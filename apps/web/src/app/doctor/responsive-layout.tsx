@@ -45,7 +45,7 @@ export function DoctorWorkspaceLayout({
       ) : null}
       <div
         className="grid min-h-0 min-w-0 flex-1"
-        style={{ gridTemplateColumns: compact ? 'minmax(0, 1fr)' : '240px minmax(0, 1fr)' }}
+        style={{ gridTemplateColumns: compact ? 'minmax(0, 1fr)' : '200px minmax(0, 1fr)' }}
       >
         <div hidden={compact && !showQueue} className="min-h-0 min-w-0 overflow-y-auto border-r">
           {queue(() => setShowQueue(false))}

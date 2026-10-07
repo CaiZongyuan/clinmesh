@@ -49,7 +49,7 @@ function randomTestId(): string {
   return `call-${String(testCallSequence)}`
 }
 
-function boundToolValue(tool: WebSurfaceAgentTool, key: 'contextId' | 'scopeKey'): string {
+function boundToolValue(tool: WebSurfaceAgentTool, key: 'pageRevision' | 'scopeKey'): string {
   const properties = tool.parameters.properties as Record<
     string,
     { const?: unknown }
@@ -57,6 +57,13 @@ function boundToolValue(tool: WebSurfaceAgentTool, key: 'contextId' | 'scopeKey'
   const value = properties?.[key]?.const
   if (typeof value !== 'string') throw new Error(`Tool ${tool.name} has no bound ${key}`)
   return value
+}
+
+async function probeContextProof(tool: WebSurfaceAgentTool): Promise<void> {
+  await expect(tool.execute({
+    pageRevision: boundToolValue(tool, 'pageRevision'),
+    scopeKey: boundToolValue(tool, 'scopeKey'),
+  }, new AbortController().signal)).rejects.toThrow('Context binding probe')
 }
 
 function createMediaQueryList(media: string, matches = false): MediaQueryList {
@@ -756,7 +763,7 @@ describe('Web application shell', () => {
     const focus = activeRegistration.tools.find(tool => tool.name === 'clinmesh_focus_panel')!
     await act(async () => {
       await focus.execute({
-        contextId: boundToolValue(focus, 'contextId'),
+        pageRevision: boundToolValue(focus, 'pageRevision'),
         scopeKey: activeRegistration.scopeKey,
       }, new AbortController().signal)
     })
@@ -765,7 +772,7 @@ describe('Web application shell', () => {
     const fill = activeRegistration.tools.find(tool => tool.name === 'clinmesh_fill_patient_draft')!
     await act(async () => {
       await fill.execute({
-        contextId: boundToolValue(fill, 'contextId'),
+        pageRevision: boundToolValue(fill, 'pageRevision'),
         scopeKey: activeRegistration.scopeKey,
         birthDate: '1990-01-01',
         gender: 'male',
@@ -796,7 +803,7 @@ describe('Web application shell', () => {
     await act(async () => {
       proposalResult = await prepare.execute(
         {
-          contextId: boundToolValue(prepare, 'contextId'),
+          pageRevision: boundToolValue(prepare, 'pageRevision'),
           scopeKey: activeRegistration.scopeKey,
         },
         new AbortController().signal,
@@ -822,7 +829,7 @@ describe('Web application shell', () => {
     await act(async () => {
       proposalResult = await prepare.execute(
         {
-          contextId: boundToolValue(prepare, 'contextId'),
+          pageRevision: boundToolValue(prepare, 'pageRevision'),
           scopeKey: activeRegistration.scopeKey,
         },
         new AbortController().signal,
@@ -844,6 +851,7 @@ describe('Web application shell', () => {
     const registeredScopes: string[] = []
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     let contextRequests = 0
+    const proofRequests: Array<{ contextId: string; pageRevision: string }> = []
     const contextBindings: Array<{
       client: { id: string; revision: number }
       dshSessionId: string
@@ -896,6 +904,10 @@ describe('Web application shell', () => {
           token: `context-token-${String(contextRequests).padEnd(32, 'x')}`,
         }, { status: 201 })
       }
+      if (path === '/clinmesh-agent-proof') {
+        proofRequests.push(JSON.parse(String(init?.body)))
+        return Response.json({ error: { code: 'PROOF_PROBE', message: 'Context binding probe' } }, { status: 409 })
+      }
       throw new Error(`Unexpected request: ${path}`)
     })
 
@@ -912,6 +924,9 @@ describe('Web application shell', () => {
     })
     await waitFor(() => expect(registration?.scopeKey).toBe('clinmesh:registrar:components'))
     expect(contextRequests).toBe(1)
+    const initialPageRevision = boundToolValue(registration!.tools[0]!, 'pageRevision')
+    await act(() => probeContextProof(registration!.tools[0]!))
+    expect(proofRequests.at(-1)).toMatchObject({ contextId: 'context-1', pageRevision: initialPageRevision })
 
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
     await act(async () => Promise.resolve())
@@ -924,6 +939,8 @@ describe('Web application shell', () => {
     })
 
     await waitFor(() => expect(contextRequests).toBe(2))
+    await act(() => probeContextProof(registration!.tools[0]!))
+    expect(proofRequests.at(-1)).toMatchObject({ contextId: 'context-2', pageRevision: initialPageRevision })
     expect(registration?.scopeKey).toBe('clinmesh:registrar:components')
     expect(contextRequests).toBe(2)
     expect(new Set(registeredScopes)).toEqual(new Set(['clinmesh:registrar:components']))
@@ -948,6 +965,7 @@ describe('Web application shell', () => {
     const history = createMemoryHistory({ initialEntries: ['/settings/developer/components'] })
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     let contextRequests = 0
+    const proofRequests: Array<{ contextId: string; pageRevision: string }> = []
     const clientRevisions: number[] = []
     let resolveReplacement: (() => void) | undefined
     const surfaceAgent: WebSurfaceAgentController = {
@@ -994,6 +1012,10 @@ describe('Web application shell', () => {
           resolveReplacement = () => resolve(response)
         })
       }
+      if (path === '/clinmesh-agent-proof') {
+        proofRequests.push(JSON.parse(String(init?.body)))
+        return Response.json({ error: { code: 'PROOF_PROBE', message: 'Context binding probe' } }, { status: 409 })
+      }
       throw new Error(`Unexpected request: ${path}`)
     })
 
@@ -1011,7 +1033,9 @@ describe('Web application shell', () => {
       runtime: runtimeFor('unavailable'),
     })
     await waitFor(() => expect(registration).toBeDefined())
-    const initialContextId = boundToolValue(registration!.tools[0]!, 'contextId')
+    const initialPageRevision = boundToolValue(registration!.tools[0]!, 'pageRevision')
+    await act(() => probeContextProof(registration!.tools[0]!))
+    expect(proofRequests.at(-1)).toMatchObject({ contextId: 'context-1', pageRevision: initialPageRevision })
 
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('connecting')} />)
     rendered.rerender(<WebApp history={history} runtime={runtimeFor('active')} />)
@@ -1023,8 +1047,9 @@ describe('Web application shell', () => {
     await waitFor(() => expect(contextRequests).toBe(2))
     await waitFor(() => expect(registration).toBeUndefined())
     await act(async () => resolveReplacement?.())
-    await waitFor(() => expect(boundToolValue(registration!.tools[0]!, 'contextId'))
-      .not.toBe(initialContextId))
+    await waitFor(() => expect(registration).toBeDefined())
+    await act(() => probeContextProof(registration!.tools[0]!))
+    expect(proofRequests.at(-1)).toMatchObject({ contextId: 'context-2', pageRevision: initialPageRevision })
     expect(clientRevisions).toEqual([1, 2])
   })
 

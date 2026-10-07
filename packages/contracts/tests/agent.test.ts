@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   agentPageContextClaimSchema,
+  agentPageBindingRevision,
   agentPageContextRequestSchema,
   agentPageContextSnapshotSchema,
   agentSelectionKindSchema,
@@ -15,6 +16,22 @@ import {
 } from '../src/agent.ts'
 
 describe('ClinMesh DSH Agent contracts', () => {
+  it('keeps the page binding revision stable across transient UI state and binds draft state', () => {
+    const claim = agentPageContextClaimSchema.parse({
+      version: 1,
+      viewId: 'registration',
+      viewRevision: 'view-17',
+      ui: { status: 'ready' },
+    })
+    expect(agentPageBindingRevision(claim)).toBe('["view-17",null]')
+    expect(agentPageBindingRevision({ ...claim, ui: { status: 'loading' } }))
+      .toBe('["view-17",null]')
+    expect(agentPageBindingRevision({
+      ...claim,
+      draft: { kind: 'patient', id: 'patient-draft', revision: '3', dirty: true },
+    })).toBe('["view-17",["patient","patient-draft","3",true]]')
+  })
+
   it('accepts a bounded page claim and rejects arbitrary or hidden state', () => {
     const claim = {
       version: 1,
@@ -331,16 +348,20 @@ describe('ClinMesh DSH Agent contracts', () => {
 
   it('binds one execution proof and authorization request to an exact Tool call', () => {
     const proof = agentExecutionProofPayloadSchema.parse({
-      version: 1,
+      version: 2,
       callId: 'call-17',
       contextId: 'context-17',
       dshSessionId: 'session-1',
       scopeKey: 'clinmesh:registrar:registration',
+      pageRevision: '["view-17",null]',
       toolName: 'clinmesh_read_current_context',
       issuedAt: '2026-08-31T00:00:00.000Z',
       expiresAt: '2026-08-31T00:01:00.000Z',
     })
     expect(proof.callId).toBe('call-17')
+    expect(agentExecutionProofPayloadSchema.safeParse({ ...proof, version: 1 }).success).toBe(false)
+    expect(agentExecutionProofPayloadSchema.safeParse({ ...proof, pageRevision: undefined }).success).toBe(false)
+    expect(agentExecutionProofPayloadSchema.safeParse({ ...proof, pageRevision: 'x'.repeat(1025) }).success).toBe(false)
     expect(agentToolAuthorizationRequestSchema.parse({
       contextToken: 'c'.repeat(32),
       executionProof: 'p'.repeat(32),

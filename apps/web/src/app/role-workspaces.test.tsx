@@ -14,7 +14,14 @@ import type {
   ScenarioGenerationRequest,
   SyntheticPatientProfile,
 } from '@clinmesh/contracts/scenario'
-import { agentToolResultRequestSchema, agentToolsForContext } from '@clinmesh/contracts/agent'
+import {
+  agentPageBindingRevision,
+  agentPageContextBindingSchema,
+  agentPageContextClaimSchema,
+  agentToolResultRequestSchema,
+  agentToolsForContext,
+  type AgentPageContextClaim,
+} from '@clinmesh/contracts/agent'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -393,7 +400,7 @@ function boundAgentToolInput(
     properties?: Record<string, { const?: unknown }>
   }
   return {
-    contextId: parameters.properties?.contextId?.const,
+    pageRevision: parameters.properties?.pageRevision?.const,
     scopeKey: parameters.properties?.scopeKey?.const,
     ...input,
   }
@@ -2940,6 +2947,7 @@ describe('role workspaces', () => {
       versionId: '1',
     }
     const question = { code: 'symptom-onset', text: '什么时候开始发热？' }
+    const staleQuestion = '依据旧轮次生成的问题'
     let rounds = 0
     const versions: number[] = []
     let releaseQueue: (() => void) | undefined
@@ -2997,6 +3005,9 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/encounters/encounter-direct/actions/ask-consultation-question') {
         const body = JSON.parse(String(init?.body))
         versions.push(body.input.expectedConsultationVersion)
+        if (body.input.message === staleQuestion) {
+          return Response.json(commandResponse({ caseId: 'case-direct', consultationVersion: 1 + rounds * 2, doctorTurn, patientTurn }))
+        }
         rounds += 1
         queueGate = new Promise<void>(resolve => { releaseQueue = resolve })
         return Response.json(commandResponse({ caseId: 'case-direct', consultationVersion: 1 + rounds * 2, doctorTurn, patientTurn }))
@@ -3007,12 +3018,19 @@ describe('role workspaces', () => {
       mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
     }} />)
     await userEvent.setup().click(await screen.findByRole('tab', { name: '问诊记录' }))
+    let previousInput: Record<string, unknown> | undefined
     for (let round = 0; round < 2; round += 1) {
       await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
       const ask = registration!.tools.find(tool => tool.name === 'clinmesh_ask_virtual_patient')!
+      if (previousInput !== undefined) {
+        await expect(ask.execute({ ...previousInput, message: staleQuestion }, new AbortController().signal))
+          .rejects.toThrow('CLINMESH_BINDING_MISMATCH')
+        expect(versions).toEqual([1])
+      }
+      previousInput = boundAgentToolInput(ask, { message: question.text })
       let execution: ReturnType<WebSurfaceAgentTool['execute']> | undefined
       act(() => {
-        execution = ask.execute(boundAgentToolInput(ask, { message: question.text }), new AbortController().signal)
+        execution = ask.execute(previousInput, new AbortController().signal)
       })
       await waitFor(() => expect(releaseQueue).toBeDefined())
       await waitFor(() => expect(screen.getByText('昨天傍晚开始的。')).toBeTruthy())
@@ -3040,6 +3058,8 @@ describe('role workspaces', () => {
 
   it.each([false, true])('switches every doctor section through authorized Tools with shadow DOM=%s', async shadow => {
     window.history.replaceState(null, '', '/consultation')
+    let latestRequestedClaim: AgentPageContextClaim | undefined
+    let latestIssuedClaim: AgentPageContextClaim | undefined
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     const surfaceAgent: WebSurfaceAgentController = {
       register(value) {
@@ -3053,8 +3073,16 @@ describe('role workspaces', () => {
     }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/agent/v1/page-contexts') {
+        latestRequestedClaim = agentPageContextClaimSchema.parse(JSON.parse(String(init?.body)).claim)
+      }
       const agentResponse = doctorSurfaceAgentResponse(path, init)
-      if (agentResponse !== undefined) return agentResponse
+      if (agentResponse !== undefined) {
+        if (path === '/api/agent/v1/page-contexts') {
+          latestIssuedClaim = agentPageContextBindingSchema.parse(await agentResponse.clone().json()).snapshot.claim
+        }
+        return agentResponse
+      }
       if (path === '/api/auth/context') return Response.json(doctorSession)
       if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
       if (path === '/api/his/v1/doctor/queue') return Response.json({
@@ -3086,8 +3114,15 @@ describe('role workspaces', () => {
         { section: 'diagnosis', label: '诊断' }, { section: 'prescription', label: '处方' },
         { section: 'laboratory', label: '检验' },
       ]) {
-        await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_select_doctor_section')).toBe(true))
-        const tool = registration!.tools.find(tool => tool.name === 'clinmesh_select_doctor_section')!
+        const tool = await waitFor(() => {
+          const candidate = registration?.tools.find(tool => tool.name === 'clinmesh_select_doctor_section')
+          expect(candidate).toBeDefined()
+          expect(latestIssuedClaim).toBeDefined()
+          expect(latestIssuedClaim).toEqual(latestRequestedClaim)
+          expect(latestIssuedClaim?.activeSection).toBe(queries.getByRole('tabpanel').getAttribute('data-agent-section'))
+          expect(boundAgentToolInput(candidate!, {}).pageRevision).toBe(agentPageBindingRevision(latestIssuedClaim!))
+          return candidate!
+        })
         await act(async () => {
           await tool.execute(boundAgentToolInput(tool, { section }), new AbortController().signal)
         })
@@ -3243,8 +3278,10 @@ describe('role workspaces', () => {
     }
     const requests: Array<{ body: unknown; path: string }> = []
     const toolResults: Array<{ ok: boolean; result?: unknown }> = []
+    const proofRequests: Array<{ contextId: string; pageRevision: string }> = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/clinmesh-agent-proof') proofRequests.push(JSON.parse(String(init?.body)))
       if (path === '/api/agent/v1/tool-calls/result') {
         toolResults.push(agentToolResultRequestSchema.parse(JSON.parse(String(init?.body))))
       }
@@ -3292,17 +3329,14 @@ describe('role workspaces', () => {
       // 报告 Tool 属于“检验检查”栏目：病历栏目不发布，切换栏目后重新注册。
       await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_select_doctor_section')).toBe(true))
       expect(registration!.tools.map(tool => tool.name)).not.toContain('clinmesh_prepare_acknowledge_report')
-      const previousContextId = boundAgentToolInput(
-        registration!.tools.find(tool => tool.name === 'clinmesh_read_current_context')!, {},
-      ).contextId
+      await act(async () => { await execute('clinmesh_read_current_context') })
+      const previousProof = proofRequests.at(-1)!
       await act(async () => { await execute('clinmesh_select_doctor_section', { section: 'laboratory' }) })
       await waitFor(() => expect(registration?.tools.map(tool => tool.name)).toContain('clinmesh_prepare_acknowledge_report'))
       // 切换栏目后页面上下文重新签发。
-      await waitFor(() => {
-        const contextTool = registration?.tools.find(tool => tool.name === 'clinmesh_read_current_context')
-        expect(contextTool).toBeDefined()
-        expect(boundAgentToolInput(contextTool!, {}).contextId).not.toBe(previousContextId)
-      })
+      await act(async () => { await execute('clinmesh_read_current_context') })
+      expect(proofRequests.at(-1)?.contextId).not.toBe(previousProof.contextId)
+      expect(proofRequests.at(-1)?.pageRevision).not.toBe(previousProof.pageRevision)
       // 影像尚未在人类面前显示：已阅提案被拒绝，Agent 读到的页面状态不含像素。
       await expect(act(() => execute('clinmesh_prepare_acknowledge_report', { requestId: 'imaging-request-1' })))
         .rejects.toThrow('have not been displayed')
@@ -3540,6 +3574,8 @@ describe('role workspaces', () => {
     let draftVersion = 0
     let draftSaves = 0
     let persistedDraftContextId: string | undefined
+    let persistedDraftPageRevision: string | undefined
+    const proofRequests: Array<{ contextId: string; pageRevision: string }> = []
     let request: {
       catalogItemId: string
       id: string
@@ -3575,9 +3611,12 @@ describe('role workspaces', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/agent/v1/page-contexts' && draftVersion === 1) {
-        const request = JSON.parse(String(init?.body)) as { claim: { viewRevision: string } }
-        persistedDraftContextId = `context-${request.claim.viewRevision}`
+        const request = JSON.parse(String(init?.body)) as { claim: unknown }
+        const claim = agentPageContextClaimSchema.parse(request.claim)
+        persistedDraftContextId = `context-${claim.viewRevision}`
+        persistedDraftPageRevision = agentPageBindingRevision(claim)
       }
+      if (url.pathname === '/clinmesh-agent-proof') proofRequests.push(JSON.parse(String(init?.body)))
       const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
@@ -3752,7 +3791,7 @@ describe('role workspaces', () => {
         candidate.name === 'clinmesh_fill_laboratory_draft'
       ))
       expect(tool).toBeDefined()
-      expect(boundAgentToolInput(tool!, {}).contextId).toBe(persistedDraftContextId)
+      expect(boundAgentToolInput(tool!, {}).pageRevision).toBe(persistedDraftPageRevision)
     })
     const fillLaboratory = registration!.tools.find(candidate => (
       candidate.name === 'clinmesh_fill_laboratory_draft'
@@ -3760,12 +3799,17 @@ describe('role workspaces', () => {
     expect((fillLaboratory.parameters as {
       properties: Record<string, unknown>
     }).properties.catalogItemId).toEqual({ type: 'string' })
+    const persistedBinding = {
+      contextId: persistedDraftContextId,
+      pageRevision: persistedDraftPageRevision,
+    }
     await act(async () => {
       await fillLaboratory.execute(boundAgentToolInput(fillLaboratory, {
         catalogItemId: agentLaboratoryService.id,
         indicationCode: 'clinical-evaluation',
       }), new AbortController().signal)
     })
+    expect(proofRequests.at(-1)).toMatchObject(persistedBinding)
     expect(await screen.findByText(agentReferenceConcept.display)).toBeTruthy()
     await act(async () => new Promise(resolve => setTimeout(resolve, 900)))
     expect(draft).toMatchObject({ catalogItemId: agentLaboratoryService.id })
@@ -4251,8 +4295,16 @@ describe('role workspaces', () => {
 
   it('starts the first visit, saves a CAS draft, and issues the laboratory order', async () => {
     window.history.replaceState(null, '', '/consultation')
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = {
+      register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      },
+    }
     let status: 'awaiting-doctor' | 'awaiting-lab-payment' | 'first-visit' = 'awaiting-doctor'
     let draftVersion = 0
+    let draftSaves = 0
     const patient = {
       birthDate: '1990-05-10',
       gender: 'male',
@@ -4267,6 +4319,8 @@ describe('role workspaces', () => {
       : { encounterVersion: '3', taskVersion: '2' }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
+      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      if (agentResponse !== undefined) return agentResponse
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
@@ -4346,10 +4400,11 @@ describe('role workspaces', () => {
         expect(body.expectedVersions).toEqual({ 'Encounter/encounter-1': '3' })
         expect(body.input).toEqual({
           assessment: '急性发热，待检验明确病原',
-          expectedDraftVersion: 0,
+          expectedDraftVersion: draftVersion,
           historyOfPresentIllness: '两天前出现发热，伴咽痛。',
         })
-        draftVersion = 1
+        draftSaves += 1
+        draftVersion += 1
         return Response.json(commandResponse({ draftVersion }))
       }
       if (url.pathname === '/api/his/v1/encounters/encounter-1/actions/issue-laboratory-order') {
@@ -4379,7 +4434,9 @@ describe('role workspaces', () => {
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
-    render(<WebApp />)
+    render(<WebApp runtime={{
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+    }} />)
 
     expect(await screen.findByText('门诊医生 · 门诊医生')).toBeTruthy()
     expect(await screen.findByRole('button', { name: '选择病例 合成患者周明' })).toBeTruthy()
@@ -4397,10 +4454,21 @@ describe('role workspaces', () => {
 
     await user.click(screen.getByRole('tab', { name: '病历记录' }))
     const firstVisitForm = await screen.findByRole('form', { name: '首诊记录' })
+    await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_fill_first_visit_draft')).toBe(true))
+    const originalFill = registration!.tools.find(tool => tool.name === 'clinmesh_fill_first_visit_draft')!
+    const originalInput = boundAgentToolInput(originalFill, {
+      assessment: '急性发热，待检验明确病原', historyOfPresentIllness: '两天前出现发热，伴咽痛。',
+    })
     await user.type(within(firstVisitForm).getByLabelText('现病史'), '两天前出现发热，伴咽痛。')
     await user.type(within(firstVisitForm).getByLabelText('首诊评估'), '急性发热，待检验明确病原')
     await user.click(within(firstVisitForm).getByRole('button', { name: '保存首诊草稿' }))
     expect(await screen.findByText('草稿已保存')).toBeTruthy()
+    await act(async () => Promise.resolve())
+    const currentFill = registration!.tools.find(tool => tool.name === 'clinmesh_fill_first_visit_draft')!
+    await expect(currentFill.execute(originalInput, new AbortController().signal))
+      .rejects.toThrow('CLINMESH_BINDING_MISMATCH')
+    expect(draftVersion).toBe(1)
+    expect(draftSaves).toBe(1)
 
     await user.click(screen.getByRole('tab', { name: '检验' }))
     await user.click(screen.getByRole('button', { name: '签发检验申请' }))
@@ -4829,6 +4897,8 @@ describe('role workspaces', () => {
   })
 
   it('saves and confirms independent primary and secondary diagnoses from the controlled catalog', async () => {
+    let latestRequestedClaim: AgentPageContextClaim | undefined
+    let latestIssuedClaim: AgentPageContextClaim | undefined
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     const surfaceAgent: WebSurfaceAgentController = {
       register(value) {
@@ -4920,8 +4990,16 @@ describe('role workspaces', () => {
     let encounterVersion = '6'
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
+      if (url.pathname === '/api/agent/v1/page-contexts') {
+        latestRequestedClaim = agentPageContextClaimSchema.parse(JSON.parse(String(init?.body)).claim)
+      }
       const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
-      if (agentResponse !== undefined) return agentResponse
+      if (agentResponse !== undefined) {
+        if (url.pathname === '/api/agent/v1/page-contexts') {
+          latestIssuedClaim = agentPageContextBindingSchema.parse(await agentResponse.clone().json()).snapshot.claim
+        }
+        return agentResponse
+      }
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
         return Response.json({
@@ -5091,17 +5169,27 @@ describe('role workspaces', () => {
     expect(screen.getByText('I10')).toBeTruthy()
     expect(screen.getAllByText('原发性高血压').length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: '添加诊断' })).toBeTruthy()
+    const priorDiagnosisRevision = await waitFor(() => {
+      expect(latestIssuedClaim).toBeDefined()
+      expect(latestIssuedClaim).toEqual(latestRequestedClaim)
+      expect(latestIssuedClaim?.selection?.version).toBe(encounterVersion)
+      return agentPageBindingRevision(latestIssuedClaim!)
+    })
     await user.click(screen.getByRole('button', { name: '移除诊断 2' }))
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(1), { timeout: 3_000 })
     expect((screen.getByRole('button', { name: '确认诊断' }) as HTMLButtonElement).disabled).toBe(false)
-    await waitFor(() => expect(registration?.tools.some(tool => (
-      tool.name === 'clinmesh_fill_diagnosis_draft'
-    ))).toBe(true))
-    const fillDiagnosis = registration!.tools.find(tool => (
-      tool.name === 'clinmesh_fill_diagnosis_draft'
-    ))!
+    const { fillDiagnosis, tools: diagnosisTools } = await waitFor(() => {
+      const candidate = registration?.tools.find(tool => tool.name === 'clinmesh_fill_diagnosis_draft')
+      expect(candidate).toBeDefined()
+      expect(latestIssuedClaim).toBeDefined()
+      expect(latestIssuedClaim).toEqual(latestRequestedClaim)
+      expect(latestIssuedClaim?.activeSection).toBe('diagnosis')
+      expect(agentPageBindingRevision(latestIssuedClaim!)).not.toBe(priorDiagnosisRevision)
+      expect(boundAgentToolInput(candidate!, {}).pageRevision).toBe(agentPageBindingRevision(latestIssuedClaim!))
+      return { fillDiagnosis: candidate!, tools: registration!.tools }
+    })
     for (const name of ['clinmesh_fill_diagnosis_draft', 'clinmesh_prepare_confirm_diagnosis']) {
-      const diagnosisTool = registration!.tools.find(tool => tool.name === name)
+      const diagnosisTool = diagnosisTools.find(tool => tool.name === name)
       expect(diagnosisTool?.parameters).toMatchObject({
         properties: {
           entries: {

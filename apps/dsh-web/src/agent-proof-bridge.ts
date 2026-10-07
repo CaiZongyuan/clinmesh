@@ -9,10 +9,17 @@ const MAX_PROOF_REQUEST_BYTES = 4096
 
 const proofRequestSchema = z.object({
   contextId: z.string().min(1).max(128),
+  pageRevision: z.string().min(1).max(1024),
   scopeKey: z.string().min(1).max(128),
   toolName: z.string().regex(/^clinmesh_[a-z0-9_]+$/).max(64),
 }).strict()
-const bindingSchema = proofRequestSchema.pick({ contextId: true, scopeKey: true }).strip()
+const bindingSchema = proofRequestSchema.pick({ pageRevision: true, scopeKey: true }).strip()
+const toolBindingSchema = z.object({
+  properties: z.object({
+    scopeKey: z.object({ const: z.string() }),
+    pageRevision: z.object({ const: z.string() }),
+  }),
+})
 
 export function installAgentProofBridge(ctx: Context, secret: string): void {
   const issuer = new AgentExecutionProofIssuer({ secret })
@@ -35,9 +42,17 @@ export function installAgentProofBridge(ctx: Context, secret: string): void {
           reason: 'CLINMESH_HOST_SESSION_REQUIRED: 当前调用未关联 DSH Agent 会话，尚未执行。请从打开 ClinMesh 工作台的 DSH 会话调用；参数补全无法修复会话关联。',
         }
       }
+      const current = toolBindingSchema.safeParse(ctx.tools.get(execution.name, execution.agent)?.parameters)
+      if (!current.success || current.data.properties.scopeKey.const !== binding.scopeKey
+        || current.data.properties.pageRevision.const !== binding.pageRevision) {
+        return {
+          kind: 'deny',
+          reason: 'CLINMESH_BINDING_MISMATCH: 当前患者、岗位、栏目或页面版本已变化，尚未执行。请等待当前工具定义更新，重新读取页面状态后决定是否继续。',
+        }
+      }
       const dispose = issuer.begin({
         callId: String(execution.callId),
-        contextId: binding.contextId,
+        pageRevision: binding.pageRevision,
         dshSessionId: String(dshSessionId),
         scopeKey: binding.scopeKey,
         toolName: execution.name,
@@ -96,15 +111,15 @@ export function installAgentProofBridge(ctx: Context, secret: string): void {
 }
 
 function bindingFromArguments(value: unknown): {
-  contextId: string
+  pageRevision: string
   scopeKey: string
 } {
   const result = bindingSchema.safeParse(value)
   if (result.success) return result.data
   const fields = [...new Set(result.error.issues.flatMap(issue => (
-    issue.path.length === 0 ? ['contextId', 'scopeKey'] : [String(issue.path[0])]
+    issue.path.length === 0 ? ['scopeKey', 'pageRevision'] : [String(issue.path[0])]
   )))]
-  throw new TypeError(`CLINMESH_BINDING_ARGUMENTS_INVALID: 调用 JSON 缺少或包含无效的绑定参数：${fields.join(', ')}。尚未执行。请把当前工具 schema 中的 contextId、scopeKey 的 const 值显式写入调用 JSON 后重试；const 不会自动填入。不要复用历史消息中的值；此错误不表示绑定已过期或被读取消耗。`)
+  throw new TypeError(`CLINMESH_BINDING_ARGUMENTS_INVALID: 调用 JSON 缺少或包含无效的绑定参数：${fields.join(', ')}。尚未执行。请显式传入当前工具 schema 中的 scopeKey、pageRevision const 值；const 不会自动填入。Context ID 由执行桥接管理。`)
 }
 
 function executionKey(execution: Pick<ToolExecution, 'agent' | 'callId'>): string {

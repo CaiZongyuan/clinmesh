@@ -2,6 +2,8 @@
 
 Status: implemented
 
+Context ID 作为模型参数的绑定方式由 [DSH 业务 Agent Harness](2026-10-07-dsh-business-agent-harness.md) 局部取代；本文其余 Surface、受信上下文、人工审阅与审计决策继续适用。
+
 ## Problem
 
 ClinMesh 需要让 DSH 原生 Session 中的 Agent 感知当前 Web 工作台状态并执行受控前端动作，同时保留 standalone Web、Hono、SQLite、Command、审计和 outbox 的既有所有权。直接把 DOM、Query cache、浏览器存储或完整患者页面交给模型会扩大数据边界；让 Agent 直接提交挂号、分诊、临床、支付或药房 Command 又会绕过当前人类岗位的责任与审阅。

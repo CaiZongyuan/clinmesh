@@ -2202,11 +2202,48 @@ function DoctorCaseController({
         activeCaseId,
         activeCaseSection,
         clinicalDocument: currentClinicalDocument,
+        consultationVersion: detail.data?.consultation?.version,
+        firstVisitDraftVersion: detail.data?.drafts?.firstVisit?.version,
+        revisitDraftVersion: detail.data?.drafts?.revisit?.version,
+        revisitConditionVersion: detail.data?.drafts?.revisit?.conditionVersion,
+        documentDraftVersion: detail.data?.drafts?.document?.version,
+        prescriptionDraftVersion: detail.data?.drafts?.prescription?.version,
+        prescriptionDraftItems: detail.data?.drafts?.prescription?.items.map(item => [item.medicationRequestId, item.versionId]),
+        medicationDraftVersion: detail.data?.medicationConclusion?.draftVersion,
+        prescription: detail.data?.medicationConclusion?.prescription === undefined ? undefined : {
+          id: detail.data.medicationConclusion.prescription.id,
+          version: detail.data.medicationConclusion.prescription.version,
+          withdrawalVersion: detail.data.medicationConclusion.prescription.withdrawal?.version,
+          items: detail.data.medicationConclusion.prescription.items.map(item => [item.medicationRequestId, item.medicationRequestVersion]),
+        },
+        noMedicationVersion: detail.data?.medicationConclusion?.noMedication?.version,
         diagnosisDraftVersion: detail.data?.diagnosis?.draftVersion,
+        diagnosisConfirmation: detail.data?.diagnosis?.confirmation === undefined ? undefined : {
+          id: detail.data.diagnosis.confirmation.id,
+          revision: detail.data.diagnosis.confirmation.revisionNumber,
+          entries: detail.data.diagnosis.confirmation.entries.map(entry => [entry.conditionId, entry.conditionVersion]),
+        },
+        signedDocuments: detail.data?.clinicalDocument?.signed.map(document => [document.compositionId, document.compositionVersion]),
+        encounterStatus: detail.data?.encounter.status,
         encounterVersion: detail.data?.encounter.versionId,
+        taskVersion: detail.data?.taskVersion,
+        status: detail.data?.status,
+        patientVersion: detail.data?.patient.versionId,
         imagingDraftVersion: detail.data?.imagingRequests?.draftVersion,
         pathologyDraftVersion: detail.data?.pathologyRequests?.draftVersion,
         laboratoryDraftVersion: detail.data?.laboratoryRequests?.draftVersion,
+        requests: [
+          ...(detail.data?.laboratoryRequests?.requests ?? []),
+          ...(detail.data?.imagingRequests?.requests ?? []),
+          ...(detail.data?.pathologyRequests?.requests ?? []),
+        ].map(request => ({
+          id: request.id, version: request.version, status: request.status,
+          serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion,
+          report: request.report === undefined ? undefined : [
+            request.report.diagnosticReportId, request.report.diagnosticReportVersion,
+            request.report.acknowledgement?.id,
+          ],
+        })),
         page,
       }),
       ...(detail.data === undefined ? {} : {
@@ -3114,7 +3151,7 @@ function CaseDetail({
           value={activeSection}
         >
           <div className="shrink-0 overflow-x-auto overflow-y-hidden border-b px-2">
-            <TabsList className="h-11 min-w-max" variant="line">
+            <TabsList className="h-9 min-w-max" variant="line">
               {detail.consultation === undefined ? null : (
                 <TabsTrigger data-agent-selection="consultation" id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
               )}
