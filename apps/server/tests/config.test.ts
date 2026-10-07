@@ -12,6 +12,25 @@ import {
 } from '../src/config.ts'
 
 describe('Node.js server configuration', () => {
+  it('uses DSH without duplicate Provider configuration and requires a trusted bridge', () => {
+    const environment = {
+      CLINMESH_AUTH_SECRET: 'synthetic-auth-secret-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'synthetic-cursor-secret-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: '/synthetic/clinmesh.sqlite',
+      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+      CLINMESH_AI_SOURCE: 'dsh',
+      CLINMESH_DSH_BRIDGE_SECRET: 'synthetic-bridge-secret-at-least-32-characters',
+    }
+    expect(readServerConfig(environment)).toMatchObject({ dshModelBridge: {
+      origin: 'http://127.0.0.1:3080', secret: environment.CLINMESH_DSH_BRIDGE_SECRET,
+      timeoutMs: 60000, maxResponseBytes: 1048576,
+    } })
+    expect(readServerConfig(environment)).not.toHaveProperty('ai')
+    expect(() => readServerConfig({ ...environment, CLINMESH_DSH_BRIDGE_SECRET: undefined })).toThrow()
+    for (const origin of ['https://127.0.0.1:3080', 'http://remote.example', 'http://127.0.0.1:3080/path', 'http://user:password@127.0.0.1:3080']) {
+      expect(() => readServerConfig({ ...environment, CLINMESH_DSH_MODEL_ORIGIN: origin })).toThrow()
+    }
+  })
   it('reads an explicit persistent single-instance configuration without exposing secrets', () => {
     expect(readServerConfig({
       CLINMESH_AUTH_SECRET: 'auth-secret-with-at-least-32-characters',

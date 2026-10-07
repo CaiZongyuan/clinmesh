@@ -1,6 +1,6 @@
 # 在 DSH 设置中选择 ClinMesh 使用的模型
 
-Status: draft
+Status: implemented
 
 ## 问题与目标
 
@@ -25,29 +25,29 @@ Status: draft
 
 ## 验收条件
 
-- [ ] 用户可从 DSH 设置找到“ClinMesh 模型”；无右侧会话或未打开 Surface 时仍可使用。
-- [ ] 初始值为“使用 DSH 默认模型”，界面可辨识当前解析到的 Provider／模型；用户可选择具体模型或恢复默认。
-- [ ] 候选来自 DSH 的模型目录，区分不同 Provider 的同名模型；不要求用户在 ClinMesh 再填地址或密钥。
-- [ ] 设置具有加载、无候选、保存中、保存成功及失败状态；保存失败不把未持久化的选择显示为已保存，过期请求不覆盖较新的选择。
-- [ ] 刷新、重启与 Surface 开关后选择保留；不同 DSH Profile 的设置互不覆盖。右侧会话创建、切换、关闭或更换模型不修改 ClinMesh 选择。
-- [ ] 选择模型 A 后，新问诊及各类实际模型生成任务通过 DSH Provider 使用 A；选择 B 后的新任务使用 B，已开始或排队且已绑定 A 的任务继续使用 A。
-- [ ] “使用 DSH 默认模型”在每个新任务开始时解析默认值；执行期间修改 DSH 默认模型不改变该任务的路由。
-- [ ] 记录足以辨识生成来源的 Provider／模型；相同模型名的不同 Provider 不混淆。已有 Persona Revision 和 Investigation Result Snapshot 不因更换模型而重写，reset/replay 保持原有复用合同。
-- [ ] Provider 缺失、凭据失效、模型移除、取消、超时及无效结构化输出有可恢复失败；不保存半成品，不悄悄改用其他 Provider。问诊失败继续保留医生发言并沿用受控重试入口。
-- [ ] 患者模拟请求仅包含现有业务所需输入，不带右侧医生 Agent 的 transcript、系统提示或 Tools；病例真值与生成输入不进入右侧会话、Page Context、Tool 或 CLI 输出。
-- [ ] 密钥不进入浏览器、ClinMesh DTO、审计正文或日志。模型桥接的实际调用只接受受信 Server 发起的受限生成请求，拒绝未授权调用与任意 URL／header 覆盖。
-- [ ] 设置在中文、英文、亮暗主题、窄窗口及键盘操作下可用；卸载 ClinMesh 插件后释放注册的入口与桥接能力。
-- [ ] 独立 Web 的现有模型配置与失败恢复正常；DSH 模式下移除重复的 `CLINMESH_AI_*` 配置后，生成仍可通过 DSH Provider 工作。
+- [x] 用户可从 DSH 设置找到“ClinMesh 模型”；无右侧会话或未打开 Surface 时仍可使用。
+- [x] 初始值为“使用 DSH 默认模型”，界面可辨识当前解析到的 Provider／模型；用户可选择具体模型或恢复默认。
+- [x] 候选来自 DSH 的模型目录，区分不同 Provider 的同名模型；不要求用户在 ClinMesh 再填地址或密钥。
+- [x] 设置具有加载、无候选、保存中、保存成功及失败状态；保存失败不把未持久化的选择显示为已保存，过期请求不覆盖较新的选择。
+- [x] 刷新、重启与 Surface 开关后选择保留；不同 DSH Profile 的设置互不覆盖。右侧会话创建、切换、关闭或更换模型不修改 ClinMesh 选择。
+- [x] 选择模型 A 后，新问诊及各类实际模型生成任务通过 DSH Provider 使用 A；选择 B 后的新任务使用 B，已开始或排队且已绑定 A 的任务继续使用 A。
+- [x] “使用 DSH 默认模型”在每个新任务开始时解析默认值；执行期间修改 DSH 默认模型不改变该任务的路由。
+- [x] 记录足以辨识生成来源的 Provider／模型；相同模型名的不同 Provider 不混淆。已有 Persona Revision 和 Investigation Result Snapshot 不因更换模型而重写，reset/replay 保持原有复用合同。
+- [x] Provider 缺失、凭据失效、模型移除、取消、超时及无效结构化输出有可恢复失败；不保存半成品，不悄悄改用其他 Provider。问诊失败继续保留医生发言并沿用受控重试入口。
+- [x] 患者模拟请求仅包含现有业务所需输入，不带右侧医生 Agent 的 transcript、系统提示或 Tools；病例真值与生成输入不进入右侧会话、Page Context、Tool 或 CLI 输出。
+- [x] 密钥不进入浏览器、ClinMesh DTO、审计正文或日志。模型桥接的实际调用只接受受信 Server 发起的受限生成请求，拒绝未授权调用与任意 URL／header 覆盖。
+- [x] 设置在中文、英文、亮暗主题、窄窗口及键盘操作下可用；卸载 ClinMesh 插件后释放注册的入口与桥接能力。
+- [x] 独立 Web 的现有模型配置与失败恢复正常；DSH 模式下移除重复的 `CLINMESH_AI_*` 配置后，生成仍可通过 DSH Provider 工作。
 
 ## 设计决定
 
 - 已确认：ClinMesh 的模型选择独立于右侧会话；默认使用 DSH 默认模型，并允许用户单独选择。
-- 草案范围：首期一个 ClinMesh 模型供全部实际模型生成能力共用，设置作用域为当前 DSH Profile；不按医院岗位、病例或会话保存独立模型。
+- 已确认：首期一个 ClinMesh 模型供全部实际模型生成能力共用，设置作用域为当前 DSH Profile；不按医院岗位、病例或会话保存独立模型。
 - 一个任务包括其内部结构化输出修复与自动重试，开始时固定 Provider／模型。持久任务将路由与任务一起保存，进程重启恢复时不重新读取当时的默认值。
 - DSH 插件拥有宿主模型配置和调用适配，ClinMesh 的业务服务继续拥有输入构造、结果验证、任务状态、幂等、预期版本与审计。业务层不直接依赖 DSH SDK。
-- 使用 DSH 公开扩展能力，不修改官方源码，不维护宿主补丁或 fork。现有可用接口包括 `ctx.llm.stream()` 与 `ctx.agentDefaultModel.currentSelection()`；具体设置注册、持久化和 Server 桥接协议在实施设计中确定。
+- 使用 DSH 公开扩展能力，不修改官方源码，不维护宿主补丁或 fork。使用 `ctx.llm.stream()` 与 `ctx.agentDefaultModel.currentSelection()`，采用原生通用设置 slot 与 volatile Profile 字段，通过受限 HTTP loopback 桥接连接 Server。
 - 已核对的 DSH 公共调用合同没有 ClinMesh 当前使用的 `response_format: json_schema`。适配层需要提供可验证的结构化结果，保留现有 schema 与诊断泄漏检查，不因 Provider 能返回文本就放宽业务校验。
-- 实施时为模型来源、持久路由、宿主桥接和上下文隔离的取舍新增 Agent Note，并更新架构与部署文档；本规格不把草案接口当作已实现能力。
+- 模型来源、持久路由、宿主桥接和上下文隔离的取舍见 [Agent Note](../../.agents/notes/implemented/architecture/2026-10-07-clinmesh-dsh-model-binding.md)。
 
 ## 测试策略
 
@@ -68,6 +68,6 @@ DSH adapter 合同测试覆盖目录读取、选择与恢复默认、持久化�
 
 宿主基线由 [DSH 上游锁](../../dsh-upstreams.lock.json) 拥有，当前为 DSH `0.2.0-rc.2`。现有 ClinMesh DSH adapter 仅提供应用代理和 Tool execution proof，需要新增受限的服务端模型桥接与相应生命周期处理。任务恢复还依赖持久的 Provider／模型路由表示，不能只保存可能重名的 model 字符串。
 
-定项前需要明确设置写入的权限与作用域边界：采用 DSH 设置管理权限时，如何告知用户其选择对同一 Profile 下所有 ClinMesh 任务生效；是否还需要 ClinMesh 管理员授权。显式失败后的人工重试是沿用原路由还是新建使用当前选择的尝试，也需结合现有问诊、Persona 和 Investigation 恢复合同确定，并在界面上保持一致。
+设置沿用 DSH 的 Profile 设置管理权限，不增加 HIS 管理员授权；界面说明同一 Profile 下所有 ClinMesh 模型任务共用此选择。既有任务人工重试沿用原路由，新发起任务使用当前选择。Server 来源由 `CLINMESH_AI_SOURCE=openai|dsh` 在启动时固定，`pnpm dev:dsh` 自动选择 `dsh`。
 
 Server 与 DSH 位于不同进程，宿主不可用、插件热重载或已选 Provider 被移除时必须可控失败，并保留任务恢复依据。桥接不能依赖某个浏览器标签页存活，也不能使普通岗位获得隐藏病例事实；辅助调用的宿主日志与可见性边界需在接入时核验。

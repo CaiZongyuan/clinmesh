@@ -224,3 +224,5 @@
 - DSH 0.2 JSONL 持久化允许延迟物化会话，`append` 是尽力写入，`sessionPersistence.flush()` 或 handle 的 `flush()` 才是持久化屏障。验证 SIGKILL 后恢复时先建立该屏障，不能用固定延迟代替落盘证据。
 
 - 新 clone 或 worktree 单独运行 DSH client 测试前，先生成 `styles.generated.ts`（`pnpm --filter @clinmesh/dsh-web build:styles`，包级 `typecheck` 也会生成）。首次样式生成与 Vitest 入口加载不能并行，否则 `index.test.ts` 会因缺少生成文件而在收集阶段失败；这种环境失败不能作为有效的行为回归 red。
+
+- DSH 0.2 的 `ctx.remote` RPC 返回 `{ ok, value }` 或 `{ ok: false, error }`，失败不一定抛异常。适配器先验证并解包，再验证业务数据；stub 也要保留该包装。自定义 `LlmAdapter.listModels(provider)` 的每个模型必须带匹配的 `provider` 字段，仅有 `id/name` 会被宿主目录拒绝。真实 Profile smoke 可以发现这两类被宽松 stub 掩盖的合同错误。

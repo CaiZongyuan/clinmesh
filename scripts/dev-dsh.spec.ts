@@ -149,6 +149,9 @@ describe('createDshDevelopmentPlan', () => {
         args: ['--filter', '@clinmesh/server', 'dev'],
         environment: {
           CLINMESH_TRUSTED_ORIGINS: 'http://127.0.0.1:51868,http://127.0.0.1:3080',
+          CLINMESH_AI_SOURCE: 'dsh',
+          CLINMESH_DSH_MODEL_ORIGIN: 'http://127.0.0.1:3080',
+          CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value',
           CLINMESH_DATABASE_PATH: resolve('/repo/.data/clinmesh.sqlite'),
           CLINMESH_REFERENCE_DATABASE_PATH: resolve('/repo/.data/clinmesh-reference.sqlite'),
           CLINMESH_WEB_ROOT: '/absolute/web-root',
@@ -181,7 +184,7 @@ describe('createDshDevelopmentPlan', () => {
     })
 
     const server = plan.processes[0]!
-    expect(Object.keys(server.environment)).toEqual(['CLINMESH_TRUSTED_ORIGINS'])
+    expect(server.environment).toEqual({ CLINMESH_TRUSTED_ORIGINS: 'http://127.0.0.1:51868,http://127.0.0.1:3080', CLINMESH_AI_SOURCE: 'dsh', CLINMESH_DSH_MODEL_ORIGIN: 'http://127.0.0.1:3080', CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value' })
   })
 })
 

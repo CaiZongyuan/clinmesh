@@ -10,6 +10,12 @@ const httpUrlSchema = z.url().refine((value) => {
 
 const serverEnvironmentSchema = z.object({
   CLINMESH_AI_API_KEY: z.string().min(1).optional(),
+  CLINMESH_AI_SOURCE: z.enum(['openai', 'dsh']).default('openai'),
+  CLINMESH_DSH_MODEL_ORIGIN: z.url().refine(value => {
+    const url = new URL(value)
+    return url.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(url.hostname)
+      && !url.username && !url.password && url.pathname === '/' && !url.search && !url.hash
+  }, 'DSH model origin must be an HTTP loopback origin').default('http://127.0.0.1:3080'),
   CLINMESH_AI_BASE_URL: httpUrlSchema.optional(),
   CLINMESH_AI_CONSULTATION_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_BRIEF_MODEL: z.string().trim().min(1).max(256).optional(),
@@ -43,6 +49,12 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_TRUSTED_ORIGINS: z.string().trim().min(1).optional(),
   CLINMESH_WEB_ROOT: z.string().trim().min(1).optional(),
 }).superRefine((environment, context) => {
+  if (environment.CLINMESH_AI_SOURCE === 'dsh') {
+    if (environment.CLINMESH_DSH_BRIDGE_SECRET === undefined) {
+      context.addIssue({ code: 'custom', path: ['CLINMESH_DSH_BRIDGE_SECRET'], message: 'DSH model calls require a bridge secret' })
+    }
+    return
+  }
   const values = [
     environment.CLINMESH_AI_API_KEY,
     environment.CLINMESH_AI_BASE_URL,
@@ -59,6 +71,7 @@ const serverEnvironmentSchema = z.object({
 })
 
 export interface ServerConfig {
+  dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   ai?: {
     apiKey: string
     baseUrl: string
@@ -177,7 +190,13 @@ export function readServerConfig(
     : parsed.CLINMESH_TRUSTED_ORIGINS.split(',').map(origin => z.url().parse(origin.trim()))
 
   return {
-    ...(parsed.CLINMESH_AI_BASE_URL === undefined
+    ...(parsed.CLINMESH_AI_SOURCE === 'dsh' ? {
+      dshModelBridge: {
+        origin: parsed.CLINMESH_DSH_MODEL_ORIGIN, secret: parsed.CLINMESH_DSH_BRIDGE_SECRET!,
+        timeoutMs: Number(parsed.CLINMESH_AI_TIMEOUT_MS), maxResponseBytes: Number(parsed.CLINMESH_AI_MAX_RESPONSE_BYTES),
+      },
+    } : {}),
+    ...(parsed.CLINMESH_AI_SOURCE === 'dsh' || parsed.CLINMESH_AI_BASE_URL === undefined
       ? {}
       : {
           ai: {

@@ -62,6 +62,7 @@ export interface JsonChatCompletionResult {
 }
 
 export interface JsonChatCompletionsProvider {
+  resolveModel?(model: string, signal?: AbortSignal): Promise<string>
   completeJson(input: JsonChatCompletionInput): Promise<JsonChatCompletionResult>
 }
 

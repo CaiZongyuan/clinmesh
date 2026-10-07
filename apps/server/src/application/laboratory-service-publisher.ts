@@ -27,6 +27,7 @@ import {
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import type { GenerationModelBinding } from './generation-model-binding.ts'
 
 const promptVersion = 'laboratory-service-enrichment-v1'
 const laboratoryCnPublicationPolicyVersion = 'clinmesh-laboratory-defaults-v1'
@@ -118,6 +119,7 @@ export class LaboratoryServicePublisher {
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #model: string | undefined
+  readonly #models: GenerationModelBinding | undefined
   readonly #provider: JsonChatCompletionsProvider | undefined
   readonly #publications: LaboratoryServicePublicationRepository
   readonly #referenceData: ReferenceDataService
@@ -126,6 +128,7 @@ export class LaboratoryServicePublisher {
     commands: CommandExecutor
     database: ClinMeshDatabase
     model?: string
+    models?: GenerationModelBinding
     provider?: JsonChatCompletionsProvider
     publications: LaboratoryServicePublicationRepository
     referenceData: ReferenceDataService
@@ -133,6 +136,7 @@ export class LaboratoryServicePublisher {
     this.#commands = input.commands
     this.#database = input.database
     this.#model = input.model
+    this.#models = input.models
     this.#provider = input.provider
     this.#publications = input.publications
     this.#referenceData = input.referenceData
@@ -331,11 +335,22 @@ export class LaboratoryServicePublisher {
     } as const
   }
 
-  enqueue(input: {
+  async enqueue(input: {
     context: ActorContext
     entries: readonly { conceptId: string; expectedVersion: number }[]
     idempotencyKey: string
   }) {
+    this.#assertAdministrator(input.context)
+    const needsModel = input.entries.some(entry => this.#referenceData.laboratoryRecord(input.context, entry.conceptId)?.definition.kind === 'loinc')
+    let model = this.#model ?? 'unconfigured'
+    if (needsModel && this.#model !== undefined) {
+      try {
+        model = await this.#models?.bind(input.context.workspaceId,
+          `catalog:${JSON.stringify([input.context.actorId, input.idempotencyKey])}`, this.#model) ?? this.#model
+      } catch {
+        throw new LaboratoryServicePublisherError('CATALOG_ENRICHMENT_UNAVAILABLE', 'The configured model is unavailable', 503)
+      }
+    }
     return this.#commands.execute({
       authorize: () => this.#assertAdministrator(input.context),
       context: input.context,
@@ -381,7 +396,7 @@ export class LaboratoryServicePublisher {
           job,
           input.entries,
           input.context,
-          this.#model ?? 'unconfigured',
+          model,
         )
       } catch (error) {
         if (error instanceof LaboratoryServicePublicationVersionError) {

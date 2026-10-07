@@ -11,6 +11,7 @@ import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import { hasHiddenDiagnosisLeak, type PersonaResource } from './patient-persona-service.ts'
 import type { WorkflowService } from './workflow-service.ts'
+import type { GenerationModelBinding } from './generation-model-binding.ts'
 
 const dialogueSystemPrompt = [
   '你在一次中国公立医院普通门诊问诊中扮演患者本人。',
@@ -60,6 +61,7 @@ export class ConsultationDialogueService {
   readonly #fhir: FhirRepository
   readonly #cases: SyntheticCaseRepository
   readonly #model: string | undefined
+  readonly #models: GenerationModelBinding | undefined
   readonly #provider: JsonChatCompletionsProvider | undefined
   readonly #workflow: WorkflowService
 
@@ -68,6 +70,7 @@ export class ConsultationDialogueService {
     commands: CommandExecutor
     fhir: FhirRepository
     model?: string
+    models?: GenerationModelBinding
     provider?: JsonChatCompletionsProvider
     workflow: WorkflowService
   }) {
@@ -75,6 +78,7 @@ export class ConsultationDialogueService {
     this.#fhir = input.fhir
     this.#cases = input.cases
     this.#model = input.model
+    this.#models = input.models
     this.#provider = input.provider
     this.#workflow = input.workflow
   }
@@ -193,7 +197,10 @@ export class ConsultationDialogueService {
     }
     let reply: string
     try {
-      reply = await this.#composeReply(input.context, caseId, binding.syntheticCaseId, binding.content)
+      const signal = AbortSignal.timeout(30_000)
+      const model = await this.#models?.bind(input.context.workspaceId,
+        `dialogue:${input.context.epoch}:${input.encounterId}:${input.doctorSequence}`, this.#model, signal) ?? this.#model
+      reply = await this.#composeReply(input.context, caseId, binding.syntheticCaseId, binding.content, model, signal)
     } catch (error) {
       if (error instanceof ConsultationDialogueError) throw error
       throw new ConsultationDialogueError(
@@ -216,6 +223,8 @@ export class ConsultationDialogueService {
     caseId: string,
     syntheticCaseId: string,
     persona: PatientPersonaContent,
+    model: string,
+    signal: AbortSignal,
   ): Promise<string> {
     const detail = this.#workflow.doctorCaseDetail(context, caseId)
     const turns = (detail.consultation?.turns ?? []).slice(-dialogueContextTurnLimit)
@@ -278,14 +287,13 @@ export class ConsultationDialogueService {
         },
       },
     }
-    const signal = AbortSignal.timeout(30_000)
     const generate = (systemPrompt: string) => new Promise<string>((resolve, reject) => {
       const abort = () => reject(new Error('Patient reply deadline elapsed'))
       if (signal.aborted) return abort()
       signal.addEventListener('abort', abort, { once: true })
       void this.#provider!.completeJson({
         signal, jsonSchema: z.toJSONSchema(replyOutputSchema) as Record<string, unknown>,
-        model: this.#model!, schemaName: 'patient_dialogue_reply', systemPrompt, userPayload: payload,
+        model, schemaName: 'patient_dialogue_reply', systemPrompt, userPayload: payload,
         validate: value => replyOutputSchema.safeParse(value).success,
       }).then(result => resolve(replyOutputSchema.parse(JSON.parse(result.content)).reply), reject)
         .catch(reject).finally(() => signal.removeEventListener('abort', abort))

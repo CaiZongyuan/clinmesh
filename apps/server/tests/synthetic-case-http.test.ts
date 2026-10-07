@@ -39,6 +39,7 @@ import {
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
+import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
 import type {
   ScenarioGenerationProvider,
   SourcePatientCorpus,
@@ -261,6 +262,7 @@ class RetryingSyntheaProvider implements ScenarioGenerationProvider {
 
 class ControlledBriefProvider implements JsonChatCompletionsProvider {
   readonly requests: JsonChatCompletionInput[] = []
+  resolveModel?: (model: string) => Promise<string>
   readonly #outputs: unknown[]
 
   constructor(outputs: unknown[]) {
@@ -271,7 +273,7 @@ class ControlledBriefProvider implements JsonChatCompletionsProvider {
     this.requests.push(input)
     const output = this.#outputs.shift()
     if (output === undefined) throw new Error('No fake Patient Brief output remains')
-    return { content: JSON.stringify(output), model: 'resolved-fake-brief-model' }
+    return { content: JSON.stringify(output), model: this.resolveModel === undefined ? 'resolved-fake-brief-model' : input.model }
   }
 }
 
@@ -1054,6 +1056,10 @@ describe('Synthetic Case generation HTTP contract', () => {
         }],
       },
     ])
+    const routeA = encodeModelRoute({ provider: 'synthetic-a', model: 'same-model' })
+    const routeB = encodeModelRoute({ provider: 'synthetic-b', model: 'same-model' })
+    let currentModel = routeA
+    briefProvider.resolveModel = async () => currentModel
     const runtime = await createRuntime(
       new RetryingSyntheaProvider(1, false),
       briefProvider,
@@ -1111,7 +1117,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       activeRevision: 1,
       items: [{
         content: safeBrief,
-        model: 'resolved-fake-brief-model',
+        model: routeA,
         promptVersion: 'patient-persona-v2',
         revision: 1,
       }],
@@ -1626,6 +1632,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(apiErrorSchema.parse(await duplicateIssueResponse.json())).toMatchObject({
       error: { code: 'LABORATORY_REQUEST_DUPLICATE' },
     })
+    currentModel = routeB
     const retryResponse = await runtime.app.request(
       `/api/his/v1/laboratory-requests/${agentRequest.id}/actions/retry-generation`,
       {
@@ -1677,11 +1684,12 @@ describe('Synthetic Case generation HTTP contract', () => {
       resourceType: 'DiagnosticReport',
     })
     expect(briefProvider.requests).toHaveLength(7)
+    expect(briefProvider.requests.slice(3).map(request => request.model)).toEqual(Array(4).fill(routeA))
     expect(runtime.database.driver.prepare(`
       SELECT source, model_id FROM investigation_result_snapshot
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
     `).get('workspace-demo', caseId)).toEqual({
-      model_id: 'resolved-fake-brief-model',
+      model_id: routeA,
       source: 'investigation-agent',
     })
     await expect(runtime.investigation.resolveForRequest(
@@ -2742,6 +2750,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       item.id === replayAdultRequest.id
     ))).toMatchObject({ status: 'reported' })
     expect(briefProvider.requests).toHaveLength(12)
+    expect(briefProvider.requests.at(-1)?.model).toBe(routeB)
 
     const publicArtifacts = JSON.stringify({ beforeSelection, firstJob, leakingJob, secondJob })
     expect(publicArtifacts).not.toMatch(/privateEpisodeEvidence|index-condition|hiddenResourceReferences/)

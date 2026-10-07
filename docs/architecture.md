@@ -1260,7 +1260,9 @@ clock_revision
 
 一次成功生成原子保存不可变 Synthetic Patient Profile Revision、本地化 R4 Bundle 和 Synthetic Case Instance。固定 catalog 未命中的 clinical display 保留来源英文，并把有界 translation warning 与 Profile 一起保存供管理员校对；缺译不阻塞患者，FHIR 结构、引用、身份、catalog hash 或 provenance 无效仍阻塞。Index Encounter 之前的闭包构成按临床时间排序的 Visible Source History；授权临床岗位可以分页查看摘要和经过可见性检查的原始 R4 详情。Index Encounter 与当前 episode 的关联资源构成 Case Truth，保存在私有边界，不进入普通 HIS/FHIR/history/tool 响应。Case 类型由来源时间线推断为 new-problem、follow-up 或 preventive。
 
-管理员显式请求异步 Patient Persona。Server-owned OpenAI-compatible transport 只接受启动配置的 HTTPS endpoint、模型和凭证，使用固定版本 prompt 与严格 schema；客户端不能覆盖 URL、模型、header 或请求体。成功结果经过结构校验和隐藏诊断泄漏检查后成为不可变 Persona Revision，失败或拒绝不会覆盖既有成功 revision。Case 必须选择一个成功 Persona Revision 才能开始。管理员可编辑为新修订；同一诊断泄漏检查命中时返回警告，明确强制保存才接受。已开始病例的绑定修订保持不变。
+管理员显式请求异步 Patient Persona。模型来源在 Server 启动时固定：standalone 默认使用 OpenAI-compatible transport，DSH 模式通过宿主受限 loopback 桥接复用 Provider 与凭据。业务服务使用固定版本 prompt 与严格 schema；岗位客户端不能覆盖 URL、模型、header 或生成请求体。成功结果经过结构校验和隐藏诊断泄漏检查后成为不可变 Persona Revision，失败或拒绝不会覆盖既有成功 revision。Case 必须选择一个成功 Persona Revision 才能开始。管理员可编辑为新修订；同一诊断泄漏检查命中时返回警告，明确强制保存才接受。已开始病例的绑定修订保持不变。
+
+DSH 通用设置提供独立“ClinMesh 模型”，默认解析 DSH 默认模型，也可选择完整 Provider／model；配置按 Profile 持久化，不跟随右侧 Session。患者档案、问诊、需要模型的检验和显式 LOINC 目录补全共用该选择。Persona 与目录任务在入队前固定模型，问诊和检验在首次实际生成时固定；`ai_model_binding` 保存第一次解析的路由，人工重试、结构化输出修复与重启恢复沿用该值。新设置只影响新任务；确定性、精确事实和快照复用不增加调用。模型输入不带医生 Session 的 transcript、系统提示或 Tools，Provider 错误不回传或写入日志；来源在结果中包含 Provider 和 model。取舍见 [模型绑定决策](../.agents/notes/implemented/architecture/2026-10-07-clinmesh-dsh-model-binding.md)，运行配置见 [部署指南](deployment.md#4-配置-ai-provider患者档案必需)。
 
 生成、人工编辑与问诊出口共用以可见既往 Condition 为依据的诊断文字检查。完整已知病名中的子串不视为新增诊断；明确命名 1/2 型糖尿病的既往并发症记录允许陈述该基础疾病。豁免匹配仅忽略病名内的横向空白，保留全部标点和换行，不把括号、破折号等分隔的短语拼成已知病名；来源病名自身的标点允许原样匹配。其他位置新增的未知诊断、未知子型或编码仍被拦截，不根据检查、药物或前期病变推断已知确诊。边界取舍见[已知病史与隐藏诊断的文字边界](../.agents/notes/implemented/bug-fix/2026-10-06-persona-known-diagnosis-boundary.md)。
 
@@ -1542,7 +1544,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；四十四个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实、结构化病历、诊断与处方、持久生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、Investigation Result Snapshot、来源 R4 artifact、Visible Source History、Epoch materialization、Agent Client/Grant/Workspace Actor/receipt role，以及 DSH Page Context/Tool/proposal/review 关联。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；五十八个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实、结构化病历、诊断与处方、持久生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、Investigation Result Snapshot、来源 R4 artifact、Visible Source History、Epoch materialization、Agent Client/Grant/Workspace Actor/receipt role、模型任务绑定，以及 DSH Page Context/Tool/proposal/review 关联。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。
