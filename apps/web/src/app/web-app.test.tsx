@@ -664,6 +664,7 @@ describe('Web application shell', () => {
       if (path === '/clinmesh-agent-proof') {
         return Response.json({ data: { proof: 'proof-with-at-least-32-characters' } })
       }
+      if (path === '/clinmesh-agent-handoff') return Response.json({ data: { permitted: true } })
       if (path === '/clinmesh-api/agent/v1/tool-calls') {
         const request = JSON.parse(String(init?.body)) as { operationId: string }
         return Response.json({

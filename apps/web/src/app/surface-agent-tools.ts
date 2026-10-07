@@ -48,7 +48,7 @@ interface BuildSurfaceAgentToolsInput {
     signal: AbortSignal
     toolName: string
   }): Promise<string>
-  onExecutionSettled?(): void
+  onExecutionSettled?(proof: string | undefined, signal: AbortSignal): void
   onExecutionStart?(): void
   onActionFeedback?(event: AgentActionFeedback): void
   readState(): unknown
@@ -97,6 +97,7 @@ export function buildSurfaceAgentTools(
       execute: async (raw, signal) => {
         input.onExecutionStart?.()
         const id = crypto.randomUUID()
+        let executionProof: string | undefined
         let feedback: ((phase: AgentActionFeedback['phase'], message?: string) => void) | undefined
         const onAbort = (): void => feedback?.('unconfirmed', '操作已中断，结果尚未确认；请读取当前状态。')
         try {
@@ -112,7 +113,7 @@ export function buildSurfaceAgentTools(
               key !== 'pageRevision' && key !== 'scopeKey'
             ))),
           ))
-          const executionProof = await input.issueProof({
+          executionProof = await input.issueProof({
             contextId: binding.snapshot.id,
             pageRevision,
             signal,
@@ -190,7 +191,11 @@ export function buildSurfaceAgentTools(
           }
         } finally {
           signal.removeEventListener('abort', onAbort)
-          input.onExecutionSettled?.()
+          // Defer handoff until the returned body can reach the native broker.
+          if (input.onExecutionSettled !== undefined) {
+            const settle = input.onExecutionSettled
+            setTimeout(() => settle(executionProof, signal), 0)
+          }
         }
       },
     }]

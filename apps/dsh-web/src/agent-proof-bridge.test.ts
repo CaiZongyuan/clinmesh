@@ -6,7 +6,7 @@ import { installAgentProofBridge } from './agent-proof-bridge.ts'
 // The host event bus is external; the installed listener and proof issuer are real.
 function bridge() {
   const on = vi.fn()
-  const currentTool = vi.fn(() => ({ parameters: { type: 'object', properties: {
+  const currentTool = vi.fn((_name: string, _agent: unknown): { parameters: unknown } | undefined => ({ parameters: { type: 'object', properties: {
     scopeKey: { type: 'string', const: 'scope' },
     pageRevision: { type: 'string', const: '["view-1",null]' },
   } } }))
@@ -29,6 +29,54 @@ function execution(args: unknown, session = true, name = 'clinmesh_fill_clinical
 }
 
 describe('ClinMesh host Tool binding diagnostics', () => {
+  it.each(['absent', 'invalid'] as const)('does not invent recovery arguments when the current read definition is %s', async kind => {
+    const { before, currentTool } = bridge()
+    currentTool.mockImplementation(name => name === 'clinmesh_read_current_context'
+      ? kind === 'absent' ? undefined : { parameters: { properties: {
+          scopeKey: { const: '' }, pageRevision: { const: 'not-a-valid-binding' },
+        } } }
+      : { parameters: { properties: {
+          scopeKey: { const: 'scope' }, pageRevision: { const: '["view-1",null]' },
+        } } })
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution({ scopeKey: 'previous-patient', pageRevision: '["old",null]' }), dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(denied.reason).toContain('尚无可用的只读工具目录')
+    expect(denied.reason).not.toContain('"arguments"')
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('rejects the previous patient write and provides current read-only recovery arguments', async () => {
+    const { before, finish, currentTool } = bridge()
+    currentTool.mockReturnValue({ parameters: { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'current-patient-scope' },
+      pageRevision: { type: 'string', const: '["current-patient",null]' },
+      contextId: { type: 'string', const: 'private-context' },
+      untrustedExtra: { type: 'string', const: 'must-not-copy' },
+    } } })
+    const originalInput = { scopeKey: 'previous-patient-scope', pageRevision: '["previous-patient",null]', assessment: '旧意图' }
+    const originalCall = execution(originalInput)
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(originalCall, dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(dispatch).not.toHaveBeenCalled()
+    expect(originalCall.arguments).toEqual(originalInput)
+    const recoveryLine = denied.reason?.split('\n').find(line => line.startsWith('{'))
+    expect(recoveryLine).toBeDefined()
+    const recovery = JSON.parse(recoveryLine!) as { toolName: string; arguments: unknown }
+    expect(recovery).toEqual({ toolName: 'clinmesh_read_current_context', arguments: {
+      scopeKey: 'current-patient-scope', pageRevision: '["current-patient",null]',
+    } })
+    expect(denied.reason).toContain('核对')
+    expect(currentTool).toHaveBeenCalledWith('clinmesh_read_current_context', originalCall.agent)
+    const agent = originalCall.agent
+    if (agent === undefined) throw new Error('Missing synthetic Agent')
+    const readCall = { ...execution(recovery.arguments, true, recovery.toolName), agent }
+    expect(await before(readCall, dispatch)).toEqual({ kind: 'allow' })
+    expect(dispatch).toHaveBeenCalledOnce()
+    finish(readCall)
+  })
+
   it('rejects a call generated for an earlier page before dispatching or creating a proof', async () => {
     const { before } = bridge()
     const next = vi.fn(async () => ({ kind: 'allow' as const }))
