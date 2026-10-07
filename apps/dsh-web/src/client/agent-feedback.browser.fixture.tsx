@@ -171,7 +171,7 @@ async function run(): Promise<void> {
   const fastHeld = fastGlow.hasAttribute('data-visible') && Number(getComputedStyle(fastGlow).opacity) >= 0.99
   const fastStatic = fastDraws === 0
   const fastDeadline = Date.now() + 3000
-  while (fastGlow.hasAttribute('data-visible') || fastCanvas?.isConnected) {
+  while (fastGlow.hasAttribute('data-visible') || fastCanvas?.isConnected || rootElement.querySelector('.clinmesh-agent-target') !== null) {
     if (Date.now() >= fastDeadline) throw new Error('Fast operation feedback did not finish fading')
     await wait(50)
   }
@@ -179,8 +179,10 @@ async function run(): Promise<void> {
   let finishCommand: () => void = () => undefined
   const command = new Promise<void>(resolve => { finishCommand = resolve })
   const proposal = { id: 'review', operationId: 'registration.patient.create.propose', input: {} }
+  flushSync(() => feedback({ ...proposal, phase: 'executing' }))
+  const staticPreparing = rootElement.querySelector('canvas, .clinmesh-agent-target, .clinmesh-agent-workspace-glow[data-visible]') === null
+    && rootElement.querySelector('[role="status"]')?.textContent === '1 in progress'
   flushSync(() => {
-    feedback({ ...proposal, phase: 'executing' })
     task = review.request({
       title: 'Review synthetic patient', description: 'Synthetic data only', confirmLabel: 'Approve',
       signal: new AbortController().signal, onConfirm: async () => {
@@ -227,7 +229,6 @@ async function run(): Promise<void> {
   flushSync(() => showConsultation())
   flushSync(() => feedback({ id: 'ask', operationId: 'outpatient.consultation.ask', input: { message: 'New synthetic question' }, phase: 'executing' }))
   flushSync(() => receiveReply())
-  await wait(150)
   const isHighlighted = (selector: string) => {
     const target = rootElement.querySelector(selector)
     if (!target) return false
@@ -243,6 +244,9 @@ async function run(): Promise<void> {
       ) < 1)
     })
   }
+  // Message layout can change after its first frame; sample the aligned result.
+  const alignmentDeadline = Date.now() + 3_000
+  while (!isHighlighted('[data-slot="message-scroller"]') && Date.now() < alignmentDeadline) await wait(50)
   const consultationRegion = isHighlighted('[data-slot="message-scroller"]')
   const consultationFormExcluded = !isHighlighted('[aria-labelledby="consultation-record-heading"]')
   const newDoctorBubble = isHighlighted('[data-agent-consultation-message="new-doctor"]')
@@ -277,7 +281,7 @@ async function run(): Promise<void> {
   })
   document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, canvasRunning, darkThemeUpdated, canvasResized, ambientAligned, canvasStopped, canvasDisposed,
     held, ambientHeld, retainedCanvas, fastCompleted, fastCanvasSized, fastCanvasResized, fastHeld, fastStatic,
-    faded, waiting, staticWaiting, staticSubmitting, staticApproved, staticRejected, committed, approved: result.approved,
+    faded, waiting, staticPreparing, staticWaiting, staticSubmitting, staticApproved, staticRejected, committed, approved: result.approved,
     consultationRegion, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged, onlyChangedRecordField, completedRecordField, sectionInset }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })

@@ -192,7 +192,7 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
   for (const event of events) {
     statusEvents.set(`${agentActionLabel(event, english)}:${event.phase}:${event.message ?? ''}`, event)
   }
-  const runningCount = events.filter(isRunning).length
+  const runningCount = events.filter(event => event.phase === 'executing').length
   const completedGlow = events.some(event => !event.operationId.endsWith('.propose')
     && event.phase === 'completed' && Date.now() - event.updatedAt < 1_500)
   const waitingCount = events.filter(event => event.phase === 'awaiting-review').length
@@ -219,7 +219,7 @@ function FeedbackDisplay({ events, root }: { events: DisplayFeedback[]; root: HT
   </details>
   const statusRoot = root?.querySelector('[data-agent-feedback-status]')
   const layer = <div ref={overlay} className="clinmesh-agent-overlay" aria-hidden="true">
-    {workspaceRect === undefined ? null : <AgentWorkspaceGlow active={runningCount > 0} completed={completedGlow}
+    {workspaceRect === undefined ? null : <AgentWorkspaceGlow active={events.some(isRunning)} completed={completedGlow}
       dark={runtime.surfaceColorScheme === 'dark'} style={workspaceRect} />}
     {rectangles.map(({ key, phase, ...rect }) => (
       <div className="clinmesh-agent-target" data-phase={phase} key={key} style={rect} />

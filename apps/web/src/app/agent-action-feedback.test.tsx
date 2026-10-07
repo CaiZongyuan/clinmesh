@@ -8,7 +8,7 @@ import { ConsultationPage } from './doctor/consultation-page.tsx'
 import { getWorkspaceMessages } from './workspace-i18n.ts'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 
-afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
+afterEach(() => { cleanup(); document.body.removeAttribute('lang'); vi.useRealTimers(); vi.restoreAllMocks() })
 
 it('keeps a fast completed Agent operation visible without presenting it as still executing', () => {
   vi.useFakeTimers()
@@ -200,6 +200,38 @@ it('shows completion on the selected target after a real selection transition', 
   view.rerender(app({ ...scope, selection: 'case-2' }))
   act(() => oldFeedback({ ...event, phase: 'completed' }))
   expect(screen.getByRole('status').textContent).toContain('已完成')
+})
+
+it.each([
+  { locale: 'zh-CN', running: '2 项正在操作', preparing: '1 项正在操作', waiting: '1 项待人工确认' },
+  { locale: 'en-US', running: '2 in progress', preparing: '1 in progress', waiting: '1 awaiting confirmation' },
+])('keeps a preparing proposal visible after another action completes in $locale', ({ locale, running, preparing, waiting }) => {
+  vi.useFakeTimers()
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 600, 600))
+  let feedback: (event: AgentActionFeedback) => void = () => undefined
+  function Harness(): React.JSX.Element {
+    feedback = useAgentActionFeedback({ identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'record' })
+    return <div data-clinmesh-workspace-panel=""><input aria-label="人工编辑" defaultValue="未保存内容" /></div>
+  }
+  render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: document.body } }}>
+    <AgentActionFeedbackProvider><Harness /></AgentActionFeedbackProvider>
+  </WebRuntimeProvider>)
+  document.body.lang = locale
+  const proposal: AgentActionFeedback = { id: 'sign', operationId: 'outpatient.record.sign.propose', input: {}, phase: 'executing' }
+  const focus: AgentActionFeedback = { id: 'focus', operationId: 'ui.panel.focus', input: {}, phase: 'executing' }
+  act(() => { feedback(proposal); feedback(focus) })
+  expect(screen.getByRole('status').textContent).toBe(running)
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-active]')).not.toBeNull()
+  act(() => feedback({ ...focus, phase: 'completed' }))
+  expect(screen.getByRole('status').textContent).toBe(preparing)
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-active]')).toBeNull()
+  // The completed action may retain a static frame; the proposal never renews it.
+  act(() => vi.advanceTimersByTime(2400))
+  expect(screen.getByRole('status').textContent).toBe(preparing)
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-visible]')).toBeNull()
+  expect(document.querySelector('canvas')).toBeNull()
+  act(() => feedback({ ...proposal, phase: 'awaiting-review' }))
+  expect(screen.getByRole('status').textContent).toBe(waiting)
 })
 
 it('keeps the entire human review lifecycle static and preserves concurrent waiting status', () => {

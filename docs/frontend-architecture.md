@@ -129,7 +129,7 @@ DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon
 | 目标 | 构建入口 | 发布节奏 |
 | --- | --- | --- |
 | Web + Server | `pnpm build` | 单实例 Node.js 构建与持久卷部署 |
-| DSH Web adapter | `pnpm --filter @clinmesh/dsh-web build` | 随固定 DSH Web Profile 安装；需要 Bun `1.4.0` 构建 artifact |
+| DSH Web adapter | `pnpm --filter @clinmesh/dsh-web build` | 随固定 DSH Web Profile 安装；Bun 版本要求见[部署指南](deployment.md#dsh-web-原生入口) |
 | Desktop | `pnpm dev:desktop` / package build | 首期不交付；启用后使用独立安装包版本 |
 | Mobile | `pnpm dev:mobile` / Expo build | 首期不开发；启用后使用独立移动版本与 OTA 策略 |
 | Docs | `pnpm docs:build` | GitHub Pages workflow |

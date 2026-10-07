@@ -44,14 +44,14 @@ for (const { version, reduced, webgl } of configurations) {
     const actual = z.object({ focused: z.boolean(), highlighted: z.boolean(), aligned: z.boolean(), runningAnimation: z.string(),
       canvasRunning: z.boolean(), darkThemeUpdated: z.boolean(), canvasResized: z.boolean(), ambientAligned: z.boolean(), canvasStopped: z.boolean(), canvasDisposed: z.boolean(),
       ambientHeld: z.boolean(), retainedCanvas: z.boolean(), fastCompleted: z.boolean(), fastCanvasSized: z.boolean(), fastCanvasResized: z.boolean(), fastHeld: z.boolean(), fastStatic: z.boolean(),
-      held: z.boolean(), faded: z.boolean(), waiting: z.boolean(), staticWaiting: z.boolean(), staticSubmitting: z.boolean(), staticApproved: z.boolean(), staticRejected: z.boolean(), committed: z.boolean(), approved: z.boolean(),
+      held: z.boolean(), faded: z.boolean(), waiting: z.boolean(), staticPreparing: z.boolean(), staticWaiting: z.boolean(), staticSubmitting: z.boolean(), staticApproved: z.boolean(), staticRejected: z.boolean(), committed: z.boolean(), approved: z.boolean(),
       consultationRegion: z.boolean(), consultationFormExcluded: z.boolean(), newDoctorBubble: z.boolean(), newPatientBubble: z.boolean(), oldMessageUnchanged: z.boolean(),
       onlyChangedRecordField: z.boolean(), completedRecordField: z.boolean(), sectionInset: z.boolean(),
     }).parse(response)
     expect(actual).toEqual({ focused: true, highlighted: true, aligned: true, runningAnimation: 'none',
       canvasRunning: true, darkThemeUpdated: true, canvasResized: true, ambientAligned: true, canvasStopped: true, canvasDisposed: true,
       ambientHeld: true, retainedCanvas: true, fastCompleted: true, fastCanvasSized: true, fastCanvasResized: true, fastHeld: true, fastStatic: true,
-      held: true, faded: true, waiting: true, staticWaiting: true, staticSubmitting: true, staticApproved: true, staticRejected: true, committed: true, approved: true,
+      held: true, faded: true, waiting: true, staticPreparing: true, staticWaiting: true, staticSubmitting: true, staticApproved: true, staticRejected: true, committed: true, approved: true,
       consultationRegion: true, consultationFormExcluded: true, newDoctorBubble: true, newPatientBubble: true, oldMessageUnchanged: true,
       onlyChangedRecordField: true, completedRecordField: true, sectionInset: true,
     })
