@@ -30,10 +30,14 @@ if (unsupported.length > 0) throw new Error(`Unsupported DSH client modules: ${u
 // which can change their string values even when source-level tests pass.
 const parsedClient = ts.createSourceFile(clientPath, client, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
 let toolBuilder: string | undefined
+let bindingRevisionBuilder: string | undefined
 let editingInstruction: string | undefined
 function findToolBuilder(node: ts.Node): void {
   if (ts.isFunctionDeclaration(node) && node.name?.text === 'buildSurfaceAgentTools') {
     toolBuilder = node.getText(parsedClient)
+  }
+  if (ts.isFunctionDeclaration(node) && node.name?.text === 'agentPageBindingRevision') {
+    bindingRevisionBuilder = node.getText(parsedClient)
   }
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)
     && node.name.text === 'editingInstruction' && node.initializer !== undefined) {
@@ -42,15 +46,16 @@ function findToolBuilder(node: ts.Node): void {
   ts.forEachChild(node, findToolBuilder)
 }
 findToolBuilder(parsedClient)
-if (toolBuilder === undefined || editingInstruction === undefined) {
+if (toolBuilder === undefined || bindingRevisionBuilder === undefined || editingInstruction === undefined) {
   throw new Error('Missing emitted Surface Tool descriptor builder')
 }
 const descriptorLength: unknown = runInNewContext(`
   const editingInstruction = ${editingInstruction};
+  ${bindingRevisionBuilder}
   ${toolBuilder}
   buildSurfaceAgentTools({
     definitions: [{ operationId: 'artifact.read', toolName: 'artifact_read' }],
-    binding: { snapshot: { allowedOperationIds: ['artifact.read'] } },
+    binding: { snapshot: { claim: { viewRevision: 'artifact' }, allowedOperationIds: ['artifact.read'] } },
     actions: { 'artifact.read': {
       description: 'x'.repeat(512 - editingInstruction.length - 1), parameters: {}
     } }

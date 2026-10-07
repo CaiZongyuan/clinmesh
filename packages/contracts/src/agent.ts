@@ -123,9 +123,10 @@ export const agentExecutionProofPayloadSchema = z.object({
   dshSessionId: z.string().trim().min(1).max(256),
   expiresAt: z.iso.datetime({ offset: true }),
   issuedAt: z.iso.datetime({ offset: true }),
+  pageRevision: z.string().min(1).max(1024),
   scopeKey: z.string().trim().min(1).max(128),
   toolName: z.string().regex(/^clinmesh_[a-z0-9_]+$/).max(64),
-  version: z.literal(1),
+  version: z.literal(2),
 }).strict()
 
 export const agentToolAuthorizationRequestSchema = z.object({
@@ -188,6 +189,16 @@ export const agentToolCompletionResponseSchema = z.object({
 export type AgentHumanRoleCode = z.infer<typeof agentHumanRoleCodeSchema>
 export type AgentViewId = z.infer<typeof agentViewIdSchema>
 export type AgentPageContextClaim = z.infer<typeof agentPageContextClaimSchema>
+
+export function agentPageBindingRevision(claim: AgentPageContextClaim): string {
+  return JSON.stringify([
+    claim.viewRevision,
+    claim.draft === undefined
+      ? null
+      : [claim.draft.kind, claim.draft.id, claim.draft.revision, claim.draft.dirty],
+  ])
+}
+
 export type AgentPageContextRequest = z.infer<typeof agentPageContextRequestSchema>
 export type AgentPageContextSnapshot = z.infer<typeof agentPageContextSnapshotSchema>
 export type AgentPageContextBinding = z.infer<typeof agentPageContextBindingSchema>

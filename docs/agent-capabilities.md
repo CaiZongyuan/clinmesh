@@ -2,9 +2,17 @@
 
 本文说明 DSH ClinMesh 工作台实际接入的页面控制、业务操作及反馈。可执行工具名称、岗位与页面范围由 [Tool Catalog](../packages/contracts/src/agent.ts) 定义，输入约束由 [Tool 输入 schema](../packages/contracts/src/agent-tool-input.ts) 定义；本文不复制参数 schema。
 
+## 业务会话
+
+新建医院业务会话使用“ClinMesh 医院助手”（`clinmesh-assistant`）；若已保存其他默认 preset，在 DSH 设置中选择该 preset 后新建会话。既有会话保留其已挂载的 Agent 组合，开发排障使用 `standard`。装配与授权边界见 [系统架构](architecture.md#7-agent-适配器与能力边界)。
+
+医院助手先读取当前授权页面，确认岗位、患者和目标资源，再调用当前发布的 `clinmesh_*` Tools，并通过重新读取业务状态核对结果。缺少能力或必要信息时使用 `ask_user_question` 澄清；正式业务动作通过工作台人工审阅，人工拒绝后不重复提交。
+
+问诊超时后先读取问诊轮次：患者已有回复则继续；最后一轮仍是医生问题且页面开放重试时，调用 `clinmesh_retry_patient_reply`，避免重复发送同一医生问题。无法确认操作结果时停止自动重试，请求人类核对。内部 Persona 与数据库查询属于开发排障，业务会话只使用授权工具返回的可见事实。
+
 ## Tool 绑定与恢复
 
-每次页面 Tool 调用都必须在 JSON 中显式传入当前工具 schema 的 `contextId`、`scopeKey` 的 `const` 值；`const` 只限制取值，不会自动填入。读取不消耗 Page Context，无须让写入成为新回合的第一次调用。绑定值可能随页面状态或续签更新，不从历史对话复制。
+每次页面 Tool 调用都必须在 JSON 中显式传入当前工具 schema 的 `scopeKey`、`pageRevision` 的 `const` 值；`const` 只限制取值，不会自动填入。短期 `contextId` 由执行桥接管理，读取不消耗 Page Context，无须让写入成为新回合的第一次调用。只续签或改变加载状态不会改变模型绑定值；切换岗位、会话、患者、栏目或页面与草稿语义版本后，按最新工具定义读取当前状态，不从历史对话复制绑定。具体绑定合同见 [系统架构](architecture.md#72-page-context)。
 
 绑定诊断发生在页面业务动作执行前，不代替业务结果核对：
 
@@ -14,6 +22,7 @@
 | `CLINMESH_HOST_SESSION_REQUIRED` | 宿主未关联 DSH Agent 会话；从打开 ClinMesh 工作台的会话调用，补参数不能恢复会话关联。 |
 | `CLINMESH_BINDING_MISMATCH` | 参数与当前页面绑定不匹配；使用当前 schema 的值并重新读取页面状态。 |
 | `AGENT_CONTEXT_EXPIRED` / `AGENT_CONTEXT_INVALID` / `AGENT_CONTEXT_STALE` | 服务端授权拒绝过期、无效或资源已变化的上下文；等待页面更新工具定义，按当前绑定读取状态后决定是否重试。工具持续未更新时重新打开工作台。 |
+| `AGENT_OPERATION_NOT_ALLOWED` | 调用的 Tool、Session、scope 或语义 revision 与当前授权不一致；等待当前工具定义并读取页面状态，重新判断该动作是否仍适用，不自动沿用旧意图。 |
 
 宿主和页面不会自动补入缺失绑定，也不会自动重放写入。网络中断、执行失败或回执失败仍按下述结果确认规则处理，不能套用绑定拒绝的“尚未执行”结论。
 

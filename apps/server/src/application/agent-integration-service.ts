@@ -2,6 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import {
   agentExecutionProofPayloadSchema,
   agentHumanRoleCodeSchema,
+  agentPageBindingRevision,
   agentPageContextRequestSchema,
   agentPageContextSnapshotSchema,
   agentViewsForRole,
@@ -347,6 +348,7 @@ export class AgentIntegrationService {
       || definition.toolName !== proof.toolName
       || proof.contextId !== context.id
       || proof.scopeKey !== context.scopeKey
+      || proof.pageRevision !== agentPageBindingRevision(context.claim)
       || proof.dshSessionId !== context.dshSessionId
       || !context.allowedOperationIds.includes(definition.operationId)
     ) {

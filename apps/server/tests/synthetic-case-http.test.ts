@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import {
+  agentPageBindingRevision,
   agentPageContextBindingSchema,
   agentToolAuthorizationResponseSchema,
 } from '@clinmesh/contracts/agent'
@@ -70,6 +71,7 @@ const translationWarning = {
 function agentExecutionProof(input: {
   callId: string
   contextId: string
+  pageRevision: string
   dshSessionId: string
   scopeKey: string
   toolName: string
@@ -78,7 +80,7 @@ function agentExecutionProof(input: {
     ...input,
     expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     issuedAt: now.toISOString(),
-    version: 1,
+    version: 2,
   }
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
   const signature = createHmac(
@@ -1576,6 +1578,7 @@ describe('Synthetic Case generation HTTP contract', () => {
         executionProof: agentExecutionProof({
           callId: 'call-cancel-generation-failed',
           contextId: binding.snapshot.id,
+          pageRevision: agentPageBindingRevision(binding.snapshot.claim),
           dshSessionId: binding.snapshot.dshSessionId,
           scopeKey: binding.snapshot.scopeKey,
           toolName: 'clinmesh_prepare_cancel_laboratory',

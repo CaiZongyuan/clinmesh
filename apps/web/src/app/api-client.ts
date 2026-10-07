@@ -386,6 +386,7 @@ export function completeAgentToolCall(request: AgentToolResultRequest, signal?: 
 
 export async function issueAgentExecutionProof(input: {
   contextId: string
+  pageRevision: string
   scopeKey: string
   signal?: AbortSignal
   toolName: string
@@ -393,6 +394,7 @@ export async function issueAgentExecutionProof(input: {
   const value = await requestApi('/clinmesh-agent-proof', {
     body: JSON.stringify({
       contextId: input.contextId,
+      pageRevision: input.pageRevision,
       scopeKey: input.scopeKey,
       toolName: input.toolName,
     }),

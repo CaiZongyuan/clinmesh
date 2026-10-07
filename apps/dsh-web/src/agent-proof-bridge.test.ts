@@ -6,7 +6,11 @@ import { installAgentProofBridge } from './agent-proof-bridge.ts'
 // The host event bus is external; the installed listener and proof issuer are real.
 function bridge() {
   const on = vi.fn()
-  installAgentProofBridge({ on, effect: vi.fn() } as unknown as Context,
+  const currentTool = vi.fn(() => ({ parameters: { type: 'object', properties: {
+    scopeKey: { type: 'string', const: 'scope' },
+    pageRevision: { type: 'string', const: '["view-1",null]' },
+  } } }))
+  installAgentProofBridge({ on, effect: vi.fn(), tools: { get: currentTool } } as unknown as Context,
     'test-bridge-secret-with-at-least-32-characters')
   const before = on.mock.calls.find(([name]) => name === 'tools/pre-execute')![1] as (
     execution: ToolExecution, next: () => Promise<{ kind: 'allow' }>,
@@ -14,7 +18,7 @@ function bridge() {
   const finish = on.mock.calls.find(([name]) => name === 'tools/result')![1] as (
     execution: ToolExecution,
   ) => void
-  return { before, finish }
+  return { before, finish, currentTool }
 }
 
 function execution(args: unknown, session = true, name = 'clinmesh_fill_clinical_document_draft') {
@@ -25,12 +29,26 @@ function execution(args: unknown, session = true, name = 'clinmesh_fill_clinical
 }
 
 describe('ClinMesh host Tool binding diagnostics', () => {
+  it('rejects a call generated for an earlier page before dispatching or creating a proof', async () => {
+    const { before } = bridge()
+    const next = vi.fn(async () => ({ kind: 'allow' as const }))
+    for (const args of [
+      { scopeKey: 'other-patient', pageRevision: '["view-1",null]' },
+      { scopeKey: 'scope', pageRevision: '["before-edit",null]' },
+    ]) {
+      expect(await before(execution(args), next)).toMatchObject({
+        kind: 'deny', reason: expect.stringContaining('CLINMESH_BINDING_MISMATCH'),
+      })
+    }
+    expect(next).not.toHaveBeenCalled()
+  })
+
   it.each([
-    [{ assessment: 'synthetic' }, ['contextId', 'scopeKey']],
-    [{ contextId: 'context' }, ['scopeKey']],
-    [{ contextId: '', scopeKey: 'scope' }, ['contextId']],
-    [{ contextId: 'context', scopeKey: 42 }, ['scopeKey']],
-    [null, ['contextId', 'scopeKey']],
+    [{ assessment: 'synthetic' }, ['pageRevision', 'scopeKey']],
+    [{ pageRevision: '["view-1",null]' }, ['scopeKey']],
+    [{ pageRevision: '', scopeKey: 'scope' }, ['pageRevision']],
+    [{ pageRevision: '["view-1",null]', scopeKey: 42 }, ['scopeKey']],
+    [null, ['scopeKey', 'pageRevision']],
   ])('identifies invalid binding fields without dispatching: %j', async (args, fields) => {
     const { before } = bridge()
     const next = vi.fn(async () => ({ kind: 'allow' as const }))
@@ -45,7 +63,7 @@ describe('ClinMesh host Tool binding diagnostics', () => {
   it('distinguishes a missing host session from missing arguments', async () => {
     const { before } = bridge()
     const next = vi.fn(async () => ({ kind: 'allow' as const }))
-    const result = await before(execution({ contextId: 'context', scopeKey: 'scope' }, false), next)
+    const result = await before(execution({ pageRevision: '["view-1",null]', scopeKey: 'scope' }, false), next)
     expect(result.reason).toContain('CLINMESH_HOST_SESSION_REQUIRED')
     expect(next).not.toHaveBeenCalled()
   })
@@ -56,7 +74,7 @@ describe('ClinMesh host Tool binding diagnostics', () => {
     expect((await before(execution({}), next)).kind).toBe('deny')
     for (const name of ['clinmesh_read_current_context',
       'clinmesh_fill_clinical_document_draft', 'clinmesh_fill_clinical_document_draft']) {
-      const call = execution({ contextId: 'context', scopeKey: 'scope' }, true, name)
+      const call = execution({ pageRevision: '["view-1",null]', scopeKey: 'scope' }, true, name)
       expect(await before(call, next)).toEqual({ kind: 'allow' })
       finish(call)
     }
