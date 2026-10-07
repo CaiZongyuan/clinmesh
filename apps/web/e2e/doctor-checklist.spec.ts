@@ -87,6 +87,15 @@ test('doctor checklist stays between patient details and vital signs and replace
       return vitalSigns?.tagName === 'DL'
         && element.getBoundingClientRect().bottom <= vitalSigns.getBoundingClientRect().top
     })).toBe(true)
+    // 规格验收：桌面宽度下头部（患者 banner 顶到章节标签栏下缘）约 140px。
+    if (width >= 1024) {
+      const tabsList = page.getByRole('tab', { name: '病历记录', exact: true }).locator('xpath=ancestor::*[@role="tablist"][1]')
+      const bannerBox = await banner.boundingBox()
+      const tabsBox = await tabsList.boundingBox()
+      expect(bannerBox).not.toBeNull()
+      expect(tabsBox).not.toBeNull()
+      expect(tabsBox!.y + tabsBox!.height - bannerBox!.y).toBeLessThanOrEqual(140)
+    }
     expect(checklistBounds!.x + checklistBounds!.width).toBeLessThanOrEqual(width)
     for (const item of await checklist.getByRole('listitem').all()) {
       const bounds = await item.boundingBox()
