@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "baselineDigest": "4c731fbd5a5e85c015b984a5b3b7a167f37ef02c18e97b3fc8995f3f9369beb9",
+  "baselineDigest": "18c8e966457bb3275e5231eeaad00fe3655efe2d708adc733ae857b0e21246f8",
   "target": {
     "schemaVersion": 1,
     "hostDependencyLock": "deployment/dsh/host/package-lock.json",
@@ -31,17 +31,17 @@
         "owner": "https://github.com/CaiZongyuan/dsh-ag-ui",
         "role": "原生 browser Tool broker；不另建 Gateway 模型会话",
         "commit": "d8fe2ad4de4b5cd4441a0a88d92513170ecd03c0",
-        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/65",
         "requires": [
           "@deepseek-ai/dsh"
-        ]
+        ],
+        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/65"
       },
       {
         "name": "dsh-react-surface",
         "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
         "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
         "role": "React runtime、Surface 生命周期、布局和构建工具",
-        "commit": "25d75fabb2f53c191012d01c63bf856ef4b13bd2",
+        "commit": "2e83e877b9a88e861fdb6cb7f36f0b7b5e2c27cc",
         "requires": [
           "@deepseek-ai/dsh",
           "dsh-ag-ui"
@@ -63,24 +63,9 @@
   },
   "changes": [
     {
-      "name": "@deepseek-ai/dsh",
-      "from": "0.1.5-rc.2",
-      "to": "0.2.0-rc.2"
-    },
-    {
-      "name": "@dsh-so/dshvm",
-      "from": "0.1.1",
-      "to": "0.2.0"
-    },
-    {
       "name": "dsh-react-surface",
-      "from": "a7ab85c55ff7dc5d33a915dff857e0238d868a71",
-      "to": "25d75fabb2f53c191012d01c63bf856ef4b13bd2"
-    },
-    {
-      "name": "dsh-ag-ui",
-      "from": "521740953be41cc37bd770ecf41b36bd7b0824d9",
-      "to": "d8fe2ad4de4b5cd4441a0a88d92513170ecd03c0"
+      "from": "25d75fabb2f53c191012d01c63bf856ef4b13bd2",
+      "to": "2e83e877b9a88e861fdb6cb7f36f0b7b5e2c27cc"
     }
   ]
 }
