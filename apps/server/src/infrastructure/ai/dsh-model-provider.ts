@@ -75,6 +75,10 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
             'The selected DSH Provider rejected authentication or access; check its credentials and permissions',
             { httpStatus: response.status })
         }
+        if (parsed.success && parsed.data.error === 'MODEL_TIMEOUT') {
+          throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request timed out',
+            { httpStatus: response.status })
+        }
         throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
       }
       return modelBridgeResponseSchema.parse(JSON.parse(content))

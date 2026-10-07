@@ -26,7 +26,7 @@ async function host() {
   let fail = false
   let hold = false
   let available = true
-  let authenticationFailure: 'AUTH' | 'MISSING_CREDENTIAL' | 'INVALID_CREDENTIAL' | undefined
+  let providerFailure: 'AUTH' | 'MISSING_CREDENTIAL' | 'INVALID_CREDENTIAL' | 'TIMEOUT' | undefined
   const calls: GenerateOptions[] = []
   const ctx = {
     agentDefaultModel: { currentSelection: () => route },
@@ -41,9 +41,9 @@ async function host() {
           options.signal?.addEventListener('abort', () => reject(new Error('Synthetic cancellation')), { once: true })
         })
         if (fail) throw new Error('private-provider-error-containing-a-secret')
-        if (authenticationFailure !== undefined) {
-          yield { type: 'finish', reason: { kind: 'error', failure: { code: authenticationFailure, status: 403,
-            message: '403 Forbidden with private-provider-credential and private-prompt' } } }
+        if (providerFailure !== undefined) {
+          yield { type: 'finish', reason: { kind: 'error', failure: { code: providerFailure,
+            message: 'Provider failure with private-provider-credential and private-prompt' } } }
           return
         }
         yield { type: 'text-delta', index: 0, text: typeof answer === 'string' ? answer : JSON.stringify(answer) }
@@ -64,7 +64,7 @@ async function host() {
     answer: (value: unknown) => { answer = value }, fail: (value: boolean) => { fail = value },
     hold: () => { hold = true }, dispose: bridge.dispose,
     available: (value: boolean) => { available = value },
-    authenticationFailure: (code: NonNullable<typeof authenticationFailure>) => { authenticationFailure = code },
+    providerFailure: (code: NonNullable<typeof providerFailure>) => { providerFailure = code },
   }
 }
 
@@ -98,7 +98,7 @@ it('requires a trusted server, validates narrow requests and keeps Provider iden
 
 it.each(['AUTH', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL'] as const)('distinguishes Provider %s failures without relaying credentials or private prompts', async code => {
   const dsh = await host()
-  dsh.authenticationFailure(code)
+  dsh.providerFailure(code)
   const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
   await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
     jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
@@ -110,6 +110,22 @@ it.each(['AUTH', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL'] as const)('distingu
       schemaName: 'patient_dialogue_reply', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {} }),
   })
   expect(await response.json()).toEqual({ error: 'MODEL_AUTH_FAILED' })
+})
+
+it('preserves Provider timeouts without relaying credentials or private prompts', async () => {
+  const dsh = await host()
+  dsh.providerFailure('TIMEOUT')
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_TIMEOUT', message: 'The DSH model request timed out' })
+  const response = await fetch(`${dsh.origin}/clinmesh-model-bridge`, { method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+    body: JSON.stringify({ operation: 'complete', model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+      schemaName: 'patient_dialogue_reply', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {} }),
+  })
+  expect(response.status).toBe(503)
+  expect(await response.json()).toEqual({ error: 'MODEL_TIMEOUT' })
 })
 
 it.each(['', 'private-provider-error', '{"error":"UNKNOWN"}',

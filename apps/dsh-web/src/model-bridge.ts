@@ -6,6 +6,7 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { decodeModelRoute, encodeModelRoute, modelBridgeRequestSchema, modelRouteSchema } from '@clinmesh/contracts/model-bridge'
 
 class ModelAccessError extends Error {}
+class ModelTimeoutError extends Error {}
 
 export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaultModel'>, secret: string, selection: () => string) {
   const closing = new AbortController()
@@ -62,6 +63,9 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
               && ['AUTH', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL'].includes(chunk.reason.failure.code)) {
               throw new ModelAccessError('Model authentication or access failed')
             }
+            if (chunk.reason.kind === 'error' && chunk.reason.failure.code === 'TIMEOUT') {
+              throw new ModelTimeoutError('Model request timed out')
+            }
             if (chunk.reason.kind !== 'stop') throw new Error('Model call failed')
             finished = true
           }
@@ -74,7 +78,8 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
       response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' }).end(body)
     } catch (error) {
       // Provider failures can contain credentials and private prompts; do not relay or log them.
-      const body = JSON.stringify({ error: error instanceof ModelAccessError ? 'MODEL_AUTH_FAILED' : 'MODEL_UNAVAILABLE' })
+      const body = JSON.stringify({ error: error instanceof ModelAccessError ? 'MODEL_AUTH_FAILED'
+        : error instanceof ModelTimeoutError ? 'MODEL_TIMEOUT' : 'MODEL_UNAVAILABLE' })
       if (!response.destroyed) response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
     } finally { response.off('close', abort); signal.removeEventListener('abort', disconnect) }
   }

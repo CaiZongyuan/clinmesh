@@ -36,5 +36,5 @@ export const modelBridgeResponseSchema = z.object({
   content: z.string().optional(),
 }).strict()
 export const modelBridgeErrorSchema = z.object({
-  error: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED']),
+  error: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT']),
 }).strict()

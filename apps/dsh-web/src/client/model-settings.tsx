@@ -85,7 +85,7 @@ export function ModelSetting({ remote, language }: { remote: ModelSettingsRemote
         </select>
       </label>
       <p style={{ margin: '8px 0', color: 'var(--dsw-alias-label-secondary)', fontSize: 12 }}>
-        {chinese ? '用于患者档案、问诊回答、检验结果生成和检验目录补全。新请求和新的人工重试使用新模型，执行中和排队任务保持原模型。' : 'Used for patient personas, patient replies, laboratory result generation and laboratory catalog enrichment. New requests and new manual retries use the new model; active and queued tasks keep their original model.'}
+        {chinese ? '用于患者档案、问诊回答、检验结果生成和检验目录补全。新请求和新的人工重试使用新模型，执行中和排队任务若已确定模型则保持原模型，尚未确定模型的排队任务使用新选择。' : 'Used for patient personas, patient replies, laboratory result generation and laboratory catalog enrichment. New requests and new manual retries use the new model. Active and queued tasks keep their model once it is assigned; queued tasks without an assigned model use the new selection.'}
       </p>
       {selected === 'default' && state.data ? <p style={{ margin: '4px 0', fontSize: 12 }}>
         {`${state.data.catalog.default.provider} · ${state.data.catalog.default.model}`}
