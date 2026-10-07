@@ -1,59 +1,94 @@
 .clinmesh-agent-feedback {
-  max-height: 4rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+}
+.clinmesh-agent-feedback summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  cursor: pointer;
+  list-style: none;
+}
+.clinmesh-agent-feedback summary::-webkit-details-marker { display: none; }
+.clinmesh-agent-feedback summary [role="status"] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clinmesh-agent-feedback summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+.clinmesh-agent-feedback-details-label { flex-shrink: 0; }
+.clinmesh-agent-activity-point {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+}
+.clinmesh-agent-feedback-details {
+  position: absolute;
+  top: calc(100% + 0.75rem);
+  right: 0.75rem;
+  width: min(24rem, calc(100% - 1.5rem));
+  max-height: 12rem;
   overflow-y: auto;
-  padding: 0.4rem 0.75rem;
+  padding: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 0.5rem;
-  background: var(--background);
-  color: var(--foreground);
-  font-size: 0.75rem;
-  pointer-events: none;
+  background: var(--popover);
+  color: var(--popover-foreground);
+  overflow-wrap: anywhere;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--foreground) 8%, transparent);
 }
-
+.clinmesh-agent-feedback-details > div + div { margin-top: 0.5rem; }
 .clinmesh-agent-overlay {
   position: fixed;
   inset: 0;
   pointer-events: none;
+  --agent-motion-blue: #39b6ff;
+  --agent-motion-purple: #bd45fb;
 }
-
+.clinmesh-agent-workspace-glow {
+  position: absolute;
+  overflow: hidden;
+  border-radius: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms ease-out;
+}
+.clinmesh-agent-workspace-glow[data-visible] { opacity: 1; }
+.clinmesh-agent-workspace-glow canvas { opacity: 0.8; }
+.clinmesh-agent-workspace-glow[data-fallback] canvas { visibility: hidden; }
+.clinmesh-agent-workspace-glow[data-static],
+.clinmesh-agent-workspace-glow[data-fallback] {
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--agent-motion-blue) 55%, transparent);
+  box-shadow: inset 0 0 15px color-mix(in srgb, var(--agent-motion-blue) 10%, transparent);
+}
 .clinmesh-agent-target {
   position: absolute;
   box-sizing: border-box;
-  border: 2px solid #818cf8;
+  border: 1px solid color-mix(in srgb, var(--agent-motion-blue) 35%, transparent);
   border-radius: 0.4rem;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--agent-motion-blue) 5%, transparent);
   pointer-events: none;
   opacity: 0.85;
   transition: opacity 150ms ease-out;
 }
-
-.clinmesh-agent-review-glow {
+.clinmesh-agent-target::before {
+  content: '';
   position: absolute;
-  inset: 0;
+  left: -12px;
+  top: min(12px, 25%);
+  width: 8px;
+  height: 8px;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  background: linear-gradient(135deg, var(--agent-motion-blue), var(--agent-motion-purple));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--agent-motion-blue) 55%, transparent);
 }
-
-.clinmesh-agent-target[data-phase="executing"],
-.clinmesh-agent-target[data-phase="submitting"] {
-  border: 0;
-  padding: 2px;
-  background: linear-gradient(110deg, #3b82f6, #a855f7, #22d3ee, #3b82f6) 0 0 / 300% 100%;
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
-  animation: clinmesh-agent-flow 3s linear infinite;
-}
-
-.clinmesh-agent-target[data-phase="fading"] {
-  opacity: 0;
-  transition-duration: 600ms;
-}
-
-.clinmesh-agent-target[data-phase="awaiting-review"] {
-  animation: clinmesh-agent-review 800ms ease-out;
-}
-
-@keyframes clinmesh-agent-flow { to { background-position: 100% 0; } }
-@keyframes clinmesh-agent-review { from { opacity: 1; box-shadow: 0 0 8px #818cf8; } to { opacity: 0.85; box-shadow: none; } }
-
+.clinmesh-agent-target[data-phase="fading"] { opacity: 0; transition-duration: 600ms; }
+.clinmesh-agent-target[data-phase="failed"],
+.clinmesh-agent-target[data-phase="unconfirmed"] { border-color: var(--warning); box-shadow: none; }
+.clinmesh-agent-target[data-phase="failed"]::before,
+.clinmesh-agent-target[data-phase="unconfirmed"]::before { background: var(--warning); box-shadow: none; }
 @media (prefers-reduced-motion: reduce) {
-  .clinmesh-agent-target { animation: none !important; transition: none !important; }
+  .clinmesh-agent-target, .clinmesh-agent-workspace-glow { transition: none; }
   .clinmesh-agent-target[data-phase="fading"] { opacity: 0.85; }
 }

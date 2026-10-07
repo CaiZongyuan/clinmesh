@@ -136,7 +136,7 @@ pnpm --filter @clinmesh/dsh-web test
 pnpm --filter @clinmesh/dsh-web build
 ```
 
-`pnpm check` 同时构建 standalone Web、DSH Surface artifact 与 Server，并验证 Node.js Server 生产 bundle 可以读取 Web 静态资源；构建 DSH Surface artifact 需要 Bun `1.4.0`。
+`pnpm check` 同时构建 standalone Web、DSH Surface artifact 与 Server，并验证 Node.js Server 生产 bundle 可以读取 Web 静态资源；构建 DSH Surface artifact 需要 Bun `1.4.2`。
 
 ## 文档与决策
 

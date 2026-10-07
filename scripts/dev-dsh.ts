@@ -323,11 +323,11 @@ export async function ensureDshRuntimeReady(
 
   const bunVersion = await dependencies.runCommand('bun', ['--version'], repositoryRoot, undefined, { quiet: true })
     .catch(() => undefined)
-  if (typeof bunVersion !== 'string' || !bunVersion.trim().startsWith('1.4.')) {
+  if (typeof bunVersion !== 'string' || bunVersion.trim() !== '1.4.2') {
     throw new DevDshEnsureError(
-      `Bun 1.4.x 不可用（当前：${bunVersion?.trim() || '未安装'}）`,
+      `需要 Bun 1.4.2（当前：${bunVersion?.trim() || '未安装'}）`,
       'bun',
-      '安装 Bun 1.4.0 后重试（DSH React Surface artifact 构建依赖 bun）',
+      '安装 Bun 1.4.2 后重试（与 CI 使用同一编译器，避免 DSH artifact 体积差异）',
     )
   }
   if (!filesystem.exists(join(checkout, 'packages', 'runtime', 'package.json'))) {

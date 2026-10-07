@@ -25,6 +25,8 @@
 
 ## 产品参考优先级
 
+- Agent 操作反馈采用已确认的 A 方案“环绕柔光”；人工审阅、批准、拒绝和人工提交保持静态，不用这些阶段展示 Agent 动效。已接受的独立 HTML 保留作设计参考，后续补充要求优先于原型中的模拟行为。
+
 - ClinMesh 与 DSH 的长期目标包括 Agent 参与整个 HIS、扮演患者或医生、多方仿真实验，以及从实践中发现基础设施和流程问题并形成持续改进（RSI）；医生使用场景同时重视提效、辅助诊断、医疗教学和病例落库后的重复分析。这些是产品方向，当前能力以 owner 文档和实现为准。
 - 医生前端应先提供熟悉的诊疗体验，再引入 Agent；保留对话栏，并为 Agent 的工作过程与结果提供可见的“舞台”。具体布局仍需通过原型确认。
 - 中国公立医院 HIS 的业务语义、岗位交接、正向流程和逆向状态以 OpenHIS 为首要参考；FHIR Repository、history、Search、授权和审计基础设施以 Medplum 为首要参考。两者是长期业务与技术参照，但不授权复制其物理架构或未实际闭环的菜单和占位实现。
@@ -42,6 +44,8 @@
 
 - Agent 视觉反馈的时序验证必须覆盖真实页面 Tool 和 Surface 工具重新注册：`connecting` 可能是同一页面发布新工具列表的正常过程，不能一概当作页面失活；仅向反馈组件注入完成事件会漏掉这类提前清理。
 
+- Agent 状态摘要与动画资格须独立统计；回归覆盖提案仍在准备、另一动作已完成的并发顺序，避免用动画筛选漏掉静态执行状态。当前语义由[环绕柔光 Agent Note](../../.agents/notes/implemented/architecture/2026-10-07-agent-workspace-glow.md)拥有。
+
 - 浏览器高光坐标测试应比较目标的可见部分；headless Chrome 的默认视口可能裁掉目标底部，不能把完整 `getBoundingClientRect()` 与已按视口裁剪的边框直接比较。保留裁剪断言，不通过放大窗口掩盖差异。
 
 - 底部输入区的浏览器布局回归须加载实际 Surface 样式和完整父布局，包含承载成功提示的中间容器；只有 `min-height` 的中间层不能为子级百分比高度建立可靠约束。覆盖窄宽度下输入区完整可见、消息区仍可滚动以及启用后的发送按钮可命中；滚动分区还须检查头部坐标不变和末尾操作可达。跳过生产容器直接挂载内部布局会漏掉高度链断裂。父容器使用 `overflow-hidden` 时，内容区须同时具备受约束的高度和自身的 `overflow-y-auto`；`min-h-full` 只有高度下限，不能提供滚动。共用父布局的不同详情分支应各自验证末尾内容可达。
@@ -54,7 +58,7 @@
 
 - Surface 宿主限制每个 Tool 的最终 description 不超过 512 字符；Web 包装器会追加通用编辑说明，预算必须按拼接后的文本计算。单个描述超限会使整份 lease 注册失败、全部 ClinMesh 工具缺失，不能仅以页面上下文签发成功或 mock register 测试通过判断桥接可用。
 - DSH lazy-CJS 包装器会缩进多行模板字符串，导致构建产物中的 Tool 描述比源码更长；验收必须执行真实产物并检查浏览器 lease 响应。非开发模式的宿主还会缓存插件脚本，重新构建后按[部署说明](../deployment.md#dsh-web-原生入口)重新加载宿主，核对实际返回的脚本，不能仅看磁盘时间或刷新页面。
-- DSH 产物体积受 Bun 编译器版本影响；本地通过而 CI 超标时，用 CI 的精确 Bun 版本构建同一源码和锁定依赖再比较，不能直接归因于依赖漂移或放宽预算。已验证版本与体积依据见[病理阅片引擎 Agent Note](../../.agents/notes/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。
+- DSH 产物体积受 Bun 编译器版本影响；本地或 CI 超标时，先用 CI 的精确 Bun 版本构建同一源码和锁定依赖再比较，不能直接归因于依赖漂移或放宽预算。已验证版本与体积依据见[病理阅片引擎 Agent Note](../../.agents/notes/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。
 
 - React 缓存的 Agent action 配置必须依赖其读取的 mutation 状态。连续问诊回归须包含已有病历草稿、病例刷新先于队列完成的时序，并验证完成后的工具清单；无草稿时临时创建的文书对象可能让缓存每次重算，掩盖缺失依赖。
 
@@ -116,6 +120,8 @@
 
 - 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 
+- 替换 Agent 反馈渲染器时，分别处理真实执行、完成反馈可见性与资源清理，沿用既有完成停留合同。快速本地 Tool 的开始和完成可能被 React 合并为一次渲染，不能依赖执行阶段创建过 Canvas；回归须包含同批开始/完成、静态停留与停止绘制，并保持业务无额外延迟。当前时序由[能力参考](../agent-capabilities.md#反馈时序)拥有。
+
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
 
 - 精确运行 Vitest 文件时使用 `pnpm --filter <package> exec vitest run <file>`。脚本经 `pnpm --filter <package> test -- <file>` 转发时会保留 `--`，当前 Vitest 可能运行整个包而未应用文件筛选；以实际 Test Files 数量确认范围。
@@ -123,6 +129,8 @@
 - 验证副本和隔离 worktree 放在仓库外。Git 忽略的 `.data/` 仍可能被根 Vitest 的脚本文件 glob 遍历，仓库内嵌套 checkout 会重复运行它的测试；不能靠 `.gitignore` 隔离测试发现。
 
 ## 浏览器演示经验
+
+- 将构建后的 JavaScript 或 CSS 内嵌到单文件 HTML 时，`String.replace` 使用返回正文的函数作为 replacement。直接传正文字符串会把其中的 `$$`、`$&` 等解释为替换标记并损坏产物；导出后用浏览器从本地文件打开，验证渲染与交互。
 
 - `agent-browser record start` 会创建新标签页并保留旧标签页。录制 DSH 原生 Tools 前关闭本次验证的旧标签页，再打开 Surface；同一 Session 的多个页面实例可能让 Tool 作用于非录制页面。只关闭自己创建的验证标签页，不关闭用户标签页。
 
