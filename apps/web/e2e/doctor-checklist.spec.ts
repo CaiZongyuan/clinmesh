@@ -95,6 +95,11 @@ test('doctor checklist stays between patient details and vital signs and replace
       expect(bannerBox).not.toBeNull()
       expect(tabsBox).not.toBeNull()
       expect(tabsBox!.y + tabsBox!.height - bannerBox!.y).toBeLessThanOrEqual(140)
+      // 规格验收：桌面宽度下队列侧栏列宽不超过 200px。
+      const queueAside = page.getByRole('complementary', { name: '候诊队列' })
+      const queueBox = await queueAside.boundingBox()
+      expect(queueBox).not.toBeNull()
+      expect(queueBox!.width).toBeLessThanOrEqual(200)
     }
     expect(checklistBounds!.x + checklistBounds!.width).toBeLessThanOrEqual(width)
     for (const item of await checklist.getByRole('listitem').all()) {

@@ -48,7 +48,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
       <Button
         aria-label={label}
         data-agent-selection={item.caseId}
-        className={`h-auto min-h-20 w-full justify-between gap-3 rounded-md border px-3 py-2 text-left ${selected
+        className={`h-auto min-h-16 w-full justify-between gap-2 rounded-md border px-2 py-1.5 text-left ${selected
           ? 'border-primary/40 bg-primary/5'
           : 'border-border bg-background hover:border-foreground/20'}`}
         onClick={onSelect}
@@ -56,7 +56,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
         variant="ghost"
       >
         <span className="flex min-w-0 flex-1 items-center gap-2">
-          <PatientAvatar className="size-9" label={`${item.patient.name} ${messages.patient}`} name={item.patient.name} />
+          <PatientAvatar className="size-8" label={`${item.patient.name} ${messages.patient}`} name={item.patient.name} />
           <span className="min-w-0">
             <span className="flex min-w-0 flex-col gap-1">
               <span className="truncate font-medium" title={item.patient.name}>{item.patient.name}</span>
@@ -96,14 +96,17 @@ export function DoctorQueueModule({
 }): React.JSX.Element {
   return (
     <aside aria-label={messages.consultationQueue} className="flex h-full min-h-0 min-w-0 flex-col bg-background">
-      <div className="shrink-0 border-b p-2">{navigation}</div>
-      <div className="shrink-0 border-b px-3 pt-3">
-        <div className="flex items-center justify-between gap-2 pb-2">
-          <h2 className="text-sm font-semibold">{queueView === 'active' ? messages.doctorActiveQueue : messages.doctorWaitingQueue}</h2>
-          <Badge variant="secondary">{queueData?.total ?? 0}</Badge>
-        </div>
+      <div className="flex shrink-0 items-center gap-2 border-b p-2">
+        <div className="min-w-0 flex-1">{navigation}</div>
+        <Badge
+          aria-label={messages.doctorQueueCount.replace('{count}', String(queueData?.total ?? 0))}
+          className="shrink-0"
+          variant="secondary"
+        >
+          {queueData?.total ?? 0}
+        </Badge>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2">
         <section aria-labelledby="consultation-queue-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
             <h3 className="sr-only" id="consultation-queue-heading">{messages.consultationQueue}</h3>
             {queuePending ? <Skeleton className="h-44 w-full" /> : queueError !== null ? (
@@ -118,7 +121,7 @@ export function DoctorQueueModule({
               </Empty>
             ) : (
               <>
-                <ul className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto pr-1">
+                <ul className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto pr-1">
                   {queueData.items.map(item => (
                     <DoctorCaseRow
                       item={item}
