@@ -1,4 +1,5 @@
 import {
+  agentPageBindingRevision,
   parseAgentToolInput,
   type AgentPageContextBinding,
   type AgentReviewDecisionRequest,
@@ -12,7 +13,7 @@ import type { WebSurfaceAgentTool } from './web-runtime.tsx'
 import { isAgentReviewTask, type AgentReviewTask } from './agent-review.tsx'
 import { ApiClientError } from './api-client.ts'
 
-const editingInstruction = '每次调用 JSON 须显式传入当前 schema 的 contextId、scopeKey 的 const 值，不复用历史值；const 不会自动填入。读取不消耗绑定，无须把写入放在回合首位。缺参则补齐；绑定失效则等待工具定义更新。填写或保存草稿前用 clinmesh_read_current_context 读取当前授权页面及未保存内容，根据用户意图判断是否询问覆盖；这是沟通约定，不是强制覆盖授权或并发修改保护。正式医院动作仍须应用内人工审阅，聊天同意不能替代。'
+const editingInstruction = '每次调用显式传入当前 schema 的 scopeKey、pageRevision const 值；const 不会自动填入，Context ID 由桥接管理。绑定变化时重新读取页面。填写草稿前用 clinmesh_read_current_context 读取当前授权页面及未保存内容，根据意图询问覆盖；这不是强制覆盖授权或并发修改保护。问诊超时先读病例状态，已有问题仅重试未完成的患者回复，不重复发送问题。正式医院动作仍须应用内人工审阅。'
 
 export interface SurfaceAgentPageAction {
   description: string
@@ -42,14 +43,16 @@ interface BuildSurfaceAgentToolsInput {
   definitions: readonly AgentToolDefinition[]
   issueProof(input: {
     contextId: string
+    pageRevision: string
     scopeKey: string
     signal: AbortSignal
     toolName: string
   }): Promise<string>
-  onExecutionSettled?(): void
+  onExecutionSettled?(proof: string | undefined, signal: AbortSignal): void
   onExecutionStart?(): void
   onActionFeedback?(event: AgentActionFeedback): void
   readState(): unknown
+  resolveBinding?(): AgentPageContextBinding | undefined
   review(request: AgentReviewDecisionRequest, signal: AbortSignal): Promise<unknown>
   strictDefinitions?: boolean
 }
@@ -57,6 +60,15 @@ interface BuildSurfaceAgentToolsInput {
 export function buildSurfaceAgentTools(
   input: BuildSurfaceAgentToolsInput,
 ): WebSurfaceAgentTool[] {
+  const pageRevision = agentPageBindingRevision(input.binding.snapshot.claim)
+  const currentBinding = (): AgentPageContextBinding => {
+    const binding = input.resolveBinding === undefined ? input.binding : input.resolveBinding()
+    if (binding === undefined || binding.snapshot.scopeKey !== input.binding.snapshot.scopeKey
+      || agentPageBindingRevision(binding.snapshot.claim) !== pageRevision) {
+      throw new TypeError('CLINMESH_BINDING_MISMATCH: 当前患者、岗位或页面版本已变化，尚未执行。请读取当前页面状态后决定是否继续。')
+    }
+    return binding
+  }
   if (input.strictDefinitions === true) {
     const missing = input.definitions.filter(definition => (
       input.binding.snapshot.allowedOperationIds.includes(definition.operationId)
@@ -71,7 +83,7 @@ export function buildSurfaceAgentTools(
   return input.definitions.flatMap(definition => {
     if (!input.binding.snapshot.allowedOperationIds.includes(definition.operationId)) return []
     const action = definition.operationId === 'ui.context.read'
-      ? contextReadAction(input)
+      ? contextReadAction(input, currentBinding)
       : input.actions[definition.operationId]
     if (action === undefined || action.enabled === false) return []
     return [{
@@ -79,34 +91,37 @@ export function buildSurfaceAgentTools(
       name: definition.toolName,
       parameters: bindContextParameters(
         action.parameters,
-        input.binding.snapshot.id,
         input.binding.snapshot.scopeKey,
+        pageRevision,
       ),
       execute: async (raw, signal) => {
         input.onExecutionStart?.()
         const id = crypto.randomUUID()
+        let executionProof: string | undefined
         let feedback: ((phase: AgentActionFeedback['phase'], message?: string) => void) | undefined
         const onAbort = (): void => feedback?.('unconfirmed', '操作已中断，结果尚未确认；请读取当前状态。')
         try {
+          const binding = currentBinding()
           const values = requireBoundInput(
             raw,
-            input.binding.snapshot.id,
             input.binding.snapshot.scopeKey,
+            pageRevision,
           )
           const actionInput = z.json().parse(parseAgentToolInput(
             definition.operationId,
             Object.fromEntries(Object.entries(values).filter(([key]) => (
-              key !== 'contextId' && key !== 'scopeKey'
+              key !== 'pageRevision' && key !== 'scopeKey'
             ))),
           ))
-          const executionProof = await input.issueProof({
-            contextId: input.binding.snapshot.id,
+          executionProof = await input.issueProof({
+            contextId: binding.snapshot.id,
+            pageRevision,
             signal,
             scopeKey: input.binding.snapshot.scopeKey,
             toolName: definition.toolName,
           })
           const authorization = await input.authorize({
-            contextToken: input.binding.token,
+            contextToken: binding.token,
             executionProof,
             input: actionInput,
             operationId: definition.operationId,
@@ -114,7 +129,7 @@ export function buildSurfaceAgentTools(
             if (error instanceof ApiClientError && [
               'AGENT_CONTEXT_EXPIRED', 'AGENT_CONTEXT_INVALID', 'AGENT_CONTEXT_STALE',
             ].includes(error.code)) {
-              throw new Error(`${error.code}: ${error.message}。本次动作尚未执行。请等待 ClinMesh 页面更新工具定义，按当前工具 schema 的 const 重新传入 contextId、scopeKey，并读取当前页面状态后再决定是否重试。不要沿用历史消息中的绑定值；若工具持续未更新，请重新打开 ClinMesh 工作台。`, { cause: error })
+              throw new Error(`${error.code}: ${error.message}。本次动作尚未执行。请等待 ClinMesh 页面更新工具定义，按当前工具 schema 的 const 传入 scopeKey、pageRevision，并读取当前页面状态后决定是否重试；若工具持续未更新，请重新打开 ClinMesh 工作台。`, { cause: error })
             }
             throw error
           })
@@ -129,6 +144,7 @@ export function buildSurfaceAgentTools(
           signal.addEventListener('abort', onAbort, { once: true })
           let actionResolved = false
           try {
+            currentBinding()
             const data = await action.execute(actionInput, signal)
             actionResolved = true
             if (isAgentReviewTask(data)) {
@@ -175,7 +191,11 @@ export function buildSurfaceAgentTools(
           }
         } finally {
           signal.removeEventListener('abort', onAbort)
-          input.onExecutionSettled?.()
+          // Defer handoff until the returned body can reach the native broker.
+          if (input.onExecutionSettled !== undefined) {
+            const settle = input.onExecutionSettled
+            setTimeout(() => settle(executionProof, signal), 0)
+          }
         }
       },
     }]
@@ -237,12 +257,12 @@ function paymentFeedbackPhase(response: unknown): AgentActionFeedback['phase'] {
   return 'unconfirmed'
 }
 
-function contextReadAction(input: BuildSurfaceAgentToolsInput): SurfaceAgentPageAction {
+function contextReadAction(input: BuildSurfaceAgentToolsInput, binding: () => AgentPageContextBinding): SurfaceAgentPageAction {
   return {
     description: 'Read the current authorized ClinMesh page context and visible UI state.',
     execute: () => ({
       pageState: input.readState(),
-      snapshot: input.binding.snapshot,
+      snapshot: binding().snapshot,
     }),
     parameters: { type: 'object', properties: {}, additionalProperties: false },
   }
@@ -258,17 +278,17 @@ function normalizeJsonValue(value: unknown) {
 
 function bindContextParameters(
   parameters: SurfaceAgentPageAction['parameters'],
-  contextId: string,
   scopeKey: string,
+  pageRevision: string,
 ): Record<string, unknown> {
   return projectDshToolSchema({
     type: 'object',
     properties: {
-      contextId: { type: 'string', const: contextId, description: '必填：显式传入此处的 const 值，不复用历史 Context ID。' },
-      scopeKey: { type: 'string', const: scopeKey, description: '必填：显式传入此处的 const 值，与当前 contextId 配对。' },
+      scopeKey: { type: 'string', const: scopeKey, description: '必填：当前页面作用域的 const 值。' },
+      pageRevision: { type: 'string', const: pageRevision, description: '必填：当前页面语义版本的 const 值，与 scopeKey 配对。' },
       ...parameters.properties,
     },
-    required: ['contextId', 'scopeKey', ...(parameters.required ?? [])],
+    required: ['scopeKey', 'pageRevision', ...(parameters.required ?? [])],
     additionalProperties: false,
   })
 }
@@ -303,21 +323,21 @@ function projectDshToolSchema(value: unknown): Record<string, unknown> {
 
 function requireBoundInput(
   value: unknown,
-  contextId: string,
   scopeKey: string,
+  pageRevision: string,
 ): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new TypeError('ClinMesh Tool input must be an object')
   }
   const input = value as Record<string, unknown>
-  const invalidFields = ['contextId', 'scopeKey'].filter(key => (
+  const invalidFields = ['scopeKey', 'pageRevision'].filter(key => (
     typeof input[key] !== 'string' || input[key].length === 0
   ))
   if (invalidFields.length > 0) {
     throw new TypeError(`CLINMESH_BINDING_ARGUMENTS_INVALID: 调用 JSON 缺少或包含无效的绑定参数：${invalidFields.join(', ')}。尚未执行。请显式传入当前工具 schema 的 const 值；const 不会自动填入。`)
   }
-  if (input.contextId !== contextId || input.scopeKey !== scopeKey) {
-    throw new TypeError('CLINMESH_BINDING_MISMATCH: contextId 或 scopeKey 与当前页面不匹配，尚未执行。请使用当前工具 schema 的 const 值并读取当前页面状态后重试，不要沿用历史消息中的绑定值。')
+  if (input.pageRevision !== pageRevision || input.scopeKey !== scopeKey) {
+    throw new TypeError('CLINMESH_BINDING_MISMATCH: 当前患者、岗位或页面版本已变化，尚未执行。请使用当前工具 schema 的 const 值并重新读取页面状态后决定是否继续。')
   }
   return input
 }

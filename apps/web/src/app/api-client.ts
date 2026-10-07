@@ -386,6 +386,7 @@ export function completeAgentToolCall(request: AgentToolResultRequest, signal?: 
 
 export async function issueAgentExecutionProof(input: {
   contextId: string
+  pageRevision: string
   scopeKey: string
   signal?: AbortSignal
   toolName: string
@@ -393,6 +394,7 @@ export async function issueAgentExecutionProof(input: {
   const value = await requestApi('/clinmesh-agent-proof', {
     body: JSON.stringify({
       contextId: input.contextId,
+      pageRevision: input.pageRevision,
       scopeKey: input.scopeKey,
       toolName: input.toolName,
     }),
@@ -404,6 +406,26 @@ export async function issueAgentExecutionProof(input: {
     z.object({ data: z.object({ proof: z.string().min(32) }).strict() }).strict(),
   ))
   return value.data.proof
+}
+
+export interface AgentToolHandoffTarget {
+  pageRevision: string
+  scopeKey: string
+  toolNames: string[]
+}
+
+export async function settleAgentToolHandoff(input: {
+  proof: string
+  target: AgentToolHandoffTarget
+  signal: AbortSignal
+}): Promise<void> {
+  await requestApi('/clinmesh-agent-handoff', {
+    body: JSON.stringify({ proof: input.proof, phase: 'settle', target: input.target }),
+    headers: { accept: 'application/json', 'content-type': 'application/json' },
+    method: 'POST', signal: input.signal,
+  }, response => parseResponse(response,
+    z.object({ data: z.object({ permitted: z.literal(true) }).strict() }).strict(),
+  ))
 }
 
 export function getCurrentScenario(signal?: AbortSignal): Promise<ScenarioState> {

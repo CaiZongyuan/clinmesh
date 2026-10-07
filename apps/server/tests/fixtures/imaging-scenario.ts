@@ -2,7 +2,7 @@ import { createHmac, randomUUID } from 'node:crypto'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { agentPageContextBindingSchema, type AgentPageContextBinding } from '@clinmesh/contracts/agent'
+import { agentPageBindingRevision, agentPageContextBindingSchema, type AgentPageContextBinding } from '@clinmesh/contracts/agent'
 import {
   commandResponseSchema,
   registrationCatalogSchema,
@@ -210,12 +210,13 @@ export async function authorizeAgentTool(
   const encoded = Buffer.from(JSON.stringify({
     callId: `call-${call.operationId}-${now.getTime()}`,
     contextId: binding.snapshot.id,
+    pageRevision: agentPageBindingRevision(binding.snapshot.claim),
     dshSessionId: binding.snapshot.dshSessionId,
     expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     issuedAt: now.toISOString(),
     scopeKey: binding.snapshot.scopeKey,
     toolName: call.toolName,
-    version: 1,
+    version: 2,
   })).toString('base64url')
   const signature = createHmac('sha256', dshBridgeSecret).update(encoded).digest('base64url')
   return await runtime.app.request('/api/agent/v1/tool-calls', {

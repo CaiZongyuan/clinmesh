@@ -64,6 +64,36 @@ const definitions: AgentToolDefinition[] = [
 ]
 
 describe('ClinMesh Surface Agent tools', () => {
+  it('executes arguments generated before Context renewal with the same semantic page binding', async () => {
+    const renewed = { ...binding, token: 'renewed-context-token', snapshot: {
+      ...binding.snapshot, id: 'context-after-renewal',
+      claim: { ...binding.snapshot.claim, ui: { status: 'loading' as const } },
+    } }
+    const issueProof = vi.fn(async () => 'proof')
+    const tools = buildSurfaceAgentTools({
+      actions: {}, binding: renewed, definitions,
+      authorize: async () => ({ callId: 'call', context: renewed.snapshot,
+        dshSessionId: renewed.snapshot.dshSessionId, operationId: 'ui.context.read',
+        receiptToken: 'receipt', status: 'authorized' }),
+      complete: async () => ({}), issueProof,
+      readState: () => ({ queue: 'visible' }), review: async () => ({}),
+    })
+    const read = tools.find(tool => tool.name === 'clinmesh_read_current_context')!
+    expect(read.parameters).not.toHaveProperty('properties.contextId')
+    const result = JSON.parse(await read.execute({
+      scopeKey: binding.snapshot.scopeKey, pageRevision: '["view-1",null]',
+    }, new AbortController().signal))
+    expect(result).toMatchObject({ ok: true, data: { snapshot: { id: 'context-after-renewal' } } })
+    expect(issueProof).toHaveBeenCalledWith(expect.objectContaining({
+      contextId: 'context-after-renewal', scopeKey: binding.snapshot.scopeKey,
+      pageRevision: '["view-1",null]',
+    }))
+    await expect(read.execute({
+      scopeKey: binding.snapshot.scopeKey, pageRevision: '["view-before-edit",null]',
+    }, new AbortController().signal)).rejects.toThrow('CLINMESH_BINDING_MISMATCH')
+    expect(issueProof).toHaveBeenCalledOnce()
+  })
+
   it.each([
     [new ApiClientError(0, 'NETWORK_ERROR', 'Response lost'), 'unconfirmed'],
     [new ApiClientError(0, 'REQUEST_TIMEOUT', 'Timed out'), 'unconfirmed'],
@@ -89,7 +119,7 @@ describe('ClinMesh Surface Agent tools', () => {
         issueProof: async () => 'proof', readState: () => ({}), review: async () => ({}),
       })
       const execute = tools.find(tool => tool.name === 'clinmesh_prepare_create_patient')!.execute(
-        { contextId: binding.snapshot.id, scopeKey: binding.snapshot.scopeKey }, new AbortController().signal,
+        { pageRevision: '["view-1",null]', scopeKey: binding.snapshot.scopeKey }, new AbortController().signal,
       )
       if (detached) { await execute; rejectDecision(error) }
       else await expect(execute).rejects.toThrow(error.message)
@@ -149,7 +179,7 @@ describe('ClinMesh Surface Agent tools', () => {
     expect(tools[1]?.description).toContain('不是强制覆盖授权或并发修改保护')
     expect(tools[1]?.parameters).toMatchObject({
       properties: {
-        contextId: { const: 'context-1' },
+        pageRevision: { const: '["view-1",null]' },
         query: { type: 'string' },
         scopeKey: { const: 'clinmesh:registrar:registration' },
         scores: { type: 'array', items: { type: 'number' } },
@@ -159,7 +189,7 @@ describe('ClinMesh Surface Agent tools', () => {
       /format|maxLength|minItems|minimum/,
     )
     const result = JSON.parse(await tools[1]!.execute({
-      contextId: 'context-1',
+      pageRevision: '["view-1",null]',
       scopeKey: 'clinmesh:registrar:registration',
       query: '张',
     }, new AbortController().signal)) as Record<string, unknown>
@@ -189,7 +219,7 @@ describe('ClinMesh Surface Agent tools', () => {
         complete: vi.fn(), issueProof: async () => 'proof', readState, review: vi.fn(),
       })
       const result = tools[0]!.execute({
-        contextId: binding.snapshot.id, scopeKey: binding.snapshot.scopeKey,
+        pageRevision: '["view-1",null]', scopeKey: binding.snapshot.scopeKey,
       }, new AbortController().signal)
       await expect(result).rejects.toThrow(`${code}:`)
       await expect(result).rejects.toThrow('当前工具 schema')
@@ -221,7 +251,7 @@ describe('ClinMesh Surface Agent tools', () => {
     })
     const read = tools.find(tool => tool.name === 'clinmesh_read_current_context')!
     const value = JSON.parse(await read.execute(
-      { contextId: 'context-1', scopeKey: 'clinmesh:registrar:registration' },
+      { pageRevision: '["view-1",null]', scopeKey: 'clinmesh:registrar:registration' },
       new AbortController().signal,
     )) as Record<string, unknown>
     expect(value).toMatchObject({
@@ -239,7 +269,7 @@ describe('ClinMesh Surface Agent tools', () => {
     await expect(read.execute({}, new AbortController().signal))
       .rejects.toThrow('CLINMESH_BINDING_ARGUMENTS_INVALID')
     await expect(read.execute(
-      { contextId: 'context-1', scopeKey: 'clinmesh:forged' },
+      { pageRevision: '["view-1",null]', scopeKey: 'clinmesh:forged' },
       new AbortController().signal,
     )).rejects.toThrow('CLINMESH_BINDING_MISMATCH')
     expect(authorize).toHaveBeenCalledOnce()
@@ -285,7 +315,7 @@ describe('ClinMesh Surface Agent tools', () => {
     const prepare = tools.find(tool => tool.name === 'clinmesh_prepare_create_patient')!
 
     await expect(prepare.execute(
-      { contextId: 'context-1', scopeKey: binding.snapshot.scopeKey },
+      { pageRevision: '["view-1",null]', scopeKey: binding.snapshot.scopeKey },
       new AbortController().signal,
     )).resolves.toContain('awaiting-human-review')
     expect(complete).not.toHaveBeenCalled()
@@ -311,7 +341,7 @@ describe('ClinMesh Surface Agent tools', () => {
       binding, definitions, authorize, complete, onActionFeedback: feedback,
       issueProof: async () => 'proof', readState: () => ({}), review: async () => ({}),
     })
-    const bound = { contextId: binding.snapshot.id, scopeKey: binding.snapshot.scopeKey, query: '张' }
+    const bound = { pageRevision: '["view-1",null]', scopeKey: binding.snapshot.scopeKey, query: '张' }
     await expect(makeTools()[1]!.execute(bound, new AbortController().signal)).rejects.toThrow('scope expired')
     expect(feedback).not.toHaveBeenCalled()
     const accepted = {

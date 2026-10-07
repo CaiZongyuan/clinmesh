@@ -61,9 +61,9 @@ export function VitalSummary({ label, value }: {
   value: number | string
 }): React.JSX.Element {
   return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="font-medium tabular-nums">{value}</dd>
+    <div className="flex items-baseline gap-1.5">
+      <dt className="shrink-0 text-xs text-muted-foreground">{label}</dt>
+      <dd className="text-xs font-medium tabular-nums">{value}</dd>
     </div>
   )
 }
@@ -84,34 +84,15 @@ export function PatientBanner({
   const presentation = detail.presentation
   const readOnly = detail.encounter.status !== 'in-progress'
   const age = patientAge(detail.patient.birthDate)
+  const genderLabel = messages[`gender_${detail.patient.gender}` as 'gender_male']
+  const ageLabel = age === undefined ? undefined : messages.patientAge.replace('{age}', String(age))
   return (
-    <section aria-label={messages.selectedPatient} className="@container/patient-banner max-h-[50%] min-h-0 min-w-0 shrink-0 overflow-y-auto overscroll-contain border-b bg-background [overflow-wrap:anywhere]">
-      <div className="flex flex-col gap-3 px-4 py-3 @min-[520px]/patient-banner:flex-row @min-[520px]/patient-banner:items-start @min-[520px]/patient-banner:justify-between">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <PatientAvatar label={`${detail.patient.name} ${messages.patient}`} name={detail.patient.name} />
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h2 className="truncate text-lg font-semibold">{detail.patient.name}</h2>
-              <Badge variant="outline">{messages[`gender_${detail.patient.gender}` as 'gender_male']}</Badge>
-              <span className="shrink-0 whitespace-nowrap text-sm text-muted-foreground">
-                {age === undefined ? '-' : messages.patientAge.replace('{age}', String(age))}
-              </span>
-            </div>
-            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-              <span>{messages.registrationNumber}：{detail.patient.identifier}</span>
-              <span>{messages.chiefComplaint}：{presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <Badge variant="secondary">{statusText}</Badge>
-          {readOnly ? (
-            <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
-          ) : completionAction}
-        </div>
-      </div>
-      {detail.allergies.length === 0 && detail.triage === undefined ? null : (
-        <div className="flex flex-wrap items-center gap-2 px-4 pb-3">
+    <section aria-label={messages.selectedPatient} className="max-h-[50%] min-h-0 min-w-0 shrink-0 overflow-y-auto overscroll-contain border-b bg-background [overflow-wrap:anywhere]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5">
+        <PatientAvatar className="size-7" label={`${detail.patient.name} ${messages.patient}`} name={detail.patient.name} />
+        <h2 className="truncate text-sm font-semibold">{detail.patient.name}</h2>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <Badge variant="outline">{ageLabel === undefined ? genderLabel : `${genderLabel} · ${ageLabel}`}</Badge>
           {detail.allergies.map(allergy => (
             <Badge className="h-auto max-w-full whitespace-normal" key={`${allergy.code}:${allergy.display}`} variant="destructive">
               {messages.allergySummary} · {allergy.display}
@@ -121,9 +102,19 @@ export function PatientBanner({
             <Badge variant="warning">{triageAcuityLabel(detail.triage.acuityCode, messages)}</Badge>
           )}
         </div>
-      )}
+        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden text-xs text-muted-foreground">
+          <span className="truncate">{messages.registrationNumber}：{detail.patient.identifier}</span>
+          <span className="truncate">{messages.chiefComplaint}：{presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
+        </div>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Badge variant="secondary">{statusText}</Badge>
+          {readOnly ? (
+            <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
+          ) : completionAction}
+        </div>
+      </div>
       {completionChecklist}
-      {presentation === null ? null : <dl className="grid grid-cols-2 gap-px border-t bg-border @min-[400px]/patient-banner:grid-cols-3 @min-[680px]/patient-banner:grid-cols-5 [&>div]:bg-background [&>div]:px-3 [&>div]:py-0.5 @min-[400px]/patient-banner:[&>div]:py-2.5">
+      {presentation === null ? null : <dl className="flex flex-wrap gap-x-5 gap-y-1 border-t px-4 py-1.5">
         <VitalSummary label={messages.temperatureC} value={presentation.vitalSigns.temperatureC} />
         <VitalSummary label={messages.pulseBpm} value={presentation.vitalSigns.pulseBpm} />
         <VitalSummary label={messages.respirationBpm} value={presentation.vitalSigns.respirationBpm} />
