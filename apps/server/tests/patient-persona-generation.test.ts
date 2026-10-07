@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generatePatientPersona } from '../src/application/patient-persona-service.ts'
+import { generatePatientPersona, type PersonaResource } from '../src/application/patient-persona-service.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 
 const hiddenResources = [{
@@ -29,6 +29,105 @@ const validPersonaContent = {
 }
 
 describe('generatePatientPersona', () => {
+  const diabetes = {
+    code: { coding: [{ code: '44054006', display: '2 型糖尿病（疾病）' }] },
+    id: 'synthetic-diabetes',
+    resourceType: 'Condition',
+  }
+
+  function generateWithHistory(knownHistorySummary: string, visibleResources: PersonaResource[]) {
+    return generatePatientPersona({
+      hiddenResources: [diabetes],
+      model: 'fake-brief-model',
+      payload: { caseType: 'new-problem' },
+      provider: {
+        completeJson: async () => ({
+          content: JSON.stringify({ ...validPersonaContent, knownHistorySummary }),
+          model: 'fake-brief-model',
+        }),
+      },
+      visibleResources,
+    })
+  }
+
+  const prediabetes = {
+    code: { coding: [{ code: '714628002', display: '糖尿病前期（临床所见）' }] },
+    id: 'synthetic-prediabetes',
+    resourceType: 'Condition',
+  }
+
+  it('allows the documented prediabetes history without treating it as a new diabetes diagnosis', async () => {
+    const result = await generateWithHistory('以前医生说我是糖尿病前期。', [prediabetes])
+    expect(result.content.knownHistorySummary).toBe('以前医生说我是糖尿病前期。')
+  })
+
+  it('still rejects newly disclosed diabetes alongside the documented prediabetes history', async () => {
+    await expect(generateWithHistory('既往糖尿病前期，这次确诊了糖尿病。', [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
+  it.each(['，', '。', '；', '\n', '！', ','])('does not join clauses across %j to exempt a hidden diagnosis', async separator => {
+    await expect(generateWithHistory(`我得了糖尿病${separator}前期需要控制饮食。`, [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
+  it('allows spacing within a complete known diagnosis name', async () => {
+    const result = await generateWithHistory('以前医生说我是糖尿病 前期。', [prediabetes])
+    expect(result.content.knownHistorySummary).toBe('以前医生说我是糖尿病 前期。')
+  })
+
+  it.each(['——', '（', '「', '/', '\t\n'])('does not join a diagnosis and another phrase across %j', async separator => {
+    await expect(generateWithHistory(`我这次确诊了糖尿病${separator}前期需要控制饮食。`, [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
+  it('allows punctuation that is part of a complete known diagnosis name', async () => {
+    const result = await generateWithHistory('以前医生说我是糖尿病-前期。', [{
+      ...prediabetes,
+      code: { coding: [{ code: '714628002', display: '糖尿病-前期（临床所见）' }] },
+    }])
+    expect(result.content.knownHistorySummary).toBe('以前医生说我是糖尿病-前期。')
+  })
+
+  it('keeps known mention coordinates correct after a numeral and subtype split by punctuation', async () => {
+    const result = await generateWithHistory('二。型。既往糖尿病前期。', [prediabetes])
+    expect(result.content.knownHistorySummary).toBe('二。型。既往糖尿病前期。')
+    await expect(generateWithHistory('二。型。既往糖尿病前期。这次确诊了糖尿病。', [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
+  it('still rejects a hidden diagnosis split by punctuation', async () => {
+    await expect(generateWithHistory('我得了糖，尿病。', [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
+  it('recognizes diabetes already named by a documented diabetic complication', async () => {
+    const result = await generateWithHistory('我有二型糖尿病，以前说已经影响到神经。', [{
+      code: { coding: [{ code: '368581000119106', display: '2型糖尿病引起的神经病（疾病）' }] },
+      id: 'synthetic-diabetic-neuropathy',
+      resourceType: 'Condition',
+    }])
+    expect(result.content.knownHistorySummary).toContain('二型糖尿病')
+  })
+
+  it('does not exempt a new diabetes diagnosis solely because prediabetes is documented', async () => {
+    await expect(generateWithHistory('我有2型糖尿病。', [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
+  it('still blocks an undisclosed diagnosis code', async () => {
+    await expect(generateWithHistory('以前医生说过44054006。', [prediabetes]))
+      .rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
+  it('does not hide a newly disclosed subtype inside the name of a known generic diagnosis', async () => {
+    await expect(generateWithHistory('我有2型糖尿病。', [{
+      code: { coding: [{ code: '73211009', display: '糖尿病（疾病）' }] },
+      id: 'synthetic-unspecified-diabetes',
+      resourceType: 'Condition',
+    }])).rejects.toMatchObject({ code: 'PERSONA_DIAGNOSIS_LEAK' })
+  })
+
   it('skips a schema-invalid tool-call result and completes via the prompt strategy', async () => {
     const bodies: unknown[] = []
     const provider = new OpenAIChatCompletionsClient({

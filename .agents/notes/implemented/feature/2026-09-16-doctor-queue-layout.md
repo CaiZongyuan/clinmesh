@@ -2,6 +2,8 @@
 
 Status: implemented
 
+> 病例上下文栏相关布局由[患者信息下方的完诊清单](../architecture/2026-10-06-doctor-inline-completion-checklist.md)取代；其余约定继续适用。
+
 ## Problem
 
 医生页面的活动诊疗和完诊导航分散在顶部与病例队列中，有限的 Surface 宽度和高度没有优先分配给病例处理。未分页前统一筛选时，客户端按当前页分类会产生空页和不准确的组内总数。

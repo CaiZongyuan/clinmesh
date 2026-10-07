@@ -1262,6 +1262,8 @@ clock_revision
 
 管理员显式请求异步 Patient Persona。Server-owned OpenAI-compatible transport 只接受启动配置的 HTTPS endpoint、模型和凭证，使用固定版本 prompt 与严格 schema；客户端不能覆盖 URL、模型、header 或请求体。成功结果经过结构校验和隐藏诊断泄漏检查后成为不可变 Persona Revision，失败或拒绝不会覆盖既有成功 revision。Case 必须选择一个成功 Persona Revision 才能开始。管理员可编辑为新修订；同一诊断泄漏检查命中时返回警告，明确强制保存才接受。已开始病例的绑定修订保持不变。
 
+生成、人工编辑与问诊出口共用以可见既往 Condition 为依据的诊断文字检查。完整已知病名中的子串不视为新增诊断；明确命名 1/2 型糖尿病的既往并发症记录允许陈述该基础疾病。豁免匹配仅忽略病名内的横向空白，保留全部标点和换行，不把括号、破折号等分隔的短语拼成已知病名；来源病名自身的标点允许原样匹配。其他位置新增的未知诊断、未知子型或编码仍被拦截，不根据检查、药物或前期病变推断已知确诊。边界取舍见[已知病史与隐藏诊断的文字边界](../.agents/notes/implemented/bug-fix/2026-10-06-persona-known-diagnosis-boundary.md)。
+
 开始是带 expected revision 和幂等键的一次性 Command，直接创建本院 R5 Patient、Registration、Encounter、Queue Task 与所需工作流状态，不复制来源历史或参考目录。默认重置在新 Epoch replay 同一不可变 Case Revision，并复用所选 Brief、Case Truth 和全部成功 Investigation Result Snapshot；replay 不重新调用 Synthea 或模型。管理员在模拟数据页通过带悬浮说明的“重置数据”打开二次确认，默认保留患者库，可选择同时清空。清空模式将当前患者库归档并退役关联 Case，不重放这些病例；来源病史、Brief 和真值从当前工作台移除，旧轮次诊疗及审计事实保留。两种模式都保留标准目录、已启用检验服务和账号。清空模式拒绝正在运行的患者或 Brief 生成任务，并取消尚未开始的相关生成任务。
 
 ### 10.4 确定性与故障注入
