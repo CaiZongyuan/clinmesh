@@ -12,6 +12,7 @@ import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contra
 import '../../../web/src/app/agent-action-feedback.css'
 
 const rootElement = document.createElement('main')
+rootElement.lang = 'en-US'
 rootElement.style.cssText = 'width:360px;height:640px;position:relative'
 const host = document.createElement('div')
 host.style.cssText = 'contain:strict;position:absolute;left:140px;top:90px;width:400px;height:700px'
@@ -26,6 +27,7 @@ let showConsultation: () => void
 let receiveReply: () => void
 let showClinicalRecord: () => void
 let updateRecord: (document: ClinicalDocumentContent) => void
+let setDarkTheme: () => void
 const initialRecord: ClinicalDocumentContent = {
   chiefComplaint: 'Initial complaint', historyOfPresentIllness: 'Initial history',
   priorMedicalHistory: 'No prior conditions', physicalExamination: 'Examination recorded',
@@ -72,13 +74,18 @@ function Harness(): React.JSX.Element {
         { ...oldTurn, id: 'new-patient', messageText: 'New synthetic reply', sequence: 3, source: 'patient-agent' },
       ] }} locale="en-US" messages={getWorkspaceMessages('en-US')} patientName="Synthetic patient" readOnly />}</>
 }
-flushSync(() => createRoot(rootElement).render(
-  <WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: rootElement } }}>
+function Fixture(): React.JSX.Element {
+  const [dark, setDark] = React.useState(false)
+  setDarkTheme = () => setDark(true)
+  return <WebRuntimeProvider value={{ mode: 'surface', surfaceColorScheme: dark ? 'dark' : 'light', appearanceRoot: { current: rootElement } }}>
     <PortalContainerProvider container={{ current: rootElement }}>
-      <AgentActionFeedbackProvider><AgentReviewProvider><Harness /></AgentReviewProvider></AgentActionFeedbackProvider>
+      <AgentActionFeedbackProvider><div data-clinmesh-workspace-panel="" style={{ width: 360, height: 640 }}>
+        <AgentReviewProvider><Harness /></AgentReviewProvider>
+      </div></AgentActionFeedbackProvider>
     </PortalContainerProvider>
-  </WebRuntimeProvider>,
-))
+  </WebRuntimeProvider>
+}
+flushSync(() => createRoot(rootElement).render(<Fixture />))
 
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 async function run(): Promise<void> {
@@ -92,31 +99,131 @@ async function run(): Promise<void> {
   const glowRect = rootElement.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
   const aligned = ['left', 'top', 'width', 'height'].every(key => Math.abs(targetRect[key as keyof DOMRect] as number - (glowRect[key as keyof DOMRect] as number)) < 1)
   const runningAnimation = getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).animationName
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+  const lightCanvas = rootElement.querySelector('canvas')
+  flushSync(() => setDarkTheme())
+  const darkThemeUpdated = lightCanvas === null || !lightCanvas.isConnected && rootElement.querySelector('canvas') !== null
+  const panel = rootElement.querySelector<HTMLElement>('[data-clinmesh-workspace-panel]')!
+  panel.style.width = '320px'
+  panel.style.height = '500px'
+  await wait(150)
+  const canvas = rootElement.querySelector('canvas')
+  const gl = canvas?.getContext('webgl2')
+  let frames = 0
+  if (gl) {
+    const draw = gl.drawArrays.bind(gl)
+    gl.drawArrays = (...args) => { frames += 1; draw(...args) }
+  }
+  await wait(250)
+  const canvasRunning = reduced
+    ? canvas === null && rootElement.querySelector('.clinmesh-agent-workspace-glow[data-static]') !== null
+    : rootElement.querySelector('.clinmesh-agent-workspace-glow[data-fallback]') !== null ? canvas === null
+    : canvas !== null && frames > 1
+  const canvasResized = canvas === null || Math.abs(canvas.width / devicePixelRatio - 320) < 1
+    && Math.abs(canvas.height / devicePixelRatio - 500) < 1
+  const panelRect = rootElement.querySelector('[data-clinmesh-workspace-panel]')!.getBoundingClientRect()
+  const ambientRect = rootElement.querySelector('.clinmesh-agent-workspace-glow')!.getBoundingClientRect()
+  const ambientAligned = ['left', 'top', 'width', 'height'].every(key => Math.abs(
+    panelRect[key as keyof DOMRect] as number - (ambientRect[key as keyof DOMRect] as number)) < 1)
   flushSync(() => feedback({ id: 'fill', operationId: 'registration.patient.draft.set', input: {}, phase: 'completed' }))
+  const completedFrames = frames
+  await wait(150)
+  const canvasStopped = frames === completedFrames
   await wait(1200)
+  const ambientHeld = rootElement.querySelector('.clinmesh-agent-workspace-glow[data-visible]') !== null
+    && Number(getComputedStyle(rootElement.querySelector('.clinmesh-agent-workspace-glow')!).opacity) >= 0.99
+  const retainedCanvas = reduced || canvas === null || canvas.isConnected
+  panel.style.width = '360px'
+  panel.style.height = '640px'
   const held = Number(getComputedStyle(rootElement.querySelector('.clinmesh-agent-target')!).opacity) >= 0.8
   const fadeDeadline = Date.now() + 3_000
   while (rootElement.querySelector('.clinmesh-agent-target') !== null && Date.now() < fadeDeadline) {
     await wait(50)
   }
   const faded = rootElement.querySelector('.clinmesh-agent-target') === null
-  let task: AgentReviewTask | undefined
+  const disposeDeadline = Date.now() + 1500
+  while (rootElement.querySelector('canvas') !== null && Date.now() < disposeDeadline) await wait(50)
+  const canvasDisposed = rootElement.querySelector('canvas') === null
+  // The actual fast-action pattern: React may never paint the executing phase.
   flushSync(() => {
+    feedback({ id: 'fast', operationId: 'registration.patient.draft.set', input: {}, phase: 'executing' })
+    feedback({ id: 'fast', operationId: 'registration.patient.draft.set', input: {}, phase: 'completed' })
+  })
+  const fastGlow = rootElement.querySelector<HTMLElement>('.clinmesh-agent-workspace-glow')!
+  const fastCanvas = fastGlow.querySelector('canvas')
+  const fastCompleted = fastGlow.hasAttribute('data-visible') && !fastGlow.hasAttribute('data-active')
+    && rootElement.querySelector('[role="status"]')?.textContent?.includes('Draft updated') === true
+  const fastCanvasSized = fastCanvas === null ? reduced || fastGlow.hasAttribute('data-fallback')
+    : Math.abs(fastCanvas.width / devicePixelRatio - panel.getBoundingClientRect().width) < 1
+      && Math.abs(fastCanvas.height / devicePixelRatio - panel.getBoundingClientRect().height) < 1
+  panel.style.width = '300px'
+  panel.style.height = '480px'
+  await wait(200)
+  const fastCanvasResized = fastCanvas === null || Math.abs(fastCanvas.width / devicePixelRatio - 300) < 1
+    && Math.abs(fastCanvas.height / devicePixelRatio - 480) < 1
+  const fastGl = fastCanvas?.getContext('webgl2')
+  let fastDraws = 0
+  if (fastGl) {
+    const draw = fastGl.drawArrays.bind(fastGl)
+    fastGl.drawArrays = (...args) => { fastDraws += 1; draw(...args) }
+  }
+  await wait(1000)
+  const fastHeld = fastGlow.hasAttribute('data-visible') && Number(getComputedStyle(fastGlow).opacity) >= 0.99
+  const fastStatic = fastDraws === 0
+  const fastDeadline = Date.now() + 3000
+  while (fastGlow.hasAttribute('data-visible') || fastCanvas?.isConnected) {
+    if (Date.now() >= fastDeadline) throw new Error('Fast operation feedback did not finish fading')
+    await wait(50)
+  }
+  let task: AgentReviewTask | undefined
+  let finishCommand: () => void = () => undefined
+  const command = new Promise<void>(resolve => { finishCommand = resolve })
+  const proposal = { id: 'review', operationId: 'registration.patient.create.propose', input: {} }
+  flushSync(() => {
+    feedback({ ...proposal, phase: 'executing' })
     task = review.request({
       title: 'Review synthetic patient', description: 'Synthetic data only', confirmLabel: 'Approve',
-      signal: new AbortController().signal, onConfirm: () => { committed = true; return { created: true } },
+      signal: new AbortController().signal, onConfirm: async () => {
+        flushSync(() => feedback({ ...proposal, phase: 'submitting' }))
+        await command
+        committed = true
+        return { created: true }
+      },
     })
+    feedback({ ...proposal, phase: 'awaiting-review' })
   })
   if (task === undefined) throw new Error('Review task missing')
   task.bindDecisionGate(async () => undefined)
   await wait(950)
   const dialog = rootElement.querySelector('[role="alertdialog"]')
   const waiting = dialog?.textContent?.includes('待人工确认') === true && !committed
-  const staticWaiting = rootElement.querySelector('[data-agent-review] [data-phase="awaiting-review"]') !== null
+  const noReviewMotion = () => rootElement.querySelector('canvas, .clinmesh-agent-target, .clinmesh-agent-workspace-glow[data-visible]') === null
+  const staticWaiting = noReviewMotion()
   const approve = [...rootElement.querySelectorAll('button')].find(button => button.textContent === 'Approve')
   approve?.click()
+  await wait(100)
+  const staticSubmitting = noReviewMotion() && !committed
+  finishCommand()
   const result = await task.decision
+  flushSync(() => feedback({ ...proposal, phase: 'completed' }))
   await wait(50)
+  const staticApproved = noReviewMotion()
+  let rejectedTask: AgentReviewTask | undefined
+  flushSync(() => {
+    feedback({ ...proposal, id: 'reject', phase: 'awaiting-review' })
+    rejectedTask = review.request({
+      title: 'Reject synthetic patient', description: 'Synthetic data only', confirmLabel: 'Approve',
+      signal: new AbortController().signal, onConfirm: () => { throw new Error('Rejected command must not run') },
+    })
+  })
+  if (!rejectedTask) throw new Error('Rejected task missing')
+  rejectedTask.bindDecisionGate(async () => undefined)
+  await wait(100)
+  const cancel = [...rootElement.querySelectorAll('button')].find(button => button.textContent === '取消')
+  cancel?.click()
+  const rejectedResult = await rejectedTask.decision
+  flushSync(() => feedback({ ...proposal, id: 'reject', phase: 'rejected' }))
+  const staticRejected = !rejectedResult.approved && noReviewMotion()
   flushSync(() => showConsultation())
   flushSync(() => feedback({ id: 'ask', operationId: 'outpatient.consultation.ask', input: { message: 'New synthetic question' }, phase: 'executing' }))
   flushSync(() => receiveReply())
@@ -125,9 +232,10 @@ async function run(): Promise<void> {
     const target = rootElement.querySelector(selector)
     if (!target) return false
     const rect = target.getBoundingClientRect()
+    const bounds = rootElement.getBoundingClientRect()
     const visibleRect = new DOMRect(rect.left, rect.top,
-      Math.min(rect.right, window.innerWidth) - rect.left,
-      Math.min(rect.bottom, window.innerHeight) - rect.top)
+      Math.min(rect.right, bounds.right, window.innerWidth) - rect.left,
+      Math.min(rect.bottom, bounds.bottom, window.innerHeight) - rect.top)
     return [...rootElement.querySelectorAll('.clinmesh-agent-target')].some(glow => {
       const glowRect = glow.getBoundingClientRect()
       return ['left', 'top', 'width', 'height'].every(key => Math.abs(
@@ -167,7 +275,9 @@ async function run(): Promise<void> {
       && Math.abs(rect.top - scrollRect.top - 4) < 1
       && Math.abs(rect.bottom - scrollRect.bottom + 4) < 1
   })
-  document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, held, faded, waiting, staticWaiting, committed, approved: result.approved,
+  document.title = btoa(JSON.stringify({ focused, highlighted, aligned, runningAnimation, canvasRunning, darkThemeUpdated, canvasResized, ambientAligned, canvasStopped, canvasDisposed,
+    held, ambientHeld, retainedCanvas, fastCompleted, fastCanvasSized, fastCanvasResized, fastHeld, fastStatic,
+    faded, waiting, staticWaiting, staticSubmitting, staticApproved, staticRejected, committed, approved: result.approved,
     consultationRegion, consultationFormExcluded, newDoctorBubble, newPatientBubble, oldMessageUnchanged, onlyChangedRecordField, completedRecordField, sectionInset }))
 }
 void run().catch(error => { document.title = btoa(JSON.stringify({ error: String(error) })) })

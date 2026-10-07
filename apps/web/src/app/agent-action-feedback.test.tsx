@@ -10,6 +10,35 @@ import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks() })
 
+it('keeps a fast completed Agent operation visible without presenting it as still executing', () => {
+  vi.useFakeTimers()
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 600, 600))
+  let feedback: (event: AgentActionFeedback) => void = () => undefined
+  function Harness(): React.JSX.Element {
+    feedback = useAgentActionFeedback({ identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'record' })
+    return <div data-clinmesh-workspace-panel=""><textarea id="clinical-record-case-1-chiefComplaint" defaultValue="原主诉" /></div>
+  }
+  render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: document.body } }}>
+    <AgentActionFeedbackProvider><Harness /></AgentActionFeedbackProvider>
+  </WebRuntimeProvider>)
+  const event: AgentActionFeedback = { id: 'fast', operationId: 'outpatient.record.draft.set', input: { chiefComplaint: '新主诉' }, phase: 'executing' }
+  // Local draft actions can begin and complete before React paints an executing frame.
+  act(() => { feedback(event); feedback({ ...event, phase: 'completed' }) })
+  expect(screen.getByRole('status').textContent).toContain('草稿已更新')
+  expect(screen.getByRole('status').textContent).not.toContain('正在操作')
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-active]')).toBeNull()
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-visible]')).not.toBeNull()
+  act(() => vi.advanceTimersByTime(1400))
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-visible]')).not.toBeNull()
+  // A second fast completion renews the result display instead of flickering off.
+  act(() => feedback({ ...event, id: 'next', phase: 'completed' }))
+  act(() => vi.advanceTimersByTime(1400))
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-visible]')).not.toBeNull()
+  act(() => vi.advanceTimersByTime(200))
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-visible]')).toBeNull()
+  expect(screen.getByRole('status').textContent).toContain('草稿已更新')
+})
+
 it.each([
   { changed: { chiefComplaint: '新的主诉' }, expected: ['10px'] },
   { changed: { chiefComplaint: '新的主诉', historyOfPresentIllness: '新的现病史' }, expected: ['10px', '20px'] },
@@ -126,7 +155,7 @@ it('highlights the consultation region and new reply bubbles without highlightin
   act(() => vi.advanceTimersByTime(1200))
   expect(highlightedLefts()).toEqual([])
   expect(screen.getByRole('status').textContent).toContain('已完成')
-  expect(screen.getByRole('status').children).toHaveLength(1)
+  expect(document.querySelector('.clinmesh-agent-feedback-details')?.children).toHaveLength(1)
   act(() => vi.advanceTimersByTime(1900))
   expect(screen.queryByRole('status')).toBeNull()
 })
@@ -171,4 +200,34 @@ it('shows completion on the selected target after a real selection transition', 
   view.rerender(app({ ...scope, selection: 'case-2' }))
   act(() => oldFeedback({ ...event, phase: 'completed' }))
   expect(screen.getByRole('status').textContent).toContain('已完成')
+})
+
+it('keeps the entire human review lifecycle static and preserves concurrent waiting status', () => {
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 600, 600))
+  let feedback: (event: AgentActionFeedback) => void = () => undefined
+  function Harness(): React.JSX.Element {
+    feedback = useAgentActionFeedback({ identity: 'session:doctor', view: 'consultation', selection: 'case-1', section: 'record' })
+    return <div data-clinmesh-workspace-panel=""><div data-agent-review="">人工审阅</div></div>
+  }
+  render(<WebRuntimeProvider value={{ mode: 'surface', appearanceRoot: { current: document.body } }}>
+    <AgentActionFeedbackProvider><Harness /></AgentActionFeedbackProvider>
+  </WebRuntimeProvider>)
+  const proposal: AgentActionFeedback = { id: 'sign', operationId: 'outpatient.record.sign.propose', input: {}, phase: 'executing' }
+  for (const phase of ['executing', 'awaiting-review', 'submitting', 'completed', 'rejected', 'failed', 'unconfirmed'] as const) {
+    act(() => feedback({ ...proposal, phase }))
+    expect(document.querySelector('.clinmesh-agent-workspace-glow[data-active]')).toBeNull()
+    expect(document.querySelector('.clinmesh-agent-workspace-glow[data-visible]')).toBeNull()
+    expect(document.querySelector('.clinmesh-agent-target')).toBeNull()
+    expect(document.querySelector('canvas')).toBeNull()
+  }
+  act(() => {
+    feedback({ ...proposal, phase: 'awaiting-review' })
+    feedback({ id: 'draft', operationId: 'outpatient.record.draft.set', input: {}, phase: 'executing' })
+  })
+  expect(screen.getByRole('status').textContent).toContain('1 项正在操作 · 1 项待人工确认')
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-active]')).not.toBeNull()
+  act(() => feedback({ id: 'draft', operationId: 'outpatient.record.draft.set', input: {}, phase: 'completed' }))
+  expect(screen.getByRole('status').textContent).toContain('1 项待人工确认')
+  expect(screen.getByRole('status').textContent).not.toContain('已完成')
+  expect(document.querySelector('.clinmesh-agent-workspace-glow[data-active]')).toBeNull()
 })

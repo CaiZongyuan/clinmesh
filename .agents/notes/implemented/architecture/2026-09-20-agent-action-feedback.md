@@ -2,6 +2,8 @@
 
 Status: implemented
 
+视觉呈现与人工审阅强调方式由 [Agent 环绕柔光与静态人工审阅](2026-10-07-agent-workspace-glow.md) 部分取代；本 Note 继续拥有真实事件、编辑输入与上下文隔离的取舍。
+
 ## Problem
 
 DSH 原生 Session 可以操作 ClinMesh 表单并发起人工审阅，连接可用却不能说明正在执行哪个动作。读取持久草稿也不能代表人工尚未保存的输入。任务背景见 [issue #108](https://github.com/CaiZongyuan/clinmesh/issues/108)。

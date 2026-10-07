@@ -25,6 +25,8 @@
 
 ## 产品参考优先级
 
+- Agent 操作反馈采用已确认的 A 方案“环绕柔光”；人工审阅、批准、拒绝和人工提交保持静态，不用这些阶段展示 Agent 动效。已接受的独立 HTML 保留作设计参考，后续补充要求优先于原型中的模拟行为。
+
 - ClinMesh 与 DSH 的长期目标包括 Agent 参与整个 HIS、扮演患者或医生、多方仿真实验，以及从实践中发现基础设施和流程问题并形成持续改进（RSI）；医生使用场景同时重视提效、辅助诊断、医疗教学和病例落库后的重复分析。这些是产品方向，当前能力以 owner 文档和实现为准。
 - 医生前端应先提供熟悉的诊疗体验，再引入 Agent；保留对话栏，并为 Agent 的工作过程与结果提供可见的“舞台”。具体布局仍需通过原型确认。
 - 中国公立医院 HIS 的业务语义、岗位交接、正向流程和逆向状态以 OpenHIS 为首要参考；FHIR Repository、history、Search、授权和审计基础设施以 Medplum 为首要参考。两者是长期业务与技术参照，但不授权复制其物理架构或未实际闭环的菜单和占位实现。
@@ -116,6 +118,8 @@
 
 - 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 
+- 替换 Agent 反馈渲染器时，分别处理真实执行、完成反馈可见性与资源清理，沿用既有完成停留合同。快速本地 Tool 的开始和完成可能被 React 合并为一次渲染，不能依赖执行阶段创建过 Canvas；回归须包含同批开始/完成、静态停留与停止绘制，并保持业务无额外延迟。当前时序由[能力参考](../agent-capabilities.md#反馈时序)拥有。
+
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
 
 - 精确运行 Vitest 文件时使用 `pnpm --filter <package> exec vitest run <file>`。脚本经 `pnpm --filter <package> test -- <file>` 转发时会保留 `--`，当前 Vitest 可能运行整个包而未应用文件筛选；以实际 Test Files 数量确认范围。
@@ -123,6 +127,8 @@
 - 验证副本和隔离 worktree 放在仓库外。Git 忽略的 `.data/` 仍可能被根 Vitest 的脚本文件 glob 遍历，仓库内嵌套 checkout 会重复运行它的测试；不能靠 `.gitignore` 隔离测试发现。
 
 ## 浏览器演示经验
+
+- 将构建后的 JavaScript 或 CSS 内嵌到单文件 HTML 时，`String.replace` 使用返回正文的函数作为 replacement。直接传正文字符串会把其中的 `$$`、`$&` 等解释为替换标记并损坏产物；导出后用浏览器从本地文件打开，验证渲染与交互。
 
 - `agent-browser record start` 会创建新标签页并保留旧标签页。录制 DSH 原生 Tools 前关闭本次验证的旧标签页，再打开 Surface；同一 Session 的多个页面实例可能让 Tool 作用于非录制页面。只关闭自己创建的验证标签页，不关闭用户标签页。
 
