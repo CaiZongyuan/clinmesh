@@ -163,7 +163,7 @@ test('queue tabs adapt to the 200px sidebar with full-width English labels', asy
     return {
       asideLeft: asideBounds?.left ?? Number.NEGATIVE_INFINITY,
       asideRight: asideBounds?.right ?? Number.POSITIVE_INFINITY,
-      asideScrolls: asideElement === undefined || asideElement.scrollWidth > asideElement.clientWidth + 1,
+      asideScrolls: asideElement === null || asideElement.scrollWidth > asideElement.clientWidth + 1,
       minTriggerLeft: triggers.length === 0 ? Number.NEGATIVE_INFINITY : Math.min(...triggers.map(b => b.left)),
       maxTriggerRight: triggers.length === 0 ? Number.POSITIVE_INFINITY : Math.max(...triggers.map(b => b.right)),
     }
