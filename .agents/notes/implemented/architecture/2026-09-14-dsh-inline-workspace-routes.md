@@ -8,7 +8,7 @@ Status: implemented
 
 ## Decision
 
-底部菜单的主题选择与标题由[DSH 统一管理 Surface 主题](2026-09-15-dsh-host-theme-ownership.md)取代；岗位导航位置与以下往返入口合同继续有效。
+底部菜单的主题选择与标题由[DSH 统一管理 Surface 主题](2026-09-15-dsh-host-theme-ownership.md)取代；工作区浏览的展示位置与空间分配由[紧凑侧栏与会话历史](2026-10-06-dsh-workspace-session-history.md)取代。岗位导航权限、路由与以下往返入口合同继续有效。
 
 HIS 页头的全屏/返回按钮使用当前页面导航项的图标，与岗位导航或设置入口保持一致；按钮提示和点击行为仍表示全屏/返回分屏。当前页面决定图标，不额外保存一份图标状态。
 

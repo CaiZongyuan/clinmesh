@@ -8,6 +8,7 @@ ClinMesh 是面向 Agent 的中国公立医院仿真 HIS。修改业务或接口
 
 - 代码简化使用 [reduce-complexity](.agents/skills/reduce-complexity/SKILL.md)，覆盖当前变更的行为保持型整理，以及用户要求的较大范围简化调查。
 - 编写文档遵循 [docs/AGENTS.md](docs/AGENTS.md)；编写 skills 或 Agent 指令时使用 `writing-for-agents`。
+- 需要正式需求记录时按 [Spec 规则](docs/spec/README.md) 写入 `docs/spec/`；GitHub Issue 只追踪执行并引用该文件。
 - Matt skills 保持上游内容；仓库代码和 owner 文档拥有事实，通用 ADR 产物映射为 Agent Note。
 - GitHub 写入和交付遵循 [实施与交付](docs/agent-development.md#实施与交付)，沿用已有授权。
 

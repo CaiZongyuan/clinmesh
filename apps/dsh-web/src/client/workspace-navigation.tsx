@@ -21,6 +21,7 @@ import clinmeshMarkUrl from '../../../web/src/assets/clinmesh-mark.webp'
 import { createStyledRoot } from './styled-root.ts'
 import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
 import { subscribeHostTheme, type ClientThemePort } from './host-ports.ts'
+import { registerWorkspaceHistory } from './workspace-history.tsx'
 
 export function createWorkspaceNavigation() {
   let current: WebSurfaceNavigationState | null = null
@@ -99,8 +100,8 @@ export function WorkspaceNavigation({
     routes.dataset.clinmeshHostRoutes = ''
     routes.style.cssText = 'flex-shrink:0;max-height:40%;overflow-y:auto;'
     const { root, dispose } = createStyledRoot(routes)
-    // DSH 0.1.5-rc.1 has no section slot here. Anchor beside its workspace
-    // region without replacing, moving, or remounting the native browser.
+    // DSH has no role-navigation section slot. Keep the host-owned browser
+    // mounted and anchor the authorized routes beside its region.
     const place = () => {
       const region = sidebar.querySelector('[data-slot="sidebar.workspaces"]')?.parentElement
       if (!region || region === sidebar || !region.parentElement) {
@@ -231,13 +232,32 @@ export function WorkspaceNavigation({
 
 export function registerWorkspaceNavigation(ctx: ClientContext, navigation: Navigation): () => void {
   const surfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
+  const layout = ctx.get('layout') as unknown as { toggleSidebar(): void }
   const theme = ctx.get('theme') as unknown as ClientThemePort
   const locale = ctx.get('locale') as unknown as ClientLocalePort
   const subscribeTheme = (listener: () => void) => subscribeHostTheme(ctx, listener)
   const getTheme = () => theme.getTheme().active.colorScheme
   const subscribeLocale = (listener: () => void) => locale.subscribe(listener)
   const getLocale = () => normalizeHostLocale(locale.getLocale().active)
+  let initialSidebarHandled = false
+  const sidebarStyle = document.createElement('style')
+  sidebarStyle.dataset.clinmeshCompactSidebar = ''
+  sidebarStyle.textContent = `
+    [data-slot="sidebar.workspaces"],
+    [data-slot="sidebar"] nav:has([data-slot="sidebar.panellist"]),
+    [data-slot="sidebar"] button[aria-label="新建会话"]:not(:has([data-slot="sidebar.brand.mark"])),
+    [data-slot="sidebar"] button[aria-label="New session"]:not(:has([data-slot="sidebar.brand.mark"])) {
+      display: none !important;
+    }
+  `
+  document.head.append(sidebarStyle)
+  const disposeHistory = registerWorkspaceHistory(ctx)
   function Entry({ wide }: SidebarFooterActionOwnerProps) {
+    useLayoutEffect(() => {
+      if (initialSidebarHandled) return
+      initialSidebarHandled = true
+      if (wide) layout.toggleSidebar()
+    }, [wide])
     const colorScheme = useSyncExternalStore(subscribeTheme, getTheme, getTheme)
     const language = useSyncExternalStore(subscribeLocale, getLocale, getLocale)
     const snapshot = useSyncExternalStore(surfaces.subscribe, surfaces.getSnapshot, surfaces.getSnapshot)
@@ -260,7 +280,7 @@ export function registerWorkspaceNavigation(ctx: ClientContext, navigation: Navi
       />
     )
   }
-  return ctx.slots.inject('sidebar.footer.action', () =>
+  const disposeFooter = ctx.slots.inject('sidebar.footer.action', () =>
     ctx.slots.register(
       {
         // Replace the runtime launcher cell, preserving other applications in the menu.
@@ -274,4 +294,9 @@ export function registerWorkspaceNavigation(ctx: ClientContext, navigation: Navi
       Entry,
     ),
   )
+  return () => {
+    disposeFooter()
+    disposeHistory()
+    sidebarStyle.remove()
+  }
 }

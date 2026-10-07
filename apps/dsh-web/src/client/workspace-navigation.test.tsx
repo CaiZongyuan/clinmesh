@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { SlotCore, type PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
@@ -20,9 +20,9 @@ it('uses one official launcher cell and restores the native launcher on unload',
   const original = () => null
   slots.register({ name: 'sidebar.footer.action', id: 'dsh-react-surface-launcher' }, original)
   const ctx = {
-    get: () => ({}),
+    get: () => ({ adapter: { current: {} } }),
     slots: {
-      inject: (_name: string, register: () => () => void) => register(),
+      inject: (name: string, register: () => () => void) => name === 'sidebar.footer.action' ? register() : () => {},
       register: slots.register.bind(slots),
     },
   }
@@ -32,6 +32,48 @@ it('uses one official launcher cell and restores the native launcher on unload',
   dispose()
   expect(slots.entriesOfSlot('sidebar.footer.action')).toHaveLength(1)
   expect(slots.entriesOfSlot('sidebar.footer.action')[0]?.component).toBe(original)
+})
+
+it('collapses the sidebar on first wide mount without undoing a later manual expansion', async () => {
+  const slots = new SlotCore()
+  slots.register(
+    { name: 'root', children: { 'sidebar.footer.action': { kind: 'list', scope: 'root' } } },
+    ({ renderSlot }: PropsRenderSlots<'sidebar.footer.action'>) => renderSlot('sidebar.footer.action', { wide: true }),
+  )
+  const toggleSidebar = vi.fn()
+  const surfaceSnapshot = { activeId: null, surfaces: [] }
+  const ctx = {
+    get(name: string) {
+      if (name === 'layout') return { toggleSidebar }
+      if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
+      if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
+      if (name === 'uiSession') return { adapter: { current: {} } }
+      return { getSnapshot: () => surfaceSnapshot, subscribe: () => () => {}, open() {}, close() {} }
+    },
+    on: () => () => {},
+    slots: {
+      inject: (name: string, register: () => () => void) => name === 'sidebar.footer.action' ? register() : () => {},
+      register: slots.register.bind(slots),
+    },
+  }
+  const dispose = registerWorkspaceNavigation(ctx as unknown as Context, createWorkspaceNavigation())
+  const Entry = slots.entriesOfSlot('sidebar.footer.action')[0]!.component as ComponentType<{ wide: boolean }>
+  const element = document.createElement('div')
+  document.body.append(element)
+  const root = createRoot(element)
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  try {
+    await act(() => root.render(<Entry wide />))
+    expect(toggleSidebar).toHaveBeenCalledOnce()
+    await act(() => root.render(<Entry wide={false} />))
+    await act(() => root.render(<Entry wide />))
+    expect(toggleSidebar).toHaveBeenCalledOnce()
+  } finally {
+    await act(() => root.unmount())
+    dispose()
+    element.remove()
+    vi.unstubAllGlobals()
+  }
 })
 
 it('places authorized routes above workspaces, keeps settings in the footer, and cleans up on unload', async () => {

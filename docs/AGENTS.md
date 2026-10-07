@@ -15,6 +15,7 @@
 | `docs/demo-architecture.md` | 首期 Demo 运行时、数据库与部署决策 |
 | `docs/agent-development.md` | Agent 参与工程开发的操作规范 |
 | `docs/testing.md` | 测试层级、场景和检查要求 |
+| `docs/spec/` | 需要跨会话追踪的正式需求、模板与编写规则；见 [需求规格](spec/README.md) |
 | `docs/agents/` | 通用工程 skills 使用的仓库配置；不作为产品行为权威 |
 | `docs/memory/` | 用户的稳定协作偏好和低频操作坑；不作为产品行为或架构权威 |
 | `docs/research/` | 基于参考源码或外部标准的研究记录；不作为当前行为权威 |

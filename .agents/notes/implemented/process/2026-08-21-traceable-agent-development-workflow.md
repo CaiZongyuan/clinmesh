@@ -10,7 +10,7 @@ Agent development needs a reliable path from user intent to implementation evide
 
 The fixed development lifecycle and DSH skill orchestration are superseded by [Task-scoped Agent skills](2026-10-02-task-scoped-agent-skills.md). This Note retains the rationale for task ownership, engineering evidence and public-content authorization.
 
-When a task uses GitHub Issues, its approved issue body owns the active implementation contract. Agent Notes retain decision rationale, while merged code and current-state documentation own shipped behavior.
+New implementation contracts belong to [repository-owned specs](2026-10-06-repository-owned-specs.md); existing approved Issues retain their contracts until explicitly migrated. GitHub Issues for repository specs track execution and link to the spec; Agent Notes retain decision rationale, while merged code and current-state documentation own shipped behavior.
 
 Observable verification evidence covers the actual changed behavior. External writes follow the user's authorization, and public artifacts are checked for sensitive content before publication.
 
@@ -24,7 +24,7 @@ Repository instructions and owner documents override generic skill defaults, inc
 
 **Run Matt and DSH review skills in sequence.** This duplicates review effort and can produce conflicting repository standards. Matt `code-review` remains the two-axis orchestrator, while ClinMesh standards incorporate the portable DSH checks.
 
-**Keep cross-session specs only in conversation or local files.** This loses durable issue, commit, PR, and evidence links. GitHub publication retains an explicit authorization boundary when a task chooses that tracking surface.
+**Keep cross-session specs only in conversation or temporary files.** This loses durable issue, commit, PR, and evidence links. Repository-owned specs provide a versioned contract; GitHub publication retains an explicit authorization boundary when a task chooses that tracking surface.
 
 **Require the full check suite before every push.** This is easy to state but obscures test intent and wastes time on unrelated surfaces. Each change runs the narrowest evidence that can fail for its regression and expands only when the diff reaches shared contracts or repository-wide configuration.
 

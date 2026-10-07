@@ -207,8 +207,12 @@
 
 - DSH 0.2 的会话列表不再含 `current`；应用和桥接订阅公开的 `uiSession.adapter.current`，从 binding 的 `key` 读取主会话。依赖与类型检查通过后还需在真实宿主核对 Page Context 签发和 lease：旧字段会让页面正常显示，却静默跳过 Agent 发布。
 
+- DSH 的 Snapshot Store 是带实例方法的公开服务；给 `useSyncExternalStore` 传回调时通过 `() => store.getSnapshot()` 与 `(listener) => store.subscribe(listener)` 保留 receiver，并把包装放在注册作用域保持稳定。只用箭头函数 stub 会漏掉真实宿主中的 `refreshSnapshot` 绑定错误；会话历史回归使用依赖 `this` 的 Store fixture。
+
 - DSH 桥接升级时同步核对 runtime peers、CI 安装的 CLI 和兼容说明；React Surface 的 E2E 从 runtime peer 读取期望版本，旧 CLI 会在挂载前退出。DSH 0.2 的桌面首次启动向导新增“开始设置 → 跳过 → 我知道了”；真实入口测试须通过可见按钮正常关闭向导后再操作侧栏，不能强制点击穿透遮罩。向导保存和换页是异步过程，应有界等待侧栏恢复可交互，并在失败时报告残留弹窗文字；固定点击轮数在本地通过后仍可能在 CI 提前退出。CI 成功日志不打印带临时访问 token 的启动 URL 或宿主原始 stdout。
 
 - 审查 `dsh-ag-ui` 的宿主合同升级时，根目录 `pnpm check` 只检查 Gateway；嵌入入口 `dsh-ag-ui-adapter` 有独立的宿主、Cordis 和 loader 依赖，必须同步核对其 manifest 与实际锁定版本。pnpm 11 的 `--workspace-root` 会把递归命令限制在根包，覆盖整个 workspace 应使用 `pnpm -r --workspace-concurrency=1 --include-workspace-root check`；adapter 测试会构建 Gateway，串行执行避免与根包构建互相清理产物。用真实工具结果验证调用身份和正文，只验证纯文本对话不能发现工具消息结构失配。
 - HTTP 上传取消回归须等原生存储实际读取第一个数据块后再断开，并等清理完成后验证重试；固定短延迟可能在路由安装取消监听器前结束请求，使测试通过却没有验证取消路径。
 - DSH 0.2 JSONL 持久化允许延迟物化会话，`append` 是尽力写入，`sessionPersistence.flush()` 或 handle 的 `flush()` 才是持久化屏障。验证 SIGKILL 后恢复时先建立该屏障，不能用固定延迟代替落盘证据。
+
+- 新 clone 或 worktree 单独运行 DSH client 测试前，先生成 `styles.generated.ts`（`pnpm --filter @clinmesh/dsh-web build:styles`，包级 `typecheck` 也会生成）。首次样式生成与 Vitest 入口加载不能并行，否则 `index.test.ts` 会因缺少生成文件而在收集阶段失败；这种环境失败不能作为有效的行为回归 red。

@@ -15,6 +15,7 @@ describe('ClinMesh React Surface definition', () => {
     let language = 'zh-CN'
     let Entry: ComponentType<{ wide: boolean }> = () => null
     let Settings: ComponentType = () => null
+    const registeredSlots = new Set<string>()
     const snapshot = { activeId: 'clinmesh.his', surfaces: [] }
     const ctx = {
       get(name: string) {
@@ -23,15 +24,17 @@ describe('ClinMesh React Surface definition', () => {
           subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
         }
         if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
+        if (name === 'layout') return { toggleSidebar: vi.fn() }
         if (name === 'reactSurfaces') return { getSnapshot: () => snapshot, subscribe: () => () => {}, open() {}, close() {} }
         return { adapter: { current: { getSnapshot: () => ({ key: undefined }), subscribe: () => () => {} } } }
       },
       on: () => () => {},
       slots: {
-        inject: (_name: string, register: () => () => void) => register(),
+        inject: (name: string, register: () => () => void) => name === 'sidebar.workspaces.directoryFlow' ? () => {} : register(),
         register(entry: { name: string }, component: ComponentType<{ wide: boolean }>) {
+          registeredSlots.add(entry.name)
           if (entry.name === 'settings.general.item') Settings = component as ComponentType
-          else Entry = component
+          else if (entry.name === 'sidebar.footer.action') Entry = component
           return () => {}
         },
       },
@@ -54,6 +57,7 @@ describe('ClinMesh React Surface definition', () => {
     const disposeSettings = registerFontSizeSettings(ctx as unknown as ClientContext, fontSize)
     const navigation = createWorkspaceNavigation()
     const dispose = registerWorkspaceNavigation(ctx as unknown as ClientContext, navigation)
+    expect(registeredSlots.has('conversation.header.leading')).toBe(true)
     const { component } = createDefinition(ctx as unknown as ClientContext, navigation, fontSize)
     const props = { active: true, conversationCollapsed: false, agent: { register: () => () => {} }, capabilities: { agent: { available: false, status: 'unavailable' as const } }, close() {}, layout: 'workspace' as const, location: '/settings/developer/components', navigate() {} }
     try {
@@ -234,7 +238,7 @@ describe('ClinMesh React Surface definition', () => {
         disposers.push(callback())
       },
       slots: {
-        inject: (_name: string, register: () => () => void) => register(),
+        inject: (name: string, register: () => () => void) => name === 'sidebar.workspaces.directoryFlow' ? () => {} : register(),
         register: (entry: { name: string }, component: ComponentType<{ size: number }>) => {
           occupants.set(entry.name, component)
           return () => {
@@ -250,6 +254,7 @@ describe('ClinMesh React Surface definition', () => {
       'sidebar.brand.name',
       'conversation.hero.brand.mark',
       'settings.general.item',
+      'conversation.header.leading',
       'sidebar.footer.action',
     ])
     const Mark = occupants.get('sidebar.brand.mark')!
