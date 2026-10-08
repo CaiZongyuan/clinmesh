@@ -13,17 +13,22 @@ const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
 async function setup(options: {
+  failFirstReply?: boolean
   reply?: string
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auto-record-'))
   disposals.push(() => rm(directory, { recursive: true }))
   const requests: JsonChatCompletionInput[] = []
+  let replyCalls = 0
   const provider: JsonChatCompletionsProvider = {
     async completeJson(input) {
       requests.push(input)
       if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
-      if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply: options.reply ?? '头晕一周了，站起来时更明显。' }), model: 'synthetic' }
+      if (input.schemaName === 'patient_dialogue_reply') {
+        if (options.failFirstReply && replyCalls++ === 0) throw new Error('Synthetic reply failure')
+        return { content: JSON.stringify({ reply: options.reply ?? '头晕一周了，站起来时更明显。' }), model: 'synthetic' }
+      }
       if (options.extract !== undefined) return { content: JSON.stringify(await options.extract(input)), model: 'synthetic' }
       const payload = input.userPayload as { turns: Array<{ id: string; speaker: string; messageText: string }> }
       const answer = payload.turns.findLast(turn => turn.speaker === 'patient')!
@@ -64,6 +69,55 @@ async function setup(options: {
   }
   return { runtime, read, ask, askMore, requests, started, cookie }
 }
+
+async function createDoctorGrant(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, adminCookie: string,
+  operationId: 'encounter.consultation.ask' | 'encounter.consultation.reply.retry') {
+  const adminHeaders = { cookie: adminCookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
+    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ name: 'Synthetic consultation recorder' }),
+  })
+  expect(clientResponse.status).toBe(200)
+  const client = agentClientSchema.parse(await clientResponse.json())
+  const grantResponse = await runtime.app.request('/api/agent/v1/grants', {
+    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ agentClientId: client.agentClientId, operationIds: [operationId],
+      practitionerRoleId: 'practitioner-role-outpatient-doctor', ttlSeconds: 3600 }),
+  })
+  expect(grantResponse.status).toBe(200)
+  return { adminHeaders, client, grant: agentCapabilityGrantSchema.parse(await grantResponse.json()) }
+}
+
+it.each(['active', 'disable', 'revoke'] as const)('records a saved reply with a retry-only Agent Grant only while it is %s', async action => {
+  const { runtime, ask, read, started } = await setup({ failFirstReply: true })
+  expect((await ask()).status).toBe(503)
+  const pending = await read()
+  expect(pending.consultation!.turns.at(-1)!.speaker).toBe('doctor')
+  const { adminHeaders, client, grant } = await createDoctorGrant(runtime, started.adminCookie,
+    'encounter.consultation.reply.retry')
+  const response = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/retry-consultation-reply`, {
+    method: 'POST', headers: { authorization: `Bearer ${grant.token}`, origin: 'http://localhost',
+      'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: {}, input: { expectedConsultationVersion: pending.consultation!.version } }),
+  })
+  expect(response.status).toBe(200)
+  expect((await read()).consultation!.turns.at(-1)!.speaker).toBe('patient')
+  if (action !== 'active') {
+    const path = action === 'disable' ? `/api/agent/v1/clients/${client.agentClientId}/actions/disable`
+      : `/api/agent/v1/grants/${grant.grantId}/actions/revoke`
+    expect((await runtime.app.request(path, { method: 'POST', body: '{}',
+      headers: { ...adminHeaders, 'idempotency-key': randomUUID() } })).status).toBe(200)
+  }
+  await runtime.dispatchPending()
+  const detail = await read()
+  expect(detail.consultationRecording?.status).toBe(action === 'active' ? 'updated' : 'pending')
+  if (action === 'active') {
+    expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了，站起来时更明显。')
+  } else {
+    expect(detail.clinicalDocument?.draft).toBeUndefined()
+    expect(detail.consultationRecording?.additions).toEqual([])
+  }
+})
 
 it('records saved patient history asynchronously through the public consultation and case interfaces', async () => {
   const { runtime, read, ask, requests } = await setup()
@@ -242,20 +296,8 @@ it.each(['disable', 'revoke'] as const)('settles a late recording as pending aft
     entered()
     return held
   } })
-  const adminHeaders = { cookie: started.adminCookie, origin: 'http://localhost', 'content-type': 'application/json' }
-  const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
-    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ name: 'Synthetic consultation recorder' }),
-  })
-  expect(clientResponse.status).toBe(200)
-  const client = agentClientSchema.parse(await clientResponse.json())
-  const grantResponse = await runtime.app.request('/api/agent/v1/grants', {
-    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ agentClientId: client.agentClientId, operationIds: ['encounter.consultation.ask'],
-      practitionerRoleId: 'practitioner-role-outpatient-doctor', ttlSeconds: 3600 }),
-  })
-  expect(grantResponse.status).toBe(200)
-  const grant = agentCapabilityGrantSchema.parse(await grantResponse.json())
+  const { adminHeaders, client, grant } = await createDoctorGrant(runtime, started.adminCookie,
+    'encounter.consultation.ask')
   if (action === 'revoke') {
     const secondGrantResponse = await runtime.app.request('/api/agent/v1/grants', {
       method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },

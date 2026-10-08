@@ -415,7 +415,10 @@ function DoctorCaseController({
   const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
     Record<string, ClinicalDocumentContent>
   >({})
-  const clinicalDocumentBaselines = useRef<Record<string, ClinicalDocumentContent>>({})
+  const clinicalDocumentBaselines = useRef<Record<string, {
+    document: ClinicalDocumentContent
+    version: number | undefined
+  }>>({})
   const [agentDraftHydrationRevisions, setAgentDraftHydrationRevisions] = useState<
     Record<string, DoctorAgentDraftHydrationRevisions>
   >({})
@@ -565,13 +568,24 @@ function DoctorCaseController({
     if (currentDetail === undefined) return
     const next = createWorkingClinicalDocument(currentDetail)
     const previous = clinicalDocumentBaselines.current[currentDetail.caseId]
-    clinicalDocumentBaselines.current[currentDetail.caseId] = next
+    const automaticFields = new Set<keyof ClinicalDocumentContent>(
+      currentDetail.consultationRecording?.additions
+        .filter(addition => addition.status === 'applied').map(addition => addition.field),
+    )
+    const firstAutomaticDraft = previous !== undefined && previous.version === undefined
+      && currentDetail.clinicalDocument?.draft !== undefined && automaticFields.size > 0
+    clinicalDocumentBaselines.current[currentDetail.caseId] = {
+      document: next,
+      version: persistedClinicalDocumentVersion,
+    }
     setWorkingClinicalDocuments(current => {
       const working = current[currentDetail.caseId]
       const merged = { ...next }
       if (working !== undefined && previous !== undefined) {
         for (const field of Object.keys(next) as Array<keyof ClinicalDocumentContent>) {
-          if (working[field] !== previous[field]) merged[field] = working[field] ?? ''
+          // 首次自动草稿的空字段不代表清空分诊预填；后续保存的空值仍是正式草稿值。
+          const preservePrefill = firstAutomaticDraft && !automaticFields.has(field) && !next[field]
+          if (working[field] !== previous.document[field] || preservePrefill) merged[field] = working[field] ?? ''
         }
       }
       return { ...current, [currentDetail.caseId]: merged }
