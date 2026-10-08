@@ -55,6 +55,12 @@ export interface ClinicalDocumentRevisionInput {
 }
 
 export interface ClinicalDocumentPageActions {
+  save?: {
+    error: Error | null
+    onSubmit: (document: ClinicalDocumentContent) => void
+    pending: boolean
+    success: boolean
+  }
   prepareSign: {
     data: ClinicalDocumentSignPreview | undefined
     error: Error | null
@@ -117,6 +123,34 @@ export function ClinicalDocumentPage({
       <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">
         {messages.structuredClinicalDocument}
       </h3>
+      {detail.consultationRecording === undefined ? null : (
+        <Alert data-consultation-recording={detail.consultationRecording.status}>
+          <ClipboardPenIcon aria-hidden="true" />
+          <AlertTitle>{messages.consultationAutoRecord}</AlertTitle>
+          <AlertDescription>
+            <p role="status">{detail.consultationRecording.status === 'processing' ? messages.consultationRecordingProcessing
+              : detail.consultationRecording.status === 'pending' ? messages.consultationRecordingPending
+                : detail.consultationRecording.status === 'updated' ? messages.consultationRecordingUpdated
+                  : messages.consultationRecordingReady}</p>
+            {detail.consultationRecording.additions.length === 0 ? null : (
+              <ul className="mt-2 flex flex-col gap-2">
+                {detail.consultationRecording.additions.map(addition => (
+                  <li data-consultation-addition={addition.status} key={addition.id}>
+                    <Badge variant={addition.status === 'applied' ? 'secondary' : 'outline'}>
+                      {addition.status === 'applied' ? messages.consultationRecordingAdded : messages.consultationRecordingReview}
+                    </Badge>{' '}{messages[addition.field]}：{addition.quote}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
+      {actions.save?.error == null ? null : <ErrorAlert
+        message={getWorkspaceErrorMessage(actions.save.error, messages)}
+        title={messages.saveClinicalDocumentDraft}
+      />}
+      {actions.save?.success ? <p role="status" className="text-sm text-muted-foreground">{messages.clinicalDocumentDraftSaved}</p> : null}
       {actions.sign.success ? (
         <Alert>
           <CheckCircleIcon aria-hidden="true" />
@@ -251,7 +285,10 @@ export function ClinicalDocumentPage({
               messages={messages}
               onChange={onDocumentChange}
             />
-            <div className="flex justify-end border-t pt-3">
+            <div className="flex justify-end gap-2 border-t pt-3">
+              {actions.save === undefined ? null : <Button disabled={actions.save.pending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
+                {messages.saveClinicalDocumentDraft}
+              </Button>}
               <Button disabled={actions.prepareSign.pending} type="submit">
                 {actions.prepareSign.pending
                   ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />

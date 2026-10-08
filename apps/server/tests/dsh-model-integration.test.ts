@@ -209,6 +209,38 @@ async function hospital(dsh: Awaited<ReturnType<typeof host>>) {
   return { get runtime() { return runtime }, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
 }
 
+it('restores queued automatic history after restart and uses only the auxiliary DSH bridge', async () => {
+  const dsh = await host()
+  const instance = await hospital(dsh)
+  const started = await startConsultationCase(instance.runtime)
+  const cookie = await signIn(instance.runtime, 'doctor@demo.clinmesh.local')
+  dsh.answer({ reply: '头晕一周了。' })
+  const response = await instance.runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+    method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion,
+      [`Task/${started.doctorTaskId}`]: '1' }, input: { expectedConsultationVersion: 2, message: '多久了？' } }),
+  })
+  expect(response.status).toBe(200)
+  const answered = await response.json() as { data: { patientTurn: { id: string } } }
+  await instance.restart()
+  dsh.answer({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId: answered.data.patientTurn.id,
+    quote: '头晕一周了。', relation: 'addition' }] })
+  await instance.runtime.dispatchPending()
+  const detail = doctorCaseDetailSchema.parse(await (await instance.runtime.app.request(
+    `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
+  )).json())
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了。')
+  expect(detail.consultationRecording).toMatchObject({ status: 'updated' })
+  const call = dsh.calls.at(-1)!
+  expect(call.provider).toBe('synthetic-provider-a')
+  expect(JSON.stringify(call)).toContain('sourceTurnId')
+  expect(JSON.stringify(call)).not.toMatch(/hiddenResources|Case Truth|private-session-transcript|reasoning/)
+  const count = dsh.calls.length
+  await instance.restart()
+  await instance.runtime.dispatchPending()
+  expect(dsh.calls).toHaveLength(count)
+})
+
 it('pins queued personas through settings changes and a Server restart', async () => {
   const dsh = await host()
   const instance = await hospital(dsh)

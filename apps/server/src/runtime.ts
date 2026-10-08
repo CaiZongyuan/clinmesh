@@ -235,6 +235,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       results: investigationResults,
     })
     const workflow = new WorkflowService(database, fhir, commands, {
+      consultationRecordingEnabled: options.dshModelBridge !== undefined,
+      consultationRecordingContextStatus: context => identity.consultationRecordingContextStatus(context),
       investigation,
       ...clockOptions,
       referenceData,
@@ -398,6 +400,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const aiTimeoutMs = options.ai?.timeoutMs ?? 60_000
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
+        'consultation.record-history': event => workflow.consultationRecording.process(event, {
+          models,
+          ...(consultationModel === undefined ? {} : { model: consultationModel }),
+          ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+          signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(aiTimeoutMs)]),
+        }),
         'laboratory.accept-request': async event => {
           const payload = laboratoryRequestPayloadSchema.parse(event.payload)
           workflow.acceptLaboratoryRequest({

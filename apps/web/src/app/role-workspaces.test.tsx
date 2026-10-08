@@ -5359,7 +5359,8 @@ describe('role workspaces', () => {
 
     expect((await screen.findByLabelText('现病史') as HTMLTextAreaElement).value)
       .toBe('患者三天前受凉后出现咳嗽、发热。')
-    expect(screen.queryByText(/保存.*草稿|草稿版本|版本 \d/)).toBeNull()
+    expect(screen.getByRole('button', { name: '保存病历草稿' })).toBeTruthy()
+    expect(screen.queryByText(/草稿版本|版本 \d/)).toBeNull()
   })
 
   it('completes an eligible Encounter from the patient header and converts it to read-only', async () => {
@@ -6282,7 +6283,7 @@ describe('role workspaces', () => {
     expect(screen.getByText('待药品缴费')).toBeTruthy()
   })
 
-  it('recovers a versioned structured Clinical Document draft and signs it without completing the Encounter', async () => {
+  it('recovers a structured draft, preserves unsaved input through a conflict and signs without completing the Encounter', async () => {
     window.history.replaceState(null, '', '/consultation')
     let document = structuredClinicalDocument
     let documentVersion = 1
@@ -6459,7 +6460,7 @@ describe('role workspaces', () => {
     expect(await screen.findByText('操作冲突')).toBeTruthy()
     const refreshedForm = await screen.findByRole('form', { name: '结构化病历' })
     expect((within(refreshedForm).getByLabelText('评估') as HTMLTextAreaElement).value)
-      .toBe('另一工作站已经补充了最新评估。')
+      .toBe('本工作站准备保存的评估。')
 
     await user.clear(within(refreshedForm).getByLabelText('评估'))
     await user.type(within(refreshedForm).getByLabelText('评估'), '复核并合并并发编辑后的最终评估。')

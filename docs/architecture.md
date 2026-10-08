@@ -846,7 +846,9 @@ Consultation 是病例级领域聚合，Consultation Record 保存 append-only �
 
 复诊延续同一条对话；完诊只读。Reset 重放保留病例与档案事实，重新生成的措辞可以不同。Canonical hash 的覆盖范围与限制见[确定性与故障注入](#104-确定性与故障注入)。
 
-结构化 Clinical Document 草稿包含主诉、现病史、查体、评估、处置和随访六个共享必填字段，按病例保存在 `clinical_document_draft`，以 `expectedDraftVersion` 和 Encounter expected version 做 CAS 更新。签署预览固定 Actor context、Encounter 版本、草稿正文和草稿版本；提交重新校验这些依赖与 token 后创建不可变 FHIR R5 Composition、带稳定 identifier 且首 entry 为该 Composition 的自包含 document Bundle，以及同时引用二者的 Provenance，但不改变 Encounter 或病例状态。`signed_clinical_document` 只保存 FHIR 资源关联、签署者、时间和修订父链；每个病例只允许一个根文书，修订只接受最新 Composition 并创建线性替代版本。首期复诊 `sign-and-complete` 是兼容入口，只能用于尚无结构化签署根文书的病例；已有根文书时预览和提交都返回稳定业务冲突。
+DSH 模型桥接已配置时，新建 Consultation 默认登记自动记录资格；迁移不补录已有对话。患者完整文本回答保存时同事务创建 `consultation_recording_job` 并写入 outbox，模型只接收截至该回答的 Consultation 文本。病史增量限于主诉、现病史与既往史，逐字引用患者完整陈述并保留来源；确定性校验拒绝提问、不确定陈述、伪造引用及截去否定的引用。共享 Command 仅向空字段或未经人工修改的自动内容追加；草稿并发变化、更正及冲突保留待核对，已签文书与有效签署预览停止自动写入。病例 Query 的 `consultationRecording` 返回处理中、已更新或待更新状态、增量及显式草稿保存事实 `hasSavedDraft`，Web 标示自动新增并保留未保存输入；显式保存前刷新仍保留未涉及字段的预填，保存后的空值保持原样。模型失败最多自动尝试三次，任务、来源和应用状态在 SQLite 持久化，重启复用模型绑定，旧 Epoch 结果不得写入当前病例。基础切片取舍及后续部分编辑、暂停、补录、撤销和签署交互见[增量记录决策](../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)。
+
+结构化 Clinical Document 草稿包含主诉、现病史、查体、评估、处置和随访六个共享字段；草稿允许字段为空，正式签署仍校验六项完整性。草稿按病例保存在 `clinical_document_draft`，以 `expectedDraftVersion` 和 Encounter expected version 做 CAS 更新。签署预览固定 Actor context、Encounter 版本、草稿正文和草稿版本；提交重新校验这些依赖与 token 后创建不可变 FHIR R5 Composition、带稳定 identifier 且首 entry 为该 Composition 的自包含 document Bundle，以及同时引用二者的 Provenance，但不改变 Encounter 或病例状态。`signed_clinical_document` 只保存 FHIR 资源关联、签署者、时间和修订父链；每个病例只允许一个根文书，修订只接受最新 Composition 并创建线性替代版本。首期复诊 `sign-and-complete` 是兼容入口，只能用于尚无结构化签署根文书的病例；已有根文书时预览和提交都返回稳定业务冲突。
 
 诊断是病例级独立聚合。版本化 `diagnosis_catalog` 为当前 Workspace/Epoch 提供受控 ICD-10 条目；`diagnosis_state` 保存一至八条目录引用、主次角色和可选备注，草稿以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。保存草稿不创建 Condition 或其他 FHIR 资源；已确认状态可以重新进入草稿，但不会改写既有确认。重复目录项、停用目录项、过期版本和已有首期复诊组合草稿分别返回稳定目录或业务冲突。
 
@@ -1552,7 +1554,7 @@ Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、sche
 ### 15.1 运行与持久化
 
 - Node.js Hono 同时提供 Web SPA、认证、HIS/Scenario API、FHIR R5 只读 API 和健康检查。
-- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；五十八个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实、结构化病历、诊断与处方、持久生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、Investigation Result Snapshot、来源 R4 artifact、Visible Source History、Epoch materialization、Agent Client/Grant/Workspace Actor/receipt role、模型任务绑定，以及 DSH Page Context/Tool/proposal/review 关联。
+- file-backed SQLite 启用 foreign keys、WAL 和五秒 busy timeout；五十九个有序 migration 建立身份、FHIR、Scenario、Command、审计、outbox、门诊事实、结构化病历、诊断与处方、持久生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、Investigation Result Snapshot、来源 R4 artifact、Visible Source History、Epoch materialization、Agent Client/Grant/Workspace Actor/receipt role、模型任务绑定，以及 DSH Page Context/Tool/proposal/review 关联。
 - 数据库 CLI 提供 migrate、verify、reindex、backup 和 restore；已有旧版数据库执行 migrate 时先在同目录创建并验证升级前备份，Server 进程只验证 migration。
 - CommandExecutor 统一 `BEGIN IMMEDIATE`、expected versions、幂等 receipt、FHIR current/history/search、领域事实、AuditEvent、Action Trace 和 outbox 原子提交。
 - 同进程 dispatcher 持久化 claim/lease/attempt/correlation，支持失败重试、ambiguous、重复消费和旧 Epoch abandon。

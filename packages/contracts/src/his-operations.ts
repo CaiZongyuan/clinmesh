@@ -1320,8 +1320,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case state; presentation is null when no triage record exists',
-    version: 2,
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording.hasSavedDraft; presentation is null when no triage record exists',
+    version: 4,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -1568,8 +1568,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save the version-protected structured clinical document draft',
-    version: 1,
+    summary: 'Save a version-protected clinical document draft; empty fields are allowed, signing still requires complete content',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'preview'],

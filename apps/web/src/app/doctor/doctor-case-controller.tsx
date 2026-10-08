@@ -2,6 +2,7 @@ import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDet
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import {
   clinicalDocumentContentSchema,
+  clinicalDocumentDraftContentSchema,
   diagnosisDraftEntrySchema,
   laboratoryRequestCatalogItemIdSchema,
   prescriptionDraftContentSchema,
@@ -265,22 +266,8 @@ function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boo
 }
 
 function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
-  const persisted = detail.clinicalDocument?.draft
-    ?? detail.clinicalDocument?.signed.at(-1)?.content
-  if (persisted !== undefined) {
-    return {
-      assessment: persisted.assessment,
-      auxiliaryExamination: persisted.auxiliaryExamination,
-      chiefComplaint: persisted.chiefComplaint,
-      disposition: persisted.disposition,
-      followUp: persisted.followUp,
-      historyOfPresentIllness: persisted.historyOfPresentIllness,
-      physicalExamination: persisted.physicalExamination,
-      priorMedicalHistory: persisted.priorMedicalHistory,
-    }
-  }
   const vitals = detail.presentation?.vitalSigns
-  return {
+  const prefill: ClinicalDocumentContent = {
     assessment: '',
     auxiliaryExamination: detail.report === undefined
       ? emptyAuxiliaryExamination
@@ -294,6 +281,29 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
       ? '系统未记录既往病史。'
       : detail.priorFacts.map(fact => fact.display || fact.code).join('；'),
   }
+  const persisted = detail.clinicalDocument?.draft
+    ?? detail.clinicalDocument?.signed.at(-1)?.content
+  if (persisted !== undefined) {
+    const document: ClinicalDocumentContent = {
+      assessment: persisted.assessment,
+      auxiliaryExamination: persisted.auxiliaryExamination,
+      chiefComplaint: persisted.chiefComplaint,
+      disposition: persisted.disposition,
+      followUp: persisted.followUp,
+      historyOfPresentIllness: persisted.historyOfPresentIllness,
+      physicalExamination: persisted.physicalExamination,
+      priorMedicalHistory: persisted.priorMedicalHistory,
+    }
+    if (detail.clinicalDocument?.draft !== undefined && detail.consultationRecording?.hasSavedDraft === false) {
+      const automaticFields = new Set<keyof ClinicalDocumentContent>(detail.consultationRecording.additions
+        .filter(addition => addition.status === 'applied').map(addition => addition.field))
+      for (const field of Object.keys(document) as Array<keyof ClinicalDocumentContent>) {
+        if (!automaticFields.has(field) && !document[field]) document[field] = prefill[field] ?? ''
+      }
+    }
+    return document
+  }
+  return prefill
 }
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
@@ -414,6 +424,7 @@ function DoctorCaseController({
   const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
     Record<string, ClinicalDocumentContent>
   >({})
+  const clinicalDocumentBaselines = useRef<Record<string, ClinicalDocumentContent>>({})
   const [agentDraftHydrationRevisions, setAgentDraftHydrationRevisions] = useState<
     Record<string, DoctorAgentDraftHydrationRevisions>
   >({})
@@ -447,6 +458,7 @@ function DoctorCaseController({
       )
       || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
       || query.state.data?.pathologyRequests?.requests.some(isAwaitingResult) === true
+      || query.state.data?.consultationRecording?.status === 'processing'
       ? 1_500
       : false,
   })
@@ -559,11 +571,20 @@ function DoctorCaseController({
     ?? detail.data?.clinicalDocument?.signed.at(-1)?.revisionNumber
   useEffect(() => {
     const currentDetail = detail.data
-    if (currentDetail === undefined || persistedClinicalDocumentVersion === undefined) return
-    setWorkingClinicalDocuments(current => ({
-      ...current,
-      [currentDetail.caseId]: createWorkingClinicalDocument(currentDetail),
-    }))
+    if (currentDetail === undefined) return
+    const next = createWorkingClinicalDocument(currentDetail)
+    const previous = clinicalDocumentBaselines.current[currentDetail.caseId]
+    clinicalDocumentBaselines.current[currentDetail.caseId] = next
+    setWorkingClinicalDocuments(current => {
+      const working = current[currentDetail.caseId]
+      const merged = { ...next }
+      if (working !== undefined && previous !== undefined) {
+        for (const field of Object.keys(next) as Array<keyof ClinicalDocumentContent>) {
+          if (working[field] !== previous[field]) merged[field] = working[field] ?? ''
+        }
+      }
+      return { ...current, [currentDetail.caseId]: merged }
+    })
   }, [detail.data?.caseId, persistedClinicalDocumentVersion])
   const usesIndependentLaboratoryRequests = detail.data?.consultation !== undefined
   const laboratoryCatalog = catalog.data?.laboratory.filter(item => (
@@ -892,6 +913,18 @@ function DoctorCaseController({
         refreshCompletedCaseDetails(),
       ])
     },
+  })
+  const saveDocumentDraft = useMutation({
+    mutationFn: ({ caseId, document }: { caseId: string; document: ClinicalDocumentContent }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return saveClinicalDocumentDraft({ document, encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId,
+        expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0,
+      }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const prepareClinicalDocumentSign = useMutation({
     mutationFn: async ({ caseId, document }: {
@@ -2370,6 +2403,12 @@ function DoctorCaseController({
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
               ?? emptyDoctorAgentDraftHydrationRevisions}
             clinicalDocumentActions={{
+              save: {
+                error: saveDocumentDraft.variables?.caseId === detail.data.caseId ? saveDocumentDraft.error : null,
+                onSubmit: document => saveDocumentDraft.mutate({ caseId: detail.data.caseId, document }),
+                pending: saveDocumentDraft.isPending && saveDocumentDraft.variables?.caseId === detail.data.caseId,
+                success: saveDocumentDraft.isSuccess && saveDocumentDraft.variables?.caseId === detail.data.caseId,
+              },
               prepareSign: {
                 data: prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId
                   ? prepareClinicalDocumentSign.data?.data
@@ -3566,18 +3605,7 @@ function doctorDiagnosisEntries(value: unknown): DiagnosisDraftEntry[] {
 }
 
 function doctorClinicalDocument(value: unknown): ClinicalDocumentContent {
-  const input = doctorRecord(value)
-  const field = (key: keyof ClinicalDocumentContent): string => doctorString(input, key, 4_000)
-  return {
-    assessment: field('assessment'),
-    auxiliaryExamination: field('auxiliaryExamination'),
-    chiefComplaint: field('chiefComplaint'),
-    disposition: field('disposition'),
-    followUp: field('followUp'),
-    historyOfPresentIllness: field('historyOfPresentIllness'),
-    physicalExamination: field('physicalExamination'),
-    priorMedicalHistory: field('priorMedicalHistory'),
-  }
+  return clinicalDocumentDraftContentSchema.parse(value)
 }
 
 function requireDoctorDetail(
