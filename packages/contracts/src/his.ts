@@ -992,16 +992,39 @@ export const consultationHistoryAdditionSchema = z.object({
   sourceTurnId: z.string().min(1).max(128),
   quote: z.string().trim().min(2).max(600),
   relation: z.enum(['addition', 'correction', 'conflict']),
-}).strict()
+  targetAdditionId: z.string().min(1).max(128).optional(),
+}).strict().superRefine((addition, context) => {
+  if ((addition.relation === 'addition') !== (addition.targetAdditionId === undefined)) {
+    context.addIssue({ code: 'custom', path: ['targetAdditionId'],
+      message: 'Corrections and conflicts require a target; ordinary additions cannot have one' })
+  }
+})
 
 export const consultationRecordingSchema = z.object({
   hasSavedDraft: z.boolean(),
   status: z.enum(['idle', 'processing', 'updated', 'pending']),
-  additions: z.array(consultationHistoryAdditionSchema.extend({
+  // Historical suggestions may predate the required correction target in the extraction contract.
+  additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({
     id: z.string().min(1),
-    status: z.enum(['applied', 'pending']),
+    status: z.enum(['applied', 'pending', 'superseded', 'ignored']),
+    ownership: z.enum(['automatic', 'manual']).default('automatic'),
+    currentText: z.string().default(''),
+    reviewable: z.boolean().default(false),
   }).strict()),
 }).strict()
+
+export const reviewConsultationHistoryRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    additionId: z.string().min(1).max(128),
+    decision: z.enum(['accept', 'ignore']),
+    expectedDraftVersion: z.number().int().nonnegative(),
+  }).strict(),
+}).strict()
+
+export const reviewConsultationHistoryResponseSchema = commandResponseSchema(z.object({
+  draftVersion: z.number().int().nonnegative(),
+}).strict())
 
 export const saveClinicalDocumentDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,

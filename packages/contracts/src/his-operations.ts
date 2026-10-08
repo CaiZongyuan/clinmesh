@@ -88,6 +88,8 @@ import {
   registrationResponseSchema,
   roleCodeSchema,
   saveClinicalDocumentDraftRequestSchema,
+  reviewConsultationHistoryRequestSchema,
+  reviewConsultationHistoryResponseSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
   savePrescriptionDraftRequestSchema,
@@ -592,6 +594,10 @@ const fhirSearchInputSchema = z.object({
     }
   }
 })
+
+const reviewConsultationHistoryOperationInputSchema = reviewConsultationHistoryRequestSchema.shape.input.extend({
+  encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
+}).strict()
 const fhirBundleSchema = z.object({
   entry: z.array(z.object({
     fullUrl: z.url(),
@@ -711,6 +717,10 @@ const bodyEncoders = {
   },
   [clinicalDocumentOperationIds.draftSet]: (rawInput: unknown) => {
     const { encounterId, encounterVersion, ...input } = saveClinicalDocumentDraftOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.consultation-history.review': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = reviewConsultationHistoryOperationInputSchema.parse(rawInput)
     return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
   },
   [clinicalDocumentOperationIds.previewSign]: (rawInput: unknown) => {
@@ -1320,7 +1330,7 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete draft and consultationRecording.hasSavedDraft; presentation is null when no triage record exists',
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, fragment ownership and review state; presentation is null when no triage record exists',
     version: 4,
   },
   {
@@ -1550,6 +1560,17 @@ const operationDefinitions = [
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
     summary: 'Withdraw a prescription before any dispensing starts',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'consultation-history', 'review'],
+    http: { method: 'POST', path: '/api/his/v1/encounters/:encounterId/consultation-history/actions/review' },
+    id: 'encounter.consultation-history.review',
+    input: reviewConsultationHistoryOperationInputSchema,
+    mode: 'command', output: reviewConsultationHistoryResponseSchema,
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['outpatient-doctor'],
+    summary: 'Accept a pending history replacement or ignore it, preserving unrelated history and requiring the current draft version',
     version: 1,
   },
   {
@@ -2337,6 +2358,7 @@ const operationDefinitions = [
 const commandOperationAliases: Readonly<Record<string, string>> = {
   'admin.laboratory-services.publish': 'laboratory-service-publication.create',
   [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
+  'encounter.consultation-history.review': 'consultation.history.review',
   [clinicalDocumentOperationIds.previewSign]: clinicalDocumentOperationIds.storedPreviewSign,
   [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
   'encounter.consultation.ask': 'consultation.ask-question',
@@ -2382,6 +2404,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'doctor.completed-cases.list': 'clinmesh-doctor',
   'doctor.queue.list': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.draftSet]: 'clinmesh-doctor',
+  'encounter.consultation-history.review': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.previewSign]: 'clinmesh-doctor',
   [clinicalDocumentOperationIds.sign]: 'clinmesh-doctor',
   'encounter.complete': 'clinmesh-doctor',

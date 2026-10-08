@@ -444,6 +444,9 @@ importers:
       '@clinmesh/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@clinmesh/core':
+        specifier: workspace:*
+        version: link:../../packages/core
       '@cornerstonejs/codec-openjpeg':
         specifier: 1.3.6
         version: 1.3.6
@@ -603,6 +606,9 @@ importers:
       '@clinmesh/contracts':
         specifier: workspace:*
         version: link:../contracts
+      diff:
+        specifier: 8.0.4
+        version: 8.0.4
     devDependencies:
       typescript:
         specifier: 'catalog:'

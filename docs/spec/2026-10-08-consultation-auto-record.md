@@ -74,4 +74,4 @@ Playwright 覆盖 A4–A6 的可见新增、原文、撤销，以及暂停、补
 
 依赖已配置的 DSH 辅助模型桥接。模型输出必须校验并关联公开问诊原文；不可把未验证输出或整篇重生成结果直接覆盖草稿。
 
-业务行为、主要测试 seam 与六个纵向实施切片已批准。自动记录基础闭环已实现，当前合并边界见[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)，其余交互与整体验收由后续切片承接。真实 DSH 验收需要已配置的宿主和有效模型能力；确定性模型替身只能证明合同，不能证明真实模型提取质量。
+业务行为、主要测试 seam 与六个纵向实施切片已批准。自动记录基础闭环、局部人工编辑保护与定向核对已实现，持久任务边界见[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)，编辑与更正边界见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)；其余交互与整体验收由后续切片承接。真实 DSH 验收需要已配置的宿主和有效模型能力；确定性模型替身只能证明合同，不能证明真实模型提取质量。

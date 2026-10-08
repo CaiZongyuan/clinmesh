@@ -1,5 +1,6 @@
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
+import { mergeDocumentText } from '@clinmesh/core/document-text'
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
@@ -81,6 +82,7 @@ import {
   reviseStructuredClinicalDocument,
   retryLaboratoryResultGeneration,
   saveClinicalDocumentDraft,
+  reviewConsultationHistory,
   saveDiagnosisDraft,
   saveFirstVisitDraft,
   saveLaboratoryRequestDraft,
@@ -424,7 +426,10 @@ function DoctorCaseController({
   const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
     Record<string, ClinicalDocumentContent>
   >({})
-  const clinicalDocumentBaselines = useRef<Record<string, ClinicalDocumentContent>>({})
+  const clinicalDocumentBaselines = useRef<Record<string, {
+    document: ClinicalDocumentContent
+    persisted: ClinicalDocumentContent | undefined
+  }>>({})
   const [agentDraftHydrationRevisions, setAgentDraftHydrationRevisions] = useState<
     Record<string, DoctorAgentDraftHydrationRevisions>
   >({})
@@ -574,13 +579,22 @@ function DoctorCaseController({
     if (currentDetail === undefined) return
     const next = createWorkingClinicalDocument(currentDetail)
     const previous = clinicalDocumentBaselines.current[currentDetail.caseId]
-    clinicalDocumentBaselines.current[currentDetail.caseId] = next
+    clinicalDocumentBaselines.current[currentDetail.caseId] = {
+      document: next,
+      persisted: currentDetail.clinicalDocument?.draft ?? currentDetail.clinicalDocument?.signed.at(-1)?.content,
+    }
     setWorkingClinicalDocuments(current => {
       const working = current[currentDetail.caseId]
       const merged = { ...next }
       if (working !== undefined && previous !== undefined) {
         for (const field of Object.keys(next) as Array<keyof ClinicalDocumentContent>) {
-          if (working[field] !== previous[field]) merged[field] = working[field] ?? ''
+          const firstAutomaticContent = currentDetail.consultationRecording?.hasSavedDraft === false
+            && !previous.persisted?.[field]
+            && currentDetail.consultationRecording.additions.some(addition => addition.status === 'applied' && addition.field === field)
+          // 预填尚未持久化，首批自动内容来自空字段，应追加到已经改写的预填后。
+          merged[field] = firstAutomaticContent && working[field] !== previous.document[field]
+            ? [working[field], next[field]].filter(Boolean).join('\n')
+            : mergeDocumentText(previous.document[field] ?? '', working[field] ?? '', next[field] ?? '')
         }
       }
       return { ...current, [currentDetail.caseId]: merged }
@@ -913,6 +927,16 @@ function DoctorCaseController({
         refreshCompletedCaseDetails(),
       ])
     },
+  })
+  const reviewHistory = useMutation({
+    mutationFn: async ({ caseId, additionId, decision }: { caseId: string; additionId: string; decision: 'accept' | 'ignore' }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return reviewConsultationHistory({ additionId, decision, encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId, expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0 }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const saveDocumentDraft = useMutation({
     mutationFn: ({ caseId, document }: { caseId: string; document: ClinicalDocumentContent }) => {
@@ -2403,6 +2427,11 @@ function DoctorCaseController({
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
               ?? emptyDoctorAgentDraftHydrationRevisions}
             clinicalDocumentActions={{
+              reviewHistory: {
+                error: reviewHistory.variables?.caseId === detail.data.caseId ? reviewHistory.error : null,
+                pending: reviewHistory.isPending && reviewHistory.variables?.caseId === detail.data.caseId,
+                onSubmit: (additionId, decision) => reviewHistory.mutate({ caseId: detail.data.caseId, additionId, decision }),
+              },
               save: {
                 error: saveDocumentDraft.variables?.caseId === detail.data.caseId ? saveDocumentDraft.error : null,
                 onSubmit: document => saveDocumentDraft.mutate({ caseId: detail.data.caseId, document }),

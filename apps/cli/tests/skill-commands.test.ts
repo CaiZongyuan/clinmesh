@@ -97,6 +97,17 @@ function inspectExample(program: Command, line: string) {
 }
 
 describe('ClinMesh CLI Agent Skills', () => {
+  it('keeps history review examples bound to the narrow versioned correction contract', async () => {
+    const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+    const operation = getHisOperation('encounter.consultation-history.review')
+    const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter consultation-history review'))!
+    expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
+    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
+      additionId: 'synthetic-correction', decision: 'accept' }).success).toBe(true)
+    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
+      additionId: 'synthetic-correction', decision: 'overwrite', document: {} }).success).toBe(false)
+    expect(skill).toContain("clinician's explicit accept/ignore decision")
+  })
   it('keeps the doctor draft example compatible with incomplete content and the versioned Catalog', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
     const operation = getHisOperation('encounter.clinical-document.draft.set')

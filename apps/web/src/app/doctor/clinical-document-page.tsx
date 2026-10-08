@@ -55,6 +55,11 @@ export interface ClinicalDocumentRevisionInput {
 }
 
 export interface ClinicalDocumentPageActions {
+  reviewHistory?: {
+    error: Error | null
+    pending: boolean
+    onSubmit: (additionId: string, decision: 'accept' | 'ignore') => void
+  }
   save?: {
     error: Error | null
     onSubmit: (document: ClinicalDocumentContent) => void
@@ -134,11 +139,33 @@ export function ClinicalDocumentPage({
                   : messages.consultationRecordingReady}</p>
             {detail.consultationRecording.additions.length === 0 ? null : (
               <ul className="mt-2 flex flex-col gap-2">
-                {detail.consultationRecording.additions.map(addition => (
+                {detail.consultationRecording.additions.filter(addition => addition.status !== 'superseded' && addition.status !== 'ignored').map(addition => (
                   <li data-consultation-addition={addition.status} key={addition.id}>
                     <Badge variant={addition.status === 'applied' ? 'secondary' : 'outline'}>
                       {addition.status === 'applied' ? messages.consultationRecordingAdded : messages.consultationRecordingReview}
                     </Badge>{' '}{messages[addition.field]}：{addition.quote}
+                    {addition.status !== 'pending' ? null : (
+                      <div className="mt-2 flex flex-col gap-2">
+                        <p className="whitespace-pre-wrap">{messages.consultationHistoryOriginal}：{addition.currentText || (addition.reviewable ? messages.consultationHistoryDeleted : messages.consultationHistoryNoTarget)}</p>
+                        <p className="whitespace-pre-wrap">{messages.consultationHistorySuggestion}：{addition.quote}</p>
+                        <p className="whitespace-pre-wrap">{messages.consultationHistorySource}：{detail.consultation?.turns.find(turn => turn.id === addition.sourceTurnId)?.messageText}</p>
+                        {(workingDocument[addition.field] ?? '') === (detail.clinicalDocument?.draft?.[addition.field] ?? '') ? null
+                          : <p>{messages.consultationHistorySaveFirst}</p>}
+                        {actions.reviewHistory === undefined ? null : (
+                          <div className="flex flex-wrap gap-2">
+                            <Button size="sm" type="button" disabled={actions.reviewHistory.pending || !addition.reviewable || signedDocuments.length > 0 || detail.encounter.status !== 'in-progress'
+                              || (workingDocument[addition.field] ?? '') !== (detail.clinicalDocument?.draft?.[addition.field] ?? '')}
+                              onClick={() => actions.reviewHistory?.onSubmit(addition.id, 'accept')}>
+                              {messages.consultationHistoryAccept}
+                            </Button>
+                            <Button size="sm" variant="outline" type="button" disabled={actions.reviewHistory.pending || signedDocuments.length > 0 || detail.encounter.status !== 'in-progress'}
+                              onClick={() => actions.reviewHistory?.onSubmit(addition.id, 'ignore')}>
+                              {messages.consultationHistoryIgnore}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -146,6 +173,8 @@ export function ClinicalDocumentPage({
           </AlertDescription>
         </Alert>
       )}
+      {actions.reviewHistory?.error == null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.reviewHistory.error, messages)}
+        title={messages.consultationRecordingReview} />}
       {actions.save?.error == null ? null : <ErrorAlert
         message={getWorkspaceErrorMessage(actions.save.error, messages)}
         title={messages.saveClinicalDocumentDraft}

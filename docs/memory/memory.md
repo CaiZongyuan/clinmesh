@@ -38,6 +38,8 @@
 
 ## 运行与验证边界
 
+- SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
+
 - 首次自动草稿从无到有时，不能将其未涉及字段的空值当作清空指令；页面预填值与人工输入都须覆盖回归。验证保留后还要保存、刷新，并主动清空再保存，避免修复变成永久恢复默认值。当前病史边界由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
 
 - 校验持久后台任务的 Grant 时，覆盖同一业务结果的所有公开触发路径，尤其失败后的显式重试；不能只检查主入口操作权限。失效回归保留原 Grant 撤销后同一 Client 仍有其他有效 Grant 的场景，防止借用另一授权继续旧任务。
@@ -45,6 +47,8 @@
 - 模型摘录的逐字匹配不能单独证明事实完整。引用边界回归同时覆盖限定语与疑问号在引用外、句间空白、逗号和小数点位于引用首尾，避免通过截断制造肯定事实、改变测量值或拒绝完整陈述；当前写入规则由[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
 
 - 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)。
+- 预填与后台文本合并的回归须覆盖首次自动更新同一个未保存字段，以及其他字段已有自动草稿时该字段才首次更新；同时断言编辑框、保存后的服务端正文和刷新结果，防止界面丢弃新增后又通过保存删掉服务端已应用的内容。当前合并基线见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
+- 增量去重回归同时覆盖重复投递、同批重复与新来源再次提出相同更正措辞；只验证相同原话不重复会漏掉新证据被历史状态挡住的路径。当前增量身份与普通事实去重规则见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
 
 - pnpm 11 在执行脚本前可能自动安装并改写锁文件，包括重新解析间接依赖。纯文档检查遇到此行为时，先核对并撤回本次检查引入的无关锁文件变更；已安装工具可通过 Node 直接调用对应 CLI，避免重复触发安装。锁文件变化不属于文档交付。
 - DSH 标签页品牌验证须覆盖初始 HTML、宿主赋值后的同步读取和刷新；布局会主动写入默认产品标题，MutationObserver 只能事后纠正，下一帧正确不能证明标签页没有闪烁。标题保护通过首页扩展在首个宿主脚本前同步规范当前 document 的标题赋值，浏览器回归覆盖同步改名、延迟改名和重复刷新。
@@ -138,6 +142,8 @@
 - 替换 Agent 反馈渲染器时，分别处理真实执行、完成反馈可见性与资源清理，沿用既有完成停留合同。快速本地 Tool 的开始和完成可能被 React 合并为一次渲染，不能依赖执行阶段创建过 Canvas；回归须包含同批开始/完成、静态停留与停止绘制，并保持业务无额外延迟。当前时序由[能力参考](../agent-capabilities.md#反馈时序)拥有。
 
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
+
+- 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。
 
 - 精确运行 Vitest 文件时使用 `pnpm --filter <package> exec vitest run <file>`。脚本经 `pnpm --filter <package> test -- <file>` 转发时会保留 `--`，当前 Vitest 可能运行整个包而未应用文件筛选；以实际 Test Files 数量确认范围。
 
