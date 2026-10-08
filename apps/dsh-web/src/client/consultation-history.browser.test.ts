@@ -29,6 +29,7 @@ for (const version of ['18', '19']) {
     const css = await buildSurfaceStyles()
     await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     const pending = page.locator('[data-consultation-addition="pending"]')
+    await expect(page.getByText('自动记录超时，患者回答已保存，请根据问诊原文补充病史。', { exact: true })).toBeVisible()
     await expect(pending).toContainText('原内容：医生核对：头晕五天。')
     await expect(pending).toContainText('患者原回答：刚才说错了，头晕是六天。')
     const accept = page.getByRole('button', { name: '接受替换', exact: true })

@@ -96,6 +96,8 @@ Draft saves accept empty fields while history is still being collected. Keep eve
 
 `consultationRecording.hasSavedDraft` records whether an explicit draft save has occurred; before that save, empty fields untouched by automatic additions can still have visible triage/history prefill. Read and preserve that visible content before submitting a complete draft; after an explicit save, saved empty values are intentional.
 
+`consultationRecording.failures` associates safe failure codes with `sourceTurnId` and indicates ongoing automatic retries through `retrying`. `AI_TIMEOUT` or `AI_RESPONSE_INVALID` settles as pending; the saved patient reply remains available. Read the consultation source and have the clinician complete or review the history. `AI_AUTH_FAILED` requires checking the selected model's access in settings. A patient-reply retry regenerates dialogue and does not retry history recording.
+
 ```bash
 clinmesh encounter clinical-document draft set --input @document.json --idempotency-key <key>
 clinmesh encounter consultation-history review --input @history-review.json --idempotency-key <review-intent-key>

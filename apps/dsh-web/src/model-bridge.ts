@@ -22,8 +22,12 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
     const cancelled = new AbortController()
     const abort = () => { if (!response.writableFinished) cancelled.abort() }
     response.on('close', abort)
-    const signal = AbortSignal.any([closing.signal, cancelled.signal, AbortSignal.timeout(60_000)])
-    const disconnect = () => response.destroy()
+    let signal = AbortSignal.any([closing.signal, cancelled.signal, AbortSignal.timeout(10_000)])
+    const disconnect = () => {
+      if (closing.signal.aborted || cancelled.signal.aborted) response.destroy()
+      else if (!response.writableEnded) response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' })
+        .end(JSON.stringify({ error: 'MODEL_TIMEOUT' }))
+    }
     signal.addEventListener('abort', disconnect, { once: true })
     try {
       if (request.headers['content-type']?.split(';')[0] !== 'application/json') throw new Error('Invalid content type')
@@ -36,6 +40,11 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
         chunks.push(buffer)
       }
       const input = modelBridgeRequestSchema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      signal.throwIfAborted()
+      signal.removeEventListener('abort', disconnect)
+      signal = AbortSignal.any([closing.signal, cancelled.signal,
+        AbortSignal.timeout(input.operation === 'complete' ? input.timeoutMs ?? 60_000 : 60_000)])
+      signal.addEventListener('abort', disconnect, { once: true })
       const route = input.operation === 'resolve'
         ? selection() === 'default' ? modelRouteSchema.parse(ctx.agentDefaultModel.currentSelection()) : decodeModelRoute(selection())
         : decodeModelRoute(input.model)
@@ -53,7 +62,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
           provider: route.provider, model: route.model,
           ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(route.reasoningEffort) }),
           signal, temperature: 0,
-          system: `${input.systemPrompt}\nReturn exactly one JSON object matching this JSON Schema, without Markdown:\n${JSON.stringify(input.jsonSchema)}`,
+          system: `${input.systemPrompt}\nReturn exactly one JSON data object matching this JSON Schema, without Markdown or $schema metadata:\n${JSON.stringify(input.jsonSchema)}`,
           messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input.userPayload) }] }],
         })) {
           if (chunk.type === 'text-delta') content += chunk.text
@@ -80,7 +89,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
       // Provider failures can contain credentials and private prompts; do not relay or log them.
       const body = JSON.stringify({ error: error instanceof ModelAccessError ? 'MODEL_AUTH_FAILED'
         : error instanceof ModelTimeoutError ? 'MODEL_TIMEOUT' : 'MODEL_UNAVAILABLE' })
-      if (!response.destroyed) response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
+      if (!response.destroyed && !response.writableEnded) response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
     } finally { response.off('close', abort); signal.removeEventListener('abort', disconnect) }
   }
   return { handler, dispose: () => closing.abort() }

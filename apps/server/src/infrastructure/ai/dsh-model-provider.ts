@@ -1,5 +1,6 @@
 import { dshDefaultModel, decodeModelRoute, modelBridgeErrorSchema, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
 import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
+import { ZodError } from 'zod'
 
 export class DshModelProvider implements JsonChatCompletionsProvider {
   readonly #endpoint: URL
@@ -18,26 +19,38 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
   }
 
   async completeJson(input: JsonChatCompletionInput) {
-    const signal = input.signal === undefined ? AbortSignal.timeout(this.options.timeoutMs)
-      : AbortSignal.any([input.signal, AbortSignal.timeout(this.options.timeoutMs)])
-    const model = await this.resolveModel(input.model, signal)
+    const model = await this.resolveModel(input.model, input.signal)
+    let issues: Array<{ code: string; path: string }> = []
     for (let attempt = 0; attempt < 2; attempt++) {
       const result = await this.#request({
         operation: 'complete', model, schemaName: input.schemaName, jsonSchema: input.jsonSchema,
-        systemPrompt: input.systemPrompt, userPayload: input.userPayload,
-      }, signal)
+        systemPrompt: attempt === 0 ? input.systemPrompt : `${input.systemPrompt}\nThe previous response failed validation: ${JSON.stringify(issues)}. Generate a corrected JSON object using the original data and schema. Do not include $schema or other schema metadata.`,
+        userPayload: input.userPayload, timeoutMs: this.options.timeoutMs,
+      }, input.signal)
       if (result.model !== model) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the pinned route')
       try {
-        const value: unknown = JSON.parse(result.content ?? '')
+        let value: unknown = JSON.parse(result.content ?? '')
+        // Only a known schema annotation is removable. All business fields remain subject to validation.
+        if (typeof value === 'object' && value !== null && !Array.isArray(value) && '$schema' in value
+          && typeof value.$schema === 'string') {
+          const { $schema: _annotation, ...data } = value
+          value = data
+        }
         if (input.validate === undefined || input.validate(value)) return { content: JSON.stringify(value), model }
-      } catch { /* Invalid JSON may be regenerated once on the same route. */ }
+        issues = [{ code: 'schema_mismatch', path: '' }]
+      } catch (error) {
+        issues = error instanceof ZodError ? error.issues.slice(0, 12).map(issue => ({
+          code: issue.code, path: issue.path.join('.').slice(0, 200),
+        })) : [{ code: 'invalid_json_or_content', path: '' }]
+      }
     }
-    throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The DSH model returned invalid structured output')
+    throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The DSH model returned invalid structured output', { validationIssues: issues })
   }
 
   async #request(payload: unknown, callerSignal?: AbortSignal) {
-    const signal = callerSignal === undefined ? AbortSignal.timeout(this.options.timeoutMs)
-      : AbortSignal.any([callerSignal, AbortSignal.timeout(this.options.timeoutMs)])
+    // Allow the host deadline to return its safe timeout code before the transport is cancelled.
+    const signal = callerSignal === undefined ? AbortSignal.timeout(this.options.timeoutMs + 1_000)
+      : AbortSignal.any([callerSignal, AbortSignal.timeout(this.options.timeoutMs + 1_000)])
     const body = JSON.stringify(payload)
     if (Buffer.byteLength(body) > 256 * 1024) throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'The model request exceeds the size limit')
     try {

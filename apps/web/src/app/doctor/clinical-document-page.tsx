@@ -137,6 +137,18 @@ export function ClinicalDocumentPage({
               : detail.consultationRecording.status === 'pending' ? messages.consultationRecordingPending
                 : detail.consultationRecording.status === 'updated' ? messages.consultationRecordingUpdated
                   : messages.consultationRecordingReady}</p>
+            {detail.consultationRecording.failures.map(failure => (
+              <p key={failure.sourceTurnId}>
+                {failure.code === 'AI_TIMEOUT' ? messages.consultationRecordingTimeout
+                  : ['AI_RESPONSE_INVALID', 'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID'].includes(failure.code)
+                    ? messages.consultationRecordingInvalid
+                    : failure.code === 'AI_AUTH_FAILED' ? messages.consultationRecordingAuthFailed
+                      : failure.code === 'CONSULTATION_RECORDING_NOT_EDITABLE' ? messages.consultationRecordingNotEditable
+                        : failure.code === 'CONSULTATION_RECORDING_CONTEXT_INACTIVE' ? messages.consultationRecordingInactive
+                          : messages.consultationRecordingFailed}
+                {failure.retrying ? ` ${messages.consultationRecordingRetrying}` : ''}
+              </p>
+            ))}
             {detail.consultationRecording.additions.length === 0 ? null : (
               <ul className="mt-2 flex flex-col gap-2">
                 {detail.consultationRecording.additions.filter(addition => addition.status !== 'superseded' && addition.status !== 'ignored').map(addition => (
