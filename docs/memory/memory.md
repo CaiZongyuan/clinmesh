@@ -131,6 +131,8 @@
 
 - Agent Note 格式检查当前按 LF 分行，Windows CRLF 检出会把空行和状态行误报为格式错误。隔离验证 Git 中的文本时使用 `git -c core.autocrlf=false archive`，再覆盖待提交的新 Note；默认 `git archive` 也可能按 `core.autocrlf` 转换换行，不能当作原始 Git blob。该验证只证明文本格式，不替代 POSIX 权限或符号链接验证。
 
+- Windows 向 Linux 验证副本导出变更时，先暂存，再用默认 `git diff --cached <base> --binary --output=<path>`；不要给该 diff 强制 `core.autocrlf=false`，否则 CRLF 工作树可能产生整文件伪变化。应用前核对 patch 的文件数和行数；含 PATH 或复杂参数的 WSL 命令写入 LF shell 脚本文件执行，避免 PowerShell 到 WSL 的参数转义改变命令。
+
 - `publint` 会再调用包管理器打包；pnpm script 注入的 Node 目录可能让子进程选择 Corepack shim，而不是父进程使用的 pnpm。若父构建成功、打包却卡在解析 pnpm 版本，核对实际 PATH 和 Corepack 缓存，预先缓存仓库 `packageManager` 指定的版本；需要代理时在缓存准备步骤启用 Node 的代理支持，不通过跳过 publint 或覆盖宿主环境规避。
 
 - DSH 的内置 bundle 由宿主槽位提供；Profile 不重复安装它们的依赖闭包。出现 `profile reload requires the root Include entry` 时，先比较官方默认 Profile，再核对配置编辑器与启动入口解析出的 `dsh-app-boot` 是否是同一模块实例。HTTP 首页成功不能证明设置持久化和热重载可用；当前装配与验收归属见[部署指南](../deployment.md#dsh-web-原生入口)。
