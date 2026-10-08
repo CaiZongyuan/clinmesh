@@ -309,7 +309,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     setCorrectionNavigation(undefined)
   }, [session.actor.epoch, session.actor.workspaceId])
   const navigation = (
-    <TabsList aria-label={messages.consultation} className="w-full flex-wrap">
+    <TabsList aria-label={messages.consultation} className="h-auto! w-full flex-wrap">
       <TabsTrigger value="active">{messages.doctorActiveQueue}</TabsTrigger>
       <TabsTrigger value="waiting">{messages.doctorWaitingQueue}</TabsTrigger>
       <TabsTrigger value="completed">{messages.doctorCompletedQueue}</TabsTrigger>
