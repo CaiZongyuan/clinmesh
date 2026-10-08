@@ -1152,6 +1152,7 @@ export class WorkflowService {
     commands: CommandExecutor,
     options: {
       consultationRecordingEnabled?: boolean
+      consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       investigation?: InvestigationCapabilityResolver
       now?: () => Date
       referenceData?: ReferenceDataService
@@ -1170,6 +1171,7 @@ export class WorkflowService {
       database, commands, enabled: options.consultationRecordingEnabled === true,
       now: this.#now,
       virtualTime: context => this.#virtualTime(context),
+      contextStatus: options.consultationRecordingContextStatus ?? (() => 'inactive'),
       assertAccess: (context, encounterId) => {
         this.#assertRole(context, ['outpatient-doctor'])
         const outpatientCase = this.#caseByEncounter(context, encounterId)

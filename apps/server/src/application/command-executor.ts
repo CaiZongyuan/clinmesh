@@ -12,6 +12,7 @@ import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-reposito
 
 export interface ActorContext extends RepositoryContext {
   actorId: string
+  agentGrantId?: string
   locationId?: string
   organizationId?: string
   practitionerId?: string

@@ -1,4 +1,5 @@
 import { doctorCaseDetailSchema, sendConsultationMessageResponseSchema, triageQueueSchema } from '@clinmesh/contracts/his'
+import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -47,8 +48,8 @@ async function setup(options: {
     `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
   )).json())
   const key = randomUUID()
-  const ask = () => runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
-    method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': key },
+  const ask = (actorHeaders: Record<string, string> = { cookie }) => runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+    method: 'POST', headers: { ...actorHeaders, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': key },
     body: JSON.stringify({ expectedVersions: {
       [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1',
     }, input: { expectedConsultationVersion: 2, message: '头晕多久了？有没有胸痛？' } }),
@@ -97,6 +98,49 @@ it('rejects a quote that removes the patient negation instead of recording chest
   const detail = await read()
   expect(detail.clinicalDocument?.draft).toBeUndefined()
   expect(detail.consultationRecording).toMatchObject({ status: 'pending', additions: [] })
+})
+
+it('rejects a quote that drops uncertainty from the same patient sentence', async () => {
+  const { runtime, ask, read } = await setup({ reply: '我不清楚，胸痛已经三天。', extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', quote: '胸痛已经三天。',
+      sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  expect((await read()).clinicalDocument?.draft).toBeUndefined()
+  expect((await read()).consultationRecording).toMatchObject({ status: 'pending', additions: [] })
+})
+
+it.each([
+  ['我不清楚，血糖是5.8mmol/L。', '8mmol/L。'],
+  ['头晕3.5天。', '头晕3.'],
+])('rejects an extraction that splits a decimal in %s', async (reply, quote) => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', quote,
+      sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  expect((await read()).clinicalDocument?.draft).toBeUndefined()
+  expect((await read()).consultationRecording).toMatchObject({ status: 'pending', additions: [] })
+})
+
+it('applies a repeated model addition once without exhausting durable retries', async () => {
+  const { runtime, ask, read } = await setup({ extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    const addition = { field: 'historyOfPresentIllness', quote: '头晕一周了，站起来时更明显。',
+      sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }
+    return { additions: [addition, addition] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  expect((await read()).clinicalDocument?.draft).toMatchObject({
+    historyOfPresentIllness: '患者自述：头晕一周了，站起来时更明显。', version: 1,
+  })
+  expect((await read()).consultationRecording).toMatchObject({ status: 'updated', additions: [{ status: 'applied' }] })
+  expect((await read()).consultationRecording?.additions).toHaveLength(1)
 })
 
 it.each([
@@ -185,6 +229,61 @@ it('does not repeat history when the patient repeats the same statement in a lat
   expect((await read()).clinicalDocument?.draft).toMatchObject({
     historyOfPresentIllness: '患者自述：头晕一周了，站起来时更明显。', version: 1,
   })
+})
+
+it.each(['disable', 'revoke'] as const)('settles a late recording as pending after Agent authorization %s', async action => {
+  let release!: (value: unknown) => void
+  let entered!: () => void
+  let sourceTurnId = ''
+  const extracting = new Promise<void>(resolve => { entered = resolve })
+  const held = new Promise<unknown>(resolve => { release = resolve })
+  const { runtime, ask, read, started } = await setup({ extract: input => {
+    sourceTurnId = (input.userPayload as { turns: Array<{ id: string }> }).turns.at(-1)!.id
+    entered()
+    return held
+  } })
+  const adminHeaders = { cookie: started.adminCookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
+    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ name: 'Synthetic consultation recorder' }),
+  })
+  expect(clientResponse.status).toBe(200)
+  const client = agentClientSchema.parse(await clientResponse.json())
+  const grantResponse = await runtime.app.request('/api/agent/v1/grants', {
+    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ agentClientId: client.agentClientId, operationIds: ['encounter.consultation.ask'],
+      practitionerRoleId: 'practitioner-role-outpatient-doctor', ttlSeconds: 3600 }),
+  })
+  expect(grantResponse.status).toBe(200)
+  const grant = agentCapabilityGrantSchema.parse(await grantResponse.json())
+  if (action === 'revoke') {
+    const secondGrantResponse = await runtime.app.request('/api/agent/v1/grants', {
+      method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ agentClientId: client.agentClientId, operationIds: ['encounter.consultation.ask'],
+        practitionerRoleId: 'practitioner-role-outpatient-doctor', ttlSeconds: 3600 }),
+    })
+    expect(secondGrantResponse.status).toBe(200)
+    expect(agentCapabilityGrantSchema.parse(await secondGrantResponse.json()).grantId).not.toBe(grant.grantId)
+  }
+  expect((await ask({ authorization: `Bearer ${grant.token}` })).status).toBe(200)
+  const dispatch = runtime.dispatchPending()
+  await extracting
+  try {
+    const path = action === 'disable' ? `/api/agent/v1/clients/${client.agentClientId}/actions/disable`
+      : `/api/agent/v1/grants/${grant.grantId}/actions/revoke`
+    const response = await runtime.app.request(path, { method: 'POST', body: '{}',
+      headers: { ...adminHeaders, 'idempotency-key': randomUUID() } })
+    expect(response.status).toBe(200)
+  } finally {
+    release({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId,
+      quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] })
+    await dispatch
+  }
+  expect((await read()).clinicalDocument?.draft).toBeUndefined()
+  expect((await read()).consultationRecording).toMatchObject({ status: 'pending', additions: [] })
+  expect((await read()).consultation?.turns).toHaveLength(3)
+  await runtime.dispatchPending()
+  expect((await read()).consultationRecording?.status).toBe('pending')
 })
 
 it('rejects a late extraction after Epoch reset without contaminating the replayed case', async () => {

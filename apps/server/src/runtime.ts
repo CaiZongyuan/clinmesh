@@ -236,6 +236,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const workflow = new WorkflowService(database, fhir, commands, {
       consultationRecordingEnabled: options.dshModelBridge !== undefined,
+      consultationRecordingContextStatus: context => identity.consultationRecordingContextStatus(context),
       investigation,
       ...clockOptions,
       referenceData,
