@@ -26,6 +26,7 @@ import {
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   type ClinicalDocumentContent,
+  clinicalDocumentDraftContentSchema,
   clinicalDocumentContentSchema,
   clinicalDocumentDraftResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
@@ -90,6 +91,7 @@ import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { PathologyRequestService } from './pathology-request-service.ts'
+import { ConsultationRecordingService } from './consultation-recording-service.ts'
 import {
   ClinicalRequestKernel,
   laboratoryRequestPolicy,
@@ -1142,12 +1144,14 @@ export class WorkflowService {
   readonly imaging: ImagingRequestService
   /** 病理会诊申请适配器；与检验、放射共用申请内核。 */
   readonly pathology: PathologyRequestService
+  readonly consultationRecording: ConsultationRecordingService
 
   constructor(
     database: ClinMeshDatabase,
     fhir: FhirRepository,
     commands: CommandExecutor,
     options: {
+      consultationRecordingEnabled?: boolean
       investigation?: InvestigationCapabilityResolver
       now?: () => Date
       referenceData?: ReferenceDataService
@@ -1162,6 +1166,20 @@ export class WorkflowService {
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
+    this.consultationRecording = new ConsultationRecordingService({
+      database, commands, enabled: options.consultationRecordingEnabled === true,
+      now: this.#now,
+      virtualTime: context => this.#virtualTime(context),
+      assertAccess: (context, encounterId) => {
+        this.#assertRole(context, ['outpatient-doctor'])
+        const outpatientCase = this.#caseByEncounter(context, encounterId)
+        this.#assertCaseResponsibility(context, outpatientCase.case_id)
+        const encounter = this.#fhir.read(context, 'Encounter', encounterId)
+        return { caseId: outpatientCase.case_id, editable: encounter.status === 'in-progress'
+          && outpatientCase.status !== 'completed'
+          && this.#signedClinicalDocumentRoot(context, outpatientCase.case_id) === undefined }
+      },
+    })
     const requestHost = {
       assertCaseResponsibility: (context: ActorContext, caseId: string) => this.#assertCaseResponsibility(context, caseId),
       assertExpectedVersions: (expectedVersions: Record<string, string>, references: string[]) => (
@@ -3049,6 +3067,7 @@ export class WorkflowService {
     )
     const issuedPrescription = this.#issuedPrescription(context, row.case_id)
     const noMedication = this.#noMedicationConclusion(context, row.case_id)
+    const consultationRecording = this.consultationRecording.read(context, row.case_id)
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
@@ -3056,7 +3075,7 @@ export class WorkflowService {
         clinicalDocument: {
           ...(clinicalDocumentDraft === undefined ? {} : {
             draft: {
-              ...clinicalDocumentContentSchema.parse(JSON.parse(clinicalDocumentDraft.content_json)),
+              ...clinicalDocumentDraftContentSchema.parse(JSON.parse(clinicalDocumentDraft.content_json)),
               updatedAt: clinicalDocumentDraft.updated_at,
               version: clinicalDocumentDraft.version,
             },
@@ -3065,6 +3084,7 @@ export class WorkflowService {
         },
       }),
       ...(consultation === undefined ? {} : { consultation }),
+      ...(consultationRecording === undefined ? {} : { consultationRecording }),
       ...(diagnosisState === undefined ? {} : {
         diagnosis: {
           ...(diagnosisConfirmation === undefined ? {} : { confirmation: diagnosisConfirmation }),
@@ -3303,7 +3323,7 @@ export class WorkflowService {
         personaRevision: input.personaRevision,
       },
       operation: 'consultation.patient-turn.append',
-    }, () => {
+    }, transaction => {
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
       if (outpatientCase.doctor_task_id === null || outpatientCase.status === 'completed') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for consultation')
@@ -3324,6 +3344,9 @@ export class WorkflowService {
         personaRevision: input.personaRevision,
         source: 'patient-agent',
         speaker: 'patient',
+      })
+      this.consultationRecording.enqueue(input.context, transaction, {
+        caseId: outpatientCase.case_id, encounterId: input.encounterId, turnId: turn.turn.id,
       })
       return {
         data: {
@@ -9543,6 +9566,7 @@ export class WorkflowService {
       INSERT INTO consultation (workspace_id, epoch, case_id, version)
       VALUES (?, ?, ?, 1)
     `).run(context.workspaceId, context.epoch, caseId)
+    this.consultationRecording.create(context, caseId)
   }
 
   #consultationTurnRows(context: ActorContext, caseId: string) {

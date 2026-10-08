@@ -975,10 +975,37 @@ export const clinicalDocumentContentSchema = z.object({
   priorMedicalHistory: z.string().trim().min(2).max(4_000).optional(),
 }).strict()
 
+// 草稿与签署分别校验：草稿可不完整，正式文书保持原有必填合同。
+export const clinicalDocumentDraftContentSchema = clinicalDocumentContentSchema.extend({
+  assessment: z.string().trim().max(4_000),
+  auxiliaryExamination: z.string().trim().max(4_000).optional(),
+  chiefComplaint: z.string().trim().max(1_000),
+  disposition: z.string().trim().max(4_000),
+  followUp: z.string().trim().max(4_000),
+  historyOfPresentIllness: z.string().trim().max(5_000),
+  physicalExamination: z.string().trim().max(4_000),
+  priorMedicalHistory: z.string().trim().max(4_000).optional(),
+})
+
+export const consultationHistoryAdditionSchema = z.object({
+  field: z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory']),
+  sourceTurnId: z.string().min(1).max(128),
+  quote: z.string().trim().min(2).max(600),
+  relation: z.enum(['addition', 'correction', 'conflict']),
+}).strict()
+
+export const consultationRecordingSchema = z.object({
+  status: z.enum(['idle', 'processing', 'updated', 'pending']),
+  additions: z.array(consultationHistoryAdditionSchema.extend({
+    id: z.string().min(1),
+    status: z.enum(['applied', 'pending']),
+  }).strict()),
+}).strict()
+
 export const saveClinicalDocumentDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
-    document: clinicalDocumentContentSchema,
+    document: clinicalDocumentDraftContentSchema,
     expectedDraftVersion: z.number().int().nonnegative(),
   }).strict(),
 }).strict()
@@ -1066,7 +1093,7 @@ export const completedCaseClinicalDocumentSchema = signedClinicalDocumentSchema.
 }).strict()
 
 export const clinicalDocumentStateSchema = z.object({
-  draft: clinicalDocumentContentSchema.extend({
+  draft: clinicalDocumentDraftContentSchema.extend({
     updatedAt: z.string().min(1),
     version: z.number().int().positive(),
   }).strict().optional(),
@@ -1752,6 +1779,7 @@ export const doctorCaseDetailSchema = z.object({
   allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
   clinicalDocument: clinicalDocumentStateSchema.optional(),
+  consultationRecording: consultationRecordingSchema.optional(),
   consultation: z.object({
     turns: z.array(consultationTurnSchema),
     version: z.number().int().positive(),

@@ -4,7 +4,7 @@ Status: proposed
 
 ## Problem
 
-患者回答完成后当前仅刷新病例，DSH 虽可读取 Consultation Record 并调用草稿填写工具，但没有自动提取和保存触发。完整文书填写不能表达持续记录的增量来源与人工修改保护。
+自动记录的持久触发、辅助提取和保守追加已由[基础增量决策](../../implemented/architecture/2026-10-08-consultation-history-increments.md)交付。持续记录仍需完善部分人工修改归属、来源核对与撤销、暂停补录及签署交互；本提案继续拥有这些后续取舍。
 
 ## Proposal
 

@@ -92,6 +92,8 @@ clinmesh pathology-report correct --input @pathology-correction.json --idempoten
 
 Use independent lifecycle Commands. A document preview binds the current draft and versions; sign from that preview, and revise a signed document by creating a new revision. Document signing never completes the Encounter. Read the completion preview, resolve every blocking condition, then submit Encounter Completion with the current Encounter version. Do not use combined revisit, combined signing/completion or old laboratory-order entrypoints.
 
+Draft saves accept empty fields while history is still being collected. Keep every required document key, use an empty string for unfinished content, and read the current draft version before saving. Sign preview still requires complete clinical content. In DSH, new consultations automatically record sourced patient history; read `consultationRecording` and the current draft before making changes, and leave pending additions for human review.
+
 ```bash
 clinmesh encounter clinical-document draft set --input @document.json --idempotency-key <key>
 clinmesh encounter clinical-document sign preview --input @document-preview.json --idempotency-key <key>
