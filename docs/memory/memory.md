@@ -38,6 +38,8 @@
 
 ## 运行与验证边界
 
+- 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；修复调用保留独立预算，服务关闭取消与模型超时分开处理。回归同时覆盖慢速首次无效响应后的修复和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+
 - SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
 
 - 首次自动草稿从无到有时，不能将其未涉及字段的空值当作清空指令；页面预填值与人工输入都须覆盖回归。验证保留后还要保存、刷新，并主动清空再保存，避免修复变成永久恢复默认值。当前病史边界由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
@@ -101,6 +103,8 @@
 - 审查自动升级时同时核对人工提交历史和最终执行目标：快进追加仍可能覆盖人工指定的支持 SHA。版本号相同也不能证明安装内容相同；发现摘要必须绑定实际下载文件与重建锁。当前保护和恢复方式见[DSH 持续升级](../deployment.md#dsh-持续升级)。
 
 - GitHub 的 PR ref 或 commit API 能访问某个支持 SHA，不代表从上游仓库普通 clone 后可检出；该对象可能只在贡献者 fork 的分支上。验收必须用声明的 source 新建 clone 并执行精确 checkout，不能复用含额外对象的本地仓库作为公开来源证据。
+
+- PR 审查的 three-dot diff 以 merge-base 确定改动范围，合并冲突则以当前远端目标分支 tip 判断。PR 元数据中的 base SHA 与远端分支 tip 不一致时，用 `git ls-remote` 或远端 ref API 核对并 fetch 最新目标分支，再以 `git merge-tree --write-tree <target-tip> <head>` 验证；不能把旧 base 与 head 合并成功当作当前可合并的证据。
 
 - `pnpm reference:sync` 固定写入默认路径 `.data/clinmesh-reference.sqlite`，不读取 `.env` 的 `CLINMESH_REFERENCE_DATABASE_PATH`；`.env` 指向自定义路径时会与同步结果分叉，出现"诊断药品正常、检验目录为空"（旧 Release 不含 `laboratory-cn`）。排查时直接查库：`reference_release` 表按 `release_id` 看 `laboratory_definition_count`。当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`，不要在 `.env` 手抄该 ID 制造双事实来源；运行中 Server 不热切换参考库，修复后必须重启。
 

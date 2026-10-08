@@ -1079,7 +1079,7 @@ function stubDoctorCompletedCaseLibrary(options: {
 function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry') {
   const initialVersion = action === 'backfill' ? 0 : 2
   let recording: NonNullable<DoctorCaseDetail['consultationRecording']> = {
-    hasSavedDraft: true, version: initialVersion, paused: action === 'resume', processedCount: 0,
+    hasSavedDraft: true, failures: [], version: initialVersion, paused: action === 'resume', processedCount: 0,
     remainingCount: action === 'pause' ? 0 : 1, failedCount: action === 'retry' ? 1 : 0,
     status: action === 'pause' ? 'updated' : action === 'resume' ? 'paused' : action === 'retry' ? 'failed' : 'backfill',
     additions: [],

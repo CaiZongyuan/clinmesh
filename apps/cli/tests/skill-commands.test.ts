@@ -108,6 +108,11 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)
     expect(skill).toContain('processedCount')
     expect(skill).toContain('explicitly starts it')
+    expect(operation.version).toBe(2)
+    expect(operation.summary).toContain('backfill requires an existing Consultation')
+    expect(operation.summary).toContain('WORKFLOW_CONFLICT')
+    expect(skill).toContain('Backfill requires an existing Consultation')
+    expect(skill).toContain('WORKFLOW_CONFLICT')
   })
   it('keeps history review examples bound to the narrow versioned correction contract', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
@@ -128,6 +133,8 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(skill).toContain('consultationRecording')
     expect(skill).toContain('hasSavedDraft')
     expect(getHisOperation('doctor.case.get').summary).toContain('hasSavedDraft')
+    expect(skill).toContain('consultationRecording.failures')
+    expect(getHisOperation('doctor.case.get').summary).toContain('failures')
     const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter clinical-document draft set'))!
     expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 0,
@@ -141,7 +148,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 5 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 6 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }

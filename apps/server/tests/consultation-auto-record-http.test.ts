@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 
@@ -179,14 +180,19 @@ it('retries a failed head before later replies and persists real progress across
   expect((await fixture.control('retry')).status).toBe(409)
 })
 
-it.each([false, true])('discards an in-flight result after pause even when resume happens before it returns: %s', async resumeFirst => {
+it.each([
+  [false, false], [true, false], [false, true], [true, true],
+] as const)('discards an in-flight result after pause with early resume %s and timeout %s', async (resumeFirst, timeout) => {
   let enter!: () => void
   let release!: () => void
   const entered = new Promise<void>(resolve => { enter = resolve })
   const held = new Promise<void>(resolve => { release = resolve })
   let calls = 0
   const fixture = await setup({ extract: async input => {
-    if (calls++ === 0) { enter(); await held }
+    if (calls++ === 0) {
+      enter(); await held
+      if (timeout) throw new ChatCompletionsError('AI_TIMEOUT', 'Synthetic late timeout')
+    }
     const turns = (input.userPayload as { turns: Array<{ id: string; messageText: string }> }).turns
     return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turns.at(-1)!.id, quote: turns.at(-1)!.messageText, relation: 'addition' }] }
   } })
@@ -567,6 +573,95 @@ it('records saved patient history asynchronously through the public consultation
   expect(duplicate.status).toBe(200)
   await runtime.dispatchPending()
   expect((await read()).clinicalDocument?.draft?.version).toBe(detail.clinicalDocument?.draft?.version)
+})
+
+it.each(['AI_TIMEOUT', 'AI_AUTH_FAILED', 'AI_RESPONSE_INVALID'] as const)(
+  'settles %s recording failures across restart and allows explicit retry without losing the reply', async code => {
+    let fail = true
+    const fixture = await setup({ extract: input => {
+      if (fail) throw new ChatCompletionsError(code, 'private-provider-credential-and-prompt')
+      const turns = (input.userPayload as { turns: Array<{ id: string; messageText: string }> }).turns
+      return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turns.at(-1)!.id,
+        quote: turns.at(-1)!.messageText, relation: 'addition' }] }
+    } })
+    expect((await fixture.ask()).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    const detail = await fixture.read()
+    expect(detail.clinicalDocument?.draft).toBeUndefined()
+    expect(detail.consultationRecording).toMatchObject({ status: 'failed', failedCount: 1, remainingCount: 1, additions: [],
+      failures: [{ sourceTurnId: detail.consultation?.turns.at(-1)?.id, code, retrying: false }] })
+    expect(detail.consultation?.turns).toHaveLength(3)
+    expect(JSON.stringify(detail)).not.toContain('private-provider-credential-and-prompt')
+    expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toHaveLength(1)
+    await fixture.restart()
+    await fixture.runtime.dispatchPending()
+    expect((await fixture.read()).consultationRecording).toEqual(detail.consultationRecording)
+    expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toHaveLength(1)
+    fail = false
+    const retried = await fixture.control('retry')
+    expect(retried.status).toBe(200)
+    expect(controlConsultationRecordingResponseSchema.parse(await retried.json()).data).toMatchObject({
+      status: 'processing', failedCount: 0, failures: [], remainingCount: 1,
+    })
+    await fixture.runtime.dispatchPending()
+    expect((await fixture.read()).consultationRecording).toMatchObject({
+      status: 'updated', failedCount: 0, failures: [], processedCount: 1, remainingCount: 0,
+    })
+    expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toHaveLength(2)
+  },
+)
+
+it('exposes transient failure while retrying and clears it after a validated update', async () => {
+  let failed = false
+  const fixture = await setup({ extract: input => {
+    if (!failed) { failed = true; throw new ChatCompletionsError('AI_REQUEST_FAILED', 'private-network-error') }
+    const turns = (input.userPayload as { turns: Array<{ id: string }> }).turns
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turns.at(-1)!.id,
+      quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatcher.dispatchOnce()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'processing',
+    failures: [{ code: 'AI_REQUEST_FAILED', retrying: true }] })
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', failures: [] })
+})
+
+it.each([0, 2])('settles an extraction cancelled by Server shutdown after %s earlier failures', async earlierFailures => {
+  let entered!: () => void
+  const extracting = new Promise<void>(resolve => { entered = resolve })
+  let cancelled = false
+  let calls = 0
+  const fixture = await setup({ extract: async input => {
+    if (calls++ < earlierFailures) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'Synthetic transient failure')
+    if (!cancelled) {
+      entered()
+      await new Promise<void>((_resolve, reject) => input.signal!.addEventListener('abort', () => {
+        cancelled = true
+        reject(new ChatCompletionsError('AI_TIMEOUT', 'Synthetic shutdown'))
+      }, { once: true }))
+    }
+    const turns = (input.userPayload as { turns: Array<{ id: string }> }).turns
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turns.at(-1)!.id,
+      quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  const processing = fixture.runtime.dispatchPending()
+  await extracting
+  await fixture.restart()
+  await processing
+  if (earlierFailures === 2) {
+    expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed',
+      failures: [{ code: 'CONSULTATION_RECORDING_FAILED', retrying: false }] })
+    await fixture.runtime.dispatchPending()
+    expect((await fixture.read()).clinicalDocument?.draft).toBeUndefined()
+    expect(calls).toBe(3)
+    return
+  }
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'processing', failures: [] })
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', failures: [] })
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了，站起来时更明显。')
 })
 
 it('rejects a quote that removes the patient negation instead of recording chest pain', async () => {

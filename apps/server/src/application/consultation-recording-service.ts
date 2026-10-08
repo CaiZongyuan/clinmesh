@@ -1,6 +1,7 @@
 import {
   clinicalDocumentDraftContentSchema,
   consultationHistoryAdditionSchema,
+  consultationRecordingErrorCodeSchema,
   consultationRecordingSchema,
   consultationTurnSchema,
   controlConsultationRecordingResponseSchema,
@@ -10,7 +11,7 @@ import { trackDocumentFragment } from '@clinmesh/core/document-text'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
-import type { JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
+import { ChatCompletionsError, type JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 import type { ActorContext, CommandExecutor, CommandTransaction } from './command-executor.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
@@ -33,7 +34,8 @@ const jobSchema = z.object({
 })
 const recordingStateSchema = z.object({ version: z.number().int().positive(), paused: z.number().int().min(0).max(1), start_sequence: z.number().int().positive() })
 const orderedJobsSchema = z.array(z.object({ turn_id: z.string(), status: jobSchema.shape.status,
-  generation: jobSchema.shape.generation, scheduled: z.number().int().min(0).max(1) }))
+  generation: jobSchema.shape.generation, scheduled: z.number().int().min(0).max(1),
+  error_code: consultationRecordingErrorCodeSchema.nullable() }))
 const draftSchema = z.object({ content_json: z.string(), version: z.number().int().positive() })
 const additionRowsSchema = z.array(z.object({
   addition_id: z.string(), field: consultationHistoryAdditionSchema.shape.field,
@@ -57,6 +59,7 @@ const prompt = [
 
 type Addition = z.infer<typeof consultationHistoryAdditionSchema>
 type Draft = z.infer<typeof clinicalDocumentDraftContentSchema>
+class RecordingSourceError extends Error {}
 
 function statements(quote: string): string[] {
   return (quote.match(/.*?(?:[。！？!?；;\n]+|$)/gs) ?? []).map(text => text.trim()).filter(Boolean)
@@ -125,8 +128,14 @@ export class ConsultationRecordingService {
     `).get(context.workspaceId, context.epoch, caseId))
   }
 
+  #hasConsultation(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string): boolean {
+    return this.#database.driver.prepare(`SELECT 1 FROM consultation
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, caseId) !== undefined
+  }
+
   #jobs(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
-    return orderedJobsSchema.parse(this.#database.driver.prepare(`SELECT j.turn_id, j.status, j.generation, j.scheduled
+    return orderedJobsSchema.parse(this.#database.driver.prepare(`SELECT j.turn_id, j.status, j.generation, j.scheduled, j.error_code
       FROM consultation_recording_job j JOIN consultation_turn t
         ON t.workspace_id = j.workspace_id AND t.epoch = j.epoch AND t.turn_id = j.turn_id
       WHERE j.workspace_id = ? AND j.epoch = ? AND j.case_id = ? ORDER BY t.sequence
@@ -164,6 +173,7 @@ export class ConsultationRecordingService {
         || input.expectedVersions[`Encounter/${encounterId}`] === undefined
         || (state?.version ?? 0) !== input.expectedRecordingVersion
         || (action === 'backfill' ? state !== undefined : state === undefined)
+        || (action === 'backfill' && !this.#hasConsultation(context, access.caseId))
         || (action === 'resume' && state?.paused !== 1)
         || (action === 'pause' && state?.paused !== 0)
         || (action === 'retry' && (state?.paused !== 0 || !this.#jobs(context, access.caseId).some(job => job.status === 'failed')))) {
@@ -200,8 +210,7 @@ export class ConsultationRecordingService {
 
   read(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
     const state = this.#state(context, caseId)
-    if (state === undefined && (!this.#enabled || this.#database.driver.prepare(`SELECT 1 FROM consultation
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).get(context.workspaceId, context.epoch, caseId) === undefined)) return undefined
+    if (state === undefined && (!this.#enabled || !this.#hasConsultation(context, caseId))) return undefined
     const jobs = this.#jobs(context, caseId)
     const total = z.object({ count: z.number().int().nonnegative() }).parse(this.#database.driver.prepare(`SELECT count(*) AS count
       FROM consultation_turn WHERE workspace_id = ? AND epoch = ? AND case_id = ?
@@ -235,6 +244,9 @@ export class ConsultationRecordingService {
         : additions.some(addition => addition.status === 'pending') ? 'pending'
           : jobs.length > 0 ? 'updated' : 'idle',
       additions,
+      failures: jobs.filter(job => job.status !== 'completed' && job.error_code !== null).map(job => ({
+        sourceTurnId: job.turn_id, code: job.error_code!, retrying: job.status === 'queued',
+      })),
     })
   }
 
@@ -316,7 +328,7 @@ export class ConsultationRecordingService {
   }
 
   async process(event: OutboxHandlerInput, model: {
-    models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider; signal: AbortSignal
+    models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider; signal: AbortSignal; shutdownSignal?: AbortSignal
   }): Promise<OutboxHandlerResult> {
     const { turnId, generation } = z.object({ turnId: z.string().min(1), generation: z.number().int().positive().default(1) }).strict().parse(event.payload)
     const job = jobSchema.optional().parse(this.#database.driver.prepare(`SELECT case_id, encounter_id,
@@ -374,33 +386,42 @@ export class ConsultationRecordingService {
         model: pinned, signal: model.signal, schemaName: 'consultation_history_increment',
         jsonSchema: z.toJSONSchema(outputSchema) as Record<string, unknown>, systemPrompt: prompt,
         userPayload: { turns, history: history.map(({ sourceTurnId: _sourceTurnId, ...item }) => item) },
-        validate: value => outputSchema.safeParse(value).success,
+        validate: value => { outputSchema.parse(value); return true },
       })
+      model.signal.throwIfAborted()
       const output = outputSchema.parse(JSON.parse(result.content))
       for (const addition of output.additions) {
         const source = turns.find(turn => turn.id === addition.sourceTurnId)
         if (source?.speaker !== 'patient' || !quotesCompleteStatement(source.messageText, addition.quote)
           || /[?？]|不知道|不清楚|说不清|记不清|可能|也许|是不是/.test(addition.quote)) {
-          throw new Error('Recording output is not an explicit patient statement')
+          throw new RecordingSourceError('Recording output is not an explicit patient statement')
         }
         if (addition.targetAdditionId !== undefined) {
-          if (statements(addition.quote).length !== 1) throw new Error('Recording correction must target one complete statement')
+          if (statements(addition.quote).length !== 1) throw new RecordingSourceError('Recording correction must target one complete statement')
           const target = history.find(item => item.id === addition.targetAdditionId)
           const targetIndex = turns.findIndex(turn => turn.id === target?.sourceTurnId)
           if (target === undefined || target.field !== addition.field || targetIndex < 0
             || targetIndex >= turns.findIndex(turn => turn.id === addition.sourceTurnId)) {
-            throw new Error('Recording correction does not refer to earlier history in this case')
+            throw new RecordingSourceError('Recording correction does not refer to earlier history in this case')
           }
         }
       }
       if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
       if (this.#current(context, turnId, job)) this.#apply(context, event, turnId, job, baseline, output.additions)
       return { status: 'completed' }
-    } catch {
+    } catch (error) {
       if (!this.#current(context, turnId, job)) return { status: 'completed' }
+      if (model.shutdownSignal?.aborted && event.attempt < 3) return { status: 'retryable-failed' }
       if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
-      this.#finish(context, event, turnId, job, 'failed', 'CONSULTATION_RECORDING_FAILED')
-      return { status: event.attempt < 3 ? 'retryable-failed' : 'completed' }
+      const code = model.shutdownSignal?.aborted ? 'CONSULTATION_RECORDING_FAILED'
+        : model.signal.aborted ? 'AI_TIMEOUT' : error instanceof ChatCompletionsError ? error.code
+        : error instanceof z.ZodError ? 'CONSULTATION_RECORDING_OUTPUT_INVALID'
+          : error instanceof RecordingSourceError ? 'CONSULTATION_RECORDING_SOURCE_INVALID' : 'CONSULTATION_RECORDING_FAILED'
+      // A timeout or exhausted structured-output repair must settle instead of multiplying long model calls.
+      const retrying = event.attempt < 3 && ['AI_REQUEST_FAILED', 'CONSULTATION_RECORDING_FAILED',
+        'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID'].includes(code)
+      this.#finish(context, event, turnId, job, 'failed', code, retrying)
+      return { status: retrying ? 'retryable-failed' : 'completed' }
     }
   }
 
@@ -558,9 +579,9 @@ export class ConsultationRecordingService {
   }
 
   #finish(context: ActorContext, event: OutboxHandlerInput, turnId: string,
-    job: z.infer<typeof jobSchema>, status: 'failed', code: string) {
+    job: z.infer<typeof jobSchema>, status: 'failed', code: z.infer<typeof consultationRecordingErrorCodeSchema>, retrying = false) {
     if (!this.#current(context, turnId, job)) return
-    const nextStatus = code === 'CONSULTATION_RECORDING_FAILED' && event.attempt < 3 ? 'queued' : status
+    const nextStatus = retrying ? 'queued' : status
     this.#commands.execute({ context, operation: 'consultation.history.fail', expectedVersions: {},
       contextRequirement: 'current',
       idempotencyKey: `history:${event.eventId}:failure:${event.attempt}`, input: { turnId, code },

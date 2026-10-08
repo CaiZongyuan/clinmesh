@@ -29,3 +29,5 @@ Status: implemented
 ## Consequences
 
 患者回复不等待提取，失败只影响记录状态。自动记录复用 outbox 的有界重试、租约恢复和 Epoch abandon；来源与应用状态可重新查询。已有就诊不会因打开页面自动补录，standalone 默认不新增模型配置。主要行为通过问诊 HTTP、病例 Query 和真实 SQLite 验证，桥接测试拥有 DSH 辅助调用与重启 wiring，Playwright 拥有可见状态、自动新增提示和未保存输入保护。
+
+模型输出修复、跨层调用预算与安全失败反馈由[自动病史调用决策](../bug-fix/2026-10-08-consultation-model-output-budget.md)拥有；本记录的来源、持久上下文与业务写入边界继续适用。

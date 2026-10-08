@@ -17,7 +17,9 @@ const detail: DoctorCaseDetail = {
     source: 'patient-agent', kind: 'text', messageText: '刚才说错了，头晕是六天。', sequence: 1,
     recordedAt: '2026-10-08T09:00:00+08:00', personaRevision: 1, reportReference: null }] },
   consultationRecording: { hasSavedDraft: true, version: 1, paused: false, processedCount: 1, remainingCount: 0, failedCount: 0,
-    status: 'pending', additions: [{ id: 'synthetic-correction', field: 'historyOfPresentIllness',
+    status: 'pending',
+    failures: [{ sourceTurnId: 'synthetic-reply', code: 'AI_TIMEOUT', retrying: false }],
+    additions: [{ id: 'synthetic-correction', field: 'historyOfPresentIllness',
     sourceTurnId: 'synthetic-reply', quote: '刚才说错了，头晕是六天。', relation: 'correction', targetAdditionId: 'synthetic-original',
     status: 'pending', ownership: 'manual', currentText: '医生核对：头晕五天。', reviewable: true }] },
 }

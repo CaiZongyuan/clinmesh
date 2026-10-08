@@ -1339,8 +1339,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, failure, fragment ownership and review state; presentation is null when no triage record exists',
-    version: 5,
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, fragment ownership, review state and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
+    version: 6,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -1590,8 +1590,8 @@ const operationDefinitions = [
     mode: 'command', output: controlConsultationRecordingResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording; requires the current recording version and preserves completed answers and manual edits',
-    version: 1,
+    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed answers and manual edits',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'draft', 'set'],

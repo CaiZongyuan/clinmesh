@@ -2,6 +2,45 @@ import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
+import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
+
+for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
+  test(`settles ${code} with a visible reason and saved patient reply after reload`, async ({ page, webRoot }) => {
+    const server = await startBrowserServer(webRoot, {
+      dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+      syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
+      chatCompletionsProvider: { async completeJson(input) {
+        if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
+        if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply: '头晕一周了。' }), model: 'synthetic' }
+        throw new ChatCompletionsError(code, 'private-provider-credential-and-prompt')
+      } },
+    })
+    try {
+      await startConsultationCase(server.runtime, server.password, server.origin)
+      await page.goto(`${server.origin}/consultation`)
+      await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+      await page.getByLabel('账户密码').fill(server.password)
+      await page.getByRole('button', { name: '登录', exact: true }).click()
+      await page.getByRole('tab', { name: '待诊', exact: true }).click()
+      await page.getByText('张琴', { exact: true }).first().click()
+      await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+      await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+      await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('头晕多久了？')
+      await page.getByRole('button', { name: '向患者提问', exact: true }).click()
+      await expect(page.getByText('头晕一周了。', { exact: true })).toBeVisible()
+      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      const reason = code === 'AI_TIMEOUT' ? '自动记录超时，患者回答已保存，请根据问诊原文补充病史。'
+        : '自动记录结果未通过校验，病史未写入，请核对问诊原文。'
+      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
+      await expect(page.getByText(reason, { exact: true })).toBeVisible()
+      await page.reload()
+      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await expect(page.getByText(reason, { exact: true })).toBeVisible()
+      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
+      expect(await page.locator('body').innerText()).not.toContain('private-provider-credential-and-prompt')
+    } finally { await server.close() }
+  })
+}
 
 test('pauses recording while asking, preserves it on reload, resumes missing replies and retries a failure', async ({ page, webRoot }) => {
   let reply = '头晕一周了。'

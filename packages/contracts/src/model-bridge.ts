@@ -29,6 +29,7 @@ export const modelBridgeRequestSchema = z.discriminatedUnion('operation', [
     jsonSchema: z.record(z.string(), z.unknown()),
     systemPrompt: z.string().min(1).max(64 * 1024),
     userPayload: z.unknown(),
+    timeoutMs: z.number().int().min(100).max(10 * 60_000).optional(),
   }).strict(),
 ])
 export const modelBridgeResponseSchema = z.object({

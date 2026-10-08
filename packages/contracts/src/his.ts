@@ -1000,6 +1000,13 @@ export const consultationHistoryAdditionSchema = z.object({
   }
 })
 
+export const consultationRecordingErrorCodeSchema = z.enum([
+  'AI_AUTH_FAILED', 'AI_REQUEST_FAILED', 'AI_REQUEST_TOO_LARGE', 'AI_RESPONSE_INVALID',
+  'AI_RESPONSE_TOO_LARGE', 'AI_TIMEOUT', 'CONSULTATION_RECORDING_FAILED',
+  'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID',
+  'CONSULTATION_RECORDING_NOT_EDITABLE', 'CONSULTATION_RECORDING_CONTEXT_INACTIVE',
+])
+
 export const consultationRecordingSchema = z.object({
   hasSavedDraft: z.boolean(),
   version: z.number().int().nonnegative().default(0),
@@ -1008,6 +1015,11 @@ export const consultationRecordingSchema = z.object({
   remainingCount: z.number().int().nonnegative().default(0),
   failedCount: z.number().int().nonnegative().default(0),
   status: z.enum(['idle', 'processing', 'updated', 'pending', 'paused', 'backfill', 'failed']),
+  failures: z.array(z.object({
+    sourceTurnId: z.string().min(1),
+    code: consultationRecordingErrorCodeSchema,
+    retrying: z.boolean(),
+  }).strict()).default([]),
   // Historical suggestions may predate the required correction target in the extraction contract.
   additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({
     id: z.string().min(1),
