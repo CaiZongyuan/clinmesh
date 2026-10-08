@@ -140,3 +140,36 @@ test('doctor checklist stays between patient details and vital signs and replace
   await banner.evaluate(element => { element.scrollTop = element.scrollHeight })
   await expect(banner.getByText('血氧饱和度（%）', { exact: true })).toBeInViewport()
 })
+
+test('queue tabs adapt to the 200px sidebar with full-width English labels', async ({ page, browserApp }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`${browserApp.origin}/consultation`)
+  await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+  await page.getByLabel('账户密码').fill(browserApp.password)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page.getByRole('complementary', { name: '候诊队列' })).toBeVisible()
+  await page.goto(`${browserApp.origin}/settings`)
+  await page.getByRole('button', { name: 'English', exact: true }).click({ timeout: 20_000 })
+  await expect(page.locator('.clinmesh-web-root')).toHaveAttribute('lang', 'en-US')
+  await page.goto(`${browserApp.origin}/consultation`)
+  const aside = page.getByRole('complementary', { name: 'Waiting queue' })
+  await expect(aside.getByRole('tab', { name: 'In care', exact: true })).toBeVisible()
+  // 队列 tab 行必须完整落在 200px 侧栏内：任一触发器越界（左截断或压住计数徽章）都算失败。
+  const geo = await aside.getByRole('tablist').evaluate(listElement => {
+    const asideElement = listElement.closest('aside')
+    const asideBounds = asideElement?.getBoundingClientRect()
+    const triggers = Array.from(listElement.querySelectorAll('[role="tab"]'))
+      .map(tab => tab.getBoundingClientRect())
+    return {
+      asideLeft: asideBounds?.left ?? Number.NEGATIVE_INFINITY,
+      asideRight: asideBounds?.right ?? Number.POSITIVE_INFINITY,
+      asideScrolls: asideElement === null || asideElement.scrollWidth > asideElement.clientWidth + 1,
+      minTriggerLeft: triggers.length === 0 ? Number.NEGATIVE_INFINITY : Math.min(...triggers.map(b => b.left)),
+      maxTriggerRight: triggers.length === 0 ? Number.POSITIVE_INFINITY : Math.max(...triggers.map(b => b.right)),
+    }
+  })
+  expect(geo.asideScrolls).toBe(false)
+  expect(geo.minTriggerLeft).toBeGreaterThanOrEqual(geo.asideLeft - 0.5)
+  expect(geo.maxTriggerRight).toBeLessThanOrEqual(geo.asideRight + 0.5)
+  await expect(aside.getByLabel(/^\d+ cases?$/)).toBeVisible()
+})
