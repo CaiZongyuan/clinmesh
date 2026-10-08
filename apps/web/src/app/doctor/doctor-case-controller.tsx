@@ -945,7 +945,8 @@ function DoctorCaseController({
       const queryKey = ['doctor-case', ...scope, variables.caseId]
       await queryClient.cancelQueries({ queryKey })
       queryClient.setQueriesData<DoctorCaseDetail>({ queryKey }, current => {
-        if (current === undefined || (current.consultationRecording?.version ?? 0) > response.data.version) return current
+        // Control versions do not advance with saved drafts, ownership or background progress.
+        if (current === undefined || (current.consultationRecording?.version ?? 0) >= response.data.version) return current
         return { ...current, consultationRecording: response.data }
       })
       await refreshCaseById(variables.caseId)
