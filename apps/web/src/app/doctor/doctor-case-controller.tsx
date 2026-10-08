@@ -426,7 +426,10 @@ function DoctorCaseController({
   const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
     Record<string, ClinicalDocumentContent>
   >({})
-  const clinicalDocumentBaselines = useRef<Record<string, ClinicalDocumentContent>>({})
+  const clinicalDocumentBaselines = useRef<Record<string, {
+    document: ClinicalDocumentContent
+    persisted: ClinicalDocumentContent | undefined
+  }>>({})
   const [agentDraftHydrationRevisions, setAgentDraftHydrationRevisions] = useState<
     Record<string, DoctorAgentDraftHydrationRevisions>
   >({})
@@ -576,13 +579,22 @@ function DoctorCaseController({
     if (currentDetail === undefined) return
     const next = createWorkingClinicalDocument(currentDetail)
     const previous = clinicalDocumentBaselines.current[currentDetail.caseId]
-    clinicalDocumentBaselines.current[currentDetail.caseId] = next
+    clinicalDocumentBaselines.current[currentDetail.caseId] = {
+      document: next,
+      persisted: currentDetail.clinicalDocument?.draft ?? currentDetail.clinicalDocument?.signed.at(-1)?.content,
+    }
     setWorkingClinicalDocuments(current => {
       const working = current[currentDetail.caseId]
       const merged = { ...next }
       if (working !== undefined && previous !== undefined) {
         for (const field of Object.keys(next) as Array<keyof ClinicalDocumentContent>) {
-          merged[field] = mergeDocumentText(previous[field] ?? '', working[field] ?? '', next[field] ?? '')
+          const firstAutomaticContent = currentDetail.consultationRecording?.hasSavedDraft === false
+            && !previous.persisted?.[field]
+            && currentDetail.consultationRecording.additions.some(addition => addition.status === 'applied' && addition.field === field)
+          // 预填尚未持久化，首批自动内容来自空字段，应追加到已经改写的预填后。
+          merged[field] = firstAutomaticContent && working[field] !== previous.document[field]
+            ? [working[field], next[field]].filter(Boolean).join('\n')
+            : mergeDocumentText(previous.document[field] ?? '', working[field] ?? '', next[field] ?? '')
         }
       }
       return { ...current, [currentDetail.caseId]: merged }

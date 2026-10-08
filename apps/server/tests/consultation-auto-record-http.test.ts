@@ -124,6 +124,34 @@ it('replaces only the untouched automatic fragment after an explicit patient cor
   } }, consultationRecording: { status: 'updated', additions: [{ status: 'superseded' }, { status: 'applied', ownership: 'automatic' }] } })
 })
 
+it('keeps a new explicit correction when a superseded correction used the same quote', async () => {
+  let reply = '头晕一周了。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>; history: Array<{ id: string }> }
+    const addition = { field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+      quote: payload.turns.at(-1)!.messageText, relation: payload.history.length ? 'correction' : 'addition',
+      ...(payload.history[0] === undefined ? {} : { targetAdditionId: payload.history[0].id }) }
+    return { additions: [addition, addition] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  for (const correction of ['刚才说错了，头晕是五天。', '刚才说错了，头晕是六天。', '刚才说错了，头晕是五天。']) {
+    reply = correction
+    expect((await fixture.askMore()).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+  }
+  await fixture.restart()
+  const final = await fixture.read()
+  expect(final.clinicalDocument?.draft).toMatchObject({
+    historyOfPresentIllness: '患者自述：刚才说错了，头晕是五天。', version: 4,
+  })
+  expect(final.consultationRecording).toMatchObject({ status: 'updated', additions: [
+    { status: 'superseded' }, { status: 'superseded' }, { status: 'superseded' },
+    { status: 'applied', ownership: 'automatic', sourceTurnId: final.consultation?.turns.at(-1)?.id },
+  ] })
+  expect(final.consultationRecording?.additions).toHaveLength(4)
+})
+
 it.each(['accept', 'ignore'] as const)('requires a current-version %s decision before changing manually edited history', async decision => {
   let reply = '头晕一周了。'
   const fixture = await setup({ reply: () => reply, extract: input => {

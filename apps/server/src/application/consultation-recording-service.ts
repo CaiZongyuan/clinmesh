@@ -337,15 +337,17 @@ export class ConsultationRecordingService {
       const access = this.#assertAccess(context, job.encounter_id)
       const current = this.#draft(context, job.case_id)
       const existing = this.#rows(context, job.case_id)
-      const seen = new Set(existing.map(item => JSON.stringify([item.field, item.quote])))
+      const seenIds = new Set(existing.map(item => item.addition_id))
+      const seenQuotes = new Set(existing.map(item => JSON.stringify([item.field, item.quote])))
       const writable = access.editable && !this.#signing(context, job.case_id)
       const document = { ...current.content }
       let changed = false
       for (const addition of fragments) {
         const id = createHash('sha256').update(JSON.stringify(addition)).digest('hex')
         const key = JSON.stringify([addition.field, addition.quote])
-        if (seen.has(key)) continue
-        seen.add(key)
+        if (seenIds.has(id) || (addition.relation === 'addition' && seenQuotes.has(key))) continue
+        seenIds.add(id)
+        seenQuotes.add(key)
         const text = `患者自述：${addition.quote}`
         const target = this.#rows(context, job.case_id).find(item => item.addition_id === addition.targetAdditionId)
         const fieldText = document[addition.field] ?? ''
