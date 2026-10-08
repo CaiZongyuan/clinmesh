@@ -29,4 +29,4 @@ Status: implemented
 
 ## Consequences
 
-本决策替代基础边界中的整字段和全草稿版本门禁，沿用其来源验证、持久任务、授权及签署不变量。公开 HTTP、病例 Query 与 file-backed SQLite 验证局部修改、更正、矛盾、版本竞争、幂等和服务重启；真实 Web 旅程验证未保存片段合并与核对，React 18/19 ShadowRoot 合同验证来源展示、禁用状态和键盘操作。暂停、补录、撤销与签署提示仍由其他切片拥有。
+本决策替代基础边界中的整字段和全草稿版本门禁，沿用其来源验证、授权及签署不变量。公开 HTTP、病例 Query 与 file-backed SQLite 验证局部修改、更正、矛盾、版本竞争、幂等和服务重启；真实 Web 旅程验证未保存片段合并与核对，React 18/19 ShadowRoot 合同验证来源展示、禁用状态和键盘操作。暂停、补录与任务恢复见[记录恢复决策](2026-10-08-consultation-recording-recovery.md)；撤销与签署提示仍由其他切片拥有。

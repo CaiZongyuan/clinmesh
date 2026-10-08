@@ -31,16 +31,103 @@ for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       const reason = code === 'AI_TIMEOUT' ? '自动记录超时，患者回答已保存，请根据问诊原文补充病史。'
         : '自动记录结果未通过校验，病史未写入，请核对问诊原文。'
-      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
+      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
       await page.reload()
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
-      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
+      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
       expect(await page.locator('body').innerText()).not.toContain('private-provider-credential-and-prompt')
     } finally { await server.close() }
   })
 }
+
+test('pauses recording while asking, preserves it on reload, resumes missing replies and retries a failure', async ({ page, webRoot }) => {
+  let reply = '头晕一周了。'
+  let fail = false
+  const server = await startBrowserServer(webRoot, {
+    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+    syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
+    chatCompletionsProvider: { async completeJson(input) {
+      if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
+      if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply }), model: 'synthetic' }
+      if (fail) throw new Error('Synthetic disconnect')
+      const turns = (input.userPayload as { turns: Array<{ id: string; messageText: string }> }).turns
+      return { content: JSON.stringify({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turns.at(-1)!.id,
+        quote: turns.at(-1)!.messageText, relation: 'addition' }] }), model: 'synthetic' }
+    } },
+  })
+  try {
+    const started = await startConsultationCase(server.runtime, server.password, server.origin)
+    let failCaseReads = false
+    let failedCaseReads = 0
+    await page.route(`${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`, async route => {
+      if (failCaseReads) { failedCaseReads += 1; await route.abort('failed') }
+      else await route.continue()
+    })
+    await page.goto(`${server.origin}/consultation`)
+    await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+    await page.getByLabel('账户密码').fill(server.password)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.getByRole('tab', { name: '待诊', exact: true }).click()
+    await page.getByText('张琴', { exact: true }).first().click()
+    await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    const ask = async () => {
+      await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+      await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充病史？')
+      await page.getByRole('button', { name: '向患者提问', exact: true }).click()
+      await expect(page.getByText(reply, { exact: true })).toBeVisible()
+    }
+    const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
+      `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
+    await ask()
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await page.getByLabel('现病史', { exact: true }).fill('医生核对：头晕五天。')
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    await expect(page.getByText('病历草稿已保存', { exact: true })).toBeVisible()
+    failCaseReads = true
+    await page.getByRole('button', { name: '暂停自动整理', exact: true }).click()
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'paused')
+    await expect.poll(() => failedCaseReads).toBeGreaterThan(0)
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('医生核对：头晕五天。')
+    failCaseReads = false
+    reply = '站起来时更明显。'
+    await ask()
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'paused')
+    expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：头晕五天。')
+    await page.reload()
+    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeVisible()
+    expect((await read()).consultationRecording).toMatchObject({ paused: true, processedCount: 1, remainingCount: 1 })
+    const readsBeforeResume = failedCaseReads
+    failCaseReads = true
+    await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
+    await expect.poll(() => failedCaseReads).toBeGreaterThan(readsBeforeResume)
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
+    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeEnabled()
+    failCaseReads = false
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('医生核对：头晕五天。\n患者自述：站起来时更明显。')
+    reply = '夜间也会头晕。'
+    fail = true
+    await ask()
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
+    await page.reload()
+    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    fail = false
+    const readsBeforeRetry = failedCaseReads
+    failCaseReads = true
+    await page.getByRole('button', { name: '重试病史整理', exact: true }).click()
+    await expect.poll(() => failedCaseReads).toBeGreaterThan(readsBeforeRetry)
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
+    failCaseReads = false
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+    expect((await read()).consultationRecording).toMatchObject({ processedCount: 3, remainingCount: 0, failedCount: 0 })
+    expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：头晕五天。\n患者自述：站起来时更明显。\n患者自述：夜间也会头晕。')
+  } finally { await server.close() }
+})
 
 for (const existingAutomaticDraft of [false, true]) {
   test(`appends the first automatic history to unsaved prefill in a ${existingAutomaticDraft ? 'previously created' : 'new'} draft`, async ({ page, webRoot }) => {

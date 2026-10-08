@@ -27,6 +27,7 @@ import { useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -55,6 +56,7 @@ export interface ClinicalDocumentRevisionInput {
 }
 
 export interface ClinicalDocumentPageActions {
+  controlRecording?: ConsultationRecordingAction
   reviewHistory?: {
     error: Error | null
     pending: boolean
@@ -133,10 +135,9 @@ export function ClinicalDocumentPage({
           <ClipboardPenIcon aria-hidden="true" />
           <AlertTitle>{messages.consultationAutoRecord}</AlertTitle>
           <AlertDescription>
-            <p role="status">{detail.consultationRecording.status === 'processing' ? messages.consultationRecordingProcessing
-              : detail.consultationRecording.status === 'pending' ? messages.consultationRecordingPending
-                : detail.consultationRecording.status === 'updated' ? messages.consultationRecordingUpdated
-                  : messages.consultationRecordingReady}</p>
+            <ConsultationRecordingControls recording={detail.consultationRecording} action={actions.controlRecording}
+              disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || currentPreview !== undefined}
+              messages={messages} />
             {detail.consultationRecording.failures.map(failure => (
               <p key={failure.sourceTurnId}>
                 {failure.code === 'AI_TIMEOUT' ? messages.consultationRecordingTimeout

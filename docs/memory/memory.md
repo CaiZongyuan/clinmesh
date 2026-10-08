@@ -104,6 +104,8 @@
 
 - GitHub 的 PR ref 或 commit API 能访问某个支持 SHA，不代表从上游仓库普通 clone 后可检出；该对象可能只在贡献者 fork 的分支上。验收必须用声明的 source 新建 clone 并执行精确 checkout，不能复用含额外对象的本地仓库作为公开来源证据。
 
+- PR 审查的 three-dot diff 以 merge-base 确定改动范围，合并冲突则以当前远端目标分支 tip 判断。PR 元数据中的 base SHA 与远端分支 tip 不一致时，用 `git ls-remote` 或远端 ref API 核对并 fetch 最新目标分支，再以 `git merge-tree --write-tree <target-tip> <head>` 验证；不能把旧 base 与 head 合并成功当作当前可合并的证据。
+
 - `pnpm reference:sync` 固定写入默认路径 `.data/clinmesh-reference.sqlite`，不读取 `.env` 的 `CLINMESH_REFERENCE_DATABASE_PATH`；`.env` 指向自定义路径时会与同步结果分叉，出现"诊断药品正常、检验目录为空"（旧 Release 不含 `laboratory-cn`）。排查时直接查库：`reference_release` 表按 `release_id` 看 `laboratory_definition_count`。当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`，不要在 `.env` 手抄该 ID 制造双事实来源；运行中 Server 不热切换参考库，修复后必须重启。
 
 - 本地项目目录迁移后，DSH Profile 的 `link:` 插件依赖可能仍指向旧绝对路径。`pnpm dsh:setup` / `pnpm dev:dsh` 每次启动都会重验 `.data/dsh-runtime` Profile 的三个链接并自动修复指向当前仓库，无需人工处理；仓库外手工维护的沙箱仍需按原方法备份 Profile 的 `package.json` 核对更新并运行 `dsh plugin --profile web install`，插件自身依赖须在各自 workspace 按锁恢复。启动见[部署指南](../deployment.md)。
@@ -133,6 +135,8 @@
 
 - Agent Note 格式检查当前按 LF 分行，Windows CRLF 检出会把空行和状态行误报为格式错误。隔离验证 Git 中的文本时使用 `git -c core.autocrlf=false archive`，再覆盖待提交的新 Note；默认 `git archive` 也可能按 `core.autocrlf` 转换换行，不能当作原始 Git blob。该验证只证明文本格式，不替代 POSIX 权限或符号链接验证。
 
+- Windows 向 Linux 验证副本导出变更时，先暂存，再用默认 `git diff --cached <base> --binary --output=<path>`；不要给该 diff 强制 `core.autocrlf=false`，否则 CRLF 工作树可能产生整文件伪变化。应用前核对 patch 的文件数和行数；含 PATH 或复杂参数的 WSL 命令写入 LF shell 脚本文件执行，避免 PowerShell 到 WSL 的参数转义改变命令。
+
 - `publint` 会再调用包管理器打包；pnpm script 注入的 Node 目录可能让子进程选择 Corepack shim，而不是父进程使用的 pnpm。若父构建成功、打包却卡在解析 pnpm 版本，核对实际 PATH 和 Corepack 缓存，预先缓存仓库 `packageManager` 指定的版本；需要代理时在缓存准备步骤启用 Node 的代理支持，不通过跳过 publint 或覆盖宿主环境规避。
 
 - DSH 的内置 bundle 由宿主槽位提供；Profile 不重复安装它们的依赖闭包。出现 `profile reload requires the root Include entry` 时，先比较官方默认 Profile，再核对配置编辑器与启动入口解析出的 `dsh-app-boot` 是否是同一模块实例。HTTP 首页成功不能证明设置持久化和热重载可用；当前装配与验收归属见[部署指南](../deployment.md#dsh-web-原生入口)。
@@ -144,6 +148,8 @@
 - 替换 Agent 反馈渲染器时，分别处理真实执行、完成反馈可见性与资源清理，沿用既有完成停留合同。快速本地 Tool 的开始和完成可能被 React 合并为一次渲染，不能依赖执行阶段创建过 Canvas；回归须包含同批开始/完成、静态停留与停止绘制，并保持业务无额外延迟。当前时序由[能力参考](../agent-capabilities.md#反馈时序)拥有。
 
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
+
+- 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
 
 - 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。
 
@@ -252,7 +258,9 @@
 
 - DSH 模型流以 `finish.reason` 携带标准失败码，消费方按 code 分类，不解析原始消息或把所有失败归成网络故障。超时回归同时覆盖宿主返回 `TIMEOUT` 与本地 `AbortSignal` 到期；只验证本地计时器会漏掉宿主超时被误归为调用失败的路径。同一 Provider 下的模型可有不同访问权限；单模型返回 403 不证明整个 Provider 不可用。可用性验证通过真实桥接向其他完整 Provider／model 路由发送最小合成请求，不修改已有任务绑定，也不输出凭据或模型私有输入。
 
-- TanStack Query 的 `invalidateQueries` 默认不抛出刷新失败，不能靠它把成功写入同步到界面。保存成功后先校验并应用服务端返回的已提交值与 revision，取消可能覆盖该值的旧读取，再刷新目录。用户偏好：设置已经保存成功且界面保留已确认值时，只提示“已保存”，后续自动刷新失败静默处理，不展示“已保存但刷新失败”等内部同步提示；首次加载和实际保存失败仍须明确反馈。回归同时覆盖设置读取失败、目录读取失败、失败后的再次保存和延迟到达的旧响应，避免界面与实际生效值分叉。
+- TanStack Query 的 `invalidateQueries` 默认不抛出刷新失败，不能靠它把成功写入同步到界面。保存成功后先校验并应用服务端返回的已提交值与 revision，取消可能覆盖该值的旧读取，再刷新目录。有缓存数据的后台读取失败也会设置 `isError`；错误分支须区分首次加载、暂时读取失败和权限失效，且按已提交状态决定后续轮询，避免恢复已成功却只能重载页面。用户偏好：设置已经保存成功且界面保留已确认值时，只提示“已保存”，后续自动刷新失败静默处理，不展示“已保存但刷新失败”等内部同步提示；首次加载和实际保存失败仍须明确反馈。回归同时覆盖设置读取失败、目录读取失败、失败后的再次保存和延迟到达的旧响应，避免界面与实际生效值分叉。
+
+- 合并 Command 回执与 Query 缓存前，先确认版本号覆盖的事实范围。记录控制版本不随后台进度、编辑归属或显式保存推进，同版本的迟到控制回执不能整块覆盖已经读取的新状态。回归组合覆盖回执延迟、期间读取新状态、后续读取失败及切换病例后返回，并检查显式保存的空字段是否被旧预填恢复。
 
 - 排查 DSH Tool 参数失败时，对照该步的真实 `request/header` 与 `tool/call`：参数匹配模型收到的 schema、却被执行时新 schema 拒绝，是生成期间更新的竞态，不能只归因为模型填错。检查 SQL 报错时先核对运行中数据库路径和当前 schema，旧演示库的表名不能用于运行库。业务 preset 与恢复规则见 [DSH 页面操作](../agent-capabilities.md)。
 - DSH 工具目录交接回归必须在同一用户回合连续执行动作并检查第一条后续模型请求的实际 schema；分多个用户回合等页面稳定后再调用会漏掉竞态。测试模型收到结果后立即继续，不能用固定延时、重试或等待注册再发送第二条用户输入作为交接证据。

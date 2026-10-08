@@ -4,6 +4,7 @@ import {
   consultationRecordingErrorCodeSchema,
   consultationRecordingSchema,
   consultationTurnSchema,
+  controlConsultationRecordingResponseSchema,
   reviewConsultationHistoryResponseSchema,
 } from '@clinmesh/contracts/his'
 import { trackDocumentFragment } from '@clinmesh/core/document-text'
@@ -29,7 +30,12 @@ const contextSchema = z.object({
 const jobSchema = z.object({
   case_id: z.string(), encounter_id: z.string(), actor_context_json: z.string(),
   status: z.enum(['queued', 'completed', 'failed']),
+  generation: z.number().int().positive(),
 })
+const recordingStateSchema = z.object({ version: z.number().int().positive(), paused: z.number().int().min(0).max(1), start_sequence: z.number().int().positive() })
+const orderedJobsSchema = z.array(z.object({ turn_id: z.string(), status: jobSchema.shape.status,
+  generation: jobSchema.shape.generation, scheduled: z.number().int().min(0).max(1),
+  error_code: consultationRecordingErrorCodeSchema.nullable() }))
 const draftSchema = z.object({ content_json: z.string(), version: z.number().int().positive() })
 const additionRowsSchema = z.array(z.object({
   addition_id: z.string(), field: consultationHistoryAdditionSchema.shape.field,
@@ -108,22 +114,110 @@ export class ConsultationRecordingService {
   enqueue(context: ActorContext, transaction: CommandTransaction, input: {
     caseId: string; encounterId: string; turnId: string
   }): void {
-    if (this.read(context, input.caseId) === undefined) return
+    if (this.#state(context, input.caseId) === undefined) return
     this.#database.driver.prepare(`INSERT INTO consultation_recording_job
-      (workspace_id, epoch, case_id, encounter_id, turn_id, actor_context_json, status)
-      VALUES (?, ?, ?, ?, ?, ?, 'queued')`).run(context.workspaceId, context.epoch, input.caseId,
+      (workspace_id, epoch, case_id, encounter_id, turn_id, actor_context_json, status, scheduled)
+      VALUES (?, ?, ?, ?, ?, ?, 'queued', 0)`).run(context.workspaceId, context.epoch, input.caseId,
         input.encounterId, input.turnId, JSON.stringify(context))
-    transaction.enqueue({ kind: 'consultation.record-history', dedupKey: `history:${input.turnId}`,
-      payload: { turnId: input.turnId } })
+    this.#scheduleNext(context, transaction, input.caseId)
+  }
+
+  #state(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
+    return recordingStateSchema.optional().parse(this.#database.driver.prepare(`SELECT version, paused, start_sequence
+      FROM consultation_recording WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, caseId))
+  }
+
+  #hasConsultation(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string): boolean {
+    return this.#database.driver.prepare(`SELECT 1 FROM consultation
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, caseId) !== undefined
+  }
+
+  #jobs(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
+    return orderedJobsSchema.parse(this.#database.driver.prepare(`SELECT j.turn_id, j.status, j.generation, j.scheduled, j.error_code
+      FROM consultation_recording_job j JOIN consultation_turn t
+        ON t.workspace_id = j.workspace_id AND t.epoch = j.epoch AND t.turn_id = j.turn_id
+      WHERE j.workspace_id = ? AND j.epoch = ? AND j.case_id = ? ORDER BY t.sequence
+    `).all(context.workspaceId, context.epoch, caseId))
+  }
+
+  #scheduleNext(context: ActorContext, transaction: CommandTransaction, caseId: string): void {
+    if (this.#state(context, caseId)?.paused !== 0) return
+    const next = this.#jobs(context, caseId).find(job => job.status !== 'completed')
+    if (next?.status !== 'queued' || next.scheduled === 1) return
+    transaction.enqueue({ kind: 'consultation.record-history', dedupKey: `history:${next.turn_id}:${next.generation}`,
+      payload: { turnId: next.turn_id, generation: next.generation } })
+    this.#database.driver.prepare(`UPDATE consultation_recording_job SET scheduled = 1
+      WHERE workspace_id = ? AND epoch = ? AND turn_id = ?
+    `).run(context.workspaceId, context.epoch, next.turn_id)
+  }
+
+  #current(context: ActorContext, turnId: string, job: z.infer<typeof jobSchema>): boolean {
+    const head = this.#jobs(context, job.case_id).find(item => item.status !== 'completed')
+    return this.#state(context, job.case_id)?.paused === 0
+      && head?.turn_id === turnId && head.generation === job.generation && head.status === 'queued'
+  }
+
+  control(input: { context: ActorContext; encounterId: string; action: 'pause' | 'resume' | 'backfill' | 'retry';
+    expectedRecordingVersion: number; expectedVersions: Record<string, string>; idempotencyKey: string }) {
+    const { context, encounterId, action } = input
+    return this.#commands.execute({ context, operation: 'consultation.recording.control',
+      expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
+      input: { encounterId, action, expectedRecordingVersion: input.expectedRecordingVersion },
+      dataSchema: controlConsultationRecordingResponseSchema.shape.data,
+    }, transaction => {
+      const access = this.#assertAccess(context, encounterId)
+      const state = this.#state(context, access.caseId)
+      if (!access.editable || this.#signing(context, access.caseId)
+        || input.expectedVersions[`Encounter/${encounterId}`] === undefined
+        || (state?.version ?? 0) !== input.expectedRecordingVersion
+        || (action === 'backfill' ? state !== undefined : state === undefined)
+        || (action === 'backfill' && !this.#hasConsultation(context, access.caseId))
+        || (action === 'resume' && state?.paused !== 1)
+        || (action === 'pause' && state?.paused !== 0)
+        || (action === 'retry' && (state?.paused !== 0 || !this.#jobs(context, access.caseId).some(job => job.status === 'failed')))) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Refresh the consultation recording state before controlling it')
+      }
+      if (action !== 'pause' && !this.#enabled) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recording model is unavailable')
+      const version = (state?.version ?? 0) + 1
+      this.#database.driver.prepare(`INSERT INTO consultation_recording (workspace_id, epoch, case_id, version, paused, start_sequence)
+        VALUES (?, ?, ?, ?, ?, 1) ON CONFLICT (workspace_id, epoch, case_id)
+        DO UPDATE SET version = excluded.version, paused = excluded.paused
+      `).run(context.workspaceId, context.epoch, access.caseId, version, action === 'pause' ? 1 : 0)
+      // 使在途结果失效；恢复由本次受信控制意图授权，不借用旧任务的 Grant。
+      this.#database.driver.prepare(`UPDATE consultation_recording_job SET generation = generation + 1, scheduled = 0,
+        status = 'queued', error_code = NULL, actor_context_json = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status != 'completed'
+      `).run(JSON.stringify(context), context.workspaceId, context.epoch, access.caseId)
+      if (action !== 'pause') {
+        const turns = z.array(z.object({ turn_id: z.string() })).parse(this.#database.driver.prepare(`SELECT t.turn_id
+          FROM consultation_turn t WHERE t.workspace_id = ? AND t.epoch = ? AND t.case_id = ?
+            AND t.speaker = 'patient' AND t.kind = 'text' AND t.sequence >= ?
+            AND NOT EXISTS (SELECT 1 FROM consultation_recording_job j
+              WHERE j.workspace_id = t.workspace_id AND j.epoch = t.epoch AND j.turn_id = t.turn_id)
+          ORDER BY t.sequence
+        `).all(context.workspaceId, context.epoch, access.caseId, state?.start_sequence ?? 1))
+        for (const turn of turns) this.enqueue(context, transaction, { caseId: access.caseId, encounterId, turnId: turn.turn_id })
+        this.#scheduleNext(context, transaction, access.caseId)
+      }
+      return { data: this.read(context, access.caseId)!, effects: [
+        { kind: state === undefined ? 'created' as const : 'updated' as const,
+          reference: `ConsultationRecording/${access.caseId}`, versionId: String(version) },
+      ] }
+    })
   }
 
   read(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
-    if (this.#database.driver.prepare(`SELECT 1 FROM consultation_recording
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).get(context.workspaceId, context.epoch, caseId) === undefined) return undefined
-    const jobs = z.array(z.object({ status: jobSchema.shape.status, turn_id: z.string(),
-      error_code: consultationRecordingErrorCodeSchema.nullable() })).parse(this.#database.driver.prepare(`
-      SELECT status, turn_id, error_code FROM consultation_recording_job WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-    `).all(context.workspaceId, context.epoch, caseId))
+    const state = this.#state(context, caseId)
+    if (state === undefined && (!this.#enabled || !this.#hasConsultation(context, caseId))) return undefined
+    const jobs = this.#jobs(context, caseId)
+    const total = z.object({ count: z.number().int().nonnegative() }).parse(this.#database.driver.prepare(`SELECT count(*) AS count
+      FROM consultation_turn WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        AND speaker = 'patient' AND kind = 'text' AND sequence >= ?
+    `).get(context.workspaceId, context.epoch, caseId, state?.start_sequence ?? 1)).count
+    const processedCount = jobs.filter(job => job.status === 'completed').length
+    const failedCount = jobs.filter(job => job.status === 'failed').length
     const rows = this.#rows(context, caseId)
     const document = this.#draft(context, caseId).content
     const additions = rows.map(row => ({
@@ -143,8 +237,11 @@ export class ConsultationRecordingService {
         WHERE workspace_id = ? AND epoch = ? AND operation = 'clinical-document.save-draft'
           AND reference = ? LIMIT 1
       `).get(context.workspaceId, context.epoch, `ClinicalDocumentDraft/${caseId}`) !== undefined,
-      status: jobs.some(job => job.status === 'queued') ? 'processing'
-        : jobs.some(job => job.status === 'failed') || additions.some(addition => addition.status === 'pending') ? 'pending'
+      version: state?.version ?? 0, paused: state?.paused === 1,
+      processedCount, remainingCount: total - processedCount, failedCount,
+      status: state === undefined ? 'backfill' : state.paused === 1 ? 'paused' : failedCount > 0 ? 'failed'
+        : jobs.some(job => job.status === 'queued') ? 'processing'
+        : additions.some(addition => addition.status === 'pending') ? 'pending'
           : jobs.length > 0 ? 'updated' : 'idle',
       additions,
       failures: jobs.filter(job => job.status !== 'completed' && job.error_code !== null).map(job => ({
@@ -233,14 +330,21 @@ export class ConsultationRecordingService {
   async process(event: OutboxHandlerInput, model: {
     models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider; signal: AbortSignal; shutdownSignal?: AbortSignal
   }): Promise<OutboxHandlerResult> {
-    const { turnId } = z.object({ turnId: z.string().min(1) }).strict().parse(event.payload)
+    const { turnId, generation } = z.object({ turnId: z.string().min(1), generation: z.number().int().positive().default(1) }).strict().parse(event.payload)
     const job = jobSchema.optional().parse(this.#database.driver.prepare(`SELECT case_id, encounter_id,
-      actor_context_json, status FROM consultation_recording_job WHERE workspace_id = ? AND epoch = ? AND turn_id = ?
+      actor_context_json, status, generation FROM consultation_recording_job WHERE workspace_id = ? AND epoch = ? AND turn_id = ?
     `).get(event.workspaceId, event.epoch, turnId))
-    if (job === undefined || job.status === 'completed') return { status: 'completed' }
+    if (job === undefined || job.status !== 'queued' || job.generation !== generation) return { status: 'completed' }
     const context = contextSchema.parse(JSON.parse(job.actor_context_json))
     if (context.workspaceId !== event.workspaceId || context.epoch !== event.epoch
       || context.scenarioRunId !== event.scenarioRunId) throw new Error('Recording context does not match the durable event')
+    if (!this.#current(context, turnId, job)) {
+      // 迁移前每轮都有事件；较晚轮次交由前一轮成功后的顺序调度重新排队。
+      this.#database.driver.prepare(`UPDATE consultation_recording_job SET scheduled = 0
+        WHERE workspace_id = ? AND epoch = ? AND turn_id = ? AND generation = ?
+      `).run(context.workspaceId, context.epoch, turnId, generation)
+      return { status: 'completed' }
+    }
     if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
     try {
       const access = this.#assertAccess(context, job.encounter_id)
@@ -272,7 +376,9 @@ export class ConsultationRecordingService {
       `).all(context.workspaceId, context.epoch, job.case_id, context.workspaceId, context.epoch, turnId))
         .filter(turn => turn.kind === 'text').map(turn => ({ id: turn.id, speaker: turn.speaker, messageText: turn.messageText }))
       if (model.provider === undefined || model.model === undefined) throw new Error('Recording model unavailable')
-      const pinned = await model.models.bind(context.workspaceId, `history:${context.epoch}:${turnId}`, model.model, model.signal)
+      // 首代沿用升级前的任务身份，保留已经固定的模型路由。
+      const taskId = `history:${context.epoch}:${turnId}${generation === 1 ? '' : `:${generation}`}`
+      const pinned = await model.models.bind(context.workspaceId, taskId, model.model, model.signal)
       const history = this.#rows(context, job.case_id)
         .filter(row => row.status === 'applied' && row.review_state === null && turns.some(turn => turn.id === row.source_turn_id))
         .map(row => ({ id: row.addition_id, field: row.field, quote: row.quote, sourceTurnId: row.source_turn_id }))
@@ -301,9 +407,10 @@ export class ConsultationRecordingService {
         }
       }
       if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
-      this.#apply(context, event, turnId, job, baseline, output.additions)
+      if (this.#current(context, turnId, job)) this.#apply(context, event, turnId, job, baseline, output.additions)
       return { status: 'completed' }
     } catch (error) {
+      if (!this.#current(context, turnId, job)) return { status: 'completed' }
       if (model.shutdownSignal?.aborted && event.attempt < 3) return { status: 'retryable-failed' }
       if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
       const code = model.shutdownSignal?.aborted ? 'CONSULTATION_RECORDING_FAILED'
@@ -348,7 +455,8 @@ export class ConsultationRecordingService {
     this.#commands.execute({ context, operation: 'consultation.history.apply', expectedVersions: {},
       idempotencyKey: `history:${event.eventId}`, input: { turnId, baselineVersion: baseline.version, additions },
       dataSchema: z.object({ draftVersion: z.number().int().nonnegative() }),
-    }, () => {
+    }, transaction => {
+      if (!this.#current(context, turnId, job)) return { data: { draftVersion: this.#draft(context, job.case_id).version }, effects: [] }
       const access = this.#assertAccess(context, job.encounter_id)
       const current = this.#draft(context, job.case_id)
       const existing = this.#rows(context, job.case_id)
@@ -402,6 +510,7 @@ export class ConsultationRecordingService {
       this.#database.driver.prepare(`UPDATE consultation_recording_job SET status = 'completed', error_code = NULL
         WHERE workspace_id = ? AND epoch = ? AND turn_id = ?
       `).run(context.workspaceId, context.epoch, turnId)
+      this.#scheduleNext(context, transaction, job.case_id)
       return { data: { draftVersion }, effects: [
         { kind: 'updated' as const, reference: `ConsultationRecording/${job.case_id}`, versionId: turnId },
         ...(changed ? [{ kind: current.version === 0 ? 'created' as const : 'updated' as const,
@@ -471,6 +580,7 @@ export class ConsultationRecordingService {
 
   #finish(context: ActorContext, event: OutboxHandlerInput, turnId: string,
     job: z.infer<typeof jobSchema>, status: 'failed', code: z.infer<typeof consultationRecordingErrorCodeSchema>, retrying = false) {
+    if (!this.#current(context, turnId, job)) return
     const nextStatus = retrying ? 'queued' : status
     this.#commands.execute({ context, operation: 'consultation.history.fail', expectedVersions: {},
       contextRequirement: 'current',
@@ -478,8 +588,8 @@ export class ConsultationRecordingService {
       dataSchema: z.object({ status: z.literal('failed') }),
     }, () => {
       this.#database.driver.prepare(`UPDATE consultation_recording_job SET status = ?, error_code = ?
-        WHERE workspace_id = ? AND epoch = ? AND turn_id = ? AND status != 'completed'
-      `).run(nextStatus, code, context.workspaceId, context.epoch, turnId)
+        WHERE workspace_id = ? AND epoch = ? AND turn_id = ? AND generation = ? AND status != 'completed'
+      `).run(nextStatus, code, context.workspaceId, context.epoch, turnId, job.generation)
       return { data: { status }, effects: [{ kind: 'updated', reference: `ConsultationRecording/${job.case_id}`, versionId: turnId }] }
     })
   }
