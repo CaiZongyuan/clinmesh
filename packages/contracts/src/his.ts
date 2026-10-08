@@ -1002,7 +1002,12 @@ export const consultationHistoryAdditionSchema = z.object({
 
 export const consultationRecordingSchema = z.object({
   hasSavedDraft: z.boolean(),
-  status: z.enum(['idle', 'processing', 'updated', 'pending']),
+  version: z.number().int().nonnegative().default(0),
+  paused: z.boolean().default(false),
+  processedCount: z.number().int().nonnegative().default(0),
+  remainingCount: z.number().int().nonnegative().default(0),
+  failedCount: z.number().int().nonnegative().default(0),
+  status: z.enum(['idle', 'processing', 'updated', 'pending', 'paused', 'backfill', 'failed']),
   // Historical suggestions may predate the required correction target in the extraction contract.
   additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({
     id: z.string().min(1),
@@ -1012,6 +1017,16 @@ export const consultationRecordingSchema = z.object({
     reviewable: z.boolean().default(false),
   }).strict()),
 }).strict()
+
+export const controlConsultationRecordingRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    action: z.enum(['pause', 'resume', 'backfill', 'retry']),
+    expectedRecordingVersion: z.number().int().nonnegative(),
+  }).strict(),
+}).strict()
+
+export const controlConsultationRecordingResponseSchema = commandResponseSchema(consultationRecordingSchema)
 
 export const reviewConsultationHistoryRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,

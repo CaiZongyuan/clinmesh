@@ -97,6 +97,18 @@ function inspectExample(program: Command, line: string) {
 }
 
 describe('ClinMesh CLI Agent Skills', () => {
+  it('keeps recording controls narrow, versioned and bound to the doctor skill', async () => {
+    const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+    const operation = getHisOperation('encounter.consultation-recording.control')
+    const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter consultation-recording control'))!
+    expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
+    for (const action of ['pause', 'resume', 'backfill', 'retry']) {
+      expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedRecordingVersion: 1, action }).success).toBe(true)
+    }
+    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)
+    expect(skill).toContain('processedCount')
+    expect(skill).toContain('explicitly starts it')
+  })
   it('keeps history review examples bound to the narrow versioned correction contract', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
     const operation = getHisOperation('encounter.consultation-history.review')
@@ -129,7 +141,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 4 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 5 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }

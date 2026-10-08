@@ -16,7 +16,8 @@ const detail: DoctorCaseDetail = {
   consultation: { version: 1, turns: [{ id: 'synthetic-reply', actorId: null, practitionerId: null, speaker: 'patient',
     source: 'patient-agent', kind: 'text', messageText: '刚才说错了，头晕是六天。', sequence: 1,
     recordedAt: '2026-10-08T09:00:00+08:00', personaRevision: 1, reportReference: null }] },
-  consultationRecording: { hasSavedDraft: true, status: 'pending', additions: [{ id: 'synthetic-correction', field: 'historyOfPresentIllness',
+  consultationRecording: { hasSavedDraft: true, version: 1, paused: false, processedCount: 1, remainingCount: 0, failedCount: 0,
+    status: 'pending', additions: [{ id: 'synthetic-correction', field: 'historyOfPresentIllness',
     sourceTurnId: 'synthetic-reply', quote: '刚才说错了，头晕是六天。', relation: 'correction', targetAdditionId: 'synthetic-original',
     status: 'pending', ownership: 'manual', currentText: '医生核对：头晕五天。', reviewable: true }] },
 }
@@ -32,16 +33,26 @@ shadow.append(root)
 function App(): React.JSX.Element {
   const [working, setWorking] = React.useState({ ...documentContent, historyOfPresentIllness: '医生尚未保存的编辑。' })
   const [decisions, setDecisions] = React.useState<string[]>([])
+  const [recording, setRecording] = React.useState(detail.consultationRecording!)
+  const [controls, setControls] = React.useState<string[]>([])
   return <>
     <button type="button" onClick={() => setWorking(documentContent)}>模拟保存编辑</button>
     <output aria-label="核对结果">{decisions.join(',')}</output>
-    <ClinicalDocumentPage allowRevision={false} detail={detail} elementId="record" locale="zh-CN"
+    <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'backfill', version: 0, remainingCount: 2 }))}>模拟历史病例</button>
+    <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'failed', failedCount: 1 }))}>模拟整理失败</button>
+    <output aria-label="控制结果">{controls.join(',')}</output>
+    <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: recording }} elementId="record" locale="zh-CN"
       messages={getWorkspaceMessages('zh-CN')} workingDocument={working} onDocumentChange={setWorking}
       actions={{
         prepareSign: { data: undefined, error: null, onReset: () => {}, onSubmit: () => {}, pending: false },
         revise: { error: null, onSubmit: () => {}, pending: false, success: false },
         sign: { error: null, onSubmit: () => {}, pending: false, success: false },
         reviewHistory: { error: null, pending: false, onSubmit: (id, decision) => setDecisions(current => [...current, `${id}:${decision}`]) },
+        controlRecording: { error: null, pending: false, onSubmit: action => {
+          setControls(current => [...current, action])
+          setRecording(current => ({ ...current, version: current.version + 1, paused: action === 'pause',
+            status: action === 'pause' ? 'paused' : 'processing', failedCount: 0 }))
+        } },
       }} />
   </>
 }

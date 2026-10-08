@@ -96,9 +96,12 @@ Draft saves accept empty fields while history is still being collected. Keep eve
 
 `consultationRecording.hasSavedDraft` records whether an explicit draft save has occurred; before that save, empty fields untouched by automatic additions can still have visible triage/history prefill. Read and preserve that visible content before submitting a complete draft; after an explicit save, saved empty values are intentional.
 
+Recording controls use `encounter.consultation-recording.control` with the current `consultationRecording.version` and Encounter version. Use pause to keep the draft stable while replies continue saving; resume records unfinished replies in order. A historical case reports backfill and remains unchanged until the clinician explicitly starts it. A failed recording can be retried; completed replies and manual fragment ownership remain intact. Read `processedCount`, `remainingCount` and `failedCount` after refresh or reconnect instead of inferring progress from a model response. On a conflict, reread before choosing a new control intent; on an ambiguous write, recover its receipt using the original key.
+
 ```bash
 clinmesh encounter clinical-document draft set --input @document.json --idempotency-key <key>
 clinmesh encounter consultation-history review --input @history-review.json --idempotency-key <review-intent-key>
+clinmesh encounter consultation-recording control --input @recording-control.json --idempotency-key <control-intent-key>
 clinmesh encounter clinical-document sign preview --input @document-preview.json --idempotency-key <key>
 clinmesh encounter clinical-document sign commit --input @document-sign.json --idempotency-key <key>
 clinmesh clinical-document revise --input @document-revision.json --idempotency-key <key>

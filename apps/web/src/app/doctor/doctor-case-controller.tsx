@@ -83,6 +83,7 @@ import {
   retryLaboratoryResultGeneration,
   saveClinicalDocumentDraft,
   reviewConsultationHistory,
+  controlConsultationRecording,
   saveDiagnosisDraft,
   saveFirstVisitDraft,
   saveLaboratoryRequestDraft,
@@ -927,6 +928,16 @@ function DoctorCaseController({
         refreshCompletedCaseDetails(),
       ])
     },
+  })
+  const controlRecording = useMutation({
+    mutationFn: ({ caseId, action }: { caseId: string; action: 'pause' | 'resume' | 'backfill' | 'retry' }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return controlConsultationRecording({ action, encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId, expectedRecordingVersion: current.consultationRecording?.version ?? 0 }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const reviewHistory = useMutation({
     mutationFn: async ({ caseId, additionId, decision }: { caseId: string; additionId: string; decision: 'accept' | 'ignore' }) => {
@@ -2432,6 +2443,11 @@ function DoctorCaseController({
                 pending: reviewHistory.isPending && reviewHistory.variables?.caseId === detail.data.caseId,
                 onSubmit: (additionId, decision) => reviewHistory.mutate({ caseId: detail.data.caseId, additionId, decision }),
               },
+              controlRecording: {
+                error: controlRecording.variables?.caseId === detail.data.caseId ? controlRecording.error : null,
+                pending: controlRecording.isPending && controlRecording.variables?.caseId === detail.data.caseId,
+                onSubmit: action => controlRecording.mutate({ caseId: detail.data.caseId, action }),
+              },
               save: {
                 error: saveDocumentDraft.variables?.caseId === detail.data.caseId ? saveDocumentDraft.error : null,
                 onSubmit: document => saveDocumentDraft.mutate({ caseId: detail.data.caseId, document }),
@@ -3240,6 +3256,8 @@ function CaseDetail({
                 messages={messages}
                 patientName={detail.patient.name}
                 readOnly={clinicalReadOnly}
+                recording={detail.consultationRecording}
+                recordingAction={clinicalDocumentActions.controlRecording}
               />
             </DoctorCasePanel>
           )}

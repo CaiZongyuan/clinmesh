@@ -90,6 +90,8 @@ import {
   saveClinicalDocumentDraftRequestSchema,
   reviewConsultationHistoryRequestSchema,
   reviewConsultationHistoryResponseSchema,
+  controlConsultationRecordingRequestSchema,
+  controlConsultationRecordingResponseSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
   savePrescriptionDraftRequestSchema,
@@ -598,6 +600,9 @@ const fhirSearchInputSchema = z.object({
 const reviewConsultationHistoryOperationInputSchema = reviewConsultationHistoryRequestSchema.shape.input.extend({
   encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
 }).strict()
+const controlConsultationRecordingOperationInputSchema = controlConsultationRecordingRequestSchema.shape.input.extend({
+  encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
+}).strict()
 const fhirBundleSchema = z.object({
   entry: z.array(z.object({
     fullUrl: z.url(),
@@ -721,6 +726,10 @@ const bodyEncoders = {
   },
   'encounter.consultation-history.review': (rawInput: unknown) => {
     const { encounterId, encounterVersion, ...input } = reviewConsultationHistoryOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.consultation-recording.control': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = controlConsultationRecordingOperationInputSchema.parse(rawInput)
     return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
   },
   [clinicalDocumentOperationIds.previewSign]: (rawInput: unknown) => {
@@ -1330,8 +1339,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, fragment ownership and review state; presentation is null when no triage record exists',
-    version: 4,
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, failure, fragment ownership and review state; presentation is null when no triage record exists',
+    version: 5,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -1571,6 +1580,17 @@ const operationDefinitions = [
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
     summary: 'Accept a pending history replacement or ignore it, preserving unrelated history and requiring the current draft version',
+    version: 1,
+  },
+  {
+    cliPath: ['encounter', 'consultation-recording', 'control'],
+    http: { method: 'POST', path: '/api/his/v1/encounters/:encounterId/consultation-recording/actions/control' },
+    id: 'encounter.consultation-recording.control',
+    input: controlConsultationRecordingOperationInputSchema,
+    mode: 'command', output: controlConsultationRecordingResponseSchema,
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['outpatient-doctor'],
+    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording; requires the current recording version and preserves completed answers and manual edits',
     version: 1,
   },
   {
@@ -2359,6 +2379,7 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
   'admin.laboratory-services.publish': 'laboratory-service-publication.create',
   [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
   'encounter.consultation-history.review': 'consultation.history.review',
+  'encounter.consultation-recording.control': 'consultation.recording.control',
   [clinicalDocumentOperationIds.previewSign]: clinicalDocumentOperationIds.storedPreviewSign,
   [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
   'encounter.consultation.ask': 'consultation.ask-question',
@@ -2405,6 +2426,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'doctor.queue.list': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.draftSet]: 'clinmesh-doctor',
   'encounter.consultation-history.review': 'clinmesh-doctor',
+  'encounter.consultation-recording.control': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.previewSign]: 'clinmesh-doctor',
   [clinicalDocumentOperationIds.sign]: 'clinmesh-doctor',
   'encounter.complete': 'clinmesh-doctor',
