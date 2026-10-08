@@ -1705,7 +1705,7 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 60,
+      expectedSchemaVersion: 61,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
@@ -1893,7 +1893,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(60),
+      schemaVersion: z.literal(61),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
