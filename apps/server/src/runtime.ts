@@ -397,11 +397,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       caseId: z.string().min(1),
       prescriptionId: z.string().min(1),
     })
-    const aiTimeoutMs = options.ai?.timeoutMs ?? 60_000
+    // Resolve plus two structured-output attempts each receive their own configured deadline.
+    const aiTimeoutMs = options.dshModelBridge === undefined ? options.ai?.timeoutMs ?? 60_000
+      : 3 * (options.dshModelBridge.timeoutMs + 1_000)
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
         'consultation.record-history': event => workflow.consultationRecording.process(event, {
           models,
+          shutdownSignal: generationAbort.signal,
           ...(consultationModel === undefined ? {} : { model: consultationModel }),
           ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
           signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(aiTimeoutMs)]),
