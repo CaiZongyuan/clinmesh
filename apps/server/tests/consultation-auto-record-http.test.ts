@@ -1,4 +1,4 @@
-import { doctorCaseDetailSchema, sendConsultationMessageResponseSchema, triageQueueSchema } from '@clinmesh/contracts/his'
+import { clinicalDocumentDraftContentSchema, doctorCaseDetailSchema, sendConsultationMessageResponseSchema, triageQueueSchema } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -13,7 +13,7 @@ const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
 async function setup(options: {
-  reply?: string
+  reply?: string | (() => string)
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auto-record-'))
@@ -23,7 +23,7 @@ async function setup(options: {
     async completeJson(input) {
       requests.push(input)
       if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
-      if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply: options.reply ?? '头晕一周了，站起来时更明显。' }), model: 'synthetic' }
+      if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply: typeof options.reply === 'function' ? options.reply() : options.reply ?? '头晕一周了，站起来时更明显。' }), model: 'synthetic' }
       if (options.extract !== undefined) return { content: JSON.stringify(await options.extract(input)), model: 'synthetic' }
       const payload = input.userPayload as { turns: Array<{ id: string; speaker: string; messageText: string }> }
       const answer = payload.turns.findLast(turn => turn.speaker === 'patient')!
@@ -33,7 +33,7 @@ async function setup(options: {
       }] }), model: 'synthetic' }
     },
   }
-  const runtime = await createClinMeshRuntime({
+  const createRuntime = () => createClinMeshRuntime({
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters',
     chatCompletionsProvider: provider, databasePath: join(directory, 'clinmesh.sqlite'),
@@ -41,6 +41,7 @@ async function setup(options: {
     dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
     syntheaProvider: new StubSyntheaProvider(), trustedOrigins: ['http://localhost'],
   })
+  let runtime = await createRuntime()
   disposals.push(() => runtime.close())
   const started = await startConsultationCase(runtime)
   const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
@@ -62,8 +63,134 @@ async function setup(options: {
         [`Task/${detail.taskId}`]: detail.taskVersion }, input: { expectedConsultationVersion: detail.consultation!.version, message: '再确认一下病史？' } }),
     })
   }
-  return { runtime, read, ask, askMore, requests, started, cookie }
+  const save = async (history: string) => {
+    const detail = await read()
+    const draft = detail.clinicalDocument!.draft!
+    const document = clinicalDocumentDraftContentSchema.parse(Object.fromEntries(
+      Object.keys(clinicalDocumentDraftContentSchema.shape).map(field => [field, draft[field as keyof typeof draft]]).filter(([, value]) => value !== undefined),
+    ))
+    return runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`, {
+      method: 'PUT', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId },
+        input: { expectedDraftVersion: detail.clinicalDocument!.draft!.version, document: { ...document, historyOfPresentIllness: history } } }),
+    })
+  }
+  return { get runtime() { return runtime }, read, ask, askMore, requests, started, cookie, save,
+    restart: async () => { await runtime.close(); runtime = await createRuntime() } }
 }
+
+it('protects an edited sentence while appending unrelated history in the same field', async () => {
+  let reply = '头晕一周了。'
+  const { runtime, read, ask, askMore, save } = await setup({ reply: () => reply, extract: input => {
+    const turns = (input.userPayload as { turns: Array<{ id: string; messageText: string }> }).turns
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turns.at(-1)!.id,
+      quote: turns.at(-1)!.messageText, relation: 'addition' }] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  expect((await save('医生核对：头晕五天。')).status).toBe(200)
+  reply = '站起来时更明显。'
+  expect((await askMore()).status).toBe(200)
+  await runtime.dispatchPending()
+  expect(await read()).toMatchObject({ clinicalDocument: { draft: {
+    historyOfPresentIllness: '医生核对：头晕五天。\n患者自述：站起来时更明显。',
+  } }, consultationRecording: { status: 'updated', additions: [
+    { ownership: 'manual', currentText: '医生核对：头晕五天。' }, { ownership: 'automatic', status: 'applied' },
+  ] } })
+})
+
+it('replaces only the untouched automatic fragment after an explicit patient correction', async () => {
+  let reply = '头晕一周了。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>; history: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+      quote: payload.turns.at(-1)!.messageText, relation: payload.history.length ? 'correction' : 'addition',
+      ...(payload.history[0] === undefined ? {} : { targetAdditionId: payload.history[0].id }) }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  reply = '刚才说错了，头晕是五天。'
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: {
+    historyOfPresentIllness: '患者自述：刚才说错了，头晕是五天。', version: 2,
+  } }, consultationRecording: { status: 'updated', additions: [{ status: 'superseded' }, { status: 'applied', ownership: 'automatic' }] } })
+})
+
+it.each(['accept', 'ignore'] as const)('requires a current-version %s decision before changing manually edited history', async decision => {
+  let reply = '头晕一周了。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>; history: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+      quote: payload.turns.at(-1)!.messageText, relation: payload.history.length ? 'correction' : 'addition',
+      ...(payload.history[0] === undefined ? {} : { targetAdditionId: payload.history[0].id }) }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.save('医生核对：头晕六天。')).status).toBe(200)
+  await fixture.restart()
+  reply = '刚才记错了，头晕是五天。'
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail).toMatchObject({ clinicalDocument: { draft: { historyOfPresentIllness: '医生核对：头晕六天。' } },
+    consultationRecording: { status: 'pending', additions: [{ ownership: 'manual' }, { status: 'pending', currentText: '医生核对：头晕六天。' }] } })
+  const additionId = detail.consultationRecording!.additions.at(-1)!.id
+  const key = randomUUID()
+  const review = (expectedDraftVersion: number, idempotencyKey = key) => fixture.runtime.app.request(
+    `/api/his/v1/encounters/${fixture.started.encounterId}/consultation-history/actions/review`, {
+      method: 'POST', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId },
+        input: { additionId, decision, expectedDraftVersion } }),
+    })
+  expect((await review(0, randomUUID())).status).toBe(409)
+  expect((await review(detail.clinicalDocument!.draft!.version)).status).toBe(200)
+  const after = await fixture.read()
+  expect(after.clinicalDocument?.draft?.historyOfPresentIllness).toBe(decision === 'accept'
+    ? '患者自述：刚才记错了，头晕是五天。' : '医生核对：头晕六天。')
+  expect(after.consultationRecording?.additions.at(-1)?.status).toBe(decision === 'accept' ? 'applied' : 'ignored')
+  expect((await review(detail.clinicalDocument!.draft!.version)).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument?.draft?.version).toBe(after.clinicalDocument?.draft?.version)
+})
+
+it('protects separated manual edits but allows a correction between them in the same field', async () => {
+  let reply = '头晕一周了。站起来时更明显。夜间也会头晕。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>; history: Array<{ id: string; quote: string }> }
+    const sourceTurnId = payload.turns.at(-1)!.id
+    return { additions: payload.history.length === 0 ? reply.match(/[^。]+。/g)!.map(quote => ({
+      field: 'historyOfPresentIllness', sourceTurnId, quote, relation: 'addition',
+    })) : [{ field: 'historyOfPresentIllness', sourceTurnId, quote: reply, relation: 'correction',
+      targetAdditionId: payload.history.find(item => item.quote === '站起来时更明显。')!.id }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  await fixture.save('医生核对：头晕五天。\n患者自述：站起来时更明显。\n医生核对：白天也会头晕。')
+  reply = '刚才说错了，站起来时不明显。'
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: {
+    historyOfPresentIllness: '医生核对：头晕五天。\n患者自述：刚才说错了，站起来时不明显。\n医生核对：白天也会头晕。',
+  } }, consultationRecording: { additions: [{ ownership: 'manual' }, { status: 'superseded' },
+    { ownership: 'manual' }, { status: 'applied', ownership: 'automatic' }] } })
+})
+
+it('keeps ambiguous contradictory history pending even when its target is automatic', async () => {
+  let reply = '头晕一周了。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>; history: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+      quote: payload.turns.at(-1)!.messageText, relation: payload.history.length ? 'conflict' : 'addition',
+      ...(payload.history[0] === undefined ? {} : { targetAdditionId: payload.history[0].id }) }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  reply = '头晕五天了。'
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: { historyOfPresentIllness: '患者自述：头晕一周了。', version: 1 } },
+    consultationRecording: { status: 'pending', additions: [{ status: 'applied' }, { status: 'pending', currentText: '患者自述：头晕一周了。' }] } })
+})
 
 it('records saved patient history asynchronously through the public consultation and case interfaces', async () => {
   const { runtime, read, ask, requests } = await setup()
@@ -79,7 +206,7 @@ it('records saved patient history asynchronously through the public consultation
     consultationRecording: { status: 'updated', additions: [{ sourceTurnId: asked.data.patientTurn.id, status: 'applied' }] },
   })
   const extraction = requests.find(request => request.schemaName === 'consultation_history_increment')!
-  expect(extraction.userPayload).toEqual({ turns: expect.any(Array) })
+  expect(extraction.userPayload).toEqual({ turns: expect.any(Array), history: [] })
   expect(JSON.stringify(extraction.userPayload)).not.toMatch(/hiddenResources|Case Truth|persona|knownConditions|2型糖尿病/)
   const duplicate = await ask()
   expect(duplicate.status).toBe(200)
@@ -188,7 +315,7 @@ it('saves an incomplete draft while preserving required fields for signing', asy
   expect((await read()).clinicalDocument?.signed).toEqual([])
 })
 
-it('does not wait for extraction and preserves a concurrent human draft instead of overwriting it', async () => {
+it('does not wait for extraction and appends history while preserving concurrent human content', async () => {
   let release!: (value: unknown) => void
   let entered!: () => void
   const extracting = new Promise<void>(resolve => { entered = resolve })
@@ -216,8 +343,8 @@ it('does not wait for extraction and preserves a concurrent human draft instead 
       quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] })
     await dispatch
   }
-  expect(await read()).toMatchObject({ clinicalDocument: { draft: { historyOfPresentIllness: '医生手工核对的病史。', version: 1 } },
-    consultationRecording: { status: 'pending', additions: [{ status: 'pending' }] } })
+  expect(await read()).toMatchObject({ clinicalDocument: { draft: { historyOfPresentIllness: '医生手工核对的病史。\n患者自述：头晕一周了，站起来时更明显。', version: 2 } },
+    consultationRecording: { status: 'updated', additions: [{ status: 'applied' }] } })
 })
 
 it('does not repeat history when the patient repeats the same statement in a later answer', async () => {

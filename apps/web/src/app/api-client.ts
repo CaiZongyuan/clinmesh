@@ -23,6 +23,7 @@ import {
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   clinicalDocumentDraftResponseSchema,
+  reviewConsultationHistoryResponseSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
@@ -1384,6 +1385,17 @@ export function saveFirstVisitDraft(input: {
     },
     { idempotencyKey, method: 'PUT' },
   )
+}
+
+export function reviewConsultationHistory(input: {
+  additionId: string; decision: 'accept' | 'ignore'; encounterId: string;
+  encounterVersion: string; expectedDraftVersion: number;
+}, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/consultation-history/actions/review`,
+    reviewConsultationHistoryResponseSchema, {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { additionId: input.additionId, decision: input.decision, expectedDraftVersion: input.expectedDraftVersion },
+    }, { idempotencyKey, method: 'POST' })
 }
 
 export function saveClinicalDocumentDraft(input: {

@@ -6099,6 +6099,7 @@ export class WorkflowService {
       }
       const draftVersion = currentVersion + 1
       const now = this.#virtualTime(input.context)
+      this.consultationRecording.trackDraftSave(input.context, outpatientCase.case_id, input.document)
       this.#database.driver.prepare(`
         INSERT INTO clinical_document_draft (
           workspace_id, epoch, case_id, version, content_json, updated_by, updated_at

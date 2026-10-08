@@ -1,5 +1,6 @@
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
+import { mergeDocumentText } from '@clinmesh/core/document-text'
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
@@ -81,6 +82,7 @@ import {
   reviseStructuredClinicalDocument,
   retryLaboratoryResultGeneration,
   saveClinicalDocumentDraft,
+  reviewConsultationHistory,
   saveDiagnosisDraft,
   saveFirstVisitDraft,
   saveLaboratoryRequestDraft,
@@ -571,7 +573,7 @@ function DoctorCaseController({
       const merged = { ...next }
       if (working !== undefined && previous !== undefined) {
         for (const field of Object.keys(next) as Array<keyof ClinicalDocumentContent>) {
-          if (working[field] !== previous[field]) merged[field] = working[field] ?? ''
+          merged[field] = mergeDocumentText(previous[field] ?? '', working[field] ?? '', next[field] ?? '')
         }
       }
       return { ...current, [currentDetail.caseId]: merged }
@@ -904,6 +906,16 @@ function DoctorCaseController({
         refreshCompletedCaseDetails(),
       ])
     },
+  })
+  const reviewHistory = useMutation({
+    mutationFn: async ({ caseId, additionId, decision }: { caseId: string; additionId: string; decision: 'accept' | 'ignore' }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return reviewConsultationHistory({ additionId, decision, encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId, expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0 }, newIdempotencyKey())
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const saveDocumentDraft = useMutation({
     mutationFn: ({ caseId, document }: { caseId: string; document: ClinicalDocumentContent }) => {
@@ -2394,6 +2406,11 @@ function DoctorCaseController({
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
               ?? emptyDoctorAgentDraftHydrationRevisions}
             clinicalDocumentActions={{
+              reviewHistory: {
+                error: reviewHistory.variables?.caseId === detail.data.caseId ? reviewHistory.error : null,
+                pending: reviewHistory.isPending && reviewHistory.variables?.caseId === detail.data.caseId,
+                onSubmit: (additionId, decision) => reviewHistory.mutate({ caseId: detail.data.caseId, additionId, decision }),
+              },
               save: {
                 error: saveDocumentDraft.variables?.caseId === detail.data.caseId ? saveDocumentDraft.error : null,
                 onSubmit: document => saveDocumentDraft.mutate({ caseId: detail.data.caseId, document }),

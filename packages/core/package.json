@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./document-text": "./src/document-text.ts",
     "./imaging-display": "./src/imaging-display.ts",
     "./imaging-pyramid": "./src/imaging-pyramid.ts",
     "./platform": "./src/platform.ts",
@@ -15,7 +16,8 @@
     "clean": "rm -rf dist coverage"
   },
   "dependencies": {
-    "@clinmesh/contracts": "workspace:*"
+    "@clinmesh/contracts": "workspace:*",
+    "diff": "8.0.4"
   },
   "devDependencies": {
     "typescript": "catalog:",

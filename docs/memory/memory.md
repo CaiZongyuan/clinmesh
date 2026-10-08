@@ -38,6 +38,8 @@
 
 ## 运行与验证边界
 
+- SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
+
 - 模型摘录的逐字匹配不能单独证明事实完整。引用边界回归同时覆盖限定语在引用外、逗号和小数点位于引用首尾，避免通过截断制造肯定事实或改变测量值；当前写入规则由[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
 
 - pnpm 11 在执行脚本前可能自动安装并改写锁文件，包括重新解析间接依赖。纯文档检查遇到此行为时，先核对并撤回本次检查引入的无关锁文件变更；已安装工具可通过 Node 直接调用对应 CLI，避免重复触发安装。锁文件变化不属于文档交付。
