@@ -155,9 +155,11 @@ test('queue tabs adapt to the 200px sidebar with full-width English labels', asy
   const aside = page.getByRole('complementary', { name: 'Waiting queue' })
   await expect(aside.getByRole('tab', { name: 'In care', exact: true })).toBeVisible()
   // 队列 tab 行必须完整落在 200px 侧栏内：任一触发器越界（左截断或压住计数徽章）都算失败。
+  // 换行适应后 tab 列表纵向自适应高度，触发器不得画出 tab 列表盒子压入下方队列内容。
   const geo = await aside.getByRole('tablist').evaluate(listElement => {
     const asideElement = listElement.closest('aside')
     const asideBounds = asideElement?.getBoundingClientRect()
+    const listBounds = listElement.getBoundingClientRect()
     const triggers = Array.from(listElement.querySelectorAll('[role="tab"]'))
       .map(tab => tab.getBoundingClientRect())
     return {
@@ -166,10 +168,13 @@ test('queue tabs adapt to the 200px sidebar with full-width English labels', asy
       asideScrolls: asideElement === null || asideElement.scrollWidth > asideElement.clientWidth + 1,
       minTriggerLeft: triggers.length === 0 ? Number.NEGATIVE_INFINITY : Math.min(...triggers.map(b => b.left)),
       maxTriggerRight: triggers.length === 0 ? Number.POSITIVE_INFINITY : Math.max(...triggers.map(b => b.right)),
+      maxTriggerBottom: triggers.length === 0 ? Number.POSITIVE_INFINITY : Math.max(...triggers.map(b => b.bottom)),
+      listBottom: listBounds.bottom,
     }
   })
   expect(geo.asideScrolls).toBe(false)
   expect(geo.minTriggerLeft).toBeGreaterThanOrEqual(geo.asideLeft - 0.5)
   expect(geo.maxTriggerRight).toBeLessThanOrEqual(geo.asideRight + 0.5)
+  expect(geo.maxTriggerBottom).toBeLessThanOrEqual(geo.listBottom + 0.5)
   await expect(aside.getByLabel(/^\d+ cases?$/)).toBeVisible()
 })
