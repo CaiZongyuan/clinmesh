@@ -13,17 +13,22 @@ const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
 async function setup(options: {
+  failFirstReply?: boolean
   reply?: string | (() => string)
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auto-record-'))
   disposals.push(() => rm(directory, { recursive: true }))
   const requests: JsonChatCompletionInput[] = []
+  let replyCalls = 0
   const provider: JsonChatCompletionsProvider = {
     async completeJson(input) {
       requests.push(input)
       if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
-      if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply: typeof options.reply === 'function' ? options.reply() : options.reply ?? '头晕一周了，站起来时更明显。' }), model: 'synthetic' }
+      if (input.schemaName === 'patient_dialogue_reply') {
+        if (options.failFirstReply && replyCalls++ === 0) throw new Error('Synthetic reply failure')
+        return { content: JSON.stringify({ reply: typeof options.reply === 'function' ? options.reply() : options.reply ?? '头晕一周了，站起来时更明显。' }), model: 'synthetic' }
+      }
       if (options.extract !== undefined) return { content: JSON.stringify(await options.extract(input)), model: 'synthetic' }
       const payload = input.userPayload as { turns: Array<{ id: string; speaker: string; messageText: string }> }
       const answer = payload.turns.findLast(turn => turn.speaker === 'patient')!
@@ -317,6 +322,55 @@ it('keeps ambiguous contradictory history pending even when its target is automa
     consultationRecording: { status: 'pending', additions: [{ status: 'applied' }, { status: 'pending', currentText: '患者自述：头晕一周了。' }] } })
 })
 
+async function createDoctorGrant(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, adminCookie: string,
+  operationId: 'encounter.consultation.ask' | 'encounter.consultation.reply.retry') {
+  const adminHeaders = { cookie: adminCookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
+    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ name: 'Synthetic consultation recorder' }),
+  })
+  expect(clientResponse.status).toBe(200)
+  const client = agentClientSchema.parse(await clientResponse.json())
+  const grantResponse = await runtime.app.request('/api/agent/v1/grants', {
+    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ agentClientId: client.agentClientId, operationIds: [operationId],
+      practitionerRoleId: 'practitioner-role-outpatient-doctor', ttlSeconds: 3600 }),
+  })
+  expect(grantResponse.status).toBe(200)
+  return { adminHeaders, client, grant: agentCapabilityGrantSchema.parse(await grantResponse.json()) }
+}
+
+it.each(['active', 'disable', 'revoke'] as const)('records a saved reply with a retry-only Agent Grant only while it is %s', async action => {
+  const { runtime, ask, read, started } = await setup({ failFirstReply: true })
+  expect((await ask()).status).toBe(503)
+  const pending = await read()
+  expect(pending.consultation!.turns.at(-1)!.speaker).toBe('doctor')
+  const { adminHeaders, client, grant } = await createDoctorGrant(runtime, started.adminCookie,
+    'encounter.consultation.reply.retry')
+  const response = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/retry-consultation-reply`, {
+    method: 'POST', headers: { authorization: `Bearer ${grant.token}`, origin: 'http://localhost',
+      'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: {}, input: { expectedConsultationVersion: pending.consultation!.version } }),
+  })
+  expect(response.status).toBe(200)
+  expect((await read()).consultation!.turns.at(-1)!.speaker).toBe('patient')
+  if (action !== 'active') {
+    const path = action === 'disable' ? `/api/agent/v1/clients/${client.agentClientId}/actions/disable`
+      : `/api/agent/v1/grants/${grant.grantId}/actions/revoke`
+    expect((await runtime.app.request(path, { method: 'POST', body: '{}',
+      headers: { ...adminHeaders, 'idempotency-key': randomUUID() } })).status).toBe(200)
+  }
+  await runtime.dispatchPending()
+  const detail = await read()
+  expect(detail.consultationRecording?.status).toBe(action === 'active' ? 'updated' : 'pending')
+  if (action === 'active') {
+    expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了，站起来时更明显。')
+  } else {
+    expect(detail.clinicalDocument?.draft).toBeUndefined()
+    expect(detail.consultationRecording?.additions).toEqual([])
+  }
+})
+
 it('records saved patient history asynchronously through the public consultation and case interfaces', async () => {
   const { runtime, read, ask, requests } = await setup()
   const response = await ask()
@@ -352,10 +406,60 @@ it('rejects a quote that removes the patient negation instead of recording chest
   expect(detail.consultationRecording).toMatchObject({ status: 'pending', additions: [] })
 })
 
+it.each([
+  ['胸痛已经三天了吗？', '胸痛已经三天了吗'],
+  ['胸痛已经三天?', '胸痛已经三天'],
+  ['胸痛已经三天！？', '胸痛已经三天'],
+  ['胸痛已经三天！ ？', '胸痛已经三天'],
+  ['胸痛已经三天 \t？', '胸痛已经三天'],
+])('rejects a quote that removes the question mark from %s', async (reply, quote) => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', quote,
+      sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  const detail = await read()
+  expect(detail.clinicalDocument?.draft).toBeUndefined()
+  expect(detail.consultationRecording).toMatchObject({ status: 'pending', additions: [] })
+  expect(detail.consultation?.turns.at(-1)?.messageText).toBe(reply)
+})
+
+it.each([' ', '\t', '\u00a0', '\n'])('records a complete statement after sentence whitespace %j', async whitespace => {
+  const quote = '站起来时更明显。'
+  const { runtime, ask, read } = await setup({ reply: `头晕一周了。${whitespace}${quote}`, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', quote,
+      sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  expect(await read()).toMatchObject({
+    clinicalDocument: { draft: { historyOfPresentIllness: `患者自述：${quote}` } },
+    consultationRecording: { status: 'updated', additions: [{ quote, status: 'applied' }] },
+  })
+})
+
 it('rejects a quote that drops uncertainty from the same patient sentence', async () => {
   const { runtime, ask, read } = await setup({ reply: '我不清楚，胸痛已经三天。', extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
     return { additions: [{ field: 'historyOfPresentIllness', quote: '胸痛已经三天。',
+      sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  expect((await read()).clinicalDocument?.draft).toBeUndefined()
+  expect((await read()).consultationRecording).toMatchObject({ status: 'pending', additions: [] })
+})
+
+it.each([
+  ['我不清楚 胸痛已经三天。', '胸痛已经三天。'],
+  ['胸痛已经三天 我不清楚。', '胸痛已经三天'],
+])('rejects whitespace clipping that removes uncertainty from %s', async (reply, quote) => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', quote,
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
@@ -418,6 +522,7 @@ it('saves an incomplete draft while preserving required fields for signing', asy
   await ask()
   await runtime.dispatchPending()
   const detail = await read()
+  expect(detail.consultationRecording?.hasSavedDraft).toBe(false)
   const headers = { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }
   const saved = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`, {
     method: 'PUT', headers, body: JSON.stringify({
@@ -430,6 +535,7 @@ it('saves an incomplete draft while preserving required fields for signing', asy
   })
   expect(saved.status).toBe(200)
   const latest = await read()
+  expect(latest.consultationRecording?.hasSavedDraft).toBe(true)
   const preview = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/preview-sign`, {
     method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({
       expectedVersions: { [`Encounter/${started.encounterId}`]: latest.encounter.versionId },
@@ -494,20 +600,8 @@ it.each(['disable', 'revoke'] as const)('settles a late recording as pending aft
     entered()
     return held
   } })
-  const adminHeaders = { cookie: started.adminCookie, origin: 'http://localhost', 'content-type': 'application/json' }
-  const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
-    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ name: 'Synthetic consultation recorder' }),
-  })
-  expect(clientResponse.status).toBe(200)
-  const client = agentClientSchema.parse(await clientResponse.json())
-  const grantResponse = await runtime.app.request('/api/agent/v1/grants', {
-    method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
-    body: JSON.stringify({ agentClientId: client.agentClientId, operationIds: ['encounter.consultation.ask'],
-      practitionerRoleId: 'practitioner-role-outpatient-doctor', ttlSeconds: 3600 }),
-  })
-  expect(grantResponse.status).toBe(200)
-  const grant = agentCapabilityGrantSchema.parse(await grantResponse.json())
+  const { adminHeaders, client, grant } = await createDoctorGrant(runtime, started.adminCookie,
+    'encounter.consultation.ask')
   if (action === 'revoke') {
     const secondGrantResponse = await runtime.app.request('/api/agent/v1/grants', {
       method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },

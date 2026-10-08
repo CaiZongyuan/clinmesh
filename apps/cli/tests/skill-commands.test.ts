@@ -114,6 +114,8 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.version).toBe(2)
     expect(skill).toContain('empty fields')
     expect(skill).toContain('consultationRecording')
+    expect(skill).toContain('hasSavedDraft')
+    expect(getHisOperation('doctor.case.get').summary).toContain('hasSavedDraft')
     const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter clinical-document draft set'))!
     expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 0,

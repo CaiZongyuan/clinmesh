@@ -259,7 +259,8 @@ export class IdentityService {
             AND grant.epoch = ? AND grant.scenario_run_id = ? AND grant.grant_id = ?
             AND grant.practitioner_role_id = role.practitioner_role_id
             AND grant.revoked_at IS NULL AND grant.expires_at > ? AND grant.catalog_hash = ?
-            AND grant.policy_version = workspace.policy_version AND allowed.operation_id = 'encounter.consultation.ask'
+            AND grant.policy_version = workspace.policy_version
+            AND allowed.operation_id IN ('encounter.consultation.ask', 'encounter.consultation.reply.retry')
         )))
     `).get(context.workspaceId, context.actorId, context.practitionerRoleId ?? '', context.practitionerId ?? '',
       context.roleCode, context.organizationId ?? '', context.locationId ?? '', context.epoch, context.scenarioRunId, context.agentGrantId ?? '',

@@ -1330,7 +1330,7 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete document draft and consultationRecording with fragment ownership and review state; presentation is null when no triage record exists',
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, fragment ownership and review state; presentation is null when no triage record exists',
     version: 4,
   },
   {

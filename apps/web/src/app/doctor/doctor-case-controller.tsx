@@ -268,22 +268,8 @@ function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boo
 }
 
 function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
-  const persisted = detail.clinicalDocument?.draft
-    ?? detail.clinicalDocument?.signed.at(-1)?.content
-  if (persisted !== undefined) {
-    return {
-      assessment: persisted.assessment,
-      auxiliaryExamination: persisted.auxiliaryExamination,
-      chiefComplaint: persisted.chiefComplaint,
-      disposition: persisted.disposition,
-      followUp: persisted.followUp,
-      historyOfPresentIllness: persisted.historyOfPresentIllness,
-      physicalExamination: persisted.physicalExamination,
-      priorMedicalHistory: persisted.priorMedicalHistory,
-    }
-  }
   const vitals = detail.presentation?.vitalSigns
-  return {
+  const prefill: ClinicalDocumentContent = {
     assessment: '',
     auxiliaryExamination: detail.report === undefined
       ? emptyAuxiliaryExamination
@@ -297,6 +283,29 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
       ? '系统未记录既往病史。'
       : detail.priorFacts.map(fact => fact.display || fact.code).join('；'),
   }
+  const persisted = detail.clinicalDocument?.draft
+    ?? detail.clinicalDocument?.signed.at(-1)?.content
+  if (persisted !== undefined) {
+    const document: ClinicalDocumentContent = {
+      assessment: persisted.assessment,
+      auxiliaryExamination: persisted.auxiliaryExamination,
+      chiefComplaint: persisted.chiefComplaint,
+      disposition: persisted.disposition,
+      followUp: persisted.followUp,
+      historyOfPresentIllness: persisted.historyOfPresentIllness,
+      physicalExamination: persisted.physicalExamination,
+      priorMedicalHistory: persisted.priorMedicalHistory,
+    }
+    if (detail.clinicalDocument?.draft !== undefined && detail.consultationRecording?.hasSavedDraft === false) {
+      const automaticFields = new Set<keyof ClinicalDocumentContent>(detail.consultationRecording.additions
+        .filter(addition => addition.status === 'applied').map(addition => addition.field))
+      for (const field of Object.keys(document) as Array<keyof ClinicalDocumentContent>) {
+        if (!automaticFields.has(field) && !document[field]) document[field] = prefill[field] ?? ''
+      }
+    }
+    return document
+  }
+  return prefill
 }
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {

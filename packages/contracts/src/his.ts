@@ -1001,6 +1001,7 @@ export const consultationHistoryAdditionSchema = z.object({
 })
 
 export const consultationRecordingSchema = z.object({
+  hasSavedDraft: z.boolean(),
   status: z.enum(['idle', 'processing', 'updated', 'pending']),
   // Historical suggestions may predate the required correction target in the extraction contract.
   additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({

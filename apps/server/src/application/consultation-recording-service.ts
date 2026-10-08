@@ -61,9 +61,13 @@ function quotesCompleteStatement(text: string, quote: string): boolean {
   const start = text.indexOf(quote)
   if (start < 0) return false
   const end = start + quote.length
-  const boundary = /[。！？；!?;\n]/
-  return (start === 0 || boundary.test(text[start - 1]!))
-    && (end === text.length || boundary.test(text[end]!) || boundary.test(quote.at(-1)!))
+  // 只忽略句界旁的水平空白；换行本身仍是句界，问号不能被引用截掉。
+  const before = text.slice(0, start).replace(/[^\S\r\n]+$/u, '')
+  const after = text.slice(end).replace(/^[^\S\r\n]+/u, '')
+  const boundary = /[。！？；!?;\r\n]/
+  return !/^(?:[。！？；!?;]|[^\S\r\n])*[?？]/u.test(after)
+    && (before.length === 0 || boundary.test(before.at(-1)!))
+    && (after.length === 0 || boundary.test(after[0]!) || boundary.test(quote.at(-1)!))
 }
 
 export class ConsultationRecordingService {
@@ -132,6 +136,10 @@ export class ConsultationRecordingService {
         && (document[target.field] ?? '').slice(target.start_offset, target.end_offset) === target.current_text),
     }))
     return consultationRecordingSchema.parse({
+      hasSavedDraft: this.#database.driver.prepare(`SELECT 1 FROM command_effect
+        WHERE workspace_id = ? AND epoch = ? AND operation = 'clinical-document.save-draft'
+          AND reference = ? LIMIT 1
+      `).get(context.workspaceId, context.epoch, `ClinicalDocumentDraft/${caseId}`) !== undefined,
       status: jobs.some(job => job.status === 'queued') ? 'processing'
         : jobs.some(job => job.status === 'failed') || additions.some(addition => addition.status === 'pending') ? 'pending'
           : jobs.length > 0 ? 'updated' : 'idle',
