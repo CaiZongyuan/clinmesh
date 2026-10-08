@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import type { PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useImagingViewState } from './imaging-page.tsx'
@@ -132,8 +132,9 @@ describe('doctor pathology consultation page', () => {
 
     expect(await screen.findByText('已保存草稿：乳腺切片病理会诊（乳房肿块切除术 · 2022-04-01）')).toBeTruthy()
     // 可选的手术来自病例可见既往病史。
-    await user.click(screen.getByRole('combobox', { name: '送检的既往手术' }))
-    await user.click(screen.getByRole('option', { name: '乳腺病灶切除术 · 2023-01-05' }))
+    act(() => screen.getByRole('combobox', { name: '送检的既往手术' }).focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '乳腺病灶切除术 · 2023-01-05' }))
     const purpose = screen.getByLabelText('会诊目的')
     await user.clear(purpose)
     await user.type(purpose, '外院手术切片复核，明确病理类型')
@@ -175,8 +176,9 @@ describe('doctor pathology consultation page', () => {
 
     expect(await screen.findByText('其他切片会诊：本院当前未开展')).toBeTruthy()
     expect(screen.getByText('本次就诊暂无病理会诊申请。')).toBeTruthy()
-    await user.click(screen.getByRole('combobox', { name: '会诊项目' }))
-    await user.click(screen.getByRole('option', { name: '乳腺切片病理会诊 · 既往手术切除标本的石蜡切片' }))
+    act(() => screen.getByRole('combobox', { name: '会诊项目' }).focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '乳腺切片病理会诊 · 既往手术切除标本的石蜡切片' }))
     expect(screen.getByText('该患者的既往病史中没有可送检的乳腺手术。')).toBeTruthy()
     expect((screen.getByRole('button', { name: '签发申请' }) as HTMLButtonElement).disabled).toBe(true)
   })
