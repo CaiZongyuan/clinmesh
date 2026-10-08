@@ -154,10 +154,60 @@ it('rejects a quote that removes the patient negation instead of recording chest
   expect(detail.consultationRecording).toMatchObject({ status: 'pending', additions: [] })
 })
 
+it.each([
+  ['胸痛已经三天了吗？', '胸痛已经三天了吗'],
+  ['胸痛已经三天?', '胸痛已经三天'],
+  ['胸痛已经三天！？', '胸痛已经三天'],
+  ['胸痛已经三天！ ？', '胸痛已经三天'],
+  ['胸痛已经三天 \t？', '胸痛已经三天'],
+])('rejects a quote that removes the question mark from %s', async (reply, quote) => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', quote,
+      sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  const detail = await read()
+  expect(detail.clinicalDocument?.draft).toBeUndefined()
+  expect(detail.consultationRecording).toMatchObject({ status: 'pending', additions: [] })
+  expect(detail.consultation?.turns.at(-1)?.messageText).toBe(reply)
+})
+
+it.each([' ', '\t', '\u00a0', '\n'])('records a complete statement after sentence whitespace %j', async whitespace => {
+  const quote = '站起来时更明显。'
+  const { runtime, ask, read } = await setup({ reply: `头晕一周了。${whitespace}${quote}`, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', quote,
+      sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  expect(await read()).toMatchObject({
+    clinicalDocument: { draft: { historyOfPresentIllness: `患者自述：${quote}` } },
+    consultationRecording: { status: 'updated', additions: [{ quote, status: 'applied' }] },
+  })
+})
+
 it('rejects a quote that drops uncertainty from the same patient sentence', async () => {
   const { runtime, ask, read } = await setup({ reply: '我不清楚，胸痛已经三天。', extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
     return { additions: [{ field: 'historyOfPresentIllness', quote: '胸痛已经三天。',
+      sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
+  } })
+  expect((await ask()).status).toBe(200)
+  await runtime.dispatchPending()
+  expect((await read()).clinicalDocument?.draft).toBeUndefined()
+  expect((await read()).consultationRecording).toMatchObject({ status: 'pending', additions: [] })
+})
+
+it.each([
+  ['我不清楚 胸痛已经三天。', '胸痛已经三天。'],
+  ['胸痛已经三天 我不清楚。', '胸痛已经三天'],
+])('rejects whitespace clipping that removes uncertainty from %s', async (reply, quote) => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', quote,
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
@@ -220,6 +270,7 @@ it('saves an incomplete draft while preserving required fields for signing', asy
   await ask()
   await runtime.dispatchPending()
   const detail = await read()
+  expect(detail.consultationRecording?.hasSavedDraft).toBe(false)
   const headers = { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }
   const saved = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`, {
     method: 'PUT', headers, body: JSON.stringify({
@@ -232,6 +283,7 @@ it('saves an incomplete draft while preserving required fields for signing', asy
   })
   expect(saved.status).toBe(200)
   const latest = await read()
+  expect(latest.consultationRecording?.hasSavedDraft).toBe(true)
   const preview = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/clinical-document/actions/preview-sign`, {
     method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({
       expectedVersions: { [`Encounter/${started.encounterId}`]: latest.encounter.versionId },

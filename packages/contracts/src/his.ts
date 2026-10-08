@@ -995,6 +995,7 @@ export const consultationHistoryAdditionSchema = z.object({
 }).strict()
 
 export const consultationRecordingSchema = z.object({
+  hasSavedDraft: z.boolean(),
   status: z.enum(['idle', 'processing', 'updated', 'pending']),
   additions: z.array(consultationHistoryAdditionSchema.extend({
     id: z.string().min(1),

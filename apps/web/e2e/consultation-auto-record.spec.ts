@@ -51,6 +51,18 @@ test('patient answers update the visible history without another instruction and
     await expect(page.getByLabel('主诉', { exact: true })).toHaveValue(beforeChiefComplaint)
     await expect(page.getByLabel('查体', { exact: true })).toHaveValue(beforePhysicalExamination)
     await expect(page.getByLabel('既往史', { exact: true })).toHaveValue(beforePriorHistory)
+    // 自动草稿尚未人工保存时，刷新也应保留未涉及字段的分诊与既往事实预填。
+    await page.reload()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了，站起来时更明显。')
+    await expect(page.getByLabel('主诉', { exact: true })).toHaveValue(beforeChiefComplaint)
+    await expect(page.getByLabel('查体', { exact: true })).toHaveValue(beforePhysicalExamination)
+    await expect(page.getByLabel('既往史', { exact: true })).toHaveValue(beforePriorHistory)
+    const automatic = doctorCaseDetailSchema.parse(await (await page.request.get(
+      `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`,
+    )).json())
+    expect(automatic.consultationRecording?.hasSavedDraft).toBe(false)
+    await page.getByLabel('评估', { exact: true }).fill('医生尚未保存的评估。')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect(page.getByText('病历草稿已保存', { exact: true })).toBeVisible()
     const detail = doctorCaseDetailSchema.parse(await (await page.request.get(`${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
@@ -58,6 +70,7 @@ test('patient answers update the visible history without another instruction and
     expect(detail.clinicalDocument?.draft?.chiefComplaint).toBe(beforeChiefComplaint)
     expect(detail.clinicalDocument?.draft?.physicalExamination).toBe(beforePhysicalExamination)
     expect(detail.clinicalDocument?.draft?.priorMedicalHistory).toBe(beforePriorHistory)
+    expect(detail.consultationRecording?.hasSavedDraft).toBe(true)
     expect(detail.consultationRecording?.additions[0]?.sourceTurnId).toBe(detail.consultation?.turns.at(-1)?.id)
     await page.reload()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
