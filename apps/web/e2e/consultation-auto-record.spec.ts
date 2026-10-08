@@ -20,6 +20,12 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
   })
   try {
     const started = await startConsultationCase(server.runtime, server.password, server.origin)
+    let failCaseReads = false
+    let failedCaseReads = 0
+    await page.route(`${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`, async route => {
+      if (failCaseReads) { failedCaseReads += 1; await route.abort('failed') }
+      else await route.continue()
+    })
     await page.goto(`${server.origin}/consultation`)
     await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
     await page.getByLabel('账户密码').fill(server.password)
@@ -41,8 +47,12 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await page.getByLabel('现病史', { exact: true }).fill('医生核对：头晕五天。')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect(page.getByText('病历草稿已保存', { exact: true })).toBeVisible()
+    failCaseReads = true
     await page.getByRole('button', { name: '暂停自动整理', exact: true }).click()
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'paused')
+    await expect.poll(() => failedCaseReads).toBeGreaterThan(0)
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('医生核对：头晕五天。')
+    failCaseReads = false
     reply = '站起来时更明显。'
     await ask()
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'paused')
@@ -51,7 +61,13 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
     await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeVisible()
     expect((await read()).consultationRecording).toMatchObject({ paused: true, processedCount: 1, remainingCount: 1 })
+    const readsBeforeResume = failedCaseReads
+    failCaseReads = true
     await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
+    await expect.poll(() => failedCaseReads).toBeGreaterThan(readsBeforeResume)
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
+    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeEnabled()
+    failCaseReads = false
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('医生核对：头晕五天。\n患者自述：站起来时更明显。')
@@ -62,7 +78,12 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await page.reload()
     await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
     fail = false
+    const readsBeforeRetry = failedCaseReads
+    failCaseReads = true
     await page.getByRole('button', { name: '重试病史整理', exact: true }).click()
+    await expect.poll(() => failedCaseReads).toBeGreaterThan(readsBeforeRetry)
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
+    failCaseReads = false
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
     expect((await read()).consultationRecording).toMatchObject({ processedCount: 3, remainingCount: 0, failedCount: 0 })
     expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：头晕五天。\n患者自述：站起来时更明显。\n患者自述：夜间也会头晕。')

@@ -97,6 +97,7 @@ import {
   startFirstVisit,
   startRevisit,
   withdrawPrescription,
+  ApiClientError,
 } from '../api-client.ts'
 import {
   DoctorCompletedCaseLibrary,
@@ -468,6 +469,9 @@ function DoctorCaseController({
       ? 1_500
       : false,
   })
+  const detailUnavailable = detail.isError && (detail.data === undefined
+    || !(detail.error instanceof ApiClientError)
+    || (detail.error.status !== 0 && detail.error.status < 500))
   const completion = useQuery({
     enabled: detail.data?.consultation !== undefined
       && detail.data.encounter.status === 'in-progress'
@@ -937,7 +941,15 @@ function DoctorCaseController({
         encounterVersion: current.encounter.versionId, expectedRecordingVersion: current.consultationRecording?.version ?? 0 }, newIdempotencyKey())
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (response, variables) => {
+      const queryKey = ['doctor-case', ...scope, variables.caseId]
+      await queryClient.cancelQueries({ queryKey })
+      queryClient.setQueriesData<DoctorCaseDetail>({ queryKey }, current => {
+        if (current === undefined || (current.consultationRecording?.version ?? 0) > response.data.version) return current
+        return { ...current, consultationRecording: response.data }
+      })
+      await refreshCaseById(variables.caseId)
+    },
   })
   const reviewHistory = useMutation({
     mutationFn: async ({ caseId, additionId, decision }: { caseId: string; additionId: string; decision: 'accept' | 'ignore' }) => {
@@ -2331,7 +2343,7 @@ function DoctorCaseController({
       }),
       ui: {
         status: queue.isPending || detail.isPending ? 'loading' as const
-          : queue.isError || detail.isError ? 'error' as const
+          : queue.isError || detailUnavailable ? 'error' as const
             : queue.data?.items.length === 0 ? 'empty' as const : 'ready' as const,
       },
     },
@@ -2368,7 +2380,7 @@ function DoctorCaseController({
     correctReport.mutateAsync,
     currentClinicalDocument,
     detail.data,
-    detail.isError,
+    detailUnavailable,
     detail.isPending,
     canCorrectReports,
     hydrateAgentDraft,
@@ -2429,7 +2441,7 @@ function DoctorCaseController({
             <AlertDescription>{messages.awaitingMedicationPayment}</AlertDescription>
           </Alert>
         ) : null}
-        {detail.isPending && activeCaseId !== undefined ? <Skeleton className="h-64 w-full" /> : detail.isError ? (
+        {detail.isPending && activeCaseId !== undefined ? <Skeleton className="h-64 w-full" /> : detailUnavailable && detail.error !== null ? (
           <ErrorAlert message={getWorkspaceErrorMessage(detail.error, messages)} title={getWorkspaceErrorTitle(detail.error, messages, messages.consultationUnavailable)} />
         ) : detail.data === undefined ? (
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
