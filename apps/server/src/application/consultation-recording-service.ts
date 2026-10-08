@@ -47,10 +47,15 @@ const prompt = [
   '居家测量与外院诊断保留其来源措辞，不成为本院查体、检查或医生诊断。不输出诊断、评估、治疗计划。',
   '只新增未出现的明确事实。患者纠正或与此前陈述矛盾时 relation 为 correction 或 conflict，不当作普通 addition。',
   'history 为此前记录的患者原话，id 只用于定位。更正或矛盾必须用 targetAdditionId 指向同字段的历史项；没有明确纠正措辞时使用 conflict。',
+  '每条更正或矛盾只引用一个完整句子并定位一个历史句子；多个目标分别输出，不能用一条建议覆盖多个历史句子。',
 ].join('\n')
 
 type Addition = z.infer<typeof consultationHistoryAdditionSchema>
 type Draft = z.infer<typeof clinicalDocumentDraftContentSchema>
+
+function statements(quote: string): string[] {
+  return (quote.match(/.*?(?:[。！？!?；;\n]+|$)/gs) ?? []).map(text => text.trim()).filter(Boolean)
+}
 
 function quotesCompleteStatement(text: string, quote: string): boolean {
   const start = text.indexOf(quote)
@@ -123,6 +128,7 @@ export class ConsultationRecordingService {
       ...(row.target_addition_id === null ? {} : { targetAdditionId: row.target_addition_id }),
       reviewable: rows.some(target => target.addition_id === row.target_addition_id && target.status === 'applied'
         && target.review_state === null && target.start_offset !== null && target.end_offset !== null
+        && statements(target.quote).length === 1
         && (document[target.field] ?? '').slice(target.start_offset, target.end_offset) === target.current_text),
     }))
     return consultationRecordingSchema.parse({
@@ -133,12 +139,16 @@ export class ConsultationRecordingService {
     })
   }
 
-  #rows(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
-    const rows = additionRowsSchema.parse(this.#database.driver.prepare(`SELECT addition_id, field,
+  #storedRows(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
+    return additionRowsSchema.parse(this.#database.driver.prepare(`SELECT addition_id, field,
       source_turn_id, quote, relation, status, target_addition_id, ownership, start_offset, end_offset,
       current_text, review_state FROM consultation_history_addition
       WHERE workspace_id = ? AND epoch = ? AND case_id = ? ORDER BY rowid
     `).all(context.workspaceId, context.epoch, caseId))
+  }
+
+  #rows(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
+    const rows = this.#storedRows(context, caseId)
     const legacy = rows.filter(row => row.status === 'applied' && row.start_offset === null && row.review_state === null)
     if (legacy.length === 0) return rows
     const document = this.#draft(context, caseId).content
@@ -153,7 +163,45 @@ export class ConsultationRecordingService {
     })
   }
 
+  #restoreLegacyRows(context: ActorContext, caseId: string): void {
+    const document = this.#draft(context, caseId).content
+    for (const row of this.#storedRows(context, caseId)) {
+      if (row.status !== 'applied' || row.review_state !== null || row.start_offset !== null) continue
+      const text = `患者自述：${row.quote}`
+      const field = document[row.field] ?? ''
+      const start = field.indexOf(text)
+      const quotes = statements(row.quote)
+      if (start < 0 || field.indexOf(text, start + text.length) >= 0
+        || quotes.length === 0 || quotes.some(quote => !consultationHistoryAdditionSchema.shape.quote.safeParse(quote).success)) {
+        this.#database.driver.prepare(`UPDATE consultation_history_addition SET ownership = 'manual'
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
+        `).run(context.workspaceId, context.epoch, caseId, row.addition_id)
+      } else if (quotes.length === 1) {
+        this.#database.driver.prepare(`UPDATE consultation_history_addition SET start_offset = ?, end_offset = ?, current_text = ?
+          WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
+        `).run(start, start + text.length, text, context.workspaceId, context.epoch, caseId, row.addition_id)
+      } else {
+        this.#supersede(context, caseId, row.addition_id)
+        let cursor = '患者自述：'.length
+        for (const [index, quote] of quotes.entries()) {
+          const offset = text.indexOf(quote, cursor)
+          const fragmentStart = index === 0 ? start : start + offset
+          const fragment = index === 0 ? text.slice(0, offset + quote.length) : quote
+          const id = createHash('sha256').update(JSON.stringify([row.addition_id, index, quote])).digest('hex')
+          this.#database.driver.prepare(`INSERT INTO consultation_history_addition
+            (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
+              target_addition_id, ownership, start_offset, end_offset, current_text)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'applied', ?, ?, ?, ?, ?)
+          `).run(context.workspaceId, context.epoch, caseId, id, row.source_turn_id, row.field, quote,
+            row.relation, row.target_addition_id, row.ownership, fragmentStart, fragmentStart + fragment.length, fragment)
+          cursor = offset + quote.length
+        }
+      }
+    }
+  }
+
   #trackEdits(context: ActorContext, caseId: string, before: Draft, after: Draft): void {
+    this.#restoreLegacyRows(context, caseId)
     for (const row of this.#rows(context, caseId)) {
       if (row.status !== 'applied' || row.review_state !== null || row.start_offset === null || row.end_offset === null) continue
       const tracked = trackDocumentFragment(before[row.field] ?? '', after[row.field] ?? '', row.start_offset, row.end_offset)
@@ -187,6 +235,18 @@ export class ConsultationRecordingService {
         this.#finish(context, event, turnId, job, 'failed', 'CONSULTATION_RECORDING_NOT_EDITABLE')
         return { status: 'completed' }
       }
+      if (this.#storedRows(context, job.case_id).some(row => row.status === 'applied'
+        && row.review_state === null && row.start_offset === null && row.ownership === 'automatic')) {
+        this.#commands.execute({ context, operation: 'consultation.history.restore-ownership', expectedVersions: {},
+          idempotencyKey: `history:${event.eventId}:anchors`, input: { caseId: job.case_id },
+          dataSchema: z.object({ caseId: z.string() }),
+        }, () => {
+          this.#restoreLegacyRows(context, job.case_id)
+          return { data: { caseId: job.case_id }, effects: [
+            { kind: 'updated', reference: `ConsultationRecording/${job.case_id}`, versionId: turnId },
+          ] }
+        })
+      }
       const baseline = this.#draft(context, job.case_id)
       const turns = z.array(consultationTurnSchema).parse(this.#database.driver.prepare(`SELECT
         turn_id AS id, speaker, kind, message_text AS messageText, sequence, source,
@@ -216,6 +276,7 @@ export class ConsultationRecordingService {
           throw new Error('Recording output is not an explicit patient statement')
         }
         if (addition.targetAdditionId !== undefined) {
+          if (statements(addition.quote).length !== 1) throw new Error('Recording correction must target one complete statement')
           const target = history.find(item => item.id === addition.targetAdditionId)
           const targetIndex = turns.findIndex(turn => turn.id === target?.sourceTurnId)
           if (target === undefined || target.field !== addition.field || targetIndex < 0
@@ -258,6 +319,9 @@ export class ConsultationRecordingService {
 
   #apply(context: ActorContext, event: OutboxHandlerInput, turnId: string,
     job: z.infer<typeof jobSchema>, baseline: { version: number; content: Draft }, additions: Addition[]) {
+    const fragments = additions.flatMap(item => item.relation === 'addition'
+      ? statements(item.quote).map(quote => ({ ...item, quote })) : [item])
+      .map(item => consultationHistoryAdditionSchema.parse(item))
     this.#commands.execute({ context, operation: 'consultation.history.apply', expectedVersions: {},
       idempotencyKey: `history:${event.eventId}`, input: { turnId, baselineVersion: baseline.version, additions },
       dataSchema: z.object({ draftVersion: z.number().int().nonnegative() }),
@@ -269,7 +333,7 @@ export class ConsultationRecordingService {
       const writable = access.editable && !this.#signing(context, job.case_id)
       const document = { ...current.content }
       let changed = false
-      for (const addition of additions) {
+      for (const addition of fragments) {
         const id = createHash('sha256').update(JSON.stringify(addition)).digest('hex')
         const key = JSON.stringify([addition.field, addition.quote])
         if (seen.has(key)) continue
@@ -279,6 +343,7 @@ export class ConsultationRecordingService {
         const fieldText = document[addition.field] ?? ''
         const anchored = target !== undefined && target.review_state === null && target.status === 'applied'
           && target.start_offset !== null && target.end_offset !== null
+          && statements(target.quote).length === 1
           && fieldText.slice(target.start_offset, target.end_offset) === target.current_text
         const correction = addition.relation === 'correction' && /更正|说错|记错|纠正|其实|不是.{0,20}是/.test(addition.quote)
         const replace = anchored && correction && target.ownership === 'automatic'
@@ -340,6 +405,7 @@ export class ConsultationRecordingService {
         || input.expectedVersions[`Encounter/${encounterId}`] === undefined || draft.version !== input.expectedDraftVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The history review context or draft version has changed')
       }
+      this.#restoreLegacyRows(context, access.caseId)
       const rows = this.#rows(context, access.caseId)
       const addition = rows.find(row => row.addition_id === input.additionId)
       if (addition?.status !== 'pending' || addition.review_state !== null) {
@@ -351,6 +417,7 @@ export class ConsultationRecordingService {
         const field = draft.content[addition.field] ?? ''
         if (target === undefined || target.status !== 'applied' || target.review_state !== null
           || target.start_offset === null || target.end_offset === null
+          || statements(target.quote).length !== 1
           || field.slice(target.start_offset, target.end_offset) !== target.current_text) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The original history fragment must be reviewed manually')
         }

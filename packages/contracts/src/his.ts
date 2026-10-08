@@ -993,11 +993,17 @@ export const consultationHistoryAdditionSchema = z.object({
   quote: z.string().trim().min(2).max(600),
   relation: z.enum(['addition', 'correction', 'conflict']),
   targetAdditionId: z.string().min(1).max(128).optional(),
-}).strict()
+}).strict().superRefine((addition, context) => {
+  if ((addition.relation === 'addition') !== (addition.targetAdditionId === undefined)) {
+    context.addIssue({ code: 'custom', path: ['targetAdditionId'],
+      message: 'Corrections and conflicts require a target; ordinary additions cannot have one' })
+  }
+})
 
 export const consultationRecordingSchema = z.object({
   status: z.enum(['idle', 'processing', 'updated', 'pending']),
-  additions: z.array(consultationHistoryAdditionSchema.extend({
+  // Historical suggestions may predate the required correction target in the extraction contract.
+  additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({
     id: z.string().min(1),
     status: z.enum(['applied', 'pending', 'superseded', 'ignored']),
     ownership: z.enum(['automatic', 'manual']).default('automatic'),

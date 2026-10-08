@@ -254,7 +254,7 @@ describe('SQLite lifecycle', () => {
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
     expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 60 })
-    expect(reopened.diagnostics().schemaVersion).toBe(59)
+    expect(reopened.diagnostics().schemaVersion).toBe(60)
     reopened.close()
   })
 
@@ -1589,7 +1589,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(59)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(60)
     await runtime.close()
   })
 
@@ -1703,7 +1703,7 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 59,
+      expectedSchemaVersion: 60,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
@@ -1891,7 +1891,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(59),
+      schemaVersion: z.literal(60),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
