@@ -1,6 +1,6 @@
 # 问诊病史自动记录
 
-Status: approved
+Status: implemented
 
 ## 问题与目标
 
@@ -32,14 +32,14 @@ DSH 中患者回答后，医生仍需主动要求助手填写病历。患者完�
 
 ## 验收条件
 
-- [ ] A1：每次完整患者回答保存后自动触发提取；患者回复不等待提取，失败不阻断问诊。
-- [ ] A2：仅整理主诉、现病史和既往史相关内容；用药与过敏自述不顺带修改正式记录。
-- [ ] A3：只记录明确自述；提问、未问及、患者不知道均不能写成肯定或阴性事实，患者自述不成为本院查体、检查结果或医生诊断。
+- [x] A1：每次完整患者回答保存后自动触发提取；患者回复不等待提取，失败不阻断问诊。
+- [x] A2：仅整理主诉、现病史和既往史相关内容；用药与过敏自述不顺带修改正式记录。
+- [x] A3：只记录明确自述；提问、未问及、患者不知道均不能写成肯定或阴性事实，患者自述不成为本院查体、检查结果或医生诊断。
 - [x] A4：无冲突增量直接进入草稿并明显提示；医生查看病历时能区分本次新增与已有内容。
 - [x] A5：每条自动增量可查看对应患者回答；来源关联在刷新后仍有效。
 - [x] A6：可撤销自动增量，保留人工修改及之后的无关新增；重复处理不恢复已拒绝的同一建议，新证据可形成新的建议。
-- [ ] A7：仅保护医生修改过的部分，其余内容继续更新；冲突由医生接受后替换，也可忽略。
-- [ ] A8：患者明确纠正时更新尚未人工修改的自动内容并提示；无法判断的矛盾成为待核对项，涉及人工修改仍遵循 A7。
+- [x] A7：仅保护医生修改过的部分，其余内容继续更新；冲突由医生接受后替换，也可忽略。
+- [x] A8：患者明确纠正时更新尚未人工修改的自动内容并提示；无法判断的矛盾成为待核对项，涉及人工修改仍遵循 A7。
 - [x] A9：新开始的 DSH 问诊默认启用，可暂停；暂停只停止自动整理，不停止问诊和对话保存。
 - [x] A10：恢复时自动补录暂停期间未处理的回答，沿用人工修改保护与新增提示。
 - [x] A11：已有就诊提示未整理内容，首次补录需医生点击一次，不因打开页面就改变既有草稿。
@@ -52,7 +52,7 @@ DSH 中患者回答后，医生仍需主动要求助手填写病历。患者完�
 
 ## 设计决定
 
-ClinMesh 拥有自动编排、病史提取规则、增量合并与共享 Command；DSH 提供辅助模型能力。设计理由见 [自动记录决策](../../.agents/notes/proposed/architecture/2026-10-08-consultation-auto-record.md)。
+ClinMesh 拥有自动编排、病史提取规则、增量合并与共享 Command；DSH 提供辅助模型能力。设计理由见 [自动记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-auto-record.md)。
 
 自动记录消费已保存的 Consultation Record，不复制或监听整个 DSH Session。来源和人工修改归属保存在服务端；增量合并不能依靠整篇模型重生成或仅在浏览器维护编辑保护。复用现有模型桥接、Query/Command 和持久任务机制，不新增任意 HTTP、SQL、FHIR write 或宿主源码补丁。自动记录的新 schema、HTTP 或 CLI 合同变化须同步 owning Operation Catalog、运行时 Skill 和命令示例漂移测试。
 
@@ -74,4 +74,4 @@ Playwright 覆盖 A4–A6 的可见新增、原文、撤销，以及暂停、补
 
 依赖已配置的 DSH 辅助模型桥接。模型输出必须校验并关联公开问诊原文；不可把未验证输出或整篇重生成结果直接覆盖草稿。
 
-业务行为、主要测试 seam 与六个纵向实施切片已批准。自动记录基础闭环、局部人工编辑保护、定向核对、暂停补录与失败恢复已实现，来源验证见[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)，编辑与更正见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)，持久控制与顺序补录见[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)，来源展开、持续未核对提示与局部撤销见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)；签署前核对、准备冻结与取消恢复见[签署准备决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-signing-preparation.md)，真实 DSH 问诊整体验收由后续切片承接。真实 DSH 验收需要已配置的宿主和有效模型能力；确定性模型替身只能证明合同，不能证明真实模型提取质量。
+自动记录基础闭环、局部人工编辑保护、定向核对、暂停补录、失败恢复、来源审阅与签署边界均已实现。详细机制分别由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)、[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)、[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)、[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)及[签署准备决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-signing-preparation.md)拥有。完整 Web 与原生 DSH 问诊旅程、真实 Session 工具与审计关联、真实模型有限样本均已验收；分层证据边界见[组合验收决策](../../.agents/notes/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。真实 DSH 验收需要已配置的宿主和有效模型能力；确定性替身证明合同，真实模型成功样本不代表医学语义质量保证。

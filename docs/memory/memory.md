@@ -278,3 +278,7 @@
 - 新 worktree 的文档检查若把 `CLAUDE.md` 中的 `AGENTS.md` 路径当正文并报缺少末尾换行，先检查 Git 的 `120000` mode 与 `core.symlinks`：禁用 symlink 的 checkout 会生成普通文本占位文件。只在隔离 worktree 中按已跟踪 blob 恢复原链接，不修改文档内容或共享 Git 配置。
 
 - `pnpm install --lockfile-only` 自动解决锁文件冲突时可能重新解析间接依赖，顺带升级两侧均未改动的版本。常规主分支整合先按合并后的 manifest 合并两侧已有锁条目，核对 package 版本与 integrity 沿用原值，再用 `pnpm install --frozen-lockfile` 验证；不要把自动解冲突成功等同于依赖范围未变。
+
+- 原生 DSH 验收中，`createClinMeshRuntime` 的 `dshModelBridge` 与 `dshBridgeSecret` 分别启用辅助模型和 Agent Page Context，必须独立装配；模型正常不证明工具授权接口已启用。建立原生 Session 后从 launcher 打开 Surface；宿主刷新会关闭 Surface，需要重新打开，并等待当前浏览器客户端的 `/lease` 成功响应。控件启用或旧客户端注册成功不足以证明当前工具可调用，刷新后的 lease 竞争应通过当前注册状态等待，不能用固定延迟替代。
+
+- Base UI 对齐 Select 在 trigger 收到 focus 时可能关闭已打开的弹层，jsdom 的指针／焦点调度不能当成稳定的展开证据。业务组件测试先聚焦 combobox，再用 `user.keyboard('{ArrowDown}')` 展开，并用 `findByRole('option')` 等待目标选项；保持选择后原有业务断言和默认超时。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证，不用固定延迟或重复点击修补 jsdom 测试。

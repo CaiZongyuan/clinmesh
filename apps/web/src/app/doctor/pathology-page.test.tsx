@@ -175,8 +175,9 @@ describe('doctor pathology consultation page', () => {
 
     expect(await screen.findByText('其他切片会诊：本院当前未开展')).toBeTruthy()
     expect(screen.getByText('本次就诊暂无病理会诊申请。')).toBeTruthy()
-    await user.click(screen.getByRole('combobox', { name: '会诊项目' }))
-    await user.click(screen.getByRole('option', { name: '乳腺切片病理会诊 · 既往手术切除标本的石蜡切片' }))
+    screen.getByRole('combobox', { name: '会诊项目' }).focus()
+    await user.keyboard('{ArrowDown}')
+    await user.click(await screen.findByRole('option', { name: '乳腺切片病理会诊 · 既往手术切除标本的石蜡切片' }))
     expect(screen.getByText('该患者的既往病史中没有可送检的乳腺手术。')).toBeTruthy()
     expect((screen.getByRole('button', { name: '签发申请' }) as HTMLButtonElement).disabled).toBe(true)
   })
