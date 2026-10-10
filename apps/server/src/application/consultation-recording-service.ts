@@ -484,9 +484,11 @@ export class ConsultationRecordingService {
       const current = this.#draft(context, job.case_id)
       const existing = this.#rows(context, job.case_id)
       const seenIds = new Set(existing.map(item => item.addition_id))
-      // Rejection belongs to the evidence, not to the wording in every future patient reply.
-      const evidenceKey = (item: Addition) => JSON.stringify([item.field, item.sourceTurnId, item.quote])
-      const seenEvidence = new Set(existing.map(item => evidenceKey({ field: item.field, sourceTurnId: item.source_turn_id,
+      // Only rejected evidence is shared across targets. Equivalent citations may
+      // include or omit sentence delimiters; a new source reply is new evidence.
+      const evidenceKey = (item: Addition) => JSON.stringify([item.field, item.sourceTurnId,
+        item.quote.replace(/[。！？!?；;\s]+$/u, '')])
+      const rejectedEvidence = new Set(existing.filter(item => item.rejected === 1).map(item => evidenceKey({ field: item.field, sourceTurnId: item.source_turn_id,
         quote: item.quote, relation: item.relation })))
       const seenQuotes = new Set(existing.filter(item => item.rejected === 0 && item.undone === 0)
         .map(item => JSON.stringify([item.field, item.quote])))
@@ -496,9 +498,8 @@ export class ConsultationRecordingService {
       for (const addition of fragments) {
         const id = createHash('sha256').update(JSON.stringify(addition)).digest('hex')
         const key = JSON.stringify([addition.field, addition.quote])
-        if (seenIds.has(id) || seenEvidence.has(evidenceKey(addition)) || (addition.relation === 'addition' && seenQuotes.has(key))) continue
+        if (seenIds.has(id) || rejectedEvidence.has(evidenceKey(addition)) || (addition.relation === 'addition' && seenQuotes.has(key))) continue
         seenIds.add(id)
-        seenEvidence.add(evidenceKey(addition))
         seenQuotes.add(key)
         const text = `患者自述：${addition.quote}`
         const target = this.#rows(context, job.case_id).find(item => item.addition_id === addition.targetAdditionId)

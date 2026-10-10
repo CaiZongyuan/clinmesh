@@ -315,6 +315,76 @@ it('undoes a correction whose restored history exactly meets the field limit', a
   ])
 })
 
+it.each(['correction', 'conflict'] as const)('keeps distinct targets for the same sourced %s without duplicating suggestions', async relation => {
+  let reply = '头晕一周了。咳嗽一周了。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }>; history: Array<{ id: string }> }
+    const sourceTurnId = payload.turns.at(-1)!.id
+    const additions = payload.history.length === 0
+      ? [{ field: 'historyOfPresentIllness', sourceTurnId, quote: reply, relation: 'addition' }]
+      : payload.history.map(target => ({ field: 'historyOfPresentIllness', sourceTurnId, quote: reply,
+        relation, targetAdditionId: target.id }))
+    return { additions: [...additions, ...additions] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const originals = (await fixture.read()).consultationRecording!.additions
+  expect(originals).toHaveLength(2)
+  reply = relation === 'correction' ? '刚才说错了，头晕和咳嗽都只有五天。' : '头晕和咳嗽都只有五天。'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  await fixture.restart()
+  const detail = await fixture.read()
+  expect(detail.consultationRecording!.additions).toHaveLength(4)
+  expect(detail.consultationRecording!.additions.slice(2)).toMatchObject(originals.map(target => ({
+    sourceTurnId: detail.consultation!.turns.at(-1)!.id, quote: reply, relation, targetAdditionId: target.id,
+    status: relation === 'correction' ? 'applied' : 'pending', reviewStatus: 'unreviewed',
+  })))
+  if (relation === 'correction') {
+    expect(detail.consultationRecording!.status).toBe('updated')
+    expect(detail.consultationRecording!.additions.slice(0, 2).every(addition => addition.status === 'superseded')).toBe(true)
+    expect(detail.clinicalDocument!.draft!.historyOfPresentIllness).toBe(`患者自述：${reply}\n患者自述：${reply}`)
+  } else {
+    expect(detail.consultationRecording!.status).toBe('pending')
+    expect(detail.clinicalDocument!.draft!.historyOfPresentIllness).toBe('患者自述：头晕一周了。\n患者自述：咳嗽一周了。')
+  }
+})
+
+it.each(['头晕一周了。', '头晕一周了'] as const)('keeps rejected source evidence across alternate sentence endings (%s) but allows new replies', async quote => {
+  let firstSource = ''
+  let phase: 'initial' | 'replay' | 'new' = 'initial'
+  const alternate = quote.endsWith('。') ? quote.slice(0, -1) : `${quote}。`
+  const fixture = await setup({ reply: '头晕一周了。', extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    firstSource ||= payload.turns.at(-1)!.id
+    return { additions: [{ field: 'historyOfPresentIllness',
+      sourceTurnId: phase === 'new' ? payload.turns.at(-1)!.id : firstSource,
+      quote: phase === 'initial' ? quote : alternate, relation: 'addition' }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const addition = (await fixture.read()).consultationRecording!.additions[0]!
+  expect((await fixture.review(addition.id, 'undo')).status).toBe(200)
+  await fixture.restart()
+  const rejected = await fixture.read()
+  expect(rejected.clinicalDocument!.draft!.historyOfPresentIllness).toBe('')
+  phase = 'replay'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const replayed = await fixture.read()
+  expect(replayed.consultationRecording!.status).toBe('updated')
+  expect(replayed.clinicalDocument!.draft).toEqual(rejected.clinicalDocument!.draft)
+  expect(replayed.consultationRecording!.additions).toEqual(rejected.consultationRecording!.additions)
+  phase = 'new'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.consultationRecording!.additions).toHaveLength(2)
+  expect(detail.consultationRecording!.additions.at(-1)).toMatchObject({ status: 'applied', quote: alternate,
+    sourceTurnId: detail.consultation!.turns.at(-1)!.id, reviewStatus: 'unreviewed' })
+  expect(detail.clinicalDocument!.draft!.historyOfPresentIllness).toBe(`患者自述：${alternate}`)
+})
+
 it.each(['undo', 'ignore'] as const)('suppresses rejected %s evidence during later extraction while allowing an identical quote from a new reply', async decision => {
   let reply = '头晕一周了。'
   let rejected: { field: string; sourceTurnId: string; quote: string; relation: string; targetAdditionId?: string } | undefined
@@ -324,8 +394,9 @@ it.each(['undo', 'ignore'] as const)('suppresses rejected %s evidence during lat
     const addition = { field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
       quote: reply, relation: correction ? 'correction' : 'addition',
       ...(correction ? { targetAdditionId: payload.history[0]!.id } : {}) }
+    const alternate = rejected === undefined ? undefined : { ...rejected, quote: rejected.quote.replace(/。$/, '') }
     return { additions: rejected === undefined ? [addition] : decision === 'ignore'
-      ? [rejected, { ...rejected, relation: 'conflict' }, addition] : [rejected, addition] }
+      ? [rejected, { ...alternate, relation: 'conflict' }, addition] : [rejected, alternate, addition] }
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
