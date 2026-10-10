@@ -301,17 +301,19 @@ function pagination(total: number) {
   return { page: 1, pageSize: 20, total }
 }
 
-function doctorSurfaceAgentResponse(
+let doctorQueryContext: unknown
+
+async function doctorSurfaceAgentResponse(
   path: string,
   init?: RequestInit,
-): Response | undefined {
+): Promise<Response | undefined> {
   if (path === '/api/agent/v1/page-contexts') {
     const request = JSON.parse(String(init?.body)) as {
       claim: Record<string, unknown>
       dshSessionId: string
     }
     const issuedAt = new Date()
-    return Response.json({
+    const response = Response.json({
       snapshot: {
         actor: {
           actorId: doctorSession.actor.actorId,
@@ -338,6 +340,13 @@ function doctorSurfaceAgentResponse(
       },
       token: 'context-token-with-at-least-32-characters',
     }, { status: 201 })
+    doctorQueryContext = (await response.clone().json()).snapshot
+    return response
+  }
+  if (path === '/api/agent/v1/doctor-tasks/permit') {
+    const { instructions, rpcId } = JSON.parse(String(init?.body)) as { instructions: string; rpcId: string }
+    return Response.json({ content: `代问范围：${instructions}`, rpcId, dshSessionId: 'dsh-session-1',
+      taskId: 'a1b2c3d4-1234-4234-8234-123456789abc', permit: 'synthetic-doctor-task-permit-at-least-32-characters' }, { status: 201 })
   }
   if (path === '/clinmesh-agent-proof') {
     return Response.json({ data: { proof: 'proof-with-at-least-32-characters' } })
@@ -375,9 +384,22 @@ function doctorSurfaceAgentResponse(
       dshSessionId: 'dsh-session-1',
       operationId: request.operationId,
       ...(request.operationId.endsWith('.propose') ? { proposalId: 'doctor-proposal-1' } : {}),
-      receiptToken: 'receipt-token-with-at-least-32-characters',
+      receiptToken: `receipt-${request.operationId}-with-at-least-32-characters`,
       status: 'authorized',
     }, { status: 201 })
+  }
+  if (path === '/api/agent/v1/doctor-queries') {
+    const { receiptToken } = JSON.parse(String(init?.body)) as { receiptToken: string }
+    if (receiptToken.includes('ui.context.read')) return Response.json({ context: doctorQueryContext })
+    const selection = (doctorQueryContext as { claim: { selection: { id: string } } }).claim.selection
+    const casePath = `/api/his/v1/doctor/cases/${selection.id}`
+    const [detail, queue, imaging, pathology] = await Promise.all([
+      fetch(casePath).then(response => response.json()),
+      fetch('/api/his/v1/doctor/queue').then(response => response.json()),
+      fetch(`${casePath}/imaging-services`).then(response => response.json(), () => null),
+      fetch(`${casePath}/pathology-services`).then(response => response.json(), () => null),
+    ])
+    return Response.json({ ...detail, queue, imagingServices: imaging?.items ?? null, pathologyServices: pathology?.items ?? null })
   }
   if (path === '/api/agent/v1/tool-calls/review') {
     const request = JSON.parse(String(init?.body)) as { decision: 'approved' | 'rejected' }
@@ -2843,7 +2865,7 @@ describe('role workspaces', () => {
 
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
-      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -2954,6 +2976,7 @@ describe('role workspaces', () => {
     }
     const question = { code: 'symptom-onset', text: '什么时候开始发热？' }
     const staleQuestion = '依据旧轮次生成的问题'
+    const surfaceDoctorTask = vi.fn(async () => undefined)
     let rounds = 0
     const versions: number[] = []
     let releaseQueue: (() => void) | undefined
@@ -2964,7 +2987,7 @@ describe('role workspaces', () => {
 
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
-      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -3021,9 +3044,19 @@ describe('role workspaces', () => {
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     render(<WebApp runtime={{
-      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+      mode: 'surface', surfaceAgent, surfaceDoctorTask, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
     }} />)
-    await userEvent.setup().click(await screen.findByRole('tab', { name: '问诊记录' }))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
+    await user.type(screen.getByRole('textbox', { name: '向患者提问' }), '了解近两周用药情况')
+    await user.click(await screen.findByRole('button', { name: '交给助手代问' }))
+    await waitFor(() => expect(surfaceDoctorTask).toHaveBeenCalledOnce())
+    expect(surfaceDoctorTask).toHaveBeenCalledWith(expect.objectContaining({
+      content: '代问范围：了解近两周用药情况', dshSessionId: 'dsh-session-1',
+    }), expect.any(AbortSignal))
+    expect(versions).toEqual([])
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(await screen.findByText('已交给助手，请在会话中查看进展或叫停。')).toBeTruthy()
     let previousInput: Record<string, unknown> | undefined
     for (let round = 0; round < 2; round += 1) {
       await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
@@ -3082,7 +3115,7 @@ describe('role workspaces', () => {
       if (path === '/api/agent/v1/page-contexts') {
         latestRequestedClaim = agentPageContextClaimSchema.parse(JSON.parse(String(init?.body)).claim)
       }
-      const agentResponse = doctorSurfaceAgentResponse(path, init)
+      const agentResponse = await doctorSurfaceAgentResponse(path, init)
       if (agentResponse !== undefined) {
         if (path === '/api/agent/v1/page-contexts') {
           latestIssuedClaim = agentPageContextBindingSchema.parse(await agentResponse.clone().json()).snapshot.claim
@@ -3169,7 +3202,7 @@ describe('role workspaces', () => {
     }))
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
-      const agentResponse = doctorSurfaceAgentResponse(path, init)
+      const agentResponse = await doctorSurfaceAgentResponse(path, init)
       if (agentResponse !== undefined) return agentResponse
       if (path === '/api/auth/context') return Response.json(doctorSession)
       if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
@@ -3291,7 +3324,7 @@ describe('role workspaces', () => {
       if (path === '/api/agent/v1/tool-calls/result') {
         toolResults.push(agentToolResultRequestSchema.parse(JSON.parse(String(init?.body))))
       }
-      const agentResponse = doctorSurfaceAgentResponse(path, init)
+      const agentResponse = await doctorSurfaceAgentResponse(path, init)
       if (agentResponse !== undefined) return agentResponse
       if (init?.method === 'POST') requests.push({ body: JSON.parse(String(init.body)), path })
       if (path === '/api/auth/context') return Response.json(doctorSession)
@@ -3623,7 +3656,7 @@ describe('role workspaces', () => {
         persistedDraftPageRevision = agentPageBindingRevision(claim)
       }
       if (url.pathname === '/clinmesh-agent-proof') proofRequests.push(JSON.parse(String(init?.body)))
-      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -3998,7 +4031,7 @@ describe('role workspaces', () => {
     }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
-      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -4325,7 +4358,7 @@ describe('role workspaces', () => {
       : { encounterVersion: '3', taskVersion: '2' }
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
-      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -4999,7 +5032,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/agent/v1/page-contexts') {
         latestRequestedClaim = agentPageContextClaimSchema.parse(JSON.parse(String(init?.body)).claim)
       }
-      const agentResponse = doctorSurfaceAgentResponse(url.pathname, init)
+      const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) {
         if (url.pathname === '/api/agent/v1/page-contexts') {
           latestIssuedClaim = agentPageContextBindingSchema.parse(await agentResponse.clone().json()).snapshot.claim

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from './doctor-history.ts'
 import {
   clinicalDocumentContentSchema,
   diagnosisDraftContentSchema,
@@ -129,6 +130,8 @@ export const agentToolInputSchemas = Object.freeze({
   'triage.draft.set': triageDraftInputSchema,
   'triage.record.propose': emptyInputSchema,
   'outpatient.case.read': emptyInputSchema,
+  'outpatient.history.search': doctorCaseHistoryInputSchema,
+  'outpatient.history.read': doctorCaseHistoryDetailInputSchema,
   'outpatient.case.select': z.object({ caseId: boundedIdSchema }).strict(),
   'outpatient.section.select': z.object({
     /** 同时展开这条放射申请的影像；只与 `laboratory` 栏目一起使用。Agent 不读取像素。 */

@@ -2,7 +2,7 @@
 
 Status: implemented
 
-针对医生纯查询绑定的后续提案见[医生 Agent 纯查询绑定](../../proposed/architecture/2026-10-08-doctor-agent-query-binding.md)，尚未实施；本文已有写入、proof 与交接决定继续适用。
+医生纯查询绑定由[医生 Agent 纯查询绑定](2026-10-08-doctor-agent-query-binding.md)拥有；本文已有写入、proof 与交接决定继续适用。
 
 ## Problem
 

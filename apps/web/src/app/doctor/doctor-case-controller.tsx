@@ -50,8 +50,6 @@ import {
   cancelPathologyRequest,
   correctImagingReport,
   correctPathologyReport,
-  getCaseImagingServices,
-  getCasePathologyServices,
   issueImagingRequest,
   issuePathologyRequest,
   retryImagingRequest,
@@ -131,7 +129,7 @@ import {
 } from './laboratory-page.tsx'
 import { PatientBanner } from './patient-summary.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
-import { agentViewRevision, useRegisterAgentPage, useRegisterAgentForm } from '../agent-page-context.tsx'
+import { agentViewRevision, useRegisterAgentPage, useRegisterAgentForm, useDoctorTaskSubmit } from '../agent-page-context.tsx'
 import { useAgentReview } from '../agent-review.tsx'
 
 interface DoctorWorkspaceProps {
@@ -635,6 +633,15 @@ function DoctorCaseController({
         refreshCompletedCaseDetails(),
         queryClient.invalidateQueries({ queryKey: completedCaseListScopeKey }),
       ])
+    },
+  })
+  const submitDoctorTask = useDoctorTaskSubmit()
+  const delegateQuestions = useMutation({
+    mutationFn: async ({ caseId, instructions }: { caseId: string; instructions: string }) => {
+      if (detail.data?.caseId !== caseId || submitDoctorTask === undefined) {
+        throw new Error(messages.consultationUnavailable)
+      }
+      await submitDoctorTask(instructions)
     },
   })
   const askQuestion = useMutation({
@@ -1162,16 +1169,24 @@ function DoctorCaseController({
         description: 'Read current case, queue.items (waiting + active; use each caseId to select a patient), imagingServices with availability, and pathologyServices with availability and the sourceProcedures that can be sent for slide consultation (each null when its catalog cannot be read).',
         enabled: activeCaseId !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: async (_raw: unknown, signal: AbortSignal) => {
-          if (activeCaseId === undefined) throw new Error(messages.consultationUnavailable)
-          const [current, imagingServices, pathologyServices] = await Promise.all([
-            getDoctorCase(activeCaseId, signal),
-            // 放射或病理目录读取失败（例如素材清单无效）时仍返回病例，目录以 null 表示不可用。
-            getCaseImagingServices(activeCaseId, signal).then(catalog => catalog.items, () => null),
-            getCasePathologyServices(activeCaseId, signal).then(catalog => catalog.items, () => null),
-          ])
-          return { ...current, imagingServices, pathologyServices, queue: queue.data ?? null }
-        },
+        execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
+      },
+      'outpatient.history.search': {
+        enabled: activeCaseId !== undefined && detail.data !== undefined,
+        description: 'Read one page of authorized local completed records or materialized Visible Source History for the current patient; reports source, time, coverage and missing materialization. Does not navigate.',
+        parameters: { type: 'object' as const, properties: {
+          source: { type: 'string', enum: ['local-completed', 'visible-source'] },
+          page: { type: 'integer', minimum: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 20 },
+        }, required: ['source'], additionalProperties: false },
+        execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
+      },
+      'outpatient.history.read': {
+        enabled: activeCaseId !== undefined && detail.data !== undefined,
+        description: 'Read clinical details of one entry from the current patient authorized history index; use its source and entryId. Hidden simulation inputs, raw resources and pixels are excluded.',
+        parameters: { type: 'object' as const, properties: {
+          source: { type: 'string', enum: ['local-completed', 'visible-source'] }, entryId: { type: 'string', maxLength: 512 },
+        }, required: ['source', 'entryId'], additionalProperties: false },
+        execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
       },
       'outpatient.case.select': {
         description: 'Select caseId from loaded queue.items; switch to its waiting or active tab.',
@@ -2424,11 +2439,22 @@ function DoctorCaseController({
               ? correctionNavigation.target
               : undefined}
             consultationAction={{
-              error: retryPatientReply.variables?.caseId === detail.data.caseId && retryPatientReply.error !== null
+              error: delegateQuestions.variables?.caseId === detail.data.caseId && delegateQuestions.error !== null
+                ? delegateQuestions.error
+                : retryPatientReply.variables?.caseId === detail.data.caseId && retryPatientReply.error !== null
                 ? retryPatientReply.error
                 : askQuestion.variables?.caseId === detail.data.caseId ? askQuestion.error : null,
               onAsk: message => askQuestion.mutate({ caseId: detail.data.caseId, message }),
               onRetry: () => retryPatientReply.mutate({ caseId: detail.data.caseId }),
+              ...(submitDoctorTask === undefined ? {} : {
+                onDelegate: async (instructions: string) => {
+                  await delegateQuestions.mutateAsync({ caseId: detail.data.caseId, instructions })
+                },
+                delegationPending: delegateQuestions.isPending && delegateQuestions.variables?.caseId === detail.data.caseId,
+                ...(delegateQuestions.isSuccess && delegateQuestions.variables?.caseId === detail.data.caseId ? {
+                  delegationStatus: locale === 'zh-CN' ? '已交给助手，请在会话中查看进展或叫停。' : 'Submitted to the assistant. Follow progress or stop in the conversation.',
+                } : {}),
+              }),
               pending: (askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId)
                 || (retryPatientReply.isPending && retryPatientReply.variables?.caseId === detail.data.caseId),
               ...(askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId

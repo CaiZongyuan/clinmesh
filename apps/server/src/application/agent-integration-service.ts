@@ -13,7 +13,13 @@ import {
   agentToolAuthorizationResponseSchema,
   agentToolResultRequestSchema,
   agentToolCatalog,
+  agentDoctorQueryRequestSchema,
   agentViewIdSchema,
+  hasSameDoctorCase,
+  usesDoctorReadBinding,
+  doctorAgentTaskPermitPayloadSchema,
+  doctorAgentTaskPermitRequestSchema,
+  doctorAgentTaskPermitResponseSchema,
   type AgentPageContextRequest,
   type AgentPageContextSnapshot,
 } from '@clinmesh/contracts/agent'
@@ -48,6 +54,8 @@ const receiptPayloadSchema = z.object({
   epoch: z.string().min(1),
   expiresAt: z.iso.datetime({ offset: true }),
   operationId: z.string().min(1),
+  origin: agentExecutionProofPayloadSchema.shape.origin,
+  issuedAt: z.iso.datetime({ offset: true }).optional(),
   version: z.literal(1),
   workspaceId: z.string().min(1),
 }).strict()
@@ -130,6 +138,9 @@ export class AgentIntegrationService {
         'A Practitioner Role is required for a DSH Agent context',
         403,
       )
+    }
+    if (roleCode === 'outpatient-doctor' && claim.taskEpoch === undefined) {
+      throw new AgentIntegrationError('AGENT_CONTEXT_INVALID', 'The doctor client requires a task epoch; reload the current application', 403)
     }
 
     const now = this.#now()
@@ -333,6 +344,32 @@ export class AgentIntegrationService {
     })
   }
 
+  createDoctorTaskPermit(input: {
+    actor: ActorContext
+    request: z.infer<typeof doctorAgentTaskPermitRequestSchema>
+    userAccountId: string
+  }): z.infer<typeof doctorAgentTaskPermitResponseSchema> {
+    const request = doctorAgentTaskPermitRequestSchema.parse(input.request)
+    const context = this.verifyPageContextToken(request.contextToken)
+    this.#assertCurrentCaller(context, input.actor, input.userAccountId)
+    if (!usesDoctorReadBinding(context, 'outpatient.case.read') || context.claim.ui.status !== 'ready'
+      || validateAgentToolInputForContext(this.#database, this.#cases, context, input.userAccountId,
+        'outpatient.case.read', {}) === undefined) throw this.#taskChanged()
+    const content = `请仅向当前病例的患者代问以下范围，可在范围内连续追问；完成后说明结果。不要修改病历或准备正式操作。\n${request.instructions}`
+    const now = this.#now()
+    const payload = doctorAgentTaskPermitPayloadSchema.parse({
+      contextId: context.id, dshSessionId: context.dshSessionId,
+      expiresAt: new Date(Math.min(Date.parse(context.expiresAt), now.getTime() + 60_000)).toISOString(),
+      inputHash: createHash('sha256').update(content).digest('hex'), issuedAt: now.toISOString(),
+      pageRevision: agentPageBindingRevision(context.claim), purpose: 'clinmesh-doctor-delegation',
+      rpcId: request.rpcId, scopeKey: context.scopeKey, taskId: uuidv7(), version: 1,
+    })
+    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
+    return { content, dshSessionId: context.dshSessionId,
+      permit: `${encoded}.${this.#signature(encoded).toString('base64url')}`,
+      rpcId: request.rpcId, taskId: payload.taskId }
+  }
+
   authorizeToolCall(input: {
     actor: ActorContext
     request: z.infer<typeof agentToolAuthorizationRequestSchema>
@@ -358,6 +395,14 @@ export class AgentIntegrationService {
         403,
       )
     }
+    if (usesDoctorReadBinding(context, definition.operationId) || proof.origin !== undefined
+      || (context.actor.roleCode === 'outpatient-doctor' && context.claim.viewId === 'consultation')) {
+      this.#assertExecutionOrigin(proof, context, input.actor, input.userAccountId)
+    }
+    if (definition.operationId === 'outpatient.consultation.ask'
+      && (proof.origin?.task.delegationId === undefined || proof.origin.task.contextId === undefined)) {
+      throw this.#taskChanged()
+    }
     const parsedInput = validateAgentToolInputForContext(
       this.#database,
       this.#cases,
@@ -367,6 +412,14 @@ export class AgentIntegrationService {
       request.input,
     )
     if (parsedInput === undefined) throw this.#staleContext()
+    if (proof.origin?.task.delegationId !== undefined
+      && !usesDoctorReadBinding(context, definition.operationId)
+      && definition.operationId !== 'outpatient.consultation.ask'
+      && definition.operationId !== 'outpatient.consultation.reply.retry'
+      && !(definition.operationId === 'outpatient.section.select'
+        && z.object({ section: z.literal('consultation') }).strict().safeParse(parsedInput).success)) {
+      throw this.#taskChanged()
+    }
 
     const startedAt = this.#now().toISOString()
     const proposalId = definition.mode === 'proposal' ? uuidv7() : undefined
@@ -440,11 +493,40 @@ export class AgentIntegrationService {
         epoch: context.workspace.epoch,
         expiresAt,
         operationId: definition.operationId,
+        ...(proof.origin === undefined ? {} : { origin: proof.origin, issuedAt: proof.issuedAt }),
         version: 1,
         workspaceId: context.workspace.id,
       }),
       status: 'authorized',
     })
+  }
+
+  verifyDoctorQuery(input: {
+    actor: ActorContext
+    request: z.infer<typeof agentDoctorQueryRequestSchema>
+    userAccountId: string
+  }): { context: AgentPageContextSnapshot; operationId: string; input: unknown; caseId: string } {
+    const request = agentDoctorQueryRequestSchema.parse(input.request)
+    const context = this.verifyPageContextToken(request.contextToken)
+    this.#assertCurrentCaller(context, input.actor, input.userAccountId)
+    const receipt = this.#parseReceipt(request.receiptToken)
+    const original = this.#contextById(receipt.workspaceId, receipt.epoch, receipt.contextId,
+      { requireActive: false, requireCurrentEpoch: true })
+    if (!isAgentOperationId(receipt.operationId) || !usesDoctorReadBinding(context, receipt.operationId)
+      || !hasSameDoctorCase(original, context) || receipt.dshSessionId !== context.dshSessionId
+      || receipt.origin === undefined || receipt.issuedAt === undefined) throw this.#taskChanged()
+    this.#assertExecutionOrigin({ origin: receipt.origin, issuedAt: receipt.issuedAt }, context, input.actor, input.userAccountId)
+    const parsed = validateAgentToolInputForContext(this.#database, this.#cases, context,
+      input.userAccountId, receipt.operationId, request.input)
+    if (parsed === undefined) throw this.#staleContext()
+    const row = z.object({ status: z.enum(['pending', 'completed', 'failed']), input_hash: z.string().regex(/^[a-f0-9]{64}$/) }).optional().parse(this.#database.driver.prepare(`
+      SELECT status, input_hash FROM agent_tool_call
+      WHERE workspace_id = ? AND epoch = ? AND dsh_session_id = ?
+        AND call_id = ? AND context_id = ? AND operation_id = ?
+    `).get(receipt.workspaceId, receipt.epoch, receipt.dshSessionId, receipt.callId,
+      receipt.contextId, receipt.operationId))
+    if (row?.status !== 'pending' || row.input_hash !== hashJson(parsed)) throw this.#callNotPending()
+    return { context, operationId: receipt.operationId, input: parsed, caseId: context.claim.selection!.id }
   }
 
   reviewToolCall(input: {
@@ -595,6 +677,22 @@ export class AgentIntegrationService {
       requireCurrentEpoch: request.ok,
       requirePractitionerRole: request.ok,
     })
+    if (request.ok && usesDoctorReadBinding(context, receipt.operationId)) {
+      const latestRow = z.object({ workspace_id: z.string().min(1), epoch: z.string().min(1), context_id: z.string().min(1) }).optional().parse(this.#database.driver.prepare(`
+        SELECT latest.workspace_id, latest.epoch, latest.context_id
+        FROM agent_page_context AS source JOIN agent_page_context AS latest
+          ON latest.client_id = source.client_id
+        WHERE source.workspace_id = ? AND source.epoch = ? AND source.context_id = ?
+        ORDER BY latest.client_revision DESC LIMIT 1
+      `).get(context.workspace.id, context.workspace.epoch, context.id))
+      if (latestRow === undefined || receipt.origin === undefined || receipt.issuedAt === undefined) throw this.#taskChanged()
+      const latest = this.#contextById(latestRow.workspace_id, latestRow.epoch, latestRow.context_id,
+        { requireActive: true, requireCurrentEpoch: true })
+      this.#assertExecutionOrigin({ origin: receipt.origin, issuedAt: receipt.issuedAt }, latest, input.actor, input.userAccountId)
+      const resolved = resolveAgentPageContext(this.#database, this.#cases, input.actor, input.userAccountId, latest.claim)
+      if (resolved === undefined || !isAgentOperationId(receipt.operationId)
+        || !resolved.allowedOperationIds.includes(receipt.operationId)) throw this.#staleContext()
+    }
     const resultJson = JSON.stringify(request.ok
       ? { result: request.result ?? null }
       : { error: request.error ?? 'Tool execution failed' })
@@ -684,6 +782,76 @@ export class AgentIntegrationService {
   #sign(payload: z.infer<typeof tokenPayloadSchema>): string {
     const encoded = Buffer.from(JSON.stringify(tokenPayloadSchema.parse(payload))).toString('base64url')
     return `${encoded}.${this.#signature(encoded).toString('base64url')}`
+  }
+
+  #assertExecutionOrigin(
+    proof: Pick<z.infer<typeof agentExecutionProofPayloadSchema>, 'origin' | 'issuedAt'>, current: AgentPageContextSnapshot,
+    actor: ActorContext, userAccountId: string,
+  ): void {
+    if (proof.origin === undefined) throw this.#taskChanged()
+    const request = this.#contextForBinding(current, proof.origin.request, proof.issuedAt)
+    const task = proof.origin.task.contextId === undefined
+      ? this.#contextForBinding(current, proof.origin.task, proof.origin.task.acceptedAt)
+      : this.#contextById(current.workspace.id, current.workspace.epoch, proof.origin.task.contextId,
+        { requireActive: false, requireCurrentEpoch: true })
+    const matchesCurrent = (candidate: AgentPageContextSnapshot) => current.claim.selection?.kind === 'case'
+      ? hasSameDoctorCase(candidate, current)
+      : candidate.scopeKey === current.scopeKey
+        && agentPageBindingRevision(candidate.claim) === agentPageBindingRevision(current.claim)
+    if (task.scopeKey !== proof.origin.task.scopeKey
+      || agentPageBindingRevision(task.claim) !== proof.origin.task.pageRevision
+      || !matchesCurrent(request) || !matchesCurrent(task)) throw this.#taskChanged()
+    this.#assertCurrentCaller(request, actor, userAccountId)
+    this.#assertCurrentCaller(task, actor, userAccountId)
+    const clientSchema = z.object({ client_id: z.string().min(1), client_revision: z.number().int().positive() })
+    const source = clientSchema.parse(this.#database.driver.prepare(`
+      SELECT client_id, client_revision FROM agent_page_context
+      WHERE workspace_id = ? AND epoch = ? AND context_id = ?
+    `).get(task.workspace.id, task.workspace.epoch, task.id))
+    const target = clientSchema.parse(this.#database.driver.prepare(`
+      SELECT client_id, client_revision FROM agent_page_context
+      WHERE workspace_id = ? AND epoch = ? AND context_id = ?
+    `).get(current.workspace.id, current.workspace.epoch, current.id))
+    if (source.client_id !== target.client_id) throw this.#taskChanged()
+    const changed = this.#database.driver.prepare(`
+      SELECT 1 FROM agent_page_context
+      WHERE client_id = ? AND client_revision > ? AND client_revision <= ?
+        AND (workspace_id != ? OR epoch != ? OR user_account_id != ? OR actor_id != ?
+          OR practitioner_role_id != ? OR dsh_session_id != ? OR scenario_run_id != ?
+          OR view_id != ? OR role_code != ?
+          OR COALESCE(json_extract(claim_json, '$.selection.kind'), '') != ?
+          OR COALESCE(json_extract(claim_json, '$.selection.id'), '') != ?
+          OR COALESCE(json_extract(claim_json, '$.taskEpoch'), '') != ?)
+      LIMIT 1
+    `).get(source.client_id, source.client_revision, target.client_revision, current.workspace.id,
+      current.workspace.epoch, userAccountId, current.actor.actorId, current.actor.practitionerRoleId,
+      current.dshSessionId, current.workspace.scenarioRunId, current.claim.viewId, current.actor.roleCode,
+      current.claim.selection?.kind ?? '', current.claim.selection?.id ?? '', current.claim.taskEpoch ?? '')
+    if (changed !== undefined) throw this.#taskChanged()
+  }
+
+  #contextForBinding(current: AgentPageContextSnapshot,
+    binding: { scopeKey: string; pageRevision: string }, at: string): AgentPageContextSnapshot {
+    let revision: unknown
+    try { revision = JSON.parse(binding.pageRevision) } catch { throw this.#taskChanged() }
+    if (!Array.isArray(revision) || typeof revision[0] !== 'string') throw this.#taskChanged()
+    const rows = z.array(z.object({ context_id: z.string().min(1), claim_json: z.string().min(1) })).parse(this.#database.driver.prepare(`
+      SELECT context_id, claim_json FROM agent_page_context
+      WHERE workspace_id = ? AND epoch = ? AND dsh_session_id = ? AND scope_key = ?
+        AND view_revision = ? AND issued_at <= ?
+      ORDER BY issued_at DESC, client_revision DESC LIMIT 64
+    `).all(current.workspace.id, current.workspace.epoch, current.dshSessionId,
+      binding.scopeKey, revision[0], at))
+    const row = rows.find(candidate => agentPageBindingRevision(
+      agentPageContextSnapshotSchema.shape.claim.parse(JSON.parse(candidate.claim_json)),
+    ) === binding.pageRevision)
+    if (row === undefined) throw this.#taskChanged()
+    return this.#contextById(current.workspace.id, current.workspace.epoch, row.context_id,
+      { requireActive: false, requireCurrentEpoch: true })
+  }
+
+  #taskChanged(): AgentIntegrationError {
+    return new AgentIntegrationError('AGENT_OPERATION_NOT_ALLOWED', 'The original doctor task cannot be verified for this case', 403)
   }
 
   #signature(encodedPayload: string): Buffer {
@@ -955,6 +1123,7 @@ function pageScopeKey(input: CreatePageContextInput): string {
     scenarioRunId: input.actor.scenarioRunId,
     userAccountId: input.userAccountId,
     selection: claim.selection,
+    taskEpoch: claim.taskEpoch,
     viewId: claim.viewId,
     workspaceId: input.actor.workspaceId,
   }).slice(0, 32)}`

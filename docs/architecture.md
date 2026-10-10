@@ -547,6 +547,8 @@ Scenario 创建的 Patient 使用固定 `synthetic-data` extension 标记合成�
 | `/api/auth/*` | Web 登录、注销、会话和岗位上下文 |
 | `/api/agent/v1/page-contexts` | 从白名单 claim、DSH Session 和 client revision 签发短期受信 Page Context |
 | `/api/agent/v1/tool-calls` | 用 DSH execution proof 与 context token 授权一次 Tool call |
+| `/api/agent/v1/doctor-queries` | 在实际查询时复验医生任务、当前 Context 与 pending receipt，只读当前病例及授权历史 |
+| `/api/agent/v1/doctor-tasks/permit` | 从医生直接提交的追问范围签发短期代问许可 |
 | `/api/agent/v1/tool-calls/review` | 在正式 Command 前记录并线性化当前人类的 proposal 决定 |
 | `/api/agent/v1/tool-calls/result` | 完成 Tool call，并关联 proposal、review、Command、Audit 与 Trace |
 | `/api/agent/v1/clients*`、`/api/agent/v1/grants*` | human-admin 管理 Agent Client/Grant，以及 Agent 读取受信 context |
@@ -729,7 +731,7 @@ snapshot 包含短期 context ID、DSH Session 和 page scope。Actor、岗位�
 
 Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 dump、其他患者标签页、完整患者档案、Case Truth、Hidden Fact、Reveal Policy、Scenario authoring truth 或生成 prompt。
 
-模型参数使用稳定 `scopeKey` 与语义 `pageRevision`。`agentPageBindingRevision` 由 claim 的 `viewRevision` 与草稿引用 `[kind, id, revision, dirty]` 序列化生成；没有草稿时使用 `null`。短期 Context ID、TTL 与 `ui.loading/ready` 不参与该值，因此只续签或切换加载状态时，模型绑定 schema 不变。岗位、会话、对象与资源版本仍受 page scope 限定，页面或草稿语义变化仍要求重新读取当前状态；旧意图不能自动绑定到新语义版本。人工审阅继续按短期 context 与页面版本严格失效。
+模型参数使用稳定 `scopeKey` 与语义 `pageRevision`。`agentPageBindingRevision` 由 claim 的 `viewRevision` 与草稿引用 `[kind, id, revision, dirty]` 序列化生成；没有草稿时使用 `null`。短期 Context ID、TTL 与 `ui.loading/ready` 不参与该值，因此只续签或切换加载状态时，模型绑定 schema 不变。岗位、会话、对象与资源版本仍受 page scope 限定，医生当前病例的纯查询由执行桥接绑定，允许同病例栏目、草稿与内容更新；其他操作仍精确绑定。医生 Surface 的 `taskEpoch` 在账户、岗位、Session、病例或页面对象变化时更新，正常内容更新与同病例栏目切换保留；切走再切回也不能恢复旧任务。人工审阅继续按短期 context 与页面版本严格失效。
 
 ### 7.3 Tool 目录与风险
 
@@ -745,15 +747,21 @@ Claim 和 snapshot 不包含 DOM、Query cache、浏览器存储、任意页面 
 | `preview` | 调用既有只读 preview，不提交正式业务 Effect |
 | `proposal` | 打开 ClinMesh 原生人工审阅；Agent 不提交正式 Command |
 
-不提供通用 `execute_action`、任意 method/path/body、FHIR write、Bundle、SQL、URL、DOM selector、JavaScript、JSON Patch 或 `runAs`。DSH Tool runtime 只接受其强制 JSON Schema 子集；当前 `scopeKey` 与 `pageRevision` 以单值 `const` 绑定，模型显式传入这两个值，短期 `contextId` 由执行桥接管理。Surface adapter 投影 broker 支持的关键词，Web action 和 Hono 在 authorization 持久化前都使用同一 operation/input schema 执行完整长度、格式、数组和数值范围校验；action result 先按标准 JSON 语义省略对象中的 `undefined` 再验证，不可序列化结果仍失败且不能用超长二次错误覆盖原因。
+不提供通用 `execute_action`、任意 method/path/body、FHIR write、Bundle、SQL、URL、DOM selector、JavaScript、JSON Patch 或 `runAs`。DSH Tool runtime 只接受其强制 JSON Schema 子集；医生已选病例时的当前页面、病例与授权历史纯查询只接收业务参数，Context 与任务由桥接核对；其余 Tool 的 `scopeKey` 与 `pageRevision` 以单值 `const` 绑定，模型显式传入，短期 `contextId` 由执行桥接管理。Surface adapter 投影 broker 支持的关键词，Web action 和 Hono 在 authorization 持久化前都使用同一 operation/input schema 执行完整长度、格式、数组和数值范围校验；action result 先按标准 JSON 语义省略对象中的 `undefined` 再验证，不可序列化结果仍失败且不能用超长二次错误覆盖原因。
 
 ### 7.4 Execution proof 与调用记录
 
-DSH Host 监听真实 `tools/pre-execute` 事件，从实际调用参数捕获 `scopeKey`、`pageRevision`，并与 DSH Session、call ID、Tool 名绑定为 pending call。浏览器执行该 Tool 时捕获当前 Context ID 与 token，以 Context ID、语义 revision、scope 和 Tool 名请求一次性 proof；Issuer 仅对匹配的 pending call 签发，签名包含实际 Context ID 与原调用的语义 revision。proof 协议为 `version: 2`，Page Context token、snapshot 和 receipt 保持 `version: 1`；浏览器不能自行签名。Hono 要求 proof 的 Context ID 与当前 token 精确一致，`pageRevision` 与该 context claim 的语义 revision 精确一致，并同时验证 Session、scope、Tool catalog、岗位/view 允许 operation、防重放和当前人类 session，再创建 `agent_tool_call` 与可选 `agent_proposal`。同一语义页面可使用续签后的 context 授权，但不能为旧页面意图补签新语义版本。
+DSH Host 将受信医生 RPC 输入与 inbox、原生回合、Session header 和 `tool/call` 关联，在 `tools/pre-execute` 核对原请求目录、Tool 名及已记录输入，再捕获执行时绑定。Header 或 `source.kind === 'user'` 单独不能证明真实来源。只保留消息引用、正文 hash 和绑定元数据，不复制 transcript 或 reasoning，不修改 arguments；来源与许可状态有界且在结束、取消或卸载时清理。
+
+Proof 协议为 `version: 3`，包括原请求绑定、原医生任务锚点与实际执行 Context；Page Context token、snapshot 和 receipt 保持 `version: 1`。Hono 验证签名、当前身份、Session、岗位/view、Tool catalog 与防重放；医生接诊工具必须带原任务来源，医生 Context 必须有 `taskEpoch`，旧客户端明确拒绝。纯查询外层 broker 允许历史字段抵达 Surface，内层只剥离两项旧绑定并继续严格校验业务输入。原任务、原请求和当前对象必须一致；同病例内容更新可以读取最新状态。现有 Command 建立的 Case 在同 Workspace/Epoch/Scenario Run 内固定关联 Patient/Encounter；换病例或任务 `taskEpoch` 后暂停，即使新 header 已发布或页面切回也不自行迁移任务。无病例页面保留精确绑定的选择动作；选择成功不把该任务转为新病例任务。
+
+医生病例及历史读取通过窄 `doctor-queries` 入口执行，从当前受信 Context 解析病例，核对 pending receipt、输入 hash、任务来源、责任医生、资源状态和当前 operation policy。异步目录准备后及结果 completion 前再次核对，Surface 返回前也复验当前 frame。未保存表单、action 与绑定来自当前已提交 frame；病例读取中的队列来自该 frame 已加载页，选择范围不扩大。授权历史复用本院完诊与 Visible Source History 投影，单项详情限于当前患者、当前责任医生及合法物化索引；隐藏真值、Persona 全文、raw Bundle、URL 和像素不进入结果。
+
+医生在问诊区输入追问范围并点击“交给助手代问”，Server 签发绑定实际正文 hash、当前病例和 Session 的短期许可；浏览器先登记许可，再用原生 Session `prompt` 提交同一 RPC。许可不进入正文，不新增首次批准弹窗。Host 将许可关联真实任务，同任务可连续追问；完成、取消、叫停、对象变化或重启后失效。问诊仍精确绑定并复用既有 Command、版本与幂等，正式操作继续人工审阅。
 
 页面动作的原生结果与新工具目录通过 `/clinmesh-agent-handoff` 交接。浏览器先返回业务结果，保留旧 registration；页面已提交且取得匹配的 Page Context 后，用该调用实际签发的 proof 提交目标 scope、语义 revision 和完整工具名称集合。Host 等待该 Session 同批已开始的 ClinMesh 调用都收到原生结果后才允许浏览器发布，避免撤销旧结果通道，也避免并行调用按顺序 finalize 造成死锁。Host 的 `tools/post-execute` 等待当前 Agent 实际完整工具集合及每项绑定精确匹配目标后才继续下一模型请求；只读或无操作的目标可直接匹配现有目录，不要求版本必须变化。等待有界并响应取消与卸载；同步失败停止当前回合，保留原业务结果，禁止自动重放写入。该交接使用官方公开 hooks，不修改 DSH。
 
-模型仍可能沿用历史参数。Host 拒绝旧绑定时，仅在当前 Agent 的 `clinmesh_read_current_context` 定义可用且绑定有效时附带该只读调用的恢复参数；原调用不被改写或执行。重新读取后仍须核对患者与原业务意图，诊断中的恢复参数不构成写入授权。
+同病例纯查询因 Context 正常更新而在 body 执行前被明确拒绝时，可用 `previousProof` 后台重签一次，保留 call ID 与原任务，并由服务端防重放。对象变化、取消、业务拒绝、网络或结果不明不自动重试；结果不明时，Surface 以本次 proof 提交 `phase: pause`，Host 失效原任务并停止回合；原生 `isError/error.message` 的执行标记在暂停 HTTP 丢失时兜底，普通结果文本不具有控制含义。旧任务的晚到结果不能取消新任务。写入参数不改写。其他精确绑定调用的诊断可附当前只读恢复入口，仍须核对原患者与意图，诊断不构成写入授权。
 
 读取、UI 和草稿动作完成后写入结构化 Tool result。proposal Tool 在打开审阅框后立即向 DSH 返回 `awaiting-human-review`，不让人工等待占用 browser lease；Hono 中的 Tool call 与 proposal 保持 pending。人类点击决定时，浏览器先用原 receipt 调用 decision gate；Hono 只在 context、DSH Session、当前资源和 Tool 仍有效时原子记录 `approved` 或 `rejected`，随后 Web 才能调用既有 Command。
 

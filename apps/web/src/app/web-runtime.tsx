@@ -1,5 +1,6 @@
 import { createContext, useContext, type ReactNode, type RefObject } from 'react'
 import type { WebPreferences } from './preferences.ts'
+import type { DoctorAgentTaskSubmission } from '@clinmesh/contracts/agent'
 
 /** Local presentation and actions; the application retains session and route ownership. */
 export interface WebSurfaceNavigationState {
@@ -32,6 +33,7 @@ export interface WebSurfaceAgentController {
 }
 
 export interface WebRuntimeOptions {
+  surfaceDoctorTask?: (task: DoctorAgentTaskSubmission, signal: AbortSignal) => Promise<void>
   surfaceNavigation?: WebSurfaceNavigation
   surfaceDisplay?: WebSurfaceDisplay
   apiBasePath?: string
@@ -47,6 +49,7 @@ export interface WebRuntimeOptions {
 }
 
 export interface WebRuntimeValue {
+  surfaceDoctorTask?: (task: DoctorAgentTaskSubmission, signal: AbortSignal) => Promise<void>
   surfaceNavigation?: WebSurfaceNavigation
   surfaceDisplay?: WebSurfaceDisplay
   appearanceRoot: RefObject<HTMLElement | null>

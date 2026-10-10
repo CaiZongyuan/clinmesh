@@ -277,6 +277,7 @@ describe('Consultation free dialogue HTTP contract', () => {
           version: 1,
           viewId: 'consultation',
           viewRevision: 'unanswered-doctor-turn',
+          taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc',
         },
         client: { id: 'consultation-retry-client', revision: 1 },
         dshSessionId: 'consultation-retry-session',

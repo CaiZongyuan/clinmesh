@@ -30,6 +30,8 @@ shadow.append(style, root)
 let feedback: ReturnType<typeof useAgentActionFeedback>
 let retryLocale: 'zh-CN' | 'en-US' | undefined
 let retryClicks = 0
+const delegated: string[] = []
+let manualQuestions = 0
 function App() {
   feedback = useAgentActionFeedback({ identity: 'test', view: 'consultation', selection: 'case', section: 'consultation' })
   return <div className="flex h-full min-h-0 flex-col">
@@ -40,7 +42,8 @@ function App() {
           <div style={{ height: 160, flexShrink: 0 }}>Synthetic patient banner and tabs</div>
           <div data-agent-section="consultation" className="flex min-h-0 flex-1 flex-col p-4">
             <ConsultationPage action={{ error: retryLocale === undefined ? null : new ApiClientError(503, 'AI_AUTH_FAILED', 'private-provider-credential'),
-              pending: false, onAsk: () => {}, onRetry: () => { retryClicks++ } }}
+              pending: false, onAsk: () => { manualQuestions++ }, onRetry: () => { retryClicks++ },
+              onDelegate: async instructions => { delegated.push(instructions) } }}
               consultation={retryLocale === undefined ? consultation : { ...consultation, turns: [...consultation.turns.slice(0, -1), {
                 ...consultation.turns.at(-1)!, speaker: 'doctor', source: 'doctor-typed', personaRevision: null,
               }] }} locale={retryLocale ?? 'en-US'} messages={getWorkspaceMessages(retryLocale ?? 'en-US')}
@@ -76,7 +79,7 @@ async function run() {
     history.scrollTop = 0
     history.scrollTop = 200
     const historyScrolled = history.scrollTop > 0 && history.scrollHeight > history.clientHeight
-    const button = composer.querySelector('button')!
+    const button = composer.querySelector('button[type="submit"]')!
     const buttonRect = button.getBoundingClientRect()
     const composerRect = composer.getBoundingClientRect()
     const glow = root.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
@@ -90,13 +93,26 @@ async function run() {
       buttonHit: shadow.elementFromPoint(buttonRect.x + buttonRect.width / 2, buttonRect.y + buttonRect.height / 2)?.closest('button') === button,
       historyHeight: root.querySelector('[data-agent-consultation]')!.getBoundingClientRect().height,
     }
+    const delegateButton = [...composer.querySelectorAll<HTMLButtonElement>('button')]
+      .find(candidate => candidate.textContent === 'Ask assistant to follow up')!
+    const delegateRect = delegateButton.getBoundingClientRect()
+    const delegateVisible = delegateRect.bottom <= host.getBoundingClientRect().bottom
+      && shadow.elementFromPoint(delegateRect.x + delegateRect.width / 2, delegateRect.y + delegateRect.height / 2)?.closest('button') === delegateButton
+    const delegatedBefore = delegated.length
+    const dialogsBefore = root.querySelectorAll('[role="dialog"]').length
+    delegateButton.click()
+    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+    const delegateSubmitted = delegated.length === delegatedBefore + 1
+      && delegated.at(-1) === `Question at ${width}px` && textarea.value === ''
+      && manualQuestions === 0 && root.querySelectorAll('[role="dialog"]').length === dialogsBefore
     let retryReadable = true
     let retryInteractive = true
     for (const locale of ['zh-CN', 'en-US'] as const) {
       retryLocale = locale
       render()
       await new Promise(resolve => setTimeout(resolve, 100))
-      const retryButton = root.querySelector<HTMLButtonElement>('[data-slot="input-group"] button')!
+      const retryButton = [...root.querySelectorAll<HTMLButtonElement>('[data-slot="input-group"] button')]
+        .find(candidate => candidate.textContent?.includes(locale === 'zh-CN' ? '重试患者回答' : 'Retry patient reply'))!
       const retryRect = retryButton.getBoundingClientRect()
       const text = root.textContent ?? ''
       retryReadable &&= text.includes(locale === 'zh-CN' ? '重试将使用当前 ClinMesh 模型设置。' : 'Retry uses the current ClinMesh model settings.')
@@ -109,7 +125,7 @@ async function run() {
       retryButton.click()
       retryInteractive &&= retryClicks === before + 1
     }
-    steps.push({ ...step, retryReadable, retryInteractive })
+    steps.push({ ...step, delegateVisible, delegateSubmitted, retryReadable, retryInteractive })
     retryLocale = undefined
     render()
   }

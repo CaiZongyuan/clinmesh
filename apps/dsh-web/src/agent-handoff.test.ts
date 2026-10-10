@@ -27,7 +27,7 @@ function fixture(timeoutMs = 30_000, initial = original) {
   const routes = new Map<string, HostRoute>()
   const disposers: Array<() => void> = []
   let schemas = descriptors(initial, ['clinmesh_read_current_context', 'clinmesh_select_doctor_section'])
-  const agent = { session: { id: 'synthetic-session' }, cancel: vi.fn() }
+  const agent = { session: { id: 'synthetic-session', header: {}, requestHeader: () => ({ tools: schemas }) }, cancel: vi.fn() }
   const ctx = {
     on: (name: string, handler: unknown) => {
       listeners.set(name, handler)
@@ -40,6 +40,10 @@ function fixture(timeoutMs = 30_000, initial = original) {
     } },
   }
   installAgentProofBridge(ctx as unknown as Context, secret, { handoffTimeoutMs: timeoutMs })
+  const message = { id: 'human-message', source: { kind: 'user', rpcId: 'human-rpc' }, content: [] }
+  invoke('agent/inbox/inserted', { agent, message })
+  invoke('agent/inbox/claimed', { agent, message, turn: 1 })
+  invoke('session/event', agent.session, { type: 'step/start', data: { turn: 1, step: 1 } })
   function startRequest(path: string, body: unknown) {
     const route = routes.get(path)
     expect(route, `registered ${path}`).toBeDefined()
@@ -62,6 +66,9 @@ function fixture(timeoutMs = 30_000, initial = original) {
     const controller = new AbortController()
     const call = { arguments: initial, callId: crypto.randomUUID(), name, agent,
       signal: controller.signal } as unknown as ToolExecution
+    invoke('session/event', agent.session, { type: 'tool/call', data: {
+      turn: 1, step: 1, callId: call.callId, name, arguments: JSON.stringify(call.arguments),
+    } })
     expect(await invoke('tools/pre-execute', call, async () => ({ kind: 'allow' }))).toEqual({ kind: 'allow' })
     const proof = await request('/clinmesh-agent-proof', { ...initial, contextId: 'current-context', toolName: name })
     expect(proof.status).toBe(200)
@@ -87,6 +94,91 @@ function descriptors(binding: typeof original, names: string[]) {
 }
 
 describe('ClinMesh Host result handoff', () => {
+  it('pauses only the pending native task matched by its issued proof', async () => {
+    const f = fixture()
+    try {
+      const { call, proof } = await f.begin()
+      expect((await f.request('/clinmesh-agent-handoff', { phase: 'pause', proof })).status).toBe(409)
+      await f.body(call)
+      const forged = signAgentExecutionProof({ ...parseAgentExecutionProof(proof, { secret }), contextId: 'another-context' }, secret)
+      expect((await f.request('/clinmesh-agent-handoff', { phase: 'pause', proof: forged })).status).toBe(409)
+      expect(f.agent.cancel).not.toHaveBeenCalled()
+      expect(await f.request('/clinmesh-agent-handoff', { phase: 'pause', proof })).toEqual({
+        status: 200, body: { data: { paused: true } },
+      })
+      expect(f.agent.cancel).toHaveBeenCalledWith({ kind: 'hook', reason: expect.stringContaining('CLINMESH_EXECUTION_UNCONFIRMED:') }, { keepInbox: true })
+      expect((await f.request('/clinmesh-agent-handoff', { phase: 'pause', proof })).status).toBe(409)
+      f.invoke('tools/result', call)
+      expect((await f.request('/clinmesh-agent-handoff', { phase: 'pause', proof })).status).toBe(409)
+    } finally { f.dispose() }
+  })
+
+  it('does not let an old proof pause a newly claimed doctor task', async () => {
+    const f = fixture()
+    try {
+      const { call, proof } = await f.begin()
+      await f.body(call)
+      const message = { id: 'new-doctor-message', source: { kind: 'user', rpcId: 'new-doctor-rpc' }, content: [] }
+      f.invoke('agent/inbox/inserted', { agent: f.agent, message })
+      f.invoke('agent/inbox/claimed', { agent: f.agent, message, turn: 1 })
+      expect((await f.request('/clinmesh-agent-handoff', { phase: 'pause', proof })).status).toBe(409)
+      const unknown: ToolExecutionResult = { isError: true, error: { message: 'CLINMESH_EXECUTION_UNCONFIRMED: late old result' },
+        content: [{ type: 'text', text: 'Error: CLINMESH_EXECUTION_UNCONFIRMED: late old result' }] }
+      expect(await f.post(call, unknown)).toEqual({ kind: 'accept' })
+      expect(f.agent.cancel).not.toHaveBeenCalled()
+      f.invoke('tools/result', call, unknown)
+      expect(f.agent.cancel).not.toHaveBeenCalled()
+      await f.begin('clinmesh_read_current_context')
+    } finally { f.dispose() }
+  })
+
+  it('re-signs a current doctor read once for the original native call and leaves writes unreplayed', async () => {
+    const f = fixture()
+    try {
+      const { call, proof } = await f.begin('clinmesh_read_current_context')
+      const updated = { ...original, pageRevision: '["updated",null]' }
+      f.update(updated, ['clinmesh_read_current_context', 'clinmesh_select_doctor_section'])
+      const recovered = await f.request('/clinmesh-agent-proof', {
+        ...updated, contextId: 'renewed-context', toolName: call.name, previousProof: proof,
+      })
+      expect(recovered.status).toBe(200)
+      const token = recovered.body.data!.proof!
+      expect(parseAgentExecutionProof(token, { secret })).toMatchObject({
+        ...updated, contextId: 'renewed-context', callId: call.callId,
+        origin: { request: original, task: { ...original, rpcId: 'human-rpc', turn: 1 } },
+      })
+      for (const previousProof of [proof, token]) {
+        expect((await f.request('/clinmesh-agent-proof', {
+          ...updated, contextId: 'another-context', toolName: call.name, previousProof,
+        })).status).toBe(409)
+      }
+      f.invoke('tools/result', call)
+      expect((await f.request('/clinmesh-agent-proof', {
+        ...updated, contextId: 'after-result', toolName: call.name, previousProof: token,
+      })).status).toBe(409)
+    } finally { f.dispose() }
+  })
+
+  it.each(['write', 'cancel', 'completed-body', 'turn-ended'] as const)(
+    'does not recover a proof after %s', async reason => {
+      const f = fixture()
+      try {
+        const { call, proof, controller } = await f.begin(reason === 'write'
+          ? 'clinmesh_select_doctor_section' : 'clinmesh_read_current_context')
+        if (reason === 'cancel') controller.abort(new Error('doctor stopped the task'))
+        if (reason === 'completed-body') await f.body(call)
+        if (reason === 'turn-ended') f.invoke('session/event', f.agent.session, {
+          type: 'turn/end', data: { turn: 1 },
+        })
+        const updated = { ...original, pageRevision: '["updated",null]' }
+        f.update(updated, ['clinmesh_read_current_context', 'clinmesh_select_doctor_section'])
+        expect((await f.request('/clinmesh-agent-proof', {
+          ...updated, contextId: 'renewed-context', toolName: call.name, previousProof: proof,
+        })).status).toBe(409)
+      } finally { f.dispose() }
+    },
+  )
+
   it('cancels an interrupted settlement request without waiting for its directory deadline', async () => {
     const f = fixture()
     try {

@@ -18,7 +18,25 @@ function bridge() {
   const finish = on.mock.calls.find(([name]) => name === 'tools/result')![1] as (
     execution: ToolExecution,
   ) => void
-  return { before, finish, currentTool }
+  const emit = (name: string, ...args: unknown[]) => {
+    const handler = on.mock.calls.find(([event]) => event === name)?.[1] as (...values: unknown[]) => void
+    handler(...args)
+  }
+  const originate = (call: ToolExecution) => {
+    const session = call.agent!.session
+    Object.assign(session, { header: {}, requestHeader: () => ({ tools: [
+      { name: 'clinmesh_select_doctor_section', ...currentTool('clinmesh_select_doctor_section', call.agent) },
+      { name: call.name, ...currentTool(call.name, call.agent) },
+    ] }) })
+    const message = { id: 'human-message', source: { kind: 'user', rpcId: 'human-rpc' }, content: [] }
+    emit('agent/inbox/inserted', { agent: call.agent, message })
+    emit('agent/inbox/claimed', { agent: call.agent, message, turn: 1 })
+    emit('session/event', session, { type: 'step/start', data: { turn: 1, step: 1 } })
+    emit('session/event', session, { type: 'tool/call', data: {
+      turn: 1, step: 1, name: call.name, callId: call.callId, arguments: JSON.stringify(call.arguments),
+    } })
+  }
+  return { before, finish, currentTool, originate }
 }
 
 function execution(args: unknown, session = true, name = 'clinmesh_fill_clinical_document_draft') {
@@ -29,6 +47,28 @@ function execution(args: unknown, session = true, name = 'clinmesh_fill_clinical
 }
 
 describe('ClinMesh host Tool binding diagnostics', () => {
+  it('rejects unobserved, changed, and replayed doctor calls before dispatch', async () => {
+    const { before, finish, originate } = bridge()
+    const next = vi.fn(async () => ({ kind: 'allow' as const }))
+    const call = execution({ pageRevision: '["view-1",null]', scopeKey: 'scope' })
+    expect(await before(call, next)).toMatchObject({
+      kind: 'deny', reason: expect.stringContaining('CLINMESH_CALL_SOURCE_REQUIRED'),
+    })
+    originate(call)
+    expect(await before({ ...call, arguments: { pageRevision: '["view-1",null]', scopeKey: 'scope',
+      assessment: 'changed after native recording' } }, next)).toMatchObject({
+      kind: 'deny', reason: expect.stringContaining('CLINMESH_CALL_SOURCE_REQUIRED'),
+    })
+    const observed = execution({ pageRevision: '["view-1",null]', scopeKey: 'scope' })
+    originate(observed)
+    expect(await before(observed, next)).toEqual({ kind: 'allow' })
+    finish(observed)
+    expect(await before(observed, next)).toMatchObject({
+      kind: 'deny', reason: expect.stringContaining('CLINMESH_CALL_SOURCE_REQUIRED'),
+    })
+    expect(next).toHaveBeenCalledOnce()
+  })
+
   it.each(['absent', 'invalid'] as const)('does not invent recovery arguments when the current read definition is %s', async kind => {
     const { before, currentTool } = bridge()
     currentTool.mockImplementation(name => name === 'clinmesh_read_current_context'
@@ -47,7 +87,7 @@ describe('ClinMesh host Tool binding diagnostics', () => {
   })
 
   it('rejects the previous patient write and provides current read-only recovery arguments', async () => {
-    const { before, finish, currentTool } = bridge()
+    const { before, finish, currentTool, originate } = bridge()
     currentTool.mockReturnValue({ parameters: { type: 'object', properties: {
       scopeKey: { type: 'string', const: 'current-patient-scope' },
       pageRevision: { type: 'string', const: '["current-patient",null]' },
@@ -72,6 +112,7 @@ describe('ClinMesh host Tool binding diagnostics', () => {
     const agent = originalCall.agent
     if (agent === undefined) throw new Error('Missing synthetic Agent')
     const readCall = { ...execution(recovery.arguments, true, recovery.toolName), agent }
+    originate(readCall)
     expect(await before(readCall, dispatch)).toEqual({ kind: 'allow' })
     expect(dispatch).toHaveBeenCalledOnce()
     finish(readCall)
@@ -117,12 +158,13 @@ describe('ClinMesh host Tool binding diagnostics', () => {
   })
 
   it('allows a corrected call, then read and repeated writes with the same binding', async () => {
-    const { before, finish } = bridge()
+    const { before, finish, originate } = bridge()
     const next = async () => ({ kind: 'allow' as const })
     expect((await before(execution({}), next)).kind).toBe('deny')
     for (const name of ['clinmesh_read_current_context',
       'clinmesh_fill_clinical_document_draft', 'clinmesh_fill_clinical_document_draft']) {
       const call = execution({ pageRevision: '["view-1",null]', scopeKey: 'scope' }, true, name)
+      originate(call)
       expect(await before(call, next)).toEqual({ kind: 'allow' })
       finish(call)
     }

@@ -3,6 +3,7 @@ import {
   agentPageBindingRevision,
   agentToolsForContext,
   agentViewsForRole,
+  hasSameDoctorCase,
   type AgentPageContextBinding,
   type AgentHumanRoleCode,
   type AgentViewId,
@@ -13,6 +14,9 @@ import {
   authorizeAgentToolCall,
   completeAgentToolCall,
   createAgentPageContext,
+  createDoctorTaskPermit,
+  queryAgentDoctor,
+  pauseAgentToolHandoff,
   issueAgentExecutionProof,
   reviewAgentToolCall,
   settleAgentToolHandoff,
@@ -20,6 +24,7 @@ import {
 import {
   createDefaultAgentPageRegistration,
   useAgentPageRegistration,
+  useRegisterDoctorTaskSubmit,
   type AgentPageRegistration,
 } from './agent-page-context.tsx'
 import { buildSurfaceAgentTools, type AgentActionFeedback, type SurfaceAgentPageAction } from './surface-agent-tools.ts'
@@ -82,7 +87,20 @@ export function useSurfaceAgentPublisher(input: {
     input.session.actor.practitionerRoleId,
     input.session.actor.workspaceId,
   ])
-  const page = registeredPage?.claim.viewId === input.activeSection ? registeredPage : defaultPage
+  const rawPage = registeredPage?.claim.viewId === input.activeSection ? registeredPage : defaultPage
+  const isRegisteredPage = rawPage === registeredPage
+  const doctorTaskIdentity = JSON.stringify([runtime.surfaceActive, runtime.surfaceSessionId,
+    input.session.user.id, input.session.actor, rawPage.claim.viewId,
+    rawPage.feedbackSelectionId ?? rawPage.claim.selection?.id])
+  const [storedTaskEpoch, setTaskEpoch] = useState(() => ({ identity: doctorTaskIdentity, epoch: crypto.randomUUID() }))
+  let taskEpoch = storedTaskEpoch
+  if (storedTaskEpoch.identity !== doctorTaskIdentity) {
+    taskEpoch = { identity: doctorTaskIdentity, epoch: crypto.randomUUID() }
+    setTaskEpoch(taskEpoch)
+  }
+  const page = useMemo(() => input.session.actor.roleCode !== 'outpatient-doctor' ? rawPage : {
+    ...rawPage, claim: { ...rawPage.claim, taskEpoch: taskEpoch.epoch },
+  }, [rawPage, input.session.actor.roleCode, taskEpoch.epoch])
   const onActionFeedback = useAgentActionFeedback(runtime.mode !== 'surface' || runtime.surfaceActive === false
     || (runtime.surfaceAgentStatus !== undefined && runtime.surfaceAgentStatus !== 'active'
       && runtime.surfaceAgentStatus !== 'connecting')
@@ -112,6 +130,7 @@ export function useSurfaceAgentPublisher(input: {
     : undefined
   const scopeBinding = identityBinding !== undefined
     && identityBinding.snapshot.claim.viewId === page.claim.viewId
+    && identityBinding.snapshot.claim.taskEpoch === page.claim.taskEpoch
     && identityBinding.snapshot.claim.activeSection === page.claim.activeSection
     && identityBinding.snapshot.claim.selection?.id === page.claim.selection?.id
     && identityBinding.snapshot.claim.selection?.kind === page.claim.selection?.kind
@@ -129,6 +148,32 @@ export function useSurfaceAgentPublisher(input: {
   const handoffs = useRef(new Set<PendingHandoff>())
   const handoffRunning = useRef(false)
   const disposed = useRef(false)
+  const pendingDoctorTasks = useRef(new Set<AbortController>())
+  useEffect(() => () => {
+    for (const controller of pendingDoctorTasks.current) controller.abort()
+    pendingDoctorTasks.current.clear()
+  }, [doctorTaskIdentity])
+  const submitDoctorTask = useCallback(async (instructions: string): Promise<void> => {
+    const frame = committedFrame.current
+    if (frame === undefined || frame.binding.snapshot.id !== currentBinding.current?.snapshot.id
+      || frame.binding.snapshot.actor.roleCode !== 'outpatient-doctor'
+      || frame.binding.snapshot.claim.selection?.kind !== 'case' || runtime.surfaceDoctorTask === undefined) {
+      throw new Error('当前病例或助手连接尚未就绪。')
+    }
+    const controller = new AbortController()
+    pendingDoctorTasks.current.add(controller)
+    try {
+      const task = await createDoctorTaskPermit({ contextToken: frame.binding.token,
+        instructions, rpcId: crypto.randomUUID() }, controller.signal)
+      controller.signal.throwIfAborted()
+      const current = committedFrame.current
+      if (current === undefined || current.binding.snapshot.id !== currentBinding.current?.snapshot.id
+        || !hasSameDoctorCase(current.binding.snapshot, frame.binding.snapshot)
+        || current.binding.snapshot.dshSessionId !== task.dshSessionId) throw new Error('当前病例或会话已变化，任务尚未提交。')
+      await runtime.surfaceDoctorTask(task, controller.signal)
+    } finally { pendingDoctorTasks.current.delete(controller) }
+  }, [runtime.surfaceDoctorTask])
+  useRegisterDoctorTaskSubmit(runtime.mode === 'surface' && runtime.surfaceDoctorTask !== undefined ? submitDoctorTask : undefined)
   const [settlementRevision, setSettlementRevision] = useState(0)
   const publish = useCallback((value: PublishedSurfaceContext | undefined): void => {
     const previous = publishedRef.current
@@ -141,9 +186,16 @@ export function useSurfaceAgentPublisher(input: {
   const onExecutionStart = useCallback((): void => {
     executionCount.current += 1
   }, [])
-  const onExecutionSettled = useCallback((proof: string | undefined, signal: AbortSignal): void => {
+  const onExecutionSettled = useCallback((proof: string | undefined, signal: AbortSignal, unconfirmed = false): void => {
     if (disposed.current) return
     executionCount.current = Math.max(0, executionCount.current - 1)
+    if (proof !== undefined && unconfirmed) {
+      // The native error marker also stops the task if this acknowledgement is lost.
+      void pauseAgentToolHandoff(proof).then(() => {
+        if (!disposed.current) setSettlementRevision(value => value + 1)
+      }).catch(() => undefined)
+      return
+    }
     if (proof !== undefined && !signal.aborted) {
       const controller = new AbortController()
       const onAbort = () => controller.abort(signal.reason)
@@ -308,18 +360,25 @@ export function useSurfaceAgentPublisher(input: {
       binding: publishedBinding,
       complete: (request, signal) => completeAgentToolCall(request, signal),
       definitions,
-      issueProof: ({ contextId, pageRevision, scopeKey, signal, toolName }) => issueAgentExecutionProof({
+      issueProof: ({ contextId, pageRevision, previousProof, scopeKey, signal, toolName }) => issueAgentExecutionProof({
         contextId,
         pageRevision,
         signal,
         scopeKey,
         toolName,
+        ...(previousProof === undefined ? {} : { previousProof }),
       }),
       onExecutionSettled,
       onExecutionStart,
       onActionFeedback: frame.onActionFeedback,
       readState: publishedPage.readState,
+      queryDoctor: queryAgentDoctor,
       resolveBinding: () => currentBinding.current,
+      resolveFrame: () => {
+        const current = committedFrame.current
+        if (current === undefined || current.binding.snapshot.id !== currentBinding.current?.snapshot.id) return undefined
+        return { binding: current.binding, actions: current.page.actions, readState: current.page.readState }
+      },
       review: (request, signal) => reviewAgentToolCall(request, signal),
       strictDefinitions: frame.strictDefinitions,
     })
@@ -327,7 +386,7 @@ export function useSurfaceAgentPublisher(input: {
 
   useEffect(() => {
     const next = activeBinding === undefined ? undefined : {
-      binding: activeBinding, onActionFeedback, page, strictDefinitions: page === registeredPage,
+      binding: activeBinding, onActionFeedback, page, strictDefinitions: isRegisteredPage,
     }
     committedFrame.current = next
     const previous = publishedRef.current?.binding.snapshot
@@ -347,7 +406,7 @@ export function useSurfaceAgentPublisher(input: {
     if (executionCount.current !== 0 || handoffRunning.current) return
     if (handoffs.current.size === 0) { publish(next); return }
     if (next === undefined || page.claim.ui.status === 'loading'
-      || (page !== registeredPage && page !== publishedRef.current?.page
+      || (!isRegisteredPage && page !== publishedRef.current?.page
         && !['uiComponents', 'settingsGeneral'].includes(page.claim.viewId))) return
 
     const targetFor = (frame: PublishedSurfaceContext) => ({
@@ -375,7 +434,7 @@ export function useSurfaceAgentPublisher(input: {
       handoffRunning.current = false
       if (!disposed.current) setSettlementRevision(value => value + 1)
     })
-  }, [activeBinding, identityBinding, onActionFeedback, page, publish, registeredPage, settlementRevision, toolsForFrame])
+  }, [activeBinding, identityBinding, onActionFeedback, page, publish, isRegisteredPage, settlementRevision, toolsForFrame])
 
   useEffect(() => {
     if (published === undefined || runtime.surfaceAgent === undefined) return

@@ -109,6 +109,9 @@ import {
 import { referenceDataReleaseListSchema } from '@clinmesh/contracts/reference-data'
 import {
   agentPageContextBindingSchema,
+  doctorAgentTaskPermitRequestSchema,
+  doctorAgentTaskPermitResponseSchema,
+  type DoctorAgentTaskPermitRequest,
   agentPageContextRequestSchema,
   agentReviewDecisionRequestSchema,
   agentReviewDecisionResponseSchema,
@@ -116,6 +119,11 @@ import {
   agentToolAuthorizationResponseSchema,
   agentToolCompletionResponseSchema,
   agentToolResultRequestSchema,
+  agentDoctorQueryRequestSchema,
+  agentDoctorCaseReadSchema,
+  agentPageContextSnapshotSchema,
+  doctorCaseHistorySchema,
+  doctorCaseHistoryDetailSchema,
   type AgentPageContextRequest,
   type AgentReviewDecisionRequest,
   type AgentToolAuthorizationRequest,
@@ -357,6 +365,17 @@ export function createAgentPageContext(request: AgentPageContextRequest, signal?
   )
 }
 
+export function createDoctorTaskPermit(request: DoctorAgentTaskPermitRequest, signal?: AbortSignal) {
+  return apiMutation('/api/agent/v1/doctor-tasks/permit', doctorAgentTaskPermitResponseSchema,
+    doctorAgentTaskPermitRequestSchema.parse(request), signal === undefined ? {} : { signal })
+}
+
+export function queryAgentDoctor(request: z.infer<typeof agentDoctorQueryRequestSchema>, signal?: AbortSignal) {
+  return apiMutation('/api/agent/v1/doctor-queries', z.union([agentDoctorCaseReadSchema,
+    doctorCaseHistorySchema, doctorCaseHistoryDetailSchema, z.object({ context: agentPageContextSnapshotSchema }).strict()]), agentDoctorQueryRequestSchema.parse(request),
+    signal === undefined ? {} : { signal })
+}
+
 export function reviewAgentToolCall(request: AgentReviewDecisionRequest, signal?: AbortSignal) {
   return apiMutation(
     '/api/agent/v1/tool-calls/review',
@@ -386,6 +405,7 @@ export function completeAgentToolCall(request: AgentToolResultRequest, signal?: 
 
 export async function issueAgentExecutionProof(input: {
   contextId: string
+  previousProof?: string
   pageRevision: string
   scopeKey: string
   signal?: AbortSignal
@@ -397,6 +417,7 @@ export async function issueAgentExecutionProof(input: {
       pageRevision: input.pageRevision,
       scopeKey: input.scopeKey,
       toolName: input.toolName,
+      ...(input.previousProof === undefined ? {} : { previousProof: input.previousProof }),
     }),
     headers: { accept: 'application/json', 'content-type': 'application/json' },
     method: 'POST',
@@ -426,6 +447,14 @@ export async function settleAgentToolHandoff(input: {
   }, response => parseResponse(response,
     z.object({ data: z.object({ permitted: z.literal(true) }).strict() }).strict(),
   ))
+}
+
+export async function pauseAgentToolHandoff(proof: string): Promise<void> {
+  await requestApi('/clinmesh-agent-handoff', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ proof, phase: 'pause' }),
+  }, response => parseResponse(response,
+    z.object({ data: z.object({ paused: z.literal(true) }).strict() }).strict()))
 }
 
 export function getCurrentScenario(signal?: AbortSignal): Promise<ScenarioState> {

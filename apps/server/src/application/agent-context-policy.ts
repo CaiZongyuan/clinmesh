@@ -7,11 +7,13 @@ import {
   type AgentOperationId,
   type AgentPageContextClaim,
   type AgentPageContextSnapshot,
+  type DoctorCaseHistoryDetailInput,
 } from '@clinmesh/contracts/agent'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import type { ActorContext } from './command-executor.ts'
+import { doctorHistoryEntryAllowed } from './doctor-case-history.ts'
 
 const versionRowSchema = z.object({ version: z.union([z.number(), z.string()]) }).strict()
 const scenarioRowSchema = z.object({ status: z.string(), version: z.string() }).strict()
@@ -128,7 +130,7 @@ export function resolveAgentPageContext(
   const accountCanCorrectReports = roleCode.data === 'outpatient-doctor'
     && claim.viewId === 'consultation'
     && accountHasAdministratorRole(database, actor, userAccountId)
-  narrowOperations(allowed, claim, selection, accountCanCorrectReports)
+  narrowOperations(allowed, claim, selection, accountCanCorrectReports, actor.practitionerRoleId)
   return { allowedOperationIds: [...allowed], selection }
 }
 
@@ -355,6 +357,13 @@ function resolveSelection(
        AND encounter.epoch = outpatient_case.epoch
        AND encounter.resource_type = 'Encounter'
        AND encounter.resource_id = outpatient_case.encounter_id
+       AND encounter.deleted = 0
+      JOIN fhir_resource AS patient
+        ON patient.workspace_id = outpatient_case.workspace_id
+       AND patient.epoch = outpatient_case.epoch
+       AND patient.resource_type = 'Patient'
+       AND patient.resource_id = outpatient_case.patient_id
+       AND patient.deleted = 0
       LEFT JOIN outpatient_case_responsibility AS responsibility
         ON responsibility.workspace_id = outpatient_case.workspace_id
        AND responsibility.epoch = outpatient_case.epoch
@@ -476,6 +485,7 @@ function narrowOperations(
   claim: AgentPageContextClaim,
   selection: ResolvedSelection,
   accountCanCorrectReports: boolean,
+  practitionerRoleId: string | undefined,
 ): void {
   const retain = (operations: readonly AgentOperationId[]): void => {
     const selected = new Set([...commonOperations, ...operations])
@@ -518,6 +528,9 @@ function narrowOperations(
       'outpatient.case.select',
       'outpatient.section.select',
     ]
+    if (selection.practitioner_role_id === practitionerRoleId) {
+      operations.push('outpatient.history.search', 'outpatient.history.read')
+    }
     if (selection.status === 'awaiting-doctor' || selection.status === 'awaiting-revisit') {
       operations.push('outpatient.visit.start.propose')
     }
@@ -631,6 +644,10 @@ function inputMatchesCurrentResources(
   const exists = (sql: string, ...bindings: unknown[]): boolean => database.driver.prepare(sql)
     .get(...bindings) !== undefined
   const scope = [actor.workspaceId, actor.epoch]
+  if (operationId === 'outpatient.history.read') {
+    return claim.selection?.kind === 'case'
+      && doctorHistoryEntryAllowed(database, actor, claim.selection.id, input as DoctorCaseHistoryDetailInput)
+  }
   if (operationId === 'ui.navigate') {
     const roleCode = agentHumanRoleCodeSchema.safeParse(actor.roleCode)
     const destination = agentViewIdSchema.safeParse(value.destination)
