@@ -246,7 +246,11 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
   await ready()
   phase = 'native-workspace'
   await page.getByRole('button', { name: '选择工作区', exact: true }).click()
-  await page.getByRole('menuitem', { name: '添加工作区…', exact: true }).click()
+  const addWorkspace = page.getByRole('menuitem', { name: '添加工作区…', exact: true })
+  const editPath = page.getByRole('button', { name: '编辑路径', exact: true })
+  // With no existing workspace the host may open the directory picker directly.
+  await expect.poll(async () => await editPath.isVisible() || await addWorkspace.isVisible(), { timeout: 30_000 }).toBe(true)
+  if (await addWorkspace.isVisible()) await addWorkspace.click()
   await page.getByRole('button', { name: '编辑路径', exact: true }).click()
   await page.getByRole('textbox', { name: '编辑路径', exact: true }).fill(scratch)
   await page.getByRole('textbox', { name: '编辑路径', exact: true }).press('Enter')
