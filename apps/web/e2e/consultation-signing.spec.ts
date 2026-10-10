@@ -54,6 +54,11 @@ test('reviews paused omissions, recovers preparation after reload and signs only
     const commit = dialog.getByRole('button', { name: '确认签署病历', exact: true })
     await expect(commit).toBeDisabled()
     const firstPreviewId = (await read()).consultationRecording!.signingPreparation!.previewId
+    await page.route('**/clinical-document/actions/cancel-sign', async route => {
+      const response = await route.fetch()
+      expect(response.ok()).toBe(true)
+      await route.abort('failed')
+    }, { times: 1 })
     await dialog.getByRole('button', { name: '返回核对并恢复整理', exact: true }).click()
     await expect(dialog).toHaveCount(0)
     await expect.poll(async () => (await read()).consultationRecording!.signingPreparation).toBeUndefined()

@@ -40,7 +40,7 @@ interface AgentReviewDecisionGateRef {
 }
 
 export interface AgentReviewRequest {
-  content?: ReactNode
+  content?: ReactNode | ((locale: WorkspaceLocale) => ReactNode)
   confirmationLabel?: ReviewText
   confirmLabel: ReviewText
   description: ReviewText
@@ -210,7 +210,9 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
                 : confirming ? 'Processing human decision' : 'Awaiting human confirmation; chat cannot approve this review'}
             </p>
           </AlertDialogHeader>
-          {pending?.content === undefined ? null : <div className="max-h-[55vh] overflow-y-auto">{pending.content}</div>}
+          {pending?.content === undefined ? null : <div className="max-h-[55vh] overflow-y-auto">
+            {typeof pending.content === 'function' ? pending.content(locale) : pending.content}
+          </div>}
           {pending?.confirmationLabel === undefined ? null : <Field orientation="horizontal">
             <Checkbox id="agent-review-confirmation" disabled={confirming} checked={acknowledged}
               onCheckedChange={setAcknowledged} />

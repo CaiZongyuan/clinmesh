@@ -1091,6 +1091,7 @@ function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry
   let controlInterceptor: ((response: Response) => Promise<Response>) | undefined
   let signingInterceptor: ((action: 'preview' | 'cancel', response: Response) => Promise<Response>) | undefined
   const cancellations: string[] = []
+  const cancellationReceipts = new Map<string, string>()
   let document: ClinicalDocumentContent = { ...structuredClinicalDocument }
   let draftVersion = 1
   const savedDocuments: ClinicalDocumentContent[] = []
@@ -1164,8 +1165,16 @@ function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry
     if (path === '/api/his/v1/encounters/encounter-recording/clinical-document/actions/cancel-sign') {
       const request = cancelClinicalDocumentSignRequestSchema.parse(JSON.parse(String(init?.body)))
       cancellations.push(request.input.previewId)
-      const { signingPreparation: _preparation, ...remaining } = recording
-      recording = remaining
+      const key = new Headers(init?.headers).get('idempotency-key')!
+      if (cancellationReceipts.get(key) !== request.input.previewId) {
+        if (recording.signingPreparation?.previewId !== request.input.previewId) {
+          return Response.json({ error: { code: 'WORKFLOW_CONFLICT',
+            message: 'The signing preparation is no longer available' } }, { status: 409 })
+        }
+        const { signingPreparation: _preparation, ...remaining } = recording
+        recording = remaining
+        cancellationReceipts.set(key, request.input.previewId)
+      }
       const response = Response.json(commandResponse({ previewId: request.input.previewId }))
       return signingInterceptor === undefined ? response : signingInterceptor('cancel', response)
     }
@@ -3313,6 +3322,82 @@ describe('role workspaces', () => {
     await user.click(screen.getAllByText('合成病史患者', { exact: true })[0]!)
     await screen.findByRole('heading', { name: '合成病史患者' })
     await waitFor(() => expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(newer))
+  })
+
+  it.each(['lost-response', 'cancelled-elsewhere', 'replaced-elsewhere'] as const)('closes an obsolete signing preview after %s and preserves a newer preparation', async reason => {
+    const fixture = stubRecordingWorkspace('resume')
+    const user = userEvent.setup()
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await user.click(await screen.findByRole('button', { name: '签署病历' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
+    if (reason === 'lost-response') {
+      fixture.interceptSigning(async (action, response) => {
+        if (action === 'cancel') throw new TypeError('Synthetic response lost after cancellation committed')
+        return response
+      })
+    } else {
+      fixture.updateRecording({ signingPreparation: reason === 'cancelled-elsewhere' ? undefined
+        : { active: true, previewId: 'newer-sign-preview', expiresAt: new Date(Date.now() + 300_000).toISOString() } })
+    }
+    await user.click(within(dialog).getByRole('button', { name: '返回核对并恢复整理' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    const newer = reason === 'replaced-elsewhere'
+    expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(newer)
+    expect(screen.queryByText('签署准备尚未结束') !== null).toBe(newer)
+    if (!newer) await user.click(screen.getByRole('button', { name: '签署病历' }))
+    else await user.click(screen.getByRole('button', { name: '返回核对并恢复整理' }))
+    if (newer) await waitFor(() => expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(false))
+    else await screen.findByRole('alertdialog', { name: '确认签署病历' })
+  })
+
+  it('replays a committed sign cancellation after its response and follow-up reads fail', async () => {
+    const fixture = stubRecordingWorkspace('resume')
+    const user = userEvent.setup()
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await user.click(await screen.findByRole('button', { name: '签署病历' }))
+    const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
+    let lost = false
+    fixture.interceptSigning(async (action, response) => {
+      if (action === 'cancel' && !lost) {
+        lost = true
+        fixture.failReads(503)
+        throw new TypeError('Synthetic response lost after cancellation committed')
+      }
+      return response
+    })
+    await user.click(within(dialog).getByRole('button', { name: '返回核对并恢复整理' }))
+    await waitFor(() => expect(fixture.failedReads()).toBeGreaterThan(0))
+    await waitFor(() => expect((within(dialog).getByRole('button', { name: '返回核对并恢复整理' }) as HTMLButtonElement).disabled).toBe(false))
+    await user.click(within(dialog).getByRole('button', { name: '返回核对并恢复整理' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(fixture.cancellations).toEqual(['sign-recording-preview', 'sign-recording-preview'])
+    expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(false)
+  })
+
+  it('translates an open Agent signing review when the host language changes', async () => {
+    window.history.replaceState(null, '', '/consultation')
+    stubRecordingWorkspace('resume')
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = { register(value) {
+      registration = value
+      return () => { if (registration === value) registration = undefined }
+    } }
+    const runtime = { mode: 'surface' as const, surfaceAgent, surfaceAgentStatus: 'active' as const, surfaceSessionId: 'dsh-session-1' }
+    const view = render(<WebApp runtime={{ ...runtime, surfaceLocale: 'zh-CN' }} />)
+    const tool = await waitFor(() => {
+      const current = registration?.tools.find(tool => tool.name === 'clinmesh_prepare_sign_document')
+      expect(current).toBeDefined()
+      return current!
+    })
+    await act(async () => { await tool.execute(boundAgentToolInput(tool, {}), new AbortController().signal) })
+    const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
+    expect(within(dialog).getByText('签署前核对问诊病史')).toBeTruthy()
+    await userEvent.setup().click(within(dialog).getByRole('checkbox'))
+    view.rerender(<WebApp runtime={{ ...runtime, surfaceLocale: 'en-US' }} />)
+    const changed = await screen.findByRole('alertdialog', { name: 'Confirm medical record signature' })
+    expect(within(changed).getByText('Review consultation history before signing')).toBeTruthy()
+    expect(within(changed).getByText('Chief complaint')).toBeTruthy()
+    expect(within(changed).getByRole('checkbox').getAttribute('aria-checked')).toBe('true')
   })
 
   it.each(['abort', 'change-case', 'unmount'] as const)('cancels a late Agent sign preview after %s without opening an old review', async change => {

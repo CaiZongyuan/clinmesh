@@ -2,12 +2,11 @@ import * as React from 'react'
 import { createRoot } from 'react-dom/client'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
-import { ClinicalDocumentPage, type ClinicalDocumentSignPreview } from '../../../web/src/app/doctor/clinical-document-page.tsx'
+import { ClinicalDocumentPage, ClinicalDocumentContentView, type ClinicalDocumentSignPreview } from '../../../web/src/app/doctor/clinical-document-page.tsx'
 import { ConsultationSignReviewNotice } from '../../../web/src/app/doctor/consultation-sign-review.tsx'
 import { AgentReviewProvider, useAgentReview } from '../../../web/src/app/agent-review.tsx'
-import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
+import { getWorkspaceMessages, type WorkspaceLocale } from '../../../web/src/app/workspace-i18n.ts'
 
-const messages = getWorkspaceMessages('zh-CN')
 const content: ClinicalDocumentContent = { chiefComplaint: '头晕一周。', historyOfPresentIllness: '医生核对病史。\n'.repeat(60),
   priorMedicalHistory: '既往高血压。', physicalExamination: '查体正常。', auxiliaryExamination: '暂无检查。',
   assessment: '进一步评估。', disposition: '门诊随访。', followUp: '加重及时就诊。' }
@@ -29,7 +28,8 @@ const root = document.createElement('div')
 root.className = 'clinmesh-web-root h-full'
 shadow.append(root)
 
-function App(): React.JSX.Element {
+function App({ locale, onLocaleChange }: { locale: WorkspaceLocale; onLocaleChange: (locale: WorkspaceLocale) => void }): React.JSX.Element {
+  const messages = getWorkspaceMessages(locale)
   const [preview, setPreview] = React.useState<ClinicalDocumentSignPreview>()
   const [serial, setSerial] = React.useState(0)
   const [result, setResult] = React.useState('')
@@ -44,18 +44,25 @@ function App(): React.JSX.Element {
   return <div className="h-full overflow-y-auto">
     <button onClick={() => setFailCancel(true)}>模拟取消失败</button>
     <button onClick={() => setRecovery(true)}>模拟重连恢复</button>
+    <button onClick={() => onLocaleChange(locale === 'zh-CN' ? 'en-US' : 'zh-CN')}>切换宿主语言</button>
     <button onClick={() => {
-      const task = agentReview.request({ signal: new AbortController().signal, title: messages.confirmClinicalRecordSign,
-        description: messages.clinicalDocumentSignDescription, confirmLabel: messages.confirmClinicalRecordSign,
-        content: <ConsultationSignReviewNotice review={review} messages={messages} />,
-        confirmationLabel: messages.consultationSignReviewed, onConfirm: acknowledged => setResult(`agent:${acknowledged}`) })
+      const task = agentReview.request({ signal: new AbortController().signal,
+        title: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
+        description: locale => getWorkspaceMessages(locale).clinicalDocumentSignDescription,
+        confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
+        content: locale => <>
+          <ConsultationSignReviewNotice review={review} messages={getWorkspaceMessages(locale)} />
+          <ClinicalDocumentContentView content={content} messages={getWorkspaceMessages(locale)} />
+        </>,
+        confirmationLabel: locale => getWorkspaceMessages(locale).consultationSignReviewed,
+        onConfirm: acknowledged => setResult(`agent:${acknowledged}`) })
       task.bindDecisionGate(async () => {})
       void task.decision.catch(() => undefined)
     }}>Agent 签署提案</button>
     <output aria-label="签署结果">{result}</output>
     <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: { ...detail.consultationRecording!,
       ...(recovery ? { signingPreparation: { previewId: 'recovered', expiresAt: '2026-10-10T09:00:00Z', active: false } } : {}) } }}
-      elementId="signing-record" locale="zh-CN" messages={messages} workingDocument={content} onDocumentChange={() => {}}
+      elementId="signing-record" locale={locale} messages={messages} workingDocument={content} onDocumentChange={() => {}}
       actions={{
         cancelSign: { error: cancelError, pending: false, onSubmit: cancel },
         prepareSign: { data: preview, error: null, pending: false, onReset: cancel, onSubmit: () => {
@@ -67,4 +74,8 @@ function App(): React.JSX.Element {
       }} />
   </div>
 }
-createRoot(root).render(<PortalContainerProvider container={root}><AgentReviewProvider><App /></AgentReviewProvider></PortalContainerProvider>)
+function Fixture(): React.JSX.Element {
+  const [locale, setLocale] = React.useState<WorkspaceLocale>('zh-CN')
+  return <AgentReviewProvider locale={locale}><App locale={locale} onLocaleChange={setLocale} /></AgentReviewProvider>
+}
+createRoot(root).render(<PortalContainerProvider container={root}><Fixture /></PortalContainerProvider>)

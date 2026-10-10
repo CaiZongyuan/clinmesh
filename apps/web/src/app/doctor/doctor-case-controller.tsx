@@ -1021,14 +1021,27 @@ function DoctorCaseController({
       const current = detail.data
       if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return cancelStructuredClinicalDocumentSign({ encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId, previewId }, newIdempotencyKey())
+        encounterVersion: current.encounter.versionId, previewId },
+        `cancel-sign:${session.actor.practitionerRoleId}:${previewId}:${current.encounter.versionId}`)
     },
     onSuccess: async (response, variables) => {
       await applySignCancellation(variables.caseId, response.data.previewId)
       if (prepareClinicalDocumentSign.data?.data.previewId === response.data.previewId) prepareClinicalDocumentSign.reset()
       await refreshCaseById(variables.caseId)
     },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onError: async (_error, variables): Promise<void> => {
+      const queryKey = ['doctor-case', ...scope, variables.caseId]
+      try {
+        await queryClient.refetchQueries({ queryKey }, { throwOnError: true })
+      } catch { return }
+      const current = queryClient.getQueriesData<DoctorCaseDetail>({ queryKey })
+        .find(([key, value]) => value?.caseId === variables.caseId && queryClient.getQueryState(key)?.status === 'success')?.[1]
+      if (current?.consultationRecording === undefined
+        || current.consultationRecording.signingPreparation?.previewId === variables.previewId) return
+      if (prepareClinicalDocumentSign.variables?.caseId === variables.caseId
+        && prepareClinicalDocumentSign.data?.data.previewId === variables.previewId) prepareClinicalDocumentSign.reset()
+      cancelClinicalDocumentSign.reset()
+    },
   })
   const signStructuredDocument = useMutation({
     mutationFn: ({ caseId, preview }: {
@@ -2228,10 +2241,13 @@ function DoctorCaseController({
               signal.throwIfAborted()
               if (!mountedRef.current || pageScopeRef.current !== proposalScope) throw new Error(messages.consultationUnavailable)
               const task = agentReview.request({
-                content: <div className="flex flex-col gap-3">
-                  <ConsultationSignReviewNotice review={preview.data.consultationReview} messages={messages} />
-                  <ClinicalDocumentContentView content={preview.data.document.content} messages={messages} />
-                </div>,
+                content: locale => {
+                  const reviewMessages = getWorkspaceMessages(locale)
+                  return <div className="flex flex-col gap-3">
+                    <ConsultationSignReviewNotice review={preview.data.consultationReview} messages={reviewMessages} />
+                    <ClinicalDocumentContentView content={preview.data.document.content} messages={reviewMessages} />
+                  </div>
+                },
                 ...(requiresConsultationReview(preview.data.consultationReview)
                   ? { confirmationLabel: (locale: WorkspaceLocale) => getWorkspaceMessages(locale).consultationSignReviewed } : {}),
                 confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
