@@ -15,6 +15,7 @@ const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
 async function setup(options: {
+  recording?: boolean
   now?: () => Date
   failFirstReply?: boolean
   reply?: string | (() => string)
@@ -46,8 +47,9 @@ async function setup(options: {
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters',
     chatCompletionsProvider: provider, databasePath: join(directory, 'clinmesh.sqlite'),
+    consultationModel: 'synthetic', patientPersonaModel: 'synthetic', investigationModel: 'synthetic',
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', outboxRetryDelayMs: 0,
-    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+    ...(options.recording === false ? {} : { dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 } }),
     syntheaProvider: new StubSyntheaProvider(), trustedOrigins: ['http://localhost'],
   })
   let runtime = await createRuntime()
@@ -135,6 +137,51 @@ async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
   }
   return { complete, save, preview, request }
 }
+
+it('requires review and exposes cancellable preparation without an automatic recording model', async () => {
+  let now = new Date('2026-10-10T06:00:00.000Z')
+  const fixture = await setup({ recording: false, now: () => now })
+  expect((await fixture.ask()).status).toBe(200)
+  expect((await fixture.read()).consultationRecording).toBeUndefined()
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  expect(preview.consultationReview).toEqual({
+    consultationVersion: (await fixture.read()).consultation!.version,
+    remainingCount: 2, failedCount: 0, paused: false, conflictCount: 0, unreviewedCount: 0,
+  })
+  expect((await fixture.read()).consultationRecording?.signingPreparation).toMatchObject({ previewId: preview.previewId, active: true })
+  const denied = await actions.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })
+  expect(denied.status).toBe(409)
+  expect(apiErrorSchema.parse(await denied.json()).error.code).toBe('WORKFLOW_CONFLICT')
+  now = new Date(now.getTime() + 6 * 60_000)
+  await fixture.restart()
+  expect((await fixture.read()).consultationRecording?.signingPreparation).toMatchObject({ previewId: preview.previewId, active: false })
+  const cancelled = await actions.request('actions/cancel-sign', { previewId: preview.previewId })
+  expect(cancelled.status).toBe(200)
+  cancelClinicalDocumentSignResponseSchema.parse(await cancelled.json())
+  expect((await fixture.read()).consultationRecording).toBeUndefined()
+  expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toEqual([])
+  const fresh = await actions.preview()
+  const signed = await actions.request('actions/sign', { previewId: fresh.previewId, commitToken: fresh.commitToken, consultationReviewed: true })
+  expect(signed.status).toBe(200)
+  clinicalDocumentSignResponseSchema.parse(await signed.json())
+})
+
+it('invalidates a changed consultation preview without an automatic recording model even after human acknowledgement', async () => {
+  const fixture = await setup({ recording: false })
+  expect((await fixture.ask()).status).toBe(200)
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  const before = (await fixture.read()).consultation!.version
+  expect((await fixture.askMore()).status).toBe(200)
+  expect((await fixture.read()).consultation!.version).toBeGreaterThan(before)
+  const denied = await actions.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken, consultationReviewed: true })
+  expect(denied.status).toBe(409)
+  expect(apiErrorSchema.parse(await denied.json()).error.code).toBe('WORKFLOW_CONFLICT')
+  expect((await fixture.read()).clinicalDocument?.signed).toEqual([])
+})
 
 it('enforces responsibility for signing preparation, commit and cancellation while allowing a newly trusted actor of the responsible role to recover', async () => {
   const fixture = await setup()

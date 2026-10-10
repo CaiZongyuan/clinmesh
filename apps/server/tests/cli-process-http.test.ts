@@ -930,6 +930,7 @@ describe('clinmesh CLI process over real HTTP', () => {
         '--input', '-',
         '--idempotency-key', 'cli-cross-role-document-sign-1',
       ], {
+        consultationReviewed: true,
         commitToken: documentPreview.commitToken,
         encounterId: doctorItem.encounterId,
         encounterVersion: diagnosis.encounterVersion,

@@ -243,7 +243,9 @@ export class ConsultationRecordingService {
 
   read(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
     const state = this.#state(context, caseId)
-    if (state === undefined && (!this.#enabled || !this.#hasConsultation(context, caseId))) return undefined
+    const signingPreparation = this.signingPreparation(context, caseId)
+    if (state === undefined && (!this.#hasConsultation(context, caseId)
+      || (!this.#enabled && signingPreparation === undefined))) return undefined
     const jobs = this.#jobs(context, caseId)
     const total = z.object({ count: z.number().int().nonnegative() }).parse(this.#database.driver.prepare(`SELECT count(*) AS count
       FROM consultation_turn WHERE workspace_id = ? AND epoch = ? AND case_id = ?
@@ -267,7 +269,7 @@ export class ConsultationRecordingService {
         && (document[target.field] ?? '').slice(target.start_offset, target.end_offset) === target.current_text),
     }))
     return consultationRecordingSchema.parse({
-      signingPreparation: this.signingPreparation(context, caseId),
+      signingPreparation,
       hasSavedDraft: this.#database.driver.prepare(`SELECT 1 FROM command_effect
         WHERE workspace_id = ? AND epoch = ? AND operation = 'clinical-document.save-draft'
           AND reference = ? LIMIT 1

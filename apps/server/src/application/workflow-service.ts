@@ -5281,6 +5281,7 @@ export class WorkflowService {
       if (outpatientCase.status !== 'revisit-draft') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not ready for signing')
       }
+      this.#assertNoConsultationForLegacySigning(input.context, outpatientCase.case_id)
       if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
       }
@@ -5477,6 +5478,7 @@ export class WorkflowService {
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical signing preview is unavailable')
       }
+      this.#assertNoConsultationForLegacySigning(input.context, preview.case_id)
       if (this.#signedClinicalDocumentRoot(input.context, preview.case_id) !== undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
       }
@@ -6131,22 +6133,26 @@ export class WorkflowService {
     })
   }
 
+  #assertNoConsultationForLegacySigning(context: ActorContext, caseId: string): void {
+    if (this.#consultationState(context, caseId) !== undefined) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'Use structured clinical document signing to review the Consultation')
+    }
+  }
+
   #consultationSignReview(context: ActorContext, caseId: string) {
+    const consultation = this.#consultationState(context, caseId)
+    if (consultation === undefined) return null
     const recording = this.consultationRecording.read(context, caseId)
-    if (recording === undefined) return null
-    const consultation = z.object({ version: z.number().int().positive() }).parse(
-      this.#database.driver.prepare(`SELECT version FROM consultation
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-      `).get(context.workspaceId, context.epoch, caseId))
     return consultationSignReviewSchema.parse({
       consultationVersion: consultation.version,
-      remainingCount: recording.remainingCount,
-      failedCount: recording.failedCount,
-      paused: recording.paused,
-      conflictCount: recording.additions.filter(addition => addition.status === 'pending'
-        || (addition.status === 'applied' && addition.reviewStatus === 'undo-pending')).length,
-      unreviewedCount: recording.additions.filter(addition => addition.status === 'applied'
-        && addition.reviewStatus === 'unreviewed').length,
+      remainingCount: recording?.remainingCount ?? this.#consultationTurnRows(context, caseId)
+        .filter(turn => turn.speaker === 'patient' && turn.kind === 'text').length,
+      failedCount: recording?.failedCount ?? 0,
+      paused: recording?.paused ?? false,
+      conflictCount: recording?.additions.filter(addition => addition.status === 'pending'
+        || (addition.status === 'applied' && addition.reviewStatus === 'undo-pending')).length ?? 0,
+      unreviewedCount: recording?.additions.filter(addition => addition.status === 'applied'
+        && addition.reviewStatus === 'unreviewed').length ?? 0,
     })
   }
 

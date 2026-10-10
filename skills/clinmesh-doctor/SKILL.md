@@ -5,7 +5,7 @@ description: ClinMesh outpatient doctor CLI workflows for consultation, diagnosi
 
 # ClinMesh Doctor
 
-Read [`../clinmesh-shared/SKILL.md`](../clinmesh-shared/SKILL.md) first. Read [references/clinical-workflows.md](references/clinical-workflows.md) before the first write in a case.
+Read [`../clinmesh-shared/SKILL.md`](../clinmesh-shared/SKILL.md) first. Read [references/clinical-workflows.md](references/clinical-workflows.md) before the first write in a case and before preparing a signature when automatic recording is unavailable.
 
 Start from the queue and current case DTO; it owns the responsible doctor, current versions, frozen dialogue turns and visible evidence. On an `awaiting-doctor` Synthetic Case, the first consultation question also starts the first visit and binds this Practitioner Role as responsible doctor. Re-read the case after every write because independent lifecycles may advance different resources.
 

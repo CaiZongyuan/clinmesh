@@ -1640,7 +1640,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Prepare a version-bound signing preview with consultation review counts; freeze recording and invalidate in-flight extraction; cancel preparation to recover unfinished answers',
+    summary: 'Prepare a version-bound signing preview with consultation review counts even without automatic recording; freeze recording and invalidate in-flight extraction; cancel preparation to recover unfinished answers',
     version: 2,
   },
   {
@@ -1659,7 +1659,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Sign an unchanged document and consultation review snapshot; remaining answers or unreviewed history require consultationReviewed=true after human review; existing completeness, role and version checks still apply',
+    summary: 'Sign an unchanged document and consultation review snapshot even without automatic recording; remaining answers or unreviewed history require consultationReviewed=true after human review; existing completeness, role and version checks still apply',
     version: 2,
   },
   {

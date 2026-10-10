@@ -554,6 +554,7 @@ async function createSignedStructuredClinicalDocument(runtime: TestRuntime, pass
       body: JSON.stringify({
         expectedVersions,
         input: {
+          consultationReviewed: true,
           commitToken: preview.commitToken,
           previewId: preview.previewId,
         },
@@ -621,6 +622,7 @@ async function createCompletionReadyConsultation(
           body: JSON.stringify({
             expectedVersions,
             input: {
+              consultationReviewed: true,
               commitToken: documentPreview.commitToken,
               previewId: documentPreview.previewId,
             },
@@ -3291,6 +3293,7 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions,
           input: {
+            consultationReviewed: true,
             commitToken: preview.data.commitToken,
             previewId: preview.data.previewId,
           },
@@ -3328,6 +3331,7 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions,
           input: {
+            consultationReviewed: true,
             commitToken: currentPreview.data.commitToken,
             previewId: currentPreview.data.previewId,
           },
@@ -3525,6 +3529,7 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions: { [`Encounter/${encounterId}`]: '4' },
           input: {
+            consultationReviewed: true,
             commitToken: preview.commitToken,
             previewId: preview.previewId,
           },
@@ -3606,6 +3611,7 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions,
           input: {
+            consultationReviewed: true,
             commitToken: preview.commitToken,
             previewId: preview.previewId,
           },
@@ -3680,6 +3686,7 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions,
           input: {
+            consultationReviewed: true,
             commitToken: preview.commitToken,
             previewId: preview.previewId,
           },
@@ -3752,6 +3759,7 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions: encounterVersions,
           input: {
+            consultationReviewed: true,
             commitToken: structuredPreview.commitToken,
             previewId: structuredPreview.previewId,
           },
@@ -9889,6 +9897,47 @@ describe('outpatient workflow HTTP contract', () => {
       )
       expect(fhirBundleSchema.parse(await response.json())).toMatchObject({ total: expectedTotal })
     }
+  })
+
+  it.each(['preview', 'commit'] as const)('rejects legacy signing %s for a case with a Consultation, including a previously issued token', async action => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-consultation-legacy-sign-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(), consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model', patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
+    })
+    runtimes.push(runtime)
+    const testCase = await createRevisitDraftCase(runtime, password)
+    const encounterId = testCase.registration.encounterId
+    const expectedVersions = {
+      [`Condition/${testCase.draft.conditionId}`]: '1', [`Encounter/${encounterId}`]: '6',
+      [`Task/${testCase.report.taskId}`]: '2',
+      ...Object.fromEntries(testCase.draft.medicationRequestIds.map(id => [`MedicationRequest/${id}`, '1'])),
+    }
+    const previewInput = { expectedDraftVersions: { documentDraft: 1, prescription: 1, revisitDraft: 1 } }
+    const call = (suffix: string, input: object) => runtime.app.request(`/api/his/v1/encounters/${encounterId}/actions/${suffix}`, {
+      method: 'POST', headers: commandHeaders(testCase.doctorCookie), body: JSON.stringify({ expectedVersions, input }),
+    })
+    const oldPreview = action === 'commit'
+      ? clinicalSignPreviewResponseSchema.parse(await (await call('preview-sign', previewInput)).json()).data
+      : undefined
+    // Existing stored cases and pre-upgrade tokens must obey the same Consultation gate.
+    runtime.database.driver.prepare(`INSERT INTO consultation (workspace_id, epoch, case_id, version)
+      VALUES ('workspace-demo', 'epoch-1', ?, 1)`).run(testCase.caseId)
+    const response = await (oldPreview === undefined ? call('preview-sign', previewInput)
+      : call('sign-and-complete', { previewId: oldPreview.previewId, commitToken: oldPreview.commitToken }))
+    expect(response.status).toBe(409)
+    expect(apiErrorSchema.parse(await response.json()).error.code).toBe('WORKFLOW_CONFLICT')
+    const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${testCase.caseId}`, { headers: { cookie: testCase.doctorCookie } },
+    )).json())
+    expect(detail.status).toBe('revisit-draft')
+    expect(detail.clinicalDocument?.signed ?? []).toEqual([])
   })
 
   it('revalidates medication catalog rules when committing a clinical signature', async () => {

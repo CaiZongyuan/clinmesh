@@ -33,6 +33,10 @@ it('keeps signing review and cancellation examples aligned with the narrow opera
   expect(commit.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview', commitToken: 'synthetic-commit-token', consultationReviewed: true }).success).toBe(true)
   expect(reference).toContain('consultationReviewed: true')
   expect(reference).toContain('consultationRecording.signingPreparation')
+  expect(reference).toContain('even without automatic recording')
+  for (const operation of ['encounter.clinical-document.sign.preview', 'encounter.clinical-document.sign'] as const) {
+    expect(getHisOperation(operation).summary).toContain('even without automatic recording')
+  }
 })
 
 function commandLines(markdown: string): string[] {
