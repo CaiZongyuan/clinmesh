@@ -37,5 +37,7 @@ export async function isDoctorDelegation(
   signal.throwIfAborted()
   if (!finished) throw new Error('CLINMESH_DELEGATION_UNCONFIRMED')
   const result = decisionSchema.parse(JSON.parse(content.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1')))
-  return result.intent === 'delegate' && result.evidence.trim() !== '' && text.includes(result.evidence)
+  if (result.intent !== 'delegate') return false
+  if (result.evidence.trim() === '' || !text.includes(result.evidence)) throw new Error('CLINMESH_DELEGATION_UNCONFIRMED')
+  return true
 }

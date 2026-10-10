@@ -328,6 +328,38 @@ it('waits for a matching native input admission that arrives after tool generati
   } finally { await browser?.drain(); await ctx.fiber.dispose() }
 })
 
+it('rejects hospital writes when the delegation decision cites text outside the actual input', async () => {
+  const ctx = new Context()
+  let browser: ReturnType<typeof browserChannel> | undefined
+  const text = '替我问清起病时间，不要改病历。'
+  const sessionId = 'invalid-delegation-evidence-write'
+  try {
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    browser = browserChannel(ctx)
+    installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters')
+    browser.publish(firstVisit, true)
+    expect((await browser.post('/clinmesh-doctor-task', { permit: doctorTaskPermit(text, sessionId, 'delegate-rpc', firstVisit) })).status).toBe(200)
+    class InvalidDecisionModel extends LlmAdapter {
+      steps = 0
+      override async resolveModel(provider: string, model: string) { return { provider, id: model, name: model } }
+      override async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
+        if (request.tools === undefined) {
+          yield { type: 'text-delta', index: 0, text: JSON.stringify({ intent: 'delegate', evidence: '另一个任务的委托' }) }
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        } else if (this.steps++ === 0) yield* call('must-not-save-draft', draft, { ...firstVisit,
+          assessment: '未经授权的评估', historyOfPresentIllness: '未经授权的现病史' })
+        else yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    }
+    ctx.llm.registerAdapter(['scripted'], new InvalidDecisionModel())
+    const { agent } = await ctx.agents.create({ sessionId: SessionId(sessionId), agentOptions: { provider: 'scripted', model: 'invalid-decision' } })
+    agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user', rpcId: 'delegate-rpc' } }))
+    await agent.whenIdle()
+    expect(browser.draftWrites()).toBe(0)
+  } finally { await browser?.drain(); await ctx.fiber.dispose() }
+})
+
 it.each(['marker', 'receipt', 'http', 'data-marker'] as const)(
   'does not replay an uncertain question under the same delegation: %s', async uncertainAsk => {
     const ctx = new Context()
