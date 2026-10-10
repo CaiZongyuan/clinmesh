@@ -3175,7 +3175,7 @@ describe('role workspaces', () => {
     const fixture = stubRecordingWorkspace('resume', true)
     const automaticAddition = { id: 'recorded-original', field: 'historyOfPresentIllness' as const,
       sourceTurnId: 'patient-turn-original', quote: '头晕五天。', relation: 'addition' as const,
-      status: 'applied' as const, ownership: 'automatic' as const, currentText: '患者自述：头晕五天。', reviewable: false }
+      status: 'applied' as const, reviewStatus: 'unreviewed' as const, ownership: 'automatic' as const, currentText: '患者自述：头晕五天。', reviewable: false }
     fixture.updateRecording({ hasSavedDraft: false, additions: [automaticAddition] })
     const queryClient = createWebQueryClient()
     const user = userEvent.setup()

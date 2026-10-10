@@ -4,7 +4,7 @@ Status: proposed
 
 ## Problem
 
-自动记录的持久触发、辅助提取和保守追加已由[基础增量决策](../../implemented/architecture/2026-10-08-consultation-history-increments.md)交付。持续记录仍需完善部分人工修改归属、来源核对与撤销、暂停补录及签署交互；本提案继续拥有这些后续取舍。
+自动记录的持久触发、辅助提取和保守追加已由[基础增量决策](../../implemented/architecture/2026-10-08-consultation-history-increments.md)交付；部分编辑保护、暂停补录和来源审阅与撤销分别由[片段归属](../../implemented/architecture/2026-10-08-consultation-history-ownership.md)、[记录恢复](../../implemented/architecture/2026-10-08-consultation-recording-recovery.md)和[审阅与撤销](../../implemented/architecture/2026-10-10-consultation-history-review-undo.md)拥有。本提案继续拥有尚未交付的签署交互取舍。
 
 ## Proposal
 

@@ -4,6 +4,102 @@ import { persona, startConsultationCase, StubSyntheaProvider } from '../../serve
 import { expect, test } from './fixtures.ts'
 import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 
+test('keeps review prompts and full reply sources across reload, then undoes additions and corrections without losing other edits', async ({ page, webRoot }) => {
+  let reply = '头晕一周了。站起来时更明显。'
+  const server = await startBrowserServer(webRoot, {
+    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+    syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
+    chatCompletionsProvider: { async completeJson(input) {
+      if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
+      if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply }), model: 'synthetic' }
+      const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>; history: Array<{ id: string }> }
+      const correction = reply.startsWith('刚才')
+      return { content: JSON.stringify({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+        quote: reply, relation: correction ? 'correction' : 'addition',
+        ...(correction ? { targetAdditionId: payload.history[0]!.id } : {}) }] }), model: 'synthetic' }
+    } },
+  })
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  try {
+    const started = await startConsultationCase(server.runtime, server.password, server.origin)
+    const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
+      `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
+    await page.goto(`${server.origin}/consultation`)
+    await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+    await page.getByLabel('账户密码').fill(server.password)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.getByRole('tab', { name: '待诊', exact: true }).click()
+    await page.getByText('张琴', { exact: true }).first().click()
+    await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    const ask = async () => {
+      await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+      await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充病史？')
+      await page.getByRole('button', { name: '向患者提问', exact: true }).click()
+      await expect(page.getByText(reply, { exact: true })).toBeVisible()
+      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    }
+    const reload = async () => { await page.reload(); await page.getByRole('tab', { name: '病历记录', exact: true }).click() }
+    const history = page.getByLabel('现病史', { exact: true })
+    const first = page.locator('[data-consultation-addition="applied"]').filter({ hasText: '头晕一周了。' })
+    const second = page.locator('[data-consultation-addition="applied"]').filter({ hasText: '站起来时更明显。' })
+    await ask()
+    await expect(page.locator('[data-consultation-unreviewed]')).toHaveAttribute('data-consultation-unreviewed', '2')
+    await reload()
+    await expect(page.locator('[data-consultation-unreviewed]')).toHaveAttribute('data-consultation-unreviewed', '2')
+    await first.getByRole('button', { name: '查看来源', exact: true }).click()
+    const source = page.getByRole('dialog', { name: '患者原回答', exact: true })
+    await expect(source.locator('blockquote')).toHaveText('头晕一周了。站起来时更明显。')
+    await page.keyboard.press('Escape')
+    await expect(source).toHaveCount(0)
+    await second.getByRole('button', { name: '确认已核对', exact: true }).click()
+    await expect(second).toHaveAttribute('data-consultation-review', 'confirmed')
+    await reload()
+    await expect(page.locator('[data-consultation-unreviewed]')).toHaveAttribute('data-consultation-unreviewed', '1')
+    await expect(second).toContainText('已核对')
+    await page.getByLabel('评估', { exact: true }).fill('医生尚未保存的评估。')
+    await history.fill('患者自述：头晕一周了。\n患者自述：站起来时更明显。\n医生补充：尚未查体。')
+    await expect(first.getByRole('button', { name: '撤销此条', exact: true })).toBeDisabled()
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    await expect(first.getByRole('button', { name: '撤销此条', exact: true })).toBeEnabled()
+    reply = '夜间也会头晕。'
+    await ask()
+    await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。\n医生补充：尚未查体。\n患者自述：夜间也会头晕。')
+    await page.getByLabel('评估', { exact: true }).fill('医生保留的未保存评估。')
+    await first.getByRole('button', { name: '撤销此条', exact: true }).click()
+    await expect(history).toHaveValue('患者自述：站起来时更明显。\n医生补充：尚未查体。\n患者自述：夜间也会头晕。')
+    await expect(page.getByLabel('评估', { exact: true })).toHaveValue('医生保留的未保存评估。')
+    await expect(page.locator('[data-consultation-addition="undone"]')).toContainText('已撤销')
+    await reload()
+    await page.locator('[data-consultation-addition="undone"]').getByRole('button', { name: '查看来源', exact: true }).click()
+    await expect(source.locator('blockquote')).toHaveText('头晕一周了。站起来时更明显。')
+    await page.keyboard.press('Escape')
+    await expect(source).toHaveCount(0)
+    reply = '刚才说错了，坐着时也会头晕。'
+    await ask()
+    const correction = page.locator('[data-consultation-addition="applied"]').filter({ hasText: reply })
+    await expect(correction).toContainText('自动更正')
+    await correction.getByRole('button', { name: '查看来源', exact: true }).click()
+    await expect(source.locator('blockquote')).toHaveText(reply)
+    await page.keyboard.press('Escape')
+    await expect(source).toHaveCount(0)
+    await correction.getByRole('button', { name: '撤销此条', exact: true }).click()
+    await expect(history).toHaveValue('患者自述：站起来时更明显。\n医生补充：尚未查体。\n患者自述：夜间也会头晕。')
+    await history.fill('医生核对：站起时头晕。\n医生补充：尚未查体。\n患者自述：夜间也会头晕。')
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    await expect(second.getByRole('button', { name: '撤销此条', exact: true })).toBeEnabled()
+    await second.getByRole('button', { name: '撤销此条', exact: true }).click()
+    await expect(second).toContainText('此条已被修改，原文已保留。请手工核对病历后确认。')
+    await reload()
+    await expect(second).toHaveAttribute('data-consultation-review', 'undo-pending')
+    await expect(history).toHaveValue('医生核对：站起时头晕。\n医生补充：尚未查体。\n患者自述：夜间也会头晕。')
+    await second.getByRole('button', { name: '确认已核对', exact: true }).click()
+    await expect(second).toHaveAttribute('data-consultation-review', 'confirmed')
+    expect((await read()).clinicalDocument?.draft?.assessment).toBe('医生尚未保存的评估。')
+    expect(errors).toEqual([])
+  } finally { await server.close() }
+})
+
 for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
   test(`settles ${code} with a visible reason and saved patient reply after reload`, async ({ page, webRoot }) => {
     const server = await startBrowserServer(webRoot, {
