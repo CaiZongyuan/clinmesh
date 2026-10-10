@@ -4,9 +4,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { serve } from '@hono/node-server'
-import { createClinMeshRuntime } from '../src/runtime.ts'
+import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 
-export async function startBrowserServer(webRoot: string) {
+export async function startBrowserServer(webRoot: string, options: Partial<Pick<CreateClinMeshRuntimeOptions,
+  'activeReferenceReleaseId' | 'referenceDatabasePath' | 'syntheaProvider' | 'chatCompletionsProvider'
+  | 'patientPersonaModel' | 'dshBridgeSecret' | 'trustedOrigins'
+>> = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-e2e-server-'))
   let runtime: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined
   const server = serve({
@@ -32,6 +35,7 @@ export async function startBrowserServer(webRoot: string) {
     const origin = `http://127.0.0.1:${address.port}`
     const password = `Synthetic-${randomUUID()}-Aa1!`
     runtime = await createClinMeshRuntime({
+      ...options,
       authBaseUrl: origin,
       authSecret: randomUUID() + randomUUID(),
       cursorSecret: randomUUID() + randomUUID(),
@@ -40,10 +44,10 @@ export async function startBrowserServer(webRoot: string) {
       imagingAssetDirectory: join(directory, 'imaging-assets'),
       imagingCatalogDirectory: join(directory, 'imaging-catalog'),
       migrationMode: 'apply',
-      trustedOrigins: [origin],
+      trustedOrigins: [origin, ...(options.trustedOrigins ?? [])],
       webRoot,
     })
-    return { origin, password, close }
+    return { origin, password, runtime, close }
   } catch (error) {
     await close()
     throw error

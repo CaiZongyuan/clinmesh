@@ -1,7 +1,10 @@
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
+import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
+import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -21,10 +24,11 @@ import {
   saveImagingRequestDraft,
 } from '../api-client.ts'
 import { ImagingViewer, type ImagingViewerSource } from '../imaging/imaging-viewer.tsx'
+import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
-import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -98,7 +102,8 @@ function ReportText({ locale, report }: { locale: WorkspaceLocale; report: Imagi
       <div><dt className="text-xs text-muted-foreground">{zh ? '印象' : 'Impression'}</dt><dd>{report.impression}</dd></div>
       <div className="text-xs text-muted-foreground">
         {zh ? '签发时间 ' : 'Issued '}{formatClinicalDateTime(report.issuedAt, locale)}
-        {report.revisionNumber === 1 ? '' : zh ? ` · 第 ${report.revisionNumber} 版，更正原因：${report.revisionReason}` : ` · Revision ${report.revisionNumber}: ${report.revisionReason}`}
+        {zh ? ` · 第 ${report.revisionNumber} 版` : ` · Revision ${report.revisionNumber}`}
+        {report.revisionReason === undefined ? '' : zh ? `，更正原因：${report.revisionReason}` : `: ${report.revisionReason}`}
         {report.acknowledgement === undefined ? '' : zh ? ` · 已阅 ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}` : ` · Acknowledged ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}`}
       </div>
     </dl>
@@ -171,17 +176,19 @@ function ImagingReportCorrection({ locale, onChanged, report, request }: {
 }
 
 /** 一条放射申请：状态、报告、影像入口，以及进行中病例的取消、重试与确认已阅。 */
-function ImagingRequestItem({ actions, locale, readOnly, request }: {
+function ImagingRequestItem({ actions, active, locale, readOnly, request, selectedReportId }: {
   actions: ImagingPageActions
+  active: boolean
   locale: WorkspaceLocale
   readOnly: boolean
   request: ImagingRequest
+  selectedReportId?: string | undefined
 }) {
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
   const { onChanged, onInsertSummary, view } = actions
   const [summaryInsertion, setSummaryInsertion] = useState<ImagingSummaryInsertion>()
-  const viewerOpen = view.isOpen(request.id)
+  const viewerOpen = active && view.isOpen(request.id)
   const diagnosticReportId = request.report?.diagnosticReportId
   const studyId = request.report?.studyId
   const study = useQuery({
@@ -266,7 +273,7 @@ function ImagingRequestItem({ actions, locale, readOnly, request }: {
             </div>
           )}
           {request.previousReports.length === 0 ? null : (
-            <details className="mt-2">
+            <details className="mt-2" open={request.previousReports.some(report => report.diagnosticReportId === selectedReportId) ? true : undefined}>
               <summary className="cursor-pointer text-xs text-muted-foreground">
                 {zh ? `历史报告 · ${request.previousReports.length}` : `Earlier reports · ${request.previousReports.length}`}
               </summary>
@@ -303,11 +310,13 @@ function ImagingRequestItem({ actions, locale, readOnly, request }: {
 }
 
 /** 放射申请列表；已完诊病例以只读方式复用。 */
-export function ImagingRequestList({ actions, locale, readOnly, requests }: {
+export function ImagingRequestList({ actions, active = true, locale, readOnly, requests, selectedReportId }: {
   actions: ImagingPageActions
+  active?: boolean | undefined
   locale: WorkspaceLocale
   readOnly: boolean
   requests: ImagingRequest[]
+  selectedReportId?: string | undefined
 }) {
   if (requests.length === 0) return null
   return (
@@ -315,34 +324,49 @@ export function ImagingRequestList({ actions, locale, readOnly, requests }: {
       {requests.map(request => (
         <ImagingRequestItem
           actions={actions}
+          active={active}
           key={`${request.id}:${request.report?.diagnosticReportId ?? 'none'}`}
           locale={locale}
           readOnly={readOnly}
           request={request}
+          selectedReportId={selectedReportId}
         />
       ))}
     </ul>
   )
 }
 
-/**
- * 医生工作台的放射检查：选择本院放射服务并填写检查指征，保存草稿后签发；
- * 下方列出本次就诊的放射申请、报告和影像。
- */
-export function ImagingPage({ actions, caseId, elementId, encounter, locale, readOnly, state }: {
+/** 放射目录与申请管理复用同一表单；报告与阅片只展示当前选中的正式申请。 */
+export function ImagingPage({
+  actions, active = true, caseId, editDraft = false, elementId, encounter, locale, readOnly,
+  state, selectedRequestId, onSelectRequest, selectedReportId,
+}: {
   actions: ImagingPageActions
+  active?: boolean | undefined
+  editDraft?: boolean | undefined
   caseId: string
   elementId: string
   encounter: { id: string; versionId: string }
   locale: WorkspaceLocale
   readOnly: boolean
   state: ImagingRequestState | undefined
+  selectedRequestId?: string | undefined
+  onSelectRequest?: ((id: string) => void) | undefined
+  selectedReportId?: string | undefined
 }) {
   const { onChanged } = actions
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
   const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
   const [indication, setIndication] = useState(state?.draft?.indication ?? '')
+  const [search, setSearch] = useState('')
+  const [adding, setAdding] = useState(editDraft && state?.draft !== undefined)
+  const [localSelectedRequestId, setLocalSelectedRequestId] = useState<string>()
+  const selectRequest = (id: string): void => {
+    setLocalSelectedRequestId(id)
+    onSelectRequest?.(id)
+  }
+  const selectedRequest = state?.requests.find(request => request.id === (selectedRequestId ?? localSelectedRequestId)) ?? state?.requests[0]
   const services = useQuery({
     enabled: !readOnly,
     queryFn: ({ signal }) => getCaseImagingServices(caseId, signal),
@@ -351,7 +375,7 @@ export function ImagingPage({ actions, caseId, elementId, encounter, locale, rea
   const draftVersion = state?.draftVersion ?? 0
   const encounterVersion = { encounterId: encounter.id, encounterVersion: encounter.versionId }
   const draftAction = useMutation({
-    mutationFn: async (kind: 'delete' | 'issue' | 'save'): Promise<void> => {
+    mutationFn: async (kind: 'delete' | 'issue' | 'save'): Promise<ImagingRequest | undefined> => {
       if (kind === 'delete') {
         await deleteImagingRequestDraft({ ...encounterVersion, expectedDraftVersion: draftVersion }, newIdempotencyKey())
         return
@@ -367,61 +391,77 @@ export function ImagingPage({ actions, caseId, elementId, encounter, locale, rea
             serviceId: serviceId!,
           }, newIdempotencyKey())).data.draftVersion
       if (kind === 'issue') {
-        await issueImagingRequest({ ...encounterVersion, expectedDraftVersion: saved }, newIdempotencyKey())
+        return (await issueImagingRequest({ ...encounterVersion, expectedDraftVersion: saved }, newIdempotencyKey())).data.request
       }
     },
     onSettled: () => onChanged(),
-    onSuccess: (_result, kind) => {
+    onSuccess: (result, kind) => {
       if (kind === 'save') return
+      if (result !== undefined) {
+        selectRequest(result.id)
+        setAdding(false)
+      }
       setServiceId(null)
       setIndication('')
     },
   })
-  const formReady = serviceId !== null && indication.trim().length >= 2
-  return (
-    <section aria-labelledby={`${elementId}-heading`} className="mt-6 border-t pt-4 outline-none" id={elementId} tabIndex={-1}>
-      <h3 className="text-sm font-semibold" id={`${elementId}-heading`}>{zh ? '放射检查' : 'Imaging'}</h3>
-      {readOnly ? null : services.isPending ? <Skeleton className="mt-3 h-24 w-full" /> : services.isError ? (
-        <Alert className="mt-3" variant="destructive">
-          <AlertTitle>{zh ? '无法加载放射服务' : 'Unable to load imaging services'}</AlertTitle>
-          <AlertDescription>
-            <Button onClick={() => void services.refetch()} size="sm" variant="outline">{zh ? '重试' : 'Retry'}</Button>
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <div className="mt-3 grid gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground" htmlFor={`${elementId}-service`}>{zh ? '检查项目' : 'Examination'}</label>
-            <WorkspaceSelect
-              id={`${elementId}-service`}
-              items={services.data.items.filter(item => item.available).map(item => ({
-                label: `${item.service.name} · ${item.service.method}`,
-                value: item.service.id,
-              }))}
-              onValueChange={setServiceId}
-              placeholder={zh ? '选择放射检查' : 'Select an imaging examination'}
-              value={serviceId}
-            />
-            {services.data.items.filter(item => !item.available).map(item => (
-              <p className="mt-1 text-xs text-muted-foreground" key={item.service.id}>
-                {zh ? `${item.service.name}：本院当前未开展` : `${item.service.name}: not currently available`}
-              </p>
-            ))}
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground" htmlFor={`${elementId}-indication`}>{zh ? '检查指征' : 'Indication'}</label>
-            <Textarea
-              id={`${elementId}-indication`}
-              maxLength={500}
-              onChange={event => setIndication(event.target.value)}
-              value={indication}
-            />
-          </div>
+  const draftInput = agentToolInputSchemas['outpatient.imaging.draft.set'].safeParse({ serviceId, indication: indication.trim() })
+  useRegisterAgentForm({
+    name: 'imaging', selectionId: caseId, viewId: 'consultation',
+    values: readOnly || !draftInput.success ? null : draftInput.data,
+  })
+  const selectedService = services.data?.items.find(item => item.service.id === serviceId)
+  const visibleServices = services.data?.items.filter(item => search.trim().toLocaleLowerCase().split(/\s+/).every(term => (
+    `${item.service.name} ${item.service.code} ${item.service.bodySite} ${item.service.method}`.toLocaleLowerCase().includes(term)
+  ))) ?? []
+  const formReady = draftInput.success
+  const editor = readOnly ? null : services.isPending ? <Skeleton className="mt-3 h-24 w-full" /> : services.isError ? (
+    <Alert className="mt-3" variant="destructive">
+      <AlertTitle>{zh ? '无法加载放射服务' : 'Unable to load imaging services'}</AlertTitle>
+      <AlertDescription>
+        <Button onClick={() => void services.refetch()} size="sm" variant="outline">{zh ? '重试' : 'Retry'}</Button>
+      </AlertDescription>
+    </Alert>
+  ) : (
+    <div className="@container/imaging-editor mt-3">
+      <div className="grid min-w-0 gap-4 @2xl/imaging-editor:grid-cols-2">
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={`${elementId}-search`}>{zh ? '搜索放射目录' : 'Search imaging catalog'}</FieldLabel>
+            <Input id={`${elementId}-search`} maxLength={128} onChange={event => setSearch(event.target.value)} value={search} />
+          </Field>
+          {visibleServices.length === 0 ? <Empty role="status"><EmptyHeader><EmptyTitle>{zh ? '没有匹配的放射检查' : 'No matching imaging examinations'}</EmptyTitle></EmptyHeader></Empty> : (
+            <ul className="flex flex-col gap-2">
+              {visibleServices.map(({ available, service }) => <li key={service.id}>
+                <Button aria-pressed={serviceId === service.id} className="h-auto w-full justify-start whitespace-normal" disabled={!available || draftAction.isPending} onClick={() => setServiceId(service.id)} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
+                  <span className="flex min-w-0 flex-col items-start gap-1 text-left">
+                    <span>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
+                    <span>{service.bodySite} · {service.method}</span>
+                  </span>
+                </Button>
+              </li>)}
+            </ul>
+          )}
+        </FieldGroup>
+        <FieldGroup>
+          {selectedService === undefined ? <Empty><EmptyHeader><EmptyTitle>{zh ? '选择放射检查' : 'Select an examination'}</EmptyTitle><EmptyDescription>{zh ? '选择检查项目后填写申请信息' : 'Select an examination to enter request information'}</EmptyDescription></EmptyHeader></Empty> : (
+            <>
+              <dl className="flex flex-col gap-2 text-sm">
+                <div><dt className="text-xs text-muted-foreground">{zh ? '检查项目' : 'Examination'}</dt><dd>{selectedService.service.name}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">{zh ? '部位与方式' : 'Body site and method'}</dt><dd>{selectedService.service.bodySite} · {selectedService.service.method}</dd></div>
+                <div><dt className="text-xs text-muted-foreground">{zh ? '适用条件' : 'Applicability'}</dt><dd>{selectedService.service.applicability}</dd></div>
+              </dl>
+              <Field>
+                <FieldLabel htmlFor={`${elementId}-indication`}>{zh ? '检查指征' : 'Indication'}</FieldLabel>
+                <Textarea disabled={draftAction.isPending} id={`${elementId}-indication`} maxLength={500} onChange={event => setIndication(event.target.value)} value={indication} />
+              </Field>
+            </>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <Button disabled={!formReady || draftAction.isPending} onClick={() => draftAction.mutate('save')} size="sm" variant="outline">
               {zh ? '保存草稿' : 'Save draft'}
             </Button>
-            <Button disabled={!formReady || draftAction.isPending} onClick={() => draftAction.mutate('issue')} size="sm">
+            <Button disabled={!formReady || selectedService?.available !== true || draftAction.isPending} onClick={() => draftAction.mutate('issue')} size="sm">
               {zh ? '签发申请' : 'Issue request'}
             </Button>
             {state?.draft === undefined ? null : (
@@ -441,11 +481,33 @@ export function ImagingPage({ actions, caseId, elementId, encounter, locale, rea
               <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
             </Alert>
           ) : null}
-        </div>
-      )}
-      {state === undefined || state.requests.length === 0
-        ? <p className="mt-3 text-sm text-muted-foreground">{zh ? '本次就诊暂无放射申请。' : 'No imaging requests in this visit.'}</p>
-        : <div className="mt-3"><ImagingRequestList actions={actions} locale={locale} readOnly={readOnly} requests={state.requests} /></div>}
+        </FieldGroup>
+      </div>
+    </div>
+  )
+  return (
+    <section aria-labelledby={`${elementId}-heading`} className="flex min-w-0 flex-col gap-3 outline-none" id={elementId} tabIndex={-1}>
+      <h3 className="text-sm font-semibold" id={`${elementId}-heading`}>{zh ? '放射检查' : 'Imaging'}</h3>
+      <InvestigationRequestWorkspace
+        adding={adding && active}
+        editor={editor}
+        locale={locale}
+        onAddingChange={setAdding}
+        onSelectRequest={selectRequest}
+        readOnly={readOnly}
+        requests={(state?.requests ?? []).map(request => ({
+          id: request.id,
+          title: request.service.name,
+          statusLabel: statusLabels[request.status][zh ? 0 : 1],
+          unread: request.status === 'reported',
+          inProgress: request.status === 'issued' || request.status === 'accepted' || request.status === 'in-progress',
+        }))}
+        selectedRequestId={selectedRequest?.id}
+      >
+        {selectedRequest === undefined ? null : <div aria-label={zh ? '放射申请详情' : 'Imaging request details'} role="region">
+          <ImagingRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} />
+        </div>}
+      </InvestigationRequestWorkspace>
     </section>
   )
 }

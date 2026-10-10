@@ -23,6 +23,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
+import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -31,17 +32,19 @@ import {
   RefreshCwIcon,
   Trash2Icon,
 } from 'lucide-react'
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { formatLaboratoryPrice } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import {
-  LaboratoryCatalogDialog,
+  LaboratoryCatalogPicker,
   type LaboratoryCatalogSelection,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { useAutosave } from './use-autosave.ts'
+import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { formatClinicalDateTime } from './clinical-date-time.ts'
 
 export interface LaboratoryPageActions {
   acknowledge: {
@@ -78,6 +81,7 @@ export interface LaboratoryPageActions {
     error: Error | null
     onSubmit: () => void
     pending: boolean
+    successRequestId?: string | undefined
   }
   retry: {
     error: Error | null
@@ -111,6 +115,8 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
 }
 
 export function LaboratoryPage({
+  active = true,
+  editDraft = false,
   actions,
   catalogError,
   catalogPending,
@@ -128,8 +134,13 @@ export function LaboratoryPage({
   onLaboratoryItemChange,
   readOnly,
   referenceSearch,
+  selectedReportId,
+  selectedRequestId,
+  onSelectRequest,
   showCorrection,
 }: {
+  active?: boolean | undefined
+  editDraft?: boolean | undefined
   actions: LaboratoryPageActions
   catalogError: Error | null
   catalogPending: boolean
@@ -147,6 +158,9 @@ export function LaboratoryPage({
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
   referenceSearch: ReferenceCatalogSearches['laboratory']
+  selectedReportId?: string | undefined
+  selectedRequestId?: string | undefined
+  onSelectRequest?: ((id: string) => void) | undefined
   showCorrection: boolean
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
@@ -244,12 +258,14 @@ export function LaboratoryPage({
           />
         ) : (
           <LaboratoryRequestEditor
+            active={active}
+            editDraft={editDraft}
             actions={actions}
             caseId={detail.caseId}
             catalog={laboratoryCatalog}
             indicationCode={indicationCode}
             indicationItems={indicationItems}
-            key={`laboratory-request:${detail.caseId}:${detail.laboratoryRequests?.draftVersion ?? 0}`}
+            key={`laboratory-request:${detail.caseId}`}
             laboratoryItemId={laboratoryItemId}
             locale={locale}
             messages={messages}
@@ -257,6 +273,9 @@ export function LaboratoryPage({
             onLaboratoryItemChange={onLaboratoryItemChange}
             readOnly={readOnly}
             referenceSearch={referenceSearch}
+            selectedReportId={selectedReportId}
+            selectedRequestId={selectedRequestId}
+            onSelectRequest={onSelectRequest}
             showCorrection={showCorrection}
             state={detail.laboratoryRequests}
           />
@@ -267,6 +286,8 @@ export function LaboratoryPage({
 }
 
 function LaboratoryRequestEditor({
+  active,
+  editDraft,
   actions,
   caseId,
   catalog,
@@ -279,9 +300,14 @@ function LaboratoryRequestEditor({
   onLaboratoryItemChange,
   readOnly,
   referenceSearch,
+  selectedReportId,
+  selectedRequestId,
+  onSelectRequest,
   showCorrection,
   state,
 }: {
+  active: boolean
+  editDraft: boolean
   actions: LaboratoryPageActions
   caseId: string
   catalog: ClinicalCatalog['laboratory']
@@ -294,6 +320,9 @@ function LaboratoryRequestEditor({
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
   referenceSearch: ReferenceCatalogSearches['laboratory']
+  selectedReportId?: string | undefined
+  selectedRequestId?: string | undefined
+  onSelectRequest?: ((id: string) => void) | undefined
   showCorrection: boolean
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
@@ -304,7 +333,7 @@ function LaboratoryRequestEditor({
       return reference === undefined
         ? undefined
         : {
-            catalogItemId: reference.id,
+            catalogItemId: state?.draft?.catalogItemId ?? reference.id,
             code: reference.code,
             display: reference.display,
             referenceConcept: {
@@ -319,15 +348,23 @@ function LaboratoryRequestEditor({
     ? undefined
     : catalogById.get(state.draft.catalogItemId)
   const selectedItem = catalogById.get(laboratoryItemId)
+  const selectedConcept = selectedReference?.catalogItemId === laboratoryItemId ? selectedReference : undefined
+  const selectedDraft = state?.draft?.catalogItemId === laboratoryItemId ? state.draft : undefined
+  const selectedService = selectedConcept?.laboratoryService ?? selectedDraft?.laboratoryService
+    ?? referenceSearch.data?.items.find(item => item.id === laboratoryItemId)
   const selectedDisplay = (locale === 'zh-CN' ? selectedItem?.nameZh : selectedItem?.nameEn)
-    ?? selectedReference?.display
-    ?? state?.draft?.referenceConcept?.display
-  const selectedCode = selectedReference?.code
-    ?? state?.draft?.referenceConcept?.code
+    ?? (locale === 'zh-CN' ? selectedService?.nameZh : selectedService?.nameEn)
+    ?? selectedConcept?.display
+    ?? selectedDraft?.referenceConcept?.display
+  const selectedCode = selectedConcept?.code
+    ?? selectedDraft?.referenceConcept?.code
+    ?? selectedService?.referenceConcept.code
     ?? selectedItem?.id
   const draftMatchesSelection = state?.draft?.catalogItemId === laboratoryItemId
     && state.draft.indicationCode === indicationCode
-  const effectiveIndicationItems = indicationItems.length > 0
+  const effectiveIndicationItems = selectedService !== undefined
+    ? selectedService.allowedIndicationCodes.map(value => ({ value, label: indicationLabel(value, messages) }))
+    : indicationItems.length > 0
     ? indicationItems
     : laboratoryItemId.length === 0 || indicationCode.length === 0
       ? []
@@ -342,11 +379,34 @@ function LaboratoryRequestEditor({
     onSave: actions.save.onSubmit,
     revision: `${caseId}:${state?.draftVersion ?? 0}:${laboratoryItemId}:${indicationCode}`,
   })
+  const [adding, setAdding] = useState(() => editDraft && state?.draft !== undefined)
+  const [localRequestId, setLocalRequestId] = useState<string>()
+  const handledIssueId = useRef<string | undefined>(actions.issue.successRequestId)
+  const requests = state?.requests ?? []
+  const selectRequest = (id: string) => { setLocalRequestId(id); onSelectRequest?.(id) }
+  const activeRequest = requests.find(request => request.id === (selectedRequestId ?? localRequestId)) ?? requests[0]
+  const requestName = (request: LaboratoryRequest) => {
+    const item = catalogById.get(request.catalogItemId)
+    return (locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
+      ?? (locale === 'zh-CN' ? request.laboratoryService?.nameZh : request.laboratoryService?.nameEn)
+      ?? request.referenceConcept?.display ?? request.catalogItemId
+  }
+  useEffect(() => {
+    const id = actions.issue.successRequestId
+    if (id === undefined || id === handledIssueId.current || !requests.some(request => request.id === id)) return
+    handledIssueId.current = id
+    setAdding(false)
+    setLocalRequestId(id)
+    onSelectRequest?.(id)
+  }, [actions.issue.successRequestId, requests, onSelectRequest])
   const requestHeadingId = `laboratory-request-heading-${caseId}`
-  const resultsHeadingId = `laboratory-results-heading-${caseId}`
-  return (
-    <div className="grid min-w-0 gap-5 @2xl/laboratory:grid-cols-[minmax(18rem,0.8fr)_minmax(0,1.2fr)]">
-      {readOnly ? null : (
+  const editor = (
+    <div className="grid min-w-0 gap-4 @2xl/laboratory:grid-cols-[minmax(0,1fr)_minmax(16rem,0.7fr)]">
+      <LaboratoryCatalogPicker active={active} locale={locale} search={referenceSearch} selectedId={laboratoryItemId}
+        onSelect={selection => {
+          setSelectedReference(selection)
+          onLaboratoryItemChange(selection?.catalogItemId ?? '')
+        }} />
         <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-3">
           <h3 className="text-sm font-semibold" id={requestHeadingId}>{messages.laboratoryOrder}</h3>
           <FieldGroup>
@@ -367,16 +427,16 @@ function LaboratoryRequestEditor({
                     </>
                   )}
                 </span>
-                <LaboratoryCatalogDialog
-                  locale={locale}
-                  onSelect={(selection) => {
-                    setSelectedReference(selection)
-                    onLaboratoryItemChange(selection.catalogItemId)
-                  }}
-                  search={referenceSearch}
-                />
               </div>
             </Field>
+            {selectedService === undefined ? null : (
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
+                <dt className="text-muted-foreground">{locale === 'zh-CN' ? '标本' : 'Specimen'}</dt><dd className="break-words">{selectedService.specimen.display}</dd>
+                <dt className="text-muted-foreground">{locale === 'zh-CN' ? '报告结构' : 'Report structure'}</dt><dd>{locale === 'zh-CN' ? `${selectedService.reportDefinition.results.length} 项指标` : `${selectedService.reportDefinition.results.length} indicators`}</dd>
+                <dt className="text-muted-foreground">TAT</dt><dd className="tabular-nums">{selectedService.tatMinutes} min</dd>
+                <dt className="text-muted-foreground">{locale === 'zh-CN' ? '费用' : 'Price'}</dt><dd>{formatLaboratoryPrice(selectedService.priceFen, locale)}</dd>
+              </dl>
+            )}
             {laboratoryItemId.length === 0 ? null : <Field>
               <FieldLabel htmlFor="laboratory-indication">{messages.laboratoryIndication}</FieldLabel>
               {effectiveIndicationItems.length === 1 ? (
@@ -456,130 +516,52 @@ function LaboratoryRequestEditor({
             {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
           </FieldGroup>
         </section>
-      )}
-      <section
-        aria-labelledby={resultsHeadingId}
-        className={readOnly
-          ? 'flex min-w-0 flex-col gap-2 @2xl/laboratory:col-span-2'
-          : 'flex min-w-0 flex-col gap-2'}
-      >
-        <h3 className="text-sm font-semibold" id={resultsHeadingId}>{messages.laboratoryResults}</h3>
-        {state === undefined || state.requests.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{messages.noLaboratoryRequests}</p>
-        ) : (
-          <Table className="table-fixed">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[34%] whitespace-normal">{messages.laboratoryItem}</TableHead>
-                <TableHead className="w-[28%] whitespace-normal">{messages.laboratoryIndication}</TableHead>
-                <TableHead className="w-[26%] whitespace-normal">{messages.status}</TableHead>
-                <TableHead className="w-[12%]"><span className="sr-only">{messages.laboratoryRequestActions}</span></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {state.requests.map((request) => {
-                const item = catalogById.get(request.catalogItemId)
-                const itemName = (locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
-                  ?? (locale === 'zh-CN'
-                    ? request.laboratoryService?.nameZh
-                    : request.laboratoryService?.nameEn)
-                  ?? request.referenceConcept?.display
-                  ?? request.catalogItemId
-                return (
-                  <TableRow key={request.id}>
-                    <TableCell className="break-words whitespace-normal font-medium">{itemName}</TableCell>
-                    <TableCell className="break-words whitespace-normal">{indicationLabel(request.indicationCode, messages)}</TableCell>
-                    <TableCell className="break-words whitespace-normal"><Badge variant="outline">{laboratoryRequestStatusLabel(request, messages)}</Badge>{request.generationError === undefined ? null : <p className="mt-1 text-xs text-destructive">{generationErrorMessage(request.generationError.code, locale)}</p>}</TableCell>
-                    <TableCell className="text-right">
-                      {readOnly ? null : request.status === 'generation-failed' && request.generationError?.code !== 'INVESTIGATION_UNSUPPORTED' ? (
-                        <Button
-                          aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${itemName}`}
-                          disabled={actions.retry.pending}
-                          onClick={() => actions.retry.onSubmit(request)}
-                          size="icon-sm"
-                          title={locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
-                          type="button"
-                          variant="outline"
-                        >
-                          <RefreshCwIcon />
-                        </Button>
-                      ) : request.status !== 'issued' ? null : (
-                        <CancelLaboratoryRequestButton
-                          action={actions.cancel}
-                          itemName={itemName}
-                          messages={messages}
-                          request={request}
-                        />
-                      )}
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        )}
-        {actions.cancel.successRequestId !== undefined
-          && state?.requests.some(request => (
-            request.id === actions.cancel.successRequestId && request.status === 'cancelled'
-          )) ? (
-          <Alert>
-            <CheckIcon aria-hidden="true" />
-            <AlertTitle>{messages.laboratoryRequestCancelled}</AlertTitle>
-          </Alert>
-        ) : null}
-        {actions.cancel.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.cancel.error, messages)} title={getWorkspaceErrorTitle(actions.cancel.error, messages, messages.operationFailed)} />}
-        {actions.retry.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.retry.error, messages)} title={getWorkspaceErrorTitle(actions.retry.error, messages, messages.operationFailed)} />}
-        {state?.requests.map((request) => {
-          if (request.status !== 'in-progress') return null
-          const item = catalogById.get(request.catalogItemId)
-          return (
-            <Alert key={`waiting:${request.id}`}>
-              <RefreshCwIcon aria-hidden="true" className="animate-spin" />
-              <AlertTitle>{messages.laboratoryResultPending}</AlertTitle>
-              <AlertDescription>
-                {(locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
-                  ?? (locale === 'zh-CN'
-                    ? request.laboratoryService?.nameZh
-                    : request.laboratoryService?.nameEn)
-                  ?? request.referenceConcept?.display}
-              </AlertDescription>
-            </Alert>
-          )
-        })}
-        {state?.requests.map((request) => {
-          if (request.report === undefined) return null
-          const item = catalogById.get(request.catalogItemId)
-          return (
-            <LaboratoryRequestReport
-              action={actions.acknowledge}
-              correctionAction={actions.correct}
-              itemName={(locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
-                ?? (locale === 'zh-CN'
-                  ? request.laboratoryService?.nameZh
-                  : request.laboratoryService?.nameEn)
-                ?? request.referenceConcept?.display
-                ?? request.catalogItemId}
-              key={`report:${request.id}:${request.report.diagnosticReportId}`}
-              locale={locale}
-              messages={messages}
-              readOnly={readOnly}
-              request={request}
-              showCorrection={showCorrection}
-            />
-          )
-        })}
-        {readOnly || actions.acknowledge.error === null ? null : (
-          <ErrorAlert
-            message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)}
-            title={getWorkspaceErrorTitle(
-              actions.acknowledge.error,
-              messages,
-              messages.operationFailed,
-            )}
-          />
-        )}
-      </section>
     </div>
+  )
+  return (
+    <InvestigationRequestWorkspace adding={adding && active} onAddingChange={setAdding} editor={editor}
+      locale={locale} readOnly={readOnly} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
+      requests={requests.map(request => ({ id: request.id, title: requestName(request),
+        statusLabel: laboratoryRequestStatusLabel(request, messages), unread: request.status === 'reported',
+        inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status) }))}>
+      {activeRequest === undefined ? null : (
+        <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)}>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">{requestName(activeRequest)}</h3>
+            <Badge variant="outline">{laboratoryRequestStatusLabel(activeRequest, messages)}</Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">{messages.laboratoryIndication}: {indicationLabel(activeRequest.indicationCode, messages)}</p>
+          {activeRequest.generationError === undefined ? null : (
+            <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" />
+              <AlertTitle>{generationErrorMessage(activeRequest.generationError.code, locale)}</AlertTitle></Alert>
+          )}
+          {readOnly ? null : activeRequest.status === 'generation-failed' && activeRequest.generationError?.code !== 'INVESTIGATION_UNSUPPORTED' ? (
+            <Button aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${requestName(activeRequest)}`}
+              disabled={actions.retry.pending} onClick={() => actions.retry.onSubmit(activeRequest)} size="sm" type="button" variant="outline">
+              <RefreshCwIcon data-icon="inline-start" />{locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
+            </Button>
+          ) : activeRequest.status === 'issued' ? (
+            <CancelLaboratoryRequestButton action={actions.cancel} itemName={requestName(activeRequest)} messages={messages} request={activeRequest} />
+          ) : null}
+          {activeRequest.status === 'in-progress' ? (
+            <Alert><RefreshCwIcon aria-hidden="true" className="animate-spin" /><AlertTitle>{messages.laboratoryResultPending}</AlertTitle></Alert>
+          ) : null}
+          {actions.cancel.successRequestId === activeRequest.id && activeRequest.status === 'cancelled' ? (
+            <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.laboratoryRequestCancelled}</AlertTitle></Alert>
+          ) : null}
+          {actions.cancel.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.cancel.error, messages)} title={getWorkspaceErrorTitle(actions.cancel.error, messages, messages.operationFailed)} />}
+          {actions.retry.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.retry.error, messages)} title={getWorkspaceErrorTitle(actions.retry.error, messages, messages.operationFailed)} />}
+          {activeRequest.report === undefined ? null : (
+            <LaboratoryRequestReport action={actions.acknowledge} correctionAction={actions.correct}
+              itemName={requestName(activeRequest)} key={`report:${activeRequest.id}:${activeRequest.report.diagnosticReportId}`}
+              locale={locale} messages={messages} readOnly={readOnly} request={activeRequest} selectedReportId={selectedReportId} showCorrection={showCorrection} />
+          )}
+          {readOnly || actions.acknowledge.error === null ? null : (
+            <ErrorAlert message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)} title={getWorkspaceErrorTitle(actions.acknowledge.error, messages, messages.operationFailed)} />
+          )}
+        </section>
+      )}
+    </InvestigationRequestWorkspace>
   )
 }
 
@@ -668,7 +650,7 @@ function CancelLaboratoryRequestButton({ action, itemName, messages, request }: 
   )
 }
 
-function LaboratoryRequestReport({ action, correctionAction, itemName, locale, messages, readOnly, request, showCorrection }: {
+function LaboratoryRequestReport({ action, correctionAction, itemName, locale, messages, readOnly, request, selectedReportId, showCorrection }: {
   action: LaboratoryPageActions['acknowledge']
   correctionAction: LaboratoryPageActions['correct']
   itemName: string
@@ -676,6 +658,7 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
   messages: ReturnType<typeof getWorkspaceMessages>
   readOnly: boolean
   request: LaboratoryRequest
+  selectedReportId?: string | undefined
   showCorrection: boolean
 }): React.JSX.Element {
   const report = request.report
@@ -720,10 +703,11 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
         />
       ) : null}
       {request.previousReports.length === 0 ? null : (
-        <div className="flex flex-col gap-3">
-          <h6 className="text-xs font-semibold text-muted-foreground">
+        <details open={request.previousReports.some(previous => previous.diagnosticReportId === selectedReportId)}>
+          <summary className="cursor-pointer text-xs font-semibold text-muted-foreground">
             {messages.laboratoryReportHistory}
-          </h6>
+          </summary>
+          <div className="mt-3 flex flex-col gap-3">
           {request.previousReports.toReversed().map(previousReport => (
             <LaboratoryReportVersion
               current={false}
@@ -733,7 +717,8 @@ function LaboratoryRequestReport({ action, correctionAction, itemName, locale, m
               report={previousReport}
             />
           ))}
-        </div>
+          </div>
+        </details>
       )}
     </section>
   )
@@ -906,6 +891,9 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
   messages: ReturnType<typeof getWorkspaceMessages>
   report: LaboratoryReport
 }): React.JSX.Element {
+  const [resultFilter, setResultFilter] = useState('all')
+  const abnormalResults = report.results.filter(result => result.interpretation !== 'normal')
+  const results = current && resultFilter === 'abnormal' ? abnormalResults : report.results
   const versionLabel = (
     current
       ? messages.laboratoryReportCurrentVersion
@@ -919,6 +907,10 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
           <Badge variant="success">{messages.laboratoryReportAcknowledged}</Badge>
         )}
       </div>
+      <p className="text-xs text-muted-foreground tabular-nums">
+        {locale === 'zh-CN' ? '报告时间：' : 'Issued: '}{formatClinicalDateTime(report.issuedAt, locale)}
+        {report.acknowledgement === undefined ? '' : `${locale === 'zh-CN' ? ' · 已阅：' : ' · Acknowledged: '}${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}`}
+      </p>
       {report.revisionReason === undefined ? null : (
         <p className="text-xs text-muted-foreground">
           <span className="font-medium">{messages.laboratoryReportRevisionReason}: </span>
@@ -929,37 +921,41 @@ function LaboratoryReportVersion({ current, locale, messages, report }: {
         <span className="font-medium">{messages.laboratoryReportConclusion}: </span>
         {report.conclusion}
       </p>
-      <Table className="table-fixed">
+      {current ? (
+        <ToggleGroup aria-label={locale === 'zh-CN' ? '检验指标显示范围' : 'Laboratory indicator filter'}
+          value={[resultFilter]} onValueChange={values => { if (values[0] !== undefined) setResultFilter(values[0]) }} size="sm" variant="outline">
+          <ToggleGroupItem value="all">{locale === 'zh-CN' ? '全部指标' : 'All indicators'}</ToggleGroupItem>
+          <ToggleGroupItem value="abnormal">{locale === 'zh-CN' ? `仅异常 ${abnormalResults.length}` : `Abnormal only ${abnormalResults.length}`}</ToggleGroupItem>
+        </ToggleGroup>
+      ) : null}
+      {results.length === 0 ? <p className="text-sm text-muted-foreground">{locale === 'zh-CN' ? '本报告没有异常指标' : 'This report has no abnormal indicators'}</p> : <Table className="min-w-[560px]">
         <TableHeader>
           <TableRow>
-            <TableHead className="w-[30%] whitespace-normal">{messages.laboratoryItem}</TableHead>
-            <TableHead className="w-[30%] whitespace-normal">{messages.result}</TableHead>
-            <TableHead className="w-[40%] whitespace-normal">{messages.referenceRange}</TableHead>
+            <TableHead>{messages.laboratoryItem}</TableHead>
+            <TableHead>{messages.result}</TableHead>
+            <TableHead>{locale === 'zh-CN' ? '单位' : 'Unit'}</TableHead>
+            <TableHead>{messages.referenceRange}</TableHead>
+            <TableHead>{locale === 'zh-CN' ? '提示' : 'Interpretation'}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {report.results.map((result) => {
+          {results.map((result) => {
             const unit = 'unit' in result ? result.unit.display : undefined
             return (
               <TableRow key={result.observationId}>
                 <TableCell className="break-words whitespace-normal font-medium">
                   {laboratoryResultName(result.code, messages, result.display)}
                 </TableCell>
-                <TableCell className="break-words whitespace-normal">
-                  <span>{laboratoryResultValue(result.value, unit, locale, messages)}</span>
-                  <Badge
-                    className="ml-2"
-                    variant={result.interpretation === 'normal' ? 'success' : 'destructive'}
-                  >
-                    {interpretationLabel(result.interpretation, messages)}
-                  </Badge>
-                </TableCell>
+                <TableCell className="whitespace-nowrap tabular-nums">{laboratoryResultValue(result.value, undefined, locale, messages)}</TableCell>
+                <TableCell className="whitespace-nowrap text-muted-foreground">{unit ?? '—'}</TableCell>
                 <TableCell className="break-words whitespace-normal">{result.referenceRange.text}</TableCell>
+                <TableCell>{result.interpretation === 'normal' ? <span className="text-xs text-muted-foreground">{messages.normal}</span>
+                  : <Badge variant="warning">{interpretationLabel(result.interpretation, messages)}</Badge>}</TableCell>
               </TableRow>
             )
           })}
         </TableBody>
-      </Table>
+      </Table>}
     </div>
   )
 }

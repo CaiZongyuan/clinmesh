@@ -1,13 +1,17 @@
 import type { PathologyReport, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
+import { savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
 import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import {
   acknowledgePathologyReport,
   cancelPathologyRequest,
@@ -27,6 +31,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
+import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -83,7 +88,8 @@ function ReportText({ locale, report }: { locale: WorkspaceLocale; report: Patho
       <div className="text-xs text-muted-foreground">
         {zh ? '病理科 · 收片 ' : 'Pathology · Received '}{formatClinicalDateTime(report.receivedAt, locale)}
         {zh ? ' · 签发 ' : ' · Issued '}{formatClinicalDateTime(report.issuedAt, locale)}
-        {report.revisionNumber === 1 ? '' : zh ? ` · 第 ${report.revisionNumber} 版，更正原因：${report.revisionReason}` : ` · Revision ${report.revisionNumber}: ${report.revisionReason}`}
+        {zh ? ` · 第 ${report.revisionNumber} 版` : ` · Revision ${report.revisionNumber}`}
+        {report.revisionNumber === 1 ? '' : zh ? `，更正原因：${report.revisionReason}` : `: ${report.revisionReason}`}
         {report.acknowledgement === undefined ? '' : zh ? ` · 已阅 ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}` : ` · Acknowledged ${formatClinicalDateTime(report.acknowledgement.acknowledgedAt, locale)}`}
       </div>
     </dl>
@@ -156,17 +162,22 @@ function PathologyReportCorrection({ locale, onChanged, report, request }: {
 }
 
 /** 一条会诊申请：状态、报告、切片入口，以及进行中病例的取消、重试与确认已阅。 */
-function PathologyRequestItem({ actions, locale, readOnly, request }: {
+function PathologyRequestItem({ actions, active, locale, readOnly, request, selectedReportId }: {
   actions: PathologyPageActions
+  active: boolean
   locale: WorkspaceLocale
   readOnly: boolean
   request: PathologyRequest
+  selectedReportId?: string | undefined
 }) {
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
   const { onChanged, onInsertSummary, view } = actions
   const [summaryInsertion, setSummaryInsertion] = useState<ImagingSummaryInsertion>()
-  const viewerOpen = view.isOpen(request.id)
+  const targetedHistory = request.previousReports.some(report => report.diagnosticReportId === selectedReportId)
+  const [historyOpen, setHistoryOpen] = useState(targetedHistory)
+  useEffect(() => { if (targetedHistory) setHistoryOpen(true) }, [targetedHistory])
+  const viewerOpen = active && view.isOpen(request.id)
   const diagnosticReportId = request.report?.diagnosticReportId
   const studyId = request.report?.studyId
   const study = useQuery({
@@ -252,7 +263,7 @@ function PathologyRequestItem({ actions, locale, readOnly, request }: {
             </div>
           )}
           {request.previousReports.length === 0 ? null : (
-            <details className="mt-2">
+            <details className="mt-2" onToggle={event => setHistoryOpen(event.currentTarget.open)} open={historyOpen}>
               <summary className="cursor-pointer text-xs text-muted-foreground">
                 {zh ? `历史报告 · ${request.previousReports.length}` : `Earlier reports · ${request.previousReports.length}`}
               </summary>
@@ -289,11 +300,13 @@ function PathologyRequestItem({ actions, locale, readOnly, request }: {
 }
 
 /** 会诊申请列表；已完诊病例以只读方式复用。 */
-export function PathologyRequestList({ actions, locale, readOnly, requests }: {
+export function PathologyRequestList({ actions, active = true, locale, readOnly, requests, selectedReportId }: {
   actions: PathologyPageActions
+  active?: boolean | undefined
   locale: WorkspaceLocale
   readOnly: boolean
   requests: PathologyRequest[]
+  selectedReportId?: string | undefined
 }) {
   if (requests.length === 0) return null
   return (
@@ -301,10 +314,12 @@ export function PathologyRequestList({ actions, locale, readOnly, requests }: {
       {requests.map(request => (
         <PathologyRequestItem
           actions={actions}
+          active={active}
           key={`${request.id}:${request.report?.diagnosticReportId ?? 'none'}`}
           locale={locale}
           readOnly={readOnly}
           request={request}
+          selectedReportId={selectedReportId}
         />
       ))}
     </ul>
@@ -313,15 +328,20 @@ export function PathologyRequestList({ actions, locale, readOnly, requests }: {
 
 /**
  * 医生工作台的病理会诊：选择本院会诊服务、从患者可见既往病史中选择送检对应的手术并填写会诊目的，
- * 保存草稿后签发；下方列出本次就诊的会诊申请、报告和切片。
+ * 无申请时直接选项目并保存草稿后签发；有申请时阅读选中详情，通过追加入口继续开立。
  */
-export function PathologyPage({ actions, caseId, elementId, encounter, locale, readOnly, state }: {
+export function PathologyPage({ actions, active = true, caseId, editDraft = false, elementId, encounter, locale, onSelectRequest, readOnly, selectedReportId, selectedRequestId, state }: {
   actions: PathologyPageActions
+  active?: boolean | undefined
   caseId: string
+  editDraft?: boolean | undefined
   elementId: string
   encounter: { id: string; versionId: string }
   locale: WorkspaceLocale
+  onSelectRequest?: ((requestId: string) => void) | undefined
   readOnly: boolean
+  selectedReportId?: string | undefined
+  selectedRequestId?: string | undefined
   state: PathologyRequestState | undefined
 }) {
   const { onChanged } = actions
@@ -330,19 +350,36 @@ export function PathologyPage({ actions, caseId, elementId, encounter, locale, r
   const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
   const [procedureReference, setProcedureReference] = useState<string | null>(state?.draft?.sourceProcedure.sourceReference ?? null)
   const [purpose, setPurpose] = useState(state?.draft?.purpose ?? '')
+  const [catalogSearch, setCatalogSearch] = useState('')
+  const [adding, setAdding] = useState(editDraft && state?.draft !== undefined)
+  const [localSelectedId, setLocalSelectedId] = useState<string>()
+  const requests = state?.requests ?? []
+  const selectedRequest = requests.find(request => request.id === (selectedRequestId ?? localSelectedId)) ?? requests[0]
+  const selectRequest = (requestId: string) => { setLocalSelectedId(requestId); onSelectRequest?.(requestId) }
   const services = useQuery({
     enabled: !readOnly,
     queryFn: ({ signal }) => getCasePathologyServices(caseId, signal),
     queryKey: ['doctor-case-pathology-services', caseId],
   })
   const draftVersion = state?.draftVersion ?? 0
+  const parsedDraft = savePathologyRequestDraftRequestSchema.shape.input.safeParse({
+    expectedDraftVersion: draftVersion,
+    purpose,
+    serviceId,
+    sourceProcedureReference: procedureReference,
+  })
+  useRegisterAgentForm({
+    viewId: 'consultation', selectionId: caseId, name: 'pathology',
+    values: readOnly || !parsedDraft.success ? null : parsedDraft.data,
+  })
   const encounterVersion = { encounterId: encounter.id, encounterVersion: encounter.versionId }
   const draftAction = useMutation({
-    mutationFn: async (kind: 'delete' | 'issue' | 'save'): Promise<void> => {
+    mutationFn: async (kind: 'delete' | 'issue' | 'save') => {
       if (kind === 'delete') {
         await deletePathologyRequestDraft({ ...encounterVersion, expectedDraftVersion: draftVersion }, newIdempotencyKey())
         return
       }
+      if (!parsedDraft.success) return
       // 签发的是已保存的草稿：表单有改动时先保存，再按保存后的草稿版本签发。
       const unchanged = state?.draft?.service.id === serviceId
         && state.draft.sourceProcedure.sourceReference === procedureReference
@@ -351,116 +388,150 @@ export function PathologyPage({ actions, caseId, elementId, encounter, locale, r
         ? draftVersion
         : (await savePathologyRequestDraft({
             ...encounterVersion,
-            expectedDraftVersion: draftVersion,
-            purpose,
-            serviceId: serviceId!,
-            sourceProcedureReference: procedureReference!,
+            ...parsedDraft.data,
           }, newIdempotencyKey())).data.draftVersion
       if (kind === 'issue') {
-        await issuePathologyRequest({ ...encounterVersion, expectedDraftVersion: saved }, newIdempotencyKey())
+        return (await issuePathologyRequest({ ...encounterVersion, expectedDraftVersion: saved }, newIdempotencyKey())).data.request
       }
     },
     onSettled: () => onChanged(),
-    onSuccess: (_result, kind) => {
+    onSuccess: (result, kind) => {
       if (kind === 'save') return
       setServiceId(null)
       setProcedureReference(null)
       setPurpose('')
+      if (kind === 'issue' && result !== undefined) {
+        selectRequest(result.id)
+        setAdding(false)
+      }
     },
   })
   const selectedService = services.data?.items.find(item => item.service.id === serviceId)
-  const formReady = serviceId !== null && procedureReference !== null && purpose.trim().length >= 2
-  return (
-    <section aria-labelledby={`${elementId}-heading`} className="mt-6 border-t pt-4 outline-none" id={elementId} tabIndex={-1}>
-      <h3 className="text-sm font-semibold" id={`${elementId}-heading`}>{zh ? '病理会诊' : 'Pathology consultation'}</h3>
-      {readOnly ? null : services.isPending ? <Skeleton className="mt-3 h-24 w-full" /> : services.isError ? (
-        <Alert className="mt-3" variant="destructive">
-          <AlertTitle>{zh ? '无法加载病理会诊服务' : 'Unable to load pathology services'}</AlertTitle>
-          <AlertDescription>
-            <Button onClick={() => void services.refetch()} size="sm" variant="outline">{zh ? '重试' : 'Retry'}</Button>
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <div className="mt-3 grid gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground" htmlFor={`${elementId}-service`}>{zh ? '会诊项目' : 'Consultation'}</label>
-            <WorkspaceSelect
-              id={`${elementId}-service`}
-              items={services.data.items.filter(item => item.available).map(item => ({
-                label: `${item.service.name} · ${item.service.specimenType}`,
-                value: item.service.id,
-              }))}
-              onValueChange={(value) => {
-                setServiceId(value)
-                setProcedureReference(null)
-              }}
-              placeholder={zh ? '选择病理会诊' : 'Select a pathology consultation'}
-              value={serviceId}
-            />
-            {services.data.items.filter(item => !item.available).map(item => (
-              <p className="mt-1 text-xs text-muted-foreground" key={item.service.id}>
-                {zh ? `${item.service.name}：本院当前未开展` : `${item.service.name}: not currently available`}
-              </p>
-            ))}
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground" htmlFor={`${elementId}-procedure`}>{zh ? '送检的既往手术' : 'Source procedure'}</label>
-            <WorkspaceSelect
-              id={`${elementId}-procedure`}
-              items={(selectedService?.sourceProcedures ?? []).map(procedure => ({
-                label: procedureLabel(procedure),
-                value: procedure.sourceReference,
-              }))}
-              onValueChange={setProcedureReference}
-              placeholder={zh ? '从既往病史中选择手术' : 'Select a procedure from the history'}
-              value={procedureReference}
-            />
-            {selectedService !== undefined && selectedService.sourceProcedures.length === 0 ? (
-              <p className="mt-1 text-xs text-muted-foreground">
-                {zh ? '该患者的既往病史中没有可送检的乳腺手术。' : 'The history has no breast procedure to consult on.'}
-              </p>
-            ) : null}
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground" htmlFor={`${elementId}-purpose`}>{zh ? '会诊目的' : 'Purpose'}</label>
-            <Textarea
-              id={`${elementId}-purpose`}
-              maxLength={500}
-              onChange={event => setPurpose(event.target.value)}
-              value={purpose}
-            />
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button disabled={!formReady || draftAction.isPending} onClick={() => draftAction.mutate('save')} size="sm" variant="outline">
-              {zh ? '保存草稿' : 'Save draft'}
-            </Button>
-            <Button disabled={!formReady || draftAction.isPending} onClick={() => draftAction.mutate('issue')} size="sm">
-              {zh ? '签发申请' : 'Issue request'}
-            </Button>
+  const formReady = parsedDraft.success && selectedService?.sourceProcedures.some(procedure => procedure.sourceReference === procedureReference) === true
+  const query = catalogSearch.trim().toLocaleLowerCase()
+  const visibleServices = services.data?.items.filter(item => `${item.service.name} ${item.service.code}`.toLocaleLowerCase().includes(query)) ?? []
+  const editor = readOnly ? null : services.isPending ? <Skeleton className="mt-3 h-24 w-full" /> : services.isError ? (
+    <Alert className="mt-3" variant="destructive">
+      <AlertTitle>{zh ? '无法加载病理会诊服务' : 'Unable to load pathology services'}</AlertTitle>
+      <AlertDescription>
+        <Button onClick={() => void services.refetch()} size="sm" variant="outline">{zh ? '重试' : 'Retry'}</Button>
+      </AlertDescription>
+    </Alert>
+  ) : (
+    <div className="@container mt-3">
+      <div className="grid gap-4 @2xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
+        <FieldSet className="min-w-0 rounded-lg border p-4">
+          <FieldLegend>{zh ? '本院病理会诊目录' : 'Hospital pathology catalog'}</FieldLegend>
+          <Field>
+            <FieldLabel htmlFor={`${elementId}-catalog-search`}>{zh ? '搜索病理目录' : 'Search pathology catalog'}</FieldLabel>
+            <Input disabled={draftAction.isPending} id={`${elementId}-catalog-search`} onChange={event => setCatalogSearch(event.target.value)} type="search" value={catalogSearch} />
+          </Field>
+          <Table aria-label={zh ? '病理会诊项目' : 'Pathology consultations'}>
+            <TableHeader>
+              <TableRow>
+                <TableHead><span className="sr-only">{zh ? '选择' : 'Select'}</span></TableHead>
+                <TableHead>{zh ? '会诊项目' : 'Consultation'}</TableHead>
+                <TableHead>{zh ? '标本' : 'Specimen'}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {visibleServices.map(item => (
+                <TableRow data-state={serviceId === item.service.id ? 'selected' : undefined} key={item.service.id}>
+                  <TableCell>
+                    <input
+                      aria-label={zh ? `选择${item.service.name}` : `Select ${item.service.name}`}
+                      checked={serviceId === item.service.id}
+                      className="size-4 accent-primary"
+                      disabled={!item.available || draftAction.isPending}
+                      id={`${elementId}-service-${item.service.id}`}
+                      name={`${elementId}-service`}
+                      onChange={() => { setServiceId(item.service.id); setProcedureReference(null) }}
+                      type="radio"
+                    />
+                  </TableCell>
+                  <TableCell className="whitespace-normal">
+                    <label htmlFor={`${elementId}-service-${item.service.id}`}>{item.service.name}</label>
+                    <p className="text-xs text-muted-foreground">{item.service.code}</p>
+                    {item.available ? null : <p className="text-xs text-muted-foreground">{zh ? `${item.service.name}：本院当前未开展` : `${item.service.name}: not currently available`}</p>}
+                    {item.sourceProcedures.length > 0 ? null : <p className="text-xs text-muted-foreground">{zh ? '无可送检的既往乳腺手术' : 'No eligible breast procedure'}</p>}
+                  </TableCell>
+                  <TableCell className="whitespace-normal">{item.service.specimenType}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+          {visibleServices.length > 0 ? null : <p className="text-sm text-muted-foreground" role="status">{zh ? '没有匹配的病理会诊项目。' : 'No matching pathology consultations.'}</p>}
+        </FieldSet>
+        <div className="min-w-0 rounded-lg border p-4">
+          <h4 className="mb-4 text-sm font-semibold">{zh ? '申请信息' : 'Request details'}</h4>
+          {selectedService === undefined ? <p className="text-sm text-muted-foreground">{zh ? '从目录选择一个会诊项目。' : 'Select a consultation from the catalog.'}</p> : (
+            <FieldSet disabled={draftAction.isPending}>
+              <FieldLegend>{selectedService.service.name}</FieldLegend>
+              <FieldGroup>
+                <p className="text-xs text-muted-foreground">{selectedService.service.applicability}</p>
+                <Field data-disabled={draftAction.isPending}>
+                  <FieldLabel htmlFor={`${elementId}-procedure`}>{zh ? '送检的既往手术' : 'Source procedure'}</FieldLabel>
+                  <WorkspaceSelect
+                    id={`${elementId}-procedure`}
+                    items={selectedService.sourceProcedures.map(procedure => ({ label: procedureLabel(procedure), value: procedure.sourceReference }))}
+                    onValueChange={setProcedureReference}
+                    placeholder={zh ? '从既往病史中选择手术' : 'Select a procedure from the history'}
+                    value={procedureReference}
+                  />
+                  {selectedService.sourceProcedures.length === 0 ? (
+                    <FieldDescription>{zh ? '该患者的既往病史中没有可送检的乳腺手术。' : 'The history has no breast procedure to consult on.'}</FieldDescription>
+                  ) : null}
+                </Field>
+                <Field data-disabled={draftAction.isPending}>
+                  <FieldLabel htmlFor={`${elementId}-purpose`}>{zh ? '会诊目的' : 'Purpose'}</FieldLabel>
+                  <Textarea disabled={draftAction.isPending} id={`${elementId}-purpose`} maxLength={500} onChange={event => setPurpose(event.target.value)} value={purpose} />
+                </Field>
+              </FieldGroup>
+            </FieldSet>
+          )}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <Button disabled={!formReady || draftAction.isPending} onClick={() => draftAction.mutate('save')} size="sm" variant="outline">{zh ? '保存草稿' : 'Save draft'}</Button>
+            <Button disabled={!formReady || selectedService?.available !== true || draftAction.isPending} onClick={() => draftAction.mutate('issue')} size="sm">{zh ? '签发申请' : 'Issue request'}</Button>
             {state?.draft === undefined ? null : (
               <>
-                <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate('delete')} size="sm" variant="outline">
-                  {zh ? '删除草稿' : 'Delete draft'}
-                </Button>
+                <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate('delete')} size="sm" variant="outline">{zh ? '删除草稿' : 'Delete draft'}</Button>
                 <span className="text-xs text-muted-foreground">
-                  {zh
-                    ? `已保存草稿：${state.draft.service.name}（${procedureLabel(state.draft.sourceProcedure)}）`
-                    : `Saved draft: ${state.draft.service.name} (${procedureLabel(state.draft.sourceProcedure)})`}
+                  {zh ? `已保存草稿：${state.draft.service.name}（${procedureLabel(state.draft.sourceProcedure)}）` : `Saved draft: ${state.draft.service.name} (${procedureLabel(state.draft.sourceProcedure)})`}
                 </span>
               </>
             )}
           </div>
           {draftAction.isError ? (
-            <Alert variant="destructive">
+            <Alert className="mt-3" variant="destructive">
               <AlertTitle>{zh ? '病理会诊申请未提交' : 'The pathology request was not submitted'}</AlertTitle>
               <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
             </Alert>
           ) : null}
         </div>
-      )}
-      {state === undefined || state.requests.length === 0
-        ? <p className="mt-3 text-sm text-muted-foreground">{zh ? '本次就诊暂无病理会诊申请。' : 'No pathology consultations in this visit.'}</p>
-        : <div className="mt-3"><PathologyRequestList actions={actions} locale={locale} readOnly={readOnly} requests={state.requests} /></div>}
+      </div>
+    </div>
+  )
+  return (
+    <section aria-labelledby={`${elementId}-heading`} className="outline-none" id={elementId} tabIndex={-1}>
+      <h3 className="mb-3 text-sm font-semibold" id={`${elementId}-heading`}>{zh ? '病理会诊' : 'Pathology consultation'}</h3>
+      <InvestigationRequestWorkspace
+        adding={adding && active}
+        editor={editor}
+        locale={locale}
+        onAddingChange={setAdding}
+        onSelectRequest={selectRequest}
+        readOnly={readOnly}
+        requests={requests.map(request => ({
+          id: request.id,
+          inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status),
+          statusLabel: statusLabels[request.status][zh ? 0 : 1],
+          title: request.service.name,
+          unread: request.status === 'reported',
+        }))}
+        selectedRequestId={selectedRequest?.id}
+      >
+        {selectedRequest === undefined ? null : <PathologyRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} />}
+      </InvestigationRequestWorkspace>
     </section>
   )
 }
