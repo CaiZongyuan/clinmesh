@@ -1,6 +1,7 @@
 import type { PatientPersonaContent, ScenarioProviderCapabilities } from '@clinmesh/contracts/scenario'
 import { randomUUID } from 'node:crypto'
-import { expect } from 'vitest'
+import assert from 'node:assert/strict'
+import { registrationCatalogSchema } from '@clinmesh/contracts/his'
 import type { createClinMeshRuntime } from '../../src/runtime.ts'
 import { sourceArtifactHash } from '../../src/application/scenario-data/provider.ts'
 import type { ScenarioGenerationProvider, SourcePatientCorpus } from '../../src/application/scenario-data/provider.ts'
@@ -118,20 +119,18 @@ export class StubSyntheaProvider implements ScenarioGenerationProvider {
   }
 }
 
-export async function signIn(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, email: string, password = 'Synthetic-Demo-Password-2026!') {
+export async function signIn(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, email: string, password = 'Synthetic-Demo-Password-2026!', origin = 'http://localhost') {
   const response = await runtime.app.request('/api/auth/sign-in/email', {
     body: JSON.stringify({ email, password }),
-    headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+    headers: { 'content-type': 'application/json', origin },
     method: 'POST',
   })
-  expect(response.status).toBe(200)
+  assert.equal(response.status, 200)
   return response.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
 }
 
-const origin = 'http://localhost'
-
-export async function startConsultationCase(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, password = 'Synthetic-Demo-Password-2026!') {
-  const admin = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+export async function startConsultationCase(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, password = 'Synthetic-Demo-Password-2026!', origin = 'http://localhost') {
+  const admin = await signIn(runtime, 'admin@demo.clinmesh.local', password, origin)
   await runtime.app.request('/api/sim/v1/scenario-generation-jobs', {
     body: JSON.stringify({
       name: '对话演练患者',
@@ -158,9 +157,10 @@ export async function startConsultationCase(runtime: Awaited<ReturnType<typeof c
   const personaJob = await runtime.patientPersona.processNext()
   if (personaJob?.status !== 'succeeded') throw new Error('Persona generation failed')
 
-  const registrar = await signIn(runtime, 'registrar@demo.clinmesh.local', password)
-  const session = await runtime.identity.resolveSessionContext(new Headers({ cookie: registrar }))
-  const catalog = runtime.workflow.registrationCatalog(session.actor)
+  const registrar = await signIn(runtime, 'registrar@demo.clinmesh.local', password, origin)
+  const catalog = registrationCatalogSchema.parse(await (await runtime.app.request(
+    '/api/his/v1/catalogs/registration', { headers: { cookie: registrar } },
+  )).json())
   const startedResponse = await runtime.app.request(
     `/api/his/v1/synthetic-cases/${encodeURIComponent(caseId)}/actions/start-outpatient-visit`,
     {
@@ -176,7 +176,7 @@ export async function startConsultationCase(runtime: Awaited<ReturnType<typeof c
       method: 'POST',
     },
   )
-  expect(startedResponse.status).toBe(200)
+  assert.equal(startedResponse.status, 200)
   const detail = await startedResponse.json() as { data: {
     encounterId: string
     outpatientCaseId: string
@@ -184,7 +184,7 @@ export async function startConsultationCase(runtime: Awaited<ReturnType<typeof c
   } }
   const encounterId = detail.data.encounterId
 
-  const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local', password)
+  const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local', password, origin)
   const triaged = await runtime.app.request(`/api/his/v1/encounters/${encounterId}/actions/record-triage`, {
     body: JSON.stringify({
       expectedVersions: { [`Encounter/${encounterId}`]: '1', [`Task/${detail.data.queueTaskId}`]: '1' },
@@ -201,7 +201,7 @@ export async function startConsultationCase(runtime: Awaited<ReturnType<typeof c
     headers: { 'content-type': 'application/json', cookie: triageCookie, 'idempotency-key': randomUUID(), origin },
     method: 'POST',
   })
-  expect(triaged.status).toBe(200)
+  assert.equal(triaged.status, 200)
   const triageData = await triaged.json() as { data: { encounterVersion: string; doctorTaskId: string } }
   return {
     adminCookie: admin,

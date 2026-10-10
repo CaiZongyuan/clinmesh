@@ -3,7 +3,7 @@ import { cleanup, render, screen, within, waitFor } from '@testing-library/react
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
-import { DiagnosisCatalogDialog, LaboratoryCatalogDialog, MedicationCatalogDialog } from './catalog-picker-dialogs.tsx'
+import { DiagnosisCatalogDialog, LaboratoryCatalogDialog, LaboratoryCatalogPicker, MedicationCatalogDialog } from './catalog-picker-dialogs.tsx'
 
 const product: ReferenceMedicationProduct = {
   brandName: null, id: 'product-1', code: 'SYN-1', genericName: '合成测试片',
@@ -90,6 +90,14 @@ describe('medication catalog picker', () => {
 })
 
 describe('diagnosis and laboratory catalog search', () => {
+  it('announces inline laboratory directory loading without displaying selectable entries', () => {
+    const onSelect = vi.fn()
+    render(<LaboratoryCatalogPicker locale="zh-CN" onSelect={onSelect}
+      search={{ data: undefined, error: null, isError: false, isFetching: true, isPending: true, onSearch: vi.fn() }} />)
+    expect(screen.getByRole('status', { name: '正在加载检验目录' })).toBeTruthy()
+    expect(screen.queryByRole('table')).toBeNull()
+    expect(onSelect).not.toHaveBeenCalled()
+  })
   it('switches and clears a reference diagnosis while keeping excluded entries disabled', async () => {
     const user = userEvent.setup()
     const onSelect = vi.fn()
