@@ -3469,7 +3469,27 @@ describe('outpatient workflow HTTP contract', () => {
     runtimes.push(runtime)
     const testCase = await createTriagedCase(runtime, password)
     const encounterId = testCase.registration.encounterId
-    const previewExpectedVersions = { [`Encounter/${encounterId}`]: '2' }
+    const unassignedPreview = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/clinical-document/actions/preview-sign`,
+      {
+        body: JSON.stringify({ expectedVersions: { [`Encounter/${encounterId}`]: '2' }, input: { expectedDraftVersion: 1 } }),
+        headers: commandHeaders(testCase.doctorCookie), method: 'POST',
+      },
+    )
+    expect(unassignedPreview.status).toBe(403)
+    expect(apiErrorSchema.parse(await unassignedPreview.json()).error.code).toBe('ROLE_NOT_ALLOWED')
+    const startResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${encounterId}/actions/start-first-visit`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${encounterId}`]: '2', [`Task/${testCase.triage.doctorTaskId}`]: '1' },
+          input: {},
+        }),
+        headers: commandHeaders(testCase.doctorCookie), method: 'POST',
+      },
+    )
+    expect(startVisitResponseSchema.parse(await startResponse.json()).data.encounterVersion).toBe('3')
+    const previewExpectedVersions = { [`Encounter/${encounterId}`]: '3' }
 
     const draftResponse = await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/clinical-document/draft`,
@@ -3495,27 +3515,15 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     const preview = clinicalDocumentSignPreviewResponseSchema.parse(await previewResponse.json()).data
-    const startResponse = await runtime.app.request(
-      `/api/his/v1/encounters/${encounterId}/actions/start-first-visit`,
-      {
-        body: JSON.stringify({
-          expectedVersions: {
-            [`Encounter/${encounterId}`]: '2',
-            [`Task/${testCase.triage.doctorTaskId}`]: '1',
-          },
-          input: {},
-        }),
-        headers: commandHeaders(testCase.doctorCookie),
-        method: 'POST',
-      },
-    )
-    expect(startVisitResponseSchema.parse(await startResponse.json()).data.encounterVersion).toBe('3')
+    const session = await runtime.identity.resolveSessionContext(new Headers({ cookie: testCase.doctorCookie }))
+    const encounter = runtime.fhir.read(session.actor, 'Encounter', encounterId)
+    runtime.fhir.update(session.actor, { ...encounter, reason: [{ value: [{ concept: { text: '就诊原因已补充' } }] }] }, '3')
 
     const signResponse = await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/clinical-document/actions/sign`,
       {
         body: JSON.stringify({
-          expectedVersions: { [`Encounter/${encounterId}`]: '3' },
+          expectedVersions: { [`Encounter/${encounterId}`]: '4' },
           input: {
             commitToken: preview.commitToken,
             previewId: preview.previewId,

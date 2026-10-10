@@ -6161,6 +6161,7 @@ export class WorkflowService {
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const preview = z.object({ case_id: z.string(), consumed_at: z.string().nullable() }).optional().parse(
         this.#database.driver.prepare(`SELECT case_id, consumed_at FROM clinical_document_sign_preview
@@ -6206,6 +6207,7 @@ export class WorkflowService {
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
       if (outpatientCase.status === 'completed' || encounter.status !== 'in-progress') {
@@ -6302,6 +6304,7 @@ export class WorkflowService {
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
       if (outpatientCase.status === 'completed' || encounter.status !== 'in-progress') {

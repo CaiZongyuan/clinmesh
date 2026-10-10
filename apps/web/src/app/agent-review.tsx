@@ -99,6 +99,9 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
       review.reject(new Error(reason))
     },
     request(input) {
+      if (input.signal.aborted) {
+        return reviewTask(Promise.reject(new Error('ClinMesh Agent review was cancelled')), {})
+      }
       if (pendingRef.current !== undefined) {
         return reviewTask(
           Promise.reject(new Error('Another ClinMesh Agent review is pending')),

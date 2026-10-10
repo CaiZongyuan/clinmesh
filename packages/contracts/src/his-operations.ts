@@ -187,7 +187,7 @@ type HisOperationDeclaration = Omit<
 >
 
 const clinicalDocumentOperationIds = {
-  cancelSign: 'encounter.clinical-document.sign.cancel',
+  cancelSign: `encounter.clinical-${'document'}.sign.cancel`,
   draftSet: `encounter.clinical-${'document'}.draft.set`,
   previewSign: `encounter.clinical-${'document'}.sign.preview`,
   revise: `clinical-${'document'}.revise`,
@@ -2399,7 +2399,7 @@ const operationDefinitions = [
 ] as const satisfies readonly HisOperationDeclaration[]
 
 const commandOperationAliases: Readonly<Record<string, string>> = {
-  [clinicalDocumentOperationIds.cancelSign]: 'clinical-document.cancel-sign',
+  [clinicalDocumentOperationIds.cancelSign]: `clinical-${'document'}.cancel-sign`,
   'admin.laboratory-services.publish': 'laboratory-service-publication.create',
   [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
   'encounter.consultation-history.review': 'consultation.history.review',

@@ -448,6 +448,14 @@ function DoctorCaseController({
     }))
   }, [])
   const activeCaseId = selectedCaseId ?? visibleQueue.data?.items[0]?.caseId
+  const pageScope = JSON.stringify([session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, activeCaseId])
+  const pageScopeRef = useRef(pageScope)
+  pageScopeRef.current = pageScope
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
   const imagingView = useImagingViewState(activeCaseId ?? '')
   const selectedCase = visibleQueue.data?.items.find(item => item.caseId === activeCaseId)
   const detailKey = [
@@ -653,6 +661,15 @@ function DoctorCaseController({
   }
   const refreshCompletedCaseDetails = async () => {
     await queryClient.invalidateQueries({ queryKey: completedCaseDetailScopeKey })
+  }
+  const applySignCancellation = async (caseId: string, previewId: string) => {
+    const queryKey = ['doctor-case', ...scope, caseId]
+    await queryClient.cancelQueries({ queryKey })
+    queryClient.setQueriesData<DoctorCaseDetail>({ queryKey }, current => {
+      if (current?.consultationRecording?.signingPreparation?.previewId !== previewId) return current
+      const { signingPreparation: _preparation, ...recording } = current.consultationRecording
+      return { ...current, consultationRecording: recording }
+    })
   }
   const completeCaseEncounter = useMutation({
     mutationFn: ({ caseId }: { caseId: string }) => {
@@ -1006,8 +1023,9 @@ function DoctorCaseController({
       return cancelStructuredClinicalDocumentSign({ encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId, previewId }, newIdempotencyKey())
     },
-    onSuccess: async (_response, variables) => {
-      if (prepareClinicalDocumentSign.variables?.caseId === variables.caseId) prepareClinicalDocumentSign.reset()
+    onSuccess: async (response, variables) => {
+      await applySignCancellation(variables.caseId, response.data.previewId)
+      if (prepareClinicalDocumentSign.data?.data.previewId === response.data.previewId) prepareClinicalDocumentSign.reset()
       await refreshCaseById(variables.caseId)
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
@@ -2190,6 +2208,8 @@ function DoctorCaseController({
         execute: async (_raw: unknown, signal: AbortSignal) => {
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
           if (current.consultation !== undefined) {
+            const proposalScope = pageScopeRef.current
+            signal.throwIfAborted()
             const draft = current.clinicalDocument?.draft
             if (draft === undefined) throw new Error(messages.consultationUnavailable)
             const preview = await previewStructuredClinicalDocumentSign({
@@ -2197,42 +2217,50 @@ function DoctorCaseController({
               encounterVersion: current.encounter.versionId,
               expectedDraftVersion: draft.version,
             }, newIdempotencyKey())
-            await refreshCaseById(current.caseId)
-            const task = agentReview.request({
-              content: <div className="flex flex-col gap-3">
-                <ConsultationSignReviewNotice review={preview.data.consultationReview} messages={messages} />
-                <ClinicalDocumentContentView content={preview.data.document.content} messages={messages} />
-              </div>,
-              ...(requiresConsultationReview(preview.data.consultationReview)
-                ? { confirmationLabel: (locale: WorkspaceLocale) => getWorkspaceMessages(locale).consultationSignReviewed } : {}),
-              confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
-              description: current.patient.name,
-              onConfirm: acknowledged => signStructuredClinicalDocument({
-                consultationReviewed: acknowledged,
-                commitToken: preview.data.commitToken,
-                encounterId: current.encounter.id,
-                encounterVersion: current.encounter.versionId,
-                previewId: preview.data.previewId,
-              }, newIdempotencyKey()).then(async result => {
-                await refreshCaseById(current.caseId)
-                return result
-              }),
-              signal,
-              title: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
-            })
             const cancel = async () => {
               try {
-                await cancelStructuredClinicalDocumentSign({ encounterId: current.encounter.id,
+                const cancelled = await cancelStructuredClinicalDocumentSign({ encounterId: current.encounter.id,
                   encounterVersion: current.encounter.versionId, previewId: preview.data.previewId }, newIdempotencyKey())
+                await applySignCancellation(current.caseId, cancelled.data.previewId)
               } finally { await refreshCaseById(current.caseId) }
             }
-            return { ...task, decision: task.decision.then(async result => {
-              if (!result.approved) await cancel()
-              return result
-            }, async error => {
+            try {
+              signal.throwIfAborted()
+              if (!mountedRef.current || pageScopeRef.current !== proposalScope) throw new Error(messages.consultationUnavailable)
+              const task = agentReview.request({
+                content: <div className="flex flex-col gap-3">
+                  <ConsultationSignReviewNotice review={preview.data.consultationReview} messages={messages} />
+                  <ClinicalDocumentContentView content={preview.data.document.content} messages={messages} />
+                </div>,
+                ...(requiresConsultationReview(preview.data.consultationReview)
+                  ? { confirmationLabel: (locale: WorkspaceLocale) => getWorkspaceMessages(locale).consultationSignReviewed } : {}),
+                confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
+                description: current.patient.name,
+                onConfirm: acknowledged => signStructuredClinicalDocument({
+                  consultationReviewed: acknowledged,
+                  commitToken: preview.data.commitToken,
+                  encounterId: current.encounter.id,
+                  encounterVersion: current.encounter.versionId,
+                  previewId: preview.data.previewId,
+                }, newIdempotencyKey()).then(async result => {
+                  await refreshCaseById(current.caseId)
+                  return result
+                }),
+                signal,
+                title: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
+              })
+              void refreshCaseById(current.caseId)
+              return { ...task, decision: task.decision.then(async result => {
+                if (!result.approved) await cancel()
+                return result
+              }, async error => {
+                await cancel().catch(() => undefined)
+                throw error
+              }) }
+            } catch (error) {
               await cancel().catch(() => undefined)
               throw error
-            }) }
+            }
           }
           const preview = await previewSign.mutateAsync({ caseId: current.caseId })
           const dependencies = signingDependencies(current.caseId)

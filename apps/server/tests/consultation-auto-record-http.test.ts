@@ -1,4 +1,4 @@
-import { clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, reviewConsultationHistoryResponseSchema, sendConsultationMessageResponseSchema, triageQueueSchema, type ConsultationHistoryDecision } from '@clinmesh/contracts/his'
+import { apiErrorSchema, sessionContextSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, reviewConsultationHistoryResponseSchema, sendConsultationMessageResponseSchema, triageQueueSchema, type ConsultationHistoryDecision } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema, cancelClinicalDocumentSignResponseSchema } from '@clinmesh/contracts/his'
 import { randomUUID } from 'node:crypto'
@@ -126,6 +126,7 @@ async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
   const save = async () => {
     const response = await request('draft', { document: complete, expectedDraftVersion: (await fixture.read()).clinicalDocument?.draft?.version ?? 0 })
     expect(response.status).toBe(200)
+    clinicalDocumentDraftResponseSchema.parse(await response.json())
   }
   const preview = async () => {
     const response = await request('actions/preview-sign', { expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })
@@ -134,6 +135,55 @@ async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
   }
   return { complete, save, preview, request }
 }
+
+it('enforces responsibility for signing preparation, commit and cancellation while allowing a newly trusted actor of the responsible role to recover', async () => {
+  const fixture = await setup()
+  expect((await fixture.ask()).status).toBe(200)
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  const frozen = await fixture.read()
+  const context = { workspaceId: 'workspace-demo', epoch: 'epoch-1' }
+  fixture.runtime.fhir.create(context, {
+    resourceType: 'PractitionerRole', id: 'practitioner-role-other-sign-doctor', active: true,
+    practitioner: { reference: 'Practitioner/practitioner-outpatient-doctor' },
+    organization: { reference: 'Organization/organization-clinmesh' }, code: [{ text: 'outpatient-doctor' }],
+    location: [{ reference: 'Location/location-outpatient-doctor' }],
+  })
+  fixture.runtime.database.driver.prepare(`INSERT INTO practitioner_role_binding (
+    workspace_id, practitioner_role_id, practitioner_id, role_code, organization_id, location_id, active
+  ) VALUES (?, ?, ?, 'outpatient-doctor', ?, ?, 1)`).run(context.workspaceId, 'practitioner-role-other-sign-doctor',
+    'practitioner-outpatient-doctor', 'organization-clinmesh', 'location-outpatient-doctor')
+  fixture.runtime.database.driver.prepare(`INSERT INTO membership_practitioner_role (
+    membership_id, workspace_id, practitioner_role_id
+  ) VALUES ('membership-administrator', ?, ?)`).run(context.workspaceId, 'practitioner-role-other-sign-doctor')
+  const admin = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
+  const select = async (practitionerRoleId: string) => {
+    const response = await fixture.runtime.app.request('/api/auth/role', {
+      method: 'POST', headers: { cookie: admin, origin: 'http://localhost', 'content-type': 'application/json' },
+      body: JSON.stringify({ practitionerRoleId }),
+    })
+    expect(response.status).toBe(200)
+    return sessionContextSchema.parse(await response.json())
+  }
+  await select('practitioner-role-other-sign-doctor')
+  for (const [action, input] of [
+    ['actions/preview-sign', { expectedDraftVersion: frozen.clinicalDocument!.draft!.version }],
+    ['actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken, consultationReviewed: true }],
+    ['actions/cancel-sign', { previewId: preview.previewId }],
+  ] as const) {
+    const denied = await actions.request(action, input, { cookie: admin })
+    expect(denied.status).toBe(403)
+    expect(apiErrorSchema.parse(await denied.json()).error.code).toBe('ROLE_NOT_ALLOWED')
+    expect(await fixture.read()).toEqual(frozen)
+  }
+  const selected = await select('practitioner-role-outpatient-doctor')
+  expect(selected.actor.actorId).not.toBe((await fixture.runtime.identity.resolveSessionContext(new Headers({ cookie: fixture.cookie }))).actor.actorId)
+  const cancelled = await actions.request('actions/cancel-sign', { previewId: preview.previewId }, { cookie: admin })
+  expect(cancelled.status).toBe(200)
+  expect(cancelClinicalDocumentSignResponseSchema.parse(await cancelled.json()).data.previewId).toBe(preview.previewId)
+  expect((await fixture.read()).consultationRecording?.signingPreparation).toBeUndefined()
+})
 
 it.each(['preparing', 'signed'])('freezes a preview and unfinished progress when extraction completes during %s, without allowing a late result to alter the document', async phase => {
   let release!: () => void
