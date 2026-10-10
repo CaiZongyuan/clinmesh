@@ -69,6 +69,7 @@ import {
   withdrawPrescriptionResponseSchema,
   type ApiConflict,
   type ClinicalDocumentContent,
+  type ConsultationHistoryDecision,
   type DiagnosisDraftEntry,
   type DoctorQueueView,
   type LaboratoryRequestCatalogItemId,
@@ -1389,7 +1390,7 @@ export function saveFirstVisitDraft(input: {
 }
 
 export function reviewConsultationHistory(input: {
-  additionId: string; decision: 'accept' | 'ignore'; encounterId: string;
+  additionId: string; decision: ConsultationHistoryDecision; encounterId: string;
   encounterVersion: string; expectedDraftVersion: number;
 }, idempotencyKey: string) {
   return apiMutation(`/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/consultation-history/actions/review`,

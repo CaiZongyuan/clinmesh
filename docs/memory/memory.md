@@ -38,6 +38,8 @@
 
 ## 运行与验证边界
 
+- Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
+
 - 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；修复调用保留独立预算，服务关闭取消与模型超时分开处理。回归同时覆盖慢速首次无效响应后的修复和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
 - SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
@@ -50,7 +52,11 @@
 
 - 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)。
 - 预填与后台文本合并的回归须覆盖首次自动更新同一个未保存字段，以及其他字段已有自动草稿时该字段才首次更新；同时断言编辑框、保存后的服务端正文和刷新结果，防止界面丢弃新增后又通过保存删掉服务端已应用的内容。当前合并基线见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
-- 增量去重回归同时覆盖重复投递、同批重复与新来源再次提出相同更正措辞；只验证相同原话不重复会漏掉新证据被历史状态挡住的路径。当前增量身份与普通事实去重规则见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
+- 增量去重回归同时覆盖重复投递、同批重复、同句多目标更正，以及拒绝后的句界表示变化和新来源再次提出相同措辞。正常增量与拒绝证据不能共用去重范围；增量身份与普通事实去重见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)，拒绝证据见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
+- 局部撤销的长度回归同时覆盖恢复后恰好达到上限，以及短更正之后追加内容再恢复长原文。单次保存合法不证明逆操作仍合法；校验失败时应先保留正文、版本及锚点，再进入既有人工核对流程，见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
+- 聚合待核对状态和显示操作提示时，同时判断条目是否仍有效与其审阅状态；被替代历史的旧标记不代表当前可处理任务。回归应覆盖替代后提示消失、逆操作恢复原核对需求和重启，不通过伪造已确认状态清除历史事实，见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
+- 旧数据惰性恢复的回归先通过公开 Query 取得标识，再直接执行对应 Command；同时检查读取不落盘、失败事务不改状态和重试仍可使用公开标识。只在保存或新任务之后验证会掩盖标识在恢复中被替代的死循环，当前病史恢复见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
+- Playwright 在页签切换后读取提示时，将 locator 限定到目标 tabpanel；退出中的旧面板可能短暂保留同名状态标记。不要用 `.first()` 或固定等待绕过双匹配，保留对目标页面状态的断言。
 
 - pnpm 11 在执行脚本前可能自动安装并改写锁文件，包括重新解析间接依赖。纯文档检查遇到此行为时，先核对并撤回本次检查引入的无关锁文件变更；已安装工具可通过 Node 直接调用对应 CLI，避免重复触发安装。锁文件变化不属于文档交付。
 - DSH 标签页品牌验证须覆盖初始 HTML、宿主赋值后的同步读取和刷新；布局会主动写入默认产品标题，MutationObserver 只能事后纠正，下一帧正确不能证明标签页没有闪烁。标题保护通过首页扩展在首个宿主脚本前同步规范当前 document 的标题赋值，浏览器回归覆盖同步改名、延迟改名和重复刷新。

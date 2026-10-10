@@ -1023,7 +1023,8 @@ export const consultationRecordingSchema = z.object({
   // Historical suggestions may predate the required correction target in the extraction contract.
   additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({
     id: z.string().min(1),
-    status: z.enum(['applied', 'pending', 'superseded', 'ignored']),
+    status: z.enum(['applied', 'pending', 'superseded', 'ignored', 'undone']),
+    reviewStatus: z.enum(['unreviewed', 'confirmed', 'undo-pending']).default('unreviewed'),
     ownership: z.enum(['automatic', 'manual']).default('automatic'),
     currentText: z.string().default(''),
     reviewable: z.boolean().default(false),
@@ -1044,7 +1045,7 @@ export const reviewConsultationHistoryRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     additionId: z.string().min(1).max(128),
-    decision: z.enum(['accept', 'ignore']),
+    decision: z.enum(['accept', 'ignore', 'confirm', 'undo']),
     expectedDraftVersion: z.number().int().nonnegative(),
   }).strict(),
 }).strict()
@@ -1052,6 +1053,8 @@ export const reviewConsultationHistoryRequestSchema = z.object({
 export const reviewConsultationHistoryResponseSchema = commandResponseSchema(z.object({
   draftVersion: z.number().int().nonnegative(),
 }).strict())
+
+export type ConsultationHistoryDecision = z.infer<typeof reviewConsultationHistoryRequestSchema>['input']['decision']
 
 export const saveClinicalDocumentDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,

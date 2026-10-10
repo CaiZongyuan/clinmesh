@@ -1339,8 +1339,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, fragment ownership, review state and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
-    version: 6,
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, fragment ownership, sourceTurnId, reviewStatus (unreviewed, confirmed, undo-pending), undone history and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
+    version: 7,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -1579,8 +1579,8 @@ const operationDefinitions = [
     mode: 'command', output: reviewConsultationHistoryResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Accept a pending history replacement or ignore it, preserving unrelated history and requiring the current draft version',
-    version: 1,
+    summary: 'Accept or ignore a pending history replacement, confirm an applied increment or undo only its untouched fragment; edited fragments or reversals exceeding draft field limits remain undo-pending for manual review. Requires the current draft version; rejected evidence stays rejected while new source replies may create new suggestions',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'consultation-recording', 'control'],

@@ -953,7 +953,7 @@ function DoctorCaseController({
     },
   })
   const reviewHistory = useMutation({
-    mutationFn: async ({ caseId, additionId, decision }: { caseId: string; additionId: string; decision: 'accept' | 'ignore' }) => {
+    mutationFn: async ({ caseId, additionId, decision }: { caseId: string; additionId: string; decision: Parameters<typeof reviewConsultationHistory>[0]['decision'] }) => {
       const current = detail.data
       if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return reviewConsultationHistory({ additionId, decision, encounterId: current.encounter.id,
