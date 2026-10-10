@@ -25,7 +25,7 @@ export interface ConsultationPageAction {
   error: Error | null
   onAsk: (message: string) => void
   onRetry: () => void
-  onOpenReport?: () => void
+  onOpenReport?: (reference: string | null) => void
   pendingMessage?: string
   pending: boolean
 }
@@ -72,8 +72,8 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                         <BubbleContent>
                           <p className="whitespace-pre-wrap">{turn.messageText}</p>
                           {turn.kind === 'report-card' ? (
-                            <Button onClick={action.onOpenReport} size="sm" type="button" variant="outline">
-                              {locale === 'zh-CN' ? '查看检验报告' : 'View laboratory report'}
+                            <Button onClick={() => action.onOpenReport?.(turn.reportReference)} size="sm" type="button" variant="outline">
+                              {locale === 'zh-CN' ? '查看报告' : 'View report'}
                             </Button>
                           ) : null}
                         </BubbleContent>

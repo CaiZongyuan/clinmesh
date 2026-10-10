@@ -2,6 +2,7 @@ import type {
   CaseLaboratoryCatalogSearch,
   ClinicalCatalog,
   DiagnosisDraftEntry,
+  LaboratoryServiceSnapshot,
 } from '@clinmesh/contracts/his'
 import type {
   ReferenceConcept,
@@ -502,49 +503,31 @@ export interface LaboratoryCatalogSelection {
   catalogItemId: string
   code: string
   display: string
+  laboratoryService?: LaboratoryServiceSnapshot
   referenceConcept?: ReferenceConceptSnapshot
 }
 
-export function LaboratoryCatalogDialog({
-  locale,
-  onSelect,
-  search,
-}: {
+export function LaboratoryCatalogPicker({ active = true, locale, onConfirm, onSearchReset, onSelect, search, selectedId }: {
+  active?: boolean
   locale: WorkspaceLocale
-  onSelect: (selection: LaboratoryCatalogSelection) => void
+  onConfirm?: (selection: LaboratoryCatalogSelection) => void
+  onSearchReset?: () => void
+  onSelect: (selection: LaboratoryCatalogSelection | undefined) => void
   search: ReferenceCatalogSearches['laboratory']
+  selectedId?: string
 }) {
   const messages = copy[locale]
-  const [open, setOpen] = useState(false)
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
-  const [selected, setSelected] = useState<LaboratoryCatalogSelection>()
+  const initialSearch = useRef(search.onSearch)
+  useEffect(() => { initialSearch.current('', 1) }, [])
   const results = search
   const visibleResults = results.data?.items ?? []
-  const openDialog = () => {
-    setInput('')
-    setQuery('')
-    setPage(1)
-    setSelected(undefined)
-    search.onSearch('', 1)
-    setOpen(true)
-  }
-  const confirm = (selection = selected) => {
-    if (selection === undefined) return
-    onSelect(selection)
-    setOpen(false)
-  }
   return (
-    <Dialog onOpenChange={setOpen} open={open}>
-      <CatalogTriggerButton catalog="laboratory" label={messages.selectLaboratory} mode="select" onClick={openDialog} />
-      <DialogContent className="h-[min(640px,calc(100svh-2rem))] sm:max-w-4xl">
-        <DialogHeader>
-          <DialogTitle>{messages.chooseLaboratory}</DialogTitle>
-          <DialogDescription>{messages.laboratoryDescription}</DialogDescription>
-        </DialogHeader>
+    <div data-agent-catalog="laboratory" className="flex min-w-0 flex-col gap-3">
         <CatalogSearchForm
-          active={open}
+          active={active}
           query={query}
           input={input}
           inputLabel={messages.laboratorySearchInput}
@@ -552,7 +535,7 @@ export function LaboratoryCatalogDialog({
           onInputChange={setInput}
           onSearch={() => {
             setPage(1)
-            setSelected(undefined)
+            onSearchReset?.()
             const nextQuery = input.trim()
             setQuery(nextQuery)
             search.onSearch(nextQuery, 1)
@@ -560,17 +543,16 @@ export function LaboratoryCatalogDialog({
           pending={results.isFetching}
           placeholder={messages.laboratoryPlaceholder}
         />
-        {results.isPending ? <Skeleton className="mx-4 min-h-0 flex-1" /> : (
+        {results.isPending ? <Skeleton aria-label={locale === 'zh-CN' ? '正在加载检验目录' : 'Loading laboratory catalog'} role="status" className="mx-4 min-h-48 flex-1" /> : results.isError ? (
+          <Alert className="mx-4" variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '无法加载本院检验目录' : 'Unable to load the hospital laboratory catalog'}</AlertTitle><Button onClick={() => search.onSearch(query, page)} type="button" variant="outline">{locale === 'zh-CN' ? '重试' : 'Retry'}</Button></Alert>
+        ) : (
           <div className="mx-4 min-h-0 flex-1 overflow-auto border">
-            {results.isError ? (
-              <Alert className="m-2"><CircleAlertIcon /><AlertTitle>{messages.catalogUnavailable}</AlertTitle></Alert>
-            ) : null}
             {visibleResults.length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">
                 {messages.noResults}
               </p>
             ) : (
-              <Table>
+              <Table className="min-w-[620px]" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>
                     <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
@@ -588,6 +570,7 @@ export function LaboratoryCatalogDialog({
                       code: item.referenceConcept.code,
                       display: locale === 'zh-CN' ? item.nameZh : (item.nameEn ?? item.nameZh),
                       referenceConcept: item.referenceConcept,
+                      laboratoryService: item,
                     }
                     const label = `${messages.choose} ${selection.display} ${selection.code}`
                     const resultStructure = item.reportDefinition.results.length > 1
@@ -597,16 +580,16 @@ export function LaboratoryCatalogDialog({
                       : item.reportDefinition.results[0]?.valueType ?? '-'
                     return (
                       <TableRow
-                        className={cn(selected?.catalogItemId === selection.catalogItemId && 'bg-muted/70')}
+                        className={cn(selectedId === selection.catalogItemId && 'bg-muted/70')}
                         key={selection.catalogItemId}
-                        onDoubleClick={() => confirm(selection)}
+                        onDoubleClick={() => (onConfirm ?? onSelect)(selection)}
                       >
                         <TableCell>
                           <SelectionButton
                             disabled={false}
                             label={label}
-                            onSelectedChange={next => setSelected(next ? selection : undefined)}
-                            selected={selected?.catalogItemId === selection.catalogItemId}
+                            onSelectedChange={next => onSelect(next ? selection : undefined)}
+                            selected={selectedId === selection.catalogItemId}
                           />
                         </TableCell>
                         <TableCell className="font-medium">{selection.display}</TableCell>
@@ -622,12 +605,12 @@ export function LaboratoryCatalogDialog({
             )}
           </div>
         )}
-        {results.data !== undefined ? (
+        {!results.isError && results.data !== undefined ? (
           <CatalogPagination
             locale={locale}
             onPageChange={(nextPage) => {
               setPage(nextPage)
-              setSelected(undefined)
+              onSearchReset?.()
               search.onSearch(query, nextPage)
             }}
             page={page}
@@ -635,6 +618,34 @@ export function LaboratoryCatalogDialog({
             total={results.data.total}
           />
         ) : null}
+    </div>
+  )
+}
+
+export function LaboratoryCatalogDialog({ locale, onSelect, search }: {
+  locale: WorkspaceLocale
+  onSelect: (selection: LaboratoryCatalogSelection) => void
+  search: ReferenceCatalogSearches['laboratory']
+}) {
+  const messages = copy[locale]
+  const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState<LaboratoryCatalogSelection>()
+  const confirm = (selection = selected) => {
+    if (selection === undefined) return
+    onSelect(selection)
+    setOpen(false)
+  }
+  return (
+    <Dialog onOpenChange={setOpen} open={open}>
+      <CatalogTriggerButton catalog="laboratory" label={messages.selectLaboratory} mode="select"
+        onClick={() => { setSelected(undefined); setOpen(true) }} />
+      <DialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-4xl">
+        <DialogHeader>
+          <DialogTitle>{messages.chooseLaboratory}</DialogTitle>
+          <DialogDescription>{messages.laboratoryDescription}</DialogDescription>
+        </DialogHeader>
+        <LaboratoryCatalogPicker active={open} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected}
+          search={search} {...(selected === undefined ? {} : { selectedId: selected.catalogItemId })} />
         <DialogFooter>
           <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
           <Button disabled={selected === undefined} onClick={() => confirm()} type="button">
