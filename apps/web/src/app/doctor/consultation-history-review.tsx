@@ -31,12 +31,13 @@ export function ConsultationHistoryReview({ detail, workingDocument, action, dis
       {additions.map(addition => {
         const applied = addition.status === 'applied'
         const pending = addition.status === 'pending'
+        const undoPending = applied && addition.reviewStatus === 'undo-pending'
         const dirty = (workingDocument[addition.field] ?? '') !== (detail.clinicalDocument?.draft?.[addition.field] ?? '')
         const source = detail.consultation?.turns.find(turn => turn.id === addition.sourceTurnId)
         const label = addition.status === 'undone' ? messages.consultationHistoryUndone
           : addition.status === 'ignored' ? messages.consultationHistoryIgnored
             : addition.status === 'superseded' ? messages.consultationHistorySuperseded
-              : pending || addition.reviewStatus === 'undo-pending' ? messages.consultationRecordingReview
+              : pending || undoPending ? messages.consultationRecordingReview
                 : addition.reviewStatus === 'confirmed' ? messages.consultationHistoryConfirmed
                   : addition.relation === 'correction' ? messages.consultationHistoryCorrected : messages.consultationRecordingAdded
         return <li className="flex min-w-0 flex-col gap-2" data-consultation-addition={addition.status}
@@ -49,7 +50,7 @@ export function ConsultationHistoryReview({ detail, workingDocument, action, dis
             <p className="whitespace-pre-wrap break-words">{messages.consultationHistorySuggestion}：{addition.quote}</p>
             <p className="whitespace-pre-wrap break-words">{messages.consultationHistorySource}：{source?.messageText}</p>
           </> : null}
-          {addition.reviewStatus === 'undo-pending' ? <>
+          {undoPending ? <>
             <p>{messages.consultationHistoryUndoPending}</p>
             <p className="whitespace-pre-wrap break-words">{messages.consultationHistoryOriginal}：{addition.currentText}</p>
           </> : null}
@@ -78,7 +79,7 @@ export function ConsultationHistoryReview({ detail, workingDocument, action, dis
             </> : applied ? <>
               {addition.reviewStatus === 'confirmed' ? null : <Button size="sm" type="button" disabled={disabled || action.pending || dirty}
                 onClick={() => action.onSubmit(addition.id, 'confirm')}>{messages.consultationHistoryConfirm}</Button>}
-              {addition.reviewStatus === 'undo-pending' ? null : <Button size="sm" variant="outline" type="button" disabled={disabled || action.pending || dirty}
+              {undoPending ? null : <Button size="sm" variant="outline" type="button" disabled={disabled || action.pending || dirty}
                 onClick={() => action.onSubmit(addition.id, 'undo')}>{messages.consultationHistoryUndo}</Button>}
             </> : null}
           </div>

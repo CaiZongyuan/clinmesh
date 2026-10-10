@@ -275,7 +275,8 @@ export class ConsultationRecordingService {
       processedCount, remainingCount: total - processedCount, failedCount,
       status: state === undefined ? 'backfill' : state.paused === 1 ? 'paused' : failedCount > 0 ? 'failed'
         : jobs.some(job => job.status === 'queued') ? 'processing'
-        : additions.some(addition => addition.status === 'pending' || addition.reviewStatus === 'undo-pending') ? 'pending'
+        : additions.some(addition => addition.status === 'pending'
+          || (addition.status === 'applied' && addition.reviewStatus === 'undo-pending')) ? 'pending'
           : jobs.length > 0 ? 'updated' : 'idle',
       additions,
       failures: jobs.filter(job => job.status !== 'completed' && job.error_code !== null).map(job => ({

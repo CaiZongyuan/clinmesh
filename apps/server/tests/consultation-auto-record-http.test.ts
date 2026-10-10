@@ -169,6 +169,38 @@ it.each(['医生核对：头晕五天。', ''] as const)('preserves manually cha
     consultationRecording: { status: 'updated', additions: [{ reviewStatus: 'confirmed', ownership: 'manual' }] } })
 })
 
+it('ends manual undo review after accepting a replacement while preserving the superseded history', async () => {
+  let reply = '头晕一周了。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }>; history: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+      quote: reply, relation: payload.history.length ? 'correction' : 'addition',
+      ...(payload.history[0] === undefined ? {} : { targetAdditionId: payload.history[0].id }) }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const original = (await fixture.read()).consultationRecording!.additions[0]!
+  expect((await fixture.save('医生核对：头晕五天。')).status).toBe(200)
+  expect((await fixture.review(original.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'pending',
+    additions: [{ status: 'applied', reviewStatus: 'undo-pending', ownership: 'manual' }] })
+  reply = '刚才说错了，头晕是三天。'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const correction = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  expect(correction).toMatchObject({ status: 'pending', reviewable: true })
+  expect((await fixture.review(correction.id, 'accept')).status).toBe(200)
+  await fixture.restart()
+  const after = await fixture.read()
+  expect(after.consultationRecording!.additions).toMatchObject([
+    { id: original.id, sourceTurnId: original.sourceTurnId, status: 'superseded', reviewStatus: 'undo-pending' },
+    { id: correction.id, status: 'applied', reviewStatus: 'confirmed' },
+  ])
+  expect(after.clinicalDocument!.draft!.historyOfPresentIllness).toBe(`患者自述：${reply}`)
+  expect((await fixture.review(original.id, 'confirm')).status).toBe(409)
+  expect(after.consultationRecording!.status).toBe('updated')
+})
+
 it('upgrades earlier correction history and replays an old control receipt with default review status', async () => {
   let reply = '头晕一周了。'
   const fixture = await setup({ reply: () => reply, extract: input => {
@@ -333,11 +365,27 @@ it.each([
   const replay = await fixture.review(correction.id, 'undo', { key, version })
   expect(replay.status).toBe(200)
   expect(reviewConsultationHistoryResponseSchema.parse(await replay.json())).toEqual(receipt)
+  reply = '刚才说错了，头晕四天。'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  await fixture.restart()
+  const replaced = await fixture.read()
+  const replacement = replaced.consultationRecording!.additions.at(-1)!
+  expect(replacement).toMatchObject({ status: 'applied', reviewStatus: 'unreviewed', ownership: 'automatic' })
+  expect(replaced.consultationRecording!.additions[1]).toMatchObject({ status: 'superseded', reviewStatus: 'undo-pending' })
+  expect(replaced.consultationRecording!.status).toBe('updated')
+  expect((await fixture.review(replacement.id, 'undo')).status).toBe(200)
+  await fixture.restart()
+  const restored = await fixture.read()
+  expect(restored.consultationRecording!.additions[1]).toMatchObject({ status: 'applied', reviewStatus: 'undo-pending' })
+  expect(restored.consultationRecording!.status).toBe('pending')
+  expect(restored.clinicalDocument!.draft![field]).toBe(before.clinicalDocument!.draft![field])
   expect((await fixture.review(correction.id, 'confirm')).status).toBe(200)
   await fixture.restart()
   const confirmed = await fixture.read()
-  expect(confirmed.clinicalDocument?.draft).toEqual(before.clinicalDocument?.draft)
+  expect(confirmed.clinicalDocument?.draft).toEqual(restored.clinicalDocument?.draft)
   expect(confirmed.consultationRecording!.additions[1]!.reviewStatus).toBe('confirmed')
+  expect(confirmed.consultationRecording!.status).toBe('updated')
 })
 
 it('undoes a correction whose restored history exactly meets the field limit', async () => {

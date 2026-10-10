@@ -25,6 +25,9 @@ const detail: DoctorCaseDetail = {
     status: 'pending', reviewStatus: 'unreviewed', ownership: 'manual', currentText: '医生核对：头晕五天。', reviewable: true },
     { id: 'synthetic-applied', field: 'historyOfPresentIllness', sourceTurnId: 'synthetic-reply',
       quote: '刚才说错了，头晕是六天。', relation: 'correction', status: 'applied', reviewStatus: 'unreviewed',
+      ownership: 'automatic', currentText: '患者自述：刚才说错了，头晕是六天。', reviewable: false },
+    { id: 'synthetic-superseded', field: 'historyOfPresentIllness', sourceTurnId: 'synthetic-reply',
+      quote: '刚才说错了，头晕是六天。', relation: 'correction', status: 'superseded', reviewStatus: 'undo-pending',
       ownership: 'automatic', currentText: '患者自述：刚才说错了，头晕是六天。', reviewable: false }] },
 }
 const host = document.createElement('div')
