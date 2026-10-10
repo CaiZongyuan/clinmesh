@@ -244,6 +244,7 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
     catch { return false }
   }, { timeout: 60_000 }).toBe(true) }
   await ready()
+  phase = 'native-workspace'
   await page.getByRole('button', { name: '选择工作区', exact: true }).click()
   await page.getByRole('menuitem', { name: '添加工作区…', exact: true }).click()
   await page.getByRole('button', { name: '编辑路径', exact: true }).click()
@@ -251,9 +252,11 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
   await page.getByRole('textbox', { name: '编辑路径', exact: true }).press('Enter')
   await page.getByRole('button', { name: '打开', exact: true }).click()
   await ready()
+  phase = 'native-session'
   await page.locator('[contenteditable="true"]').last().fill('合成验收：建立问诊会话。')
   await page.getByRole('button', { name: '发送消息', exact: true }).click()
   await expect(page.getByText('合成验收会话已就绪。', { exact: true }).last()).toBeVisible({ timeout: 30_000 })
+  phase = 'surface-login'
   await launcher.click()
   await page.getByRole('menuitem', { name: '打开 ClinMesh', exact: true }).click()
   await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
@@ -264,6 +267,7 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   await expect.poll(() => activeTools.includes('clinmesh_fill_clinical_document_draft'), { timeout: 60_000 }).toBe(true)
+  phase = 'recording-journey'
   let control: Record<string, unknown> = { stage: 'initial', fail: false, released: false }
   const updateControl = async (patch: Record<string, unknown>) => { control = { ...control, ...patch }; await writeFile(controlPath, json(control)) }
   const calls = async () => (await readFile(callsPath, 'utf8')).trim().split('\n').filter(Boolean).map(line =>
@@ -403,6 +407,10 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
 } catch (error) {
   // Playwright errors can contain the host token or provider input. Keep the public failure bounded.
   console.error('原生验收失败', phase, error instanceof Error ? error.name : 'UnknownError')
+  if (error instanceof Error && error.name === 'TimeoutError' && phase !== 'live-model') {
+    console.error(error.message.replaceAll(secret, 'REDACTED').replaceAll(password, 'REDACTED')
+      .replace(/token=[A-Za-z0-9_-]+/g, 'token=REDACTED').slice(0, 1000))
+  }
   console.error('原生桥接响应', json(bridgeEvents.slice(-15)))
   if (process.env.CLINMESH_DSH_SMOKE_REPORT) await writeFile(resolve(process.env.CLINMESH_DSH_SMOKE_REPORT), json({ ...report, failurePhase: phase }))
   process.exitCode = 1
