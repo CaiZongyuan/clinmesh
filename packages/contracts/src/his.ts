@@ -1008,6 +1008,11 @@ export const consultationRecordingErrorCodeSchema = z.enum([
 ])
 
 export const consultationRecordingSchema = z.object({
+  signingPreparation: z.object({
+    previewId: z.string().min(1),
+    expiresAt: z.string().min(1),
+    active: z.boolean(),
+  }).strict().optional(),
   hasSavedDraft: z.boolean(),
   version: z.number().int().nonnegative().default(0),
   paused: z.boolean().default(false),
@@ -1076,7 +1081,17 @@ export const previewClinicalDocumentSignRequestSchema = z.object({
   }).strict(),
 }).strict()
 
+export const consultationSignReviewSchema = z.object({
+  consultationVersion: z.number().int().nonnegative(),
+  remainingCount: z.number().int().nonnegative(),
+  failedCount: z.number().int().nonnegative(),
+  paused: z.boolean(),
+  conflictCount: z.number().int().nonnegative(),
+  unreviewedCount: z.number().int().nonnegative(),
+}).strict()
+
 export const clinicalDocumentSignPreviewResponseSchema = commandResponseSchema(z.object({
+  consultationReview: consultationSignReviewSchema.nullable().default(null),
   commitToken: z.string().min(1),
   document: z.object({
     content: clinicalDocumentContentSchema,
@@ -1089,10 +1104,20 @@ export const clinicalDocumentSignPreviewResponseSchema = commandResponseSchema(z
 export const signClinicalDocumentRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
+    consultationReviewed: z.boolean().optional(),
     commitToken: z.string().min(16).max(256),
     previewId: z.string().min(1).max(128),
   }).strict(),
 }).strict()
+
+export const cancelClinicalDocumentSignRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({ previewId: z.string().min(1).max(128) }).strict(),
+}).strict()
+
+export const cancelClinicalDocumentSignResponseSchema = commandResponseSchema(z.object({
+  previewId: z.string().min(1),
+}).strict())
 
 const clinicalDocumentRevisionReasonSchema = z.string().trim().min(2).max(500)
 

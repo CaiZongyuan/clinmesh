@@ -39,6 +39,7 @@ import {
   publishLaboratoryServicesRequestSchema,
   orderHospitalServiceRequestSchema,
   previewClinicalDocumentSignRequestSchema,
+  cancelClinicalDocumentSignRequestSchema,
   reviseClinicalDocumentRequestSchema,
   retryLaboratoryResultGenerationRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
@@ -1626,11 +1627,23 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.post('/api/his/v1/encounters/:encounterId/clinical-document/actions/cancel-sign', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = cancelClinicalDocumentSignRequestSchema.parse(await context.req.json())
+        return context.json(workflow.cancelStructuredClinicalDocumentSign({
+          context: await actor(context), encounterId: context.req.param('encounterId'),
+          previewId: body.input.previewId, expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.post('/api/his/v1/encounters/:encounterId/clinical-document/actions/sign', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = signClinicalDocumentRequestSchema.parse(await context.req.json())
         return context.json(workflow.signStructuredClinicalDocument({
+          ...(body.input.consultationReviewed === undefined ? {} : { consultationReviewed: body.input.consultationReviewed }),
           commitToken: body.input.commitToken,
           context: await actor(context),
           encounterId: context.req.param('encounterId'),

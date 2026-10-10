@@ -18,6 +18,8 @@ import {
   AlertDialogTitle,
 } from '@clinmesh/ui/components/alert-dialog'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
+import { Checkbox } from '@clinmesh/ui/components/checkbox'
+import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 
 export interface AgentReviewResult {
   approved: boolean
@@ -38,9 +40,11 @@ interface AgentReviewDecisionGateRef {
 }
 
 export interface AgentReviewRequest {
+  content?: ReactNode | ((locale: WorkspaceLocale) => ReactNode)
+  confirmationLabel?: ReviewText
   confirmLabel: ReviewText
   description: ReviewText
-  onConfirm(): unknown | Promise<unknown>
+  onConfirm(acknowledged: boolean): unknown | Promise<unknown>
   signal: AbortSignal
   title: ReviewText
 }
@@ -76,6 +80,7 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
   const [pending, setPending] = useState<PendingReview>()
   const pendingRef = useRef(pending)
   const [confirming, setConfirming] = useState(false)
+  const [acknowledged, setAcknowledged] = useState(false)
 
   useEffect(() => () => {
     const review = pendingRef.current
@@ -94,12 +99,16 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
       review.reject(new Error(reason))
     },
     request(input) {
+      if (input.signal.aborted) {
+        return reviewTask(Promise.reject(new Error('ClinMesh Agent review was cancelled')), {})
+      }
       if (pendingRef.current !== undefined) {
         return reviewTask(
           Promise.reject(new Error('Another ClinMesh Agent review is pending')),
           {},
         )
       }
+      setAcknowledged(false)
       const decisionGate: AgentReviewDecisionGateRef = {}
       return reviewTask(new Promise((resolve, reject) => {
         const review: PendingReview = {
@@ -158,6 +167,7 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
   const confirm = async (): Promise<void> => {
     const review = pendingRef.current
     if (review === undefined || review.phase !== 'pending') return
+    if (review.confirmationLabel !== undefined && !acknowledged) return
     review.phase = 'gating'
     setConfirming(true)
     try {
@@ -165,7 +175,7 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
       if (review.phase !== 'gating') return
       if (review.signal.aborted) throw new Error('ClinMesh Agent review was cancelled')
       review.phase = 'executing'
-      const data = await review.onConfirm()
+      const data = await review.onConfirm(acknowledged)
       review.phase = 'settled'
       pendingRef.current = undefined
       setPending(undefined)
@@ -200,9 +210,17 @@ export function AgentReviewProvider({ children, locale = 'zh-CN' }: { children: 
                 : confirming ? 'Processing human decision' : 'Awaiting human confirmation; chat cannot approve this review'}
             </p>
           </AlertDialogHeader>
+          {pending?.content === undefined ? null : <div className="max-h-[55vh] overflow-y-auto">
+            {typeof pending.content === 'function' ? pending.content(locale) : pending.content}
+          </div>}
+          {pending?.confirmationLabel === undefined ? null : <Field orientation="horizontal">
+            <Checkbox id="agent-review-confirmation" disabled={confirming} checked={acknowledged}
+              onCheckedChange={setAcknowledged} />
+            <FieldLabel htmlFor="agent-review-confirmation">{reviewText(pending.confirmationLabel, locale)}</FieldLabel>
+          </Field>}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={confirming}>{getWorkspaceMessages(locale).cancel}</AlertDialogCancel>
-            <AlertDialogAction disabled={confirming} onClick={() => void confirm()}>
+            <AlertDialogAction disabled={confirming || (pending?.confirmationLabel !== undefined && !acknowledged)} onClick={() => void confirm()}>
               {reviewText(pending?.confirmLabel, locale)}
             </AlertDialogAction>
           </AlertDialogFooter>

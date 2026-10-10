@@ -900,7 +900,7 @@ describe('Pathology consultation request HTTP contract', () => {
     const preview = clinicalDocumentSignPreviewResponseSchema.parse(
       await post('clinical-document/actions/preview-sign', { expectedDraftVersion: documentDraft.draftVersion }),
     ).data
-    await post('clinical-document/actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId })
+    await post('clinical-document/actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId, consultationReviewed: true })
     const diagnosisDraft = diagnosisDraftResponseSchema.parse(await post('diagnosis/draft', {
       entries: [{ catalogItemId: 'diagnosis-influenza', role: 'primary' }],
       expectedDraftVersion: 0,

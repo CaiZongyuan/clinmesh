@@ -38,6 +38,8 @@
 
 ## 运行与验证边界
 
+- 新增 SQLite migration 后，先核对 `database.ts` 的文件名筛选与 `schema_migration` 中的实际应用记录；文件存在不代表启动时会被发现。描述部分误用下划线会被当前筛选忽略，表现为新接口缺少列的 500；修正文件名并通过公开 HTTP 验证，不以启动成功代替迁移证据。
+
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
 
 - 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；修复调用保留独立预算，服务关闭取消与模型超时分开处理。回归同时覆盖慢速首次无效响应后的修复和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
@@ -123,6 +125,9 @@
 - 已经通过且没有被后续变更失效的证据不因 commit、push、review、Ready 或 merge 再次运行。
 - 生产 Docker build 不能假设 `better-sqlite3` 一定有预编译件。Build stage 保留 `python3`、`make` 和 `g++` 供 `node-gyp` 回退编译，runtime stage 不携带工具链；升级 Node.js 或 `better-sqlite3` 后必须用实际 Docker build 和健康启动验证。
 - Command receipt 是跨版本持久数据。响应 DTO 新增必填字段时提供向后兼容默认值或迁移旧回执，并用原幂等键重放升级前响应形状；只验证新命令成功不能发现这类回归。
+- 持久准备的取消回归须覆盖服务端已提交但响应丢失，以及其他会话先消费同一准备的场景。仅验证明确失败后重试不足以证明恢复：还要重新读取已提交状态，确认本地旧预览不会继续锁住编辑或遮挡恢复入口；重试同一取消意图应能复用幂等回执或根据最新读取结束失效的本地准备。
+
+- 异步创建人工审阅前，先检查 `AbortSignal.aborted` 和当前病例／Actor 范围；给已经终止的 signal 注册事件不会补发 abort。若先前请求已创建持久准备，提前退出也必须尝试取消，并保留 Query 恢复入口。回归覆盖预览返回前终止和切换病例。
 - Better Auth 在 `NODE_ENV=test` 下默认跳过 origin 校验；ClinMesh Auth 必须显式保持 origin check 开启，相关 HTTP 测试同时携带会话 Cookie 和 `Origin`，否则无法捕获开发 Web origin 的 CSRF 配置回归。
 - `scripts/dev-lan.ts` 的进程生命周期覆盖完整子树。POSIX 上 Server 和 Web 必须使用独立进程组；任一分支退出或收到终止信号时，向两个完整进程组转发原信号。只终止顶层 `pnpm` 会遗留 Turbo、Vite 或 `tsx watch` 子进程，并在下次启动时产生错误的端口占用。
 - POSIX 上进程组 kill 已生效后，孤儿进程在被收养方收尸前仍处于僵尸/退出中状态，`kill(pid, 0)` 会把它探测为存活。判定幸存者必须在断言前轮询等待全部不可探测（如 50ms 间隔、数秒上限），超时仍存活才上报失败；Windows 无僵尸进程，本地全绿不能证明 Linux 无竞态。探测只把 `ESRCH` 视为已死、其余错误如实抛出，并拒绝非正整数 pid（`Number` 解析出的 NaN 会被强转为 pid 0，探测到探测方自身进程组）。
@@ -155,7 +160,7 @@
 
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
 
-- 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
+- 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。也可用 `VITEST_MAX_WORKERS=2 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1 --env-mode=loose` 显式限制文件并发；Turbo 默认 strict 环境会过滤该变量，仅在父进程设置它并不会约束包内 Vitest。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
 
 - 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。
 

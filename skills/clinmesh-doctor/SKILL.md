@@ -5,7 +5,7 @@ description: ClinMesh outpatient doctor CLI workflows for consultation, diagnosi
 
 # ClinMesh Doctor
 
-Read [`../clinmesh-shared/SKILL.md`](../clinmesh-shared/SKILL.md) first. Read [references/clinical-workflows.md](references/clinical-workflows.md) before the first write in a case.
+Read [`../clinmesh-shared/SKILL.md`](../clinmesh-shared/SKILL.md) first. Read [references/clinical-workflows.md](references/clinical-workflows.md) before the first write in a case and before preparing a signature when automatic recording is unavailable.
 
 Start from the queue and current case DTO; it owns the responsible doctor, current versions, frozen dialogue turns and visible evidence. On an `awaiting-doctor` Synthetic Case, the first consultation question also starts the first visit and binds this Practitioner Role as responsible doctor. Re-read the case after every write because independent lifecycles may advance different resources.
 
@@ -106,6 +106,7 @@ clinmesh encounter consultation-history review --input @history-review.json --id
 clinmesh encounter consultation-recording control --input @recording-control.json --idempotency-key <control-intent-key>
 clinmesh encounter clinical-document sign preview --input @document-preview.json --idempotency-key <key>
 clinmesh encounter clinical-document sign commit --input @document-sign.json --idempotency-key <key>
+clinmesh encounter clinical-document sign cancel --input @document-cancel.json --idempotency-key <cancel-intent-key>
 clinmesh clinical-document revise --input @document-revision.json --idempotency-key <key>
 clinmesh encounter completion preview --encounter-id <encounter-id>
 clinmesh encounter complete --input @completion.json --idempotency-key <key>
