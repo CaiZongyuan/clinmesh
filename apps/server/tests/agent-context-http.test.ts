@@ -482,12 +482,12 @@ describe('DSH Agent Page Context HTTP contract', () => {
       }
     }
     const delegation = await runtime.app.request('/api/agent/v1/doctor-tasks/permit', {
-      body: JSON.stringify({ contextToken: updatedDoctor.token, instructions: '了解近两周用药情况', rpcId: 'doctor-task-rpc-1' }),
+      body: JSON.stringify({ contextToken: updatedDoctor.token, content: '替我问清近两周用药情况', rpcId: 'doctor-task-rpc-1' }),
       headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
     })
     expect(delegation.status).toBe(201)
     expect(await delegation.json()).toMatchObject({ dshSessionId: 'dsh-session-1', rpcId: 'doctor-task-rpc-1',
-      content: expect.stringContaining('了解近两周用药情况'), permit: expect.any(String) })
+      content: '替我问清近两周用药情况', permit: expect.any(String) })
 
     const emptyDoctor = agentPageContextBindingSchema.parse(await (await createContext(runtime, doctorCookie, {
       version: 1, viewId: 'consultation', viewRevision: 'doctor-left-case', ui: { status: 'empty' },

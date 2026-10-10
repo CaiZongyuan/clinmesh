@@ -6,14 +6,14 @@ import {
   parseDoctorAgentTaskPermit,
 } from './execution-proof.ts'
 
-describe('direct doctor task permits', () => {
+describe('native doctor input permits', () => {
   it('verifies the signed binding and rejects tampering, another issuer, malformed payloads and expiry', () => {
     const secret = 'synthetic-doctor-task-secret-at-least-32-characters'
     const now = () => new Date('2026-10-10T00:00:00.000Z')
     const payload = { scopeKey: 'doctor-case-scope', pageRevision: '["consultation",null]',
       contextId: 'current-context', dshSessionId: 'current-session', rpcId: 'human-rpc',
       inputHash: 'a'.repeat(64), issuedAt: now().toISOString(), expiresAt: '2026-10-10T00:01:00.000Z',
-      purpose: 'clinmesh-doctor-delegation', taskId: '01234567-89ab-7def-8123-456789abcdef', version: 1 }
+      purpose: 'clinmesh-doctor-input', taskId: '01234567-89ab-7def-8123-456789abcdef', version: 2 }
     const sign = (value: unknown) => {
       const encoded = Buffer.from(JSON.stringify(value)).toString('base64url')
       return encoded + '.' + createHmac('sha256', secret).update(encoded).digest('base64url')

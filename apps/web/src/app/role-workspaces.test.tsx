@@ -29,7 +29,7 @@ import { DoctorWorkspace } from './doctor-workspace.tsx'
 import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library-view-store.ts'
 import { WebApp } from './web-app.tsx'
 import { agentActionTarget } from './agent-action-targets.ts'
-import type { WebSurfaceAgentController, WebSurfaceAgentTool } from './web-runtime.tsx'
+import type { WebRuntimeOptions, WebSurfaceAgentController, WebSurfaceAgentTool } from './web-runtime.tsx'
 
 const forbiddenChineseClinicalUiTerms = /Agent|评分|仿真|Scenario|Epoch/i
 const forbiddenEnglishClinicalUiTerms = /Agent|scor(?:e|ing)|simulation|Scenario|Epoch/i
@@ -344,8 +344,8 @@ async function doctorSurfaceAgentResponse(
     return response
   }
   if (path === '/api/agent/v1/doctor-tasks/permit') {
-    const { instructions, rpcId } = JSON.parse(String(init?.body)) as { instructions: string; rpcId: string }
-    return Response.json({ content: `代问范围：${instructions}`, rpcId, dshSessionId: 'dsh-session-1',
+    const { content, rpcId } = JSON.parse(String(init?.body)) as { content: string; rpcId: string }
+    return Response.json({ content, rpcId, dshSessionId: 'dsh-session-1',
       taskId: 'a1b2c3d4-1234-4234-8234-123456789abc', permit: 'synthetic-doctor-task-permit-at-least-32-characters' }, { status: 201 })
   }
   if (path === '/clinmesh-agent-proof') {
@@ -2958,6 +2958,7 @@ describe('role workspaces', () => {
   })
 
   it.each([false, true])('keeps ask registered after a successful reply and sends a second round with persisted document=%s', async persistedDocument => {
+    let acceptDoctorInput: Parameters<NonNullable<WebRuntimeOptions['surfaceDoctorInput']>>[0] | undefined
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     const surfaceAgent: WebSurfaceAgentController = {
       register(value) {
@@ -2976,7 +2977,6 @@ describe('role workspaces', () => {
     }
     const question = { code: 'symptom-onset', text: '什么时候开始发热？' }
     const staleQuestion = '依据旧轮次生成的问题'
-    const surfaceDoctorTask = vi.fn(async () => undefined)
     let rounds = 0
     const versions: number[] = []
     let releaseQueue: (() => void) | undefined
@@ -3044,19 +3044,22 @@ describe('role workspaces', () => {
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     render(<WebApp runtime={{
-      mode: 'surface', surfaceAgent, surfaceDoctorTask, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+      mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
+      surfaceDoctorInput: accept => {
+        acceptDoctorInput = accept
+        return () => { if (acceptDoctorInput === accept) acceptDoctorInput = undefined }
+      },
     }} />)
     const user = userEvent.setup()
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
-    await user.type(screen.getByRole('textbox', { name: '向患者提问' }), '了解近两周用药情况')
-    await user.click(await screen.findByRole('button', { name: '交给助手代问' }))
-    await waitFor(() => expect(surfaceDoctorTask).toHaveBeenCalledOnce())
-    expect(surfaceDoctorTask).toHaveBeenCalledWith(expect.objectContaining({
-      content: '代问范围：了解近两周用药情况', dshSessionId: 'dsh-session-1',
-    }), expect.any(AbortSignal))
+    expect(screen.queryByRole('button', { name: '交给助手代问' })).toBeNull()
     expect(versions).toEqual([])
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(await screen.findByText('已交给助手，请在会话中查看进展或叫停。')).toBeTruthy()
+    await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))
+    const admitted = await acceptDoctorInput!({ content: '替我问清近两周用药情况',
+      dshSessionId: 'dsh-session-1', rpcId: 'native-right-chat-rpc' }, new AbortController().signal)
+    expect(admitted).toMatchObject({ content: '替我问清近两周用药情况',
+      dshSessionId: 'dsh-session-1', rpcId: 'native-right-chat-rpc' })
     let previousInput: Record<string, unknown> | undefined
     for (let round = 0; round < 2; round += 1) {
       await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_ask_virtual_patient')).toBe(true))

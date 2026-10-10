@@ -28,8 +28,6 @@ interface AgentPageRegistryValue {
   registration: AgentPageRegistration | null
   setRegistration(value: AgentPageRegistration | null): void
   forms: Map<symbol, AgentFormSnapshot>
-  submitDoctorTask: ((instructions: string) => Promise<void>) | undefined
-  registerDoctorTaskSubmit(submit: (instructions: string) => Promise<void>): () => void
 }
 
 interface AgentFormSnapshot {
@@ -61,11 +59,6 @@ const AgentPageRegistryContext = createContext<AgentPageRegistryValue | null>(nu
 export function AgentPageRegistryProvider({ children }: { children: ReactNode }): React.JSX.Element {
   const forms = useRef(new Map<symbol, AgentFormSnapshot>()).current
   const [published, setPublished] = useState<PublishedAgentPageRegistration | null>(null)
-  const [submitDoctorTask, setSubmitDoctorTask] = useState<((instructions: string) => Promise<void>)>()
-  const registerDoctorTaskSubmit = useCallback((submit: (instructions: string) => Promise<void>) => {
-    setSubmitDoctorTask(() => submit)
-    return () => setSubmitDoctorTask((current: ((instructions: string) => Promise<void>) | undefined) => current === submit ? undefined : current)
-  }, [])
   const updateRegistration = useCallback((value: AgentPageRegistration | null) => {
     setPublished(current => {
       if (value === null) return null
@@ -81,9 +74,7 @@ export function AgentPageRegistryProvider({ children }: { children: ReactNode })
     registration: published?.registration ?? null,
     forms,
     setRegistration: updateRegistration,
-    submitDoctorTask,
-    registerDoctorTaskSubmit,
-  }), [forms, published, updateRegistration, submitDoctorTask, registerDoctorTaskSubmit])
+  }), [forms, published, updateRegistration])
   return (
     <AgentPageRegistryContext.Provider value={value}>
       {children}
@@ -93,15 +84,6 @@ export function AgentPageRegistryProvider({ children }: { children: ReactNode })
 
 export function useAgentPageRegistration(): AgentPageRegistration | null {
   return useContext(AgentPageRegistryContext)?.registration ?? null
-}
-
-export function useDoctorTaskSubmit(): ((instructions: string) => Promise<void>) | undefined {
-  return useContext(AgentPageRegistryContext)?.submitDoctorTask
-}
-
-export function useRegisterDoctorTaskSubmit(submit: ((instructions: string) => Promise<void>) | undefined): void {
-  const register = useContext(AgentPageRegistryContext)?.registerDoctorTaskSubmit
-  useEffect(() => submit === undefined ? undefined : register?.(submit), [register, submit])
 }
 
 export function useRegisterAgentPage(registration: AgentPageRegistration): void {

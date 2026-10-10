@@ -548,7 +548,7 @@ Scenario 创建的 Patient 使用固定 `synthetic-data` extension 标记合成�
 | `/api/agent/v1/page-contexts` | 从白名单 claim、DSH Session 和 client revision 签发短期受信 Page Context |
 | `/api/agent/v1/tool-calls` | 用 DSH execution proof 与 context token 授权一次 Tool call |
 | `/api/agent/v1/doctor-queries` | 在实际查询时复验医生任务、当前 Context 与 pending receipt，只读当前病例及授权历史 |
-| `/api/agent/v1/doctor-tasks/permit` | 从医生直接提交的追问范围签发短期代问许可 |
+| `/api/agent/v1/doctor-tasks/permit` | 为原生侧栏提交的医生原文签发短期输入凭证 |
 | `/api/agent/v1/tool-calls/review` | 在正式 Command 前记录并线性化当前人类的 proposal 决定 |
 | `/api/agent/v1/tool-calls/result` | 完成 Tool call，并关联 proposal、review、Command、Audit 与 Trace |
 | `/api/agent/v1/clients*`、`/api/agent/v1/grants*` | human-admin 管理 Agent Client/Grant，以及 Agent 读取受信 context |
@@ -757,7 +757,7 @@ Proof 协议为 `version: 3`，包括原请求绑定、原医生任务锚点与�
 
 医生病例及历史读取通过窄 `doctor-queries` 入口执行，从当前受信 Context 解析病例，核对 pending receipt、输入 hash、任务来源、责任医生、资源状态和当前 operation policy。异步目录准备后及结果 completion 前再次核对，Surface 返回前也复验当前 frame。未保存表单、action 与绑定来自当前已提交 frame；病例读取中的队列来自该 frame 已加载页，选择范围不扩大。授权历史复用本院完诊与 Visible Source History 投影，单项详情限于当前患者、当前责任医生及合法物化索引；隐藏真值、Persona 全文、raw Bundle、URL 和像素不进入结果。
 
-医生在问诊区输入追问范围并点击“交给助手代问”，Server 签发绑定实际正文 hash、当前病例和 Session 的短期许可；浏览器先登记许可，再用原生 Session `prompt` 提交同一 RPC。许可不进入正文，不新增首次批准弹窗。Host 将许可关联真实任务，同任务可连续追问；完成、取消、叫停、对象变化或重启后失效。问诊仍精确绑定并复用既有 Command、版本与幂等，正式操作继续人工审阅。
+医生代问来自现有右侧助手聊天中的明确任务。Client 观察原生新提交快照，用原文与原 requestId 签发并登记输入凭证，不重复发消息。Host 在首次工具执行前有界等待并核对凭证，再按原请求模型独立识别本条输入；每个已选病例任务识别一次，普通讨论、含糊或识别失败均不授予代问许可。凭证 version 2 只证明输入来源，execution proof 的代问 ID 与输入 hash 表示 Host 核实的委托；许可和原任务不能从模型声明、历史或工具结果取得。完成、取消、叫停、对象变化或重启后失效。问诊继续精确绑定并复用既有 Command、版本与幂等，正式操作继续人工审阅；详细输入、授权与生命周期合同由 [#176 规格](spec/2026-10-08-doctor-agent-context-execution.md)拥有，取舍见 [聊天代问 Agent Note](../.agents/notes/implemented/architecture/2026-10-10-doctor-agent-chat-delegation.md)。
 
 页面动作的原生结果与新工具目录通过 `/clinmesh-agent-handoff` 交接。浏览器先返回业务结果，保留旧 registration；页面已提交且取得匹配的 Page Context 后，用该调用实际签发的 proof 提交目标 scope、语义 revision 和完整工具名称集合。Host 等待该 Session 同批已开始的 ClinMesh 调用都收到原生结果后才允许浏览器发布，避免撤销旧结果通道，也避免并行调用按顺序 finalize 造成死锁。Host 的 `tools/post-execute` 等待当前 Agent 实际完整工具集合及每项绑定精确匹配目标后才继续下一模型请求；只读或无操作的目标可直接匹配现有目录，不要求版本必须变化。等待有界并响应取消与卸载；同步失败停止当前回合，保留原业务结果，禁止自动重放写入。该交接使用官方公开 hooks，不修改 DSH。
 

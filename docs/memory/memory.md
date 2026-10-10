@@ -222,6 +222,7 @@
 - DSH 0.2 的会话列表不再含 `current`；应用和桥接订阅公开的 `uiSession.adapter.current`，从 binding 的 `key` 读取主会话。依赖与类型检查通过后还需在真实宿主核对 Page Context 签发和 lease：旧字段会让页面正常显示，却静默跳过 Agent 发布。
 
 - DSH 的 Snapshot Store 是带实例方法的公开服务；给 `useSyncExternalStore` 传回调时通过 `() => store.getSnapshot()` 与 `(listener) => store.subscribe(listener)` 保留 receiver，并把包装放在注册作用域保持稳定。只用箭头函数 stub 会漏掉真实宿主中的 `refreshSnapshot` 绑定错误；会话历史回归使用依赖 `this` 的 Store fixture。
+- Cordis 插件新增 `ctx.llm` 等服务读取时，同步声明使用该服务的 `inject`，或在对应 `ctx.inject` 子作用域执行。裸根 Context 上直接安装 bridge 的测试会掩盖真实插件作用域中“未注入服务”的失败；来源与工具执行回归至少一条通过 `ctx.plugin` 加载实际插件。
 
 - DSH 桥接升级时同步核对 runtime peers、CI 安装的 CLI 和兼容说明；React Surface 的 E2E 从 runtime peer 读取期望版本，旧 CLI 会在挂载前退出。DSH 0.2 的桌面首次启动向导新增“开始设置 → 跳过 → 我知道了”；真实入口测试须通过可见按钮正常关闭向导后再操作侧栏，不能强制点击穿透遮罩。向导保存和换页是异步过程，应有界等待侧栏恢复可交互，并在失败时报告残留弹窗文字；固定点击轮数在本地通过后仍可能在 CI 提前退出。CI 成功日志不打印带临时访问 token 的启动 URL 或宿主原始 stdout。
 

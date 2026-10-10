@@ -30,7 +30,6 @@ shadow.append(style, root)
 let feedback: ReturnType<typeof useAgentActionFeedback>
 let retryLocale: 'zh-CN' | 'en-US' | undefined
 let retryClicks = 0
-const delegated: string[] = []
 let manualQuestions = 0
 function App() {
   feedback = useAgentActionFeedback({ identity: 'test', view: 'consultation', selection: 'case', section: 'consultation' })
@@ -42,8 +41,7 @@ function App() {
           <div style={{ height: 160, flexShrink: 0 }}>Synthetic patient banner and tabs</div>
           <div data-agent-section="consultation" className="flex min-h-0 flex-1 flex-col p-4">
             <ConsultationPage action={{ error: retryLocale === undefined ? null : new ApiClientError(503, 'AI_AUTH_FAILED', 'private-provider-credential'),
-              pending: false, onAsk: () => { manualQuestions++ }, onRetry: () => { retryClicks++ },
-              onDelegate: async instructions => { delegated.push(instructions) } }}
+              pending: false, onAsk: () => { manualQuestions++ }, onRetry: () => { retryClicks++ } }}
               consultation={retryLocale === undefined ? consultation : { ...consultation, turns: [...consultation.turns.slice(0, -1), {
                 ...consultation.turns.at(-1)!, speaker: 'doctor', source: 'doctor-typed', personaRevision: null,
               }] }} locale={retryLocale ?? 'en-US'} messages={getWorkspaceMessages(retryLocale ?? 'en-US')}
@@ -79,7 +77,7 @@ async function run() {
     history.scrollTop = 0
     history.scrollTop = 200
     const historyScrolled = history.scrollTop > 0 && history.scrollHeight > history.clientHeight
-    const button = composer.querySelector('button[type="submit"]')!
+    const button = composer.querySelector<HTMLButtonElement>('button[type="submit"]')!
     const buttonRect = button.getBoundingClientRect()
     const composerRect = composer.getBoundingClientRect()
     const glow = root.querySelector('.clinmesh-agent-target')!.getBoundingClientRect()
@@ -93,18 +91,14 @@ async function run() {
       buttonHit: shadow.elementFromPoint(buttonRect.x + buttonRect.width / 2, buttonRect.y + buttonRect.height / 2)?.closest('button') === button,
       historyHeight: root.querySelector('[data-agent-consultation]')!.getBoundingClientRect().height,
     }
-    const delegateButton = [...composer.querySelectorAll<HTMLButtonElement>('button')]
-      .find(candidate => candidate.textContent === 'Ask assistant to follow up')!
-    const delegateRect = delegateButton.getBoundingClientRect()
-    const delegateVisible = delegateRect.bottom <= host.getBoundingClientRect().bottom
-      && shadow.elementFromPoint(delegateRect.x + delegateRect.width / 2, delegateRect.y + delegateRect.height / 2)?.closest('button') === delegateButton
-    const delegatedBefore = delegated.length
+    const assistantActionAbsent = ![...composer.querySelectorAll<HTMLButtonElement>('button')]
+      .some(candidate => candidate.textContent === 'Ask assistant to follow up')
+    const questionsBefore = manualQuestions
     const dialogsBefore = root.querySelectorAll('[role="dialog"]').length
-    delegateButton.click()
+    button.click()
     await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
-    const delegateSubmitted = delegated.length === delegatedBefore + 1
-      && delegated.at(-1) === `Question at ${width}px` && textarea.value === ''
-      && manualQuestions === 0 && root.querySelectorAll('[role="dialog"]').length === dialogsBefore
+    const patientQuestionSent = manualQuestions === questionsBefore + 1 && textarea.value === ''
+      && root.querySelectorAll('[role="dialog"]').length === dialogsBefore
     let retryReadable = true
     let retryInteractive = true
     for (const locale of ['zh-CN', 'en-US'] as const) {
@@ -125,7 +119,7 @@ async function run() {
       retryButton.click()
       retryInteractive &&= retryClicks === before + 1
     }
-    steps.push({ ...step, delegateVisible, delegateSubmitted, retryReadable, retryInteractive })
+    steps.push({ ...step, assistantActionAbsent, patientQuestionSent, retryReadable, retryInteractive })
     retryLocale = undefined
     render()
   }

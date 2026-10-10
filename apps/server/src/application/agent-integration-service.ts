@@ -352,17 +352,22 @@ export class AgentIntegrationService {
     const request = doctorAgentTaskPermitRequestSchema.parse(input.request)
     const context = this.verifyPageContextToken(request.contextToken)
     this.#assertCurrentCaller(context, input.actor, input.userAccountId)
-    if (!usesDoctorReadBinding(context, 'outpatient.case.read') || context.claim.ui.status !== 'ready'
-      || validateAgentToolInputForContext(this.#database, this.#cases, context, input.userAccountId,
+    if (context.actor.roleCode !== 'outpatient-doctor' || context.claim.viewId !== 'consultation'
+      || !['ready', 'empty'].includes(context.claim.ui.status)) throw this.#taskChanged()
+    if (context.claim.selection?.kind === 'case') {
+      if (validateAgentToolInputForContext(this.#database, this.#cases, context, input.userAccountId,
         'outpatient.case.read', {}) === undefined) throw this.#taskChanged()
-    const content = `请仅向当前病例的患者代问以下范围，可在范围内连续追问；完成后说明结果。不要修改病历或准备正式操作。\n${request.instructions}`
+    } else if (context.claim.selection !== undefined || !context.allowedOperationIds.includes('outpatient.case.select')) {
+      throw this.#taskChanged()
+    }
+    const content = request.content
     const now = this.#now()
     const payload = doctorAgentTaskPermitPayloadSchema.parse({
       contextId: context.id, dshSessionId: context.dshSessionId,
       expiresAt: new Date(Math.min(Date.parse(context.expiresAt), now.getTime() + 60_000)).toISOString(),
       inputHash: createHash('sha256').update(content).digest('hex'), issuedAt: now.toISOString(),
-      pageRevision: agentPageBindingRevision(context.claim), purpose: 'clinmesh-doctor-delegation',
-      rpcId: request.rpcId, scopeKey: context.scopeKey, taskId: uuidv7(), version: 1,
+      pageRevision: agentPageBindingRevision(context.claim), purpose: 'clinmesh-doctor-input',
+      rpcId: request.rpcId, scopeKey: context.scopeKey, taskId: uuidv7(), version: 2,
     })
     const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
     return { content, dshSessionId: context.dshSessionId,
@@ -399,8 +404,9 @@ export class AgentIntegrationService {
       || (context.actor.roleCode === 'outpatient-doctor' && context.claim.viewId === 'consultation')) {
       this.#assertExecutionOrigin(proof, context, input.actor, input.userAccountId)
     }
-    if (definition.operationId === 'outpatient.consultation.ask'
-      && (proof.origin?.task.delegationId === undefined || proof.origin.task.contextId === undefined)) {
+    if (['outpatient.consultation.ask', 'outpatient.consultation.reply.retry'].includes(definition.operationId)
+      && (proof.origin?.task.delegationId === undefined || proof.origin.task.delegationInputHash === undefined
+        || proof.origin.task.contextId === undefined)) {
       throw this.#taskChanged()
     }
     const parsedInput = validateAgentToolInputForContext(

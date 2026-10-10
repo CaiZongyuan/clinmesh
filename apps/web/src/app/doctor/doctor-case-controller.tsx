@@ -129,7 +129,7 @@ import {
 } from './laboratory-page.tsx'
 import { PatientBanner } from './patient-summary.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
-import { agentViewRevision, useRegisterAgentPage, useRegisterAgentForm, useDoctorTaskSubmit } from '../agent-page-context.tsx'
+import { agentViewRevision, useRegisterAgentPage, useRegisterAgentForm } from '../agent-page-context.tsx'
 import { useAgentReview } from '../agent-review.tsx'
 
 interface DoctorWorkspaceProps {
@@ -633,15 +633,6 @@ function DoctorCaseController({
         refreshCompletedCaseDetails(),
         queryClient.invalidateQueries({ queryKey: completedCaseListScopeKey }),
       ])
-    },
-  })
-  const submitDoctorTask = useDoctorTaskSubmit()
-  const delegateQuestions = useMutation({
-    mutationFn: async ({ caseId, instructions }: { caseId: string; instructions: string }) => {
-      if (detail.data?.caseId !== caseId || submitDoctorTask === undefined) {
-        throw new Error(messages.consultationUnavailable)
-      }
-      await submitDoctorTask(instructions)
     },
   })
   const askQuestion = useMutation({
@@ -2439,22 +2430,11 @@ function DoctorCaseController({
               ? correctionNavigation.target
               : undefined}
             consultationAction={{
-              error: delegateQuestions.variables?.caseId === detail.data.caseId && delegateQuestions.error !== null
-                ? delegateQuestions.error
-                : retryPatientReply.variables?.caseId === detail.data.caseId && retryPatientReply.error !== null
+              error: retryPatientReply.variables?.caseId === detail.data.caseId && retryPatientReply.error !== null
                 ? retryPatientReply.error
                 : askQuestion.variables?.caseId === detail.data.caseId ? askQuestion.error : null,
               onAsk: message => askQuestion.mutate({ caseId: detail.data.caseId, message }),
               onRetry: () => retryPatientReply.mutate({ caseId: detail.data.caseId }),
-              ...(submitDoctorTask === undefined ? {} : {
-                onDelegate: async (instructions: string) => {
-                  await delegateQuestions.mutateAsync({ caseId: detail.data.caseId, instructions })
-                },
-                delegationPending: delegateQuestions.isPending && delegateQuestions.variables?.caseId === detail.data.caseId,
-                ...(delegateQuestions.isSuccess && delegateQuestions.variables?.caseId === detail.data.caseId ? {
-                  delegationStatus: locale === 'zh-CN' ? '已交给助手，请在会话中查看进展或叫停。' : 'Submitted to the assistant. Follow progress or stop in the conversation.',
-                } : {}),
-              }),
               pending: (askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId)
                 || (retryPatientReply.isPending && retryPatientReply.variables?.caseId === detail.data.caseId),
               ...(askQuestion.isPending && askQuestion.variables?.caseId === detail.data.caseId

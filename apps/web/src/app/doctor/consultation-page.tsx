@@ -24,9 +24,6 @@ import { formatClinicalTime } from './clinical-date-time.ts'
 export interface ConsultationPageAction {
   error: Error | null
   onAsk: (message: string) => void
-  onDelegate?: (instructions: string) => Promise<void>
-  delegationPending?: boolean
-  delegationStatus?: string
   onRetry: () => void
   onOpenReport?: () => void
   pendingMessage?: string
@@ -123,7 +120,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
               <InputGroup aria-label={messages.askPatient}>
                 <InputGroupTextarea
                   className="max-h-40 overflow-y-auto"
-                  disabled={action.pending || unanswered || action.delegationPending}
+                  disabled={action.pending || unanswered}
                   id="consultation-message"
                   maxLength={2000}
                   onChange={event => setMessage(event.target.value)}
@@ -131,15 +128,6 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   value={message}
                 />
                 <InputGroupAddon align="block-end">
-                  {action.onDelegate === undefined ? null : (
-                    <InputGroupButton disabled={action.pending || unanswered || action.delegationPending || message.trim() === ''}
-                      onClick={async () => {
-                        try { await action.onDelegate?.(message.trim()); setMessage('') }
-                        catch { /* 提交错误由 action.error 展示，保留追问范围。 */ }
-                      }} size="sm" type="button" variant="outline">
-                      {locale === 'zh-CN' ? '交给助手代问' : 'Ask assistant to follow up'}
-                    </InputGroupButton>
-                  )}
                   {action.pending ? <InputGroupText>{messages.waitingForPatientAnswer}</InputGroupText> : null}
                   {unanswered && !action.pending ? (
                     <InputGroupButton className="ml-auto" onClick={action.onRetry} size="sm" type="button" variant="outline">
@@ -150,7 +138,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                     <InputGroupButton
                       aria-label={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
                       className="ml-auto shrink-0 rounded-full"
-                      disabled={action.pending || action.delegationPending || message.trim() === ''}
+                      disabled={action.pending || message.trim() === ''}
                       size="icon-sm"
                       title={action.pending ? messages.waitingForPatientAnswer : messages.askPatient}
                       type="submit"
@@ -177,7 +165,6 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
               </Alert>
             )}
           </FieldGroup>
-          {action.delegationStatus === undefined ? null : <p className="mt-2 text-sm text-muted-foreground" role="status">{action.delegationStatus}</p>}
         </form>
       )}
     </section>

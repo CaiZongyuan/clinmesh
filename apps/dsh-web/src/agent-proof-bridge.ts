@@ -7,6 +7,7 @@ import type {} from '@deepseek-ai/dsh-user-questions'
 import { agentExecutionProofPayloadSchema, agentToolCatalog, isDoctorReadOperation } from '@clinmesh/contracts/agent'
 import { z } from 'zod'
 import { AgentExecutionProofIssuer, parseAgentExecutionProof, parseDoctorAgentTaskPermit } from './execution-proof.ts'
+import { isDoctorDelegation } from './doctor-delegation.ts'
 
 export const CLINMESH_AGENT_PROOF_PATH = '/clinmesh-agent-proof'
 export const CLINMESH_AGENT_HANDOFF_PATH = '/clinmesh-agent-handoff'
@@ -68,8 +69,9 @@ export function installAgentProofBridge(ctx: Context, secret: string,
 ): void {
   const issuer = new AgentExecutionProofIssuer({ secret })
   const pending = new Map<string, PendingCall>()
-  const queuedTasks = new Map<string, { task: Omit<ExecutionOrigin['task'], 'turn'>; caseSelected: boolean }>()
+  const queuedTasks = new Map<string, { task: Omit<ExecutionOrigin['task'], 'turn'>; caseSelected: boolean; text?: string }>()
   const activeTasks = new Map<string, ExecutionOrigin['task']>()
+  const inputs = new WeakMap<ExecutionOrigin['task'], { text: string; admission?: Promise<void> }>()
   const unselectedTasks = new WeakSet<ExecutionOrigin['task']>()
   const questionCalls = new Map<string, ExecutionOrigin['task']>()
   const sidebandTasks = new Map<string, ExecutionOrigin['task']>()
@@ -77,11 +79,20 @@ export function installAgentProofBridge(ctx: Context, secret: string,
   const turnCalls = new Map<string, Set<string>>()
   const doctorTasks = new Map<string, { permit: ReturnType<typeof parseDoctorAgentTaskPermit>; timer: ReturnType<typeof setTimeout> }>()
   const usedDelegations = new Map<string, number>()
+  const endedInputs = new Map<string, number>()
   const changed = new Set<() => void>()
   const lifetime = new AbortController()
   const timeoutMs = options.handoffTimeoutMs ?? 30_000
   const notify = (): void => { for (const listener of changed) listener() }
-  const wait = (call: PendingCall, ready: () => boolean, signal = call.execution.signal): Promise<void> => {
+  const endInput = (sessionId: string, rpcId: string): void => {
+    const key = `${sessionId}\u0000${rpcId}`
+    const registered = doctorTasks.get(key)
+    if (registered !== undefined) clearTimeout(registered.timer)
+    doctorTasks.delete(key)
+    for (const [candidate, expiresAt] of endedInputs) if (expiresAt <= Date.now()) endedInputs.delete(candidate)
+    if (endedInputs.size < 256) endedInputs.set(key, Date.now() + 60_000)
+  }
+  const wait = (call: Pick<PendingCall, 'execution' | 'abort' | 'deadline'>, ready: () => boolean, signal = call.execution.signal): Promise<void> => {
     const combined = AbortSignal.any([signal, lifetime.signal, call.execution.signal, call.abort.signal])
     return new Promise((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined
@@ -145,10 +156,50 @@ export function installAgentProofBridge(ctx: Context, secret: string,
       }
     }
     const reason = `${UNCONFIRMED_EXECUTION} 操作结果尚未确认，已暂停原任务；不能自动重放。`
+    if (task !== undefined) endInput(sessionId, task.rpcId)
     call.abort.abort(new Error(reason))
     agent.cancel({ kind: 'hook', reason }, { keepInbox: true })
     notify()
     return true
+  }
+
+  const admitInput = (execution: ToolExecution, task: ExecutionOrigin['task']): Promise<void> => {
+    const input = inputs.get(task)
+    if (input === undefined) return Promise.reject(new Error('CLINMESH_CALL_SOURCE_REQUIRED'))
+    if (input.admission !== undefined) return input.admission
+    input.admission = (async () => {
+      const call = { execution, abort: new AbortController(), deadline: Date.now() + timeoutMs }
+      const signal = AbortSignal.any([execution.signal, lifetime.signal, AbortSignal.timeout(timeoutMs)])
+      const key = `${execution.agent!.session.id}\u0000${task.rpcId}`
+      let permit: ReturnType<typeof parseDoctorAgentTaskPermit> | undefined
+      await wait(call, () => {
+        if (activeTasks.get(String(execution.agent!.session.id)) !== task) throw new Error('CLINMESH_TASK_CHANGED')
+        const registered = doctorTasks.get(key)
+        if (registered === undefined) return false
+        clearTimeout(registered.timer)
+        doctorTasks.delete(key)
+        permit = registered.permit
+        if (Date.parse(permit.expiresAt) <= Date.now() || permit.scopeKey !== task.scopeKey
+          || permit.pageRevision !== task.pageRevision
+          || createHash('sha256').update(input.text).digest('hex') !== permit.inputHash) {
+          throw new Error('CLINMESH_CALL_SOURCE_REQUIRED')
+        }
+        return true
+      }, signal)
+      const config = execution.agent!.session.requestHeader()?.config
+      if (config === undefined || permit === undefined) throw new Error('CLINMESH_CALL_SOURCE_REQUIRED')
+      let delegated: boolean
+      try { delegated = !unselectedTasks.has(task) && await isDoctorDelegation(ctx, config, input.text, signal) }
+      catch { throw new Error('CLINMESH_DELEGATION_UNCONFIRMED: 未能核实本次代问意图，尚未执行；请明确说明追问范围。') }
+      signal.throwIfAborted()
+      if (activeTasks.get(String(execution.agent!.session.id)) !== task) throw new Error('CLINMESH_TASK_CHANGED')
+      task.contextId = permit.contextId
+      if (delegated) {
+        task.delegationId = permit.taskId
+        task.delegationInputHash = permit.inputHash
+      }
+    })()
+    return input.admission
   }
 
   ctx.on('agent/inbox/inserted', ({ agent, message }) => {
@@ -166,19 +217,14 @@ export function installAgentProofBridge(ctx: Context, secret: string,
     }
     const source = humanSourceSchema.safeParse(message.source)
     if (!source.success || agent.session.header.origin === 'subagent' || queuedTasks.size >= 256) return
-    const taskKey = `${agent.session.id}\u0000${source.data.rpcId}`
-    const registered = doctorTasks.get(taskKey)
-    if (registered !== undefined) { clearTimeout(registered.timer); doctorTasks.delete(taskKey) }
     const content = message.content.length === 1 && message.content[0]?.type === 'text' ? message.content[0].text : undefined
-    if (registered !== undefined && (Date.parse(registered.permit.expiresAt) <= Date.now()
-      || content === undefined || createHash('sha256').update(content).digest('hex') !== registered.permit.inputHash)) return
-    const binding = registered?.permit ?? directoryBinding(ctx, agent)
+    const binding = directoryBinding(ctx, agent)
     if (binding === undefined) return
     queuedTasks.set(`${agent.session.id}\u0000${message.id}`, { task: {
       scopeKey: binding.scopeKey, pageRevision: binding.pageRevision,
       messageId: String(message.id), rpcId: source.data.rpcId, acceptedAt: new Date().toISOString(),
-      ...(registered === undefined ? {} : { contextId: registered.permit.contextId, delegationId: registered.permit.taskId }),
-    }, caseSelected: ctx.tools.get('clinmesh_select_doctor_section', agent) !== undefined })
+    }, caseSelected: ctx.tools.get('clinmesh_select_doctor_section', agent) !== undefined,
+      ...(content === undefined || content.length === 0 || content.length > 2000 ? {} : { text: content }) })
   })
   ctx.on('agent/inbox/claimed', ({ agent, message, turn }) => {
     const key = `${agent.session.id}\u0000${message.id}`
@@ -187,15 +233,22 @@ export function installAgentProofBridge(ctx: Context, secret: string,
     if (sideband !== undefined && sideband === activeTasks.get(String(agent.session.id)) && sideband.turn === turn) return
     const queued = queuedTasks.get(key)
     queuedTasks.delete(key)
+    const previous = activeTasks.get(String(agent.session.id))
+    if (previous !== undefined) endInput(String(agent.session.id), previous.rpcId)
     activeTasks.delete(String(agent.session.id))
     if (queued !== undefined) {
       const task = { ...queued.task, turn }
       activeTasks.set(String(agent.session.id), task)
+      if (queued.text !== undefined) inputs.set(task, { text: queued.text })
       if (!queued.caseSelected) unselectedTasks.add(task)
     }
+    notify()
   })
   ctx.on('agent/inbox/discarded', ({ agent, message }) => {
-    queuedTasks.delete(`${agent.session.id}\u0000${message.id}`)
+    const key = `${agent.session.id}\u0000${message.id}`
+    const queued = queuedTasks.get(key)
+    if (queued !== undefined) endInput(String(agent.session.id), queued.task.rpcId)
+    queuedTasks.delete(key)
     sidebandTasks.delete(`${agent.session.id}\u0000${message.id}`)
   })
   ctx.on('session/event', (session, event) => {
@@ -205,12 +258,15 @@ export function installAgentProofBridge(ctx: Context, secret: string,
       return
     }
     if (event.type === 'turn/end') {
+      const task = activeTasks.get(sessionId)
+      if (task !== undefined) endInput(sessionId, task.rpcId)
       activeTasks.delete(sessionId)
       turnCalls.delete(sessionId)
       for (const key of callSources.keys()) if (key.startsWith(`${sessionId}\u0000`)) callSources.delete(key)
       for (const map of [questionCalls, sidebandTasks]) {
         for (const key of map.keys()) if (key.startsWith(`${sessionId}\u0000`)) map.delete(key)
       }
+      notify()
       return
     }
     if (event.type !== 'tool/call') return
@@ -296,9 +352,15 @@ export function installAgentProofBridge(ctx: Context, secret: string,
         && ctx.tools.get('clinmesh_select_doctor_section', execution.agent) !== undefined) {
         throw new Error('CLINMESH_TASK_CHANGED: 原任务没有病例锚点，请由医生为已选择病例提交新任务。')
       }
+      if (source !== undefined) {
+        await admitInput(execution, source.origin.task)
+        if (source.origin.task !== activeTasks.get(String(dshSessionId)) || execution.signal.aborted) {
+          throw new Error('CLINMESH_TASK_CHANGED: 原医生任务已结束，尚未执行。')
+        }
+      }
       if (['clinmesh_ask_virtual_patient', 'clinmesh_retry_patient_reply'].includes(execution.name)
         && source?.origin.task.delegationId === undefined) {
-        throw new Error('CLINMESH_DELEGATION_REQUIRED: 当前任务没有代问委托，请由医生在问诊区提交代问范围。')
+        throw new Error('CLINMESH_DELEGATION_REQUIRED: 当前任务没有明确代问委托，请在右侧医院助手会话中说明追问范围。')
       }
       if (source?.origin.task.delegationId !== undefined && !doctorReadNames.has(execution.name)
         && !['clinmesh_ask_virtual_patient', 'clinmesh_retry_patient_reply'].includes(execution.name)
@@ -377,10 +439,13 @@ export function installAgentProofBridge(ctx: Context, secret: string,
         for (const [id, expiresAt] of usedDelegations) if (expiresAt <= Date.now()) usedDelegations.delete(id)
         if (usedDelegations.has(permit.taskId) || doctorTasks.size >= 256 || usedDelegations.size >= 256) throw new Error('The doctor task is already registered or unavailable')
         const key = `${permit.dshSessionId}\u0000${permit.rpcId}`
+        for (const [candidate, expiresAt] of endedInputs) if (expiresAt <= Date.now()) endedInputs.delete(candidate)
+        if (endedInputs.has(key) || endedInputs.size >= 256) throw new Error('The doctor input has ended or is unavailable')
         if (doctorTasks.has(key)) throw new Error('The doctor task request is already registered')
         usedDelegations.set(permit.taskId, Date.parse(permit.expiresAt))
         const timer = setTimeout(() => doctorTasks.delete(key), Math.max(0, Date.parse(permit.expiresAt) - Date.now()))
         doctorTasks.set(key, { permit, timer })
+        notify()
         writeJson(response, 200, { data: { registered: true } })
       } catch { writeError(response, 409, 'DOCTOR_TASK_INVALID', 'The doctor task cannot be registered') }
     },
@@ -496,6 +561,7 @@ export function installAgentProofBridge(ctx: Context, secret: string,
     for (const task of doctorTasks.values()) clearTimeout(task.timer)
     doctorTasks.clear()
     usedDelegations.clear()
+    endedInputs.clear()
   }, 'clinmesh-dsh-web: release Tool execution proofs')
 }
 

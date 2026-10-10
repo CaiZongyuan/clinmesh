@@ -24,7 +24,6 @@ import {
 import {
   createDefaultAgentPageRegistration,
   useAgentPageRegistration,
-  useRegisterDoctorTaskSubmit,
   type AgentPageRegistration,
 } from './agent-page-context.tsx'
 import { buildSurfaceAgentTools, type AgentActionFeedback, type SurfaceAgentPageAction } from './surface-agent-tools.ts'
@@ -153,27 +152,31 @@ export function useSurfaceAgentPublisher(input: {
     for (const controller of pendingDoctorTasks.current) controller.abort()
     pendingDoctorTasks.current.clear()
   }, [doctorTaskIdentity])
-  const submitDoctorTask = useCallback(async (instructions: string): Promise<void> => {
+  useEffect(() => runtime.surfaceDoctorInput?.(async (input, signal) => {
     const frame = committedFrame.current
     if (frame === undefined || frame.binding.snapshot.id !== currentBinding.current?.snapshot.id
       || frame.binding.snapshot.actor.roleCode !== 'outpatient-doctor'
-      || frame.binding.snapshot.claim.selection?.kind !== 'case' || runtime.surfaceDoctorTask === undefined) {
+      || frame.binding.snapshot.dshSessionId !== input.dshSessionId) {
       throw new Error('当前病例或助手连接尚未就绪。')
     }
     const controller = new AbortController()
+    const combined = AbortSignal.any([signal, controller.signal])
     pendingDoctorTasks.current.add(controller)
     try {
       const task = await createDoctorTaskPermit({ contextToken: frame.binding.token,
-        instructions, rpcId: crypto.randomUUID() }, controller.signal)
-      controller.signal.throwIfAborted()
+        content: input.content, rpcId: input.rpcId }, combined)
+      combined.throwIfAborted()
       const current = committedFrame.current
       if (current === undefined || current.binding.snapshot.id !== currentBinding.current?.snapshot.id
-        || !hasSameDoctorCase(current.binding.snapshot, frame.binding.snapshot)
-        || current.binding.snapshot.dshSessionId !== task.dshSessionId) throw new Error('当前病例或会话已变化，任务尚未提交。')
-      await runtime.surfaceDoctorTask(task, controller.signal)
+        || !(frame.binding.snapshot.claim.selection?.kind === 'case'
+          ? hasSameDoctorCase(current.binding.snapshot, frame.binding.snapshot)
+          : current.binding.snapshot.scopeKey === frame.binding.snapshot.scopeKey)
+        || current.binding.snapshot.dshSessionId !== task.dshSessionId) {
+        throw new Error('当前病例或会话已变化，输入凭证尚未登记。')
+      }
+      return task
     } finally { pendingDoctorTasks.current.delete(controller) }
-  }, [runtime.surfaceDoctorTask])
-  useRegisterDoctorTaskSubmit(runtime.mode === 'surface' && runtime.surfaceDoctorTask !== undefined ? submitDoctorTask : undefined)
+  }), [runtime.surfaceDoctorInput, doctorTaskIdentity])
   const [settlementRevision, setSettlementRevision] = useState(0)
   const publish = useCallback((value: PublishedSurfaceContext | undefined): void => {
     const previous = publishedRef.current

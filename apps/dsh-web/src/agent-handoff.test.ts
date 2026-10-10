@@ -6,6 +6,7 @@ import type { PostToolDecision, ToolExecution, ToolExecutionResult } from '@deep
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseAgentExecutionProof, signAgentExecutionProof } from './execution-proof.ts'
 import { installAgentProofBridge } from './agent-proof-bridge.ts'
+import { doctorInputPermit } from './doctor-input-fixture.ts'
 
 const secret = 'test-bridge-secret-with-at-least-32-characters'
 const original = { scopeKey: 'scope', pageRevision: '["record",null]' }
@@ -27,7 +28,9 @@ function fixture(timeoutMs = 30_000, initial = original) {
   const routes = new Map<string, HostRoute>()
   const disposers: Array<() => void> = []
   let schemas = descriptors(initial, ['clinmesh_read_current_context', 'clinmesh_select_doctor_section'])
-  const agent = { session: { id: 'synthetic-session', header: {}, requestHeader: () => ({ tools: schemas }) }, cancel: vi.fn() }
+  const agent = { session: { id: 'synthetic-session', header: {}, requestHeader: () => ({
+    config: { provider: 'scripted', model: 'handoff' }, tools: schemas,
+  }) }, cancel: vi.fn() }
   const ctx = {
     on: (name: string, handler: unknown) => {
       listeners.set(name, handler)
@@ -35,15 +38,15 @@ function fixture(timeoutMs = 30_000, initial = original) {
     },
     effect: (factory: () => (() => void)) => { disposers.push(factory()) },
     tools: { get: (name: string) => schemas.find(tool => tool.name === name), schemas: () => schemas },
+    llm: { async *stream() {
+      yield { type: 'text-delta', text: '{"intent":"discuss","evidence":""}' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    } },
     webServer: { register: (route: { path: string; handler: HostRoute }) => {
       routes.set(route.path, route.handler); return () => { routes.delete(route.path) }
     } },
   }
   installAgentProofBridge(ctx as unknown as Context, secret, { handoffTimeoutMs: timeoutMs })
-  const message = { id: 'human-message', source: { kind: 'user', rpcId: 'human-rpc' }, content: [] }
-  invoke('agent/inbox/inserted', { agent, message })
-  invoke('agent/inbox/claimed', { agent, message, turn: 1 })
-  invoke('session/event', agent.session, { type: 'step/start', data: { turn: 1, step: 1 } })
   function startRequest(path: string, body: unknown) {
     const route = routes.get(path)
     expect(route, `registered ${path}`).toBeDefined()
@@ -62,7 +65,20 @@ function fixture(timeoutMs = 30_000, initial = original) {
     return { returned, response }
   }
   const request = (path: string, body: unknown) => startRequest(path, body).returned
+  async function originate(rpcId = 'human-rpc', id = 'human-message') {
+    const text = '读取当前病例资料，暂不向患者提问。'
+    const message = { id, source: { kind: 'user', rpcId }, content: [{ type: 'text', text }] }
+    invoke('agent/inbox/inserted', { agent, message })
+    invoke('agent/inbox/claimed', { agent, message, turn: 1 })
+    const registered = await request('/clinmesh-doctor-task', { permit: doctorInputPermit({
+      text, rpcId, dshSessionId: agent.session.id, secret, ...initial,
+    }) })
+    expect(registered).toEqual({ status: 200, body: { data: { registered: true } } })
+    invoke('session/event', agent.session, { type: 'step/start', data: { turn: 1, step: 1 } })
+  }
+  const ready = originate()
   async function begin(name = 'clinmesh_select_doctor_section') {
+    await ready
     const controller = new AbortController()
     const call = { arguments: initial, callId: crypto.randomUUID(), name, agent,
       signal: controller.signal } as unknown as ToolExecution
@@ -76,7 +92,7 @@ function fixture(timeoutMs = 30_000, initial = original) {
     if (token === undefined) throw new Error('Missing proof response')
     return { call, proof: token, controller }
   }
-  return { begin, request, startRequest, agent, invoke,
+  return { begin, request, startRequest, agent, invoke, originate,
     body: (call: ToolExecution, body = async () => result) => (invoke('tools/execute', call, body) ?? body()) as Promise<ToolExecutionResult>,
     post: (call: ToolExecution, value = result) => (invoke('tools/post-execute', call, value,
       async () => ({ kind: 'accept' })) ?? Promise.resolve({ kind: 'accept' })) as Promise<PostToolDecision>,
@@ -118,9 +134,7 @@ describe('ClinMesh Host result handoff', () => {
     try {
       const { call, proof } = await f.begin()
       await f.body(call)
-      const message = { id: 'new-doctor-message', source: { kind: 'user', rpcId: 'new-doctor-rpc' }, content: [] }
-      f.invoke('agent/inbox/inserted', { agent: f.agent, message })
-      f.invoke('agent/inbox/claimed', { agent: f.agent, message, turn: 1 })
+      await f.originate('new-doctor-rpc', 'new-doctor-message')
       expect((await f.request('/clinmesh-agent-handoff', { phase: 'pause', proof })).status).toBe(409)
       const unknown: ToolExecutionResult = { isError: true, error: { message: 'CLINMESH_EXECUTION_UNCONFIRMED: late old result' },
         content: [{ type: 'text', text: 'Error: CLINMESH_EXECUTION_UNCONFIRMED: late old result' }] }

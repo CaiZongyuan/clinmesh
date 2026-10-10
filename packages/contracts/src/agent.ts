@@ -132,20 +132,20 @@ export const doctorAgentTaskPermitPayloadSchema = agentExecutionBindingSchema.ex
   expiresAt: z.iso.datetime({ offset: true }),
   inputHash: z.string().regex(/^[a-f0-9]{64}$/),
   issuedAt: z.iso.datetime({ offset: true }),
-  purpose: z.literal('clinmesh-doctor-delegation'),
+  purpose: z.literal('clinmesh-doctor-input'),
   rpcId: z.string().min(1).max(256),
   taskId: z.uuid(),
-  version: z.literal(1),
+  version: z.literal(2),
 })
 
 export const doctorAgentTaskPermitRequestSchema = z.object({
   contextToken: z.string().min(32),
-  instructions: z.string().trim().min(1).max(2000),
+  content: z.string().min(1).max(2000),
   rpcId: z.string().min(1).max(256),
 }).strict()
 
 export const doctorAgentTaskPermitResponseSchema = z.object({
-  content: z.string().min(1).max(2200),
+  content: z.string().min(1).max(2000),
   dshSessionId: z.string().min(1).max(256),
   permit: z.string().min(32).max(8192),
   rpcId: z.string().min(1).max(256),
@@ -154,6 +154,7 @@ export const doctorAgentTaskPermitResponseSchema = z.object({
 
 export type DoctorAgentTaskPermitRequest = z.infer<typeof doctorAgentTaskPermitRequestSchema>
 export type DoctorAgentTaskSubmission = z.infer<typeof doctorAgentTaskPermitResponseSchema>
+export type DoctorAgentChatInput = Pick<DoctorAgentTaskSubmission, 'content' | 'dshSessionId' | 'rpcId'>
 
 export const agentExecutionProofPayloadSchema = z.object({
   callId: z.string().trim().min(1).max(256),
@@ -170,6 +171,7 @@ export const agentExecutionProofPayloadSchema = z.object({
       rpcId: z.string().trim().min(1).max(256),
       contextId: z.string().min(1).max(128).optional(),
       delegationId: z.uuid().optional(),
+      delegationInputHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
       turn: z.number().int().positive(),
     }),
   }).strict().optional(),
