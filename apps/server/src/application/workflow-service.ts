@@ -1,4 +1,10 @@
 import { CommandReceiptNotFoundError } from './command-executor.ts'
+import {
+  doctorCaseHistorySchema,
+  doctorCompletedHistoryDetailSchema,
+  type DoctorCaseHistoryInput,
+  type DoctorCaseHistoryDetailInput,
+} from '@clinmesh/contracts/agent'
 import { createHmac } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { fhirResourceSchema, type FhirResource } from '@clinmesh/contracts/fhir'
@@ -85,6 +91,8 @@ import {
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
+import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
+import { doctorHistoryEntryAllowed, doctorVisibleHistory, doctorVisibleHistoryDetail } from './doctor-case-history.ts'
 import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction } from './command-executor.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
@@ -921,6 +929,7 @@ const completedCaseSelectionSql = `
    AND encounter.resource_id = outpatient_case.encounter_id
   WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
     AND responsibility.practitioner_role_id = ?
+    AND patient.deleted = 0 AND encounter.deleted = 0
     AND json_extract(encounter.content_json, '$.status') = 'completed'
     AND json_extract(encounter.content_json, '$.actualPeriod.end') IS NOT NULL
     AND (? IS NULL OR outpatient_case.patient_id = ?)
@@ -2702,6 +2711,66 @@ export class WorkflowService {
     })
   }
 
+  doctorCaseHistory(context: ActorContext, currentCaseId: string, input: DoctorCaseHistoryInput) {
+    const patientId = this.#doctorHistoryPatient(context, currentCaseId)
+    if (input.source === 'visible-source') {
+      return doctorVisibleHistory(this.#database, context, currentCaseId, patientId, input)
+    }
+    const history = this.doctorCompletedCases(context, { ...input, patientId })
+    return doctorCaseHistorySchema.parse({
+      ...history,
+      availability: history.total === 0 ? 'no-data' : 'available',
+      coverage: 'current-patient-responsible-doctor',
+      items: history.items.map(item => ({
+        clinicalDate: item.completedAt,
+        entryId: item.caseId,
+        resourceType: 'Encounter',
+        source: input.source,
+        title: item.primaryDiagnosis?.display ?? '本院完诊记录',
+      })),
+      source: input.source,
+    })
+  }
+
+  doctorCaseHistoryDetail(context: ActorContext, currentCaseId: string, input: DoctorCaseHistoryDetailInput) {
+    const patientId = this.#doctorHistoryPatient(context, currentCaseId)
+    if (input.source === 'visible-source') {
+      return doctorVisibleHistoryDetail(this.#database, context, currentCaseId, patientId, input.entryId)
+    }
+    if (!doctorHistoryEntryAllowed(this.#database, context, currentCaseId, input)) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The authorized history entry was not found')
+    }
+    return doctorCompletedHistoryDetailSchema.parse({
+      entryId: input.entryId,
+      record: this.doctorCompletedCaseDetail(context, input.entryId),
+      source: input.source,
+    })
+  }
+
+  #doctorHistoryPatient(context: ActorContext, caseId: string): string {
+    this.#assertRole(context, ['outpatient-doctor'])
+    new WorkspaceRepository(this.#database).assertCurrent(context, context.scenarioRunId)
+    this.#assertCaseResponsibility(context, caseId)
+    const row = z.object({ patient_id: z.string().min(1) }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT outpatient_case.patient_id FROM outpatient_case
+        JOIN fhir_resource AS patient
+          ON patient.workspace_id = outpatient_case.workspace_id
+         AND patient.epoch = outpatient_case.epoch AND patient.resource_type = 'Patient'
+         AND patient.resource_id = outpatient_case.patient_id AND patient.deleted = 0
+        JOIN fhir_resource AS encounter
+          ON encounter.workspace_id = outpatient_case.workspace_id
+         AND encounter.epoch = outpatient_case.epoch AND encounter.resource_type = 'Encounter'
+         AND encounter.resource_id = outpatient_case.encounter_id AND encounter.deleted = 0
+        WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
+          AND outpatient_case.case_id = ? AND outpatient_case.scenario_run_id = ?
+          AND json_extract(encounter.content_json, '$.status') = 'in-progress'
+      `).get(context.workspaceId, context.epoch, caseId, context.scenarioRunId),
+    )
+    if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The current outpatient case was not found')
+    return row.patient_id
+  }
+
   doctorCompletedCaseDetail(context: ActorContext, caseId: string) {
     this.#assertRole(context, ['outpatient-doctor'])
     const row = completedCaseDetailRowSchema.optional().parse(this.#database.driver.prepare(`
@@ -2725,6 +2794,7 @@ export class WorkflowService {
       WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ?
         AND outpatient_case.case_id = ?
         AND responsibility.practitioner_role_id = ?
+        AND patient.deleted = 0 AND encounter.deleted = 0
         AND json_extract(encounter.content_json, '$.status') = 'completed'
         AND json_extract(encounter.content_json, '$.actualPeriod.end') IS NOT NULL
     `).get(
