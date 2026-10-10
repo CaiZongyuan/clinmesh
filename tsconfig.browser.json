@@ -1,4 +1,5 @@
 {
   "extends": "./tsconfig.base.json",
-  "include": ["playwright.config.ts", "scripts/browser-contract.ts", "apps/web/e2e/**/*.ts", "apps/server/src/infrastructure/imaging-assets/dcmjs.d.ts", "apps/server/src/infrastructure/imaging-assets/openjpeg.d.ts"]
+  "compilerOptions": { "lib": ["ES2023", "DOM", "DOM.Iterable", "DOM.AsyncIterable"] },
+  "include": ["playwright.config.ts", "scripts/browser-contract.ts", "scripts/smoke-dsh-consultation.ts", "apps/web/e2e/**/*.ts", "apps/server/src/infrastructure/imaging-assets/dcmjs.d.ts", "apps/server/src/infrastructure/imaging-assets/openjpeg.d.ts"]
 }
