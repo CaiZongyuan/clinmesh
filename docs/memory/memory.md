@@ -19,6 +19,7 @@
 - 用户明确要求把当前工作区 changes 一并提交时，先辨认并保真保存这些修改，再纳入目标 PR；不丢弃、不改写为自己的内容，也不额外推送原工作分支。
 - 用户询问进度时，先报告已经完成、正在处理和剩余阻塞，然后继续执行，除非用户要求暂停。
 - 用户询问合成演示账号或密码时，从当前 Scenario 或 seed owner 直接给出可试用信息；真实凭证、平台密钥和患者信息永不写入本文或公开 artifact。
+- 用户要求运行开发分支进行手工测试时，启动该分支的真实应用，沿用已有 Provider 配置和完整参考目录，并使用持久化业务数据；需要隔离时使用现有数据的一致备份，明确告知数据副本的边界，不用少量 fixture 代替实际运行环境。
 - UI 预览参考 `agentic-axum-saas-demo` 的体验设计方式，按任务交付可运行且保留版本的交互体验，不在正式 Web 内维护长期 mock 展示站或方案切换器；具体规则见[交互预览](../agent-development.md#交互预览)。
 
 - ClinMesh 与 DSH 会话保持左右分屏，不因窄窗口改为上下排列或自动全屏。DSH 模式的岗位导航直接铺在宿主侧栏“新会话”和“工作区”之间，底部按钮保留“医院工作台”，仅点开后的菜单内部标题显示“设置”；菜单保留设置与应用操作，DSH 内的 ClinMesh 始终跟随宿主主题，不提供独立主题选择，ClinMesh 内部不显示左侧栏；独立 Web 保留侧栏。全屏由用户手动切换，切换与返回按钮放进现有页头，不额外占一行；全屏时先返回分屏再使用宿主导航。账户与岗位切换保留在页头，右上角账户菜单不放设置入口；设置统一由左侧栏承接，独立 Web 使用侧栏底部入口。
@@ -111,6 +112,7 @@
 - Windows 上 Turborepo 包装 `tsx watch` 的持久任务（旧根 `pnpm dev:server`）会以约三成概率把整棵进程树冻结在启动阶段：父进程 IPC 管道已建、子进程已派生，但双方 CPU 归零、服务永不监听，且 forensics 期 inspector 无响应。常驻开发服务器一律直连 pnpm（`pnpm --filter @clinmesh/server dev`），不进 turbo；诊断该类挂起先用“绕开包装层”隔离，再比较冻结与正常实例的 CPU 增量。
 - Turborepo strict env 只转发任务声明的 `passThroughEnv` 变量，turbo 包装的任务拿不到未声明的 `CLINMESH_AI_*` 等变量。核对环境变量是否生效要从实际业务进程取证，只看父 shell 会把 provider 未配置误判为产品错误；这也是根 `dev:server` 改为直连 pnpm 的原因之一。
 - SQLite perf gate 统计数据库、WAL 和 SHM 总增长；同一 Command completion 更新的多个 nullable 关联列若各建独立索引，会放大短事务 WAL pages。优先按真实验证查询建立一个复合索引，并用 `pnpm perf:ci` 证明增长，而不是放宽预算。
+- 跨 CRLF/LF 工作区复用 SQLite 时，`Applied migration checksum changed` 可能只来自 SQL 换行差异。先逐项确认已应用 checksum 匹配来源 SQL，且来源与目标 SQL 仅换行不同；保留原库并建立一致备份后，只在隔离副本中重算对应迁移记录，核对迁移验证、完整性与业务 canonical hash。不能据此跳过校验、覆盖原库或接受实际 SQL 内容差异。
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。
 - 隔离验证副本复用已安装依赖时，VitePress 会在仓库根 `node_modules` 自动创建 `vue` 符号链接。验证副本应保留自己的 `node_modules` 真目录，将已有包分别链接到依赖缓存，让构建新增链接写入验证副本；整体链接共享依赖目录会把构建写入带到共享目录。
 - pnpm 在 Windows 的 `node_modules/.bin` 只生成 `.cmd`/`.ps1` shim，且 Node 直接 `execFile` `.cmd` 会被拒绝。需要子进程调用 workspace 依赖的 CLI 时，用 `process.execPath` 加包内 JS launcher（如 `node_modules/cn-health/bin/cn-health.js`），不要拼 `.bin` 路径；Linux 测试传 `cliPath` 桩会掩盖该断裂，默认解析路径必须有独立测试。`cn-health dataset materialize` 支持多进程并行写同一 `--data-dir`（内部有锁），默认 Dataset 可并行 materialize；`cn-health@0.5.1` 起子进程在 stderr 自带分阶段进度，reference-sync 逐行转发到 `onProgress`。升级被 `reference-data.lock.json` 的 `cli.version` 锁定，与 receipt 的 `cliVersion` 严格相等，升级时 lock、根 devDependency、`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 三处必须同步，且旧版本条目会因排除清单移除而被 `minimumReleaseAge` 政策拒绝——先临时双列排除完成重解析、`pnpm clean --lockfile` 清陈旧条目后再收窄清单。
