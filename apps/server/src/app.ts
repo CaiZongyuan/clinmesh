@@ -118,6 +118,9 @@ import {
   agentReviewDecisionRequestSchema,
   agentToolAuthorizationRequestSchema,
   agentToolResultRequestSchema,
+  agentDoctorQueryRequestSchema,
+  doctorCaseHistoryInputSchema,
+  doctorCaseHistoryDetailInputSchema,
 } from '@clinmesh/contracts/agent'
 
 interface FhirRuntime {
@@ -527,6 +530,46 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch (error) {
         return apiErrorResponse(context, error)
       }
+    })
+    if (options.workflow !== undefined) {
+      const workflow = options.workflow
+      app.post('/api/agent/v1/doctor-queries', async context => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const request = agentDoctorQueryRequestSchema.parse(await context.req.json())
+          let session = await identity.resolveSessionContext(context.req.raw.headers)
+          const query = agentIntegration.verifyDoctorQuery({ actor: session.actor, request,
+            userAccountId: session.user.id })
+          if (query.operationId === 'ui.context.read') return context.json({ context: query.context })
+          if (query.operationId === 'outpatient.case.read') {
+            const [readyExamCodes, offering] = await Promise.all([
+              options.imaging?.library.readyExamCodes().catch(() => undefined),
+              options.pathology?.preparation.offering(session.actor, { outpatientCaseId: query.caseId }).catch(() => undefined),
+            ])
+            session = await identity.resolveSessionContext(context.req.raw.headers)
+            agentIntegration.verifyDoctorQuery({ actor: session.actor, request, userAccountId: session.user.id })
+            return context.json({ ...workflow.doctorCaseDetail(session.actor, query.caseId),
+              imagingServices: readyExamCodes === undefined ? null : workflow.imaging.serviceCatalog(session.actor, readyExamCodes).items,
+              pathologyServices: offering === undefined ? null : workflow.pathology.serviceCatalog(session.actor, offering.readyExamCodes, offering.sourceProcedures).items,
+              queue: null,
+            })
+          }
+          if (query.operationId === 'outpatient.history.search') return context.json(workflow.doctorCaseHistory(
+            session.actor, query.caseId, doctorCaseHistoryInputSchema.parse(query.input)))
+          if (query.operationId === 'outpatient.history.read') return context.json(workflow.doctorCaseHistoryDetail(
+            session.actor, query.caseId, doctorCaseHistoryDetailInputSchema.parse(query.input)))
+          throw new AgentIntegrationError('AGENT_OPERATION_NOT_ALLOWED', 'The doctor query is not available', 403)
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+    }
+    app.post('/api/agent/v1/doctor-tasks/permit', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(agentIntegration.createDoctorTaskPermit({
+          actor: session.actor, request: await context.req.json(), userAccountId: session.user.id,
+        }), 201)
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/agent/v1/tool-calls/review', async context => {
       try {

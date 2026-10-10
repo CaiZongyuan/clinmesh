@@ -14,7 +14,7 @@
 
 ## Tool 绑定与恢复
 
-每次页面 Tool 调用都必须在 JSON 中显式传入当前工具 schema 的 `scopeKey`、`pageRevision` 的 `const` 值；`const` 只限制取值，不会自动填入。短期 `contextId` 由执行桥接管理，读取不消耗 Page Context，无须让写入成为新回合的第一次调用。只续签或改变加载状态不会改变模型绑定值；切换岗位、会话、患者、栏目或页面与草稿语义版本后，按最新工具定义读取当前状态，不从历史对话复制绑定。具体绑定合同见 [系统架构](architecture.md#72-page-context)。
+医生已选病例时，`clinmesh_read_current_context`、`clinmesh_read_doctor_context` 和授权历史纯查询只提交业务参数，由系统核对原任务与当前病例。其余页面 Tool 在 JSON 中显式传入当前工具 schema 的 `scopeKey`、`pageRevision` 的 `const` 值；`const` 只限制取值，不会自动填入。短期 `contextId` 由执行桥接管理，读取不消耗 Page Context，无须让写入成为新回合的第一次调用。只续签或改变加载状态不会改变模型绑定值；同病例栏目、问诊与草稿更新可继续纯查询；换岗位、会话或病例后旧任务暂停，切回也不会自行恢复。精确操作按最新工具定义绑定，不从历史对话复制绑定。具体绑定合同见 [系统架构](architecture.md#72-page-context)。
 
 绑定诊断发生在页面业务动作执行前，不代替业务结果核对：
 
@@ -115,9 +115,13 @@
 | `pharmacy.dispense.propose` | 当前处方满足调剂前提 | 人工审阅发药 |
 | `scenario.reset.propose` | 管理员场景页面 | 人工审阅重置；新 Epoch 清理旧反馈 |
 
-只读操作包括 `ui.context.read`、`triage.queue.read`、`outpatient.case.read`、`billing.queue.read`、`pharmacy.queue.read`、`scenario.status.read`、`scenario.providers.read` 和 `scenario.generation.status.read`。它们读取授权范围内的页面或服务端结果，不显示执行边框，也不复制 Case Truth。
+只读操作包括 `ui.context.read`、`triage.queue.read`、`outpatient.case.read`、`outpatient.history.search/read`、`billing.queue.read`、`pharmacy.queue.read`、`scenario.status.read`、`scenario.providers.read` 和 `scenario.generation.status.read`。它们读取授权范围内的页面或服务端结果，不显示执行边框，也不复制 Case Truth。
 
-医生页面的 `clinmesh_read_current_context` 在 `data.pageState.queue` 返回已加载的医生队列页；`clinmesh_read_doctor_context` 保留当前病例详情字段，并在 `data.queue` 返回同一队列。`queue.items` 包含可用于切换的 `caseId`、患者身份和病例状态，`page`、`pageSize`、`total` 描述分页。该队列包含待诊与在诊病例，不等同于当前标签筛选后的列表；`queueCount` 保留为总数，不能据此推断已返回全部条目。队列尚未加载时 `queue` 为 `null`，空队列的 `items` 为 `[]`。选择工具只接受这份已加载队列中的病例，不提供任意患者查询、按姓名全库搜索或跨页选择；同名时应结合队列返回的身份字段消歧。
+医生页面的 `clinmesh_read_current_context` 在 `data.pageState.queue` 返回已加载的医生队列页；`clinmesh_read_doctor_context` 保留当前病例详情字段，并在 `data.queue` 返回当前 frame 已加载的同一队列页。`queue.items` 包含可用于切换的 `caseId`、患者身份和病例状态，`page`、`pageSize`、`total` 描述分页。该队列包含待诊与在诊病例，不等同于当前标签筛选后的列表；`queueCount` 保留为总数，不能据此推断已返回全部条目。队列尚未加载时 `queue` 为 `null`，空队列的 `items` 为 `[]`。选择工具只接受这份已加载队列中的病例，不提供任意患者查询、按姓名全库搜索或跨页选择；同名时应结合队列返回的身份字段消歧。
+
+`clinmesh_search_doctor_history` 按 `source`（`local-completed` 或 `visible-source`）、`page` 和 `pageSize` 读取当前患者授权历史，返回来源、时间、覆盖范围与分页。`no-data` 表示允许范围内无记录，`no-materialization` 表示没有合法来源物化关联；查询失败不能当作没有资料。`clinmesh_read_doctor_history` 只接受索引中的 `source` 与 `entryId`，未记录字段标明 `not-recorded`，不开放任意病例或仿真隐藏输入。
+
+医生在右侧「ClinMesh 医院助手」聊天中明确交代“替我问清起病时间”等任务后，系统核实真实输入与代问意图，助手可在本任务范围内连续追问；问题与患者回答显示在左侧问诊记录。左侧输入框用于医生直接提问。普通讨论病例、请助手拟问题或发现缺项只提示医生，不授予代问许可。进展和叫停沿用原生会话；完成、取消、病例或授权身份变化后许可结束，结果不明时不自动重复。当前医院工具任务支持不超过 2000 字符且无附件的纯文字输入；完整授权与失败合同见 [#176 规格](spec/2026-10-08-doctor-agent-context-execution.md)。正式诊疗动作保留工作台人工审阅。
 
 放射检查沿用同一边界：`clinmesh_read_doctor_context` 在 `imagingRequests` 返回当前病例的放射草稿、申请和报告文字，在 `imagingServices` 返回本院放射服务及其是否已开展。Agent 通过报告参与诊疗，不读取像素或渲染结果；这些返回值不含素材标识、来源 UID、匹配依据或病例与素材的对应关系。导航阅片只是替人类展开阅片器，已阅提案在影像成功显示之前会被拒绝。放射更正提案只指定申请、报告内容修订号和原因，不接受改写的报告正文。
 
@@ -127,7 +131,7 @@ DSH browser Tool broker 每次注册最多接受 32 个 Tool。医生“接诊�
 
 | 栏目 | Tool |
 | --- | --- |
-| 跨栏目 | `ui.context.read`、`ui.navigate`、`ui.panel.focus`、`outpatient.case.read`、`outpatient.case.select`、`outpatient.section.select`、`outpatient.visit.start.propose`、`outpatient.first-visit.draft.set`、`outpatient.revisit.draft.set`、`outpatient.encounter.complete.propose` |
+| 跨栏目 | `ui.context.read`、`ui.navigate`、`ui.panel.focus`、`outpatient.case.read`、`outpatient.history.search/read`、`outpatient.case.select`、`outpatient.section.select`、`outpatient.visit.start.propose`、`outpatient.first-visit.draft.set`、`outpatient.revisit.draft.set`、`outpatient.encounter.complete.propose` |
 | `consultation`（问诊记录） | `outpatient.consultation.ask`、`outpatient.consultation.reply.retry` |
 | `record`（病历记录） | `outpatient.record.draft.set`、`outpatient.preview.request`、`outpatient.record.sign.propose`、`outpatient.record.revise.propose` |
 | `diagnosis`（诊断） | `outpatient.diagnosis.draft.set`、`outpatient.diagnosis.confirm.propose` |

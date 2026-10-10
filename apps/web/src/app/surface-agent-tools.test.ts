@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { AgentToolDefinition } from '@clinmesh/contracts/agent'
+import type { AgentPageContextBinding, AgentToolDefinition } from '@clinmesh/contracts/agent'
 import { buildSurfaceAgentTools } from './surface-agent-tools.ts'
 import { ApiClientError } from './api-client.ts'
 
@@ -64,6 +64,127 @@ const definitions: AgentToolDefinition[] = [
 ]
 
 describe('ClinMesh Surface Agent tools', () => {
+  it('keeps the native pause marker when both the action and failed-result recording lose their responses', async () => {
+    const settled = vi.fn()
+    const tools = buildSurfaceAgentTools({
+      binding, definitions, actions: { 'registration.patient.search': {
+        description: 'Search', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] },
+        execute: async () => { throw new ApiClientError(0, 'NETWORK_ERROR', 'Response lost') },
+      } },
+      authorize: async request => ({ callId: 'call', context: binding.snapshot, dshSessionId: 'dsh-session-1',
+        operationId: request.operationId, receiptToken: 'receipt', status: 'authorized' }),
+      complete: async () => { throw new ApiClientError(0, 'NETWORK_ERROR', 'Completion lost') },
+      issueProof: async () => 'proof', readState: () => ({}), review: async () => ({}), onExecutionSettled: settled,
+    })
+    const tool = tools.find(tool => tool.name === 'clinmesh_search_patients')!
+    const signal = new AbortController().signal
+    await expect(tool.execute({ query: '合成患者', scopeKey: binding.snapshot.scopeKey, pageRevision: '["view-1",null]' }, signal))
+      .rejects.toThrow('CLINMESH_EXECUTION_UNCONFIRMED: Response lost')
+    await vi.waitFor(() => expect(settled).toHaveBeenCalledWith('proof', signal, true))
+  })
+  it('keeps the loaded queue page on the production query path and discards a late result after a case change', async () => {
+    const doctor: AgentPageContextBinding = { ...binding, snapshot: { ...binding.snapshot,
+      actor: { actorId: 'doctor', practitionerRoleId: 'doctor-role', roleCode: 'outpatient-doctor' },
+      claim: { ...binding.snapshot.claim, viewId: 'consultation', selection: { id: 'case-1', kind: 'case', version: '1' } },
+      allowedOperationIds: ['outpatient.case.read'] } }
+    const execute = vi.fn()
+    const action = { description: 'Read current case', parameters: { type: 'object' as const }, execute }
+    let frame = { binding: doctor, actions: { 'outpatient.case.read': action },
+      readState: () => ({ queue: { page: 2, pageSize: 20, total: 21, items: [] } }) }
+    let switchCase = false
+    const issueProof = vi.fn(async () => 'proof')
+    const read = buildSurfaceAgentTools({ ...frame, resolveFrame: () => frame,
+      definitions: [{ mode: 'query', operationId: 'outpatient.case.read', risk: 'read-only', roleCodes: ['outpatient-doctor'],
+        toolName: 'clinmesh_read_doctor_context', viewIds: ['consultation'] }],
+      authorize: async request => ({ callId: 'call', context: doctor.snapshot, dshSessionId: 'dsh-session-1',
+        operationId: request.operationId, receiptToken: 'receipt', status: 'authorized' }),
+      queryDoctor: async () => {
+        if (switchCase) frame = { ...frame, binding: { ...doctor, snapshot: { ...doctor.snapshot,
+          claim: { ...doctor.snapshot.claim, selection: { id: 'case-2', kind: 'case', version: '1' } } } } }
+        return { caseId: 'case-1', queue: { page: 1, pageSize: 20, total: 21, items: [] } }
+      },
+      issueProof, complete: async () => ({}), review: async () => ({}),
+    })[0]!
+    const data = JSON.parse(await read.execute({ scopeKey: 'old-model-scope', pageRevision: 'old-revision' }, new AbortController().signal)).data
+    expect(data.queue).toMatchObject({ page: 2, pageSize: 20, total: 21 })
+    expect(execute).not.toHaveBeenCalled()
+    await expect(read.execute({ patientId: 'untrusted-patient' }, new AbortController().signal)).rejects.toThrow()
+    expect(issueProof).toHaveBeenCalledOnce()
+    switchCase = true
+    await expect(read.execute({}, new AbortController().signal)).rejects.toThrow('CLINMESH_TASK_CHANGED')
+  })
+  it('recovers one rejected doctor read after a same-case context update before executing its body', async () => {
+    const doctor: AgentPageContextBinding = { ...binding, snapshot: { ...binding.snapshot,
+      actor: { actorId: 'doctor', practitionerRoleId: 'doctor-role', roleCode: 'outpatient-doctor' },
+      claim: { ...binding.snapshot.claim, viewId: 'consultation', selection: { id: 'case-1', kind: 'case', version: '1' } },
+      allowedOperationIds: ['outpatient.case.read'] } }
+    const action = { description: 'Read current case', parameters: { type: 'object' as const }, execute: vi.fn(async () => ({ caseId: 'case-1' })) }
+    let frame = { binding: doctor, actions: { 'outpatient.case.read': action }, readState: () => ({}) }
+    const issueProof = vi.fn(async () => 'proof-1')
+    let attempts = 0
+    const read = buildSurfaceAgentTools({ ...frame, resolveFrame: () => frame,
+      definitions: [{ mode: 'query', operationId: 'outpatient.case.read', risk: 'read-only', roleCodes: ['outpatient-doctor'],
+        toolName: 'clinmesh_read_doctor_context', viewIds: ['consultation'] }],
+      authorize: async request => {
+        attempts += 1
+        if (attempts === 1) {
+          frame = { ...frame, binding: { ...doctor, token: 'renewed-token', snapshot: { ...doctor.snapshot, id: 'context-2' } } }
+          throw new ApiClientError(401, 'AGENT_CONTEXT_INVALID', 'Context renewed')
+        }
+        expect(request.contextToken).toBe('renewed-token')
+        return { callId: 'call', context: frame.binding.snapshot, dshSessionId: 'dsh-session-1',
+          operationId: request.operationId, receiptToken: 'receipt', status: 'authorized' }
+      },
+      issueProof, complete: async () => ({}), review: async () => ({}),
+    })[0]!
+    await expect(read.execute({}, new AbortController().signal)).resolves.toContain('"caseId":"case-1"')
+    expect(issueProof).toHaveBeenCalledWith(expect.objectContaining({ contextId: 'context-2', previousProof: 'proof-1' }))
+    expect(attempts).toBe(2)
+    expect(action.execute).toHaveBeenCalledOnce()
+  })
+  it('reads the current doctor frame after a same-case update without model binding arguments', async () => {
+    const doctorBinding: AgentPageContextBinding = { ...binding, snapshot: { ...binding.snapshot,
+      actor: { actorId: 'actor-doctor', practitionerRoleId: 'role-doctor', roleCode: 'outpatient-doctor' },
+      allowedOperationIds: ['ui.context.read', 'outpatient.case.read'], scopeKey: 'doctor-case-before-update',
+      claim: { ...binding.snapshot.claim, viewId: 'consultation', activeSection: 'record',
+        selection: { id: 'case-1', kind: 'case', version: '1' } } } }
+    const oldRead = vi.fn(async () => ({ caseId: 'case-1', saved: 'before update' }))
+    const newRead = vi.fn(async () => ({ caseId: 'case-1', saved: 'after update' }))
+    const oldAction = { description: 'Read doctor case', parameters: { type: 'object' as const }, execute: oldRead }
+    let frame = { binding: doctorBinding, actions: { 'outpatient.case.read': oldAction },
+      readState: () => ({ unsaved: 'before doctor edit' }) }
+    const issueProof = vi.fn(async () => 'proof')
+    const tools = buildSurfaceAgentTools({ ...frame, resolveFrame: () => frame, resolveBinding: () => frame.binding,
+      definitions: [{ ...definitions[0]!, roleCodes: ['outpatient-doctor'], viewIds: ['consultation'] },
+        { mode: 'query', operationId: 'outpatient.case.read', risk: 'read-only', roleCodes: ['outpatient-doctor'],
+          toolName: 'clinmesh_read_doctor_context', viewIds: ['consultation'] }],
+      authorize: async request => ({ callId: 'call', context: frame.binding.snapshot,
+        dshSessionId: frame.binding.snapshot.dshSessionId, operationId: request.operationId,
+        receiptToken: 'receipt', status: 'authorized' }),
+      issueProof, complete: async () => ({}), review: async () => ({}),
+    })
+    frame = { binding: { ...doctorBinding, token: 'new-context-token', snapshot: { ...doctorBinding.snapshot,
+      id: 'context-after-update', scopeKey: 'doctor-case-after-update', claim: { ...doctorBinding.snapshot.claim,
+        viewRevision: 'view-2', activeSection: 'laboratory', selection: { id: 'case-1', kind: 'case', version: '2' } } } },
+      actions: { 'outpatient.case.read': { ...oldAction, execute: newRead } },
+      readState: () => ({ unsaved: 'current doctor edit' }) }
+    for (const tool of tools) {
+      expect(tool.parameters).not.toHaveProperty('properties.scopeKey')
+      expect(tool.parameters).not.toHaveProperty('properties.pageRevision')
+      const result = JSON.parse(await tool.execute({ scopeKey: doctorBinding.snapshot.scopeKey,
+        pageRevision: '["view-1",null]' }, new AbortController().signal))
+      expect(result.ok).toBe(true)
+      if (tool.name === 'clinmesh_read_current_context') {
+        expect(result.data.pageState).toEqual({ unsaved: 'current doctor edit' })
+        expect(result.data.snapshot.id).toBe('context-after-update')
+      } else expect(result.data.saved).toBe('after update')
+    }
+    expect(oldRead).not.toHaveBeenCalled()
+    expect(newRead).toHaveBeenCalledOnce()
+    expect(issueProof).toHaveBeenCalledWith(expect.objectContaining({ contextId: 'context-after-update',
+      scopeKey: 'doctor-case-after-update', pageRevision: '["view-2",null]' }))
+  })
+
   it('executes arguments generated before Context renewal with the same semantic page binding', async () => {
     const renewed = { ...binding, token: 'renewed-context-token', snapshot: {
       ...binding.snapshot, id: 'context-after-renewal',
