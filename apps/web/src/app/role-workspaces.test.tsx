@@ -1567,8 +1567,9 @@ describe('role workspaces', () => {
     await user.type(minimumAge, '45')
     expect(within(sheet).queryByRole('alert')).toBeNull()
     expect(submit.hasAttribute('disabled')).toBe(false)
-    await user.click(within(sheet).getByRole('combobox', { name: '性别' }))
-    await user.click(screen.getByRole('option', { name: '女' }))
+    within(sheet).getByRole('combobox', { name: '性别' }).focus()
+    await user.keyboard('{ArrowDown}')
+    await user.click(await screen.findByRole('option', { name: '女' }))
     expect(within(sheet).getByRole('alert').textContent).toBe('所选适配条目要求性别为男')
     expect(submit.hasAttribute('disabled')).toBe(true)
     await user.click(submit)
@@ -6321,8 +6322,9 @@ describe('role workspaces', () => {
     expect(within(medicationDialog).getAllByRole('row')).toHaveLength(3)
     expect(within(medicationDialog).getAllByText('合成制药有限公司')).toHaveLength(1)
     expect(within(medicationDialog).getByText('另一合成制药有限公司')).toBeTruthy()
-    await user.click(within(medicationDialog).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }))
-    await user.click(screen.getByRole('option', { name: '12粒/盒' }))
+    within(medicationDialog).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).focus()
+    await user.keyboard('{ArrowDown}')
+    await user.click(await screen.findByRole('option', { name: '12粒/盒' }))
     await user.click(within(medicationDialog).getByRole('button', {
       name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))
@@ -6352,8 +6354,9 @@ describe('role workspaces', () => {
     expect(draftDeletionRequests).toBe(1)
     await user.click(screen.getByRole('button', { name: '添加药品' }))
     const reopenedMedicationDialog = await screen.findByRole('dialog', { name: '选择药品' })
-    await user.click(within(reopenedMedicationDialog).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }))
-    await user.click(screen.getByRole('option', { name: '12粒/盒' }))
+    within(reopenedMedicationDialog).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).focus()
+    await user.keyboard('{ArrowDown}')
+    await user.click(await screen.findByRole('option', { name: '12粒/盒' }))
     await user.click(await within(reopenedMedicationDialog).findByRole('button', {
       name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))
