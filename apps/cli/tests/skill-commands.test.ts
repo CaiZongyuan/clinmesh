@@ -16,6 +16,25 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('keeps signing review and cancellation examples aligned with the narrow operation contracts', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  const reference = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
+  for (const [suffix, version] of [['preview', 2], ['commit', 2], ['cancel', 1]] as const) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh encounter clinical-document sign ${suffix}`))!
+    expect(inspectExample(program, line).operation?.version).toBe(version)
+  }
+  const cancel = getHisOperation('encounter.clinical-document.sign.cancel')
+  expect(cancel.skill).toBe('clinmesh-doctor')
+  expect(cancel.commandOperation).toBe('clinical-document.cancel-sign')
+  expect(cancel.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview' }).success).toBe(true)
+  expect(cancel.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview', document: {} }).success).toBe(false)
+  const commit = getHisOperation('encounter.clinical-document.sign')
+  expect(commit.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview', commitToken: 'synthetic-commit-token', consultationReviewed: true }).success).toBe(true)
+  expect(reference).toContain('consultationReviewed: true')
+  expect(reference).toContain('consultationRecording.signingPreparation')
+})
+
 function commandLines(markdown: string): string[] {
   const lines = markdown.split('\n')
   const commands: string[] = []

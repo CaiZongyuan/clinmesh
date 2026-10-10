@@ -79,6 +79,7 @@ import {
   newIdempotencyKey,
   previewClinicalSign,
   previewStructuredClinicalDocumentSign,
+  cancelStructuredClinicalDocumentSign,
   reviseStructuredClinicalDocument,
   retryLaboratoryResultGeneration,
   saveClinicalDocumentDraft,
@@ -114,10 +115,12 @@ import { EncounterCompletionChecklist } from './completion-checklist.tsx'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import {
   ClinicalDocumentPage,
+  ClinicalDocumentContentView,
   type ClinicalDocumentPageActions,
   type ClinicalDocumentRevisionInput,
   type ClinicalDocumentSignPreview,
 } from './clinical-document-page.tsx'
+import { ConsultationSignReviewNotice, requiresConsultationReview } from './consultation-sign-review.tsx'
 import {
   ConsultationPage,
   type ConsultationPageAction,
@@ -994,6 +997,20 @@ function DoctorCaseController({
       }, newIdempotencyKey())
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
+    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
+  })
+  const cancelClinicalDocumentSign = useMutation({
+    mutationFn: ({ caseId, previewId }: { caseId: string; previewId: string }) => {
+      const current = detail.data
+      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
+      return cancelStructuredClinicalDocumentSign({ encounterId: current.encounter.id,
+        encounterVersion: current.encounter.versionId, previewId }, newIdempotencyKey())
+    },
+    onSuccess: async (_response, variables) => {
+      if (prepareClinicalDocumentSign.variables?.caseId === variables.caseId) prepareClinicalDocumentSign.reset()
+      await refreshCaseById(variables.caseId)
+    },
+    onError: async (_error, variables) => refreshCaseById(variables.caseId),
   })
   const signStructuredDocument = useMutation({
     mutationFn: ({ caseId, preview }: {
@@ -1003,6 +1020,7 @@ function DoctorCaseController({
       const current = detail.data
       if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return signStructuredClinicalDocument({
+        consultationReviewed: preview.consultationReviewed === true,
         commitToken: preview.commitToken,
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
@@ -2179,10 +2197,18 @@ function DoctorCaseController({
               encounterVersion: current.encounter.versionId,
               expectedDraftVersion: draft.version,
             }, newIdempotencyKey())
-            return agentReview.request({
+            await refreshCaseById(current.caseId)
+            const task = agentReview.request({
+              content: <div className="flex flex-col gap-3">
+                <ConsultationSignReviewNotice review={preview.data.consultationReview} messages={messages} />
+                <ClinicalDocumentContentView content={preview.data.document.content} messages={messages} />
+              </div>,
+              ...(requiresConsultationReview(preview.data.consultationReview)
+                ? { confirmationLabel: (locale: WorkspaceLocale) => getWorkspaceMessages(locale).consultationSignReviewed } : {}),
               confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
               description: current.patient.name,
-              onConfirm: () => signStructuredClinicalDocument({
+              onConfirm: acknowledged => signStructuredClinicalDocument({
+                consultationReviewed: acknowledged,
                 commitToken: preview.data.commitToken,
                 encounterId: current.encounter.id,
                 encounterVersion: current.encounter.versionId,
@@ -2194,6 +2220,19 @@ function DoctorCaseController({
               signal,
               title: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
             })
+            const cancel = async () => {
+              try {
+                await cancelStructuredClinicalDocumentSign({ encounterId: current.encounter.id,
+                  encounterVersion: current.encounter.versionId, previewId: preview.data.previewId }, newIdempotencyKey())
+              } finally { await refreshCaseById(current.caseId) }
+            }
+            return { ...task, decision: task.decision.then(async result => {
+              if (!result.approved) await cancel()
+              return result
+            }, async error => {
+              await cancel().catch(() => undefined)
+              throw error
+            }) }
           }
           const preview = await previewSign.mutateAsync({ caseId: current.caseId })
           const dependencies = signingDependencies(current.caseId)
@@ -2451,6 +2490,11 @@ function DoctorCaseController({
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
               ?? emptyDoctorAgentDraftHydrationRevisions}
             clinicalDocumentActions={{
+              cancelSign: {
+                error: cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId ? cancelClinicalDocumentSign.error : null,
+                pending: cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId,
+                onSubmit: previewId => cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId }),
+              },
               reviewHistory: {
                 error: reviewHistory.variables?.caseId === detail.data.caseId ? reviewHistory.error : null,
                 pending: reviewHistory.isPending && reviewHistory.variables?.caseId === detail.data.caseId,
@@ -2474,7 +2518,10 @@ function DoctorCaseController({
                 error: prepareClinicalDocumentSign.variables?.caseId === detail.data.caseId
                   ? prepareClinicalDocumentSign.error
                   : null,
-                onReset: prepareClinicalDocumentSign.reset,
+                onReset: () => {
+                  const previewId = prepareClinicalDocumentSign.data?.data.previewId
+                  if (previewId !== undefined) cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId })
+                },
                 onSubmit: document => prepareClinicalDocumentSign.mutate({
                   caseId: detail.data.caseId,
                   document,

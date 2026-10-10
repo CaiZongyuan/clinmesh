@@ -47,8 +47,8 @@ DSH 中患者回答后，医生仍需主动要求助手填写病历。患者完�
 - [x] A13：记录状态、来源、人工修改归属与处理进度持久化，刷新、重连与服务重启不丢失。
 - [x] A14：重试、重复事件与乱序结果不重复记录或覆盖新内容；并发人工修改不被迟到结果覆盖。
 - [x] A15：患者、Encounter、Workspace/Epoch 严格隔离，切换患者与重置后旧结果不能写到新上下文；写入仍受岗位、就诊责任、版本、幂等和审计规则约束。
-- [ ] A16：签署前提示尚未处理的对话与未核对冲突，医生可重试或确认已人工核对后继续；提示不能代替已有签署前置条件。
-- [ ] A17：签署准备期间停止自动写入，迟到结果不得修改已签署文书；取消签署后允许恢复未完成记录。
+- [x] A16：签署前提示尚未处理的对话与未核对冲突，医生可重试或确认已人工核对后继续；提示不能代替已有签署前置条件。
+- [x] A17：签署准备期间停止自动写入，迟到结果不得修改已签署文书；取消签署后允许恢复未完成记录。
 
 ## 设计决定
 
@@ -74,4 +74,4 @@ Playwright 覆盖 A4–A6 的可见新增、原文、撤销，以及暂停、补
 
 依赖已配置的 DSH 辅助模型桥接。模型输出必须校验并关联公开问诊原文；不可把未验证输出或整篇重生成结果直接覆盖草稿。
 
-业务行为、主要测试 seam 与六个纵向实施切片已批准。自动记录基础闭环、局部人工编辑保护、定向核对、暂停补录与失败恢复已实现，来源验证见[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)，编辑与更正见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)，持久控制与顺序补录见[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)，来源展开、持续未核对提示与局部撤销见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)；签署交互与整体验收由后续切片承接。真实 DSH 验收需要已配置的宿主和有效模型能力；确定性模型替身只能证明合同，不能证明真实模型提取质量。
+业务行为、主要测试 seam 与六个纵向实施切片已批准。自动记录基础闭环、局部人工编辑保护、定向核对、暂停补录与失败恢复已实现，来源验证见[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)，编辑与更正见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)，持久控制与顺序补录见[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)，来源展开、持续未核对提示与局部撤销见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)；签署前核对、准备冻结与取消恢复见[签署准备决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-signing-preparation.md)，真实 DSH 问诊整体验收由后续切片承接。真实 DSH 验收需要已配置的宿主和有效模型能力；确定性模型替身只能证明合同，不能证明真实模型提取质量。

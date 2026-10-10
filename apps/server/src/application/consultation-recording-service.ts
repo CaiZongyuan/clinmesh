@@ -176,7 +176,7 @@ export class ConsultationRecordingService {
   }
 
   #scheduleNext(context: ActorContext, transaction: CommandTransaction, caseId: string): void {
-    if (this.#state(context, caseId)?.paused !== 0) return
+    if (this.#state(context, caseId)?.paused !== 0 || this.isSigning(context, caseId)) return
     const next = this.#jobs(context, caseId).find(job => job.status !== 'completed')
     if (next?.status !== 'queued' || next.scheduled === 1) return
     transaction.enqueue({ kind: 'consultation.record-history', dedupKey: `history:${next.turn_id}:${next.generation}`,
@@ -188,7 +188,7 @@ export class ConsultationRecordingService {
 
   #current(context: ActorContext, turnId: string, job: z.infer<typeof jobSchema>): boolean {
     const head = this.#jobs(context, job.case_id).find(item => item.status !== 'completed')
-    return this.#state(context, job.case_id)?.paused === 0
+    return this.#state(context, job.case_id)?.paused === 0 && !this.isSigning(context, job.case_id)
       && head?.turn_id === turnId && head.generation === job.generation && head.status === 'queued'
   }
 
@@ -202,7 +202,7 @@ export class ConsultationRecordingService {
     }, transaction => {
       const access = this.#assertAccess(context, encounterId)
       const state = this.#state(context, access.caseId)
-      if (!access.editable || this.#signing(context, access.caseId)
+      if (!access.editable || this.isSigning(context, access.caseId)
         || input.expectedVersions[`Encounter/${encounterId}`] === undefined
         || (state?.version ?? 0) !== input.expectedRecordingVersion
         || (action === 'backfill' ? state !== undefined : state === undefined)
@@ -267,6 +267,7 @@ export class ConsultationRecordingService {
         && (document[target.field] ?? '').slice(target.start_offset, target.end_offset) === target.current_text),
     }))
     return consultationRecordingSchema.parse({
+      signingPreparation: this.signingPreparation(context, caseId),
       hasSavedDraft: this.#database.driver.prepare(`SELECT 1 FROM command_effect
         WHERE workspace_id = ? AND epoch = ? AND operation = 'clinical-document.save-draft'
           AND reference = ? LIMIT 1
@@ -381,7 +382,7 @@ export class ConsultationRecordingService {
     try {
       const access = this.#assertAccess(context, job.encounter_id)
       if (access.caseId !== job.case_id) throw new Error('Recording case changed')
-      if (!access.editable || this.#signing(context, job.case_id)) {
+      if (!access.editable || this.isSigning(context, job.case_id)) {
         this.#finish(context, event, turnId, job, 'failed', 'CONSULTATION_RECORDING_NOT_EDITABLE')
         return { status: 'completed' }
       }
@@ -473,10 +474,31 @@ export class ConsultationRecordingService {
     } satisfies Draft : clinicalDocumentDraftContentSchema.parse(JSON.parse(row.content_json)) }
   }
 
-  #signing(context: ActorContext, caseId: string): boolean {
-    return this.#database.driver.prepare(`SELECT 1 FROM clinical_document_sign_preview
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND consumed_at IS NULL AND expires_at > ?
-    `).get(context.workspaceId, context.epoch, caseId, this.#now().toISOString()) !== undefined
+  signingPreparation(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
+    const preview = z.object({ preview_id: z.string(), expires_at: z.string() }).optional().parse(
+      this.#database.driver.prepare(`SELECT preview_id, expires_at FROM clinical_document_sign_preview
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND consumed_at IS NULL ORDER BY rowid DESC LIMIT 1
+      `).get(context.workspaceId, context.epoch, caseId))
+    return preview === undefined ? undefined : { previewId: preview.preview_id, expiresAt: preview.expires_at,
+      active: Date.parse(preview.expires_at) > this.#now().getTime() }
+  }
+
+  isSigning(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string): boolean {
+    return this.signingPreparation(context, caseId)?.active === true
+  }
+
+  suspendForSigning(context: ActorContext, caseId: string): void {
+    // Keep unfinished answers and failures; an old model response never regains authority after cancel/expiry.
+    this.#database.driver.prepare(`UPDATE consultation_recording_job SET generation = generation + 1, scheduled = 0
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status != 'completed'
+    `).run(context.workspaceId, context.epoch, caseId)
+  }
+
+  resumeAfterSigning(context: ActorContext, transaction: CommandTransaction, caseId: string): void {
+    this.#database.driver.prepare(`UPDATE consultation_recording_job SET actor_context_json = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status != 'completed'
+    `).run(JSON.stringify(context), context.workspaceId, context.epoch, caseId)
+    this.#scheduleNext(context, transaction, caseId)
   }
 
   #apply(context: ActorContext, event: OutboxHandlerInput, turnId: string,
@@ -501,7 +523,8 @@ export class ConsultationRecordingService {
         quote: item.quote, relation: item.relation })))
       const seenQuotes = new Set(existing.filter(item => item.rejected === 0 && item.undone === 0)
         .map(item => JSON.stringify([item.field, item.quote])))
-      const writable = access.editable && !this.#signing(context, job.case_id)
+      if (!access.editable) return { data: { draftVersion: current.version }, effects: [] }
+      const writable = !this.isSigning(context, job.case_id)
       const document = { ...current.content }
       let changed = false
       for (const addition of fragments) {
@@ -576,7 +599,7 @@ export class ConsultationRecordingService {
     }, () => {
       const access = this.#assertAccess(context, encounterId)
       const draft = this.#draft(context, access.caseId)
-      if (!access.editable || this.#signing(context, access.caseId)
+      if (!access.editable || this.isSigning(context, access.caseId)
         || input.expectedVersions[`Encounter/${encounterId}`] === undefined || draft.version !== input.expectedDraftVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The history review context or draft version has changed')
       }

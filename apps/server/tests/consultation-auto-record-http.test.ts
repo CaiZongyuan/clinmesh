@@ -1,5 +1,6 @@
 import { clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, reviewConsultationHistoryResponseSchema, sendConsultationMessageResponseSchema, triageQueueSchema, type ConsultationHistoryDecision } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
+import { clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema, cancelClinicalDocumentSignResponseSchema } from '@clinmesh/contracts/his'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -14,6 +15,7 @@ const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
 async function setup(options: {
+  now?: () => Date
   failFirstReply?: boolean
   reply?: string | (() => string)
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
@@ -40,6 +42,7 @@ async function setup(options: {
     },
   }
   const createRuntime = () => createClinMeshRuntime({
+    ...(options.now === undefined ? {} : { now: options.now }),
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters',
     chatCompletionsProvider: provider, databasePath: join(directory, 'clinmesh.sqlite'),
@@ -107,6 +110,190 @@ async function setup(options: {
   return { get runtime() { return runtime }, read, ask, askMore, requests, started, cookie, save, control, review,
     restart: async () => { await runtime.close(); runtime = await createRuntime() } }
 }
+
+async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
+  const complete = { assessment: '医生评估待进一步明确。', chiefComplaint: '头晕一周。', disposition: '门诊随访。',
+    followUp: '加重时及时就诊。', physicalExamination: '查体未见明显异常。', historyOfPresentIllness: '医生已核对病史。' }
+  const request = async (action: string, input: object, options: { cookie?: string; version?: string; key?: string } = {}) => {
+    const current = await fixture.read()
+    return fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/clinical-document/${action}`, {
+      method: action === 'draft' ? 'PUT' : 'POST',
+      headers: { cookie: options.cookie ?? fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json',
+        'idempotency-key': options.key ?? randomUUID() },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: options.version ?? current.encounter.versionId }, input }),
+    })
+  }
+  const save = async () => {
+    const response = await request('draft', { document: complete, expectedDraftVersion: (await fixture.read()).clinicalDocument?.draft?.version ?? 0 })
+    expect(response.status).toBe(200)
+  }
+  const preview = async () => {
+    const response = await request('actions/preview-sign', { expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version })
+    expect(response.status).toBe(200)
+    return clinicalDocumentSignPreviewResponseSchema.parse(await response.json()).data
+  }
+  return { complete, save, preview, request }
+}
+
+it.each(['preparing', 'signed'])('freezes a preview and unfinished progress when extraction completes during %s, without allowing a late result to alter the document', async phase => {
+  let release!: () => void
+  let entered!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  const extracting = new Promise<void>(resolve => { entered = resolve })
+  const fixture = await setup({ extract: async input => {
+    entered()
+    await held
+    const turn = (input.userPayload as { turns: Array<{ id: string }> }).turns.at(-1)!
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turn.id, quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] }
+  } })
+  disposals.push(async () => release())
+  expect((await fixture.ask()).status).toBe(200)
+  const processing = fixture.runtime.dispatchPending()
+  await extracting
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  expect(preview.consultationReview).toMatchObject({ remainingCount: 1, failedCount: 0, conflictCount: 0 })
+  const frozen = await fixture.read()
+  expect(frozen.consultationRecording?.signingPreparation).toMatchObject({ previewId: preview.previewId, active: true })
+  expect((await fixture.control('pause')).status).toBe(409)
+  expect((await actions.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(409)
+  const input = { previewId: preview.previewId, commitToken: preview.commitToken, consultationReviewed: true }
+  expect((await actions.request('actions/sign', input, { version: '1' })).status).toBe(409)
+  expect((await actions.request('actions/sign', input, { cookie: await signIn(fixture.runtime, 'registrar@demo.clinmesh.local') })).status).toBe(403)
+  if (phase === 'preparing') {
+    release()
+    await processing
+    expect(await fixture.read()).toEqual(frozen)
+  }
+  const signed = await actions.request('actions/sign', input)
+  expect(signed.status).toBe(200)
+  const receipt = clinicalDocumentSignResponseSchema.parse(await signed.json())
+  const beforeLate = await fixture.read()
+  release()
+  await processing
+  expect(await fixture.read()).toEqual(beforeLate)
+  expect(beforeLate.clinicalDocument!.signed[0]!.content).toEqual(actions.complete)
+  const composition = await fixture.runtime.app.request(`/fhir/R5/Composition/${receipt.data.compositionId}`, { headers: { cookie: fixture.cookie } })
+  expect(composition.status).toBe(200)
+  const persisted = await composition.json()
+  await fixture.restart()
+  expect((await fixture.read()).clinicalDocument).toEqual(beforeLate.clinicalDocument)
+  expect(await (await fixture.runtime.app.request(`/fhir/R5/Composition/${receipt.data.compositionId}`, { headers: { cookie: fixture.cookie } })).json()).toEqual(persisted)
+})
+
+it('cancels preparation durably and resumes an unfinished answer in a new generation while discarding the old result', async () => {
+  let release!: () => void
+  let entered!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  const extracting = new Promise<void>(resolve => { entered = resolve })
+  let calls = 0
+  const fixture = await setup({ extract: async input => {
+    if (calls++ === 0) { entered(); await held; return { additions: [] } }
+    const turn = (input.userPayload as { turns: Array<{ id: string }> }).turns.at(-1)!
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turn.id, quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] }
+  } })
+  disposals.push(async () => release())
+  await fixture.ask()
+  const processing = fixture.runtime.dispatchPending()
+  await extracting
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  const key = randomUUID()
+  expect((await actions.request('actions/cancel-sign', { previewId: 'another-preview' })).status).toBe(409)
+  expect((await actions.request('actions/cancel-sign', { previewId: preview.previewId }, { version: '1' })).status).toBe(409)
+  expect((await actions.request('actions/cancel-sign', { previewId: preview.previewId }, { cookie: await signIn(fixture.runtime, 'registrar@demo.clinmesh.local') })).status).toBe(403)
+  const cancel = await actions.request('actions/cancel-sign', { previewId: preview.previewId }, { key })
+  expect(cancel.status).toBe(200)
+  const receipt = cancelClinicalDocumentSignResponseSchema.parse(await cancel.json())
+  release()
+  await processing
+  expect((await fixture.read()).consultationRecording).toMatchObject({ processedCount: 1, remainingCount: 0, additions: [{ status: 'applied' }] })
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(actions.complete.historyOfPresentIllness + '\n患者自述：头晕一周了，站起来时更明显。')
+  await fixture.restart()
+  expect((await actions.request('actions/cancel-sign', { previewId: preview.previewId }, { key })).status).toBe(200)
+  expect(cancelClinicalDocumentSignResponseSchema.parse(await (await actions.request('actions/cancel-sign', { previewId: preview.previewId }, { key })).json())).toEqual(receipt)
+  expect((await fixture.read()).consultationRecording?.signingPreparation).toBeUndefined()
+  expect((await actions.request('actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId, consultationReviewed: true })).status).toBe(409)
+})
+
+it('recovers an expired preview after restart without losing explicit pause or omissions', async () => {
+  let time = Date.now()
+  const fixture = await setup({ now: () => new Date(time) })
+  await fixture.ask()
+  expect((await fixture.control('pause')).status).toBe(200)
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  expect(preview.consultationReview).toMatchObject({ paused: true, remainingCount: 1 })
+  time += 5 * 60_000
+  await fixture.restart()
+  expect((await fixture.read()).consultationRecording?.signingPreparation).toMatchObject({ previewId: preview.previewId, active: false })
+  expect((await actions.request('actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId, consultationReviewed: true })).status).toBe(409)
+  expect((await actions.request('actions/cancel-sign', { previewId: preview.previewId })).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ paused: true, remainingCount: 1, processedCount: 0 })
+  expect((await fixture.control('resume')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ remainingCount: 0, processedCount: 1 })
+})
+
+it('reports failed recording and unresolved manual conflicts before signing, and rejects a changed consultation even after acknowledgement', async () => {
+  let reply = '头晕一周了。'
+  let fail = false
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    if (fail) throw new ChatCompletionsError('AI_TIMEOUT', 'Synthetic recording timeout')
+    const payload = input.userPayload as { turns: Array<{ id: string }>; history: Array<{ id: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id, quote: reply,
+      relation: payload.history[0] ? 'conflict' : 'addition', ...(payload.history[0] ? { targetAdditionId: payload.history[0].id } : {}) }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  await fixture.save('医生核对：头晕五天。')
+  reply = '头晕是三天。'
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  fail = true
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  expect(preview.consultationReview).toMatchObject({ failedCount: 1, remainingCount: 1, conflictCount: 1, unreviewedCount: 1 })
+  await fixture.askMore()
+  expect((await actions.request('actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId, consultationReviewed: true })).status).toBe(409)
+  expect((await fixture.read()).clinicalDocument!.signed).toEqual([])
+  expect((await actions.request('actions/cancel-sign', { previewId: preview.previewId })).status).toBe(200)
+  fail = false
+  expect((await fixture.control('retry')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording!.failedCount).toBe(0)
+})
+
+it('replays a legacy preview receipt but requires fresh preparation for a consultation without a stored review snapshot', async () => {
+  const fixture = await setup()
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const actions = await signing(fixture)
+  await actions.save()
+  const input = { expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version }
+  const key = randomUUID()
+  const receipt = clinicalDocumentSignPreviewResponseSchema.parse(await (await actions.request('actions/preview-sign', input, { key })).json())
+  const { consultationReview: _review, ...legacyData } = receipt.data
+  fixture.runtime.database.driver.prepare('UPDATE command_receipt SET response_json = ? WHERE idempotency_key = ?')
+    .run(JSON.stringify({ ...receipt, data: legacyData }), key)
+  fixture.runtime.database.driver.prepare('UPDATE clinical_document_sign_preview SET consultation_review_json = NULL WHERE preview_id = ?')
+    .run(receipt.data.previewId)
+  await fixture.restart()
+  const replay = clinicalDocumentSignPreviewResponseSchema.parse(await (await actions.request('actions/preview-sign', input, { key })).json())
+  expect(replay.data).toEqual({ ...legacyData, consultationReview: null })
+  expect((await actions.request('actions/sign', { commitToken: legacyData.commitToken, previewId: legacyData.previewId, consultationReviewed: true })).status).toBe(409)
+  expect((await actions.request('actions/cancel-sign', { previewId: legacyData.previewId })).status).toBe(200)
+  const fresh = await actions.preview()
+  expect(fresh.consultationReview).toMatchObject({ unreviewedCount: 1 })
+  expect((await actions.request('actions/sign', { commitToken: fresh.commitToken, previewId: fresh.previewId, consultationReviewed: true })).status).toBe(200)
+})
 
 it('persists individual review and source after restart and undoes only the selected increment with an idempotent receipt', async () => {
   let reply = '头晕一周了。站起来时更明显。'

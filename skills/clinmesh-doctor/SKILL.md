@@ -106,6 +106,7 @@ clinmesh encounter consultation-history review --input @history-review.json --id
 clinmesh encounter consultation-recording control --input @recording-control.json --idempotency-key <control-intent-key>
 clinmesh encounter clinical-document sign preview --input @document-preview.json --idempotency-key <key>
 clinmesh encounter clinical-document sign commit --input @document-sign.json --idempotency-key <key>
+clinmesh encounter clinical-document sign cancel --input @document-cancel.json --idempotency-key <cancel-intent-key>
 clinmesh clinical-document revise --input @document-revision.json --idempotency-key <key>
 clinmesh encounter completion preview --encounter-id <encounter-id>
 clinmesh encounter complete --input @completion.json --idempotency-key <key>

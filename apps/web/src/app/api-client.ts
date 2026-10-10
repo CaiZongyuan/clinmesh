@@ -28,6 +28,7 @@ import {
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
+  cancelClinicalDocumentSignResponseSchema,
   clinicalSignPreviewResponseSchema,
   clinicalSignResponseSchema,
   commandResponseSchema,
@@ -1448,6 +1449,7 @@ export function previewStructuredClinicalDocumentSign(input: {
 }
 
 export function signStructuredClinicalDocument(input: {
+  consultationReviewed?: boolean
   commitToken: string
   encounterId: string
   encounterVersion: string
@@ -1459,10 +1461,22 @@ export function signStructuredClinicalDocument(input: {
     {
       expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
       input: {
+        ...(input.consultationReviewed === undefined ? {} : { consultationReviewed: input.consultationReviewed }),
         commitToken: input.commitToken,
         previewId: input.previewId,
       },
     },
+    { idempotencyKey },
+  )
+}
+
+export function cancelStructuredClinicalDocumentSign(input: {
+  encounterId: string; encounterVersion: string; previewId: string
+}, idempotencyKey: string) {
+  return apiMutation(
+    `/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-document/actions/cancel-sign`,
+    cancelClinicalDocumentSignResponseSchema,
+    { expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion }, input: { previewId: input.previewId } },
     { idempotencyKey },
   )
 }

@@ -45,6 +45,8 @@ import {
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
+  cancelClinicalDocumentSignRequestSchema,
+  cancelClinicalDocumentSignResponseSchema,
   commandResponseSchema,
   completeHospitalServiceResponseSchema,
   correlationIdSchema,
@@ -185,6 +187,7 @@ type HisOperationDeclaration = Omit<
 >
 
 const clinicalDocumentOperationIds = {
+  cancelSign: 'encounter.clinical-document.sign.cancel',
   draftSet: `encounter.clinical-${'document'}.draft.set`,
   previewSign: `encounter.clinical-${'document'}.sign.preview`,
   revise: `clinical-${'document'}.revise`,
@@ -384,6 +387,11 @@ const previewClinicalDocumentSignOperationInputSchema = previewClinicalDocumentS
 }).strict()
 
 const signClinicalDocumentOperationInputSchema = signClinicalDocumentRequestSchema.shape.input.extend({
+  encounterId: z.string().min(1),
+  encounterVersion: z.string().regex(/^\d+$/),
+}).strict()
+
+const cancelClinicalDocumentSignOperationInputSchema = cancelClinicalDocumentSignRequestSchema.shape.input.extend({
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
 }).strict()
@@ -739,6 +747,10 @@ const bodyEncoders = {
   },
   [clinicalDocumentOperationIds.sign]: (rawInput: unknown) => {
     const { encounterId, encounterVersion, ...input } = signClinicalDocumentOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  [clinicalDocumentOperationIds.cancelSign]: (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = cancelClinicalDocumentSignOperationInputSchema.parse(rawInput)
     return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
   },
   [clinicalDocumentOperationIds.revise]: (rawInput: unknown) => {
@@ -1628,8 +1640,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Create a version-bound preview for clinical document signing',
-    version: 1,
+    summary: 'Prepare a version-bound signing preview with consultation review counts; freeze recording and invalidate in-flight extraction; cancel preparation to recover unfinished answers',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'commit'],
@@ -1647,7 +1659,18 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Sign the structured clinical document from a valid preview',
+    summary: 'Sign an unchanged document and consultation review snapshot; remaining answers or unreviewed history require consultationReviewed=true after human review; existing completeness, role and version checks still apply',
+    version: 2,
+  },
+  {
+    cliPath: ['encounter', 'clinical-document', 'sign', 'cancel'],
+    http: { method: 'POST', path: '/api/his/v1/encounters/:encounterId/clinical-document/actions/cancel-sign' },
+    id: clinicalDocumentOperationIds.cancelSign,
+    input: cancelClinicalDocumentSignOperationInputSchema,
+    mode: 'command', output: cancelClinicalDocumentSignResponseSchema,
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['outpatient-doctor'],
+    summary: 'Cancel an unconsumed signing preparation, including expired previews; recover unfinished recording without clearing an explicit pause or failed answers; re-read the case before retrying or signing',
     version: 1,
   },
   {
@@ -2376,6 +2399,7 @@ const operationDefinitions = [
 ] as const satisfies readonly HisOperationDeclaration[]
 
 const commandOperationAliases: Readonly<Record<string, string>> = {
+  [clinicalDocumentOperationIds.cancelSign]: 'clinical-document.cancel-sign',
   'admin.laboratory-services.publish': 'laboratory-service-publication.create',
   [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
   'encounter.consultation-history.review': 'consultation.history.review',
@@ -2428,6 +2452,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'encounter.consultation-history.review': 'clinmesh-doctor',
   'encounter.consultation-recording.control': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.previewSign]: 'clinmesh-doctor',
+  [clinicalDocumentOperationIds.cancelSign]: 'clinmesh-doctor',
   [clinicalDocumentOperationIds.sign]: 'clinmesh-doctor',
   'encounter.complete': 'clinmesh-doctor',
   'encounter.completion.preview': 'clinmesh-doctor',
