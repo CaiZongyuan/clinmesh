@@ -975,10 +975,91 @@ export const clinicalDocumentContentSchema = z.object({
   priorMedicalHistory: z.string().trim().min(2).max(4_000).optional(),
 }).strict()
 
+// 草稿与签署分别校验：草稿可不完整，正式文书保持原有必填合同。
+export const clinicalDocumentDraftContentSchema = clinicalDocumentContentSchema.extend({
+  assessment: z.string().trim().max(4_000),
+  auxiliaryExamination: z.string().trim().max(4_000).optional(),
+  chiefComplaint: z.string().trim().max(1_000),
+  disposition: z.string().trim().max(4_000),
+  followUp: z.string().trim().max(4_000),
+  historyOfPresentIllness: z.string().trim().max(5_000),
+  physicalExamination: z.string().trim().max(4_000),
+  priorMedicalHistory: z.string().trim().max(4_000).optional(),
+})
+
+export const consultationHistoryAdditionSchema = z.object({
+  field: z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory']),
+  sourceTurnId: z.string().min(1).max(128),
+  quote: z.string().trim().min(2).max(600),
+  relation: z.enum(['addition', 'correction', 'conflict']),
+  targetAdditionId: z.string().min(1).max(128).optional(),
+}).strict().superRefine((addition, context) => {
+  if ((addition.relation === 'addition') !== (addition.targetAdditionId === undefined)) {
+    context.addIssue({ code: 'custom', path: ['targetAdditionId'],
+      message: 'Corrections and conflicts require a target; ordinary additions cannot have one' })
+  }
+})
+
+export const consultationRecordingErrorCodeSchema = z.enum([
+  'AI_AUTH_FAILED', 'AI_REQUEST_FAILED', 'AI_REQUEST_TOO_LARGE', 'AI_RESPONSE_INVALID',
+  'AI_RESPONSE_TOO_LARGE', 'AI_TIMEOUT', 'CONSULTATION_RECORDING_FAILED',
+  'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID',
+  'CONSULTATION_RECORDING_NOT_EDITABLE', 'CONSULTATION_RECORDING_CONTEXT_INACTIVE',
+])
+
+export const consultationRecordingSchema = z.object({
+  hasSavedDraft: z.boolean(),
+  version: z.number().int().nonnegative().default(0),
+  paused: z.boolean().default(false),
+  processedCount: z.number().int().nonnegative().default(0),
+  remainingCount: z.number().int().nonnegative().default(0),
+  failedCount: z.number().int().nonnegative().default(0),
+  status: z.enum(['idle', 'processing', 'updated', 'pending', 'paused', 'backfill', 'failed']),
+  failures: z.array(z.object({
+    sourceTurnId: z.string().min(1),
+    code: consultationRecordingErrorCodeSchema,
+    retrying: z.boolean(),
+  }).strict()).default([]),
+  // Historical suggestions may predate the required correction target in the extraction contract.
+  additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({
+    id: z.string().min(1),
+    status: z.enum(['applied', 'pending', 'superseded', 'ignored', 'undone']),
+    reviewStatus: z.enum(['unreviewed', 'confirmed', 'undo-pending']).default('unreviewed'),
+    ownership: z.enum(['automatic', 'manual']).default('automatic'),
+    currentText: z.string().default(''),
+    reviewable: z.boolean().default(false),
+  }).strict()),
+}).strict()
+
+export const controlConsultationRecordingRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    action: z.enum(['pause', 'resume', 'backfill', 'retry']),
+    expectedRecordingVersion: z.number().int().nonnegative(),
+  }).strict(),
+}).strict()
+
+export const controlConsultationRecordingResponseSchema = commandResponseSchema(consultationRecordingSchema)
+
+export const reviewConsultationHistoryRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    additionId: z.string().min(1).max(128),
+    decision: z.enum(['accept', 'ignore', 'confirm', 'undo']),
+    expectedDraftVersion: z.number().int().nonnegative(),
+  }).strict(),
+}).strict()
+
+export const reviewConsultationHistoryResponseSchema = commandResponseSchema(z.object({
+  draftVersion: z.number().int().nonnegative(),
+}).strict())
+
+export type ConsultationHistoryDecision = z.infer<typeof reviewConsultationHistoryRequestSchema>['input']['decision']
+
 export const saveClinicalDocumentDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
-    document: clinicalDocumentContentSchema,
+    document: clinicalDocumentDraftContentSchema,
     expectedDraftVersion: z.number().int().nonnegative(),
   }).strict(),
 }).strict()
@@ -1066,7 +1147,7 @@ export const completedCaseClinicalDocumentSchema = signedClinicalDocumentSchema.
 }).strict()
 
 export const clinicalDocumentStateSchema = z.object({
-  draft: clinicalDocumentContentSchema.extend({
+  draft: clinicalDocumentDraftContentSchema.extend({
     updatedAt: z.string().min(1),
     version: z.number().int().positive(),
   }).strict().optional(),
@@ -1752,6 +1833,7 @@ export const doctorCaseDetailSchema = z.object({
   allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
   clinicalDocument: clinicalDocumentStateSchema.optional(),
+  consultationRecording: consultationRecordingSchema.optional(),
   consultation: z.object({
     turns: z.array(consultationTurnSchema),
     version: z.number().int().positive(),

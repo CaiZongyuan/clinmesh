@@ -6,6 +6,7 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { z } from 'zod'
 import { CommandExecutor, type ActorContext } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import { WorkspaceContextError, WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import * as authSchema from '../infrastructure/auth/schema.ts'
 import {
   getHisOperation,
@@ -190,9 +191,11 @@ export class IdentityService {
   readonly #now: () => Date
   readonly #trustedOrigin: string
   readonly #trustedOrigins: Set<string>
+  readonly #workspaces: WorkspaceRepository
 
   constructor(database: ClinMeshDatabase, options: IdentityServiceOptions) {
     this.#database = database
+    this.#workspaces = new WorkspaceRepository(database)
     this.#commands = options.commands
     this.#catalogHash = createHash('sha256').update(JSON.stringify(
       listHisOperations().map(operation => ({
@@ -218,6 +221,51 @@ export class IdentityService {
     this.#trustedOrigin = options.trustedOrigins[0] ?? new URL(options.authBaseUrl).origin
     this.#trustedOrigins = new Set(options.trustedOrigins)
     this.auth = createAuth(database, options)
+  }
+
+  consultationRecordingContextStatus(context: ActorContext): 'active' | 'inactive' | 'superseded' {
+    try {
+      this.#workspaces.assertCurrent(context, context.scenarioRunId)
+    } catch (error) {
+      if (error instanceof WorkspaceContextError) return 'superseded'
+      throw error
+    }
+    try {
+      this.#workspaces.assertActive(context, context.scenarioRunId)
+    } catch (error) {
+      if (error instanceof WorkspaceContextError) return 'inactive'
+      throw error
+    }
+    if (context.roleCode !== 'outpatient-doctor') return 'inactive'
+    const authorized = this.#database.driver.prepare(`SELECT 1 FROM workspace_actor AS actor
+      JOIN practitioner_role_binding AS role ON role.workspace_id = actor.workspace_id
+      JOIN workspace ON workspace.workspace_id = actor.workspace_id
+      WHERE actor.workspace_id = ? AND actor.actor_id = ? AND actor.status = 'active'
+        AND role.practitioner_role_id = ? AND role.practitioner_id = ? AND role.role_code = ?
+        AND role.organization_id = ? AND role.location_id = ? AND role.active = 1
+        AND ((actor.kind = 'human' AND EXISTS (
+          SELECT 1 FROM workspace_membership AS membership
+          JOIN membership_practitioner_role AS granted ON granted.membership_id = membership.membership_id
+            AND granted.workspace_id = membership.workspace_id
+          WHERE membership.workspace_id = actor.workspace_id AND membership.actor_id = actor.actor_id
+            AND membership.status = 'active' AND granted.practitioner_role_id = role.practitioner_role_id
+        )) OR (actor.kind = 'agent' AND EXISTS (
+          SELECT 1 FROM agent_client AS client
+          JOIN agent_capability_grant AS grant ON grant.workspace_id = client.workspace_id
+            AND grant.agent_client_id = client.agent_client_id
+          JOIN agent_grant_operation AS allowed ON allowed.workspace_id = grant.workspace_id
+            AND allowed.epoch = grant.epoch AND allowed.grant_id = grant.grant_id
+          WHERE client.workspace_id = actor.workspace_id AND client.actor_id = actor.actor_id AND client.status = 'active'
+            AND grant.epoch = ? AND grant.scenario_run_id = ? AND grant.grant_id = ?
+            AND grant.practitioner_role_id = role.practitioner_role_id
+            AND grant.revoked_at IS NULL AND grant.expires_at > ? AND grant.catalog_hash = ?
+            AND grant.policy_version = workspace.policy_version
+            AND allowed.operation_id IN ('encounter.consultation.ask', 'encounter.consultation.reply.retry', 'encounter.consultation-recording.control')
+        )))
+    `).get(context.workspaceId, context.actorId, context.practitionerRoleId ?? '', context.practitionerId ?? '',
+      context.roleCode, context.organizationId ?? '', context.locationId ?? '', context.epoch, context.scenarioRunId, context.agentGrantId ?? '',
+      this.#now().toISOString(), this.#catalogHash)
+    return authorized === undefined ? 'inactive' : 'active'
   }
 
   handle(request: Request): Promise<Response> {
@@ -549,6 +597,7 @@ export class IdentityService {
     }
     return {
       actorId: row.actor_id,
+      agentGrantId: row.grant_id,
       epoch: row.epoch,
       locationId: row.location_id,
       organizationId: row.organization_id,
@@ -638,7 +687,7 @@ export class IdentityService {
       row.epoch,
       row.grant_id,
     )
-    const actor = await this.resolveActorContext(headers, operationIds[0]!)
+    const { agentGrantId, ...actor } = await this.resolveActorContext(headers, operationIds[0]!)
     return agentCapabilityContextSchema.parse({
       actor,
       agent: {
@@ -647,7 +696,7 @@ export class IdentityService {
       },
       grant: {
         expiresAt: row.expires_at,
-        grantId: row.grant_id,
+        grantId: agentGrantId,
         operationIds,
         policyVersion: row.policy_version,
       },

@@ -27,6 +27,8 @@ import { useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
+import { ConsultationHistoryReview, type ConsultationHistoryReviewAction } from './consultation-history-review.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -55,6 +57,14 @@ export interface ClinicalDocumentRevisionInput {
 }
 
 export interface ClinicalDocumentPageActions {
+  controlRecording?: ConsultationRecordingAction
+  reviewHistory?: ConsultationHistoryReviewAction
+  save?: {
+    error: Error | null
+    onSubmit: (document: ClinicalDocumentContent) => void
+    pending: boolean
+    success: boolean
+  }
   prepareSign: {
     data: ClinicalDocumentSignPreview | undefined
     error: Error | null
@@ -117,6 +127,39 @@ export function ClinicalDocumentPage({
       <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">
         {messages.structuredClinicalDocument}
       </h3>
+      {detail.consultationRecording === undefined ? null : (
+        <Alert data-consultation-recording={detail.consultationRecording.status}>
+          <ClipboardPenIcon aria-hidden="true" />
+          <AlertTitle>{messages.consultationAutoRecord}</AlertTitle>
+          <AlertDescription>
+            <ConsultationRecordingControls recording={detail.consultationRecording} action={actions.controlRecording}
+              disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || currentPreview !== undefined}
+              messages={messages} />
+            {detail.consultationRecording.failures.map(failure => (
+              <p key={failure.sourceTurnId}>
+                {failure.code === 'AI_TIMEOUT' ? messages.consultationRecordingTimeout
+                  : ['AI_RESPONSE_INVALID', 'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID'].includes(failure.code)
+                    ? messages.consultationRecordingInvalid
+                    : failure.code === 'AI_AUTH_FAILED' ? messages.consultationRecordingAuthFailed
+                      : failure.code === 'CONSULTATION_RECORDING_NOT_EDITABLE' ? messages.consultationRecordingNotEditable
+                        : failure.code === 'CONSULTATION_RECORDING_CONTEXT_INACTIVE' ? messages.consultationRecordingInactive
+                          : messages.consultationRecordingFailed}
+                {failure.retrying ? ` ${messages.consultationRecordingRetrying}` : ''}
+              </p>
+            ))}
+            <ConsultationHistoryReview detail={detail} workingDocument={workingDocument} action={actions.reviewHistory}
+              disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || currentPreview !== undefined}
+              messages={messages} locale={locale} />
+          </AlertDescription>
+        </Alert>
+      )}
+      {actions.reviewHistory?.error == null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.reviewHistory.error, messages)}
+        title={messages.consultationRecordingReview} />}
+      {actions.save?.error == null ? null : <ErrorAlert
+        message={getWorkspaceErrorMessage(actions.save.error, messages)}
+        title={messages.saveClinicalDocumentDraft}
+      />}
+      {actions.save?.success ? <p role="status" className="text-sm text-muted-foreground">{messages.clinicalDocumentDraftSaved}</p> : null}
       {actions.sign.success ? (
         <Alert>
           <CheckCircleIcon aria-hidden="true" />
@@ -251,7 +294,10 @@ export function ClinicalDocumentPage({
               messages={messages}
               onChange={onDocumentChange}
             />
-            <div className="flex justify-end border-t pt-3">
+            <div className="flex justify-end gap-2 border-t pt-3">
+              {actions.save === undefined ? null : <Button disabled={actions.save.pending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
+                {messages.saveClinicalDocumentDraft}
+              </Button>}
               <Button disabled={actions.prepareSign.pending} type="submit">
                 {actions.prepareSign.pending
                   ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />

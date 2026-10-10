@@ -42,6 +42,8 @@ import {
   reviseClinicalDocumentRequestSchema,
   retryLaboratoryResultGenerationRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
+  reviewConsultationHistoryRequestSchema,
+  controlConsultationRecordingRequestSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
   savePrescriptionDraftRequestSchema,
@@ -1572,6 +1574,26 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch (error) {
         return apiErrorResponse(context, error)
       }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/consultation-recording/actions/control', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = controlConsultationRecordingRequestSchema.parse(await context.req.json())
+        return context.json(workflow.consultationRecording.control({
+          ...body.input, context: await actor(context), encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions, idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/encounters/:encounterId/consultation-history/actions/review', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = reviewConsultationHistoryRequestSchema.parse(await context.req.json())
+        return context.json(workflow.consultationRecording.review({
+          ...body.input, context: await actor(context), encounterId: context.req.param('encounterId'),
+          expectedVersions: body.expectedVersions, idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.put('/api/his/v1/encounters/:encounterId/clinical-document/draft', async (context) => {
       try {

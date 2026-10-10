@@ -97,13 +97,65 @@ function inspectExample(program: Command, line: string) {
 }
 
 describe('ClinMesh CLI Agent Skills', () => {
+  it('keeps recording controls narrow, versioned and bound to the doctor skill', async () => {
+    const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+    const operation = getHisOperation('encounter.consultation-recording.control')
+    const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter consultation-recording control'))!
+    expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
+    for (const action of ['pause', 'resume', 'backfill', 'retry']) {
+      expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedRecordingVersion: 1, action }).success).toBe(true)
+    }
+    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)
+    expect(skill).toContain('processedCount')
+    expect(skill).toContain('explicitly starts it')
+    expect(operation.version).toBe(2)
+    expect(operation.summary).toContain('backfill requires an existing Consultation')
+    expect(operation.summary).toContain('WORKFLOW_CONFLICT')
+    expect(skill).toContain('Backfill requires an existing Consultation')
+    expect(skill).toContain('WORKFLOW_CONFLICT')
+  })
+  it('keeps history review examples bound to the narrow versioned correction contract', async () => {
+    const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+    const operation = getHisOperation('encounter.consultation-history.review')
+    const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter consultation-history review'))!
+    expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
+    for (const decision of ['accept', 'ignore', 'confirm', 'undo']) {
+      expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
+        additionId: 'synthetic-correction', decision }).success).toBe(true)
+    }
+    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
+      additionId: 'synthetic-correction', decision: 'overwrite', document: {} }).success).toBe(false)
+    expect(operation.version).toBe(2)
+    expect(skill).toContain("clinician's explicit accept/ignore/confirm/undo decision")
+    expect(skill).toContain('undo-pending')
+    expect(operation.summary).toContain('draft field limits')
+    expect(skill).toContain('exceed a draft field limit')
+    expect(skill).toContain('new source reply')
+  })
+  it('keeps the doctor draft example compatible with incomplete content and the versioned Catalog', async () => {
+    const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+    const operation = getHisOperation('encounter.clinical-document.draft.set')
+    expect(operation.version).toBe(2)
+    expect(skill).toContain('empty fields')
+    expect(skill).toContain('consultationRecording')
+    expect(skill).toContain('hasSavedDraft')
+    expect(getHisOperation('doctor.case.get').summary).toContain('hasSavedDraft')
+    expect(skill).toContain('consultationRecording.failures')
+    expect(getHisOperation('doctor.case.get').summary).toContain('failures')
+    const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter clinical-document draft set'))!
+    expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
+    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 0,
+      document: { chiefComplaint: '头晕一周', historyOfPresentIllness: '', physicalExamination: '',
+        assessment: '', disposition: '', followUp: '' },
+    }).success).toBe(true)
+  })
   it('documents absent triage in the versioned doctor read contracts', async () => {
     const doctorSkill = await readFile(resolve(
       import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md',
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 7 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }

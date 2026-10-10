@@ -24,11 +24,12 @@ export const modelBridgeRequestSchema = z.discriminatedUnion('operation', [
   z.object({
     operation: z.literal('complete'),
     model: z.string().min(1).max(1024),
-    schemaName: z.enum(['patient_persona', 'patient_dialogue_reply', 'investigation_result',
+    schemaName: z.enum(['patient_persona', 'patient_dialogue_reply', 'consultation_history_increment', 'investigation_result',
       'investigation_service_result', 'laboratory_service_enrichment']),
     jsonSchema: z.record(z.string(), z.unknown()),
     systemPrompt: z.string().min(1).max(64 * 1024),
     userPayload: z.unknown(),
+    timeoutMs: z.number().int().min(100).max(10 * 60_000).optional(),
   }).strict(),
 ])
 export const modelBridgeResponseSchema = z.object({

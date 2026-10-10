@@ -23,6 +23,8 @@ import {
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   clinicalDocumentDraftResponseSchema,
+  reviewConsultationHistoryResponseSchema,
+  controlConsultationRecordingResponseSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
@@ -67,6 +69,7 @@ import {
   withdrawPrescriptionResponseSchema,
   type ApiConflict,
   type ClinicalDocumentContent,
+  type ConsultationHistoryDecision,
   type DiagnosisDraftEntry,
   type DoctorQueueView,
   type LaboratoryRequestCatalogItemId,
@@ -1384,6 +1387,28 @@ export function saveFirstVisitDraft(input: {
     },
     { idempotencyKey, method: 'PUT' },
   )
+}
+
+export function reviewConsultationHistory(input: {
+  additionId: string; decision: ConsultationHistoryDecision; encounterId: string;
+  encounterVersion: string; expectedDraftVersion: number;
+}, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/consultation-history/actions/review`,
+    reviewConsultationHistoryResponseSchema, {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { additionId: input.additionId, decision: input.decision, expectedDraftVersion: input.expectedDraftVersion },
+    }, { idempotencyKey, method: 'POST' })
+}
+
+export function controlConsultationRecording(input: {
+  action: 'pause' | 'resume' | 'backfill' | 'retry'; encounterId: string;
+  encounterVersion: string; expectedRecordingVersion: number;
+}, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/consultation-recording/actions/control`,
+    controlConsultationRecordingResponseSchema, {
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      input: { action: input.action, expectedRecordingVersion: input.expectedRecordingVersion },
+    }, { idempotencyKey, method: 'POST' })
 }
 
 export function saveClinicalDocumentDraft(input: {

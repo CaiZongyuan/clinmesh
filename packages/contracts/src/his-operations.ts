@@ -88,6 +88,10 @@ import {
   registrationResponseSchema,
   roleCodeSchema,
   saveClinicalDocumentDraftRequestSchema,
+  reviewConsultationHistoryRequestSchema,
+  reviewConsultationHistoryResponseSchema,
+  controlConsultationRecordingRequestSchema,
+  controlConsultationRecordingResponseSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
   savePrescriptionDraftRequestSchema,
@@ -592,6 +596,13 @@ const fhirSearchInputSchema = z.object({
     }
   }
 })
+
+const reviewConsultationHistoryOperationInputSchema = reviewConsultationHistoryRequestSchema.shape.input.extend({
+  encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
+}).strict()
+const controlConsultationRecordingOperationInputSchema = controlConsultationRecordingRequestSchema.shape.input.extend({
+  encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
+}).strict()
 const fhirBundleSchema = z.object({
   entry: z.array(z.object({
     fullUrl: z.url(),
@@ -711,6 +722,14 @@ const bodyEncoders = {
   },
   [clinicalDocumentOperationIds.draftSet]: (rawInput: unknown) => {
     const { encounterId, encounterVersion, ...input } = saveClinicalDocumentDraftOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.consultation-history.review': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = reviewConsultationHistoryOperationInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'encounter.consultation-recording.control': (rawInput: unknown) => {
+    const { encounterId, encounterVersion, ...input } = controlConsultationRecordingOperationInputSchema.parse(rawInput)
     return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
   },
   [clinicalDocumentOperationIds.previewSign]: (rawInput: unknown) => {
@@ -1320,8 +1339,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case state; presentation is null when no triage record exists',
-    version: 2,
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, fragment ownership, sourceTurnId, reviewStatus (unreviewed, confirmed, undo-pending), undone history and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
+    version: 7,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -1553,6 +1572,28 @@ const operationDefinitions = [
     version: 1,
   },
   {
+    cliPath: ['encounter', 'consultation-history', 'review'],
+    http: { method: 'POST', path: '/api/his/v1/encounters/:encounterId/consultation-history/actions/review' },
+    id: 'encounter.consultation-history.review',
+    input: reviewConsultationHistoryOperationInputSchema,
+    mode: 'command', output: reviewConsultationHistoryResponseSchema,
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['outpatient-doctor'],
+    summary: 'Accept or ignore a pending history replacement, confirm an applied increment or undo only its untouched fragment; edited fragments or reversals exceeding draft field limits remain undo-pending for manual review. Requires the current draft version; rejected evidence stays rejected while new source replies may create new suggestions',
+    version: 2,
+  },
+  {
+    cliPath: ['encounter', 'consultation-recording', 'control'],
+    http: { method: 'POST', path: '/api/his/v1/encounters/:encounterId/consultation-recording/actions/control' },
+    id: 'encounter.consultation-recording.control',
+    input: controlConsultationRecordingOperationInputSchema,
+    mode: 'command', output: controlConsultationRecordingResponseSchema,
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['outpatient-doctor'],
+    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed answers and manual edits',
+    version: 2,
+  },
+  {
     cliPath: ['encounter', 'clinical-document', 'draft', 'set'],
     http: {
       method: 'PUT',
@@ -1568,8 +1609,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save the version-protected structured clinical document draft',
-    version: 1,
+    summary: 'Save a version-protected clinical document draft; empty fields are allowed, signing still requires complete content',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'preview'],
@@ -2337,6 +2378,8 @@ const operationDefinitions = [
 const commandOperationAliases: Readonly<Record<string, string>> = {
   'admin.laboratory-services.publish': 'laboratory-service-publication.create',
   [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
+  'encounter.consultation-history.review': 'consultation.history.review',
+  'encounter.consultation-recording.control': 'consultation.recording.control',
   [clinicalDocumentOperationIds.previewSign]: clinicalDocumentOperationIds.storedPreviewSign,
   [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
   'encounter.consultation.ask': 'consultation.ask-question',
@@ -2382,6 +2425,8 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'doctor.completed-cases.list': 'clinmesh-doctor',
   'doctor.queue.list': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.draftSet]: 'clinmesh-doctor',
+  'encounter.consultation-history.review': 'clinmesh-doctor',
+  'encounter.consultation-recording.control': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.previewSign]: 'clinmesh-doctor',
   [clinicalDocumentOperationIds.sign]: 'clinmesh-doctor',
   'encounter.complete': 'clinmesh-doctor',
