@@ -89,7 +89,7 @@ test('keeps review prompts and full reply sources across reload, then undoes add
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect(second.getByRole('button', { name: '撤销此条', exact: true })).toBeEnabled()
     await second.getByRole('button', { name: '撤销此条', exact: true }).click()
-    await expect(second).toContainText('此条已被修改，原文已保留。请手工核对病历后确认。')
+    await expect(second).toContainText('无法安全撤销此条，当前内容已保留。请手工核对病历后确认。')
     await reload()
     await expect(second).toHaveAttribute('data-consultation-review', 'undo-pending')
     await expect(history).toHaveValue('医生核对：站起时头晕。\n医生补充：尚未查体。\n患者自述：夜间也会头晕。')

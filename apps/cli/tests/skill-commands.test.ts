@@ -128,6 +128,8 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.version).toBe(2)
     expect(skill).toContain("clinician's explicit accept/ignore/confirm/undo decision")
     expect(skill).toContain('undo-pending')
+    expect(operation.summary).toContain('draft field limits')
+    expect(skill).toContain('exceed a draft field limit')
     expect(skill).toContain('new source reply')
   })
   it('keeps the doctor draft example compatible with incomplete content and the versioned Catalog', async () => {

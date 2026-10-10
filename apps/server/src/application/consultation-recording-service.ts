@@ -618,17 +618,21 @@ export class ConsultationRecordingService {
           // Remove the append separator only when deleting an ordinary increment.
           const removeStart = addition.target_addition_id === null && field[start - 1] === '\n' ? start - 1 : start
           const removeEnd = addition.target_addition_id === null && removeStart === 0 && field[end] === '\n' ? end + 1 : end
-          document = clinicalDocumentDraftContentSchema.parse({ ...draft.content,
+          const restored = clinicalDocumentDraftContentSchema.safeParse({ ...draft.content,
             [addition.field]: field.slice(0, removeStart) + inverse + field.slice(removeEnd) })
-          this.#database.driver.prepare(`UPDATE consultation_history_addition SET undone = 1, rejected = 1,
-            review_status = 'confirmed' WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
-          `).run(context.workspaceId, context.epoch, access.caseId, addition.addition_id)
-          this.#trackReplacement(context, access.caseId, addition.field, field, document[addition.field] ?? '', removeStart, removeEnd)
-          if (target !== undefined) this.#database.driver.prepare(`UPDATE consultation_history_addition
-            SET review_state = NULL, start_offset = ?, end_offset = ?
-            WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
-          `).run(start, start + inverse.length, context.workspaceId, context.epoch, access.caseId, target.addition_id)
-        } else this.#database.driver.prepare(`UPDATE consultation_history_addition SET rejected = 1, review_status = 'undo-pending'
+          if (restored.success) {
+            document = restored.data
+            this.#database.driver.prepare(`UPDATE consultation_history_addition SET undone = 1, rejected = 1,
+              review_status = 'confirmed' WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
+            `).run(context.workspaceId, context.epoch, access.caseId, addition.addition_id)
+            this.#trackReplacement(context, access.caseId, addition.field, field, document[addition.field] ?? '', removeStart, removeEnd)
+            if (target !== undefined) this.#database.driver.prepare(`UPDATE consultation_history_addition
+              SET review_state = NULL, start_offset = ?, end_offset = ?
+              WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
+            `).run(start, start + inverse.length, context.workspaceId, context.epoch, access.caseId, target.addition_id)
+          }
+        }
+        if (document === undefined) this.#database.driver.prepare(`UPDATE consultation_history_addition SET rejected = 1, review_status = 'undo-pending'
           WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
         `).run(context.workspaceId, context.epoch, access.caseId, addition.addition_id)
       }
