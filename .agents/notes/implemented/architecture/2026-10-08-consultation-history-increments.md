@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-患者回答与病历填写原来是两次独立操作。后台提取可能晚于医生编辑、签署或 Epoch reset，整篇重生成不能保留人工内容，也不能证明模型使用了患者已公开的信息。整体需求及后续交互取舍见[规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)与[整体提案](../../proposed/architecture/2026-10-08-consultation-auto-record.md)。
+患者回答与病历填写原来是两次独立操作。后台提取可能晚于医生编辑、签署或 Epoch reset，整篇重生成不能保留人工内容，也不能证明模型使用了患者已公开的信息。整体需求及职责归属见[规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)与[整体决策](2026-10-08-consultation-auto-record.md)。
 
 ## Decision
 

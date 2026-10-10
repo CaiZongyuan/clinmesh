@@ -36,7 +36,9 @@ Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Ro
 
 E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。DSH Web 验收从统一 launcher 打开 Surface，要求原生 Session 实际调用 browser Tool，并覆盖一个草稿 action 和一个 proposal → 人工批准 → Command Effect；Tool call、proposal、review、request、audit 和 trace 必须可关联。
 
-`pnpm test:e2e` 使用 Playwright 从 standalone Web 的生产构建运行登录、岗位切换和窄屏外观设置旅程。每个测试使用独立的真实 Hono listener、临时 file-backed SQLite 和浏览器 context；Web 构建由同一 worker 复用。端口由系统分配，账户、密码、Auth secret 与数据库均由 fixture 创建并清理，不读取开发 `.env`、已有会话、真实影像或模型配置。页面断言与受 schema 验证的 HTTP 会话查询共同证明登录、岗位绑定和退出；此集合不替代原生 DSH Session 的人工验收或完整门诊业务闭环。
+`pnpm test:e2e` 使用 Playwright 从 standalone Web 的生产构建运行登录、岗位切换、窄屏外观设置和问诊自动记录旅程。每个测试使用独立的真实 Hono listener、临时 file-backed SQLite 和浏览器 context；Web 构建由同一 worker 复用。端口由系统分配，账户、密码、Auth secret 与数据库均由 fixture 创建并清理，不读取开发 `.env`、已有会话、真实影像或模型配置。页面断言与受 schema 验证的 HTTP 会话查询共同证明保存和刷新后的状态；此集合不替代原生 DSH Session 验收。
+
+问诊组合旅程由 `apps/web/e2e/consultation-recording-journey.ts` 同时驱动 CI Web 与原生 Surface，覆盖自动追加、来源、局部人工保护、未保存编辑、撤销、冲突忽略、暂停补录、失败重试、签署准备冻结、取消恢复和人工签署。HTTP/SQLite 测试继续拥有完整业务输入矩阵。`pnpm smoke:consultation:native` 使用锁定的真实宿主与合成 `LlmAdapter`，额外执行真实 Session browser Tool 草稿保存与签署 proposal，并关联 Command 回执、审计和 Trace；`pnpm smoke:consultation:live` 再为一个新合成病例调用真实模型。后者验证成功输出及逐字来源约束，不代表医学语义质量评估。两种 smoke 均显式运行，不进入常规 CI；前置配置见[部署教程](deployment.md#问诊自动记录原生验收)，分层取舍见[组合验收决策](../.agents/notes/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。
 
 CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，并从独立 `clinmesh` 子进程执行 human login 和 Agent operation。主场景从生成 Synthetic Case 与 Brief 的受控 setup 开始，由不同单岗位 Grant 依次完成挂号、分诊、问诊、检查与报告确认、诊断、处方、病历签署、完诊、药品支付、处方审核和发药。响应丢失场景必须先证明 Server 已提交，再用原 operation ID/idempotency key 查询 receipt，并通过正式 query 证明 Effect 没有重复。
 
