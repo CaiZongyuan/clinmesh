@@ -29,6 +29,49 @@ const test = base.extend<{ investigationCase: Awaited<ReturnType<typeof startCon
   },
 })
 
+test('keeps the current category when another category finishes issuing a request', async ({ page, browserApp, investigationCase }) => {
+  let resumeIssue: () => void = () => undefined
+  let issueStarted: () => void = () => undefined
+  const waitingForIssue = new Promise<void>(resolve => { issueStarted = resolve })
+  const issueGate = new Promise<void>(resolve => { resumeIssue = resolve })
+  await page.route('**/laboratory-request/actions/issue', async route => {
+    issueStarted()
+    await issueGate
+    await route.continue()
+  })
+  try {
+    await page.goto(`${browserApp.origin}/consultation`)
+    await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+    await page.getByLabel('账户密码').fill(browserApp.password)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.getByRole('tab', { name: '待诊', exact: true }).click()
+    await page.getByRole('button', { name: /^选择病例 / }).click()
+    await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+    const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
+    await laboratory.getByRole('button', { name: '选择 合成白细胞计数 0100101A', exact: true }).click()
+    await expect(laboratory.getByText('草稿已自动保存', { exact: true })).toBeVisible()
+    const issueResponse = page.waitForResponse(response => response.url().endsWith('/laboratory-request/actions/issue'))
+    await laboratory.getByRole('button', { name: '开具检验申请', exact: true }).click()
+    await waitingForIssue
+    const radiologyTab = page.getByRole('tab', { name: '放射检查 0', exact: true })
+    await radiologyTab.click()
+    await page.getByLabel('搜索放射目录').fill('保留当前放射检索')
+    resumeIssue()
+    expect((await issueResponse).status()).toBe(200)
+    await expect(page.getByRole('tab', { name: '检验 1', exact: true })).toBeVisible()
+    await expect(radiologyTab).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByLabel('搜索放射目录')).toHaveValue('保留当前放射检索')
+    await expect(page.getByLabel('搜索放射目录')).toBeVisible()
+    const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${investigationCase.outpatientCaseId}`)
+    expect(doctorCaseDetailSchema.parse(await response.json()).laboratoryRequests?.requests).toHaveLength(1)
+    await page.getByRole('tab', { name: '检验 1', exact: true }).click()
+    await expect(laboratory.getByRole('region', { name: '申请列表', exact: true }).getByRole('button', { name: /^合成白细胞计数 / })).toHaveAttribute('aria-pressed', 'true')
+  } finally {
+    resumeIssue()
+  }
+})
+
 for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores laboratory requests through the real server at ${width}px`, async ({ page, browserApp, investigationCase }) => {
   const pageErrors: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))

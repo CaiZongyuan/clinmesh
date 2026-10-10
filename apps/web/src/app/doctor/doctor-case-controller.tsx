@@ -453,6 +453,18 @@ function DoctorCaseController({
       return { caseId: activeCaseId, category, selected: requestId === undefined ? selected : { ...selected, [category]: requestId }, reportId }
     })
   }, [activeCaseId])
+  const selectInvestigationRequest = useCallback((category: InvestigationCategory, requestId: string): void => {
+    if (activeCaseId === undefined || activeCaseIdRef.current !== activeCaseId) return
+    setInvestigationSelection(previous => {
+      const current = previous?.caseId === activeCaseId ? previous : undefined
+      return {
+        caseId: activeCaseId,
+        category: current?.category ?? 'laboratory',
+        selected: { ...current?.selected, [category]: requestId },
+        reportId: current?.category === category ? undefined : current?.reportId,
+      }
+    })
+  }, [activeCaseId])
   const imagingView = useImagingViewState(activeCaseId ?? '')
   const selectedCase = visibleQueue.data?.items.find(item => item.caseId === activeCaseId)
   const detailKey = [
@@ -845,7 +857,7 @@ function DoctorCaseController({
         saveLaboratoryRequest.reset()
         setLaboratoryItemId('')
         setIndicationCode('')
-        selectInvestigation('laboratory', response.data.request.id)
+        selectInvestigationRequest('laboratory', response.data.request.id)
       }
       await refreshCaseById(variables.caseId)
     },
@@ -2598,6 +2610,7 @@ function DoctorCaseController({
             }}
             investigationView={investigationView}
             onSelectInvestigation={selectInvestigation}
+            onSelectInvestigationRequest={selectInvestigationRequest}
             laboratoryRequestActions={{
               acknowledge: {
                 error: acknowledgeReport.variables?.caseId === detail.data.caseId
@@ -2854,6 +2867,7 @@ function CaseDetail({
   laboratoryRequestActions,
   investigationView,
   onSelectInvestigation,
+  onSelectInvestigationRequest,
   imagingActions,
   pathologyActions,
   locale,
@@ -2906,6 +2920,7 @@ function CaseDetail({
   laboratoryItemId: string
   investigationView: InvestigationView
   onSelectInvestigation: (category: InvestigationCategory, requestId?: string, reportId?: string) => void
+  onSelectInvestigationRequest: (category: InvestigationCategory, requestId: string) => void
   laboratoryRequestActions: LaboratoryPageActions
   imagingActions: ImagingPageActions
   pathologyActions: PathologyPageActions
@@ -3387,7 +3402,7 @@ function CaseDetail({
                   editDraft={(agentDraftHydrationRevisions.laboratory ?? 0) > 0}
                   active={investigationView.category === 'laboratory'}
                   selectedRequestId={investigationView.selected.laboratory}
-                  onSelectRequest={id => onSelectInvestigation('laboratory', id)}
+                  onSelectRequest={id => onSelectInvestigationRequest('laboratory', id)}
                   selectedReportId={investigationView.reportId}
                   showCorrection={correctionTarget === 'laboratory'}
                 />
@@ -3405,7 +3420,7 @@ function CaseDetail({
                   state={detail.imagingRequests}
                   editDraft={(agentDraftHydrationRevisions.imaging ?? 0) > 0}
                   selectedRequestId={investigationView.selected.imaging}
-                  onSelectRequest={id => onSelectInvestigation('imaging', id)}
+                  onSelectRequest={id => onSelectInvestigationRequest('imaging', id)}
                   selectedReportId={investigationView.reportId}
                 />
               </TabsContent>
@@ -3422,7 +3437,7 @@ function CaseDetail({
                   state={detail.pathologyRequests}
                   editDraft={(agentDraftHydrationRevisions.pathology ?? 0) > 0}
                   selectedRequestId={investigationView.selected.pathology}
-                  onSelectRequest={id => onSelectInvestigation('pathology', id)}
+                  onSelectRequest={id => onSelectInvestigationRequest('pathology', id)}
                   selectedReportId={investigationView.reportId}
                 />
               </TabsContent>

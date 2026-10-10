@@ -7,7 +7,11 @@ import type {
   DoctorCaseDetail,
   DoctorCompletedCaseDetail,
   DoctorCompletedCaseList,
+  ImagingRequest,
+  ImagingServiceSnapshot,
   LaboratoryRequest,
+  PathologyRequest,
+  PathologyServiceSnapshot,
   SessionContext,
 } from '@clinmesh/contracts/his'
 import type {
@@ -3491,6 +3495,111 @@ describe('role workspaces', () => {
     expect(screen.getByRole('main').textContent).not.toMatch(forbiddenEnglishClinicalUiTerms)
   })
 
+
+  it.each(['imaging', 'pathology'] as const)('keeps the active investigation form when a late %s issuance completes', async category => {
+    window.history.replaceState(null, '', '/consultation')
+    const imagingService: ImagingServiceSnapshot = {
+      applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
+      department: '放射科', examCode: 'chest-ct-plain', id: 'imaging-chest-ct-plain', method: '平扫（不使用造影剂）',
+      modality: 'CT', name: '胸部 CT 平扫', reportSections: ['technique', 'findings', 'impression'], version: 1,
+    }
+    const pathologyService: PathologyServiceSnapshot = {
+      applicability: '既往乳腺手术切除标本切片的会诊复核', bodySite: '乳腺', code: 'PATH-BREAST-SLIDE-CONSULT',
+      department: '病理科', examCode: 'breast-slide-consultation', id: 'pathology-breast-slide-consultation',
+      name: '乳腺切片病理会诊', reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'],
+      specimenType: '既往手术切除标本的石蜡切片', stain: 'HE', version: 1,
+    }
+    const sourceProcedure = {
+      code: '392021009', display: '乳房肿块切除术', performedAt: '2022-04-01T08:00:00+08:00',
+      sourceReference: 'urn:uuid:procedure-0',
+    }
+    const initialImagingRequest: ImagingRequest = {
+      id: 'imaging-request-old', indication: '咳嗽两周', previousReports: [], service: imagingService,
+      serviceRequestId: 'imaging-service-request-old', serviceRequestVersion: '1', status: 'cancelled',
+      taskId: 'imaging-task-old', taskVersion: '1', version: 1,
+    }
+    const initialPathologyRequest: PathologyRequest = {
+      id: 'pathology-request-old', purpose: '外院手术切片复核', previousReports: [], service: pathologyService,
+      serviceRequestId: 'pathology-service-request-old', serviceRequestVersion: '1', sourceProcedure, status: 'cancelled',
+      taskId: 'pathology-task-old', taskVersion: '1', version: 1,
+    }
+    const newRequest = category === 'imaging'
+      ? { ...initialImagingRequest, id: 'imaging-request-new', serviceRequestId: 'imaging-service-request-new', taskId: 'imaging-task-new', status: 'issued' as const }
+      : { ...initialPathologyRequest, id: 'pathology-request-new', serviceRequestId: 'pathology-service-request-new', taskId: 'pathology-task-new', status: 'issued' as const }
+    const queueItem = {
+      caseId: 'case-late-investigation', encounterId: 'encounter-late-investigation', encounterVersion: '1',
+      patient: { id: 'patient-late-investigation', identifier: 'CM-SYN-LATE', name: '合成迟到检查患者',
+        birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1' },
+      presentation: doctorPresentation, status: 'first-visit', taskId: 'task-late-investigation', taskVersion: '1',
+    }
+    let issued = false
+    let releaseIssue: (() => void) | undefined
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+      if (path.endsWith('/doctor/queue')) return Response.json({ items: [queueItem], ...pagination(1) })
+      if (path.endsWith('/cases/case-late-investigation')) return Response.json({
+        ...queueItem, allergies: [], consultation: { turns: [], version: 1 }, priorFacts: [],
+        encounter: { id: queueItem.encounterId, status: 'in-progress', versionId: '1' },
+        laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [] },
+        imagingRequests: {
+          draftVersion: issued && category === 'imaging' ? 2 : 1,
+          ...(issued && category === 'imaging' ? {} : { draft: { indication: '咳嗽两周', service: imagingService } }),
+          requests: category === 'imaging' ? [initialImagingRequest, ...(issued ? [newRequest] : [])] : [],
+        },
+        pathologyRequests: {
+          draftVersion: issued && category === 'pathology' ? 2 : 1,
+          ...(issued && category === 'pathology' ? {} : { draft: { purpose: '外院手术切片复核', service: pathologyService, sourceProcedure } }),
+          requests: category === 'pathology' ? [initialPathologyRequest, ...(issued ? [newRequest] : [])] : [],
+        },
+      })
+      if (path.endsWith('/reference-catalogs/laboratory')) return Response.json({ items: [], ...pagination(0) })
+      if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService }] })
+      if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures: [sourceProcedure] }] })
+      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: queueItem.encounterId, encounterVersion: '1', items: [] })
+      if (path.endsWith(`/${category}-request/actions/issue`)) {
+        expect(init?.method).toBe('POST')
+        expect(JSON.parse(String(init?.body))).toEqual({
+          expectedVersions: { [`Encounter/${queueItem.encounterId}`]: '1' }, input: { expectedDraftVersion: 1 },
+        })
+        return new Promise<Response>(resolve => {
+          releaseIssue = () => {
+            issued = true
+            resolve(Response.json(commandResponse({ caseId: queueItem.caseId, draftVersion: 2, request: newRequest })))
+          }
+        })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    const originalCategory = category === 'imaging' ? '放射检查' : '病理会诊'
+    const otherCategory = category === 'imaging' ? '病理会诊' : '放射检查'
+    const otherField = category === 'imaging' ? '会诊目的' : '检查指征'
+    await user.click(screen.getByRole('tab', { name: `${originalCategory} 1` }))
+    await user.click(screen.getByRole('button', { name: '追加申请' }))
+    const dialog = await screen.findByRole('dialog', { name: '追加申请' })
+    await user.click(await within(dialog).findByRole('button', { name: '签发申请' }))
+    await waitFor(() => expect(releaseIssue).toBeDefined())
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await user.click(screen.getByRole('tab', { name: `${otherCategory} 0` }))
+    const input = await screen.findByRole('textbox', { name: otherField })
+    await user.clear(input)
+    await user.type(input, '另一分类尚未保存的申请信息')
+    await act(async () => { releaseIssue?.() })
+    await screen.findByRole('tab', { name: `${originalCategory} 2` })
+    expect(screen.getByRole('tab', { name: `${otherCategory} 0` }).getAttribute('aria-selected')).toBe('true')
+    expect((screen.getByRole('textbox', { name: otherField }) as HTMLTextAreaElement).value).toBe('另一分类尚未保存的申请信息')
+    await user.click(screen.getByRole('tab', { name: `${originalCategory} 2` }))
+    const list = screen.getByRole('region', { name: '申请列表' })
+    const serviceName = category === 'imaging' ? imagingService.name : pathologyService.name
+    const issuedStatus = category === 'imaging' ? '已开具' : '已开立'
+    expect(within(list).getByRole('button', { name: `${serviceName} ${issuedStatus}` }).getAttribute('aria-pressed')).toBe('true')
+    expect(within(list).getByRole('button', { name: `${serviceName} 已取消` }).getAttribute('aria-pressed')).toBe('false')
+  })
 
   it.each([false, true])('opens the investigation catalog directly and recovers a failed read=%s', async failFirstRead => {
     window.history.replaceState(null, '', '/consultation')
