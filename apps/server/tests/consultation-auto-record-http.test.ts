@@ -203,6 +203,62 @@ it('upgrades earlier correction history and replays an old control receipt with 
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了。')
 })
 
+it.each(['confirm', 'undo'] as const)('reviews an upgraded multi-statement legacy history directly from its query IDs (%s)', async decision => {
+  const quote = '头晕一周了。站起来时更明显。'
+  const fixture = await setup({ reply: quote, extract: input => ({ additions: [{
+    field: 'historyOfPresentIllness', sourceTurnId: (input.userPayload as { turns: Array<{ id: string }> }).turns.at(-1)!.id,
+    quote, relation: 'addition',
+  }] }) })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const before = await fixture.read()
+  const original = before.consultationRecording!.additions[0]!
+  const document = clinicalDocumentDraftContentSchema.parse(Object.fromEntries(Object.entries(before.clinicalDocument!.draft!)
+    .filter(([field]) => field in clinicalDocumentDraftContentSchema.shape)))
+  const history = `医生补充：🙂尚未查体。\n患者自述：${quote}\n医生补充：待查体。`
+  // Seed the migrated single-row representation before ownership and sentence ranges existed.
+  fixture.runtime.database.driver.prepare('DELETE FROM consultation_history_addition WHERE case_id = ? AND addition_id != ?')
+    .run(before.caseId, original.id)
+  fixture.runtime.database.driver.prepare(`UPDATE consultation_history_addition SET quote = ?, start_offset = NULL,
+    end_offset = NULL, current_text = '' WHERE case_id = ? AND addition_id = ?`).run(quote, before.caseId, original.id)
+  fixture.runtime.database.driver.prepare('UPDATE clinical_document_draft SET content_json = ? WHERE case_id = ?')
+    .run(JSON.stringify({ ...document, historyOfPresentIllness: history }), before.caseId)
+  await fixture.restart()
+  const upgraded = await fixture.read()
+  const fragments = upgraded.consultationRecording!.additions.filter(addition => addition.status === 'applied')
+  expect(fragments).toMatchObject([
+    { quote: '头晕一周了。', currentText: '患者自述：头晕一周了。', sourceTurnId: original.sourceTurnId, reviewStatus: 'unreviewed' },
+    { quote: '站起来时更明显。', currentText: '站起来时更明显。', sourceTurnId: original.sourceTurnId, reviewStatus: 'unreviewed' },
+  ])
+  expect(upgraded.clinicalDocument!.draft!.historyOfPresentIllness).toBe(history)
+  expect((await fixture.read()).consultationRecording!.additions).toEqual(upgraded.consultationRecording!.additions)
+  const countStored = () => fixture.runtime.database.driver.prepare('SELECT count(*) AS count FROM consultation_history_addition WHERE case_id = ?').get(before.caseId)
+  expect(countStored()).toEqual({ count: 1 })
+  const version = upgraded.clinicalDocument!.draft!.version
+  expect((await fixture.review(fragments[0]!.id, decision, { version: version - 1 })).status).toBe(409)
+  expect(countStored()).toEqual({ count: 1 })
+  const key = randomUUID()
+  const response = await fixture.review(fragments[0]!.id, decision, { key, version })
+  expect(response.status).toBe(200)
+  const receipt = reviewConsultationHistoryResponseSchema.parse(await response.json())
+  await fixture.restart()
+  const after = await fixture.read()
+  expect(after.consultationRecording!.additions).toMatchObject([
+    { id: original.id, status: 'superseded' },
+    { id: fragments[0]!.id, status: decision === 'undo' ? 'undone' : 'applied', reviewStatus: 'confirmed' },
+    { id: fragments[1]!.id, status: 'applied', reviewStatus: 'unreviewed', ownership: 'automatic' },
+  ])
+  expect(after.clinicalDocument!.draft!.historyOfPresentIllness).toBe(decision === 'undo'
+    ? '医生补充：🙂尚未查体。\n站起来时更明显。\n医生补充：待查体。' : history)
+  expect(after.clinicalDocument!.draft!.version).toBe(version + (decision === 'undo' ? 1 : 0))
+  const replay = await fixture.review(fragments[0]!.id, decision, { key, version })
+  expect(reviewConsultationHistoryResponseSchema.parse(await replay.json())).toEqual(receipt)
+  expect((await fixture.review(fragments[1]!.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(decision === 'undo'
+    ? '医生补充：🙂尚未查体。\n医生补充：待查体。'
+    : '医生补充：🙂尚未查体。\n患者自述：头晕一周了。\n医生补充：待查体。')
+})
+
 it('undoes a correction using its predecessor text while keeping later increments and supports a correction chain', async () => {
   let reply = '头晕一周了。'
   const fixture = await setup({ reply: () => reply, extract: input => {

@@ -227,6 +227,7 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
 
 for (const existingAutomaticDraft of [false, true]) {
   test(`appends the first automatic history to unsaved prefill in a ${existingAutomaticDraft ? 'previously created' : 'new'} draft`, async ({ page, webRoot }) => {
+    const recording = page.getByRole('tabpanel', { name: '病历记录', exact: true }).locator('[data-consultation-recording]')
     let release!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
     let reply = '反复头晕一周。'
@@ -263,7 +264,7 @@ for (const existingAutomaticDraft of [false, true]) {
         `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
       if (existingAutomaticDraft) {
         await ask()
-        await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+        await expect(recording).toHaveAttribute('data-consultation-recording', 'updated')
         expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('')
       } else await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       const history = page.getByLabel('现病史', { exact: true })
@@ -273,9 +274,9 @@ for (const existingAutomaticDraft of [false, true]) {
       reply = '夜间也会头晕。'
       field = 'historyOfPresentIllness'
       await ask()
-      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
+      await expect(recording).toHaveAttribute('data-consultation-recording', 'processing')
       release()
-      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+      await expect(recording).toHaveAttribute('data-consultation-recording', 'updated')
       const expected = `${manual}\n患者自述：${reply}`
       await expect(history).toHaveValue(expected)
       await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()

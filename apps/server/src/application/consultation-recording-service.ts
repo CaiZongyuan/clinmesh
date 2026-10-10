@@ -63,10 +63,39 @@ const prompt = [
 
 type Addition = z.infer<typeof consultationHistoryAdditionSchema>
 type Draft = z.infer<typeof clinicalDocumentDraftContentSchema>
+type HistoryRow = z.infer<typeof additionRowsSchema>[number]
 class RecordingSourceError extends Error {}
 
 function statements(quote: string): string[] {
   return (quote.match(/.*?(?:[。！？!?；;\n]+|$)/gs) ?? []).map(text => text.trim()).filter(Boolean)
+}
+
+function recoverLegacyHistoryRows(rows: HistoryRow[], document: Draft): HistoryRow[] {
+  const fragments: HistoryRow[] = []
+  const recovered = rows.map(row => {
+    if (row.status !== 'applied' || row.undone === 1 || row.review_state !== null || row.start_offset !== null) return row
+    const text = `患者自述：${row.quote}`
+    const field = document[row.field] ?? ''
+    const start = field.indexOf(text)
+    const quotes = statements(row.quote)
+    if (start < 0 || field.indexOf(text, start + text.length) >= 0
+      || quotes.length === 0 || quotes.some(quote => !consultationHistoryAdditionSchema.shape.quote.safeParse(quote).success)) {
+      return row.ownership === 'manual' ? row : { ...row, ownership: 'manual' as const }
+    }
+    if (quotes.length === 1) return { ...row, start_offset: start, end_offset: start + text.length, current_text: text }
+    let cursor = '患者自述：'.length
+    for (const [index, quote] of quotes.entries()) {
+      const offset = text.indexOf(quote, cursor)
+      const fragmentStart = index === 0 ? start : start + offset
+      const fragment = index === 0 ? text.slice(0, offset + quote.length) : quote
+      fragments.push({ ...row, addition_id: createHash('sha256').update(JSON.stringify([row.addition_id, index, quote])).digest('hex'),
+        quote, start_offset: fragmentStart, end_offset: fragmentStart + fragment.length, current_text: fragment })
+      cursor = offset + quote.length
+    }
+    return { ...row, review_state: 'superseded' as const }
+  })
+  // Query and Command must expose the same IDs without making reads persist recovery.
+  return [...recovered, ...fragments]
 }
 
 function quotesCompleteStatement(text: string, quote: string): boolean {
@@ -265,55 +294,34 @@ export class ConsultationRecordingService {
 
   #rows(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
     const rows = this.#storedRows(context, caseId)
-    const legacy = rows.filter(row => row.status === 'applied' && row.undone === 0 && row.start_offset === null && row.review_state === null)
-    if (legacy.length === 0) return rows
-    const document = this.#draft(context, caseId).content
-    return rows.map(row => {
-      if (!legacy.includes(row)) return row
-      const text = `患者自述：${row.quote}`
-      const field = document[row.field] ?? ''
-      const start = field.indexOf(text)
-      return start >= 0 && field.indexOf(text, start + text.length) < 0
-        ? { ...row, start_offset: start, end_offset: start + text.length, current_text: text }
-        : { ...row, ownership: 'manual' as const }
-    })
+    if (!rows.some(row => row.status === 'applied' && row.undone === 0 && row.start_offset === null && row.review_state === null)) return rows
+    return recoverLegacyHistoryRows(rows, this.#draft(context, caseId).content)
   }
 
-  #restoreLegacyRows(context: ActorContext, caseId: string): void {
-    const document = this.#draft(context, caseId).content
-    for (const row of this.#storedRows(context, caseId)) {
-      if (row.status !== 'applied' || row.undone === 1 || row.review_state !== null || row.start_offset !== null) continue
-      const text = `患者自述：${row.quote}`
-      const field = document[row.field] ?? ''
-      const start = field.indexOf(text)
-      const quotes = statements(row.quote)
-      if (start < 0 || field.indexOf(text, start + text.length) >= 0
-        || quotes.length === 0 || quotes.some(quote => !consultationHistoryAdditionSchema.shape.quote.safeParse(quote).success)) {
-        this.#database.driver.prepare(`UPDATE consultation_history_addition SET ownership = 'manual'
+  #restoreLegacyRows(context: ActorContext, caseId: string, document = this.#draft(context, caseId).content): HistoryRow[] {
+    const stored = this.#storedRows(context, caseId)
+    const originals = new Map(stored.map(row => [row.addition_id, row]))
+    const recovered = recoverLegacyHistoryRows(stored, document)
+    for (const row of recovered) {
+      const original = originals.get(row.addition_id)
+      if (row === original) continue
+      if (original !== undefined) {
+        this.#database.driver.prepare(`UPDATE consultation_history_addition SET start_offset = ?, end_offset = ?,
+          current_text = ?, ownership = ?, review_state = ?
           WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
-        `).run(context.workspaceId, context.epoch, caseId, row.addition_id)
-      } else if (quotes.length === 1) {
-        this.#database.driver.prepare(`UPDATE consultation_history_addition SET start_offset = ?, end_offset = ?, current_text = ?
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
-        `).run(start, start + text.length, text, context.workspaceId, context.epoch, caseId, row.addition_id)
+        `).run(row.start_offset, row.end_offset, row.current_text, row.ownership, row.review_state,
+          context.workspaceId, context.epoch, caseId, row.addition_id)
       } else {
-        this.#supersede(context, caseId, row.addition_id)
-        let cursor = '患者自述：'.length
-        for (const [index, quote] of quotes.entries()) {
-          const offset = text.indexOf(quote, cursor)
-          const fragmentStart = index === 0 ? start : start + offset
-          const fragment = index === 0 ? text.slice(0, offset + quote.length) : quote
-          const id = createHash('sha256').update(JSON.stringify([row.addition_id, index, quote])).digest('hex')
-          this.#database.driver.prepare(`INSERT INTO consultation_history_addition
-            (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
-              target_addition_id, ownership, start_offset, end_offset, current_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'applied', ?, ?, ?, ?, ?)
-          `).run(context.workspaceId, context.epoch, caseId, id, row.source_turn_id, row.field, quote,
-            row.relation, row.target_addition_id, row.ownership, fragmentStart, fragmentStart + fragment.length, fragment)
-          cursor = offset + quote.length
-        }
+        this.#database.driver.prepare(`INSERT INTO consultation_history_addition
+          (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
+            target_addition_id, ownership, start_offset, end_offset, current_text, review_status, rejected, undone, inverse_text)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(context.workspaceId, context.epoch, caseId, row.addition_id, row.source_turn_id, row.field, row.quote,
+          row.relation, row.status, row.target_addition_id, row.ownership, row.start_offset, row.end_offset,
+          row.current_text, row.review_status, row.rejected, row.undone, row.inverse_text)
       }
     }
+    return recovered
   }
 
   #trackEdits(context: ActorContext, caseId: string, before: Draft, after: Draft): void {
@@ -482,7 +490,7 @@ export class ConsultationRecordingService {
       if (!this.#current(context, turnId, job)) return { data: { draftVersion: this.#draft(context, job.case_id).version }, effects: [] }
       const access = this.#assertAccess(context, job.encounter_id)
       const current = this.#draft(context, job.case_id)
-      const existing = this.#rows(context, job.case_id)
+      const existing = this.#restoreLegacyRows(context, job.case_id, current.content)
       const seenIds = new Set(existing.map(item => item.addition_id))
       // Only rejected evidence is shared across targets. Equivalent citations may
       // include or omit sentence delimiters; a new source reply is new evidence.
@@ -617,7 +625,8 @@ export class ConsultationRecordingService {
           const end = addition.end_offset!
           const inverse = addition.inverse_text ?? ''
           // Remove the append separator only when deleting an ordinary increment.
-          const removeStart = addition.target_addition_id === null && field[start - 1] === '\n' ? start - 1 : start
+          const removeStart = addition.target_addition_id === null && (end === field.length || field[end] === '\n')
+            && field[start - 1] === '\n' ? start - 1 : start
           const removeEnd = addition.target_addition_id === null && removeStart === 0 && field[end] === '\n' ? end + 1 : end
           const restored = clinicalDocumentDraftContentSchema.safeParse({ ...draft.content,
             [addition.field]: field.slice(0, removeStart) + inverse + field.slice(removeEnd) })
