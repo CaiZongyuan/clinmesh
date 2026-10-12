@@ -65,6 +65,8 @@
 
 - DSH 工具缺失时，同时检查后端 Page Context 的 `allowedOperationIds` 和前端 action 的 `enabled` 条件。失败后的恢复工具也必须经过两层筛选；仅用返回全部 catalog operations 的前端 mock，无法发现后端漏授权，需补真实 HTTP Page Context 回归。
 
+- TanStack Query 的禁用查询在没有缓存时仍是 `isPending`，不能把可选查询的该标志直接计入 Agent 页面加载状态；使用实际首次请求的 `isLoading`，并覆盖“没有选中任务”和“选中任务等待响应”两种真实页面 Tool 交接。只断言工具已注册会漏掉读取成功后始终等待加载结束、最终 `CLINMESH_HANDOFF_TIMEOUT` 停轮的问题。
+
 - Surface 宿主限制每个 Tool 的最终 description 不超过 512 字符；Web 包装器会追加通用编辑说明，预算必须按拼接后的文本计算。单个描述超限会使整份 lease 注册失败、全部 ClinMesh 工具缺失，不能仅以页面上下文签发成功或 mock register 测试通过判断桥接可用。
 - DSH lazy-CJS 包装器会缩进多行模板字符串，导致构建产物中的 Tool 描述比源码更长；验收必须执行真实产物并检查浏览器 lease 响应。非开发模式的宿主还会缓存插件脚本，重新构建后按[部署说明](../deployment.md#dsh-web-原生入口)重新加载宿主，核对实际返回的脚本，不能仅看磁盘时间或刷新页面。
 - DSH 产物体积受 Bun 编译器版本影响；本地或 CI 超标时，先用 CI 的精确 Bun 版本构建同一源码和锁定依赖再比较，不能直接归因于依赖漂移或放宽预算。已验证版本与体积依据见[病理阅片引擎 Agent Note](../../.agents/notes/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。

@@ -1201,20 +1201,31 @@ describe('role workspaces', () => {
     expect(within(generationSheet).getByRole('checkbox', { name: 'metabolic/diabetes' })).toBeTruthy()
   })
 
-  it('publishes Provider and generation status Tools from the synthetic patient library', async () => {
+  it.each(['no job', 'loading job'] as const)('settles a context read from the synthetic patient library with %s', async state => {
     window.history.replaceState(null, '', '/scenario-data')
     stubScenarioDataWorkspace({ profileAvailable: true, syntheaAvailable: true })
+    if (state === 'loading job') useSyntheticPatientLibraryViewStore.getState()
+      .setScenarioGenerationJob(administratorSession.actor.workspaceId, 'scenario-generation-job-001')
     const applicationFetch = vi.mocked(fetch).getMockImplementation()
     if (applicationFetch === undefined) throw new Error('Synthetic patient library stub is unavailable')
+    let binding: ReturnType<typeof agentPageContextBindingSchema.parse> | undefined
+    const handoffs: unknown[] = []
+    let releaseJob: () => void = () => undefined
+    const jobResponse = new Promise<void>(resolve => { releaseJob = resolve })
+    let jobRequested = false
     vi.mocked(fetch).mockImplementation(async (input, init) => {
       const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/sim/v1/scenario-generation-jobs/scenario-generation-job-001') {
+        jobRequested = true
+        await jobResponse
+      }
       if (path === '/api/agent/v1/page-contexts') {
         const request = JSON.parse(String(init?.body)) as {
           claim: Record<string, unknown>
           dshSessionId: string
         }
         const issuedAt = new Date()
-        return Response.json({
+        binding = agentPageContextBindingSchema.parse({
           snapshot: {
             actor: {
               actorId: administratorSession.actor.actorId,
@@ -1237,7 +1248,23 @@ describe('role workspaces', () => {
             },
           },
           token: 'context-token-with-at-least-32-characters',
+        })
+        return Response.json(binding, { status: 201 })
+      }
+      if (path === '/clinmesh-agent-proof') {
+        return Response.json({ data: { proof: 'proof-with-at-least-32-characters' } })
+      }
+      if (path === '/api/agent/v1/tool-calls') {
+        return Response.json({
+          callId: 'administrator-context-read', context: binding!.snapshot,
+          dshSessionId: 'dsh-session-1', operationId: 'ui.context.read',
+          receiptToken: 'receipt-token-with-at-least-32-characters', status: 'authorized',
         }, { status: 201 })
+      }
+      if (path === '/api/agent/v1/tool-calls/result') return Response.json({ status: 'completed' })
+      if (path === '/clinmesh-agent-handoff') {
+        handoffs.push(JSON.parse(String(init?.body)))
+        return Response.json({ data: { permitted: true } })
       }
       return applicationFetch(input, init)
     })
@@ -1267,6 +1294,32 @@ describe('role workspaces', () => {
       'clinmesh_read_generation_status',
       'clinmesh_prepare_scenario_reset',
     ]))
+    const read = registration!.tools.find(tool => tool.name === 'clinmesh_read_current_context')!
+    const result = await read.execute({
+      scopeKey: binding!.snapshot.scopeKey,
+      pageRevision: agentPageBindingRevision(binding!.snapshot.claim),
+    }, new AbortController().signal)
+    expect(JSON.parse(String(result))).toMatchObject({ ok: true, data: {
+      pageState: { generation: null, providers: [{ available: true, providerId: 'synthea' }] },
+    } })
+    if (state === 'loading job') {
+      expect(jobRequested).toBe(true)
+      expect(JSON.parse(String(result))).toMatchObject({ data: { snapshot: { claim: { ui: { status: 'loading' } } } } })
+      // Let the deferred settlement run while the selected job response is still pending.
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)) })
+      expect(handoffs).toEqual([])
+      await act(async () => { releaseJob() })
+    } else {
+      expect(jobRequested).toBe(false)
+      expect(JSON.parse(String(result))).toMatchObject({ data: { snapshot: { claim: { ui: { status: 'ready' } } } } })
+    }
+    await waitFor(() => expect(handoffs).toHaveLength(1))
+    expect(binding!.snapshot.claim.ui.status).toBe('ready')
+    expect(handoffs[0]).toMatchObject({ target: {
+      scopeKey: binding!.snapshot.scopeKey,
+      pageRevision: agentPageBindingRevision(binding!.snapshot.claim),
+      toolNames: registration!.tools.map(tool => tool.name).sort(),
+    } })
   })
 
   it('keeps module filtering disabled when Synthea reports no modules', async () => {

@@ -906,7 +906,7 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
         },
       }),
       ui: {
-        status: providers.isPending || generationJob.isPending ? 'loading' as const
+        status: providers.isPending || generationJob.isLoading ? 'loading' as const
           : providers.isError || generationJob.isError ? 'error' as const : 'ready' as const,
       },
     },
@@ -929,7 +929,7 @@ export function SyntheticPatientLibrary({ locale }: { locale: WorkspaceLocale })
     agentReview, locale, reset.mutateAsync, scenario.data,
     generationJob.data,
     generationJob.isError,
-    generationJob.isPending,
+    generationJob.isLoading,
     generationJobId,
     providers.data,
     providers.isError,
