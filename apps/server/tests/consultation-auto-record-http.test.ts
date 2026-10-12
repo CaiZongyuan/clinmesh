@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 
@@ -1388,6 +1389,51 @@ it('rejects a quote that removes the patient negation instead of recording chest
   const detail = await read()
   expect(detail.clinicalDocument?.draft).toBeUndefined()
   expect(detail.consultationRecording).toMatchObject({ status: 'failed', additions: [] })
+})
+
+it.each([false, true])('repairs patient-source validation before exhausting recording retries (manual retry: %s)', async manualRetry => {
+  const prompts: string[] = []
+  let retryEnabled = false
+  const uncertain = '凉水酸那一下像是那边，是不是同一颗我说不准。'
+  const confirmed = '牙上没见发黑，也没觉着缺。'
+  const provider = new DshModelProvider({
+    origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters',
+    timeoutMs: 2000, maxResponseBytes: 8192,
+    fetch: async (_url, init) => {
+      const request = JSON.parse(String(init?.body)) as { model: string; systemPrompt: string;
+        userPayload: { turns: Array<{ id: string }> } }
+      prompts.push(request.systemPrompt)
+      const repaired = request.systemPrompt.includes('previous response failed validation')
+      return Response.json({ model: request.model, content: JSON.stringify({ additions: [{
+        field: 'historyOfPresentIllness', relation: 'addition',
+        sourceTurnId: request.userPayload.turns.at(-1)!.id,
+        quote: repaired && (!manualRetry || retryEnabled) ? confirmed : uncertain,
+      }] }) })
+    },
+  })
+  const fixture = await setup({ reply: `${uncertain}${confirmed}`, extract: async input => {
+    const result = await provider.completeJson({ ...input, model: 'dsh:{"provider":"synthetic","model":"synthetic"}' })
+    return JSON.parse(result.content)
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  if (manualRetry) {
+    const failed = await fixture.read()
+    expect(failed.consultationRecording).toMatchObject({ status: 'failed', processedCount: 0, remainingCount: 1,
+      failures: [{ code: 'AI_RESPONSE_INVALID', retrying: false }], additions: [] })
+    expect(failed.clinicalDocument?.draft).toBeUndefined()
+    expect(failed.consultation?.turns.at(-1)?.messageText).toBe(`${uncertain}${confirmed}`)
+    expect(prompts).toHaveLength(2)
+    retryEnabled = true
+    expect((await fixture.control('retry')).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+  }
+  expect(await fixture.read()).toMatchObject({
+    consultationRecording: { status: 'updated', processedCount: 1, remainingCount: 0, failures: [] },
+    clinicalDocument: { draft: { historyOfPresentIllness: `患者自述：${confirmed}` } },
+  })
+  expect(prompts).toHaveLength(manualRetry ? 4 : 2)
+  expect(prompts.at(-1)).toContain('additions.0.quote')
 })
 
 it.each([

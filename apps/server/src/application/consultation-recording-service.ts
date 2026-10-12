@@ -55,6 +55,7 @@ const prompt = [
   '只使用 patient text，逐字引用完整句子，以 sourceTurnId 关联原文。不要改写、补全或裁剪限定语及数值。',
   'chiefComplaint 为主诉；historyOfPresentIllness 为现病史；priorMedicalHistory 为既往史、用药、过敏自述。',
   '提问、猜测、患者不知道、未问及、医生话语、报告卡片都不是患者确认的事实，不能写成阴性或肯定事实。',
+  '含问号或“不知道、不清楚、说不清、记不清、可能、也许、是不是”的句子整句跳过，不裁去这些词再摘录；其他完整且明确的句子仍可记录。没有合格新增时返回 additions: []。',
   '居家测量与外院诊断保留其来源措辞，不成为本院查体、检查或医生诊断。不输出诊断、评估、治疗计划。',
   '只新增未出现的明确事实。患者纠正或与此前陈述矛盾时 relation 为 correction 或 conflict，不当作普通 addition。',
   'history 为此前记录的患者原话，id 只用于定位。更正或矛盾必须用 targetAdditionId 指向同字段的历史项；没有明确纠正措辞时使用 conflict。',
@@ -64,7 +65,11 @@ const prompt = [
 type Addition = z.infer<typeof consultationHistoryAdditionSchema>
 type Draft = z.infer<typeof clinicalDocumentDraftContentSchema>
 type HistoryRow = z.infer<typeof additionRowsSchema>[number]
-class RecordingSourceError extends Error {}
+class RecordingSourceError extends z.ZodError {
+  constructor(path: Array<string | number>, message: string) {
+    super([{ code: 'custom', path, message }])
+  }
+}
 
 function statements(quote: string): string[] {
   return (quote.match(/.*?(?:[。！？!?；;\n]+|$)/gs) ?? []).map(text => text.trim()).filter(Boolean)
@@ -417,30 +422,37 @@ export class ConsultationRecordingService {
       const history = this.#rows(context, job.case_id)
         .filter(row => row.status === 'applied' && row.undone === 0 && row.review_state === null && turns.some(turn => turn.id === row.source_turn_id))
         .map(row => ({ id: row.addition_id, field: row.field, quote: row.quote, sourceTurnId: row.source_turn_id }))
+      const parseOutput = (value: unknown) => {
+        const output = outputSchema.parse(value)
+        for (const [index, addition] of output.additions.entries()) {
+          const source = turns.find(turn => turn.id === addition.sourceTurnId)
+          if (source?.speaker !== 'patient') {
+            throw new RecordingSourceError(['additions', index, 'sourceTurnId'], 'Recording output does not refer to a patient statement')
+          }
+          if (!quotesCompleteStatement(source.messageText, addition.quote)
+            || /[?？]|不知道|不清楚|说不清|记不清|可能|也许|是不是/.test(addition.quote)) {
+            throw new RecordingSourceError(['additions', index, 'quote'], 'Recording output is not an explicit patient statement')
+          }
+          if (addition.targetAdditionId !== undefined) {
+            if (statements(addition.quote).length !== 1) throw new RecordingSourceError(['additions', index, 'quote'], 'Recording correction must target one complete statement')
+            const target = history.find(item => item.id === addition.targetAdditionId)
+            const targetIndex = turns.findIndex(turn => turn.id === target?.sourceTurnId)
+            if (target === undefined || target.field !== addition.field || targetIndex < 0
+              || targetIndex >= turns.findIndex(turn => turn.id === addition.sourceTurnId)) {
+              throw new RecordingSourceError(['additions', index, 'targetAdditionId'], 'Recording correction does not refer to earlier history in this case')
+            }
+          }
+        }
+        return output
+      }
       const result = await model.provider.completeJson({
         model: pinned, signal: model.signal, schemaName: 'consultation_history_increment',
         jsonSchema: z.toJSONSchema(outputSchema) as Record<string, unknown>, systemPrompt: prompt,
         userPayload: { turns, history: history.map(({ sourceTurnId: _sourceTurnId, ...item }) => item) },
-        validate: value => { outputSchema.parse(value); return true },
+        validate: value => { parseOutput(value); return true },
       })
       model.signal.throwIfAborted()
-      const output = outputSchema.parse(JSON.parse(result.content))
-      for (const addition of output.additions) {
-        const source = turns.find(turn => turn.id === addition.sourceTurnId)
-        if (source?.speaker !== 'patient' || !quotesCompleteStatement(source.messageText, addition.quote)
-          || /[?？]|不知道|不清楚|说不清|记不清|可能|也许|是不是/.test(addition.quote)) {
-          throw new RecordingSourceError('Recording output is not an explicit patient statement')
-        }
-        if (addition.targetAdditionId !== undefined) {
-          if (statements(addition.quote).length !== 1) throw new RecordingSourceError('Recording correction must target one complete statement')
-          const target = history.find(item => item.id === addition.targetAdditionId)
-          const targetIndex = turns.findIndex(turn => turn.id === target?.sourceTurnId)
-          if (target === undefined || target.field !== addition.field || targetIndex < 0
-            || targetIndex >= turns.findIndex(turn => turn.id === addition.sourceTurnId)) {
-            throw new RecordingSourceError('Recording correction does not refer to earlier history in this case')
-          }
-        }
-      }
+      const output = parseOutput(JSON.parse(result.content))
       if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
       if (this.#current(context, turnId, job)) this.#apply(context, event, turnId, job, baseline, output.additions)
       return { status: 'completed' }
@@ -450,8 +462,8 @@ export class ConsultationRecordingService {
       if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
       const code = model.shutdownSignal?.aborted ? 'CONSULTATION_RECORDING_FAILED'
         : model.signal.aborted ? 'AI_TIMEOUT' : error instanceof ChatCompletionsError ? error.code
-        : error instanceof z.ZodError ? 'CONSULTATION_RECORDING_OUTPUT_INVALID'
-          : error instanceof RecordingSourceError ? 'CONSULTATION_RECORDING_SOURCE_INVALID' : 'CONSULTATION_RECORDING_FAILED'
+        : error instanceof RecordingSourceError ? 'CONSULTATION_RECORDING_SOURCE_INVALID'
+          : error instanceof z.ZodError ? 'CONSULTATION_RECORDING_OUTPUT_INVALID' : 'CONSULTATION_RECORDING_FAILED'
       // A timeout or exhausted structured-output repair must settle instead of multiplying long model calls.
       const retrying = event.attempt < 3 && ['AI_REQUEST_FAILED', 'CONSULTATION_RECORDING_FAILED',
         'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID'].includes(code)
