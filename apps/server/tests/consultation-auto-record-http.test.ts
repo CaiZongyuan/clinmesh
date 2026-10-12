@@ -1193,7 +1193,8 @@ it('keeps ambiguous contradictory history pending even when its target is automa
 })
 
 async function createDoctorGrant(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, adminCookie: string,
-  operationId: 'encounter.consultation.ask' | 'encounter.consultation.reply.retry' | 'encounter.consultation-recording.control') {
+  operationId: 'encounter.consultation.ask' | 'encounter.consultation.reply.retry' | 'encounter.consultation-recording.control'
+    | 'encounter.clinical-document.sign.cancel') {
   const adminHeaders = { cookie: adminCookie, origin: 'http://localhost', 'content-type': 'application/json' }
   const clientResponse = await runtime.app.request('/api/agent/v1/clients', {
     method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
@@ -1209,6 +1210,58 @@ async function createDoctorGrant(runtime: Awaited<ReturnType<typeof createClinMe
   expect(grantResponse.status).toBe(200)
   return { adminHeaders, client, grant: agentCapabilityGrantSchema.parse(await grantResponse.json()) }
 }
+
+it.each(['active', 'disable', 'revoke'] as const)('resumes unfinished recording with a cancel-only Agent Grant only while it is %s', async action => {
+  const fixture = await setup()
+  expect((await fixture.ask()).status).toBe(200)
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  const { adminHeaders, client, grant } = await createDoctorGrant(fixture.runtime, fixture.started.adminCookie,
+    'encounter.clinical-document.sign.cancel')
+  expect(grant.operationIds).toEqual(['command.receipt.get', 'encounter.clinical-document.sign.cancel'])
+  const detail = await fixture.read()
+  const cancelled = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/clinical-document/actions/cancel-sign`, {
+    method: 'POST', headers: { authorization: `Bearer ${grant.token}`, 'content-type': 'application/json',
+      'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId },
+      input: { previewId: preview.previewId } }),
+  })
+  expect(cancelled.status).toBe(200)
+  expect(cancelClinicalDocumentSignResponseSchema.parse(await cancelled.json()).data.previewId).toBe(preview.previewId)
+  const resumed = await fixture.read()
+  expect(resumed.consultationRecording?.signingPreparation).toBeUndefined()
+  expect(resumed.consultationRecording).toMatchObject({ status: 'processing', processedCount: 0, remainingCount: 1 })
+  if (action !== 'active') {
+    const path = action === 'disable' ? `/api/agent/v1/clients/${client.agentClientId}/actions/disable`
+      : `/api/agent/v1/grants/${grant.grantId}/actions/revoke`
+    expect((await fixture.runtime.app.request(path, { method: 'POST', body: '{}',
+      headers: { ...adminHeaders, 'idempotency-key': randomUUID() } })).status).toBe(200)
+    if (action === 'revoke') {
+      const replacement = await fixture.runtime.app.request('/api/agent/v1/grants', {
+        method: 'POST', headers: { ...adminHeaders, 'idempotency-key': randomUUID() },
+        body: JSON.stringify({ agentClientId: client.agentClientId, operationIds: ['encounter.clinical-document.sign.cancel'],
+          practitionerRoleId: 'practitioner-role-outpatient-doctor', ttlSeconds: 3600 }),
+      })
+      expect(replacement.status).toBe(200)
+      expect(agentCapabilityGrantSchema.parse(await replacement.json()).grantId).not.toBe(grant.grantId)
+    }
+  }
+  await fixture.restart()
+  await fixture.runtime.dispatchPending()
+  const after = await fixture.read()
+  expect(after.consultationRecording?.signingPreparation).toBeUndefined()
+  if (action === 'active') {
+    expect(after.consultationRecording).toMatchObject({ status: 'updated', processedCount: 1, remainingCount: 0,
+      failedCount: 0, failures: [], additions: [{ status: 'applied' }] })
+    expect(after.clinicalDocument!.draft!.historyOfPresentIllness).toBe(
+      `${actions.complete.historyOfPresentIllness}\n患者自述：头晕一周了，站起来时更明显。`)
+  } else {
+    expect(after.clinicalDocument?.draft).toEqual(resumed.clinicalDocument?.draft)
+    expect(after.consultationRecording).toMatchObject({ status: 'failed', processedCount: 0, remainingCount: 1,
+      failedCount: 1, additions: [], failures: [{ code: 'CONSULTATION_RECORDING_CONTEXT_INACTIVE', retrying: false }] })
+  }
+})
 
 it.each(['active', 'revoke'] as const)('resumes with a control-only Agent Grant and respects its exact identity while %s', async action => {
   const fixture = await setup()
@@ -1378,10 +1431,10 @@ it.each([0, 2])('settles an extraction cancelled by Server shutdown after %s ear
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了，站起来时更明显。')
 })
 
-it('rejects a quote that removes the patient negation instead of recording chest pain', async () => {
-  const { runtime, ask, read } = await setup({ reply: '没有胸痛。', extract: input => {
+it.each(['没有胸痛。', '之前没有胸痛。后来也没有胸痛。'])('rejects a quote that removes the patient negation instead of recording chest pain (%s)', async reply => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
-    return { additions: [{ field: 'historyOfPresentIllness', quote: '胸痛',
+    return { additions: [{ field: 'historyOfPresentIllness', quote: '胸痛。',
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
@@ -1389,6 +1442,22 @@ it('rejects a quote that removes the patient negation instead of recording chest
   const detail = await read()
   expect(detail.clinicalDocument?.draft).toBeUndefined()
   expect(detail.consultationRecording).toMatchObject({ status: 'failed', additions: [] })
+})
+
+it.each(['之前没有胸痛。胸痛。', '我不清楚，胸痛。胸痛。'])('records a later complete statement when an earlier substring is not a valid citation (%s)', async reply => {
+  const fixture = await setup({ reply, extract: input => {
+    const turns = (input.userPayload as { turns: Array<{ id: string }> }).turns
+    return { additions: [{ field: 'historyOfPresentIllness', quote: '胸痛。',
+      sourceTurnId: turns.at(-1)!.id, relation: 'addition' }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.consultation!.turns.at(-1)!.messageText).toBe(reply)
+  expect(detail.clinicalDocument?.draft).toMatchObject({ historyOfPresentIllness: '患者自述：胸痛。', version: 1 })
+  expect(detail.consultationRecording).toMatchObject({ status: 'updated', processedCount: 1, remainingCount: 0,
+    failures: [], additions: [{ sourceTurnId: detail.consultation!.turns.at(-1)!.id, quote: '胸痛。', status: 'applied' }] })
+  expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toHaveLength(1)
 })
 
 it.each([false, true])('repairs patient-source validation before exhausting recording retries (manual retry: %s)', async manualRetry => {
@@ -1617,6 +1686,30 @@ it('does not repeat history when the patient repeats the same statement in a lat
   expect((await read()).clinicalDocument?.draft).toMatchObject({
     historyOfPresentIllness: '患者自述：头晕一周了，站起来时更明显。', version: 1,
   })
+})
+
+it.each(['头晕一周了。', '头晕一周了'])('deduplicates ordinary additions across alternate sentence endings (%s)', async quote => {
+  let firstSource = ''
+  const alternate = quote.endsWith('。') ? quote.slice(0, -1) : `${quote}。`
+  const fixture = await setup({ reply: '头晕一周了。', extract: input => {
+    const turns = (input.userPayload as { turns: Array<{ id: string }> }).turns
+    const sourceTurnId = turns.at(-1)!.id
+    const addition = { field: 'historyOfPresentIllness', sourceTurnId, quote, relation: 'addition' }
+    if (!firstSource) { firstSource = sourceTurnId; return { additions: [addition] } }
+    return { additions: [{ ...addition, sourceTurnId: firstSource, quote: alternate },
+      { ...addition, quote: alternate }, addition] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const initial = await fixture.read()
+  expect(initial.consultationRecording!.additions).toHaveLength(1)
+  await fixture.restart()
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const after = await fixture.read()
+  expect(after.consultationRecording).toMatchObject({ status: 'updated', processedCount: 2, remainingCount: 0, failures: [] })
+  expect(after.consultationRecording!.additions).toEqual(initial.consultationRecording!.additions)
+  expect(after.clinicalDocument?.draft).toEqual(initial.clinicalDocument?.draft)
 })
 
 it.each(['disable', 'revoke'] as const)('settles a late recording as pending after Agent authorization %s', async action => {

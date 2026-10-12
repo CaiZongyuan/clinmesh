@@ -100,6 +100,8 @@ Recording controls use `encounter.consultation-recording.control` with the curre
 
 `consultationRecording.failures` associates safe failure codes with `sourceTurnId` and indicates ongoing automatic retries through `retrying`. `AI_TIMEOUT` or `AI_RESPONSE_INVALID` settles as failed and can be retried with the recording control; the saved patient reply remains available. Read the consultation source and have the clinician complete or review the history. `AI_AUTH_FAILED` requires checking the selected model's access in settings. A patient-reply retry regenerates dialogue and does not retry history recording.
 
+A valid cancel-only Agent Grant can cancel a signing preparation and recover its unfinished recording. Recovery remains bound to that exact Grant; revocation, expiry or client disablement stops background recording. Follow the [clinical workflow reference](references/clinical-workflows.md#clinical-document-and-completion) for preparation, cancellation and receipt recovery.
+
 ```bash
 clinmesh encounter clinical-document draft set --input @document.json --idempotency-key <key>
 clinmesh encounter consultation-history review --input @history-review.json --idempotency-key <review-intent-key>

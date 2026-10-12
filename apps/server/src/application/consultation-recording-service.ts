@@ -75,6 +75,10 @@ function statements(quote: string): string[] {
   return (quote.match(/.*?(?:[。！？!?；;\n]+|$)/gs) ?? []).map(text => text.trim()).filter(Boolean)
 }
 
+function normalizeQuoteEnding(quote: string): string {
+  return quote.replace(/[。！？!?；;\s]+$/u, '')
+}
+
 function recoverLegacyHistoryRows(rows: HistoryRow[], document: Draft): HistoryRow[] {
   const fragments: HistoryRow[] = []
   const recovered = rows.map(row => {
@@ -104,16 +108,17 @@ function recoverLegacyHistoryRows(rows: HistoryRow[], document: Draft): HistoryR
 }
 
 function quotesCompleteStatement(text: string, quote: string): boolean {
-  const start = text.indexOf(quote)
-  if (start < 0) return false
-  const end = start + quote.length
-  // 只忽略句界旁的水平空白；换行本身仍是句界，问号不能被引用截掉。
-  const before = text.slice(0, start).replace(/[^\S\r\n]+$/u, '')
-  const after = text.slice(end).replace(/^[^\S\r\n]+/u, '')
   const boundary = /[。！？；!?;\r\n]/
-  return !/^(?:[。！？；!?;]|[^\S\r\n])*[?？]/u.test(after)
-    && (before.length === 0 || boundary.test(before.at(-1)!))
-    && (after.length === 0 || boundary.test(after[0]!) || boundary.test(quote.at(-1)!))
+  for (let start = text.indexOf(quote); start >= 0; start = text.indexOf(quote, start + 1)) {
+    const end = start + quote.length
+    // 只忽略句界旁的水平空白；换行本身仍是句界，问号不能被引用截掉。
+    const before = text.slice(0, start).replace(/[^\S\r\n]+$/u, '')
+    const after = text.slice(end).replace(/^[^\S\r\n]+/u, '')
+    if (!/^(?:[。！？；!?;]|[^\S\r\n])*[?？]/u.test(after)
+      && (before.length === 0 || boundary.test(before.at(-1)!))
+      && (after.length === 0 || boundary.test(after[0]!) || boundary.test(quote.at(-1)!))) return true
+  }
+  return false
 }
 
 export class ConsultationRecordingService {
@@ -532,18 +537,18 @@ export class ConsultationRecordingService {
       // Only rejected evidence is shared across targets. Equivalent citations may
       // include or omit sentence delimiters; a new source reply is new evidence.
       const evidenceKey = (item: Addition) => JSON.stringify([item.field, item.sourceTurnId,
-        item.quote.replace(/[。！？!?；;\s]+$/u, '')])
+        normalizeQuoteEnding(item.quote)])
       const rejectedEvidence = new Set(existing.filter(item => item.rejected === 1).map(item => evidenceKey({ field: item.field, sourceTurnId: item.source_turn_id,
         quote: item.quote, relation: item.relation })))
       const seenQuotes = new Set(existing.filter(item => item.rejected === 0 && item.undone === 0)
-        .map(item => JSON.stringify([item.field, item.quote])))
+        .map(item => JSON.stringify([item.field, normalizeQuoteEnding(item.quote)])))
       if (!access.editable) return { data: { draftVersion: current.version }, effects: [] }
       const writable = !this.isSigning(context, job.case_id)
       const document = { ...current.content }
       let changed = false
       for (const addition of fragments) {
         const id = createHash('sha256').update(JSON.stringify(addition)).digest('hex')
-        const key = JSON.stringify([addition.field, addition.quote])
+        const key = JSON.stringify([addition.field, normalizeQuoteEnding(addition.quote)])
         if (seenIds.has(id) || rejectedEvidence.has(evidenceKey(addition)) || (addition.relation === 'addition' && seenQuotes.has(key))) continue
         seenIds.add(id)
         seenQuotes.add(key)

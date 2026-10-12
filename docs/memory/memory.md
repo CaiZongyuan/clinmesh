@@ -51,9 +51,11 @@
 
 - 首次自动草稿从无到有时，不能将其未涉及字段的空值当作清空指令；页面预填值与人工输入都须覆盖回归。验证保留后还要保存、刷新，并主动清空再保存，避免修复变成永久恢复默认值。当前病史边界由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
 
-- 校验持久后台任务的 Grant 时，覆盖同一业务结果的所有公开触发路径，尤其失败后的显式重试；不能只检查主入口操作权限。失效回归保留原 Grant 撤销后同一 Client 仍有其他有效 Grant 的场景，防止借用另一授权继续旧任务。
+- 校验持久后台任务的 Grant 时，覆盖同一业务结果的所有公开触发路径，尤其失败后的显式重试、暂停恢复和取消签署；不能只检查主入口操作权限。失效回归保留原 Grant 撤销后同一 Client 仍有其他有效 Grant 的场景，防止借用另一授权继续旧任务。
 
 - 模型摘录的逐字匹配不能单独证明事实完整。引用边界回归同时覆盖限定语与疑问号在引用外、句间空白、逗号和小数点位于引用首尾，避免通过截断制造肯定事实、改变测量值或拒绝完整陈述；当前写入规则由[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
+
+- 同一引用可能先出现在长句内部，再以完整句重复；引用校验回归同时覆盖后续合法匹配和全部匹配不合法。普通新增去重还须覆盖同一来源、同批和新回答的句尾表示差异，保持持久标识、不同更正目标及新来源拒绝证据的独立性；当前边界见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)与[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
 
 - 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)。
 - 预填与后台文本合并的回归须覆盖首次自动更新同一个未保存字段，以及其他字段已有自动草稿时该字段才首次更新；同时断言编辑框、保存后的服务端正文和刷新结果，防止界面丢弃新增后又通过保存删掉服务端已应用的内容。当前合并基线见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。

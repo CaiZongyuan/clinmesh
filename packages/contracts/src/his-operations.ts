@@ -1670,7 +1670,7 @@ const operationDefinitions = [
     mode: 'command', output: cancelClinicalDocumentSignResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Cancel an unconsumed signing preparation, including expired previews; recover unfinished recording without clearing an explicit pause or failed answers; re-read the case before retrying or signing',
+    summary: 'Cancel an unconsumed signing preparation, including expired previews; a valid cancel-only Agent Grant authorizes recovery of unfinished recording without clearing an explicit pause or failed answers; re-read the case before retrying or signing',
     version: 1,
   },
   {
