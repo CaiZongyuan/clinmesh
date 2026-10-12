@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
@@ -29,8 +29,9 @@ describe('medication catalog picker', () => {
       search={{ data: { items: [product, { ...product, id: 'product-2', packageDescription: '20片/盒' }, { ...product, id: 'product-3', packageDescription: '30片/盒' }],
         page: 1, pageSize: 20, total: 3, releaseId: 'synthetic' }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }} />)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('combobox', { name: '包装 合成测试片 合成药厂' }))
-    await user.click(screen.getByRole('option', { name: '30片/盒' }))
+    act(() => screen.getByRole('combobox', { name: '包装 合成测试片 合成药厂' }).focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '30片/盒' }))
     expect(onSelect).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: /选择 合成测试片 10 mg 30片\/盒/ }))
     expect(onSelect).toHaveBeenCalledExactlyOnceWith({ kind: 'reference', product: expect.objectContaining({ id: 'product-3' }) })
@@ -43,10 +44,12 @@ describe('medication catalog picker', () => {
         { ...product, id: 'product-3', packageDescription: '30片/盒' }, { ...product, id: 'product-4', status: 'inactive', packageDescription: '40片/盒' }],
         page: 1, pageSize: 20, total: 4, releaseId: 'synthetic' }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }} />)
     expect(onSelect).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('combobox', { name: '包装 合成测试片 合成药厂' }))
+    act(() => screen.getByRole('combobox', { name: '包装 合成测试片 合成药厂' }).focus())
+    await user.keyboard('{Enter}')
+    const selectedPackage = await screen.findByRole('option', { name: '20片/盒' })
     expect(screen.getByRole('option', { name: /30片\/盒/ }).getAttribute('aria-disabled')).toBe('true')
     expect(screen.getByRole('option', { name: /40片\/盒/ }).getAttribute('aria-disabled')).toBe('true')
-    await user.click(screen.getByRole('option', { name: '20片/盒' }))
+    await user.click(selectedPackage)
     await user.click(screen.getByRole('button', { name: /选择 合成测试片 10 mg 20片\/盒/ }))
     expect(onSelect).toHaveBeenCalledExactlyOnceWith({ kind: 'reference', product: expect.objectContaining({ id: 'product-2' }) })
   })
@@ -68,8 +71,9 @@ describe('medication catalog picker', () => {
     expect(confirm.hasAttribute('disabled')).toBe(true)
     expect(onSelect).not.toHaveBeenCalled()
     await user.click(select())
-    await user.click(within(dialog).getByRole('combobox', { name: '包装 合成测试片 合成药厂' }))
-    await user.click(screen.getByRole('option', { name: '20片/盒' }))
+    act(() => within(dialog).getByRole('combobox', { name: '包装 合成测试片 合成药厂' }).focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '20片/盒' }))
     expect(confirm.hasAttribute('disabled')).toBe(false)
     await user.click(select())
     expect(confirm.hasAttribute('disabled')).toBe(true)
@@ -92,10 +96,12 @@ describe('medication catalog picker', () => {
     expect(within(dialog).getAllByRole('row')).toHaveLength(3)
     const picker = within(dialog).getByRole('combobox', { name: '包装 合成测试片 合成药厂' })
     expect(picker.textContent).toContain('20片/盒')
-    await user.click(picker)
+    act(() => picker.focus())
+    await user.keyboard('{Enter}')
+    const selectedPackage = await screen.findByRole('option', { name: '40片/盒' })
     expect(screen.getByRole('option', { name: /10片\/盒/ }).getAttribute('aria-disabled')).toBe('true')
     expect(screen.getByRole('option', { name: /30片\/盒/ }).getAttribute('aria-disabled')).toBe('true')
-    await user.click(screen.getByRole('option', { name: '40片/盒' }))
+    await user.click(selectedPackage)
     await user.click(within(dialog).getByRole('button', { name: /选择 合成测试片 10 mg 40片\/盒 合成药厂/ }))
     await user.click(within(dialog).getByRole('button', { name: '加入处方' }))
     expect(onSelect).toHaveBeenCalledWith({ kind: 'reference', product: expect.objectContaining({ id: 'product-4' }) })
