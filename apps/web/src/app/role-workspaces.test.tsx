@@ -5428,25 +5428,21 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('heading', { name: '用药结论' })).toBeNull()
     expect(screen.queryByLabelText('诊断编码')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '诊断' }))
-    await user.click(screen.getByRole('button', { name: '添加诊断' }))
-    let diagnosisDialog = await screen.findByRole('dialog', { name: '选择诊断' })
-    await user.type(within(diagnosisDialog).getByLabelText('搜索疾病目录'), '流感')
-    await user.click(within(diagnosisDialog).getByRole('button', { name: '执行疾病目录搜索' }))
+    const diagnosisDirectory = screen.getByRole('region', { name: '诊断目录' })
+    await user.type(within(diagnosisDirectory).getByLabelText('搜索疾病目录'), '流感')
+    await user.click(within(diagnosisDirectory).getByRole('button', { name: '执行疾病目录搜索' }))
     await waitFor(() => expect(diagnosisQueries).toContain('流感'))
-    await user.click(await within(diagnosisDialog).findByRole('button', {
+    await user.click(await within(diagnosisDirectory).findByRole('button', {
       name: '选择 流感伴其他呼吸道表现 J10.1',
     }))
-    await user.click(within(diagnosisDialog).getByRole('button', { name: '加入诊断' }))
     await user.type(screen.getByLabelText('诊断备注'), '结合甲型流感抗原结果。')
-    await user.click(screen.getByRole('button', { name: '添加诊断' }))
-    diagnosisDialog = await screen.findByRole('dialog', { name: '选择诊断' })
-    await user.type(within(diagnosisDialog).getByLabelText('搜索疾病目录'), '高血')
-    await user.click(within(diagnosisDialog).getByRole('button', { name: '执行疾病目录搜索' }))
+    await user.clear(within(diagnosisDirectory).getByLabelText('搜索疾病目录'))
+    await user.type(within(diagnosisDirectory).getByLabelText('搜索疾病目录'), '高血')
+    await user.click(within(diagnosisDirectory).getByRole('button', { name: '执行疾病目录搜索' }))
     await waitFor(() => expect(diagnosisQueries).toContain('高血'))
-    await user.click(await within(diagnosisDialog).findByRole('button', {
+    await user.click(await within(diagnosisDirectory).findByRole('button', {
       name: '选择 原发性高血压 I10',
     }))
-    await user.click(within(diagnosisDialog).getByRole('button', { name: '加入诊断' }))
     expect(screen.queryByRole('button', { name: '保存诊断草稿' })).toBeNull()
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(2), { timeout: 3_000 })
     expect(await screen.findByText('草稿已自动保存')).toBeTruthy()
@@ -5455,9 +5451,9 @@ describe('role workspaces', () => {
     const confirmDiagnosisDialog = await screen.findByRole('alertdialog', { name: '确认诊断版本' })
     await user.click(within(confirmDiagnosisDialog).getByRole('button', { name: '确认诊断版本' }))
     expect(await screen.findByText(/诊断已确认/)).toBeTruthy()
-    expect(screen.getByText('J10.1')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('J10.1')).toBeTruthy()
     expect(screen.getAllByText('流感伴其他呼吸道表现').length).toBeGreaterThan(0)
-    expect(screen.getByText('I10')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('I10')).toBeTruthy()
     expect(screen.getAllByText('原发性高血压').length).toBeGreaterThan(0)
     expect(screen.getByRole('button', { name: '添加诊断' })).toBeTruthy()
     const priorDiagnosisRevision = await waitFor(() => {
@@ -5466,6 +5462,7 @@ describe('role workspaces', () => {
       expect(latestIssuedClaim?.selection?.version).toBe(encounterVersion)
       return agentPageBindingRevision(latestIssuedClaim!)
     })
+    await user.click(within(screen.getByRole('region', { name: '诊断列表' })).getByRole('button', { name: /原发性高血压/ }))
     await user.click(screen.getByRole('button', { name: '移除诊断 2' }))
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(1), { timeout: 3_000 })
     expect((screen.getByRole('button', { name: '确认诊断' }) as HTMLButtonElement).disabled).toBe(false)
@@ -5496,8 +5493,8 @@ describe('role workspaces', () => {
         entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary' }],
       }), new AbortController().signal)
     })
-    expect(await screen.findByText('发热，未特指')).toBeTruthy()
-    expect(screen.getByText('R50.9')).toBeTruthy()
+    expect(await within(screen.getByRole('region', { name: '诊断列表' })).findByText('发热，未特指')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('R50.9')).toBeTruthy()
     expect(screen.queryByText('流感伴其他呼吸道表现')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '检验检查' }))
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
@@ -6196,21 +6193,20 @@ describe('role workspaces', () => {
 
     await user.click(await screen.findByRole('tab', { name: '处方' }))
     expect(screen.queryByLabelText('剂量')).toBeNull()
-    await user.click(await screen.findByRole('button', { name: '添加药品' }))
-    const medicationDialog = await screen.findByRole('dialog', { name: '选择药品' })
-    await user.type(within(medicationDialog).getByLabelText('搜索药品目录'), '奥司')
-    await user.click(within(medicationDialog).getByRole('button', { name: '执行药品目录搜索' }))
+    const medicationDirectory = await screen.findByRole('region', { name: '药品目录' })
+    await user.type(within(medicationDirectory).getByLabelText('搜索药品目录'), '奥司')
+    await user.click(within(medicationDirectory).getByRole('button', { name: '执行药品目录搜索' }))
     await waitFor(() => expect(medicationQueries).toContain('奥司'))
-    expect(within(medicationDialog).queryByText('2 个包装')).toBeNull()
-    expect(within(medicationDialog).getAllByRole('row')).toHaveLength(3)
-    expect(within(medicationDialog).getAllByText('合成制药有限公司')).toHaveLength(1)
-    expect(within(medicationDialog).getByText('另一合成制药有限公司')).toBeTruthy()
-    await user.click(within(medicationDialog).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }))
+    expect(within(medicationDirectory).queryByText('2 个包装')).toBeNull()
+    expect(within(medicationDirectory).getAllByRole('combobox', { name: /^包装 / })).toHaveLength(2)
+    expect(within(medicationDirectory).getAllByText(/^合成制药有限公司 · /)).toHaveLength(1)
+    expect(within(medicationDirectory).getByText(/^另一合成制药有限公司 · /)).toBeTruthy()
+    await waitFor(() => expect((within(medicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }) as HTMLButtonElement).disabled).toBe(false))
+    await user.click(within(medicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }))
     await user.click(screen.getByRole('option', { name: '12粒/盒' }))
-    await user.click(within(medicationDialog).getByRole('button', {
+    await user.click(within(medicationDirectory).getByRole('button', {
       name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))
-    await user.click(within(medicationDialog).getByRole('button', { name: '加入处方' }))
     const dose = await screen.findByLabelText('剂量')
     const frequency = screen.getByLabelText('频次')
     const course = screen.getByLabelText('疗程')
@@ -6234,14 +6230,12 @@ describe('role workspaces', () => {
       name: '确认删除处方草稿',
     })).toBeNull())
     expect(draftDeletionRequests).toBe(1)
-    await user.click(screen.getByRole('button', { name: '添加药品' }))
-    const reopenedMedicationDialog = await screen.findByRole('dialog', { name: '选择药品' })
-    await user.click(within(reopenedMedicationDialog).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }))
-    await user.click(screen.getByRole('option', { name: '12粒/盒' }))
-    await user.click(await within(reopenedMedicationDialog).findByRole('button', {
+    const reopenedMedicationDirectory = await screen.findByRole('region', { name: '药品目录' })
+    await waitFor(() => expect((within(reopenedMedicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }) as HTMLButtonElement).disabled).toBe(false))
+    expect(within(reopenedMedicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).textContent).toContain('12粒/盒')
+    await user.click(await within(reopenedMedicationDirectory).findByRole('button', {
       name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))
-    await user.click(within(reopenedMedicationDialog).getByRole('button', { name: '加入处方' }))
     await user.type(await screen.findByLabelText('剂量'), '75 mg')
     await user.type(screen.getByLabelText('频次'), 'BID')
     await user.clear(screen.getByLabelText('疗程'))
@@ -6249,6 +6243,7 @@ describe('role workspaces', () => {
     await user.clear(screen.getByLabelText('数量'))
     await user.type(screen.getByLabelText('数量'), '10')
     await waitFor(() => expect(medicationConclusion?.draftVersion).toBe(3), { timeout: 3_000 })
+    await waitFor(() => expect((screen.getByRole('button', { name: '正式开具处方' }) as HTMLButtonElement).disabled).toBe(false))
     await user.click(screen.getByRole('button', { name: '正式开具处方' }))
     const issueDialog = await screen.findByRole('alertdialog', { name: '确认正式开具处方' })
     await user.click(within(issueDialog).getByRole('button', { name: '确认开具' }))
@@ -6265,6 +6260,8 @@ describe('role workspaces', () => {
 
     await user.click(screen.getByRole('button', { name: '无需用药' }))
     await user.click(screen.getByRole('button', { name: '确认无需用药' }))
+    const noMedicationDialog = await screen.findByRole('alertdialog', { name: '确认无需用药' })
+    await user.click(within(noMedicationDialog).getByRole('button', { name: '确认无需用药' }))
     expect(await screen.findByText('已确认无需用药')).toBeTruthy()
   }, 10_000)
 
@@ -8044,16 +8041,15 @@ describe('role workspaces', () => {
       input: { expectedDraftVersion: 1 },
     })
 
-    await user.click(screen.getByRole('button', { name: '添加药品' }))
-    const replacementMedicationDialog = await screen.findByRole('dialog', { name: '选择药品' })
-    await user.click(await within(replacementMedicationDialog).findByRole('button', {
+    const replacementMedicationDirectory = await screen.findByRole('region', { name: '药品目录' })
+    await user.click(await within(replacementMedicationDirectory).findByRole('button', {
       name: '选择 磷酸奥司他韦胶囊',
     }))
-    await user.click(within(replacementMedicationDialog).getByRole('button', { name: '加入处方' }))
     await waitFor(() => expect(prescriptionDraftRequest).toEqual({
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
       input: { expectedDraftVersion: 2, items: [prescriptionDraftItem] },
     }), { timeout: 3_000 })
+    await waitFor(() => expect((screen.getByRole('button', { name: '正式开具处方' }) as HTMLButtonElement).disabled).toBe(false))
     await user.click(screen.getByRole('button', { name: '正式开具处方' }))
     const issueDialog = await screen.findByRole('alertdialog', { name: '确认正式开具处方' })
     await user.click(within(issueDialog).getByRole('button', { name: '确认开具' }))

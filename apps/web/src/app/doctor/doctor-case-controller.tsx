@@ -571,11 +571,13 @@ function DoctorCaseController({
       isError: referenceDiagnoses.isError,
       isFetching: referenceDiagnoses.isFetching,
       isPending: referenceDiagnoses.isPending,
-      onSearch: (query, searchPage) => setDiagnosisReferenceSearch({
-        enabled: true,
-        page: searchPage,
-        query,
-      }),
+      onSearch: (query, searchPage) => {
+        if (diagnosisReferenceSearch.enabled && diagnosisReferenceSearch.query === query && diagnosisReferenceSearch.page === searchPage) {
+          void referenceDiagnoses.refetch()
+        } else {
+          setDiagnosisReferenceSearch({ enabled: true, page: searchPage, query })
+        }
+      },
     },
     laboratory: {
       data: referenceLaboratory.data,
@@ -597,11 +599,13 @@ function DoctorCaseController({
       isError: referenceMedications.isError,
       isFetching: referenceMedications.isFetching,
       isPending: referenceMedications.isPending,
-      onSearch: (query, searchPage) => setMedicationReferenceSearch({
-        enabled: true,
-        page: searchPage,
-        query,
-      }),
+      onSearch: (query, searchPage) => {
+        if (medicationReferenceSearch.enabled && medicationReferenceSearch.query === query && medicationReferenceSearch.page === searchPage) {
+          void referenceMedications.refetch()
+        } else {
+          setMedicationReferenceSearch({ enabled: true, page: searchPage, query })
+        }
+      },
     },
   }
   const persistedClinicalDocumentVersion = detail.data?.clinicalDocument?.draft?.version

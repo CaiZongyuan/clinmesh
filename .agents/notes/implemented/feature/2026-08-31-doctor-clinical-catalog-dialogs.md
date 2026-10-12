@@ -12,6 +12,8 @@ Status: implemented
 
 草稿保存和诊断确认后的编辑规则已由[医生草稿自动保存与诊断确认修订](../architecture/2026-08-31-doctor-draft-autosave-and-diagnosis-revision.md)取代；本 Note 继续拥有目录 Dialog、搜索、分页和明确选择的决策。
 
+诊断与药品必须先打开 Dialog、整组表格编辑的布局决定已由[诊断与处方两阶段视图](../architecture/2026-10-10-diagnosis-prescription-workspace.md)取代；本 Note 的明确选择、搜索、分页和不同领域模型边界继续有效。
+
 ## Decision
 
 诊断、药品和检验分别使用 app-private 目录 Dialog。Dialog 打开后才启用 TanStack Query；诊断和药品默认读取当前 Reference Release 的第一页，检验读取当前 Workspace/Epoch 已发布 Hospital Laboratory Service。三类目录搜索遵循[底账门禁与药品选择反馈](2026-09-14-laboratory-evidence-and-medication-picker.md)的防抖、分词与排序决策；结果保持 20 行有界分页，翻页或重新搜索清空当前选择，不自动选择第一行。诊断和药品的两字符关键词使用只读 SQLite substring 查询，三字符以上使用 trigram FTS；检验按本院名称、本院编码和根 LOINC 查询。

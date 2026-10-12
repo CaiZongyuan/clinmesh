@@ -66,7 +66,7 @@ const copy = {
   'en-US': {
     addDiagnosis: 'Add diagnosis',
     addMedication: 'Add medication',
-    catalogUnavailable: 'The global catalog is unavailable. Local common items are shown.',
+    catalogUnavailable: 'The global catalog is unavailable. Use local common items or retry.',
     choose: 'Select',
     chooseDiagnosis: 'Select diagnosis',
     chooseLaboratory: 'Select laboratory item',
@@ -99,7 +99,7 @@ const copy = {
   'zh-CN': {
     addDiagnosis: '添加诊断',
     addMedication: '添加药品',
-    catalogUnavailable: '全局目录暂不可用，当前显示本院常用项。',
+    catalogUnavailable: '全局目录暂不可用，可使用本院常用项或重试。',
     choose: '选择',
     chooseDiagnosis: '选择诊断',
     chooseLaboratory: '选择检验项目',
@@ -330,29 +330,24 @@ function diagnosisReferenceSnapshot(concept: ReferenceConcept) {
   }
 }
 
-export function DiagnosisCatalogDialog({
-  disabled,
-  excludedIds,
-  localCatalog,
-  locale,
-  mode = 'add',
-  onSelect,
-  search,
+export function DiagnosisCatalogPicker({
+  active = true, disabled = false, excludedIds, localCatalog, locale, onConfirm, onSearchReset, onSelect, search, selectedId,
 }: {
+  active?: boolean
   disabled?: boolean
   excludedIds: ReadonlySet<string>
   localCatalog: ClinicalCatalog['diagnoses']
   locale: WorkspaceLocale
-  mode?: TriggerMode
-  onSelect: (selection: DiagnosisCatalogSelection) => void
+  onConfirm?: (selection: DiagnosisCatalogSelection) => void
+  onSearchReset?: () => void
+  onSelect: (selection: DiagnosisCatalogSelection | undefined) => void
   search: ReferenceCatalogSearches['diagnoses']
+  selectedId?: string | undefined
 }) {
   const messages = copy[locale]
-  const [open, setOpen] = useState(false)
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
-  const [selected, setSelected] = useState<DiagnosisCatalogSelection>()
   const results = search
   const remoteResults = results.data?.items ?? []
   const useLocal = results.isError
@@ -364,36 +359,21 @@ export function DiagnosisCatalogDialog({
       || item.code.toLocaleLowerCase().includes(term))) return []
     return [{ catalogItemId: item.id, code: item.code, display }]
   })
-  const openDialog = () => {
-    setInput('')
-    setQuery('')
-    setPage(1)
-    setSelected(undefined)
-    search.onSearch('', 1)
-    setOpen(true)
+  const searchLatestRef = useRef(search.onSearch)
+  const searchParamsRef = useRef({ query, page })
+  useEffect(() => {
+    searchLatestRef.current = search.onSearch
+    searchParamsRef.current = { query, page }
+  })
+  useEffect(() => {
+    if (active) searchLatestRef.current(searchParamsRef.current.query, searchParamsRef.current.page)
+  }, [active])
+  const confirm = (selection: DiagnosisCatalogSelection) => {
+    if (!disabled && !results.isFetching && !excludedIds.has(selection.catalogItemId)) onConfirm?.(selection)
   }
-  const confirm = (selection = selected) => {
-    if (selection === undefined || excludedIds.has(selection.catalogItemId)) return
-    onSelect(selection)
-    setOpen(false)
-  }
-  const triggerLabel = mode === 'replace' ? messages.replaceDiagnosis : messages.addDiagnosis
-  return (
-    <Dialog onOpenChange={setOpen} open={open}>
-      <CatalogTriggerButton
-        catalog="diagnosis"
-        {...(disabled === undefined ? {} : { disabled })}
-        label={triggerLabel}
-        mode={mode}
-        onClick={openDialog}
-      />
-      <DialogContent data-agent-catalog="diagnosis" className="h-[min(680px,calc(100svh-2rem))] sm:max-w-4xl">
-        <DialogHeader>
-          <DialogTitle>{messages.chooseDiagnosis}</DialogTitle>
-          <DialogDescription>{messages.diagnosisDescription}</DialogDescription>
-        </DialogHeader>
+  return <section aria-label={locale === 'zh-CN' ? '诊断目录' : 'Diagnosis catalog'} data-agent-catalog="diagnosis" className="flex min-h-0 min-w-0 flex-col">
         <CatalogSearchForm
-          active={open}
+          active={active}
           query={query}
           input={input}
           inputLabel={messages.diagnosisSearchInput}
@@ -401,7 +381,7 @@ export function DiagnosisCatalogDialog({
           onInputChange={setInput}
           onSearch={() => {
             setPage(1)
-            setSelected(undefined)
+            onSearchReset?.()
             const nextQuery = input.trim()
             setQuery(nextQuery)
             search.onSearch(nextQuery, 1)
@@ -409,15 +389,33 @@ export function DiagnosisCatalogDialog({
           pending={results.isFetching}
           placeholder={messages.diagnosisPlaceholder}
         />
-        {results.isPending ? <Skeleton className="mx-4 min-h-0 flex-1" /> : (
+        {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载疾病目录' : 'Loading diagnosis catalog'} role="status" className="mx-4 min-h-0 flex-1"><Skeleton className="h-full min-h-24" /></div> : (
           <div className="mx-4 min-h-0 flex-1 overflow-auto border">
-            {results.isError && localResults.length > 0 ? (
-              <Alert className="m-2"><CircleAlertIcon /><AlertTitle>{messages.catalogUnavailable}</AlertTitle></Alert>
+            {results.isError ? (
+              <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
+                <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
+              </Alert>
             ) : null}
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              <Table>
+              onConfirm === undefined ? <ul className="flex flex-col gap-2 p-2">
+                {(useLocal ? localResults : remoteResults).map(item => {
+                  const selection: DiagnosisCatalogSelection = 'domain' in item
+                    ? { catalogItemId: item.id, code: item.code, display: item.display, referenceConcept: diagnosisReferenceSnapshot(item) }
+                    : item
+                  const inactive = 'status' in item && item.status !== 'active'
+                  const excluded = excludedIds.has(selection.catalogItemId)
+                  return <li className="flex min-w-0 flex-col gap-2 rounded-lg border p-3" key={selection.catalogItemId}>
+                    <div className="flex flex-wrap items-start justify-between gap-2"><strong className="break-words text-sm">{selection.display}</strong><Badge variant="outline">{selection.code}</Badge></div>
+                    <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-muted-foreground">{useLocal ? messages.localCatalog : ('system' in item ? item.system : '')}</span>
+                      <Button aria-label={`${messages.choose} ${selection.display} ${selection.code}`} disabled={disabled || results.isFetching || inactive || excluded} onClick={() => onSelect(selection)} size="sm" type="button" variant="outline">
+                        {excluded ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : inactive ? (locale === 'zh-CN' ? '停用' : 'Inactive') : messages.chooseDiagnosis}
+                      </Button>
+                    </div>
+                  </li>
+                })}
+              </ul> : <Table>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>
                     <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
@@ -438,11 +436,11 @@ export function DiagnosisCatalogDialog({
                       : item
                     const inactive = 'status' in item && item.status !== 'active'
                     const excluded = excludedIds.has(selection.catalogItemId)
-                    const unavailable = inactive || excluded
+                    const unavailable = disabled || results.isFetching || inactive || excluded
                     const label = `${messages.choose} ${selection.display} ${selection.code}`
                     return (
                       <TableRow
-                        className={cn(unavailable && 'opacity-50', selected?.catalogItemId === selection.catalogItemId && 'bg-muted/70')}
+                        className={cn(unavailable && 'opacity-50', selectedId === selection.catalogItemId && 'bg-muted/70')}
                         key={selection.catalogItemId}
                         onDoubleClick={() => { if (!unavailable) confirm(selection) }}
                       >
@@ -450,8 +448,8 @@ export function DiagnosisCatalogDialog({
                           <SelectionButton
                             disabled={unavailable}
                             label={label}
-                            onSelectedChange={next => setSelected(next ? selection : undefined)}
-                            selected={selected?.catalogItemId === selection.catalogItemId}
+                            onSelectedChange={next => onSelect(next ? selection : undefined)}
+                            selected={selectedId === selection.catalogItemId}
                           />
                         </TableCell>
                         <TableCell className="font-medium">{selection.display}</TableCell>
@@ -480,7 +478,7 @@ export function DiagnosisCatalogDialog({
             locale={locale}
             onPageChange={(nextPage) => {
               setPage(nextPage)
-              setSelected(undefined)
+              onSearchReset?.()
               search.onSearch(query, nextPage)
             }}
             page={page}
@@ -488,15 +486,39 @@ export function DiagnosisCatalogDialog({
             total={results.data.total}
           />
         ) : null}
-        <DialogFooter>
-          <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button disabled={selected === undefined} onClick={() => confirm()} type="button">
-            {messages.confirmDiagnosis}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+  </section>
+}
+
+export function DiagnosisCatalogDialog({ disabled, excludedIds, localCatalog, locale, mode = 'add', onOpenChange, onSelect, search }: {
+  disabled?: boolean
+  excludedIds: ReadonlySet<string>
+  localCatalog: ClinicalCatalog['diagnoses']
+  locale: WorkspaceLocale
+  mode?: TriggerMode
+  onOpenChange?: (open: boolean) => void
+  onSelect: (selection: DiagnosisCatalogSelection) => void
+  search: ReferenceCatalogSearches['diagnoses']
+}) {
+  const messages = copy[locale]
+  const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState<DiagnosisCatalogSelection>()
+  const changeOpen = (next: boolean) => {
+    setOpen(next)
+    onOpenChange?.(next)
+  }
+  const confirm = (selection = selected) => {
+    if (selection === undefined || search.isFetching || excludedIds.has(selection.catalogItemId)) return
+    onSelect(selection)
+    changeOpen(false)
+  }
+  return <Dialog onOpenChange={changeOpen} open={open}>
+    <CatalogTriggerButton catalog="diagnosis" {...(disabled === undefined ? {} : { disabled })} label={mode === 'replace' ? messages.replaceDiagnosis : messages.addDiagnosis} mode={mode} onClick={() => { setSelected(undefined); changeOpen(true) }} />
+    <DialogContent data-agent-catalog="diagnosis" className="h-[min(680px,calc(100svh-2rem))] sm:max-w-4xl">
+      <DialogHeader><DialogTitle>{messages.chooseDiagnosis}</DialogTitle><DialogDescription>{messages.diagnosisDescription}</DialogDescription></DialogHeader>
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">{open ? <DiagnosisCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected} search={search} selectedId={selected?.catalogItemId} /> : null}</div>
+      <DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose><Button disabled={selected === undefined || search.isFetching} onClick={() => confirm()} type="button">{messages.confirmDiagnosis}</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>
 }
 
 export interface LaboratoryCatalogSelection {
@@ -690,38 +712,25 @@ function groupMedicationProducts(products: ReferenceMedicationProduct[]): Medica
   return [...groups.values()]
 }
 
-function MedicationProductRow({ group, excludedIds, locale, selectionId, onSelect, onConfirm }: {
+function MedicationProductRow({ group, disabled = false, excludedIds, locale, selectionId, onSelect, onConfirm }: {
+  disabled?: boolean
   group: MedicationProductGroup
   excludedIds: ReadonlySet<string>
   locale: WorkspaceLocale
-  selectionId: string | undefined
+  selectionId?: string | undefined
   onSelect: (selection: MedicationCatalogSelection | undefined) => void
-  onConfirm: (selection: MedicationCatalogSelection) => void
+  onConfirm?: (selection: MedicationCatalogSelection) => void
 }) {
   const [packageId, setPackageId] = useState<string>()
   const available = (item: ReferenceMedicationProduct) => item.status === 'active' && !excludedIds.has(item.id)
   const item = group.variants.find(variant => variant.id === packageId && available(variant))
     ?? group.variants.find(available)
     ?? group.product
-  const unavailable = !available(item)
+  const unavailable = disabled || !available(item)
   const selection: MedicationCatalogSelection = { kind: 'reference', product: item }
   const selected = group.variants.some(variant => variant.id === selectionId)
   const messages = copy[locale]
-  return (
-    <TableRow className={cn(unavailable && 'opacity-50', selected && 'bg-muted/70')}
-      onDoubleClick={() => { if (!unavailable) onConfirm(selection) }}>
-      <TableCell>
-        <SelectionButton disabled={unavailable}
-          label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`}
-          onSelectedChange={next => onSelect(next ? selection : undefined)} selected={selected} />
-      </TableCell>
-      <TableCell data-agent-medication-name="" className="font-medium">
-        <span className="line-clamp-2 whitespace-normal break-words" title={`${item.genericName} · ${item.dosageForm} · ${item.approvalNumber}`}>{item.genericName}</span>
-      </TableCell>
-      <TableCell><span className="line-clamp-2 whitespace-normal break-words" title={item.manufacturer}>{item.manufacturer}</span></TableCell>
-      <TableCell><span className="block truncate" title={item.brandName ?? undefined}>{item.brandName ?? '-'}</span></TableCell>
-      <TableCell><span className="block truncate" title={item.strength}>{item.strength}</span></TableCell>
-      <TableCell onDoubleClick={event => event.stopPropagation()}>
+  const packageSelector = (
         <Select disabled={unavailable} value={item.id} onValueChange={value => {
           const next = group.variants.find(variant => variant.id === value && available(variant))
           if (next === undefined) return
@@ -743,34 +752,54 @@ function MedicationProductRow({ group, excludedIds, locale, selectionId, onSelec
             </SelectGroup>
           </SelectContent>
         </Select>
+  )
+  if (onConfirm === undefined) return <li className="flex min-w-0 flex-col gap-2 rounded-lg border p-3">
+    <div className="flex flex-wrap items-start justify-between gap-2"><strong data-agent-medication-name="" className="break-words text-sm">{item.genericName}</strong><Badge variant="outline">{item.strength}</Badge></div>
+    <p className="break-words text-xs text-muted-foreground">{[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}</p>
+    {packageSelector}
+    <Button aria-label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`} disabled={unavailable} onClick={() => onSelect(selection)} size="sm" type="button" variant="outline">
+      {excludedIds.has(item.id) ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : item.status !== 'active' ? (locale === 'zh-CN' ? '停用' : 'Inactive') : (locale === 'zh-CN' ? '选择包装' : 'Select package')}
+    </Button>
+  </li>
+  return (
+    <TableRow className={cn(unavailable && 'opacity-50', selected && 'bg-muted/70')}
+      onDoubleClick={() => { if (!unavailable) onConfirm(selection) }}>
+      <TableCell>
+        <SelectionButton disabled={unavailable}
+          label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`}
+          onSelectedChange={next => onSelect(next ? selection : undefined)} selected={selected} />
+      </TableCell>
+      <TableCell data-agent-medication-name="" className="font-medium">
+        <span className="line-clamp-2 whitespace-normal break-words" title={`${item.genericName} · ${item.dosageForm} · ${item.approvalNumber}`}>{item.genericName}</span>
+      </TableCell>
+      <TableCell><span className="line-clamp-2 whitespace-normal break-words" title={item.manufacturer}>{item.manufacturer}</span></TableCell>
+      <TableCell><span className="block truncate" title={item.brandName ?? undefined}>{item.brandName ?? '-'}</span></TableCell>
+      <TableCell><span className="block truncate" title={item.strength}>{item.strength}</span></TableCell>
+      <TableCell onDoubleClick={event => event.stopPropagation()}>
+        {packageSelector}
       </TableCell>
     </TableRow>
   )
 }
 
-export function MedicationCatalogDialog({
-  disabled,
-  excludedIds,
-  localCatalog,
-  locale,
-  mode = 'add',
-  onSelect,
-  search,
+export function MedicationCatalogPicker({
+  active = true, disabled = false, excludedIds, localCatalog, locale, onConfirm, onSearchReset, onSelect, search, selectedId: selectionId,
 }: {
+  active?: boolean
   disabled?: boolean
   excludedIds: ReadonlySet<string>
   localCatalog: PrescriptionMedication[]
   locale: WorkspaceLocale
-  mode?: TriggerMode
-  onSelect: (selection: MedicationCatalogSelection) => void
+  onConfirm?: (selection: MedicationCatalogSelection) => void
+  onSearchReset?: () => void
+  onSelect: (selection: MedicationCatalogSelection | undefined) => void
   search: ReferenceCatalogSearches['medications']
+  selectedId?: string | undefined
 }) {
   const messages = copy[locale]
-  const [open, setOpen] = useState(false)
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
-  const [selected, setSelected] = useState<MedicationCatalogSelection>()
   const results = search
   const remoteResults = results.data?.items ?? []
   const useLocal = results.isError
@@ -784,43 +813,22 @@ export function MedicationCatalogDialog({
     () => results.data === undefined ? [] : groupMedicationProducts(results.data.items),
     [results.data],
   )
-  const openDialog = () => {
-    setInput('')
-    setQuery('')
-    setPage(1)
-    setSelected(undefined)
-    search.onSearch('', 1)
-    setOpen(true)
-  }
-  const selectionId = selected === undefined
-    ? undefined
-    : selected.kind === 'reference'
-      ? selected.product.id
-      : selected.medication.id
-  const confirm = (selection = selected) => {
-    if (selection === undefined) return
+  const searchLatestRef = useRef(search.onSearch)
+  const searchParamsRef = useRef({ query, page })
+  useEffect(() => {
+    searchLatestRef.current = search.onSearch
+    searchParamsRef.current = { query, page }
+  })
+  useEffect(() => {
+    if (active) searchLatestRef.current(searchParamsRef.current.query, searchParamsRef.current.page)
+  }, [active])
+  const confirm = (selection: MedicationCatalogSelection) => {
     const id = selection.kind === 'reference' ? selection.product.id : selection.medication.id
-    if (excludedIds.has(id)) return
-    onSelect(selection)
-    setOpen(false)
+    if (!disabled && !results.isFetching && !excludedIds.has(id)) onConfirm?.(selection)
   }
-  const triggerLabel = mode === 'replace' ? messages.replaceMedication : messages.addMedication
-  return (
-    <Dialog onOpenChange={setOpen} open={open}>
-      <CatalogTriggerButton
-        catalog="medication"
-        {...(disabled === undefined ? {} : { disabled })}
-        label={triggerLabel}
-        mode={mode}
-        onClick={openDialog}
-      />
-      <DialogContent data-agent-catalog="medication" className="h-[min(720px,calc(100svh-2rem))] sm:max-w-6xl">
-        <DialogHeader>
-          <DialogTitle>{messages.chooseMedication}</DialogTitle>
-          <DialogDescription>{messages.medicationDescription}</DialogDescription>
-        </DialogHeader>
+  return <section aria-label={locale === 'zh-CN' ? '药品目录' : 'Medication catalog'} data-agent-catalog="medication" className="flex min-h-0 min-w-0 flex-col">
         <CatalogSearchForm
-          active={open}
+          active={active}
           query={query}
           input={input}
           inputLabel={messages.medicationSearchInput}
@@ -828,7 +836,7 @@ export function MedicationCatalogDialog({
           onInputChange={setInput}
           onSearch={() => {
             setPage(1)
-            setSelected(undefined)
+            onSearchReset?.()
             const nextQuery = input.trim()
             setQuery(nextQuery)
             search.onSearch(nextQuery, 1)
@@ -836,15 +844,22 @@ export function MedicationCatalogDialog({
           pending={results.isFetching}
           placeholder={messages.medicationPlaceholder}
         />
-        {results.isPending ? <Skeleton className="mx-4 min-h-0 flex-1" /> : (
-          <div className="mx-4 min-h-0 flex-1 overflow-x-scroll overflow-y-auto border">
-            {results.isError && localResults.length > 0 ? (
-              <Alert className="m-2"><CircleAlertIcon /><AlertTitle>{messages.catalogUnavailable}</AlertTitle></Alert>
+        {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="mx-4 min-h-0 flex-1"><Skeleton className="h-full min-h-24" /></div> : (
+          <div className="mx-4 min-h-0 flex-1 overflow-auto border">
+            {results.isError ? (
+              <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
+                <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
+              </Alert>
             ) : null}
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
+              onConfirm === undefined ? <ul className="flex flex-col gap-2 p-2">
+                {useLocal ? localResults.map(item => <li className="flex min-w-0 flex-col gap-2 rounded-lg border p-3" key={item.id}>
+                  <strong data-agent-medication-name="" className="break-words text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong><span className="text-xs text-muted-foreground">{messages.localCatalog}</span>
+                  <Button aria-label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} disabled={disabled || results.isFetching || excludedIds.has(item.id)} onClick={() => onSelect({ kind: 'local', medication: item })} size="sm" type="button" variant="outline">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : messages.chooseMedication}</Button>
+                </li>) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale} onSelect={onSelect} />)}
+              </ul> : <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>
                     <TableHead className="w-12"><span className="sr-only">{messages.choose}</span></TableHead>
@@ -865,13 +880,13 @@ export function MedicationCatalogDialog({
                       <TableRow
                         className={cn(excluded && 'opacity-50', selectionId === id && 'bg-muted/70')}
                         key={id}
-                        onDoubleClick={() => { if (!excluded) confirm(selection) }}
+                        onDoubleClick={() => { if (!disabled && !results.isFetching && !excluded) confirm(selection) }}
                       >
                         <TableCell>
                           <SelectionButton
-                            disabled={excluded}
+                            disabled={disabled || results.isFetching || excluded}
                             label={`${messages.choose} ${genericName}`}
-                            onSelectedChange={next => setSelected(next ? selection : undefined)}
+                            onSelectedChange={next => onSelect(next ? selection : undefined)}
                             selected={selectionId === id}
                           />
                         </TableCell>
@@ -884,8 +899,8 @@ export function MedicationCatalogDialog({
                     )
                   }) : referenceGroups.map(group => (
                     <MedicationProductRow key={medicationProductGroupKey(group.product)}
-                      group={group} excludedIds={excludedIds} locale={locale}
-                      selectionId={selectionId} onSelect={setSelected} onConfirm={confirm} />
+                      group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale}
+                      selectionId={selectionId} onSelect={onSelect} onConfirm={confirm} />
                   ))}
                 </TableBody>
               </Table>
@@ -897,7 +912,7 @@ export function MedicationCatalogDialog({
             locale={locale}
             onPageChange={(nextPage) => {
               setPage(nextPage)
-              setSelected(undefined)
+              onSearchReset?.()
               search.onSearch(query, nextPage)
             }}
             page={page}
@@ -905,13 +920,40 @@ export function MedicationCatalogDialog({
             total={results.data.total}
           />
         ) : null}
-        <DialogFooter>
-          <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
-          <Button disabled={selected === undefined} onClick={() => confirm()} type="button">
-            {messages.confirmMedication}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  )
+  </section>
+}
+
+export function MedicationCatalogDialog({ disabled, excludedIds, localCatalog, locale, mode = 'add', onOpenChange, onSelect, search }: {
+  disabled?: boolean
+  excludedIds: ReadonlySet<string>
+  localCatalog: PrescriptionMedication[]
+  locale: WorkspaceLocale
+  mode?: TriggerMode
+  onOpenChange?: (open: boolean) => void
+  onSelect: (selection: MedicationCatalogSelection) => void
+  search: ReferenceCatalogSearches['medications']
+}) {
+  const messages = copy[locale]
+  const [open, setOpen] = useState(false)
+  const [selected, setSelected] = useState<MedicationCatalogSelection>()
+  const changeOpen = (next: boolean) => {
+    setOpen(next)
+    onOpenChange?.(next)
+  }
+  const selectionId = selected === undefined ? undefined : selected.kind === 'reference' ? selected.product.id : selected.medication.id
+  const confirm = (selection = selected) => {
+    if (selection === undefined || search.isFetching) return
+    const id = selection.kind === 'reference' ? selection.product.id : selection.medication.id
+    if (excludedIds.has(id)) return
+    onSelect(selection)
+    changeOpen(false)
+  }
+  return <Dialog onOpenChange={changeOpen} open={open}>
+    <CatalogTriggerButton catalog="medication" {...(disabled === undefined ? {} : { disabled })} label={mode === 'replace' ? messages.replaceMedication : messages.addMedication} mode={mode} onClick={() => { setSelected(undefined); changeOpen(true) }} />
+    <DialogContent data-agent-catalog="medication" className="h-[min(720px,calc(100svh-2rem))] sm:max-w-6xl">
+      <DialogHeader><DialogTitle>{messages.chooseMedication}</DialogTitle><DialogDescription>{messages.medicationDescription}</DialogDescription></DialogHeader>
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">{open ? <MedicationCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onConfirm={confirm} onSearchReset={() => setSelected(undefined)} onSelect={setSelected} search={search} selectedId={selectionId} /> : null}</div>
+      <DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose><Button disabled={selected === undefined || search.isFetching} onClick={() => confirm()} type="button">{messages.confirmMedication}</Button></DialogFooter>
+    </DialogContent>
+  </Dialog>
 }
