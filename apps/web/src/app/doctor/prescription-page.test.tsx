@@ -119,6 +119,52 @@ afterEach(() => {
 })
 
 describe('PrescriptionPage', () => {
+  it('keeps edits made while deletion is pending and autosaves them after the deletion refresh', async () => {
+    const user = userEvent.setup()
+    const pageActions = createActions()
+    const mounted = renderPage({ actions: pageActions, detail: { ...detail, medicationConclusion: {
+      draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10, referenceProduct }] },
+      draftVersion: 1,
+    } } })
+    await user.click(screen.getByRole('button', { name: '删除处方草稿' }))
+    await user.click(within(screen.getByRole('alertdialog', { name: '确认删除处方草稿' })).getByRole('button', { name: '确认删除' }))
+    expect(pageActions.deleteDraft.onSubmit).toHaveBeenCalledOnce()
+
+    vi.useFakeTimers()
+    const pendingActions = { ...pageActions, deleteDraft: { ...pageActions.deleteDraft, pending: true } }
+    mounted.rerender(<PrescriptionPage {...mounted.props} actions={pendingActions} />)
+    fireEvent.change(screen.getByLabelText('剂量'), { target: { value: '150 mg' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(900) })
+    expect(pageActions.saveDraft.onSubmit).not.toHaveBeenCalled()
+    const deletion = { caseId: detail.caseId, draftVersion: 2 }
+    const completedActions = { ...pageActions, deleteDraft: { ...pageActions.deleteDraft, data: deletion } }
+    mounted.rerender(<PrescriptionPage {...mounted.props} actions={completedActions} />)
+    expect(screen.getByLabelText('剂量').getAttribute('value')).toBe('150 mg')
+
+    const refreshedDetail = { ...detail, medicationConclusion: { draftVersion: 2 } }
+    mounted.rerender(<PrescriptionPage {...mounted.props} actions={completedActions} detail={refreshedDetail} />)
+    expect(screen.getByLabelText('剂量').getAttribute('value')).toBe('150 mg')
+    await act(async () => { await vi.advanceTimersByTimeAsync(900) })
+    expect(pageActions.saveDraft.onSubmit).toHaveBeenLastCalledWith([{
+      catalogItemId: referenceProduct.id, courseDays: 5, doseText: '150 mg', frequencyCode: 'BID', quantity: 10, referenceProduct,
+    }])
+  })
+
+  it('does not replay a deletion receipt after a new draft is saved and its owner version refreshes', async () => {
+    const deletion = { caseId: detail.caseId, draftVersion: 2 }
+    const pageActions = createActions()
+    pageActions.deleteDraft.data = deletion
+    const mounted = renderPage({ actions: pageActions, detail: { ...detail, medicationConclusion: { draftVersion: 1 } } })
+    await userEvent.setup().click(screen.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
+    const savedActions = { ...pageActions, saveDraft: { ...pageActions.saveDraft, success: true,
+      savedRevision: JSON.stringify([{ catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 }]),
+    } }
+    mounted.rerender(<PrescriptionPage {...mounted.props} actions={savedActions} />)
+    mounted.rerender(<PrescriptionPage {...mounted.props} actions={savedActions} detail={{ ...detail, medicationConclusion: { draftVersion: 2 } }} />)
+    expect(screen.getByRole('combobox', { name: '剂量' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '合成对乙酰氨基酚' })).toBeTruthy()
+  })
+
   it('keeps a new draft when a previous deletion receipt is recreated during a refresh', async () => {
     const deletion = { caseId: detail.caseId, draftVersion: 2 }
     const pageActions = createActions()

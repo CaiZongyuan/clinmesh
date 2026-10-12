@@ -221,11 +221,15 @@ export function PrescriptionPage({
   }, [actions.saveDraft.savedRevision, actions.saveDraft.success, currentRevision])
   const deletedCaseId = actions.deleteDraft.data?.caseId
   const deletedDraftVersion = actions.deleteDraft.data?.draftVersion
+  const handledDeletionRef = useRef<{ caseId: string; draftVersion: number } | undefined>(undefined)
   useEffect(() => {
-    if (deletedCaseId !== detail.caseId || deletedDraftVersion === undefined || (state?.draftVersion ?? 0) > deletedDraftVersion) return
+    if (deletedCaseId !== detail.caseId || deletedDraftVersion === undefined) return
+    if (handledDeletionRef.current?.caseId === deletedCaseId && handledDeletionRef.current.draftVersion === deletedDraftVersion) return
+    handledDeletionRef.current = { caseId: deletedCaseId, draftVersion: deletedDraftVersion }
+    if (dirty || (state?.draftVersion ?? 0) > deletedDraftVersion) return
     setItems([])
     setDirty(false)
-  }, [deletedCaseId, deletedDraftVersion, detail.caseId, state?.draftVersion])
+  }, [deletedCaseId, deletedDraftVersion, detail.caseId, dirty, state?.draftVersion])
   const usedCatalogItemIds = new Set(items.map(item => item.catalogItemId))
   const canCombineWithCurrentItems = (
     candidate: PrescriptionMedicationCatalogItem,
@@ -266,7 +270,7 @@ export function PrescriptionPage({
   const invalidDraft = !draftValidation.success
   useAutosave({
     delayMs: 800,
-    enabled: dirty && !invalidDraft && !actions.saveDraft.pending,
+    enabled: dirty && !invalidDraft && !actions.saveDraft.pending && !actions.deleteDraft.pending,
     onSave: () => actions.saveDraft.onSubmit(submittedItems),
     revision: `${state?.draftVersion ?? 0}:${currentRevision}`,
   })
@@ -282,7 +286,7 @@ export function PrescriptionPage({
               : state?.draft === undefined ? '' : messages.autosaveSaved}
       </p>
       {actions.saveDraft.error === null ? null : (
-        <Button disabled={invalidDraft || actions.saveDraft.pending} onClick={() => actions.saveDraft.onSubmit(submittedItems)} size="sm" type="button" variant="outline">
+        <Button disabled={invalidDraft || actions.saveDraft.pending || actions.deleteDraft.pending} onClick={() => actions.saveDraft.onSubmit(submittedItems)} size="sm" type="button" variant="outline">
           {locale === 'zh-CN' ? '重试保存' : 'Retry save'}
         </Button>
       )}
