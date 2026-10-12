@@ -22,6 +22,7 @@
 - 用户明确要求把当前工作区 changes 一并提交时，先辨认并保真保存这些修改，再纳入目标 PR；不丢弃、不改写为自己的内容，也不额外推送原工作分支。
 - 用户询问进度时，先报告已经完成、正在处理和剩余阻塞，然后继续执行，除非用户要求暂停。
 - 用户询问合成演示账号或密码时，从当前 Scenario 或 seed owner 直接给出可试用信息；真实凭证、平台密钥和患者信息永不写入本文或公开 artifact。
+- 用户要求运行开发分支进行手工测试时，启动该分支的真实应用，沿用已有 Provider 配置和完整参考目录，并使用持久化业务数据；需要隔离时使用现有数据的一致备份，明确告知数据副本的边界，不用少量 fixture 代替实际运行环境。
 - UI 预览参考 `agentic-axum-saas-demo` 的体验设计方式，按任务交付可运行且保留版本的交互体验，不在正式 Web 内维护长期 mock 展示站或方案切换器；具体规则见[交互预览](../agent-development.md#交互预览)。
 
 - ClinMesh 与 DSH 会话保持左右分屏，不因窄窗口改为上下排列或自动全屏。DSH 模式的岗位导航直接铺在宿主侧栏“新会话”和“工作区”之间，底部按钮保留“医院工作台”，仅点开后的菜单内部标题显示“设置”；菜单保留设置与应用操作，DSH 内的 ClinMesh 始终跟随宿主主题，不提供独立主题选择，ClinMesh 内部不显示左侧栏；独立 Web 保留侧栏。全屏由用户手动切换，切换与返回按钮放进现有页头，不额外占一行；全屏时先返回分屏再使用宿主导航。账户与岗位切换保留在页头，右上角账户菜单不放设置入口；设置统一由左侧栏承接，独立 Web 使用侧栏底部入口。
@@ -39,6 +40,11 @@
 
 ## 运行与验证边界
 
+- React 18 的普通函数组件不会接收 `ref`；共享输入组件需要沿用 `forwardRef`，并用 ShadowRoot 的 `activeElement` 核对真实返回焦点。Query 刷新时重建的 mutation 回执对象不能作为清空草稿的效果依赖，按病例与业务版本处理，并忽略旧回执；删除草稿回归还须覆盖请求未完成时继续编辑、自动保存和迟到的查询刷新。相关回归与决定见[诊断与处方两阶段视图](../../.agents/notes/implemented/architecture/2026-10-10-diagnosis-prescription-workspace.md)。
+- JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
+- Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。浏览器回归验证真实指针命中，不能只检查文本可见。
+- 目录读取失败后，重设相同搜索条件不会改变 TanStack Query key，重试需显式 `refetch`。回归从真实页面观察第二次 HTTP 读取和恢复，不只断言搜索回调被调用。
+- 真实 WebApp 浏览器合同使用 `localhost` 或 HTTPS 的有效 origin：`about:blank` 的 opaque origin 无法使用存储，普通 HTTP 域名不提供 `crypto.randomUUID`。沿用产品需要的浏览器能力，不为测试给生产代码加 polyfill。
 - 新增 SQLite migration 后，先核对 `database.ts` 的文件名筛选与 `schema_migration` 中的实际应用记录；文件存在不代表启动时会被发现。描述部分误用下划线会被当前筛选忽略，表现为新接口缺少列的 500；修正文件名并通过公开 HTTP 验证，不以启动成功代替迁移证据。
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
@@ -59,6 +65,8 @@
 
 - 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)。
 - 预填与后台文本合并的回归须覆盖首次自动更新同一个未保存字段，以及其他字段已有自动草稿时该字段才首次更新；同时断言编辑框、保存后的服务端正文和刷新结果，防止界面丢弃新增后又通过保存删掉服务端已应用的内容。当前合并基线见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
+- 自动记录的人工冲突回归同时覆盖纯手写病史和已改写自动片段的当前文本；仅提供患者原话无法证明当前手工内容参与比较。来源校验与冲突比较分开验证；并发既要覆盖旧目标修改，也要覆盖模型请求后新增人工矛盾、持续编辑后的有界失败与显式恢复。核对范围覆盖新增限定语、人工扩写多句及独立句子的无关编辑，防止旧建议替换新人工内容或删除无关句子。当前边界见[人工病史冲突决策](../../.agents/notes/implemented/bug-fix/2026-10-12-consultation-manual-history-conflicts.md)。
+- 共享 HTTP 请求替身改为异步后，调用者必须先 `await` 再判断是否命中；直接比较 Promise 与 `undefined` 会让未处理的普通请求返回空响应。`vi.fn` 的宽松返回类型可能使类型检查通过，主分支整合仍须运行受影响页面的完整测试，并同步最新目录响应合同。
 - 增量去重回归同时覆盖重复投递、同批重复、同句多目标更正，以及拒绝后的句界表示变化和新来源再次提出相同措辞。正常增量与拒绝证据不能共用去重范围；增量身份与普通事实去重见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)，拒绝证据见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
 - 局部撤销的长度回归同时覆盖恢复后恰好达到上限，以及短更正之后追加内容再恢复长原文。单次保存合法不证明逆操作仍合法；校验失败时应先保留正文、版本及锚点，再进入既有人工核对流程，见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
 - 聚合待核对状态和显示操作提示时，同时判断条目是否仍有效与其审阅状态；被替代历史的旧标记不代表当前可处理任务。回归应覆盖替代后提示消失、逆操作恢复原核对需求和重启，不通过伪造已确认状态清除历史事实，见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
@@ -88,6 +96,8 @@
 - DSH Tool 报 `ClinMesh Tools require an active Page Context binding` 时，先核对真实调用参数中的 `contextId`、`scopeKey` 和宿主会话关联；不要根据调用顺序推断绑定被读取消耗或已过期。对照发送给模型的 schema 与实际 Tool arguments，区分模型漏传必填参数和页面签发故障。
 
 - DSH 工具缺失时，同时检查后端 Page Context 的 `allowedOperationIds` 和前端 action 的 `enabled` 条件。失败后的恢复工具也必须经过两层筛选；仅用返回全部 catalog operations 的前端 mock，无法发现后端漏授权，需补真实 HTTP Page Context 回归。
+
+- TanStack Query 的禁用查询在没有缓存时仍是 `isPending`，不能把可选查询的该标志直接计入 Agent 页面加载状态；使用实际首次请求的 `isLoading`，并覆盖“没有选中任务”和“选中任务等待响应”两种真实页面 Tool 交接。只断言工具已注册会漏掉读取成功后始终等待加载结束、最终 `CLINMESH_HANDOFF_TIMEOUT` 停轮的问题。
 
 - Surface 宿主限制每个 Tool 的最终 description 不超过 512 字符；Web 包装器会追加通用编辑说明，预算必须按拼接后的文本计算。单个描述超限会使整份 lease 注册失败、全部 ClinMesh 工具缺失，不能仅以页面上下文签发成功或 mock register 测试通过判断桥接可用。
 - DSH lazy-CJS 包装器会缩进多行模板字符串，导致构建产物中的 Tool 描述比源码更长；验收必须执行真实产物并检查浏览器 lease 响应。非开发模式的宿主还会缓存插件脚本，重新构建后按[部署说明](../deployment.md#dsh-web-原生入口)重新加载宿主，核对实际返回的脚本，不能仅看磁盘时间或刷新页面。
@@ -144,7 +154,9 @@
 - Windows 上 Turborepo 包装 `tsx watch` 的持久任务（旧根 `pnpm dev:server`）会以约三成概率把整棵进程树冻结在启动阶段：父进程 IPC 管道已建、子进程已派生，但双方 CPU 归零、服务永不监听，且 forensics 期 inspector 无响应。常驻开发服务器一律直连 pnpm（`pnpm --filter @clinmesh/server dev`），不进 turbo；诊断该类挂起先用“绕开包装层”隔离，再比较冻结与正常实例的 CPU 增量。
 - Turborepo strict env 只转发任务声明的 `passThroughEnv` 变量，turbo 包装的任务拿不到未声明的 `CLINMESH_AI_*` 等变量。核对环境变量是否生效要从实际业务进程取证，只看父 shell 会把 provider 未配置误判为产品错误；这也是根 `dev:server` 改为直连 pnpm 的原因之一。
 - SQLite perf gate 统计数据库、WAL 和 SHM 总增长；同一 Command completion 更新的多个 nullable 关联列若各建独立索引，会放大短事务 WAL pages。优先按真实验证查询建立一个复合索引，并用 `pnpm perf:ci` 证明增长，而不是放宽预算。
+- 跨 CRLF/LF 工作区复用 SQLite 时，`Applied migration checksum changed` 可能只来自 SQL 换行差异。先逐项确认已应用 checksum 匹配来源 SQL，且来源与目标 SQL 仅换行不同；保留原库并建立一致备份后，只在隔离副本中重算对应迁移记录，核对迁移验证、完整性与业务 canonical hash。不能据此跳过校验、覆盖原库或接受实际 SQL 内容差异。
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。
+- 隔离验证副本复用已安装依赖时，VitePress 会在仓库根 `node_modules` 自动创建 `vue` 符号链接。验证副本应保留自己的 `node_modules` 真目录，将已有包分别链接到依赖缓存，让构建新增链接写入验证副本；整体链接共享依赖目录会把构建写入带到共享目录。
 - pnpm 在 Windows 的 `node_modules/.bin` 只生成 `.cmd`/`.ps1` shim，且 Node 直接 `execFile` `.cmd` 会被拒绝。需要子进程调用 workspace 依赖的 CLI 时，用 `process.execPath` 加包内 JS launcher（如 `node_modules/cn-health/bin/cn-health.js`），不要拼 `.bin` 路径；Linux 测试传 `cliPath` 桩会掩盖该断裂，默认解析路径必须有独立测试。`cn-health dataset materialize` 支持多进程并行写同一 `--data-dir`（内部有锁），默认 Dataset 可并行 materialize；`cn-health@0.5.1` 起子进程在 stderr 自带分阶段进度，reference-sync 逐行转发到 `onProgress`。升级被 `reference-data.lock.json` 的 `cli.version` 锁定，与 receipt 的 `cliVersion` 严格相等，升级时 lock、根 devDependency、`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 三处必须同步，且旧版本条目会因排除清单移除而被 `minimumReleaseAge` 政策拒绝——先临时双列排除完成重解析、`pnpm clean --lockfile` 清陈旧条目后再收窄清单。
 
 - Windows checkout 若把仓库中的 CLAUDE.md 符号链接物化为链接目标文本，文档换行检查会误报；CLI 的 POSIX 权限与文件符号链接测试也不能由该 checkout 证明。使用 Linux 文件系统上的独立 Git 检出验证，并把 Linux Node、pnpm 与 Bun 放在 PATH 前端，避免子进程拾取 Windows pnpm shim。跨命令复用的 WSL 验证副本和产物使用持久目录，避免重启清理 `/tmp`。
@@ -163,7 +175,7 @@
 
 - 替换 Agent 反馈渲染器时，分别处理真实执行、完成反馈可见性与资源清理，沿用既有完成停留合同。快速本地 Tool 的开始和完成可能被 React 合并为一次渲染，不能依赖执行阶段创建过 Canvas；回归须包含同批开始/完成、静态停留与停止绘制，并保持业务无额外延迟。当前时序由[能力参考](../agent-capabilities.md#反馈时序)拥有。
 
-- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
+- WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。验证记录须明确 CPU affinity、worker 或串行限制，不把受限并发结果说成默认并发通过。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
 
 - 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。也可用 `VITEST_MAX_WORKERS=2 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1 --env-mode=loose` 显式限制文件并发；Turbo 默认 strict 环境会过滤该变量，仅在父进程设置它并不会约束包内 Vitest。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
 
@@ -229,7 +241,7 @@
 - `jpeg-js` 解码三分量 JPEG 时，`colorTransform` 缺省会把 Adobe APP14 transform=0（RGB）的码流当作 YCbCr 转换；需要按码流标记显式传入。`@cornerstonejs/codec-openjpeg` 的 Emscripten 模块默认逐瓦片向标准输出打印 INFO，创建模块时传入空的 `print` 与 `printErr`。验证真实切片的颜色解释不看像素：解码已安装层级后统计通道均值与近白像素比例，H&E 组织像素的红、蓝明显高于绿，背景接近白色。
 
 - Playwright 使用与锁定版本匹配的 browser cache；跨项目参考配置时同时核对 runner 版本与已安装 revision，缺失时用本仓库的 `pnpm exec playwright install chromium` 安装。运行合同与真实入口的方式见[测试策略](../testing.md#用户界面验证)。
-- `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，不能只凭包级 `tsc` 通过判断完整类型检查通过。
+- `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，不能只凭包级 `tsc` 通过判断完整类型检查通过。修改 `apps/web/e2e/` 后运行 `pnpm exec tsc --noEmit -p tsconfig.browser.json`；Playwright 会转译 TypeScript，但不做类型检查，E2E 通过不能替代这项检查。
 
 - 验证真实影像时不读取像素或截图：用 Playwright locator 或文字快照核对报告、状态和控件，用页面内脚本返回 canvas 尺寸、非零像素比例、均值和翻片前后的校验和变化等聚合量。帧切换计时以 canvas 内容发生变化为准，页码文字会先于像素更新。
 
@@ -261,6 +273,7 @@
 - DSH 0.2 的会话列表不再含 `current`；应用和桥接订阅公开的 `uiSession.adapter.current`，从 binding 的 `key` 读取主会话。依赖与类型检查通过后还需在真实宿主核对 Page Context 签发和 lease：旧字段会让页面正常显示，却静默跳过 Agent 发布。
 
 - DSH 的 Snapshot Store 是带实例方法的公开服务；给 `useSyncExternalStore` 传回调时通过 `() => store.getSnapshot()` 与 `(listener) => store.subscribe(listener)` 保留 receiver，并把包装放在注册作用域保持稳定。只用箭头函数 stub 会漏掉真实宿主中的 `refreshSnapshot` 绑定错误；会话历史回归使用依赖 `this` 的 Store fixture。
+- Cordis 插件新增 `ctx.llm` 等服务读取时，同步声明使用该服务的 `inject`，或在对应 `ctx.inject` 子作用域执行。裸根 Context 上直接安装 bridge 的测试会掩盖真实插件作用域中“未注入服务”的失败；来源与工具执行回归至少一条通过 `ctx.plugin` 加载实际插件。
 
 - DSH 桥接升级时同步核对 runtime peers、CI 安装的 CLI 和兼容说明；React Surface 的 E2E 从 runtime peer 读取期望版本，旧 CLI 会在挂载前退出。DSH 0.2 的桌面首次启动向导新增“开始设置 → 跳过 → 我知道了”；真实入口测试须通过可见按钮正常关闭向导后再操作侧栏，不能强制点击穿透遮罩。向导保存和换页是异步过程，应有界等待侧栏恢复可交互，并在失败时报告残留弹窗文字；固定点击轮数在本地通过后仍可能在 CI 提前退出。CI 成功日志不打印带临时访问 token 的启动 URL 或宿主原始 stdout。
 
@@ -284,12 +297,11 @@
 - DSH 工具目录交接回归必须在同一用户回合连续执行动作并检查第一条后续模型请求的实际 schema；分多个用户回合等页面稳定后再调用会漏掉竞态。测试模型收到结果后立即继续，不能用固定延时、重试或等待注册再发送第二条用户输入作为交接证据。
 
 - 排查 Agent 代问后病历未更新时，用 Tool 回执的 `patientTurn.id` 关联实际病例、记录任务与增量，并对照控制 Command 的时间；先确认人工提问和 Agent 提问是否发生在同一病例及相同记录状态。`outbox_event.status=completed` 只证明事件已结束，病史整理可能已经失败，须同时核对 `consultation_recording_job` 和失败 Command。暂停会重置未完成任务的当前错误码，既往失败应从 Command 记录追溯；启用、补录与恢复合同见[问诊自动记录规格](../spec/2026-10-08-consultation-auto-record.md)。
-- 新 worktree 的文档检查若把 `CLAUDE.md` 中的 `AGENTS.md` 路径当正文并报缺少末尾换行，先检查 Git 的 `120000` mode 与 `core.symlinks`：禁用 symlink 的 checkout 会生成普通文本占位文件。只在隔离 worktree 中按已跟踪 blob 恢复原链接，不修改文档内容或共享 Git 配置。
+- 新 worktree 的文档检查若把 `CLAUDE.md` 中的 `AGENTS.md` 路径当正文并报缺少末尾换行，先检查 Git 的 `120000` mode 与 `core.symlinks`：禁用 symlink 的 checkout 会生成普通文本占位文件。`core.symlinks=false` 时 `git status` 也可能仍显示干净。只在隔离 worktree 中恢复占位内容仍精确等于 index 目标的链接，不给目标文本补换行，也不修改共享 Git 配置。
 
 - `pnpm install --lockfile-only` 自动解决锁文件冲突时可能重新解析间接依赖，顺带升级两侧均未改动的版本。常规主分支整合先按合并后的 manifest 合并两侧已有锁条目，核对 package 版本与 integrity 沿用原值，再用 `pnpm install --frozen-lockfile` 验证；不要把自动解冲突成功等同于依赖范围未变。
 
 - 原生 DSH 验收中，`createClinMeshRuntime` 的 `dshModelBridge` 与 `dshBridgeSecret` 分别启用辅助模型和 Agent Page Context，必须独立装配；模型正常不证明工具授权接口已启用。建立原生 Session 后从 launcher 打开 Surface；宿主刷新会关闭 Surface，需要重新打开，并等待当前浏览器客户端的 `/lease` 成功响应。控件启用或旧客户端注册成功不足以证明当前工具可调用，刷新后的 lease 竞争应通过当前注册状态等待，不能用固定延迟替代。
 
-- Base UI 对齐 Select 在 trigger 收到 focus 时可能关闭已打开的弹层，jsdom 的指针／焦点调度不能当成稳定的展开证据。业务组件测试先聚焦 combobox，再用 `user.keyboard('{ArrowDown}')` 展开，并用 `findByRole('option')` 等待目标选项；保持选择后原有业务断言和默认超时。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证，不用固定延迟或重复点击修补 jsdom 测试。
 
 - 新建隔离 worktree 后，安装依赖前先用 `git submodule update --init --recursive vendor/dsh-react-surface` 检出仓库锁定的子模块。未初始化的子模块目录会让 `pnpm install --frozen-lockfile` 在扫描 `file:` 依赖的 `packages/runtime` 时以 `ENOENT` 失败；初始化后重新按锁安装，不改写锁文件绕过缺失目录。

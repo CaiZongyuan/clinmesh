@@ -928,6 +928,234 @@ it.each([
   expect(calls).toBe(2)
 })
 
+it('keeps conflicting handwritten history pending across restart and replaces only its reviewed sentence', async () => {
+  const original = '医生核对：否认胸痛。\n平时睡眠正常。'
+  const fixture = await setup({ reply: '胸痛两天了。', extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>;
+      manualHistory?: Array<{ id: string; field: string; text: string }> }
+    const answer = payload.turns.at(-1)!
+    const target = payload.manualHistory?.find(item => item.field === 'historyOfPresentIllness' && item.text === '医生核对：否认胸痛。')
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: answer.id,
+      quote: answer.messageText, relation: target === undefined ? 'addition' : 'conflict',
+      ...(target === undefined ? {} : { targetAdditionId: target.id }) }] }
+  } })
+  expect((await fixture.save(original)).status).toBe(200)
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe(original)
+  expect(detail.consultationRecording).toMatchObject({ status: 'pending', additions: [
+    { status: 'pending', currentText: '医生核对：否认胸痛。', reviewable: true, quote: '胸痛两天了。' },
+  ] })
+  const additionId = detail.consultationRecording!.additions[0]!.id
+  await fixture.restart()
+  expect((await fixture.read()).consultationRecording).toEqual(detail.consultationRecording)
+  const key = randomUUID()
+  expect((await fixture.review(additionId, 'accept', { key })).status).toBe(200)
+  const accepted = await fixture.read()
+  expect(accepted.clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：胸痛两天了。\n平时睡眠正常。')
+  expect(accepted.consultationRecording?.additions[0]).toMatchObject({ status: 'applied', ownership: 'manual', reviewStatus: 'confirmed' })
+  expect((await fixture.review(additionId, 'accept', { key, version: detail.clinicalDocument!.draft!.version })).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument?.draft).toEqual(accepted.clinicalDocument?.draft)
+})
+
+it('compares the current manual edit of an attributed fragment rather than its original patient quote', async () => {
+  let reply = '否认胸痛。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>;
+      manualHistory?: Array<{ id: string; text: string }> }
+    const answer = payload.turns.at(-1)!
+    const target = payload.manualHistory?.find(item => item.text === '医生已核对：有胸痛。')
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: answer.id, quote: answer.messageText,
+      relation: target === undefined ? 'addition' : 'conflict', ...(target === undefined ? {} : { targetAdditionId: target.id }) }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const original = (await fixture.read()).consultationRecording!.additions[0]!
+  expect((await fixture.save('医生已核对：有胸痛。')).status).toBe(200)
+  reply = '没有胸痛。'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  const conflict = detail.consultationRecording!.additions.find(item => item.status === 'pending')!
+  expect(conflict).toMatchObject({ targetAdditionId: original.id, currentText: '医生已核对：有胸痛。', reviewable: true })
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生已核对：有胸痛。')
+  expect((await fixture.review(conflict.id, 'accept')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：没有胸痛。')
+})
+
+it.each(['during-extraction', 'after-extraction'] as const)('invalidates a handwritten conflict target edited %s without replacing newer text', async timing => {
+  let release!: () => void
+  let started!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const extracting = new Promise<void>(resolve => { started = resolve })
+  const fixture = await setup({ reply: '胸痛两天了。', extract: async input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }>;
+      manualHistory: Array<{ id: string; field: string; text: string }> }
+    const target = payload.manualHistory.find(item => item.text === '医生核对：否认胸痛。')!
+    started()
+    if (timing === 'during-extraction') await blocked
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+      quote: '胸痛两天了。', relation: 'conflict', targetAdditionId: target.id }] }
+  } })
+  expect((await fixture.save('医生核对：否认胸痛。')).status).toBe(200)
+  expect((await fixture.ask()).status).toBe(200)
+  const processing = fixture.runtime.dispatchPending()
+  await extracting
+  if (timing === 'after-extraction') await processing
+  const newer = '医生重新核对：胸痛已缓解。\n睡眠正常。'
+  expect((await fixture.save(newer)).status).toBe(200)
+  release()
+  await processing
+  const detail = await fixture.read()
+  const addition = detail.consultationRecording!.additions[0]!
+  expect(addition).toMatchObject({ status: 'pending', reviewable: false })
+  expect((await fixture.review(addition.id, 'accept')).status).toBe(409)
+  expect((await fixture.read()).clinicalDocument?.draft).toEqual(detail.clinicalDocument?.draft)
+  expect((await fixture.review(addition.id, 'ignore')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(newer)
+})
+
+it.each(['医生核对：否认胸痛。', '医生核对：睡眠正常。'] as const)('recompares history saved during extraction before applying a new addition (%s)', async manual => {
+  let release!: () => void
+  let started!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const extracting = new Promise<void>(resolve => { started = resolve })
+  let calls = 0
+  const fixture = await setup({ reply: '胸痛两天了。', extract: async input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }>;
+      manualHistory?: Array<{ id: string; text: string }> }
+    if (++calls === 1) { started(); await blocked }
+    const target = payload.manualHistory?.find(item => item.text === '医生核对：否认胸痛。')
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+      quote: '胸痛两天了。', relation: target === undefined ? 'addition' : 'conflict',
+      ...(target === undefined ? {} : { targetAdditionId: target.id }) }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  const processing = fixture.runtime.dispatchPending()
+  await extracting
+  try { expect((await fixture.save(manual)).status).toBe(200) } finally { release(); await processing }
+  const detail = await fixture.read()
+  const conflicting = manual.includes('否认胸痛')
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness)
+    .toBe(conflicting ? manual : `${manual}\n患者自述：胸痛两天了。`)
+  expect(detail.consultationRecording).toMatchObject({ remainingCount: 0, failedCount: 0,
+    additions: [{ status: conflicting ? 'pending' : 'applied' }] })
+  expect(calls).toBe(2)
+})
+
+it('settles repeated in-flight manual saves without appending stale history and allows an explicit retry', async () => {
+  let changing = true
+  let calls = 0
+  const fixture = await setup({ reply: '胸痛两天了。', extract: async input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }> }
+    if (changing) expect((await fixture.save(`医生核对：睡眠正常。第${++calls}次核对。`)).status).toBe(200)
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+      quote: '胸痛两天了。', relation: 'addition' }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(calls).toBe(3)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：睡眠正常。第3次核对。')
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', remainingCount: 1,
+    failures: [{ code: 'CONSULTATION_RECORDING_FAILED', retrying: false }], additions: [] })
+  await fixture.restart()
+  changing = false
+  expect((await fixture.control('retry')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness)
+    .toBe('医生核对：睡眠正常。第3次核对。\n患者自述：胸痛两天了。')
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', remainingCount: 0 })
+})
+
+it.each(['已撤回旧记录：', '独立补充。'] as const)('rechecks the full handwritten sentence after inserting %s before a pending target', async prefix => {
+  const original = '医生核对：否认胸痛。'
+  const fixture = await setup({ reply: '胸痛两天了。', extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }>;
+      manualHistory: Array<{ id: string; text: string }> }
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+      quote: '胸痛两天了。', relation: 'conflict', targetAdditionId: payload.manualHistory.find(item => item.text === original)!.id }] }
+  } })
+  expect((await fixture.save(original)).status).toBe(200)
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const addition = (await fixture.read()).consultationRecording!.additions[0]!
+  expect((await fixture.save(prefix + original)).status).toBe(200)
+  const independent = prefix.endsWith('。')
+  expect((await fixture.read()).consultationRecording!.additions[0]?.reviewable).toBe(independent)
+  expect((await fixture.review(addition.id, 'accept')).status).toBe(independent ? 200 : 409)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness)
+    .toBe(prefix + (independent ? '患者自述：胸痛两天了。' : original))
+})
+
+it('keeps a multi-sentence attributed manual fragment pending instead of replacing unrelated history', async () => {
+  let reply = '否认胸痛。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>;
+      manualHistory?: Array<{ id: string; text: string }> }
+    const answer = payload.turns.at(-1)!
+    const target = payload.manualHistory?.find(item => item.text === '患者自述：睡眠正常。否认胸痛。')
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: answer.id, quote: answer.messageText,
+      relation: target === undefined ? 'addition' : 'conflict', ...(target === undefined ? {} : { targetAdditionId: target.id }) }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const expanded = '患者自述：睡眠正常。否认胸痛。'
+  expect((await fixture.save(expanded)).status).toBe(200)
+  reply = '胸痛两天了。'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const addition = (await fixture.read()).consultationRecording!.additions.find(item => item.status === 'pending')!
+  expect(addition.reviewable).toBe(false)
+  expect((await fixture.review(addition.id, 'accept')).status).toBe(409)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(expanded)
+})
+
+it('moves a handwritten conflict anchor through unrelated edits and automatic additions in the same field', async () => {
+  const fixture = await setup({ reply: '胸痛两天了。走路容易累。', extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }>;
+      manualHistory: Array<{ id: string; field: string; text: string }> }
+    const target = payload.manualHistory.find(item => item.text === '医生核对：否认胸痛。')!
+    return { additions: [
+      { field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+        quote: '胸痛两天了。', relation: 'conflict', targetAdditionId: target.id },
+      { field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+        quote: '走路容易累。', relation: 'addition' },
+    ] }
+  } })
+  expect((await fixture.save('医生核对：否认胸痛。\n睡眠正常。')).status).toBe(200)
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：否认胸痛。\n睡眠正常。\n患者自述：走路容易累。')
+  const pending = detail.consultationRecording!.additions.find(item => item.status === 'pending')!
+  expect((await fixture.save('🙂医生补充：近日食欲正常。\n' + detail.clinicalDocument!.draft!.historyOfPresentIllness)).status).toBe(200)
+  await fixture.restart()
+  expect((await fixture.read()).consultationRecording!.additions.find(item => item.id === pending.id)?.reviewable).toBe(true)
+  expect((await fixture.review(pending.id, 'accept')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness)
+    .toBe('🙂医生补充：近日食欲正常。\n患者自述：胸痛两天了。\n睡眠正常。\n患者自述：走路容易累。')
+})
+
+it.each(['manual-source', 'wrong-field', 'fabricated-target'] as const)('rejects %s in a handwritten history comparison without changing the draft', async invalid => {
+  const fixture = await setup({ reply: '胸痛两天了。', extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string }>;
+      manualHistory: Array<{ id: string; field: string; text: string }> }
+    const target = payload.manualHistory.find(item => item.text === '医生核对：否认胸痛。')!
+    return { additions: [{ field: invalid === 'wrong-field' ? 'priorMedicalHistory' : 'historyOfPresentIllness',
+      sourceTurnId: payload.turns.at(-1)!.id, quote: invalid === 'manual-source' ? target.text : '胸痛两天了。',
+      relation: 'conflict', targetAdditionId: invalid === 'fabricated-target' ? 'manual:made-up' : target.id }] }
+  } })
+  expect((await fixture.save('医生核对：否认胸痛。')).status).toBe(200)
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：否认胸痛。')
+  expect(detail.consultationRecording).toMatchObject({ status: 'failed', additions: [], failures: [
+    { code: 'CONSULTATION_RECORDING_SOURCE_INVALID', retrying: false },
+  ] })
+})
+
 it('protects an edited sentence while appending unrelated history in the same field', async () => {
   let reply = '头晕一周了。'
   const { runtime, read, ask, askMore, save } = await setup({ reply: () => reply, extract: input => {

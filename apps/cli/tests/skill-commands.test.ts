@@ -151,12 +151,16 @@ describe('ClinMesh CLI Agent Skills', () => {
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
       additionId: 'synthetic-correction', decision: 'overwrite', document: {} }).success).toBe(false)
-    expect(operation.version).toBe(2)
+    expect(operation.version).toBe(3)
     expect(skill).toContain("clinician's explicit accept/ignore/confirm/undo decision")
     expect(skill).toContain('undo-pending')
     expect(operation.summary).toContain('draft field limits')
     expect(skill).toContain('exceed a draft field limit')
     expect(skill).toContain('new source reply')
+    expect(operation.summary).toContain('sourced or handwritten history')
+    expect(operation.summary).toContain('changed handwritten targets')
+    expect(skill).toContain('handwritten history')
+    expect(skill).toContain('changed handwritten target')
   })
   it('keeps the doctor draft example compatible with incomplete content and the versioned Catalog', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')

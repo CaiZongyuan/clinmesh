@@ -79,9 +79,12 @@ function agentExecutionProof(input: {
 }, now = new Date()): string {
   const payload = {
     ...input,
+    origin: { request: { scopeKey: input.scopeKey, pageRevision: input.pageRevision },
+      task: { scopeKey: input.scopeKey, pageRevision: input.pageRevision,
+        acceptedAt: now.toISOString(), messageId: `message-${input.callId}`, rpcId: `rpc-${input.callId}`, turn: 1 } },
     expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     issuedAt: now.toISOString(),
-    version: 2,
+    version: 3,
   }
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
   const signature = createHmac(
@@ -1568,6 +1571,7 @@ describe('Synthetic Case generation HTTP contract', () => {
           version: 1,
           viewId: 'consultation',
           viewRevision: 'synthetic-case-generation-failed',
+          taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc',
         },
         client: { id: 'synthetic-case-agent-test', revision: 1 },
         dshSessionId: 'dsh-session-synthetic-case',

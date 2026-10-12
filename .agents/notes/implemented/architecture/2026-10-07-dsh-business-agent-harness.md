@@ -2,6 +2,8 @@
 
 Status: implemented
 
+医生纯查询绑定由[医生 Agent 纯查询绑定](2026-10-08-doctor-agent-query-binding.md)拥有；本文已有写入、proof 与交接决定继续适用。
+
 ## Problem
 
 DSH 通用 `standard` preset 的编码身份与开发工具会使医院业务 Agent 转向源码或数据库排障，超出当前页面授权工具的使用方式。模型还需显式携带短期 Context ID，而页面状态发布与 TTL 续签可在模型生成调用期间替换该 ID，导致原调用参数与执行时 schema 失配。

@@ -1,6 +1,7 @@
 import type { PatientPersonaContent, ScenarioProviderCapabilities } from '@clinmesh/contracts/scenario'
 import { randomUUID } from 'node:crypto'
-import { strict as assert } from 'node:assert'
+import assert from 'node:assert/strict'
+import { registrationCatalogSchema } from '@clinmesh/contracts/his'
 import type { createClinMeshRuntime } from '../../src/runtime.ts'
 import { sourceArtifactHash } from '../../src/application/scenario-data/provider.ts'
 import type { ScenarioGenerationProvider, SourcePatientCorpus } from '../../src/application/scenario-data/provider.ts'
@@ -157,8 +158,9 @@ export async function startConsultationCase(runtime: Awaited<ReturnType<typeof c
   if (personaJob?.status !== 'succeeded') throw new Error('Persona generation failed')
 
   const registrar = await signIn(runtime, 'registrar@demo.clinmesh.local', password, origin)
-  const session = await runtime.identity.resolveSessionContext(new Headers({ cookie: registrar }))
-  const catalog = runtime.workflow.registrationCatalog(session.actor)
+  const catalog = registrationCatalogSchema.parse(await (await runtime.app.request(
+    '/api/his/v1/catalogs/registration', { headers: { cookie: registrar } },
+  )).json())
   const startedResponse = await runtime.app.request(
     `/api/his/v1/synthetic-cases/${encodeURIComponent(caseId)}/actions/start-outpatient-visit`,
     {

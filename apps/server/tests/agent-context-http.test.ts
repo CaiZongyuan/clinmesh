@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   agentPageBindingRevision,
+  agentExecutionProofPayloadSchema,
   agentPageContextBindingSchema,
+  agentDoctorCaseReadSchema,
+  agentToolCatalog,
   agentReviewDecisionResponseSchema,
   agentToolAuthorizationResponseSchema,
   agentToolCompletionResponseSchema,
@@ -63,7 +66,8 @@ describe('DSH Agent Page Context HTTP contract', () => {
     pageContextRevision += 1
     return runtime.app.request('/api/agent/v1/page-contexts', {
       body: JSON.stringify({
-        claim,
+        claim: claim.viewId === 'consultation'
+          ? { taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc', ...claim } : claim,
         client: {
           id: options.clientId ?? 'test-surface-client',
           revision: options.clientRevision ?? pageContextRevision,
@@ -402,8 +406,135 @@ describe('DSH Agent Page Context HTTP contract', () => {
     })
     expect(doctorContext.status).toBe(201)
     const doctor = agentPageContextBindingSchema.parse(await doctorContext.json())
+    const { taskEpoch: _taskEpoch, ...legacyClaim } = doctor.snapshot.claim
+    const legacyDoctor = await runtime.app.request('/api/agent/v1/page-contexts', {
+      body: JSON.stringify({ claim: legacyClaim, client: { id: 'legacy-doctor-client', revision: 1 }, dshSessionId: 'dsh-session-1' }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+    })
+    expect(legacyDoctor.status).toBe(403)
     expect(doctor.snapshot.allowedOperationIds).toContain('outpatient.visit.start.propose')
     expect(doctor.snapshot.allowedOperationIds).not.toContain('outpatient.consultation.reply.retry')
+
+    const acceptedAt = new Date().toISOString()
+    const updatedDoctorResponse = await createContext(runtime, doctorCookie, {
+      ...doctor.snapshot.claim, activeSection: 'record', viewRevision: 'doctor-content-update-2',
+    })
+    expect(updatedDoctorResponse.status).toBe(201)
+    const updatedDoctor = agentPageContextBindingSchema.parse(await updatedDoctorResponse.json())
+    const origin = {
+      request: { scopeKey: doctor.snapshot.scopeKey, pageRevision: agentPageBindingRevision(doctor.snapshot.claim) },
+      task: { scopeKey: doctor.snapshot.scopeKey, pageRevision: agentPageBindingRevision(doctor.snapshot.claim),
+        acceptedAt, messageId: 'doctor-read-message', rpcId: 'doctor-read-rpc', turn: 1 },
+    }
+    for (const unknown of [true, false]) {
+      const readResponse = await runtime.app.request('/api/agent/v1/tool-calls', {
+        body: JSON.stringify({ contextToken: updatedDoctor.token,
+          executionProof: executionProof({ callId: unknown ? 'read-unknown-task' : 'read-same-case-after-update',
+            contextId: updatedDoctor.snapshot.id, pageRevision: agentPageBindingRevision(updatedDoctor.snapshot.claim),
+            dshSessionId: updatedDoctor.snapshot.dshSessionId, scopeKey: updatedDoctor.snapshot.scopeKey,
+            toolName: 'clinmesh_read_doctor_context', origin: unknown
+              ? { ...origin, task: { ...origin.task, scopeKey: 'unknown-doctor-task' } } : origin }),
+          input: {}, operationId: 'outpatient.case.read' }),
+        headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+      })
+      expect(readResponse.status).toBe(unknown ? 403 : 201)
+      if (!unknown) {
+        const authorized = agentToolAuthorizationResponseSchema.parse(await readResponse.json())
+        expect(authorized.context.id).toBe(updatedDoctor.snapshot.id)
+        const query = (receiptToken = authorized.receiptToken) => runtime.app.request('/api/agent/v1/doctor-queries', {
+          body: JSON.stringify({ contextToken: updatedDoctor.token, receiptToken, input: {} }),
+          headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+        })
+        const result = await query()
+        expect(result.status).toBe(200)
+        const readDetail = agentDoctorCaseReadSchema.parse(await result.json())
+        expect(readDetail.caseId).toBe(item!.caseId)
+        expect((await query(`${authorized.receiptToken}x`)).status).toBe(401)
+        expect(runtime.database.driver.prepare(`
+          UPDATE fhir_resource SET content_json = json_set(content_json, '$.status', 'finished')
+          WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+            AND resource_type = 'Encounter' AND resource_id = ?
+        `).run(item!.encounterId).changes).toBe(1)
+        expect((await query()).status).toBe(409)
+        const lateCompletion = await runtime.app.request('/api/agent/v1/tool-calls/result', {
+          body: JSON.stringify({ receiptToken: authorized.receiptToken, ok: true, result: { caseId: item!.caseId } }),
+          headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+        })
+        expect(lateCompletion.status).toBe(409)
+        runtime.database.driver.prepare(`
+          UPDATE fhir_resource SET content_json = json_set(content_json, '$.status', 'in-progress')
+          WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+            AND resource_type = 'Encounter' AND resource_id = ?
+        `).run(item!.encounterId)
+        runtime.database.driver.prepare(`
+          UPDATE fhir_resource SET deleted = 1 WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+            AND resource_type = 'Patient' AND resource_id = ?
+        `).run(readDetail.patient.id)
+        const deletedPatientCompletion = await runtime.app.request('/api/agent/v1/tool-calls/result', {
+          body: JSON.stringify({ receiptToken: authorized.receiptToken, ok: true, result: { caseId: item!.caseId } }),
+          headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+        })
+        expect(deletedPatientCompletion.status).toBe(409)
+        runtime.database.driver.prepare(`
+          UPDATE fhir_resource SET deleted = 0 WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1'
+            AND resource_type = 'Patient' AND resource_id = ?
+        `).run(readDetail.patient.id)
+      }
+    }
+    const delegation = await runtime.app.request('/api/agent/v1/doctor-tasks/permit', {
+      body: JSON.stringify({ contextToken: updatedDoctor.token, content: '替我问清近两周用药情况', rpcId: 'doctor-task-rpc-1' }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+    })
+    expect(delegation.status).toBe(201)
+    expect(await delegation.json()).toMatchObject({ dshSessionId: 'dsh-session-1', rpcId: 'doctor-task-rpc-1',
+      content: '替我问清近两周用药情况', permit: expect.any(String) })
+
+    const emptyDoctor = agentPageContextBindingSchema.parse(await (await createContext(runtime, doctorCookie, {
+      version: 1, viewId: 'consultation', viewRevision: 'doctor-left-case', ui: { status: 'empty' },
+    })).json())
+    const emptyBinding = { scopeKey: emptyDoctor.snapshot.scopeKey, pageRevision: agentPageBindingRevision(emptyDoctor.snapshot.claim) }
+    const selectFromEmpty = await runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({ contextToken: emptyDoctor.token, input: { caseId: item!.caseId }, operationId: 'outpatient.case.select',
+        executionProof: executionProof({ ...emptyBinding, callId: 'select-from-empty-doctor-page',
+          contextId: emptyDoctor.snapshot.id, dshSessionId: emptyDoctor.snapshot.dshSessionId,
+          toolName: 'clinmesh_select_doctor_case', origin: { request: emptyBinding,
+            task: { ...emptyBinding, acceptedAt: new Date().toISOString(), rpcId: 'select-case-rpc', messageId: 'select-case-message', turn: 2 } } }) }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+    })
+    expect(selectFromEmpty.status).toBe(201)
+    const returned = agentPageContextBindingSchema.parse(await (await createContext(runtime, doctorCookie, {
+      ...updatedDoctor.snapshot.claim, viewRevision: 'doctor-returned-case',
+    })).json())
+    const resumedRead = (fresh: boolean) => runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({ contextToken: returned.token, input: {}, operationId: 'outpatient.case.read',
+        executionProof: executionProof({ callId: fresh ? 'fresh-task-after-return' : 'old-task-after-return',
+          contextId: returned.snapshot.id, pageRevision: agentPageBindingRevision(returned.snapshot.claim),
+          dshSessionId: returned.snapshot.dshSessionId, scopeKey: returned.snapshot.scopeKey,
+          toolName: 'clinmesh_read_doctor_context', origin: {
+            request: { scopeKey: returned.snapshot.scopeKey, pageRevision: agentPageBindingRevision(returned.snapshot.claim) },
+            task: fresh ? { scopeKey: returned.snapshot.scopeKey, pageRevision: agentPageBindingRevision(returned.snapshot.claim),
+              acceptedAt: new Date().toISOString(), rpcId: 'new-doctor-rpc', messageId: 'new-doctor-input', turn: 2 }
+              : origin.task,
+          } }) }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+    })
+    expect((await resumedRead(false)).status).toBe(403)
+    expect((await resumedRead(true)).status).toBe(201)
+    const discontinuous = agentPageContextBindingSchema.parse(await (await createContext(runtime, doctorCookie, {
+      ...returned.snapshot.claim, taskEpoch: randomUUID(), viewRevision: 'doctor-returned-with-new-task-epoch',
+    })).json())
+    const discontinuousCall = await runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({ contextToken: discontinuous.token, input: {}, operationId: 'outpatient.case.read',
+        executionProof: executionProof({ callId: 'same-case-discontinuous-task', contextId: discontinuous.snapshot.id,
+          pageRevision: agentPageBindingRevision(discontinuous.snapshot.claim), scopeKey: discontinuous.snapshot.scopeKey,
+          dshSessionId: discontinuous.snapshot.dshSessionId, toolName: 'clinmesh_read_doctor_context', origin: {
+            request: { scopeKey: returned.snapshot.scopeKey, pageRevision: agentPageBindingRevision(returned.snapshot.claim) },
+            task: { scopeKey: returned.snapshot.scopeKey, pageRevision: agentPageBindingRevision(returned.snapshot.claim),
+              acceptedAt: new Date().toISOString(), rpcId: 'new-doctor-rpc', messageId: 'new-doctor-input', turn: 2 },
+          } }) }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+    })
+    expect(discontinuousCall.status).toBe(403)
 
     runtime.database.driver.prepare(`
       INSERT INTO laboratory_request (
@@ -1396,12 +1527,17 @@ function executionProof(input: {
   dshSessionId: string
   scopeKey: string
   toolName: string
+  origin?: ReturnType<typeof agentExecutionProofPayloadSchema.parse>['origin']
 }, now = new Date()): string {
+  const doctorTool = agentToolCatalog.find(tool => tool.toolName === input.toolName)?.operationId.startsWith('outpatient.')
   const payload = {
     ...input,
+    ...(input.origin !== undefined || !doctorTool ? {} : { origin: { request: { scopeKey: input.scopeKey, pageRevision: input.pageRevision },
+      task: { scopeKey: input.scopeKey, pageRevision: input.pageRevision, acceptedAt: now.toISOString(),
+        messageId: `message-${input.callId}`, rpcId: `rpc-${input.callId}`, turn: 1 } } }),
     expiresAt: new Date(now.getTime() + 60_000).toISOString(),
     issuedAt: now.toISOString(),
-    version: 2,
+    version: 3,
   }
   const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
   const signature = createHmac(

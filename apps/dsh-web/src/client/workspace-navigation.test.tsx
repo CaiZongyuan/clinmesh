@@ -77,6 +77,7 @@ it('collapses the sidebar on first wide mount without undoing a later manual exp
 })
 
 it('places authorized routes above workspaces, keeps settings in the footer, and cleans up on unload', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const navigation = createWorkspaceNavigation()
   const open = vi.fn()
   const openOther = vi.fn()
@@ -198,5 +199,6 @@ it('places authorized routes above workspaces, keeps settings in the footer, and
     expect(sidebar.querySelector('[data-clinmesh-host-routes]')).toBeNull()
     expect(sidebar.contains(workspaces)).toBe(true)
     sidebar.remove()
+    vi.unstubAllGlobals()
   }
 })

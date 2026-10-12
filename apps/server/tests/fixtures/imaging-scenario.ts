@@ -182,6 +182,7 @@ export async function agentPageContext(
   const response = await runtime.app.request('/api/agent/v1/page-contexts', {
     body: JSON.stringify({
       claim: {
+        taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc',
         activeSection: claim.activeSection,
         selection: { id: claim.caseId, kind: 'case', version: claim.encounterVersion },
         ui: { status: 'ready' },
@@ -216,7 +217,10 @@ export async function authorizeAgentTool(
     issuedAt: now.toISOString(),
     scopeKey: binding.snapshot.scopeKey,
     toolName: call.toolName,
-    version: 2,
+    origin: { request: { scopeKey: binding.snapshot.scopeKey, pageRevision: agentPageBindingRevision(binding.snapshot.claim) },
+      task: { scopeKey: binding.snapshot.scopeKey, pageRevision: agentPageBindingRevision(binding.snapshot.claim),
+        acceptedAt: now.toISOString(), messageId: `message-${call.operationId}`, rpcId: `rpc-${call.operationId}`, turn: 1 } },
+    version: 3,
   })).toString('base64url')
   const signature = createHmac('sha256', dshBridgeSecret).update(encoded).digest('base64url')
   return await runtime.app.request('/api/agent/v1/tool-calls', {

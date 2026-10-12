@@ -1591,8 +1591,8 @@ const operationDefinitions = [
     mode: 'command', output: reviewConsultationHistoryResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Accept or ignore a pending history replacement, confirm an applied increment or undo only its untouched fragment; edited fragments or reversals exceeding draft field limits remain undo-pending for manual review. Requires the current draft version; rejected evidence stays rejected while new source replies may create new suggestions',
-    version: 2,
+    summary: 'Accept or ignore a pending replacement of sourced or handwritten history; changed handwritten targets require fresh manual review. Confirm an applied increment or undo only its untouched fragment; reversals exceeding draft field limits remain undo-pending. Requires the current draft version; rejected evidence stays rejected while new source replies may create new suggestions',
+    version: 3,
   },
   {
     cliPath: ['encounter', 'consultation-recording', 'control'],

@@ -11,9 +11,10 @@ import {
 import { clinMeshStyles } from './styles.generated.ts'
 import { registerProfileBrand } from './profile-brand.tsx'
 import { normalizeHostLocale, type ClientLocalePort } from './host-locale.ts'
-import { subscribeHostTheme, type ClientSessionBindingPort, type ClientThemePort } from './host-ports.ts'
+import { subscribeHostTheme, type ClientSessionBindingPort, type ClientSessionInputPort, type ClientThemePort } from './host-ports.ts'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
-import type { WebSurfaceDisplay, WebSurfaceNavigation } from '@clinmesh/web/runtime'
+import type { WebSurfaceDisplay, WebSurfaceNavigation, WebRuntimeOptions } from '@clinmesh/web/runtime'
+import { createDoctorInputBridge } from './doctor-task.ts'
 import { createFontSizePreference, registerFontSizeSettings, type FontSizePreferenceStore } from './font-size-settings.tsx'
 import { registerModelSettings } from './model-settings.tsx'
 import type { FontSizePreference } from '../../../web/src/app/preferences.ts'
@@ -31,6 +32,7 @@ function ClinMeshSurface({
   surfaceSessionId,
   surfaceDisplay,
   surfaceNavigation,
+  surfaceDoctorInput,
 }: ReactSurfaceProps & {
   surfaceNavigation: WebSurfaceNavigation
   surfaceDisplay: WebSurfaceDisplay
@@ -38,6 +40,7 @@ function ClinMeshSurface({
   surfaceLocale: 'zh-CN' | 'en-US'
   surfaceFontSize: FontSizePreference
   surfaceSessionId?: string
+  surfaceDoctorInput: NonNullable<WebRuntimeOptions['surfaceDoctorInput']>
 }): React.JSX.Element {
   const locationRef = useRef(location)
   const navigateRef = useRef(navigate)
@@ -78,6 +81,7 @@ function ClinMeshSurface({
         surfaceFontSize,
         surfaceDisplay,
         surfaceNavigation,
+        surfaceDoctorInput,
         ...(surfaceSessionId === undefined ? {} : { surfaceSessionId }),
       }}
     />
@@ -99,6 +103,10 @@ export function createDefinition(
   const subscribeLocale = (listener: () => void) => locale.subscribe(listener)
   const getLocale = () => normalizeHostLocale(locale.getLocale().active)
   const surfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
+  const sessions = ctx.get('sessions') as unknown as ClientSessionInputPort
+  const surfaceDoctorInput: NonNullable<WebRuntimeOptions['surfaceDoctorInput']> = accept => createDoctorInputBridge({
+    current: sessionBinding.adapter.current, sessions,
+  }, accept)
   const subscribe = (listener: () => void): (() => void) => sessionBinding.adapter.current.subscribe(listener)
   const subscribeTheme = (listener: () => void): (() => void) => subscribeHostTheme(ctx, listener)
   const getSnapshot = (): string | undefined => sessionBinding.adapter.current.getSnapshot().key
@@ -115,6 +123,7 @@ export function createDefinition(
       <ClinMeshSurface
         {...props}
         surfaceNavigation={navigation}
+        surfaceDoctorInput={surfaceDoctorInput}
         surfaceDisplay={{
           fullscreen: props.layout === 'full-frame',
           // 全屏保留宿主会话文件等原生右栏内容。

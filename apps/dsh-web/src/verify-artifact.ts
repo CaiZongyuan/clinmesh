@@ -30,14 +30,16 @@ if (unsupported.length > 0) throw new Error(`Unsupported DSH client modules: ${u
 // which can change their string values even when source-level tests pass.
 const parsedClient = ts.createSourceFile(clientPath, client, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS)
 let toolBuilder: string | undefined
-let bindingRevisionBuilder: string | undefined
+const helperNames = new Set(['agentPageBindingRevision', 'isDoctorReadOperation',
+  'usesDoctorReadBinding', 'projectDshToolSchema'])
+const descriptorHelpers = new Map<string, string>()
 let editingInstruction: string | undefined
 function findToolBuilder(node: ts.Node): void {
   if (ts.isFunctionDeclaration(node) && node.name?.text === 'buildSurfaceAgentTools') {
     toolBuilder = node.getText(parsedClient)
   }
-  if (ts.isFunctionDeclaration(node) && node.name?.text === 'agentPageBindingRevision') {
-    bindingRevisionBuilder = node.getText(parsedClient)
+  if (ts.isFunctionDeclaration(node) && node.name !== undefined && helperNames.has(node.name.text)) {
+    descriptorHelpers.set(node.name.text, node.getText(parsedClient))
   }
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)
     && node.name.text === 'editingInstruction' && node.initializer !== undefined) {
@@ -46,12 +48,12 @@ function findToolBuilder(node: ts.Node): void {
   ts.forEachChild(node, findToolBuilder)
 }
 findToolBuilder(parsedClient)
-if (toolBuilder === undefined || bindingRevisionBuilder === undefined || editingInstruction === undefined) {
+if (toolBuilder === undefined || descriptorHelpers.size !== helperNames.size || editingInstruction === undefined) {
   throw new Error('Missing emitted Surface Tool descriptor builder')
 }
 const descriptorLength: unknown = runInNewContext(`
   const editingInstruction = ${editingInstruction};
-  ${bindingRevisionBuilder}
+  ${[...descriptorHelpers.values()].join('\n')}
   ${toolBuilder}
   buildSurfaceAgentTools({
     definitions: [{ operationId: 'artifact.read', toolName: 'artifact_read' }],
@@ -65,6 +67,26 @@ const descriptorLength: unknown = runInNewContext(`
 }, { timeout: 1_000 })
 if (descriptorLength !== 512) {
   throw new Error(`Emitted Surface Tool description must be 512 characters, received ${String(descriptorLength)}`)
+}
+const doctorParameters: unknown = runInNewContext(`
+  const editingInstruction = ${editingInstruction};
+  ${[...descriptorHelpers.values()].join('\n')}
+  ${toolBuilder}
+  JSON.stringify(buildSurfaceAgentTools({
+    definitions: [{ operationId: 'outpatient.history.search', toolName: 'clinmesh_search_doctor_history' }],
+    binding: { snapshot: { actor: { roleCode: 'outpatient-doctor' }, claim: {
+      viewRevision: 'artifact', viewId: 'consultation', selection: { kind: 'case', id: 'synthetic-case' }
+    }, allowedOperationIds: ['outpatient.history.search'] } },
+    actions: { 'outpatient.history.search': { description: 'Read authorized history.', parameters: {
+      type: 'object', properties: { source: { type: 'string', enum: ['visible-source'] } },
+      required: ['source'], additionalProperties: false
+    } } }
+  })[0].parameters);
+`, {}, { timeout: 1_000 })
+if (doctorParameters !== JSON.stringify({ type: 'object', properties: {
+  source: { type: 'string', enum: ['visible-source'] },
+}, required: ['source'], additionalProperties: true })) {
+  throw new Error('Emitted doctor query schema must preserve business input without dynamic binding parameters')
 }
 
 // The bundle requires the vendored runtime at host runtime, and every host

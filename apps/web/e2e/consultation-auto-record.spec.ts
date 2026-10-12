@@ -4,6 +4,63 @@ import { persona, startConsultationCase, StubSyntheaProvider } from '../../serve
 import { expect, test } from './fixtures.ts'
 import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 
+test('reviews a conflicting handwritten sentence before replacement and preserves the rest of the draft after reload', async ({ page, webRoot }) => {
+  const reply = '胸痛两天了。'
+  const server = await startBrowserServer(webRoot, {
+    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+    syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
+    chatCompletionsProvider: { async completeJson(input) {
+      if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
+      if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply }), model: 'synthetic' }
+      const payload = input.userPayload as { turns: Array<{ id: string }>;
+        manualHistory: Array<{ id: string; text: string }> }
+      const target = payload.manualHistory.find(item => item.text === '医生核对：否认胸痛。')!
+      return { content: JSON.stringify({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId: payload.turns.at(-1)!.id,
+        quote: reply, relation: 'conflict', targetAdditionId: target.id }] }), model: 'synthetic' }
+    } },
+  })
+  try {
+    const started = await startConsultationCase(server.runtime, server.password, server.origin)
+    const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
+      `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
+    await page.goto(`${server.origin}/consultation`)
+    await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+    await page.getByLabel('账户密码').fill(server.password)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.getByRole('tab', { name: '待诊', exact: true }).click()
+    await page.getByText('张琴', { exact: true }).first().click()
+    await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    const original = '医生核对：否认胸痛。\n平时睡眠正常。'
+    const history = page.getByLabel('现病史', { exact: true })
+    await history.fill(original)
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(original)
+    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充胸痛情况？')
+    await page.getByRole('button', { name: '向患者提问', exact: true }).click()
+    await expect(page.getByText(reply, { exact: true })).toBeVisible()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    const pending = page.locator('[data-consultation-addition="pending"]')
+    await expect(pending).toContainText('医生核对：否认胸痛。')
+    await expect(history).toHaveValue(original)
+    await page.reload()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(pending.getByRole('button', { name: '接受替换', exact: true })).toBeEnabled()
+    await pending.getByRole('button', { name: '查看来源', exact: true }).click()
+    await expect(page.getByRole('dialog', { name: '患者原回答', exact: true }).locator('blockquote')).toHaveText(reply)
+    await page.keyboard.press('Escape')
+    await expect(page.getByRole('dialog', { name: '患者原回答', exact: true })).toHaveCount(0)
+    await pending.getByRole('button', { name: '接受替换', exact: true }).click()
+    const expected = '患者自述：胸痛两天了。\n平时睡眠正常。'
+    await expect(history).toHaveValue(expected)
+    await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(expected)
+    await page.reload()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(history).toHaveValue(expected)
+  } finally { await server.close() }
+})
+
 test('keeps review prompts and full reply sources across reload, then undoes additions and corrections without losing other edits', async ({ page, webRoot }) => {
   let reply = '头晕一周了。站起来时更明显。'
   const server = await startBrowserServer(webRoot, {

@@ -16,6 +16,26 @@ import {
 } from '../src/agent.ts'
 
 describe('ClinMesh DSH Agent contracts', () => {
+  it('accepts bounded current-patient history queries without arbitrary context or patient identifiers', () => {
+    expect(parseAgentToolInput('outpatient.history.search', { source: 'visible-source' })).toEqual({
+      page: 1, pageSize: 10, source: 'visible-source',
+    })
+    expect(parseAgentToolInput('outpatient.history.read', {
+      entryId: 'urn:uuid:prior-condition', source: 'visible-source',
+    })).toEqual({ entryId: 'urn:uuid:prior-condition', source: 'visible-source' })
+    for (const input of [
+      { source: 'visible-source', patientId: 'other-patient' },
+      { source: 'local-completed', caseId: 'other-case' },
+      { source: 'visible-source', pageSize: 21 },
+      { source: 'case-truth' },
+    ]) {
+      expect(() => parseAgentToolInput('outpatient.history.search', input)).toThrow()
+    }
+    expect(agentToolsForContext('outpatient-doctor', 'consultation', 'diagnosis').map(tool => tool.operationId))
+      .toEqual(expect.arrayContaining(['outpatient.history.search', 'outpatient.history.read']))
+    expect(agentToolsForContext('registrar', 'registration').map(tool => tool.operationId))
+      .not.toContain('outpatient.history.read')
+  })
   it('keeps the page binding revision stable across transient UI state and binds draft state', () => {
     const claim = agentPageContextClaimSchema.parse({
       version: 1,
@@ -154,6 +174,8 @@ describe('ClinMesh DSH Agent contracts', () => {
       'ui.navigate',
       'ui.panel.focus',
       'outpatient.case.read',
+      'outpatient.history.search',
+      'outpatient.history.read',
       'outpatient.case.select',
       'outpatient.section.select',
       'outpatient.first-visit.draft.set',
@@ -348,7 +370,7 @@ describe('ClinMesh DSH Agent contracts', () => {
 
   it('binds one execution proof and authorization request to an exact Tool call', () => {
     const proof = agentExecutionProofPayloadSchema.parse({
-      version: 2,
+      version: 3,
       callId: 'call-17',
       contextId: 'context-17',
       dshSessionId: 'session-1',
@@ -360,6 +382,7 @@ describe('ClinMesh DSH Agent contracts', () => {
     })
     expect(proof.callId).toBe('call-17')
     expect(agentExecutionProofPayloadSchema.safeParse({ ...proof, version: 1 }).success).toBe(false)
+    expect(agentExecutionProofPayloadSchema.safeParse({ ...proof, version: 2 }).success).toBe(false)
     expect(agentExecutionProofPayloadSchema.safeParse({ ...proof, pageRevision: undefined }).success).toBe(false)
     expect(agentExecutionProofPayloadSchema.safeParse({ ...proof, pageRevision: 'x'.repeat(1025) }).success).toBe(false)
     expect(agentToolAuthorizationRequestSchema.parse({

@@ -39,7 +39,7 @@ import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
-import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
 import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
@@ -52,8 +52,6 @@ import {
   cancelPathologyRequest,
   correctImagingReport,
   correctPathologyReport,
-  getCaseImagingServices,
-  getCasePathologyServices,
   issueImagingRequest,
   issuePathologyRequest,
   retryImagingRequest,
@@ -326,7 +324,7 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
     setCorrectionNavigation(undefined)
   }, [session.actor.epoch, session.actor.workspaceId])
   const navigation = (
-    <TabsList aria-label={messages.consultation} className="w-full">
+    <TabsList aria-label={messages.consultation} className="h-auto! w-full flex-wrap">
       <TabsTrigger value="active">{messages.doctorActiveQueue}</TabsTrigger>
       <TabsTrigger value="waiting">{messages.doctorWaitingQueue}</TabsTrigger>
       <TabsTrigger value="completed">{messages.doctorCompletedQueue}</TabsTrigger>
@@ -368,6 +366,22 @@ export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): Reac
       )}
     </Tabs>
   )
+}
+
+type InvestigationCategory = 'laboratory' | 'imaging' | 'pathology'
+interface InvestigationView {
+  caseId: string
+  category: InvestigationCategory
+  selected: Partial<Record<InvestigationCategory, string>>
+  reportId?: string | undefined
+}
+
+function caseInvestigationRequests(detail: DoctorCaseDetail | undefined) {
+  return {
+    laboratory: detail?.laboratoryRequests?.requests ?? [],
+    imaging: detail?.imagingRequests?.requests ?? [],
+    pathology: detail?.pathologyRequests?.requests ?? [],
+  }
 }
 
 function DoctorCaseController({
@@ -426,7 +440,7 @@ function DoctorCaseController({
       ? 1_500
       : false,
   })
-  const [laboratoryItemId, setLaboratoryItemId] = useState('')
+  const [laboratoryItemId, setLaboratoryItemId] = useState<string>()
   const [indicationCode, setIndicationCode] = useState('')
   const [workingClinicalDocuments, setWorkingClinicalDocuments] = useState<
     Record<string, ClinicalDocumentContent>
@@ -448,6 +462,28 @@ function DoctorCaseController({
     }))
   }, [])
   const activeCaseId = selectedCaseId ?? visibleQueue.data?.items[0]?.caseId
+  const activeCaseIdRef = useRef(activeCaseId)
+  activeCaseIdRef.current = activeCaseId
+  const [investigationSelection, setInvestigationSelection] = useState<InvestigationView>()
+  const selectInvestigation = useCallback((category: InvestigationCategory, requestId?: string, reportId?: string): void => {
+    if (activeCaseId === undefined || activeCaseIdRef.current !== activeCaseId) return
+    setInvestigationSelection(previous => {
+      const selected = previous?.caseId === activeCaseId ? previous.selected : {}
+      return { caseId: activeCaseId, category, selected: requestId === undefined ? selected : { ...selected, [category]: requestId }, reportId }
+    })
+  }, [activeCaseId])
+  const selectInvestigationRequest = useCallback((category: InvestigationCategory, requestId: string): void => {
+    if (activeCaseId === undefined || activeCaseIdRef.current !== activeCaseId) return
+    setInvestigationSelection(previous => {
+      const current = previous?.caseId === activeCaseId ? previous : undefined
+      return {
+        caseId: activeCaseId,
+        category: current?.category ?? 'laboratory',
+        selected: { ...current?.selected, [category]: requestId },
+        reportId: current?.category === category ? undefined : current?.reportId,
+      }
+    })
+  }, [activeCaseId])
   const pageScope = JSON.stringify([session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, activeCaseId])
   const pageScopeRef = useRef(pageScope)
   pageScopeRef.current = pageScope
@@ -480,6 +516,17 @@ function DoctorCaseController({
       ? 1_500
       : false,
   })
+  const investigationView = useMemo<InvestigationView>(() => {
+    const view = investigationSelection?.caseId === activeCaseId ? investigationSelection : undefined
+    const groups = caseInvestigationRequests(detail.data)
+    const selected: InvestigationView['selected'] = {}
+    for (const category of ['laboratory', 'imaging', 'pathology'] as const) {
+      const requests = groups[category]
+      const request = requests.find(item => item.id === view?.selected[category]) ?? requests[0]
+      if (request !== undefined) selected[category] = request.id
+    }
+    return { caseId: activeCaseId ?? '', category: view?.category ?? 'laboratory', selected, reportId: view?.reportId }
+  }, [activeCaseId, detail.data, investigationSelection])
   const detailUnavailable = detail.isError && (detail.data === undefined
     || !(detail.error instanceof ApiClientError)
     || (detail.error.status !== 0 && detail.error.status < 500))
@@ -495,7 +542,7 @@ function DoctorCaseController({
     ],
   })
   useEffect(() => {
-    setLaboratoryItemId('')
+    setLaboratoryItemId(undefined)
     setIndicationCode('')
     setActiveCaseSection('record')
   }, [activeCaseId, session.actor.epoch, session.actor.workspaceId])
@@ -557,11 +604,13 @@ function DoctorCaseController({
       isError: referenceDiagnoses.isError,
       isFetching: referenceDiagnoses.isFetching,
       isPending: referenceDiagnoses.isPending,
-      onSearch: (query, searchPage) => setDiagnosisReferenceSearch({
-        enabled: true,
-        page: searchPage,
-        query,
-      }),
+      onSearch: (query, searchPage) => {
+        if (diagnosisReferenceSearch.enabled && diagnosisReferenceSearch.query === query && diagnosisReferenceSearch.page === searchPage) {
+          void referenceDiagnoses.refetch()
+        } else {
+          setDiagnosisReferenceSearch({ enabled: true, page: searchPage, query })
+        }
+      },
     },
     laboratory: {
       data: referenceLaboratory.data,
@@ -569,11 +618,13 @@ function DoctorCaseController({
       isError: referenceLaboratory.isError,
       isFetching: referenceLaboratory.isFetching,
       isPending: referenceLaboratory.isPending,
-      onSearch: (query, searchPage) => setLaboratoryReferenceSearch({
-        enabled: true,
-        page: searchPage,
-        query,
-      }),
+      onSearch: (query, searchPage) => {
+        if (laboratoryReferenceSearch.enabled && laboratoryReferenceSearch.query === query && laboratoryReferenceSearch.page === searchPage) {
+          void referenceLaboratory.refetch()
+        } else {
+          setLaboratoryReferenceSearch({ enabled: true, page: searchPage, query })
+        }
+      },
     },
     medications: {
       data: referenceMedications.data,
@@ -581,11 +632,13 @@ function DoctorCaseController({
       isError: referenceMedications.isError,
       isFetching: referenceMedications.isFetching,
       isPending: referenceMedications.isPending,
-      onSearch: (query, searchPage) => setMedicationReferenceSearch({
-        enabled: true,
-        page: searchPage,
-        query,
-      }),
+      onSearch: (query, searchPage) => {
+        if (medicationReferenceSearch.enabled && medicationReferenceSearch.query === query && medicationReferenceSearch.page === searchPage) {
+          void referenceMedications.refetch()
+        } else {
+          setMedicationReferenceSearch({ enabled: true, page: searchPage, query })
+        }
+      },
     },
   }
   const persistedClinicalDocumentVersion = detail.data?.clinicalDocument?.draft?.version
@@ -623,7 +676,7 @@ function DoctorCaseController({
       : item.id === 'lab-fever-panel'
   )) ?? []
   const draftLaboratoryItemId = detail.data?.laboratoryRequests?.draft?.catalogItemId
-  const requestedLaboratoryItemId = laboratoryItemId || draftLaboratoryItemId
+  const requestedLaboratoryItemId = laboratoryItemId ?? draftLaboratoryItemId
   const resolvedLaboratoryItemId = requestedLaboratoryItemId
     ?? (usesIndependentLaboratoryRequests ? '' : laboratoryCatalog[0]?.id)
     ?? ''
@@ -861,10 +914,13 @@ function DoctorCaseController({
         expectedDraftVersion: requestState.draftVersion,
       }, newIdempotencyKey())
     },
-    onSuccess: async (_response, variables) => {
-      saveLaboratoryRequest.reset()
-      setLaboratoryItemId('')
-      setIndicationCode('')
+    onSuccess: async (response, variables) => {
+      if (activeCaseIdRef.current === variables.caseId) {
+        saveLaboratoryRequest.reset()
+        setLaboratoryItemId('')
+        setIndicationCode('')
+        selectInvestigationRequest('laboratory', response.data.request.id)
+      }
       await refreshCaseById(variables.caseId)
     },
   })
@@ -883,9 +939,11 @@ function DoctorCaseController({
     },
     onError: async (_error, caseId) => refreshCaseById(caseId),
     onSuccess: async (_response, caseId) => {
-      saveLaboratoryRequest.reset()
-      setLaboratoryItemId('')
-      setIndicationCode('')
+      if (activeCaseIdRef.current === caseId) {
+        saveLaboratoryRequest.reset()
+        setLaboratoryItemId('')
+        setIndicationCode('')
+      }
       await refreshCaseById(caseId)
     },
   })
@@ -1292,16 +1350,24 @@ function DoctorCaseController({
         description: 'Read current case, queue.items (waiting + active; use each caseId to select a patient), imagingServices with availability, and pathologyServices with availability and the sourceProcedures that can be sent for slide consultation (each null when its catalog cannot be read).',
         enabled: activeCaseId !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: async (_raw: unknown, signal: AbortSignal) => {
-          if (activeCaseId === undefined) throw new Error(messages.consultationUnavailable)
-          const [current, imagingServices, pathologyServices] = await Promise.all([
-            getDoctorCase(activeCaseId, signal),
-            // 放射或病理目录读取失败（例如素材清单无效）时仍返回病例，目录以 null 表示不可用。
-            getCaseImagingServices(activeCaseId, signal).then(catalog => catalog.items, () => null),
-            getCasePathologyServices(activeCaseId, signal).then(catalog => catalog.items, () => null),
-          ])
-          return { ...current, imagingServices, pathologyServices, queue: queue.data ?? null }
-        },
+        execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
+      },
+      'outpatient.history.search': {
+        enabled: activeCaseId !== undefined && detail.data !== undefined,
+        description: 'Read one page of authorized local completed records or materialized Visible Source History for the current patient; reports source, time, coverage and missing materialization. Does not navigate.',
+        parameters: { type: 'object' as const, properties: {
+          source: { type: 'string', enum: ['local-completed', 'visible-source'] },
+          page: { type: 'integer', minimum: 1 }, pageSize: { type: 'integer', minimum: 1, maximum: 20 },
+        }, required: ['source'], additionalProperties: false },
+        execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
+      },
+      'outpatient.history.read': {
+        enabled: activeCaseId !== undefined && detail.data !== undefined,
+        description: 'Read clinical details of one entry from the current patient authorized history index; use its source and entryId. Hidden simulation inputs, raw resources and pixels are excluded.',
+        parameters: { type: 'object' as const, properties: {
+          source: { type: 'string', enum: ['local-completed', 'visible-source'] }, entryId: { type: 'string', maxLength: 512 },
+        }, required: ['source', 'entryId'], additionalProperties: false },
+        execute: () => { throw new Error('Doctor reads require an authorized Query receipt') },
       },
       'outpatient.case.select': {
         description: 'Select caseId from loaded queue.items; switch to its waiting or active tab.',
@@ -1351,11 +1417,18 @@ function DoctorCaseController({
             throw new Error('Doctor case section is not available')
           }
           tab.click()
-          if (imagingRequestId !== undefined) imagingView.setOpen(imagingRequestId, true)
-          if (pathologyRequestId !== undefined) imagingView.setOpen(pathologyRequestId, true)
+          if (imagingRequestId !== undefined) {
+            selectInvestigation('imaging', imagingRequestId)
+            imagingView.setOpen(imagingRequestId, true)
+          }
+          if (pathologyRequestId !== undefined) {
+            selectInvestigation('pathology', pathologyRequestId)
+            imagingView.setOpen(pathologyRequestId, true)
+          }
           return {
-            ...(imagingRequestId === undefined ? {} : { imagesOpened: true, imagingRequestId }),
+            ...(imagingRequestId === undefined ? {} : { imagesOpened: pathologyRequestId === undefined, imagingRequestId }),
             ...(pathologyRequestId === undefined ? {} : { pathologyRequestId, slideOpened: true }),
+            ...(imagingRequestId !== undefined && pathologyRequestId !== undefined ? { category: 'pathology' } : {}),
             section,
             selected: true,
           }
@@ -1480,9 +1553,12 @@ function DoctorCaseController({
             indicationCode: nextIndication,
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
-          setLaboratoryItemId(catalogItemId)
-          setIndicationCode(nextIndication)
-          hydrateAgentDraft(current.caseId, 'laboratory')
+          if (activeCaseIdRef.current === current.caseId) {
+            setLaboratoryItemId(catalogItemId)
+            setIndicationCode(nextIndication)
+            selectInvestigation('laboratory')
+            hydrateAgentDraft(current.caseId, 'laboratory')
+          }
           return result
         },
       },
@@ -1508,7 +1584,10 @@ function DoctorCaseController({
             expectedDraftVersion: current.imagingRequests?.draftVersion ?? 0,
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
-          hydrateAgentDraft(current.caseId, 'imaging')
+          if (activeCaseIdRef.current === current.caseId) {
+            selectInvestigation('imaging')
+            hydrateAgentDraft(current.caseId, 'imaging')
+          }
           return result
         },
       },
@@ -1535,7 +1614,10 @@ function DoctorCaseController({
             expectedDraftVersion: current.pathologyRequests?.draftVersion ?? 0,
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
-          hydrateAgentDraft(current.caseId, 'pathology')
+          if (activeCaseIdRef.current === current.caseId) {
+            selectInvestigation('pathology')
+            hydrateAgentDraft(current.caseId, 'pathology')
+          }
           return result
         },
       },
@@ -1759,11 +1841,18 @@ function DoctorCaseController({
         description: 'Open human review before issuing the current laboratory request.',
         enabled: usesIndependentLaboratoryRequests
           ? detail.data?.laboratoryRequests?.draft !== undefined
+            && detail.data.laboratoryRequests.draft.catalogItemId === resolvedLaboratoryItemId
+            && detail.data.laboratoryRequests.draft.indicationCode === resolvedIndicationCode
+            && !(saveLaboratoryRequest.isPending && saveLaboratoryRequest.variables?.caseId === activeCaseId)
+            && !(issueRequest.isPending && issueRequest.variables?.caseId === activeCaseId)
           : detail.data?.drafts?.firstVisit !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => agentReview.request({
           confirmLabel: locale => getWorkspaceMessages(locale).issueLaboratoryRequest,
-          description: locale => resolvedLaboratoryItem?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn'] ?? getWorkspaceMessages(locale).consultationUnavailable,
+          description: locale => resolvedLaboratoryItem?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn']
+            ?? detail.data?.laboratoryRequests?.draft?.laboratoryService?.[locale === 'zh-CN' ? 'nameZh' : 'nameEn']
+            ?? detail.data?.laboratoryRequests?.draft?.referenceConcept?.display
+            ?? getWorkspaceMessages(locale).consultationUnavailable,
           onConfirm: () => {
             const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
             return usesIndependentLaboratoryRequests
@@ -2365,6 +2454,8 @@ function DoctorCaseController({
       viewRevision: agentViewRevision({
         activeCaseId,
         activeCaseSection,
+        investigationView,
+        laboratorySelection: { catalogItemId: resolvedLaboratoryItemId, indicationCode: resolvedIndicationCode },
         clinicalDocument: currentClinicalDocument,
         consultationVersion: detail.data?.consultation?.version,
         firstVisitDraftVersion: detail.data?.drafts?.firstVisit?.version,
@@ -2450,6 +2541,7 @@ function DoctorCaseController({
       queue: queue.data ?? null,
       queueCount: queue.data?.total ?? 0,
       section: activeCaseSection,
+      investigation: investigationView,
     }),
   }), [
     activeCaseId,
@@ -2469,8 +2561,14 @@ function DoctorCaseController({
     canCorrectReports,
     hydrateAgentDraft,
     imagingView,
+    investigationView,
+    selectInvestigation,
     issueOrder.mutateAsync,
     issueRequest.mutateAsync,
+    issueRequest.isPending,
+    issueRequest.variables?.caseId,
+    saveLaboratoryRequest.isPending,
+    saveLaboratoryRequest.variables?.caseId,
     messages,
     onQueueViewChange,
     onSelectedCaseIdChange,
@@ -2708,6 +2806,9 @@ function DoctorCaseController({
               // 切片的阅片状态与放射影像共用：都按申请和报告标识记录。
               view: imagingView,
             }}
+            investigationView={investigationView}
+            onSelectInvestigation={selectInvestigation}
+            onSelectInvestigationRequest={selectInvestigationRequest}
             laboratoryRequestActions={{
               acknowledge: {
                 error: acknowledgeReport.variables?.caseId === detail.data.caseId
@@ -2792,6 +2893,8 @@ function DoctorCaseController({
                 onSubmit: () => issueRequest.mutate({ caseId: detail.data.caseId }),
                 pending: issueRequest.isPending
                   && issueRequest.variables?.caseId === detail.data.caseId,
+                ...(issueRequest.variables?.caseId === detail.data.caseId && issueRequest.data !== undefined
+                  ? { successRequestId: issueRequest.data.data.request.id } : {}),
               },
               retry: {
                 error: retryResultGeneration.variables?.caseId === detail.data.caseId
@@ -2960,6 +3063,9 @@ function CaseDetail({
   laboratoryItemId,
   laboratoryCatalog,
   laboratoryRequestActions,
+  investigationView,
+  onSelectInvestigation,
+  onSelectInvestigationRequest,
   imagingActions,
   pathologyActions,
   locale,
@@ -3010,6 +3116,9 @@ function CaseDetail({
   issueOrderPending: boolean
   laboratoryCatalog: ClinicalCatalog['laboratory']
   laboratoryItemId: string
+  investigationView: InvestigationView
+  onSelectInvestigation: (category: InvestigationCategory, requestId?: string, reportId?: string) => void
+  onSelectInvestigationRequest: (category: InvestigationCategory, requestId: string) => void
   laboratoryRequestActions: LaboratoryPageActions
   imagingActions: ImagingPageActions
   pathologyActions: PathologyPageActions
@@ -3075,29 +3184,45 @@ function CaseDetail({
     source: 'checklist' | 'correction'
     target: EncounterCompletionTarget
   }>()
+  const detailRoot = useRef<HTMLDivElement>(null)
+  const correctionNavigationKey = useRef<string | undefined>(undefined)
+  const navigateInvestigationTarget = useCallback((target: EncounterCompletionTarget): void => {
+    if (target === 'laboratory' || target === 'imaging' || target === 'pathology') {
+      const requests = caseInvestigationRequests(detail)[target]
+      const selected = requests?.find(request => request.status === 'reported')
+        ?? requests?.find(request => request.report !== undefined)
+        ?? requests?.[0]
+      onSelectInvestigation(target, selected?.id)
+    }
+  }, [detail.laboratoryRequests, detail.imagingRequests, detail.pathologyRequests, onSelectInvestigation])
   useEffect(() => {
     if (correctionTarget === undefined) return
+    const key = `${detail.caseId}:${correctionTarget}`
+    if (correctionNavigationKey.current === key) return
+    correctionNavigationKey.current = key
+    navigateInvestigationTarget(correctionTarget)
     setActiveSection(caseDetailSectionByCompletionTarget[correctionTarget])
     setPendingNavigation({ source: 'correction', target: correctionTarget })
-  }, [correctionTarget, detail.caseId])
+  }, [correctionTarget, detail.caseId, navigateInvestigationTarget])
 
   useEffect(() => {
     if (pendingNavigation === undefined) return
-    const target = document.getElementById(
-      encounterCompletionTargetElementIds[pendingNavigation.target],
+    const target = detailRoot.current?.querySelector<HTMLElement>(
+      `#${encounterCompletionTargetElementIds[pendingNavigation.target]}`,
     )
-    if (target === null) return
+    if (target === null || target === undefined) return
     target.focus()
     target.scrollIntoView?.({ block: 'start' })
     if (pendingNavigation.source === 'correction') onCorrectionNavigationHandled()
     setPendingNavigation(undefined)
-  }, [activeSection, onCorrectionNavigationHandled, pendingNavigation])
+  }, [activeSection, investigationView.category, onCorrectionNavigationHandled, pendingNavigation])
 
   useEffect(() => {
     onActiveSectionChange(activeSection)
   }, [activeSection, onActiveSectionChange])
 
   const navigateToCompletionTarget = (target: EncounterCompletionTarget): void => {
+    navigateInvestigationTarget(target)
     setActiveSection(caseDetailSectionByCompletionTarget[target])
     setPendingNavigation({ source: 'checklist', target })
   }
@@ -3304,7 +3429,7 @@ function CaseDetail({
 
   return (
     <DoctorCaseLayout>
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div ref={detailRoot} className="flex min-h-0 min-w-0 flex-1 flex-col">
         <PatientBanner
           {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
@@ -3353,7 +3478,20 @@ function CaseDetail({
           {detail.consultation === undefined ? null : (
             <DoctorCasePanel value="consultation">
               <ConsultationPage
-                action={{ ...consultationAction, onOpenReport: () => setActiveSection('laboratory') }}
+                action={{ ...consultationAction, onOpenReport: reference => {
+                  const reportId = reference?.split('/')[1]
+                  const categories = ['laboratory', 'imaging', 'pathology'] as const
+                  for (const category of reportId === undefined ? [] : categories) {
+                    const requests = caseInvestigationRequests(detail)[category]
+                    const request = requests?.find(item => item.report?.diagnosticReportId === reportId
+                      || item.previousReports.some(report => report.diagnosticReportId === reportId))
+                    if (request !== undefined) {
+                      onSelectInvestigation(category, request.id, reportId)
+                      break
+                    }
+                  }
+                  setActiveSection('laboratory')
+                } }}
                 consultation={detail.consultation}
                 key={`consultation:${detail.caseId}`}
                 locale={locale}
@@ -3435,47 +3573,75 @@ function CaseDetail({
           </DoctorCasePanel>
 
           <DoctorCasePanel value="laboratory">
-            <LaboratoryPage
-              actions={laboratoryRequestActions}
-              catalogError={catalog.error}
-              catalogPending={catalog.isPending}
-              detail={detail}
-              elementId={encounterCompletionTargetElementIds.laboratory}
-              indicationCode={indicationCode}
-              issueLegacyOrderError={issueOrderError}
-              issueLegacyOrderPending={issueOrderPending}
-              laboratoryCatalog={laboratoryCatalog}
-              laboratoryItemId={laboratoryItemId}
-              key={`laboratory:${detail.caseId}:${agentDraftHydrationRevisions.laboratory ?? 0}`}
-              locale={locale}
-              messages={messages}
-              onIndicationChange={onIndicationChange}
-              onIssueLegacyOrder={onIssueOrder}
-              onLaboratoryItemChange={onLaboratoryItemChange}
-              readOnly={clinicalReadOnly}
-              referenceSearch={referenceCatalogSearches.laboratory}
-              showCorrection={correctionTarget === 'laboratory'}
-            />
-            <ImagingPage
-              actions={imagingActions}
-              caseId={detail.caseId}
-              elementId={encounterCompletionTargetElementIds.imaging}
-              encounter={detail.encounter}
-              key={`imaging:${detail.caseId}:${agentDraftHydrationRevisions.imaging ?? 0}`}
-              locale={locale}
-              readOnly={clinicalReadOnly}
-              state={detail.imagingRequests}
-            />
-            <PathologyPage
-              actions={pathologyActions}
-              caseId={detail.caseId}
-              elementId={encounterCompletionTargetElementIds.pathology}
-              encounter={detail.encounter}
-              key={`pathology:${detail.caseId}:${agentDraftHydrationRevisions.pathology ?? 0}`}
-              locale={locale}
-              readOnly={clinicalReadOnly}
-              state={detail.pathologyRequests}
-            />
+            <Tabs onValueChange={value => { if (value === 'laboratory' || value === 'imaging' || value === 'pathology') onSelectInvestigation(value) }} value={investigationView.category}>
+              <TabsList aria-label={locale === 'zh-CN' ? '检查分类' : 'Investigation categories'} className="h-auto! max-w-full flex-wrap justify-start" variant="line">
+                <TabsTrigger value="laboratory">{locale === 'zh-CN' ? '检验' : 'Laboratory'} <Badge variant="secondary">{detail.laboratoryRequests?.requests.length ?? (detail.report === undefined ? 0 : 1)}</Badge></TabsTrigger>
+                <TabsTrigger value="imaging">{locale === 'zh-CN' ? '放射检查' : 'Radiology'} <Badge variant="secondary">{detail.imagingRequests?.requests.length ?? 0}</Badge></TabsTrigger>
+                <TabsTrigger value="pathology">{locale === 'zh-CN' ? '病理会诊' : 'Pathology'} <Badge variant="secondary">{detail.pathologyRequests?.requests.length ?? 0}</Badge></TabsTrigger>
+              </TabsList>
+              <TabsContent keepMounted value="laboratory">
+                <LaboratoryPage
+                  actions={laboratoryRequestActions}
+                  catalogError={catalog.error}
+                  catalogPending={catalog.isPending}
+                  detail={detail}
+                  elementId={encounterCompletionTargetElementIds.laboratory}
+                  indicationCode={indicationCode}
+                  issueLegacyOrderError={issueOrderError}
+                  issueLegacyOrderPending={issueOrderPending}
+                  laboratoryCatalog={laboratoryCatalog}
+                  laboratoryItemId={laboratoryItemId}
+                  key={`laboratory:${detail.caseId}:${agentDraftHydrationRevisions.laboratory ?? 0}`}
+                  locale={locale}
+                  messages={messages}
+                  onIndicationChange={onIndicationChange}
+                  onIssueLegacyOrder={onIssueOrder}
+                  onLaboratoryItemChange={onLaboratoryItemChange}
+                  readOnly={clinicalReadOnly}
+                  referenceSearch={referenceCatalogSearches.laboratory}
+                  editDraft={(agentDraftHydrationRevisions.laboratory ?? 0) > 0}
+                  active={investigationView.category === 'laboratory'}
+                  selectedRequestId={investigationView.selected.laboratory}
+                  onSelectRequest={id => onSelectInvestigationRequest('laboratory', id)}
+                  selectedReportId={investigationView.reportId}
+                  showCorrection={correctionTarget === 'laboratory'}
+                />
+              </TabsContent>
+              <TabsContent keepMounted value="imaging">
+                <ImagingPage
+                  actions={imagingActions}
+                  active={investigationView.category === 'imaging'}
+                  caseId={detail.caseId}
+                  elementId={encounterCompletionTargetElementIds.imaging}
+                  encounter={detail.encounter}
+                  key={`imaging:${detail.caseId}:${agentDraftHydrationRevisions.imaging ?? 0}`}
+                  locale={locale}
+                  readOnly={clinicalReadOnly}
+                  state={detail.imagingRequests}
+                  editDraft={(agentDraftHydrationRevisions.imaging ?? 0) > 0}
+                  selectedRequestId={investigationView.selected.imaging}
+                  onSelectRequest={id => onSelectInvestigationRequest('imaging', id)}
+                  selectedReportId={investigationView.reportId}
+                />
+              </TabsContent>
+              <TabsContent keepMounted value="pathology">
+                <PathologyPage
+                  actions={pathologyActions}
+                  active={investigationView.category === 'pathology'}
+                  caseId={detail.caseId}
+                  elementId={encounterCompletionTargetElementIds.pathology}
+                  encounter={detail.encounter}
+                  key={`pathology:${detail.caseId}:${agentDraftHydrationRevisions.pathology ?? 0}`}
+                  locale={locale}
+                  readOnly={clinicalReadOnly}
+                  state={detail.pathologyRequests}
+                  editDraft={(agentDraftHydrationRevisions.pathology ?? 0) > 0}
+                  selectedRequestId={investigationView.selected.pathology}
+                  onSelectRequest={id => onSelectInvestigationRequest('pathology', id)}
+                  selectedReportId={investigationView.reportId}
+                />
+              </TabsContent>
+            </Tabs>
           </DoctorCasePanel>
         </Tabs>
       </div>

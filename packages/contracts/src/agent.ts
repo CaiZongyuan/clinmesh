@@ -7,7 +7,10 @@ import {
   type DoctorCaseSection,
 } from './agent-tool-input.ts'
 import { hisOperationIdSchema } from './his-operations.ts'
-import { roleCodeSchema } from './his.ts'
+import { doctorCaseDetailSchema, doctorQueueSchema, roleCodeSchema,
+  caseImagingServiceCatalogSchema, casePathologyServiceCatalogSchema } from './his.ts'
+
+export * from './doctor-history.ts'
 
 export {
   agentToolInputSchemas,
@@ -73,6 +76,7 @@ const agentPageUiStateSchema = z.object({
 }).strict()
 
 export const agentPageContextClaimSchema = z.object({
+  taskEpoch: z.uuid().optional(),
   activeSection: z.string().trim().min(1).max(64).optional(),
   draft: agentDraftReferenceSchema.optional(),
   selection: versionedSelectionSchema.optional(),
@@ -117,6 +121,41 @@ export const agentPageContextBindingSchema = z.object({
   token: z.string().min(32),
 }).strict()
 
+const agentExecutionBindingSchema = z.object({
+  pageRevision: z.string().min(1).max(1024),
+  scopeKey: z.string().trim().min(1).max(128),
+}).strict()
+
+export const doctorAgentTaskPermitPayloadSchema = agentExecutionBindingSchema.extend({
+  contextId: z.string().min(1).max(128),
+  dshSessionId: z.string().min(1).max(256),
+  expiresAt: z.iso.datetime({ offset: true }),
+  inputHash: z.string().regex(/^[a-f0-9]{64}$/),
+  issuedAt: z.iso.datetime({ offset: true }),
+  purpose: z.literal('clinmesh-doctor-input'),
+  rpcId: z.string().min(1).max(256),
+  taskId: z.uuid(),
+  version: z.literal(2),
+})
+
+export const doctorAgentTaskPermitRequestSchema = z.object({
+  contextToken: z.string().min(32),
+  content: z.string().min(1).max(2000),
+  rpcId: z.string().min(1).max(256),
+}).strict()
+
+export const doctorAgentTaskPermitResponseSchema = z.object({
+  content: z.string().min(1).max(2000),
+  dshSessionId: z.string().min(1).max(256),
+  permit: z.string().min(32).max(8192),
+  rpcId: z.string().min(1).max(256),
+  taskId: z.uuid(),
+}).strict()
+
+export type DoctorAgentTaskPermitRequest = z.infer<typeof doctorAgentTaskPermitRequestSchema>
+export type DoctorAgentTaskSubmission = z.infer<typeof doctorAgentTaskPermitResponseSchema>
+export type DoctorAgentChatInput = Pick<DoctorAgentTaskSubmission, 'content' | 'dshSessionId' | 'rpcId'>
+
 export const agentExecutionProofPayloadSchema = z.object({
   callId: z.string().trim().min(1).max(256),
   contextId: z.string().trim().min(1).max(128),
@@ -124,9 +163,21 @@ export const agentExecutionProofPayloadSchema = z.object({
   expiresAt: z.iso.datetime({ offset: true }),
   issuedAt: z.iso.datetime({ offset: true }),
   pageRevision: z.string().min(1).max(1024),
+  origin: z.object({
+    request: agentExecutionBindingSchema,
+    task: agentExecutionBindingSchema.extend({
+      messageId: z.string().trim().min(1).max(256),
+      acceptedAt: z.iso.datetime({ offset: true }),
+      rpcId: z.string().trim().min(1).max(256),
+      contextId: z.string().min(1).max(128).optional(),
+      delegationId: z.uuid().optional(),
+      delegationInputHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+      turn: z.number().int().positive(),
+    }),
+  }).strict().optional(),
   scopeKey: z.string().trim().min(1).max(128),
   toolName: z.string().regex(/^clinmesh_[a-z0-9_]+$/).max(64),
-  version: z.literal(2),
+  version: z.literal(3),
 }).strict()
 
 export const agentToolAuthorizationRequestSchema = z.object({
@@ -165,6 +216,18 @@ export const agentToolResultRequestSchema = z.object({
   if (value.ok && value.error !== undefined) {
     context.addIssue({ code: 'custom', message: 'A successful Tool result cannot include an error' })
   }
+})
+
+export const agentDoctorQueryRequestSchema = z.object({
+  contextToken: z.string().min(32),
+  receiptToken: z.string().min(32),
+  input: z.json(),
+}).strict()
+
+export const agentDoctorCaseReadSchema = doctorCaseDetailSchema.extend({
+  imagingServices: caseImagingServiceCatalogSchema.shape.items.nullable(),
+  pathologyServices: casePathologyServiceCatalogSchema.shape.items.nullable(),
+  queue: doctorQueueSchema.nullable(),
 })
 
 export const agentReviewDecisionRequestSchema = z.object({
@@ -301,6 +364,8 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('triage.record.propose', 'clinmesh_prepare_record_triage', 'proposal', 'human-review', triage, ['triage']),
 
   tool('outpatient.case.read', 'clinmesh_read_doctor_context', 'query', 'read-only', doctor, ['consultation']),
+  tool('outpatient.history.search', 'clinmesh_search_doctor_history', 'query', 'read-only', doctor, ['consultation']),
+  tool('outpatient.history.read', 'clinmesh_read_doctor_history', 'query', 'read-only', doctor, ['consultation']),
   tool('outpatient.case.select', 'clinmesh_select_doctor_case', 'ui', 'ui-only', doctor, ['consultation']),
   tool('outpatient.section.select', 'clinmesh_select_doctor_section', 'ui', 'ui-only', doctor, ['consultation']),
   tool('outpatient.consultation.ask', 'clinmesh_ask_virtual_patient', 'draft', 'draft-only', doctor, ['consultation'], 'consultation'),
@@ -362,6 +427,27 @@ export function agentToolsForContext(
     && definition.viewIds.includes(viewId)
     && (definition.section === undefined || definition.section === activeSection)
   ))
+}
+
+export function isDoctorReadOperation(operationId: string): boolean {
+  return operationId === 'ui.context.read' || operationId === 'outpatient.case.read'
+    || operationId === 'outpatient.history.search' || operationId === 'outpatient.history.read'
+}
+
+export function usesDoctorReadBinding(snapshot: AgentPageContextSnapshot, operationId: string): boolean {
+  return isDoctorReadOperation(operationId) && snapshot.actor.roleCode === 'outpatient-doctor'
+    && snapshot.claim.viewId === 'consultation' && snapshot.claim.selection?.kind === 'case'
+}
+
+export function hasSameDoctorCase(left: AgentPageContextSnapshot, right: AgentPageContextSnapshot): boolean {
+  return left.claim.viewId === 'consultation' && right.claim.viewId === 'consultation'
+    && left.claim.selection?.kind === 'case' && right.claim.selection?.kind === 'case'
+    && left.claim.selection.id === right.claim.selection.id
+    && left.claim.taskEpoch === right.claim.taskEpoch
+    && left.actor.roleCode === 'outpatient-doctor' && right.actor.roleCode === 'outpatient-doctor'
+    && left.actor.actorId === right.actor.actorId && left.actor.practitionerRoleId === right.actor.practitionerRoleId
+    && left.dshSessionId === right.dshSessionId && left.workspace.id === right.workspace.id
+    && left.workspace.epoch === right.workspace.epoch && left.workspace.scenarioRunId === right.workspace.scenarioRunId
 }
 
 export const agentClientSchema = z.object({

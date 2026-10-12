@@ -9,7 +9,7 @@ import { installAgentProofBridge } from './agent-proof-bridge.ts'
 import { createModelBridgeHandler } from './model-bridge.ts'
 import { modelBridgePath } from '@clinmesh/contracts/model-bridge'
 
-export const inject = ['webServer', 'tools']
+export const inject = ['webServer', 'tools', 'llm']
 
 export const Config = Schema.object({
   bridgeSecret: Schema.string().role('secret'),

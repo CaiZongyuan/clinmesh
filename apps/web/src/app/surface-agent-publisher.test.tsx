@@ -74,7 +74,9 @@ async function fixture(initialPatient?: string, holdHandoff = false) {
       return Response.json({ data: { proof: `synthetic-proof-${proofRequests.length}-at-least-32-characters` } })
     }
     if (path === '/clinmesh-agent-handoff') {
-      handoffRequests.push(JSON.parse(String(init?.body)))
+      const request = JSON.parse(String(init?.body))
+      handoffRequests.push(request)
+      if (request.phase === 'pause') return Response.json({ data: { paused: true } })
       const signal = init!.signal!
       handoffSignals.push(signal)
       if (holdHandoff) await new Promise<void>((resolve, reject) => {
@@ -123,6 +125,23 @@ it('returns the Tool body before handing off the final signed page and awaits Ho
   expect(f.released).not.toContain(originalRegistration)
   await act(async () => f.releaseHandoff())
   await waitFor(() => expect(f.findSearch()?.parameters).toHaveProperty('properties.scopeKey.const', 'clinmesh:patient-2'))
+})
+
+it('requests a pause immediately after an uncertain body without waiting for a replacement frame', async () => {
+  const f = await fixture('patient-1', true)
+  // A successful body followed by a lost completion response is also uncertain.
+  f.oldAction.mockImplementation(async () => ({ matches: 1 }))
+  const originalFetch = globalThis.fetch
+  vi.stubGlobal('fetch', vi.fn(async (url, init) => {
+    if (String(url).endsWith('/agent/v1/tool-calls/result')) throw new Error('Completion lost')
+    return originalFetch(url, init)
+  }))
+  const tool = f.findSearch()!
+  await expect(tool.execute({ query: '合成', scopeKey: 'clinmesh:patient-1', pageRevision: '["page-1",null]' }, new AbortController().signal))
+    .rejects.toThrow('CLINMESH_EXECUTION_UNCONFIRMED:')
+  await waitFor(() => expect(f.handoffRequests).toEqual([{
+    phase: 'pause', proof: 'synthetic-proof-1-at-least-32-characters',
+  }]))
 })
 
 it('hands parallel read and write bodies to one final page without releasing either transport early', async () => {

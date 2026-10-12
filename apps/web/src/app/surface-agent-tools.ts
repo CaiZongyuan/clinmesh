@@ -1,14 +1,18 @@
 import {
   agentPageBindingRevision,
+  hasSameDoctorCase,
   parseAgentToolInput,
+  usesDoctorReadBinding,
   type AgentPageContextBinding,
   type AgentReviewDecisionRequest,
   type AgentToolAuthorizationRequest,
   type AgentToolAuthorizationResponse,
   type AgentToolDefinition,
+  agentDoctorQueryRequestSchema,
   type AgentToolResultRequest,
 } from '@clinmesh/contracts/agent'
 import { z } from 'zod'
+import { doctorQueueSchema } from '@clinmesh/contracts/his'
 import type { WebSurfaceAgentTool } from './web-runtime.tsx'
 import { isAgentReviewTask, type AgentReviewTask } from './agent-review.tsx'
 import { ApiClientError } from './api-client.ts'
@@ -35,7 +39,14 @@ export interface AgentActionFeedback {
   message?: string
 }
 
+export interface SurfaceAgentFrame {
+  actions: Readonly<Record<string, SurfaceAgentPageAction>>
+  binding: AgentPageContextBinding
+  readState(): unknown
+}
+
 interface BuildSurfaceAgentToolsInput {
+  queryDoctor?(request: z.infer<typeof agentDoctorQueryRequestSchema>, signal: AbortSignal): Promise<object>
   actions: Readonly<Record<string, SurfaceAgentPageAction>>
   authorize(request: AgentToolAuthorizationRequest, signal: AbortSignal): Promise<AgentToolAuthorizationResponse>
   binding: AgentPageContextBinding
@@ -44,15 +55,17 @@ interface BuildSurfaceAgentToolsInput {
   issueProof(input: {
     contextId: string
     pageRevision: string
+    previousProof?: string
     scopeKey: string
     signal: AbortSignal
     toolName: string
   }): Promise<string>
-  onExecutionSettled?(proof: string | undefined, signal: AbortSignal): void
+  onExecutionSettled?(proof: string | undefined, signal: AbortSignal, unconfirmed?: boolean): void
   onExecutionStart?(): void
   onActionFeedback?(event: AgentActionFeedback): void
   readState(): unknown
   resolveBinding?(): AgentPageContextBinding | undefined
+  resolveFrame?(): SurfaceAgentFrame | undefined
   review(request: AgentReviewDecisionRequest, signal: AbortSignal): Promise<unknown>
   strictDefinitions?: boolean
 }
@@ -86,10 +99,23 @@ export function buildSurfaceAgentTools(
       ? contextReadAction(input, currentBinding)
       : input.actions[definition.operationId]
     if (action === undefined || action.enabled === false) return []
+    const executionRead = usesDoctorReadBinding(input.binding.snapshot, definition.operationId)
+    const readFrame = (): SurfaceAgentFrame => {
+      const frame = input.resolveFrame === undefined
+        ? { actions: input.actions, binding: currentBinding(), readState: input.readState }
+        : input.resolveFrame()
+      if (frame === undefined || !hasSameDoctorCase(input.binding.snapshot, frame.binding.snapshot)
+        || !frame.binding.snapshot.allowedOperationIds.includes(definition.operationId)) {
+        throw new TypeError('CLINMESH_TASK_CHANGED: 当前病例或权限已变化，已暂停原任务。')
+      }
+      return frame
+    }
     return [{
-      description: [action.description, editingInstruction].join(' '),
+      description: [action.description, executionRead
+        ? '只提交业务参数，当前病例与授权由系统绑定。读取不切换医生页面；对象或权限变化时暂停原任务。'
+        : editingInstruction].join(' '),
       name: definition.toolName,
-      parameters: bindContextParameters(
+      parameters: executionRead ? projectDshToolSchema({ ...action.parameters, additionalProperties: true }) : bindContextParameters(
         action.parameters,
         input.binding.snapshot.scopeKey,
         pageRevision,
@@ -98,11 +124,13 @@ export function buildSurfaceAgentTools(
         input.onExecutionStart?.()
         const id = crypto.randomUUID()
         let executionProof: string | undefined
+        let unconfirmed = false
         let feedback: ((phase: AgentActionFeedback['phase'], message?: string) => void) | undefined
         const onAbort = (): void => feedback?.('unconfirmed', '操作已中断，结果尚未确认；请读取当前状态。')
         try {
-          const binding = currentBinding()
-          const values = requireBoundInput(
+          const frame = executionRead ? readFrame() : undefined
+          let binding = frame?.binding ?? currentBinding()
+          const values = executionRead ? z.record(z.string(), z.unknown()).parse(raw) : requireBoundInput(
             raw,
             input.binding.snapshot.scopeKey,
             pageRevision,
@@ -115,26 +143,39 @@ export function buildSurfaceAgentTools(
           ))
           executionProof = await input.issueProof({
             contextId: binding.snapshot.id,
-            pageRevision,
+            pageRevision: agentPageBindingRevision(binding.snapshot.claim),
             signal,
-            scopeKey: input.binding.snapshot.scopeKey,
+            scopeKey: binding.snapshot.scopeKey,
             toolName: definition.toolName,
           })
-          const authorization = await input.authorize({
+          const authorize = () => input.authorize({
             contextToken: binding.token,
-            executionProof,
+            executionProof: executionProof!,
             input: actionInput,
             operationId: definition.operationId,
-          }, signal).catch((error: unknown) => {
+          }, signal)
+          const authorization = await authorize().catch(async (error: unknown) => {
             if (error instanceof ApiClientError && [
               'AGENT_CONTEXT_EXPIRED', 'AGENT_CONTEXT_INVALID', 'AGENT_CONTEXT_STALE',
             ].includes(error.code)) {
+              if (executionRead) {
+                const current = readFrame().binding
+                if (current.snapshot.id !== binding.snapshot.id) {
+                  signal.throwIfAborted()
+                  binding = current
+                  executionProof = await input.issueProof({ contextId: current.snapshot.id,
+                    pageRevision: agentPageBindingRevision(current.snapshot.claim), previousProof: executionProof!,
+                    signal, scopeKey: current.snapshot.scopeKey, toolName: definition.toolName })
+                  return authorize()
+                }
+                throw new Error('当前病例资料暂时无法读取，已暂停；请稍后再试。', { cause: error })
+              }
               throw new Error(`${error.code}: ${error.message}。本次动作尚未执行。请等待 ClinMesh 页面更新工具定义，按当前工具 schema 的 const 传入 scopeKey、pageRevision，并读取当前页面状态后决定是否重试；若工具持续未更新，请重新打开 ClinMesh 工作台。`, { cause: error })
             }
             throw error
           })
           signal.throwIfAborted()
-          if (definition.operationId !== 'ui.context.read' && !definition.operationId.endsWith('.read')) {
+          if (!executionRead && definition.operationId !== 'ui.context.read' && !definition.operationId.endsWith('.read')) {
             feedback = (phase, message) => input.onActionFeedback?.({
               id, operationId: definition.operationId, input: actionInput, phase,
               ...(message === undefined ? {} : { message }),
@@ -144,9 +185,28 @@ export function buildSurfaceAgentTools(
           signal.addEventListener('abort', onAbort, { once: true })
           let actionResolved = false
           try {
-            currentBinding()
-            const data = await action.execute(actionInput, signal)
+            const executionFrame = executionRead ? readFrame() : undefined
+            if (!executionRead) currentBinding()
+            const currentAction = executionFrame === undefined ? action : definition.operationId === 'ui.context.read'
+              ? contextReadAction({ ...input, readState: executionFrame.readState }, () => executionFrame.binding)
+              : executionFrame.actions[definition.operationId]
+            if (currentAction === undefined || currentAction.enabled === false) {
+              throw new TypeError('CLINMESH_TASK_CHANGED: 当前读取能力不可用，已暂停原任务。')
+            }
+            const queried = executionFrame !== undefined && input.queryDoctor !== undefined
+              ? await input.queryDoctor({ contextToken: executionFrame.binding.token,
+                  receiptToken: authorization.receiptToken, input: actionInput }, signal)
+              : undefined
+            if (executionRead) readFrame()
+            const data = executionFrame !== undefined && input.queryDoctor !== undefined
+              ? definition.operationId === 'ui.context.read'
+                ? { snapshot: readFrame().binding.snapshot, pageState: readFrame().readState() }
+                : definition.operationId === 'outpatient.case.read'
+                  ? { ...queried, queue: z.object({ queue: doctorQueueSchema.nullable().optional() }).parse(readFrame().readState()).queue ?? null }
+                : queried
+              : await currentAction.execute(actionInput, signal)
             actionResolved = true
+            if (executionRead) readFrame()
             if (isAgentReviewTask(data)) {
               if (definition.mode !== 'proposal' || authorization.proposalId === undefined) {
                 throw new Error('ClinMesh review requires an authorized Agent proposal')
@@ -174,27 +234,30 @@ export function buildSurfaceAgentTools(
               receiptToken: authorization.receiptToken,
               result,
             }, signal)
+            if (executionRead) readFrame()
             feedback?.(signal.aborted ? 'unconfirmed' : 'completed')
             return JSON.stringify({ data: result, ok: true })
           } catch (error) {
             const message = error instanceof Error ? error.message : 'ClinMesh page action failed'
             const phase = signal.aborted || actionResolved ? 'unconfirmed' : errorFeedbackPhase(error)
+            unconfirmed = phase === 'unconfirmed'
             feedback?.(phase, feedbackErrorMessage(phase, message))
             if (!actionResolved) {
-              await input.complete({
-                error: message,
-                ok: false,
-                receiptToken: authorization.receiptToken,
-              }, signal)
+              try {
+                await input.complete({ error: message, ok: false, receiptToken: authorization.receiptToken }, signal)
+              } catch (completionError) {
+                // Preserve the pause marker when recording an uncertain result also fails.
+                if (!unconfirmed) throw completionError
+              }
             }
-            throw new Error(message)
+            throw new Error(unconfirmed ? `CLINMESH_EXECUTION_UNCONFIRMED: ${message}` : message)
           }
         } finally {
           signal.removeEventListener('abort', onAbort)
           // Defer handoff until the returned body can reach the native broker.
           if (input.onExecutionSettled !== undefined) {
             const settle = input.onExecutionSettled
-            setTimeout(() => settle(executionProof, signal), 0)
+            setTimeout(() => unconfirmed ? settle(executionProof, signal, true) : settle(executionProof, signal), 0)
           }
         }
       },

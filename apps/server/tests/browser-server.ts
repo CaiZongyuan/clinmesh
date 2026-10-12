@@ -6,8 +6,10 @@ import { randomUUID } from 'node:crypto'
 import { serve } from '@hono/node-server'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 
-export async function startBrowserServer(webRoot: string, options: Pick<CreateClinMeshRuntimeOptions,
-  'chatCompletionsProvider' | 'dshModelBridge' | 'syntheaProvider' | 'autoDispatchIntervalMs'> = {}) {
+export async function startBrowserServer(webRoot: string, options: Partial<Pick<CreateClinMeshRuntimeOptions,
+  'activeReferenceReleaseId' | 'referenceDatabasePath' | 'syntheaProvider' | 'chatCompletionsProvider'
+  | 'patientPersonaModel' | 'dshBridgeSecret' | 'trustedOrigins' | 'dshModelBridge' | 'autoDispatchIntervalMs'
+>> = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-e2e-server-'))
   let runtime: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined
   const server = serve({
@@ -42,7 +44,7 @@ export async function startBrowserServer(webRoot: string, options: Pick<CreateCl
       imagingAssetDirectory: join(directory, 'imaging-assets'),
       imagingCatalogDirectory: join(directory, 'imaging-catalog'),
       migrationMode: 'apply',
-      trustedOrigins: [origin],
+      trustedOrigins: [origin, ...(options.trustedOrigins ?? [])],
       webRoot,
     })
     return { origin, password, close, runtime }

@@ -5,11 +5,66 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { act, createElement, type ComponentType } from 'react'
 import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
+import * as application from '@clinmesh/web/application'
+import type { WebRuntimeOptions } from '@clinmesh/web/runtime'
 import { apply, createDefinition } from './index.tsx'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
 import { createFontSizePreference, registerFontSizeSettings } from './font-size-settings.tsx'
 
 describe('ClinMesh React Surface definition', () => {
+  it('wires native doctor chat submissions to source registration without resending a prompt', async () => {
+    const listeners = new Set<() => void>()
+    let submissions: Array<{ requestId: string; text: string; attachments: unknown[] }> = []
+    const session = {
+      getSnapshot: () => ({ sessionId: 'session-1', pendingSubmissions: submissions }),
+      subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener) } },
+    }
+    const prompt = vi.fn()
+    const ctx = { get(name: string) {
+      if (name === 'sessions') return { binding: () => ({ session }) }
+      if (name === 'remote') return { session: { prompt } }
+      if (name === 'uiSession') return { adapter: { current: {
+        getSnapshot: () => ({ key: 'session-1' }), subscribe: () => () => {},
+      } } }
+      if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
+      if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
+      return {}
+    }, on: () => () => {} }
+    let runtime: WebRuntimeOptions | undefined
+    const render = vi.spyOn(application, 'WebApp').mockImplementation(props => { runtime = props?.runtime; return createElement('div') })
+    const register = vi.fn(async () => Response.json({ data: { registered: true } }))
+    vi.stubGlobal('fetch', register)
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    let dispose: (() => void) | undefined
+    try {
+      const definition = createDefinition(ctx as unknown as ClientContext)
+      await act(() => root.render(createElement(definition.component, {
+        active: true, conversationCollapsed: false, agent: { register: () => () => {} },
+        capabilities: { agent: { available: false, status: 'unavailable' } },
+        close() {}, layout: 'workspace', location: '/', navigate() {},
+      })))
+      expect(runtime?.surfaceDoctorInput).toBeTypeOf('function')
+      expect(runtime).not.toHaveProperty('surfaceDoctorTask')
+      const accept = vi.fn<Parameters<NonNullable<WebRuntimeOptions['surfaceDoctorInput']>>[0]>(async input => ({ ...input, permit: 'synthetic-signed-permit-at-least-32-characters', taskId: 'input-1' }))
+      dispose = runtime!.surfaceDoctorInput!(accept)
+      submissions = [{ requestId: 'rpc-1', text: '替我问清起病时间。', attachments: [] }]
+      for (const listener of listeners) listener()
+      await vi.waitFor(() => expect(register).toHaveBeenCalledOnce())
+      expect(accept).toHaveBeenCalledWith({ content: '替我问清起病时间。', dshSessionId: 'session-1', rpcId: 'rpc-1' }, expect.any(AbortSignal))
+      expect(prompt).not.toHaveBeenCalled()
+    } finally {
+      dispose?.()
+      await act(() => root.unmount())
+      container.remove()
+      render.mockRestore()
+      vi.unstubAllGlobals()
+    }
+    expect(listeners.size).toBe(0)
+  })
+
   it('updates workspace routes, settings and launcher through the same host locale event', async () => {
     const listeners = new Set<() => void>()
     let language = 'zh-CN'
