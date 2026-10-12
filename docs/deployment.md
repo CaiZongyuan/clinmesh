@@ -327,15 +327,17 @@ pnpm --filter @clinmesh/dsh-web build
 pnpm smoke:consultation:native
 ```
 
-真实模型验收显式指定一个已有配置的隔离 `DSH_HOME` 和完整 Provider/model 路由。脚本把凭据和 Profile patch 复制到新的临时环境，在完整确定性旅程后，对新合成病例调用真实患者回复及病史提取；患者档案仍使用明确的合成 fixture。真实调用可能产生费用，命令不进入 `pnpm check` 或 CI。
+真实模型验收显式指定一个已有配置的隔离 `DSH_HOME` 和完整 Provider/model 路由。脚本把凭据和 Profile patch 复制到新的临时环境，在完整确定性旅程后，对新合成病例运行两轮真实病史总结与独立事实核对；患者档案和两轮回答使用固定合成 fixture，以便逐项核对起病、发热、干咳、体温及胸痛、气促的否定。`--summary-only` 可单独运行该多轮总结及来源入口验收，完整合成旅程的断言保持在默认模式。真实调用可能产生费用，命令不进入 `pnpm check` 或 CI。
 
 ```sh
 export CLINMESH_DSH_SMOKE_HOME=/absolute/path/to/configured/dsh-home
 export CLINMESH_DSH_SMOKE_LIVE_MODEL='dsh:{"provider":"configured-provider","model":"configured-model"}'
 pnpm smoke:consultation:live
+# 已有完整合成旅程证据时，单独验证真实总结质量
+pnpm smoke:consultation:live --summary-only
 ```
 
-可用 `CLINMESH_DSH_SMOKE_REPORT=/absolute/path/to/report.json` 保存版本、代码 commit/内容 hash、处理数量和 request/audit/trace 关联的验收摘要；摘要不含凭据、prompt 或模型响应正文。成功仅说明本次合成样本通过来源和结构约束；真实模型的语义质量局限与 CI 证据边界见[测试策略](testing.md#end-to-end)。
+可用 `CLINMESH_DSH_SMOKE_REPORT=/absolute/path/to/report.json` 保存版本、代码 commit/内容 hash、处理数量和 request/audit/trace 关联的验收摘要；真实总结模式还保存固定合成回答、总结和事实来源供逐项复核，不保存凭据或 prompt。失败报告保留安全任务错误码。成功说明本次合成样本满足总结质量与来源断言，不能证明所有病史的语义准确；模型局限与 CI 证据边界见[测试策略](testing.md#end-to-end)。
 
 无桌面交互的浏览器验收可在隔离 Profile 的 `cordis.patch.yml` 使用官方目录选择器替换点，避免工作区选择触发不可操作的 Windows 原生对话框：
 

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { serve } from '@hono/node-server'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
+import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
 
 export async function startBrowserServer(webRoot: string, options: Partial<Pick<CreateClinMeshRuntimeOptions,
   'activeReferenceReleaseId' | 'referenceDatabasePath' | 'syntheaProvider' | 'chatCompletionsProvider'
@@ -36,6 +37,7 @@ export async function startBrowserServer(webRoot: string, options: Partial<Pick<
     const password = `Synthetic-${randomUUID()}-Aa1!`
     runtime = await createClinMeshRuntime({
       ...options,
+      ...(options.chatCompletionsProvider === undefined ? {} : { chatCompletionsProvider: recordingFixtureProvider(options.chatCompletionsProvider) }),
       authBaseUrl: origin,
       authSecret: randomUUID() + randomUUID(),
       cursorSecret: randomUUID() + randomUUID(),

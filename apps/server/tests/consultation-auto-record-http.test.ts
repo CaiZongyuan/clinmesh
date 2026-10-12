@@ -6,14 +6,42 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
+import { z } from 'zod'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
+import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
+
+const summaryPayloadSchema = z.object({
+  turns: z.array(z.object({ id: z.string(), speaker: z.string(), messageText: z.string() })),
+  history: z.array(z.object({ id: z.string(), field: z.string(), text: z.string() })),
+})
+const firstFeverReply = '昨天晚上开始发烧，最高量到38.5度，还咳嗽，但是没有痰。'
+const secondFeverReply = '咳嗽也是昨晚开始的，胸口不疼，也不觉得喘。'
+const feverSummary = '昨晚起发热伴干咳，自述最高体温38.5℃'
+const combinedFeverSummary = feverSummary + '；否认胸痛、气促'
+
+function feverSummaries(input: JsonChatCompletionInput) {
+  const { turns, history } = summaryPayloadSchema.parse(input.userPayload)
+  const first = turns.find(turn => turn.messageText === firstFeverReply)!
+  const second = turns.find(turn => turn.messageText === secondFeverReply)
+  return { additions: [{ field: 'historyOfPresentIllness', relation: second === undefined ? 'addition' : 'update',
+    ...(second === undefined ? {} : { targetAdditionId: history[0]!.id }),
+    facts: [{ text: feverSummary, sources: [{ sourceTurnId: first.id, quote: first.messageText },
+      ...(second === undefined ? [] : [{ sourceTurnId: second.id, quote: second.messageText }])] },
+    ...(second === undefined ? [] : [{ text: '否认胸痛、气促', sources: [{ sourceTurnId: second.id, quote: second.messageText }] }])],
+  }] }
+}
+
+const faithfulSummaryVerification = (input: JsonChatCompletionInput) => ({ additions:
+  z.object({ additions: z.array(z.unknown()) }).parse(input.userPayload).additions.map((_, index) => ({
+    index, faithful: true, complete: true, relationValid: true,
+  })) })
 
 async function setup(options: {
   recording?: boolean
@@ -21,6 +49,7 @@ async function setup(options: {
   failFirstReply?: boolean
   reply?: string | (() => string)
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
+  verify?: (input: JsonChatCompletionInput) => unknown
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auto-record-'))
   disposals.push(() => rm(directory, { recursive: true }))
@@ -47,7 +76,7 @@ async function setup(options: {
     ...(options.now === undefined ? {} : { now: options.now }),
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters',
-    chatCompletionsProvider: provider, databasePath: join(directory, 'clinmesh.sqlite'),
+    chatCompletionsProvider: recordingFixtureProvider(provider, options.verify), databasePath: join(directory, 'clinmesh.sqlite'),
     consultationModel: 'synthetic', patientPersonaModel: 'synthetic', investigationModel: 'synthetic',
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', outboxRetryDelayMs: 0,
     ...(options.recording === false ? {} : { dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 } }),
@@ -138,6 +167,197 @@ async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
   }
   return { complete, save, preview, request }
 }
+
+it('summarizes and merges multi-turn patient facts with persistent citations, deduplicates repeats and restores the predecessor on undo', async () => {
+  let reply = firstFeverReply
+  let repeated = false
+  const fixture = await setup({ reply: () => reply,
+    extract: input => repeated ? { additions: [] } : feverSummaries(input) })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(feverSummary)
+  const first = (await fixture.read()).consultationRecording!.additions[0]!
+  reply = secondFeverReply
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  const merged = await fixture.read()
+  expect(merged.clinicalDocument?.draft?.historyOfPresentIllness).toBe(combinedFeverSummary)
+  const update = merged.consultationRecording!.additions.at(-1)!
+  expect(update).toMatchObject({ relation: 'update', status: 'applied', summary: combinedFeverSummary,
+    facts: [{ text: feverSummary, sources: [{ sourceTurnId: first.sourceTurnId, quote: firstFeverReply },
+      { quote: secondFeverReply }] }, { text: '否认胸痛、气促', sources: [{ quote: secondFeverReply }] }] })
+  expect(merged.consultationRecording!.additions[0]!.status).toBe('superseded')
+  await fixture.restart()
+  expect((await fixture.read()).consultationRecording!.additions.at(-1)).toEqual(update)
+  repeated = true
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(combinedFeverSummary)
+  expect((await fixture.read()).consultationRecording!.additions).toHaveLength(2)
+  expect((await fixture.review(update.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(feverSummary)
+  expect((await fixture.read()).consultationRecording!.additions[0]).toMatchObject({
+    status: 'applied', facts: first.facts, summary: first.summary,
+  })
+})
+
+it('keeps a locally edited summary as a pending multi-source suggestion across restart and explicit acceptance', async () => {
+  let reply = firstFeverReply
+  const fixture = await setup({ reply: () => reply, extract: feverSummaries })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const manual = '医生核对：昨晚发热，体温数值待核对。'
+  await fixture.save(manual)
+  reply = secondFeverReply
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  const pending = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  expect(pending).toMatchObject({ status: 'pending', currentText: manual, summary: combinedFeverSummary, reviewable: true })
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(manual)
+  await fixture.restart()
+  expect((await fixture.review(pending.id, 'accept')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(combinedFeverSummary)
+  expect((await fixture.read()).consultationRecording!.additions.at(-1)).toMatchObject({
+    status: 'applied', ownership: 'manual', reviewStatus: 'confirmed', facts: pending.facts,
+  })
+})
+
+it.each(['correction', 'conflict'] as const)('keeps both patient sources for a summarized %s and preserves the original on undo or before review', async relation => {
+  let reply = firstFeverReply
+  let second = false
+  const revised = relation === 'correction' ? '昨晚起发热伴干咳，自述最高体温更正为38.0℃'
+    : '昨晚起发热伴干咳；最高体温先述38.5℃，后述38.0℃，待核对'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    if (!second) return feverSummaries(input)
+    const payload = summaryPayloadSchema.parse(input.userPayload)
+    const first = payload.turns.find(turn => turn.messageText === firstFeverReply)!
+    const last = payload.turns.at(-1)!
+    return { additions: [{ field: 'historyOfPresentIllness', relation, targetAdditionId: payload.history[0]!.id,
+      facts: [{ text: revised, sources: [{ sourceTurnId: first.id, quote: first.messageText },
+        { sourceTurnId: last.id, quote: last.messageText }] }] }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  second = true
+  reply = relation === 'correction' ? '刚才说错了，最高是38.0度。' : '最高是38.0度。'
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  const suggestion = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  expect(suggestion).toMatchObject({ status: relation === 'correction' ? 'applied' : 'pending', summary: revised })
+  expect(suggestion.facts![0]!.sources).toHaveLength(2)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(relation === 'correction' ? revised : feverSummary)
+  if (relation === 'correction') {
+    expect((await fixture.review(suggestion.id, 'undo')).status).toBe(200)
+    expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(feverSummary)
+  }
+})
+
+it('migrates pre-summary extracts without rewriting their text and replays a receipt without the new source fields', async () => {
+  const fixture = await setup()
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const original = await fixture.read()
+  const key = randomUUID()
+  const paused = await fixture.control('pause', { key })
+  const receipt = controlConsultationRecordingResponseSchema.parse(await paused.json())
+  const oldReceipt = { ...receipt, data: { ...receipt.data, additions: receipt.data.additions.map(({ summary: _summary, facts: _facts, ...addition }) => addition) } }
+  fixture.runtime.database.driver.prepare('UPDATE command_receipt SET response_json = ? WHERE idempotency_key = ?')
+    .run(JSON.stringify(oldReceipt), key)
+  fixture.runtime.database.driver.exec('ALTER TABLE consultation_history_addition DROP COLUMN facts_json')
+  fixture.runtime.database.driver.prepare('DELETE FROM schema_migration WHERE migration_id = ?').run('0059_consultation-history-summary.sql')
+  await fixture.restart()
+  const upgraded = await fixture.read()
+  expect(upgraded.clinicalDocument).toEqual(original.clinicalDocument)
+  expect(upgraded.consultationRecording!.additions[0]).toMatchObject({ summary: '', facts: [],
+    sourceTurnId: original.consultationRecording!.additions[0]!.sourceTurnId })
+  const replayed = await fixture.control('pause', { key, version: receipt.data.version - 1 })
+  expect(replayed.status).toBe(200)
+  expect(controlConsultationRecordingResponseSchema.parse(await replayed.json())).toEqual(oldReceipt)
+  expect((await fixture.review(upgraded.consultationRecording!.additions[0]!.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('')
+})
+
+it('retains patient uncertainty, home measurements, external diagnoses, medication and allergy attribution', async () => {
+  const reply = '我记不清了，可能三天前开始头晕。家里量的血压是150/90。外院说我有高血压。以前吃过氨氯地平，我不确定青霉素是不是过敏。'
+  const texts = ['自述头晕可能始于三天前，具体时间记不清', '自述居家血压150/90，外院曾告知高血压', '自述既往服用氨氯地平，青霉素过敏情况不确定']
+  const fixture = await setup({ reply, verify: faithfulSummaryVerification, extract: input => {
+    const source = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!
+    return { additions: texts.map((text, index) => ({ field: index === 2 ? 'priorMedicalHistory' : 'historyOfPresentIllness',
+      relation: 'addition', facts: [{ text, sources: [{ sourceTurnId: source.id, quote: reply }] }] })) }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.clinicalDocument?.draft).toMatchObject({ historyOfPresentIllness: texts.slice(0, 2).join('\n'),
+    priorMedicalHistory: texts[2], physicalExamination: '', assessment: '' })
+  expect(detail.consultationRecording!.additions.flatMap(addition => addition.facts!)).toHaveLength(3)
+})
+
+it.each([
+  ['unsupported diagnosis', '考虑肺炎'], ['wrong citation', '否认胸痛'],
+  ['dropped negation', '发热伴咳嗽、咳痰'], ['changed number', '自述最高体温38.8℃'],
+])('preserves the saved reply and draft when independent verification rejects %s', async (_reason, text) => {
+    const fixture = await setup({ reply: firstFeverReply, extract: input => {
+      const source = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!
+      return { additions: [{ field: 'historyOfPresentIllness', relation: 'addition',
+        facts: [{ text, sources: [{ sourceTurnId: source.id, quote: firstFeverReply }] }] }] }
+    }, verify: input => {
+      const verdict = { additions: faithfulSummaryVerification(input).additions.map(item => ({ ...item, faithful: false })) }
+      // A valid negative verdict must not trigger structured-output repair.
+      expect(input.validate!(verdict)).toBe(true)
+      return verdict
+    } })
+    await fixture.ask()
+    await fixture.runtime.dispatchPending()
+    expect((await fixture.read()).clinicalDocument?.draft).toBeUndefined()
+    expect((await fixture.read()).consultation!.turns.at(-1)!.messageText).toBe(firstFeverReply)
+    expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', additions: [],
+      failures: [{ code: 'CONSULTATION_RECORDING_SOURCE_INVALID' }] })
+  })
+
+it.each(['lost prior fact', 'unresolved contradiction'])('keeps the prior summary when verification rejects an update with %s', async reason => {
+  let reply = firstFeverReply
+  let update = false
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    if (!update) return feverSummaries(input)
+    const payload = summaryPayloadSchema.parse(input.userPayload)
+    const source = payload.turns.at(-1)!
+    return { additions: [{ field: 'historyOfPresentIllness', relation: 'update', targetAdditionId: payload.history[0]!.id,
+      facts: [{ text: reason === 'lost prior fact' ? '否认胸痛、气促' : '自述最高体温37.5℃',
+        sources: [{ sourceTurnId: source.id, quote: reply }] }] }] }
+  }, verify: input => ({ additions: faithfulSummaryVerification(input).additions.map(item => ({ ...item,
+    complete: !update || reason !== 'lost prior fact', relationValid: !update || reason !== 'unresolved contradiction',
+  })) }) })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  update = true
+  reply = reason === 'lost prior fact' ? secondFeverReply : '最高量到37.5度。'
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(feverSummary)
+  expect((await fixture.read()).consultationRecording!.additions).toHaveLength(1)
+  expect((await fixture.read()).consultationRecording!.status).toBe('failed')
+})
+
+it('requires complete independent verification rather than trusting missing or duplicate verdicts', async () => {
+  const fixture = await setup({ reply: firstFeverReply, extract: feverSummaries, verify: () => ({ additions: [] }) })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
+})
+
+it('rejects a source from another case before semantic verification', async () => {
+  let verificationCalls = 0
+  const fixture = await setup({ reply: firstFeverReply,
+    verify: input => { verificationCalls += 1; return faithfulSummaryVerification(input) },
+    extract: () => ({ additions: [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{
+      text: feverSummary, sources: [{ sourceTurnId: 'other-case-patient-turn', quote: firstFeverReply }],
+    }] }] }) })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  expect(verificationCalls).toBe(0)
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
+})
 
 it('requires review and exposes cancellable preparation without an automatic recording model', async () => {
   let now = new Date('2026-10-10T06:00:00.000Z')
@@ -536,7 +756,7 @@ it.each(['confirm', 'undo'] as const)('reviews an upgraded multi-statement legac
   // Seed the migrated single-row representation before ownership and sentence ranges existed.
   fixture.runtime.database.driver.prepare('DELETE FROM consultation_history_addition WHERE case_id = ? AND addition_id != ?')
     .run(before.caseId, original.id)
-  fixture.runtime.database.driver.prepare(`UPDATE consultation_history_addition SET quote = ?, start_offset = NULL,
+  fixture.runtime.database.driver.prepare(`UPDATE consultation_history_addition SET quote = ?, facts_json = NULL, start_offset = NULL,
     end_offset = NULL, current_text = '' WHERE case_id = ? AND addition_id = ?`).run(quote, before.caseId, original.id)
   fixture.runtime.database.driver.prepare('UPDATE clinical_document_draft SET content_json = ? WHERE case_id = ?')
     .run(JSON.stringify({ ...document, historyOfPresentIllness: history }), before.caseId)
@@ -1390,7 +1610,7 @@ it.each(['automatic', 'manual'] as const)('preserves %s unrelated sentences when
   // Seed the original single-row representation before ownership/statement ranges existed.
   fixture.runtime.database.driver.prepare('DELETE FROM consultation_history_addition WHERE case_id = ? AND addition_id != ?')
     .run(fixture.started.outpatientCaseId, originalId)
-  fixture.runtime.database.driver.prepare(`UPDATE consultation_history_addition SET quote = ?, ownership = 'automatic',
+  fixture.runtime.database.driver.prepare(`UPDATE consultation_history_addition SET quote = ?, facts_json = NULL, ownership = 'automatic',
     start_offset = NULL, end_offset = NULL, current_text = '' WHERE addition_id = ?`).run(reply, originalId)
   await fixture.restart()
   if (ownership === 'manual') await fixture.save('患者自述：头晕五天了。夜间也会头晕。')
@@ -1703,7 +1923,7 @@ it.each([false, true])('repairs patient-source validation before exhausting reco
       const repaired = request.systemPrompt.includes('previous response failed validation')
       return Response.json({ model: request.model, content: JSON.stringify({ additions: [{
         field: 'historyOfPresentIllness', relation: 'addition',
-        sourceTurnId: request.userPayload.turns.at(-1)!.id,
+        sourceTurnId: repaired && (!manualRetry || retryEnabled) ? request.userPayload.turns.at(-1)!.id : 'missing-patient-turn',
         quote: repaired && (!manualRetry || retryEnabled) ? confirmed : uncertain,
       }] }) })
     },
@@ -1730,7 +1950,7 @@ it.each([false, true])('repairs patient-source validation before exhausting reco
     clinicalDocument: { draft: { historyOfPresentIllness: `患者自述：${confirmed}` } },
   })
   expect(prompts).toHaveLength(manualRetry ? 4 : 2)
-  expect(prompts.at(-1)).toContain('additions.0.quote')
+  expect(prompts.at(-1)).toContain('additions.0.facts.0.sources.0')
 })
 
 it.each([

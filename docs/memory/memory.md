@@ -40,6 +40,10 @@
 
 ## 运行与验证边界
 
+- 模型语义核对的否定结论是合法结果，结构化输出 `validate` 只校验完整性和形状；在请求完成后处理否定结论。把否定结论当成可修复格式错误，会诱导模型对同一候选改成通过。病史总结采用此边界，见[多轮溯源决策](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
+
+- 新增辅助模型的 `schemaName` 时同步 `packages/contracts/src/model-bridge.ts` 的窄白名单，并通过真实 `DshModelProvider` 与宿主 handler 的集成测试。直接 Provider 替身会绕过这条边界，JSON 和应用测试通过仍可能在宿主报 `AI_REQUEST_FAILED`。
+
 - React 18 的普通函数组件不会接收 `ref`；共享输入组件需要沿用 `forwardRef`，并用 ShadowRoot 的 `activeElement` 核对真实返回焦点。Query 刷新时重建的 mutation 回执对象不能作为清空草稿的效果依赖，按病例与业务版本处理，并忽略旧回执；删除草稿回归还须覆盖请求未完成时继续编辑、自动保存和迟到的查询刷新。相关回归与决定见[诊断与处方两阶段视图](../../.agents/notes/implemented/architecture/2026-10-10-diagnosis-prescription-workspace.md)。
 - JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。浏览器回归验证真实指针命中，不能只检查文本可见。
@@ -305,3 +309,9 @@
 
 
 - 新建隔离 worktree 后，安装依赖前先用 `git submodule update --init --recursive vendor/dsh-react-surface` 检出仓库锁定的子模块。未初始化的子模块目录会让 `pnpm install --frozen-lockfile` 在扫描 `file:` 依赖的 `packages/runtime` 时以 `ENOENT` 失败；初始化后重新按锁安装，不改写锁文件绕过缺失目录。
+
+- 新 worktree 的原生 DSH 验收还需要构建锁定 Surface runtime；只构建 ClinMesh 不能提供外部 `dsh-react-surface/client`。宿主报该模块未进入 client module table 时，在子模块按锁执行 `bun install --frozen-lockfile` 和 `bun run build:runtime`，不修改上游源码；普通 React 浏览器合同通过不证明宿主外部模块已安装。
+
+- 原生 DSH 合成模型替身须覆盖宿主的医生任务意图识别；这条辅助请求接收单条医生原文而非业务 JSON。只实现患者与病史输出的替身会在页面 Tool 前报 `CLINMESH_DELEGATION_UNCONFIRMED`，服务端没有工具记录；按真实输入返回 `discuss` 或合法委托结果，不能跳过执行授权。
+
+- 原生 DSH 验收的临时插件也须在 manifest 中声明非空 `name` 和 `version`。官方 DeepSeek 的插件清单扩展会检查全部 active package；缺少版本时真实模型请求在发出 HTTP 前失败为 `REQUEST_EXTENSION`，合成 adapter 不经过这条扩展，不能证明真实 Provider 可用。

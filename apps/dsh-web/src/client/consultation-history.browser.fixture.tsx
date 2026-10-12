@@ -43,15 +43,27 @@ function App(): React.JSX.Element {
   const [working, setWorking] = React.useState({ ...documentContent, historyOfPresentIllness: '医生尚未保存的编辑。' })
   const [decisions, setDecisions] = React.useState<string[]>([])
   const [recording, setRecording] = React.useState(detail.consultationRecording!)
+  const [consultation, setConsultation] = React.useState(detail.consultation!)
   const [controls, setControls] = React.useState<string[]>([])
   return <PortalContainerProvider container={root}>
     <div className="h-full overflow-y-auto">
     <button type="button" onClick={() => setWorking(documentContent)}>模拟保存编辑</button>
+    <button type="button" onClick={() => {
+      setConsultation(current => ({ ...current, turns: [...current.turns,
+        { ...current.turns[0]!, id: 'synthetic-question', speaker: 'doctor', messageText: '夜间是否头晕，有没有胸痛？', sequence: 2 },
+        { ...current.turns[0]!, id: 'synthetic-second-reply', messageText: '晚上也会头晕，但是胸口不痛。', sequence: 3 },
+      ] }))
+      setRecording(current => ({ ...current, additions: current.additions.map(addition => addition.id !== 'synthetic-applied' ? addition : {
+        ...addition, summary: '自述头晕六天；夜间亦会头晕，否认胸痛',
+        facts: [{ text: '自述头晕六天', sources: [{ sourceTurnId: 'synthetic-reply', quote: '刚才说错了，头晕是六天。' }] },
+          { text: '夜间亦会头晕，否认胸痛', sources: [{ sourceTurnId: 'synthetic-second-reply', quote: '晚上也会头晕，但是胸口不痛。' }] }],
+      }) }))
+    }}>模拟跨轮总结</button>
     <output aria-label="核对结果">{decisions.join(',')}</output>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'backfill', version: 0, remainingCount: 2 }))}>模拟历史病例</button>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'failed', failedCount: 1 }))}>模拟整理失败</button>
     <output aria-label="控制结果">{controls.join(',')}</output>
-    <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: recording }} elementId="record" locale="zh-CN"
+    <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultation, consultationRecording: recording }} elementId="record" locale="zh-CN"
       messages={getWorkspaceMessages('zh-CN')} workingDocument={working} onDocumentChange={setWorking}
       actions={{
         prepareSign: { data: undefined, error: null, onReset: () => {}, onSubmit: () => {}, pending: false },
