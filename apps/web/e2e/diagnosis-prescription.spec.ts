@@ -88,6 +88,33 @@ for (const width of [1280, 390]) test(`confirms and revises diagnoses, issues an
   await dosage.getByLabel('疗程', { exact: true }).fill(String(medication.defaultCourseDays))
   await dosage.getByLabel('数量', { exact: true }).fill(String(medication.defaultQuantity))
   await expect(page.getByText('草稿已自动保存', { exact: true })).toBeVisible()
+  const draftPath = `**/encounters/${(await readCase()).encounter.id}/prescription/draft`
+  let releaseDeletion!: () => void
+  let deletionCompleted!: () => void
+  const deletionHeld = new Promise<void>(resolve => { releaseDeletion = resolve })
+  const deletionReady = new Promise<void>(resolve => { deletionCompleted = resolve })
+  await page.route(draftPath, async route => {
+    if (route.request().method() !== 'DELETE') return route.continue()
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    deletionCompleted()
+    await deletionHeld
+    await route.fulfill({ response })
+  })
+  try {
+    await page.getByRole('button', { name: '删除处方草稿', exact: true }).click()
+    await page.getByRole('alertdialog', { name: '确认删除处方草稿', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click()
+    await deletionReady
+    await expect(page.getByRole('alertdialog')).toHaveCount(0)
+    await dosage.getByLabel('剂量', { exact: true }).fill('500 mg（合成新输入）')
+    releaseDeletion()
+    await expect.poll(async () => (await readCase()).medicationConclusion?.draft?.items[0]?.doseText).toBe('500 mg（合成新输入）')
+    await expect(dosage.getByLabel('剂量', { exact: true })).toHaveValue('500 mg（合成新输入）')
+    await expect(page.getByRole('button', { name: '删除处方草稿', exact: true })).toBeEnabled()
+  } finally {
+    releaseDeletion()
+    await page.unroute(draftPath)
+  }
   await page.getByRole('button', { name: '删除处方草稿', exact: true }).click()
   await page.getByRole('alertdialog', { name: '确认删除处方草稿', exact: true }).getByRole('button', { name: '确认删除', exact: true }).click()
   await expect(page.getByRole('alertdialog')).toHaveCount(0)
