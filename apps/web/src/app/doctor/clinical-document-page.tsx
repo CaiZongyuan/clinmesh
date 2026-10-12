@@ -12,6 +12,7 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -27,6 +28,9 @@ import { useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
+import { ConsultationHistoryReview, type ConsultationHistoryReviewAction } from './consultation-history-review.tsx'
+import { ConsultationSignReviewNotice, requiresConsultationReview, type ConsultationSignReview } from './consultation-sign-review.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -39,6 +43,9 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
 }
 
 export interface ClinicalDocumentSignPreview {
+  consultationReview?: ConsultationSignReview | null
+  consultationReviewed?: boolean
+  expiresAt?: string
   commitToken: string
   document: { content: ClinicalDocumentContent }
   previewId: string
@@ -55,6 +62,15 @@ export interface ClinicalDocumentRevisionInput {
 }
 
 export interface ClinicalDocumentPageActions {
+  cancelSign?: { error: Error | null; pending: boolean; onSubmit: (previewId: string) => void }
+  controlRecording?: ConsultationRecordingAction
+  reviewHistory?: ConsultationHistoryReviewAction
+  save?: {
+    error: Error | null
+    onSubmit: (document: ClinicalDocumentContent) => void
+    pending: boolean
+    success: boolean
+  }
   prepareSign: {
     data: ClinicalDocumentSignPreview | undefined
     error: Error | null
@@ -98,6 +114,7 @@ export function ClinicalDocumentPage({
   const signedDocuments = detail.clinicalDocument?.signed ?? []
   const latestSignedDocument = signedDocuments.at(-1)
   const [revisionPreview, setRevisionPreview] = useState<ClinicalDocumentRevisionInput>()
+  const [reviewedPreviewId, setReviewedPreviewId] = useState<string>()
 
   if (
     signedDocuments.length === 0
@@ -107,6 +124,9 @@ export function ClinicalDocumentPage({
   }
 
   const currentPreview = actions.prepareSign.data
+  const preparation = detail.consultationRecording?.signingPreparation
+  const preparing = currentPreview !== undefined || preparation?.active === true || actions.prepareSign.pending
+  const cancelPending = actions.cancelSign?.pending === true
   return (
     <section
       aria-labelledby="structured-clinical-document-heading"
@@ -117,6 +137,39 @@ export function ClinicalDocumentPage({
       <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">
         {messages.structuredClinicalDocument}
       </h3>
+      {detail.consultationRecording === undefined ? null : (
+        <Alert data-consultation-recording={detail.consultationRecording.status}>
+          <ClipboardPenIcon aria-hidden="true" />
+          <AlertTitle>{messages.consultationAutoRecord}</AlertTitle>
+          <AlertDescription>
+            <ConsultationRecordingControls recording={detail.consultationRecording} action={actions.controlRecording}
+              disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
+              messages={messages} />
+            {detail.consultationRecording.failures.map(failure => (
+              <p key={failure.sourceTurnId}>
+                {failure.code === 'AI_TIMEOUT' ? messages.consultationRecordingTimeout
+                  : ['AI_RESPONSE_INVALID', 'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID'].includes(failure.code)
+                    ? messages.consultationRecordingInvalid
+                    : failure.code === 'AI_AUTH_FAILED' ? messages.consultationRecordingAuthFailed
+                      : failure.code === 'CONSULTATION_RECORDING_NOT_EDITABLE' ? messages.consultationRecordingNotEditable
+                        : failure.code === 'CONSULTATION_RECORDING_CONTEXT_INACTIVE' ? messages.consultationRecordingInactive
+                          : messages.consultationRecordingFailed}
+                {failure.retrying ? ` ${messages.consultationRecordingRetrying}` : ''}
+              </p>
+            ))}
+            <ConsultationHistoryReview detail={detail} workingDocument={workingDocument} action={actions.reviewHistory}
+              disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
+              messages={messages} locale={locale} />
+          </AlertDescription>
+        </Alert>
+      )}
+      {actions.reviewHistory?.error == null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.reviewHistory.error, messages)}
+        title={messages.consultationRecordingReview} />}
+      {actions.save?.error == null ? null : <ErrorAlert
+        message={getWorkspaceErrorMessage(actions.save.error, messages)}
+        title={messages.saveClinicalDocumentDraft}
+      />}
+      {actions.save?.success ? <p role="status" className="text-sm text-muted-foreground">{messages.clinicalDocumentDraftSaved}</p> : null}
       {actions.sign.success ? (
         <Alert>
           <CheckCircleIcon aria-hidden="true" />
@@ -237,6 +290,16 @@ export function ClinicalDocumentPage({
         </>
       ) : (
         <>
+          {preparation === undefined || currentPreview !== undefined ? null : <Alert>
+            <AlertTitle>{messages.consultationSignRecoveryTitle}</AlertTitle>
+            <AlertDescription>
+              <p>{messages.consultationSignRecoveryDescription}</p>
+              <Button type="button" variant="outline" disabled={cancelPending}
+                onClick={() => actions.cancelSign?.onSubmit(preparation.previewId)}>{messages.consultationSignReturn}</Button>
+            </AlertDescription>
+          </Alert>}
+          {actions.cancelSign?.error == null ? null : <ErrorAlert title={messages.operationFailed}
+            message={getWorkspaceErrorMessage(actions.cancelSign.error, messages)} />}
           <form
             aria-label={messages.structuredClinicalDocument}
             className="flex flex-col gap-3"
@@ -246,13 +309,17 @@ export function ClinicalDocumentPage({
             }}
           >
             <ClinicalRecordEditor
+              disabled={preparing || cancelPending}
               content={workingDocument}
               idPrefix={`clinical-record-${detail.caseId}`}
               messages={messages}
               onChange={onDocumentChange}
             />
-            <div className="flex justify-end border-t pt-3">
-              <Button disabled={actions.prepareSign.pending} type="submit">
+            <div className="flex justify-end gap-2 border-t pt-3">
+              {actions.save === undefined ? null : <Button disabled={actions.save.pending || preparing || cancelPending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
+                {messages.saveClinicalDocumentDraft}
+              </Button>}
+              <Button disabled={preparing || cancelPending} type="submit">
                 {actions.prepareSign.pending
                   ? <RefreshCwIcon aria-hidden="true" className="animate-spin" data-icon="inline-start" />
                   : <FileSignatureIcon aria-hidden="true" data-icon="inline-start" />}
@@ -268,7 +335,7 @@ export function ClinicalDocumentPage({
           )}
           <AlertDialog
             onOpenChange={open => {
-              if (!open && !actions.sign.pending) actions.prepareSign.onReset()
+              if (!open && !actions.sign.pending && !cancelPending) actions.prepareSign.onReset()
             }}
             open={currentPreview !== undefined}
           >
@@ -278,16 +345,31 @@ export function ClinicalDocumentPage({
                 <AlertDialogDescription>{messages.clinicalDocumentSignDescription}</AlertDialogDescription>
               </AlertDialogHeader>
               {currentPreview === undefined ? null : (
-                <div className="max-h-[55vh] overflow-y-auto">
+                <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">
+                  <ConsultationSignReviewNotice review={currentPreview.consultationReview} messages={messages} />
                   <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
+                  {requiresConsultationReview(currentPreview.consultationReview) ? <Field orientation="horizontal">
+                    <Checkbox id="consultation-sign-reviewed" disabled={actions.sign.pending || cancelPending}
+                      checked={reviewedPreviewId === currentPreview.previewId}
+                      onCheckedChange={checked => setReviewedPreviewId(checked ? currentPreview.previewId : undefined)} />
+                    <FieldLabel htmlFor="consultation-sign-reviewed">{messages.consultationSignReviewed}</FieldLabel>
+                  </Field> : null}
+                  {actions.sign.error === null ? null : <ErrorAlert title={messages.operationFailed}
+                    message={getWorkspaceErrorMessage(actions.sign.error, messages)} />}
+                  {actions.cancelSign?.error == null ? null : <ErrorAlert title={messages.operationFailed}
+                    message={getWorkspaceErrorMessage(actions.cancelSign.error, messages)} />}
                 </div>
               )}
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={actions.sign.pending}>{messages.cancel}</AlertDialogCancel>
+                <AlertDialogCancel disabled={actions.sign.pending || cancelPending}>
+                  {requiresConsultationReview(currentPreview?.consultationReview) ? messages.consultationSignReturn : messages.cancel}
+                </AlertDialogCancel>
                 <Button
-                  disabled={currentPreview === undefined || actions.sign.pending}
+                  disabled={currentPreview === undefined || actions.sign.pending || cancelPending
+                    || (requiresConsultationReview(currentPreview?.consultationReview) && reviewedPreviewId !== currentPreview?.previewId)}
                   onClick={() => {
-                    if (currentPreview !== undefined) actions.sign.onSubmit(currentPreview)
+                    if (currentPreview !== undefined) actions.sign.onSubmit({ ...currentPreview,
+                      consultationReviewed: reviewedPreviewId === currentPreview.previewId })
                   }}
                   type="button"
                 >
@@ -311,8 +393,9 @@ export function ClinicalDocumentPage({
   )
 }
 
-function ClinicalRecordEditor({ content, idPrefix, messages, onChange }: {
+function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange }: {
   content: ClinicalDocumentContent
+  disabled: boolean
   idPrefix: string
   messages: ReturnType<typeof getWorkspaceMessages>
   onChange: (document: ClinicalDocumentContent) => void
@@ -342,6 +425,7 @@ function ClinicalRecordEditor({ content, idPrefix, messages, onChange }: {
             <FieldLabel className="pt-2" htmlFor={id}>{label}</FieldLabel>
             {multiline ? (
               <Textarea
+                disabled={disabled}
                 className="min-h-10 resize-y"
                 id={id}
                 maxLength={maxLength}
@@ -352,6 +436,7 @@ function ClinicalRecordEditor({ content, idPrefix, messages, onChange }: {
               />
             ) : (
               <Input
+                disabled={disabled}
                 id={id}
                 maxLength={maxLength}
                 minLength={2}
@@ -521,7 +606,7 @@ function ClinicalDocumentForm({
   )
 }
 
-function ClinicalDocumentContentView({ content, messages }: {
+export function ClinicalDocumentContentView({ content, messages }: {
   content: ClinicalDocumentContent
   messages: ReturnType<typeof getWorkspaceMessages>
 }): React.JSX.Element {

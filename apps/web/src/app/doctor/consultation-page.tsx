@@ -20,6 +20,7 @@ import { useState } from 'react'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { formatClinicalTime } from './clinical-date-time.ts'
+import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 
 export interface ConsultationPageAction {
   error: Error | null
@@ -30,13 +31,15 @@ export interface ConsultationPageAction {
   pending: boolean
 }
 
-export function ConsultationPage({ action, consultation, locale, messages, patientName, readOnly }: {
+export function ConsultationPage({ action, consultation, locale, messages, patientName, readOnly, recording, recordingAction }: {
   action: ConsultationPageAction
   consultation: NonNullable<DoctorCaseDetail['consultation']>
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   patientName: string
   readOnly: boolean
+  recording?: DoctorCaseDetail['consultationRecording']
+  recordingAction?: ConsultationRecordingAction | undefined
 }): React.JSX.Element {
   const [message, setMessage] = useState('')
   const lastTextTurn = consultation.turns.findLast(turn => turn.kind === 'text')
@@ -50,6 +53,11 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
         <h3 className="text-sm font-semibold" id="consultation-record-heading">{messages.consultationRecord}</h3>
         <Badge variant="secondary">{consultation.turns.length}</Badge>
       </div>
+      {recording === undefined ? null : <Alert className="shrink-0" data-consultation-recording={recording.status}>
+        <AlertTitle>{messages.consultationAutoRecord}</AlertTitle>
+        <AlertDescription><ConsultationRecordingControls recording={recording} action={recordingAction}
+          disabled={readOnly} messages={messages} /></AlertDescription>
+      </Alert>}
       <MessageScrollerProvider autoScroll>
         <MessageScroller data-agent-consultation="" className="min-h-0 flex-1 rounded-md border">
           <MessageScrollerViewport>

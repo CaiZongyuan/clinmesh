@@ -3,6 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
+import { z } from 'zod'
 import { afterEach, expect, it } from 'vitest'
 import { encodeModelRoute, dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
@@ -23,6 +25,7 @@ async function host() {
   let route = { provider: 'synthetic-provider-a', model: 'same-model' }
   let selection = 'default'
   let answer: unknown = persona
+  let responder: ((options: GenerateOptions) => Promise<unknown>) | undefined
   let fail = false
   let hold = false
   let available = true
@@ -46,7 +49,8 @@ async function host() {
             message: 'Provider failure with private-provider-credential and private-prompt' } } }
           return
         }
-        yield { type: 'text-delta', index: 0, text: typeof answer === 'string' ? answer : JSON.stringify(answer) }
+        const generated = responder === undefined ? answer : await responder(options)
+        yield { type: 'text-delta', index: 0, text: typeof generated === 'string' ? generated : JSON.stringify(generated) }
         yield { type: 'finish', reason: { kind: 'stop' } }
       },
     },
@@ -62,6 +66,7 @@ async function host() {
     route: (provider: string) => { route = { provider, model: 'same-model' } },
     selection: (value: string) => { selection = value },
     answer: (value: unknown) => { answer = value }, fail: (value: boolean) => { fail = value },
+    respond: (callback: NonNullable<typeof responder>) => { responder = callback },
     hold: () => { hold = true }, dispose: bridge.dispose,
     available: (value: boolean) => { available = value },
     providerFailure: (code: NonNullable<typeof providerFailure>) => { providerFailure = code },
@@ -176,6 +181,47 @@ it('pins the configured route while its Provider is unavailable and recovers on 
   expect(dsh.calls[0]?.provider).toBe('synthetic-provider-a')
 })
 
+it('repairs a slow invalid response with validation feedback and a fresh attempt budget', async () => {
+  const dsh = await host()
+  const schema = z.object({ reply: z.string() }).strict()
+  dsh.respond(async () => {
+    await delay(450)
+    return dsh.calls.length === 1 ? { reply: 123 } : { reply: '头晕一周了。' }
+  })
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 700, maxResponseBytes: 2048 })
+  const result = await provider.completeJson({ model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+    schemaName: 'patient_dialogue_reply', jsonSchema: z.toJSONSchema(schema), systemPrompt: 'synthetic',
+    userPayload: { synthetic: true }, validate: value => { schema.parse(value); return true },
+  })
+  expect(JSON.parse(result.content)).toEqual({ reply: '头晕一周了。' })
+  expect(dsh.calls).toHaveLength(2)
+  expect(dsh.calls[1]?.system).toContain('invalid_type')
+  expect(dsh.calls[1]?.system).toContain('reply')
+  expect(dsh.calls[1]?.messages).toEqual(dsh.calls[0]?.messages)
+})
+
+it('enforces the configured host deadline and cancels its stream before the transport deadline', async () => {
+  const dsh = await host()
+  dsh.hold()
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 100, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+    schemaName: 'patient_dialogue_reply', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_TIMEOUT', message: 'The DSH model request timed out' })
+  expect(dsh.calls[0]?.signal?.aborted).toBe(true)
+})
+
+it('rejects unknown business properties even alongside harmless schema metadata', async () => {
+  const dsh = await host()
+  dsh.answer({ $schema: 'https://json-schema.org/draft/2020-12/schema', reply: '头晕一周了。', diagnosis: '伪造诊断' })
+  const schema = z.object({ reply: z.string() }).strict()
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: z.toJSONSchema(schema), systemPrompt: 'synthetic', userPayload: {},
+    validate: value => { schema.parse(value); return true },
+  })).rejects.toMatchObject({ code: 'AI_RESPONSE_INVALID' })
+  expect(dsh.calls).toHaveLength(2)
+})
+
 it('cancels an active auxiliary stream on caller disconnect or plugin unload', async () => {
   const dsh = await host()
   dsh.hold()
@@ -208,6 +254,39 @@ async function hospital(dsh: Awaited<ReturnType<typeof host>>) {
   cleanup.push(async () => runtime.close())
   return { get runtime() { return runtime }, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
 }
+
+it.each([false, true])('restores queued automatic history through DSH (schema metadata: %s)', async metadata => {
+  const dsh = await host()
+  const instance = await hospital(dsh)
+  const started = await startConsultationCase(instance.runtime)
+  const cookie = await signIn(instance.runtime, 'doctor@demo.clinmesh.local')
+  dsh.answer({ reply: '头晕一周了。' })
+  const response = await instance.runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+    method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion,
+      [`Task/${started.doctorTaskId}`]: '1' }, input: { expectedConsultationVersion: 2, message: '多久了？' } }),
+  })
+  expect(response.status).toBe(200)
+  const answered = await response.json() as { data: { patientTurn: { id: string } } }
+  await instance.restart()
+  dsh.answer({ ...(metadata ? { $schema: 'https://json-schema.org/draft/2020-12/schema' } : {}),
+    additions: [{ field: 'historyOfPresentIllness', sourceTurnId: answered.data.patientTurn.id,
+    quote: '头晕一周了。', relation: 'addition' }] })
+  await instance.runtime.dispatchPending()
+  const detail = doctorCaseDetailSchema.parse(await (await instance.runtime.app.request(
+    `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
+  )).json())
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了。')
+  expect(detail.consultationRecording).toMatchObject({ status: 'updated' })
+  const call = dsh.calls.at(-1)!
+  expect(call.provider).toBe('synthetic-provider-a')
+  expect(JSON.stringify(call)).toContain('sourceTurnId')
+  expect(JSON.stringify(call)).not.toMatch(/hiddenResources|Case Truth|private-session-transcript|reasoning/)
+  const count = dsh.calls.length
+  await instance.restart()
+  await instance.runtime.dispatchPending()
+  expect(dsh.calls).toHaveLength(count)
+})
 
 it('pins queued personas through settings changes and a Server restart', async () => {
   const dsh = await host()

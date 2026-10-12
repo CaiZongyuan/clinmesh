@@ -27,6 +27,7 @@
   "dependencies": {
     "@better-auth/drizzle-adapter": "1.7.1",
     "@clinmesh/contracts": "workspace:*",
+    "@clinmesh/core": "workspace:*",
     "@cornerstonejs/codec-openjpeg": "1.3.6",
     "@hono/node-server": "catalog:",
     "better-auth": "1.7.1",

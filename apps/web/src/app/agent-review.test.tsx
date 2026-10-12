@@ -12,6 +12,19 @@ import {
 describe('ClinMesh Agent review', () => {
   afterEach(cleanup)
 
+  it('rejects a proposal whose signal was already aborted without opening review', async () => {
+    let review = {} as ReturnType<typeof useAgentReview>
+    function Harness(): null { review = useAgentReview(); return null }
+    render(<AgentReviewProvider><Harness /></AgentReviewProvider>)
+    const controller = new AbortController()
+    controller.abort()
+    const task = review.request({ confirmLabel: '签署病历', description: '合成患者',
+      onConfirm: () => { throw new Error('An aborted review cannot sign') },
+      signal: controller.signal, title: '签署病历' })
+    await expect(task.decision).rejects.toThrow('cancelled')
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
   it('closes a pending review when its Surface page scope is cancelled', async () => {
     let review = {} as ReturnType<typeof useAgentReview>
     function Harness(): null {

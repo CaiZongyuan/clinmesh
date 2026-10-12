@@ -9,6 +9,7 @@ import {
 import { createAgentCapabilityGrantInputSchema } from '@clinmesh/contracts/agent'
 
 const clinicalDocumentOperationIds = {
+  cancelSign: `encounter.clinical-${'document'}.sign.cancel`,
   draftSet: `encounter.clinical-${'document'}.draft.set`,
   previewSign: `encounter.clinical-${'document'}.sign.preview`,
   revise: `clinical-${'document'}.revise`,
@@ -609,7 +610,10 @@ describe('HIS operation catalog', () => {
       [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
       [clinicalDocumentOperationIds.previewSign]: clinicalDocumentOperationIds.storedPreviewSign,
       [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
+      [clinicalDocumentOperationIds.cancelSign]: `clinical-${'document'}.cancel-sign`,
       'encounter.consultation.ask': 'consultation.ask-question',
+      'encounter.consultation-history.review': 'consultation.history.review',
+      'encounter.consultation-recording.control': 'consultation.recording.control',
       'encounter.consultation.reply.retry': 'consultation.reply.retry',
       'encounter.diagnosis.confirm': 'encounter.confirm-diagnosis',
       'encounter.diagnosis.draft.set': 'encounter.save-diagnosis-draft',
@@ -645,7 +649,7 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 3,
       'clinmesh-billing': 3,
-      'clinmesh-doctor': 50,
+      'clinmesh-doctor': 53,
       'clinmesh-fhir': 5,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,

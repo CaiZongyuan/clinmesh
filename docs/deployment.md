@@ -307,6 +307,8 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 模型桥接地址只接受 HTTP loopback origin；DSH 使用非默认端口时同步修改 `CLINMESH_DSH_MODEL_ORIGIN`。同一 Server 的全部入口共用启动时选定的模型来源，打开或关闭 Surface 不切换来源。宿主设置权限允许的用户可以修改 ClinMesh 模型，修改对该 Profile 的新任务生效，刷新和重启后仍保留；没有候选时先在 DSH 模型设置中配置 Provider。
 
+DSH 每次模型生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖，并随受信请求贯通宿主。无效结构化输出最多修复一次，每次使用独立预算；持久任务和 lease 覆盖路由解析与两次生成。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。完整预算和失败分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+
 切换模型后的任务绑定与人工重试规则见[系统架构](architecture.md#103-场景定义)。宿主不可达、原 Provider 删除或凭据失效时任务可控失败，可修复原 Provider，或按[AI Provider 配置](#4-配置-ai-provider患者档案必需)中的步骤使用新模型恢复。切换 Server 来源前遗留的 OpenAI 任务不会被重映射到 DSH，需恢复原来源处理或显式发起新生成尝试。
 
 真实宿主模型 smoke 使用隔离 Profile 和合成 Provider，不调用付费模型；先构建 DSH adapter，再运行。默认使用本地 lock 对应的 runtime 槽位，可通过 `CLINMESH_DSH_SMOKE_RUNTIME` 指定槽位绝对目录：
@@ -315,6 +317,25 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 pnpm --filter @clinmesh/dsh-web build
 pnpm exec tsx scripts/smoke-dsh-models.ts
 ```
+
+#### 问诊自动记录原生验收
+
+完成上述宿主、React Surface、AG-UI 的锁定安装和构建后，在仓库根目录运行。默认读取 `.data/dsh-runtime/versions/dsh-<锁定版本>` 与 `.data/dsh-runtime/ag-ui`；目录不同时分别设置 `CLINMESH_DSH_SMOKE_RUNTIME` 和 `CLINMESH_DSH_SMOKE_AG_UI` 为绝对路径。脚本核对宿主版本及两个桥接组件的 commit，使用临时 Profile、SQLite、密码和 secret，从“医院工作台”打开 Surface，自动运行合成问诊与真实原生工具签署。运行结束清理临时环境，不改变日常 Profile。
+
+```sh
+pnpm --filter @clinmesh/dsh-web build
+pnpm smoke:consultation:native
+```
+
+真实模型验收显式指定一个已有配置的隔离 `DSH_HOME` 和完整 Provider/model 路由。脚本把凭据和 Profile patch 复制到新的临时环境，在完整确定性旅程后，对新合成病例调用真实患者回复及病史提取；患者档案仍使用明确的合成 fixture。真实调用可能产生费用，命令不进入 `pnpm check` 或 CI。
+
+```sh
+export CLINMESH_DSH_SMOKE_HOME=/absolute/path/to/configured/dsh-home
+export CLINMESH_DSH_SMOKE_LIVE_MODEL='dsh:{"provider":"configured-provider","model":"configured-model"}'
+pnpm smoke:consultation:live
+```
+
+可用 `CLINMESH_DSH_SMOKE_REPORT=/absolute/path/to/report.json` 保存版本、代码 commit/内容 hash、处理数量和 request/audit/trace 关联的验收摘要；摘要不含凭据、prompt 或模型响应正文。成功仅说明本次合成样本通过来源和结构约束；真实模型的语义质量局限与 CI 证据边界见[测试策略](testing.md#end-to-end)。
 
 无桌面交互的浏览器验收可在隔离 Profile 的 `cordis.patch.yml` 使用官方目录选择器替换点，避免工作区选择触发不可操作的 Windows 原生对话框：
 

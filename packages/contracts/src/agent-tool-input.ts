@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from './doctor-history.ts'
 import {
   clinicalDocumentContentSchema,
+  clinicalDocumentDraftContentSchema,
   diagnosisDraftContentSchema,
   correctImagingReportRequestSchema,
   correctPathologyReportRequestSchema,
@@ -152,7 +153,7 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.diagnosis.draft.set': diagnosisInputSchema,
   'outpatient.laboratory.draft.set': laboratoryDraftInputSchema,
   'outpatient.prescription.draft.set': prescriptionDraftContentSchema,
-  'outpatient.record.draft.set': clinicalDocumentContentSchema,
+  'outpatient.record.draft.set': clinicalDocumentDraftContentSchema,
   'outpatient.revisit.draft.set': revisitDraftInputSchema,
   'outpatient.preview.request': emptyInputSchema,
   'outpatient.visit.start.propose': emptyInputSchema,

@@ -23,9 +23,10 @@ describe('Node.js server configuration', () => {
     }
     expect(readServerConfig(environment)).toMatchObject({ dshModelBridge: {
       origin: 'http://127.0.0.1:3080', secret: environment.CLINMESH_DSH_BRIDGE_SECRET,
-      timeoutMs: 60000, maxResponseBytes: 1048576,
+      timeoutMs: 120000, maxResponseBytes: 1048576,
     } })
     expect(readServerConfig(environment)).not.toHaveProperty('ai')
+    expect(readServerConfig({ ...environment, CLINMESH_AI_TIMEOUT_MS: '180000' }).dshModelBridge?.timeoutMs).toBe(180000)
     expect(() => readServerConfig({ ...environment, CLINMESH_DSH_BRIDGE_SECRET: undefined })).toThrow()
     for (const origin of ['https://127.0.0.1:3080', 'http://remote.example', 'http://127.0.0.1:3080/path', 'http://user:password@127.0.0.1:3080']) {
       expect(() => readServerConfig({ ...environment, CLINMESH_DSH_MODEL_ORIGIN: origin })).toThrow()

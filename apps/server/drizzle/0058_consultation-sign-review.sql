@@ -1,0 +1,1 @@
+ALTER TABLE clinical_document_sign_preview ADD COLUMN consultation_review_json TEXT;

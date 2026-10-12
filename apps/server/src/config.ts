@@ -26,7 +26,7 @@ const serverEnvironmentSchema = z.object({
     .default('1048576'),
   CLINMESH_AI_TIMEOUT_MS: z.string().regex(/^\d+$/)
     .refine(value => Number(value) >= 100 && Number(value) <= 10 * 60 * 1_000)
-    .default('60000'),
+    .optional(),
   CLINMESH_AUTH_SECRET: z.string().min(32),
   CLINMESH_CURSOR_SECRET: z.string().min(32),
   CLINMESH_DATABASE_PATH: z.string().trim().min(1),
@@ -193,7 +193,7 @@ export function readServerConfig(
     ...(parsed.CLINMESH_AI_SOURCE === 'dsh' ? {
       dshModelBridge: {
         origin: parsed.CLINMESH_DSH_MODEL_ORIGIN, secret: parsed.CLINMESH_DSH_BRIDGE_SECRET!,
-        timeoutMs: Number(parsed.CLINMESH_AI_TIMEOUT_MS), maxResponseBytes: Number(parsed.CLINMESH_AI_MAX_RESPONSE_BYTES),
+        timeoutMs: Number(parsed.CLINMESH_AI_TIMEOUT_MS ?? 120_000), maxResponseBytes: Number(parsed.CLINMESH_AI_MAX_RESPONSE_BYTES),
       },
     } : {}),
     ...(parsed.CLINMESH_AI_SOURCE === 'dsh' || parsed.CLINMESH_AI_BASE_URL === undefined
@@ -209,7 +209,7 @@ export function readServerConfig(
               : { catalogEnrichmentModel: parsed.CLINMESH_AI_CATALOG_ENRICHMENT_MODEL }),
             investigationModel: parsed.CLINMESH_AI_INVESTIGATION_MODEL!,
             maxResponseBytes: Number(parsed.CLINMESH_AI_MAX_RESPONSE_BYTES),
-            timeoutMs: Number(parsed.CLINMESH_AI_TIMEOUT_MS),
+            timeoutMs: Number(parsed.CLINMESH_AI_TIMEOUT_MS ?? 60_000),
           },
         }),
     authBaseUrl,

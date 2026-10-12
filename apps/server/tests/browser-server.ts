@@ -8,7 +8,7 @@ import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src
 
 export async function startBrowserServer(webRoot: string, options: Partial<Pick<CreateClinMeshRuntimeOptions,
   'activeReferenceReleaseId' | 'referenceDatabasePath' | 'syntheaProvider' | 'chatCompletionsProvider'
-  | 'patientPersonaModel' | 'dshBridgeSecret' | 'trustedOrigins'
+  | 'patientPersonaModel' | 'dshBridgeSecret' | 'trustedOrigins' | 'dshModelBridge' | 'autoDispatchIntervalMs'
 >> = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-e2e-server-'))
   let runtime: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined
@@ -47,7 +47,7 @@ export async function startBrowserServer(webRoot: string, options: Partial<Pick<
       trustedOrigins: [origin, ...(options.trustedOrigins ?? [])],
       webRoot,
     })
-    return { origin, password, runtime, close }
+    return { origin, password, close, runtime }
   } catch (error) {
     await close()
     throw error

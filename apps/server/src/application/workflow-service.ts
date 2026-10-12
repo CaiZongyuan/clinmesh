@@ -32,9 +32,12 @@ import {
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   type ClinicalDocumentContent,
+  clinicalDocumentDraftContentSchema,
   clinicalDocumentContentSchema,
   clinicalDocumentDraftResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
+  cancelClinicalDocumentSignResponseSchema,
+  consultationSignReviewSchema,
   clinicalDocumentSignResponseSchema,
   clinicalPresentationSchema,
   clinicalDocumentRevisionResponseSchema,
@@ -98,6 +101,7 @@ import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { PathologyRequestService } from './pathology-request-service.ts'
+import { ConsultationRecordingService } from './consultation-recording-service.ts'
 import {
   ClinicalRequestKernel,
   laboratoryRequestPolicy,
@@ -1151,12 +1155,15 @@ export class WorkflowService {
   readonly imaging: ImagingRequestService
   /** 病理会诊申请适配器；与检验、放射共用申请内核。 */
   readonly pathology: PathologyRequestService
+  readonly consultationRecording: ConsultationRecordingService
 
   constructor(
     database: ClinMeshDatabase,
     fhir: FhirRepository,
     commands: CommandExecutor,
     options: {
+      consultationRecordingEnabled?: boolean
+      consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       investigation?: InvestigationCapabilityResolver
       now?: () => Date
       referenceData?: ReferenceDataService
@@ -1171,6 +1178,21 @@ export class WorkflowService {
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
+    this.consultationRecording = new ConsultationRecordingService({
+      database, commands, enabled: options.consultationRecordingEnabled === true,
+      now: this.#now,
+      virtualTime: context => this.#virtualTime(context),
+      contextStatus: options.consultationRecordingContextStatus ?? (() => 'inactive'),
+      assertAccess: (context, encounterId) => {
+        this.#assertRole(context, ['outpatient-doctor'])
+        const outpatientCase = this.#caseByEncounter(context, encounterId)
+        this.#assertCaseResponsibility(context, outpatientCase.case_id)
+        const encounter = this.#fhir.read(context, 'Encounter', encounterId)
+        return { caseId: outpatientCase.case_id, editable: encounter.status === 'in-progress'
+          && outpatientCase.status !== 'completed'
+          && this.#signedClinicalDocumentRoot(context, outpatientCase.case_id) === undefined }
+      },
+    })
     const requestHost = {
       assertCaseResponsibility: (context: ActorContext, caseId: string) => this.#assertCaseResponsibility(context, caseId),
       assertExpectedVersions: (expectedVersions: Record<string, string>, references: string[]) => (
@@ -3119,6 +3141,7 @@ export class WorkflowService {
     )
     const issuedPrescription = this.#issuedPrescription(context, row.case_id)
     const noMedication = this.#noMedicationConclusion(context, row.case_id)
+    const consultationRecording = this.consultationRecording.read(context, row.case_id)
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
@@ -3126,7 +3149,7 @@ export class WorkflowService {
         clinicalDocument: {
           ...(clinicalDocumentDraft === undefined ? {} : {
             draft: {
-              ...clinicalDocumentContentSchema.parse(JSON.parse(clinicalDocumentDraft.content_json)),
+              ...clinicalDocumentDraftContentSchema.parse(JSON.parse(clinicalDocumentDraft.content_json)),
               updatedAt: clinicalDocumentDraft.updated_at,
               version: clinicalDocumentDraft.version,
             },
@@ -3135,6 +3158,7 @@ export class WorkflowService {
         },
       }),
       ...(consultation === undefined ? {} : { consultation }),
+      ...(consultationRecording === undefined ? {} : { consultationRecording }),
       ...(diagnosisState === undefined ? {} : {
         diagnosis: {
           ...(diagnosisConfirmation === undefined ? {} : { confirmation: diagnosisConfirmation }),
@@ -3373,7 +3397,7 @@ export class WorkflowService {
         personaRevision: input.personaRevision,
       },
       operation: 'consultation.patient-turn.append',
-    }, () => {
+    }, transaction => {
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
       if (outpatientCase.doctor_task_id === null || outpatientCase.status === 'completed') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for consultation')
@@ -3394,6 +3418,9 @@ export class WorkflowService {
         personaRevision: input.personaRevision,
         source: 'patient-agent',
         speaker: 'patient',
+      })
+      this.consultationRecording.enqueue(input.context, transaction, {
+        caseId: outpatientCase.case_id, encounterId: input.encounterId, turnId: turn.turn.id,
       })
       return {
         data: {
@@ -5324,6 +5351,7 @@ export class WorkflowService {
       if (outpatientCase.status !== 'revisit-draft') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not ready for signing')
       }
+      this.#assertNoConsultationForLegacySigning(input.context, outpatientCase.case_id)
       if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
       }
@@ -5520,6 +5548,7 @@ export class WorkflowService {
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical signing preview is unavailable')
       }
+      this.#assertNoConsultationForLegacySigning(input.context, preview.case_id)
       if (this.#signedClinicalDocumentRoot(input.context, preview.case_id) !== undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
       }
@@ -6144,6 +6173,7 @@ export class WorkflowService {
       }
       const draftVersion = currentVersion + 1
       const now = this.#virtualTime(input.context)
+      this.consultationRecording.trackDraftSave(input.context, outpatientCase.case_id, input.document)
       this.#database.driver.prepare(`
         INSERT INTO clinical_document_draft (
           workspace_id, epoch, case_id, version, content_json, updated_by, updated_at
@@ -6173,6 +6203,60 @@ export class WorkflowService {
     })
   }
 
+  #assertNoConsultationForLegacySigning(context: ActorContext, caseId: string): void {
+    if (this.#consultationState(context, caseId) !== undefined) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'Use structured clinical document signing to review the Consultation')
+    }
+  }
+
+  #consultationSignReview(context: ActorContext, caseId: string) {
+    const consultation = this.#consultationState(context, caseId)
+    if (consultation === undefined) return null
+    const recording = this.consultationRecording.read(context, caseId)
+    return consultationSignReviewSchema.parse({
+      consultationVersion: consultation.version,
+      remainingCount: recording?.remainingCount ?? this.#consultationTurnRows(context, caseId)
+        .filter(turn => turn.speaker === 'patient' && turn.kind === 'text').length,
+      failedCount: recording?.failedCount ?? 0,
+      paused: recording?.paused ?? false,
+      conflictCount: recording?.additions.filter(addition => addition.status === 'pending'
+        || (addition.status === 'applied' && addition.reviewStatus === 'undo-pending')).length ?? 0,
+      unreviewedCount: recording?.additions.filter(addition => addition.status === 'applied'
+        && addition.reviewStatus === 'unreviewed').length ?? 0,
+    })
+  }
+
+  cancelStructuredClinicalDocumentSign(input: {
+    context: ActorContext; encounterId: string; previewId: string;
+    expectedVersions: Record<string, string>; idempotencyKey: string
+  }) {
+    return this.#commands.execute({ context: input.context, operation: 'clinical-document.cancel-sign',
+      dataSchema: cancelClinicalDocumentSignResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
+      input: { encounterId: input.encounterId, previewId: input.previewId },
+    }, transaction => {
+      this.#assertRole(input.context, ['outpatient-doctor'])
+      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
+      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+      const preview = z.object({ case_id: z.string(), consumed_at: z.string().nullable() }).optional().parse(
+        this.#database.driver.prepare(`SELECT case_id, consumed_at FROM clinical_document_sign_preview
+          WHERE workspace_id = ? AND epoch = ? AND preview_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.previewId))
+      if (preview?.case_id !== outpatientCase.case_id || preview.consumed_at !== null
+        || this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The signing preparation is no longer available')
+      }
+      this.#database.driver.prepare(`UPDATE clinical_document_sign_preview SET consumed_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND preview_id = ?
+      `).run(this.#now().toISOString(), input.context.workspaceId, input.context.epoch, input.previewId)
+      this.consultationRecording.suspendForSigning(input.context, outpatientCase.case_id)
+      this.consultationRecording.resumeAfterSigning(input.context, transaction, outpatientCase.case_id)
+      return { data: { previewId: input.previewId }, effects: [{ kind: 'updated' as const,
+        reference: `ClinicalDocumentSignPreview/${input.previewId}`, versionId: '2' }] }
+    })
+  }
+
   previewStructuredClinicalDocumentSign(input: {
     context: ActorContext
     encounterId: string
@@ -6180,6 +6264,7 @@ export class WorkflowService {
     expectedVersions: Record<string, string>
     idempotencyKey: string
   }): CommandResponse<{
+    consultationReview: z.infer<typeof consultationSignReviewSchema> | null
     commitToken: string
     document: { content: ClinicalDocumentContent; version: number }
     expiresAt: string
@@ -6198,6 +6283,7 @@ export class WorkflowService {
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
       if (outpatientCase.status === 'completed' || encounter.status !== 'in-progress') {
@@ -6217,17 +6303,22 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
       }
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
+      const consultationReview = this.#consultationSignReview(input.context, outpatientCase.case_id)
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(`clinical-document-sign:${previewId}`)}`
       const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
       const encounterVersion = z.string().parse(
         input.expectedVersions[`Encounter/${input.encounterId}`],
       )
+      this.#database.driver.prepare(`UPDATE clinical_document_sign_preview SET consumed_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND consumed_at IS NULL
+      `).run(this.#now().toISOString(), input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
+      this.consultationRecording.suspendForSigning(input.context, outpatientCase.case_id)
       this.#database.driver.prepare(`
         INSERT INTO clinical_document_sign_preview (
           workspace_id, epoch, preview_id, case_id, draft_version,
-          summary_json, token_hash, expires_at, encounter_version, actor_context_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          summary_json, token_hash, expires_at, encounter_version, actor_context_hash, consultation_review_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -6239,9 +6330,11 @@ export class WorkflowService {
         expiresAt,
         encounterVersion,
         this.#actorContextHash(input.context),
+        JSON.stringify(consultationReview),
       )
       return {
         data: {
+          consultationReview,
           commitToken,
           document: { content: document, version: draft.version },
           expiresAt,
@@ -6257,6 +6350,7 @@ export class WorkflowService {
   }
 
   signStructuredClinicalDocument(input: {
+    consultationReviewed?: boolean
     commitToken: string
     context: ActorContext
     encounterId: string
@@ -6277,6 +6371,7 @@ export class WorkflowService {
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
+        ...(input.consultationReviewed === undefined ? {} : { consultationReviewed: input.consultationReviewed }),
         commitToken: input.commitToken,
         encounterId: input.encounterId,
         previewId: input.previewId,
@@ -6285,6 +6380,7 @@ export class WorkflowService {
     }, transaction => {
       this.#assertRole(input.context, ['outpatient-doctor'])
       const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+      this.#assertCaseResponsibility(input.context, outpatientCase.case_id)
       this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
       const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
       if (outpatientCase.status === 'completed' || encounter.status !== 'in-progress') {
@@ -6292,11 +6388,12 @@ export class WorkflowService {
       }
       const preview = this.#database.driver.prepare(`
         SELECT case_id, draft_version, summary_json, token_hash, expires_at, consumed_at,
-          encounter_version, actor_context_hash
+          encounter_version, actor_context_hash, consultation_review_json
         FROM clinical_document_sign_preview
         WHERE workspace_id = ? AND epoch = ? AND preview_id = ?
       `).get(input.context.workspaceId, input.context.epoch, input.previewId) as {
         actor_context_hash: string
+        consultation_review_json: string | null
         case_id: string
         consumed_at: string | null
         draft_version: number
@@ -6310,7 +6407,7 @@ export class WorkflowService {
         || preview.case_id !== outpatientCase.case_id
         || preview.consumed_at !== null
         || preview.token_hash !== this.#hashToken(input.commitToken)
-        || Date.parse(preview.expires_at) < this.#now().getTime()
+        || Date.parse(preview.expires_at) <= this.#now().getTime()
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document signing preview is unavailable')
       }
@@ -6338,10 +6435,21 @@ export class WorkflowService {
       if (JSON.stringify(previewDocument) !== JSON.stringify(document)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
       }
+      const review = this.#consultationSignReview(input.context, outpatientCase.case_id)
+      const preparedReview = consultationSignReviewSchema.nullable().parse(
+        preview.consultation_review_json === null ? null : JSON.parse(preview.consultation_review_json))
+      if (JSON.stringify(review) !== JSON.stringify(preparedReview)) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Consultation changed; cancel preparation and review a fresh preview')
+      }
+      if (review !== null && (review.remainingCount > 0 || review.conflictCount > 0 || review.unreviewedCount > 0)
+        && input.consultationReviewed !== true) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Review unfinished answers and history conflicts before signing')
+      }
       if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')
       }
       const now = this.#virtualTime(input.context)
+      this.consultationRecording.suspendForSigning(input.context, outpatientCase.case_id)
       const compositionId = uuidv7()
       const composition = transaction.fhir.createImmutable(input.context, {
         resourceType: 'Composition',
@@ -9613,6 +9721,7 @@ export class WorkflowService {
       INSERT INTO consultation (workspace_id, epoch, case_id, version)
       VALUES (?, ?, ?, 1)
     `).run(context.workspaceId, context.epoch, caseId)
+    this.consultationRecording.create(context, caseId)
   }
 
   #consultationTurnRows(context: ActorContext, caseId: string) {

@@ -4,6 +4,8 @@
 
 ## 协作与交付偏好
 
+- 用户要求先通过 `to-spec`、`to-tickets` 整理和拆分的任务，设计确认后仍先完成规格、测试 seam 和拆票审阅，不把 grilling 的设计确认解释为直接实施授权；明确要求实施后再写业务代码。此偏好不替代其他任务已有的直接实施授权。
+
 - 用户更换 ClinMesh 模型后，希望新请求和新的人工重试采用新选择；正在执行的请求保持原模型，已有成功结果只在显式重新生成时调用新模型。具体行为由[系统架构](../architecture.md#103-场景定义)拥有。
 
 - DSH 原生文件全屏应完整覆盖 HIS。不得为让 HIS 控件始终可点而抬高整个 Surface 层级；退出文件全屏后再操作 HIS。菜单也应沿用正常覆盖关系，不能通过逐层抬高 z-index 修补遮挡。
@@ -15,6 +17,7 @@
 - 已批准的 spec、测试 seam 和拆票结构没有未决分支时，直接实施，不重复展示最终待发布全文，也不逐项请求内容批准。
 - 用户要求“完整整个 issue”时，一口气完成全部 tickets，最终只提一个集成 PR。Tickets 用于执行和追踪，不自动等于一个 ticket 一个 PR。
 - Merge、发布或合并现有工作区变更仍以用户明确授权为边界；授权已经给出后直接执行，不再增加一次确认。
+- 用户要求提交并推送当前工作区修改时，沿用当前非 `main` 工作分支；“独立工作分支”不表示每次提交都新建分支。只有当前位于 `main`、用户明确要求或任务确需隔离时才另建分支。
 - 用户授权合并 PR 时，收尾包含切回本地 `main`、同步到最新 `origin/main`，并删除该 PR 已合并的本地开发分支；先确认没有未保存修改、合并后新增提交或其他 worktree 占用，保留这些内容后再清理。涉及子模块开发提交时，同时核对子模块的 PR、主分支和父仓库引用，取得该仓库的合并授权后完成对应收尾。
 - 用户明确要求把当前工作区 changes 一并提交时，先辨认并保真保存这些修改，再纳入目标 PR；不丢弃、不改写为自己的内容，也不额外推送原工作分支。
 - 用户询问进度时，先报告已经完成、正在处理和剩余阻塞，然后继续执行，除非用户要求暂停。
@@ -38,10 +41,39 @@
 ## 运行与验证边界
 
 - React 18 的普通函数组件不会接收 `ref`；共享输入组件需要沿用 `forwardRef`，并用 ShadowRoot 的 `activeElement` 核对真实返回焦点。Query 刷新时重建的 mutation 回执对象不能作为清空草稿的效果依赖，按病例与业务版本处理，并忽略旧回执；删除草稿回归还须覆盖请求未完成时继续编辑、自动保存和迟到的查询刷新。相关回归与决定见[诊断与处方两阶段视图](../../.agents/notes/implemented/architecture/2026-10-10-diagnosis-prescription-workspace.md)。
-- JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。
+- JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。浏览器回归验证真实指针命中，不能只检查文本可见。
 - 目录读取失败后，重设相同搜索条件不会改变 TanStack Query key，重试需显式 `refetch`。回归从真实页面观察第二次 HTTP 读取和恢复，不只断言搜索回调被调用。
 - 真实 WebApp 浏览器合同使用 `localhost` 或 HTTPS 的有效 origin：`about:blank` 的 opaque origin 无法使用存储，普通 HTTP 域名不提供 `crypto.randomUUID`。沿用产品需要的浏览器能力，不为测试给生产代码加 polyfill。
+- 新增 SQLite migration 后，先核对 `database.ts` 的文件名筛选与 `schema_migration` 中的实际应用记录；文件存在不代表启动时会被发现。描述部分误用下划线会被当前筛选忽略，表现为新接口缺少列的 500；修正文件名并通过公开 HTTP 验证，不以启动成功代替迁移证据。
+
+- Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
+
+- 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；修复调用保留独立预算，服务关闭取消与模型超时分开处理。回归同时覆盖慢速首次无效响应后的修复和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+
+- 病史任务反复报来源无效时，回归须组合真实记录服务与 DSH Provider，核对领域校验是否进入修复反馈；仅验证 JSON schema 或用忽略 `validate` 的 Provider stub 会漏掉无反馈重试。覆盖修复后成功、修复耗尽后停止及显式重试，仍验证完整逐字来源和不确定表述拒绝，见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+
+- SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
+
+- 首次自动草稿从无到有时，不能将其未涉及字段的空值当作清空指令；页面预填值与人工输入都须覆盖回归。验证保留后还要保存、刷新，并主动清空再保存，避免修复变成永久恢复默认值。当前病史边界由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
+
+- 校验持久后台任务的 Grant 时，覆盖同一业务结果的所有公开触发路径，尤其失败后的显式重试、暂停恢复和取消签署；不能只检查主入口操作权限。失效回归保留原 Grant 撤销后同一 Client 仍有其他有效 Grant 的场景，防止借用另一授权继续旧任务。
+
+- 模型摘录的逐字匹配不能单独证明事实完整。引用边界回归同时覆盖限定语与疑问号在引用外、句间空白、逗号和小数点位于引用首尾，避免通过截断制造肯定事实、改变测量值或拒绝完整陈述；当前写入规则由[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
+
+- 同一引用可能先出现在长句内部，再以完整句重复；引用校验回归同时覆盖后续合法匹配和全部匹配不合法。普通新增去重还须覆盖同一来源、同批和新回答的句尾表示差异，保持持久标识、不同更正目标及新来源拒绝证据的独立性；当前边界见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)与[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
+
+- 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)。
+- 预填与后台文本合并的回归须覆盖首次自动更新同一个未保存字段，以及其他字段已有自动草稿时该字段才首次更新；同时断言编辑框、保存后的服务端正文和刷新结果，防止界面丢弃新增后又通过保存删掉服务端已应用的内容。当前合并基线见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
+- 自动记录的人工冲突回归同时覆盖纯手写病史和已改写自动片段的当前文本；仅提供患者原话无法证明当前手工内容参与比较。来源校验与冲突比较分开验证；并发既要覆盖旧目标修改，也要覆盖模型请求后新增人工矛盾、持续编辑后的有界失败与显式恢复。核对范围覆盖新增限定语、人工扩写多句及独立句子的无关编辑，防止旧建议替换新人工内容或删除无关句子。当前边界见[人工病史冲突决策](../../.agents/notes/implemented/bug-fix/2026-10-12-consultation-manual-history-conflicts.md)。
+- 共享 HTTP 请求替身改为异步后，调用者必须先 `await` 再判断是否命中；直接比较 Promise 与 `undefined` 会让未处理的普通请求返回空响应。`vi.fn` 的宽松返回类型可能使类型检查通过，主分支整合仍须运行受影响页面的完整测试，并同步最新目录响应合同。
+- 增量去重回归同时覆盖重复投递、同批重复、同句多目标更正，以及拒绝后的句界表示变化和新来源再次提出相同措辞。正常增量与拒绝证据不能共用去重范围；增量身份与普通事实去重见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)，拒绝证据见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
+- 局部撤销的长度回归同时覆盖恢复后恰好达到上限，以及短更正之后追加内容再恢复长原文。单次保存合法不证明逆操作仍合法；校验失败时应先保留正文、版本及锚点，再进入既有人工核对流程，见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
+- 聚合待核对状态和显示操作提示时，同时判断条目是否仍有效与其审阅状态；被替代历史的旧标记不代表当前可处理任务。回归应覆盖替代后提示消失、逆操作恢复原核对需求和重启，不通过伪造已确认状态清除历史事实，见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
+- 旧数据惰性恢复的回归先通过公开 Query 取得标识，再直接执行对应 Command；同时检查读取不落盘、失败事务不改状态和重试仍可使用公开标识。只在保存或新任务之后验证会掩盖标识在恢复中被替代的死循环，当前病史恢复见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
+- Playwright 在页签切换后读取提示时，将 locator 限定到目标 tabpanel；退出中的旧面板可能短暂保留同名状态标记。不要用 `.first()` 或固定等待绕过双匹配，保留对目标页面状态的断言。
+
+- pnpm 11 在执行脚本前可能自动安装并改写锁文件，包括重新解析间接依赖。纯文档检查遇到此行为时，先核对并撤回本次检查引入的无关锁文件变更；已安装工具可通过 Node 直接调用对应 CLI，避免重复触发安装。锁文件变化不属于文档交付。
 - DSH 标签页品牌验证须覆盖初始 HTML、宿主赋值后的同步读取和刷新；布局会主动写入默认产品标题，MutationObserver 只能事后纠正，下一帧正确不能证明标签页没有闪烁。标题保护通过首页扩展在首个宿主脚本前同步规范当前 document 的标题赋值，浏览器回归覆盖同步改名、延迟改名和重复刷新。
 - Base UI 弹框关闭依赖动画帧完成卸载；Chrome `--virtual-time-budget` 下即使轮询定时器已结束，渲染帧仍可能未执行。验证关闭卸载的浏览器合同使用真实时钟并限时等待 DOM 消失，不缩减关闭断言。
 - Surface 集成测试在 Tool 切换页面或打开影像后，须等新的受信 Tool 绑定发布再执行下一动作；控件已启用不证明已发布 action 快照同步。提案工具先返回 `awaiting-human-review`，测试在 `act` 内等待准备结果，人工点击后另行观察正式写入和 Tool result，不能用准备 Promise 代表 Command 已完成。
@@ -87,12 +119,15 @@
 
 - Windows 的 `core.symlinks=false` 会把 Git 符号链接检出为存放目标路径的普通文件。修改 `CLAUDE.md` 前先检查 Git mode；`120000` 的 blob 是链接目标，不能按 Markdown 添加末尾换行。文档或格式检查受 CRLF、符号链接、POSIX 权限影响时，在支持这些语义的 Linux checkout 验证，不改坏链接或放宽检查。
 - 从 Windows 用 `git archive` 同步 Linux 验证副本时，显式使用 `git -c core.autocrlf=false archive`；否则归档可能带入 CRLF，导致按 LF 字节锁定的合成数据校验和失败。先比较归档、Git blob 和检查副本，不修改校验和或测试阈值。
+- Windows worktree 的 `.git` 指针可能包含盘符绝对路径，WSL Git 不能直接解析。在 Windows Git 中导出 diff，再应用到 Linux 原生 checkout；不要改写原 worktree 的 Git 指针来迁就验证工具。
 
 - DSH 的启动地址包含临时访问 token，直接请求无凭证的 `/` 不能证明 Web 是否就绪。隔离 smoke 在内存中使用启动 token 完成登录，再携带返回的 Cookie 检查首页；保存或发布启动日志前必须移除该 token。候选子进程使用受限环境和临时 npm 用户配置，不能把父进程的 GitHub/npm/模型凭证传给安装脚本。
 
 - 审查自动升级时同时核对人工提交历史和最终执行目标：快进追加仍可能覆盖人工指定的支持 SHA。版本号相同也不能证明安装内容相同；发现摘要必须绑定实际下载文件与重建锁。当前保护和恢复方式见[DSH 持续升级](../deployment.md#dsh-持续升级)。
 
 - GitHub 的 PR ref 或 commit API 能访问某个支持 SHA，不代表从上游仓库普通 clone 后可检出；该对象可能只在贡献者 fork 的分支上。验收必须用声明的 source 新建 clone 并执行精确 checkout，不能复用含额外对象的本地仓库作为公开来源证据。
+
+- PR 审查的 three-dot diff 以 merge-base 确定改动范围，合并冲突则以当前远端目标分支 tip 判断。PR 元数据中的 base SHA 与远端分支 tip 不一致时，用 `git ls-remote` 或远端 ref API 核对并 fetch 最新目标分支，再以 `git merge-tree --write-tree <target-tip> <head>` 验证；不能把旧 base 与 head 合并成功当作当前可合并的证据。
 
 - `pnpm reference:sync` 固定写入默认路径 `.data/clinmesh-reference.sqlite`，不读取 `.env` 的 `CLINMESH_REFERENCE_DATABASE_PATH`；`.env` 指向自定义路径时会与同步结果分叉，出现"诊断药品正常、检验目录为空"（旧 Release 不含 `laboratory-cn`）。排查时直接查库：`reference_release` 表按 `release_id` 看 `laboratory_definition_count`。当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`，不要在 `.env` 手抄该 ID 制造双事实来源；运行中 Server 不热切换参考库，修复后必须重启。
 
@@ -105,6 +140,9 @@
 - 已经通过且没有被后续变更失效的证据不因 commit、push、review、Ready 或 merge 再次运行。
 - 生产 Docker build 不能假设 `better-sqlite3` 一定有预编译件。Build stage 保留 `python3`、`make` 和 `g++` 供 `node-gyp` 回退编译，runtime stage 不携带工具链；升级 Node.js 或 `better-sqlite3` 后必须用实际 Docker build 和健康启动验证。
 - Command receipt 是跨版本持久数据。响应 DTO 新增必填字段时提供向后兼容默认值或迁移旧回执，并用原幂等键重放升级前响应形状；只验证新命令成功不能发现这类回归。
+- 持久准备的取消回归须覆盖服务端已提交但响应丢失，以及其他会话先消费同一准备的场景。仅验证明确失败后重试不足以证明恢复：还要重新读取已提交状态，确认本地旧预览不会继续锁住编辑或遮挡恢复入口；重试同一取消意图应能复用幂等回执或根据最新读取结束失效的本地准备。
+
+- 异步创建人工审阅前，先检查 `AbortSignal.aborted` 和当前病例／Actor 范围；给已经终止的 signal 注册事件不会补发 abort。若先前请求已创建持久准备，提前退出也必须尝试取消，并保留 Query 恢复入口。回归覆盖预览返回前终止和切换病例。
 - Better Auth 在 `NODE_ENV=test` 下默认跳过 origin 校验；ClinMesh Auth 必须显式保持 origin check 开启，相关 HTTP 测试同时携带会话 Cookie 和 `Origin`，否则无法捕获开发 Web origin 的 CSRF 配置回归。
 - `scripts/dev-lan.ts` 的进程生命周期覆盖完整子树。POSIX 上 Server 和 Web 必须使用独立进程组；任一分支退出或收到终止信号时，向两个完整进程组转发原信号。只终止顶层 `pnpm` 会遗留 Turbo、Vite 或 `tsx watch` 子进程，并在下次启动时产生错误的端口占用。
 - POSIX 上进程组 kill 已生效后，孤儿进程在被收养方收尸前仍处于僵尸/退出中状态，`kill(pid, 0)` 会把它探测为存活。判定幸存者必须在断言前轮询等待全部不可探测（如 50ms 间隔、数秒上限），超时仍存活才上报失败；Windows 无僵尸进程，本地全绿不能证明 Linux 无竞态。探测只把 `ESRCH` 视为已死、其余错误如实抛出，并拒绝非正整数 pid（`Number` 解析出的 NaN 会被强转为 pid 0，探测到探测方自身进程组）。
@@ -125,6 +163,8 @@
 
 - Agent Note 格式检查当前按 LF 分行，Windows CRLF 检出会把空行和状态行误报为格式错误。隔离验证 Git 中的文本时使用 `git -c core.autocrlf=false archive`，再覆盖待提交的新 Note；默认 `git archive` 也可能按 `core.autocrlf` 转换换行，不能当作原始 Git blob。该验证只证明文本格式，不替代 POSIX 权限或符号链接验证。
 
+- Windows 向 Linux 验证副本导出变更时，先暂存，再用默认 `git diff --cached <base> --binary --output=<path>`；不要给该 diff 强制 `core.autocrlf=false`，否则 CRLF 工作树可能产生整文件伪变化。应用前核对 patch 的文件数和行数；含 PATH 或复杂参数的 WSL 命令写入 LF shell 脚本文件执行，避免 PowerShell 到 WSL 的参数转义改变命令。
+
 - `publint` 会再调用包管理器打包；pnpm script 注入的 Node 目录可能让子进程选择 Corepack shim，而不是父进程使用的 pnpm。若父构建成功、打包却卡在解析 pnpm 版本，核对实际 PATH 和 Corepack 缓存，预先缓存仓库 `packageManager` 指定的版本；需要代理时在缓存准备步骤启用 Node 的代理支持，不通过跳过 publint 或覆盖宿主环境规避。
 
 - DSH 的内置 bundle 由宿主槽位提供；Profile 不重复安装它们的依赖闭包。出现 `profile reload requires the root Include entry` 时，先比较官方默认 Profile，再核对配置编辑器与启动入口解析出的 `dsh-app-boot` 是否是同一模块实例。HTTP 首页成功不能证明设置持久化和热重载可用；当前装配与验收归属见[部署指南](../deployment.md#dsh-web-原生入口)。
@@ -136,6 +176,10 @@
 - 替换 Agent 反馈渲染器时，分别处理真实执行、完成反馈可见性与资源清理，沿用既有完成停留合同。快速本地 Tool 的开始和完成可能被 React 合并为一次渲染，不能依赖执行阶段创建过 Canvas；回归须包含同批开始/完成、静态停留与停止绘制，并保持业务无额外延迟。当前时序由[能力参考](../agent-capabilities.md#反馈时序)拥有。
 
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。验证记录须明确 CPU affinity、worker 或串行限制，不把受限并发结果说成默认并发通过。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。
+
+- 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。也可用 `VITEST_MAX_WORKERS=2 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1 --env-mode=loose` 显式限制文件并发；Turbo 默认 strict 环境会过滤该变量，仅在父进程设置它并不会约束包内 Vitest。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
+
+- 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。
 
 - 精确运行 Vitest 文件时使用 `pnpm --filter <package> exec vitest run <file>`。脚本经 `pnpm --filter <package> test -- <file>` 转发时会保留 `--`，当前 Vitest 可能运行整个包而未应用文件筛选；以实际 Test Files 数量确认范围。
 
@@ -243,10 +287,21 @@
 
 - DSH 模型流以 `finish.reason` 携带标准失败码，消费方按 code 分类，不解析原始消息或把所有失败归成网络故障。超时回归同时覆盖宿主返回 `TIMEOUT` 与本地 `AbortSignal` 到期；只验证本地计时器会漏掉宿主超时被误归为调用失败的路径。同一 Provider 下的模型可有不同访问权限；单模型返回 403 不证明整个 Provider 不可用。可用性验证通过真实桥接向其他完整 Provider／model 路由发送最小合成请求，不修改已有任务绑定，也不输出凭据或模型私有输入。
 
-- TanStack Query 的 `invalidateQueries` 默认不抛出刷新失败，不能靠它把成功写入同步到界面。保存成功后先校验并应用服务端返回的已提交值与 revision，取消可能覆盖该值的旧读取，再刷新目录。用户偏好：设置已经保存成功且界面保留已确认值时，只提示“已保存”，后续自动刷新失败静默处理，不展示“已保存但刷新失败”等内部同步提示；首次加载和实际保存失败仍须明确反馈。回归同时覆盖设置读取失败、目录读取失败、失败后的再次保存和延迟到达的旧响应，避免界面与实际生效值分叉。
+- DSH 桥接在截止时间附近报 `UND_ERR_SOCKET` 时，分别用 gzip 与 identity 协商复现。宿主压缩中间件可能延迟设置 `writableEnded`，超时回调和模型取消后的 catch 会据此重复写响应；仅用原生 `node:http` listener 的测试无法发现。使用实际 DSH WebServer 的压缩路径验证，响应归属规则见[模型调用预算](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+
+- TanStack Query 的 `invalidateQueries` 默认不抛出刷新失败，不能靠它把成功写入同步到界面。保存成功后先校验并应用服务端返回的已提交值与 revision，取消可能覆盖该值的旧读取，再刷新目录。有缓存数据的后台读取失败也会设置 `isError`；错误分支须区分首次加载、暂时读取失败和权限失效，且按已提交状态决定后续轮询，避免恢复已成功却只能重载页面。用户偏好：设置已经保存成功且界面保留已确认值时，只提示“已保存”，后续自动刷新失败静默处理，不展示“已保存但刷新失败”等内部同步提示；首次加载和实际保存失败仍须明确反馈。回归同时覆盖设置读取失败、目录读取失败、失败后的再次保存和延迟到达的旧响应，避免界面与实际生效值分叉。
+
+- 合并 Command 回执与 Query 缓存前，先确认版本号覆盖的事实范围。记录控制版本不随后台进度、编辑归属或显式保存推进，同版本的迟到控制回执不能整块覆盖已经读取的新状态。回归组合覆盖回执延迟、期间读取新状态、后续读取失败及切换病例后返回，并检查显式保存的空字段是否被旧预填恢复。
 
 - 排查 DSH Tool 参数失败时，对照该步的真实 `request/header` 与 `tool/call`：参数匹配模型收到的 schema、却被执行时新 schema 拒绝，是生成期间更新的竞态，不能只归因为模型填错。检查 SQL 报错时先核对运行中数据库路径和当前 schema，旧演示库的表名不能用于运行库。业务 preset 与恢复规则见 [DSH 页面操作](../agent-capabilities.md)。
 - DSH 工具目录交接回归必须在同一用户回合连续执行动作并检查第一条后续模型请求的实际 schema；分多个用户回合等页面稳定后再调用会漏掉竞态。测试模型收到结果后立即继续，不能用固定延时、重试或等待注册再发送第二条用户输入作为交接证据。
+
+- 排查 Agent 代问后病历未更新时，用 Tool 回执的 `patientTurn.id` 关联实际病例、记录任务与增量，并对照控制 Command 的时间；先确认人工提问和 Agent 提问是否发生在同一病例及相同记录状态。`outbox_event.status=completed` 只证明事件已结束，病史整理可能已经失败，须同时核对 `consultation_recording_job` 和失败 Command。暂停会重置未完成任务的当前错误码，既往失败应从 Command 记录追溯；启用、补录与恢复合同见[问诊自动记录规格](../spec/2026-10-08-consultation-auto-record.md)。
 - 新 worktree 的文档检查若把 `CLAUDE.md` 中的 `AGENTS.md` 路径当正文并报缺少末尾换行，先检查 Git 的 `120000` mode 与 `core.symlinks`：禁用 symlink 的 checkout 会生成普通文本占位文件。`core.symlinks=false` 时 `git status` 也可能仍显示干净。只在隔离 worktree 中恢复占位内容仍精确等于 index 目标的链接，不给目标文本补换行，也不修改共享 Git 配置。
 
 - `pnpm install --lockfile-only` 自动解决锁文件冲突时可能重新解析间接依赖，顺带升级两侧均未改动的版本。常规主分支整合先按合并后的 manifest 合并两侧已有锁条目，核对 package 版本与 integrity 沿用原值，再用 `pnpm install --frozen-lockfile` 验证；不要把自动解冲突成功等同于依赖范围未变。
+
+- 原生 DSH 验收中，`createClinMeshRuntime` 的 `dshModelBridge` 与 `dshBridgeSecret` 分别启用辅助模型和 Agent Page Context，必须独立装配；模型正常不证明工具授权接口已启用。建立原生 Session 后从 launcher 打开 Surface；宿主刷新会关闭 Surface，需要重新打开，并等待当前浏览器客户端的 `/lease` 成功响应。控件启用或旧客户端注册成功不足以证明当前工具可调用，刷新后的 lease 竞争应通过当前注册状态等待，不能用固定延迟替代。
+
+
+- 新建隔离 worktree 后，安装依赖前先用 `git submodule update --init --recursive vendor/dsh-react-surface` 检出仓库锁定的子模块。未初始化的子模块目录会让 `pnpm install --frozen-lockfile` 在扫描 `file:` 依赖的 `packages/runtime` 时以 `ENOENT` 失败；初始化后重新按锁安装，不改写锁文件绕过缺失目录。
