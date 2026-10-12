@@ -282,3 +282,5 @@
 - 原生 DSH 验收中，`createClinMeshRuntime` 的 `dshModelBridge` 与 `dshBridgeSecret` 分别启用辅助模型和 Agent Page Context，必须独立装配；模型正常不证明工具授权接口已启用。建立原生 Session 后从 launcher 打开 Surface；宿主刷新会关闭 Surface，需要重新打开，并等待当前浏览器客户端的 `/lease` 成功响应。控件启用或旧客户端注册成功不足以证明当前工具可调用，刷新后的 lease 竞争应通过当前注册状态等待，不能用固定延迟替代。
 
 - Base UI 对齐 Select 在 trigger 收到 focus 时可能关闭已打开的弹层，jsdom 的指针／焦点调度不能当成稳定的展开证据。业务组件测试先聚焦 combobox，再用 `user.keyboard('{ArrowDown}')` 展开，并用 `findByRole('option')` 等待目标选项；保持选择后原有业务断言和默认超时。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证，不用固定延迟或重复点击修补 jsdom 测试。
+
+- 新建隔离 worktree 后，安装依赖前先用 `git submodule update --init --recursive vendor/dsh-react-surface` 检出仓库锁定的子模块。未初始化的子模块目录会让 `pnpm install --frozen-lockfile` 在扫描 `file:` 依赖的 `packages/runtime` 时以 `ENOENT` 失败；初始化后重新按锁安装，不改写锁文件绕过缺失目录。
