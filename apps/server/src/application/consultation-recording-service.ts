@@ -18,8 +18,8 @@ import type { ActorContext, CommandExecutor, CommandTransaction } from './comman
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import { WorkflowError } from './workflow-error.ts'
-import { historySummaryOutputSchema, historySummaryPrompt, parseHistorySummaries, RecordingSourceError,
-  summaryText, verifyHistorySummaries, type HistorySummary } from './consultation-history-summary.ts'
+import { hasStatementBoundaries, historySummaryOutputSchema, historySummaryPrompt, validateHistorySummaries, RecordingSourceError,
+  summaryText, verifyHistorySummaries, type HistoryFact, type HistorySummary } from './consultation-history-summary.ts'
 
 const contextSchema = z.object({
   agentGrantId: z.uuid().optional(),
@@ -97,6 +97,23 @@ function rowText(row: HistoryRow): string {
   return row.facts_json === null ? `患者自述：${row.quote}` : summaryText(rowFacts(row))
 }
 
+function historyEvidenceKey(field: HistorySummary['field'], source: HistoryFact['sources'][number]): string {
+  return JSON.stringify([field, source.sourceTurnId, normalizeQuoteEnding(source.quote)])
+}
+
+function rejectedHistoryEvidence(rows: HistoryRow[]): Set<string> {
+  return new Set(rows.filter(row => row.rejected === 1).flatMap(row => {
+    const sources = row.facts_json === null ? [{ sourceTurnId: row.source_turn_id, quote: row.quote }]
+      : rowFacts(row).flatMap(fact => fact.sources)
+    return sources.map(source => historyEvidenceKey(row.field, source))
+  }))
+}
+
+function hasNewHistoryEvidence(addition: HistorySummary, turnId: string, rejected: ReadonlySet<string>): boolean {
+  return addition.facts.some(fact => fact.sources.some(source => source.sourceTurnId === turnId
+    && !rejected.has(historyEvidenceKey(addition.field, source))))
+}
+
 function isHistoryRange(row: HistoryRow, text: string, start: number, end: number): boolean {
   if (row.facts_json === null) return isCompleteStatementRange(text, start, end)
   return hasStatementBoundaries(text, start, end) && (row.ownership !== 'manual'
@@ -109,16 +126,6 @@ function statements(quote: string): string[] {
 
 function isCompleteStatementRange(text: string, start: number, end: number): boolean {
   return statements(text.slice(start, end)).length === 1 && hasStatementBoundaries(text, start, end)
-}
-
-function hasStatementBoundaries(text: string, start: number, end: number): boolean {
-  const quote = text.slice(start, end)
-  const boundary = /[。！？；!?;\r\n]/
-  const before = text.slice(0, start).replace(/[^\S\r\n]+$/u, '')
-  const after = text.slice(end).replace(/^[^\S\r\n]+/u, '')
-  return !/^(?:[。！？；!?;]|[^\S\r\n])*[?？]/u.test(after)
-    && (before.length === 0 || boundary.test(before.at(-1)!))
-    && (after.length === 0 || boundary.test(after[0]!) || boundary.test(quote.at(-1)!))
 }
 
 function normalizeQuoteEnding(quote: string): string {
@@ -504,15 +511,15 @@ export class ConsultationRecordingService {
         .map(row => ({ id: row.addition_id, field: row.field, text: row.current_text || rowText(row),
           facts: rowFacts(row), quote: row.quote, sourceTurnId: row.source_turn_id }))
       const manualHistory = this.#manualHistory(context, job.case_id, baseline.content)
-      const rejected = this.#rows(context, job.case_id).filter(row => row.rejected === 1)
+      const rejected = rejectedHistoryEvidence(this.#rows(context, job.case_id))
       const parseOutput = (value: unknown) => {
         const output = historySummaryOutputSchema.parse(value)
         // Replayed rejected evidence is already settled, including alternate
         // sentence endings. A new saved reply remains new review evidence.
         const additions = output.additions.filter(addition => !addition.facts.flatMap(fact => fact.sources)
-          .every(source => rejected.some(row => row.field === addition.field && row.source_turn_id === source.sourceTurnId
-            && normalizeQuoteEnding(row.quote) === normalizeQuoteEnding(source.quote))))
-        return parseHistorySummaries({ additions }, turns, history, manualHistory)
+          .every(source => rejected.has(historyEvidenceKey(addition.field, source))))
+        validateHistorySummaries(additions, turns, history, manualHistory)
+        return { additions: additions.filter(addition => hasNewHistoryEvidence(addition, turnId, rejected)) }
       }
       const result = await model.provider.completeJson({
         model: pinned, signal: model.signal, schemaName: 'consultation_history_summary',
@@ -590,7 +597,7 @@ export class ConsultationRecordingService {
     job: z.infer<typeof jobSchema>, baseline: { version: number; content: Draft }, additions: HistorySummary[], manualHistory: ManualFragment[]) {
     const fragments: Addition[] = additions.map(item => {
       const sources = item.facts.flatMap(fact => fact.sources)
-      const source = sources.find(source => source.sourceTurnId === turnId) ?? sources[0]!
+      const source = sources.find(source => source.sourceTurnId === turnId)!
       return { ...item, ...source }
     })
     this.#commands.execute({ context, operation: 'consultation.history.apply', expectedVersions: {},
@@ -609,12 +616,7 @@ export class ConsultationRecordingService {
         throw new Error('Manual history comparison changed during extraction')
       }
       const seenIds = new Set(existing.map(item => item.addition_id))
-      // Only rejected evidence is shared across targets. Equivalent citations may
-      // include or omit sentence delimiters; a new source reply is new evidence.
-      const evidenceKey = (item: Pick<Addition, 'field' | 'sourceTurnId' | 'quote'>) => JSON.stringify([item.field, item.sourceTurnId,
-        normalizeQuoteEnding(item.quote)])
-      const rejectedEvidence = new Set(existing.filter(item => item.rejected === 1).map(item => evidenceKey({ field: item.field, sourceTurnId: item.source_turn_id,
-        quote: item.quote })))
+      const rejectedEvidence = rejectedHistoryEvidence(existing)
       const seenSummaries = new Set(existing.filter(item => item.rejected === 0 && item.undone === 0 && item.review_state === null)
         .map(item => JSON.stringify([item.field, normalizeQuoteEnding(rowText(item))])))
       if (!access.editable) return { data: { draftVersion: current.version }, effects: [] }
@@ -625,7 +627,8 @@ export class ConsultationRecordingService {
         const id = createHash('sha256').update(JSON.stringify(addition)).digest('hex')
         const text = summaryText(addition.facts)
         const key = JSON.stringify([addition.field, normalizeQuoteEnding(text)])
-        if (seenIds.has(id) || rejectedEvidence.has(evidenceKey(addition)) || (addition.relation === 'addition' && seenSummaries.has(key))) continue
+        if (!hasNewHistoryEvidence(addition, turnId, rejectedEvidence) || seenIds.has(id)
+          || (addition.relation === 'addition' && seenSummaries.has(key))) continue
         seenIds.add(id)
         seenSummaries.add(key)
         const target = this.#rows(context, job.case_id).find(item => item.addition_id === addition.targetAdditionId)
@@ -638,14 +641,15 @@ export class ConsultationRecordingService {
           && isHistoryRange(target, fieldText, target.start_offset, target.end_offset)
           && fieldText.slice(target.start_offset, target.end_offset) === target.current_text
         if (addition.relation === 'update' && anchored && text === target.current_text) continue
-        const correction = addition.relation === 'correction' && /更正|说错|记错|纠正|其实|不是.{0,20}是/.test(addition.quote)
-        const replace = anchored && (correction || addition.relation === 'update') && target.ownership === 'automatic'
+        // The independent verifier evaluates the relation against every fact's
+        // sources; the legacy representative quote cannot decide it.
+        const replace = anchored && (addition.relation === 'correction' || addition.relation === 'update')
+          && target.ownership === 'automatic'
         const start = replace ? target.start_offset! : fieldText.length + (fieldText ? 1 : 0)
         const next = replace ? fieldText.slice(0, start) + text + fieldText.slice(target.end_offset!)
           : [fieldText, text].filter(Boolean).join('\n')
         const limit = addition.field === 'chiefComplaint' ? 1_000 : addition.field === 'historyOfPresentIllness' ? 5_000 : 4_000
-        const applied = writable && (replace || (addition.relation === 'addition' && addition.targetAdditionId === undefined
-          && !/更正|说错|记错|纠正|其实|不是.{0,20}是/.test(addition.quote)))
+        const applied = writable && (replace || (addition.relation === 'addition' && addition.targetAdditionId === undefined))
           && next.length <= limit
         if (applied) {
           if (replace) this.#supersede(context, job.case_id, target.addition_id)

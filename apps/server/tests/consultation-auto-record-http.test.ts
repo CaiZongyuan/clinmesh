@@ -252,6 +252,112 @@ it.each(['correction', 'conflict'] as const)('keeps both patient sources for a s
   }
 })
 
+it.each(['undo', 'ignore'] as const)('keeps a multi-source %s decision across reordered old citations while allowing new evidence', async decision => {
+  let reply = firstFeverReply
+  const fixture = await setup({ reply: () => reply, verify: faithfulSummaryVerification, extract: input => {
+    const { turns, history } = summaryPayloadSchema.parse(input.userPayload)
+    const first = turns.find(turn => turn.messageText === firstFeverReply)!
+    const second = turns.findLast(turn => turn.messageText === secondFeverReply)
+    if (second === undefined) return feverSummaries(input)
+    const sources = turns.at(-1)!.messageText === '谢谢。' ? [first, second] : [second, first]
+    return { additions: [{ field: 'historyOfPresentIllness', relation: 'update', targetAdditionId: history[0]!.id,
+      facts: [{ text: combinedFeverSummary,
+        sources: sources.map(source => ({ sourceTurnId: source.id, quote: source.messageText })) }] }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  if (decision === 'ignore') expect((await fixture.save('医生核对：昨晚发热，体温数值待核对。')).status).toBe(200)
+  reply = secondFeverReply
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const suggestion = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  expect(suggestion.status).toBe(decision === 'undo' ? 'applied' : 'pending')
+  expect((await fixture.review(suggestion.id, decision)).status).toBe(200)
+  await fixture.restart()
+  const rejected = await fixture.read()
+  reply = '谢谢。'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const replayed = await fixture.read()
+  expect(replayed.clinicalDocument).toEqual(rejected.clinicalDocument)
+  expect(replayed.consultationRecording!.additions).toEqual(rejected.consultationRecording!.additions)
+  expect(replayed.consultationRecording).toMatchObject({ status: 'updated', failures: [] })
+  reply = secondFeverReply
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const fresh = await fixture.read()
+  expect(fresh.consultationRecording!.additions).toHaveLength(rejected.consultationRecording!.additions.length + 1)
+  expect(fresh.consultationRecording!.additions.at(-1)).toMatchObject({
+    sourceTurnId: fresh.consultation!.turns.at(-1)!.id, status: decision === 'undo' ? 'applied' : 'pending',
+  })
+})
+
+it('applies a verified correction when its explicit evidence follows another cited fact', async () => {
+  let reply = firstFeverReply
+  const revised = '昨晚起发热伴干咳；自述最高体温更正为38.0℃'
+  const fixture = await setup({ reply: () => reply, verify: faithfulSummaryVerification, extract: input => {
+    const { turns, history } = summaryPayloadSchema.parse(input.userPayload)
+    if (reply === firstFeverReply) return feverSummaries(input)
+    const first = turns.find(turn => turn.messageText === firstFeverReply)!
+    const last = turns.at(-1)!
+    return { additions: [{ field: 'historyOfPresentIllness', relation: 'correction', targetAdditionId: history[0]!.id,
+      facts: [{ text: '昨晚起发热伴干咳', sources: [{ sourceTurnId: first.id, quote: first.messageText },
+        { sourceTurnId: last.id, quote: '仍然咳嗽，没有痰。' }] },
+      { text: '自述最高体温更正为38.0℃', sources: [{ sourceTurnId: first.id, quote: first.messageText },
+        { sourceTurnId: last.id, quote: '刚才说错了，最高是38.0度。' }] }] }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  reply = '仍然咳嗽，没有痰。刚才说错了，最高是38.0度。'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const corrected = await fixture.read()
+  const suggestion = corrected.consultationRecording!.additions.at(-1)!
+  expect(suggestion).toMatchObject({ relation: 'correction', status: 'applied' })
+  expect(corrected.clinicalDocument!.draft!.historyOfPresentIllness).toBe(revised)
+  expect((await fixture.review(suggestion.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(feverSummary)
+})
+
+it.each(['\n', '\r\n'])('accepts separately cited patient statements delimited by %j', async newline => {
+  const reply = `发热三天${newline}最高量到38.5度`
+  const fixture = await setup({ reply, verify: faithfulSummaryVerification, extract: input => {
+    const turn = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!
+    return { additions: [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [
+      { text: '发热三天', sources: [{ sourceTurnId: turn.id, quote: '发热三天' }] },
+      { text: '自述最高体温38.5℃', sources: [{ sourceTurnId: turn.id, quote: '最高量到38.5度' }] },
+    ] }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const recorded = await fixture.read()
+  expect(recorded.consultationRecording).toMatchObject({ status: 'updated', failures: [] })
+  expect(recorded.clinicalDocument!.draft!.historyOfPresentIllness).toBe('发热三天；自述最高体温38.5℃')
+  expect(recorded.consultation!.turns.at(-1)!.messageText).toBe(reply)
+})
+
+it('ignores an old-only summary rewrite after a reply with no new history', async () => {
+  let reply = firstFeverReply
+  const fixture = await setup({ reply: () => reply, verify: faithfulSummaryVerification, extract: input => {
+    if (reply === firstFeverReply) return feverSummaries(input)
+    const { turns, history } = summaryPayloadSchema.parse(input.userPayload)
+    const first = turns.find(turn => turn.messageText === firstFeverReply)!
+    return { additions: [{ field: 'historyOfPresentIllness', relation: 'update', targetAdditionId: history[0]!.id,
+      facts: [{ text: '自述最高体温38.5℃，昨晚起发热伴干咳',
+        sources: [{ sourceTurnId: first.id, quote: first.messageText }] }] }] }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const before = await fixture.read()
+  reply = '谢谢。'
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const after = await fixture.read()
+  expect(after.clinicalDocument).toEqual(before.clinicalDocument)
+  expect(after.consultationRecording!.additions).toEqual(before.consultationRecording!.additions)
+  expect(after.consultationRecording).toMatchObject({ status: 'updated', failures: [] })
+})
+
 it('migrates pre-summary extracts without rewriting their text and replays a receipt without the new source fields', async () => {
   const fixture = await setup()
   await fixture.ask()

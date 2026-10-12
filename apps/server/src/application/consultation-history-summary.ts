@@ -34,23 +34,27 @@ export function summaryText(facts: HistoryFact[]): string {
   return facts.map(fact => fact.text.replace(/[；;]+$/u, '')).join('；')
 }
 
-function completeQuote(text: string, quote: string): boolean {
+export function hasStatementBoundaries(text: string, start: number, end: number): boolean {
+  const quote = text.slice(start, end)
   const boundary = /[。！？；!?;\r\n]/u
+  const before = text.slice(0, start).replace(/[^\S\r\n]+$/u, '')
+  const after = text.slice(end).replace(/^[^\S\r\n]+/u, '')
+  return !/^(?:[。！？；!?;]|[^\S\r\n])*[?？]/u.test(after)
+    && (before.length === 0 || boundary.test(before.at(-1)!))
+    && (after.length === 0 || boundary.test(after[0]!) || boundary.test(quote.at(-1)!))
+}
+
+function completeQuote(text: string, quote: string): boolean {
   for (let start = text.indexOf(quote); start >= 0; start = text.indexOf(quote, start + 1)) {
-    const before = text.slice(0, start).trimEnd()
-    const after = text.slice(start + quote.length).trimStart()
-    if ((before.length === 0 || boundary.test(before.at(-1)!))
-      && (after.length === 0 || boundary.test(after[0]!) || boundary.test(quote.at(-1)!))
-      && !/^(?:[。！？；!?;]|\s)*[?？]/u.test(after)) return true
+    if (hasStatementBoundaries(text, start, start + quote.length)) return true
   }
   return false
 }
 
-export function parseHistorySummaries(value: unknown, turns: HistoryTurn[], history: HistoryTarget[],
-  manualHistory: HistoryTarget[]) {
-  const output = historySummaryOutputSchema.parse(value)
+export function validateHistorySummaries(additions: HistorySummary[], turns: HistoryTurn[], history: HistoryTarget[],
+  manualHistory: HistoryTarget[]): void {
   const targets = new Map<string, string>()
-  for (const [index, addition] of output.additions.entries()) {
+  for (const [index, addition] of additions.entries()) {
     for (const [factIndex, fact] of addition.facts.entries()) for (const [sourceIndex, source] of fact.sources.entries()) {
       const turn = turns.find(turn => turn.id === source.sourceTurnId)
       if (turn?.speaker !== 'patient' || !completeQuote(turn.messageText, source.quote) || /[?？]/u.test(source.quote)) {
@@ -69,7 +73,6 @@ export function parseHistorySummaries(value: unknown, turns: HistoryTurn[], hist
       throw new RecordingSourceError(['additions', index, 'facts'], 'Summary exceeds the document field limit')
     }
   }
-  return output
 }
 
 const verificationSchema = z.object({ additions: z.array(z.object({
@@ -85,14 +88,14 @@ export async function verifyHistorySummaries(provider: JsonChatCompletionsProvid
   signal: AbortSignal, additions: HistorySummary[], turns: HistoryTurn[], history: HistoryTarget[],
   manualHistory: HistoryTarget[]): Promise<void> {
   if (additions.length === 0) return
-  const validate = (value: unknown) => {
+  const parseVerdict = (value: unknown) => {
     const verdict = verificationSchema.parse(value)
     if (verdict.additions.length !== additions.length
       || new Set(verdict.additions.map(item => item.index)).size !== additions.length
       || verdict.additions.some(item => item.index >= additions.length)) {
       throw new RecordingSourceError(['additions'], 'Summary verification must cover every candidate exactly once')
     }
-    return true
+    return verdict
   }
   const result = await provider.completeJson({ model, signal, schemaName: 'consultation_history_verification',
     jsonSchema: z.toJSONSchema(verificationSchema) as Record<string, unknown>,
@@ -104,14 +107,14 @@ export async function verifyHistorySummaries(provider: JsonChatCompletionsProvid
       'complete 检查替换是否保留目标片段的全部仍有效患者事实；correction 可替代明确更正的部分，conflict 必须呈现矛盾两方及待核对。人工草稿不是患者证据。',
       'relationValid 检查 addition 是否真的新增且无重复或与 history/manualHistory 矛盾；update 只归并补充或同义表达，不能选择矛盾一方；correction 必须有患者明确纠正语义；其余矛盾必须 conflict。',
     ].join('\n'),
-    userPayload: { additions, turns, history, manualHistory }, validate,
+    userPayload: { additions, turns, history, manualHistory },
+    validate: value => { parseVerdict(value); return true },
   })
   signal.throwIfAborted()
-  const value: unknown = JSON.parse(result.content)
-  validate(value)
+  const verdict = parseVerdict(JSON.parse(result.content))
   // A negative verdict is a valid response, not a formatting error to repair by
   // asking the verifier to change its answer until it approves the same facts.
-  if (verificationSchema.parse(value).additions.some(item => !item.faithful || !item.complete || !item.relationValid)) {
+  if (verdict.additions.some(item => !item.faithful || !item.complete || !item.relationValid)) {
     throw new RecordingSourceError(['additions'], 'Summary failed factual fidelity, coverage or relation verification')
   }
 }
