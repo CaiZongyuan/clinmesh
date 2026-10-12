@@ -19,14 +19,21 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
       response.writeHead(403).end(); return
     }
     if (request.method !== 'POST') { response.writeHead(405, { allow: 'POST' }).end(); return }
+    let responseStarted = false
+    const send = (status: number, body: string) => {
+      if (responseStarted || response.destroyed || response.writableEnded) return
+      // Host gzip can defer writableEnded after end(); retain ownership while it flushes.
+      responseStarted = true
+      response.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body),
+        'cache-control': 'no-store' }).end(body)
+    }
     const cancelled = new AbortController()
     const abort = () => { if (!response.writableFinished) cancelled.abort() }
     response.on('close', abort)
     let signal = AbortSignal.any([closing.signal, cancelled.signal, AbortSignal.timeout(10_000)])
     const disconnect = () => {
       if (closing.signal.aborted || cancelled.signal.aborted) response.destroy()
-      else if (!response.writableEnded) response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' })
-        .end(JSON.stringify({ error: 'MODEL_TIMEOUT' }))
+      else send(503, JSON.stringify({ error: 'MODEL_TIMEOUT' }))
     }
     signal.addEventListener('abort', disconnect, { once: true })
     try {
@@ -84,12 +91,12 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
         content = content.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1')
       }
       const body = JSON.stringify({ model, ...(content === undefined ? {} : { content }) })
-      response.writeHead(200, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body), 'cache-control': 'no-store' }).end(body)
+      send(200, body)
     } catch (error) {
       // Provider failures can contain credentials and private prompts; do not relay or log them.
       const body = JSON.stringify({ error: error instanceof ModelAccessError ? 'MODEL_AUTH_FAILED'
         : error instanceof ModelTimeoutError ? 'MODEL_TIMEOUT' : 'MODEL_UNAVAILABLE' })
-      if (!response.destroyed && !response.writableEnded) response.writeHead(503, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
+      send(503, body)
     } finally { response.off('close', abort); signal.removeEventListener('abort', disconnect) }
   }
   return { handler, dispose: () => closing.abort() }
