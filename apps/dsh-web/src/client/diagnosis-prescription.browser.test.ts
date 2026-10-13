@@ -3,6 +3,8 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { z } from 'zod'
+import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { doctorRecommendationStateSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
 import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
@@ -34,7 +36,7 @@ async function buildFixture(version: string) {
   artifacts.set(version, artifact)
   return artifact
 }
-async function mount(page: Page, version: string, mode: 'empty' | 'existing') {
+async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations') {
   const { script, styles } = await buildFixture(version)
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.route('http://localhost/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
@@ -101,8 +103,144 @@ async function forEachAppearance(page: Page, verify: (locale: 'zh-CN' | 'en-US',
 }
 const diagnosisName = '合成诊断与需要完整显示的复杂中文名称'
 const medicationName = '合成药品与需要完整显示的复杂中文通用名称'
+async function readCase(page: Page) {
+  return doctorCaseDetailSchema.parse(await page.evaluate(async () =>
+    await (await fetch('/api/his/v1/doctor/cases/synthetic-case')).json(),
+  ))
+}
+async function readRecommendations(page: Page, kind: DoctorRecommendationKind) {
+  return doctorRecommendationStateSchema.parse(await page.evaluate(async kind =>
+    await (await fetch(`/api/his/v1/doctor/cases/synthetic-case/recommendations/${kind}`)).json(), kind,
+  ))
+}
 
 for (const version of ['18', '19']) {
+  test(`expands each recommendation source and adopts diagnoses as editable drafts before confirmation on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'recommendations')
+    await appearance(page, 'zh-CN', 'light', 'large', 390)
+    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    const panel = page.getByRole('region', { name: '诊断建议', exact: true })
+    const sources = panel.getByText('查看依据', { exact: true })
+    await expect(sources).toHaveCount(2)
+    await sources.nth(0).click()
+    for (const label of ['国家标准', '卫生行业标准', '诊疗方案', '临床指南', '药品说明书']) {
+      await expect(panel.locator('details').nth(0).getByText(label, { exact: true })).toBeVisible()
+    }
+    const standard = panel.getByRole('link', { name: 'WS/T 872—2025 基层医疗卫生机构高血压防治管理标准', exact: true })
+    await expect(standard).toHaveAttribute('href', /^https:\/\/www\.nhc\.gov\.cn\//)
+    await expect(standard).toHaveAttribute('rel', 'noreferrer noopener')
+    await expect(panel.getByText('符合高血压诊断的患者，应进行首次评估，询问病史、进行体格检查和血尿常规、生化及心电图检测。', { exact: true })).toBeVisible()
+    await expect(panel.getByText('合成病例第一条依据：仅验证来源展开与页面接线。', { exact: true })).toBeVisible()
+    await sources.nth(1).click()
+    await expect(panel.getByText('合成病例第二条依据：需要医生继续核实。', { exact: true })).toBeVisible()
+    await sources.nth(0).click()
+    await expect(standard).toBeHidden()
+    await expect(panel.getByText('合成病例第二条依据：需要医生继续核实。', { exact: true })).toBeVisible()
+    await expectPanelBounded(page, 'diagnosis')
+
+    await panel.getByRole('button', { name: `采纳 ${diagnosisName}`, exact: true }).click()
+    const note = page.getByRole('textbox', { name: '诊断备注', exact: true })
+    await note.fill('医生手改的合成备注，刷新建议必须保留。')
+    await panel.getByRole('button', { name: '刷新建议', exact: true }).click()
+    await expect.poll(async () => (await readRecommendations(page, 'diagnosis')).generation).toBe(2)
+    await expect(note).toHaveValue('医生手改的合成备注，刷新建议必须保留。')
+    await panel.getByRole('button', { name: '采纳 合成第二诊断', exact: true }).click()
+    await page.getByRole('button', { name: diagnosisName, exact: true }).click()
+    await expect(note).toHaveValue('医生手改的合成备注，刷新建议必须保留。')
+    const confirm = page.getByRole('button', { name: '确认诊断', exact: true })
+    await expect(confirm).toBeEnabled()
+    const draft = await readCase(page)
+    expect(draft.diagnosis?.draft?.entries.map(entry => entry.catalogItemId)).toEqual(['synthetic-diagnosis-1', 'synthetic-diagnosis-2'])
+    expect(draft.diagnosis?.draft?.entries[0]?.note).toBe('医生手改的合成备注，刷新建议必须保留。')
+    expect(draft.diagnosis?.confirmation).toBeUndefined()
+    expect(draft.medicationConclusion?.prescription).toBeUndefined()
+
+    await confirm.click()
+    const dialog = page.getByRole('alertdialog', { name: '确认诊断版本', exact: true })
+    await expect(dialog).toBeVisible()
+    expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(confirm).toBeFocused()
+    expect((await readCase(page)).diagnosis?.confirmation).toBeUndefined()
+    await confirm.click()
+    await dialog.getByRole('button', { name: '确认诊断版本', exact: true }).click()
+    await expect(page.getByText(/诊断已确认 · 第 1 版/)).toBeVisible()
+    expect((await readCase(page)).diagnosis?.confirmation?.entries.map(entry => entry.conditionId)).toEqual([
+      'synthetic-condition-1-0', 'synthetic-condition-1-1',
+    ])
+    await expectNoFixtureErrors(page)
+  })
+
+  test(`keeps prescription fields pending until the doctor completes and formally issues the draft on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'recommendations')
+    await appearance(page, 'zh-CN', 'dark', 'large', 390)
+    await page.getByRole('tab', { name: '处方', exact: true }).click()
+    const panel = page.getByRole('region', { name: '处方建议', exact: true })
+    await panel.getByText('查看依据', { exact: true }).click()
+    await expect(panel.getByText('药品说明书', { exact: true })).toBeVisible()
+    await expect(panel.getByRole('link', { name: '苯磺酸氨氯地平片（络活喜）说明书', exact: true }))
+      .toHaveAttribute('href', 'https://www.viatris.cn/-/media/project/viatris-sites/product-document/02norvasc.pdf')
+    await expect(panel.getByText('待医生补充', { exact: true })).toHaveCount(2)
+    await expectPanelBounded(page, 'prescription')
+    await panel.getByRole('button', { name: `采纳 ${medicationName}`, exact: true }).click()
+    const dose = page.getByRole('combobox', { name: '剂量', exact: true })
+    const course = page.getByRole('combobox', { name: '疗程', exact: true })
+    const quantity = page.getByRole('combobox', { name: '数量', exact: true })
+    await expect(dose.locator('[data-slot="select-value"]')).toHaveText('5 mg')
+    await expect(course.locator('[data-slot="select-value"]')).toHaveText('待医生补充')
+    await expect(quantity.locator('[data-slot="select-value"]')).toHaveText('待医生补充')
+    expect((await readRecommendations(page, 'prescription')).items).toEqual([expect.objectContaining({ courseDays: null, quantity: null })])
+    expect((await readCase(page)).medicationConclusion?.draft).toBeUndefined()
+    await expect(page.getByRole('button', { name: '正式开具处方', exact: true })).toHaveCount(0)
+    await dose.click()
+    const changedDose = page.getByRole('option', { name: '10 mg', exact: true })
+    await expect(changedDose).toBeVisible()
+    expect(await changedDose.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+    await changedDose.click()
+    await expect(dose).toBeFocused()
+    await panel.getByRole('button', { name: '刷新建议', exact: true }).click()
+    await expect.poll(async () => (await readRecommendations(page, 'prescription')).generation).toBe(2)
+    await expect(dose.locator('[data-slot="select-value"]')).toHaveText('10 mg')
+    await expect(course.locator('[data-slot="select-value"]')).toHaveText('待医生补充')
+    await expect(quantity.locator('[data-slot="select-value"]')).toHaveText('待医生补充')
+    expect((await readCase(page)).medicationConclusion?.draft).toBeUndefined()
+    await course.click()
+    await page.getByRole('option', { name: '7 天', exact: true }).click()
+    await quantity.click()
+    await page.getByRole('option', { name: '2', exact: true }).click()
+    const issue = page.getByRole('button', { name: '正式开具处方', exact: true })
+    await expect(issue).toBeEnabled()
+    const saved = await readCase(page)
+    expect(saved.medicationConclusion?.draft?.items).toEqual([{
+      catalogItemId: 'synthetic-product-1', doseText: '10 mg', frequencyCode: '每日一次', courseDays: 7, quantity: 2,
+    }])
+    expect(saved.medicationConclusion?.prescription).toBeUndefined()
+    await panel.getByRole('button', { name: '刷新建议', exact: true }).click()
+    await expect.poll(async () => (await readRecommendations(page, 'prescription')).generation).toBe(3)
+    await expect(dose.locator('[data-slot="select-value"]')).toHaveText('10 mg')
+    await expect(course.locator('[data-slot="select-value"]')).toHaveText('7 天')
+    await expect(quantity.locator('[data-slot="select-value"]')).toHaveText('2')
+    await issue.click()
+    const dialog = page.getByRole('alertdialog', { name: '确认正式开具处方', exact: true })
+    await expect(dialog).toBeVisible()
+    expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    await expect(dialog).toHaveCount(0)
+    await expect(issue).toBeFocused()
+    expect((await readCase(page)).medicationConclusion?.prescription).toBeUndefined()
+    await issue.click()
+    await dialog.getByRole('button', { name: '确认开具', exact: true }).click()
+    await expect(page.getByText('处方已正式开具', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '返回药品列表', exact: true }).click()
+    await expect(page.getByRole('region', { name: '药品列表', exact: true })).toBeVisible()
+    expect((await readCase(page)).medicationConclusion?.prescription?.items[0]).toMatchObject({
+      doseText: '10 mg', courseDays: 7, quantity: 2, medicationRequestId: 'synthetic-medication-request-0',
+    })
+    await expectPanelBounded(page, 'prescription')
+    await expectNoFixtureErrors(page)
+  })
+
   test(`restores the inline catalog search after cancelling a replacement on React ${version}`, async ({ page }) => {
     await mount(page, version, 'empty')
     await page.getByRole('tab', { name: '诊断', exact: true }).click()
