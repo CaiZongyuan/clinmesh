@@ -332,7 +332,7 @@ export function PathologyRequestList({ actions, active = true, locale, readOnly,
  * 医生工作台的病理会诊：选择本院会诊服务、从患者可见既往病史中选择送检对应的手术并填写会诊目的，
  * 无申请时直接选项目并保存草稿后签发；有申请时阅读选中详情，通过追加入口继续开立。
  */
-export function PathologyPage({ actions, active = true, caseId, editDraft = false, elementId, encounter, locale, onSelectRequest, readOnly, recommendationScope, selectedReportId, selectedRequestId, state }: {
+export function PathologyPage({ actions, active = true, caseId, editDraft = false, elementId, encounter, locale, onSelectRequest, readOnly, recommendationRevision, recommendationScope, selectedReportId, selectedRequestId, state }: {
   actions: PathologyPageActions
   active?: boolean | undefined
   caseId: string
@@ -342,6 +342,7 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
   locale: WorkspaceLocale
   onSelectRequest?: ((requestId: string) => void) | undefined
   readOnly: boolean
+  recommendationRevision?: string | undefined
   recommendationScope?: string | undefined
   selectedReportId?: string | undefined
   selectedRequestId?: string | undefined
@@ -533,6 +534,7 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
       <DoctorRecommendationsPanel
         caseId={caseId}
         kind="pathology"
+        inputRevision={recommendationRevision}
         locale={locale}
         scope={recommendationScope}
         enabled={active && !readOnly}

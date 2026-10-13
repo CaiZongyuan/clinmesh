@@ -340,7 +340,7 @@ export function ImagingRequestList({ actions, active = true, locale, readOnly, r
 
 /** 放射目录与申请管理复用同一表单；报告与阅片只展示当前选中的正式申请。 */
 export function ImagingPage({
-  actions, active = true, caseId, editDraft = false, elementId, encounter, locale, readOnly, recommendationScope,
+  actions, active = true, caseId, editDraft = false, elementId, encounter, locale, readOnly, recommendationRevision, recommendationScope,
   state, selectedRequestId, onSelectRequest, selectedReportId,
 }: {
   actions: ImagingPageActions
@@ -351,6 +351,7 @@ export function ImagingPage({
   encounter: { id: string; versionId: string }
   locale: WorkspaceLocale
   readOnly: boolean
+  recommendationRevision?: string | undefined
   recommendationScope?: string | undefined
   state: ImagingRequestState | undefined
   selectedRequestId?: string | undefined
@@ -503,6 +504,7 @@ export function ImagingPage({
       <DoctorRecommendationsPanel
         caseId={caseId}
         kind="imaging"
+        inputRevision={recommendationRevision}
         locale={locale}
         scope={recommendationScope}
         enabled={active && !readOnly}

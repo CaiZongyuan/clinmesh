@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { doctorRecommendationStateSchema } from '@clinmesh/contracts/doctor-recommendations'
 import type {
   ClinicalDocumentContent,
   DiagnosisDraftEntry,
@@ -3531,6 +3532,48 @@ describe('role workspaces', () => {
       await waitFor(() => expect(fixture.cancellations).toEqual(['sign-recording-preview']))
       expect(screen.queryByRole('alertdialog')).toBeNull()
     } finally { release() }
+  })
+
+  it('updates recommendations after case facts change without an Encounter revision and preserves unsaved diagnosis edits', async () => {
+    const fixture = stubRecordingWorkspace('pause')
+    const originalFetch = globalThis.fetch
+    let recommendationNote = '合成建议资料版本一'
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({
+        diagnoses: [{ id: 'diagnosis-fever', code: 'R50.9', nameZh: '发热', nameEn: 'Fever',
+          system: 'http://hl7.org/fhir/sid/icd-10', version: 1 }],
+        laboratory: [], medications: [], prescriptionConclusionSupported: true,
+      })
+      if (path === '/api/his/v1/doctor/cases/case-recording/recommendations/diagnosis') {
+        return Response.json(doctorRecommendationStateSchema.parse({
+          caseId: 'case-recording', encounterId: 'encounter-recording', encounterVersion: '1',
+          kind: 'diagnosis', inputFingerprint: 'a'.repeat(64), generation: 1, status: 'ready', stale: false,
+          items: [], guidelines: [], caseEvidence: [], missingInformation: [recommendationNote],
+        }))
+      }
+      return originalFetch(input, init)
+    }))
+    const queryClient = createWebQueryClient()
+    const user = userEvent.setup()
+    const view = render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByRole('button', { name: '暂停自动整理' })
+    await user.click(screen.getByRole('tab', { name: '诊断' }))
+    await screen.findByText('合成建议资料版本一')
+    await user.click(screen.getByRole('button', { name: '选择 发热 R50.9' }))
+    fireEvent.change(screen.getByLabelText('诊断备注', { exact: true }), { target: { value: '医生未保存的备注' } })
+    recommendationNote = '合成建议资料版本二'
+    fixture.updateRecording({ processedCount: 1 })
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+    await screen.findByText('合成建议资料版本二')
+    expect((screen.getByLabelText('诊断备注', { exact: true }) as HTMLTextAreaElement).value).toBe('医生未保存的备注')
+    recommendationNote = '合成建议新数据世代'
+    const nextSession = { ...doctorSession, actor: { ...doctorSession.actor, epoch: 'epoch-recommendation-next' } }
+    view.rerender(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={nextSession} /></QueryClientProvider>)
+    await screen.findByRole('button', { name: '暂停自动整理' })
+    await user.click(screen.getByRole('tab', { name: '诊断' }))
+    await screen.findByText('合成建议新数据世代')
+    expect(screen.queryByText('合成建议资料版本二')).toBeNull()
   })
 
   it('hides a cached recording case when refresh denies access', async () => {

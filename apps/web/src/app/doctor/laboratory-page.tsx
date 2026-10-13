@@ -138,6 +138,7 @@ export function LaboratoryPage({
   onLaboratoryItemChange,
   readOnly,
   referenceSearch,
+  recommendationRevision,
   recommendationScope,
   selectedReportId,
   selectedRequestId,
@@ -163,6 +164,7 @@ export function LaboratoryPage({
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
   referenceSearch: ReferenceCatalogSearches['laboratory']
+  recommendationRevision?: string | undefined
   recommendationScope?: string | undefined
   selectedReportId?: string | undefined
   selectedRequestId?: string | undefined
@@ -279,6 +281,7 @@ export function LaboratoryPage({
             onLaboratoryItemChange={onLaboratoryItemChange}
             readOnly={readOnly}
             referenceSearch={referenceSearch}
+            recommendationRevision={recommendationRevision}
             recommendationScope={recommendationScope}
             selectedReportId={selectedReportId}
             selectedRequestId={selectedRequestId}
@@ -307,6 +310,7 @@ function LaboratoryRequestEditor({
   onLaboratoryItemChange,
   readOnly,
   referenceSearch,
+  recommendationRevision,
   recommendationScope,
   selectedReportId,
   selectedRequestId,
@@ -328,6 +332,7 @@ function LaboratoryRequestEditor({
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
   referenceSearch: ReferenceCatalogSearches['laboratory']
+  recommendationRevision?: string | undefined
   recommendationScope?: string | undefined
   selectedReportId?: string | undefined
   selectedRequestId?: string | undefined
@@ -573,6 +578,7 @@ function LaboratoryRequestEditor({
       <DoctorRecommendationsPanel
         caseId={caseId}
         kind="laboratory"
+        inputRevision={recommendationRevision}
         locale={locale}
         scope={recommendationScope}
         enabled={active && !readOnly}
