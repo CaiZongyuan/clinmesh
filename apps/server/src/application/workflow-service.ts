@@ -2930,6 +2930,11 @@ export class WorkflowService {
     })
   }
 
+  doctorRecommendationCase(context: ActorContext, caseId: string) {
+    this.#doctorHistoryPatient(context, caseId)
+    return this.doctorCaseDetail(context, caseId)
+  }
+
   doctorCaseDetail(context: ActorContext, caseId: string) {
     this.#assertRole(context, ['outpatient-doctor'])
     const row = this.#database.driver.prepare(`

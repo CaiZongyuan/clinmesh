@@ -52,6 +52,7 @@ import type { SqlitePerformanceObserver } from './infrastructure/sqlite/performa
 import { AgentIntegrationService } from './application/agent-integration-service.ts'
 import { reportRuntimeError } from './runtime-error-reporting.ts'
 import { GenerationModelBinding } from './application/generation-model-binding.ts'
+import { DoctorRecommendationsService } from './application/doctor-recommendations-service.ts'
 import { DshModelProvider } from './infrastructure/ai/dsh-model-provider.ts'
 import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
@@ -648,7 +649,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             reportRuntimeError({ error, scope: 'laboratory-service-publication-dispatch' })
           })
         }, options.autoDispatchIntervalMs)
+    const doctorRecommendations = new DoctorRecommendationsService({ database, workflow, commands })
     const app = createApp({
+      doctorRecommendations,
       ...(agentIntegration === undefined ? {} : { agentIntegration }),
       fhir: {
         repository: fhir,
@@ -718,6 +721,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       dispatchPatientPersonaJobs,
       dispatchLaboratoryServicePublicationJobs,
       dispatcher,
+      doctorRecommendations,
       fhir,
       identity,
       imagingResults,
