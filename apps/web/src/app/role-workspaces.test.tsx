@@ -3294,8 +3294,10 @@ describe('role workspaces', () => {
       ])
     }
     fixture.finish()
-    await screen.findByText('病史草稿已更新，请核对自动新增内容。', {}, { timeout: 3_000 })
-    expect(screen.getByText('已整理回答 1 · 待整理 0')).toBeTruthy()
+    await screen.findByText('问诊自动记录 · 已整理', {}, { timeout: 3_000 })
+    await user.click(screen.getByRole('button', { name: '问诊自动记录' }))
+    expect(await screen.findByText('已整理回答 1 · 待整理 0')).toBeTruthy()
+    await user.keyboard('{Escape}')
     expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).value).toBe(unsavedHistory)
   })
 
@@ -3336,7 +3338,9 @@ describe('role workspaces', () => {
       await waitFor(() => expect(fixture.failedReads()).toBeGreaterThan(0))
       await waitFor(() => expect((screen.getByRole('button', { name: '暂停自动整理' }) as HTMLButtonElement).disabled).toBe(false))
       expect(recordingCache()?.consultationRecording).toEqual(latestRecording)
-      expect(screen.getByText('已整理回答 1 · 待整理 0')).toBeTruthy()
+      await user.click(screen.getByRole('button', { name: '问诊自动记录' }))
+      expect(await screen.findByText('已整理回答 1 · 待整理 0')).toBeTruthy()
+      await user.keyboard('{Escape}')
       await user.click(screen.getAllByText('合成其他患者', { exact: true })[0]!)
       await screen.findByRole('heading', { name: '合成其他患者' })
       await user.click(screen.getAllByText('合成病史患者', { exact: true })[0]!)
@@ -3378,7 +3382,7 @@ describe('role workspaces', () => {
       await act(async () => { release(); await held; await refresh })
     }
     expect(screen.getByRole('button', { name: '恢复并补录' })).toBeTruthy()
-    expect(screen.getByText('自动整理已暂停，问诊和患者回答继续保存。')).toBeTruthy()
+    expect(screen.getByText('问诊自动记录 · 已暂停')).toBeTruthy()
   })
 
   it.each([false, true])('applies sign cancellation through failed reads and preserves a newer preview=%s', async newer => {

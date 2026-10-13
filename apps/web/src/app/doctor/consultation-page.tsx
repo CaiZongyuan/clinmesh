@@ -49,15 +49,14 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
     ? action.pendingMessage : undefined
   return (
     <section aria-labelledby="consultation-record-heading" className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
-      <div className="flex shrink-0 items-center justify-between gap-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="consultation-record-heading">{messages.consultationRecord}</h3>
-        <Badge variant="secondary">{consultation.turns.length}</Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="secondary">{consultation.turns.length}</Badge>
+          {recording === undefined ? null : <ConsultationRecordingControls recording={recording} action={recordingAction}
+            disabled={readOnly} messages={messages} />}
+        </div>
       </div>
-      {recording === undefined ? null : <Alert className="shrink-0" data-consultation-recording={recording.status}>
-        <AlertTitle>{messages.consultationAutoRecord}</AlertTitle>
-        <AlertDescription><ConsultationRecordingControls recording={recording} action={recordingAction}
-          disabled={readOnly} messages={messages} /></AlertDescription>
-      </Alert>}
       <MessageScrollerProvider autoScroll>
         <MessageScroller data-agent-consultation="" className="min-h-0 flex-1 rounded-md border">
           <MessageScrollerViewport>

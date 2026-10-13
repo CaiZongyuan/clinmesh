@@ -61,7 +61,7 @@ interface ManualFragment { id: string; field: Addition['field']; text: string; s
 const manualTargetPrefix = 'manual:'
 
 function isPendingManualTarget(row: HistoryRow): boolean {
-  return row.status === 'pending' && row.review_state === null && row.target_addition_id?.startsWith(manualTargetPrefix) === true
+  return row.status === 'pending' && row.review_state !== 'ignored' && row.target_addition_id?.startsWith(manualTargetPrefix) === true
 }
 
 function trackManualFragment(before: string, after: string, start: number, end: number) {
@@ -78,8 +78,18 @@ function trackManualFragment(before: string, after: string, start: number, end: 
   return { ...tracked, modified: tracked.modified || !hasStatementBoundaries(after, tracked.start, tracked.end) }
 }
 
-function reviewTarget(rows: HistoryRow[], addition: HistoryRow, document: Draft) {
+interface HistoryReviewTarget { additionId: string | undefined; start: number; end: number; text: string; append: boolean }
+function reviewTarget(rows: HistoryRow[], addition: HistoryRow, document: Draft): HistoryReviewTarget | undefined {
+  // Follow superseded suggestions to the document range they proposed changing.
+  // Pending summaries never own document text.
+  if (addition.status === 'pending' && addition.target_addition_id === null && addition.relation === 'addition') {
+    const field = document[addition.field] ?? ''
+    return { additionId: undefined, start: field.length, end: field.length, text: '', append: true }
+  }
   const target = rows.find(row => row.addition_id === addition.target_addition_id)
+  if (target?.status === 'pending' && target.field === addition.field && target.review_state !== 'ignored') {
+    return reviewTarget(rows.filter(row => row.addition_id !== addition.addition_id), { ...target, review_state: null }, document)
+  }
   const manual = target === undefined && isPendingManualTarget(addition)
   const row = manual ? addition : target
   if (row === undefined || row.field !== addition.field || row.undone === 1 || row.review_state !== null
@@ -87,7 +97,7 @@ function reviewTarget(rows: HistoryRow[], addition: HistoryRow, document: Draft)
     || !isHistoryRange(row, document[row.field] ?? '', row.start_offset, row.end_offset)
     || (document[row.field] ?? '').slice(row.start_offset, row.end_offset) !== row.current_text) return undefined
   return { additionId: manual ? undefined : row.addition_id, start: row.start_offset, end: row.end_offset,
-    text: row.current_text }
+    text: row.current_text, append: false }
 }
 function rowFacts(row: HistoryRow) {
   return row.facts_json === null ? [] : z.array(consultationHistoryFactSchema).min(1).max(12).parse(JSON.parse(row.facts_json))
@@ -110,7 +120,7 @@ function historyEvidence(rows: HistoryRow[]) {
   const rejectedFacts: RejectedHistoryFact[] = rows.filter(row => row.rejected === 1)
     .flatMap(row => historyFacts(row).map(fact => ({ ...fact, field: row.field })))
   const rejected = new Set(rejectedFacts.flatMap(fact => fact.sources.map(source => historyEvidenceKey(fact.field, source))))
-  const active = new Set(rows.filter(row => row.status === 'applied' && row.undone === 0
+  const active = new Set(rows.filter(row => row.undone === 0
     && row.review_state === null && row.rejected === 0)
     .flatMap(row => historyFacts(row).flatMap(fact => fact.sources.map(source => historyEvidenceKey(row.field, source)))))
   return { rejectedFacts, rejected, blocked: new Set([...rejected].filter(key => !active.has(key))) }
@@ -328,8 +338,7 @@ export class ConsultationRecordingService {
       summary: row.facts_json === null ? '' : rowText(row), facts: rowFacts(row),
       reviewStatus: row.review_status,
       ownership: row.ownership,
-      currentText: row.status === 'pending' && row.target_addition_id !== null && !row.target_addition_id.startsWith(manualTargetPrefix)
-        ? rows.find(target => target.addition_id === row.target_addition_id)?.current_text ?? '' : row.current_text,
+      currentText: row.status === 'pending' ? reviewTarget(rows, row, document)?.text ?? row.current_text : row.current_text,
       ...(row.target_addition_id === null ? {} : { targetAdditionId: row.target_addition_id }),
       reviewable: reviewTarget(rows, row, document) !== undefined,
     }))
@@ -426,7 +435,8 @@ export class ConsultationRecordingService {
   #trackEdits(context: ActorContext, caseId: string, before: Draft, after: Draft): void {
     this.#restoreLegacyRows(context, caseId)
     for (const row of this.#rows(context, caseId)) {
-      if ((row.status !== 'applied' && !isPendingManualTarget(row)) || row.undone === 1 || row.review_state !== null || row.start_offset === null || row.end_offset === null) continue
+      if ((row.status !== 'applied' && !isPendingManualTarget(row)) || row.undone === 1
+        || (row.review_state !== null && !isPendingManualTarget(row)) || row.start_offset === null || row.end_offset === null) continue
       const track = isPendingManualTarget(row) ? trackManualFragment : trackDocumentFragment
       const tracked = track(before[row.field] ?? '', after[row.field] ?? '', row.start_offset, row.end_offset)
       if (row.facts_json !== null && tracked.modified && !isPendingManualTarget(row)) {
@@ -458,7 +468,7 @@ export class ConsultationRecordingService {
     // "患者自述：" prefixes to the wrong sentence and falsely claim a neighbour was edited.
     const delta = after.length - before.length
     for (const row of this.#rows(context, caseId)) {
-      if (row.field !== field || (row.status !== 'applied' && !isPendingManualTarget(row)) || row.undone === 1 || row.review_state !== null
+      if (row.field !== field || (row.status !== 'applied' && !isPendingManualTarget(row)) || row.undone === 1 || (row.review_state !== null && !isPendingManualTarget(row))
         || row.start_offset === null || row.end_offset === null || row.end_offset <= start) continue
       const tracked = row.start_offset >= end
         ? { start: row.start_offset + delta, end: row.end_offset + delta, text: row.current_text, modified: false }
@@ -523,9 +533,11 @@ export class ConsultationRecordingService {
       const taskId = `history:${context.epoch}:${turnId}${generation === 1 ? '' : `:${generation}`}`
       const pinned = await model.models.bind(context.workspaceId, taskId, model.model, model.signal)
       const baseline = this.#draft(context, job.case_id)
-      const history = this.#rows(context, job.case_id)
-        .filter(row => row.status === 'applied' && row.undone === 0 && row.review_state === null && turns.some(turn => turn.id === row.source_turn_id))
-        .map(row => ({ id: row.addition_id, field: row.field, text: row.current_text || rowText(row),
+      const live = this.#rows(context, job.case_id).filter(row => row.undone === 0 && row.review_state === null)
+      const history = live
+        .filter(row => !live.some(candidate => candidate.status === 'pending' && candidate.target_addition_id === row.addition_id)
+          && turns.some(turn => turn.id === row.source_turn_id))
+        .map(row => ({ id: row.addition_id, field: row.field, text: row.status === 'pending' ? rowText(row) : row.current_text || rowText(row),
           facts: rowFacts(row), quote: row.quote, sourceTurnId: row.source_turn_id }))
       const manualHistory = this.#manualHistory(context, job.case_id, baseline.content)
       const evidence = historyEvidence(this.#rows(context, job.case_id))
@@ -629,10 +641,9 @@ export class ConsultationRecordingService {
       if (JSON.stringify(rejectedFacts) !== JSON.stringify(evidence.rejectedFacts)) {
         throw new Error('History rejection changed during summarization')
       }
-      // Pending conflicts never write. Results that can write must be compared
-      // against the latest manual context, using the durable bounded retry path.
-      const writableFields = new Set(additions.filter(item => item.relation !== 'conflict').map(item => item.field))
-      const comparison = (items: ManualFragment[]) => JSON.stringify(items.filter(item => writableFields.has(item.field)))
+      // Preserve the manual context used to classify new facts through bounded retries.
+      const comparisonFields = new Set(additions.filter(item => item.relation !== 'conflict').map(item => item.field))
+      const comparison = (items: ManualFragment[]) => JSON.stringify(items.filter(item => comparisonFields.has(item.field)))
       if (comparison(manualHistory) !== comparison(this.#manualHistory(context, job.case_id, current.content))) {
         throw new Error('Manual history comparison changed during extraction')
       }
@@ -640,9 +651,6 @@ export class ConsultationRecordingService {
       const seenSummaries = new Set(existing.filter(item => item.rejected === 0 && item.undone === 0 && item.review_state === null)
         .map(item => JSON.stringify([item.field, normalizeQuoteEnding(rowText(item))])))
       if (!access.editable) return { data: { draftVersion: current.version }, effects: [] }
-      const writable = !this.isSigning(context, job.case_id)
-      const document = { ...current.content }
-      let changed = false
       for (const addition of fragments) {
         const id = createHash('sha256').update(JSON.stringify(addition)).digest('hex')
         const text = summaryText(addition.facts)
@@ -652,7 +660,7 @@ export class ConsultationRecordingService {
         seenIds.add(id)
         seenSummaries.add(key)
         const target = this.#rows(context, job.case_id).find(item => item.addition_id === addition.targetAdditionId)
-        const fieldText = document[addition.field] ?? ''
+        const fieldText = current.content[addition.field] ?? ''
         const manualTarget = manualHistory.find(item => item.id === addition.targetAdditionId && item.id.startsWith(manualTargetPrefix))
         const trackedManual = manualTarget === undefined ? undefined : trackManualFragment(
           baseline.content[addition.field] ?? '', fieldText, manualTarget.start, manualTarget.end)
@@ -661,48 +669,25 @@ export class ConsultationRecordingService {
           && isHistoryRange(target, fieldText, target.start_offset, target.end_offset)
           && fieldText.slice(target.start_offset, target.end_offset) === target.current_text
         if (addition.relation === 'update' && anchored && text === target.current_text) continue
-        // The independent verifier evaluates the relation against every fact's
-        // sources; the legacy representative quote cannot decide it.
-        const replace = anchored && (addition.relation === 'correction' || addition.relation === 'update')
-          && target.ownership === 'automatic'
-        const start = replace ? target.start_offset! : fieldText.length + (fieldText ? 1 : 0)
-        const next = replace ? fieldText.slice(0, start) + text + fieldText.slice(target.end_offset!)
-          : [fieldText, text].filter(Boolean).join('\n')
-        const limit = addition.field === 'chiefComplaint' ? 1_000 : addition.field === 'historyOfPresentIllness' ? 5_000 : 4_000
-        const applied = writable && (replace || (addition.relation === 'addition' && addition.targetAdditionId === undefined))
-          && next.length <= limit
-        if (applied) {
-          if (replace) this.#supersede(context, job.case_id, target.addition_id)
-          this.#trackReplacement(context, job.case_id, addition.field, fieldText, next,
-            replace ? start : fieldText.length, replace ? target.end_offset! : fieldText.length)
-        }
+        if (target?.status === 'pending' && target.review_state === null) this.#supersede(context, job.case_id, target.addition_id)
         this.#database.driver.prepare(`INSERT INTO consultation_history_addition
           (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
             target_addition_id, start_offset, end_offset, current_text, inverse_text, facts_json)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(context.workspaceId, context.epoch, job.case_id, id, addition.sourceTurnId, addition.field,
-          addition.quote, addition.relation, applied ? 'applied' : 'pending', addition.targetAdditionId ?? null,
-          applied ? start : trackedManual !== undefined && !trackedManual.modified ? trackedManual.start : null,
-          applied ? start + text.length : trackedManual !== undefined && !trackedManual.modified ? trackedManual.end : null,
-          applied ? text : trackedManual?.text ?? fieldText,
-          replace ? target.current_text : null, JSON.stringify(addition.facts))
-        if (applied) { document[addition.field] = next; changed = true }
+          addition.quote, addition.relation, 'pending', addition.targetAdditionId ?? null,
+          trackedManual !== undefined && !trackedManual.modified ? trackedManual.start : null,
+          trackedManual !== undefined && !trackedManual.modified ? trackedManual.end : null,
+          trackedManual?.text ?? (addition.targetAdditionId === undefined ? '' : fieldText),
+          null, JSON.stringify(addition.facts))
       }
-      const draftVersion = current.version + (changed ? 1 : 0)
-      if (changed) this.#database.driver.prepare(`INSERT INTO clinical_document_draft
-        (workspace_id, epoch, case_id, version, content_json, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT (workspace_id, epoch, case_id) DO UPDATE SET version = excluded.version,
-          content_json = excluded.content_json, updated_by = excluded.updated_by, updated_at = excluded.updated_at
-      `).run(context.workspaceId, context.epoch, job.case_id, draftVersion,
-        JSON.stringify(clinicalDocumentDraftContentSchema.parse(document)), context.actorId, this.#virtualTime(context))
+      const draftVersion = current.version
       this.#database.driver.prepare(`UPDATE consultation_recording_job SET status = 'completed', error_code = NULL
         WHERE workspace_id = ? AND epoch = ? AND turn_id = ?
       `).run(context.workspaceId, context.epoch, turnId)
       this.#scheduleNext(context, transaction, job.case_id)
       return { data: { draftVersion }, effects: [
         { kind: 'updated' as const, reference: `ConsultationRecording/${job.case_id}`, versionId: turnId },
-        ...(changed ? [{ kind: current.version === 0 ? 'created' as const : 'updated' as const,
-          reference: `ClinicalDocumentDraft/${job.case_id}`, versionId: String(draftVersion) }] : []),
       ] }
     })
   }
@@ -743,15 +728,18 @@ export class ConsultationRecordingService {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The original history fragment must be reviewed manually')
         }
         const text = rowText(addition)
+        const start = target.append ? field.length + (field ? 1 : 0) : target.start
         document = clinicalDocumentDraftContentSchema.parse({ ...draft.content,
-          [addition.field]: field.slice(0, target.start) + text + field.slice(target.end) })
+          [addition.field]: target.append ? [field, text].filter(Boolean).join('\n')
+            : field.slice(0, target.start) + text + field.slice(target.end) })
         if (target.additionId !== undefined) this.#supersede(context, access.caseId, target.additionId)
         this.#trackReplacement(context, access.caseId, addition.field, field, document[addition.field] ?? '',
           target.start, target.end)
         this.#database.driver.prepare(`UPDATE consultation_history_addition SET status = 'applied',
-          ownership = 'manual', review_status = 'confirmed', start_offset = ?, end_offset = ?, current_text = ?, inverse_text = ?
+          ownership = 'automatic', review_status = 'confirmed', start_offset = ?, end_offset = ?, current_text = ?, inverse_text = ?, target_addition_id = ?
           WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
-        `).run(target.start, target.start + text.length, text, target.text,
+        `).run(start, start + text.length, text, target.append ? null : target.text,
+          target.additionId ?? (target.append ? null : manualTargetPrefix + addition.addition_id),
           context.workspaceId, context.epoch, access.caseId, addition.addition_id)
       } else if (input.decision === 'ignore') this.#database.driver.prepare(`UPDATE consultation_history_addition
         SET review_state = 'ignored', rejected = 1 WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ?
@@ -764,7 +752,8 @@ export class ConsultationRecordingService {
         const target = rows.find(row => row.addition_id === addition.target_addition_id)
         const safe = addition.ownership === 'automatic' && addition.start_offset !== null && addition.end_offset !== null
           && field.slice(addition.start_offset, addition.end_offset) === addition.current_text
-          && (addition.target_addition_id === null || (addition.inverse_text !== null && target?.review_state === 'superseded'))
+          && (addition.target_addition_id === null || (addition.inverse_text !== null
+            && (target?.review_state === 'superseded' || addition.target_addition_id.startsWith(manualTargetPrefix))))
         if (safe) {
           const start = addition.start_offset!
           const end = addition.end_offset!
@@ -793,13 +782,16 @@ export class ConsultationRecordingService {
       }
       if (document !== undefined) {
         draftVersion += 1
-        this.#database.driver.prepare(`UPDATE clinical_document_draft SET version = ?, content_json = ?, updated_by = ?, updated_at = ?
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        `).run(draftVersion, JSON.stringify(document), context.actorId, this.#virtualTime(context), context.workspaceId, context.epoch, access.caseId)
+        this.#database.driver.prepare(`INSERT INTO clinical_document_draft
+          (workspace_id, epoch, case_id, version, content_json, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT (workspace_id, epoch, case_id) DO UPDATE SET version = excluded.version,
+            content_json = excluded.content_json, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+        `).run(context.workspaceId, context.epoch, access.caseId, draftVersion, JSON.stringify(document), context.actorId, this.#virtualTime(context))
       }
       return { data: { draftVersion }, effects: [
         { kind: 'updated' as const, reference: `ConsultationRecording/${access.caseId}`, versionId: addition.addition_id },
-        ...(document !== undefined ? [{ kind: 'updated' as const, reference: `ClinicalDocumentDraft/${access.caseId}`, versionId: String(draftVersion) }] : []),
+        ...(document !== undefined ? [{ kind: draft.version === 0 ? 'created' as const : 'updated' as const,
+          reference: `ClinicalDocumentDraft/${access.caseId}`, versionId: String(draftVersion) }] : []),
       ] }
     })
   }

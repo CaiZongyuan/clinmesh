@@ -151,7 +151,11 @@ describe('ClinMesh CLI Agent Skills', () => {
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
       additionId: 'synthetic-correction', decision: 'overwrite', document: {} }).success).toBe(false)
-    expect(operation.version).toBe(3)
+    expect(operation.version).toBe(4)
+    expect(operation.summary).toContain('Generation never changes draft text')
+    expect(operation.summary).toContain('appends targetless additions')
+    expect(skill).toContain('Every new addition, update, correction and conflict remains pending')
+    expect(skill).toContain('generation never changes the draft')
     expect(skill).toContain("clinician's explicit accept/ignore/confirm/undo decision")
     expect(skill).toContain('undo-pending')
     expect(operation.summary).toContain('draft field limits')
