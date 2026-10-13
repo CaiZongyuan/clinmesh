@@ -10,11 +10,15 @@ import { promisify } from 'node:util'
 import { chromium, expect, type Request } from '@playwright/test'
 import { z } from 'zod'
 import { doctorCaseDetailSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema } from '../packages/contracts/src/his.ts'
+import { doctorRecommendationStateSchema } from '../packages/contracts/src/doctor-recommendations.ts'
 import { decodeModelRoute } from '../packages/contracts/src/model-bridge.ts'
 import { createClinMeshRuntime } from '../apps/server/src/runtime.ts'
 import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model-provider.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../apps/server/tests/fixtures/consultation.ts'
 import { journeyReplies, runRecordingJourney } from '../apps/web/e2e/consultation-recording-journey.ts'
+import { recommendationFixture } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
+import { runRecommendationJourney } from '../apps/web/e2e/doctor-recommendations-journey.ts'
+import { createInvestigationReferenceDatabase } from '../apps/web/e2e/investigation-workspace.fixture.ts'
 import { startManagedProcess } from './dsh-upstreams-process.ts'
 import { verificationEnvironment } from './dsh-upstreams-verify.ts'
 import { parseLock } from './dsh-upstreams.ts'
@@ -29,7 +33,9 @@ const runtimeDirectory = resolve(process.env.CLINMESH_DSH_SMOKE_RUNTIME ?? join(
 const agUiDirectory = resolve(process.env.CLINMESH_DSH_SMOKE_AG_UI ?? join(root, '.data/dsh-runtime/ag-ui'))
 const live = process.argv.includes('--live')
 const summaryOnly = process.argv.includes('--summary-only')
+const recommendationsOnly = process.argv.includes('--recommendations-only')
 if (summaryOnly && !live) throw new Error('--summary-only requires --live')
+if (summaryOnly && recommendationsOnly) throw new Error('Choose one smoke journey')
 const sourceHome = process.env.CLINMESH_DSH_SMOKE_HOME
 if (live && !sourceHome) throw new Error('--live requires CLINMESH_DSH_SMOKE_HOME with a configured isolated host')
 const liveModel = process.env.CLINMESH_DSH_SMOKE_LIVE_MODEL
@@ -47,6 +53,9 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
   'apps/server/drizzle/0059_consultation-history-summary.sql', 'packages/contracts/src/his.ts',
   'apps/web/src/app/doctor/consultation-history-review.tsx',
+  'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
+  'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
+  'packages/contracts/src/doctor-recommendations.ts', 'packages/contracts/src/model-bridge.ts',
 ].map(async path => [path, createHash('sha256').update(await readFile(join(root, path))).digest('hex')])))
 const scratch = await mkdtemp(join(tmpdir(), 'clinmesh-dsh-consultation-'))
 const home = join(scratch, 'home')
@@ -57,7 +66,7 @@ const secret = randomBytes(32).toString('hex')
 const password = `Synthetic-${randomUUID()}-Aa1!`
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n'
 const report: Record<string, unknown> = { hostVersion: installedHost.version, agUiCommit, sourceCommit: await revision(root), sourceHashes,
-  components: lock.components.map(({ name, version, commit }) => ({ name, version, commit })), syntheticData: true, summaryOnly }
+  components: lock.components.map(({ name, version, commit }) => ({ name, version, commit })), syntheticData: true, summaryOnly, recommendationsOnly }
 const browser = await chromium.launch({ headless: true })
 let managed: ReturnType<typeof startManagedProcess> | undefined
 let hospital: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined
@@ -136,7 +145,9 @@ class Adapter extends LlmAdapter {
     const history=Array.isArray(payload.turns)&&Array.isArray(payload.history);
     record({kind:'auxiliary',history,session:false,tools:!!options.tools});
     let result;
-    if(Array.isArray(payload.additions)) {
+    if(Array.isArray(payload.guidelines)&&Array.isArray(payload.caseEvidence)) {
+      result=state.recommendationResult;
+    } else if(Array.isArray(payload.additions)) {
       result={additions:payload.additions.map((_,index)=>({index,faithful:true,complete:true,relationValid:true}))};
     } else if(history) {
       if(state.fail) { yield {type:'finish',reason:{kind:'error',failure:{code:'TIMEOUT',message:'Synthetic controlled timeout'}}}; return; }
@@ -187,11 +198,21 @@ export function apply(ctx) {
     - id: ui-directory-picker-browse
       name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
 `)
+  const recommendationReferenceDatabase = recommendationsOnly ? await createInvestigationReferenceDatabase(scratch) : undefined
+  const recommendationReference = recommendationReferenceDatabase === undefined ? {}
+    : { activeReferenceReleaseId: 'investigation-e2e-v1', referenceDatabasePath: recommendationReferenceDatabase }
   hospital = await createClinMeshRuntime({
+    ...recommendationReference,
     chatCompletionsProvider: {
       resolveModel: (route, signal) => provider.resolveModel(route === 'dsh:default'
         ? 'dsh:{"provider":"synthetic-consultation","model":"journey"}' : route, signal),
-      completeJson: input => provider.completeJson(input),
+      completeJson: async input => {
+        if (recommendationsOnly && ['doctor_recommendations', 'doctor_recommendation_verification'].includes(input.schemaName)) {
+          const control = JSON.parse(await readFile(controlPath, 'utf8')) as Record<string, unknown>
+          await writeFile(controlPath, json({ ...control, recommendationResult: recommendationFixture(input) }))
+        }
+        return provider.completeJson(input)
+      },
     },
     dshBridgeSecret: secret,
     dshModelBridge: { origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 },
@@ -316,7 +337,11 @@ export function apply(ctx) {
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   await expect.poll(() => activeTools.includes('clinmesh_fill_clinical_document_draft'), { timeout: 60_000 }).toBe(true)
-  if (!summaryOnly) {
+  if (recommendationsOnly) {
+    phase = 'recommendations-journey'
+    report.recommendations = await runRecommendationJourney({ page, read })
+  }
+  if (!summaryOnly && !recommendationsOnly) {
   phase = 'recording-journey'
   let control: Record<string, unknown> = { stage: 'initial', fail: false, released: false }
   const updateControl = async (patch: Record<string, unknown>) => { control = { ...control, ...patch }; await writeFile(controlPath, json(control)) }
@@ -417,6 +442,7 @@ export function apply(ctx) {
     let liveReplyIndex = 0
     const original = hospital
     const liveRuntime = await createClinMeshRuntime({
+      ...recommendationReference,
       dshBridgeSecret: secret,
       chatCompletionsProvider: { resolveModel: (route, signal) => provider.resolveModel(route === 'dsh:default' ? model : route, signal),
         completeJson: input => input.schemaName === 'patient_persona'
@@ -447,6 +473,31 @@ export function apply(ctx) {
       await page.getByRole('tab', { name: '待诊', exact: true }).click()
       await page.getByText('张琴', { exact: true }).first().click()
       await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+      if (recommendationsOnly) {
+        phase = 'live-recommendations'
+        const before = await readLive()
+        const states = []
+        for (const [kind, tab, region] of [
+          ['diagnosis', '诊断', '诊断建议'], ['prescription', '处方', '处方建议'], ['laboratory', '检验检查', '检验建议'],
+        ] as const) {
+          await page.getByRole('tab', { name: tab, exact: true }).click()
+          await expect(page.getByRole('region', { name: region, exact: true })).toBeVisible()
+          const current = async () => doctorRecommendationStateSchema.parse(await (await liveRuntime.app.request(
+            `/api/his/v1/doctor/cases/${liveCase.outpatientCaseId}/recommendations/${kind}`, { headers: { cookie: liveCookie } },
+          )).json())
+          await expect.poll(async () => (await current()).status, { timeout: 370_000 }).toMatch(/^(ready|missing-evidence)$/)
+          const state = await current()
+          expect(state.stale).toBe(false)
+          states.push({ kind, status: state.status, items: state.items.length,
+            guidelines: state.guidelines.length, caseEvidence: state.caseEvidence.length, missingInformation: state.missingInformation.length })
+        }
+        const after = await readLive()
+        expect(after.diagnosis).toEqual(before.diagnosis)
+        expect(after.medicationConclusion).toEqual(before.medicationConclusion)
+        expect(after.laboratoryRequests).toEqual(before.laboratoryRequests)
+        report.liveRecommendations = { states, realAuxiliaryModel: true, generatedClinicalFacts: false }
+        liveMode = true
+      } else {
       await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
       const begun = performance.now()
       for (const [index, question] of ['何时发热，最高体温多少，咳嗽有没有痰？', '咳嗽何时开始，有没有胸痛或气促？'].entries()) {
@@ -504,6 +555,7 @@ export function apply(ctx) {
         sourceVerified: true, summary: history, replies: liveReplies, facts: additions.map(addition => addition.facts),
         multiTurnSourceDialog: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
       liveMode = true
+      }
     } finally {
       report.liveJobs = liveRuntime.database.driver.prepare('SELECT status, error_code FROM consultation_recording_job').all()
       hospital = original
@@ -513,7 +565,8 @@ export function apply(ctx) {
   }
   report.pageErrors = errors.length
   expect(errors).toEqual([])
-  console.log(summaryOnly ? '原生 DSH 多轮病史总结与来源验收通过' : '原生 DSH 问诊组合验收及 Tool → 人工批准 → Command 关联通过')
+  console.log(recommendationsOnly ? '原生 DSH 指南建议、草稿采纳与人工确认验收通过'
+    : summaryOnly ? '原生 DSH 多轮病史总结与来源验收通过' : '原生 DSH 问诊组合验收及 Tool → 人工批准 → Command 关联通过')
   if (process.env.CLINMESH_DSH_SMOKE_REPORT) await writeFile(resolve(process.env.CLINMESH_DSH_SMOKE_REPORT), json(report))
 } catch (error) {
   // Playwright errors can contain the host token or provider input. Keep the public failure bounded.

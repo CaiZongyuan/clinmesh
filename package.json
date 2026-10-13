@@ -42,6 +42,8 @@
     "smoke:patient-brief:live": "pnpm --filter @clinmesh/server smoke:patient-brief:live",
     "smoke:consultation:native": "tsx scripts/smoke-dsh-consultation.ts",
     "smoke:consultation:live": "tsx scripts/smoke-dsh-consultation.ts --live",
+    "smoke:recommendations:native": "tsx scripts/smoke-dsh-consultation.ts --recommendations-only",
+    "smoke:recommendations:live": "tsx scripts/smoke-dsh-consultation.ts --recommendations-only --live",
     "synthea:doctor": "tsx scripts/synthea-runtime.ts doctor",
     "synthea:down": "tsx scripts/synthea-runtime.ts down",
     "synthea:up": "tsx scripts/synthea-runtime.ts up",
