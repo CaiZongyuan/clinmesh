@@ -694,7 +694,7 @@ function DoctorCaseController({
     ? indicationCode
     : draftIndicationCode
   const resolvedIndicationCode = resolvedLaboratoryItem === undefined
-    ? requestedIndicationCode ?? (indicationCode || 'clinical-evaluation')
+    ? requestedIndicationCode ?? (indicationCode || (resolvedLaboratoryItemId === '' ? '' : 'clinical-evaluation'))
     : resolvedLaboratoryItem.allowedIndicationCodes.includes(
     requestedIndicationCode ?? '',
   ) === true
