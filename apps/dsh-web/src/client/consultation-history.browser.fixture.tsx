@@ -59,6 +59,15 @@ function App(): React.JSX.Element {
           { text: '夜间亦会头晕，否认胸痛', sources: [{ sourceTurnId: 'synthetic-second-reply', quote: '晚上也会头晕，但是胸口不痛。' }] }],
       }) }))
     }}>模拟跨轮总结</button>
+    <button type="button" onClick={() => {
+      setConsultation(current => ({ ...current, turns: current.turns.map(turn => turn.id !== 'synthetic-reply' ? turn : {
+        ...turn, messageText: '我之前没有发热。发热。',
+      }) }))
+      setRecording(current => ({ ...current, additions: current.additions.map(addition => addition.id !== 'synthetic-applied' ? addition : {
+        ...addition, summary: '自述发热',
+        facts: [{ text: '自述发热', sources: [{ sourceTurnId: 'synthetic-reply', quote: '发热。' }] }],
+      }) }))
+    }}>模拟重复引用</button>
     <output aria-label="核对结果">{decisions.join(',')}</output>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'backfill', version: 0, remainingCount: 2 }))}>模拟历史病例</button>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'failed', failedCount: 1 }))}>模拟整理失败</button>

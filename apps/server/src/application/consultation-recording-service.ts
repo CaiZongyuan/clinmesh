@@ -9,7 +9,7 @@ import {
   reviewConsultationHistoryResponseSchema,
   type ConsultationHistoryDecision,
 } from '@clinmesh/contracts/his'
-import { trackDocumentFragment } from '@clinmesh/core/document-text'
+import { hasStatementBoundaries, trackDocumentFragment } from '@clinmesh/core/document-text'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -18,8 +18,8 @@ import type { ActorContext, CommandExecutor, CommandTransaction } from './comman
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import { WorkflowError } from './workflow-error.ts'
-import { hasStatementBoundaries, historySummaryOutputSchema, historySummaryPrompt, validateHistorySummaries, RecordingSourceError,
-  summaryText, verifyHistorySummaries, type HistoryFact, type HistorySummary } from './consultation-history-summary.ts'
+import { historySummaryOutputSchema, historySummaryPrompt, validateHistorySummaries, RecordingSourceError,
+  summaryText, verifyHistorySummaries, type HistoryFact, type HistorySummary, type RejectedHistoryFact } from './consultation-history-summary.ts'
 
 const contextSchema = z.object({
   agentGrantId: z.uuid().optional(),
@@ -101,12 +101,29 @@ function historyEvidenceKey(field: HistorySummary['field'], source: HistoryFact[
   return JSON.stringify([field, source.sourceTurnId, normalizeQuoteEnding(source.quote)])
 }
 
-function rejectedHistoryEvidence(rows: HistoryRow[]): Set<string> {
-  return new Set(rows.filter(row => row.rejected === 1).flatMap(row => {
-    const sources = row.facts_json === null ? [{ sourceTurnId: row.source_turn_id, quote: row.quote }]
-      : rowFacts(row).flatMap(fact => fact.sources)
-    return sources.map(source => historyEvidenceKey(row.field, source))
-  }))
+function historyFacts(row: HistoryRow): HistoryFact[] {
+  return row.facts_json === null ? [{ text: rowText(row), sources: [{ sourceTurnId: row.source_turn_id, quote: row.quote }] }]
+    : rowFacts(row)
+}
+
+function historyEvidence(rows: HistoryRow[]) {
+  const rejectedFacts: RejectedHistoryFact[] = rows.filter(row => row.rejected === 1)
+    .flatMap(row => historyFacts(row).map(fact => ({ ...fact, field: row.field })))
+  const rejected = new Set(rejectedFacts.flatMap(fact => fact.sources.map(source => historyEvidenceKey(fact.field, source))))
+  const active = new Set(rows.filter(row => row.status === 'applied' && row.undone === 0
+    && row.review_state === null && row.rejected === 0)
+    .flatMap(row => historyFacts(row).flatMap(fact => fact.sources.map(source => historyEvidenceKey(row.field, source)))))
+  return { rejectedFacts, rejected, blocked: new Set([...rejected].filter(key => !active.has(key))) }
+}
+
+function removeRejectedHistorySources(additions: HistorySummary[], blocked: ReadonlySet<string>): HistorySummary[] {
+  return additions.flatMap(addition => {
+    const facts = addition.facts.flatMap(fact => {
+      const sources = fact.sources.filter(source => !blocked.has(historyEvidenceKey(addition.field, source)))
+      return sources.length === 0 ? [] : [{ ...fact, sources }]
+    })
+    return facts.length === 0 ? [] : [{ ...addition, facts }]
+  })
 }
 
 function hasNewHistoryEvidence(addition: HistorySummary, turnId: string, rejected: ReadonlySet<string>): boolean {
@@ -511,28 +528,27 @@ export class ConsultationRecordingService {
         .map(row => ({ id: row.addition_id, field: row.field, text: row.current_text || rowText(row),
           facts: rowFacts(row), quote: row.quote, sourceTurnId: row.source_turn_id }))
       const manualHistory = this.#manualHistory(context, job.case_id, baseline.content)
-      const rejected = rejectedHistoryEvidence(this.#rows(context, job.case_id))
+      const evidence = historyEvidence(this.#rows(context, job.case_id))
       const parseOutput = (value: unknown) => {
         const output = historySummaryOutputSchema.parse(value)
-        // Replayed rejected evidence is already settled, including alternate
-        // sentence endings. A new saved reply remains new review evidence.
-        const additions = output.additions.filter(addition => !addition.facts.flatMap(fact => fact.sources)
-          .every(source => rejected.has(historyEvidenceKey(addition.field, source))))
+        // A restored predecessor keeps its valid facts. Other rejected citations
+        // cannot support new text; remaining sources must pass semantic verification.
+        const additions = removeRejectedHistorySources(output.additions, evidence.blocked)
         validateHistorySummaries(additions, turns, history, manualHistory)
-        return { additions: additions.filter(addition => hasNewHistoryEvidence(addition, turnId, rejected)) }
+        return { additions: additions.filter(addition => hasNewHistoryEvidence(addition, turnId, evidence.rejected)) }
       }
       const result = await model.provider.completeJson({
         model: pinned, signal: model.signal, schemaName: 'consultation_history_summary',
         jsonSchema: z.toJSONSchema(historySummaryOutputSchema) as Record<string, unknown>, systemPrompt: historySummaryPrompt,
-        userPayload: { turns, history: history.map(({ sourceTurnId: _sourceTurnId, ...item }) => item),
+        userPayload: { turns, history: history.map(({ sourceTurnId: _sourceTurnId, ...item }) => item), rejectedFacts: evidence.rejectedFacts,
           ...(manualHistory.length === 0 ? {} : { manualHistory: manualHistory.map(({ start: _start, end: _end, ...item }) => item) }) },
         validate: value => { parseOutput(value); return true },
       })
       model.signal.throwIfAborted()
       const output = parseOutput(JSON.parse(result.content))
-      await verifyHistorySummaries(model.provider, pinned, model.signal, output.additions, turns, history, manualHistory)
+      await verifyHistorySummaries(model.provider, pinned, model.signal, output.additions, turns, history, manualHistory, evidence.rejectedFacts)
       if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
-      if (this.#current(context, turnId, job)) this.#apply(context, event, turnId, job, baseline, output.additions, manualHistory)
+      if (this.#current(context, turnId, job)) this.#apply(context, event, turnId, job, baseline, output.additions, manualHistory, evidence.rejectedFacts)
       return { status: 'completed' }
     } catch (error) {
       if (!this.#current(context, turnId, job)) return { status: 'completed' }
@@ -594,7 +610,8 @@ export class ConsultationRecordingService {
   }
 
   #apply(context: ActorContext, event: OutboxHandlerInput, turnId: string,
-    job: z.infer<typeof jobSchema>, baseline: { version: number; content: Draft }, additions: HistorySummary[], manualHistory: ManualFragment[]) {
+    job: z.infer<typeof jobSchema>, baseline: { version: number; content: Draft }, additions: HistorySummary[], manualHistory: ManualFragment[],
+    rejectedFacts: RejectedHistoryFact[]) {
     const fragments: Addition[] = additions.map(item => {
       const sources = item.facts.flatMap(fact => fact.sources)
       const source = sources.find(source => source.sourceTurnId === turnId)!
@@ -608,6 +625,10 @@ export class ConsultationRecordingService {
       const access = this.#assertAccess(context, job.encounter_id)
       const current = this.#draft(context, job.case_id)
       const existing = this.#restoreLegacyRows(context, job.case_id, current.content)
+      const evidence = historyEvidence(existing)
+      if (JSON.stringify(rejectedFacts) !== JSON.stringify(evidence.rejectedFacts)) {
+        throw new Error('History rejection changed during summarization')
+      }
       // Pending conflicts never write. Results that can write must be compared
       // against the latest manual context, using the durable bounded retry path.
       const writableFields = new Set(additions.filter(item => item.relation !== 'conflict').map(item => item.field))
@@ -616,7 +637,6 @@ export class ConsultationRecordingService {
         throw new Error('Manual history comparison changed during extraction')
       }
       const seenIds = new Set(existing.map(item => item.addition_id))
-      const rejectedEvidence = rejectedHistoryEvidence(existing)
       const seenSummaries = new Set(existing.filter(item => item.rejected === 0 && item.undone === 0 && item.review_state === null)
         .map(item => JSON.stringify([item.field, normalizeQuoteEnding(rowText(item))])))
       if (!access.editable) return { data: { draftVersion: current.version }, effects: [] }
@@ -627,7 +647,7 @@ export class ConsultationRecordingService {
         const id = createHash('sha256').update(JSON.stringify(addition)).digest('hex')
         const text = summaryText(addition.facts)
         const key = JSON.stringify([addition.field, normalizeQuoteEnding(text)])
-        if (!hasNewHistoryEvidence(addition, turnId, rejectedEvidence) || seenIds.has(id)
+        if (!hasNewHistoryEvidence(addition, turnId, evidence.rejected) || seenIds.has(id)
           || (addition.relation === 'addition' && seenSummaries.has(key))) continue
         seenIds.add(id)
         seenSummaries.add(key)

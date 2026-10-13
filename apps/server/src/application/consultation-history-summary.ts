@@ -1,4 +1,5 @@
 import { consultationHistoryFactSchema, consultationHistorySummarySchema } from '@clinmesh/contracts/his'
+import { findCompleteStatementQuote } from '@clinmesh/core/document-text'
 import { z } from 'zod'
 import type { JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 
@@ -10,6 +11,7 @@ export type HistorySummary = z.infer<typeof consultationHistorySummarySchema>
 export type HistoryFact = z.infer<typeof consultationHistoryFactSchema>
 export interface HistoryTurn { id: string; speaker: string; messageText: string }
 export interface HistoryTarget { id: string; field: HistorySummary['field']; text: string }
+export interface RejectedHistoryFact extends HistoryFact { field: HistorySummary['field'] }
 
 export class RecordingSourceError extends z.ZodError {
   constructor(path: Array<string | number>, message: string) {
@@ -25,6 +27,7 @@ export const historySummaryPrompt = [
   '保留否定、时间、数值、程度和不确定性。患者说可能或记不清时如实保留；未问及、提问、猜测问题不能转成阴性或肯定结论。居家测量、外院诊断和自述用药保持其来源，不转成本院客观事实。',
   '只有不知道、未问及、客套话或无关指令，没有症状、病史或具体的不确定事实时返回 additions: []，不生成占位病史。',
   'history 是已记录片段，manualHistory 是医生拥有的内容，仅用来比较，不能作为患者事实来源。人工 text 优先用于冲突比较。',
+  'rejectedFacts 是医生已撤销或忽略的候选事实。history 中仍保留的事实可以继续归并；其余已拒绝事实只有本次患者回答重新提供支持才可记录，不能用无关的新事实夹带恢复旧事实。',
   '相关新信息用 update 指向同字段的一个 history.id，重新总结该片段的全部仍有效事实并保留各自来源；无关的新事实才用 addition。相同事实再次出现返回 additions: []，不堆积同义片段。',
   '患者明确更正用 correction，并保留被更正的旧自述和明确更正的来源；没有明确更正的矛盾用 conflict，保留矛盾两方与待核对措辞，不能任意选择一方。update 不得偷偷更正旧事实。',
   'update/correction/conflict 必须定位一个 targetAdditionId，人工片段可定位 manualHistory.id；不能一次覆盖多个片段。新总结必须引用本次回答。没有可总结事实返回 additions: []。',
@@ -34,30 +37,13 @@ export function summaryText(facts: HistoryFact[]): string {
   return facts.map(fact => fact.text.replace(/[；;]+$/u, '')).join('；')
 }
 
-export function hasStatementBoundaries(text: string, start: number, end: number): boolean {
-  const quote = text.slice(start, end)
-  const boundary = /[。！？；!?;\r\n]/u
-  const before = text.slice(0, start).replace(/[^\S\r\n]+$/u, '')
-  const after = text.slice(end).replace(/^[^\S\r\n]+/u, '')
-  return !/^(?:[。！？；!?;]|[^\S\r\n])*[?？]/u.test(after)
-    && (before.length === 0 || boundary.test(before.at(-1)!))
-    && (after.length === 0 || boundary.test(after[0]!) || boundary.test(quote.at(-1)!))
-}
-
-function completeQuote(text: string, quote: string): boolean {
-  for (let start = text.indexOf(quote); start >= 0; start = text.indexOf(quote, start + 1)) {
-    if (hasStatementBoundaries(text, start, start + quote.length)) return true
-  }
-  return false
-}
-
 export function validateHistorySummaries(additions: HistorySummary[], turns: HistoryTurn[], history: HistoryTarget[],
   manualHistory: HistoryTarget[]): void {
   const targets = new Map<string, string>()
   for (const [index, addition] of additions.entries()) {
     for (const [factIndex, fact] of addition.facts.entries()) for (const [sourceIndex, source] of fact.sources.entries()) {
       const turn = turns.find(turn => turn.id === source.sourceTurnId)
-      if (turn?.speaker !== 'patient' || !completeQuote(turn.messageText, source.quote) || /[?？]/u.test(source.quote)) {
+      if (turn?.speaker !== 'patient' || findCompleteStatementQuote(turn.messageText, source.quote) === undefined || /[?？]/u.test(source.quote)) {
         throw new RecordingSourceError(['additions', index, 'facts', factIndex, 'sources', sourceIndex], 'Summary must cite a complete saved patient statement in this case')
       }
     }
@@ -86,7 +72,7 @@ const verificationSchema = z.object({ additions: z.array(z.object({
 // bounded model request evaluates the proposed facts against saved evidence.
 export async function verifyHistorySummaries(provider: JsonChatCompletionsProvider, model: string,
   signal: AbortSignal, additions: HistorySummary[], turns: HistoryTurn[], history: HistoryTarget[],
-  manualHistory: HistoryTarget[]): Promise<void> {
+  manualHistory: HistoryTarget[], rejectedFacts: RejectedHistoryFact[]): Promise<void> {
   if (additions.length === 0) return
   const parseVerdict = (value: unknown) => {
     const verdict = verificationSchema.parse(value)
@@ -106,8 +92,9 @@ export async function verifyHistorySummaries(provider: JsonChatCompletionsProvid
       '每项事实必须包含可记录的症状、病史或具体不确定事实；仅记录不知道、未问及、客套话或无关指令为 faithful: false。',
       'complete 检查替换是否保留目标片段的全部仍有效患者事实；correction 可替代明确更正的部分，conflict 必须呈现矛盾两方及待核对。人工草稿不是患者证据。',
       'relationValid 检查 addition 是否真的新增且无重复或与 history/manualHistory 矛盾；update 只归并补充或同义表达，不能选择矛盾一方；correction 必须有患者明确纠正语义；其余矛盾必须 conflict。',
+      'rejectedFacts 是医生已撤销或忽略的事实。history 中仍有效的事实可继续保留；其他已拒绝事实只有 currentTurnId 的新回答重新支持才为 relationValid: true。旧回答重新摘引或无关新事实的引用不能解除拒绝；同一旧引用支持多个事实时，不能因为其中一个仍有效就恢复其余被拒绝事实。',
     ].join('\n'),
-    userPayload: { additions, turns, history, manualHistory },
+    userPayload: { additions, turns, history, manualHistory, rejectedFacts, currentTurnId: turns.at(-1)?.id },
     validate: value => { parseVerdict(value); return true },
   })
   signal.throwIfAborted()

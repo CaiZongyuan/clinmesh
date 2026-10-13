@@ -336,6 +336,155 @@ it.each(['\n', '\r\n'])('accepts separately cited patient statements delimited b
   expect(recorded.consultation!.turns.at(-1)!.messageText).toBe(reply)
 })
 
+it.each(['undo', 'ignore'] as const)('does not mix %s evidence into a later summary and allows the patient to provide it again', async decision => {
+  const replies = ['头晕一周。', '昨天开始恶心。', '今天有乏力。', '昨天开始恶心。']
+  const texts = ['头晕一周', '昨日起恶心', '今日乏力']
+  let stage = 0
+  const fixture = await setup({ reply: () => replies[stage]!, verify: faithfulSummaryVerification, extract: input => {
+    const { turns, history } = summaryPayloadSchema.parse(input.userPayload)
+    const answers = turns.filter(turn => replies.includes(turn.messageText))
+    const facts = texts.slice(0, Math.min(stage + 1, 3)).map((text, index) => ({ text,
+      sources: [{ sourceTurnId: answers[index]!.id, quote: answers[index]!.messageText },
+        ...(stage === 3 && index === 1 ? [{ sourceTurnId: answers[3]!.id, quote: answers[3]!.messageText }] : [])],
+    }))
+    return { additions: [{ field: 'historyOfPresentIllness', relation: stage === 0 ? 'addition' : 'update',
+      ...(stage === 0 ? {} : { targetAdditionId: history[0]!.id }), facts }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  if (decision === 'ignore') expect((await fixture.save('医生核对：头晕七天')).status).toBe(200)
+  stage = 1
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  const rejected = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  expect(rejected.status).toBe(decision === 'undo' ? 'applied' : 'pending')
+  expect((await fixture.review(rejected.id, decision)).status).toBe(200)
+  await fixture.restart()
+  stage = 2
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  let current = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  expect(current.summary).toBe('头晕一周；今日乏力')
+  expect(current.facts!.flatMap(fact => fact.sources)).not.toContainEqual({ sourceTurnId: rejected.sourceTurnId, quote: replies[1] })
+  if (decision === 'ignore') expect((await fixture.review(current.id, 'accept')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('头晕一周；今日乏力')
+  stage = 3
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  current = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  expect(current.summary).toBe('头晕一周；昨日起恶心；今日乏力')
+  expect(current.facts![1]!.sources).toHaveLength(1)
+  expect(current.facts![1]!.sources[0]!.sourceTurnId).not.toBe(rejected.sourceTurnId)
+  if (current.status === 'pending') expect((await fixture.review(current.id, 'accept')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(current.summary)
+})
+
+it('verifies a combined fact against its remaining sources after rejected evidence is removed', async () => {
+  let stage = 0
+  const replies = ['头晕一周。', '昨天开始恶心。', '今天有乏力。']
+  const fixture = await setup({ reply: () => replies[stage]!, extract: input => {
+    const { turns, history } = summaryPayloadSchema.parse(input.userPayload)
+    const answers = turns.filter(turn => replies.includes(turn.messageText))
+    const facts = [{ text: '头晕一周', sources: [{ sourceTurnId: answers[0]!.id, quote: replies[0] }] },
+      ...(stage === 0 ? [] : [{ text: stage === 1 ? '昨日起恶心' : '昨日起恶心伴今日乏力',
+        sources: answers.slice(1).map(source => ({ sourceTurnId: source.id, quote: source.messageText })) }])]
+    return { additions: [{ field: 'historyOfPresentIllness', relation: stage === 0 ? 'addition' : 'update',
+      ...(stage === 0 ? {} : { targetAdditionId: history[0]!.id }), facts }] }
+  }, verify: input => {
+    const { additions } = z.object({ additions: z.array(z.object({ facts: z.array(z.object({ text: z.string(),
+      sources: z.array(z.object({ quote: z.string() })) })) })) }).parse(input.userPayload)
+    return { additions: additions.map((addition, index) => ({ index, complete: true, relationValid: true,
+      faithful: addition.facts.every(fact => !fact.text.includes('恶心') || fact.sources.some(source => source.quote.includes('恶心'))),
+    })) }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  stage = 1
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.review((await fixture.read()).consultationRecording!.additions.at(-1)!.id, 'undo')).status).toBe(200)
+  stage = 2
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('头晕一周')
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed',
+    failures: [{ code: 'CONSULTATION_RECORDING_SOURCE_INVALID', retrying: false }] })
+})
+
+it('checks rejected facts separately when a live predecessor shares their old citation', async () => {
+  const replies = ['头晕一周，昨天开始恶心。', '恶心确实是昨天开始的。', '今天有乏力。']
+  let stage = 0
+  const fixture = await setup({ reply: () => replies[stage]!, extract: input => {
+    const { turns, history } = summaryPayloadSchema.parse(input.userPayload)
+    const answers = turns.filter(turn => replies.includes(turn.messageText))
+    return { additions: [{ field: 'historyOfPresentIllness', relation: stage === 0 ? 'addition' : 'update',
+      ...(stage === 0 ? {} : { targetAdditionId: history[0]!.id }), facts: [
+        { text: '头晕一周', sources: [{ sourceTurnId: answers[0]!.id, quote: replies[0] }] },
+        ...(stage === 0 ? [] : [{ text: '昨日起恶心', sources: [{ sourceTurnId: answers[0]!.id, quote: replies[0] },
+          ...(stage === 1 ? [{ sourceTurnId: answers[1]!.id, quote: replies[1] }] : [])] }]),
+        ...(stage !== 2 ? [] : [{ text: '今日乏力', sources: [{ sourceTurnId: answers[2]!.id, quote: replies[2] }] }]),
+      ] }] }
+  }, verify: input => {
+    const factSchema = z.object({ text: z.string(), sources: z.array(z.object({ sourceTurnId: z.string() })) })
+    const payload = z.object({ additions: z.array(z.object({ facts: z.array(factSchema) })),
+      history: z.array(z.object({ text: z.string() })), rejectedFacts: z.array(factSchema).default([]),
+      turns: z.array(z.object({ id: z.string() })),
+    }).parse(input.userPayload)
+    return { additions: payload.additions.map((addition, index) => ({ index, faithful: true, complete: true,
+      relationValid: addition.facts.every(fact => !payload.rejectedFacts.some(rejected => rejected.text === fact.text)
+        || payload.history.some(target => target.text.includes(fact.text))
+        || fact.sources.some(source => source.sourceTurnId === payload.turns.at(-1)!.id)),
+    })) }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  stage = 1
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.review((await fixture.read()).consultationRecording!.additions.at(-1)!.id, 'undo')).status).toBe(200)
+  stage = 2
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('头晕一周')
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed',
+    failures: [{ code: 'CONSULTATION_RECORDING_SOURCE_INVALID', retrying: false }] })
+})
+
+it('rechecks a rejection made while the model is preparing a multi-turn summary', async () => {
+  const replies = ['头晕一周。', '昨天开始恶心。', '今天有乏力。']
+  const texts = ['头晕一周', '昨日起恶心', '今日乏力']
+  let stage = 0
+  let release!: () => void
+  let started!: () => void
+  const waiting = new Promise<void>(resolve => { release = resolve })
+  const entered = new Promise<void>(resolve => { started = resolve })
+  let paused = false
+  const fixture = await setup({ reply: () => replies[stage]!, verify: faithfulSummaryVerification, extract: async input => {
+    const { turns, history } = summaryPayloadSchema.parse(input.userPayload)
+    const answers = turns.filter(turn => replies.includes(turn.messageText))
+    if (stage === 2 && !paused) { paused = true; started(); await waiting }
+    return { additions: [{ field: 'historyOfPresentIllness', relation: stage === 0 ? 'addition' : 'update',
+      ...(stage === 0 ? {} : { targetAdditionId: history[0]!.id }),
+      facts: texts.slice(0, stage + 1).map((text, index) => ({ text,
+        sources: [{ sourceTurnId: answers[index]!.id, quote: answers[index]!.messageText }],
+      })) }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  stage = 1
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  const update = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  stage = 2
+  await fixture.askMore()
+  const processing = fixture.runtime.dispatchPending()
+  await entered
+  try { expect((await fixture.review(update.id, 'undo')).status).toBe(200) } finally { release() }
+  await processing
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('头晕一周；今日乏力')
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', failures: [] })
+})
+
 it('ignores an old-only summary rewrite after a reply with no new history', async () => {
   let reply = firstFeverReply
   const fixture = await setup({ reply: () => reply, verify: faithfulSummaryVerification, extract: input => {
@@ -1888,7 +2037,7 @@ it('records saved patient history asynchronously through the public consultation
     consultationRecording: { status: 'updated', additions: [{ sourceTurnId: asked.data.patientTurn.id, status: 'applied' }] },
   })
   const extraction = requests.find(request => request.schemaName === 'consultation_history_increment')!
-  expect(extraction.userPayload).toEqual({ turns: expect.any(Array), history: [] })
+  expect(extraction.userPayload).toEqual({ turns: expect.any(Array), history: [], rejectedFacts: [] })
   expect(JSON.stringify(extraction.userPayload)).not.toMatch(/hiddenResources|Case Truth|persona|knownConditions|2型糖尿病/)
   const duplicate = await ask()
   expect(duplicate.status).toBe(200)

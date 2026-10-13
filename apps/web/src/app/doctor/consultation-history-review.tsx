@@ -1,4 +1,5 @@
 import type { ClinicalDocumentContent, ConsultationHistoryDecision, DoctorCaseDetail } from '@clinmesh/contracts/his'
+import { findCompleteStatementQuote } from '@clinmesh/core/document-text'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
@@ -7,8 +8,8 @@ import { formatClinicalDateTime } from './clinical-date-time.ts'
 
 function QuotedReply({ text, quotes }: { text: string; quotes: string[] }): React.JSX.Element {
   const ranges = quotes.flatMap(quote => {
-    const start = text.indexOf(quote)
-    return start < 0 ? [] : [{ start, end: start + quote.length }]
+    const range = findCompleteStatementQuote(text, quote)
+    return range === undefined ? [] : [range]
   }).sort((left, right) => left.start - right.start)
   const parts: React.ReactNode[] = []
   let cursor = 0
