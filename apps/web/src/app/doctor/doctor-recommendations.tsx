@@ -1,5 +1,5 @@
 import type {
-  DoctorRecommendationKind, DoctorRecommendationState, DoctorRecommendationSuggestion,
+  DoctorRecommendationKind, DoctorRecommendationState, DoctorRecommendationSuggestion, GuidelineEvidence,
 } from '@clinmesh/contracts/doctor-recommendations'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -22,6 +22,22 @@ const titles: Record<DoctorRecommendationKind, [string, string]> = {
   prescription: ['处方建议', 'Prescription suggestions'],
 }
 
+const documentTypes: Record<GuidelineEvidence['documentType'], [string, string]> = {
+  'national-standard': ['国家标准', 'National standard'],
+  'health-standard': ['卫生行业标准', 'Health industry standard'],
+  'official-protocol': ['诊疗方案', 'Clinical protocol'],
+  guideline: ['临床指南', 'Clinical guideline'],
+  'product-information': ['药品说明书', 'Product information'],
+}
+
+function newerGeneration(current: DoctorRecommendationState | undefined, incoming: DoctorRecommendationState) {
+  if (current !== undefined && current.generation > incoming.generation) return current
+  // POST 的 pending 回执可能晚于同轮完成结果。
+  if (current?.generation === incoming.generation && current.inputFingerprint === incoming.inputFingerprint
+    && current.status === 'ready' && incoming.status === 'pending' && !incoming.stale) return current
+  return incoming
+}
+
 export function DoctorRecommendationsPanel({
   caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', onAdopt, canAdopt, unavailableReason,
 }: {
@@ -39,56 +55,92 @@ export function DoctorRecommendationsPanel({
   const zh = locale === 'zh-CN'
   const messages = getWorkspaceMessages(locale)
   const title = titles[kind][zh ? 0 : 1]
-  const identity = JSON.stringify([scope, caseId, kind, inputRevision])
-  const currentIdentity = useRef(identity)
-  currentIdentity.current = identity
+  const identity = JSON.stringify([scope, caseId, kind, enabled, inputRevision])
+  const currentView = useRef({ identity, revision: 0 })
+  if (currentView.current.identity !== identity) {
+    currentView.current = { identity, revision: currentView.current.revision + 1 }
+  }
+  const viewRevision = currentView.current.revision
+  const callbacks = useRef({ canAdopt, onAdopt })
+  callbacks.current = { canAdopt, onAdopt }
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
   const lastAutomaticRequest = useRef<string | undefined>(undefined)
-  const queryKey = ['doctor-recommendations', scope, caseId, kind, inputRevision] as const
+  const queryKey = ['doctor-recommendations', scope, caseId, kind, inputRevision, viewRevision] as const
   const query = useQuery({
     queryKey,
-    queryFn: ({ signal }) => getDoctorRecommendations(caseId, kind, signal),
+    queryFn: async ({ signal }) => {
+      const incoming = await getDoctorRecommendations(caseId, kind, signal)
+      return newerGeneration(client.getQueryData<DoctorRecommendationState>(queryKey), incoming)
+    },
     enabled,
     retry: false,
     refetchInterval: query => query.state.data?.status === 'pending' ? 1_000 : false,
   })
   const generation = useMutation({
-    mutationFn: (request: { state: DoctorRecommendationState; refresh: boolean; identity: string }) =>
+    mutationFn: (request: { state: DoctorRecommendationState; refresh: boolean; viewRevision: number }) =>
       generateDoctorRecommendations(request.state, request.refresh),
     onSuccess: (state, request) => {
-      if (currentIdentity.current === request.identity) client.setQueryData(queryKey, state)
+      if (mounted.current && currentView.current.revision === request.viewRevision) {
+        client.setQueryData<DoctorRecommendationState>(queryKey, current => newerGeneration(current, state))
+      }
     },
     onSettled: (_state, _error, request) => {
-      if (currentIdentity.current === request.identity) void client.invalidateQueries({ queryKey })
+      if (mounted.current && currentView.current.revision === request.viewRevision) void client.invalidateQueries({ queryKey })
+    },
+  })
+  const adoption = useMutation({
+    mutationFn: (request: { state: DoctorRecommendationState; item: DoctorRecommendationSuggestion; viewRevision: number }) =>
+      getDoctorRecommendations(request.state.caseId, request.state.kind),
+    onSuccess: (latest, request) => {
+      if (!mounted.current || currentView.current.revision !== request.viewRevision || latest.caseId !== caseId || latest.kind !== kind) return
+      const previous = client.getQueryData<DoctorRecommendationState>(queryKey)
+      if (previous === undefined || previous.caseId !== caseId || previous.kind !== kind || previous.generation !== request.state.generation
+        || previous.inputFingerprint !== request.state.inputFingerprint || previous.status !== 'ready' || previous.stale
+        || JSON.stringify(previous.items.find(item => item.id === request.item.id)) !== JSON.stringify(request.item)) return
+      client.setQueryData<DoctorRecommendationState>(queryKey, current => newerGeneration(current, latest))
+      const item = latest.items.find(item => item.id === request.item.id)
+      if (latest.inputFingerprint !== request.state.inputFingerprint || latest.generation !== request.state.generation
+        || latest.status !== 'ready' || latest.stale || item === undefined
+        || JSON.stringify(item) !== JSON.stringify(request.item) || !(callbacks.current.canAdopt?.(item) ?? true)) return
+      callbacks.current.onAdopt(item)
     },
   })
   const state = query.data?.caseId === caseId && query.data.kind === kind ? query.data : undefined
   const mutate = generation.mutate
+  const generationPending = generation.isPending && generation.variables.viewRevision === viewRevision
   useEffect(() => {
-    if (!enabled || state === undefined || generation.isPending || !(state.status === 'idle' || state.stale)) return
-    const requestIdentity = `${identity}:${state.inputFingerprint}`
+    if (!enabled || state === undefined || generationPending || !(state.status === 'idle' || state.stale)) return
+    const requestIdentity = `${viewRevision}:${state.inputFingerprint}`
     if (lastAutomaticRequest.current === requestIdentity) return
     lastAutomaticRequest.current = requestIdentity
-    mutate({ state, refresh: false, identity })
-  }, [enabled, state, generation.isPending, identity, mutate])
+    mutate({ state, refresh: false, viewRevision })
+  }, [enabled, state, generationPending, viewRevision, mutate])
 
   if (!enabled) return null
-  const pending = query.isLoading || state?.status === 'pending' || generation.isPending
+  const pending = query.isLoading || state?.status === 'pending' || generationPending
+  const checking = adoption.isPending && adoption.variables.viewRevision === viewRevision
   const failed = query.isError || state?.status === 'failed'
-    || (generation.isError && generation.variables?.identity === identity)
+    || (generation.isError && generation.variables?.viewRevision === viewRevision)
+    || (adoption.isError && adoption.variables?.viewRevision === viewRevision)
   return (
     <Card aria-label={title} role="region" className="mb-4 min-w-0">
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         <CardDescription>{zh ? '结合指南与当前病例，采纳后继续核对草稿。' : 'Based on guidance and this case. Review the draft after adoption.'}</CardDescription>
         <CardAction>
-          <Button disabled={pending || state === undefined} onClick={() => {
-            if (state !== undefined) generation.mutate({ state, refresh: true, identity })
+          <Button disabled={pending || checking || state === undefined} onClick={() => {
+            if (state !== undefined) generation.mutate({ state, refresh: true, viewRevision })
           }} size="sm" variant="outline">
             <RefreshCwIcon data-icon="inline-start" />{zh ? '刷新建议' : 'Refresh suggestions'}
           </Button>
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        {checking && <p aria-live="polite" role="status">{zh ? '正在核对建议…' : 'Checking suggestions…'}</p>}
         {pending && <p aria-live="polite" role="status">{zh ? '正在生成建议…' : 'Generating suggestions…'}</p>}
         {query.isLoading && <Skeleton className="h-12 w-full" />}
         {failed && <Alert><AlertDescription>
@@ -100,13 +152,15 @@ export function DoctorRecommendationsPanel({
           <ul className="list-inside list-disc">{state.missingInformation.map(note => <li key={note}>{note}</li>)}</ul>
         </AlertDescription></Alert>}
         {state?.items.map(item => {
-          const adoptable = !pending && !state.stale && state.status === 'ready' && (canAdopt?.(item) ?? true)
+          const adoptable = !pending && !checking && !state.stale && state.status === 'ready' && (canAdopt?.(item) ?? true)
           const reason = unavailableReason?.(item)
           return (
             <div className="flex min-w-0 flex-col gap-2" key={item.id}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h4 className="font-medium">{item.label}</h4>
-                <Button disabled={!adoptable} onClick={() => { if (adoptable) onAdopt(item) }} size="sm" variant="outline">
+                <Button disabled={!adoptable} onClick={() => {
+                  if (adoptable) adoption.mutate({ state, item, viewRevision })
+                }} size="sm" variant="outline">
                   {zh ? '采纳' : 'Adopt'} {item.label}
                 </Button>
               </div>
@@ -133,7 +187,7 @@ export function DoctorRecommendationsPanel({
                   {item.guidelineEvidenceIds.map(id => {
                     const evidence = state.guidelines.find(entry => entry.id === id)
                     return evidence === undefined ? null : <div key={id}>
-                      <Badge variant="secondary">{zh ? '指南依据' : 'Guidance'}</Badge>
+                      <Badge variant="secondary">{documentTypes[evidence.documentType][zh ? 0 : 1]}</Badge>
                       <p><a href={evidence.url} rel="noreferrer noopener" target="_blank">{evidence.title}</a> · {evidence.version} · {evidence.locator}</p>
                       <p className="text-muted-foreground">{evidence.publisher} · {evidence.scope}</p><p>{evidence.text}</p>
                     </div>

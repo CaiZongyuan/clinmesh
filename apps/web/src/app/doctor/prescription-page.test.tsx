@@ -226,7 +226,10 @@ describe('PrescriptionPage', () => {
     } } })
     const adopt = await screen.findByRole('button', { name: '采纳 合成第二药品' })
     vi.useFakeTimers()
-    fireEvent.click(adopt)
+    await act(async () => {
+      fireEvent.click(adopt)
+      await vi.advanceTimersByTimeAsync(0)
+    })
     for (const name of ['剂量 2', '频次 2', '疗程 2', '数量 2']) {
       expect(within(screen.getByRole('combobox', { name })).getByText('待医生补充')).toBeTruthy()
     }
@@ -333,7 +336,10 @@ describe('PrescriptionPage', () => {
     const mounted = renderPage({ catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }] })
     const adopt = await screen.findByRole('button', { name: '采纳 合成第二药品' })
     vi.useFakeTimers()
-    fireEvent.click(adopt)
+    await act(async () => {
+      fireEvent.click(adopt)
+      await vi.advanceTimersByTimeAsync(0)
+    })
     fireEvent.click(screen.getByRole('button', { name: '无需用药' }))
     expect(screen.queryByRole('region', { name: '处方建议' })).toBeNull()
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
