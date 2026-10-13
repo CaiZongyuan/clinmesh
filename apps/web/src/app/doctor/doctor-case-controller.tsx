@@ -3501,6 +3501,7 @@ function CaseDetail({
                 readOnly={clinicalReadOnly}
                 recording={detail.consultationRecording}
                 recordingAction={clinicalDocumentActions.controlRecording}
+                recordingReadOnly={(detail.clinicalDocument?.signed.length ?? 0) > 0}
               />
             </DoctorCasePanel>
           )}

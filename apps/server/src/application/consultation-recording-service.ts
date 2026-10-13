@@ -659,7 +659,8 @@ export class ConsultationRecordingService {
           || (addition.relation === 'addition' && seenSummaries.has(key))) continue
         seenIds.add(id)
         seenSummaries.add(key)
-        const target = this.#rows(context, job.case_id).find(item => item.addition_id === addition.targetAdditionId)
+        const rows = this.#rows(context, job.case_id)
+        const target = rows.find(item => item.addition_id === addition.targetAdditionId)
         const fieldText = current.content[addition.field] ?? ''
         const manualTarget = manualHistory.find(item => item.id === addition.targetAdditionId && item.id.startsWith(manualTargetPrefix))
         const trackedManual = manualTarget === undefined ? undefined : trackManualFragment(
@@ -669,7 +670,17 @@ export class ConsultationRecordingService {
           && isHistoryRange(target, fieldText, target.start_offset, target.end_offset)
           && fieldText.slice(target.start_offset, target.end_offset) === target.current_text
         if (addition.relation === 'update' && anchored && text === target.current_text) continue
-        if (target?.status === 'pending' && target.review_state === null) this.#supersede(context, job.case_id, target.addition_id)
+        const replacement = target?.status === 'pending' ? reviewTarget(rows, target, current.content)
+          : anchored ? { start: target.start_offset!, end: target.end_offset!, append: false }
+            : trackedManual !== undefined && !trackedManual.modified ? { ...trackedManual, append: false } : undefined
+        for (const candidate of rows) {
+          if (candidate.status !== 'pending' || candidate.review_state !== null || candidate.field !== addition.field) continue
+          const range = reviewTarget(rows, candidate, current.content)
+          if (candidate.addition_id === target?.addition_id || (replacement !== undefined && !replacement.append
+            && range !== undefined && !range.append && range.start === replacement.start && range.end === replacement.end)) {
+            this.#supersede(context, job.case_id, candidate.addition_id)
+          }
+        }
         this.#database.driver.prepare(`INSERT INTO consultation_history_addition
           (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
             target_addition_id, start_offset, end_offset, current_text, inverse_text, facts_json)

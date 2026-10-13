@@ -72,6 +72,8 @@ test('reviews paused omissions, recovers preparation after reload and signs only
     await expect(dialog).toBeVisible()
     expect((await read()).consultationRecording!.signingPreparation!.previewId).not.toBe(firstPreviewId)
     await page.reload()
+    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeDisabled()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect(page.getByText('签署准备尚未结束', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: '返回核对并恢复整理', exact: true }).click()
@@ -87,6 +89,8 @@ test('reviews paused omissions, recovers preparation after reload and signs only
     await expect(dialog).toHaveCount(0)
     await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(1)
     expect((await read()).clinicalDocument!.signed[0]!.content.historyOfPresentIllness).toBe('患者自述：头晕一周了。')
+    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeDisabled()
     expect(errors).toEqual([])
   } finally { await server.close() }
 })

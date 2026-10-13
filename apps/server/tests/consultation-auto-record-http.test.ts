@@ -270,7 +270,10 @@ it('waits for explicit application of an applied summary update and preserves it
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(feverSummary + '\n医生补充：待查体。')
 })
 
-it.each([false, true])('tracks a superseded manual-target suggestion through unrelated edits and invalidates rewritten targets=%s', async rewritten => {
+it.each([
+  { rewritten: false, alias: false }, { rewritten: true, alias: false },
+  { rewritten: false, alias: true }, { rewritten: true, alias: true },
+])('tracks superseded manual-target suggestions through unrelated edits or rewritten targets: %j', async ({ rewritten, alias }) => {
   let reply = '胸痛两天了。'
   const original = '医生核对：否认胸痛。'
   const fixture = await setup({ reply: () => reply, verify: faithfulSummaryVerification, extract: input => {
@@ -282,7 +285,7 @@ it.each([false, true])('tracks a superseded manual-target suggestion through unr
     const first = payload.turns.find(turn => turn.messageText === '胸痛两天了。')!
     const last = payload.turns.at(-1)!
     return { additions: [{ field: 'historyOfPresentIllness', relation: payload.history.length === 0 ? 'conflict' : 'update',
-      targetAdditionId: payload.history[0]?.id ?? payload.manualHistory.find(item => item.text === original)!.id,
+      targetAdditionId: (alias ? undefined : payload.history[0]?.id) ?? payload.manualHistory.find(item => item.text === original)!.id,
       facts: [{ text: last.id === first.id ? '自述胸痛两天' : '自述胸痛两天，活动后加重',
         sources: [first, ...(last.id === first.id ? [] : [last])].map(turn => ({ sourceTurnId: turn.id, quote: turn.messageText })) }] }] }
   } })
@@ -294,6 +297,7 @@ it.each([false, true])('tracks a superseded manual-target suggestion through unr
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
   const next = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  expect((await fixture.read()).consultationRecording!.additions[0]!.status).toBe('superseded')
   expect(next).toMatchObject({ status: 'pending', currentText: original, reviewable: true })
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(original + '\n睡眠正常。')
   const target = rewritten ? '医生核对：胸痛待明确。' : original
@@ -307,6 +311,40 @@ it.each([false, true])('tracks a superseded manual-target suggestion through unr
     expect((await fixture.review(next.id, 'undo')).status).toBe(200)
   }
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('医生补充：🙂待查体。\n' + target + '\n睡眠正常。')
+})
+
+it('supersedes a pending correction when new evidence again targets the same manually edited applied fragment', async () => {
+  let reply = '头晕一周了。'
+  const manual = '医生核对：头晕四天。'
+  const fixture = await setup({ reply: () => reply, extract: input => {
+    const payload = summaryPayloadSchema.extend({ manualHistory: z.array(z.object({ id: z.string(), text: z.string() })).default([]) }).parse(input.userPayload)
+    const answer = payload.turns.at(-1)!
+    const target = payload.manualHistory.find(item => item.text === manual)
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: answer.id, quote: answer.messageText,
+      relation: target === undefined ? 'addition' : 'correction', ...(target === undefined ? {} : { targetAdditionId: target.id }) }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.review((await fixture.read()).consultationRecording!.additions[0]!.id, 'accept')).status).toBe(200)
+  await fixture.save(manual)
+  const draft = (await fixture.read()).clinicalDocument!.draft!
+  reply = '刚才说错了，头晕三天。'
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  const old = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  reply = '刚才说错了，头晕两天。'
+  await fixture.askMore()
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  const next = detail.consultationRecording!.additions.at(-1)!
+  expect(detail.clinicalDocument!.draft).toEqual(draft)
+  expect(detail.consultationRecording!.additions.find(addition => addition.id === old.id)!.status).toBe('superseded')
+  expect(next).toMatchObject({ status: 'pending', reviewable: true, currentText: manual })
+  expect((await fixture.review(old.id, 'accept')).status).toBe(409)
+  expect((await fixture.review(next.id, 'accept')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('患者自述：' + reply)
+  expect((await fixture.review(next.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(manual)
 })
 
 it('summarizes and merges multi-turn patient facts with persistent citations, deduplicates repeats and restores the predecessor on undo', async () => {
@@ -2749,7 +2787,7 @@ it('rejects a late extraction after Epoch reset without contaminating the replay
   let sourceTurnId = ''
   const extracting = new Promise<void>(resolve => { entered = resolve })
   const held = new Promise<unknown>(resolve => { release = resolve })
-  const { applySuggestions, runtime, ask, started, cookie } = await setup({ extract: input => {
+  const { runtime, ask, started, cookie } = await setup({ extract: input => {
     sourceTurnId = (input.userPayload as { turns: Array<{ id: string }> }).turns.at(-1)!.id
     entered()
     return held
@@ -2782,7 +2820,6 @@ it('rejects a late extraction after Epoch reset without contaminating the replay
     release({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId,
       quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] })
     await dispatch
-    await applySuggestions()
   }
   const response = await runtime.app.request('/api/his/v1/doctor/queue?view=waiting', { headers: { cookie } })
   expect(response.status).toBe(200)

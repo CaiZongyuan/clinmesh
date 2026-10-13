@@ -459,7 +459,7 @@ export function apply(ctx) {
           const recording = (await readLive()).consultationRecording!
           if (recording.status === 'failed') throw new Error('Live history generation failed')
           return recording.status
-        }, { timeout: 370_000 }).toBe('updated')
+        }, { timeout: 370_000 }).toBe('pending')
       }
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       const detail = await readLive()
@@ -501,7 +501,7 @@ export function apply(ctx) {
         .getByRole('button', { name: '查看来源', exact: true }).click()
       await expect(page.getByRole('dialog', { name: '患者原回答', exact: true }).locator('blockquote')).toHaveText(liveReplies)
       await page.keyboard.press('Escape')
-      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'updated',
+      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'pending',
         sourceVerified: true, summary: history, replies: liveReplies, facts: additions.map(addition => addition.facts),
         draftUnchanged: true, multiTurnSourceDialog: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
       liveMode = true

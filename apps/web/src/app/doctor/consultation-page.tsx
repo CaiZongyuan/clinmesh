@@ -31,7 +31,7 @@ export interface ConsultationPageAction {
   pending: boolean
 }
 
-export function ConsultationPage({ action, consultation, locale, messages, patientName, readOnly, recording, recordingAction }: {
+export function ConsultationPage({ action, consultation, locale, messages, patientName, readOnly, recording, recordingAction, recordingReadOnly }: {
   action: ConsultationPageAction
   consultation: NonNullable<DoctorCaseDetail['consultation']>
   locale: WorkspaceLocale
@@ -40,6 +40,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
   readOnly: boolean
   recording?: DoctorCaseDetail['consultationRecording']
   recordingAction?: ConsultationRecordingAction | undefined
+  recordingReadOnly?: boolean
 }): React.JSX.Element {
   const [message, setMessage] = useState('')
   const lastTextTurn = consultation.turns.findLast(turn => turn.kind === 'text')
@@ -54,7 +55,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">{consultation.turns.length}</Badge>
           {recording === undefined ? null : <ConsultationRecordingControls recording={recording} action={recordingAction}
-            disabled={readOnly} messages={messages} />}
+            disabled={readOnly || recordingReadOnly === true || recording.signingPreparation?.active === true} messages={messages} />}
         </div>
       </div>
       <MessageScrollerProvider autoScroll>
