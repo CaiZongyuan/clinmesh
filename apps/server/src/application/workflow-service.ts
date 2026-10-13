@@ -15,6 +15,7 @@ import {
 } from '@clinmesh/contracts/reference-data'
 import {
   scenarioHospitalServiceCatalogItemSchema,
+  scenarioProductMedicationCatalogItemSchema,
   patientPersonaRevisionContentSchema,
   startSyntheticCaseResultSchema,
   type InvestigationResultContent,
@@ -2933,6 +2934,26 @@ export class WorkflowService {
   doctorRecommendationCase(context: ActorContext, caseId: string) {
     this.#doctorHistoryPatient(context, caseId)
     return this.doctorCaseDetail(context, caseId)
+  }
+
+  doctorRecommendationMedications(context: ActorContext) {
+    const catalog = this.clinicalCatalog(context)
+    if (!catalog.prescriptionConclusionSupported) return []
+    const presentationSchema = scenarioProductMedicationCatalogItemSchema.pick({
+      availableScopes: true, drugConcept: true, product: true, regulatoryVerification: true,
+    }).partial()
+    const presentations = z.array(z.object({ item_id: z.string(), config_json: z.string() })).parse(
+      this.#database.driver.prepare(`SELECT item_id, config_json FROM outpatient_catalog
+        WHERE workspace_id = ? AND epoch = ? AND kind = 'medication' AND active = 1
+        ORDER BY item_id
+      `).all(context.workspaceId, context.epoch),
+    )
+    return catalog.medications.flatMap(medication => {
+      const row = presentations.find(item => item.item_id === medication.id)!
+      const presentation = presentationSchema.parse(JSON.parse(row.config_json))
+      return presentation.availableScopes !== undefined && !presentation.availableScopes.includes('outpatient')
+        ? [] : [{ ...medication, ...presentation }]
+    })
   }
 
   doctorCaseDetail(context: ActorContext, caseId: string) {

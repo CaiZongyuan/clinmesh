@@ -1456,14 +1456,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     if (options.doctorRecommendations !== undefined) {
       app.get('/api/his/v1/doctor/cases/:caseId/recommendations/:kind', async (context) => {
         try {
-          return context.json(options.doctorRecommendations!.read(
+          return context.json(await options.doctorRecommendations!.read(
             await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.parse(context.req.param('kind')),
           ))
         } catch (error) { return apiErrorResponse(context, error) }
       })
       app.post('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/generate', async (context) => {
         try {
-          return context.json(options.doctorRecommendations!.generate(
+          return context.json(await options.doctorRecommendations!.generate(
             await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.parse(context.req.param('kind')),
             generateDoctorRecommendationsRequestSchema.parse(await context.req.json()), requestIdempotencyKey(context),
           ))

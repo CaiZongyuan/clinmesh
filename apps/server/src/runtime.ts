@@ -401,8 +401,24 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     // Resolve plus two structured-output attempts each receive their own configured deadline.
     const aiTimeoutMs = options.dshModelBridge === undefined ? options.ai?.timeoutMs ?? 60_000
       : 3 * (options.dshModelBridge.timeoutMs + 1_000)
+    const recommendationTimeoutMs = 2 * aiTimeoutMs
+    const recommendationModel = consultationModel ?? investigationModel ?? patientPersonaModel
+    const doctorRecommendations = new DoctorRecommendationsService({
+      database, workflow, commands, models, referenceData,
+      contextStatus: context => identity.consultationRecordingContextStatus(context),
+      ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
+      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      investigationCatalogs: async (context, caseId, kind) => {
+        if (kind === 'laboratory') return { laboratory: workflow.caseLaboratoryCatalog(context, caseId, { page: 1, pageSize: 50 }) }
+        if (kind === 'imaging') return { imaging: workflow.imaging.serviceCatalog(context, await imagingLibrary.readyExamCodes()) }
+        const offering = await pathologyPreparation.offering(context, { outpatientCaseId: caseId })
+        return { pathology: workflow.pathology.serviceCatalog(context, offering.readyExamCodes, offering.sourceProcedures) }
+      },
+    })
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
+        'doctor.generate-recommendations': event => doctorRecommendations.process(event,
+          AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]), generationAbort.signal),
         'consultation.record-history': event => workflow.consultationRecording.process(event, {
           models,
           shutdownSignal: generationAbort.signal,
@@ -564,7 +580,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           return { status: 'completed' }
         },
       },
-      leaseDurationMs: aiTimeoutMs + 5_000,
+      leaseDurationMs: recommendationTimeoutMs + 5_000,
       leaseOwner: `runtime-${process.pid}`,
       maxAttempts: 3,
       ...clockOptions,
@@ -649,7 +665,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             reportRuntimeError({ error, scope: 'laboratory-service-publication-dispatch' })
           })
         }, options.autoDispatchIntervalMs)
-    const doctorRecommendations = new DoctorRecommendationsService({ database, workflow, commands })
     const app = createApp({
       doctorRecommendations,
       ...(agentIntegration === undefined ? {} : { agentIntegration }),

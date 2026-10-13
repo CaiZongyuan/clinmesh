@@ -6,11 +6,13 @@ import { afterEach, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { doctorRecommendationStateSchema, generateDoctorRecommendationsResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
+import type { JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { z } from 'zod'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
-async function setup() {
+async function setup(complete?: JsonChatCompletionsProvider['completeJson']) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-recommendations-'))
   disposals.push(() => rm(directory, { recursive: true, force: true }))
   const runtime = await createClinMeshRuntime({
@@ -22,6 +24,7 @@ async function setup() {
     chatCompletionsProvider: {
       async completeJson(input) {
         if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
+        if (complete !== undefined) return complete(input)
         throw new Error('This read must not generate suggestions')
       },
     },
@@ -54,6 +57,46 @@ it('reads a responsible doctor’s recommendation state without generating or ch
     caseId: started.outpatientCaseId, kind: 'laboratory', status: 'idle', generation: 0, items: [], stale: false,
   })
   expect(await readCase()).toEqual(before)
+})
+
+it('generates independently verified suggestions from actual visible evidence without writing diagnoses or drafts', async () => {
+  const inputs: Parameters<JsonChatCompletionsProvider['completeJson']>[0][] = []
+  const { runtime, started, cookie } = await setup(async input => {
+    inputs.push(input)
+    if (input.schemaName === 'doctor_recommendation_verification') {
+      const payload = z.object({ items: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+      return { content: JSON.stringify({ items: payload.items.map(item => ({ id: item.id,
+        guidelineSupported: true, caseSupported: true, applicable: true, qualifiersPreserved: true,
+      })) }), model: 'synthetic' }
+    }
+    expect(input.schemaName).toBe('doctor_recommendations')
+    const payload = z.object({
+      guidelines: z.array(z.object({ id: z.string() })), caseEvidence: z.array(z.object({ id: z.string() })),
+    }).parse(input.userPayload)
+    return { content: JSON.stringify({ items: [{
+      id: 'synthetic-hypertension-candidate', kind: 'diagnosis', catalogItemId: 'diagnosis-hypertension',
+      label: '模型给出的名称', rationale: '依据可见既往病史进一步核对当前血压。',
+      supportingInformation: ['可见高血压病史'], opposingInformation: [], missingInformation: ['当前血压仍需核对'],
+      guidelineEvidenceIds: [payload.guidelines[0]!.id], caseEvidenceIds: [payload.caseEvidence[0]!.id],
+    }], missingInformation: [] }), model: 'synthetic' }
+  })
+  const path = `/api/his/v1/doctor/cases/${started.outpatientCaseId}/recommendations/diagnosis`
+  const state = doctorRecommendationStateSchema.parse(await (await runtime.app.request(path, { headers: { cookie } })).json())
+  const before = await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json()
+  const response = await runtime.app.request(`${path}/actions/generate`, {
+    method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
+      input: { expectedInputFingerprint: state.inputFingerprint, refresh: false } }),
+  })
+  expect(response.status).toBe(200)
+  await runtime.dispatchPending()
+  const result = doctorRecommendationStateSchema.parse(await (await runtime.app.request(path, { headers: { cookie } })).json())
+  expect(result).toMatchObject({ status: 'ready', generation: 1, stale: false,
+    items: [{ kind: 'diagnosis', catalogItemId: 'diagnosis-hypertension', label: '高血压' }],
+  })
+  expect(inputs.map(input => input.schemaName)).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+  expect(JSON.stringify(inputs.map(input => input.userPayload))).not.toMatch(/2 型糖尿病|11\.2|hiddenResources|reasoning/)
+  expect(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json()).toEqual(before)
 })
 
 it('queues generation through an idempotent command while preserving every clinical draft', async () => {
