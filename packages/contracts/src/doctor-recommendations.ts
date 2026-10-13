@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { saveDiagnosisDraftRequestSchema } from './his.ts'
+import { commandResponseSchema, saveDiagnosisDraftRequestSchema } from './his.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
 
 export const doctorRecommendationKindSchema = z.enum(['laboratory', 'imaging', 'pathology', 'diagnosis', 'prescription'])
@@ -95,6 +95,8 @@ export const doctorRecommendationStateSchema = z.object({
   }
 })
 export type DoctorRecommendationState = z.infer<typeof doctorRecommendationStateSchema>
+
+export const generateDoctorRecommendationsResponseSchema = commandResponseSchema(doctorRecommendationStateSchema)
 
 export const generateDoctorRecommendationsRequestSchema = z.object({
   expectedVersions: saveDiagnosisDraftRequestSchema.shape.expectedVersions,

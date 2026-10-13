@@ -138,6 +138,12 @@ import {
   referenceMedicationCatalogSearchSchema,
 } from '@clinmesh/contracts/reference-data'
 import { z } from 'zod'
+import {
+  doctorRecommendationStateSchema,
+  generateDoctorRecommendationsResponseSchema,
+  type DoctorRecommendationKind,
+  type DoctorRecommendationState,
+} from '@clinmesh/contracts/doctor-recommendations'
 
 export const sessionQueryKey = ['session-context'] as const
 
@@ -1229,6 +1235,21 @@ export function getDoctorCase(caseId: string, signal?: AbortSignal) {
     doctorCaseDetailSchema,
     signal,
   )
+}
+
+export function getDoctorRecommendations(caseId: string, kind: DoctorRecommendationKind, signal?: AbortSignal) {
+  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/recommendations/${kind}`, doctorRecommendationStateSchema, signal)
+}
+
+export async function generateDoctorRecommendations(state: DoctorRecommendationState, refresh: boolean) {
+  const response = await apiMutation(
+    `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/actions/generate`,
+    generateDoctorRecommendationsResponseSchema,
+    { expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
+      input: { expectedInputFingerprint: state.inputFingerprint, refresh } },
+    { idempotencyKey: newIdempotencyKey() },
+  )
+  return response.data
 }
 
 export function getEncounterCompletion(encounterId: string, signal?: AbortSignal) {

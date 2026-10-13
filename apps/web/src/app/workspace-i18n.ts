@@ -1,5 +1,8 @@
 const zhCN = {
   appName: '科灵脉智',
+  recommendationFieldPending: '待医生补充',
+  recommendationDraftNeedsResolution: '请先处理当前申请草稿，再采纳其他建议。',
+  recommendationRequestTargetUnavailable: '当前目录或申请信息不可用，暂不能采纳。',
   logoAlt: '科灵脉智标志',
   productTagline: '医疗智能体平台',
   simulationBadge: '',
@@ -867,6 +870,9 @@ export type WorkspaceMessages = { [Key in WorkspaceMessageKey]: string }
 export type WorkspaceLocale = 'zh-CN' | 'en-US'
 
 const enUS = {
+  recommendationFieldPending: 'Requires doctor input',
+  recommendationDraftNeedsResolution: 'Resolve the current request draft before adopting another suggestion.',
+  recommendationRequestTargetUnavailable: 'The current catalog or request information is unavailable for adoption.',
   appName: 'Clinmesh',
   logoAlt: 'Clinmesh logo',
   productTagline: 'Medical AI Agent Platform',
