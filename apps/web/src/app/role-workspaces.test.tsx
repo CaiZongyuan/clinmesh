@@ -1568,8 +1568,10 @@ describe('role workspaces', () => {
 
     await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
     const sheet = await screen.findByRole('dialog', { name: '生成患者' })
-    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
-    await user.click(screen.getByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
+    const targetSelect = await within(sheet).findByRole('combobox', { name: '定向病例' })
+    act(() => targetSelect.focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
     expect(within(sheet).getByText('适用人群：男，40–79 岁')).toBeTruthy()
     expect(within(sheet).getByRole<HTMLInputElement>('spinbutton', { name: '最小年龄' }).value).toBe('40')
     expect(within(sheet).getByRole<HTMLInputElement>('spinbutton', { name: '最大年龄' }).value).toBe('79')
@@ -1603,9 +1605,11 @@ describe('role workspaces', () => {
 
     await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
     const sheet = await screen.findByRole('dialog', { name: '生成患者' })
-    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
+    const targetSelect = await within(sheet).findByRole('combobox', { name: '定向病例' })
+    act(() => targetSelect.focus())
+    await user.keyboard('{Enter}')
     // 病理条目的名称已含会诊项目，不加放射的检查类别前缀。
-    await user.click(screen.getByRole('option', { name: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2' }))
+    await user.click(await screen.findByRole('option', { name: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2' }))
     expect(within(sheet).getByText('适用人群：女，45–80 岁')).toBeTruthy()
     // 条目要求病史覆盖 45 年：选择后历史起始日期自动前移，改晚则提示并禁止提交。
     const historyStart = within(sheet).getByLabelText<HTMLInputElement>('历史起始日期')
@@ -1636,8 +1640,10 @@ describe('role workspaces', () => {
 
     await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
     const sheet = await screen.findByRole('dialog', { name: '生成患者' })
-    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
-    await user.click(screen.getByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
+    const targetSelect = await within(sheet).findByRole('combobox', { name: '定向病例' })
+    act(() => targetSelect.focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
     const submit = within(sheet).getByRole('button', { name: '生成患者' })
     const minimumAge = within(sheet).getByRole('spinbutton', { name: '最小年龄' })
     await user.clear(minimumAge)
