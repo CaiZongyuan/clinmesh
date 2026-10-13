@@ -47,7 +47,7 @@ export function DoctorRecommendationsPanel({
   inputRevision?: string | undefined
   scope?: string | undefined
   locale?: WorkspaceLocale | undefined
-  onAdopt: (suggestion: DoctorRecommendationSuggestion) => void
+  onAdopt: (suggestion: DoctorRecommendationSuggestion, state: DoctorRecommendationState) => void
   canAdopt?: ((suggestion: DoctorRecommendationSuggestion) => boolean) | undefined
   unavailableReason?: ((suggestion: DoctorRecommendationSuggestion) => string | undefined) | undefined
 }): React.JSX.Element | null {
@@ -106,7 +106,7 @@ export function DoctorRecommendationsPanel({
       if (latest.inputFingerprint !== request.state.inputFingerprint || latest.generation !== request.state.generation
         || latest.status !== 'ready' || latest.stale || item === undefined
         || JSON.stringify(item) !== JSON.stringify(request.item) || !(callbacks.current.canAdopt?.(item) ?? true)) return
-      callbacks.current.onAdopt(item)
+      callbacks.current.onAdopt(item, latest)
     },
   })
   const state = query.data?.caseId === caseId && query.data.kind === kind ? query.data : undefined

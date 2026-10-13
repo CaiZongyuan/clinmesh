@@ -288,10 +288,11 @@ describe('doctor recommendation panel current version checks', () => {
     await userEvent.setup().click(await screen.findByRole('button', { name: '采纳 发热，未特指' }))
     await waitFor(() => expect(reads).toBe(2))
     mounted.rerenderPanel({ ...page, canAdopt: () => permitted, onAdopt: latestAdopt })
-    await act(async () => { check.complete(Response.json(state())) })
+    const verified = state({ missingInformation: ['采纳前已完成本次核对。'] })
+    await act(async () => { check.complete(Response.json(verified)) })
     await waitFor(() => expect(screen.queryByText('正在核对建议…')).toBeNull())
     expect(previousAdopt).not.toHaveBeenCalled()
-    if (permitted) expect(latestAdopt).toHaveBeenCalledExactlyOnceWith(state().items[0])
+    if (permitted) expect(latestAdopt).toHaveBeenCalledExactlyOnceWith(verified.items[0], verified)
     else expect(latestAdopt).not.toHaveBeenCalled()
   })
 

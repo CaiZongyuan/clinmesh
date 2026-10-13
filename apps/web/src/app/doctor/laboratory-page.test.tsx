@@ -120,38 +120,143 @@ describe('laboratory investigation workspace', () => {
     expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
   })
 
-  it.each(['recommendationScope', 'recommendationRevision'] as const)('does not resume a pending adoption after %s changes and returns', async bindingField => {
+  it.each([
+    { change: 'generation', latest: recommendations({ generation: 2 }) },
+    { change: 'input fingerprint', latest: recommendations({ inputFingerprint: 'c'.repeat(64) }) },
+    { change: 'stale sources', latest: recommendations({ stale: true }) },
+    { change: 'pending generation', latest: recommendations({ status: 'pending' }) },
+    { change: 'missing evidence', latest: recommendations({ status: 'missing-evidence', items: [] }) },
+    { change: 'failed generation', latest: recommendations({ status: 'failed', items: [] }) },
+    { change: 'case identity', latest: recommendations({ caseId: 'other-case' }) },
+    { change: 'recommendation kind', latest: recommendations({ kind: 'diagnosis', items: [] }) },
+    { change: 'suggestion removal', latest: recommendations({ items: [] }) },
+    { change: 'suggestion content', latest: recommendations({ items: [{ ...recommendations().items[0]!, rationale: '当前检验建议已经更正。' }] }) },
+  ])('does not adopt after the backend changes the $change while its catalog lookup is pending', async ({ latest }) => {
     let resolveCatalog: (response: Response) => void = () => undefined
     const catalogResponse = new Promise<Response>(resolve => { resolveCatalog = resolve })
     let catalogRequested = false
+    let current = recommendations()
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       if (new URL(String(input), 'http://localhost').pathname.endsWith('/reference-catalogs/laboratory')) {
         catalogRequested = true
         return catalogResponse
       }
+      return Response.json(current)
+    }))
+    const page = props()
+    render(<LaboratoryPage {...page} />)
+    const adopt = await screen.findByRole('button', { name: '采纳 合成检验项目' })
+    await userEvent.setup().click(adopt)
+    await waitFor(() => expect(catalogRequested).toBe(true))
+    current = latest
+    await act(async () => { resolveCatalog(Response.json({ items: [service], page: 1, pageSize: 20, total: 1 })) })
+    await waitFor(() => expect(adopt.hasAttribute('disabled')).toBe(false))
+    expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
+    expect(page.onIndicationChange).not.toHaveBeenCalled()
+    expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft empty when a manual refresh replaces the generation during a pending catalog lookup', async () => {
+    let resolveCatalog: (response: Response) => void = () => undefined
+    const catalogResponse = new Promise<Response>(resolve => { resolveCatalog = resolve })
+    let catalogRequested = false
+    let current = recommendations()
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (new URL(String(input), 'http://localhost').pathname.endsWith('/reference-catalogs/laboratory')) {
+        catalogRequested = true
+        return catalogResponse
+      }
+      if (init?.method === 'POST') {
+        current = recommendations({ generation: 2, items: [{ ...current.items[0]!, rationale: '手动刷新后的检验建议。' }] })
+        return Response.json({ data: current, auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-request', warnings: [] })
+      }
+      return Response.json(current)
+    }))
+    const page = props()
+    render(<LaboratoryPage {...page} />)
+    const user = userEvent.setup()
+    const adopt = await screen.findByRole('button', { name: '采纳 合成检验项目' })
+    await user.click(adopt)
+    await waitFor(() => expect(catalogRequested).toBe(true))
+    const refresh = screen.getByRole('button', { name: '刷新建议' })
+    await waitFor(() => expect(refresh.hasAttribute('disabled')).toBe(false))
+    await user.click(refresh)
+    await screen.findByText('手动刷新后的检验建议。')
+    await act(async () => { resolveCatalog(Response.json({ items: [service], page: 1, pageSize: 20, total: 1 })) })
+    await waitFor(() => expect(adopt.hasAttribute('disabled')).toBe(false))
+    expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
+    expect(page.onIndicationChange).not.toHaveBeenCalled()
+    expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft empty and reports a failed final recommendation check', async () => {
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (new URL(String(input), 'http://localhost').pathname.endsWith('/reference-catalogs/laboratory')) {
+        return Response.json({ items: [service], page: 1, pageSize: 20, total: 1 })
+      }
+      if (++reads === 3) return Response.json({ error: { code: 'MODEL_UNAVAILABLE', message: '合成最终核对失败。' } }, { status: 503 })
       return Response.json(recommendations())
+    }))
+    const page = props()
+    render(<LaboratoryPage {...page} />)
+    await userEvent.setup().click(await screen.findByRole('button', { name: '采纳 合成检验项目' }))
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
+    expect(page.onIndicationChange).not.toHaveBeenCalled()
+    expect(screen.getByText('尚未选择检验项目')).toBeTruthy()
+    expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { bindingField: 'recommendationScope', stage: 'catalog' },
+    { bindingField: 'recommendationRevision', stage: 'catalog' },
+    { bindingField: 'recommendationScope', stage: 'recommendation check' },
+    { bindingField: 'recommendationRevision', stage: 'recommendation check' },
+  ] as const)('does not resume a pending $stage after $bindingField changes and returns', async ({ bindingField, stage }) => {
+    let resolvePending: (response: Response) => void = () => undefined
+    const pendingResponse = new Promise<Response>(resolve => { resolvePending = resolve })
+    const catalog = { items: [service], page: 1, pageSize: 20, total: 1 }
+    let pendingRequested = false
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (new URL(String(input), 'http://localhost').pathname.endsWith('/reference-catalogs/laboratory')) {
+        if (stage !== 'catalog') return Response.json(catalog)
+      } else if (stage !== 'recommendation check' || ++reads !== 3) {
+        return Response.json(recommendations())
+      }
+      pendingRequested = true
+      return pendingResponse
     }))
     const page = props()
     const binding = { recommendationScope: 'synthetic-role-first', recommendationRevision: '1' }
     const { rerender } = render(<LaboratoryPage {...page} {...binding} />)
     await userEvent.setup().click(await screen.findByRole('button', { name: /采纳/ }))
-    await waitFor(() => expect(catalogRequested).toBe(true))
+    await waitFor(() => expect(pendingRequested).toBe(true))
     rerender(<LaboratoryPage {...page} {...binding} {...{ [bindingField]: 'next' }} />)
     rerender(<LaboratoryPage {...page} {...binding} />)
-    await act(async () => { resolveCatalog(Response.json({ items: [service], page: 1, pageSize: 20, total: 1 })) })
+    await act(async () => { resolvePending(Response.json(stage === 'catalog' ? catalog : recommendations())) })
 
     expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
     expect(page.onIndicationChange).not.toHaveBeenCalled()
     expect(screen.getByText('尚未选择检验项目')).toBeTruthy()
   })
 
-  it('keeps an examination selected manually while the recommendation catalog lookup is pending', async () => {
-    let resolveCatalog: (response: Response) => void = () => undefined
-    const catalogResponse = new Promise<Response>(resolve => { resolveCatalog = resolve })
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => (
-      new URL(String(input), 'http://localhost').pathname.endsWith('/reference-catalogs/laboratory')
-        ? catalogResponse : Response.json(recommendations())
-    )))
+  it.each(['catalog', 'recommendation check'] as const)('keeps an examination selected manually while the %s is pending', async stage => {
+    let resolvePending: (response: Response) => void = () => undefined
+    const pendingResponse = new Promise<Response>(resolve => { resolvePending = resolve })
+    const catalog = { items: [service], page: 1, pageSize: 20, total: 1 }
+    let pendingRequested = false
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (new URL(String(input), 'http://localhost').pathname.endsWith('/reference-catalogs/laboratory')) {
+        if (stage !== 'catalog') return Response.json(catalog)
+      } else if (stage !== 'recommendation check' || ++reads !== 3) {
+        return Response.json(recommendations())
+      }
+      pendingRequested = true
+      return pendingResponse
+    }))
     const manualService = { ...service, id: 'synthetic-manual-service', nameZh: '人工选择的合成项目' }
     function ControlledPage() {
       const [itemId, setItemId] = useState('')
@@ -164,26 +269,36 @@ describe('laboratory investigation workspace', () => {
     render(<ControlledPage />)
     const user = userEvent.setup()
     await user.click(await screen.findByRole('button', { name: /采纳/ }))
+    await waitFor(() => expect(pendingRequested).toBe(true))
     await user.click(screen.getByRole('button', { name: '选择 人工选择的合成项目 SYN-1' }))
-    await act(async () => { resolveCatalog(Response.json({ items: [service], page: 1, pageSize: 20, total: 1 })) })
+    await act(async () => { resolvePending(Response.json(stage === 'catalog' ? catalog : recommendations())) })
 
     const draft = within(screen.getByRole('region', { name: '检验申请' }))
     expect(draft.getByText('人工选择的合成项目')).toBeTruthy()
     expect(draft.queryByText('合成检验项目')).toBeNull()
   })
 
-  it('does not write a pending adoption back through the parent after the editor is unmounted', async () => {
-    let resolveCatalog: (response: Response) => void = () => undefined
-    const catalogResponse = new Promise<Response>(resolve => { resolveCatalog = resolve })
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => (
-      new URL(String(input), 'http://localhost').pathname.endsWith('/reference-catalogs/laboratory')
-        ? catalogResponse : Response.json(recommendations())
-    )))
+  it.each(['catalog', 'recommendation check'] as const)('does not write a pending %s back through the parent after the editor unmounts', async stage => {
+    let resolvePending: (response: Response) => void = () => undefined
+    const pendingResponse = new Promise<Response>(resolve => { resolvePending = resolve })
+    const catalog = { items: [service], page: 1, pageSize: 20, total: 1 }
+    let pendingRequested = false
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (new URL(String(input), 'http://localhost').pathname.endsWith('/reference-catalogs/laboratory')) {
+        if (stage !== 'catalog') return Response.json(catalog)
+      } else if (stage !== 'recommendation check' || ++reads !== 3) {
+        return Response.json(recommendations())
+      }
+      pendingRequested = true
+      return pendingResponse
+    }))
     const page = props()
     const { unmount } = render(<LaboratoryPage {...page} />)
     await userEvent.setup().click(await screen.findByRole('button', { name: /采纳/ }))
+    await waitFor(() => expect(pendingRequested).toBe(true))
     unmount()
-    await act(async () => { resolveCatalog(Response.json({ items: [service], page: 1, pageSize: 20, total: 1 })) })
+    await act(async () => { resolvePending(Response.json(stage === 'catalog' ? catalog : recommendations())) })
     expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
     expect(page.onIndicationChange).not.toHaveBeenCalled()
   })
