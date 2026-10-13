@@ -1,3 +1,4 @@
+import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type { PathologyReport, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
 import { savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
 import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
@@ -32,6 +33,7 @@ import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -330,7 +332,7 @@ export function PathologyRequestList({ actions, active = true, locale, readOnly,
  * 医生工作台的病理会诊：选择本院会诊服务、从患者可见既往病史中选择送检对应的手术并填写会诊目的，
  * 无申请时直接选项目并保存草稿后签发；有申请时阅读选中详情，通过追加入口继续开立。
  */
-export function PathologyPage({ actions, active = true, caseId, editDraft = false, elementId, encounter, locale, onSelectRequest, readOnly, selectedReportId, selectedRequestId, state }: {
+export function PathologyPage({ actions, active = true, caseId, editDraft = false, elementId, encounter, locale, onSelectRequest, readOnly, recommendationScope, selectedReportId, selectedRequestId, state }: {
   actions: PathologyPageActions
   active?: boolean | undefined
   caseId: string
@@ -340,6 +342,7 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
   locale: WorkspaceLocale
   onSelectRequest?: ((requestId: string) => void) | undefined
   readOnly: boolean
+  recommendationScope?: string | undefined
   selectedReportId?: string | undefined
   selectedRequestId?: string | undefined
   state: PathologyRequestState | undefined
@@ -407,6 +410,19 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
     },
   })
   const selectedService = services.data?.items.find(item => item.service.id === serviceId)
+  const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion): string | undefined => {
+    if (state?.draft !== undefined || serviceId !== null || procedureReference !== null || purpose.trim() !== '') {
+      return messages.recommendationDraftNeedsResolution
+    }
+    if (suggestion.kind !== 'pathology' || services.isFetching || draftAction.isPending) return messages.recommendationRequestTargetUnavailable
+    const target = services.data?.items.find(item => item.service.id === suggestion.serviceId)
+    if (target?.available !== true || !target.sourceProcedures.some(procedure => procedure.sourceReference === suggestion.sourceProcedureReference)
+      || !savePathologyRequestDraftRequestSchema.shape.input.safeParse({
+        expectedDraftVersion: draftVersion, serviceId: suggestion.serviceId,
+        sourceProcedureReference: suggestion.sourceProcedureReference, purpose: suggestion.purpose,
+      }).success) return messages.recommendationRequestTargetUnavailable
+    return undefined
+  }
   const formReady = parsedDraft.success && selectedService?.sourceProcedures.some(procedure => procedure.sourceReference === procedureReference) === true
   const query = catalogSearch.trim().toLocaleLowerCase()
   const visibleServices = services.data?.items.filter(item => `${item.service.name} ${item.service.code}`.toLocaleLowerCase().includes(query)) ?? []
@@ -514,6 +530,22 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
   return (
     <section aria-labelledby={`${elementId}-heading`} className="outline-none" id={elementId} tabIndex={-1}>
       <h3 className="mb-3 text-sm font-semibold" id={`${elementId}-heading`}>{zh ? '病理会诊' : 'Pathology consultation'}</h3>
+      <DoctorRecommendationsPanel
+        caseId={caseId}
+        kind="pathology"
+        locale={locale}
+        scope={recommendationScope}
+        enabled={active && !readOnly}
+        canAdopt={suggestion => recommendationUnavailableReason(suggestion) === undefined}
+        unavailableReason={recommendationUnavailableReason}
+        onAdopt={suggestion => {
+          if (suggestion.kind !== 'pathology' || !active || readOnly || recommendationUnavailableReason(suggestion) !== undefined) return
+          setServiceId(suggestion.serviceId)
+          setProcedureReference(suggestion.sourceProcedureReference)
+          setPurpose(suggestion.purpose)
+          setAdding(true)
+        }}
+      />
       <InvestigationRequestWorkspace
         adding={adding && active}
         editor={editor}

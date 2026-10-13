@@ -4,6 +4,7 @@ import type {
   LaboratoryReport,
   LaboratoryRequest,
 } from '@clinmesh/contracts/his'
+import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -24,6 +25,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
+import { useMutation } from '@tanstack/react-query'
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -33,6 +35,7 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { searchReferenceLaboratory } from '../api-client.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { formatLaboratoryPrice } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
@@ -44,6 +47,7 @@ import {
 } from './catalog-picker-dialogs.tsx'
 import { useAutosave } from './use-autosave.ts'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 
 export interface LaboratoryPageActions {
@@ -134,6 +138,7 @@ export function LaboratoryPage({
   onLaboratoryItemChange,
   readOnly,
   referenceSearch,
+  recommendationScope,
   selectedReportId,
   selectedRequestId,
   onSelectRequest,
@@ -158,6 +163,7 @@ export function LaboratoryPage({
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
   referenceSearch: ReferenceCatalogSearches['laboratory']
+  recommendationScope?: string | undefined
   selectedReportId?: string | undefined
   selectedRequestId?: string | undefined
   onSelectRequest?: ((id: string) => void) | undefined
@@ -273,6 +279,7 @@ export function LaboratoryPage({
             onLaboratoryItemChange={onLaboratoryItemChange}
             readOnly={readOnly}
             referenceSearch={referenceSearch}
+            recommendationScope={recommendationScope}
             selectedReportId={selectedReportId}
             selectedRequestId={selectedRequestId}
             onSelectRequest={onSelectRequest}
@@ -300,6 +307,7 @@ function LaboratoryRequestEditor({
   onLaboratoryItemChange,
   readOnly,
   referenceSearch,
+  recommendationScope,
   selectedReportId,
   selectedRequestId,
   onSelectRequest,
@@ -320,6 +328,7 @@ function LaboratoryRequestEditor({
   onLaboratoryItemChange: (value: string) => void
   readOnly: boolean
   referenceSearch: ReferenceCatalogSearches['laboratory']
+  recommendationScope?: string | undefined
   selectedReportId?: string | undefined
   selectedRequestId?: string | undefined
   onSelectRequest?: ((id: string) => void) | undefined
@@ -380,6 +389,47 @@ function LaboratoryRequestEditor({
     revision: `${caseId}:${state?.draftVersion ?? 0}:${laboratoryItemId}:${indicationCode}`,
   })
   const [adding, setAdding] = useState(() => editDraft && state?.draft !== undefined)
+  const recommendationContext = JSON.stringify([
+    recommendationScope, caseId, active, readOnly, state?.draftVersion ?? 0, laboratoryItemId, indicationCode,
+  ])
+  const currentRecommendationContext = useRef({ value: recommendationContext, revision: 0 })
+  if (currentRecommendationContext.current.value !== recommendationContext) {
+    currentRecommendationContext.current = { value: recommendationContext, revision: currentRecommendationContext.current.revision + 1 }
+  }
+  const recommendationEditorMounted = useRef(true)
+  useEffect(() => {
+    recommendationEditorMounted.current = true
+    return () => { recommendationEditorMounted.current = false }
+  }, [])
+  const recommendationAdoption = useMutation({
+    mutationFn: async (input: {
+      caseId: string
+      context: number
+      suggestion: Extract<DoctorRecommendationSuggestion, { kind: 'laboratory' }>
+    }) => {
+      const result = await searchReferenceLaboratory(input.caseId, input.suggestion.label)
+      const service = result.items.find(item => item.id === input.suggestion.catalogItemId
+        && item.allowedIndicationCodes.includes(input.suggestion.indicationCode))
+      if (service === undefined) throw new Error(messages.recommendationRequestTargetUnavailable)
+      return service
+    },
+    onSuccess: (service, input) => {
+      if (!recommendationEditorMounted.current || currentRecommendationContext.current.revision !== input.context) return
+      setSelectedReference({ catalogItemId: service.id, code: service.referenceConcept.code,
+        display: locale === 'zh-CN' ? service.nameZh : service.nameEn ?? service.nameZh, laboratoryService: service,
+        referenceConcept: service.referenceConcept })
+      onLaboratoryItemChange(service.id)
+      onIndicationChange(input.suggestion.indicationCode)
+      setAdding(true)
+    },
+  })
+  const recommendationUnavailableReason = (): string | undefined => {
+    if (state?.draft !== undefined || laboratoryItemId !== '' || indicationCode !== '') return messages.recommendationDraftNeedsResolution
+    if (actions.save.pending || actions.issue.pending || actions.deleteDraft.pending || recommendationAdoption.isPending) {
+      return messages.recommendationRequestTargetUnavailable
+    }
+    return undefined
+  }
   const [localRequestId, setLocalRequestId] = useState<string>()
   const handledIssueId = useRef<string | undefined>(actions.issue.successRequestId)
   const requests = state?.requests ?? []
@@ -519,49 +569,68 @@ function LaboratoryRequestEditor({
     </div>
   )
   return (
-    <InvestigationRequestWorkspace adding={adding && active} onAddingChange={setAdding} editor={editor}
-      locale={locale} readOnly={readOnly} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
-      requests={requests.map(request => ({ id: request.id, title: requestName(request),
-        statusLabel: laboratoryRequestStatusLabel(request, messages), unread: request.status === 'reported',
-        inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status) }))}>
-      {activeRequest === undefined ? null : (
-        <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)}>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold">{requestName(activeRequest)}</h3>
-            <Badge variant="outline">{laboratoryRequestStatusLabel(activeRequest, messages)}</Badge>
-          </div>
-          <p className="text-xs text-muted-foreground">{messages.laboratoryIndication}: {indicationLabel(activeRequest.indicationCode, messages)}</p>
-          {activeRequest.generationError === undefined ? null : (
-            <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" />
-              <AlertTitle>{generationErrorMessage(activeRequest.generationError.code, locale)}</AlertTitle></Alert>
-          )}
-          {readOnly ? null : activeRequest.status === 'generation-failed' && activeRequest.generationError?.code !== 'INVESTIGATION_UNSUPPORTED' ? (
-            <Button aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${requestName(activeRequest)}`}
-              disabled={actions.retry.pending} onClick={() => actions.retry.onSubmit(activeRequest)} size="sm" type="button" variant="outline">
-              <RefreshCwIcon data-icon="inline-start" />{locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
-            </Button>
-          ) : activeRequest.status === 'issued' ? (
-            <CancelLaboratoryRequestButton action={actions.cancel} itemName={requestName(activeRequest)} messages={messages} request={activeRequest} />
-          ) : null}
-          {activeRequest.status === 'in-progress' ? (
-            <Alert><RefreshCwIcon aria-hidden="true" className="animate-spin" /><AlertTitle>{messages.laboratoryResultPending}</AlertTitle></Alert>
-          ) : null}
-          {actions.cancel.successRequestId === activeRequest.id && activeRequest.status === 'cancelled' ? (
-            <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.laboratoryRequestCancelled}</AlertTitle></Alert>
-          ) : null}
-          {actions.cancel.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.cancel.error, messages)} title={getWorkspaceErrorTitle(actions.cancel.error, messages, messages.operationFailed)} />}
-          {actions.retry.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.retry.error, messages)} title={getWorkspaceErrorTitle(actions.retry.error, messages, messages.operationFailed)} />}
-          {activeRequest.report === undefined ? null : (
-            <LaboratoryRequestReport action={actions.acknowledge} correctionAction={actions.correct}
-              itemName={requestName(activeRequest)} key={`report:${activeRequest.id}:${activeRequest.report.diagnosticReportId}`}
-              locale={locale} messages={messages} readOnly={readOnly} request={activeRequest} selectedReportId={selectedReportId} showCorrection={showCorrection} />
-          )}
-          {readOnly || actions.acknowledge.error === null ? null : (
-            <ErrorAlert message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)} title={getWorkspaceErrorTitle(actions.acknowledge.error, messages, messages.operationFailed)} />
-          )}
-        </section>
-      )}
-    </InvestigationRequestWorkspace>
+    <>
+      <DoctorRecommendationsPanel
+        caseId={caseId}
+        kind="laboratory"
+        locale={locale}
+        scope={recommendationScope}
+        enabled={active && !readOnly}
+        canAdopt={suggestion => suggestion.kind === 'laboratory' && recommendationUnavailableReason() === undefined}
+        unavailableReason={recommendationUnavailableReason}
+        onAdopt={suggestion => {
+          if (suggestion.kind !== 'laboratory' || !active || readOnly || recommendationUnavailableReason() !== undefined) return
+          recommendationAdoption.mutate({ caseId, context: currentRecommendationContext.current.revision, suggestion })
+        }}
+      />
+      {recommendationAdoption.isError ? <ErrorAlert
+        message={getWorkspaceErrorMessage(recommendationAdoption.error, messages)}
+        title={messages.recommendationRequestTargetUnavailable}
+      /> : null}
+      <InvestigationRequestWorkspace adding={adding && active} onAddingChange={setAdding} editor={editor}
+        locale={locale} readOnly={readOnly} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
+        requests={requests.map(request => ({ id: request.id, title: requestName(request),
+          statusLabel: laboratoryRequestStatusLabel(request, messages), unread: request.status === 'reported',
+          inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status) }))}>
+        {activeRequest === undefined ? null : (
+          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">{requestName(activeRequest)}</h3>
+              <Badge variant="outline">{laboratoryRequestStatusLabel(activeRequest, messages)}</Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">{messages.laboratoryIndication}: {indicationLabel(activeRequest.indicationCode, messages)}</p>
+            {activeRequest.generationError === undefined ? null : (
+              <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" />
+                <AlertTitle>{generationErrorMessage(activeRequest.generationError.code, locale)}</AlertTitle></Alert>
+            )}
+            {readOnly ? null : activeRequest.status === 'generation-failed' && activeRequest.generationError?.code !== 'INVESTIGATION_UNSUPPORTED' ? (
+              <Button aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${requestName(activeRequest)}`}
+                disabled={actions.retry.pending} onClick={() => actions.retry.onSubmit(activeRequest)} size="sm" type="button" variant="outline">
+                <RefreshCwIcon data-icon="inline-start" />{locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
+              </Button>
+            ) : activeRequest.status === 'issued' ? (
+              <CancelLaboratoryRequestButton action={actions.cancel} itemName={requestName(activeRequest)} messages={messages} request={activeRequest} />
+            ) : null}
+            {activeRequest.status === 'in-progress' ? (
+              <Alert><RefreshCwIcon aria-hidden="true" className="animate-spin" /><AlertTitle>{messages.laboratoryResultPending}</AlertTitle></Alert>
+            ) : null}
+            {actions.cancel.successRequestId === activeRequest.id && activeRequest.status === 'cancelled' ? (
+              <Alert><CheckIcon aria-hidden="true" /><AlertTitle>{messages.laboratoryRequestCancelled}</AlertTitle></Alert>
+            ) : null}
+            {actions.cancel.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.cancel.error, messages)} title={getWorkspaceErrorTitle(actions.cancel.error, messages, messages.operationFailed)} />}
+            {actions.retry.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.retry.error, messages)} title={getWorkspaceErrorTitle(actions.retry.error, messages, messages.operationFailed)} />}
+            {activeRequest.report === undefined ? null : (
+              <LaboratoryRequestReport action={actions.acknowledge} correctionAction={actions.correct}
+                itemName={requestName(activeRequest)} key={`report:${activeRequest.id}:${activeRequest.report.diagnosticReportId}`}
+                locale={locale} messages={messages} readOnly={readOnly} request={activeRequest} selectedReportId={selectedReportId} showCorrection={showCorrection} />
+            )}
+            {readOnly || actions.acknowledge.error === null ? null : (
+              <ErrorAlert message={getWorkspaceErrorMessage(actions.acknowledge.error, messages)} title={getWorkspaceErrorTitle(actions.acknowledge.error, messages, messages.operationFailed)} />
+            )}
+          </section>
+        )}
+      </InvestigationRequestWorkspace>
+    </>
   )
 }
 

@@ -1,4 +1,5 @@
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
+import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -29,6 +30,7 @@ import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -338,7 +340,7 @@ export function ImagingRequestList({ actions, active = true, locale, readOnly, r
 
 /** 放射目录与申请管理复用同一表单；报告与阅片只展示当前选中的正式申请。 */
 export function ImagingPage({
-  actions, active = true, caseId, editDraft = false, elementId, encounter, locale, readOnly,
+  actions, active = true, caseId, editDraft = false, elementId, encounter, locale, readOnly, recommendationScope,
   state, selectedRequestId, onSelectRequest, selectedReportId,
 }: {
   actions: ImagingPageActions
@@ -349,6 +351,7 @@ export function ImagingPage({
   encounter: { id: string; versionId: string }
   locale: WorkspaceLocale
   readOnly: boolean
+  recommendationScope?: string | undefined
   state: ImagingRequestState | undefined
   selectedRequestId?: string | undefined
   onSelectRequest?: ((id: string) => void) | undefined
@@ -411,6 +414,15 @@ export function ImagingPage({
     values: readOnly || !draftInput.success ? null : draftInput.data,
   })
   const selectedService = services.data?.items.find(item => item.service.id === serviceId)
+  const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion): string | undefined => {
+    if (state?.draft !== undefined || serviceId !== null || indication.trim() !== '') return messages.recommendationDraftNeedsResolution
+    if (suggestion.kind !== 'imaging' || draftAction.isPending || services.isFetching
+      || !services.data?.items.some(item => item.available && item.service.id === suggestion.serviceId)
+      || !agentToolInputSchemas['outpatient.imaging.draft.set'].safeParse({
+        serviceId: suggestion.serviceId, indication: suggestion.indication,
+      }).success) return messages.recommendationRequestTargetUnavailable
+    return undefined
+  }
   const visibleServices = services.data?.items.filter(item => search.trim().toLocaleLowerCase().split(/\s+/).every(term => (
     `${item.service.name} ${item.service.code} ${item.service.bodySite} ${item.service.method}`.toLocaleLowerCase().includes(term)
   ))) ?? []
@@ -488,6 +500,21 @@ export function ImagingPage({
   return (
     <section aria-labelledby={`${elementId}-heading`} className="flex min-w-0 flex-col gap-3 outline-none" id={elementId} tabIndex={-1}>
       <h3 className="text-sm font-semibold" id={`${elementId}-heading`}>{zh ? '放射检查' : 'Imaging'}</h3>
+      <DoctorRecommendationsPanel
+        caseId={caseId}
+        kind="imaging"
+        locale={locale}
+        scope={recommendationScope}
+        enabled={active && !readOnly}
+        canAdopt={suggestion => recommendationUnavailableReason(suggestion) === undefined}
+        unavailableReason={recommendationUnavailableReason}
+        onAdopt={suggestion => {
+          if (suggestion.kind !== 'imaging' || readOnly || !active || recommendationUnavailableReason(suggestion) !== undefined) return
+          setServiceId(suggestion.serviceId)
+          setIndication(suggestion.indication)
+          setAdding(true)
+        }}
+      />
       <InvestigationRequestWorkspace
         adding={adding && active}
         editor={editor}
