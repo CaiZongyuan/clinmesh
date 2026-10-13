@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import type { ComponentProps } from 'react'
+import { doctorRecommendationStateSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import type { DiagnosisState } from '@clinmesh/contracts/his'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { act, cleanup, render as testingRender, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DiagnosisPage } from './diagnosis-page.tsx'
 
@@ -29,7 +31,56 @@ function props(overrides: Partial<ComponentProps<typeof DiagnosisPage>> = {}): C
   }
 }
 
-afterEach(cleanup)
+const queryClients: QueryClient[] = []
+
+function render(element: React.JSX.Element) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  queryClients.push(client)
+  const result = testingRender(<QueryClientProvider client={client}>{element}</QueryClientProvider>)
+  return { ...result, rerender: (next: React.JSX.Element) => result.rerender(<QueryClientProvider client={client}>{next}</QueryClientProvider>) }
+}
+
+function recommendationState(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
+  return {
+    caseId: 'synthetic-case', kind: 'diagnosis', encounterId: 'synthetic-encounter', encounterVersion: '1',
+    inputFingerprint: 'a'.repeat(64), status: 'ready', generation: 1, stale: false,
+    items: [], guidelines: [], caseEvidence: [], missingInformation: [], ...overrides,
+  }
+}
+
+function diagnosisSuggestionState(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
+  return doctorRecommendationStateSchema.parse(recommendationState({
+    items: [{
+      id: 'suggestion-diagnosis-3', kind: 'diagnosis', catalogItemId: 'diagnosis-3', label: '合成建议诊断3',
+      rationale: '需要结合本次记录继续核实。', supportingInformation: ['本次症状支持该候选。'],
+      opposingInformation: ['当前报告存在不符合信息。'], missingInformation: ['尚需核实病程。'],
+      guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-source'],
+      referenceConcept: {
+        id: 'diagnosis-3', code: 'SYN-3', display: '合成建议诊断3',
+        system: 'https://clinmesh.example.com/icd-10', version: '1', sourceLocator: 'synthetic:reference-diagnosis',
+      },
+    }],
+    guidelines: [{
+      id: 'synthetic-guideline', title: '合成诊疗依据', publisher: '合成发布机构', documentType: 'official-protocol',
+      version: '2026', url: 'https://clinmesh.example.com/synthetic-guideline', locator: '第1节',
+      scope: '合成病例', text: '仅用于验证建议引用的合成条款。', sourceHash: 'b'.repeat(64),
+    }],
+    caseEvidence: [{ id: 'synthetic-case-source', kind: 'consultation', label: '合成问诊来源', text: '当前病例的合成患者自述。' }],
+    ...overrides,
+  }))
+}
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(recommendationState()), {
+    headers: { 'content-type': 'application/json' },
+  })))
+})
+
+afterEach(() => {
+  cleanup()
+  for (const client of queryClients.splice(0)) client.clear()
+  vi.unstubAllGlobals()
+})
 
 function savedState(confirmed = false): DiagnosisState {
   const entries: DiagnosisState['draft'] = { entries: [
@@ -49,6 +100,179 @@ function savedState(confirmed = false): DiagnosisState {
 }
 
 describe('diagnosis workspace', () => {
+  it('shows diagnosis suggestions separately from the editable draft', () => {
+    render(<DiagnosisPage {...props()} />)
+    expect(screen.getByRole('region', { name: '诊断建议' })).toBeTruthy()
+  })
+  it('adopts a reference candidate as a secondary draft diagnosis while preserving an unsaved primary note', async () => {
+    const recommendations = diagnosisSuggestionState()
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(recommendations), {
+      headers: { 'content-type': 'application/json' },
+    })))
+    const page = props({ state: savedState() })
+    render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    await user.type(screen.getByRole('textbox', { name: page.messages.diagnosisNote }), ' · 医生刚补充')
+    const panel = within(screen.getByRole('region', { name: '诊断建议' }))
+    const adopt = await panel.findByRole('button', { name: '采纳 合成建议诊断3' })
+    expect(panel.getByText('本次症状支持该候选。')).toBeTruthy()
+    expect(panel.getByText('当前报告存在不符合信息。')).toBeTruthy()
+    expect(panel.getByText('尚需核实病程。')).toBeTruthy()
+    await user.click(adopt)
+    const selected = within(screen.getByRole('group', { name: '已选诊断' }))
+    expect(selected.getByRole('button', { name: '合成建议诊断3' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: page.messages.secondaryDiagnosis }).getAttribute('aria-pressed')).toBe('true')
+    await user.click(selected.getByRole('button', { name: '合成诊断1' }))
+    expect((screen.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('第一条保存备注 · 医生刚补充')
+    expect(screen.getByRole('button', { name: page.messages.primaryDiagnosis }).getAttribute('aria-pressed')).toBe('true')
+    await waitFor(() => expect(page.actions.save.onSubmit).toHaveBeenLastCalledWith([
+      { catalogItemId: 'diagnosis-1', role: 'primary', note: '第一条保存备注 · 医生刚补充' },
+      { catalogItemId: 'diagnosis-2', role: 'secondary', note: '第二条保存备注' },
+      { catalogItemId: 'diagnosis-3', role: 'secondary', referenceConcept: {
+        id: 'diagnosis-3', code: 'SYN-3', display: '合成建议诊断3',
+        system: 'https://clinmesh.example.com/icd-10', version: '1', sourceLocator: 'synthetic:reference-diagnosis',
+      } },
+    ]), { timeout: 2000 })
+    expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
+  })
+  it('adopts the first candidate as primary and disables repeated adoption of the same diagnosis', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(diagnosisSuggestionState()), {
+      headers: { 'content-type': 'application/json' },
+    })))
+    const page = props()
+    render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    const panel = within(screen.getByRole('region', { name: '诊断建议' }))
+    const adopt = await panel.findByRole('button', { name: '采纳 合成建议诊断3' })
+    await user.click(adopt)
+    expect(screen.getByRole('button', { name: page.messages.primaryDiagnosis }).getAttribute('aria-pressed')).toBe('true')
+    expect(adopt.hasAttribute('disabled')).toBe(true)
+    expect(panel.getByText(page.messages.recommendationDiagnosisDuplicate)).toBeTruthy()
+    await user.click(adopt)
+    expect(within(screen.getByRole('group', { name: '已选诊断' })).getAllByRole('button')).toHaveLength(1)
+    expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
+  })
+  it('does not allow suggestion adoption once the draft already contains eight diagnoses', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(diagnosisSuggestionState()), {
+      headers: { 'content-type': 'application/json' },
+    })))
+    const page = props({ state: { draftVersion: 1, draft: { entries: [
+      ...savedState().draft!.entries,
+      ...[4, 5, 6, 7, 8, 9].map(id => ({ catalogItemId: `diagnosis-${id}`, role: 'secondary' as const })),
+    ] } } })
+    render(<DiagnosisPage {...page} />)
+    const adopt = await within(screen.getByRole('region', { name: '诊断建议' })).findByRole('button', { name: '采纳 合成建议诊断3' })
+    expect(adopt.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText(page.messages.recommendationDiagnosisLimit)).toBeTruthy()
+    await userEvent.setup().click(adopt)
+    expect(within(screen.getByRole('group', { name: '已选诊断' })).getAllByRole('button')).toHaveLength(8)
+    expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
+  })
+  it('disables a local candidate when its diagnosis is removed from the currently available catalog', async () => {
+    const source = diagnosisSuggestionState()
+    const candidate = source.items[0]!
+    if (candidate.kind !== 'diagnosis') throw new Error('Expected the synthetic diagnosis candidate')
+    const recommendations = diagnosisSuggestionState({ items: [{
+      ...candidate, catalogItemId: 'diagnosis-2', label: '合成诊断2', referenceConcept: {
+        id: 'diagnosis-2', code: 'SYN-2', display: '合成诊断2',
+        system: 'https://clinmesh.example.com/icd-10', version: '1', sourceLocator: 'operational:diagnosis_catalog',
+      },
+    }] })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(recommendations), {
+      headers: { 'content-type': 'application/json' },
+    })))
+    const page = props()
+    const { rerender } = render(<DiagnosisPage {...page} />)
+    const adopt = await within(screen.getByRole('region', { name: '诊断建议' })).findByRole('button', { name: '采纳 合成诊断2' })
+    expect(adopt.hasAttribute('disabled')).toBe(false)
+    rerender(<DiagnosisPage {...page} catalog={[page.catalog[0]!]} />)
+    expect(adopt.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText(page.messages.recommendationDiagnosisUnavailable)).toBeTruthy()
+    await userEvent.setup().click(adopt)
+    expect(screen.queryByRole('group', { name: '已选诊断' })).toBeNull()
+    expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
+  })
+  it('disables a reference candidate that the current directory marks inactive', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(diagnosisSuggestionState()), {
+      headers: { 'content-type': 'application/json' },
+    })))
+    const page = props()
+    const activeSearch = { ...page.referenceSearch, data: {
+      ...page.referenceSearch.data!, total: 3, items: [...page.referenceSearch.data!.items, {
+        id: 'diagnosis-3', code: 'SYN-3', display: '合成建议诊断3', domain: 'diagnosis' as const,
+        sourceLocator: 'synthetic:reference-diagnosis', system: 'https://clinmesh.example.com/icd-10', version: '1', status: 'active' as const,
+      }],
+    } }
+    const { rerender } = render(<DiagnosisPage {...page} referenceSearch={activeSearch} />)
+    const adopt = await within(screen.getByRole('region', { name: '诊断建议' })).findByRole('button', { name: '采纳 合成建议诊断3' })
+    expect(adopt.hasAttribute('disabled')).toBe(false)
+    rerender(<DiagnosisPage {...page} referenceSearch={{ ...activeSearch, data: { ...activeSearch.data,
+      items: activeSearch.data.items.map(item => item.id === 'diagnosis-3' ? { ...item, status: 'inactive' as const } : item),
+    } }} />)
+    expect(adopt.hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText(page.messages.recommendationDiagnosisUnavailable)).toBeTruthy()
+    expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
+  })
+  it('keeps adopted diagnoses and an edited note when refreshing suggestions', async () => {
+    let recommendations = diagnosisSuggestionState()
+    const candidate = recommendations.items[0]!
+    if (candidate.kind !== 'diagnosis') throw new Error('Expected the synthetic diagnosis candidate')
+    const refreshed = diagnosisSuggestionState({ generation: 2, items: [{
+      ...candidate, id: 'suggestion-diagnosis-4', catalogItemId: 'diagnosis-4', label: '合成新候选4',
+      referenceConcept: { ...candidate.referenceConcept!, id: 'diagnosis-4', code: 'SYN-4', display: '合成新候选4' },
+    }] })
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        recommendations = refreshed
+        return new Response(JSON.stringify({ data: refreshed, auditId: 'synthetic-audit',
+          effects: [], requestId: 'synthetic-refresh', warnings: [] }), { headers: { 'content-type': 'application/json' } })
+      }
+      return new Response(JSON.stringify(recommendations), { headers: { 'content-type': 'application/json' } })
+    }))
+    const page = props()
+    render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    const panel = within(screen.getByRole('region', { name: '诊断建议' }))
+    await user.click(await panel.findByRole('button', { name: '采纳 合成建议诊断3' }))
+    await user.type(screen.getByRole('textbox', { name: page.messages.diagnosisNote }), '医生核实后保留')
+    await user.click(panel.getByRole('button', { name: '刷新建议' }))
+    await panel.findByRole('button', { name: '采纳 合成新候选4' })
+    const selected = within(screen.getByRole('group', { name: '已选诊断' }))
+    expect(selected.getAllByRole('button')).toHaveLength(1)
+    expect(selected.getByRole('button', { name: '合成建议诊断3' })).toBeTruthy()
+    expect(selected.queryByRole('button', { name: '合成新候选4' })).toBeNull()
+    expect((screen.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('医生核实后保留')
+    expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
+  })
+  it.each([
+    { scenario: 'the case changes', nextCaseId: 'new-synthetic-case' },
+    { scenario: 'the identity scope changes', nextCaseId: 'synthetic-case' },
+  ])('does not expose a late recommendation response when $scenario', async ({ nextCaseId }) => {
+    const old = diagnosisSuggestionState()
+    const candidate = old.items[0]!
+    if (candidate.kind !== 'diagnosis') throw new Error('Expected the synthetic diagnosis candidate')
+    const current = diagnosisSuggestionState({
+      caseId: nextCaseId, encounterId: nextCaseId === old.caseId ? old.encounterId : 'new-synthetic-encounter',
+      items: [{ ...candidate, label: '当前病例候选', referenceConcept: { ...candidate.referenceConcept!, display: '当前病例候选' } }],
+    })
+    let finishPrevious: (response: Response) => void = () => { throw new Error('Previous query has not started') }
+    const pendingPrevious = new Promise<Response>(resolve => { finishPrevious = resolve })
+    let reads = 0
+    const fetch = vi.fn(async () => reads++ === 0
+      ? await pendingPrevious
+      : new Response(JSON.stringify(current), { headers: { 'content-type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetch)
+    const page = props({ recommendationScope: 'previous-actor' })
+    const { rerender } = render(<DiagnosisPage {...page} key="previous-case" />)
+    await waitFor(() => expect(fetch).toHaveBeenCalled())
+    rerender(<DiagnosisPage {...page} caseId={current.caseId} key="new-case" recommendationScope="current-actor" />)
+    const panel = within(screen.getByRole('region', { name: '诊断建议' }))
+    await panel.findByRole('button', { name: '采纳 当前病例候选' })
+    await act(async () => { finishPrevious(new Response(JSON.stringify(old), { headers: { 'content-type': 'application/json' } })) })
+    expect(panel.queryByRole('button', { name: '采纳 合成建议诊断3' })).toBeNull()
+    expect(panel.getByRole('button', { name: '采纳 当前病例候选' }).hasAttribute('disabled')).toBe(false)
+    expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
+  })
   it('starts with an inline directory and waits for an explicit diagnosis selection', () => {
     const page = props()
     render(<DiagnosisPage {...page} />)
@@ -188,6 +412,8 @@ describe('diagnosis workspace', () => {
     expect(screen.queryByRole('button', { name: /移除诊断/ })).toBeNull()
     expect(screen.queryByRole('button', { name: page.messages.confirmDiagnosis })).toBeNull()
     expect(screen.queryByRole('textbox', { name: '搜索疾病目录' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '诊断建议' })).toBeNull()
+    expect(globalThis.fetch).not.toHaveBeenCalled()
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
   it('replaces a confirmed diagnosis from the local fallback catalog while keeping its role and note', async () => {

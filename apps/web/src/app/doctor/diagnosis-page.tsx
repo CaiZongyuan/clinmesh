@@ -1,3 +1,4 @@
+import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinicalCatalog, DiagnosisDraftEntry, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
@@ -41,6 +42,7 @@ import {
   type DiagnosisCatalogSelection,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
+import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
 import { useAutosave } from './use-autosave.ts'
 
 export interface DiagnosisPageActions {
@@ -65,7 +67,7 @@ interface DiagnosisDraftLine extends DiagnosisDraftEntry {
   snapshotDisplay?: string
 }
 
-export function DiagnosisPage({ actions, caseId, catalog, elementId, locale, messages, readOnly, referenceSearch, state }: {
+export function DiagnosisPage({ actions, caseId, catalog, elementId, locale, messages, readOnly, recommendationRevision, recommendationScope, referenceSearch, state }: {
   caseId: string
   actions: DiagnosisPageActions
   catalog: ClinicalCatalog['diagnoses']
@@ -73,6 +75,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, locale, mes
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   readOnly: boolean
+  recommendationRevision?: string | undefined
+  recommendationScope?: string | undefined
   referenceSearch: ReferenceCatalogSearches['diagnoses']
   state: DoctorCaseDetail['diagnosis']
 }): React.JSX.Element {
@@ -110,6 +114,20 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, locale, mes
   })
   const [confirmOpen, setConfirmOpen] = useState(false)
   const usedCatalogItemIds = new Set(entries.map(entry => entry.catalogItemId))
+  const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion) => {
+    if (readOnly || suggestion.kind !== 'diagnosis') return messages.recommendationDiagnosisUnavailable
+    if (usedCatalogItemIds.has(suggestion.catalogItemId)) return messages.recommendationDiagnosisDuplicate
+    if (entries.length >= 8) return messages.recommendationDiagnosisLimit
+    if (referenceSearch.data?.items.some(item => item.id === suggestion.catalogItemId && item.status === 'inactive')) {
+      return messages.recommendationDiagnosisUnavailable
+    }
+    const concept = suggestion.referenceConcept
+    if (!catalogById.has(suggestion.catalogItemId)
+      && (concept?.id !== suggestion.catalogItemId || concept.sourceLocator === 'operational:diagnosis_catalog')) {
+      return messages.recommendationDiagnosisUnavailable
+    }
+    return undefined
+  }
   const addEntry = (selection: DiagnosisCatalogSelection) => {
     if (entries.length >= 8 || usedCatalogItemIds.has(selection.catalogItemId)) return
     const key = globalThis.crypto.randomUUID()
@@ -392,6 +410,18 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, locale, mes
           </Dialog>
         )}
       </div>
+      <DoctorRecommendationsPanel canAdopt={suggestion => recommendationUnavailableReason(suggestion) === undefined}
+        caseId={caseId} enabled={!readOnly} inputRevision={recommendationRevision}
+        kind="diagnosis" locale={locale} onAdopt={suggestion => {
+          if (suggestion.kind !== 'diagnosis' || recommendationUnavailableReason(suggestion) !== undefined) return
+          const local = catalogById.get(suggestion.catalogItemId)
+          const concept = suggestion.referenceConcept
+          const code = concept?.code ?? local?.code
+          const display = concept?.display ?? (locale === 'zh-CN' ? local?.nameZh : local?.nameEn)
+          if (code === undefined || display === undefined) return
+          addEntry({ catalogItemId: suggestion.catalogItemId, code, display,
+            ...(concept === undefined ? {} : { referenceConcept: concept }) })
+        }} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
       {state?.confirmation === undefined ? null : (
         <Alert>
           <CheckCircleIcon aria-hidden="true" />
