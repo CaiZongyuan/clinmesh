@@ -2941,7 +2941,7 @@ export class WorkflowService {
     if (!catalog.prescriptionConclusionSupported) return []
     const presentationSchema = scenarioProductMedicationCatalogItemSchema.pick({
       availableScopes: true, drugConcept: true, product: true, regulatoryVerification: true,
-    }).partial()
+    }).partial().strip()
     const presentations = z.array(z.object({ item_id: z.string(), config_json: z.string() })).parse(
       this.#database.driver.prepare(`SELECT item_id, config_json FROM outpatient_catalog
         WHERE workspace_id = ? AND epoch = ? AND kind = 'medication' AND active = 1

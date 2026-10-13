@@ -66,13 +66,25 @@ export class DoctorRecommendationsService {
     return this.options.workflow.doctorRecommendationCase(context, caseId)
   }
 
-  async #input(context: ActorContext, caseId: string, kind: DoctorRecommendationKind) {
+  #snapshot(context: ActorContext, caseId: string, kind: DoctorRecommendationKind, offerings: DoctorInvestigationRecommendationCatalogs) {
     const detail = doctorCaseDetailSchema.parse(this.#authorize(context, caseId))
     const caseEvidence: DoctorCaseEvidence[] = []
+    const sourceHashes: string[] = []
+    const missingInformation = new Set<string>()
     const add = (id: string, sourceKind: DoctorCaseEvidence['kind'], label: string, content: unknown, reference?: string) => {
-      if (content === undefined || content === null) return
-      caseEvidence.push(doctorCaseEvidenceSchema.parse({ id, kind: sourceKind, label,
-        text: typeof content === 'string' ? content : JSON.stringify(content), ...(reference === undefined ? {} : { reference }) }))
+      if (content === undefined || content === null || content === '') return
+      const text = typeof content === 'string' ? content : JSON.stringify(content)
+      sourceHashes.push(canonicalJsonHash({ id, text }))
+      if (text.length > 12_000 && typeof content === 'object') {
+        for (const [field, value] of Object.entries(content)) add(`${id}:${field}`, sourceKind, `${label} / ${field}`, value, reference)
+        return
+      }
+      if (text.length > 12_000 || caseEvidence.length >= 100) {
+        missingInformation.add('当前完整可见资料超过建议单次证据预算，需先明确本次诊疗资料范围。')
+        return
+      }
+      caseEvidence.push(doctorCaseEvidenceSchema.parse({ id: `evidence:${canonicalJsonHash({ caseId, id })}`, kind: sourceKind,
+        label, text, ...(reference === undefined || reference.length > 256 ? {} : { reference }) }))
     }
     add('demographics', 'demographics', '患者基本资料', detail.patient, `Patient/${detail.patient.id}`)
     add('presentation', 'presentation', '当前主诉与体征', { presentation: detail.presentation, triage: detail.triage })
@@ -81,8 +93,13 @@ export class DoctorRecommendationsService {
       add(`turn:${turn.id}`, 'consultation', `${turn.speaker === 'patient' ? '患者' : '医生'}问诊记录`,
         { speaker: turn.speaker, text: turn.messageText, kind: turn.kind, recordedAt: turn.recordedAt, reportReference: turn.reportReference })
     }
-    add('clinical-document', 'draft', '当前病历草稿与已签病历', detail.clinicalDocument)
-    add('legacy-drafts', 'draft', '当前诊疗草稿', detail.drafts)
+    if (detail.clinicalDocument?.draft !== undefined) {
+      const { version, updatedAt, ...fields } = detail.clinicalDocument.draft
+      for (const [field, text] of Object.entries(fields)) add(`clinical-document:draft:${field}`, 'draft',
+        `当前病历草稿 v${version} / ${field} / ${updatedAt}`, text, `Encounter/${detail.encounter.id}`)
+    }
+    for (const signed of detail.clinicalDocument?.signed ?? []) add(`clinical-document:signed:${signed.compositionId}`, 'draft', '已签病历', signed, `Composition/${signed.compositionId}`)
+    for (const [field, draft] of Object.entries(detail.drafts ?? {})) add(`legacy-draft:${field}`, 'draft', `当前诊疗草稿 / ${field}`, draft)
     add('diagnoses', 'diagnosis', '当前诊断草稿与已确认诊断', detail.diagnosis)
     add('medication-conclusion', 'draft', '当前处方草稿与用药结论', detail.medicationConclusion)
     add('prior-facts', 'history', '已发布既往诊断', detail.priorFacts)
@@ -91,9 +108,12 @@ export class DoctorRecommendationsService {
       add(`report:${request.id}`, 'report', '已发布检查检验报告', request.report)
     }
     for (const source of ['visible-source', 'local-completed'] as const) {
-      const history = this.options.workflow.doctorCaseHistory(context, caseId, { source, page: 1, pageSize: 20 })
-      for (const item of history.items) add(`history:${source}:${item.entryId}`, 'history', item.title,
-        this.options.workflow.doctorCaseHistoryDetail(context, caseId, { source, entryId: item.entryId }))
+      for (let page = 1; ; page += 1) {
+        const history = this.options.workflow.doctorCaseHistory(context, caseId, { source, page, pageSize: 20 })
+        for (const item of history.items) add(`history:${source}:${item.entryId}`, 'history', `${item.title} / ${item.entryId} / ${item.clinicalDate}`,
+          this.options.workflow.doctorCaseHistoryDetail(context, caseId, { source, entryId: item.entryId }))
+        if (page * history.pageSize >= history.total) break
+      }
     }
     const text = JSON.stringify(caseEvidence).toLowerCase()
     const groups = doctorGuidelineGroups.filter(group => group.terms.some(term => text.includes(term.toLowerCase())))
@@ -104,12 +124,32 @@ export class DoctorRecommendationsService {
       catalogs = { diagnoses: { local: this.options.workflow.clinicalCatalog(context).diagnoses,
         reference: [...new Map(reference.map(item => [item.id, item])).values()] } }
     } else if (kind === 'prescription') catalogs = { medications: this.options.workflow.doctorRecommendationMedications(context) }
-    else catalogs = await this.options.investigationCatalogs(context, caseId, kind)
-    this.#authorize(context, caseId)
+    else if (kind === 'laboratory') {
+      const laboratory = this.options.workflow.caseLaboratoryCatalog(context, caseId, { page: 1, pageSize: 50 })
+      for (let page = 2; (page - 1) * laboratory.pageSize < laboratory.total; page += 1) {
+        laboratory.items.push(...this.options.workflow.caseLaboratoryCatalog(context, caseId, { page, pageSize: laboratory.pageSize }).items)
+      }
+      catalogs = { laboratory }
+    } else if (kind === 'imaging') catalogs = { imaging: this.options.workflow.imaging.serviceCatalog(context,
+      new Set(offerings.imaging?.items.filter(item => item.available).map(item => item.service.examCode))) }
+    else catalogs = { pathology: this.options.workflow.pathology.serviceCatalog(context,
+      new Set(offerings.pathology?.items.filter(item => item.available).map(item => item.service.examCode)),
+      new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures]))) }
+    if (Buffer.byteLength(JSON.stringify({ kind, caseEvidence, catalogs, guidelines })) > 240 * 1024) {
+      missingInformation.add('当前完整可见资料与目录超过建议模型的单次请求预算，需先明确本次诊疗资料范围。')
+    }
     const snapshot = { context, encounter: detail.encounter, kind, caseEvidence, catalogs, guidelines,
+      sourceHashes, missingInformation: [...missingInformation],
       guidelineRevision: doctorGuidelineRevision,
       ...(kind === 'diagnosis' ? { referenceRevision: this.options.referenceData.provenance() } : {}),
       prescriptionConcluded: detail.medicationConclusion?.prescription !== undefined || detail.medicationConclusion?.noMedication !== undefined }
+    return snapshot
+  }
+
+  async #input(context: ActorContext, caseId: string, kind: DoctorRecommendationKind) {
+    this.#authorize(context, caseId)
+    const offerings = kind === 'imaging' || kind === 'pathology' ? await this.options.investigationCatalogs(context, caseId, kind) : {}
+    const snapshot = this.#snapshot(context, caseId, kind, offerings)
     return { snapshot, inputFingerprint: canonicalJsonHash(snapshot) }
   }
 
@@ -153,6 +193,9 @@ export class DoctorRecommendationsService {
     }, transaction => {
       if (request.input.expectedInputFingerprint !== inputFingerprint) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed; read the current state')
+      }
+      if (canonicalJsonHash(this.#snapshot(context, caseId, kind, snapshot.catalogs)) !== inputFingerprint) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed before queuing')
       }
       const previous = this.#row(context, caseId, kind)
       if (!request.input.refresh && previous?.input_fingerprint === inputFingerprint && previous.status !== 'failed') {
@@ -198,13 +241,16 @@ export class DoctorRecommendationsService {
     }
     const pending = doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
     const current = () => this.#row(context, payload.caseId, payload.kind)?.generation === payload.generation
-    const finish = (state: DoctorRecommendationState) => {
+    const finish = (state: DoctorRecommendationState, offerings?: DoctorInvestigationRecommendationCatalogs) => {
       if (!current() || this.options.contextStatus(context) === 'superseded') return
       this.options.commands.execute({ context, operation: 'doctor.recommendations.complete', contextRequirement: 'known',
         expectedVersions: {}, idempotencyKey: `recommendations:${event.eventId}:${event.attempt}`, input: state,
         dataSchema: doctorRecommendationStateSchema,
       }, () => {
         if (!current()) return { data: state, effects: [] }
+        if (offerings !== undefined && canonicalJsonHash(this.#snapshot(context, payload.caseId, payload.kind, offerings)) !== row.input_fingerprint) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed before completion')
+        }
         this.options.database.driver.prepare(`UPDATE doctor_recommendation_state SET state_json = ?, status = ?, updated_at = ?
           WHERE workspace_id = ? AND epoch = ? AND actor_id = ? AND context_key = ? AND case_id = ? AND kind = ? AND generation = ?
         `).run(JSON.stringify(state), state.status, new Date().toISOString(), ...this.#key(context, payload.caseId, payload.kind), payload.generation)
@@ -215,9 +261,9 @@ export class DoctorRecommendationsService {
       const { snapshot, inputFingerprint } = await this.#input(context, payload.caseId, payload.kind)
       if (row.input_fingerprint !== inputFingerprint) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed')
       const base = { ...pending, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence }
-      if (snapshot.guidelines.length === 0 || (payload.kind === 'prescription' && snapshot.prescriptionConcluded)) {
-        finish({ ...base, status: 'missing-evidence', missingInformation: [snapshot.prescriptionConcluded
-          ? '本次就诊已有正式用药结论。' : '当前病例没有已取得的适用指南条款。'] })
+      if (snapshot.guidelines.length === 0 || snapshot.missingInformation.length > 0 || (payload.kind === 'prescription' && snapshot.prescriptionConcluded)) {
+        finish({ ...base, status: 'missing-evidence', missingInformation: snapshot.missingInformation.length > 0 ? snapshot.missingInformation
+          : [snapshot.prescriptionConcluded ? '本次就诊已有正式用药结论。' : '当前病例没有已取得的适用指南条款。'] }, snapshot.catalogs)
         return { status: 'completed' }
       }
       if (this.options.provider === undefined || this.options.model === undefined) {
@@ -282,7 +328,7 @@ export class DoctorRecommendationsService {
       const latest = await this.#input(context, payload.caseId, payload.kind)
       if (row.input_fingerprint !== latest.inputFingerprint) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed during generation')
       finish({ ...base, items, status: items.length === 0 ? 'missing-evidence' : 'ready',
-        missingInformation: [...output.missingInformation, ...(items.length < output.items.length ? ['部分候选未通过当前目录、指南与病例的独立核验。'] : [])].slice(0, 12) })
+        missingInformation: [...output.missingInformation, ...(items.length < output.items.length ? ['部分候选未通过当前目录、指南与病例的独立核验。'] : [])].slice(0, 12) }, latest.snapshot.catalogs)
       return { status: 'completed' }
     } catch (error) {
       if (!current() || this.options.contextStatus(context) === 'superseded') return { status: 'completed' }
