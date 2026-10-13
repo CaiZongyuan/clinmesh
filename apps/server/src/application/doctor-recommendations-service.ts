@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import {
   doctorCaseEvidenceSchema, doctorRecommendationGenerationSchema, doctorRecommendationKindSchema,
-  doctorRecommendationStateSchema, type DoctorCaseEvidence, type DoctorRecommendationKind, type DoctorRecommendationState,
+  doctorRecommendationStateSchema, type DoctorCaseEvidence, type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion,
   type GenerateDoctorRecommendationsRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -10,7 +10,7 @@ import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { WorkflowService } from './workflow-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { WorkflowError } from './workflow-error.ts'
-import { ChatCompletionsError, type JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
+import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
@@ -53,8 +53,33 @@ const generationPrompt = `你是医生的诊疗建议助手。仅依据给出的
 处方需要核对具体药品规格、单位和包装，疗程与数量分别需要依据，不得根据默认值或剂量自行猜测换算。
 只给建议，不确诊、不正式开立；没有适用依据时返回空items并明确missingInformation。`
 const verificationPrompt = `独立核对每条候选与实际提供的指南和病例。逐项判断指南支持、病例支持、适用性、否定和限定语是否保留。
+候选名称与诊断编码已按实际目录固定；selectedCatalogItems提供所选检查的真实编码、项目与授权手术来源，必须核对这一最终临床身份。
 引用存在不等于临床语义成立，未证实、条件缺失或冲突时返回false。必须恰好覆盖全部候选id。
 处方还必须分别核对doseText、frequencyCode、courseDays、quantity：仅使用指南、病例及medicationPresentations的真实品名、规格、剂型和包装；目录允许值与默认值不能证明临床依据，无法证实时返回false。`
+
+function assertRecommendationRequestBudget(input: JsonChatCompletionInput) {
+  const { model, schemaName, jsonSchema, systemPrompt, userPayload } = input
+  let envelopes: unknown[]
+  let repairBytes = 0
+  if (model.startsWith('dsh:')) {
+    envelopes = [{ operation: 'complete', model, schemaName, jsonSchema, systemPrompt, userPayload, timeoutMs: 600_000 }]
+    // These fixed schemas have short field paths; reserve the bounded DSH repair feedback as well.
+    repairBytes = 4 * 1024
+  } else {
+    const messages = [{ role: 'system', content: systemPrompt }, { role: 'user', content: JSON.stringify(userPayload) }]
+    const common = { model, temperature: 0, messages }
+    envelopes = [
+      { ...common, response_format: { type: 'json_schema', json_schema: { name: schemaName, schema: jsonSchema, strict: true } } },
+      { ...common, tool_choice: { type: 'function', function: { name: schemaName } }, tools: [{ type: 'function',
+        function: { name: schemaName, description: 'Return the validated structured result.', parameters: jsonSchema } }] },
+      { ...common, messages: [{ role: 'system', content: [systemPrompt,
+        'Return exactly one JSON object matching this JSON Schema:', JSON.stringify(jsonSchema)].join('\n') }, messages[1]] },
+    ]
+  }
+  if (envelopes.some(envelope => Buffer.byteLength(JSON.stringify(envelope)) + repairBytes > 256 * 1024)) {
+    throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'The complete recommendation request exceeds the transport budget')
+  }
+}
 
 export class DoctorRecommendationsService {
   constructor(private readonly options: {
@@ -247,6 +272,8 @@ export class DoctorRecommendationsService {
       throw new Error('Recommendation context does not match the durable event')
     }
     const pending = doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
+    let base = pending
+    let phase: 'generation' | 'verification' = 'generation'
     const current = () => this.#row(context, payload.caseId, payload.kind)?.generation === payload.generation
     const finish = (state: DoctorRecommendationState, offerings?: DoctorInvestigationRecommendationCatalogs) => {
       if (!current() || this.options.contextStatus(context) === 'superseded') return
@@ -267,7 +294,7 @@ export class DoctorRecommendationsService {
     try {
       const { snapshot, inputFingerprint } = await this.#input(context, payload.caseId, payload.kind)
       if (row.input_fingerprint !== inputFingerprint) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed')
-      const base = { ...pending, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence }
+      base = { ...pending, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence }
       const available = snapshot.catalogs.diagnoses === undefined ? snapshot.catalogs.medications?.length
         ?? snapshot.catalogs.laboratory?.items.length ?? snapshot.catalogs.imaging?.items.filter(item => item.available).length
         ?? snapshot.catalogs.pathology?.items.filter(item => item.available && item.sourceProcedures.length > 0).length ?? 0
@@ -295,45 +322,71 @@ export class DoctorRecommendationsService {
         doctorRecommendationStateSchema.parse({ ...base, ...output, status: 'ready' })
         return output
       }
-      const result = await this.options.provider.completeJson({ model, signal, schemaName: 'doctor_recommendations',
+      const generationRequest: JsonChatCompletionInput = { model, signal, schemaName: 'doctor_recommendations',
         systemPrompt: generationPrompt, jsonSchema: z.toJSONSchema(doctorRecommendationGenerationSchema) as Record<string, unknown>,
         userPayload: { kind: payload.kind, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence, catalogs: snapshot.catalogs },
         validate: value => { parseGeneration(value); return true },
-      })
+      }
+      assertRecommendationRequestBudget(generationRequest)
+      const result = await this.options.provider.completeJson(generationRequest)
       signal.throwIfAborted()
       const output = parseGeneration(JSON.parse(result.content))
       if (!current() || this.options.contextStatus(context) === 'superseded') return { status: 'completed' }
       this.#authorize(context, payload.caseId)
+      const candidates = output.items.flatMap<DoctorRecommendationSuggestion>(item => {
+        if (item.kind === 'diagnosis') {
+          const normalized = normalizeDoctorDiagnosisRecommendation(item, snapshot.catalogs.diagnoses!)
+          return normalized === undefined ? [] : [normalized]
+        }
+        if (item.kind === 'prescription') {
+          const medication = snapshot.catalogs.medications!.find(medication => medication.id === item.catalogItemId)
+          return medication === undefined ? [] : [{ ...item, label: medication.nameZh }]
+        }
+        const normalized = normalizeInvestigationRecommendation(item, snapshot.catalogs)
+        return normalized === undefined ? [] : [normalized]
+      })
+      const selectedCatalogItems = {
+        ...(snapshot.catalogs.laboratory === undefined ? {} : { laboratory: snapshot.catalogs.laboratory.items
+          .filter(entry => candidates.some(item => item.kind === 'laboratory' && item.catalogItemId === entry.id))
+          .map(({ id, localCode, nameZh, version, referenceConcept, reportDefinition }) => ({ id, localCode, nameZh, version, referenceConcept, reportDefinition })) }),
+        ...(snapshot.catalogs.imaging === undefined ? {} : { imaging: snapshot.catalogs.imaging.items
+          .filter(entry => candidates.some(item => item.kind === 'imaging' && item.serviceId === entry.service.id)).map(entry => entry.service) }),
+        ...(snapshot.catalogs.pathology === undefined ? {} : { pathology: snapshot.catalogs.pathology.items
+          .filter(entry => candidates.some(item => item.kind === 'pathology' && item.serviceId === entry.service.id))
+          .map(entry => ({ service: entry.service, sourceProcedures: entry.sourceProcedures.filter(procedure => candidates.some(item =>
+            item.kind === 'pathology' && item.serviceId === entry.service.id && item.sourceProcedureReference === procedure.sourceReference)) })) }),
+      }
       const parseVerification = (value: unknown) => {
         const verification = verificationSchema.parse(value)
         const ids = new Set(verification.items.map(item => item.id))
-        if (ids.size !== output.items.length || verification.items.length !== output.items.length
-          || output.items.some(item => !ids.has(item.id))
+        if (ids.size !== candidates.length || verification.items.length !== candidates.length
+          || candidates.some(item => !ids.has(item.id))
           || (payload.kind === 'prescription' && verification.items.some(item => item.prescriptionFields === undefined))) {
           throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'Independent verification must cover every candidate and prescription field')
         }
         return verification
       }
       let verified: z.infer<typeof verificationSchema> = { items: [] }
-      if (output.items.length > 0) {
-        const verification = await this.options.provider.completeJson({
+      if (candidates.length > 0) {
+        phase = 'verification'
+        const verificationRequest: JsonChatCompletionInput = {
           model, signal, schemaName: 'doctor_recommendation_verification', systemPrompt: verificationPrompt,
           jsonSchema: z.toJSONSchema(verificationSchema) as Record<string, unknown>,
-          userPayload: { kind: payload.kind, items: output.items, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence,
-            ...(payload.kind === 'prescription' ? { medicationPresentations: snapshot.catalogs.medications?.map(({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification }) =>
+          userPayload: { kind: payload.kind, items: candidates, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence,
+            ...(Object.keys(selectedCatalogItems).length === 0 ? {} : { selectedCatalogItems }),
+            ...(payload.kind === 'prescription' ? { medicationPresentations: snapshot.catalogs.medications?.filter(medication =>
+              candidates.some(item => item.kind === 'prescription' && item.catalogItemId === medication.id)).map(({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification }) =>
               ({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification })) } : {}) },
           validate: value => { parseVerification(value); return true },
-        })
+        }
+        assertRecommendationRequestBudget(verificationRequest)
+        const verification = await this.options.provider.completeJson(verificationRequest)
         verified = parseVerification(JSON.parse(verification.content))
       }
       signal.throwIfAborted()
-      const items = output.items.flatMap(item => {
+      const items = candidates.flatMap<DoctorRecommendationSuggestion>(item => {
         const check = verified.items.find(candidate => candidate.id === item.id)!
         if (!check.guidelineSupported || !check.caseSupported || !check.applicable || !check.qualifiersPreserved) return []
-        if (item.kind === 'diagnosis') {
-          const normalized = normalizeDoctorDiagnosisRecommendation(item, snapshot.catalogs.diagnoses!)
-          return normalized === undefined ? [] : [normalized]
-        }
         if (item.kind === 'prescription') {
           const missingInformation = [...item.missingInformation]
           const medication = snapshot.catalogs.medications!.find(medication => medication.id === item.catalogItemId)
@@ -345,11 +398,10 @@ export class DoctorRecommendationsService {
               missingInformation.push(`处方${{ doseText: '剂量', frequencyCode: '频次', courseDays: '疗程', quantity: '数量' }[field]}缺少指南、病例或药品规格依据。`)
             }
           }
-          const normalized = normalizePrescriptionRecommendation({ ...item, ...fields, missingInformation: [...new Set(missingInformation)].slice(0, 12) }, snapshot.catalogs.medications!)
-          return normalized === undefined ? [] : [normalized]
+          const prescription = { ...item, ...fields, missingInformation: [...new Set(missingInformation)].slice(0, 12) }
+          return normalizePrescriptionRecommendation(prescription, snapshot.catalogs.medications!) === undefined ? [] : [prescription]
         }
-        const normalized = normalizeInvestigationRecommendation(item, snapshot.catalogs)
-        return normalized === undefined ? [] : [normalized]
+        return [item]
       })
       const latest = await this.#input(context, payload.caseId, payload.kind)
       if (row.input_fingerprint !== latest.inputFingerprint) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed during generation')
@@ -360,6 +412,13 @@ export class DoctorRecommendationsService {
     } catch (error) {
       if (!current() || this.options.contextStatus(context) === 'superseded') return { status: 'completed' }
       if (shutdownSignal.aborted && event.attempt < 3) return { status: 'retryable-failed' }
+      if (error instanceof ChatCompletionsError && (error.code === 'AI_REQUEST_TOO_LARGE' || error.code === 'AI_RESPONSE_TOO_LARGE')) {
+        const operation = phase === 'verification' ? '独立核验' : '诊疗建议生成'
+        const boundary = error.code === 'AI_REQUEST_TOO_LARGE' ? '请求' : '响应'
+        finish({ ...base, status: 'missing-evidence', items: [],
+          missingInformation: [`当前完整资料或候选结果超过${operation}${boundary}预算，无法形成可采纳建议。`] })
+        return { status: 'completed' }
+      }
       const retrying = error instanceof ChatCompletionsError && error.code === 'AI_REQUEST_FAILED'
         && event.attempt < 3 && this.options.contextStatus(context) === 'active'
       if (!retrying) finish({ ...pending, status: 'failed', errorCode:

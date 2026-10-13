@@ -144,6 +144,90 @@ function prescriptionOutput(input: Parameters<JsonChatCompletionsProvider['compl
   }] }
 }
 
+it('verifies the actual diagnosis identity before accepting an opaque catalog ID with a fabricated label', async () => {
+  const received: Array<{ label: string; code?: string }> = []
+  const schemas: string[] = []
+  const fixture = await setup(async input => {
+    schemas.push(input.schemaName)
+    if (input.schemaName === 'doctor_recommendations') {
+      const output = diagnosisOutput(input)
+      return { content: JSON.stringify({ ...output, items: [{ ...output.items[0],
+        catalogItemId: 'opaque-diagnosis-27', label: '高血压',
+      }] }), model: input.model }
+    }
+    const payload = z.object({ items: z.array(z.object({ id: z.string(), label: z.string(),
+      referenceConcept: z.object({ code: z.string() }).optional() })) }).parse(input.userPayload)
+    received.push(...payload.items.map(item => ({ label: item.label, ...(item.referenceConcept === undefined ? {} : { code: item.referenceConcept.code }) })))
+    return { content: JSON.stringify({ items: payload.items.map(item => ({ id: item.id,
+      guidelineSupported: item.label === '高血压', caseSupported: item.label === '高血压',
+      applicable: item.referenceConcept?.code !== 'R50.9', qualifiersPreserved: true,
+    })) }), model: input.model }
+  })
+  fixture.runtime.database.driver.prepare(`UPDATE diagnosis_catalog SET item_id = 'opaque-diagnosis-27'
+    WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND code = 'R50.9'
+  `).run()
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject({ status: 'missing-evidence', items: [] })
+  expect(received).toEqual([{ label: '发热，未特指', code: 'R50.9' }])
+  expect(schemas).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+  expect(await fixture.readCase()).toEqual(before)
+})
+
+it('reports the verification request budget when a valid eight-candidate output exceeds the transport envelope', async () => {
+  const calls: string[] = []
+  let generationPayloadBytes = 0
+  let outputBytes = 0
+  let verificationPayloadBytes = 0
+  const fixture = await setup(async input => {
+    calls.push(input.schemaName)
+    if (input.schemaName === 'doctor_recommendation_verification') return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    generationPayloadBytes = Buffer.byteLength(JSON.stringify(input.userPayload))
+    const candidate = diagnosisOutput(input).items[0]!
+    const detail = '待'.repeat(2000)
+    const output = { items: Array.from({ length: 8 }, (_, index) => ({ ...candidate, id: `candidate-${index}`,
+      rationale: detail, supportingInformation: [detail], opposingInformation: [detail], missingInformation: [detail] })), missingInformation: [] }
+    outputBytes = Buffer.byteLength(JSON.stringify(output))
+    const payload = z.object({ kind: z.string(), guidelines: z.unknown(), caseEvidence: z.unknown() }).parse(input.userPayload)
+    verificationPayloadBytes = Buffer.byteLength(JSON.stringify({ ...payload, items: output.items }))
+    return { content: JSON.stringify(output), model: input.model }
+  })
+  const field = '合'.repeat(4000)
+  expect((await fixture.saveDocument({ assessment: field, auxiliaryExamination: field, chiefComplaint: '合'.repeat(1000),
+    disposition: field, followUp: field, historyOfPresentIllness: '合'.repeat(5000), physicalExamination: field, priorMedicalHistory: field })).status).toBe(200)
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(generationPayloadBytes).toBeGreaterThan(90 * 1024)
+  expect(generationPayloadBytes).toBeLessThan(240 * 1024)
+  expect(outputBytes).toBeGreaterThan(190 * 1024)
+  expect(outputBytes).toBeLessThan(256 * 1024)
+  expect(verificationPayloadBytes).toBeGreaterThan(256 * 1024)
+  expect(await fixture.read()).toMatchObject({ status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('核验请求预算')] })
+  expect((await fixture.read()).errorCode).toBeUndefined()
+  expect(calls).toEqual(['doctor_recommendations'])
+  expect(await fixture.readCase()).toEqual(before)
+})
+
+it('reports a generation response budget when valid candidates exceed the provider response limit', async () => {
+  const calls: string[] = []
+  const fixture = await setup(async input => {
+    calls.push(input.schemaName)
+    const candidate = diagnosisOutput(input).items[0]!
+    const detail = '待'.repeat(2000)
+    const output = { items: Array.from({ length: 8 }, (_, index) => ({ ...candidate, id: `oversized-candidate-${index}`,
+      rationale: detail, supportingInformation: [detail, detail], opposingInformation: [detail, detail], missingInformation: [detail, detail] })), missingInformation: [] }
+    expect(Buffer.byteLength(JSON.stringify(output))).toBeGreaterThan(256 * 1024)
+    return { content: JSON.stringify(output), model: input.model }
+  })
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject({ status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('生成响应预算')] })
+  expect((await fixture.read()).errorCode).toBeUndefined()
+  expect(calls).toEqual(['doctor_recommendations'])
+})
+
 function syntheticLaboratory(id: string) {
   const referenceConcept = { id: `reference:${id}`, code: 'SYN-LAB', display: '合成生化指标',
     system: 'urn:synthetic:laboratory', version: '1', sourceLocator: 'synthetic:test:recommendations' }
@@ -159,8 +243,12 @@ function syntheticLaboratory(id: string) {
 }
 
 it('maps a laboratory suggestion to the full current hospital catalog beyond its first public page', async () => {
+  let verificationPayload: unknown
   const fixture = await setup(async input => {
-    if (input.schemaName === 'doctor_recommendation_verification') return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    if (input.schemaName === 'doctor_recommendation_verification') {
+      verificationPayload = input.userPayload
+      return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    }
     const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() })) }) }).strict() }).parse(input.userPayload)
     expect(payload.catalogs.laboratory.items).toHaveLength(60)
     const output = diagnosisOutput(input)
@@ -180,14 +268,21 @@ it('maps a laboratory suggestion to the full current hospital catalog beyond its
   expect(await fixture.read('laboratory')).toMatchObject({ status: 'ready', items: [{
     kind: 'laboratory', catalogItemId: 'lab-59', label: '合成检验 lab-59', indicationCode: 'clinical-evaluation',
   }] })
+  expect(verificationPayload).toMatchObject({ items: [{ catalogItemId: 'lab-59', label: '合成检验 lab-59' }],
+    selectedCatalogItems: { laboratory: [{ id: 'lab-59', localCode: 'lab-59', referenceConcept: { code: 'SYN-LAB' },
+      reportDefinition: { results: [{ referenceConcept: { code: 'SYN-LAB' }, unit: { code: 'mg/L' } }] } }] } })
   expect(await fixture.readCase()).toEqual(before)
 })
 
 it('uses installed imaging metadata and invalidates a suggestion when its actual offering disappears', async () => {
   let requests = 0
+  let verificationPayload: unknown
   const fixture = await setup(async input => {
     requests += 1
-    if (input.schemaName === 'doctor_recommendation_verification') return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    if (input.schemaName === 'doctor_recommendation_verification') {
+      verificationPayload = input.userPayload
+      return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    }
     const payload = z.object({ catalogs: z.object({ imaging: z.object({ items: z.array(z.object({ available: z.boolean(),
       service: z.object({ id: z.string() }) })) }) }).strict() }).parse(input.userPayload)
     expect(payload.catalogs.imaging.items.find(item => item.service.id === 'imaging-chest-ct-plain')?.available).toBe(true)
@@ -201,6 +296,8 @@ it('uses installed imaging metadata and invalidates a suggestion when its actual
   expect((await fixture.generate('imaging')).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect(await fixture.read('imaging')).toMatchObject({ status: 'ready', items: [{ kind: 'imaging', serviceId: 'imaging-chest-ct-plain' }] })
+  expect(verificationPayload).toMatchObject({ items: [{ label: '胸部 CT 平扫', serviceId: 'imaging-chest-ct-plain' }],
+    selectedCatalogItems: { imaging: [{ id: 'imaging-chest-ct-plain', code: 'CT-CHEST-PLAIN', method: '平扫（不使用造影剂）' }] } })
   await rm(join(fixture.directory, 'imaging-assets', 'installed', 'synthetic-ct'), { force: true, recursive: true })
   expect((await fixture.read('imaging')).stale).toBe(true)
   expect((await fixture.generate('imaging')).status).toBe(200)
@@ -211,6 +308,7 @@ it('uses installed imaging metadata and invalidates a suggestion when its actual
 })
 
 it.each([false, true])('maps pathology only to an offered service and its authorized visible source procedure (fabricated: %s)', async fabricated => {
+  let verificationPayload: unknown
   const syntheaProvider = new class extends StubSyntheaProvider {
     override async generate() {
       const corpus = await super.generate()
@@ -219,7 +317,10 @@ it.each([false, true])('maps pathology only to an offered service and its author
     }
   }()
   const fixture = await setup(async input => {
-    if (input.schemaName === 'doctor_recommendation_verification') return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    if (input.schemaName === 'doctor_recommendation_verification') {
+      verificationPayload = input.userPayload
+      return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    }
     const payload = z.object({ guidelines: z.array(z.object({ id: z.string() })),
       caseEvidence: z.array(z.object({ id: z.string(), text: z.string() })),
       catalogs: z.object({ pathology: z.object({ items: z.array(z.object({ available: z.boolean(), service: z.object({ id: z.string() }),
@@ -242,6 +343,10 @@ it.each([false, true])('maps pathology only to an offered service and its author
   await fixture.runtime.dispatchPending()
   expect(await fixture.read('pathology')).toMatchObject(fabricated ? { status: 'missing-evidence', items: [] }
     : { status: 'ready', items: [{ kind: 'pathology', serviceId: 'pathology-breast-slide-consultation', sourceProcedureReference: 'urn:uuid:procedure-0' }] })
+  if (fabricated) expect(verificationPayload).toBeUndefined()
+  else expect(verificationPayload).toMatchObject({ items: [{ label: '乳腺切片病理会诊', sourceProcedureReference: 'urn:uuid:procedure-0' }],
+    selectedCatalogItems: { pathology: [{ service: { code: 'PATH-BREAST-SLIDE-CONSULT' },
+      sourceProcedures: [{ sourceReference: 'urn:uuid:procedure-0', code: '392021009', display: '乳房肿块切除术' }] }] } })
   expect(await fixture.readCase()).toEqual(before)
 })
 
@@ -297,6 +402,7 @@ it('uses actual installed product specifications and leaves unsupported prescrip
     product: z.object({ strength: z.string(), dosageForm: z.string(), packageDescription: z.string() }).optional() })) }).parse(inputs[1]!.userPayload)
   expect(payload.medicationPresentations.find(item => item.id === 'medication-amlodipine')?.product)
     .toMatchObject({ strength: '5 mg', dosageForm: '片剂', packageDescription: '30片/盒' })
+  expect(inputs[1]!.userPayload).toMatchObject({ items: [{ catalogItemId: 'medication-amlodipine', label: '苯磺酸氨氯地平片' }] })
   expect(JSON.stringify(inputs[1]!.userPayload)).not.toMatch(/allowedDoseTexts|allowedCourseDays|defaultQuantity|defaultDoseText/)
   expect(inputs.map(input => input.schemaName)).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
   expect(await fixture.readCase()).toEqual(before)
