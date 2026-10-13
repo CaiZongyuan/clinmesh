@@ -170,17 +170,20 @@ describe('doctor recommendation panel current version checks', () => {
     }
   })
 
-  it('keeps a ready result when its delayed generation response still reports the same generation as pending', async () => {
+  it.each(['ready', 'missing-evidence', 'failed'] as const)('keeps a %s result when its delayed generation response still reports the same generation as pending', async status => {
     const post = deferredResponse()
     const readAfterPost = deferredResponse()
     const initial = state()
-    const ready = state({ generation: 2, items: [{ ...initial.items[0]!, rationale: '第二轮已经完成，等待医生核对。' }] })
+    const completed = state({ generation: 2, status,
+      items: status === 'ready' ? [{ ...initial.items[0]!, rationale: '第二轮已经完成，等待医生核对。' }] : [],
+      missingInformation: ['第二轮已核对，保留当前完成说明。'],
+    })
     let reads = 0
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') return post.response
       reads++
       if (reads === 1) return Response.json(initial)
-      if (reads === 2) return Response.json(ready)
+      if (reads === 2) return Response.json(completed)
       return readAfterPost.response
     }))
     const mounted = mount(props())
@@ -188,17 +191,18 @@ describe('doctor recommendation panel current version checks', () => {
     await userEvent.setup().click(screen.getByRole('button', { name: '刷新建议' }))
     await screen.findByText('正在生成建议…')
     await act(async () => { await mounted.client.refetchQueries({ type: 'active' }) })
-    await screen.findByText('第二轮已经完成，等待医生核对。')
+    await screen.findByText('第二轮已核对，保留当前完成说明。')
     await act(async () => {
       post.complete(Response.json({ data: state({ generation: 2, status: 'pending', items: [] }),
         auditId: 'audit-pending', effects: [], requestId: 'request-pending', warnings: [] }))
     })
     await waitFor(() => expect(reads).toBe(3))
     try {
-      expect(screen.getByText('第二轮已经完成，等待医生核对。')).toBeTruthy()
+      expect(screen.getByText('第二轮已核对，保留当前完成说明。')).toBeTruthy()
       expect(screen.queryByText('正在生成建议…')).toBeNull()
+      expect(screen.getByRole('button', { name: '刷新建议' }).hasAttribute('disabled')).toBe(false)
     } finally {
-      await act(async () => { readAfterPost.complete(Response.json(ready)) })
+      await act(async () => { readAfterPost.complete(Response.json(completed)) })
     }
   })
 

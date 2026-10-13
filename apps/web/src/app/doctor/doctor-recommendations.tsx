@@ -34,7 +34,7 @@ function newerGeneration(current: DoctorRecommendationState | undefined, incomin
   if (current !== undefined && current.generation > incoming.generation) return current
   // POST 的 pending 回执可能晚于同轮完成结果。
   if (current?.generation === incoming.generation && current.inputFingerprint === incoming.inputFingerprint
-    && current.status === 'ready' && incoming.status === 'pending' && !incoming.stale) return current
+    && ['ready', 'missing-evidence', 'failed'].includes(current.status) && incoming.status === 'pending' && !incoming.stale) return current
   return incoming
 }
 
