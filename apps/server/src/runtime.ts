@@ -409,7 +409,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
       investigationCatalogs: async (context, caseId, kind) => {
-        if (kind === 'laboratory') return { laboratory: workflow.caseLaboratoryCatalog(context, caseId, { page: 1, pageSize: 50 }) }
         if (kind === 'imaging') return { imaging: workflow.imaging.serviceCatalog(context, await imagingLibrary.readyExamCodes()) }
         const offering = await pathologyPreparation.offering(context, { outpatientCaseId: caseId })
         return { pathology: workflow.pathology.serviceCatalog(context, offering.readyExamCodes, offering.sourceProcedures) }

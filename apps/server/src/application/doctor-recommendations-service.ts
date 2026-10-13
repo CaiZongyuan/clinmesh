@@ -41,9 +41,14 @@ type Catalogs = DoctorInvestigationRecommendationCatalogs & {
   diagnoses?: { local: ClinicalCatalog['diagnoses']; reference: ReferenceConcept[] }
   medications?: ReturnType<WorkflowService['doctorRecommendationMedications']>
 }
+const documentFieldLabels: Record<string, string> = {
+  assessment: '诊断分析', auxiliaryExamination: '辅助检查', chiefComplaint: '主诉', disposition: '处理意见',
+  followUp: '随访计划', historyOfPresentIllness: '现病史', physicalExamination: '体格检查', priorMedicalHistory: '既往史',
+}
 
 const generationPrompt = `你是医生的诊疗建议助手。仅依据给出的指南条款、当前医生可见病例和本院目录生成当前kind的候选，最多8条。
 每条必须引用实际guidelines与caseEvidence的id，说明支持、不符合和待核实信息，保留来源中的否定、条件、时间与不确定性。
+未记录不代表阴性，医生的提问不是患者已经确认的自述。
 目录仅定义可选项目与允许值，default和allowed字段不是临床依据。不能用模型记忆补齐指南、事实或处方字段；无依据的处方字段必须为null。
 处方需要核对具体药品规格、单位和包装，疗程与数量分别需要依据，不得根据默认值或剂量自行猜测换算。
 只给建议，不确诊、不正式开立；没有适用依据时返回空items并明确missingInformation。`
@@ -71,9 +76,13 @@ export class DoctorRecommendationsService {
     const caseEvidence: DoctorCaseEvidence[] = []
     const sourceHashes: string[] = []
     const missingInformation = new Set<string>()
+    const applicableGroups = new Set<(typeof doctorGuidelineGroups)[number]>()
     const add = (id: string, sourceKind: DoctorCaseEvidence['kind'], label: string, content: unknown, reference?: string) => {
       if (content === undefined || content === null || content === '') return
       const text = typeof content === 'string' ? content : JSON.stringify(content)
+      for (const group of doctorGuidelineGroups) {
+        if (group.terms.some(term => text.toLowerCase().includes(term.toLowerCase()))) applicableGroups.add(group)
+      }
       sourceHashes.push(canonicalJsonHash({ id, text }))
       if (text.length > 12_000 && typeof content === 'object') {
         for (const [field, value] of Object.entries(content)) add(`${id}:${field}`, sourceKind, `${label} / ${field}`, value, reference)
@@ -96,7 +105,7 @@ export class DoctorRecommendationsService {
     if (detail.clinicalDocument?.draft !== undefined) {
       const { version, updatedAt, ...fields } = detail.clinicalDocument.draft
       for (const [field, text] of Object.entries(fields)) add(`clinical-document:draft:${field}`, 'draft',
-        `当前病历草稿 v${version} / ${field} / ${updatedAt}`, text, `Encounter/${detail.encounter.id}`)
+        `当前病历草稿 v${version} / ${documentFieldLabels[field] ?? field} / ${updatedAt}`, text, `Encounter/${detail.encounter.id}`)
     }
     for (const signed of detail.clinicalDocument?.signed ?? []) add(`clinical-document:signed:${signed.compositionId}`, 'draft', '已签病历', signed, `Composition/${signed.compositionId}`)
     for (const [field, draft] of Object.entries(detail.drafts ?? {})) add(`legacy-draft:${field}`, 'draft', `当前诊疗草稿 / ${field}`, draft)
@@ -115,8 +124,7 @@ export class DoctorRecommendationsService {
         if (page * history.pageSize >= history.total) break
       }
     }
-    const text = JSON.stringify(caseEvidence).toLowerCase()
-    const groups = doctorGuidelineGroups.filter(group => group.terms.some(term => text.includes(term.toLowerCase())))
+    const groups = doctorGuidelineGroups.filter(group => applicableGroups.has(group))
     const guidelines = groups.flatMap(group => group.evidence)
     let catalogs: Catalogs
     if (kind === 'diagnosis') {
@@ -138,12 +146,11 @@ export class DoctorRecommendationsService {
     if (Buffer.byteLength(JSON.stringify({ kind, caseEvidence, catalogs, guidelines })) > 240 * 1024) {
       missingInformation.add('当前完整可见资料与目录超过建议模型的单次请求预算，需先明确本次诊疗资料范围。')
     }
-    const snapshot = { context, encounter: detail.encounter, kind, caseEvidence, catalogs, guidelines,
+    return { context, encounter: detail.encounter, kind, caseEvidence, catalogs, guidelines,
       sourceHashes, missingInformation: [...missingInformation],
       guidelineRevision: doctorGuidelineRevision,
       ...(kind === 'diagnosis' ? { referenceRevision: this.options.referenceData.provenance() } : {}),
       prescriptionConcluded: detail.medicationConclusion?.prescription !== undefined || detail.medicationConclusion?.noMedication !== undefined }
-    return snapshot
   }
 
   async #input(context: ActorContext, caseId: string, kind: DoctorRecommendationKind) {
@@ -261,9 +268,17 @@ export class DoctorRecommendationsService {
       const { snapshot, inputFingerprint } = await this.#input(context, payload.caseId, payload.kind)
       if (row.input_fingerprint !== inputFingerprint) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed')
       const base = { ...pending, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence }
-      if (snapshot.guidelines.length === 0 || snapshot.missingInformation.length > 0 || (payload.kind === 'prescription' && snapshot.prescriptionConcluded)) {
-        finish({ ...base, status: 'missing-evidence', missingInformation: snapshot.missingInformation.length > 0 ? snapshot.missingInformation
-          : [snapshot.prescriptionConcluded ? '本次就诊已有正式用药结论。' : '当前病例没有已取得的适用指南条款。'] }, snapshot.catalogs)
+      const available = snapshot.catalogs.diagnoses === undefined ? snapshot.catalogs.medications?.length
+        ?? snapshot.catalogs.laboratory?.items.length ?? snapshot.catalogs.imaging?.items.filter(item => item.available).length
+        ?? snapshot.catalogs.pathology?.items.filter(item => item.available && item.sourceProcedures.length > 0).length ?? 0
+        : snapshot.catalogs.diagnoses.local.length + snapshot.catalogs.diagnoses.reference.length
+      const missing = [...snapshot.missingInformation,
+        ...(snapshot.guidelines.length === 0 ? ['当前病例没有已取得的适用指南条款。'] : []),
+        ...(available === 0 ? [`当前病例没有可选的本院${{ laboratory: '检验', imaging: '影像', pathology: '病理会诊', diagnosis: '诊断', prescription: '药品' }[payload.kind]}目录项目。`] : []),
+        ...(payload.kind === 'prescription' && snapshot.prescriptionConcluded ? ['本次就诊已有正式用药结论。'] : []),
+      ]
+      if (missing.length > 0) {
+        finish({ ...base, status: 'missing-evidence', missingInformation: missing.slice(0, 12) }, snapshot.catalogs)
         return { status: 'completed' }
       }
       if (this.options.provider === undefined || this.options.model === undefined) {
@@ -272,6 +287,9 @@ export class DoctorRecommendationsService {
       }
       const model = await this.options.models.bind(context.workspaceId,
         `recommendations:${context.epoch}:${payload.contextKey}:${payload.caseId}:${payload.kind}:${payload.generation}`, this.options.model, signal)
+      if (canonicalJsonHash(this.#snapshot(context, payload.caseId, payload.kind, snapshot.catalogs)) !== row.input_fingerprint) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed during model selection')
+      }
       const parseGeneration = (value: unknown) => {
         const output = doctorRecommendationGenerationSchema.parse(value)
         doctorRecommendationStateSchema.parse({ ...base, ...output, status: 'ready' })
@@ -284,6 +302,8 @@ export class DoctorRecommendationsService {
       })
       signal.throwIfAborted()
       const output = parseGeneration(JSON.parse(result.content))
+      if (!current() || this.options.contextStatus(context) === 'superseded') return { status: 'completed' }
+      this.#authorize(context, payload.caseId)
       const parseVerification = (value: unknown) => {
         const verification = verificationSchema.parse(value)
         const ids = new Set(verification.items.map(item => item.id))
@@ -294,14 +314,18 @@ export class DoctorRecommendationsService {
         }
         return verification
       }
-      const verified = output.items.length === 0 ? { items: [] } : parseVerification(JSON.parse((await this.options.provider.completeJson({
-        model, signal, schemaName: 'doctor_recommendation_verification', systemPrompt: verificationPrompt,
-        jsonSchema: z.toJSONSchema(verificationSchema) as Record<string, unknown>,
-        userPayload: { kind: payload.kind, items: output.items, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence,
-          ...(payload.kind === 'prescription' ? { medicationPresentations: snapshot.catalogs.medications?.map(({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification }) =>
-            ({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification })) } : {}) },
-        validate: value => { parseVerification(value); return true },
-      })).content))
+      let verified: z.infer<typeof verificationSchema> = { items: [] }
+      if (output.items.length > 0) {
+        const verification = await this.options.provider.completeJson({
+          model, signal, schemaName: 'doctor_recommendation_verification', systemPrompt: verificationPrompt,
+          jsonSchema: z.toJSONSchema(verificationSchema) as Record<string, unknown>,
+          userPayload: { kind: payload.kind, items: output.items, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence,
+            ...(payload.kind === 'prescription' ? { medicationPresentations: snapshot.catalogs.medications?.map(({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification }) =>
+              ({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification })) } : {}) },
+          validate: value => { parseVerification(value); return true },
+        })
+        verified = parseVerification(JSON.parse(verification.content))
+      }
       signal.throwIfAborted()
       const items = output.items.flatMap(item => {
         const check = verified.items.find(candidate => candidate.id === item.id)!
@@ -312,9 +336,11 @@ export class DoctorRecommendationsService {
         }
         if (item.kind === 'prescription') {
           const missingInformation = [...item.missingInformation]
+          const medication = snapshot.catalogs.medications!.find(medication => medication.id === item.catalogItemId)
           const fields = { doseText: item.doseText, frequencyCode: item.frequencyCode, courseDays: item.courseDays, quantity: item.quantity }
           for (const field of ['doseText', 'frequencyCode', 'courseDays', 'quantity'] as const) {
-            if (!check.prescriptionFields![field]) {
+            if (!check.prescriptionFields![field] || ((field === 'doseText' || field === 'quantity')
+              && (medication?.product === undefined || medication.regulatoryVerification === undefined))) {
               fields[field] = null
               missingInformation.push(`处方${{ doseText: '剂量', frequencyCode: '频次', courseDays: '疗程', quantity: '数量' }[field]}缺少指南、病例或药品规格依据。`)
             }
@@ -328,7 +354,8 @@ export class DoctorRecommendationsService {
       const latest = await this.#input(context, payload.caseId, payload.kind)
       if (row.input_fingerprint !== latest.inputFingerprint) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed during generation')
       finish({ ...base, items, status: items.length === 0 ? 'missing-evidence' : 'ready',
-        missingInformation: [...output.missingInformation, ...(items.length < output.items.length ? ['部分候选未通过当前目录、指南与病例的独立核验。'] : [])].slice(0, 12) }, latest.snapshot.catalogs)
+        missingInformation: [...output.missingInformation, ...(items.length < output.items.length ? ['部分候选未通过当前目录、指南与病例的独立核验。']
+          : items.length === 0 && output.missingInformation.length === 0 ? ['当前指南与病例不足以形成可采纳建议。'] : [])].slice(0, 12) }, latest.snapshot.catalogs)
       return { status: 'completed' }
     } catch (error) {
       if (!current() || this.options.contextStatus(context) === 'superseded') return { status: 'completed' }
