@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
+import type { DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -122,8 +123,87 @@ function Page({ active = true, canCorrect = false, editDraft = false, onChanged,
 
 const services = { items: [{ available: true, service, sourceProcedures: [lumpectomy, excision] }] }
 
+function recommendations(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
+  return {
+    caseId: 'case-1', kind: 'pathology', encounterId: 'encounter-1', encounterVersion: '3',
+    inputFingerprint: 'a'.repeat(64), status: 'ready', generation: 1, missingInformation: [], stale: false,
+    guidelines: [{ id: 'synthetic-guideline', title: '合成病理会诊指南', publisher: '合成发布机构',
+      documentType: 'official-protocol', version: '1', url: 'https://example.test/synthetic-guideline',
+      locator: '检查章节', scope: '合成既往乳腺手术病例', text: '结合已有手术资料核对会诊目的。', sourceHash: 'b'.repeat(64) }],
+    caseEvidence: [{ id: 'synthetic-case-evidence', kind: 'history', label: '可见既往手术', text: '合成乳腺病灶切除术' }],
+    items: [{
+      id: 'synthetic-pathology-suggestion', kind: 'pathology', label: service.name,
+      serviceId: service.id, sourceProcedureReference: excision.sourceReference,
+      purpose: '复核既往病灶切除的切片。', rationale: '依据当前可见手术资料核对病理会诊。',
+      supportingInformation: ['可见既往乳腺手术'], opposingInformation: [], missingInformation: [],
+      guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-evidence'],
+    }],
+    ...overrides,
+  }
+}
+
 describe('doctor pathology consultation page', () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('adopts the recommended authorized source procedure into an editable draft without issuing it', async () => {
+    const calls = stubFetch(({ path }) => Response.json(path.endsWith('/pathology-services') ? services : recommendations()))
+    renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 0, requests: [request({ report })] }} />)
+
+    expect(await screen.findByText('依据当前可见手术资料核对病理会诊。')).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: /采纳/ }))
+    const editor = within(await screen.findByRole('dialog', { name: '追加申请' }))
+    expect(editor.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(excision.display)
+    expect((editor.getByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('复核既往病灶切除的切片。')
+    expect(calls.every(call => call.method === 'GET')).toBe(true)
+  })
+
+  it('keeps saved and unsaved procedure and purpose when recommendations refresh', async () => {
+    let current = recommendations()
+    const calls = stubFetch(({ method, path }) => {
+      if (path.endsWith('/pathology-services')) return Response.json(services)
+      if (method === 'POST' && path.endsWith('/actions/generate')) {
+        current = recommendations({ generation: 2, items: [{ ...current.items[0]!, rationale: '新的病理会诊建议。' }] })
+        return Response.json(commandResponse(current))
+      }
+      return Response.json(current)
+    })
+    renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 1, requests: [],
+      draft: { service, sourceProcedure: lumpectomy, purpose: '医生已保存的会诊目的。' },
+    }} />)
+    const user = userEvent.setup()
+    const purpose = await screen.findByLabelText('会诊目的')
+    await user.type(purpose, '追加未保存的核对内容。')
+    expect((await screen.findByRole('button', { name: /采纳/ })).hasAttribute('disabled')).toBe(true)
+    await user.click(screen.getByRole('button', { name: '刷新建议' }))
+    expect(await screen.findByText('新的病理会诊建议。')).toBeTruthy()
+    expect((purpose as HTMLTextAreaElement).value).toBe('医生已保存的会诊目的。追加未保存的核对内容。')
+    expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
+    expect(screen.getByRole('button', { name: /采纳/ }).hasAttribute('disabled')).toBe(true)
+    expect(calls.filter(call => call.method !== 'GET').map(call => call.path))
+      .toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/pathology/actions/generate'])
+  })
+
+  it.each(['unavailable-service', 'unauthorized-procedure'] as const)('cannot adopt a suggestion with an %s target', async reason => {
+    const state = recommendations()
+    const catalog = { items: services.items.map(item => ({ ...item, available: reason !== 'unavailable-service',
+      sourceProcedures: reason === 'unauthorized-procedure' ? [lumpectomy] : item.sourceProcedures,
+    })) }
+    const calls = stubFetch(({ path }) => Response.json(path.endsWith('/pathology-services') ? catalog : state))
+    renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 0, requests: [] }} />)
+    expect((await screen.findByRole('button', { name: /采纳/ })).hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByLabelText('会诊目的')).toBeNull()
+    expect(calls.every(call => call.method === 'GET')).toBe(true)
+  })
+
+  it.each(['inactive', 'read-only'] as const)('does not request or expose recommendations for an %s page', async mode => {
+    const calls = stubFetch(() => Response.json(services))
+    renderPage(<Page active={mode !== 'inactive'} readOnly={mode === 'read-only'} onChanged={vi.fn()}
+      state={{ draftVersion: 0, requests: [] }} />)
+    expect(screen.queryByRole('region', { name: '病理会诊建议' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /采纳/ })).toBeNull()
+    expect(calls.some(call => call.path.includes('/recommendations/'))).toBe(false)
+  })
 
   it('shows the searchable catalog directly without selecting a consultation by default', async () => {
     stubFetch(() => Response.json({ items: [

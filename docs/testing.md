@@ -42,6 +42,8 @@ E2E 从真实入口执行，并从外部观察结果：重新读取资源、数�
 
 CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，并从独立 `clinmesh` 子进程执行 human login 和 Agent operation。主场景从生成 Synthetic Case 与 Brief 的受控 setup 开始，由不同单岗位 Grant 依次完成挂号、分诊、问诊、检查与报告确认、诊断、处方、病历签署、完诊、药品支付、处方审核和发药。响应丢失场景必须先证明 Server 已提交，再用原 operation ID/idempotency key 查询 receipt，并通过正式 query 证明 Effect 没有重复。
 
+指南建议由 `doctor-recommendations-http.test.ts` 从真实 DSH Provider 的网络边界验证引用、语义否定、字段缺证、动态目录、授权、迟到结果与恢复；公开 HTTP 和真实 SQLite 保持真实。`doctor-recommendations.spec.ts` 与共享旅程从真实 Web 核对诊断、处方、检验建议进入草稿，处方缺项保持待补充，人工确认后才正式生效；两组 DSH 浏览器合同同时覆盖 React 18/19 的五种建议、来源类型、ShadowRoot、Portal、焦点及窄宽度。`pnpm smoke:recommendations:native` 复用锁定的原生宿主与合成外部模型运行同一旅程，`pnpm smoke:recommendations:live` 再读取新合成病例，使用显式配置的真实模型验证建议响应与实际提供的引用，且不采纳或创建临床事实。真实模型样本不代表全病种医学质量或药学安全评估；这两个显式 smoke 不进入 CI。
+
 核心病例轨迹见[系统架构](architecture.md#144-场景测试)。每次运行固定 app build、数据库 schema、Operation Catalog hash、Workspace policy version、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG 时再把对应版本加入固定输入。
 
 ## 测试设计

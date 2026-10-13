@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import type { ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
+import type { DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -85,12 +86,13 @@ function renderPage(element: React.JSX.Element) {
 }
 
 /** 像医生工作台一样由调用方持有阅片状态。 */
-function Page({ active = true, canCorrect = false, editDraft = false, onChanged, onInsertSummary, selectedReportId, state }: {
+function Page({ active = true, canCorrect = false, editDraft = false, onChanged, onInsertSummary, readOnly = false, selectedReportId, state }: {
   active?: boolean
   editDraft?: boolean
   canCorrect?: boolean
   onChanged: ImagingPageActions['onChanged']
   onInsertSummary?: ImagingPageActions['onInsertSummary']
+  readOnly?: boolean
   selectedReportId?: string | undefined
   state: Parameters<typeof ImagingPage>[0]['state']
 }) {
@@ -104,7 +106,7 @@ function Page({ active = true, canCorrect = false, editDraft = false, onChanged,
       editDraft={editDraft}
       encounter={{ id: 'encounter-1', versionId: '3' }}
       locale="zh-CN"
-      readOnly={false}
+      readOnly={readOnly}
       selectedReportId={selectedReportId}
       state={state}
     />
@@ -113,6 +115,25 @@ function Page({ active = true, canCorrect = false, editDraft = false, onChanged,
 
 const services = { items: [{ available: true, service: ctService }, { available: false, service: radiographService }] }
 
+function recommendations(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
+  return {
+    caseId: 'case-1', kind: 'imaging', encounterId: 'encounter-1', encounterVersion: '3',
+    inputFingerprint: 'a'.repeat(64), status: 'ready', generation: 1, missingInformation: [], stale: false,
+    guidelines: [{ id: 'synthetic-guideline', title: '合成检查指南', publisher: '合成发布机构',
+      documentType: 'official-protocol', version: '1', url: 'https://example.test/synthetic-guideline',
+      locator: '检查章节', scope: '合成成人病例', text: '依据当前资料核对检查指征。', sourceHash: 'b'.repeat(64) }],
+    caseEvidence: [{ id: 'synthetic-case-evidence', kind: 'consultation', label: '患者回答', text: '咳嗽两周' }],
+    items: [{
+      id: 'synthetic-imaging-suggestion', kind: 'imaging', label: ctService.name,
+      serviceId: ctService.id, indication: '持续咳嗽，需要医生核对检查指征。',
+      rationale: '依据当前病例完善胸部检查。', supportingInformation: ['咳嗽两周'],
+      opposingInformation: [], missingInformation: [],
+      guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-evidence'],
+    }],
+    ...overrides,
+  }
+}
+
 describe('doctor imaging page', () => {
   beforeEach(() => {
     // jsdom 没有 canvas 与 ImageData；阅片器只需要能把一帧画上去。
@@ -120,6 +141,68 @@ describe('doctor imaging page', () => {
     vi.stubGlobal('ImageData', class { constructor(readonly data: Uint8ClampedArray, readonly width: number, readonly height: number) {} })
   })
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
+
+  it('shows recommendations outside the add dialog and adopts an available examination without issuing it', async () => {
+    const calls = stubFetch(({ path }) => {
+      if (path.endsWith('/imaging-services')) return Response.json(services)
+      return Response.json(recommendations())
+    })
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [request()] }} />)
+
+    expect(await screen.findByText('依据当前病例完善胸部检查。')).toBeTruthy()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: /采纳/ }))
+    const editor = within(await screen.findByRole('dialog', { name: '追加申请' }))
+    expect((editor.getByLabelText('检查指征') as HTMLTextAreaElement).value)
+      .toBe('持续咳嗽，需要医生核对检查指征。')
+    expect(editor.getByText(ctService.applicability)).toBeTruthy()
+    expect(calls.every(call => call.method === 'GET')).toBe(true)
+  })
+
+  it('preserves saved and unsaved request contents while suggestions are refreshed', async () => {
+    let current = recommendations()
+    const calls = stubFetch(({ method, path }) => {
+      if (path.endsWith('/imaging-services')) return Response.json(services)
+      if (method === 'POST' && path.endsWith('/actions/generate')) {
+        current = recommendations({ generation: 2, items: [{ ...current.items[0]!, rationale: '重新核对后的检查建议。' }] })
+        return Response.json(commandResponse(current))
+      }
+      return Response.json(current)
+    })
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 1, requests: [],
+      draft: { service: ctService, indication: '已保存的医生检查指征。' },
+    }} />)
+    const user = userEvent.setup()
+    const indication = await screen.findByLabelText('检查指征')
+    await user.type(indication, '继续手工核对。')
+    expect((await screen.findByRole('button', { name: /采纳/ })).hasAttribute('disabled')).toBe(true)
+    await user.click(screen.getByRole('button', { name: '刷新建议' }))
+    expect(await screen.findByText('重新核对后的检查建议。')).toBeTruthy()
+    expect((indication as HTMLTextAreaElement).value).toBe('已保存的医生检查指征。继续手工核对。')
+    expect(screen.getByRole('button', { name: /采纳/ }).hasAttribute('disabled')).toBe(true)
+    expect(calls.filter(call => call.method !== 'GET').map(call => call.path))
+      .toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/imaging/actions/generate'])
+  })
+
+  it('cannot adopt an examination that is unavailable in the hospital catalog', async () => {
+    const state = recommendations()
+    state.items = [{ ...state.items[0]!, kind: 'imaging', serviceId: radiographService.id,
+      indication: '待核对的检查指征。', label: radiographService.name }]
+    const calls = stubFetch(({ path }) => Response.json(path.endsWith('/imaging-services') ? services : state))
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [] }} />)
+    expect((await screen.findByRole('button', { name: '采纳 胸片' })).hasAttribute('disabled')).toBe(true)
+    expect(screen.queryByLabelText('检查指征')).toBeNull()
+    expect(calls.every(call => call.method === 'GET')).toBe(true)
+  })
+
+  it.each(['inactive', 'read-only'] as const)('does not generate or expose adoptable suggestions for an %s page', async mode => {
+    const calls = stubFetch(() => Response.json(services))
+    renderPage(<Page active={mode !== 'inactive'} readOnly={mode === 'read-only'} onChanged={() => undefined}
+      state={{ draftVersion: 0, requests: [] }} />)
+    expect(screen.queryByRole('region', { name: '放射检查建议' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /采纳/ })).toBeNull()
+    expect(calls.some(call => call.path.includes('/recommendations/'))).toBe(false)
+  })
 
   it('opens a searchable catalog without selecting an examination or enabling issuance', async () => {
     const calls = stubFetch(() => Response.json(services))
@@ -255,6 +338,7 @@ describe('doctor imaging page', () => {
     let persisted = [request({ report })]
     stubFetch(({ method, path }) => {
       if (path.endsWith('/imaging-services')) return Response.json({ items: services.items.map(item => ({ ...item, available: true })) })
+      if (path.endsWith('/recommendations/imaging')) return Response.json(recommendations({ items: [] }))
       if (method === 'PUT') return Response.json(commandResponse({ caseId: 'case-1', draftVersion: 2 }))
       const added = request({ id: 'request-2', service: radiographService, status: 'issued', version: 1 })
       persisted = [...persisted, added]

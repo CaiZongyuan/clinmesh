@@ -5,6 +5,7 @@ import type {
 } from '@clinmesh/contracts/his'
 import { prescriptionDraftContentSchema } from '@clinmesh/contracts/his'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -46,6 +47,7 @@ import {
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
 import { useAutosave } from './use-autosave.ts'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
@@ -89,8 +91,10 @@ export interface PrescriptionPageActions {
   }
 }
 
-interface PrescriptionDraftLine extends PrescriptionDraftItem {
+interface PrescriptionDraftLine extends Omit<PrescriptionDraftItem, 'courseDays' | 'quantity'> {
+  courseDays: number | null
   key: string
+  quantity: number | null
 }
 
 type MedicationConclusionMode = 'no-medication' | 'prescription'
@@ -162,6 +166,8 @@ export function PrescriptionPage({
   locale,
   messages,
   readOnly,
+  recommendationRevision,
+  recommendationScope,
   referenceSearch,
 }: {
   actions: PrescriptionPageActions
@@ -172,6 +178,8 @@ export function PrescriptionPage({
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
   readOnly: boolean
+  recommendationRevision?: string
+  recommendationScope?: string
   referenceSearch: ReferenceCatalogSearches['medications']
 }): React.JSX.Element {
   const state = detail.medicationConclusion
@@ -181,6 +189,8 @@ export function PrescriptionPage({
   const [mode, setMode] = useState<MedicationConclusionMode>(
     noMedicationConclusion === undefined ? 'prescription' : 'no-medication',
   )
+  const canEditDraft = !readOnly && noMedicationConclusion === undefined
+    && !hasActivePrescription && mode === 'prescription' && prescription === undefined
   const [dirty, setDirty] = useState(false)
   const [deleteDraftOpen, setDeleteDraftOpen] = useState(false)
   const [issueOpen, setIssueOpen] = useState(false)
@@ -209,11 +219,12 @@ export function PrescriptionPage({
   const selectedDraft = items.find(item => item.key === selectedDraftKey) ?? items[0]
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const submittedItems = items.map(({ key: _key, ...item }) => item)
+  const draftValidation = prescriptionDraftContentSchema.safeParse({ items: submittedItems })
   useRegisterAgentForm({
     viewId: 'consultation', selectionId: detail.caseId, name: 'prescription',
     values: { mode, items: items.map(({ catalogItemId, courseDays, doseText, frequencyCode, quantity }) => ({ catalogItemId, courseDays, doseText, frequencyCode, quantity })) },
   })
-  const currentRevision = JSON.stringify(submittedItems)
+  const currentRevision = JSON.stringify(draftValidation.success ? draftValidation.data.items : submittedItems)
   useEffect(() => {
     if (actions.saveDraft.success && actions.saveDraft.savedRevision === currentRevision) {
       setDirty(false)
@@ -240,6 +251,31 @@ export function PrescriptionPage({
     return selected?.allowedCombinationIds.includes(candidate.id) === true
       && candidate.allowedCombinationIds.includes(item.catalogItemId)
   })
+  const canAdoptRecommendation = (suggestion: DoctorRecommendationSuggestion) => {
+    if (!canEditDraft || suggestion.kind !== 'prescription' || items.length >= 8
+      || actions.issue.pending || actions.confirmNoMedication.pending || actions.deleteDraft.pending
+      || usedCatalogItemIds.has(suggestion.catalogItemId)) return false
+    const medication = catalogById.get(suggestion.catalogItemId)
+    return medication !== undefined && canCombineWithCurrentItems(medication)
+      && (suggestion.doseText === null || medication.allowedDoseTexts.includes(suggestion.doseText))
+      && (suggestion.frequencyCode === null || medication.allowedFrequencyCodes.includes(suggestion.frequencyCode))
+      && (suggestion.courseDays === null || medication.allowedCourseDays.includes(suggestion.courseDays))
+      && (suggestion.quantity === null || medication.allowedQuantities.includes(suggestion.quantity))
+  }
+  const adoptRecommendation = (suggestion: DoctorRecommendationSuggestion) => {
+    if (suggestion.kind !== 'prescription' || !canAdoptRecommendation(suggestion)) return
+    const key = globalThis.crypto.randomUUID()
+    setItems(current => [...current, {
+      catalogItemId: suggestion.catalogItemId,
+      courseDays: suggestion.courseDays,
+      doseText: suggestion.doseText ?? '',
+      frequencyCode: suggestion.frequencyCode ?? '',
+      key,
+      quantity: suggestion.quantity,
+    }])
+    setSelectedDraftKey(key)
+    setDirty(true)
+  }
   const medicationLine = (
     selection: MedicationCatalogSelection,
     key: string = globalThis.crypto.randomUUID(),
@@ -266,12 +302,14 @@ export function PrescriptionPage({
     setDirty(true)
   }
   const canAddMedication = items.length < 8
-  const draftValidation = prescriptionDraftContentSchema.safeParse({ items: submittedItems })
   const invalidDraft = !draftValidation.success
+  const saveCurrentDraft = () => {
+    if (canEditDraft && draftValidation.success) actions.saveDraft.onSubmit(draftValidation.data.items)
+  }
   useAutosave({
     delayMs: 800,
-    enabled: dirty && !invalidDraft && !actions.saveDraft.pending && !actions.deleteDraft.pending,
-    onSave: () => actions.saveDraft.onSubmit(submittedItems),
+    enabled: canEditDraft && dirty && !invalidDraft && !actions.saveDraft.pending && !actions.deleteDraft.pending,
+    onSave: saveCurrentDraft,
     revision: `${state?.draftVersion ?? 0}:${currentRevision}`,
   })
   const draftSaveFeedback = (
@@ -286,7 +324,7 @@ export function PrescriptionPage({
               : state?.draft === undefined ? '' : messages.autosaveSaved}
       </p>
       {actions.saveDraft.error === null ? null : (
-        <Button disabled={invalidDraft || actions.saveDraft.pending || actions.deleteDraft.pending} onClick={() => actions.saveDraft.onSubmit(submittedItems)} size="sm" type="button" variant="outline">
+        <Button disabled={invalidDraft || actions.saveDraft.pending || actions.deleteDraft.pending} onClick={saveCurrentDraft} size="sm" type="button" variant="outline">
           {locale === 'zh-CN' ? '重试保存' : 'Retry save'}
         </Button>
       )}
@@ -305,6 +343,17 @@ export function PrescriptionPage({
           {messages.medicationConclusion}
         </h3>
       </div>
+
+      <DoctorRecommendationsPanel
+        canAdopt={canAdoptRecommendation}
+        caseId={detail.caseId}
+        enabled={canEditDraft}
+        inputRevision={recommendationRevision}
+        kind="prescription"
+        locale={locale}
+        onAdopt={adoptRecommendation}
+        scope={recommendationScope}
+      />
 
       {prescription === undefined ? null : (
         <div className="flex flex-col gap-3">
@@ -509,11 +558,7 @@ export function PrescriptionPage({
         </Field>
       )}
 
-      {!readOnly
-        && noMedicationConclusion === undefined
-        && !hasActivePrescription
-        && mode === 'prescription'
-        && prescription === undefined ? (
+      {canEditDraft ? (
           <div>
             <FieldGroup>
               <div className="flex items-center justify-between gap-3">
@@ -615,7 +660,8 @@ export function PrescriptionPage({
                               onValueChange={value => {
                                 if (value !== null) updateItem(index, { doseText: value })
                               }}
-                              value={item.doseText}
+                              placeholder={messages.recommendationFieldPending}
+                              value={item.doseText || null}
                             /> : <Input aria-invalid={invalidFields.has('doseText')} id={`prescription-dose-${index}`} maxLength={120} onChange={event => updateItem(index, { doseText: event.currentTarget.value })} value={item.doseText} />}
                           </Field>
                           <Field data-invalid={invalidFields.has('frequencyCode')}>
@@ -626,7 +672,8 @@ export function PrescriptionPage({
                               onValueChange={value => {
                                 if (value !== null) updateItem(index, { frequencyCode: value })
                               }}
-                              value={item.frequencyCode}
+                              placeholder={messages.recommendationFieldPending}
+                              value={item.frequencyCode || null}
                             /> : <Input aria-invalid={invalidFields.has('frequencyCode')} id={`prescription-frequency-${index}`} maxLength={32} onChange={event => updateItem(index, { frequencyCode: event.currentTarget.value })} value={item.frequencyCode} />}
                           </Field>
                           <Field data-invalid={invalidFields.has('courseDays')}>
@@ -637,8 +684,9 @@ export function PrescriptionPage({
                               onValueChange={value => {
                                 if (value !== null) updateItem(index, { courseDays: Number(value) })
                               }}
-                              value={String(item.courseDays)}
-                            /> : <Input aria-invalid={invalidFields.has('courseDays')} id={`prescription-course-${index}`} max={30} min={1} onChange={event => updateItem(index, { courseDays: Number(event.currentTarget.value) })} step={1} type="number" value={item.courseDays} />}
+                              placeholder={messages.recommendationFieldPending}
+                              value={item.courseDays === null ? null : String(item.courseDays)}
+                            /> : <Input aria-invalid={invalidFields.has('courseDays')} id={`prescription-course-${index}`} max={30} min={1} onChange={event => updateItem(index, { courseDays: event.currentTarget.value === '' ? null : Number(event.currentTarget.value) })} step={1} type="number" value={item.courseDays ?? ''} />}
                           </Field>
                           <Field data-invalid={invalidFields.has('quantity')}>
                             <FieldLabel htmlFor={`prescription-quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel>
@@ -648,8 +696,9 @@ export function PrescriptionPage({
                               onValueChange={value => {
                                 if (value !== null) updateItem(index, { quantity: Number(value) })
                               }}
-                              value={String(item.quantity)}
-                            /> : <Input aria-invalid={invalidFields.has('quantity')} id={`prescription-quantity-${index}`} max={1_000} min={1} onChange={event => updateItem(index, { quantity: Number(event.currentTarget.value) })} step={1} type="number" value={item.quantity} />}
+                              placeholder={messages.recommendationFieldPending}
+                              value={item.quantity === null ? null : String(item.quantity)}
+                            /> : <Input aria-invalid={invalidFields.has('quantity')} id={`prescription-quantity-${index}`} max={1_000} min={1} onChange={event => updateItem(index, { quantity: event.currentTarget.value === '' ? null : Number(event.currentTarget.value) })} step={1} type="number" value={item.quantity ?? ''} />}
                           </Field>
                         </FieldGroup>
                         {invalidFields.size === 0 ? null : <FieldError>{locale === 'zh-CN' ? '请填写剂量与频次，疗程为 1–30 天，数量为 1–1000 的整数。' : 'Enter dose and frequency. Course must be 1–30 days and quantity an integer from 1–1000.'}</FieldError>}

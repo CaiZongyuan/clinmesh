@@ -1,5 +1,11 @@
 const zhCN = {
   appName: '科灵脉智',
+  recommendationFieldPending: '待医生补充',
+  recommendationDraftNeedsResolution: '请先处理当前申请草稿，再采纳其他建议。',
+  recommendationRequestTargetUnavailable: '当前目录或申请信息不可用，暂不能采纳。',
+  recommendationDiagnosisDuplicate: '该诊断已在当前草稿中。',
+  recommendationDiagnosisLimit: '诊断草稿最多保留 8 条。',
+  recommendationDiagnosisUnavailable: '该诊断目录条目已不可用，请刷新建议。',
   logoAlt: '科灵脉智标志',
   productTagline: '医疗智能体平台',
   simulationBadge: '',
@@ -872,6 +878,12 @@ export type WorkspaceMessages = { [Key in WorkspaceMessageKey]: string }
 export type WorkspaceLocale = 'zh-CN' | 'en-US'
 
 const enUS = {
+  recommendationFieldPending: 'Requires doctor input',
+  recommendationDraftNeedsResolution: 'Resolve the current request draft before adopting another suggestion.',
+  recommendationRequestTargetUnavailable: 'The current catalog or request information is unavailable for adoption.',
+  recommendationDiagnosisDuplicate: 'This diagnosis is already in the draft.',
+  recommendationDiagnosisLimit: 'The diagnosis draft allows up to 8 entries.',
+  recommendationDiagnosisUnavailable: 'This diagnosis catalog entry is unavailable. Refresh suggestions.',
   appName: 'Clinmesh',
   logoAlt: 'Clinmesh logo',
   productTagline: 'Medical AI Agent Platform',

@@ -14,6 +14,10 @@ import {
   type SessionContext,
 } from '@clinmesh/contracts/his'
 import type { ReferenceConcept, ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
+import {
+  doctorRecommendationKindSchema, doctorRecommendationStateSchema, generateDoctorRecommendationsRequestSchema,
+  type DoctorRecommendationState, type GuidelineEvidence,
+} from '@clinmesh/contracts/doctor-recommendations'
 import { WebApp } from '../../../web/src/app/web-app.tsx'
 
 const session: SessionContext = {
@@ -46,6 +50,33 @@ const medication: ReferenceMedicationProduct = {
 }
 const products = [medication, { ...medication, id: 'synthetic-product-2', code: 'SYN-M2', packageDescription: '20片/盒' },
   { ...medication, id: 'synthetic-product-3', code: 'SYN-M3', genericName: '合成第二药品', packageDescription: '30片/盒' }]
+const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
+const recommendationGuidelines: GuidelineEvidence[] = [
+  ...(['national-standard', 'official-protocol', 'guideline'] as const).map(documentType => ({
+    id: `synthetic-${documentType}`, documentType, title: `合成浏览器来源分类 ${documentType}`,
+    publisher: '合成发布机构', version: '1', scope: '仅验证浏览器来源分类，不提供临床依据。',
+    locator: '合成条款 1', text: '合成来源分类合同文字。', url: `https://example.test/${documentType}`,
+    sourceHash: 'a'.repeat(64),
+  })),
+  {
+    id: 'ws-t-872-2025-initial-assessment', documentType: 'health-standard',
+    title: 'WS/T 872—2025 基层医疗卫生机构高血压防治管理标准', publisher: '国家卫生健康委员会',
+    version: 'WS/T 872—2025', locator: '第 7 节，印刷第 2 页',
+    scope: '基层医疗卫生机构成人高血压管理；不能从本标准推导具体药品剂量或固定疗程。',
+    text: '符合高血压诊断的患者，应进行首次评估，询问病史、进行体格检查和血尿常规、生化及心电图检测。',
+    url: 'https://www.nhc.gov.cn/fzs/c100048/202509/2f3f7cce449145f8b361e70b3ed4ae9a/files/WS%20T%20872%E2%80%942025-20250930105429913.pdf',
+    sourceHash: '4c099a4a656b72d6524c7acd05359da10b4dd861def402b80acd94a307d410d6',
+  },
+  {
+    id: 'viatris-norvasc-adult-hypertension-dose', documentType: 'product-information',
+    title: '苯磺酸氨氯地平片（络活喜）说明书', publisher: '晖致制药（大连）有限公司',
+    version: '2026-10-13 核验版本', locator: '“用法用量—成人”，印刷第 3 页',
+    scope: '需核对既有方案、年龄、体型、虚弱与肝功能；本合成药品并非此具体产品，不套用包装或固定疗程与数量。',
+    text: '通常本品治疗高血压的起始剂量为5 mg，每日一次，最大剂量为10 mg，每日一次。\n身材小、虚弱、老年、或伴肝功能不全患者，起始剂量为2.5 mg，每日一次；此剂量也可为本品联合其它抗高血压药物治疗的剂量。',
+    url: 'https://www.viatris.cn/-/media/project/viatris-sites/product-document/02norvasc.pdf',
+    sourceHash: '6421355efdba7552efc1d814295f8dcff186dfbb44805af6d78c6673199e5689',
+  },
+]
 function diagnosisReference(concept: ReferenceConcept) {
   return { id: concept.id, code: concept.code, display: concept.display, sourceLocator: concept.sourceLocator,
     system: concept.system, version: concept.version }
@@ -99,18 +130,64 @@ window.addEventListener('unhandledrejection', event => errors.push(String(event.
 const command = (data: unknown) => Response.json({
   auditId: 'synthetic-audit', data, effects: [], requestId: 'synthetic-command', warnings: [],
 })
+const recommendationStates = new Map<string, DoctorRecommendationState>()
 // 只替换网络边界；本合同不证明 Server Command、授权或审计。
 const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const url = new URL(String(input), 'http://synthetic.test')
   const path = url.pathname
   if (path === '/api/auth/context') return Response.json(session)
-  if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+  if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [],
+    medications: recommendationsMode ? [{
+      id: medication.id, nameZh: medication.genericName, nameEn: 'Synthetic browser medication', version: 1,
+      allowedCombinationIds: [], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['每日一次', '每日两次'],
+      allowedCourseDays: [3, 7], allowedQuantities: [1, 2],
+      defaultDoseText: '10 mg', defaultFrequencyCode: '每日两次', defaultCourseDays: 3, defaultQuantity: 1,
+    }] : [], prescriptionConclusionSupported: true })
   if (path === '/api/his/v1/doctor/queue') return Response.json({
     items: [{ caseId: detail.caseId, encounterId: detail.encounter.id, encounterVersion: '1', patient: detail.patient,
       presentation: detail.presentation, status: detail.status, taskId: detail.taskId, taskVersion: '1' }],
     page: 1, pageSize: 20, total: 1,
   })
   if (path === '/api/his/v1/doctor/cases/synthetic-case') return Response.json(detail)
+  const recommendation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/([^/]+)(\/actions\/generate)?$/.exec(path)
+  if (recommendation !== null) {
+    const kind = doctorRecommendationKindSchema.parse(recommendation[1])
+    let state = recommendationStates.get(kind)
+    if (state === undefined) {
+      const common = {
+        rationale: '合成浏览器建议，长中文仅验证病例来源、草稿保护与医生正式确认接线。'.repeat(4),
+        supportingInformation: ['合成支持信息，仅验证展示。'], opposingInformation: ['尚未核实合成检查结果。'],
+        missingInformation: ['仍需医生核实，不代表已确诊或已开具。'],
+        guidelineEvidenceIds: recommendationGuidelines.map(source => source.id), caseEvidenceIds: ['synthetic-case-evidence-1'],
+      }
+      state = doctorRecommendationStateSchema.parse({
+        caseId: detail.caseId, kind, encounterId: detail.encounter.id, encounterVersion: detail.encounter.versionId,
+        inputFingerprint: 'b'.repeat(64), generation: 1, stale: false,
+        status: recommendationsMode && (kind === 'diagnosis' || kind === 'prescription') ? 'ready' : 'missing-evidence',
+        items: !recommendationsMode ? [] : kind === 'diagnosis' ? diagnoses.slice(0, 2).map((concept, index) => ({
+          ...common, id: `synthetic-recommendation-diagnosis-${index}`, kind, label: concept.display,
+          catalogItemId: concept.id, referenceConcept: diagnosisReference(concept),
+          ...(index === 0 ? {} : { guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-evidence-2'] }),
+        })) : kind === 'prescription' ? [{
+          ...common, id: 'synthetic-recommendation-prescription', kind, label: medication.genericName,
+          catalogItemId: medication.id, doseText: '5 mg', frequencyCode: '每日一次', courseDays: null, quantity: null,
+        }] : [],
+        guidelines: recommendationGuidelines,
+        caseEvidence: [
+          { id: 'synthetic-case-evidence-1', kind: 'presentation', label: '合成病例来源一', text: '合成病例第一条依据：仅验证来源展开与页面接线。' },
+          { id: 'synthetic-case-evidence-2', kind: 'presentation', label: '合成病例来源二', text: '合成病例第二条依据：需要医生继续核实。' },
+        ], missingInformation: [],
+      })
+      recommendationStates.set(kind, state)
+    }
+    if (recommendation[2] !== undefined) {
+      generateDoctorRecommendationsRequestSchema.parse(JSON.parse(String(init?.body)))
+      state = { ...state, generation: state.generation + 1 }
+      recommendationStates.set(kind, state)
+      return command(state)
+    }
+    return Response.json(state)
+  }
   if (path.endsWith('/completion')) return Response.json({
     canComplete: false, encounterId: detail.encounter.id, encounterVersion: detail.encounter.versionId, items: [],
   })
@@ -139,7 +216,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     const saved = savePrescriptionDraftRequestSchema.parse(JSON.parse(String(init.body))).input
     const draftVersion = (detail.medicationConclusion?.draftVersion ?? 0) + 1
     detail.medicationConclusion = { draftVersion, draft: { items: saved.items.map(item => ({ ...item,
-      referenceProduct: products.find(product => product.id === item.catalogItemId)!,
+      ...(recommendationsMode ? {} : { referenceProduct: products.find(product => product.id === item.catalogItemId)! }),
     })) } }
     return command({ draftVersion })
   }
