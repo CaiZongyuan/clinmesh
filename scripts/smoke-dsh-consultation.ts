@@ -251,7 +251,7 @@ export function apply(ctx) {
   const read = async () => doctorCaseDetailSchema.parse(await (await hospital!.app.request(
     `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
   )).json())
-  const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } })
+  const page = await browser.newPage({ locale: 'zh-CN', viewport: { width: 1600, height: 1000 } })
   let activeTools: string[] = []
   let activeLeaseRequest: Request | undefined
   page.on('request', request => {
@@ -293,7 +293,8 @@ export function apply(ctx) {
         return false
       }
     }
-    try { await launcher.click({ trial: true, timeout: 500 }); return true }
+    const entryControl = phase === 'journey' ? page.getByRole('button', { name: '选择工作区', exact: true }) : launcher
+    try { await entryControl.click({ trial: true, timeout: 500 }); return true }
     catch { return false }
   }, { timeout: 60_000 }).toBe(true) }
   try { await ready() } catch (error) {

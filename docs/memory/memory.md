@@ -160,6 +160,7 @@
 - Surface 构建器不压缩依赖，并会把已压缩的代码重新排版：大体积第三方库引用其压缩构建，实际增量以引入前后 `lib/client.js` 的字节数为准，不能按压缩文件大小估算（OpenSeadragon 压缩构建约 35 万字节，产物增加约 55 万字节；默认入口会超出预算）。压缩构建没有类型声明时，在 `apps/web` 放环境模块声明并在 `apps/dsh-web/tsconfig.json` 的 `include` 中列出；oxlint 不允许三斜线引用。
 - 依赖真实渲染帧的组件（OpenSeadragon 的动画与瓦片调度）在 Chrome `--virtual-time-budget` 下不可靠，这类浏览器合同用 Playwright 的真实时钟并有界轮询。合成 JPEG 瓦片带填充色时，色度上采样会让填充色渗入相邻一两列有效像素；按像素统计验证时为图像边缘留出小于 0.5% 的容差。
 - `vendor/dsh-react-surface` 的 `lib/` 是未跟踪的生成目录。ClinMesh 的 Vitest 若直接导入由 DSH 注入的 `dsh-react-surface/client` external，必须通过显式测试 alias 解析到本地 stub；测试不能依赖开发机曾构建 submodule 后遗留的 `lib/client.js`。
+- 独立 worktree 不包含 `vendor/dsh-react-surface/packages/runtime/lib/`；运行原生 DSH 验收前按锁定 commit 构建 Runtime 并核对 `index.js`、`client.js`，只构建 ClinMesh Surface 不能满足这项前置。临时 Profile 的首次入口先等待并选择工作区，再等待医院菜单；验收使用与断言一致的浏览器 locale，避免把尚未出现的菜单或默认英文误判为业务失败。部署顺序见[DSH 原生入口](../deployment.md#dsh-web-原生入口)。
 - WSL2 中 pnpm 为 Bun bin 生成的 shim 可能优先选择同目录 `bun.exe`，并把 Linux 路径转换成无法由该 Bun 解析的 UNC 路径。React Surface 构建脚本应由当前 Linux `bun` 直接执行 builder 的 TypeScript CLI，不能依赖该 shim；诊断时先比较实际 Bun 与 shim 目标，不要重复安装 Bun。
 - Windows 上 Turborepo 包装 `tsx watch` 的持久任务（旧根 `pnpm dev:server`）会以约三成概率把整棵进程树冻结在启动阶段：父进程 IPC 管道已建、子进程已派生，但双方 CPU 归零、服务永不监听，且 forensics 期 inspector 无响应。常驻开发服务器一律直连 pnpm（`pnpm --filter @clinmesh/server dev`），不进 turbo；诊断该类挂起先用“绕开包装层”隔离，再比较冻结与正常实例的 CPU 增量。
 - Turborepo strict env 只转发任务声明的 `passThroughEnv` 变量，turbo 包装的任务拿不到未声明的 `CLINMESH_AI_*` 等变量。核对环境变量是否生效要从实际业务进程取证，只看父 shell 会把 provider 未配置误判为产品错误；这也是根 `dev:server` 改为直连 pnpm 的原因之一。

@@ -4177,7 +4177,9 @@ describe('role workspaces', () => {
     expect(screen.getByRole('tabpanel', { name: '检验 0' })).toBeTruthy()
     if (failFirstRead) {
       expect(await screen.findByText('无法加载本院检验目录')).toBeTruthy()
-      await user.click(screen.getByRole('button', { name: '重试' }))
+      const failure = screen.getByText('无法加载本院检验目录').closest<HTMLElement>('[role="alert"]')
+      if (failure === null) throw new Error('Missing hospital catalog failure notice')
+      await user.click(within(failure).getByRole('button', { name: '重试' }))
       await waitFor(() => expect(laboratoryReads).toBe(2))
       await waitFor(() => expect(screen.queryByText('无法加载本院检验目录')).toBeNull())
     }
