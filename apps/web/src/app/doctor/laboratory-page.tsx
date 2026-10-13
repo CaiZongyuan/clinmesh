@@ -395,7 +395,7 @@ function LaboratoryRequestEditor({
   })
   const [adding, setAdding] = useState(() => editDraft && state?.draft !== undefined)
   const recommendationContext = JSON.stringify([
-    recommendationScope, caseId, active, readOnly, state?.draftVersion ?? 0, laboratoryItemId, indicationCode,
+    recommendationScope, recommendationRevision, caseId, active, readOnly, state?.draftVersion ?? 0, laboratoryItemId, indicationCode,
   ])
   const currentRecommendationContext = useRef({ value: recommendationContext, revision: 0 })
   if (currentRecommendationContext.current.value !== recommendationContext) {

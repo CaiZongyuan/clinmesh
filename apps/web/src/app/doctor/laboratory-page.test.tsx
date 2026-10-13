@@ -120,7 +120,7 @@ describe('laboratory investigation workspace', () => {
     expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
   })
 
-  it('does not resume a pending adoption after the acting identity changes and returns', async () => {
+  it.each(['recommendationScope', 'recommendationRevision'] as const)('does not resume a pending adoption after %s changes and returns', async bindingField => {
     let resolveCatalog: (response: Response) => void = () => undefined
     const catalogResponse = new Promise<Response>(resolve => { resolveCatalog = resolve })
     let catalogRequested = false
@@ -132,11 +132,12 @@ describe('laboratory investigation workspace', () => {
       return Response.json(recommendations())
     }))
     const page = props()
-    const { rerender } = render(<LaboratoryPage {...page} recommendationScope="synthetic-role-first" />)
+    const binding = { recommendationScope: 'synthetic-role-first', recommendationRevision: '1' }
+    const { rerender } = render(<LaboratoryPage {...page} {...binding} />)
     await userEvent.setup().click(await screen.findByRole('button', { name: /采纳/ }))
     await waitFor(() => expect(catalogRequested).toBe(true))
-    rerender(<LaboratoryPage {...page} recommendationScope="synthetic-role-second" />)
-    rerender(<LaboratoryPage {...page} recommendationScope="synthetic-role-first" />)
+    rerender(<LaboratoryPage {...page} {...binding} {...{ [bindingField]: 'next' }} />)
+    rerender(<LaboratoryPage {...page} {...binding} />)
     await act(async () => { resolveCatalog(Response.json({ items: [service], page: 1, pageSize: 20, total: 1 })) })
 
     expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
