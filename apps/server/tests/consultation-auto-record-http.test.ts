@@ -1,4 +1,4 @@
-import { apiErrorSchema, sessionContextSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, reviewConsultationHistoryResponseSchema, sendConsultationMessageResponseSchema, triageQueueSchema, type ConsultationHistoryDecision } from '@clinmesh/contracts/his'
+import { apiErrorSchema, sessionContextSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, consultationHistoryFactSchema, controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, reviewConsultationHistoryResponseSchema, sendConsultationMessageResponseSchema, triageQueueSchema, type ConsultationHistoryDecision } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema, cancelClinicalDocumentSignResponseSchema } from '@clinmesh/contracts/his'
 import { randomUUID } from 'node:crypto'
@@ -215,6 +215,49 @@ it('keeps new and updated suggestions out of the draft until individually applie
   await fixture.save('医生记录：睡眠正常。\n' + combinedFeverSummary + '\n医生补充：尚待查体。')
   expect((await fixture.review(pending.id, 'undo')).status).toBe(200)
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('医生记录：睡眠正常。\n医生补充：尚待查体。')
+})
+
+it('retains all four rounds of facts when pending updates form a chain over applied history', async () => {
+  const replies = ['头晕一周了。', '夜间也会头晕。', '站起来时更明显。', '今天有些乏力。']
+  const texts = ['自述头晕一周', '夜间头晕', '站立时加重', '今天乏力']
+  const payloadSchema = summaryPayloadSchema.extend({
+    history: z.array(summaryPayloadSchema.shape.history.element.extend({ facts: z.array(consultationHistoryFactSchema) })),
+  })
+  let round = 0
+  const fixture = await setup({ reply: () => replies[round]!, verify: faithfulSummaryVerification, extract: input => {
+    const payload = payloadSchema.parse(input.userPayload)
+    // Preserve the selected target's facts, as required by the model contract.
+    const target = payload.history.find(item => item.field === 'historyOfPresentIllness')
+    const answer = payload.turns.at(-1)!
+    return { additions: [{ field: 'historyOfPresentIllness', relation: target === undefined ? 'addition' : 'update',
+      ...(target === undefined ? {} : { targetAdditionId: target.id }),
+      facts: [...target?.facts ?? [], { text: texts[round]!, sources: [{ sourceTurnId: answer.id, quote: answer.messageText }] }],
+    }] }
+  } })
+  const manual = '医生记录：睡眠正常。'
+  expect((await fixture.save(manual)).status).toBe(200)
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const first = (await fixture.read()).consultationRecording!.additions[0]!
+  expect((await fixture.review(first.id, 'accept')).status).toBe(200)
+  const appliedDraft = (await fixture.read()).clinicalDocument!.draft!
+  for (round = 1; round < replies.length; round += 1) {
+    if (round === 3) await fixture.restart()
+    expect((await fixture.askMore()).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+  }
+  const detail = await fixture.read()
+  const latest = detail.consultationRecording!.additions.at(-1)!
+  expect(detail.consultationRecording!.failedCount).toBe(0)
+  expect(detail.clinicalDocument!.draft).toEqual(appliedDraft)
+  expect(latest).toMatchObject({ status: 'pending', reviewable: true, summary: texts.join('；') })
+  expect(latest.facts!.flatMap(fact => fact.sources.map(source => source.quote))).toEqual(replies)
+  expect(detail.consultationRecording!.additions.map(item => item.status)).toEqual(['applied', 'superseded', 'superseded', 'pending'])
+  expect((await fixture.review(latest.id, 'accept')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(manual + '\n' + texts.join('；'))
+  expect((await fixture.review(latest.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(appliedDraft.historyOfPresentIllness)
+  expect((await fixture.read()).consultationRecording!.additions[0]).toMatchObject({ id: first.id, status: 'applied' })
 })
 
 it('creates the first draft only on application and preserves ignored suggestions across restart and old-source replay', async () => {

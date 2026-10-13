@@ -107,6 +107,24 @@ function rowText(row: HistoryRow): string {
   return row.facts_json === null ? `患者自述：${row.quote}` : summaryText(rowFacts(row))
 }
 
+function latestSummaryRows(rows: HistoryRow[]): HistoryRow[] {
+  const live = rows.filter(row => row.undone === 0 && row.review_state === null)
+  const byId = new Map(rows.map(row => [row.addition_id, row]))
+  const covered = new Set<string>()
+  for (const row of live) {
+    if (row.status !== 'pending') continue
+    let target = byId.get(row.target_addition_id ?? '')
+    // Superseded pending rows still link the latest suggestion to its applied ancestor.
+    while (target !== undefined && target.field === row.field && target.undone === 0
+      && target.review_state !== 'ignored' && !covered.has(target.addition_id)) {
+      covered.add(target.addition_id)
+      if (target.status !== 'pending') break
+      target = byId.get(target.target_addition_id ?? '')
+    }
+  }
+  return live.filter(row => !covered.has(row.addition_id))
+}
+
 function historyEvidenceKey(field: HistorySummary['field'], source: HistoryFact['sources'][number]): string {
   return JSON.stringify([field, source.sourceTurnId, normalizeQuoteEnding(source.quote)])
 }
@@ -533,10 +551,8 @@ export class ConsultationRecordingService {
       const taskId = `history:${context.epoch}:${turnId}${generation === 1 ? '' : `:${generation}`}`
       const pinned = await model.models.bind(context.workspaceId, taskId, model.model, model.signal)
       const baseline = this.#draft(context, job.case_id)
-      const live = this.#rows(context, job.case_id).filter(row => row.undone === 0 && row.review_state === null)
-      const history = live
-        .filter(row => !live.some(candidate => candidate.status === 'pending' && candidate.target_addition_id === row.addition_id)
-          && turns.some(turn => turn.id === row.source_turn_id))
+      const history = latestSummaryRows(this.#rows(context, job.case_id))
+        .filter(row => turns.some(turn => turn.id === row.source_turn_id))
         .map(row => ({ id: row.addition_id, field: row.field, text: row.status === 'pending' ? rowText(row) : row.current_text || rowText(row),
           facts: rowFacts(row), quote: row.quote, sourceTurnId: row.source_turn_id }))
       const manualHistory = this.#manualHistory(context, job.case_id, baseline.content)
