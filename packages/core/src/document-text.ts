@@ -2,6 +2,26 @@ import { diffChars } from 'diff'
 
 interface TextEdit { start: number; end: number; text: string }
 
+export function hasStatementBoundaries(text: string, start: number, end: number): boolean {
+  const quote = text.slice(start, end)
+  const boundary = /[。！？；!?;\r\n]/u
+  const before = text.slice(0, start).replace(/[^\S\r\n]+$/u, '')
+  const after = text.slice(end).replace(/^[^\S\r\n]+/u, '')
+  return !/^(?:[。！？；!?;]|[^\S\r\n])*[?？]/u.test(after)
+    && (before.length === 0 || boundary.test(before.at(-1)!))
+    && (after.length === 0 || boundary.test(after[0]!) || boundary.test(quote.at(-1)!))
+}
+
+/** Locate the first complete statement, skipping matches inside other statements. */
+export function findCompleteStatementQuote(text: string, quote: string): { start: number; end: number } | undefined {
+  if (quote.length === 0) return undefined
+  for (let start = text.indexOf(quote); start >= 0; start = text.indexOf(quote, start + 1)) {
+    const end = start + quote.length
+    if (hasStatementBoundaries(text, start, end)) return { start, end }
+  }
+  return undefined
+}
+
 function edits(before: string, after: string): TextEdit[] {
   const result: TextEdit[] = []
   let offset = 0

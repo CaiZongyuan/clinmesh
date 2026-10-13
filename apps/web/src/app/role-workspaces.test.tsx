@@ -6658,8 +6658,9 @@ describe('role workspaces', () => {
     expect(within(medicationDirectory).getAllByText(/^合成制药有限公司 · /)).toHaveLength(1)
     expect(within(medicationDirectory).getByText(/^另一合成制药有限公司 · /)).toBeTruthy()
     await waitFor(() => expect((within(medicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }) as HTMLButtonElement).disabled).toBe(false))
-    await user.click(within(medicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }))
-    await user.click(screen.getByRole('option', { name: '12粒/盒' }))
+    act(() => within(medicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '12粒/盒' }))
     await user.click(within(medicationDirectory).getByRole('button', {
       name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))

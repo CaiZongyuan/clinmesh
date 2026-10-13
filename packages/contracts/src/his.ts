@@ -987,11 +987,34 @@ export const clinicalDocumentDraftContentSchema = clinicalDocumentContentSchema.
   priorMedicalHistory: z.string().trim().max(4_000).optional(),
 })
 
+export const consultationHistorySourceSchema = z.object({
+  sourceTurnId: z.string().min(1).max(128),
+  quote: z.string().trim().min(2).max(2_000),
+}).strict()
+
+export const consultationHistoryFactSchema = z.object({
+  text: z.string().trim().min(2).max(600),
+  sources: z.array(consultationHistorySourceSchema).min(1).max(12),
+}).strict()
+
+export const consultationHistorySummarySchema = z.object({
+  field: z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory']),
+  facts: z.array(consultationHistoryFactSchema).min(1).max(12),
+  relation: z.enum(['addition', 'update', 'correction', 'conflict']),
+  targetAdditionId: z.string().min(1).max(128).optional(),
+}).strict().superRefine((addition, context) => {
+  if ((addition.relation === 'addition') !== (addition.targetAdditionId === undefined)) {
+    context.addIssue({ code: 'custom', path: ['targetAdditionId'],
+      message: 'Updates, corrections and conflicts require a target; additions cannot have one' })
+  }
+})
+
+// Retained for stored extracts and old Command receipts.
 export const consultationHistoryAdditionSchema = z.object({
   field: z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory']),
   sourceTurnId: z.string().min(1).max(128),
-  quote: z.string().trim().min(2).max(600),
-  relation: z.enum(['addition', 'correction', 'conflict']),
+  quote: z.string().trim().min(2).max(2_000),
+  relation: z.enum(['addition', 'update', 'correction', 'conflict']),
   targetAdditionId: z.string().min(1).max(128).optional(),
 }).strict().superRefine((addition, context) => {
   if ((addition.relation === 'addition') !== (addition.targetAdditionId === undefined)) {
@@ -1027,6 +1050,8 @@ export const consultationRecordingSchema = z.object({
   }).strict()).default([]),
   // Historical suggestions may predate the required correction target in the extraction contract.
   additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({
+    summary: z.string().optional(),
+    facts: z.array(consultationHistoryFactSchema).optional(),
     id: z.string().min(1),
     status: z.enum(['applied', 'pending', 'superseded', 'ignored', 'undone']),
     reviewStatus: z.enum(['unreviewed', 'confirmed', 'undo-pending']).default('unreviewed'),
