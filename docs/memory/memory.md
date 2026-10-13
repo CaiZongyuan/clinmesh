@@ -42,6 +42,8 @@
 
 - 模型语义核对的否定结论是合法结果，结构化输出 `validate` 只校验完整性和形状；在请求完成后处理否定结论。把否定结论当成可修复格式错误，会诱导模型对同一候选改成通过。病史总结采用此边界，见[多轮溯源决策](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
 
+- 验证自然语言来源时，原文归属与完整引用属于确定性边界，事实是否成立属于语义边界；不能用句末问号排除同句中的明确自述，也不能删标点或截断引用规避检查。回归同时提供完整混合句、纯提问和错误肯定总结，确保合法来源确实到达独立核对，而否定结果不触发格式修复；当前病史规则见[多轮溯源决策](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
+
 - 单来源升级为多来源时，逐一检查拒绝重放、去重和更正判定是否仍只读取代表引用；回归组合引用重排、拒绝后重启、旧证据重放与新轮次再次提供证据，并把更正引用放在其他事实之后。句界校验不能用 `trimStart`／`trimEnd` 擦除 CR、LF，来源校验和持久锚点应共用规则，同时覆盖两种换行。病史总结的当前边界由[多轮溯源决策](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)拥有。
 
 - 新增辅助模型的 `schemaName` 时同步 `packages/contracts/src/model-bridge.ts` 的窄白名单，并通过真实 `DshModelProvider` 与宿主 handler 的集成测试。直接 Provider 替身会绕过这条边界，JSON 和应用测试通过仍可能在宿主报 `AI_REQUEST_FAILED`。
