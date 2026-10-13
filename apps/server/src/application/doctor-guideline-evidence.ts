@@ -1,6 +1,6 @@
 import { guidelineEvidenceSchema, type GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
 
-export const doctorGuidelineRevision = 'official-clauses-2026-10-13-v1'
+export const doctorGuidelineRevision = 'official-clauses-2026-10-13-v2'
 
 const influenza = {
   title: '流行性感冒诊疗方案（2025 年版）',
@@ -26,6 +26,13 @@ const breast = {
   url: 'https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930/files/1732863054702_65919.pdf',
   sourceHash: '9d3b51f20abe6b80fa2f6273d371c36e14554bfecceb84a274ffe60195c8ffae',
 }
+const amlodipine = {
+  title: '苯磺酸氨氯地平片（络活喜）说明书', publisher: '晖致制药（大连）有限公司',
+  documentType: 'product-information' as const, version: '2026-10-13 核验版本',
+  scope: '成人高血压用药；需核对既有方案、年龄、体型、虚弱与肝功能。本院合成药品并非本说明书的具体产品，不能套用包装，也无固定 30 天疗程或 30 片数量依据。',
+  url: 'https://www.viatris.cn/-/media/project/viatris-sites/product-document/02norvasc.pdf',
+  sourceHash: '6421355efdba7552efc1d814295f8dcff186dfbb44805af6d78c6673199e5689',
+}
 
 export const doctorGuidelineGroups: ReadonlyArray<{ terms: readonly string[]; evidence: readonly GuidelineEvidence[] }> = [
   { terms: ['流感', '发热', '咳嗽', 'influenza', 'fever', 'cough'], evidence: [
@@ -41,6 +48,8 @@ export const doctorGuidelineGroups: ReadonlyArray<{ terms: readonly string[]; ev
       text: '符合高血压诊断的患者，应进行首次评估，询问病史、进行体格检查和血尿常规、生化及心电图检测。' },
     { ...hypertension, id: 'ws-t-872-2025-treatment', locator: '第 8.2 节，印刷第 3 页',
       text: '在生活方式干预的基础上，根据患者个体情况合理选择降压药物，逐步调定' },
+    { ...amlodipine, id: 'viatris-norvasc-adult-hypertension-dose', locator: '“用法用量—成人”，印刷第 3 页',
+      text: '通常本品治疗高血压的起始剂量为5 mg，每日一次，最大剂量为10 mg，每日一次。\n身材小、虚弱、老年、或伴肝功能不全患者，起始剂量为2.5 mg，每日一次；此剂量也可为本品联合其它抗高血压药物治疗的剂量。' },
   ].map(item => guidelineEvidenceSchema.parse(item)) },
   { terms: ['乳腺', 'breast'], evidence: [
     { ...breast, id: 'nhc-breast-2022-pathology', locator: '第三节“组织病理学诊断”，印刷第 11 页',
