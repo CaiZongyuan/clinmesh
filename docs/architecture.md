@@ -866,6 +866,12 @@ DSH 模型桥接已配置时，新建 Consultation 默认登记自动记录资�
 
 临床目录响应以 `prescriptionConclusionSupported` 显式声明当前 Epoch 是否具有独立用药结论能力。v3 药品目录同时提供疗程、数量和诊断适应规则并返回 `true`；保留的 v1/v2 目录只提供组合、剂量和频次规则并返回 `false`，其组合复诊流程保持可用，独立处方与无需用药 Command 返回稳定目录冲突，Web 不显示独立用药结论面板。
 
+诊疗建议是绑定 Workspace、Epoch、负责医生、病例和建议类型的独立辅助结果。医生页面通过 `GET /api/his/v1/doctor/cases/:caseId/recommendations/:kind` 读取，通过同路径的 `POST actions/generate` 提交当前 Encounter 版本与资料指纹，类型为检验、放射、病理、诊断和处方。生成 Command 只更新建议状态并入持久 outbox，不创建正式临床资源。输入包括当前授权公开病例、完整问诊和病历字段、报告与可见历史、当前院内目录以及[已经核验的官方短条款](research/2026-10-13-clinical-recommendation-guidelines.md)，不读取 Case Truth、私有 Persona、影像像素或 DSH Session transcript。
+
+建议按资料、目录与证据版本的指纹去重，显式刷新创建新代次；同一任务的生成、结构化修复、自动重试与重启恢复沿用固定模型，新的代次采用当前模型选择。第二次独立请求核对条款支持、病例支持、适用性与限定语，合法否定结论不触发格式修复。处方进一步核对本院实际药品规格与每个字段依据，无法证实的字段保持 `null`；目录默认值与允许值只用于执行映射。来源、目录、授权或代次变化会阻止旧结果生效。输入超过证据或请求预算时返回明确缺少处理条件，不截断来源生成。持久输入、语义核对与预算取舍见[建议来源与草稿边界决策](../.agents/notes/implemented/architecture/2026-10-13-doctor-guideline-recommendations.md)。
+
+页面资料更新只推进建议读取版本，保留现有草稿编辑器与未保存输入。采纳前重新读取建议，核对当前病例、类型、指纹、代次和可见条目，并重新检查最新编辑权限；只读、已有人工检查草稿和重复条目沿用现有约束。采纳只填入可编辑草稿，处方缺项显示待医生补充，正式确认诊断、开立检查和开具处方仍通过原有人工确认与共享 Command。
+
 无需用药结论是独立的 domain-native 正式事实，记录负责 Actor、Practitioner Role 和虚拟业务时间，不用空 Prescription 或空 MedicationRequest 代替。有效处方与无需用药结论互斥；处方撤回后可确认无需用药。确认动作也清除处方草稿并递增草稿版本。
 
 处方撤回使用不可变 `prescription_withdrawal` 事实表达，不删除或覆盖原 Prescription。只有未发生任何调剂的 signed 或 paid 处方可按 Prescription expected version 和全部 MedicationRequest expected versions 撤回；成功后各 MedicationRequest 进入 `cancelled` 并保留 FHIR history，Prescription 版本递增且读模型投影为 `withdrawn`。未收费的已撤回药品费用不再进入收费员待收费队列，已收费历史仍可查询且不会隐式退款；药房队列、审核、支付和发药入口都拒绝已撤回处方。
