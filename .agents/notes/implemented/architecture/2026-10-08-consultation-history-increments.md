@@ -2,6 +2,8 @@
 
 Status: implemented
 
+正文逐字摘录与单来源约束由[病史总结与多轮溯源](2026-10-12-consultation-agent-summary-sources.md)替代；本记录中的持久任务、共享 Command、患者自述边界与失败恢复理由继续适用。
+
 ## Problem
 
 患者回答与病历填写原来是两次独立操作。后台提取可能晚于医生编辑、签署或 Epoch reset，整篇重生成不能保留人工内容，也不能证明模型使用了患者已公开的信息。整体需求及职责归属见[规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)与[整体决策](2026-10-08-consultation-auto-record.md)。

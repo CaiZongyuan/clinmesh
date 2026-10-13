@@ -20,13 +20,16 @@ import { verificationEnvironment } from './dsh-upstreams-verify.ts'
 import { parseLock } from './dsh-upstreams.ts'
 
 // Explicit native smoke: the default uses only a synthetic host LlmAdapter.
-// --live additionally validates one real auxiliary reply/extraction using an isolated copy of a configured profile.
+// --live validates real multi-turn summarization/verification with fixed synthetic
+// patient replies using an isolated copy of a configured profile.
 const root = resolve(import.meta.dirname, '..')
 const lock = parseLock(JSON.parse(await readFile(join(root, 'dsh-upstreams.lock.json'), 'utf8')))
 const hostVersion = lock.components.find(component => component.name === '@deepseek-ai/dsh')!.version!
 const runtimeDirectory = resolve(process.env.CLINMESH_DSH_SMOKE_RUNTIME ?? join(root, `.data/dsh-runtime/versions/dsh-${hostVersion}`))
 const agUiDirectory = resolve(process.env.CLINMESH_DSH_SMOKE_AG_UI ?? join(root, '.data/dsh-runtime/ag-ui'))
 const live = process.argv.includes('--live')
+const summaryOnly = process.argv.includes('--summary-only')
+if (summaryOnly && !live) throw new Error('--summary-only requires --live')
 const sourceHome = process.env.CLINMESH_DSH_SMOKE_HOME
 if (live && !sourceHome) throw new Error('--live requires CLINMESH_DSH_SMOKE_HOME with a configured isolated host')
 const liveModel = process.env.CLINMESH_DSH_SMOKE_LIVE_MODEL
@@ -41,6 +44,9 @@ expect(await revision(join(root, 'vendor/dsh-react-surface'))).toBe(lock.compone
 const sourceHashes = Object.fromEntries(await Promise.all([
   'scripts/smoke-dsh-consultation.ts', 'apps/web/e2e/consultation-recording-journey.ts', 'apps/web/e2e/consultation-recording-journey.spec.ts',
   'package.json', 'pnpm-lock.yaml', 'tsconfig.browser.json',
+  'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
+  'apps/server/drizzle/0059_consultation-history-summary.sql', 'packages/contracts/src/his.ts',
+  'apps/web/src/app/doctor/consultation-history-review.tsx',
 ].map(async path => [path, createHash('sha256').update(await readFile(join(root, path))).digest('hex')])))
 const scratch = await mkdtemp(join(tmpdir(), 'clinmesh-dsh-consultation-'))
 const home = join(scratch, 'home')
@@ -51,7 +57,7 @@ const secret = randomBytes(32).toString('hex')
 const password = `Synthetic-${randomUUID()}-Aa1!`
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n'
 const report: Record<string, unknown> = { hostVersion: installedHost.version, agUiCommit, sourceCommit: await revision(root), sourceHashes,
-  components: lock.components.map(({ name, version, commit }) => ({ name, version, commit })), syntheticData: true }
+  components: lock.components.map(({ name, version, commit }) => ({ name, version, commit })), syntheticData: true, summaryOnly }
 const browser = await chromium.launch({ headless: true })
 let managed: ReturnType<typeof startManagedProcess> | undefined
 let hospital: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined
@@ -84,7 +90,7 @@ try {
   for (const [target, link] of links) await symlink(target!, link!, process.platform === 'win32' ? 'junction' : 'dir')
   const synthetic = join(profile, 'node_modules/synthetic-consultation')
   await mkdir(synthetic)
-  await writeFile(join(synthetic, 'package.json'), json({ name: 'synthetic-consultation', type: 'module', main: './index.js' }))
+  await writeFile(join(synthetic, 'package.json'), json({ name: 'synthetic-consultation', version: '0.0.0', type: 'module', main: './index.js' }))
   await writeFile(controlPath, json({ stage: 'initial', fail: false, released: false }))
   const sdk = pathToFileURL(join(runtimeDirectory, 'node_modules/@deepseek-ai/dsh-llm/lib/index.js')).href
   // The adapter records only routing/Tool metadata, never prompts, credentials or patient pixels.
@@ -102,7 +108,10 @@ class Adapter extends LlmAdapter {
     if(options.sessionId) {
       record({kind:'native-request', session:options.sessionId, tools:options.tools?.map(t=>t.name)});
       const last=options.messages.at(-1);
-      if(last?.role==='tool') { yield {type:'finish',reason:{kind:'stop'}}; return; }
+      if(last?.role==='tool') {
+        record({kind:'native-result',codes:JSON.stringify(last).match(/(?:CLINMESH|AGENT)_[A-Z_]+/g)??[]});
+        yield {type:'finish',reason:{kind:'stop'}}; return;
+      }
       if(!state.tool) {
         yield {type:'text-delta',index:0,text:'合成验收会话已就绪。'};
         yield {type:'finish',reason:{kind:'stop'}}; return;
@@ -118,11 +127,18 @@ class Adapter extends LlmAdapter {
       yield {type:'block-end',index:0,block:{type:'tool-call',id,name:tool.name,arguments:encoded}};
       yield {type:'finish',reason:{kind:'tool-calls'}}; return;
     }
+    if(options.system.includes('你只判断本条医生输入是否明确委托')) {
+      record({kind:'auxiliary',history:false,session:false,tools:!!options.tools});
+      yield {type:'text-delta',index:0,text:JSON.stringify({intent:'discuss',evidence:''})};
+      yield {type:'finish',reason:{kind:'stop'}}; return;
+    }
     const payload=JSON.parse(options.messages[0].content[0].text);
     const history=Array.isArray(payload.turns)&&Array.isArray(payload.history);
     record({kind:'auxiliary',history,session:false,tools:!!options.tools});
     let result;
-    if(history) {
+    if(Array.isArray(payload.additions)) {
+      result={additions:payload.additions.map((_,index)=>({index,faithful:true,complete:true,relationValid:true}))};
+    } else if(history) {
       if(state.fail) { yield {type:'finish',reason:{kind:'error',failure:{code:'TIMEOUT',message:'Synthetic controlled timeout'}}}; return; }
       if(state.stage==='late') {
         record({kind:'held-extraction'});
@@ -130,7 +146,7 @@ class Adapter extends LlmAdapter {
       }
       const turn=payload.turns.at(-1);
       const quotes=state.stage==='initial'?['头晕一周了。','站起来时更明显。']:[turn.messageText];
-      result={additions:quotes.map(quote=>({field:'historyOfPresentIllness',sourceTurnId:turn.id,quote,
+      result={additions:quotes.map(quote=>({field:'historyOfPresentIllness',facts:[{text:'患者自述：'+quote,sources:[{sourceTurnId:turn.id,quote}]}],
         relation:state.stage==='correction'?'correction':'addition',...(state.stage==='correction'?{targetAdditionId:payload.history[0].id}:{})}))};
     } else if(options.system.includes('患者档案')) result=${JSON.stringify(persona)};
     else result={reply:replies[state.stage]};
@@ -139,9 +155,11 @@ class Adapter extends LlmAdapter {
     if(history) record({kind:'settled-extraction',stage:state.stage});
   }
 }
-export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],new Adapter());}
+export function apply(ctx) {
+  ctx.llm.registerAdapter(['synthetic-consultation'],new Adapter());
+}
 `)
-  await writeFile(join(profile, 'package.json'), json({ name: 'synthetic-consultation-profile', private: true,
+  await writeFile(join(profile, 'package.json'), json({ name: 'synthetic-consultation-profile', version: '0.0.0', private: true,
     dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'dsh-react-surface', 'dsh-ag-ui', '@clinmesh/dsh-web'] } } }))
   await writeFile(join(profile, 'cordis.yml'), '[]\n')
   let existingPatch = ''
@@ -170,6 +188,11 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
       name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
 `)
   hospital = await createClinMeshRuntime({
+    chatCompletionsProvider: {
+      resolveModel: (route, signal) => provider.resolveModel(route === 'dsh:default'
+        ? 'dsh:{"provider":"synthetic-consultation","model":"journey"}' : route, signal),
+      completeJson: input => provider.completeJson(input),
+    },
     dshBridgeSecret: secret,
     dshModelBridge: { origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 },
     authBaseUrl: serverOrigin, trustedOrigins: [serverOrigin, hostOrigin], authSecret: secret, cursorSecret: secret,
@@ -229,6 +252,15 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
   })
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.name))
+  const startupErrors: string[] = []
+  const startupResponses: Array<{ path: string; status: number }> = []
+  page.on('response', response => {
+    if (phase === 'journey') startupResponses.push({ path: new URL(response.url()).pathname, status: response.status() })
+  })
+  page.on('pageerror', error => {
+    if (phase === 'journey') startupErrors.push(error.message.replaceAll(secret, 'REDACTED').replaceAll(password, 'REDACTED')
+      .replace(/token=[A-Za-z0-9_-]+/g, 'token=REDACTED').slice(0, 400))
+  })
   await page.goto(entry)
   const launcher = page.getByRole('button', { name: '医院工作台', exact: true })
   const ready = async () => { await expect.poll(async () => {
@@ -243,7 +275,13 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
     try { await launcher.click({ trial: true, timeout: 500 }); return true }
     catch { return false }
   }, { timeout: 60_000 }).toBe(true) }
-  await ready()
+  try { await ready() } catch (error) {
+    const text = (await page.locator('body').innerText()).replaceAll(secret, 'REDACTED').replaceAll(password, 'REDACTED')
+      .replace(/token=[A-Za-z0-9_-]+/g, 'token=REDACTED').slice(0, 400)
+    console.error('原生首页加载诊断', json({ errors: startupErrors, responses: startupResponses.slice(-12),
+      buttons: await page.getByRole('button').allTextContents(), text }))
+    throw error
+  }
   phase = 'native-workspace'
   await page.getByRole('button', { name: '选择工作区', exact: true }).click()
   const addWorkspace = page.getByRole('menuitem', { name: '添加工作区…', exact: true })
@@ -257,7 +295,14 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
   await page.getByRole('button', { name: '打开', exact: true }).click()
   await ready()
   phase = 'native-session'
-  await page.locator('[contenteditable="true"]').last().fill('合成验收：建立问诊会话。')
+  const initialComposer = page.locator('[contenteditable="true"]').last()
+  // Selecting a workspace can remount the composer while its session hydrates.
+  // Populate only the current draft and observe the enabled send control.
+  await expect.poll(async () => {
+    await initialComposer.fill('合成验收：建立问诊会话。')
+    return await initialComposer.innerText() === '合成验收：建立问诊会话。'
+      && await page.getByRole('button', { name: '发送消息', exact: true }).isEnabled()
+  }, { timeout: 30_000 }).toBe(true)
   await page.getByRole('button', { name: '发送消息', exact: true }).click()
   await expect(page.getByText('合成验收会话已就绪。', { exact: true }).last()).toBeVisible({ timeout: 30_000 })
   phase = 'surface-login'
@@ -271,6 +316,7 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
   await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   await expect.poll(() => activeTools.includes('clinmesh_fill_clinical_document_draft'), { timeout: 60_000 }).toBe(true)
+  if (!summaryOnly) {
   phase = 'recording-journey'
   let control: Record<string, unknown> = { stage: 'initial', fail: false, released: false }
   const updateControl = async (patch: Record<string, unknown>) => { control = { ...control, ...patch }; await writeFile(controlPath, json(control)) }
@@ -302,6 +348,11 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
       await expect.poll(() => hospital!.database.driver.prepare("SELECT count(*) AS count FROM outbox_event WHERE status = 'claimed'").get()).toEqual({ count: 0 })
     },
     agentDraft: async () => {
+      // The journey deliberately leaves an unsaved assessment to verify local
+      // edit protection. Save it before testing a separate Agent draft action.
+      const assessment = await page.getByLabel('评估', { exact: true }).inputValue()
+      await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+      await expect.poll(async () => (await read()).clinicalDocument!.draft!.assessment).toBe(assessment)
       const current = (await read()).clinicalDocument!.draft!
       const draft = clinicalDocumentDraftContentSchema.parse(Object.fromEntries([
         'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition', 'followUp',
@@ -354,18 +405,24 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
   report.nativeCalls = recorded.filter(call => call.kind === 'native-call').map(call => call.name)
   report.pageErrors = errors.length
   expect(errors).toEqual([])
+  }
   if (live) {
     phase = 'live-model'
     const model = liveModel!
     report.liveRoute = decodeModelRoute(model)
     // New synthetic case, real DSH network boundary; the fixture persona remains explicit setup.
     let liveMode = false
+    const liveReplies = ['昨天晚上开始发烧，最高量到38.5度，还咳嗽，但是没有痰。',
+      '咳嗽也是昨晚开始的，胸口不疼，也不觉得喘。']
+    let liveReplyIndex = 0
     const original = hospital
     const liveRuntime = await createClinMeshRuntime({
       dshBridgeSecret: secret,
       chatCompletionsProvider: { resolveModel: (route, signal) => provider.resolveModel(route === 'dsh:default' ? model : route, signal),
         completeJson: input => input.schemaName === 'patient_persona'
           ? Promise.resolve({ content: JSON.stringify(persona), model: input.model })
+          : input.schemaName === 'patient_dialogue_reply'
+            ? Promise.resolve({ content: JSON.stringify({ reply: liveReplies[liveReplyIndex] }), model: input.model })
           : provider.completeJson(input) },
       dshModelBridge: { origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 },
       authBaseUrl: serverOrigin, trustedOrigins: [serverOrigin, hostOrigin], authSecret: secret, cursorSecret: secret,
@@ -391,31 +448,93 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-consultation'],n
       await page.getByText('张琴', { exact: true }).first().click()
       await page.getByRole('button', { name: '开始首诊', exact: true }).click()
       await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
-      await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('头晕多久了，什么情况会加重？')
       const begun = performance.now()
-      await page.getByRole('button', { name: '向患者提问', exact: true }).click()
-      await expect.poll(async () => (await readLive()).consultation!.turns.length, { timeout: 180_000 }).toBe(3)
+      for (const [index, question] of ['何时发热，最高体温多少，咳嗽有没有痰？', '咳嗽何时开始，有没有胸痛或气促？'].entries()) {
+        liveReplyIndex = index
+        await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+        await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill(question)
+        await page.getByRole('button', { name: '向患者提问', exact: true }).click()
+        await expect.poll(async () => (await readLive()).consultation!.turns.length, { timeout: 180_000 }).toBe(3 + 2 * index)
+        await expect.poll(async () => {
+          const recording = (await readLive()).consultationRecording!
+          if (recording.status === 'failed') throw new Error('Live history generation failed')
+          return recording.status
+        }, { timeout: 370_000 }).toBe('updated')
+      }
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-      await expect.poll(async () => (await readLive()).consultationRecording!.status, { timeout: 370_000 }).toBe('updated')
       const detail = await readLive()
       const additions = detail.consultationRecording!.additions.filter(addition => addition.status === 'applied')
+      report.liveEvidence = { summary: detail.clinicalDocument?.draft?.historyOfPresentIllness,
+        replies: liveReplies, additions: additions.map(({ summary, facts }) => ({ summary, facts })) }
+      phase = 'live-summary-quality'
       expect(additions.length).toBeGreaterThan(0)
-      for (const addition of additions) expect(detail.consultation!.turns.find(turn => turn.id === addition.sourceTurnId)?.messageText).toContain(addition.quote)
-      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'updated', sourceVerified: true }
+      const history = detail.clinicalDocument!.draft!.historyOfPresentIllness
+      expect(history).not.toContain('患者自述：')
+      expect(history).toMatch(/38\.5/)
+      expect(history).toMatch(/(?:自述|自测|居家|家中).*38\.5/)
+      expect(history).toMatch(/昨晚|昨天晚上/)
+      expect(history).toMatch(/发热|发烧/)
+      expect(history).toMatch(/干咳|无痰|咳嗽.*(?:无|没有)痰/)
+      expect(history).toMatch(/胸痛|胸口/)
+      expect(history).toMatch(/气促|喘|呼吸困难/)
+      expect(history).toMatch(/(?:否认|无|没有|不).*(?:胸痛|胸口)/)
+      expect(history).toMatch(/(?:否认|无|没有|不).*(?:气促|喘|呼吸困难)/)
+      expect(history).not.toMatch(/肺炎|听诊|查体正常|考虑诊断/)
+      phase = 'live-summary-sources'
+      const summarizedTurns = new Set<string>()
+      for (const addition of additions) {
+        expect(addition.facts?.length).toBeGreaterThan(0)
+        for (const fact of addition.facts!) for (const source of fact.sources) {
+          expect(detail.consultation!.turns.find(turn => turn.id === source.sourceTurnId)?.messageText).toContain(source.quote)
+          summarizedTurns.add(source.sourceTurnId)
+        }
+      }
+      const replyTurnIds = detail.consultation!.turns.filter(turn => liveReplies.includes(turn.messageText)).map(turn => turn.id)
+      expect(replyTurnIds).toHaveLength(2)
+      expect(replyTurnIds.every(id => summarizedTurns.has(id))).toBe(true)
+      const merged = additions.find(addition => addition.field === 'historyOfPresentIllness'
+        && replyTurnIds.every(id => addition.facts!.some(fact => fact.sources.some(source => source.sourceTurnId === id))))
+      expect(merged).toBeDefined()
+      phase = 'live-summary-source-dialog'
+      await page.locator('[data-consultation-addition="applied"]').filter({ hasText: merged!.summary! })
+        .getByRole('button', { name: '查看来源', exact: true }).click()
+      await expect(page.getByRole('dialog', { name: '患者原回答', exact: true }).locator('blockquote')).toHaveText(liveReplies)
+      await page.keyboard.press('Escape')
+      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'updated',
+        sourceVerified: true, summary: history, replies: liveReplies, facts: additions.map(addition => addition.facts),
+        multiTurnSourceDialog: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
       liveMode = true
-    } finally { hospital = original; await liveRuntime.close() }
+    } finally {
+      report.liveJobs = liveRuntime.database.driver.prepare('SELECT status, error_code FROM consultation_recording_job').all()
+      hospital = original
+      await liveRuntime.close()
+    }
     expect(liveMode).toBe(true)
   }
-  console.log('原生 DSH 问诊组合验收及 Tool → 人工批准 → Command 关联通过')
+  report.pageErrors = errors.length
+  expect(errors).toEqual([])
+  console.log(summaryOnly ? '原生 DSH 多轮病史总结与来源验收通过' : '原生 DSH 问诊组合验收及 Tool → 人工批准 → Command 关联通过')
   if (process.env.CLINMESH_DSH_SMOKE_REPORT) await writeFile(resolve(process.env.CLINMESH_DSH_SMOKE_REPORT), json(report))
 } catch (error) {
   // Playwright errors can contain the host token or provider input. Keep the public failure bounded.
   console.error('原生验收失败', phase, error instanceof Error ? error.name : 'UnknownError')
-  if (error instanceof Error && error.name === 'TimeoutError' && phase !== 'live-model') {
+  if (error instanceof Error && ['TimeoutError', 'Error'].includes(error.name) && phase !== 'live-model') {
     console.error(error.message.replaceAll(secret, 'REDACTED').replaceAll(password, 'REDACTED')
       .replace(/token=[A-Za-z0-9_-]+/g, 'token=REDACTED').slice(0, 1000))
   }
   console.error('原生桥接响应', json(bridgeEvents.slice(-15)))
+  const capturedCalls = await readFile(callsPath, 'utf8').catch(() => '')
+  console.error('原生调用状态', json(capturedCalls.trim().split('\n').filter(Boolean).slice(-8).map(line => {
+    const value = z.object({ kind: z.string(), name: z.string().optional(), codes: z.array(z.string()).optional(),
+      provider: z.string().optional(), model: z.string().optional(), reason: z.string().optional(), code: z.string().optional() }).parse(JSON.parse(line))
+    return value
+  })))
+  if (hospital !== undefined) console.error('页面工具状态', json(hospital.database.driver.prepare(
+    "SELECT operation_id, status, json_extract(result_json, '$.error.code') AS error_code FROM agent_tool_call",
+  ).all()))
+  if (hospital !== undefined) console.error('记录任务状态', json(hospital.database.driver.prepare(
+    'SELECT status, error_code FROM consultation_recording_job',
+  ).all()))
   if (process.env.CLINMESH_DSH_SMOKE_REPORT) await writeFile(resolve(process.env.CLINMESH_DSH_SMOKE_REPORT), json({ ...report, failurePhase: phase }))
   process.exitCode = 1
 } finally {

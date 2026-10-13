@@ -269,15 +269,22 @@ it.each([false, true])('restores queued automatic history through DSH (schema me
   expect(response.status).toBe(200)
   const answered = await response.json() as { data: { patientTurn: { id: string } } }
   await instance.restart()
-  dsh.answer({ ...(metadata ? { $schema: 'https://json-schema.org/draft/2020-12/schema' } : {}),
-    additions: [{ field: 'historyOfPresentIllness', sourceTurnId: answered.data.patientTurn.id,
-    quote: '头晕一周了。', relation: 'addition' }] })
+  const beforeRecording = dsh.calls.length
+  dsh.respond(async options => ({ ...(metadata ? { $schema: 'https://json-schema.org/draft/2020-12/schema' } : {}),
+    additions: options.system?.includes('独立病史核对者')
+      ? [{ index: 0, faithful: true, complete: true, relationValid: true }]
+      : [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{ text: '头晕一周',
+        sources: [{ sourceTurnId: answered.data.patientTurn.id, quote: '头晕一周了。' }] }] }],
+  }))
   await instance.runtime.dispatchPending()
   const detail = doctorCaseDetailSchema.parse(await (await instance.runtime.app.request(
     `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
   )).json())
-  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了。')
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('头晕一周')
   expect(detail.consultationRecording).toMatchObject({ status: 'updated' })
+  expect(dsh.calls).toHaveLength(beforeRecording + 2)
+  expect(dsh.calls.at(-2)?.system).toContain('跨轮归并')
+  expect(dsh.calls.at(-1)?.system).toContain('独立病史核对者')
   const call = dsh.calls.at(-1)!
   expect(call.provider).toBe('synthetic-provider-a')
   expect(JSON.stringify(call)).toContain('sourceTurnId')
