@@ -7,11 +7,13 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import { afterEach, expect, it } from 'vitest'
 import { encodeModelRoute, dshDefaultModel } from '@clinmesh/contracts/model-bridge'
-import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, sendConsultationMessageResponseSchema } from '@clinmesh/contracts/his'
 import { createModelBridgeHandler } from '../../dsh-web/src/model-bridge.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
+import type { HistoryTurn } from '../src/application/consultation-history-summary.ts'
+import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 
 type HostContext = Parameters<typeof createModelBridgeHandler>[0]
 type GenerateOptions = Parameters<HostContext['llm']['stream']>[0]
@@ -240,7 +242,24 @@ it('cancels an active auxiliary stream on caller disconnect or plugin unload', a
   expect(dsh.calls[1]?.signal?.aborted).toBe(true)
 })
 
-async function hospital(dsh: Awaited<ReturnType<typeof host>>) {
+class KnownDiabetesSyntheaProvider extends StubSyntheaProvider {
+  override async generate() {
+    const corpus = await super.generate()
+    const sources = corpus.sources.map(source => {
+      const raw = z.object({ entry: z.array(z.unknown()) }).passthrough().parse(source.raw)
+      raw.entry.push({ fullUrl: 'urn:uuid:prior-diabetes', resource: {
+        resourceType: 'Condition', id: 'prior-diabetes', subject: { reference: 'urn:uuid:patient' },
+        encounter: { reference: 'urn:uuid:prior-encounter' }, recordedDate: '2025-01-10T09:10:00+08:00',
+        code: { coding: [{ system: 'http://snomed.info/sct', code: '44054006', display: '2型糖尿病' }] },
+      } })
+      return { ...source, raw, hash: sourceArtifactHash(raw) }
+    })
+    return { ...corpus, sources }
+  }
+}
+
+async function hospital(dsh: Awaited<ReturnType<typeof host>>, outboxRetryDelayMs?: number,
+  syntheaProvider = new StubSyntheaProvider()) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-dsh-models-'))
   cleanup.push(() => rm(directory, { recursive: true }))
   const options = {
@@ -248,19 +267,205 @@ async function hospital(dsh: Awaited<ReturnType<typeof host>>) {
     databasePath: join(directory, 'clinmesh.sqlite'), authBaseUrl: 'http://localhost',
     authSecret: 'synthetic-auth-secret-with-at-least-32-characters', cursorSecret: secret,
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply' as const,
-    syntheaProvider: new StubSyntheaProvider(), trustedOrigins: ['http://localhost'],
+    syntheaProvider, trustedOrigins: ['http://localhost'],
+    ...(outboxRetryDelayMs === undefined ? {} : { outboxRetryDelayMs }),
   }
   let runtime = await createClinMeshRuntime(options)
   cleanup.push(async () => runtime.close())
   return { get runtime() { return runtime }, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
 }
 
-it.each([false, true])('restores queued automatic history through DSH (schema metadata: %s)', async metadata => {
+async function recordingCase(summarize: (turns: HistoryTurn[]) => unknown, faithful = true) {
+  const dsh = await host()
+  // Keep the pure diabetes question visible to the history path; hidden-diagnosis
+  // leakage protection is covered separately by dialogue regressions.
+  const instance = await hospital(dsh, 0, new KnownDiabetesSyntheaProvider())
+  const started = await startConsultationCase(instance.runtime)
+  const cookie = await signIn(instance.runtime, 'doctor@demo.clinmesh.local')
+  let reply = ''
+  dsh.respond(async options => {
+    const payload: unknown = JSON.parse(z.object({ text: z.string() }).parse(options.messages[0]?.content[0]).text)
+    if (options.system?.includes('独立病史核对者')) {
+      const { additions } = z.object({ additions: z.array(z.unknown()) }).parse(payload)
+      return { additions: additions.map((_, index) => ({ index, faithful, complete: true, relationValid: true })) }
+    }
+    if (options.system?.includes('病史整理助手')) {
+      const { turns } = z.object({ turns: z.array(z.object({ id: z.string(), speaker: z.string(), messageText: z.string() })) }).parse(payload)
+      return summarize(turns)
+    }
+    return { reply }
+  })
+  const read = async () => doctorCaseDetailSchema.parse(await (await instance.runtime.app.request(
+    `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
+  )).json())
+  const headers = () => ({ cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() })
+  const ask = async (answer: string) => {
+    reply = answer
+    const detail = await read()
+    const response = await instance.runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+      method: 'POST', headers: headers(), body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId, [`Task/${detail.taskId}`]: detail.taskVersion },
+        input: { expectedConsultationVersion: detail.consultation!.version, message: '请继续说说您的情况。' },
+      }),
+    })
+    expect(response.status).toBe(200)
+    const turn = sendConsultationMessageResponseSchema.parse(await response.json()).data.patientTurn
+    expect(turn.messageText).toBe(answer)
+    return turn
+  }
+  const control = async (action: 'backfill' | 'retry') => {
+    const detail = await read()
+    const response = await instance.runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/consultation-recording/actions/control`, {
+      method: 'POST', headers: headers(), body: JSON.stringify({
+        expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId },
+        input: { action, expectedRecordingVersion: detail.consultationRecording!.version },
+      }),
+    })
+    expect(response.status).toBe(200)
+    return controlConsultationRecordingResponseSchema.parse(await response.json())
+  }
+  return { instance, dsh, read, ask, control }
+}
+
+const mixedQuestionReply = '医生，那我今天到现在还没吃东西，水也就抿了两口，这样抽血行不行啊？'
+const mixedQuestionSummary = '患者自述今日尚未进食，仅饮少量水'
+function candidate(turn: HistoryTurn, text: string) {
+  return { additions: [{ field: 'historyOfPresentIllness', relation: 'addition',
+    facts: [{ text, sources: [{ sourceTurnId: turn.id, quote: turn.messageText }] }] }] }
+}
+
+it.each([
+  [mixedQuestionReply, '患者已空腹至少8小时'],
+  [mixedQuestionReply, '患者符合空腹采血条件'],
+  [mixedQuestionReply, '患者已经完成采血'],
+  ['我是不是糖尿病？', '患者确诊糖尿病'],
+  ['胸痛已经三天了吗？', '患者胸痛三天'],
+  ['如果我三天没吃饭，会不会头晕？', '患者三天未进食'],
+  ['我没有胸痛，是不是就不用检查了？', '患者胸痛'],
+  ['我可能昨晚发烧了，需要检查吗？', '患者昨晚发热'],
+])('rejects unsupported facts from a complete question through independent DSH verification: %s → %s', async (reply, text) => {
+  const fixture = await recordingCase(turns => candidate(turns.at(-1)!, text), false)
+  await fixture.ask(reply)
+  await fixture.instance.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.clinicalDocument?.draft).toBeUndefined()
+  expect(detail.consultationRecording).toMatchObject({ status: 'failed', additions: [],
+    failures: [{ code: 'CONSULTATION_RECORDING_SOURCE_INVALID' }] })
+  expect(detail.consultation!.turns.at(-1)!.messageText).toBe(reply)
+  const summaries = fixture.dsh.calls.filter(call => call.system?.includes('病史整理助手'))
+  const verifications = fixture.dsh.calls.filter(call => call.system?.includes('独立病史核对者'))
+  expect(verifications.length).toBeGreaterThan(0)
+  expect(verifications).toHaveLength(summaries.length)
+  expect(verifications.every(call => !call.system?.includes('previous response failed validation'))).toBe(true)
+})
+
+it.each(['我是不是糖尿病？', '胸痛已经三天了吗？', '如果三天不吃东西，会不会头晕？'])(
+  'completes a pure question without history through DSH: %s', async reply => {
+    const fixture = await recordingCase(() => ({ additions: [] }))
+    await fixture.ask(reply)
+    await fixture.instance.runtime.dispatchPending()
+    expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', processedCount: 1,
+      remainingCount: 0, failedCount: 0, failures: [], additions: [] })
+    expect((await fixture.read()).clinicalDocument?.draft).toBeUndefined()
+    expect(fixture.dsh.calls.filter(call => call.system?.includes('独立病史核对者'))).toHaveLength(0)
+  },
+)
+
+it.each([
+  ['我没有胸痛，是不是就不用检查了？', '患者否认胸痛'],
+  ['我可能昨晚发烧了，需要检查吗？', '患者自述可能于昨晚发热'],
+  ['我昨晚开始头晕。今天站起来更明显，是不是要检查？', '患者自述昨晚起头晕，今日站立时加重'],
+])('keeps negation, uncertainty and connected sentences in DSH summaries: %s', async (reply, text) => {
+  const fixture = await recordingCase(turns => candidate(turns.at(-1)!, text))
+  await fixture.ask(reply)
+  await fixture.instance.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
+  expect((await fixture.read()).consultationRecording!.additions[0]!.facts).toMatchObject([
+    { text, sources: [{ quote: reply }] },
+  ])
+})
+
+it('backfills complete mixed questions through DSH without rewriting saved replies', async () => {
+  const fixture = await recordingCase(turns => {
+    const turn = turns.at(-1)!
+    return turn.messageText === mixedQuestionReply ? candidate(turn, mixedQuestionSummary) : { additions: [] }
+  })
+  // Existing consultations have no automatic eligibility until explicit backfill.
+  fixture.instance.runtime.database.driver.prepare('DELETE FROM consultation_recording').run()
+  const turn = await fixture.ask(mixedQuestionReply)
+  await fixture.instance.restart()
+  await fixture.instance.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'backfill', processedCount: 0, remainingCount: 2 })
+  expect(fixture.dsh.calls.filter(call => call.system?.includes('病史整理助手'))).toHaveLength(0)
+  await fixture.control('backfill')
+  await fixture.instance.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe(mixedQuestionSummary)
+  expect(detail.consultationRecording).toMatchObject({ status: 'updated', processedCount: 2, remainingCount: 0, failures: [],
+    additions: [{ facts: [{ sources: [{ sourceTurnId: turn.id, quote: mixedQuestionReply }] }] }] })
+})
+
+it('explicitly recovers five completed, one failed and one queued DSH recording without rerunning successful jobs', async () => {
+  const fixture = await recordingCase(turns => {
+    const turn = turns.at(-1)!
+    return candidate(turn, turn.messageText === mixedQuestionReply ? mixedQuestionSummary : `患者自述：${turn.messageText}`)
+  })
+  for (const reply of ['头晕一周了。', '昨天咳嗽了。', '今天有点乏力。', '以前吃过氨氯地平。', '没有药物过敏。']) {
+    await fixture.ask(reply)
+    await fixture.instance.runtime.dispatchPending()
+  }
+  const completed = await fixture.read()
+  const jobs = () => fixture.instance.runtime.database.driver.prepare(
+    'SELECT * FROM consultation_recording_job ORDER BY rowid',
+  ).all()
+  const completedJobs = jobs()
+  expect(completedJobs).toHaveLength(5)
+  const failedTurn = await fixture.ask(mixedQuestionReply)
+  // Seed the persisted pre-fix AI_RESPONSE_INVALID outcome; deployment must not revive it.
+  fixture.instance.runtime.database.driver.prepare(
+    "UPDATE consultation_recording_job SET status = 'failed', error_code = 'AI_RESPONSE_INVALID' WHERE turn_id = ?",
+  ).run(failedTurn.id)
+  const queuedTurn = await fixture.ask('我胸口已经痛三天了，这会不会很严重?')
+  await fixture.instance.runtime.dispatchPending()
+  const callsBeforeRestart = fixture.dsh.calls.length
+  await fixture.instance.restart()
+  await fixture.instance.runtime.dispatchPending()
+  const failed = await fixture.read()
+  expect(failed.consultationRecording).toMatchObject({ status: 'failed', processedCount: 5, failedCount: 1, remainingCount: 2,
+    failures: [{ sourceTurnId: failedTurn.id, code: 'AI_RESPONSE_INVALID', retrying: false }] })
+  expect(failed.clinicalDocument?.draft).toEqual(completed.clinicalDocument?.draft)
+  expect(failed.consultation!.turns.slice(-3).map(turn => turn.id)).toContain(queuedTurn.id)
+  expect(fixture.dsh.calls).toHaveLength(callsBeforeRestart)
+  await fixture.control('retry')
+  await fixture.instance.runtime.dispatchPending()
+  const recovered = await fixture.read()
+  expect(recovered.consultationRecording).toMatchObject({ status: 'updated', processedCount: 7, failedCount: 0,
+    remainingCount: 0, failures: [] })
+  expect(recovered.consultationRecording!.additions.slice(0, 5)).toEqual(completed.consultationRecording!.additions)
+  expect(recovered.clinicalDocument!.draft!.historyOfPresentIllness).toBe(
+    completed.clinicalDocument!.draft!.historyOfPresentIllness + '\n' + mixedQuestionSummary + '\n患者自述：' + queuedTurn.messageText,
+  )
+  expect(jobs().slice(0, 5)).toEqual(completedJobs)
+  expect(fixture.dsh.calls).toHaveLength(callsBeforeRestart + 4)
+  const recordingCalls = fixture.dsh.calls.slice(callsBeforeRestart)
+  expect(recordingCalls.map(call => JSON.parse(z.object({ text: z.string() }).parse(call.messages[0]!.content[0]).text))
+    .map(payload => payload.currentTurnId ?? payload.turns.at(-1).id)).toEqual([failedTurn.id, failedTurn.id, queuedTurn.id, queuedTurn.id])
+  await fixture.instance.restart()
+  await fixture.instance.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument?.draft).toEqual(recovered.clinicalDocument?.draft)
+  expect(fixture.dsh.calls).toHaveLength(callsBeforeRestart + 4)
+})
+
+it.each([false, true].flatMap(metadata => [
+  { metadata, reply: '头晕一周了。', summary: '头晕一周' },
+  { metadata, reply: '医生，那我今天到现在还没吃东西，水也就抿了两口，这样抽血行不行啊？', summary: '患者自述今日尚未进食，仅饮少量水' },
+  { metadata, reply: '我胸口已经痛三天了，这会不会很严重?', summary: '患者自述胸痛三天' },
+]))('restores queued automatic history through DSH ($reply, schema metadata: $metadata)', async ({ metadata, reply, summary }) => {
   const dsh = await host()
   const instance = await hospital(dsh)
   const started = await startConsultationCase(instance.runtime)
   const cookie = await signIn(instance.runtime, 'doctor@demo.clinmesh.local')
-  dsh.answer({ reply: '头晕一周了。' })
+  dsh.answer({ reply })
   const response = await instance.runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
     method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
     body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion,
@@ -273,14 +478,17 @@ it.each([false, true])('restores queued automatic history through DSH (schema me
   dsh.respond(async options => ({ ...(metadata ? { $schema: 'https://json-schema.org/draft/2020-12/schema' } : {}),
     additions: options.system?.includes('独立病史核对者')
       ? [{ index: 0, faithful: true, complete: true, relationValid: true }]
-      : [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{ text: '头晕一周',
-        sources: [{ sourceTurnId: answered.data.patientTurn.id, quote: '头晕一周了。' }] }] }],
+      : [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{ text: summary,
+        sources: [{ sourceTurnId: answered.data.patientTurn.id, quote: reply }] }] }],
   }))
   await instance.runtime.dispatchPending()
   const detail = doctorCaseDetailSchema.parse(await (await instance.runtime.app.request(
     `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
   )).json())
-  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('头晕一周')
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe(summary)
+  expect(detail.consultationRecording!.additions[0]!.facts).toEqual([
+    { text: summary, sources: [{ sourceTurnId: answered.data.patientTurn.id, quote: reply }] },
+  ])
   expect(detail.consultationRecording).toMatchObject({ status: 'updated' })
   expect(dsh.calls).toHaveLength(beforeRecording + 2)
   expect(dsh.calls.at(-2)?.system).toContain('跨轮归并')
