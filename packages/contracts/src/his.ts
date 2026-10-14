@@ -1046,7 +1046,7 @@ export const consultationRecordingErrorCodeSchema = z.enum([
 ])
 
 export const consultationRecordingSchema = z.object({
-  sources: z.array(consultationRecordingSourceSchema).default([]),
+  sources: z.array(consultationRecordingSourceSchema).optional(),
   signingPreparation: z.object({
     previewId: z.string().min(1),
     expiresAt: z.string().min(1),
@@ -1080,7 +1080,7 @@ export const consultationRecordingSchema = z.object({
 export const controlConsultationRecordingRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
-    action: z.enum(['pause', 'resume', 'backfill', 'retry']),
+    action: z.enum(['activate', 'pause', 'resume', 'backfill', 'retry']),
     expectedRecordingVersion: z.number().int().nonnegative(),
   }).strict(),
 }).strict()
