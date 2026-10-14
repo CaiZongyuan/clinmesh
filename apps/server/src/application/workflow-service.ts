@@ -3403,6 +3403,10 @@ export class WorkflowService {
     })
   }
 
+  recordDoctorSupplement(input: Parameters<ConsultationRecordingService['recordDoctorSupplement']>[0]) {
+    return this.consultationRecording.recordDoctorSupplement(input)
+  }
+
   appendPatientConsultationTurn(input: {
     context: ActorContext
     encounterId: string

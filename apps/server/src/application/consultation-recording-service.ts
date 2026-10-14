@@ -2,9 +2,9 @@ import {
   clinicalDocumentDraftContentSchema,
   consultationHistoryAdditionSchema,
   consultationHistoryFactSchema,
+  consultationRecordingSourceSchema,
   consultationRecordingErrorCodeSchema,
   consultationRecordingSchema,
-  consultationTurnSchema,
   controlConsultationRecordingResponseSchema,
   reviewConsultationHistoryResponseSchema,
   type ConsultationHistoryDecision,
@@ -36,6 +36,9 @@ const jobSchema = z.object({
   generation: z.number().int().positive(),
 })
 const recordingStateSchema = z.object({ version: z.number().int().positive(), paused: z.number().int().min(0).max(1), start_sequence: z.number().int().positive() })
+const sourceRowSchema = z.object({ source_id: z.string(), source_kind: consultationRecordingSourceSchema.shape.kind,
+  message_text: z.string(), recorded_at: z.string(), metadata_json: z.string() })
+const sourceMetadataSchema = consultationRecordingSourceSchema.omit({ id: true, kind: true, messageText: true, recordedAt: true })
 const orderedJobsSchema = z.array(z.object({ turn_id: z.string(), status: jobSchema.shape.status,
   generation: jobSchema.shape.generation, scheduled: z.number().int().min(0).max(1),
   error_code: consultationRecordingErrorCodeSchema.nullable() }))
@@ -235,19 +238,105 @@ export class ConsultationRecordingService {
 
   create(context: ActorContext, caseId: string): void {
     if (!this.#enabled) return
-    this.#database.driver.prepare(`INSERT INTO consultation_recording (workspace_id, epoch, case_id)
-      VALUES (?, ?, ?)`).run(context.workspaceId, context.epoch, caseId)
+    this.#database.driver.prepare(`INSERT INTO consultation_recording (workspace_id, epoch, case_id, start_sequence)
+      VALUES (?, ?, ?, ?) ON CONFLICT (workspace_id, epoch, case_id) DO NOTHING`).run(context.workspaceId, context.epoch, caseId,
+        this.#hasConsultation(context, caseId) ? 2 : 1)
+  }
+
+  activate(input: { context: ActorContext; encounterId: string; expectedVersions: Record<string, string>; idempotencyKey: string }) {
+    return this.#commands.execute({ ...input, operation: 'consultation.recording.activate', input: { encounterId: input.encounterId },
+      dataSchema: controlConsultationRecordingResponseSchema.shape.data,
+    }, transaction => {
+      const access = this.#assertAccess(input.context, input.encounterId)
+      if (!access.editable || this.isSigning(input.context, access.caseId) || !this.#enabled
+        || input.expectedVersions[`Encounter/${input.encounterId}`] === undefined) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The recording context is not editable')
+      }
+      if (this.#state(input.context, access.caseId) === undefined && !this.#hasConsultation(input.context, access.caseId)) {
+        this.create(input.context, access.caseId)
+      }
+      this.#database.driver.prepare(`UPDATE consultation_recording SET actor_context_json = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).run(JSON.stringify(input.context), input.context.workspaceId, input.context.epoch, access.caseId)
+      this.#scheduleNext(input.context, transaction, access.caseId)
+      return { data: this.read(input.context, access.caseId)!, effects: [{ kind: 'updated' as const,
+        reference: `ConsultationRecording/${access.caseId}`, versionId: String(this.#state(input.context, access.caseId)?.version ?? 0) }] }
+    })
+  }
+
+  recordDoctorSupplement(input: { context: ActorContext; encounterId: string; content: string; sourceId: string;
+    sessionId: string; messageId: string; rpcId: string; recordedAt: string;
+    expectedVersions: Record<string, string>; idempotencyKey: string }) {
+    const { context, encounterId, content, sourceId, sessionId, messageId, rpcId, recordedAt } = input
+    const source = consultationRecordingSourceSchema.parse({ id: sourceId, kind: 'doctor', messageText: content,
+      sessionId, messageId, rpcId, recordedAt })
+    return this.#commands.execute({ context, operation: 'consultation.doctor-supplement.record',
+      expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
+      input: { encounterId, source }, dataSchema: z.object({ caseId: z.string(), sourceId: z.string() }).strict(),
+    }, transaction => {
+      const access = this.#assertAccess(context, encounterId)
+      if (!access.editable || this.isSigning(context, access.caseId)
+        || input.expectedVersions[`Encounter/${encounterId}`] === undefined || !this.#enabled) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The doctor source context is not editable')
+      }
+      if (this.#state(context, access.caseId) === undefined && !this.#hasConsultation(context, access.caseId)) this.create(context, access.caseId)
+      const prior = this.#sources(context, access.caseId).find(item => item.id === sourceId)
+      if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(source)) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The saved doctor source identity has different content')
+      }
+      this.enqueueSource(context, transaction, { ...source, caseId: access.caseId, encounterId })
+      return { data: { caseId: access.caseId, sourceId }, effects: [{ kind: 'created' as const,
+        reference: `ConsultationRecordingSource/${sourceId}`, versionId: '1' }] }
+    })
   }
 
   enqueue(context: ActorContext, transaction: CommandTransaction, input: {
     caseId: string; encounterId: string; turnId: string
   }): void {
+    this.#syncPatientSources(context, input.caseId)
+    const turn = z.object({ message_text: z.string(), recorded_at: z.string() }).parse(this.#database.driver.prepare(`
+      SELECT message_text, recorded_at FROM consultation_turn WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND turn_id = ?
+    `).get(context.workspaceId, context.epoch, input.caseId, input.turnId))
+    this.enqueueSource(context, transaction, { caseId: input.caseId, encounterId: input.encounterId,
+      id: input.turnId, kind: 'patient', messageText: turn.message_text,
+      recordedAt: turn.recorded_at, consultationTurnId: input.turnId })
+  }
+
+  #syncPatientSources(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string): void {
+    const turns = z.array(z.object({ turn_id: z.string(), message_text: z.string(), recorded_at: z.string() })).parse(
+      this.#database.driver.prepare(`SELECT turn_id, message_text, recorded_at FROM consultation_turn
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND speaker = 'patient' AND kind = 'text'
+          AND NOT EXISTS (SELECT 1 FROM consultation_recording_source s WHERE s.workspace_id = consultation_turn.workspace_id
+            AND s.epoch = consultation_turn.epoch AND s.source_id = consultation_turn.turn_id) ORDER BY sequence
+      `).all(context.workspaceId, context.epoch, caseId))
+    for (const turn of turns) this.#database.driver.prepare(`INSERT INTO consultation_recording_source
+      (workspace_id, epoch, case_id, source_id, source_kind, message_text, sequence, recorded_at, metadata_json)
+      VALUES (?, ?, ?, ?, 'patient', ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM consultation_recording_source
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?), ?, ?)
+    `).run(context.workspaceId, context.epoch, caseId, turn.turn_id, turn.message_text,
+      context.workspaceId, context.epoch, caseId, turn.recorded_at, JSON.stringify({ consultationTurnId: turn.turn_id }))
+  }
+
+  enqueueSource(context: ActorContext, transaction: CommandTransaction, input: {
+    caseId: string; encounterId: string
+  } & z.infer<typeof consultationRecordingSourceSchema>): void {
+    const { caseId, encounterId, ...source } = input
+    const { id, kind, messageText, recordedAt, ...metadata } = consultationRecordingSourceSchema.parse(source)
+    const prior = this.#database.driver.prepare(`SELECT 1 FROM consultation_recording_source
+      WHERE workspace_id = ? AND epoch = ? AND source_id = ?`).get(context.workspaceId, context.epoch, id)
+    if (prior === undefined) this.#database.driver.prepare(`INSERT INTO consultation_recording_source
+      (workspace_id, epoch, case_id, source_id, source_kind, message_text, sequence, recorded_at, metadata_json)
+      VALUES (?, ?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sequence), 0) + 1 FROM consultation_recording_source
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?), ?, ?)
+    `).run(context.workspaceId, context.epoch, caseId, id, kind, messageText,
+      context.workspaceId, context.epoch, caseId, recordedAt, JSON.stringify(metadata))
     if (this.#state(context, input.caseId) === undefined) return
+    this.#database.driver.prepare(`UPDATE consultation_recording SET actor_context_json = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).run(JSON.stringify(context), context.workspaceId, context.epoch, caseId)
     this.#database.driver.prepare(`INSERT INTO consultation_recording_job
       (workspace_id, epoch, case_id, encounter_id, turn_id, actor_context_json, status, scheduled)
-      VALUES (?, ?, ?, ?, ?, ?, 'queued', 0)`).run(context.workspaceId, context.epoch, input.caseId,
-        input.encounterId, input.turnId, JSON.stringify(context))
-    this.#scheduleNext(context, transaction, input.caseId)
+      VALUES (?, ?, ?, ?, ?, ?, 'queued', 0) ON CONFLICT (workspace_id, epoch, turn_id) DO NOTHING
+    `).run(context.workspaceId, context.epoch, caseId, encounterId, id, JSON.stringify(context))
+    this.#scheduleNext(context, transaction, caseId)
   }
 
   #state(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
@@ -264,8 +353,8 @@ export class ConsultationRecordingService {
 
   #jobs(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
     return orderedJobsSchema.parse(this.#database.driver.prepare(`SELECT j.turn_id, j.status, j.generation, j.scheduled, j.error_code
-      FROM consultation_recording_job j JOIN consultation_turn t
-        ON t.workspace_id = j.workspace_id AND t.epoch = j.epoch AND t.turn_id = j.turn_id
+      FROM consultation_recording_job j JOIN consultation_recording_source t
+        ON t.workspace_id = j.workspace_id AND t.epoch = j.epoch AND t.source_id = j.turn_id
       WHERE j.workspace_id = ? AND j.epoch = ? AND j.case_id = ? ORDER BY t.sequence
     `).all(context.workspaceId, context.epoch, caseId))
   }
@@ -287,9 +376,16 @@ export class ConsultationRecordingService {
       && head?.turn_id === turnId && head.generation === job.generation && head.status === 'queued'
   }
 
-  control(input: { context: ActorContext; encounterId: string; action: 'pause' | 'resume' | 'backfill' | 'retry';
+  control(input: { context: ActorContext; encounterId: string; action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry';
     expectedRecordingVersion: number; expectedVersions: Record<string, string>; idempotencyKey: string }) {
     const { context, encounterId, action } = input
+    if (action === 'activate') {
+      const access = this.#assertAccess(context, encounterId)
+      if ((this.#state(context, access.caseId)?.version ?? 0) !== input.expectedRecordingVersion) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Refresh the recording activation state')
+      }
+      return this.activate(input)
+    }
     return this.#commands.execute({ context, operation: 'consultation.recording.control',
       expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
       input: { encounterId, action, expectedRecordingVersion: input.expectedRecordingVersion },
@@ -319,14 +415,16 @@ export class ConsultationRecordingService {
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status != 'completed'
       `).run(JSON.stringify(context), context.workspaceId, context.epoch, access.caseId)
       if (action !== 'pause') {
-        const turns = z.array(z.object({ turn_id: z.string() })).parse(this.#database.driver.prepare(`SELECT t.turn_id
-          FROM consultation_turn t WHERE t.workspace_id = ? AND t.epoch = ? AND t.case_id = ?
-            AND t.speaker = 'patient' AND t.kind = 'text' AND t.sequence >= ?
+        this.#syncPatientSources(context, access.caseId)
+        const turns = z.array(z.object({ turn_id: z.string() })).parse(this.#database.driver.prepare(`SELECT t.source_id AS turn_id
+          FROM consultation_recording_source t WHERE t.workspace_id = ? AND t.epoch = ? AND t.case_id = ?
+            AND t.sequence >= ?
             AND NOT EXISTS (SELECT 1 FROM consultation_recording_job j
-              WHERE j.workspace_id = t.workspace_id AND j.epoch = t.epoch AND j.turn_id = t.turn_id)
+              WHERE j.workspace_id = t.workspace_id AND j.epoch = t.epoch AND j.turn_id = t.source_id)
           ORDER BY t.sequence
         `).all(context.workspaceId, context.epoch, access.caseId, state?.start_sequence ?? 1))
-        for (const turn of turns) this.enqueue(context, transaction, { caseId: access.caseId, encounterId, turnId: turn.turn_id })
+        for (const turn of turns) this.enqueueSource(context, transaction, { caseId: access.caseId, encounterId,
+          ...this.#sources(context, access.caseId).find(source => source.id === turn.turn_id)! })
         this.#scheduleNext(context, transaction, access.caseId)
       }
       return { data: this.read(context, access.caseId)!, effects: [
@@ -343,9 +441,11 @@ export class ConsultationRecordingService {
       || (!this.#enabled && signingPreparation === undefined))) return undefined
     const jobs = this.#jobs(context, caseId)
     const total = z.object({ count: z.number().int().nonnegative() }).parse(this.#database.driver.prepare(`SELECT count(*) AS count
-      FROM consultation_turn WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        AND speaker = 'patient' AND kind = 'text' AND sequence >= ?
-    `).get(context.workspaceId, context.epoch, caseId, state?.start_sequence ?? 1)).count
+      FROM (SELECT sequence FROM consultation_recording_source WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        UNION ALL SELECT t.sequence FROM consultation_turn t WHERE t.workspace_id = ? AND t.epoch = ? AND t.case_id = ?
+          AND t.speaker = 'patient' AND t.kind = 'text' AND NOT EXISTS (SELECT 1 FROM consultation_recording_source s
+            WHERE s.workspace_id = t.workspace_id AND s.epoch = t.epoch AND s.source_id = t.turn_id)) WHERE sequence >= ?
+    `).get(context.workspaceId, context.epoch, caseId, context.workspaceId, context.epoch, caseId, state?.start_sequence ?? 1)).count
     const processedCount = jobs.filter(job => job.status === 'completed').length
     const failedCount = jobs.filter(job => job.status === 'failed').length
     const rows = this.#rows(context, caseId)
@@ -361,6 +461,7 @@ export class ConsultationRecordingService {
       reviewable: reviewTarget(rows, row, document) !== undefined,
     }))
     return consultationRecordingSchema.parse({
+      sources: this.#sources(context, caseId),
       signingPreparation,
       hasSavedDraft: this.#database.driver.prepare(`SELECT 1 FROM command_effect
         WHERE workspace_id = ? AND epoch = ? AND operation = 'clinical-document.save-draft'
@@ -378,6 +479,16 @@ export class ConsultationRecordingService {
         sourceTurnId: job.turn_id, code: job.error_code!, retrying: job.status === 'queued',
       })),
     })
+  }
+
+  #sources(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
+    return z.array(sourceRowSchema).parse(this.#database.driver.prepare(`SELECT source_id, source_kind,
+      message_text, recorded_at, metadata_json FROM consultation_recording_source
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? ORDER BY sequence
+    `).all(context.workspaceId, context.epoch, caseId)).map(row => consultationRecordingSourceSchema.parse({
+      id: row.source_id, kind: row.source_kind, messageText: row.message_text, recordedAt: row.recorded_at,
+      ...sourceMetadataSchema.parse(JSON.parse(row.metadata_json)),
+    }))
   }
 
   #storedRows(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
@@ -537,15 +648,13 @@ export class ConsultationRecordingService {
           ] }
         })
       }
-      const turns = z.array(consultationTurnSchema).parse(this.#database.driver.prepare(`SELECT
-        turn_id AS id, speaker, kind, message_text AS messageText, sequence, source,
-        actor_id AS actorId, practitioner_id AS practitionerId, persona_revision AS personaRevision,
-        report_reference AS reportReference, recorded_at AS recordedAt FROM consultation_turn
+      const turns = z.array(sourceRowSchema).parse(this.#database.driver.prepare(`SELECT
+        source_id, source_kind, message_text, recorded_at, metadata_json FROM consultation_recording_source
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND sequence <= (
-          SELECT sequence FROM consultation_turn WHERE workspace_id = ? AND epoch = ? AND turn_id = ?)
+          SELECT sequence FROM consultation_recording_source WHERE workspace_id = ? AND epoch = ? AND source_id = ?)
         ORDER BY sequence
       `).all(context.workspaceId, context.epoch, job.case_id, context.workspaceId, context.epoch, turnId))
-        .filter(turn => turn.kind === 'text').map(turn => ({ id: turn.id, speaker: turn.speaker, messageText: turn.messageText }))
+        .map(turn => ({ id: turn.source_id, speaker: turn.source_kind, kind: turn.source_kind, messageText: turn.message_text }))
       if (model.provider === undefined || model.model === undefined) throw new Error('Recording model unavailable')
       // 首代沿用升级前的任务身份，保留已经固定的模型路由。
       const taskId = `history:${context.epoch}:${turnId}${generation === 1 ? '' : `:${generation}`}`
@@ -667,6 +776,8 @@ export class ConsultationRecordingService {
       const seenSummaries = new Set(existing.filter(item => item.rejected === 0 && item.undone === 0 && item.review_state === null)
         .map(item => JSON.stringify([item.field, normalizeQuoteEnding(rowText(item))])))
       if (!access.editable) return { data: { draftVersion: current.version }, effects: [] }
+      const document = { ...current.content }
+      let changed = false
       for (const addition of fragments) {
         const id = createHash('sha256').update(JSON.stringify(addition)).digest('hex')
         const text = summaryText(addition.facts)
@@ -677,7 +788,7 @@ export class ConsultationRecordingService {
         seenSummaries.add(key)
         const rows = this.#rows(context, job.case_id)
         const target = rows.find(item => item.addition_id === addition.targetAdditionId)
-        const fieldText = current.content[addition.field] ?? ''
+        const fieldText = document[addition.field] ?? ''
         const manualTarget = manualHistory.find(item => item.id === addition.targetAdditionId && item.id.startsWith(manualTargetPrefix))
         const trackedManual = manualTarget === undefined ? undefined : trackManualFragment(
           baseline.content[addition.field] ?? '', fieldText, manualTarget.start, manualTarget.end)
@@ -686,35 +797,56 @@ export class ConsultationRecordingService {
           && isHistoryRange(target, fieldText, target.start_offset, target.end_offset)
           && fieldText.slice(target.start_offset, target.end_offset) === target.current_text
         if (addition.relation === 'update' && anchored && text === target.current_text) continue
-        const replacement = target?.status === 'pending' ? reviewTarget(rows, target, current.content)
+        const replacement = target?.status === 'pending' ? reviewTarget(rows, target, document)
           : anchored ? { start: target.start_offset!, end: target.end_offset!, append: false }
             : trackedManual !== undefined && !trackedManual.modified ? { ...trackedManual, append: false } : undefined
         for (const candidate of rows) {
           if (candidate.status !== 'pending' || candidate.review_state !== null || candidate.field !== addition.field) continue
-          const range = reviewTarget(rows, candidate, current.content)
+          const range = reviewTarget(rows, candidate, document)
           if (candidate.addition_id === target?.addition_id || (replacement !== undefined && !replacement.append
             && range !== undefined && !range.append && range.start === replacement.start && range.end === replacement.end)) {
             this.#supersede(context, job.case_id, candidate.addition_id)
           }
+        }
+        const replace = anchored && target.ownership === 'automatic'
+          && (addition.relation === 'update' || addition.relation === 'correction')
+        const start = replace ? target.start_offset! : fieldText.length + (fieldText ? 1 : 0)
+        const next = replace ? fieldText.slice(0, start) + text + fieldText.slice(target.end_offset!)
+          : [fieldText, text].filter(Boolean).join('\n')
+        const limit = addition.field === 'chiefComplaint' ? 1_000 : addition.field === 'historyOfPresentIllness' ? 5_000 : 4_000
+        const applied = (replace || addition.relation === 'addition') && next.length <= limit
+        if (applied) {
+          if (replace) this.#supersede(context, job.case_id, target.addition_id)
+          this.#trackReplacement(context, job.case_id, addition.field, fieldText, next,
+            replace ? start : fieldText.length, replace ? target.end_offset! : fieldText.length)
         }
         this.#database.driver.prepare(`INSERT INTO consultation_history_addition
           (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
             target_addition_id, start_offset, end_offset, current_text, inverse_text, facts_json)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(context.workspaceId, context.epoch, job.case_id, id, addition.sourceTurnId, addition.field,
-          addition.quote, addition.relation, 'pending', addition.targetAdditionId ?? null,
-          trackedManual !== undefined && !trackedManual.modified ? trackedManual.start : null,
-          trackedManual !== undefined && !trackedManual.modified ? trackedManual.end : null,
-          trackedManual?.text ?? (addition.targetAdditionId === undefined ? '' : fieldText),
-          null, JSON.stringify(addition.facts))
+          addition.quote, addition.relation, applied ? 'applied' : 'pending', addition.targetAdditionId ?? null,
+          applied ? start : trackedManual !== undefined && !trackedManual.modified ? trackedManual.start : null,
+          applied ? start + text.length : trackedManual !== undefined && !trackedManual.modified ? trackedManual.end : null,
+          applied ? text : trackedManual?.text ?? (addition.targetAdditionId === undefined ? '' : fieldText),
+          replace ? target.current_text : null, JSON.stringify(addition.facts))
+        if (applied) { document[addition.field] = next; changed = true }
       }
-      const draftVersion = current.version
+      const draftVersion = current.version + (changed ? 1 : 0)
+      if (changed) this.#database.driver.prepare(`INSERT INTO clinical_document_draft
+        (workspace_id, epoch, case_id, version, content_json, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (workspace_id, epoch, case_id) DO UPDATE SET version = excluded.version,
+          content_json = excluded.content_json, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+      `).run(context.workspaceId, context.epoch, job.case_id, draftVersion,
+        JSON.stringify(clinicalDocumentDraftContentSchema.parse(document)), context.actorId, this.#virtualTime(context))
       this.#database.driver.prepare(`UPDATE consultation_recording_job SET status = 'completed', error_code = NULL
         WHERE workspace_id = ? AND epoch = ? AND turn_id = ?
       `).run(context.workspaceId, context.epoch, turnId)
       this.#scheduleNext(context, transaction, job.case_id)
       return { data: { draftVersion }, effects: [
         { kind: 'updated' as const, reference: `ConsultationRecording/${job.case_id}`, versionId: turnId },
+        ...(changed ? [{ kind: current.version === 0 ? 'created' as const : 'updated' as const,
+          reference: `ClinicalDocumentDraft/${job.case_id}`, versionId: String(draftVersion) }] : []),
       ] }
     })
   }
