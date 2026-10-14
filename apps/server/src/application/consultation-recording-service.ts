@@ -484,12 +484,7 @@ export class ConsultationRecordingService {
     if (state === undefined && (!this.#hasConsultation(context, caseId)
       || (!this.#enabled && signingPreparation === undefined))) return undefined
     const jobs = this.#jobs(context, caseId)
-    const sourceCount = z.object({ count: z.number().int().nonnegative() }).parse(this.#database.driver.prepare(`SELECT count(*) AS count
-      FROM (SELECT sequence FROM consultation_recording_source WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        UNION ALL SELECT t.sequence FROM consultation_turn t WHERE t.workspace_id = ? AND t.epoch = ? AND t.case_id = ?
-          AND t.speaker = 'patient' AND t.kind = 'text' AND NOT EXISTS (SELECT 1 FROM consultation_recording_source s
-            WHERE s.workspace_id = t.workspace_id AND s.epoch = t.epoch AND s.source_id = t.turn_id)) WHERE sequence >= ?
-    `).get(context.workspaceId, context.epoch, caseId, context.workspaceId, context.epoch, caseId, state?.start_sequence ?? 1)).count
+    const sourceCount = this.#sourceCount(context, caseId, state?.start_sequence ?? 1)
     const total = state !== undefined || this.#enabled ? sourceCount : z.object({ count: z.number().int().nonnegative() }).parse(
       this.#database.driver.prepare(`SELECT count(*) AS count FROM consultation_turn
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND speaker = 'patient' AND kind = 'text'
@@ -527,6 +522,15 @@ export class ConsultationRecordingService {
         sourceTurnId: job.turn_id, code: job.error_code!, retrying: job.status === 'queued',
       })),
     })
+  }
+
+  #sourceCount(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string, startSequence: number): number {
+    return z.object({ count: z.number().int().nonnegative() }).parse(this.#database.driver.prepare(`SELECT count(*) AS count
+      FROM (SELECT sequence FROM consultation_recording_source WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        UNION ALL SELECT t.sequence FROM consultation_turn t WHERE t.workspace_id = ? AND t.epoch = ? AND t.case_id = ?
+          AND t.speaker = 'patient' AND t.kind = 'text' AND NOT EXISTS (SELECT 1 FROM consultation_recording_source s
+            WHERE s.workspace_id = t.workspace_id AND s.epoch = t.epoch AND s.source_id = t.turn_id)) WHERE sequence >= ?
+    `).get(context.workspaceId, context.epoch, caseId, context.workspaceId, context.epoch, caseId, startSequence)).count
   }
 
   #sources(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
@@ -780,12 +784,20 @@ export class ConsultationRecordingService {
     return this.signingPreparation(context, caseId)?.active === true
   }
 
-  signingSourceCount(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string): number | undefined {
-    const counts = z.object({ total: z.number().int().nonnegative(), additional: z.number().int().nonnegative() }).parse(
-      this.#database.driver.prepare(`SELECT count(*) AS total, count(CASE WHEN source_kind != 'patient' THEN 1 END) AS additional
+  signingProgress(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
+    const state = this.#state(context, caseId)
+    const counts = z.object({ total: z.number().int().nonnegative(), additional: z.number().int().nonnegative(), doctors: z.number().int().nonnegative() }).parse(
+      this.#database.driver.prepare(`SELECT count(*) AS total, count(CASE WHEN source_kind != 'patient' THEN 1 END) AS additional,
+        count(CASE WHEN source_kind = 'doctor' THEN 1 END) AS doctors
         FROM consultation_recording_source WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(context.workspaceId, context.epoch, caseId))
-    return counts.additional === 0 ? undefined : counts.total
+    const remainingCount = state === undefined ? counts.doctors + z.object({ count: z.number().int().nonnegative() }).parse(
+      this.#database.driver.prepare(`SELECT count(*) AS count FROM consultation_turn
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND speaker = 'patient' AND kind = 'text'
+      `).get(context.workspaceId, context.epoch, caseId)).count
+      : this.#sourceCount(context, caseId, state.start_sequence) - this.#jobs(context, caseId).filter(job => job.status === 'completed').length
+    return { hasRegisteredSources: state !== undefined || counts.doctors > 0, remainingCount,
+      sourceCount: counts.additional === 0 ? undefined : counts.total }
   }
 
   suspendForSigning(context: ActorContext, caseId: string): void {

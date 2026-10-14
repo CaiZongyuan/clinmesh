@@ -6234,7 +6234,7 @@ export class WorkflowService {
 
   #assertNoConsultationForLegacySigning(context: ActorContext, caseId: string): void {
     if (this.#consultationState(context, caseId) !== undefined
-      || (this.consultationRecording.read(context, caseId)?.sources?.length ?? 0) > 0) {
+      || this.consultationRecording.signingProgress(context, caseId).hasRegisteredSources) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'Use structured clinical document signing to review the Consultation')
     }
   }
@@ -6242,13 +6242,13 @@ export class WorkflowService {
   #consultationSignReview(context: ActorContext, caseId: string) {
     const consultation = this.#consultationState(context, caseId)
     const recording = this.consultationRecording.read(context, caseId)
-    const sourceCount = this.consultationRecording.signingSourceCount(context, caseId)
+    const progress = this.consultationRecording.signingProgress(context, caseId)
+    const { sourceCount } = progress
     if (consultation === undefined && sourceCount === undefined) return null
     return consultationSignReviewSchema.parse({
       consultationVersion: consultation?.version ?? 0,
       ...(sourceCount === undefined ? {} : { sourceCount }),
-      remainingCount: recording?.remainingCount ?? this.#consultationTurnRows(context, caseId)
-        .filter(turn => turn.speaker === 'patient' && turn.kind === 'text').length,
+      remainingCount: progress.remainingCount,
       failedCount: recording?.failedCount ?? 0,
       paused: recording?.paused ?? false,
       conflictCount: recording?.additions.filter(addition => addition.status === 'pending'
@@ -9925,10 +9925,12 @@ export class WorkflowService {
       const observation = z.object({ code: z.object({ text: z.string().optional(), coding: z.array(z.object({ display: z.string().optional() })).optional() }),
         valueQuantity: z.object({ value: z.number(), unit: z.string().optional() }).optional(),
         valueString: z.string().optional(), valueCodeableConcept: z.object({ text: z.string().optional(), coding: z.array(z.object({ display: z.string().optional() })).optional() }).optional(),
+        valueBoolean: z.boolean().optional(),
       }).parse(transaction.fhir.read(context, 'Observation', match[1]!))
       const name = observation.code.text ?? observation.code.coding?.[0]?.display ?? result.reference
       const value = observation.valueQuantity === undefined ? observation.valueString
         ?? observation.valueCodeableConcept?.text ?? observation.valueCodeableConcept?.coding?.[0]?.display
+        ?? observation.valueBoolean?.toString()
         : `${observation.valueQuantity.value}${observation.valueQuantity.unit === undefined ? '' : ` ${observation.valueQuantity.unit}`}`
       if (value === undefined) throw new Error('The published report result has no supported value')
       return `${name}：${value}。`

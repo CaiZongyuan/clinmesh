@@ -140,7 +140,11 @@ async function setup(options: {
     return response
   }
   return { get runtime() { return runtime }, read, ask, askMore, requests, started, cookie, save, control, review,
-    restart: async () => { await runtime.close(); runtime = await createRuntime() } }
+    restart: async (prepare?: (databasePath: string) => Promise<void>) => {
+      await runtime.close()
+      await prepare?.(join(directory, 'clinmesh.sqlite'))
+      runtime = await createRuntime()
+    } }
 }
 
 async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
@@ -921,6 +925,29 @@ it('requires review and exposes cancellable preparation without an automatic rec
   const signed = await actions.request('actions/sign', { previewId: fresh.previewId, commitToken: fresh.commitToken, consultationReviewed: true })
   expect(signed.status).toBe(200)
   clinicalDocumentSignResponseSchema.parse(await signed.json())
+})
+
+it('counts an unprocessed saved doctor source when a historical consultation remains unregistered and the model is disabled', async () => {
+  const options = { recording: false }
+  const fixture = await setup(options)
+  expect((await fixture.ask()).status).toBe(200)
+  options.recording = true
+  await fixture.restart()
+  const detail = await fixture.read()
+  const context = await fixture.runtime.identity.resolveActorContext(new Headers({ cookie: fixture.cookie }), 'encounter.consultation.recording.control')
+  fixture.runtime.workflow.consultationRecording.recordDoctorSupplement({ context, encounterId: fixture.started.encounterId,
+    content: '医生查体双肺呼吸音清。', sourceId: 'historical-doctor-source', sessionId: 'synthetic-session', messageId: 'synthetic-message', rpcId: 'synthetic-rpc',
+    recordedAt: '2026-10-14T01:00:00.000Z', expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId }, idempotencyKey: randomUUID() })
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'backfill', version: 0 })
+  options.recording = false
+  await fixture.restart()
+  expect((await fixture.read()).consultationRecording).toBeUndefined()
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  expect(preview.consultationReview).toMatchObject({ consultationVersion: 4, sourceCount: 3, remainingCount: 3 })
+  expect((await actions.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(409)
+  expect((await actions.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken, consultationReviewed: true })).status).toBe(200)
 })
 
 it('invalidates a changed consultation preview without an automatic recording model even after human acknowledgement', async () => {
