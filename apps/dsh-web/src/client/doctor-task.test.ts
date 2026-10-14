@@ -155,11 +155,63 @@ it('records a proven native source even when normal turn completion rejects Tool
     : Response.json({ data: { sourceProof: 'synthetic-native-source-proof-at-least-32-characters' } }))
   const accept = vi.fn<Accept>(async input => task(input))
   const record = vi.fn(async () => {})
-  const dispose = createDoctorInputBridge(f, accept, record)
+  const failed = vi.fn()
+  const dispose = createDoctorInputBridge(f, accept, record, failed)
   try {
     f.stores.get('session-1')!.submit([pending('doctor-fact', '查体：双肺呼吸音清。')])
     await vi.waitFor(() => expect(record).toHaveBeenCalledWith({ content: '查体：双肺呼吸音清。',
       dshSessionId: 'session-1', rpcId: 'doctor-fact', sourceProof: 'synthetic-native-source-proof-at-least-32-characters' }, expect.any(AbortSignal)))
+    expect(failed).not.toHaveBeenCalled()
+  } finally { dispose() }
+})
+
+it('reports a failed source permit without replaying the native input', async () => {
+  const f = fixture()
+  const failed = vi.fn()
+  const record = vi.fn(async () => {})
+  const dispose = createDoctorInputBridge(f, async () => { throw new Error('synthetic-private-permit-error') }, record, failed)
+  try {
+    f.stores.get('session-1')!.submit([pending()])
+    await vi.waitFor(() => expect(failed).toHaveBeenCalledExactlyOnceWith('session-1'))
+    expect(record).not.toHaveBeenCalled()
+    expect(f.fetch).not.toHaveBeenCalled()
+  } finally { dispose() }
+})
+
+it('suppresses source failure after a session switch cancels proof acceptance', async () => {
+  const f = fixture()
+  const failed = vi.fn()
+  let rejectSource!: (error: Error) => void
+  f.fetch.mockImplementation(async (path: unknown) => path === '/clinmesh-doctor-source'
+    ? new Promise<Response>((_, reject) => { rejectSource = reject }) : Response.json({ data: { registered: true } }))
+  const dispose = createDoctorInputBridge(f, async input => task(input), async () => {}, failed)
+  try {
+    f.stores.get('session-1')!.submit([pending()])
+    await vi.waitFor(() => expect(rejectSource).toBeTypeOf('function'))
+    f.select('session-2')
+    rejectSource(new Error('synthetic-cancelled-proof'))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(failed).not.toHaveBeenCalled()
+  } finally { dispose() }
+})
+
+it.each(['proof', 'save'] as const)('reports a %s source failure without forwarding private text or retrying', async failure => {
+  const f = fixture()
+  f.fetch.mockImplementation(async (path: unknown) => path === '/clinmesh-doctor-source'
+    ? failure === 'proof' ? Response.json({ error: 'synthetic-private-error' }, { status: 409 })
+      : Response.json({ data: { sourceProof: 'synthetic-native-source-proof-at-least-32-characters' } })
+    : Response.json({ data: { registered: true } }))
+  const record = vi.fn(async () => { throw new Error('synthetic-private-doctor-text') })
+  const failed = vi.fn()
+  const dispose = createDoctorInputBridge(f, async input => task(input), record, failed)
+  try {
+    const store = f.stores.get('session-1')!
+    store.submit([pending()])
+    await vi.waitFor(() => expect(failed).toHaveBeenCalledExactlyOnceWith('session-1'))
+    store.submit([pending()])
+    expect(failed).toHaveBeenCalledOnce()
+    expect(record).toHaveBeenCalledTimes(failure === 'proof' ? 0 : 1)
   } finally { dispose() }
 })
 

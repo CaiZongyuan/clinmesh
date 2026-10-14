@@ -34,7 +34,8 @@ export interface WebSurfaceAgentController {
 
 export interface WebRuntimeOptions {
   surfaceDoctorInput?: (accept: (input: DoctorAgentChatInput, signal: AbortSignal) => Promise<DoctorAgentTaskSubmission>,
-    record?: (input: DoctorRecordingSourceInput, signal: AbortSignal) => Promise<void>) => (() => void)
+    record?: (input: DoctorRecordingSourceInput, signal: AbortSignal) => Promise<void>,
+    sourceFailed?: (dshSessionId: string) => void) => (() => void)
   surfaceNavigation?: WebSurfaceNavigation
   surfaceDisplay?: WebSurfaceDisplay
   apiBasePath?: string

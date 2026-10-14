@@ -1,4 +1,5 @@
 const zhCN = {
+  doctorSupplementSaveUnconfirmed: '暂未确认本条补充已加入病历，请核对后重新补充。',
   appName: '科灵脉智',
   recommendationFieldPending: '待医生补充',
   recommendationDraftNeedsResolution: '请先处理当前申请草稿，再采纳其他建议。',
@@ -895,6 +896,7 @@ export type WorkspaceMessages = { [Key in WorkspaceMessageKey]: string }
 export type WorkspaceLocale = 'zh-CN' | 'en-US'
 
 const enUS = {
+  doctorSupplementSaveUnconfirmed: 'This supplement has not been confirmed in the record. Check the record before adding it again.',
   recommendationFieldPending: 'Requires doctor input',
   recommendationDraftNeedsResolution: 'Resolve the current request draft before adopting another suggestion.',
   recommendationRequestTargetUnavailable: 'The current catalog or request information is unavailable for adoption.',

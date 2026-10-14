@@ -104,9 +104,9 @@ export function createDefinition(
   const getLocale = () => normalizeHostLocale(locale.getLocale().active)
   const surfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
   const sessions = ctx.get('sessions') as unknown as ClientSessionInputPort
-  const surfaceDoctorInput: NonNullable<WebRuntimeOptions['surfaceDoctorInput']> = (accept, record) => createDoctorInputBridge({
+  const surfaceDoctorInput: NonNullable<WebRuntimeOptions['surfaceDoctorInput']> = (accept, record, sourceFailed) => createDoctorInputBridge({
     current: sessionBinding.adapter.current, sessions,
-  }, accept, record)
+  }, accept, record, sourceFailed)
   const subscribe = (listener: () => void): (() => void) => sessionBinding.adapter.current.subscribe(listener)
   const subscribeTheme = (listener: () => void): (() => void) => subscribeHostTheme(ctx, listener)
   const getSnapshot = (): string | undefined => sessionBinding.adapter.current.getSnapshot().key

@@ -6,6 +6,7 @@ export function createDoctorInputBridge(
   ports: { current: ClientSessionBindingPort['adapter']['current']; sessions: ClientSessionInputPort },
   accept: (input: DoctorAgentChatInput, signal: AbortSignal) => Promise<DoctorAgentTaskSubmission>,
   record?: (input: DoctorRecordingSourceInput, signal: AbortSignal) => Promise<void>,
+  sourceFailed?: (dshSessionId: string) => void,
 ): () => void {
   let session: NonNullable<ReturnType<ClientSessionInputPort['binding']>>['session'] | undefined
   let detach = () => {}
@@ -34,12 +35,20 @@ export function createDoctorInputBridge(
     detach = () => { controller.abort(); unsubscribe() }
   }
   async function register(input: DoctorAgentChatInput, signal: AbortSignal): Promise<void> {
-    const task = await accept(input, signal)
-    signal.throwIfAborted()
-    if (task.content !== input.content || task.dshSessionId !== input.dshSessionId || task.rpcId !== input.rpcId) {
-      throw new Error('助手未能核实本次医生输入。')
+    let task: DoctorAgentTaskSubmission
+    try {
+      task = await accept(input, signal)
+      signal.throwIfAborted()
+      if (task.content !== input.content || task.dshSessionId !== input.dshSessionId || task.rpcId !== input.rpcId) {
+        throw new Error('助手未能核实本次医生输入。')
+      }
+    } catch {
+      if (record !== undefined && !signal.aborted) sourceFailed?.(input.dshSessionId)
+      return
     }
-    const source = record === undefined ? Promise.resolve() : recordSource(task, input, signal)
+    const source = record === undefined ? Promise.resolve() : recordSource(task, input, signal).catch(() => {
+      if (!signal.aborted) sourceFailed?.(input.dshSessionId)
+    })
     const registration = registerTask(task, signal)
     await Promise.all([source, registration])
   }
