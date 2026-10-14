@@ -13,6 +13,7 @@ import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
+import { replaceWithPreSourceDatabase } from './fixtures/legacy-recording-database.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -50,12 +51,14 @@ async function setup(options: {
   reply?: string | (() => string)
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
   verify?: (input: JsonChatCompletionInput) => unknown
+  resolveModel?: JsonChatCompletionsProvider['resolveModel']
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auto-record-'))
   disposals.push(() => rm(directory, { recursive: true }))
   const requests: JsonChatCompletionInput[] = []
   let replyCalls = 0
   const provider: JsonChatCompletionsProvider = {
+    ...(options.resolveModel === undefined ? {} : { resolveModel: options.resolveModel }),
     async completeJson(input) {
       requests.push(input)
       if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
@@ -96,10 +99,10 @@ async function setup(options: {
       [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1',
     }, input: { expectedConsultationVersion: 2, message: '头晕多久了？有没有胸痛？' } }),
   })
-  const askMore = async () => {
+  const askMore = async (actorHeaders: Record<string, string> = { cookie }) => {
     const detail = await read()
     return runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
-      method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      method: 'POST', headers: { ...actorHeaders, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
       body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId,
         [`Task/${detail.taskId}`]: detail.taskVersion }, input: { expectedConsultationVersion: detail.consultation!.version, message: '再确认一下病史？' } }),
     })
@@ -119,7 +122,7 @@ async function setup(options: {
     if (response.status === 200) clinicalDocumentDraftResponseSchema.parse(await response.clone().json())
     return response
   }
-  const control = async (action: 'pause' | 'resume' | 'backfill' | 'retry', options: { key?: string; version?: number; headers?: Record<string, string> } = {}) => {
+  const control = async (action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry', options: { key?: string; version?: number; headers?: Record<string, string> } = {}) => {
     const detail = await read()
     return runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/consultation-recording/actions/control`, {
       method: 'POST', headers: { ...(options.headers ?? { cookie }), origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': options.key ?? randomUUID() },
@@ -185,6 +188,94 @@ it('automatically writes verified new facts into the draft without physician app
   }] })
   await fixture.restart()
   expect((await fixture.read()).clinicalDocument?.draft).toEqual(detail.clinicalDocument?.draft)
+})
+
+it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0061 database and resumes report recording without losing legacy facts (%s)', async kind => {
+  let reply = '头晕一周了。站起来时更明显。'
+  const fixture = await setup({ reply: () => reply, resolveModel: async model => `${model}-legacy-route`, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; kind: string; messageText: string }>; history: Array<{ id: string; quote: string }> }
+    const answer = payload.turns.at(-1)!
+    if (answer.kind === 'report') return { additions: [] }
+    const target = reply.startsWith('刚才说错了') ? payload.history.find(row => row.quote === '头晕一周了。') : undefined
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: answer.id, quote: reply,
+      relation: target === undefined ? 'addition' : 'correction', ...(target === undefined ? {} : { targetAdditionId: target.id }) }] }
+  } })
+  if (kind === 'job-with-grant') {
+    const { grant } = await createDoctorGrant(fixture.runtime, fixture.started.adminCookie, 'encounter.consultation.ask')
+    const actor = { authorization: `Bearer ${grant.token}` }
+    expect((await fixture.ask(actor)).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    reply = '刚才说错了，头晕三天。'
+    expect((await fixture.askMore(actor)).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    await fixture.save('患者自述：刚才说错了，头晕三天。\n医生核对：站立时更明显。')
+    reply = '夜间也会头晕。'
+    expect((await fixture.askMore(actor)).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    expect((await fixture.review((await fixture.read()).consultationRecording!.additions.at(-1)!.id, 'undo')).status).toBe(200)
+  } else {
+    expect((await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/actions/start-first-visit`, {
+      method: 'POST', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: fixture.started.encounterVersion,
+        [`Task/${fixture.started.doctorTaskId}`]: '1' }, input: {} }),
+    })).status).toBe(200)
+  }
+  const before = await fixture.read()
+  const originalContext = z.object({ actor_context_json: z.string() }).parse(fixture.runtime.database.driver.prepare(
+    'SELECT actor_context_json FROM consultation_recording WHERE case_id = ?').get(fixture.started.outpatientCaseId)).actor_context_json
+  const snapshot = () => ({
+    recording: fixture.runtime.database.driver.prepare('SELECT workspace_id, epoch, case_id, version, paused, start_sequence FROM consultation_recording ORDER BY case_id').all(),
+    jobs: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_recording_job ORDER BY turn_id').all(),
+    models: fixture.runtime.database.driver.prepare('SELECT * FROM ai_model_binding ORDER BY task_id').all(),
+    additions: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_history_addition ORDER BY addition_id').all(),
+    receipts: fixture.runtime.database.driver.prepare('SELECT * FROM command_receipt ORDER BY operation, idempotency_key').all(),
+  })
+  const stored = snapshot()
+  if (kind === 'job-with-grant') {
+    expect(stored.jobs).toHaveLength(3)
+    expect(stored.models.length).toBeGreaterThan(0)
+    expect(stored.receipts.length).toBeGreaterThan(0)
+    expect(JSON.stringify(stored.jobs)).toContain('agentGrantId')
+    expect(before.consultationRecording!.additions.some(row => row.ownership === 'manual')).toBe(true)
+    expect(before.consultationRecording!.additions.some(row => row.status === 'undone')).toBe(true)
+    expect(stored.additions).toEqual(expect.arrayContaining([expect.objectContaining({ inverse_text: '患者自述：头晕一周了。' }),
+      expect.objectContaining({ ownership: 'manual' }), expect.objectContaining({ rejected: 1, undone: 1 })]))
+  }
+  await fixture.restart(replaceWithPreSourceDatabase)
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 66, foreignKeys: true, integrity: 'ok' })
+  expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
+  expect(snapshot()).toEqual(stored)
+  const upgraded = await fixture.read()
+  expect(upgraded.consultationRecording!.requiresContextBinding).toBe(kind === 'no-job-human')
+  expect(upgraded.clinicalDocument?.draft).toEqual(before.clinicalDocument?.draft)
+  expect(upgraded.consultationRecording!.additions).toEqual(before.consultationRecording!.additions)
+  if (kind === 'no-job-human') {
+    expect(upgraded.consultationRecording!.requiresContextBinding).toBe(true)
+    expect((await fixture.control('activate', { version: upgraded.consultationRecording!.version })).status).toBe(200)
+    expect((await fixture.read()).consultationRecording!.requiresContextBinding).toBe(false)
+  }
+  useSyntheticLaboratoryCatalog(fixture.runtime)
+  const detail = await fixture.read()
+  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId }
+  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
+  })
+  expect(draft.status).toBe(200)
+  const saved = await draft.json() as { data: { draftVersion: number } }
+  expect((await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
+  })).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ remainingCount: 0,
+    processedCount: kind === 'job-with-grant' ? 4 : 1, version: before.consultationRecording!.version })
+  const reportContext = z.object({ actor_context_json: z.string() }).parse(fixture.runtime.database.driver.prepare(`SELECT job.actor_context_json FROM consultation_recording_job AS job
+    JOIN consultation_recording_source AS source ON source.workspace_id = job.workspace_id AND source.epoch = job.epoch
+      AND source.source_id = job.turn_id WHERE source.source_kind = 'report' AND job.case_id = ?
+  `).get(fixture.started.outpatientCaseId))
+  expect(JSON.parse(reportContext.actor_context_json)).toEqual(JSON.parse(originalContext))
 })
 
 it('records published laboratory values and conclusion with a fixed report version while paused', async () => {
