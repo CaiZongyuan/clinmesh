@@ -550,6 +550,12 @@ function DoctorCaseController({
     queryFn: ({ signal }) => getClinicalCatalog(signal),
     queryKey: ['clinical-catalog', ...scope],
   })
+  const recommendationInput = useRef({ scope: pageScope, detail: detail.data, catalog: catalog.data, revision: 0 })
+  if (recommendationInput.current.scope !== pageScope || recommendationInput.current.detail !== detail.data
+    || recommendationInput.current.catalog !== catalog.data) {
+    recommendationInput.current = { scope: pageScope, detail: detail.data, catalog: catalog.data,
+      revision: recommendationInput.current.revision + 1 }
+  }
   const referenceDiagnoses = useQuery({
     enabled: diagnosisReferenceSearch.enabled,
     queryFn: ({ signal }) => searchReferenceDiagnoses(
@@ -688,7 +694,7 @@ function DoctorCaseController({
     ? indicationCode
     : draftIndicationCode
   const resolvedIndicationCode = resolvedLaboratoryItem === undefined
-    ? requestedIndicationCode ?? (indicationCode || 'clinical-evaluation')
+    ? requestedIndicationCode ?? (indicationCode || (resolvedLaboratoryItemId === '' ? '' : 'clinical-evaluation'))
     : resolvedLaboratoryItem.allowedIndicationCodes.includes(
     requestedIndicationCode ?? '',
   ) === true
@@ -2629,6 +2635,8 @@ function DoctorCaseController({
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <CaseDetail
+            recommendationScope={pageScope}
+            recommendationRevision={String(recommendationInput.current.revision)}
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
               ?? emptyDoctorAgentDraftHydrationRevisions}
             clinicalDocumentActions={{
@@ -3050,6 +3058,8 @@ function DoctorCaseController({
 
 function CaseDetail({
   agentDraftHydrationRevisions,
+  recommendationScope,
+  recommendationRevision,
   catalog,
   clinicalDocumentActions,
   completion,
@@ -3104,6 +3114,8 @@ function CaseDetail({
   workingClinicalDocument,
 }: {
   agentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions
+  recommendationScope: string
+  recommendationRevision: string
   catalog: ReturnType<typeof useQuery<Awaited<ReturnType<typeof getClinicalCatalog>>>>
   clinicalDocumentActions: ClinicalDocumentPageActions
   completion: UseQueryResult<EncounterCompletionPreview, Error>
@@ -3537,6 +3549,8 @@ function CaseDetail({
             ) : (
               <DiagnosisPage
                 actions={diagnosisActions}
+                recommendationScope={recommendationScope}
+                recommendationRevision={recommendationRevision}
                 caseId={detail.caseId}
                 catalog={catalog.data.diagnoses}
                 elementId={encounterCompletionTargetElementIds.diagnosis}
@@ -3561,6 +3575,8 @@ function CaseDetail({
             ) : catalog.data.prescriptionConclusionSupported ? (
               <PrescriptionPage
                 actions={prescriptionActions}
+                recommendationScope={recommendationScope}
+                recommendationRevision={recommendationRevision}
                 allowWithdrawal={!clinicalReadOnly || correctionTarget === 'medication-conclusion'}
                 catalog={catalog.data.medications}
                 detail={detail}
@@ -3584,6 +3600,8 @@ function CaseDetail({
               <TabsContent keepMounted value="laboratory">
                 <LaboratoryPage
                   actions={laboratoryRequestActions}
+                  recommendationScope={recommendationScope}
+                  recommendationRevision={recommendationRevision}
                   catalogError={catalog.error}
                   catalogPending={catalog.isPending}
                   detail={detail}
@@ -3612,6 +3630,8 @@ function CaseDetail({
               <TabsContent keepMounted value="imaging">
                 <ImagingPage
                   actions={imagingActions}
+                  recommendationScope={recommendationScope}
+                  recommendationRevision={recommendationRevision}
                   active={investigationView.category === 'imaging'}
                   caseId={detail.caseId}
                   elementId={encounterCompletionTargetElementIds.imaging}
@@ -3629,6 +3649,8 @@ function CaseDetail({
               <TabsContent keepMounted value="pathology">
                 <PathologyPage
                   actions={pathologyActions}
+                  recommendationScope={recommendationScope}
+                  recommendationRevision={recommendationRevision}
                   active={investigationView.category === 'pathology'}
                   caseId={detail.caseId}
                   elementId={encounterCompletionTargetElementIds.pathology}

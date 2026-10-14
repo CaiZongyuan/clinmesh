@@ -172,7 +172,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 64,
+      schemaVersion: 65,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -240,8 +240,9 @@ describe('SQLite lifecycle', () => {
         '0057_consultation-history-review.sql',
         '0058_consultation-sign-review.sql',
         '0059_consultation-history-summary.sql',
+        '0060_doctor-recommendations.sql',
       ],
-      schemaVersion: 64,
+      schemaVersion: 65,
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
@@ -257,8 +258,8 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 64 })
-    expect(reopened.diagnostics().schemaVersion).toBe(64)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 65 })
+    expect(reopened.diagnostics().schemaVersion).toBe(65)
     reopened.close()
   })
 
@@ -342,8 +343,9 @@ describe('SQLite lifecycle', () => {
         '0057_consultation-history-review.sql',
         '0058_consultation-sign-review.sql',
         '0059_consultation-history-summary.sql',
+        '0060_doctor-recommendations.sql',
       ],
-      schemaVersion: 64,
+      schemaVersion: 65,
     })
     expect(database.driver.prepare(`
       SELECT practitioner_role_id FROM command_receipt
@@ -1597,7 +1599,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(64)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(65)
     await runtime.close()
   })
 
@@ -1699,7 +1701,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 64,
+      schemaVersion: 65,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1711,11 +1713,11 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 64,
+      expectedSchemaVersion: 65,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 64,
+      schemaVersion: 65,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1899,7 +1901,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(64),
+      schemaVersion: z.literal(65),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -1963,26 +1965,27 @@ describe('SQLite lifecycle', () => {
         '0057_consultation-history-review.sql',
         '0058_consultation-sign-review.sql',
         '0059_consultation-history-summary.sql',
+        '0060_doctor-recommendations.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 64 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 65 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 64 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 65 })
     await expect(runDatabaseCli([
       'restore',
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 64 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 65 })
   })
 })

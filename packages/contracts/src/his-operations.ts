@@ -2569,6 +2569,16 @@ export interface ExcludedHisRoute {
 
 export const excludedHisRoutes = [
   {
+    method: 'GET',
+    path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind',
+    reason: '医生页面的诊疗建议状态与依据辅助读取，本期不登记独立 CLI 或 Agent tool 操作。',
+  },
+  {
+    method: 'POST',
+    path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/generate',
+    reason: '医生页面辅助建议生成，本期不提供独立 CLI 或 Agent tool 授权，临床采纳与正式提交沿用既有操作。',
+  },
+  {
     method: 'POST',
     path: '/api/his/v1/encounters/:encounterId/actions/start-first-visit',
     reason: 'Legacy first-visit compatibility entrypoint',

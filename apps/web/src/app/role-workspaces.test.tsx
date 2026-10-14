@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { doctorRecommendationStateSchema } from '@clinmesh/contracts/doctor-recommendations'
 import type {
   ClinicalDocumentContent,
   DiagnosisDraftEntry,
@@ -1567,8 +1568,10 @@ describe('role workspaces', () => {
 
     await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
     const sheet = await screen.findByRole('dialog', { name: '生成患者' })
-    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
-    await user.click(screen.getByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
+    const targetSelect = await within(sheet).findByRole('combobox', { name: '定向病例' })
+    act(() => targetSelect.focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
     expect(within(sheet).getByText('适用人群：男，40–79 岁')).toBeTruthy()
     expect(within(sheet).getByRole<HTMLInputElement>('spinbutton', { name: '最小年龄' }).value).toBe('40')
     expect(within(sheet).getByRole<HTMLInputElement>('spinbutton', { name: '最大年龄' }).value).toBe('79')
@@ -1602,9 +1605,11 @@ describe('role workspaces', () => {
 
     await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
     const sheet = await screen.findByRole('dialog', { name: '生成患者' })
-    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
+    const targetSelect = await within(sheet).findByRole('combobox', { name: '定向病例' })
+    act(() => targetSelect.focus())
+    await user.keyboard('{Enter}')
     // 病理条目的名称已含会诊项目，不加放射的检查类别前缀。
-    await user.click(screen.getByRole('option', { name: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2' }))
+    await user.click(await screen.findByRole('option', { name: '乳腺切片会诊：ER 阳性 · PR 阳性 · HER2 阴性 · 淋巴结阳性 · T2' }))
     expect(within(sheet).getByText('适用人群：女，45–80 岁')).toBeTruthy()
     // 条目要求病史覆盖 45 年：选择后历史起始日期自动前移，改晚则提示并禁止提交。
     const historyStart = within(sheet).getByLabelText<HTMLInputElement>('历史起始日期')
@@ -1635,8 +1640,10 @@ describe('role workspaces', () => {
 
     await user.click((await screen.findAllByRole('button', { name: '生成患者' }))[0]!)
     const sheet = await screen.findByRole('dialog', { name: '生成患者' })
-    await user.click(await within(sheet).findByRole('combobox', { name: '定向病例' }))
-    await user.click(screen.getByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
+    const targetSelect = await within(sheet).findByRole('combobox', { name: '定向病例' })
+    act(() => targetSelect.focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '胸部影像：右肺单发肿块（成年男性，疑似或确诊肺癌）' }))
     const submit = within(sheet).getByRole('button', { name: '生成患者' })
     const minimumAge = within(sheet).getByRole('spinbutton', { name: '最小年龄' })
     await user.clear(minimumAge)
@@ -3537,6 +3544,48 @@ describe('role workspaces', () => {
     } finally { release() }
   })
 
+  it('updates recommendations after case facts change without an Encounter revision and preserves unsaved diagnosis edits', async () => {
+    const fixture = stubRecordingWorkspace('pause')
+    const originalFetch = globalThis.fetch
+    let recommendationNote = '合成建议资料版本一'
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/his/v1/catalogs/clinical') return Response.json({
+        diagnoses: [{ id: 'diagnosis-fever', code: 'R50.9', nameZh: '发热', nameEn: 'Fever',
+          system: 'http://hl7.org/fhir/sid/icd-10', version: 1 }],
+        laboratory: [], medications: [], prescriptionConclusionSupported: true,
+      })
+      if (path === '/api/his/v1/doctor/cases/case-recording/recommendations/diagnosis') {
+        return Response.json(doctorRecommendationStateSchema.parse({
+          caseId: 'case-recording', encounterId: 'encounter-recording', encounterVersion: '1',
+          kind: 'diagnosis', inputFingerprint: 'a'.repeat(64), generation: 1, status: 'ready', stale: false,
+          items: [], guidelines: [], caseEvidence: [], missingInformation: [recommendationNote],
+        }))
+      }
+      return originalFetch(input, init)
+    }))
+    const queryClient = createWebQueryClient()
+    const user = userEvent.setup()
+    const view = render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByRole('button', { name: '暂停自动整理' })
+    await user.click(screen.getByRole('tab', { name: '诊断' }))
+    await screen.findByText('合成建议资料版本一')
+    await user.click(screen.getByRole('button', { name: '选择 发热 R50.9' }))
+    fireEvent.change(screen.getByLabelText('诊断备注', { exact: true }), { target: { value: '医生未保存的备注' } })
+    recommendationNote = '合成建议资料版本二'
+    fixture.updateRecording({ processedCount: 1 })
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+    await screen.findByText('合成建议资料版本二')
+    expect((screen.getByLabelText('诊断备注', { exact: true }) as HTMLTextAreaElement).value).toBe('医生未保存的备注')
+    recommendationNote = '合成建议新数据世代'
+    const nextSession = { ...doctorSession, actor: { ...doctorSession.actor, epoch: 'epoch-recommendation-next' } }
+    view.rerender(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={nextSession} /></QueryClientProvider>)
+    await screen.findByRole('button', { name: '暂停自动整理' })
+    await user.click(screen.getByRole('tab', { name: '诊断' }))
+    await screen.findByText('合成建议新数据世代')
+    expect(screen.queryByText('合成建议资料版本二')).toBeNull()
+  })
+
   it('hides a cached recording case when refresh denies access', async () => {
     const fixture = stubRecordingWorkspace('resume')
     const queryClient = createWebQueryClient()
@@ -4138,7 +4187,9 @@ describe('role workspaces', () => {
     expect(screen.getByRole('tabpanel', { name: '检验 0' })).toBeTruthy()
     if (failFirstRead) {
       expect(await screen.findByText('无法加载本院检验目录')).toBeTruthy()
-      await user.click(screen.getByRole('button', { name: '重试' }))
+      const failure = screen.getByText('无法加载本院检验目录').closest<HTMLElement>('[role="alert"]')
+      if (failure === null) throw new Error('Missing hospital catalog failure notice')
+      await user.click(within(failure).getByRole('button', { name: '重试' }))
       await waitFor(() => expect(laboratoryReads).toBe(2))
       await waitFor(() => expect(screen.queryByText('无法加载本院检验目录')).toBeNull())
     }
@@ -5924,7 +5975,7 @@ describe('role workspaces', () => {
     await user.click(within(screen.getByRole('region', { name: '诊断列表' })).getByRole('button', { name: /原发性高血压/ }))
     await user.click(screen.getByRole('button', { name: '移除诊断 2' }))
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(1), { timeout: 3_000 })
-    expect((screen.getByRole('button', { name: '确认诊断' }) as HTMLButtonElement).disabled).toBe(false)
+    await waitFor(() => expect((screen.getByRole('button', { name: '确认诊断' }) as HTMLButtonElement).disabled).toBe(false))
     const { fillDiagnosis, tools: diagnosisTools } = await waitFor(() => {
       const candidate = registration?.tools.find(tool => tool.name === 'clinmesh_fill_diagnosis_draft')
       expect(candidate).toBeDefined()

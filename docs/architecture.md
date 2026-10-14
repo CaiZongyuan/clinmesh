@@ -786,7 +786,7 @@ Surface 隐藏、DSH Session/lease 失效、page scope、selection、资源版�
 
 `packages/contracts/src/his-operations.ts` 导出的 `hisOperationCatalog` 是 CLI/Capability Grant 直接 HIS 操作面的唯一合同 owner。每项 operation 显式声明稳定 ID、版本、`cliPath`、`query/draft/preview/command` mode、输入/输出/错误 Zod schema、HTTP method/path adapter、唯一 handler owner、human/agent identity、岗位 allowlist、风险、幂等、expected version 与 preview token 要求；既有 Command 的持久 operation 名称不同时，Catalog 还保存 receipt adapter 名称。DSH 页面 Tools 由独立的 `agentToolCatalog` 拥有，并在当前人类 Session 内投影 UI action 与 proposal，不能作为 Capability Grant operation 使用。两个 Catalog 都不依赖 Hono、Node.js、环境变量或 handler。
 
-CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的兼容排除项。管理员 Laboratory Service 候选搜索、发布和 job 查询属于 `clinmesh-administrator`；医生病例级目录属于 `clinmesh-doctor`，只返回可开立 Hospital Service。全局 Reference 检验搜索不能替代服务发布，也不能把 Reference Concept ID 作为申请项目。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
+CLI 命令树、`operations list/schema`、服务端 Agent route matching、Grant 的 Catalog hash 和 Skill 命令示例测试都读取同一 Catalog。HIS route coverage test 要求每条 `/api/his/v1` route 恰好属于 canonical operation 或带原因的排除项。医生页面的诊疗建议状态读取与生成是辅助结果入口，两条 route 在 `excludedHisRoutes` 登记，本期不增加独立 CLI 命令或 Agent tool 授权。管理员 Laboratory Service 候选搜索、发布和 job 查询属于 `clinmesh-administrator`；医生病例级目录属于 `clinmesh-doctor`，只返回可开立 Hospital Service。全局 Reference 检验搜索不能替代服务发布，也不能把 Reference Concept ID 作为申请项目。FHIR 部分只投影 metadata、read、vread、instance history 和资源能力注册表允许的 search；资源类型与 SearchParameter 白名单和 CapabilityStatement 共用一份注册表。包括 metadata 在内的每个 FHIR 入口都先解析受信身份，Agent 还必须在 Grant allowlist 中拥有对应 operation。
 
 CLI 没有通用 invoke、任意 URL、method/path/body、SQL、JSON Patch、FHIR write 或 Bundle write。兼容组合 route 不进入命令树，Agent 使用独立 diagnosis、prescription、laboratory request、clinical document 和 Encounter Completion 生命周期。
 
@@ -871,6 +871,12 @@ DSH 模型桥接已配置时，新建 Consultation 默认登记自动记录资�
 处方草稿是病例级 domain-native 聚合，保存一至八条受控药品、剂量、频次、疗程和数量，并以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。保存或删除草稿不创建 MedicationRequest；正式开具时重新读取目录和已确认诊断，校验药品组合、诊断适应规则、患者过敏、剂量、频次、疗程和数量，然后在同一 Command 创建稳定处方号、Prescription、每种药一个的 active FHIR R5 MedicationRequest、Medication ChargeItem 和 Charge Record。`prescription_authorship` 通过 `workspace_actor` 与 Practitioner Role 复合外键保存负责身份，草稿正文同时清除且版本递增。收费预览只有在 Encounter 已完诊、处方仍 signed 且未撤回时可用；支付成功把病例移交药房。独立处方入口与首期复诊组合草稿互斥，已存在正式用药结论时不能继续普通编辑。
 
 临床目录响应以 `prescriptionConclusionSupported` 显式声明当前 Epoch 是否具有独立用药结论能力。v3 药品目录同时提供疗程、数量和诊断适应规则并返回 `true`；保留的 v1/v2 目录只提供组合、剂量和频次规则并返回 `false`，其组合复诊流程保持可用，独立处方与无需用药 Command 返回稳定目录冲突，Web 不显示独立用药结论面板。
+
+诊疗建议是绑定 Workspace、Epoch、负责医生、病例和建议类型的独立辅助结果。医生页面通过 `GET /api/his/v1/doctor/cases/:caseId/recommendations/:kind` 读取，通过同路径的 `POST actions/generate` 提交当前 Encounter 版本与资料指纹，类型为检验、放射、病理、诊断和处方。生成 Command 只更新建议状态并入持久 outbox，不创建正式临床资源。输入包括当前授权公开病例、完整问诊和病历字段、报告与可见历史、当前院内目录以及[已经核验的官方短条款](research/2026-10-13-clinical-recommendation-guidelines.md)，不读取 Case Truth、私有 Persona、影像像素或 DSH Session transcript。
+
+建议按资料、目录与证据版本的指纹去重，显式刷新创建新代次；同一任务的生成、结构化修复、自动重试与重启恢复沿用固定模型，新的代次采用当前模型选择。候选先按真实目录固定名称、编码和所选检查来源，再由第二次独立请求核对最终条目的条款支持、病例支持、适用性与限定语，核验后不替换临床身份；合法否定结论不触发格式修复。处方进一步核对所选本院药品的实际规格与每个字段依据，无法证实的字段保持 `null`；目录默认值与允许值只用于执行映射。来源、目录、授权或代次变化会阻止旧结果生效。证据、生成或独立核验的完整请求及响应超预算时明确返回 `missing-evidence`，不截断来源生成。持久输入、语义核对与预算取舍见[建议来源与草稿边界决策](../.agents/notes/implemented/architecture/2026-10-13-doctor-guideline-recommendations.md)。
+
+页面资料更新只推进建议读取版本，保留现有草稿编辑器与未保存输入。采纳前重新读取建议，核对当前病例、类型、指纹、代次和可见条目，并重新检查最新编辑权限；只读、已有人工检查草稿和重复条目沿用现有约束。采纳只填入可编辑草稿，处方缺项显示待医生补充，正式确认诊断、开立检查和开具处方仍通过原有人工确认与共享 Command。
 
 无需用药结论是独立的 domain-native 正式事实，记录负责 Actor、Practitioner Role 和虚拟业务时间，不用空 Prescription 或空 MedicationRequest 代替。有效处方与无需用药结论互斥；处方撤回后可确认无需用药。确认动作也清除处方草稿并递增草稿版本。
 

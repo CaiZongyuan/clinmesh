@@ -105,6 +105,8 @@ import type { SyntheticCaseVisitService } from './application/synthetic-case-vis
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
+import type { DoctorRecommendationsService } from './application/doctor-recommendations-service.ts'
+import { doctorRecommendationKindSchema, generateDoctorRecommendationsRequestSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { createCapabilityStatement } from './fhir/capabilities.ts'
 import { isSupportedResourceType } from './fhir/capabilities.ts'
 import {
@@ -132,6 +134,7 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  doctorRecommendations?: DoctorRecommendationsService
   agentIntegration?: AgentIntegrationService
   caseVisits?: SyntheticCaseVisitService
   fhir?: FhirRuntime
@@ -1448,6 +1451,23 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         } catch (error) {
           return apiErrorResponse(context, error)
         }
+      })
+    }
+    if (options.doctorRecommendations !== undefined) {
+      app.get('/api/his/v1/doctor/cases/:caseId/recommendations/:kind', async (context) => {
+        try {
+          return context.json(await options.doctorRecommendations!.read(
+            await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.parse(context.req.param('kind')),
+          ))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.post('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/generate', async (context) => {
+        try {
+          return context.json(await options.doctorRecommendations!.generate(
+            await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.parse(context.req.param('kind')),
+            generateDoctorRecommendationsRequestSchema.parse(await context.req.json()), requestIdempotencyKey(context),
+          ))
+        } catch (error) { return apiErrorResponse(context, error) }
       })
     }
     app.get('/api/his/v1/doctor/cases/:caseId', async (context) => {
