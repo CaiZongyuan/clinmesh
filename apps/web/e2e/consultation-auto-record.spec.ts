@@ -3,7 +3,7 @@ import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
 import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
-import { applySuggestion, expandHistory } from './consultation-suggestions.ts'
+import { confirmRecordedAddition, expandHistory } from './consultation-suggestions.ts'
 
 test('reviews a conflicting handwritten sentence before replacement and preserves the rest of the draft after reload', async ({ page, webRoot }) => {
   const reply = '胸痛两天了。'
@@ -106,8 +106,8 @@ test('keeps review prompts and full reply sources across reload, then undoes add
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await ask()
     await expect(page.locator('[data-consultation-unreviewed]')).toHaveAttribute('data-consultation-unreviewed', '2')
-    await applySuggestion(page, '头晕一周了。')
-    await applySuggestion(page, '站起来时更明显。')
+    await confirmRecordedAddition(page, '头晕一周了。')
+    await confirmRecordedAddition(page, '站起来时更明显。')
     await reload()
     await expect(page.locator('[data-consultation-unreviewed]')).toHaveCount(0)
     await first.getByRole('button', { name: '查看来源', exact: true }).click()
@@ -126,7 +126,7 @@ test('keeps review prompts and full reply sources across reload, then undoes add
     await expect(first.getByRole('button', { name: '撤销此条', exact: true })).toBeEnabled()
     reply = '夜间也会头晕。'
     await ask()
-    await applySuggestion(page, reply)
+    await confirmRecordedAddition(page, reply)
     await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。\n医生补充：尚未查体。\n患者自述：夜间也会头晕。')
     await page.getByLabel('评估', { exact: true }).fill('医生保留的未保存评估。')
     await first.getByRole('button', { name: '撤销此条', exact: true }).click()
@@ -140,7 +140,7 @@ test('keeps review prompts and full reply sources across reload, then undoes add
     await expect(source).toHaveCount(0)
     reply = '刚才说错了，坐着时也会头晕。'
     await ask()
-    await applySuggestion(page, reply)
+    await confirmRecordedAddition(page, reply)
     const correction = page.locator('[data-consultation-addition="applied"]').filter({ hasText: reply })
     await expect(correction).toContainText('已应用')
     await correction.getByRole('button', { name: '查看来源', exact: true }).click()
@@ -265,9 +265,9 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await page.getByLabel('现病史', { exact: true }).fill('')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await ask()
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-    await applySuggestion(page, reply)
+    await confirmRecordedAddition(page, reply)
     await page.getByLabel('现病史', { exact: true }).fill('医生核对：头晕五天。')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect(page.getByText('病历草稿已保存', { exact: true })).toBeVisible()
@@ -292,9 +292,9 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
     await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeEnabled()
     failCaseReads = false
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-    await applySuggestion(page, reply)
+    await confirmRecordedAddition(page, reply)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('医生核对：头晕五天。\n患者自述：站起来时更明显。')
     reply = '夜间也会头晕。'
     fail = true
@@ -309,16 +309,16 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await expect.poll(() => failedCaseReads).toBeGreaterThan(readsBeforeRetry)
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
     failCaseReads = false
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-    await applySuggestion(page, reply)
+    await confirmRecordedAddition(page, reply)
     expect((await read()).consultationRecording).toMatchObject({ processedCount: 3, remainingCount: 0, failedCount: 0 })
     expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：头晕五天。\n患者自述：站起来时更明显。\n患者自述：夜间也会头晕。')
   } finally { await server.close() }
 })
 
 for (const existingAutomaticDraft of [false, true]) {
-  test(`applies the first suggestion after saving prefill in a ${existingAutomaticDraft ? 'previously created' : 'new'} draft`, async ({ page, webRoot }) => {
+  test(`automatically merges the first recorded fact with unsaved prefill edits in a ${existingAutomaticDraft ? 'previously created' : 'new'} draft`, async ({ page, webRoot }) => {
     const recording = page.getByRole('tabpanel', { name: '病历记录', exact: true }).locator('[data-consultation-recording]')
     let release!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
@@ -356,9 +356,9 @@ for (const existingAutomaticDraft of [false, true]) {
         `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
       if (existingAutomaticDraft) {
         await ask()
-        await expect(recording).toHaveAttribute('data-consultation-recording', 'pending')
+        await expect(recording).toHaveAttribute('data-consultation-recording', 'updated')
         await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-        await applySuggestion(page, reply)
+        await confirmRecordedAddition(page, reply)
       } else await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       const history = page.getByLabel('现病史', { exact: true })
       expect(await history.inputValue()).not.toBe('')
@@ -369,12 +369,14 @@ for (const existingAutomaticDraft of [false, true]) {
       await ask()
       await expect(recording).toHaveAttribute('data-consultation-recording', 'processing')
       release()
-      await expect(recording).toHaveAttribute('data-consultation-recording', 'pending')
+      await expect(recording).toHaveAttribute('data-consultation-recording', 'updated')
       const expected = `${manual}\n患者自述：${reply}`
-      await expect(history).toHaveValue(manual)
-      await expect(page.getByRole('button', { name: '应用建议', exact: true })).toBeDisabled()
+      await expect(history).toHaveValue(expected)
+      await expect(page.getByRole('button', { name: '应用建议', exact: true })).toHaveCount(0)
+      await expect(page.locator('[data-consultation-addition="applied"]').filter({ hasText: reply })
+        .getByRole('button', { name: '确认已核对', exact: true })).toBeDisabled()
       await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-      await applySuggestion(page, reply)
+      await confirmRecordedAddition(page, reply)
       await expect(history).toHaveValue(expected)
       expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(expected)
       expect((await read()).consultationRecording?.additions.at(-1)).toMatchObject({
@@ -390,7 +392,7 @@ for (const existingAutomaticDraft of [false, true]) {
   })
 }
 
-test('patient answers create suggestions and explicit application preserves unsaved human input', async ({ page, webRoot }) => {
+test('patient answers automatically update the draft while unsaved human input and conflicting corrections stay protected', async ({ page, webRoot }) => {
   let release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
   let reply = '头晕一周了，站起来时更明显。'
@@ -436,9 +438,9 @@ test('patient answers create suggestions and explicit application preserves unsa
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
     release()
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
-    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('')
-    await applySuggestion(page, reply)
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了，站起来时更明显。')
+    await confirmRecordedAddition(page, reply)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了，站起来时更明显。')
     await expect(page.getByLabel('评估', { exact: true })).toHaveValue('医生尚未保存的评估。')
     await expect(page.getByLabel('主诉', { exact: true })).toHaveValue(beforeChiefComplaint)
@@ -464,10 +466,10 @@ test('patient answers create suggestions and explicit application preserves unsa
     await page.getByRole('button', { name: '向患者提问', exact: true }).click()
     await expect(page.getByText('夜间也会头晕。', { exact: true })).toBeVisible()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-    await expect(historyField).toHaveValue('医生核对：头晕五天，站起来时更明显。')
-    await expect(page.getByRole('button', { name: '应用建议', exact: true })).toBeDisabled()
+    await expect(historyField).toHaveValue('医生核对：头晕五天，站起来时更明显。\n患者自述：夜间也会头晕。')
+    await expect(page.getByRole('button', { name: '应用建议', exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-    await applySuggestion(page, reply)
+    await confirmRecordedAddition(page, reply)
     await expect.poll(async () => doctorCaseDetailSchema.parse(await (await page.request.get(
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json()).consultationRecording?.additions[0]?.ownership).toBe('manual')
     reply = '刚才说错了，头晕是六天。'

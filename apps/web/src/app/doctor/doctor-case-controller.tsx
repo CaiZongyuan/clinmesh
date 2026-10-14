@@ -446,6 +446,7 @@ function DoctorCaseController({
     Record<string, ClinicalDocumentContent>
   >({})
   const clinicalDocumentBaselines = useRef<Record<string, {
+    appliedAdditionIds: Set<string>
     document: ClinicalDocumentContent
     persisted: ClinicalDocumentContent | undefined
   }>>({})
@@ -655,6 +656,7 @@ function DoctorCaseController({
     const next = createWorkingClinicalDocument(currentDetail)
     const previous = clinicalDocumentBaselines.current[currentDetail.caseId]
     clinicalDocumentBaselines.current[currentDetail.caseId] = {
+      appliedAdditionIds: new Set(currentDetail.consultationRecording?.additions.filter(addition => addition.status === 'applied').map(addition => addition.id)),
       document: next,
       persisted: currentDetail.clinicalDocument?.draft ?? currentDetail.clinicalDocument?.signed.at(-1)?.content,
     }
@@ -670,6 +672,14 @@ function DoctorCaseController({
           merged[field] = firstAutomaticContent && working[field] !== previous.document[field]
             ? [working[field], next[field]].filter(Boolean).join('\n')
             : mergeDocumentText(previous.document[field] ?? '', working[field] ?? '', next[field] ?? '')
+          // 同一末尾的人工追加与自动追加都保留；已存在或改写的片段仍由文本合并保护。
+          for (const addition of currentDetail.consultationRecording?.additions ?? []) {
+            if (addition.field !== field || addition.status !== 'applied' || addition.ownership !== 'automatic'
+              || addition.relation !== 'addition' || previous.appliedAdditionIds.has(addition.id)
+              || !addition.currentText || !next[field]?.includes(addition.currentText)
+              || merged[field]?.includes(addition.currentText)) continue
+            merged[field] = [merged[field], addition.currentText].filter(Boolean).join('\n')
+          }
         }
       }
       return { ...current, [currentDetail.caseId]: merged }
@@ -1017,8 +1027,9 @@ function DoctorCaseController({
       ])
     },
   })
+  const activatedRecordingCases = useRef(new Set<string>())
   const controlRecording = useMutation({
-    mutationFn: ({ caseId, action }: { caseId: string; action: 'pause' | 'resume' | 'backfill' | 'retry' }) => {
+    mutationFn: ({ caseId, action }: { caseId: string; action: Parameters<typeof controlConsultationRecording>[0]['action'] }) => {
       const current = detail.data
       if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return controlConsultationRecording({ action, encounterId: current.encounter.id,
@@ -1036,6 +1047,17 @@ function DoctorCaseController({
       await refreshCaseById(variables.caseId)
     },
   })
+  useEffect(() => {
+    const current = detail.data
+    const recording = current?.consultationRecording
+    if (current === undefined || current.encounter.status !== 'in-progress' || (current.clinicalDocument?.signed.length ?? 0) > 0
+      || (current.consultation?.turns.length ?? 0) > 0 || recording?.signingPreparation?.active === true
+      || (recording !== undefined && (recording.version !== 0 || recording.status !== 'idle'))) return
+    const key = `${scope[0]}:${scope[1]}:${current.caseId}`
+    if (activatedRecordingCases.current.has(key)) return
+    activatedRecordingCases.current.add(key)
+    controlRecording.mutate({ caseId: current.caseId, action: 'activate' })
+  }, [detail.data, scope[0], scope[1], controlRecording.mutate])
   const reviewHistory = useMutation({
     mutationFn: async ({ caseId, additionId, decision }: { caseId: string; additionId: string; decision: Parameters<typeof reviewConsultationHistory>[0]['decision'] }) => {
       const current = detail.data

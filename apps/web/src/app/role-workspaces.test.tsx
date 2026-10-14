@@ -1104,18 +1104,19 @@ function stubDoctorCompletedCaseLibrary(options: {
   }))
 }
 
-function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry', additionalCase = false) {
-  const initialVersion = action === 'backfill' ? 0 : 2
+function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry', additionalCase = false) {
+  const initialVersion = action === 'backfill' || action === 'activate' ? 0 : 2
   let recording: NonNullable<DoctorCaseDetail['consultationRecording']> = {
     hasSavedDraft: true, failures: [], version: initialVersion, paused: action === 'resume', processedCount: 0,
     remainingCount: action === 'pause' ? 0 : 1, failedCount: action === 'retry' ? 1 : 0,
-    status: action === 'pause' ? 'updated' : action === 'resume' ? 'paused' : action === 'retry' ? 'failed' : 'backfill',
+    status: action === 'activate' ? 'idle' : action === 'pause' ? 'updated' : action === 'resume' ? 'paused' : action === 'retry' ? 'failed' : 'backfill',
     additions: [],
   }
   let readFailure: number | undefined
   let failedReads = 0
   let readInterceptor: ((response: Response, signal: AbortSignal | null | undefined) => Promise<Response>) | undefined
   let controlInterceptor: ((response: Response) => Promise<Response>) | undefined
+  let controlFailure = false
   let signingInterceptor: ((action: 'preview' | 'cancel', response: Response) => Promise<Response>) | undefined
   const cancellations: string[] = []
   const cancellationReceipts = new Map<string, string>()
@@ -1127,7 +1128,7 @@ function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry
     identifier: 'CM-SYN-RECORDING', name: '合成病史患者', synthetic: true, versionId: '1' }
   const detail = () => ({
     allergies: [], caseId: 'case-recording', consultation: { turns: [], version: 1 },
-    consultationRecording: recording,
+    consultationRecording: action === 'activate' && recording.version === 0 ? undefined : recording,
     clinicalDocument: { draft: { ...document, version: draftVersion, updatedAt: '2026-10-08T09:00:00+08:00' }, signed: [] },
     encounter: { id: 'encounter-recording', status: 'in-progress', versionId: '1' },
     patient, presentation: doctorPresentation, priorFacts: [], status: 'first-visit',
@@ -1210,6 +1211,7 @@ function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry
       const request = controlConsultationRecordingRequestSchema.parse(JSON.parse(String(init?.body)))
       controls.push(request.input)
       expect(request.input.expectedRecordingVersion).toBe(recording.version)
+      if (controlFailure) return Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Synthetic activation failure' } }, { status: 503 })
       recording = { ...recording, version: recording.version + 1, paused: request.input.action === 'pause', failedCount: 0,
         status: request.input.action === 'pause' ? 'paused' : 'processing', remainingCount: 1 }
       readFailure = 503
@@ -1220,6 +1222,16 @@ function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry
   }))
   return {
     controls, initialVersion, savedDocuments, cancellations,
+    failControl: (failed: boolean) => { controlFailure = failed },
+    recordAddition: (text: string) => {
+      document = { ...document, historyOfPresentIllness: `${document.historyOfPresentIllness}\n${text}` }
+      draftVersion += 1
+      recording = { ...recording, status: 'updated', additions: [...recording.additions, {
+        id: 'recorded-append', field: 'historyOfPresentIllness', sourceTurnId: 'patient-turn-append',
+        quote: '夜间也会头晕。', relation: 'addition', status: 'applied', reviewStatus: 'unreviewed',
+        ownership: 'automatic', currentText: text, reviewable: false,
+      }] }
+    },
     interceptSigning: (intercept: NonNullable<typeof signingInterceptor>) => { signingInterceptor = intercept },
     interceptControl: (intercept: NonNullable<typeof controlInterceptor>) => { controlInterceptor = intercept },
     updateRecording: (facts: Partial<NonNullable<DoctorCaseDetail['consultationRecording']>>) => { recording = { ...recording, ...facts } },
@@ -3091,6 +3103,7 @@ describe('role workspaces', () => {
             signed: [],
           },
           consultation: { turns: recovered ? [doctorTurn, patientTurn] : failed ? [doctorTurn] : [], version: recovered ? 3 : failed ? 2 : 1 },
+          consultationRecording: { hasSavedDraft: true, version: 1, status: 'idle', additions: [] },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
           presentation: virtualPatientPresentation,
@@ -3306,6 +3319,58 @@ describe('role workspaces', () => {
     expect(await screen.findByText('已整理回答 1 · 待整理 0')).toBeTruthy()
     await user.keyboard('{Escape}')
     expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).value).toBe(unsavedHistory)
+  })
+
+  it('automatically adds a new recorded fact after an unsaved human addition without losing either or changing focus', async () => {
+    const fixture = stubRecordingWorkspace('pause')
+    const queryClient = createWebQueryClient()
+    render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    const history = await screen.findByLabelText('现病史', { exact: true }) as HTMLTextAreaElement
+    const local = `${structuredClinicalDocument.historyOfPresentIllness}\n医生尚未保存的补充。`
+    history.focus()
+    fireEvent.change(history, { target: { value: local } })
+    fireEvent.change(screen.getByLabelText('评估', { exact: true }), { target: { value: '医生未保存的评估。' } })
+    fixture.recordAddition('患者自述：夜间也会头晕。')
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+    await waitFor(() => expect(history.value).toBe(`${local}\n患者自述：夜间也会头晕。`))
+    expect((screen.getByLabelText('评估', { exact: true }) as HTMLTextAreaElement).value).toBe('医生未保存的评估。')
+    expect(document.activeElement).toBe(history)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('button', { name: '应用建议' })).toBeNull()
+    expect(screen.getByRole('button', { name: '确认已核对' })).toBeTruthy()
+  })
+
+  it('activates recording once when a new editable case is opened and leaves historical backfill explicit', async () => {
+    const fixture = stubRecordingWorkspace('activate')
+    const queryClient = createWebQueryClient()
+    render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByLabelText('现病史', { exact: true })
+    await waitFor(() => expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 0 }]))
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+    expect(fixture.controls).toHaveLength(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    cleanup()
+    const historical = stubRecordingWorkspace('backfill')
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByRole('button', { name: '补录历史回答' })
+    expect(historical.controls).toEqual([])
+  })
+
+  it('offers an explicit retry when activating a new case fails', async () => {
+    const fixture = stubRecordingWorkspace('activate')
+    fixture.failControl(true)
+    const user = userEvent.setup()
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByLabelText('现病史', { exact: true })
+    await screen.findByRole('alert')
+    const retry = await screen.findByRole('button', { name: '重试病史整理' })
+    expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 0 }])
+    fixture.failControl(false)
+    await user.click(retry)
+    await waitFor(() => expect(fixture.controls).toEqual([
+      { action: 'activate', expectedRecordingVersion: 0 }, { action: 'activate', expectedRecordingVersion: 0 },
+    ]))
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
   it('preserves newer recording facts and saved empty fields when a same-version control receipt arrives late', async () => {

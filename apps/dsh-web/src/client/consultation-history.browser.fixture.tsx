@@ -18,6 +18,7 @@ const detail: DoctorCaseDetail = {
     source: 'patient-agent', kind: 'text', messageText: '刚才说错了，头晕是六天。\n' + '我站起来会更明显，休息后会缓解。\n'.repeat(45) + '最后补充：夜间也会头晕。', sequence: 1,
     recordedAt: '2026-10-08T09:00:00+08:00', personaRevision: 1, reportReference: null }] },
   consultationRecording: { hasSavedDraft: true, version: 1, paused: false, processedCount: 1, remainingCount: 0, failedCount: 0,
+    sources: [],
     status: 'pending',
     failures: [{ sourceTurnId: 'synthetic-reply', code: 'AI_TIMEOUT', retrying: false }],
     additions: [{ id: 'synthetic-correction', field: 'historyOfPresentIllness',
@@ -44,6 +45,7 @@ shadow.append(root)
 function App(): React.JSX.Element {
   const [locale, setLocale] = React.useState<'zh-CN' | 'en-US'>('zh-CN')
   const [working, setWorking] = React.useState({ ...documentContent, historyOfPresentIllness: '医生尚未保存的编辑。' })
+  const [savedDocument, setSavedDocument] = React.useState(documentContent)
   const [decisions, setDecisions] = React.useState<string[]>([])
   const [recording, setRecording] = React.useState(detail.consultationRecording!)
   const [consultation, setConsultation] = React.useState(detail.consultation!)
@@ -66,6 +68,51 @@ function App(): React.JSX.Element {
     <button type="button" onClick={() => setBlocked(true)}>模拟签署准备</button>
     <button type="button" onClick={() => setFailReview(true)}>模拟应用失败</button>
     <button type="button" onClick={() => setSignedView(true)}>模拟已签内容</button>
+    <button type="button" onClick={() => {
+      const fields = {
+        chiefComplaint: '头晕六天。', historyOfPresentIllness: '头晕六天，休息后缓解。', priorMedicalHistory: '既往高血压。',
+        physicalExamination: '右下腹压痛。', auxiliaryExamination: '血常规白细胞10.5×10⁹/L。',
+        assessment: '医生评估：考虑腹部炎症，待进一步检查。', disposition: '医生安排：完善腹部超声。', followUp: '医生安排：明日复诊。',
+      } satisfies ClinicalDocumentContent
+      const messageText = Object.values(fields).join('\n')
+      setWorking(fields)
+      setSavedDocument(fields)
+      setBlocked(false)
+      setSignedView(false)
+      setFailReview(false)
+      setReviewError(undefined)
+      setRecording(current => ({ ...current, status: 'updated', sources: [{
+        id: 'synthetic-doctor-facts', kind: 'doctor', messageText, recordedAt: '2026-10-08T10:00:00+08:00',
+        sessionId: 'synthetic-session', messageId: 'synthetic-message', rpcId: 'synthetic-rpc',
+      }], additions: (['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'physicalExamination',
+        'auxiliaryExamination', 'assessment', 'disposition', 'followUp'] as const).map(field => ({
+        ...current.additions[0]!, id: `synthetic-${field}`, field,
+        sourceTurnId: 'synthetic-doctor-facts', quote: fields[field], summary: fields[field],
+        relation: 'addition', targetAdditionId: undefined, status: 'applied', reviewStatus: 'unreviewed', ownership: 'automatic',
+        currentText: fields[field], facts: [{ text: fields[field], sources: [{ sourceTurnId: 'synthetic-doctor-facts', quote: fields[field] }] }],
+      })) }))
+    }}>模拟医生全病历</button>
+    <button type="button" onClick={() => setRecording(current => ({ ...current,
+      sources: [...(current.sources ?? []), { id: 'synthetic-report', kind: 'report',
+        messageText: '血常规白细胞10.5×10⁹/L。\n报告结论：白细胞升高。', recordedAt: '2026-10-08T10:05:00+08:00',
+        reportReference: 'DiagnosticReport/synthetic-report/_history/2' }],
+      additions: current.additions.map(addition => addition.field !== 'auxiliaryExamination' ? addition : {
+        ...addition, sourceTurnId: 'synthetic-report',
+        facts: [{ text: addition.summary!, sources: [{ sourceTurnId: 'synthetic-report', quote: addition.quote }] }],
+      }),
+    }))}>模拟授权报告来源</button>
+    <button type="button" onClick={() => setRecording(current => ({ ...current,
+      sources: [...(current.sources ?? []), { id: 'synthetic-patient-facts', kind: 'patient',
+        messageText: '头晕六天，休息后缓解。', recordedAt: '2026-10-08T10:10:00+08:00' }],
+      additions: current.additions.map(addition => addition.field !== 'historyOfPresentIllness' ? addition : {
+        ...addition, facts: [{ text: addition.summary!, sources: [
+          { sourceTurnId: addition.sourceTurnId, quote: addition.quote },
+          { sourceTurnId: 'synthetic-patient-facts', quote: '头晕六天，休息后缓解。' },
+        ] }],
+      }),
+    }))}>模拟混合来源</button>
+    <button type="button" onClick={() => { setConsultation(current => ({ ...current, turns: [] }));
+      setRecording(current => ({ ...current, sources: [] })) }}>模拟来源不可读取</button>
     <button type="button" onClick={() => {
       setConsultation(current => ({ ...current, turns: [...current.turns,
         { ...current.turns[0]!, id: 'synthetic-question', speaker: 'doctor', messageText: '夜间是否头晕，有没有胸痛？', sequence: 2 },
@@ -90,11 +137,11 @@ function App(): React.JSX.Element {
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'backfill', version: 0, remainingCount: 2 }))}>模拟历史病例</button>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'failed', failedCount: 1 }))}>模拟整理失败</button>
     <output aria-label="控制结果">{controls.join(',')}</output>
-    {signedView ? <ClinicalDocumentContentView content={documentContent} messages={getWorkspaceMessages(locale)}
-      history={{ detail: { ...detail, consultation, consultationRecording: recording }, workingDocument: documentContent,
+    {signedView ? <ClinicalDocumentContentView content={savedDocument} messages={getWorkspaceMessages(locale)}
+      history={{ detail: { ...detail, consultation, consultationRecording: recording }, workingDocument: savedDocument,
         action: undefined, disabled: true, messages: getWorkspaceMessages(locale), locale }} /> : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultation, consultationRecording: {
       ...recording, ...(blocked ? { signingPreparation: { active: true, previewId: 'synthetic-preview', expiresAt: '2099-01-01T00:00:00Z' } } : {}),
-    } }} elementId="record" locale={locale}
+    }, clinicalDocument: { ...detail.clinicalDocument!, draft: { ...savedDocument, version: 1, updatedAt: '2026-10-08T09:00:00+08:00' } } }} elementId="record" locale={locale}
       messages={getWorkspaceMessages(locale)} workingDocument={working} onDocumentChange={setWorking}
       actions={{
         prepareSign: { data: undefined, error: null, onReset: () => {}, onSubmit: () => {}, pending: false },
