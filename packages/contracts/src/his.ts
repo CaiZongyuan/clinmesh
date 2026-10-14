@@ -992,13 +992,28 @@ export const consultationHistorySourceSchema = z.object({
   quote: z.string().trim().min(2).max(2_000),
 }).strict()
 
+export const consultationRecordingSourceSchema = z.object({
+  id: z.string().min(1).max(128),
+  kind: z.enum(['patient', 'doctor', 'report']),
+  messageText: z.string().min(1).max(20_000),
+  recordedAt: z.string().min(1),
+  consultationTurnId: z.string().min(1).max(128).optional(),
+  reportReference: z.string().regex(/^DiagnosticReport\/[A-Za-z0-9.-]+\/_history\/\d+$/).optional(),
+  sessionId: z.string().min(1).max(128).optional(),
+  messageId: z.string().min(1).max(128).optional(),
+  rpcId: z.string().min(1).max(128).optional(),
+}).strict()
+
+const consultationRecordingFieldSchema = z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory',
+  'physicalExamination', 'auxiliaryExamination', 'assessment', 'disposition', 'followUp'])
+
 export const consultationHistoryFactSchema = z.object({
   text: z.string().trim().min(2).max(600),
   sources: z.array(consultationHistorySourceSchema).min(1).max(12),
 }).strict()
 
 export const consultationHistorySummarySchema = z.object({
-  field: z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory']),
+  field: consultationRecordingFieldSchema,
   facts: z.array(consultationHistoryFactSchema).min(1).max(12),
   relation: z.enum(['addition', 'update', 'correction', 'conflict']),
   targetAdditionId: z.string().min(1).max(128).optional(),
@@ -1011,7 +1026,7 @@ export const consultationHistorySummarySchema = z.object({
 
 // Retained for stored extracts and old Command receipts.
 export const consultationHistoryAdditionSchema = z.object({
-  field: z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory']),
+  field: consultationRecordingFieldSchema,
   sourceTurnId: z.string().min(1).max(128),
   quote: z.string().trim().min(2).max(2_000),
   relation: z.enum(['addition', 'update', 'correction', 'conflict']),
@@ -1031,6 +1046,7 @@ export const consultationRecordingErrorCodeSchema = z.enum([
 ])
 
 export const consultationRecordingSchema = z.object({
+  sources: z.array(consultationRecordingSourceSchema).default([]),
   signingPreparation: z.object({
     previewId: z.string().min(1),
     expiresAt: z.string().min(1),
