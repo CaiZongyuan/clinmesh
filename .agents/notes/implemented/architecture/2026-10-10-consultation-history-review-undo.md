@@ -2,6 +2,8 @@
 
 Status: implemented
 
+无冲突内容自动应用与全局核对面板的决定由[字段内建议决策](2026-10-13-consultation-field-suggestions.md)取代；本记录的来源、片段保护、持久任务与逆操作理由继续适用。
+
 ## Problem
 
 [片段归属与定向核对](2026-10-08-consultation-history-ownership.md)保护局部人工编辑，但仅有 applied／pending 不能区分医生尚未核对的自动内容与已确认内容，也不能安全逆转更正。刷新后失去新增提示或整篇回滚都会破坏[自动记录规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)要求的来源追溯与人工保护。

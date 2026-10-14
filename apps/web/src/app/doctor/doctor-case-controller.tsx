@@ -2646,6 +2646,7 @@ function DoctorCaseController({
                 onSubmit: previewId => cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId }),
               },
               reviewHistory: {
+                additionId: reviewHistory.variables?.caseId === detail.data.caseId ? reviewHistory.variables.additionId : undefined,
                 error: reviewHistory.variables?.caseId === detail.data.caseId ? reviewHistory.error : null,
                 pending: reviewHistory.isPending && reviewHistory.variables?.caseId === detail.data.caseId,
                 onSubmit: (additionId, decision) => reviewHistory.mutate({ caseId: detail.data.caseId, additionId, decision }),
@@ -3512,6 +3513,7 @@ function CaseDetail({
                 readOnly={clinicalReadOnly}
                 recording={detail.consultationRecording}
                 recordingAction={clinicalDocumentActions.controlRecording}
+                recordingReadOnly={(detail.clinicalDocument?.signed.length ?? 0) > 0}
               />
             </DoctorCasePanel>
           )}

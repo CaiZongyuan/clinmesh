@@ -7,7 +7,7 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
 import { afterEach, expect, it } from 'vitest'
 import { encodeModelRoute, dshDefaultModel } from '@clinmesh/contracts/model-bridge'
-import { controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, sendConsultationMessageResponseSchema } from '@clinmesh/contracts/his'
+import { controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, reviewConsultationHistoryResponseSchema, sendConsultationMessageResponseSchema } from '@clinmesh/contracts/his'
 import { createModelBridgeHandler } from '../../dsh-web/src/model-bridge.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
@@ -275,6 +275,17 @@ async function hospital(dsh: Awaited<ReturnType<typeof host>>, outboxRetryDelayM
   return { get runtime() { return runtime }, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
 }
 
+async function applyHistorySuggestion(instance: Awaited<ReturnType<typeof hospital>>,
+  detail: z.infer<typeof doctorCaseDetailSchema>, cookie: string, additionId: string) {
+  const response = await instance.runtime.app.request(`/api/his/v1/encounters/${detail.encounter.id}/consultation-history/actions/review`, {
+    method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${detail.encounter.id}`]: detail.encounter.versionId },
+      input: { additionId, decision: 'accept', expectedDraftVersion: detail.clinicalDocument?.draft?.version ?? 0 } }),
+  })
+  expect(response.status).toBe(200)
+  reviewConsultationHistoryResponseSchema.parse(await response.json())
+}
+
 async function recordingCase(summarize: (turns: HistoryTurn[]) => unknown, faithful = true) {
   const dsh = await host()
   // Keep the pure diabetes question visible to the history path; hidden-diagnosis
@@ -324,7 +335,12 @@ async function recordingCase(summarize: (turns: HistoryTurn[]) => unknown, faith
     expect(response.status).toBe(200)
     return controlConsultationRecordingResponseSchema.parse(await response.json())
   }
-  return { instance, dsh, read, ask, control }
+  const applySuggestions = async () => {
+    for (const addition of (await read()).consultationRecording?.additions ?? []) {
+      if (addition.status === 'pending') await applyHistorySuggestion(instance, await read(), cookie, addition.id)
+    }
+  }
+  return { instance, dsh, read, ask, control, applySuggestions }
 }
 
 const mixedQuestionReply = '医生，那我今天到现在还没吃东西，水也就抿了两口，这样抽血行不行啊？'
@@ -379,10 +395,14 @@ it.each([
   const fixture = await recordingCase(turns => candidate(turns.at(-1)!, text))
   await fixture.ask(reply)
   await fixture.instance.runtime.dispatchPending()
-  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
-  expect((await fixture.read()).consultationRecording!.additions[0]!.facts).toMatchObject([
+  const pending = await fixture.read()
+  expect(pending.clinicalDocument?.draft).toBeUndefined()
+  expect(pending.consultationRecording).toMatchObject({ status: 'pending', additions: [{ status: 'pending', reviewable: true }] })
+  expect(pending.consultationRecording!.additions[0]!.facts).toMatchObject([
     { text, sources: [{ quote: reply }] },
   ])
+  await fixture.applySuggestions()
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
 })
 
 it('backfills complete mixed questions through DSH without rewriting saved replies', async () => {
@@ -400,9 +420,11 @@ it('backfills complete mixed questions through DSH without rewriting saved repli
   await fixture.control('backfill')
   await fixture.instance.runtime.dispatchPending()
   const detail = await fixture.read()
-  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe(mixedQuestionSummary)
-  expect(detail.consultationRecording).toMatchObject({ status: 'updated', processedCount: 2, remainingCount: 0, failures: [],
-    additions: [{ facts: [{ sources: [{ sourceTurnId: turn.id, quote: mixedQuestionReply }] }] }] })
+  expect(detail.clinicalDocument?.draft).toBeUndefined()
+  expect(detail.consultationRecording).toMatchObject({ status: 'pending', processedCount: 2, remainingCount: 0, failures: [],
+    additions: [{ status: 'pending', facts: [{ sources: [{ sourceTurnId: turn.id, quote: mixedQuestionReply }] }] }] })
+  await fixture.applySuggestions()
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(mixedQuestionSummary)
 })
 
 it('explicitly recovers five completed, one failed and one queued DSH recording without rerunning successful jobs', async () => {
@@ -413,6 +435,7 @@ it('explicitly recovers five completed, one failed and one queued DSH recording 
   for (const reply of ['头晕一周了。', '昨天咳嗽了。', '今天有点乏力。', '以前吃过氨氯地平。', '没有药物过敏。']) {
     await fixture.ask(reply)
     await fixture.instance.runtime.dispatchPending()
+    await fixture.applySuggestions()
   }
   const completed = await fixture.read()
   const jobs = () => fixture.instance.runtime.database.driver.prepare(
@@ -439,10 +462,13 @@ it('explicitly recovers five completed, one failed and one queued DSH recording 
   await fixture.control('retry')
   await fixture.instance.runtime.dispatchPending()
   const recovered = await fixture.read()
-  expect(recovered.consultationRecording).toMatchObject({ status: 'updated', processedCount: 7, failedCount: 0,
+  expect(recovered.consultationRecording).toMatchObject({ status: 'pending', processedCount: 7, failedCount: 0,
     remainingCount: 0, failures: [] })
+  expect(recovered.clinicalDocument?.draft).toEqual(completed.clinicalDocument?.draft)
   expect(recovered.consultationRecording!.additions.slice(0, 5)).toEqual(completed.consultationRecording!.additions)
-  expect(recovered.clinicalDocument!.draft!.historyOfPresentIllness).toBe(
+  await fixture.applySuggestions()
+  const applied = await fixture.read()
+  expect(applied.clinicalDocument!.draft!.historyOfPresentIllness).toBe(
     completed.clinicalDocument!.draft!.historyOfPresentIllness + '\n' + mixedQuestionSummary + '\n患者自述：' + queuedTurn.messageText,
   )
   expect(jobs().slice(0, 5)).toEqual(completedJobs)
@@ -452,7 +478,7 @@ it('explicitly recovers five completed, one failed and one queued DSH recording 
     .map(payload => payload.currentTurnId ?? payload.turns.at(-1).id)).toEqual([failedTurn.id, failedTurn.id, queuedTurn.id, queuedTurn.id])
   await fixture.instance.restart()
   await fixture.instance.runtime.dispatchPending()
-  expect((await fixture.read()).clinicalDocument?.draft).toEqual(recovered.clinicalDocument?.draft)
+  expect((await fixture.read()).clinicalDocument?.draft).toEqual(applied.clinicalDocument?.draft)
   expect(fixture.dsh.calls).toHaveLength(callsBeforeRestart + 4)
 })
 
@@ -460,7 +486,7 @@ it.each([false, true].flatMap(metadata => [
   { metadata, reply: '头晕一周了。', summary: '头晕一周' },
   { metadata, reply: '医生，那我今天到现在还没吃东西，水也就抿了两口，这样抽血行不行啊？', summary: '患者自述今日尚未进食，仅饮少量水' },
   { metadata, reply: '我胸口已经痛三天了，这会不会很严重?', summary: '患者自述胸痛三天' },
-]))('restores queued automatic history through DSH ($reply, schema metadata: $metadata)', async ({ metadata, reply, summary }) => {
+]))('restores queued DSH suggestions and applies them explicitly ($reply, schema metadata: $metadata)', async ({ metadata, reply, summary }) => {
   const dsh = await host()
   const instance = await hospital(dsh)
   const started = await startConsultationCase(instance.runtime)
@@ -485,11 +511,11 @@ it.each([false, true].flatMap(metadata => [
   const detail = doctorCaseDetailSchema.parse(await (await instance.runtime.app.request(
     `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
   )).json())
-  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe(summary)
+  expect(detail.clinicalDocument?.draft).toBeUndefined()
   expect(detail.consultationRecording!.additions[0]!.facts).toEqual([
     { text: summary, sources: [{ sourceTurnId: answered.data.patientTurn.id, quote: reply }] },
   ])
-  expect(detail.consultationRecording).toMatchObject({ status: 'updated' })
+  expect(detail.consultationRecording).toMatchObject({ status: 'pending', additions: [{ status: 'pending', reviewable: true }] })
   expect(dsh.calls).toHaveLength(beforeRecording + 2)
   expect(dsh.calls.at(-2)?.system).toContain('跨轮归并')
   expect(dsh.calls.at(-1)?.system).toContain('独立病史核对者')
@@ -497,6 +523,12 @@ it.each([false, true].flatMap(metadata => [
   expect(call.provider).toBe('synthetic-provider-a')
   expect(JSON.stringify(call)).toContain('sourceTurnId')
   expect(JSON.stringify(call)).not.toMatch(/hiddenResources|Case Truth|private-session-transcript|reasoning/)
+  await applyHistorySuggestion(instance, detail, cookie, detail.consultationRecording!.additions[0]!.id)
+  const applied = doctorCaseDetailSchema.parse(await (await instance.runtime.app.request(
+    `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
+  )).json())
+  expect(applied.clinicalDocument?.draft?.historyOfPresentIllness).toBe(summary)
+  expect(applied.consultationRecording!.additions[0]!.status).toBe('applied')
   const count = dsh.calls.length
   await instance.restart()
   await instance.runtime.dispatchPending()

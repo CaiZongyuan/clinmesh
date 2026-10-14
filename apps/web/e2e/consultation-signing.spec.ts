@@ -2,6 +2,7 @@ import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
+import { applySuggestion } from './consultation-suggestions.ts'
 
 test('reviews paused omissions, recovers preparation after reload and signs only after manual review', async ({ page, webRoot }) => {
   let reply = '头晕一周了。'
@@ -37,7 +38,11 @@ test('reviews paused omissions, recovers preparation after reload and signs only
       await expect(page.getByText(reply, { exact: true })).toBeVisible()
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     }
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await page.getByLabel('现病史', { exact: true }).fill('')
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await ask()
+    await applySuggestion(page, reply)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了。')
     await page.getByRole('button', { name: '暂停自动整理', exact: true }).click()
     await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeEnabled()
@@ -67,12 +72,15 @@ test('reviews paused omissions, recovers preparation after reload and signs only
     await expect(dialog).toBeVisible()
     expect((await read()).consultationRecording!.signingPreparation!.previewId).not.toBe(firstPreviewId)
     await page.reload()
+    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeDisabled()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect(page.getByText('签署准备尚未结束', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: '返回核对并恢复整理', exact: true }).click()
     await expect(page.getByText('签署准备尚未结束', { exact: true })).toHaveCount(0)
     await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
-    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
+    await expect(page.locator('[data-consultation-addition="pending"]')).toContainText(reply)
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了。')
     await page.getByRole('button', { name: '签署病历', exact: true }).click()
     await expect(commit).toBeDisabled()
     await dialog.getByRole('checkbox').check()
@@ -80,7 +88,9 @@ test('reviews paused omissions, recovers preparation after reload and signs only
     await commit.click()
     await expect(dialog).toHaveCount(0)
     await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(1)
-    expect((await read()).clinicalDocument!.signed[0]!.content.historyOfPresentIllness).toBe('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
+    expect((await read()).clinicalDocument!.signed[0]!.content.historyOfPresentIllness).toBe('患者自述：头晕一周了。')
+    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeDisabled()
     expect(errors).toEqual([])
   } finally { await server.close() }
 })

@@ -3,6 +3,7 @@ import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
 import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
+import { applySuggestion, expandHistory } from './consultation-suggestions.ts'
 
 test('reviews a conflicting handwritten sentence before replacement and preserves the rest of the draft after reload', async ({ page, webRoot }) => {
   const reply = '胸痛两天了。'
@@ -46,12 +47,12 @@ test('reviews a conflicting handwritten sentence before replacement and preserve
     await expect(history).toHaveValue(original)
     await page.reload()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-    await expect(pending.getByRole('button', { name: '接受替换', exact: true })).toBeEnabled()
+    await expect(pending.getByRole('button', { name: '应用建议', exact: true })).toBeEnabled()
     await pending.getByRole('button', { name: '查看来源', exact: true }).click()
     await expect(page.getByRole('dialog', { name: '患者原回答', exact: true }).locator('blockquote')).toHaveText(reply)
     await page.keyboard.press('Escape')
     await expect(page.getByRole('dialog', { name: '患者原回答', exact: true })).toHaveCount(0)
-    await pending.getByRole('button', { name: '接受替换', exact: true }).click()
+    await pending.getByRole('button', { name: '应用建议', exact: true }).click()
     const expected = '患者自述：胸痛两天了。\n平时睡眠正常。'
     await expect(history).toHaveValue(expected)
     await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(expected)
@@ -96,24 +97,28 @@ test('keeps review prompts and full reply sources across reload, then undoes add
       await expect(page.getByText(reply, { exact: true })).toBeVisible()
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     }
-    const reload = async () => { await page.reload(); await page.getByRole('tab', { name: '病历记录', exact: true }).click() }
+    const reload = async () => { await page.reload(); await page.getByRole('tab', { name: '病历记录', exact: true }).click(); await expandHistory(page) }
     const history = page.getByLabel('现病史', { exact: true })
     const first = page.locator('[data-consultation-addition="applied"]').filter({ hasText: '头晕一周了。' })
     const second = page.locator('[data-consultation-addition="applied"]').filter({ hasText: '站起来时更明显。' })
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await history.fill('')
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await ask()
     await expect(page.locator('[data-consultation-unreviewed]')).toHaveAttribute('data-consultation-unreviewed', '2')
+    await applySuggestion(page, '头晕一周了。')
+    await applySuggestion(page, '站起来时更明显。')
     await reload()
-    await expect(page.locator('[data-consultation-unreviewed]')).toHaveAttribute('data-consultation-unreviewed', '2')
+    await expect(page.locator('[data-consultation-unreviewed]')).toHaveCount(0)
     await first.getByRole('button', { name: '查看来源', exact: true }).click()
     const source = page.getByRole('dialog', { name: '患者原回答', exact: true })
     await expect(source.locator('blockquote')).toHaveText('头晕一周了。站起来时更明显。')
     await page.keyboard.press('Escape')
     await expect(source).toHaveCount(0)
-    await second.getByRole('button', { name: '确认已核对', exact: true }).click()
     await expect(second).toHaveAttribute('data-consultation-review', 'confirmed')
     await reload()
-    await expect(page.locator('[data-consultation-unreviewed]')).toHaveAttribute('data-consultation-unreviewed', '1')
-    await expect(second).toContainText('已核对')
+    await expect(page.locator('[data-consultation-unreviewed]')).toHaveCount(0)
+    await expect(second).toContainText('已应用')
     await page.getByLabel('评估', { exact: true }).fill('医生尚未保存的评估。')
     await history.fill('患者自述：头晕一周了。\n患者自述：站起来时更明显。\n医生补充：尚未查体。')
     await expect(first.getByRole('button', { name: '撤销此条', exact: true })).toBeDisabled()
@@ -121,6 +126,7 @@ test('keeps review prompts and full reply sources across reload, then undoes add
     await expect(first.getByRole('button', { name: '撤销此条', exact: true })).toBeEnabled()
     reply = '夜间也会头晕。'
     await ask()
+    await applySuggestion(page, reply)
     await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。\n医生补充：尚未查体。\n患者自述：夜间也会头晕。')
     await page.getByLabel('评估', { exact: true }).fill('医生保留的未保存评估。')
     await first.getByRole('button', { name: '撤销此条', exact: true }).click()
@@ -134,8 +140,9 @@ test('keeps review prompts and full reply sources across reload, then undoes add
     await expect(source).toHaveCount(0)
     reply = '刚才说错了，坐着时也会头晕。'
     await ask()
+    await applySuggestion(page, reply)
     const correction = page.locator('[data-consultation-addition="applied"]').filter({ hasText: reply })
-    await expect(correction).toContainText('自动更正')
+    await expect(correction).toContainText('已应用')
     await correction.getByRole('button', { name: '查看来源', exact: true }).click()
     await expect(source.locator('blockquote')).toHaveText(reply)
     await page.keyboard.press('Escape')
@@ -158,8 +165,8 @@ test('keeps review prompts and full reply sources across reload, then undoes add
     reply = '刚才说错了，站起时头晕是三天。'
     await ask()
     const replacement = page.locator('[data-consultation-addition="pending"]').filter({ hasText: reply })
-    await expect(replacement.getByRole('button', { name: '接受替换', exact: true })).toBeEnabled()
-    await replacement.getByRole('button', { name: '接受替换', exact: true }).click()
+    await expect(replacement.getByRole('button', { name: '应用建议', exact: true })).toBeEnabled()
+    await replacement.getByRole('button', { name: '应用建议', exact: true }).click()
     await expect(history).toHaveValue(`患者自述：${reply}\n医生补充：尚未查体。\n患者自述：夜间也会头晕。`)
     await reload()
     const superseded = page.locator('[data-consultation-addition="superseded"]').filter({ hasText: '站起来时更明显。' })
@@ -167,7 +174,7 @@ test('keeps review prompts and full reply sources across reload, then undoes add
     await expect(superseded).not.toContainText('请手工核对病历后确认')
     await expect(page.getByRole('tabpanel', { name: '病历记录', exact: true }).locator('[data-consultation-recording]'))
       .toHaveAttribute('data-consultation-recording', 'updated')
-    await expect(page.locator('[data-consultation-unreviewed]')).toHaveAttribute('data-consultation-unreviewed', '1')
+    await expect(page.locator('[data-consultation-unreviewed]')).toHaveCount(0)
     await superseded.getByRole('button', { name: '查看来源', exact: true }).click()
     await expect(source.locator('blockquote')).toHaveText('头晕一周了。站起来时更明显。')
     await page.keyboard.press('Escape')
@@ -204,9 +211,11 @@ for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
       const reason = code === 'AI_TIMEOUT' ? '自动记录超时，患者回答已保存，请根据问诊原文补充病史。'
         : '自动记录结果未通过校验，病史未写入，请核对问诊原文。'
       await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
+      await page.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
       await page.reload()
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await page.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
       await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
       expect(await page.locator('body').innerText()).not.toContain('private-provider-credential-and-prompt')
@@ -252,9 +261,13 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     }
     const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
-    await ask()
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await page.getByLabel('现病史', { exact: true }).fill('')
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    await ask()
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await applySuggestion(page, reply)
     await page.getByLabel('现病史', { exact: true }).fill('医生核对：头晕五天。')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect(page.getByText('病历草稿已保存', { exact: true })).toBeVisible()
@@ -279,8 +292,9 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
     await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeEnabled()
     failCaseReads = false
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await applySuggestion(page, reply)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('医生核对：头晕五天。\n患者自述：站起来时更明显。')
     reply = '夜间也会头晕。'
     fail = true
@@ -295,14 +309,16 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await expect.poll(() => failedCaseReads).toBeGreaterThan(readsBeforeRetry)
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
     failCaseReads = false
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await applySuggestion(page, reply)
     expect((await read()).consultationRecording).toMatchObject({ processedCount: 3, remainingCount: 0, failedCount: 0 })
     expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：头晕五天。\n患者自述：站起来时更明显。\n患者自述：夜间也会头晕。')
   } finally { await server.close() }
 })
 
 for (const existingAutomaticDraft of [false, true]) {
-  test(`appends the first automatic history to unsaved prefill in a ${existingAutomaticDraft ? 'previously created' : 'new'} draft`, async ({ page, webRoot }) => {
+  test(`applies the first suggestion after saving prefill in a ${existingAutomaticDraft ? 'previously created' : 'new'} draft`, async ({ page, webRoot }) => {
     const recording = page.getByRole('tabpanel', { name: '病历记录', exact: true }).locator('[data-consultation-recording]')
     let release!: () => void
     const held = new Promise<void>(resolve => { release = resolve })
@@ -340,8 +356,9 @@ for (const existingAutomaticDraft of [false, true]) {
         `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
       if (existingAutomaticDraft) {
         await ask()
-        await expect(recording).toHaveAttribute('data-consultation-recording', 'updated')
-        expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('')
+        await expect(recording).toHaveAttribute('data-consultation-recording', 'pending')
+        await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+        await applySuggestion(page, reply)
       } else await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       const history = page.getByLabel('现病史', { exact: true })
       expect(await history.inputValue()).not.toBe('')
@@ -352,11 +369,13 @@ for (const existingAutomaticDraft of [false, true]) {
       await ask()
       await expect(recording).toHaveAttribute('data-consultation-recording', 'processing')
       release()
-      await expect(recording).toHaveAttribute('data-consultation-recording', 'updated')
+      await expect(recording).toHaveAttribute('data-consultation-recording', 'pending')
       const expected = `${manual}\n患者自述：${reply}`
-      await expect(history).toHaveValue(expected)
+      await expect(history).toHaveValue(manual)
+      await expect(page.getByRole('button', { name: '应用建议', exact: true })).toBeDisabled()
       await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-      await expect(page.getByText('病历草稿已保存', { exact: true })).toBeVisible()
+      await applySuggestion(page, reply)
+      await expect(history).toHaveValue(expected)
       expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(expected)
       expect((await read()).consultationRecording?.additions.at(-1)).toMatchObject({
         status: 'applied', ownership: 'automatic', currentText: `患者自述：${reply}`,
@@ -371,7 +390,7 @@ for (const existingAutomaticDraft of [false, true]) {
   })
 }
 
-test('patient answers update the visible history without another instruction and preserve unsaved human input', async ({ page, webRoot }) => {
+test('patient answers create suggestions and explicit application preserves unsaved human input', async ({ page, webRoot }) => {
   let release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
   let reply = '头晕一周了，站起来时更明显。'
@@ -407,6 +426,8 @@ test('patient answers update the visible history without another instruction and
     expect(beforeChiefComplaint).not.toBe('')
     expect(beforePhysicalExamination).not.toBe('')
     expect(beforePriorHistory).not.toBe('')
+    await page.getByLabel('现病史', { exact: true }).fill('')
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await page.getByLabel('评估', { exact: true }).fill('医生尚未保存的评估。')
     await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
     await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('头晕多久了？')
@@ -415,8 +436,9 @@ test('patient answers update the visible history without another instruction and
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
     release()
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
-    await expect(page.getByText('自动新增', { exact: true })).toBeVisible()
+    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'pending')
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('')
+    await applySuggestion(page, reply)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了，站起来时更明显。')
     await expect(page.getByLabel('评估', { exact: true })).toHaveValue('医生尚未保存的评估。')
     await expect(page.getByLabel('主诉', { exact: true })).toHaveValue(beforeChiefComplaint)
@@ -432,7 +454,7 @@ test('patient answers update the visible history without another instruction and
     const automatic = doctorCaseDetailSchema.parse(await (await page.request.get(
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`,
     )).json())
-    expect(automatic.consultationRecording?.hasSavedDraft).toBe(false)
+    expect(automatic.consultationRecording?.hasSavedDraft).toBe(true)
     await page.getByLabel('评估', { exact: true }).fill('医生尚未保存的评估。')
     const historyField = page.getByLabel('现病史', { exact: true })
     await historyField.fill('医生核对：头晕五天，站起来时更明显。')
@@ -442,8 +464,10 @@ test('patient answers update the visible history without another instruction and
     await page.getByRole('button', { name: '向患者提问', exact: true }).click()
     await expect(page.getByText('夜间也会头晕。', { exact: true })).toBeVisible()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-    await expect(historyField).toHaveValue('医生核对：头晕五天，站起来时更明显。\n患者自述：夜间也会头晕。')
+    await expect(historyField).toHaveValue('医生核对：头晕五天，站起来时更明显。')
+    await expect(page.getByRole('button', { name: '应用建议', exact: true })).toBeDisabled()
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    await applySuggestion(page, reply)
     await expect.poll(async () => doctorCaseDetailSchema.parse(await (await page.request.get(
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json()).consultationRecording?.additions[0]?.ownership).toBe('manual')
     reply = '刚才说错了，头晕是六天。'
@@ -457,10 +481,10 @@ test('patient answers update the visible history without another instruction and
     await expect(page.getByRole('dialog', { name: '患者原回答', exact: true }).locator('blockquote')).toHaveText(reply)
     await page.keyboard.press('Escape')
     await historyField.fill('医生核对：头晕五天，站起来时更明显。\n患者自述：夜间也会头晕。\n医生补充：暂未查体。')
-    await expect(page.getByRole('button', { name: '接受替换', exact: true })).toBeDisabled()
+    await expect(page.getByRole('button', { name: '应用建议', exact: true })).toBeDisabled()
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-    await expect(page.getByRole('button', { name: '接受替换', exact: true })).toBeEnabled()
-    await page.getByRole('button', { name: '接受替换', exact: true }).click()
+    await expect(page.getByRole('button', { name: '应用建议', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: '应用建议', exact: true }).click()
     await expect(historyField).toHaveValue('患者自述：刚才说错了，头晕是六天。\n患者自述：夜间也会头晕。\n医生补充：暂未查体。')
     await expect(page.locator('[data-consultation-addition="pending"]')).toHaveCount(0)
     await page.reload()

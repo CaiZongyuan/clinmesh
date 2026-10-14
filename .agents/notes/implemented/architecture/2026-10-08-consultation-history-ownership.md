@@ -2,6 +2,8 @@
 
 Status: implemented
 
+自动追加、自动更正与显式接受后归人工的决定由[字段内建议决策](2026-10-13-consultation-field-suggestions.md)取代；本记录的片段锚点、旧数据恢复与三方合并理由继续适用。
+
 ## Problem
 
 [病史增量基础边界](2026-10-08-consultation-history-increments.md)在草稿并发变化或同字段存在人工内容时保守地留下待核对建议。这能保护人工内容，但不能满足[自动记录规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)要求的局部保护：编辑一句现病史不应停止同字段其他片段的补充与更正。

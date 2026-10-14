@@ -10,6 +10,8 @@ Status: implemented
 
 参考 `agentic-axum-saas-demo` 的分层方式，Vitest 保留单元、组件与 adapter 测试；`@playwright/test` 统一拥有浏览器合同和 standalone Web E2E。浏览器合同沿用生产 Vite/Tailwind 构建及 React 18/19 fixtures，真实帧驱动状态等待，worker 复用 Chromium，测试隔离 context/page。配置与实际命令见[测试策略](../../../../docs/testing.md#用户界面验证)。
 
+检验目录合同按 React 版本在 `beforeAll` 中构建 fixture，并以文件的默认执行模式复用产物，避免全局 `fullyParallel` 使同一 fixture 在多个 worker 重复冷构建。构建 hook 与每条交互测试各自保持原有 30 秒时限；冷构建曾占用约 22 秒，把它放在交互测试中会使完整外观矩阵和开具申请在总时限处中断。每条测试仍使用独立 page/context，保留全部断言，不依赖前一测试的业务状态。
+
 Web E2E 每 worker 构建一次 Web，每测试创建真实 Hono listener、file-backed SQLite、合成账户和随机凭证；系统分配端口，fixture 完成后关闭 listener/runtime 并删除临时文件。登录、岗位切换和窄屏设置通过页面与正式 HTTP 会话查询验证，不读取开发配置或调用真实 provider。
 
 日常 UI 回归与真实入口验证默认使用 Playwright；`agent-browser` 用于按需探索或接管已有会话。常规自动测试不生成截图、视频或 trace；真实影像仍只允许文字与聚合统计。原生 DSH Session/browser Tool 验收独立保留。
@@ -20,6 +22,7 @@ Web E2E 每 worker 构建一次 Web，每测试创建真实 Hono listener、file
 - 在 Vitest 内逐例手动启动 Playwright：能够运行真实帧，但浏览器生命周期、隔离和筛选需要自行维护，不能使用统一的 runner fixture。
 - 把所有组件与状态机测试迁到 E2E：增加构建和浏览器成本，并重复较低层已有矩阵；只迁移浏览器行为，真实入口保留关键旅程。
 - 强制每次 UI 验证录屏：会把媒体成本加入普通迭代；用户需要演示时再录制绑定 commit 的 WebM。
+- 扩大检验目录交互测试的超时：会把 fixture 冷构建与浏览器行为混在同一预算中；分开准备与交互保留各自的超时信号。
 
 ## Consequences
 

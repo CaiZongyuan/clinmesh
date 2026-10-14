@@ -134,37 +134,13 @@ export function ClinicalDocumentPage({
       id={elementId}
       tabIndex={-1}
     >
-      <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">
-        {messages.structuredClinicalDocument}
-      </h3>
-      {detail.consultationRecording === undefined ? null : (
-        <Alert data-consultation-recording={detail.consultationRecording.status}>
-          <ClipboardPenIcon aria-hidden="true" />
-          <AlertTitle>{messages.consultationAutoRecord}</AlertTitle>
-          <AlertDescription>
-            <ConsultationRecordingControls recording={detail.consultationRecording} action={actions.controlRecording}
-              disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
-              messages={messages} />
-            {detail.consultationRecording.failures.map(failure => (
-              <p key={failure.sourceTurnId}>
-                {failure.code === 'AI_TIMEOUT' ? messages.consultationRecordingTimeout
-                  : ['AI_RESPONSE_INVALID', 'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID'].includes(failure.code)
-                    ? messages.consultationRecordingInvalid
-                    : failure.code === 'AI_AUTH_FAILED' ? messages.consultationRecordingAuthFailed
-                      : failure.code === 'CONSULTATION_RECORDING_NOT_EDITABLE' ? messages.consultationRecordingNotEditable
-                        : failure.code === 'CONSULTATION_RECORDING_CONTEXT_INACTIVE' ? messages.consultationRecordingInactive
-                          : messages.consultationRecordingFailed}
-                {failure.retrying ? ` ${messages.consultationRecordingRetrying}` : ''}
-              </p>
-            ))}
-            <ConsultationHistoryReview detail={detail} workingDocument={workingDocument} action={actions.reviewHistory}
-              disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
-              messages={messages} locale={locale} />
-          </AlertDescription>
-        </Alert>
-      )}
-      {actions.reviewHistory?.error == null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.reviewHistory.error, messages)}
-        title={messages.consultationRecordingReview} />}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">{messages.structuredClinicalDocument}</h3>
+        {detail.consultationRecording === undefined ? null : <ConsultationRecordingControls
+          recording={detail.consultationRecording} action={actions.controlRecording}
+          disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
+          messages={messages} />}
+      </div>
       {actions.save?.error == null ? null : <ErrorAlert
         message={getWorkspaceErrorMessage(actions.save.error, messages)}
         title={messages.saveClinicalDocumentDraft}
@@ -206,7 +182,9 @@ export function ClinicalDocumentPage({
                       {messages.revisionReason}：{document.revisionReason}
                     </p>
                   )}
-                  <ClinicalDocumentContentView content={document.content} messages={messages} />
+                  <ClinicalDocumentContentView content={document.content} messages={messages}
+                    history={document === latestSignedDocument ? { detail, workingDocument: document.content,
+                      action: undefined, disabled: true, messages, locale } : undefined} />
                 </li>
               ))}
             </ol>
@@ -314,6 +292,9 @@ export function ClinicalDocumentPage({
               idPrefix={`clinical-record-${detail.caseId}`}
               messages={messages}
               onChange={onDocumentChange}
+              history={{ detail, workingDocument, action: actions.reviewHistory,
+                disabled: detail.encounter.status !== 'in-progress' || preparing || cancelPending,
+                messages, locale }}
             />
             <div className="flex justify-end gap-2 border-t pt-3">
               {actions.save === undefined ? null : <Button disabled={actions.save.pending || preparing || cancelPending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
@@ -393,12 +374,13 @@ export function ClinicalDocumentPage({
   )
 }
 
-function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange }: {
+function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, history }: {
   content: ClinicalDocumentContent
   disabled: boolean
   idPrefix: string
   messages: ReturnType<typeof getWorkspaceMessages>
   onChange: (document: ClinicalDocumentContent) => void
+  history: Omit<Parameters<typeof ConsultationHistoryReview>[0], 'field'>
 }): React.JSX.Element {
   const fields = [
     { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
@@ -421,8 +403,9 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange 
         const id = `${idPrefix}-${field}`
         const value = content[field] ?? ''
         return (
-          <Field className="grid gap-2 border-b px-3 py-2.5 last:border-b-0 @min-[640px]/case-content:grid-cols-[6rem_minmax(0,1fr)] @min-[640px]/case-content:items-start" key={field}>
+          <Field data-clinical-document-field={field} className="grid gap-2 border-b px-3 py-2.5 last:border-b-0 @min-[640px]/case-content:grid-cols-[6rem_minmax(0,1fr)] @min-[640px]/case-content:items-start" key={field}>
             <FieldLabel className="pt-2" htmlFor={id}>{label}</FieldLabel>
+            <div className="flex min-w-0 flex-col gap-2">
             {multiline ? (
               <Textarea
                 disabled={disabled}
@@ -445,6 +428,9 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange 
                 value={value}
               />
             )}
+            {field === 'chiefComplaint' || field === 'historyOfPresentIllness' || field === 'priorMedicalHistory'
+              ? <ConsultationHistoryReview {...history} field={field} /> : null}
+            </div>
           </Field>
         )
       })}
@@ -606,28 +592,25 @@ function ClinicalDocumentForm({
   )
 }
 
-export function ClinicalDocumentContentView({ content, messages }: {
+export function ClinicalDocumentContentView({ content, messages, history }: {
   content: ClinicalDocumentContent
   messages: ReturnType<typeof getWorkspaceMessages>
+  history?: Omit<Parameters<typeof ConsultationHistoryReview>[0], 'field'> | undefined
 }): React.JSX.Element {
-  const fields = [
-    [messages.chiefComplaint, content.chiefComplaint],
-    [messages.historyOfPresentIllness, content.historyOfPresentIllness],
-    [messages.priorMedicalHistory, content.priorMedicalHistory],
-    [messages.physicalExamination, content.physicalExamination],
-    [messages.auxiliaryExamination, content.auxiliaryExamination],
-    [messages.assessment, content.assessment],
-    [messages.disposition, content.disposition],
-    [messages.followUp, content.followUp],
-  ]
+  const fields = ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'physicalExamination',
+    'auxiliaryExamination', 'assessment', 'disposition', 'followUp'] as const
   return (
     <dl className="grid grid-cols-1 gap-3 text-sm @min-[768px]/case-content:grid-cols-2">
-      {fields.flatMap(([label, value]) => value === undefined ? [] : [(
-        <div key={label}>
-          <dt className="text-muted-foreground">{label}</dt>
-          <dd className="whitespace-pre-wrap font-medium">{value}</dd>
+      {fields.map(field => {
+        const hasHistory = history?.detail.consultationRecording?.additions.some(addition => addition.field === field) === true
+        if (content[field] === undefined && !hasHistory) return null
+        return <div key={field} data-clinical-document-field={field}>
+          <dt className="text-muted-foreground">{messages[field]}</dt>
+          {content[field] === undefined ? null : <dd className="whitespace-pre-wrap font-medium">{content[field]}</dd>}
+          {history !== undefined && (field === 'chiefComplaint' || field === 'historyOfPresentIllness' || field === 'priorMedicalHistory')
+            ? <dd><ConsultationHistoryReview {...history} field={field} /></dd> : null}
         </div>
-      )])}
+      })}
     </dl>
   )
 }

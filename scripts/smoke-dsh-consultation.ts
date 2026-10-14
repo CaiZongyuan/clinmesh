@@ -511,16 +511,17 @@ export function apply(ctx) {
           const recording = (await readLive()).consultationRecording!
           if (recording.status === 'failed') throw new Error('Live history generation failed')
           return recording.status
-        }, { timeout: 370_000 }).toBe('updated')
+        }, { timeout: 370_000 }).toBe('pending')
       }
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       const detail = await readLive()
-      const additions = detail.consultationRecording!.additions.filter(addition => addition.status === 'applied')
-      report.liveEvidence = { summary: detail.clinicalDocument?.draft?.historyOfPresentIllness,
+      const additions = detail.consultationRecording!.additions.filter(addition => addition.status === 'pending')
+      expect(detail.clinicalDocument?.draft).toBeUndefined()
+      report.liveEvidence = { draftUnchanged: true,
         replies: liveReplies, additions: additions.map(({ summary, facts }) => ({ summary, facts })) }
       phase = 'live-summary-quality'
       expect(additions.length).toBeGreaterThan(0)
-      const history = detail.clinicalDocument!.draft!.historyOfPresentIllness
+      const history = additions.filter(addition => addition.field === 'historyOfPresentIllness').map(addition => addition.summary).join('\n')
       expect(history).not.toContain('患者自述：')
       expect(history).toMatch(/38\.5/)
       expect(history).toMatch(/(?:自述|自测|居家|家中).*38\.5/)
@@ -548,13 +549,13 @@ export function apply(ctx) {
         && replyTurnIds.every(id => addition.facts!.some(fact => fact.sources.some(source => source.sourceTurnId === id))))
       expect(merged).toBeDefined()
       phase = 'live-summary-source-dialog'
-      await page.locator('[data-consultation-addition="applied"]').filter({ hasText: merged!.summary! })
+      await page.locator('[data-consultation-addition="pending"]').filter({ hasText: merged!.summary! })
         .getByRole('button', { name: '查看来源', exact: true }).click()
       await expect(page.getByRole('dialog', { name: '患者原回答', exact: true }).locator('blockquote')).toHaveText(liveReplies)
       await page.keyboard.press('Escape')
-      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'updated',
+      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'pending',
         sourceVerified: true, summary: history, replies: liveReplies, facts: additions.map(addition => addition.facts),
-        multiTurnSourceDialog: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
+        draftUnchanged: true, multiTurnSourceDialog: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
       liveMode = true
       }
     } finally {
