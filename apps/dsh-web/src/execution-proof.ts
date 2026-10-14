@@ -2,9 +2,11 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import {
   agentExecutionProofPayloadSchema,
   doctorAgentTaskPermitPayloadSchema,
+  doctorRecordingSourceProofPayloadSchema,
   agentToolCatalog,
   isDoctorReadOperation,
 } from '@clinmesh/contracts/agent'
+import type { z } from 'zod'
 
 const PROOF_TTL_MS = 60_000
 const doctorReadNames = new Set(agentToolCatalog.filter(tool => isDoctorReadOperation(tool.operationId))
@@ -93,6 +95,13 @@ export class AgentExecutionProofIssuer {
     }, this.#secret)
     return pending.proof
   }
+}
+
+export function signDoctorRecordingSourceProof(
+  payload: z.infer<typeof doctorRecordingSourceProofPayloadSchema>, secret: string,
+): string {
+  const encoded = Buffer.from(JSON.stringify(doctorRecordingSourceProofPayloadSchema.parse(payload))).toString('base64url')
+  return `${encoded}.${signature(encoded, secret).toString('base64url')}`
 }
 
 export function signAgentExecutionProof(

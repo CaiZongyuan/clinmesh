@@ -26,7 +26,7 @@ function fixture(initial: Pending = []) {
     getSnapshot: () => ({ key }),
     subscribe(listener: () => void) { currentListeners.add(listener); return () => { currentListeners.delete(listener) } },
   }
-  const fetch = vi.fn(async () => Response.json({ data: { registered: true } }))
+  const fetch = vi.fn(async (_path: unknown) => Response.json({ data: { registered: true } }))
   vi.stubGlobal('fetch', fetch)
   return { stores, current, fetch, currentListeners,
     sessions: { binding: (id: string) => stores.has(id) ? { session: stores.get(id)! } : undefined },
@@ -145,6 +145,21 @@ it('continues source registration when the native submission echo normally retir
     expect((accept.mock.calls[0]![1]).aborted).toBe(false)
     resolve(task({ content: pending().text, dshSessionId: 'session-1', rpcId: 'rpc-1' }))
     await vi.waitFor(() => expect(f.fetch).toHaveBeenCalledOnce())
+  } finally { dispose() }
+})
+
+it('records a proven native source even when normal turn completion rejects Tool task registration', async () => {
+  const f = fixture()
+  f.fetch.mockImplementation(async (path: unknown) => path === '/clinmesh-doctor-task'
+    ? Response.json({ error: 'DOCTOR_TASK_INVALID' }, { status: 409 })
+    : Response.json({ data: { sourceProof: 'synthetic-native-source-proof-at-least-32-characters' } }))
+  const accept = vi.fn<Accept>(async input => task(input))
+  const record = vi.fn(async () => {})
+  const dispose = createDoctorInputBridge(f, accept, record)
+  try {
+    f.stores.get('session-1')!.submit([pending('doctor-fact', '查体：双肺呼吸音清。')])
+    await vi.waitFor(() => expect(record).toHaveBeenCalledWith({ content: '查体：双肺呼吸音清。',
+      dshSessionId: 'session-1', rpcId: 'doctor-fact', sourceProof: 'synthetic-native-source-proof-at-least-32-characters' }, expect.any(AbortSignal)))
   } finally { dispose() }
 })
 

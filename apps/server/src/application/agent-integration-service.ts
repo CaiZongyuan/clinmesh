@@ -20,6 +20,8 @@ import {
   doctorAgentTaskPermitPayloadSchema,
   doctorAgentTaskPermitRequestSchema,
   doctorAgentTaskPermitResponseSchema,
+  doctorRecordingSourceProofPayloadSchema,
+  doctorRecordingSourceRequestSchema,
   type AgentPageContextRequest,
   type AgentPageContextSnapshot,
 } from '@clinmesh/contracts/agent'
@@ -35,6 +37,7 @@ import {
 } from './agent-context-policy.ts'
 
 const PAGE_CONTEXT_TTL_MS = 5 * 60_000
+type ExecutionOrigin = NonNullable<z.infer<typeof agentExecutionProofPayloadSchema>['origin']>
 
 const tokenPayloadSchema = z.object({
   actorId: z.string().min(1),
@@ -373,6 +376,30 @@ export class AgentIntegrationService {
     return { content, dshSessionId: context.dshSessionId,
       permit: `${encoded}.${this.#signature(encoded).toString('base64url')}`,
       rpcId: request.rpcId, taskId: payload.taskId }
+  }
+
+  verifyDoctorRecordingSource(input: {
+    actor: ActorContext; request: z.infer<typeof doctorRecordingSourceRequestSchema>; userAccountId: string
+  }) {
+    const request = doctorRecordingSourceRequestSchema.parse(input.request)
+    const context = this.verifyPageContextToken(request.contextToken)
+    this.#assertCurrentCaller(context, input.actor, input.userAccountId)
+    const proof = this.#verifySignedToken(request.sourceProof, doctorRecordingSourceProofPayloadSchema)
+    if (Date.parse(proof.expiresAt) <= this.#now().getTime()) throw this.#invalidProof()
+    if (context.actor.roleCode !== 'outpatient-doctor' || context.claim.viewId !== 'consultation'
+      || context.claim.ui.status !== 'ready' || context.claim.selection?.kind !== 'case'
+      || proof.dshSessionId !== context.dshSessionId
+      || proof.inputHash !== createHash('sha256').update(request.content).digest('hex')) throw this.#taskChanged()
+    this.#assertExecutionOrigin({ issuedAt: proof.issuedAt, origin: {
+      request: { scopeKey: proof.scopeKey, pageRevision: proof.pageRevision },
+      task: { contextId: proof.contextId, scopeKey: proof.scopeKey, pageRevision: proof.pageRevision,
+        acceptedAt: proof.recordedAt },
+    } }, context, input.actor, input.userAccountId)
+    if (validateAgentToolInputForContext(this.#database, this.#cases, context,
+      input.userAccountId, 'outpatient.case.read', {}) === undefined) throw this.#taskChanged()
+    return { caseId: context.claim.selection.id, content: request.content,
+      sourceId: createHash('sha256').update(JSON.stringify([proof.dshSessionId, proof.rpcId])).digest('hex'),
+      sessionId: proof.dshSessionId, messageId: proof.messageId, rpcId: proof.rpcId, recordedAt: proof.recordedAt }
   }
 
   authorizeToolCall(input: {
@@ -791,7 +818,8 @@ export class AgentIntegrationService {
   }
 
   #assertExecutionOrigin(
-    proof: Pick<z.infer<typeof agentExecutionProofPayloadSchema>, 'origin' | 'issuedAt'>, current: AgentPageContextSnapshot,
+    proof: { issuedAt: string; origin?: { request: ExecutionOrigin['request'];
+      task: Pick<ExecutionOrigin['task'], 'contextId' | 'scopeKey' | 'pageRevision' | 'acceptedAt'> } | undefined }, current: AgentPageContextSnapshot,
     actor: ActorContext, userAccountId: string,
   ): void {
     if (proof.origin === undefined) throw this.#taskChanged()

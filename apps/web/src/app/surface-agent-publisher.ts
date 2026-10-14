@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   agentPageBindingRevision,
   agentToolsForContext,
@@ -15,6 +16,7 @@ import {
   completeAgentToolCall,
   createAgentPageContext,
   createDoctorTaskPermit,
+  recordDoctorSupplement,
   queryAgentDoctor,
   pauseAgentToolHandoff,
   issueAgentExecutionProof,
@@ -66,6 +68,7 @@ export function useSurfaceAgentPublisher(input: {
   session: SessionContext
 }): void {
   const runtime = useWebRuntime()
+  const queryClient = useQueryClient()
   const appearanceRoot = useRef(runtime.appearanceRoot)
   appearanceRoot.current = runtime.appearanceRoot
   const agentReview = useAgentReview()
@@ -176,7 +179,22 @@ export function useSurfaceAgentPublisher(input: {
       }
       return task
     } finally { pendingDoctorTasks.current.delete(controller) }
-  }), [runtime.surfaceDoctorInput, doctorTaskIdentity])
+  }, async (input, signal) => {
+    const frame = committedFrame.current
+    if (frame === undefined || frame.binding.snapshot.id !== currentBinding.current?.snapshot.id
+      || frame.binding.snapshot.actor.roleCode !== 'outpatient-doctor'
+      || frame.binding.snapshot.claim.selection?.kind !== 'case'
+      || frame.binding.snapshot.dshSessionId !== input.dshSessionId) throw new Error('当前病例或助手连接尚未就绪。')
+    const controller = new AbortController()
+    const combined = AbortSignal.any([signal, controller.signal])
+    pendingDoctorTasks.current.add(controller)
+    try {
+      const receipt = await recordDoctorSupplement({ contextToken: frame.binding.token, content: input.content,
+        sourceProof: input.sourceProof }, combined)
+      await queryClient.invalidateQueries({ queryKey: ['doctor-case', frame.binding.snapshot.workspace.id,
+        frame.binding.snapshot.workspace.epoch, receipt.data.caseId] })
+    } finally { pendingDoctorTasks.current.delete(controller) }
+  }), [runtime.surfaceDoctorInput, doctorTaskIdentity, queryClient])
   const [settlementRevision, setSettlementRevision] = useState(0)
   const publish = useCallback((value: PublishedSurfaceContext | undefined): void => {
     const previous = publishedRef.current

@@ -126,6 +126,7 @@ import {
   agentDoctorQueryRequestSchema,
   doctorCaseHistoryInputSchema,
   doctorCaseHistoryDetailInputSchema,
+  doctorRecordingSourceRequestSchema,
 } from '@clinmesh/contracts/agent'
 
 interface FhirRuntime {
@@ -539,6 +540,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     if (options.workflow !== undefined) {
       const workflow = options.workflow
+      app.post('/api/agent/v1/doctor-inputs', async context => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const request = doctorRecordingSourceRequestSchema.parse(await context.req.json())
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          const source = agentIntegration.verifyDoctorRecordingSource({ actor: session.actor,
+            request, userAccountId: session.user.id })
+          const detail = workflow.doctorCaseDetail(session.actor, source.caseId)
+          return context.json(workflow.consultationRecording.recordDoctorSupplement({ ...source,
+            context: session.actor, encounterId: detail.encounter.id,
+            expectedVersions: { [`Encounter/${detail.encounter.id}`]: z.string().min(1).parse(detail.encounter.versionId) },
+            idempotencyKey: `doctor-source:${source.sourceId}`,
+          }))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
       app.post('/api/agent/v1/doctor-queries', async context => {
         try {
           identity.assertTrustedMutation(context.req.raw.headers)
