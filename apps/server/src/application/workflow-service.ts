@@ -6246,10 +6246,11 @@ export class WorkflowService {
   #consultationSignReview(context: ActorContext, caseId: string) {
     const consultation = this.#consultationState(context, caseId)
     const recording = this.consultationRecording.read(context, caseId)
-    if (consultation === undefined && (recording?.sources?.length ?? 0) === 0) return null
+    const sourceCount = this.consultationRecording.signingSourceCount(context, caseId)
+    if (consultation === undefined && sourceCount === undefined) return null
     return consultationSignReviewSchema.parse({
       consultationVersion: consultation?.version ?? 0,
-      ...(recording?.sources?.some(source => source.kind !== 'patient') ? { sourceCount: recording.sources.length } : {}),
+      ...(sourceCount === undefined ? {} : { sourceCount }),
       remainingCount: recording?.remainingCount ?? this.#consultationTurnRows(context, caseId)
         .filter(turn => turn.speaker === 'patient' && turn.kind === 'text').length,
       failedCount: recording?.failedCount ?? 0,
@@ -9545,6 +9546,7 @@ export class WorkflowService {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case state has changed')
     }
     this.#assignCaseResponsibility(context, input.caseId, now)
+    this.consultationRecording.bindDoctorContext(context, input.caseId)
     this.#database.driver.prepare(`
       UPDATE registration SET status = 'in-progress'
       WHERE workspace_id = ? AND epoch = ? AND case_id = ?

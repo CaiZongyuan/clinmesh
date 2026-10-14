@@ -224,6 +224,40 @@ it('records published laboratory values and conclusion with a fixed report versi
   expect((await fixture.read()).consultationRecording).toMatchObject({ remainingCount: 0, status: 'updated' })
 })
 
+it('records a published report before the first patient question using the assigned doctor context', async () => {
+  const fixture = await setup({ extract: input => {
+    const source = (input.userPayload as { turns: Array<{ id: string; kind: string; messageText: string }> }).turns.at(-1)!
+    return { additions: source.kind !== 'report' ? [] : [{ field: 'auxiliaryExamination', relation: 'addition',
+      facts: [{ text: '本院检验白细胞计数11.2×10^9/L', sources: [{ sourceTurnId: source.id, quote: source.messageText.split('\n').at(-1)! }] }],
+    }] }
+  } })
+  useSyntheticLaboratoryCatalog(fixture.runtime)
+  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const start = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/actions/start-first-visit`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({ expectedVersions: {
+      [`Encounter/${fixture.started.encounterId}`]: fixture.started.encounterVersion, [`Task/${fixture.started.doctorTaskId}`]: '1',
+    }, input: {} }),
+  })
+  expect(start.status).toBe(200)
+  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: (await fixture.read()).encounter.versionId }
+  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
+  })
+  expect(draft.status).toBe(200)
+  const saved = await draft.json() as { data: { draftVersion: number } }
+  const issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
+  })
+  expect(issued.status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const result = await fixture.read()
+  expect(result.consultation!.turns.filter(turn => turn.kind === 'text')).toHaveLength(1)
+  expect(result.clinicalDocument?.draft).toMatchObject({ auxiliaryExamination: '本院检验白细胞计数11.2×10^9/L' })
+  expect(result.consultationRecording).toMatchObject({ remainingCount: 0, status: 'updated', processedCount: 1 })
+})
+
 it('automatically appends new facts and updates only its own fragment, persisting the inverse through restart', async () => {
   let reply = firstFeverReply
   const fixture = await setup({ reply: () => reply, extract: feverSummaries })
