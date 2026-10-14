@@ -28,7 +28,6 @@ import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-e
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
-import { ConsultationHistorySources } from './consultation-history-sources.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -176,8 +175,7 @@ export function ClinicalDocumentPage({
                       {messages.revisionReason}：{document.revisionReason}
                     </p>
                   )}
-                  <ClinicalDocumentContentView content={document.content} messages={messages}
-                    history={document === latestSignedDocument ? { detail, messages, locale } : undefined} />
+                  <ClinicalDocumentContentView content={document.content} messages={messages} />
                 </li>
               ))}
             </ol>
@@ -285,7 +283,6 @@ export function ClinicalDocumentPage({
               idPrefix={`clinical-record-${detail.caseId}`}
               messages={messages}
               onChange={onDocumentChange}
-              history={{ detail, messages, locale }}
             />
             <div className="flex justify-end gap-2 border-t pt-3">
               {actions.save === undefined ? null : <Button disabled={actions.save.pending || preparing || cancelPending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
@@ -356,13 +353,12 @@ export function ClinicalDocumentPage({
   )
 }
 
-function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, history }: {
+function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange }: {
   content: ClinicalDocumentContent
   disabled: boolean
   idPrefix: string
   messages: ReturnType<typeof getWorkspaceMessages>
   onChange: (document: ClinicalDocumentContent) => void
-  history: Omit<Parameters<typeof ConsultationHistorySources>[0], 'field'>
 }): React.JSX.Element {
   const fields = [
     { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
@@ -414,9 +410,6 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
               />
             )}
             {optional ? <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription> : null}
-            {field === 'chiefComplaint' || field === 'historyOfPresentIllness' || field === 'priorMedicalHistory'
-              || field === 'familyHistory' || field === 'allergyHistory'
-              ? <ConsultationHistorySources {...history} field={field} /> : null}
             </div>
           </Field>
         )
@@ -588,24 +581,19 @@ function ClinicalDocumentForm({
   )
 }
 
-export function ClinicalDocumentContentView({ content, messages, history }: {
+export function ClinicalDocumentContentView({ content, messages }: {
   content: ClinicalDocumentContent
   messages: ReturnType<typeof getWorkspaceMessages>
-  history?: Omit<Parameters<typeof ConsultationHistorySources>[0], 'field'> | undefined
 }): React.JSX.Element {
   const fields = ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'familyHistory', 'allergyHistory', 'physicalExamination',
     'auxiliaryExamination', 'assessment', 'disposition', 'followUp'] as const
   return (
     <dl className="grid grid-cols-1 gap-3 text-sm @min-[768px]/case-content:grid-cols-2">
       {fields.map(field => {
-        const hasHistory = history?.detail.consultationRecording?.additions.some(addition => addition.field === field) === true
-        if (content[field] === undefined && !hasHistory) return null
+        if (content[field] === undefined) return null
         return <div key={field} data-clinical-document-field={field}>
           <dt className="text-muted-foreground">{messages[field]}</dt>
-          {content[field] === undefined ? null : <dd className="whitespace-pre-wrap break-words font-medium">{content[field] || messages.clinicalHistoryNotRecorded}</dd>}
-          {history !== undefined && (field === 'chiefComplaint' || field === 'historyOfPresentIllness' || field === 'priorMedicalHistory'
-            || field === 'familyHistory' || field === 'allergyHistory')
-            ? <dd><ConsultationHistorySources {...history} field={field} /></dd> : null}
+          <dd className="whitespace-pre-wrap break-words font-medium">{content[field] || messages.clinicalHistoryNotRecorded}</dd>
         </div>
       })}
     </dl>

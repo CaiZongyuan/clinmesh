@@ -3,7 +3,7 @@ import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
 import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
-import { waitForRecordedHistory, expandHistory } from './consultation-recording.ts'
+import { waitForRecordedHistory } from './consultation-recording.ts'
 
 test('records a conflict automatically without replacing handwritten history and preserves the rest of the draft after reload', async ({ page, webRoot }) => {
   const reply = '胸痛两天了。'
@@ -47,11 +47,6 @@ test('records a conflict automatically without replacing handwritten history and
     await page.reload()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect(history).toHaveValue(expected)
-    await expandHistory(page)
-    await page.locator('[data-consultation-addition="applied"]').getByRole('button', { name: '查看来源', exact: true }).click()
-    const source = page.getByRole('dialog', { name: '患者原回答', exact: true })
-    await expect(source.locator('blockquote')).toHaveText(reply)
-    await page.keyboard.press('Escape')
     await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(expected)
   } finally { await server.close() }
 })
@@ -245,7 +240,7 @@ for (const existingAutomaticDraft of [false, true]) {
       await expect(recording).toHaveAttribute('data-consultation-recording', 'updated')
       const expected = `${manual}\n患者自述：${reply}`
       await expect(history).toHaveValue(expected)
-        await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+      await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
       await waitForRecordedHistory(page, reply)
       await expect(history).toHaveValue(expected)
       expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(expected)

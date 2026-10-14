@@ -4,7 +4,6 @@ import { sourceArtifactHash } from '../../server/src/application/scenario-data/p
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
-import { expandHistory } from './consultation-recording.ts'
 
 test('restores independent histories across cases, records family history automatically and protects unsaved allergy text', async ({ page, webRoot }) => {
   const reply = '我父亲患高血压。对青霉素过敏。'
@@ -80,22 +79,12 @@ test('restores independent histories across cases, records family history automa
     await expect(page.getByText(reply, { exact: true })).toBeVisible()
     await server.runtime.dispatchPending()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-    const familyPanel = page.locator('[data-consultation-field-sources="familyHistory"]')
     await expect(family).toHaveValue('患者自述：我父亲患高血压。')
     const workingAllergy = '医生未保存的过敏核对。\n患者自述：对青霉素过敏。'
     await expect(allergy).toHaveValue(workingAllergy)
     await expect(page.getByRole('button', { name: '应用建议', exact: true })).toHaveCount(0)
     expect((await read()).clinicalDocument?.draft?.allergyHistory).toBe('医生记录：药物待核实。\n患者自述：对青霉素过敏。')
-    await expandHistory(page)
-    const sourceButton = familyPanel.getByRole('button', { name: '查看来源', exact: true })
-    await sourceButton.focus()
-    await page.keyboard.press('Enter')
-    const source = page.getByRole('dialog', { name: '患者原回答', exact: true })
-    await expect(source.locator('blockquote')).toHaveText(reply)
-    await page.keyboard.press('Escape')
-    await expect(source).toHaveCount(0)
-    await expect(sourceButton).toBeFocused()
-    await expect(allergy).toHaveValue(workingAllergy)
+    await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
     expect((await read()).clinicalDocument?.draft?.priorMedicalHistory).not.toContain('青霉素')
   } finally { await server.close() }
 })

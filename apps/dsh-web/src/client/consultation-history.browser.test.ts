@@ -6,7 +6,7 @@ import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
 for (const version of ['18', '19']) {
-  test(`reviews sourced history corrections inside a ShadowRoot on React ${version}`, async ({ page }) => {
+  test(`edits directly recorded history without source controls inside a ShadowRoot on React ${version}`, async ({ page }) => {
     const react = version === '18' ? 'react18' : 'react'
     const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
     const result = await build({
@@ -30,26 +30,9 @@ for (const version of ['18', '19']) {
     await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     await expect(page.getByRole('button', { name: '应用建议', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '确认已核对', exact: true })).toHaveCount(0)
-    const panel = page.locator('[data-consultation-field-sources="historyOfPresentIllness"]')
-    await panel.locator('summary').click()
-    const applied = panel.locator('[data-consultation-addition="applied"]').last()
-    await applied.getByRole('button', { name: '查看来源', exact: true }).click()
-    const source = page.getByRole('dialog', { name: '患者原回答', exact: true })
-    await expect(source).toBeVisible()
-    await expect(source.locator('mark')).toHaveText('刚才说错了，头晕是六天。')
-    expect(await source.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
-    await page.keyboard.press('Escape')
-    await expect(source).toHaveCount(0)
-    await page.getByRole('button', { name: '模拟跨轮总结', exact: true }).click()
-    await applied.getByRole('button', { name: '查看来源', exact: true }).click()
-    await expect(source.locator('blockquote')).toHaveCount(2)
-    await expect(source.locator('mark')).toHaveText(['刚才说错了，头晕是六天。', '晚上也会头晕，但是胸口不痛。'])
-    await page.keyboard.press('Escape')
-    await page.getByRole('button', { name: '模拟重复引用', exact: true }).click()
-    await applied.getByRole('button', { name: '查看来源', exact: true }).click()
-    await expect(source.locator('blockquote')).toHaveText('我之前没有发热。发热。')
-    await expect(source.locator('mark')).toHaveText('发热。')
-    await page.keyboard.press('Escape')
+    await expect(page.getByText('自动记录来源', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
+    expect(await page.getByLabel('现病史', { exact: true }).evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
     await page.getByRole('button', { name: '暂停自动整理', exact: true }).click()
     await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
     await page.getByRole('button', { name: '模拟历史病例', exact: true }).click()
@@ -83,11 +66,8 @@ for (const version of ['18', '19']) {
     await page.getByRole('button', { name: '模拟签署准备', exact: true }).click()
     await expect(page.getByLabel('家族史', { exact: true })).toBeDisabled()
     await page.getByRole('button', { name: '模拟已签内容', exact: true }).click()
-    const signedSources = page.locator('[data-consultation-field-sources="familyHistory"]')
-    await signedSources.locator('summary').click()
-    await signedSources.getByRole('button', { name: '查看来源', exact: true }).first().click()
-    await expect(source).toBeVisible()
-    await page.keyboard.press('Escape')
+    await expect(page.locator('[data-clinical-document-field="familyHistory"] dd')).toHaveText('患者自述父亲患高血压。')
+    await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
     expect(errors).toEqual([])
   })
 }

@@ -3,9 +3,9 @@ import { z } from 'zod'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
-import { waitForRecordedHistory, expandHistory } from './consultation-recording.ts'
+import { waitForRecordedHistory } from './consultation-recording.ts'
 
-test('merges a readable history and shows both saved patient replies and their doctor context after reload', async ({ page, webRoot }) => {
+test('merges readable history across replies and restores it without source controls after reload', async ({ page, webRoot }) => {
   const replies = ['昨天晚上开始发烧，最高量到38.5度，还咳嗽，但是没有痰。',
     '咳嗽也是昨晚开始的，胸口不疼，也不觉得喘。']
   let replyIndex = 0
@@ -60,19 +60,11 @@ test('merges a readable history and shows both saved patient replies and their d
     await page.reload()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(combined)
-    await expandHistory(page)
-    const active = page.locator('[data-consultation-addition="applied"]')
-    await active.getByRole('button', { name: '查看来源', exact: true }).click()
-    const dialog = page.getByRole('dialog', { name: '患者原回答', exact: true })
-    await expect(dialog).toContainText('Agent 病史总结：' + combined)
-    await expect(dialog.locator('blockquote')).toHaveText(replies)
-    await expect(dialog).toContainText('医生提问：何时开始发热，最高体温多少，有没有咳嗽和痰？')
-    await expect(dialog).toContainText('医生提问：咳嗽何时开始，有没有胸痛或气促？')
-    await expect(dialog.locator('mark')).toHaveText(replies)
+    await expect(page.getByText('自动记录来源', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
     const updated = (await read()).consultationRecording!.additions.at(-1)!
     expect(updated.facts![0]!.sources).toHaveLength(2)
-    await page.keyboard.press('Escape')
-    await expect(active.getByRole('button', { name: '撤销此条', exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '撤销此条', exact: true })).toHaveCount(0)
     expect((await read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(combined)
   } finally { await server.close() }
 })

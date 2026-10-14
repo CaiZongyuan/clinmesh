@@ -15,7 +15,6 @@ import { decodeModelRoute } from '../packages/contracts/src/model-bridge.ts'
 import { createClinMeshRuntime } from '../apps/server/src/runtime.ts'
 import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model-provider.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../apps/server/tests/fixtures/consultation.ts'
-import { expandHistory } from '../apps/web/e2e/consultation-recording.ts'
 import { journeyReplies, runRecordingJourney } from '../apps/web/e2e/consultation-recording-journey.ts'
 import { recommendationFixture } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
 import { runRecommendationJourney } from '../apps/web/e2e/doctor-recommendations-journey.ts'
@@ -53,7 +52,7 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'package.json', 'pnpm-lock.yaml', 'tsconfig.browser.json',
   'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
   'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0062_consultation-direct-recording.sql', 'packages/contracts/src/his.ts',
-  'apps/web/src/app/doctor/consultation-history-sources.tsx',
+  'apps/web/src/app/doctor/clinical-document-page.tsx',
   'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
   'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
   'packages/contracts/src/doctor-recommendations.ts', 'packages/contracts/src/model-bridge.ts',
@@ -549,15 +548,12 @@ export function apply(ctx) {
       const merged = additions.find(addition => addition.field === 'historyOfPresentIllness'
         && replyTurnIds.every(id => addition.facts!.some(fact => fact.sources.some(source => source.sourceTurnId === id))))
       expect(merged).toBeDefined()
-      phase = 'live-summary-source-dialog'
-      await expandHistory(page)
-      await page.locator('[data-consultation-addition="applied"]').filter({ hasText: merged!.summary! })
-        .getByRole('button', { name: '查看来源', exact: true }).click()
-      await expect(page.getByRole('dialog', { name: '患者原回答', exact: true }).locator('blockquote')).toHaveText(liveReplies)
-      await page.keyboard.press('Escape')
+      phase = 'live-summary-recorded-document'
+      await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(history)
+      await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
       report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'updated',
         sourceVerified: true, summary: history, replies: liveReplies, facts: additions.map(addition => addition.facts),
-        draftRecorded: true, multiTurnSourceDialog: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
+        draftRecorded: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
       liveMode = true
       }
     } finally {

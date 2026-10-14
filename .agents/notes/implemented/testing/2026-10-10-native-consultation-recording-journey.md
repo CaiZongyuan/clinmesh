@@ -4,11 +4,11 @@ Status: implemented
 
 ## Problem
 
-[自动记录规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)跨越后台任务、病历编辑、来源审阅和签署准备。各切片的 HTTP/SQLite 与 React 合同能证明局部行为，但不能证明同一患者连续操作后仍保持编辑归属，也不能证明实际 DSH Session 注册并执行 browser Tool。真实模型的非确定输出又不适合作为 CI 故障恢复和签署竞态的输入。
+[自动记录规格](../../../../docs/spec/2026-10-08-consultation-auto-record.md)跨越后台任务、病历编辑和签署准备。各切片的 HTTP/SQLite 与 React 合同能证明局部行为，但不能证明同一患者连续操作后仍保持编辑归属，也不能证明实际 DSH Session 注册并执行 browser Tool。真实模型的非确定输出又不适合作为 CI 故障恢复和签署竞态的输入。
 
 ## Decision
 
-共享可见旅程 `apps/web/e2e/consultation-recording-journey.ts` 只拥有组合交互：同一合成患者经历来源查看、局部人工修改、未保存编辑、自动记录、更正与矛盾、暂停补录、失败重试和签署冻结。Web E2E 使用真实生产构建、Hono listener、file-backed SQLite 与公开病例 Query，仅替换外部模型边界。受控在途提取必须真正启动后才准备签署，并等待任务结算后检查草稿不变；取消后检查补录，正式签署后重新读取不可变文书。
+共享可见旅程 `apps/web/e2e/consultation-recording-journey.ts` 只拥有组合交互：同一合成患者经历直接记录、刷新恢复、局部人工修改、未保存编辑、自动记录、更正与矛盾、暂停补录、失败重试和签署冻结。Web E2E 使用真实生产构建、Hono listener、file-backed SQLite 与公开病例 Query，仅替换外部模型边界。受控在途提取必须真正启动后才准备签署，并等待任务结算后检查草稿不变；取消后检查补录，正式签署后重新读取不可变文书。
 
 显式原生 smoke 复用同一旅程，在锁定 DSH 的隔离 Profile 中注册合成宿主 `LlmAdapter`。辅助调用不携带 Session/Tool；原生主会话独立建立 Session，实际请求当前工具 schema 并调用草稿 action 和签署 proposal。刷新通过 launcher 重新打开 Surface，发工具前等待当前浏览器客户端 lease 注册成功。模型桥接与 Agent Page Context 桥接分别配置，不能用自动记录成功或页面控件启用推断工具已注册。
 

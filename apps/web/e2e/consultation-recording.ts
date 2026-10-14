@@ -1,12 +1,7 @@
 import { expect, type Page } from '@playwright/test'
 
-export async function expandHistory(page: Page): Promise<void> {
-  const closed = page.locator('[data-consultation-field-sources]:not([open]) > summary')
-  while (await closed.count() > 0) await closed.first().click()
-}
-
 export async function waitForRecordedHistory(page: Page, quote: string): Promise<void> {
-  await expect(page.locator('[data-consultation-field-sources]')).not.toHaveCount(0)
-  await expandHistory(page)
-  await expect(page.locator('[data-consultation-addition="applied"]').filter({ hasText: quote })).not.toHaveCount(0)
+  const fields = page.locator('[data-clinical-document-field] input, [data-clinical-document-field] textarea')
+  await expect.poll(async () => fields.evaluateAll(elements => elements.map(element => (element as HTMLInputElement).value))
+    .then(values => values.some(value => value.includes(quote)))).toBe(true)
 }

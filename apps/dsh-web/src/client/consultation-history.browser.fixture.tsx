@@ -45,54 +45,23 @@ function App(): React.JSX.Element {
   const [locale, setLocale] = React.useState<'zh-CN' | 'en-US'>('zh-CN')
   const [working, setWorking] = React.useState(documentContent)
   const [recording, setRecording] = React.useState(detail.consultationRecording!)
-  const [consultation, setConsultation] = React.useState(detail.consultation!)
   const [controls, setControls] = React.useState<string[]>([])
   const [blocked, setBlocked] = React.useState(false)
   const [signedView, setSignedView] = React.useState(false)
   return <PortalContainerProvider container={root}>
     <div className="h-full overflow-y-auto">
     <button type="button" onClick={() => setLocale(current => current === 'zh-CN' ? 'en-US' : 'zh-CN')}>切换语言</button>
-    <button type="button" onClick={() => setWorking(documentContent)}>模拟保存编辑</button>
-    <button type="button" onClick={() => { setWorking(current => ({ ...current, chiefComplaint: "自述头晕六天", priorMedicalHistory: "合成长病史记录。".repeat(80), familyHistory: "患者自述父亲患高血压。", allergyHistory: "患者自述青霉素用药后出现皮疹。" })); setRecording(current => ({ ...current, additions: [
-      ...current.additions,
-      { ...current.additions[0]!, id: 'synthetic-chief', field: 'chiefComplaint', relation: 'addition',
-        targetAdditionId: undefined, currentText: '', summary: '自述头晕六天' },
-      { ...current.additions[0]!, id: 'synthetic-prior', field: 'priorMedicalHistory', relation: 'addition',
-        targetAdditionId: undefined, currentText: '', summary: '合成长病史记录。'.repeat(80) },
-      { ...current.additions[0]!, id: 'synthetic-family', field: 'familyHistory', relation: 'addition',
-        targetAdditionId: undefined, currentText: '', summary: '患者自述父亲患高血压。' },
-      { ...current.additions[0]!, id: 'synthetic-family-second', field: 'familyHistory', relation: 'addition',
-        targetAdditionId: undefined, currentText: '', summary: '患者自述母亲无糖尿病。' },
-      { ...current.additions[0]!, id: 'synthetic-allergy', field: 'allergyHistory', relation: 'addition',
-        targetAdditionId: undefined, currentText: '', summary: '患者自述青霉素用药后出现皮疹。' },
-    ] })) }}>模拟自动记录</button>
+    <button type="button" onClick={() => setWorking(current => ({ ...current,
+      chiefComplaint: '自述头晕六天', priorMedicalHistory: '合成长病史记录。'.repeat(80),
+      familyHistory: '患者自述父亲患高血压。', allergyHistory: '患者自述青霉素用药后出现皮疹。',
+    }))}>模拟自动记录</button>
     <button type="button" onClick={() => setBlocked(true)}>模拟签署准备</button>
     <button type="button" onClick={() => setSignedView(true)}>模拟已签内容</button>
-    <button type="button" onClick={() => {
-      setConsultation(current => ({ ...current, turns: [...current.turns,
-        { ...current.turns[0]!, id: 'synthetic-question', speaker: 'doctor', messageText: '夜间是否头晕，有没有胸痛？', sequence: 2 },
-        { ...current.turns[0]!, id: 'synthetic-second-reply', messageText: '晚上也会头晕，但是胸口不痛。', sequence: 3 },
-      ] }))
-      setRecording(current => ({ ...current, additions: current.additions.map(addition => addition.id !== 'synthetic-applied' ? addition : {
-        ...addition, summary: '自述头晕六天；夜间亦会头晕，否认胸痛',
-        facts: [{ text: '自述头晕六天', sources: [{ sourceTurnId: 'synthetic-reply', quote: '刚才说错了，头晕是六天。' }] },
-          { text: '夜间亦会头晕，否认胸痛', sources: [{ sourceTurnId: 'synthetic-second-reply', quote: '晚上也会头晕，但是胸口不痛。' }] }],
-      }) }))
-    }}>模拟跨轮总结</button>
-    <button type="button" onClick={() => {
-      setConsultation(current => ({ ...current, turns: current.turns.map(turn => turn.id !== 'synthetic-reply' ? turn : {
-        ...turn, messageText: '我之前没有发热。发热。',
-      }) }))
-      setRecording(current => ({ ...current, additions: current.additions.map(addition => addition.id !== 'synthetic-applied' ? addition : {
-        ...addition, summary: '自述发热',
-        facts: [{ text: '自述发热', sources: [{ sourceTurnId: 'synthetic-reply', quote: '发热。' }] }],
-      }) }))
-    }}>模拟重复引用</button>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'backfill', version: 0, remainingCount: 2 }))}>模拟历史病例</button>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'failed', failedCount: 1 }))}>模拟整理失败</button>
     <output aria-label="控制结果">{controls.join(',')}</output>
-    {signedView ? <ClinicalDocumentContentView content={documentContent} messages={getWorkspaceMessages(locale)}
-      history={{ detail: { ...detail, consultation, consultationRecording: recording }, messages: getWorkspaceMessages(locale), locale }} /> : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultation, consultationRecording: {
+    {signedView ? <ClinicalDocumentContentView content={working} messages={getWorkspaceMessages(locale)} />
+      : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: {
       ...recording, ...(blocked ? { signingPreparation: { active: true, previewId: 'synthetic-preview', expiresAt: '2099-01-01T00:00:00Z' } } : {}),
     } }} elementId="record" locale={locale}
       messages={getWorkspaceMessages(locale)} workingDocument={working} onDocumentChange={setWorking}

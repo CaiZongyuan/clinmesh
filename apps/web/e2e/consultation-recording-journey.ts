@@ -1,6 +1,5 @@
 import { expect, type Page } from '@playwright/test'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
-import { expandHistory } from './consultation-recording.ts'
 
 export const journeyReplies = {
   initial: '头晕一周了。站起来时更明显。',
@@ -51,11 +50,8 @@ export async function runRecordingJourney(input: {
   await ask('initial')
   await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
   await reload()
-  await expandHistory(page)
-  await page.locator('[data-consultation-addition="applied"]').filter({ hasText: '站起来时更明显。' }).getByRole('button', { name: '查看来源', exact: true }).click()
-  const source = page.getByRole('dialog', { name: '患者原回答', exact: true })
-  await expect(source.locator('blockquote')).toHaveText(journeyReplies.initial)
-  await page.keyboard.press('Escape')
+  await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
+  await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
   await history.fill('医生核对：头晕五天。\n患者自述：站起来时更明显。')
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
   await expect.poll(async () => (await read()).consultationRecording!.additions[0]!.ownership).toBe('manual')
@@ -66,7 +62,7 @@ export async function runRecordingJourney(input: {
   await ask('correction')
   await expect(history).toHaveValue(/医生核对：头晕五天。[\s\S]*患者更正：[\s\S]*头晕是六天/)
   await expect(page.getByRole('button', { name: '应用建议', exact: true })).toHaveCount(0)
-  input.progress?.('自动记录、来源、刷新、人工正文及未保存输入保护通过')
+  input.progress?.('自动记录、刷新、人工正文及未保存输入保护通过')
   for (const [label, value] of [
     ['主诉', '头晕五天。'], ['体格检查', '查体尚待进一步核实。'], ['辅助检查', '本次暂无检查结果。'],
     ['家族史', '父亲患高血压，患者自述。'], ['过敏史', '青霉素用药后皮疹，患者自述。'],
