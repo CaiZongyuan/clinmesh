@@ -39,8 +39,17 @@ test('reviews paused omissions, recovers preparation after reload and signs only
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     }
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('')
+    await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('')
+    await page.getByLabel('家族史', { exact: true }).fill('父亲患高血压，患者自述。')
+    await page.getByLabel('过敏史', { exact: true }).fill('青霉素用药后皮疹，患者自述。')
     await page.getByLabel('现病史', { exact: true }).fill('')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    await expect.poll(async () => (await read()).clinicalDocument?.draft?.familyHistory).toBe('父亲患高血压，患者自述。')
+    await page.reload()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('父亲患高血压，患者自述。')
+    await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('青霉素用药后皮疹，患者自述。')
     await ask()
     await applySuggestion(page, reply)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('患者自述：头晕一周了。')
@@ -49,13 +58,15 @@ test('reviews paused omissions, recovers preparation after reload and signs only
     reply = '站起来时更明显。'
     await ask()
     for (const [label, text] of [
-      ['主诉', '头晕一周。'], ['既往史', '既往高血压。'], ['查体', '查体未见明显异常。'],
+      ['主诉', '头晕一周。'], ['既往史', '既往高血压。'], ['体格检查', '查体未见明显异常。'],
       ['辅助检查', '暂无检查。'], ['评估', '继续评估。'], ['处置', '门诊随访。'], ['随访', '加重时及时就诊。'],
     ]) await page.getByLabel(label!, { exact: true }).fill(text!)
     await page.getByRole('button', { name: '签署病历', exact: true }).click()
     const dialog = page.getByRole('alertdialog', { name: '确认签署病历', exact: true })
     await expect(dialog).toContainText('待整理 1')
     await expect(dialog).toContainText('自动整理已暂停')
+    await expect(dialog).toContainText('父亲患高血压，患者自述。')
+    await expect(dialog).toContainText('青霉素用药后皮疹，患者自述。')
     const commit = dialog.getByRole('button', { name: '确认签署病历', exact: true })
     await expect(commit).toBeDisabled()
     const firstPreviewId = (await read()).consultationRecording!.signingPreparation!.previewId
@@ -89,6 +100,28 @@ test('reviews paused omissions, recovers preparation after reload and signs only
     await expect(dialog).toHaveCount(0)
     await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(1)
     expect((await read()).clinicalDocument!.signed[0]!.content.historyOfPresentIllness).toBe('患者自述：头晕一周了。')
+    expect((await read()).clinicalDocument!.signed[0]!.content).toMatchObject({
+      familyHistory: '父亲患高血压，患者自述。', allergyHistory: '青霉素用药后皮疹，患者自述。',
+    })
+    await expect(page.locator('[data-clinical-document-field="familyHistory"]')).toContainText('父亲患高血压，患者自述。')
+    const revision = page.getByRole('form', { name: '修订病历版本', exact: true })
+    await expect(revision.getByLabel('家族史', { exact: true })).toHaveValue('父亲患高血压，患者自述。')
+    await expect(revision.getByLabel('过敏史', { exact: true })).toHaveValue('青霉素用药后皮疹，患者自述。')
+    await revision.getByLabel('家族史', { exact: true }).fill('')
+    await revision.getByLabel('过敏史', { exact: true }).fill('过敏药物待进一步核实。')
+    await revision.getByLabel('修订原因', { exact: true }).fill('重新核对家族及过敏自述。')
+    await revision.getByRole('button', { name: '提交病历修订', exact: true }).click()
+    const revisionDialog = page.getByRole('alertdialog', { name: '确认提交病历修订', exact: true })
+    await expect(revisionDialog.locator('[data-clinical-document-field="familyHistory"]')).toContainText('未记录')
+    await expect(revisionDialog).toContainText('过敏药物待进一步核实。')
+    await revisionDialog.getByRole('button', { name: '确认提交修订', exact: true }).click()
+    await expect(revisionDialog).toHaveCount(0)
+    await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(2)
+    expect((await read()).clinicalDocument!.signed.map(document => ({ familyHistory: document.content.familyHistory, allergyHistory: document.content.allergyHistory })))
+      .toEqual([
+        { familyHistory: '父亲患高血压，患者自述。', allergyHistory: '青霉素用药后皮疹，患者自述。' },
+        { familyHistory: '', allergyHistory: '过敏药物待进一步核实。' },
+      ])
     await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
     await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeDisabled()
     expect(errors).toEqual([])

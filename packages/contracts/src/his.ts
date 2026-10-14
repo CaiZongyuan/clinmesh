@@ -965,10 +965,12 @@ export const retryConsultationReplyResponseSchema = commandResponseSchema(z.obje
 }).strict())
 
 export const clinicalDocumentContentSchema = z.object({
+  allergyHistory: z.string().trim().max(4_000).optional(),
   assessment: z.string().trim().min(2).max(4_000),
   auxiliaryExamination: z.string().trim().min(2).max(4_000).optional(),
   chiefComplaint: z.string().trim().min(2).max(1_000),
   disposition: z.string().trim().min(2).max(4_000),
+  familyHistory: z.string().trim().max(4_000).optional(),
   followUp: z.string().trim().min(2).max(4_000),
   historyOfPresentIllness: z.string().trim().min(2).max(5_000),
   physicalExamination: z.string().trim().min(2).max(4_000),
@@ -992,13 +994,17 @@ export const consultationHistorySourceSchema = z.object({
   quote: z.string().trim().min(2).max(2_000),
 }).strict()
 
+export const consultationHistoryFieldSchema = z.enum([
+  'chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'familyHistory', 'allergyHistory',
+])
+
 export const consultationHistoryFactSchema = z.object({
   text: z.string().trim().min(2).max(600),
   sources: z.array(consultationHistorySourceSchema).min(1).max(12),
 }).strict()
 
 export const consultationHistorySummarySchema = z.object({
-  field: z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory']),
+  field: consultationHistoryFieldSchema,
   facts: z.array(consultationHistoryFactSchema).min(1).max(12),
   relation: z.enum(['addition', 'update', 'correction', 'conflict']),
   targetAdditionId: z.string().min(1).max(128).optional(),
@@ -1011,7 +1017,7 @@ export const consultationHistorySummarySchema = z.object({
 
 // Retained for stored extracts and old Command receipts.
 export const consultationHistoryAdditionSchema = z.object({
-  field: z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory']),
+  field: consultationHistoryFieldSchema,
   sourceTurnId: z.string().min(1).max(128),
   quote: z.string().trim().min(2).max(2_000),
   relation: z.enum(['addition', 'update', 'correction', 'conflict']),

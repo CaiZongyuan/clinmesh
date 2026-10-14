@@ -20,7 +20,7 @@ clinmesh encounter consultation retry-reply --input @reply-retry.json --idempote
 
 `--view waiting` selects cases awaiting first visit or revisit. `--view active` selects first visits, revisit drafts, and cases awaiting reports. Omit `--view` to list both groups. Filtering precedes pagination and the returned total belongs to the selected group. Completed Encounters use `doctor completed-cases list`.
 
-队列和病例详情中的 `presentation: null` 表示没有分诊来源的临床表现，不能推断无症状或生命体征正常。保留病例并读取已有病历、问诊记录等可见证据；不得从 Case Truth 补造主诉、体征或分诊记录。缺失时结构化病历的主诉、现病史和查体初始为空，已有持久草稿不受影响。
+队列和病例详情中的 `presentation: null` 表示没有分诊来源的临床表现，不能推断无症状或生命体征正常。保留病例并读取已有病历、问诊记录等可见证据；不得从 Case Truth 补造主诉、体征或分诊记录。缺失时结构化病历的主诉、现病史和体格检查初始为空，已有持久草稿不受影响。
 
 ## Clinical conclusions
 
@@ -89,6 +89,8 @@ clinmesh pathology-report correct --input @pathology-correction.json --idempoten
 ```
 
 ## Document and completion
+
+`familyHistory`（家族史）与 `allergyHistory`（过敏史）各最多 4,000 字，可缺失或留空，表示未记录，签署不要求补齐。读取旧草稿或文书时保留缺失状态；不得自动填“无”。新患者自述建议分别进入这两个字段，旧建议保留持久 field，逐项显式应用。过敏史文本不创建正式 AllergyIntolerance，也不替代正式用药过敏校验。保存和修订完整文书时保留当前两字段；清空使用空字符串。
 
 Use independent lifecycle Commands. A document preview binds the current draft and versions; sign from that preview, and revise a signed document by creating a new revision. Document signing never completes the Encounter. Read the completion preview, resolve every blocking condition, then submit Encounter Completion with the current Encounter version. Do not use combined revisit, combined signing/completion or old laboratory-order entrypoints.
 

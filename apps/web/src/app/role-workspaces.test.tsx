@@ -2951,7 +2951,7 @@ describe('role workspaces', () => {
     expect(record).toBeTruthy()
     if (!hasTriage) {
       expect((within(record).getByLabelText('主诉') as HTMLTextAreaElement).value).toBe('')
-      expect((within(record).getByLabelText('查体') as HTMLTextAreaElement).value).toBe('')
+      expect((within(record).getByLabelText('体格检查') as HTMLTextAreaElement).value).toBe('')
     }
     expect(screen.queryByText('咽痛，吞咽时更明显，没有气促。')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '问诊记录' }))
@@ -7175,6 +7175,8 @@ describe('role workspaces', () => {
         expect(body.input.document).toEqual({
           ...structuredClinicalDocument,
           assessment: '复核并合并并发编辑后的最终评估。',
+          familyHistory: '',
+          allergyHistory: '',
         })
         document = body.input.document
         documentVersion = 3
@@ -7229,7 +7231,9 @@ describe('role workspaces', () => {
       .toBe(structuredClinicalDocument.chiefComplaint)
     expect((within(recoveredForm).getByLabelText('现病史') as HTMLTextAreaElement).value)
       .toBe(structuredClinicalDocument.historyOfPresentIllness)
-    expect((within(recoveredForm).getByLabelText('查体') as HTMLTextAreaElement).value)
+    expect((within(recoveredForm).getByLabelText('家族史') as HTMLTextAreaElement).value).toBe('')
+    expect((within(recoveredForm).getByLabelText('过敏史') as HTMLTextAreaElement).value).toBe('')
+    expect((within(recoveredForm).getByLabelText('体格检查') as HTMLTextAreaElement).value)
       .toBe(structuredClinicalDocument.physicalExamination)
     expect((within(recoveredForm).getByLabelText('评估') as HTMLTextAreaElement).value)
       .toBe(structuredClinicalDocument.assessment)
@@ -7395,12 +7399,16 @@ describe('role workspaces', () => {
     expect(screen.getAllByRole('button', { name: '提交病历修订' })).toHaveLength(1)
 
     const revisionForm = screen.getByRole('form', { name: '修订病历版本' })
+    await user.type(within(revisionForm).getByLabelText('家族史'), '父亲患高血压。')
+    await user.type(within(revisionForm).getByLabelText('过敏史'), '青霉素用药后皮疹。')
     await user.clear(within(revisionForm).getByLabelText('评估'))
     await user.type(within(revisionForm).getByLabelText('评估'), '修订后明确为甲型流感轻症。')
     await user.type(within(revisionForm).getByLabelText('修订原因'), '补充复诊时限和危险征象。')
     await user.click(within(revisionForm).getByRole('button', { name: '提交病历修订' }))
 
     const revisionDialog = await screen.findByRole('alertdialog', { name: '确认提交病历修订' })
+    expect(within(revisionDialog).getByText('父亲患高血压。')).toBeTruthy()
+    expect(within(revisionDialog).getByText('青霉素用药后皮疹。')).toBeTruthy()
     expect(clinicalRevisionRequest).toBeUndefined()
     expect(within(revisionDialog).getByText('修订后明确为甲型流感轻症。')).toBeTruthy()
     expect(within(revisionDialog).getByText('补充复诊时限和危险征象。')).toBeTruthy()

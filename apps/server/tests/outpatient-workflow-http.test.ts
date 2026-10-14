@@ -104,6 +104,8 @@ const structuredClinicalDocument = {
 
 const revisedStructuredClinicalDocument = {
   ...structuredClinicalDocument,
+  familyHistory: '父亲患高血压，患者自述。',
+  allergyHistory: '青霉素过敏，患者自述。',
   assessment: '复核检验结果后考虑甲型流感，当前生命体征稳定。',
   disposition: '继续门诊治疗，按医嘱口服抗病毒药物并充分休息。',
   followUp: '三天后复诊；持续高热或出现呼吸困难时立即就医。',

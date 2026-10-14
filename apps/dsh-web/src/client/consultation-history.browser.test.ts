@@ -38,7 +38,17 @@ for (const version of ['18', '19']) {
     await page.getByRole('button', { name: '问诊自动记录', exact: true }).click()
     await expect(page.getByText('自动记录超时，患者回答已保存，请根据问诊原文补充病史。', { exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
-    await expect(pending).toContainText('原内容：医生核对：头晕五天。')
+    await expect(pending.locator('dt')).toHaveText(['当前内容', '拟应用内容'])
+    await expect(pending.locator('dd').first()).toHaveText('医生核对：头晕五天。')
+    await expect(pending).toContainText('更正建议')
+    await expect(pending).toContainText('仅替换下方所示当前片段')
+    const panel = page.locator('[data-consultation-field-suggestions="historyOfPresentIllness"]')
+    await expect(panel.getByRole('heading', { name: '自动整理建议', exact: true })).toBeVisible()
+    await expect(panel.getByRole('status')).toHaveText('待处理 2')
+    expect(await panel.evaluate(element => {
+      const style = getComputedStyle(element)
+      return parseFloat(style.borderTopWidth) > 0 && parseFloat(style.paddingTop) > 0
+    })).toBe(true)
     expect(await pending.evaluate(element => element.closest('[data-clinical-document-field]')?.getAttribute('data-clinical-document-field'))).toBe('historyOfPresentIllness')
     const accept = page.getByRole('button', { name: '应用建议', exact: true })
     await expect(accept).toBeDisabled()
@@ -115,15 +125,47 @@ for (const version of ['18', '19']) {
     await page.getByRole('button', { name: '模拟字段建议', exact: true }).click()
     const chief = page.locator('[data-clinical-document-field="chiefComplaint"]')
     const prior = page.locator('[data-clinical-document-field="priorMedicalHistory"]')
+    const family = page.locator('[data-clinical-document-field="familyHistory"]')
+    const allergy = page.locator('[data-clinical-document-field="allergyHistory"]')
     await expect(chief.locator('[data-consultation-addition="pending"]')).toContainText('自述头晕六天')
     await expect(prior.locator('[data-consultation-addition="pending"]')).toContainText('合成长病史建议。'.repeat(80))
     await expect(chief.getByRole('textbox')).toHaveValue('')
     await expect(prior.getByRole('textbox')).toHaveValue('')
-    for (const field of [chief, prior]) {
+    await expect(family.locator('[data-consultation-addition="pending"]')).toHaveCount(2)
+    await expect(family.getByRole('status')).toHaveText('待处理 2')
+    await expect(allergy.locator('[data-consultation-addition="pending"]')).toContainText('青霉素用药后出现皮疹')
+    await expect(family.getByRole('textbox')).toHaveValue('')
+    await expect(allergy.getByRole('textbox')).toHaveValue('')
+    for (const field of [chief, prior, family, allergy]) {
       expect(await field.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
-      const apply = field.getByRole('button', { name: '应用建议', exact: true })
+      const apply = field.getByRole('button', { name: '应用建议', exact: true }).last()
       await apply.scrollIntoViewIfNeeded()
       await expect(apply).toBeInViewport()
+      expect(await apply.evaluate(element => {
+        const box = element.getBoundingClientRect()
+        return element.getRootNode() instanceof ShadowRoot
+          && (element.getRootNode() as ShadowRoot).elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button') === element
+      })).toBe(true)
+    }
+    for (const dark of [false, true]) {
+      await page.locator('[data-clinmesh-app]').evaluate((element, dark) => element.classList.toggle('dark', dark), dark)
+      const fontSizes: number[] = []
+      for (const font of ['standard', 'larger', 'large']) {
+        await page.locator('[data-clinmesh-app]').evaluate((element, font) => element.setAttribute('data-font-size', font), font)
+        fontSizes.push(await family.getByRole('textbox').evaluate(element => parseFloat(getComputedStyle(element).fontSize)))
+        for (let language = 0; language < 2; language++) {
+          for (const field of [prior, family, allergy]) {
+            expect(await field.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+            expect(await field.getByRole('textbox').evaluate(element => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(36)
+            const sourceButton = field.getByRole('button', { name: language === 0 ? '查看来源' : 'View source', exact: true }).last()
+            await sourceButton.scrollIntoViewIfNeeded()
+            await expect(sourceButton).toBeInViewport()
+          }
+          await page.getByRole('button', { name: '切换语言', exact: true }).click()
+        }
+      }
+      expect(fontSizes[1]).toBeGreaterThan(fontSizes[0]!)
+      expect(fontSizes[2]).toBeGreaterThan(fontSizes[1]!)
     }
     await expect(page.locator('[data-clinical-document-field="physicalExamination"] [data-consultation-field-suggestions]')).toHaveCount(0)
     await page.getByRole('button', { name: '模拟应用失败', exact: true }).click()

@@ -80,7 +80,8 @@ export async function runRecordingJourney(input: {
   input.progress?.('来源、刷新、局部撤销、未保存编辑与冲突核对通过')
 
   for (const [label, value] of [
-    ['主诉', '头晕五天。'], ['查体', '查体尚待进一步核实。'], ['辅助检查', '本次暂无检查结果。'],
+    ['主诉', '头晕五天。'], ['体格检查', '查体尚待进一步核实。'], ['辅助检查', '本次暂无检查结果。'],
+    ['家族史', '父亲患高血压，患者自述。'], ['过敏史', '青霉素用药后皮疹，患者自述。'],
     ['处置', '继续问诊并评估。'], ['随访', '加重时及时就诊。'],
   ]) await page.getByLabel(label!, { exact: true }).fill(value!)
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
@@ -96,6 +97,8 @@ export async function runRecordingJourney(input: {
   await expect(dialog).toHaveCount(0)
   await reload()
   await expect(recording).toHaveAttribute('data-consultation-recording', 'paused')
+  await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('父亲患高血压，患者自述。')
+  await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('青霉素用药后皮疹，患者自述。')
   await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
   await applySuggestion(page, journeyReplies.paused)
   await expect(history).toHaveValue('医生核对：头晕五天。\n患者自述：夜间也会头晕。\n患者自述：躺着休息能缓过来。')
@@ -114,6 +117,8 @@ export async function runRecordingJourney(input: {
   input.progress?.('暂停遗漏、取消准备、刷新补录与失败重试通过')
 
   await input.agentDraft?.()
+  await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('父亲患高血压，患者自述。')
+  await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('青霉素用药后皮疹，患者自述。')
   await ask('late')
   await input.waitForExtraction()
   await page.getByRole('button', { name: '签署病历', exact: true }).click()
@@ -130,6 +135,8 @@ export async function runRecordingJourney(input: {
   if (input.agentSign) await input.agentSign()
   else await page.getByRole('button', { name: '签署病历', exact: true }).click()
   await expect(dialog).toBeVisible()
+  await expect(dialog).toContainText('父亲患高血压，患者自述。')
+  await expect(dialog).toContainText('青霉素用药后皮疹，患者自述。')
   const commit = dialog.getByRole('button', { name: '确认签署病历', exact: true })
   await expect(commit).toBeDisabled()
   expect((await read()).clinicalDocument!.signed).toHaveLength(0)
@@ -138,6 +145,7 @@ export async function runRecordingJourney(input: {
   await expect(dialog).toHaveCount(0)
   await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(1)
   const signed = (await read()).clinicalDocument!.signed
+  expect(signed[0]!.content).toMatchObject({ familyHistory: '父亲患高血压，患者自述。', allergyHistory: '青霉素用药后皮疹，患者自述。' })
   await reload()
   expect((await read()).clinicalDocument!.signed).toEqual(signed)
   for (const addition of (await read()).consultationRecording!.additions) {

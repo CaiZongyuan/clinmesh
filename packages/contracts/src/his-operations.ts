@@ -1621,8 +1621,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save a version-protected clinical document draft; empty fields are allowed, signing still requires complete content',
-    version: 2,
+    summary: 'Save a version-protected clinical document draft; empty fields are allowed. Optional familyHistory and allergyHistory allow empty or missing values meaning not recorded; allergy text does not create AllergyIntolerance. Signing still requires the existing core content',
+    version: 3,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'preview'],
@@ -1689,8 +1689,8 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Create a new revision from the latest signed clinical document',
-    version: 1,
+    summary: 'Create a new revision from the latest signed clinical document, preserving the immutable original. Optional familyHistory and allergyHistory allow empty or missing values meaning not recorded',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'laboratory-request', 'draft', 'set'],

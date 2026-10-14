@@ -2,6 +2,7 @@ import { apiErrorSchema, sessionContextSchema, clinicalDocumentDraftContentSchem
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema, cancelClinicalDocumentSignResponseSchema } from '@clinmesh/contracts/his'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +14,7 @@ import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
+import { applyMigrations } from '../src/infrastructure/sqlite/database.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -186,6 +188,98 @@ async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
   }
   return { complete, save, preview, request }
 }
+
+it.each([
+  { field: 'familyHistory', reply: '我父亲患高血压。', text: '父亲患高血压，患者自述' },
+  { field: 'allergyHistory', reply: '我用青霉素后出过皮疹。', text: '自述青霉素用药后出现皮疹' },
+] as const)('persists independent $field suggestions, applies explicitly and undoes without removing manual text', async ({ field, reply, text }) => {
+  const fixture = await setup({ reply, extract: input => {
+    expect(input.systemPrompt).toContain('familyHistory 是家族史；allergyHistory 是过敏自述')
+    const turn = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!
+    return { additions: [{ field, relation: 'addition', facts: [{ text, sources: [{ sourceTurnId: turn.id, quote: reply }] }] }] }
+  } })
+  await fixture.save('医生记录：病史继续收集。')
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  const suggestion = (await fixture.read()).consultationRecording!.additions[0]!
+  expect(suggestion).toMatchObject({ field, status: 'pending', summary: text })
+  expect((await fixture.read()).clinicalDocument!.draft![field]).toBeUndefined()
+  await fixture.restart()
+  expect((await fixture.review(suggestion.id, 'accept')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft).toMatchObject({ [field]: text, historyOfPresentIllness: '医生记录：病史继续收集。' })
+  await fixture.save(text + '\n医生补充：需进一步核实。', field)
+  await fixture.restart()
+  expect((await fixture.review(suggestion.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft![field]).toBe('医生补充：需进一步核实。')
+})
+
+it('saves, restarts, signs and revises family and allergy history while preserving signed originals and formal allergies', async () => {
+  const fixture = await setup()
+  const sign = await signing(fixture)
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  await sign.save()
+  expect((await fixture.read()).clinicalDocument!.draft).not.toHaveProperty('familyHistory')
+  const allergyCount = () => fixture.runtime.database.driver.prepare("SELECT COUNT(*) AS count FROM fhir_resource WHERE resource_type = 'AllergyIntolerance'").get()
+  const beforeAllergies = allergyCount()
+  await fixture.save('父亲患高血压。', 'familyHistory')
+  await fixture.save('青霉素用药后皮疹。', 'allergyHistory')
+  await fixture.restart()
+  const preview = await sign.preview()
+  expect(preview.document.content).toMatchObject({ familyHistory: '父亲患高血压。', allergyHistory: '青霉素用药后皮疹。' })
+  const response = await sign.request('actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId, consultationReviewed: true })
+  expect(response.status).toBe(200)
+  const signed = clinicalDocumentSignResponseSchema.parse(await response.json()).data
+  const readFhir = async (type: string, id: string) => (await fixture.runtime.app.request(`/fhir/R5/${type}/${id}`, { headers: { cookie: fixture.cookie } })).json()
+  const original = await readFhir('Composition', signed.compositionId)
+  const bundle = await readFhir('Bundle', signed.bundleId)
+  expect(original).toMatchObject({ section: expect.arrayContaining([
+    { title: '家族史', code: expect.objectContaining({ coding: expect.arrayContaining([expect.objectContaining({ code: 'family-history' })]) }),
+      text: expect.objectContaining({ div: expect.stringContaining('父亲患高血压。') }) },
+    { title: '过敏史', code: expect.objectContaining({ coding: expect.arrayContaining([expect.objectContaining({ code: 'allergy-history' })]) }),
+      text: expect.objectContaining({ div: expect.stringContaining('青霉素用药后皮疹。') }) },
+    expect.objectContaining({ title: '体格检查' }),
+  ]) })
+  const current = await fixture.read()
+  const revisionResponse = await fixture.runtime.app.request(`/api/his/v1/clinical-documents/${signed.compositionId}/actions/revise`, {
+    method: 'POST', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Composition/${signed.compositionId}`]: signed.compositionVersion,
+      [`Encounter/${fixture.started.encounterId}`]: current.encounter.versionId }, input: {
+      document: { ...preview.document.content, familyHistory: '', allergyHistory: '过敏药物待核实。' }, reason: '补充核对病史。',
+    } }),
+  })
+  expect(revisionResponse.status).toBe(200)
+  await fixture.restart()
+  expect((await fixture.read()).clinicalDocument!.signed.map(document => document.content)).toEqual([
+    preview.document.content, { ...preview.document.content, familyHistory: '', allergyHistory: '过敏药物待核实。' },
+  ])
+  expect(await readFhir('Composition', signed.compositionId)).toEqual(original)
+  expect(await readFhir('Bundle', signed.bundleId)).toEqual(bundle)
+  expect(allergyCount()).toEqual(beforeAllergies)
+})
+
+it('upgrades the old three-field history constraint without changing existing sources, review, anchors, inverses or order', async () => {
+  const fixture = await setup()
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  await fixture.applySuggestions()
+  await fixture.save('医生手工记录。\n' + (await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness)
+  const database = fixture.runtime.database
+  const rows = () => database.driver.prepare('SELECT * FROM consultation_history_addition ORDER BY rowid').all()
+  const before = rows()
+  const migration = readFileSync(new URL('../drizzle/0061_clinical-document-history-fields.sql', import.meta.url), 'utf8')
+  database.driver.exec(migration.replace(
+    "'priorMedicalHistory', 'familyHistory', 'allergyHistory'", "'priorMedicalHistory'"))
+  database.driver.prepare("DELETE FROM schema_migration WHERE migration_id = '0061_clinical-document-history-fields.sql'").run()
+  expect(rows()).toEqual(before)
+  expect(applyMigrations(database).applied).toEqual(['0061_clinical-document-history-fields.sql'])
+  expect(rows()).toEqual(before)
+  expect(database.driver.pragma('foreign_key_check')).toEqual([])
+  await fixture.restart()
+  const addition = (await fixture.read()).consultationRecording!.additions.find(item => item.status === 'applied')!
+  expect((await fixture.review(addition.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('医生手工记录。')
+})
 
 it('keeps new and updated suggestions out of the draft until individually applied, persists pending updates and undoes only applied text', async () => {
   let reply = firstFeverReply

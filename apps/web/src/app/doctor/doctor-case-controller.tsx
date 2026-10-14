@@ -273,6 +273,7 @@ function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boo
 function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
   const vitals = detail.presentation?.vitalSigns
   const prefill: ClinicalDocumentContent = {
+    allergyHistory: '',
     assessment: '',
     auxiliaryExamination: detail.report === undefined
       ? emptyAuxiliaryExamination
@@ -280,6 +281,7 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
     chiefComplaint: detail.presentation?.chiefComplaint ?? '',
     disposition: '',
     followUp: '',
+    familyHistory: '',
     historyOfPresentIllness: detail.presentation?.summary ?? '',
     physicalExamination: vitals === undefined ? '' : `T ${vitals.temperatureC} °C，P ${vitals.pulseBpm} 次/分，R ${vitals.respirationBpm} 次/分，BP ${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg} mmHg，SpO₂ ${vitals.oxygenSaturationPct}%。`,
     priorMedicalHistory: detail.priorFacts.length === 0
@@ -290,11 +292,13 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
     ?? detail.clinicalDocument?.signed.at(-1)?.content
   if (persisted !== undefined) {
     const document: ClinicalDocumentContent = {
+      allergyHistory: persisted.allergyHistory,
       assessment: persisted.assessment,
       auxiliaryExamination: persisted.auxiliaryExamination,
       chiefComplaint: persisted.chiefComplaint,
       disposition: persisted.disposition,
       followUp: persisted.followUp,
+      familyHistory: persisted.familyHistory,
       historyOfPresentIllness: persisted.historyOfPresentIllness,
       physicalExamination: persisted.physicalExamination,
       priorMedicalHistory: persisted.priorMedicalHistory,
@@ -1725,7 +1729,7 @@ function DoctorCaseController({
         parameters: {
           type: 'object' as const,
           properties: Object.fromEntries([
-            'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+            'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
             'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
           ].map(key => [key, { type: 'string', maxLength: 4000 }])),
           required: [
@@ -2401,7 +2405,7 @@ function DoctorCaseController({
             document: {
               type: 'object',
               properties: Object.fromEntries([
-                'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+                'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
                 'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
               ].map(key => [key, { type: 'string' }])),
               required: [

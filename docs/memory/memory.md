@@ -40,6 +40,10 @@
 
 ## 运行与验证边界
 
+- 隔离测试手动调用 generation、persona 或 outbox `processNext`／`dispatchPending` 时，省略 `autoDispatchIntervalMs` 以关闭自动定时器；设置为 `0` 仍会创建定时器并按最小间隔执行，与手动 claim 竞争，可能使 fixture 误报任务不存在或生成失败。需要自动处理时使用正间隔，并从公开状态等待结果。
+
+- 多病例测试不能在同一 runtime 中反复使用完全相同的 Synthea 来源：生成按来源去重，会返回已经接诊的病例，后续 Persona 因病例状态不允许而失败。替身须返回身份或其他来源事实不同、hash 与内容一致的合成病例，并断言病例 ID 不同。
+
 - 模型语义核对的否定结论是合法结果，结构化输出 `validate` 只校验完整性和形状；在请求完成后处理否定结论。把否定结论当成可修复格式错误，会诱导模型对同一候选改成通过。病史总结采用此边界，见[多轮溯源决策](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
 
 - 验证自然语言来源时，原文归属与完整引用属于确定性边界，事实是否成立属于语义边界；不能用句末问号排除同句中的明确自述，也不能删标点或截断引用规避检查。回归同时提供完整混合句、纯提问和错误肯定总结，确保合法来源确实到达独立核对，而否定结果不触发格式修复；当前病史规则见[多轮溯源决策](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
@@ -267,7 +271,7 @@
 
 - Base UI Select 的长选项换行须同时处理 ItemText 的 `whitespace-nowrap`、`shrink-0`，以及选中值的单行限制与 Trigger 固定高度；ItemText 默认渲染为 `div`，不要凭其他组件的结构假定为 `span`。使用真实 DOM 核对文字宽高和裁切，覆盖窄窗口中的菜单与选中状态。
 
-- 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性。
+- 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性并核对实际计算字号变化，防止空根标记或无效字号让矩阵退回同一默认样式。
 
 - 验证独立滚动时只设置目标区域的 `scrollTop` 或使用真实滚轮，等待页签切换和滚动后的渲染帧，并将末尾边界与实际宿主比较。`scrollIntoView` 会滚动 `overflow-hidden` 祖先，可能掩盖内容已被固定头部挤出宿主的问题；头部 fixture 同时覆盖多条过敏、长文本、矮屏和大字号。
 

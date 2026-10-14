@@ -13,7 +13,7 @@ import {
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
-import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import {
@@ -386,6 +386,8 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
     { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
     { field: 'historyOfPresentIllness', label: messages.historyOfPresentIllness, maxLength: 5_000, multiline: true },
     { field: 'priorMedicalHistory', label: messages.priorMedicalHistory, maxLength: 4_000, multiline: true },
+    { field: 'familyHistory', label: messages.familyHistory, maxLength: 4_000, multiline: true },
+    { field: 'allergyHistory', label: messages.allergyHistory, maxLength: 4_000, multiline: true },
     { field: 'physicalExamination', label: messages.physicalExamination, maxLength: 4_000, multiline: true },
     { field: 'auxiliaryExamination', label: messages.auxiliaryExamination, maxLength: 4_000, multiline: true },
     { field: 'assessment', label: messages.assessment, maxLength: 4_000, multiline: true },
@@ -402,6 +404,7 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
       {fields.map(({ field, label, maxLength, multiline }) => {
         const id = `${idPrefix}-${field}`
         const value = content[field] ?? ''
+        const optional = field === 'familyHistory' || field === 'allergyHistory'
         return (
           <Field data-clinical-document-field={field} className="grid gap-2 border-b px-3 py-2.5 last:border-b-0 @min-[640px]/case-content:grid-cols-[6rem_minmax(0,1fr)] @min-[640px]/case-content:items-start" key={field}>
             <FieldLabel className="pt-2" htmlFor={id}>{label}</FieldLabel>
@@ -412,9 +415,9 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
                 className="min-h-10 resize-y"
                 id={id}
                 maxLength={maxLength}
-                minLength={2}
+                minLength={optional ? undefined : 2}
                 onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
-                required
+                required={!optional}
                 value={value}
               />
             ) : (
@@ -422,13 +425,15 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
                 disabled={disabled}
                 id={id}
                 maxLength={maxLength}
-                minLength={2}
+                minLength={optional ? undefined : 2}
                 onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
-                required
+                required={!optional}
                 value={value}
               />
             )}
+            {optional ? <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription> : null}
             {field === 'chiefComplaint' || field === 'historyOfPresentIllness' || field === 'priorMedicalHistory'
+              || field === 'familyHistory' || field === 'allergyHistory'
               ? <ConsultationHistoryReview {...history} field={field} /> : null}
             </div>
           </Field>
@@ -466,11 +471,13 @@ function ClinicalDocumentForm({
         event.preventDefault()
         const data = new FormData(event.currentTarget)
         onSubmit({
+          allergyHistory: String(data.get('allergyHistory') ?? ''),
           assessment: String(data.get('assessment') ?? ''),
           auxiliaryExamination: String(data.get('auxiliaryExamination') ?? ''),
           chiefComplaint: String(data.get('chiefComplaint') ?? ''),
           disposition: String(data.get('disposition') ?? ''),
           followUp: String(data.get('followUp') ?? ''),
+          familyHistory: String(data.get('familyHistory') ?? ''),
           historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? ''),
           physicalExamination: String(data.get('physicalExamination') ?? ''),
           priorMedicalHistory: String(data.get('priorMedicalHistory') ?? ''),
@@ -512,6 +519,13 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
+        {(['familyHistory', 'allergyHistory'] as const).map(field => (
+          <Field className="border-b p-3 @min-[768px]/case-content:col-span-2" key={field}>
+            <FieldLabel htmlFor={`${idPrefix}-${field}`}>{messages[field]}</FieldLabel>
+            <Textarea defaultValue={content[field] ?? ''} id={`${idPrefix}-${field}`} maxLength={4_000} name={field} />
+            <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription>
+          </Field>
+        ))}
         <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-examination`}>{messages.physicalExamination}</FieldLabel>
           <Textarea
@@ -597,7 +611,7 @@ export function ClinicalDocumentContentView({ content, messages, history }: {
   messages: ReturnType<typeof getWorkspaceMessages>
   history?: Omit<Parameters<typeof ConsultationHistoryReview>[0], 'field'> | undefined
 }): React.JSX.Element {
-  const fields = ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'physicalExamination',
+  const fields = ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'familyHistory', 'allergyHistory', 'physicalExamination',
     'auxiliaryExamination', 'assessment', 'disposition', 'followUp'] as const
   return (
     <dl className="grid grid-cols-1 gap-3 text-sm @min-[768px]/case-content:grid-cols-2">
@@ -606,8 +620,9 @@ export function ClinicalDocumentContentView({ content, messages, history }: {
         if (content[field] === undefined && !hasHistory) return null
         return <div key={field} data-clinical-document-field={field}>
           <dt className="text-muted-foreground">{messages[field]}</dt>
-          {content[field] === undefined ? null : <dd className="whitespace-pre-wrap font-medium">{content[field]}</dd>}
-          {history !== undefined && (field === 'chiefComplaint' || field === 'historyOfPresentIllness' || field === 'priorMedicalHistory')
+          {content[field] === undefined ? null : <dd className="whitespace-pre-wrap break-words font-medium">{content[field] || messages.clinicalHistoryNotRecorded}</dd>}
+          {history !== undefined && (field === 'chiefComplaint' || field === 'historyOfPresentIllness' || field === 'priorMedicalHistory'
+            || field === 'familyHistory' || field === 'allergyHistory')
             ? <dd><ConsultationHistoryReview {...history} field={field} /></dd> : null}
         </div>
       })}

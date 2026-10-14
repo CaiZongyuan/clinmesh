@@ -37,8 +37,8 @@ const shadow = host.attachShadow({ mode: 'open' })
 for (const style of document.querySelectorAll('style')) shadow.append(style.cloneNode(true))
 const root = document.createElement('div')
 root.className = 'clinmesh-web-root h-full'
-root.dataset.clinmeshApp = ''
-root.dataset.fontSize = 'default'
+root.dataset.clinmeshApp = 'web'
+root.dataset.fontSize = 'standard'
 shadow.append(root)
 
 function App(): React.JSX.Element {
@@ -62,6 +62,12 @@ function App(): React.JSX.Element {
         targetAdditionId: undefined, currentText: '', summary: '自述头晕六天' },
       { ...current.additions[0]!, id: 'synthetic-prior', field: 'priorMedicalHistory', relation: 'addition',
         targetAdditionId: undefined, currentText: '', summary: '合成长病史建议。'.repeat(80) },
+      { ...current.additions[0]!, id: 'synthetic-family', field: 'familyHistory', relation: 'addition',
+        targetAdditionId: undefined, currentText: '', summary: '患者自述父亲患高血压。' },
+      { ...current.additions[0]!, id: 'synthetic-family-second', field: 'familyHistory', relation: 'addition',
+        targetAdditionId: undefined, currentText: '', summary: '患者自述母亲无糖尿病。' },
+      { ...current.additions[0]!, id: 'synthetic-allergy', field: 'allergyHistory', relation: 'addition',
+        targetAdditionId: undefined, currentText: '', summary: '患者自述青霉素用药后出现皮疹。' },
     ] }))}>模拟字段建议</button>
     <button type="button" onClick={() => setBlocked(true)}>模拟签署准备</button>
     <button type="button" onClick={() => setFailReview(true)}>模拟应用失败</button>

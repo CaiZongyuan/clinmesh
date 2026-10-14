@@ -381,7 +381,7 @@ export function apply(ctx) {
       await expect.poll(async () => (await read()).clinicalDocument!.draft!.assessment).toBe(assessment)
       const current = (await read()).clinicalDocument!.draft!
       const draft = clinicalDocumentDraftContentSchema.parse(Object.fromEntries([
-        'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition', 'followUp',
+        'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition', 'followUp',
         'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
       ].map(key => [key, current[key as keyof typeof current]])))
       await nativeCall('clinmesh_fill_clinical_document_draft', { ...draft, assessment: '原生 Agent 草稿评估，待进一步核对。',
