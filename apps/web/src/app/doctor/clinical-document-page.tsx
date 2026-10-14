@@ -28,6 +28,7 @@ import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-e
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
+import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -90,6 +91,7 @@ export function ClinicalDocumentPage({
   actions,
   allowRevision,
   detail,
+  updates,
   elementId,
   locale,
   messages,
@@ -99,6 +101,7 @@ export function ClinicalDocumentPage({
   actions: ClinicalDocumentPageActions
   allowRevision: boolean
   detail: DoctorCaseDetail
+  updates?: ClinicalDocumentUpdates | undefined
   elementId: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
@@ -283,6 +286,7 @@ export function ClinicalDocumentPage({
               idPrefix={`clinical-record-${detail.caseId}`}
               messages={messages}
               onChange={onDocumentChange}
+              updates={updates}
             />
             <div className="flex justify-end gap-2 border-t pt-3">
               {actions.save === undefined ? null : <Button disabled={actions.save.pending || preparing || cancelPending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
@@ -353,12 +357,13 @@ export function ClinicalDocumentPage({
   )
 }
 
-function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange }: {
+function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, updates }: {
   content: ClinicalDocumentContent
   disabled: boolean
   idPrefix: string
   messages: ReturnType<typeof getWorkspaceMessages>
   onChange: (document: ClinicalDocumentContent) => void
+  updates: ClinicalDocumentUpdates | undefined
 }): React.JSX.Element {
   const fields = [
     { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
@@ -385,8 +390,12 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange 
         const optional = field === 'familyHistory' || field === 'allergyHistory'
         return (
           <Field data-clinical-document-field={field} className="grid gap-2 border-b px-3 py-2.5 last:border-b-0 @min-[640px]/case-content:grid-cols-[6rem_minmax(0,1fr)] @min-[640px]/case-content:items-start" key={field}>
-            <FieldLabel className="pt-2" htmlFor={id}>{label}</FieldLabel>
+            <div className="flex flex-wrap items-center gap-2 pt-2 @min-[640px]/case-content:flex-col @min-[640px]/case-content:items-start @min-[640px]/case-content:gap-1">
+              <FieldLabel htmlFor={id}>{label}</FieldLabel>
+              {updates?.fields[field] === undefined ? null : <span className="clinical-document-update-label" role="status">{messages.clinicalDocumentFieldUpdated}</span>}
+            </div>
             <div className="flex min-w-0 flex-col gap-2">
+            <ClinicalDocumentUpdateControl field={field} updates={updates}>
             {multiline ? (
               <Textarea
                 disabled={disabled}
@@ -409,6 +418,7 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange 
                 value={value}
               />
             )}
+            </ClinicalDocumentUpdateControl>
             {optional ? <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription> : null}
             </div>
           </Field>

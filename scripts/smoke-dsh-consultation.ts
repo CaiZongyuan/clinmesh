@@ -53,6 +53,8 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
   'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0062_consultation-direct-recording.sql', 'packages/contracts/src/his.ts',
   'apps/web/src/app/doctor/clinical-document-page.tsx',
+  'apps/web/src/app/doctor/clinical-document-updates.tsx', 'apps/web/src/app/doctor/clinical-document-updates.css',
+  'apps/web/src/app/doctor/doctor-case-controller.tsx',
   'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
   'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
   'packages/contracts/src/doctor-recommendations.ts', 'packages/contracts/src/model-bridge.ts',

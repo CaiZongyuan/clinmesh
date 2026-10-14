@@ -43,6 +43,24 @@ for (const version of ['18', '19']) {
     await page.getByRole('button', { name: '模拟自动记录', exact: true }).click()
     await expect(page.getByLabel('家族史', { exact: true })).toHaveValue('患者自述父亲患高血压。')
     await expect(page.getByLabel('过敏史', { exact: true })).toHaveValue('患者自述青霉素用药后出现皮疹。')
+    const allergyField = page.locator('[data-clinical-document-field="allergyHistory"]')
+    // A long preceding field keeps this update out of view. Its reminder must
+    // survive until the doctor scrolls to it, including inside a ShadowRoot.
+    await page.clock.install()
+    await page.clock.fastForward(6_000)
+    await expect(allergyField.getByRole('status')).toHaveText('已更新')
+    await allergyField.getByRole('textbox').scrollIntoViewIfNeeded()
+    await expect(allergyField.locator('[data-clinical-document-update]')).toHaveAttribute('data-clinical-document-update', 'visible')
+    const flow = allergyField.locator('.clinical-document-update-flow')
+    expect(await flow.evaluate(element => getComputedStyle(element).pointerEvents)).toBe('none')
+    expect(await flow.evaluate(element => getComputedStyle(element, '::before').animationPlayState)).toBe('running')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    expect(await flow.evaluate(element => getComputedStyle(element, '::before').animationName)).toBe('none')
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.clock.fastForward(4_000)
+    await expect(allergyField.locator('[data-clinical-document-update]')).toHaveAttribute('data-clinical-document-update', 'fading')
+    await page.clock.fastForward(800)
+    await expect(allergyField.getByRole('status')).toHaveCount(0)
     for (const dark of [false, true]) {
       await page.locator('[data-clinmesh-app]').evaluate((element, dark) => element.classList.toggle('dark', dark), dark)
       const sizes: number[] = []

@@ -137,6 +137,7 @@ import { PatientBanner } from './patient-summary.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
 import { agentViewRevision, useRegisterAgentPage, useRegisterAgentForm } from '../agent-page-context.tsx'
 import { useAgentReview } from '../agent-review.tsx'
+import { useClinicalDocumentUpdates, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
 
 interface DoctorWorkspaceProps {
   locale: WorkspaceLocale
@@ -1334,6 +1335,8 @@ function DoctorCaseController({
   const currentClinicalDocument = detail.data === undefined
     ? undefined
     : workingClinicalDocuments[detail.data.caseId] ?? createWorkingClinicalDocument(detail.data)
+  const clinicalDocumentUpdates = useClinicalDocumentUpdates(detail.data?.caseId, currentClinicalDocument,
+    detail.data?.encounter.status === 'in-progress' && (detail.data.clinicalDocument?.signed.length ?? 0) === 0)
   const canCorrectReports = session.availableRoles.some(role => role.code === 'administrator')
   /** 放射提案经人工确认后提交对应命令，并刷新病例。 */
   const runImagingAction = async <Result,>(caseId: string, action: () => Promise<Result>): Promise<Result> => {
@@ -2622,6 +2625,7 @@ function DoctorCaseController({
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <CaseDetail
+            clinicalDocumentUpdates={clinicalDocumentUpdates}
             recommendationScope={pageScope}
             recommendationRevision={String(recommendationInput.current.revision)}
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
@@ -2913,6 +2917,7 @@ function DoctorCaseController({
             locale={locale}
             messages={messages}
             onClinicalDocumentChange={document => {
+              clinicalDocumentUpdates.onEdit(detail.data.caseId, document)
               setWorkingClinicalDocuments(current => ({
                 ...current,
                 [detail.data.caseId]: document,
@@ -3038,6 +3043,7 @@ function DoctorCaseController({
 }
 
 function CaseDetail({
+  clinicalDocumentUpdates,
   agentDraftHydrationRevisions,
   recommendationScope,
   recommendationRevision,
@@ -3094,6 +3100,7 @@ function CaseDetail({
   startRevisitPending,
   workingClinicalDocument,
 }: {
+  clinicalDocumentUpdates: ClinicalDocumentUpdates
   agentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions
   recommendationScope: string
   recommendationRevision: string
@@ -3462,12 +3469,20 @@ function CaseDetail({
               {detail.consultation === undefined ? null : (
                 <TabsTrigger data-agent-selection="consultation" id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
               )}
-              <TabsTrigger data-agent-selection="record" id={doctorCaseSectionTabElementIds.record} value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
+              <TabsTrigger data-agent-selection="record" id={doctorCaseSectionTabElementIds.record} value="record"
+                aria-describedby={Object.keys(clinicalDocumentUpdates.fields).length === 0 ? undefined : 'clinical-document-update-notice'}>
+                <ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}
+                {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? null : <span className="clinical-document-update-notice" aria-hidden="true">{messages.clinicalDocumentUpdatesShort}</span>}
+              </TabsTrigger>
               <TabsTrigger data-agent-selection="laboratory" id={doctorCaseSectionTabElementIds.laboratory} value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
               <TabsTrigger data-agent-selection="diagnosis" id={doctorCaseSectionTabElementIds.diagnosis} value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
               <TabsTrigger data-agent-selection="prescription" id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
             </TabsList>
           </div>
+
+          <span id="clinical-document-update-notice" className="sr-only" role="status">
+            {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? '' : messages.clinicalDocumentHasUpdates}
+          </span>
 
           {detail.consultation === undefined ? null : (
             <DoctorCasePanel value="consultation">
@@ -3507,6 +3522,7 @@ function CaseDetail({
                     actions={clinicalDocumentActions}
                     allowRevision={!clinicalReadOnly || correctionTarget === 'clinical-document'}
                     detail={detail}
+                    updates={clinicalDocumentUpdates}
                     elementId={encounterCompletionTargetElementIds['clinical-document']}
                     key={`structured-clinical-document:${detail.caseId}:${agentDraftHydrationRevisions.record ?? 0}`}
                     locale={locale}

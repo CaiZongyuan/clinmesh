@@ -36,6 +36,7 @@ export async function runRecordingJourney(input: {
     await page.getByRole('button', { name: '向患者提问', exact: true }).click()
     await expect.poll(async () => (await read()).consultation!.turns.length).toBe(previous + 2)
     await expect(page.getByText(journeyReplies[stage], { exact: true })).toBeVisible()
+    if (stage === 'initial') await expect(page.getByRole('tab', { name: '病历记录', exact: true })).toContainText('有更新')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   }
   const reload = async () => {
@@ -49,6 +50,7 @@ export async function runRecordingJourney(input: {
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
   await ask('initial')
   await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
+  await expect(page.locator('[data-clinical-document-field="historyOfPresentIllness"]').getByRole('status')).toHaveText('已更新')
   await reload()
   await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
   await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)

@@ -4,6 +4,7 @@ import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { ClinicalDocumentContentView, ClinicalDocumentPage } from '../../../web/src/app/doctor/clinical-document-page.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
+import { useClinicalDocumentUpdates } from '../../../web/src/app/doctor/clinical-document-updates.tsx'
 
 const documentContent: ClinicalDocumentContent = {
   chiefComplaint: '', historyOfPresentIllness: '医生核对：头晕五天。', assessment: '',
@@ -48,6 +49,7 @@ function App(): React.JSX.Element {
   const [controls, setControls] = React.useState<string[]>([])
   const [blocked, setBlocked] = React.useState(false)
   const [signedView, setSignedView] = React.useState(false)
+  const updates = useClinicalDocumentUpdates(detail.caseId, working, true)
   return <PortalContainerProvider container={root}>
     <div className="h-full overflow-y-auto">
     <button type="button" onClick={() => setLocale(current => current === 'zh-CN' ? 'en-US' : 'zh-CN')}>切换语言</button>
@@ -64,7 +66,8 @@ function App(): React.JSX.Element {
       : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: {
       ...recording, ...(blocked ? { signingPreparation: { active: true, previewId: 'synthetic-preview', expiresAt: '2099-01-01T00:00:00Z' } } : {}),
     } }} elementId="record" locale={locale}
-      messages={getWorkspaceMessages(locale)} workingDocument={working} onDocumentChange={setWorking}
+      messages={getWorkspaceMessages(locale)} workingDocument={working} onDocumentChange={document => { updates.onEdit(detail.caseId, document); setWorking(document) }}
+      updates={updates}
       actions={{
         prepareSign: { data: undefined, error: null, onReset: () => {}, onSubmit: () => {}, pending: false },
         revise: { error: null, onSubmit: () => {}, pending: false, success: false },
