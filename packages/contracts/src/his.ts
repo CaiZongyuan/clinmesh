@@ -1124,6 +1124,7 @@ export const previewClinicalDocumentSignRequestSchema = z.object({
 
 export const consultationSignReviewSchema = z.object({
   consultationVersion: z.number().int().nonnegative(),
+  sourceCount: z.number().int().nonnegative().optional(),
   remainingCount: z.number().int().nonnegative(),
   failedCount: z.number().int().nonnegative(),
   paused: z.boolean(),

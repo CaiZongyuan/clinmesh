@@ -217,6 +217,7 @@ export class ConsultationRecordingService {
   readonly #now: () => Date
   readonly #virtualTime: (context: ActorContext) => string
   readonly #contextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
+  readonly #prepareReports: (context: ActorContext, transaction: CommandTransaction, caseId: string) => void
 
   constructor(input: {
     database: ClinMeshDatabase
@@ -226,6 +227,7 @@ export class ConsultationRecordingService {
     now: () => Date
     virtualTime: (context: ActorContext) => string
     contextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
+    prepareReports: (context: ActorContext, transaction: CommandTransaction, caseId: string) => void
   }) {
     this.#database = input.database
     this.#commands = input.commands
@@ -234,6 +236,7 @@ export class ConsultationRecordingService {
     this.#now = input.now
     this.#virtualTime = input.virtualTime
     this.#contextStatus = input.contextStatus
+    this.#prepareReports = input.prepareReports
   }
 
   create(context: ActorContext, caseId: string): void {
@@ -243,13 +246,16 @@ export class ConsultationRecordingService {
         this.#hasConsultation(context, caseId) ? 2 : 1)
   }
 
-  activate(input: { context: ActorContext; encounterId: string; expectedVersions: Record<string, string>; idempotencyKey: string }) {
-    return this.#commands.execute({ ...input, operation: 'consultation.recording.activate', input: { encounterId: input.encounterId },
+  activate(input: { context: ActorContext; encounterId: string; expectedVersions: Record<string, string>; idempotencyKey: string;
+    expectedRecordingVersion?: number }) {
+    return this.#commands.execute({ ...input, operation: 'consultation.recording.control',
+      input: { encounterId: input.encounterId, action: 'activate', expectedRecordingVersion: input.expectedRecordingVersion ?? 0 },
       dataSchema: controlConsultationRecordingResponseSchema.shape.data,
     }, transaction => {
       const access = this.#assertAccess(input.context, input.encounterId)
       if (!access.editable || this.isSigning(input.context, access.caseId) || !this.#enabled
-        || input.expectedVersions[`Encounter/${input.encounterId}`] === undefined) {
+        || input.expectedVersions[`Encounter/${input.encounterId}`] === undefined
+        || (this.#state(input.context, access.caseId)?.version ?? 0) !== (input.expectedRecordingVersion ?? 0)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The recording context is not editable')
       }
       if (this.#state(input.context, access.caseId) === undefined && !this.#hasConsultation(input.context, access.caseId)) {
@@ -257,6 +263,12 @@ export class ConsultationRecordingService {
       }
       this.#database.driver.prepare(`UPDATE consultation_recording SET actor_context_json = ?
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).run(JSON.stringify(input.context), input.context.workspaceId, input.context.epoch, access.caseId)
+      this.#prepareReports(input.context, transaction, access.caseId)
+      if (this.#state(input.context, access.caseId) !== undefined) {
+        for (const source of this.#sources(input.context, access.caseId).filter(source => source.kind === 'report')) {
+          this.enqueueSource(input.context, transaction, { ...source, caseId: access.caseId, encounterId: input.encounterId })
+        }
+      }
       this.#scheduleNext(input.context, transaction, access.caseId)
       return { data: this.read(input.context, access.caseId)!, effects: [{ kind: 'updated' as const,
         reference: `ConsultationRecording/${access.caseId}`, versionId: String(this.#state(input.context, access.caseId)?.version ?? 0) }] }
@@ -283,7 +295,9 @@ export class ConsultationRecordingService {
       if (prior !== undefined && JSON.stringify(prior) !== JSON.stringify(source)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The saved doctor source identity has different content')
       }
+      this.#syncPatientSources(context, access.caseId)
       this.enqueueSource(context, transaction, { ...source, caseId: access.caseId, encounterId })
+      this.#prepareReports(context, transaction, access.caseId)
       return { data: { caseId: access.caseId, sourceId }, effects: [{ kind: 'created' as const,
         reference: `ConsultationRecordingSource/${sourceId}`, versionId: '1' }] }
     })
@@ -299,6 +313,7 @@ export class ConsultationRecordingService {
     this.enqueueSource(context, transaction, { caseId: input.caseId, encounterId: input.encounterId,
       id: input.turnId, kind: 'patient', messageText: turn.message_text,
       recordedAt: turn.recorded_at, consultationTurnId: input.turnId })
+    this.#prepareReports(context, transaction, input.caseId)
   }
 
   #syncPatientSources(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string): void {
@@ -320,6 +335,34 @@ export class ConsultationRecordingService {
     caseId: string; encounterId: string
   } & z.infer<typeof consultationRecordingSourceSchema>): void {
     const { caseId, encounterId, ...source } = input
+    this.#saveSource(context, caseId, source)
+    if (this.#state(context, input.caseId) === undefined) return
+    this.#database.driver.prepare(`UPDATE consultation_recording SET actor_context_json = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).run(JSON.stringify(context), context.workspaceId, context.epoch, caseId)
+    this.#database.driver.prepare(`INSERT INTO consultation_recording_job
+      (workspace_id, epoch, case_id, encounter_id, turn_id, actor_context_json, status, scheduled)
+      VALUES (?, ?, ?, ?, ?, ?, 'queued', 0) ON CONFLICT (workspace_id, epoch, turn_id) DO NOTHING
+    `).run(context.workspaceId, context.epoch, caseId, encounterId, source.id, JSON.stringify(context))
+    this.#scheduleNext(context, transaction, caseId)
+  }
+
+  enqueueReport(context: ActorContext, transaction: CommandTransaction, input: {
+    caseId: string; encounterId: string; reportReference: string; messageText: string; recordedAt: string
+  }): void {
+    this.#syncPatientSources(context, input.caseId)
+    const source = consultationRecordingSourceSchema.parse({ id: createHash('sha256').update(input.reportReference).digest('hex'),
+      kind: 'report', reportReference: input.reportReference, messageText: input.messageText, recordedAt: input.recordedAt })
+    const recorder = z.object({ actor_context_json: z.string().nullable() }).optional().parse(this.#database.driver.prepare(`
+      SELECT actor_context_json FROM consultation_recording WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, input.caseId))
+    this.#saveSource(context, input.caseId, source)
+    if (recorder?.actor_context_json === undefined || recorder.actor_context_json === null) return
+    const doctor = contextSchema.parse(JSON.parse(recorder.actor_context_json))
+    this.enqueueSource(doctor, transaction, { ...source, caseId: input.caseId, encounterId: input.encounterId })
+  }
+
+  #saveSource(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string,
+    source: z.infer<typeof consultationRecordingSourceSchema>): void {
     const { id, kind, messageText, recordedAt, ...metadata } = consultationRecordingSourceSchema.parse(source)
     const prior = this.#database.driver.prepare(`SELECT 1 FROM consultation_recording_source
       WHERE workspace_id = ? AND epoch = ? AND source_id = ?`).get(context.workspaceId, context.epoch, id)
@@ -329,14 +372,6 @@ export class ConsultationRecordingService {
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?), ?, ?)
     `).run(context.workspaceId, context.epoch, caseId, id, kind, messageText,
       context.workspaceId, context.epoch, caseId, recordedAt, JSON.stringify(metadata))
-    if (this.#state(context, input.caseId) === undefined) return
-    this.#database.driver.prepare(`UPDATE consultation_recording SET actor_context_json = ?
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).run(JSON.stringify(context), context.workspaceId, context.epoch, caseId)
-    this.#database.driver.prepare(`INSERT INTO consultation_recording_job
-      (workspace_id, epoch, case_id, encounter_id, turn_id, actor_context_json, status, scheduled)
-      VALUES (?, ?, ?, ?, ?, ?, 'queued', 0) ON CONFLICT (workspace_id, epoch, turn_id) DO NOTHING
-    `).run(context.workspaceId, context.epoch, caseId, encounterId, id, JSON.stringify(context))
-    this.#scheduleNext(context, transaction, caseId)
   }
 
   #state(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
@@ -379,13 +414,7 @@ export class ConsultationRecordingService {
   control(input: { context: ActorContext; encounterId: string; action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry';
     expectedRecordingVersion: number; expectedVersions: Record<string, string>; idempotencyKey: string }) {
     const { context, encounterId, action } = input
-    if (action === 'activate') {
-      const access = this.#assertAccess(context, encounterId)
-      if ((this.#state(context, access.caseId)?.version ?? 0) !== input.expectedRecordingVersion) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'Refresh the recording activation state')
-      }
-      return this.activate(input)
-    }
+    if (action === 'activate') return this.activate(input)
     return this.#commands.execute({ context, operation: 'consultation.recording.control',
       expectedVersions: input.expectedVersions, idempotencyKey: input.idempotencyKey,
       input: { encounterId, action, expectedRecordingVersion: input.expectedRecordingVersion },
@@ -405,10 +434,10 @@ export class ConsultationRecordingService {
       }
       if (action !== 'pause' && !this.#enabled) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recording model is unavailable')
       const version = (state?.version ?? 0) + 1
-      this.#database.driver.prepare(`INSERT INTO consultation_recording (workspace_id, epoch, case_id, version, paused, start_sequence)
-        VALUES (?, ?, ?, ?, ?, 1) ON CONFLICT (workspace_id, epoch, case_id)
-        DO UPDATE SET version = excluded.version, paused = excluded.paused
-      `).run(context.workspaceId, context.epoch, access.caseId, version, action === 'pause' ? 1 : 0)
+      this.#database.driver.prepare(`INSERT INTO consultation_recording (workspace_id, epoch, case_id, version, paused, start_sequence, actor_context_json)
+        VALUES (?, ?, ?, ?, ?, 1, ?) ON CONFLICT (workspace_id, epoch, case_id)
+        DO UPDATE SET version = excluded.version, paused = excluded.paused, actor_context_json = excluded.actor_context_json
+      `).run(context.workspaceId, context.epoch, access.caseId, version, action === 'pause' ? 1 : 0, JSON.stringify(context))
       // 使在途结果失效；恢复由本次受信控制意图授权，不借用旧任务的 Grant。
       this.#database.driver.prepare(`UPDATE consultation_recording_job SET generation = generation + 1, scheduled = 0,
         status = 'queued', error_code = NULL, actor_context_json = ?
@@ -416,6 +445,7 @@ export class ConsultationRecordingService {
       `).run(JSON.stringify(context), context.workspaceId, context.epoch, access.caseId)
       if (action !== 'pause') {
         this.#syncPatientSources(context, access.caseId)
+        this.#prepareReports(context, transaction, access.caseId)
         const turns = z.array(z.object({ turn_id: z.string() })).parse(this.#database.driver.prepare(`SELECT t.source_id AS turn_id
           FROM consultation_recording_source t WHERE t.workspace_id = ? AND t.epoch = ? AND t.case_id = ?
             AND t.sequence >= ?

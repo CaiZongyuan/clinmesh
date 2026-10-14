@@ -11,7 +11,7 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
-import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
+import { persona, signIn, startConsultationCase, StubSyntheaProvider, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
 
 const disposals: Array<() => Promise<void>> = []
@@ -139,26 +139,7 @@ async function setup(options: {
     if (response.status === 200) reviewConsultationHistoryResponseSchema.parse(await response.clone().json())
     return response
   }
-  // Ownership, source and signing regressions start from physician-applied text.
-  // Exercise the public review Command explicitly; generation itself stays read-only.
-  const applySuggestions = async () => {
-    const detail = await read()
-    if (detail.consultationRecording?.signingPreparation?.active || detail.clinicalDocument?.signed.length) return
-    for (const addition of (await read()).consultationRecording?.additions ?? []) {
-      if (addition.status !== 'pending' || !addition.reviewable || addition.relation === 'conflict') continue
-      const current = await read()
-      const target = current.consultationRecording?.additions.find(item => item.id === addition.targetAdditionId)
-      if (addition.targetAdditionId?.startsWith('manual:') || target?.ownership === 'manual') continue
-      const field = current.clinicalDocument?.draft?.[addition.field] ?? ''
-      const text = addition.summary || `患者自述：${addition.quote}`
-      const length = target === undefined ? field.length + (field ? 1 : 0) + text.length
-        : field.length - addition.currentText.length + text.length
-      const limit = addition.field === 'chiefComplaint' ? 1_000 : addition.field === 'historyOfPresentIllness' ? 5_000 : 4_000
-      if (length > limit) continue
-      expect((await review(addition.id, 'accept')).status).toBe(200)
-    }
-  }
-  return { get runtime() { return runtime }, read, ask, askMore, requests, started, cookie, save, control, review, applySuggestions,
+  return { get runtime() { return runtime }, read, ask, askMore, requests, started, cookie, save, control, review,
     restart: async () => { await runtime.close(); runtime = await createRuntime() } }
 }
 
@@ -187,37 +168,89 @@ async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
   return { complete, save, preview, request }
 }
 
-it('keeps new and updated suggestions out of the draft until individually applied, persists pending updates and undoes only applied text', async () => {
+it('automatically writes verified new facts into the draft without physician application', async () => {
+  const fixture = await setup()
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.clinicalDocument?.draft).toMatchObject({
+    historyOfPresentIllness: '患者自述：头晕一周了，站起来时更明显。', version: 1,
+  })
+  expect(detail.consultationRecording).toMatchObject({ status: 'updated', additions: [{
+    status: 'applied', ownership: 'automatic', reviewStatus: 'unreviewed',
+  }] })
+  await fixture.restart()
+  expect((await fixture.read()).clinicalDocument?.draft).toEqual(detail.clinicalDocument?.draft)
+})
+
+it('records published laboratory values and conclusion with a fixed report version while paused', async () => {
+  const fixture = await setup({ extract: input => {
+    const source = (input.userPayload as { turns: Array<{ id: string; kind: string; messageText: string }> }).turns.at(-1)!
+    return { additions: source.kind !== 'report' ? [] : [{ field: 'auxiliaryExamination', relation: 'addition',
+      facts: [{ text: '本院检验白细胞计数11.2×10^9/L', sources: [{ sourceTurnId: source.id, quote: source.messageText.split('\n').at(-1)! }] }],
+    }] }
+  } })
+  useSyntheticLaboratoryCatalog(fixture.runtime)
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.control('pause')).status).toBe(200)
+  const detail = await fixture.read()
+  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId }
+  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
+  })
+  expect(draft.status).toBe(200)
+  const saved = await draft.json() as { data: { draftVersion: number } }
+  const issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
+  })
+  expect(issued.status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const published = await fixture.read()
+  const report = published.laboratoryRequests!.requests[0]!.report!
+  const source = published.consultationRecording!.sources!.find(source => source.kind === 'report')!
+  expect(source).toMatchObject({ reportReference: `DiagnosticReport/${report.diagnosticReportId}/_history/1` })
+  expect(source.messageText).toContain(report.conclusion)
+  expect(source.messageText).toContain('11.2')
+  expect(published.consultationRecording).toMatchObject({ status: 'paused', remainingCount: 1 })
+  await fixture.restart()
+  expect((await fixture.read()).consultationRecording!.sources!.find(item => item.kind === 'report')).toEqual(source)
+  expect((await fixture.control('resume')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument!.draft).toMatchObject({ auxiliaryExamination: '本院检验白细胞计数11.2×10^9/L' })
+  expect((await fixture.read()).consultationRecording).toMatchObject({ remainingCount: 0, status: 'updated' })
+})
+
+it('automatically appends new facts and updates only its own fragment, persisting the inverse through restart', async () => {
   let reply = firstFeverReply
   const fixture = await setup({ reply: () => reply, extract: feverSummaries })
   await fixture.save('医生记录：睡眠正常。')
-  const before = (await fixture.read()).clinicalDocument!.draft
   await fixture.ask()
   await fixture.runtime.dispatchPending()
   const first = (await fixture.read()).consultationRecording!.additions[0]!
-  expect(first).toMatchObject({ status: 'pending', reviewable: true, currentText: '' })
-  expect((await fixture.read()).clinicalDocument!.draft).toEqual(before)
+  expect(first).toMatchObject({ status: 'applied', ownership: 'automatic', reviewStatus: 'unreviewed' })
   reply = secondFeverReply
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  const pending = (await fixture.read()).consultationRecording!.additions.at(-1)!
-  expect(pending).toMatchObject({ status: 'pending', reviewable: true, summary: combinedFeverSummary })
-  expect((await fixture.read()).consultationRecording!.additions[0]!.status).toBe('superseded')
-  expect((await fixture.read()).clinicalDocument!.draft).toEqual(before)
-  await fixture.restart()
-  expect((await fixture.read()).consultationRecording!.additions.at(-1)).toEqual(pending)
-  expect((await fixture.review(first.id, 'accept')).status).toBe(409)
-  const key = randomUUID()
-  expect((await fixture.review(pending.id, 'accept', { key, version: before!.version })).status).toBe(200)
-  expect((await fixture.review(pending.id, 'accept', { key, version: before!.version })).status).toBe(200)
+  const next = (await fixture.read()).consultationRecording!.additions.at(-1)!
+  expect(next).toMatchObject({ status: 'applied', summary: combinedFeverSummary, reviewStatus: 'unreviewed' })
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('医生记录：睡眠正常。\n' + combinedFeverSummary)
-  expect((await fixture.read()).consultationRecording!.additions.at(-1)).toMatchObject({ status: 'applied', reviewStatus: 'confirmed' })
+  await fixture.restart()
+  expect((await fixture.read()).consultationRecording!.additions.at(-1)).toEqual(next)
+  expect((await fixture.review(first.id, 'undo')).status).toBe(409)
+  const key = randomUUID()
+  const version = (await fixture.read()).clinicalDocument!.draft!.version
+  expect((await fixture.review(next.id, 'confirm', { key, version })).status).toBe(200)
+  expect((await fixture.review(next.id, 'confirm', { key, version })).status).toBe(200)
   await fixture.save('医生记录：睡眠正常。\n' + combinedFeverSummary + '\n医生补充：尚待查体。')
-  expect((await fixture.review(pending.id, 'undo')).status).toBe(200)
-  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('医生记录：睡眠正常。\n医生补充：尚待查体。')
+  expect((await fixture.review(next.id, 'undo')).status).toBe(200)
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('医生记录：睡眠正常。\n' + feverSummary + '\n医生补充：尚待查体。')
 })
 
-it('retains all four rounds of facts when pending updates form a chain over applied history', async () => {
+it('retains all four rounds of automatically updated facts and restores the immediate predecessor on undo', async () => {
   const replies = ['头晕一周了。', '夜间也会头晕。', '站起来时更明显。', '今天有些乏力。']
   const texts = ['自述头晕一周', '夜间头晕', '站立时加重', '今天乏力']
   const payloadSchema = summaryPayloadSchema.extend({
@@ -226,7 +259,6 @@ it('retains all four rounds of facts when pending updates form a chain over appl
   let round = 0
   const fixture = await setup({ reply: () => replies[round]!, verify: faithfulSummaryVerification, extract: input => {
     const payload = payloadSchema.parse(input.userPayload)
-    // Preserve the selected target's facts, as required by the model contract.
     const target = payload.history.find(item => item.field === 'historyOfPresentIllness')
     const answer = payload.turns.at(-1)!
     return { additions: [{ field: 'historyOfPresentIllness', relation: target === undefined ? 'addition' : 'update',
@@ -238,9 +270,6 @@ it('retains all four rounds of facts when pending updates form a chain over appl
   expect((await fixture.save(manual)).status).toBe(200)
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  const first = (await fixture.read()).consultationRecording!.additions[0]!
-  expect((await fixture.review(first.id, 'accept')).status).toBe(200)
-  const appliedDraft = (await fixture.read()).clinicalDocument!.draft!
   for (round = 1; round < replies.length; round += 1) {
     if (round === 3) await fixture.restart()
     expect((await fixture.askMore()).status).toBe(200)
@@ -249,18 +278,15 @@ it('retains all four rounds of facts when pending updates form a chain over appl
   const detail = await fixture.read()
   const latest = detail.consultationRecording!.additions.at(-1)!
   expect(detail.consultationRecording!.failedCount).toBe(0)
-  expect(detail.clinicalDocument!.draft).toEqual(appliedDraft)
-  expect(latest).toMatchObject({ status: 'pending', reviewable: true, summary: texts.join('；') })
+  expect(latest).toMatchObject({ status: 'applied', summary: texts.join('；') })
   expect(latest.facts!.flatMap(fact => fact.sources.map(source => source.quote))).toEqual(replies)
-  expect(detail.consultationRecording!.additions.map(item => item.status)).toEqual(['applied', 'superseded', 'superseded', 'pending'])
-  expect((await fixture.review(latest.id, 'accept')).status).toBe(200)
-  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(manual + '\n' + texts.join('；'))
+  expect(detail.consultationRecording!.additions.map(item => item.status)).toEqual(['superseded', 'superseded', 'superseded', 'applied'])
+  expect(detail.clinicalDocument!.draft!.historyOfPresentIllness).toBe(manual + '\n' + texts.join('；'))
   expect((await fixture.review(latest.id, 'undo')).status).toBe(200)
-  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(appliedDraft.historyOfPresentIllness)
-  expect((await fixture.read()).consultationRecording!.additions[0]).toMatchObject({ id: first.id, status: 'applied' })
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(manual + '\n' + texts.slice(0, 3).join('；'))
 })
 
-it('creates the first draft only on application and preserves ignored suggestions across restart and old-source replay', async () => {
+it('preserves undone facts across restart and old-source replay, and permits genuinely new patient support', async () => {
   let replay = false
   const fixture = await setup({ extract: input => {
     const payload = summaryPayloadSchema.parse(input.userPayload)
@@ -271,46 +297,43 @@ it('creates the first draft only on application and preserves ignored suggestion
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  expect((await fixture.read()).clinicalDocument?.draft).toBeUndefined()
   const addition = (await fixture.read()).consultationRecording!.additions[0]!
-  expect((await fixture.review(addition.id, 'ignore')).status).toBe(200)
+  expect((await fixture.review(addition.id, 'undo')).status).toBe(200)
   await fixture.restart()
   replay = true
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  expect((await fixture.read()).consultationRecording!.additions).toMatchObject([{ id: addition.id, status: 'ignored' }])
-  expect((await fixture.read()).clinicalDocument?.draft).toBeUndefined()
+  expect((await fixture.read()).consultationRecording!.additions).toMatchObject([{ id: addition.id, status: 'undone' }])
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('')
   replay = false
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
   const next = (await fixture.read()).consultationRecording!.additions.at(-1)!
-  expect(next).toMatchObject({ status: 'pending', reviewable: true })
-  expect((await fixture.review(next.id, 'accept')).status).toBe(200)
-  expect((await fixture.read()).clinicalDocument!.draft).toMatchObject({ version: 1, historyOfPresentIllness: next.summary })
+  expect(next).toMatchObject({ status: 'applied', reviewStatus: 'unreviewed' })
+  expect((await fixture.read()).clinicalDocument!.draft).toMatchObject({ version: 3, historyOfPresentIllness: next.summary })
 })
 
-it('waits for explicit application of an applied summary update and preserves it through a stale draft version', async () => {
+it('keeps a manually edited summary update pending and rejects application with a stale draft version', async () => {
   let reply = firstFeverReply
   const fixture = await setup({ reply: () => reply, extract: feverSummaries })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  const first = (await fixture.read()).consultationRecording!.additions[0]!
-  expect((await fixture.review(first.id, 'accept')).status).toBe(200)
+  await fixture.save('医生核对：发热伴干咳时间仍待明确。')
   const applied = (await fixture.read()).clinicalDocument!.draft!
   reply = secondFeverReply
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
   const pending = (await fixture.read()).consultationRecording!.additions.at(-1)!
-  expect(pending).toMatchObject({ status: 'pending', currentText: feverSummary, reviewable: true })
+  expect(pending).toMatchObject({ status: 'pending', currentText: '医生核对：发热伴干咳时间仍待明确。', reviewable: true })
   expect((await fixture.read()).clinicalDocument!.draft).toEqual(applied)
-  await fixture.save(feverSummary + '\n医生补充：待查体。')
+  await fixture.save('医生核对：发热伴干咳时间仍待明确。' + '\n医生补充：待查体。')
   expect((await fixture.review(pending.id, 'accept', { version: applied.version })).status).toBe(409)
   await fixture.restart()
   expect((await fixture.read()).consultationRecording!.additions.at(-1)).toEqual(pending)
   expect((await fixture.review(pending.id, 'accept')).status).toBe(200)
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(combinedFeverSummary + '\n医生补充：待查体。')
   expect((await fixture.review(pending.id, 'undo')).status).toBe(200)
-  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(feverSummary + '\n医生补充：待查体。')
+  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('医生核对：发热伴干咳时间仍待明确。' + '\n医生补充：待查体。')
 })
 
 it.each([
@@ -368,7 +391,7 @@ it('supersedes a pending correction when new evidence again targets the same man
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  expect((await fixture.review((await fixture.read()).consultationRecording!.additions[0]!.id, 'accept')).status).toBe(200)
+  expect((await fixture.review((await fixture.read()).consultationRecording!.additions[0]!.id, 'confirm')).status).toBe(200)
   await fixture.save(manual)
   const draft = (await fixture.read()).clinicalDocument!.draft!
   reply = '刚才说错了，头晕三天。'
@@ -397,13 +420,11 @@ it('summarizes and merges multi-turn patient facts with persistent citations, de
     extract: input => repeated ? { additions: [] } : feverSummaries(input) })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(feverSummary)
   const first = (await fixture.read()).consultationRecording!.additions[0]!
   reply = secondFeverReply
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const merged = await fixture.read()
   expect(merged.clinicalDocument?.draft?.historyOfPresentIllness).toBe(combinedFeverSummary)
   const update = merged.consultationRecording!.additions.at(-1)!
@@ -416,7 +437,6 @@ it('summarizes and merges multi-turn patient facts with persistent citations, de
   repeated = true
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(combinedFeverSummary)
   expect((await fixture.read()).consultationRecording!.additions).toHaveLength(2)
   expect((await fixture.review(update.id, 'undo')).status).toBe(200)
@@ -431,13 +451,11 @@ it('keeps a locally edited summary as a pending multi-source suggestion across r
   const fixture = await setup({ reply: () => reply, extract: feverSummaries })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const manual = '医生核对：昨晚发热，体温数值待核对。'
   await fixture.save(manual)
   reply = secondFeverReply
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const pending = (await fixture.read()).consultationRecording!.additions.at(-1)!
   expect(pending).toMatchObject({ status: 'pending', currentText: manual, summary: combinedFeverSummary, reviewable: true })
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(manual)
@@ -465,12 +483,10 @@ it.each(['correction', 'conflict'] as const)('keeps both patient sources for a s
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   second = true
   reply = relation === 'correction' ? '刚才说错了，最高是38.0度。' : '最高是38.0度。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const suggestion = (await fixture.read()).consultationRecording!.additions.at(-1)!
   expect(suggestion).toMatchObject({ status: relation === 'correction' ? 'applied' : 'pending', summary: revised })
   expect(suggestion.facts![0]!.sources).toHaveLength(2)
@@ -495,12 +511,10 @@ it.each(['undo', 'ignore'] as const)('keeps a multi-source %s decision across re
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   if (decision === 'ignore') expect((await fixture.save('医生核对：昨晚发热，体温数值待核对。')).status).toBe(200)
   reply = secondFeverReply
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const suggestion = (await fixture.read()).consultationRecording!.additions.at(-1)!
   expect(suggestion.status).toBe(decision === 'undo' ? 'applied' : 'pending')
   expect((await fixture.review(suggestion.id, decision)).status).toBe(200)
@@ -509,7 +523,6 @@ it.each(['undo', 'ignore'] as const)('keeps a multi-source %s decision across re
   reply = '谢谢。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const replayed = await fixture.read()
   expect(replayed.clinicalDocument).toEqual(rejected.clinicalDocument)
   expect(replayed.consultationRecording!.additions).toEqual(rejected.consultationRecording!.additions)
@@ -517,7 +530,6 @@ it.each(['undo', 'ignore'] as const)('keeps a multi-source %s decision across re
   reply = secondFeverReply
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const fresh = await fixture.read()
   expect(fresh.consultationRecording!.additions).toHaveLength(rejected.consultationRecording!.additions.length + 1)
   expect(fresh.consultationRecording!.additions.at(-1)).toMatchObject({
@@ -541,11 +553,9 @@ it('applies a verified correction when its explicit evidence follows another cit
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   reply = '仍然咳嗽，没有痰。刚才说错了，最高是38.0度。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const corrected = await fixture.read()
   const suggestion = corrected.consultationRecording!.additions.at(-1)!
   expect(suggestion).toMatchObject({ relation: 'correction', status: 'applied' })
@@ -565,7 +575,6 @@ it.each(['\n', '\r\n'])('accepts separately cited patient statements delimited b
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const recorded = await fixture.read()
   expect(recorded.consultationRecording).toMatchObject({ status: 'updated', failures: [] })
   expect(recorded.clinicalDocument!.draft!.historyOfPresentIllness).toBe('发热三天；自述最高体温38.5℃')
@@ -588,12 +597,10 @@ it.each(['undo', 'ignore'] as const)('does not mix %s evidence into a later summ
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   if (decision === 'ignore') expect((await fixture.save('医生核对：头晕七天')).status).toBe(200)
   stage = 1
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const rejected = (await fixture.read()).consultationRecording!.additions.at(-1)!
   expect(rejected.status).toBe(decision === 'undo' ? 'applied' : 'pending')
   expect((await fixture.review(rejected.id, decision)).status).toBe(200)
@@ -601,7 +608,6 @@ it.each(['undo', 'ignore'] as const)('does not mix %s evidence into a later summ
   stage = 2
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   let current = (await fixture.read()).consultationRecording!.additions.at(-1)!
   expect(current.summary).toBe('头晕一周；今日乏力')
   expect(current.facts!.flatMap(fact => fact.sources)).not.toContainEqual({ sourceTurnId: rejected.sourceTurnId, quote: replies[1] })
@@ -610,7 +616,6 @@ it.each(['undo', 'ignore'] as const)('does not mix %s evidence into a later summ
   stage = 3
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   current = (await fixture.read()).consultationRecording!.additions.at(-1)!
   expect(current.summary).toBe('头晕一周；昨日起恶心；今日乏力')
   expect(current.facts![1]!.sources).toHaveLength(1)
@@ -639,16 +644,13 @@ it('verifies a combined fact against its remaining sources after rejected eviden
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   stage = 1
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.review((await fixture.read()).consultationRecording!.additions.at(-1)!.id, 'undo')).status).toBe(200)
   stage = 2
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('头晕一周')
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed',
     failures: [{ code: 'CONSULTATION_RECORDING_SOURCE_INVALID', retrying: false }] })
@@ -681,16 +683,13 @@ it('checks rejected facts separately when a live predecessor shares their old ci
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   stage = 1
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.review((await fixture.read()).consultationRecording!.additions.at(-1)!.id, 'undo')).status).toBe(200)
   stage = 2
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('头晕一周')
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed',
     failures: [{ code: 'CONSULTATION_RECORDING_SOURCE_INVALID', retrying: false }] })
@@ -717,11 +716,9 @@ it('rechecks a rejection made while the model is preparing a multi-turn summary'
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   stage = 1
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const update = (await fixture.read()).consultationRecording!.additions.at(-1)!
   stage = 2
   await fixture.askMore()
@@ -729,7 +726,6 @@ it('rechecks a rejection made while the model is preparing a multi-turn summary'
   await entered
   try { expect((await fixture.review(update.id, 'undo')).status).toBe(200) } finally { release() }
   await processing
-  await fixture.applySuggestions()
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('头晕一周；今日乏力')
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', failures: [] })
 })
@@ -746,12 +742,10 @@ it('ignores an old-only summary rewrite after a reply with no new history', asyn
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const before = await fixture.read()
   reply = '谢谢。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const after = await fixture.read()
   expect(after.clinicalDocument).toEqual(before.clinicalDocument)
   expect(after.consultationRecording!.additions).toEqual(before.consultationRecording!.additions)
@@ -762,7 +756,6 @@ it('migrates pre-summary extracts without rewriting their text and replays a rec
   const fixture = await setup()
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const original = await fixture.read()
   const key = randomUUID()
   const paused = await fixture.control('pause', { key })
@@ -794,7 +787,6 @@ it('retains patient uncertainty, home measurements, external diagnoses, medicati
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   expect(detail.clinicalDocument?.draft).toMatchObject({ historyOfPresentIllness: texts.slice(0, 2).join('\n'),
     priorMedicalHistory: texts[2], physicalExamination: '', assessment: '' })
@@ -817,7 +809,6 @@ it.each([
     } })
     await fixture.ask()
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
     expect((await fixture.read()).clinicalDocument?.draft).toBeUndefined()
     expect((await fixture.read()).consultation!.turns.at(-1)!.messageText).toBe(firstFeverReply)
     expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', additions: [],
@@ -839,12 +830,10 @@ it.each(['lost prior fact', 'unresolved contradiction'])('keeps the prior summar
   })) }) })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   update = true
   reply = reason === 'lost prior fact' ? secondFeverReply : '最高量到37.5度。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(feverSummary)
   expect((await fixture.read()).consultationRecording!.additions).toHaveLength(1)
   expect((await fixture.read()).consultationRecording!.status).toBe('failed')
@@ -854,7 +843,6 @@ it('requires complete independent verification rather than trusting missing or d
   const fixture = await setup({ reply: firstFeverReply, extract: feverSummaries, verify: () => ({ additions: [] }) })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
 })
 
@@ -867,7 +855,6 @@ it('rejects a source from another case before semantic verification', async () =
     }] }] }) })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(verificationCalls).toBe(0)
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
 })
@@ -995,7 +982,6 @@ it.each(['preparing', 'signed'])('freezes a preview and unfinished progress when
   if (phase === 'preparing') {
     release()
     await processing
-    await fixture.applySuggestions()
     expect(await fixture.read()).toEqual(frozen)
   }
   const signed = await actions.request('actions/sign', input)
@@ -1004,7 +990,6 @@ it.each(['preparing', 'signed'])('freezes a preview and unfinished progress when
   const beforeLate = await fixture.read()
   release()
   await processing
-  await fixture.applySuggestions()
   expect(await fixture.read()).toEqual(beforeLate)
   expect(beforeLate.clinicalDocument!.signed[0]!.content).toEqual(actions.complete)
   const composition = await fixture.runtime.app.request(`/fhir/R5/Composition/${receipt.data.compositionId}`, { headers: { cookie: fixture.cookie } })
@@ -1042,7 +1027,6 @@ it('cancels preparation durably and resumes an unfinished answer in a new genera
   const receipt = cancelClinicalDocumentSignResponseSchema.parse(await cancel.json())
   release()
   await processing
-  await fixture.applySuggestions()
   expect((await fixture.read()).consultationRecording).toMatchObject({ processedCount: 1, remainingCount: 0, additions: [{ status: 'applied' }] })
   expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(actions.complete.historyOfPresentIllness + '\n患者自述：头晕一周了，站起来时更明显。')
   await fixture.restart()
@@ -1067,11 +1051,9 @@ it('recovers an expired preview after restart without losing explicit pause or o
   expect((await actions.request('actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId, consultationReviewed: true })).status).toBe(409)
   expect((await actions.request('actions/cancel-sign', { previewId: preview.previewId })).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).consultationRecording).toMatchObject({ paused: true, remainingCount: 1, processedCount: 0 })
   expect((await fixture.control('resume')).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).consultationRecording).toMatchObject({ remainingCount: 0, processedCount: 1 })
 })
 
@@ -1086,20 +1068,17 @@ it('reports failed recording and unresolved manual conflicts before signing, and
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   await fixture.save('医生核对：头晕五天。')
   reply = '头晕是三天。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   fail = true
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const actions = await signing(fixture)
   await actions.save()
   const preview = await actions.preview()
-  expect(preview.consultationReview).toMatchObject({ failedCount: 1, remainingCount: 1, conflictCount: 1, unreviewedCount: 0 })
+  expect(preview.consultationReview).toMatchObject({ failedCount: 1, remainingCount: 1, conflictCount: 1, unreviewedCount: 1 })
   await fixture.askMore()
   expect((await actions.request('actions/sign', { commitToken: preview.commitToken, previewId: preview.previewId, consultationReviewed: true })).status).toBe(409)
   expect((await fixture.read()).clinicalDocument!.signed).toEqual([])
@@ -1107,7 +1086,6 @@ it('reports failed recording and unresolved manual conflicts before signing, and
   fail = false
   expect((await fixture.control('retry')).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).consultationRecording!.failedCount).toBe(0)
 })
 
@@ -1115,7 +1093,6 @@ it('replays a legacy preview receipt but requires fresh preparation for a consul
   const fixture = await setup()
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const actions = await signing(fixture)
   await actions.save()
   const input = { expectedDraftVersion: (await fixture.read()).clinicalDocument!.draft!.version }
@@ -1132,7 +1109,7 @@ it('replays a legacy preview receipt but requires fresh preparation for a consul
   expect((await actions.request('actions/sign', { commitToken: legacyData.commitToken, previewId: legacyData.previewId, consultationReviewed: true })).status).toBe(409)
   expect((await actions.request('actions/cancel-sign', { previewId: legacyData.previewId })).status).toBe(200)
   const fresh = await actions.preview()
-  expect(fresh.consultationReview).toMatchObject({ unreviewedCount: 0 })
+  expect(fresh.consultationReview).toMatchObject({ unreviewedCount: 1 })
   expect((await actions.request('actions/sign', { commitToken: fresh.commitToken, previewId: fresh.previewId, consultationReviewed: true })).status).toBe(200)
 })
 
@@ -1145,20 +1122,18 @@ it('persists individual review and source after restart and undoes only the sele
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const original = (await fixture.read()).consultationRecording!.additions
-  expect(original).toMatchObject([{ reviewStatus: 'confirmed' }, { reviewStatus: 'confirmed' }])
-  // Applying already records the physician's confirmation.
+  expect(original).toMatchObject([{ reviewStatus: 'unreviewed' }, { reviewStatus: 'unreviewed' }])
+  expect((await fixture.review(original[1]!.id, 'confirm')).status).toBe(200)
   expect((await fixture.save('患者自述：头晕一周了。\n患者自述：站起来时更明显。\n医生补充：尚未查体。')).status).toBe(200)
   reply = '夜间也会头晕。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   await fixture.restart()
   const before = await fixture.read()
   expect(before.consultationRecording!.additions).toMatchObject([
-    { reviewStatus: 'confirmed', ownership: 'automatic' }, { reviewStatus: 'confirmed', ownership: 'automatic' },
-    { reviewStatus: 'confirmed', ownership: 'automatic' },
+    { reviewStatus: 'unreviewed', ownership: 'automatic' }, { reviewStatus: 'confirmed', ownership: 'automatic' },
+    { reviewStatus: 'unreviewed', ownership: 'automatic' },
   ])
   expect(before.consultation?.turns.find(turn => turn.id === original[0]!.sourceTurnId)?.messageText).toBe('头晕一周了。站起来时更明显。')
   const key = randomUUID()
@@ -1174,19 +1149,18 @@ it('persists individual review and source after restart and undoes only the sele
   const after = await fixture.read()
   expect(after.clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：站起来时更明显。\n医生补充：尚未查体。\n患者自述：夜间也会头晕。')
   expect(after.consultationRecording!.additions).toMatchObject([
-    { status: 'undone', sourceTurnId: original[0]!.sourceTurnId }, { reviewStatus: 'confirmed', ownership: 'automatic' }, { reviewStatus: 'confirmed', ownership: 'automatic' },
+    { status: 'undone', sourceTurnId: original[0]!.sourceTurnId }, { reviewStatus: 'confirmed', ownership: 'automatic' }, { reviewStatus: 'unreviewed', ownership: 'automatic' },
   ])
   const replay = await fixture.review(original[0]!.id, 'undo', { key, version })
   expect(reviewConsultationHistoryResponseSchema.parse(await replay.json())).toEqual(receipt)
   expect((await fixture.read()).clinicalDocument?.draft?.version).toBe(version + 1)
-  expect(fixture.runtime.database.driver.prepare("SELECT count(*) AS count FROM audit_log WHERE operation = 'consultation.history.review' AND outcome = 'success'").get()).toMatchObject({ count: 4 })
+  expect(fixture.runtime.database.driver.prepare("SELECT count(*) AS count FROM audit_log WHERE operation = 'consultation.history.review' AND outcome = 'success'").get()).toMatchObject({ count: 2 })
 })
 
 it.each(['医生核对：头晕五天。', ''] as const)('preserves manually changed or deleted content on undo (%s) and leaves persistent manual review', async history => {
   const fixture = await setup()
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const id = (await fixture.read()).consultationRecording!.additions[0]!.id
   await fixture.save(history)
   const version = (await fixture.read()).clinicalDocument!.draft!.version
@@ -1210,7 +1184,6 @@ it('ends manual undo review after accepting a replacement while preserving the s
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const original = (await fixture.read()).consultationRecording!.additions[0]!
   expect((await fixture.save('医生核对：头晕五天。')).status).toBe(200)
   expect((await fixture.review(original.id, 'undo')).status).toBe(200)
@@ -1219,7 +1192,6 @@ it('ends manual undo review after accepting a replacement while preserving the s
   reply = '刚才说错了，头晕是三天。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const correction = (await fixture.read()).consultationRecording!.additions.at(-1)!
   expect(correction).toMatchObject({ status: 'pending', reviewable: true })
   expect((await fixture.review(correction.id, 'accept')).status).toBe(200)
@@ -1244,11 +1216,9 @@ it('upgrades earlier correction history and replays an old control receipt with 
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   reply = '刚才说错了，头晕是五天。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const id = (await fixture.read()).consultationRecording!.additions.at(-1)!.id
   const key = randomUUID()
   const pause = await fixture.control('pause', { key, version: 1 })
@@ -1279,7 +1249,6 @@ it.each(['confirm', 'undo'] as const)('reviews an upgraded multi-statement legac
   }] }) })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const before = await fixture.read()
   const original = before.consultationRecording!.additions[0]!
   const document = clinicalDocumentDraftContentSchema.parse(Object.fromEntries(Object.entries(before.clinicalDocument!.draft!)
@@ -1339,12 +1308,10 @@ it('undoes a correction using its predecessor text while keeping later increment
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   for (const value of ['刚才说错了，头晕是五天。', '刚才说错了，头晕是六天。', '夜间也会头晕。']) {
     reply = value
     await fixture.askMore()
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
   }
   await fixture.save('患者自述：刚才说错了，头晕是六天。\n患者自述：夜间也会头晕。\n医生补充：尚未查体。')
   const additions = (await fixture.read()).consultationRecording!.additions
@@ -1374,12 +1341,10 @@ it.each([
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   for (const value of ['刚才说错了，头晕五天。', '夜间也会头晕。']) {
     reply = value
     expect((await fixture.askMore()).status).toBe(200)
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
   }
   const history = (await fixture.read()).clinicalDocument!.draft![field]!
   const manual = '医生补充：' + '补'.repeat(limit - 100 - history.length - 6)
@@ -1409,11 +1374,10 @@ it.each([
   reply = '刚才说错了，头晕四天。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   await fixture.restart()
   const replaced = await fixture.read()
   const replacement = replaced.consultationRecording!.additions.at(-1)!
-  expect(replacement).toMatchObject({ status: 'applied', reviewStatus: 'confirmed', ownership: 'automatic' })
+  expect(replacement).toMatchObject({ status: 'applied', reviewStatus: 'unreviewed', ownership: 'automatic' })
   expect(replaced.consultationRecording!.additions[1]).toMatchObject({ status: 'superseded', reviewStatus: 'undo-pending' })
   expect(replaced.consultationRecording!.status).toBe('updated')
   expect((await fixture.review(replacement.id, 'undo')).status).toBe(200)
@@ -1442,11 +1406,9 @@ it('undoes a correction whose restored history exactly meets the field limit', a
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   reply = '刚才说错了，头晕五天。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const manual = '医生补充：' + '补'.repeat(5_000 - original.length - 11)
   expect((await fixture.save(`患者自述：${reply}\n${manual}`)).status).toBe(200)
   const before = await fixture.read()
@@ -1476,19 +1438,17 @@ it.each(['correction', 'conflict'] as const)('keeps distinct targets for the sam
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const originals = (await fixture.read()).consultationRecording!.additions
   expect(originals).toHaveLength(2)
   reply = relation === 'correction' ? '刚才说错了，头晕和咳嗽都只有五天。' : '头晕和咳嗽都只有五天。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   await fixture.restart()
   const detail = await fixture.read()
   expect(detail.consultationRecording!.additions).toHaveLength(4)
   expect(detail.consultationRecording!.additions.slice(2)).toMatchObject(originals.map(target => ({
     sourceTurnId: detail.consultation!.turns.at(-1)!.id, quote: reply, relation, targetAdditionId: target.id,
-    status: relation === 'correction' ? 'applied' : 'pending', reviewStatus: relation === 'correction' ? 'confirmed' : 'unreviewed',
+    status: relation === 'correction' ? 'applied' : 'pending', reviewStatus: 'unreviewed',
   })))
   if (relation === 'correction') {
     expect(detail.consultationRecording!.status).toBe('updated')
@@ -1513,7 +1473,6 @@ it.each(['头晕一周了。', '头晕一周了'] as const)('keeps rejected sour
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const addition = (await fixture.read()).consultationRecording!.additions[0]!
   expect((await fixture.review(addition.id, 'undo')).status).toBe(200)
   await fixture.restart()
@@ -1522,7 +1481,6 @@ it.each(['头晕一周了。', '头晕一周了'] as const)('keeps rejected sour
   phase = 'replay'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const replayed = await fixture.read()
   expect(replayed.consultationRecording!.status).toBe('updated')
   expect(replayed.clinicalDocument!.draft).toEqual(rejected.clinicalDocument!.draft)
@@ -1530,11 +1488,10 @@ it.each(['头晕一周了。', '头晕一周了'] as const)('keeps rejected sour
   phase = 'new'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   expect(detail.consultationRecording!.additions).toHaveLength(2)
   expect(detail.consultationRecording!.additions.at(-1)).toMatchObject({ status: 'applied', quote: alternate,
-    sourceTurnId: detail.consultation!.turns.at(-1)!.id, reviewStatus: 'confirmed' })
+    sourceTurnId: detail.consultation!.turns.at(-1)!.id, reviewStatus: 'unreviewed' })
   expect(detail.clinicalDocument!.draft!.historyOfPresentIllness).toBe(`患者自述：${alternate}`)
 })
 
@@ -1553,13 +1510,11 @@ it.each(['undo', 'ignore'] as const)('suppresses rejected %s evidence during lat
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   if (decision === 'ignore') {
     await fixture.save('医生核对：头晕五天。')
     reply = '刚才说错了，头晕是六天。'
     await fixture.askMore()
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
   }
   const addition = (await fixture.read()).consultationRecording!.additions.at(-1)!
   rejected = { field: addition.field, sourceTurnId: addition.sourceTurnId, quote: addition.quote,
@@ -1569,12 +1524,11 @@ it.each(['undo', 'ignore'] as const)('suppresses rejected %s evidence during lat
   const before = (await fixture.read()).consultationRecording!.additions.length
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const after = await fixture.read()
   expect(after.consultationRecording!.additions).toHaveLength(before + 1)
   expect(after.consultationRecording!.additions.find(item => item.id === addition.id)?.status).toBe(decision === 'undo' ? 'undone' : 'ignored')
   expect(after.consultationRecording!.additions.at(-1)).toMatchObject({ quote: addition.quote,
-    sourceTurnId: after.consultation!.turns.at(-1)!.id, status: decision === 'undo' ? 'applied' : 'pending', reviewStatus: decision === 'undo' ? 'confirmed' : 'unreviewed' })
+    sourceTurnId: after.consultation!.turns.at(-1)!.id, status: decision === 'undo' ? 'applied' : 'pending', reviewStatus: 'unreviewed' })
 })
 
 it('persists pause while saving replies, then resumes in order without duplicating processed answers or losing manual edits', async () => {
@@ -1585,7 +1539,6 @@ it('persists pause while saving replies, then resumes in order without duplicati
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.save('医生核对：头晕五天。')).status).toBe(200)
   const key = randomUUID()
   const paused = await fixture.control('pause', { key, version: 1 })
@@ -1597,7 +1550,6 @@ it('persists pause while saving replies, then resumes in order without duplicati
   reply = '夜间也会头晕。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   await fixture.restart()
   expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: { historyOfPresentIllness: '医生核对：头晕五天。' } },
     consultationRecording: { status: 'paused', paused: true, processedCount: 1, remainingCount: 2 } })
@@ -1607,7 +1559,6 @@ it('persists pause while saving replies, then resumes in order without duplicati
   expect((await fixture.control('resume')).status).toBe(200)
   await fixture.restart()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const final = await fixture.read()
   expect(final.clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：头晕五天。\n患者自述：站起来时更明显。\n患者自述：夜间也会头晕。')
   expect(final.consultationRecording).toMatchObject({ status: 'updated', version: 3, processedCount: 3, remainingCount: 0,
@@ -1627,7 +1578,6 @@ it('offers historical backfill without changing a manual draft on read or restar
   expect((await fixture.save('医生手工核对的病史。')).status).toBe(200)
   await fixture.restart()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: { version: 1, historyOfPresentIllness: '医生手工核对的病史。' } },
     consultationRecording: { version: 0, status: 'backfill', remainingCount: 2 } })
   expect(fixture.requests.filter(input => input.schemaName === 'consultation_history_increment')).toHaveLength(0)
@@ -1636,7 +1586,6 @@ it('offers historical backfill without changing a manual draft on read or restar
   expect(response.status).toBe(200)
   const receipt = controlConsultationRecordingResponseSchema.parse(await response.json())
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(`医生手工核对的病史。\n患者自述：${persona.openingStatement}\n患者自述：头晕一周了，站起来时更明显。`)
   const replay = await fixture.control('backfill', { key, version: 0 })
   expect(controlConsultationRecordingResponseSchema.parse(await replay.json())).toEqual(receipt)
@@ -1656,13 +1605,11 @@ it('retries a failed head before later replies and persists real progress across
   reply = '夜间也会头晕。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   await fixture.restart()
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', failedCount: 1, processedCount: 0, remainingCount: 2 })
   fail = false
   expect((await fixture.control('retry')).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: { historyOfPresentIllness: '患者自述：头晕一周了。\n患者自述：夜间也会头晕。' } },
     consultationRecording: { status: 'updated', failedCount: 0, processedCount: 2, remainingCount: 0 } })
   expect((await fixture.control('retry')).status).toBe(409)
@@ -1691,13 +1638,11 @@ it.each([
     expect((await fixture.control('pause')).status).toBe(200)
     if (resumeFirst) expect((await fixture.control('resume')).status).toBe(200)
   } finally { release(); await dispatch }
-  await fixture.applySuggestions()
   if (!resumeFirst) {
     expect((await fixture.read()).clinicalDocument?.draft).toBeUndefined()
     expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'paused', processedCount: 0, remainingCount: 1 })
     expect((await fixture.control('resume')).status).toBe(200)
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
   }
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', processedCount: 1, remainingCount: 0 })
   expect((await fixture.read()).clinicalDocument?.draft?.version).toBe(1)
@@ -1718,7 +1663,6 @@ it('keeps conflicting handwritten history pending across restart and replaces on
   expect((await fixture.save(original)).status).toBe(200)
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe(original)
   expect(detail.consultationRecording).toMatchObject({ status: 'pending', additions: [
@@ -1748,13 +1692,11 @@ it('compares the current manual edit of an attributed fragment rather than its o
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const original = (await fixture.read()).consultationRecording!.additions[0]!
   expect((await fixture.save('医生已核对：有胸痛。')).status).toBe(200)
   reply = '没有胸痛。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   const conflict = detail.consultationRecording!.additions.find(item => item.status === 'pending')!
   expect(conflict).toMatchObject({ targetAdditionId: original.id, currentText: '医生已核对：有胸痛。', reviewable: true })
@@ -1782,12 +1724,10 @@ it.each(['during-extraction', 'after-extraction'] as const)('invalidates a handw
   const processing = fixture.runtime.dispatchPending()
   await extracting
   if (timing === 'after-extraction') await processing
- await fixture.applySuggestions()
   const newer = '医生重新核对：胸痛已缓解。\n睡眠正常。'
   expect((await fixture.save(newer)).status).toBe(200)
   release()
   await processing
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   const addition = detail.consultationRecording!.additions[0]!
   expect(addition).toMatchObject({ status: 'pending', reviewable: false })
@@ -1816,7 +1756,6 @@ it.each(['医生核对：否认胸痛。', '医生核对：睡眠正常。'] as 
   const processing = fixture.runtime.dispatchPending()
   await extracting
   try { expect((await fixture.save(manual)).status).toBe(200) } finally { release(); await processing }
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   const conflicting = manual.includes('否认胸痛')
   expect(detail.clinicalDocument?.draft?.historyOfPresentIllness)
@@ -1837,7 +1776,6 @@ it('settles repeated in-flight manual saves without appending stale history and 
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(calls).toBe(3)
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：睡眠正常。第3次核对。')
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', remainingCount: 1,
@@ -1846,7 +1784,6 @@ it('settles repeated in-flight manual saves without appending stale history and 
   changing = false
   expect((await fixture.control('retry')).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness)
     .toBe('医生核对：睡眠正常。第3次核对。\n患者自述：胸痛两天了。')
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', remainingCount: 0 })
@@ -1863,7 +1800,6 @@ it.each(['已撤回旧记录：', '独立补充。'] as const)('rechecks the ful
   expect((await fixture.save(original)).status).toBe(200)
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const addition = (await fixture.read()).consultationRecording!.additions[0]!
   expect((await fixture.save(prefix + original)).status).toBe(200)
   const independent = prefix.endsWith('。')
@@ -1885,13 +1821,11 @@ it('keeps a multi-sentence attributed manual fragment pending instead of replaci
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const expanded = '患者自述：睡眠正常。否认胸痛。'
   expect((await fixture.save(expanded)).status).toBe(200)
   reply = '胸痛两天了。'
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const addition = (await fixture.read()).consultationRecording!.additions.find(item => item.status === 'pending')!
   expect(addition.reviewable).toBe(false)
   expect((await fixture.review(addition.id, 'accept')).status).toBe(409)
@@ -1913,7 +1847,6 @@ it('moves a handwritten conflict anchor through unrelated edits and automatic ad
   expect((await fixture.save('医生核对：否认胸痛。\n睡眠正常。')).status).toBe(200)
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：否认胸痛。\n睡眠正常。\n患者自述：走路容易累。')
   const pending = detail.consultationRecording!.additions.find(item => item.status === 'pending')!
@@ -1937,7 +1870,6 @@ it.each(['manual-source', 'wrong-field', 'fabricated-target'] as const)('rejects
   expect((await fixture.save('医生核对：否认胸痛。')).status).toBe(200)
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：否认胸痛。')
   expect(detail.consultationRecording).toMatchObject({ status: 'failed', additions: [], failures: [
@@ -1947,19 +1879,17 @@ it.each(['manual-source', 'wrong-field', 'fabricated-target'] as const)('rejects
 
 it('protects an edited sentence while appending unrelated history in the same field', async () => {
   let reply = '头晕一周了。'
-  const { applySuggestions, runtime, read, ask, askMore, save } = await setup({ reply: () => reply, extract: input => {
+  const { runtime, read, ask, askMore, save } = await setup({ reply: () => reply, extract: input => {
     const turns = (input.userPayload as { turns: Array<{ id: string; messageText: string }> }).turns
     return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turns.at(-1)!.id,
       quote: turns.at(-1)!.messageText, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await save('医生核对：头晕五天。')).status).toBe(200)
   reply = '站起来时更明显。'
   expect((await askMore()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect(await read()).toMatchObject({ clinicalDocument: { draft: {
     historyOfPresentIllness: '医生核对：头晕五天。\n患者自述：站起来时更明显。',
   } }, consultationRecording: { status: 'updated', additions: [
@@ -1977,11 +1907,9 @@ it('replaces only the untouched automatic fragment after an explicit patient cor
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   reply = '刚才说错了，头晕是五天。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: {
     historyOfPresentIllness: '患者自述：刚才说错了，头晕是五天。', version: 2,
   } }, consultationRecording: { status: 'updated', additions: [{ status: 'superseded' }, { status: 'applied', ownership: 'automatic' }] } })
@@ -1998,12 +1926,10 @@ it('keeps a new explicit correction when a superseded correction used the same q
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   for (const correction of ['刚才说错了，头晕是五天。', '刚才说错了，头晕是六天。', '刚才说错了，头晕是五天。']) {
     reply = correction
     expect((await fixture.askMore()).status).toBe(200)
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
   }
   await fixture.restart()
   const final = await fixture.read()
@@ -2027,13 +1953,11 @@ it.each(['accept', 'ignore'] as const)('requires a current-version %s decision b
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.save('医生核对：头晕六天。')).status).toBe(200)
   await fixture.restart()
   reply = '刚才记错了，头晕是五天。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   expect(detail).toMatchObject({ clinicalDocument: { draft: { historyOfPresentIllness: '医生核对：头晕六天。' } },
     consultationRecording: { status: 'pending', additions: [{ ownership: 'manual' }, { status: 'pending', currentText: '医生核对：头晕六天。' }] } })
@@ -2072,12 +1996,10 @@ it('protects separated manual edits but allows a correction between them in the 
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   await fixture.save('医生核对：头晕五天。\n患者自述：站起来时更明显。\n医生核对：白天也会头晕。')
   reply = '刚才说错了，站起来时不明显。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: {
     historyOfPresentIllness: '医生核对：头晕五天。\n患者自述：刚才说错了，站起来时不明显。\n医生核对：白天也会头晕。',
   } }, consultationRecording: { additions: [{ ownership: 'manual' }, { status: 'superseded' },
@@ -2094,13 +2016,11 @@ it('protects only the edited sentence when the model groups several statements i
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const original = (await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness
   expect((await fixture.save(original.replace('头晕一周了', '头晕五天了'))).status).toBe(200)
   reply = '刚才说错了，夜间没有头晕。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: {
     historyOfPresentIllness: '患者自述：头晕五天了。\n患者自述：刚才说错了，夜间没有头晕。',
   } }, consultationRecording: { status: 'updated', additions: [
@@ -2123,11 +2043,9 @@ it.each(['correction', 'conflict'] as const)('retries a %s without a target inst
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   reply = '刚才说错了，头晕是五天。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).consultationRecording?.additions).toHaveLength(2)
   expect((await fixture.read()).consultationRecording?.additions.at(-1)).toMatchObject({
     relation, status: relation === 'correction' ? 'applied' : 'pending',
@@ -2145,7 +2063,6 @@ it('retains manual ownership when an unanchored legacy fragment is restored and 
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   await fixture.save('医生核对：头晕六天。')
   // Seed the migrated representation of an already edited pre-ownership record.
   fixture.runtime.database.driver.prepare(`UPDATE consultation_history_addition SET ownership = 'automatic',
@@ -2155,7 +2072,6 @@ it('retains manual ownership when an unanchored legacy fragment is restored and 
   reply = '刚才说错了，头晕是五天。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: {
     historyOfPresentIllness: '患者自述：头晕一周了。',
   } }, consultationRecording: { status: 'pending', additions: [
@@ -2174,7 +2090,6 @@ it('retries invalid sentence fragments before writing an unreadable case', async
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: {
     historyOfPresentIllness: '患者自述：头晕一周了。', version: 1,
   } }, consultationRecording: { status: 'updated', additions: [{ quote: '头晕一周了。' }] } })
@@ -2191,7 +2106,6 @@ it.each(['automatic', 'manual'] as const)('preserves %s unrelated sentences when
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const originalId = (await fixture.read()).consultationRecording!.additions[0]!.id
   await fixture.save('患者自述：头晕一周了。夜间也会头晕。')
   // Seed the original single-row representation before ownership/statement ranges existed.
@@ -2204,7 +2118,6 @@ it.each(['automatic', 'manual'] as const)('preserves %s unrelated sentences when
   reply = '刚才说错了，夜间没有头晕。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness)
     .toBe(ownership === 'manual' ? '患者自述：头晕五天了。患者自述：刚才说错了，夜间没有头晕。'
       : '患者自述：头晕一周了。患者自述：刚才说错了，夜间没有头晕。')
@@ -2221,11 +2134,9 @@ it('keeps ambiguous contradictory history pending even when its target is automa
   } })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   reply = '头晕五天了。'
   await fixture.askMore()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect(await fixture.read()).toMatchObject({ clinicalDocument: { draft: { historyOfPresentIllness: '患者自述：头晕一周了。', version: 1 } },
     consultationRecording: { status: 'pending', additions: [{ status: 'applied' }, { status: 'pending', currentText: '患者自述：头晕一周了。' }] } })
 })
@@ -2287,7 +2198,6 @@ it.each(['active', 'disable', 'revoke'] as const)('resumes unfinished recording 
   }
   await fixture.restart()
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const after = await fixture.read()
   expect(after.consultationRecording?.signingPreparation).toBeUndefined()
   if (action === 'active') {
@@ -2324,13 +2234,12 @@ it.each(['active', 'revoke'] as const)('resumes with a control-only Agent Grant 
     expect(agentCapabilityGrantSchema.parse(await replacement.json()).grantId).not.toBe(grant.grantId)
   }
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).consultationRecording?.status).toBe(action === 'active' ? 'updated' : 'failed')
   expect((await fixture.read()).clinicalDocument?.draft === undefined).toBe(action !== 'active')
 })
 
 it.each(['active', 'disable', 'revoke'] as const)('records a saved reply with a retry-only Agent Grant only while it is %s', async action => {
-  const { applySuggestions, runtime, ask, read, started } = await setup({ failFirstReply: true })
+  const { runtime, ask, read, started } = await setup({ failFirstReply: true })
   expect((await ask()).status).toBe(503)
   const pending = await read()
   expect(pending.consultation!.turns.at(-1)!.speaker).toBe('doctor')
@@ -2350,7 +2259,6 @@ it.each(['active', 'disable', 'revoke'] as const)('records a saved reply with a 
       headers: { ...adminHeaders, 'idempotency-key': randomUUID() } })).status).toBe(200)
   }
   await runtime.dispatchPending()
-  await applySuggestions()
   const detail = await read()
   expect(detail.consultationRecording?.status).toBe(action === 'active' ? 'updated' : 'failed')
   if (action === 'active') {
@@ -2362,14 +2270,13 @@ it.each(['active', 'disable', 'revoke'] as const)('records a saved reply with a 
 })
 
 it('records saved patient history asynchronously through the public consultation and case interfaces', async () => {
-  const { applySuggestions, runtime, read, ask, requests } = await setup()
+  const { runtime, read, ask, requests } = await setup()
   const response = await ask()
   expect(response.status).toBe(200)
   const asked = sendConsultationMessageResponseSchema.parse(await response.json())
   expect(asked.data.patientTurn.messageText).toBe('头晕一周了，站起来时更明显。')
   expect(await read()).toMatchObject({ consultationRecording: { status: 'processing' } })
   await runtime.dispatchPending()
-  await applySuggestions()
   const detail = await read()
   expect(detail).toMatchObject({
     clinicalDocument: { draft: { historyOfPresentIllness: '患者自述：头晕一周了，站起来时更明显。', assessment: '', physicalExamination: '' } },
@@ -2381,7 +2288,6 @@ it('records saved patient history asynchronously through the public consultation
   const duplicate = await ask()
   expect(duplicate.status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await read()).clinicalDocument?.draft?.version).toBe(detail.clinicalDocument?.draft?.version)
 })
 
@@ -2396,7 +2302,6 @@ it.each(['AI_TIMEOUT', 'AI_AUTH_FAILED', 'AI_RESPONSE_INVALID'] as const)(
     } })
     expect((await fixture.ask()).status).toBe(200)
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
     const detail = await fixture.read()
     expect(detail.clinicalDocument?.draft).toBeUndefined()
     expect(detail.consultationRecording).toMatchObject({ status: 'failed', failedCount: 1, remainingCount: 1, additions: [],
@@ -2406,7 +2311,6 @@ it.each(['AI_TIMEOUT', 'AI_AUTH_FAILED', 'AI_RESPONSE_INVALID'] as const)(
     expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toHaveLength(1)
     await fixture.restart()
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
     expect((await fixture.read()).consultationRecording).toEqual(detail.consultationRecording)
     expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toHaveLength(1)
     fail = false
@@ -2416,7 +2320,6 @@ it.each(['AI_TIMEOUT', 'AI_AUTH_FAILED', 'AI_RESPONSE_INVALID'] as const)(
       status: 'processing', failedCount: 0, failures: [], remainingCount: 1,
     })
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
     expect((await fixture.read()).consultationRecording).toMatchObject({
       status: 'updated', failedCount: 0, failures: [], processedCount: 1, remainingCount: 0,
     })
@@ -2437,7 +2340,6 @@ it('exposes transient failure while retrying and clears it after a validated upd
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'processing',
     failures: [{ code: 'AI_REQUEST_FAILED', retrying: true }] })
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', failures: [] })
 })
 
@@ -2464,32 +2366,28 @@ it.each([0, 2])('settles an extraction cancelled by Server shutdown after %s ear
   await extracting
   await fixture.restart()
   await processing
-  await fixture.applySuggestions()
   if (earlierFailures === 2) {
     expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed',
       failures: [{ code: 'CONSULTATION_RECORDING_FAILED', retrying: false }] })
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
     expect((await fixture.read()).clinicalDocument?.draft).toBeUndefined()
     expect(calls).toBe(3)
     return
   }
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'processing', failures: [] })
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', failures: [] })
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了，站起来时更明显。')
 })
 
 it.each(['没有胸痛。', '之前没有胸痛。后来也没有胸痛。'])('rejects a quote that removes the patient negation instead of recording chest pain (%s)', async reply => {
-  const { applySuggestions, runtime, ask, read } = await setup({ reply, extract: input => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
     return { additions: [{ field: 'historyOfPresentIllness', quote: '胸痛。',
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   const detail = await read()
   expect(detail.clinicalDocument?.draft).toBeUndefined()
   expect(detail.consultationRecording).toMatchObject({ status: 'failed', additions: [] })
@@ -2503,7 +2401,6 @@ it.each(['之前没有胸痛。胸痛。', '我不清楚，胸痛。胸痛。'])
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const detail = await fixture.read()
   expect(detail.consultation!.turns.at(-1)!.messageText).toBe(reply)
   expect(detail.clinicalDocument?.draft).toMatchObject({ historyOfPresentIllness: '患者自述：胸痛。', version: 1 })
@@ -2538,7 +2435,6 @@ it.each([false, true])('repairs patient-source validation before exhausting reco
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   if (manualRetry) {
     const failed = await fixture.read()
     expect(failed.consultationRecording).toMatchObject({ status: 'failed', processedCount: 0, remainingCount: 1,
@@ -2549,7 +2445,6 @@ it.each([false, true])('repairs patient-source validation before exhausting reco
     retryEnabled = true
     expect((await fixture.control('retry')).status).toBe(200)
     await fixture.runtime.dispatchPending()
-    await fixture.applySuggestions()
   }
   expect(await fixture.read()).toMatchObject({
     consultationRecording: { status: 'updated', processedCount: 1, remainingCount: 0, failures: [] },
@@ -2566,14 +2461,13 @@ it.each([
   ['胸痛已经三天！ ？', '胸痛已经三天'],
   ['胸痛已经三天 \t？', '胸痛已经三天'],
 ])('rejects a quote that removes the question mark from %s', async (reply, quote) => {
-  const { applySuggestions, runtime, ask, read } = await setup({ reply, extract: input => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
     return { additions: [{ field: 'historyOfPresentIllness', quote,
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   const detail = await read()
   expect(detail.clinicalDocument?.draft).toBeUndefined()
   expect(detail.consultationRecording).toMatchObject({ status: 'failed', additions: [] })
@@ -2582,14 +2476,13 @@ it.each([
 
 it.each([' ', '\t', '\u00a0', '\n'])('records a complete statement after sentence whitespace %j', async whitespace => {
   const quote = '站起来时更明显。'
-  const { applySuggestions, runtime, ask, read } = await setup({ reply: `头晕一周了。${whitespace}${quote}`, extract: input => {
+  const { runtime, ask, read } = await setup({ reply: `头晕一周了。${whitespace}${quote}`, extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
     return { additions: [{ field: 'historyOfPresentIllness', quote,
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect(await read()).toMatchObject({
     clinicalDocument: { draft: { historyOfPresentIllness: `患者自述：${quote}` } },
     consultationRecording: { status: 'updated', additions: [{ quote, status: 'applied' }] },
@@ -2597,14 +2490,13 @@ it.each([' ', '\t', '\u00a0', '\n'])('records a complete statement after sentenc
 })
 
 it('rejects a quote that drops uncertainty from the same patient sentence', async () => {
-  const { applySuggestions, runtime, ask, read } = await setup({ reply: '我不清楚，胸痛已经三天。', extract: input => {
+  const { runtime, ask, read } = await setup({ reply: '我不清楚，胸痛已经三天。', extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
     return { additions: [{ field: 'historyOfPresentIllness', quote: '胸痛已经三天。',
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await read()).clinicalDocument?.draft).toBeUndefined()
   expect((await read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
 })
@@ -2613,14 +2505,13 @@ it.each([
   ['我不清楚 胸痛已经三天。', '胸痛已经三天。'],
   ['胸痛已经三天 我不清楚。', '胸痛已经三天'],
 ])('rejects whitespace clipping that removes uncertainty from %s', async (reply, quote) => {
-  const { applySuggestions, runtime, ask, read } = await setup({ reply, extract: input => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
     return { additions: [{ field: 'historyOfPresentIllness', quote,
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await read()).clinicalDocument?.draft).toBeUndefined()
   expect((await read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
 })
@@ -2629,20 +2520,19 @@ it.each([
   ['我不清楚，血糖是5.8mmol/L。', '8mmol/L。'],
   ['头晕3.5天。', '头晕3.'],
 ])('rejects an extraction that splits a decimal in %s', async (reply, quote) => {
-  const { applySuggestions, runtime, ask, read } = await setup({ reply, extract: input => {
+  const { runtime, ask, read } = await setup({ reply, extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
     return { additions: [{ field: 'historyOfPresentIllness', quote,
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }] }
   } })
   expect((await ask()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await read()).clinicalDocument?.draft).toBeUndefined()
   expect((await read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
 })
 
 it('applies a repeated model addition once without exhausting durable retries', async () => {
-  const { applySuggestions, runtime, ask, read } = await setup({ extract: input => {
+  const { runtime, ask, read } = await setup({ extract: input => {
     const payload = input.userPayload as { turns: Array<{ id: string }> }
     const addition = { field: 'historyOfPresentIllness', quote: '头晕一周了，站起来时更明显。',
       sourceTurnId: payload.turns.at(-1)!.id, relation: 'addition' }
@@ -2650,7 +2540,6 @@ it('applies a repeated model addition once without exhausting durable retries', 
   } })
   expect((await ask()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await read()).clinicalDocument?.draft).toMatchObject({
     historyOfPresentIllness: '患者自述：头晕一周了，站起来时更明显。', version: 1,
   })
@@ -2664,24 +2553,22 @@ it.each([
   ['fabricated source', () => ({ sourceTurnId: 'different-patient-turn', quote: '头晕一周了，站起来时更明显。' })],
   ['unknown answer', (turns: Array<{ id: string }>) => ({ sourceTurnId: turns.at(-1)!.id, quote: '我不知道。' })],
 ] as const)('keeps the reply and rejects %s in extracted history', async (name, candidate) => {
-  const { applySuggestions, runtime, ask, read } = await setup({
+  const { runtime, ask, read } = await setup({
     ...(name === 'unknown answer' ? { reply: '我不知道。' } : {}),
     extract: input => ({ additions: [{ field: 'historyOfPresentIllness', relation: 'addition',
       ...candidate((input.userPayload as { turns: Array<{ id: string }> }).turns) }] }),
   })
   expect((await ask()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await read()).clinicalDocument?.draft).toBeUndefined()
   expect((await read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
   expect((await read()).consultation?.turns).toHaveLength(3)
 })
 
 it('saves an incomplete draft while preserving required fields for signing', async () => {
-  const { applySuggestions, ask, read, runtime, started, cookie } = await setup()
+  const { ask, read, runtime, started, cookie } = await setup()
   await ask()
   await runtime.dispatchPending()
-  await applySuggestions()
   const detail = await read()
   expect(detail.consultationRecording?.hasSavedDraft).toBe(false)
   const headers = { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }
@@ -2713,7 +2600,7 @@ it('does not wait for extraction and appends history while preserving concurrent
   const extracting = new Promise<void>(resolve => { entered = resolve })
   const held = new Promise<unknown>(resolve => { release = resolve })
   let turnId = ''
-  const { applySuggestions, ask, read, runtime, started, cookie } = await setup({ extract: input => {
+  const { ask, read, runtime, started, cookie } = await setup({ extract: input => {
     turnId = (input.userPayload as { turns: Array<{ id: string }> }).turns.at(-1)!.id
     entered()
     return held
@@ -2734,20 +2621,17 @@ it('does not wait for extraction and appends history while preserving concurrent
     release({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turnId,
       quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] })
     await dispatch
-    await applySuggestions()
   }
   expect(await read()).toMatchObject({ clinicalDocument: { draft: { historyOfPresentIllness: '医生手工核对的病史。\n患者自述：头晕一周了，站起来时更明显。', version: 2 } },
     consultationRecording: { status: 'updated', additions: [{ status: 'applied' }] } })
 })
 
 it('does not repeat history when the patient repeats the same statement in a later answer', async () => {
-  const { applySuggestions, runtime, ask, askMore, read } = await setup()
+  const { runtime, ask, askMore, read } = await setup()
   await ask()
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await askMore()).status).toBe(200)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await read()).clinicalDocument?.draft).toMatchObject({
     historyOfPresentIllness: '患者自述：头晕一周了，站起来时更明显。', version: 1,
   })
@@ -2766,13 +2650,11 @@ it.each(['头晕一周了。', '头晕一周了'])('deduplicates ordinary additi
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const initial = await fixture.read()
   expect(initial.consultationRecording!.additions).toHaveLength(1)
   await fixture.restart()
   expect((await fixture.askMore()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  await fixture.applySuggestions()
   const after = await fixture.read()
   expect(after.consultationRecording).toMatchObject({ status: 'updated', processedCount: 2, remainingCount: 0, failures: [] })
   expect(after.consultationRecording!.additions).toEqual(initial.consultationRecording!.additions)
@@ -2785,7 +2667,7 @@ it.each(['disable', 'revoke'] as const)('settles a late recording as pending aft
   let sourceTurnId = ''
   const extracting = new Promise<void>(resolve => { entered = resolve })
   const held = new Promise<unknown>(resolve => { release = resolve })
-  const { applySuggestions, runtime, ask, read, started } = await setup({ extract: input => {
+  const { runtime, ask, read, started } = await setup({ extract: input => {
     sourceTurnId = (input.userPayload as { turns: Array<{ id: string }> }).turns.at(-1)!.id
     entered()
     return held
@@ -2814,13 +2696,11 @@ it.each(['disable', 'revoke'] as const)('settles a late recording as pending aft
     release({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId,
       quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] })
     await dispatch
-    await applySuggestions()
   }
   expect((await read()).clinicalDocument?.draft).toBeUndefined()
   expect((await read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
   expect((await read()).consultation?.turns).toHaveLength(3)
   await runtime.dispatchPending()
-  await applySuggestions()
   expect((await read()).consultationRecording?.status).toBe('failed')
 })
 

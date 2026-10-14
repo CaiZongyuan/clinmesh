@@ -1,4 +1,4 @@
-import { apiErrorSchema, createPatientResponseSchema, doctorCaseDetailSchema, doctorQueueSchema, registrationResponseSchema, startVisitResponseSchema, triageResponseSchema } from '@clinmesh/contracts/his'
+import { apiErrorSchema, clinicalDocumentSignPreviewResponseSchema, createPatientResponseSchema, doctorCaseDetailSchema, doctorQueueSchema, registrationResponseSchema, startVisitResponseSchema, triageResponseSchema } from '@clinmesh/contracts/his'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -7,13 +7,23 @@ import { expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { signIn } from './fixtures/consultation.ts'
 
-it('rejects backfill without a Consultation as a workflow conflict without creating recording state', async () => {
+it('activates a new case without consultation and requires review before signing doctor-only recording', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-recording-control-'))
   const runtime = await createClinMeshRuntime({
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', trustedOrigins: ['http://localhost'],
     dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+    chatCompletionsProvider: { async completeJson(input) {
+      const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>; additions?: unknown[] }
+      if (input.schemaName === 'consultation_history_verification') return { model: 'synthetic', content: JSON.stringify({
+        additions: payload.additions!.map((_, index) => ({ index, faithful: true, complete: true, relationValid: true })),
+      }) }
+      const source = payload.turns.at(-1)!
+      return { model: 'synthetic', content: JSON.stringify({ additions: [{ field: 'assessment', relation: 'addition',
+        facts: [{ text: '医生考虑急性上呼吸道感染', sources: [{ sourceTurnId: source.id, quote: source.messageText }] }],
+      }] }) }
+    } },
   })
   const headers = (cookie: string) => ({ cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() })
   try {
@@ -66,6 +76,46 @@ it('rejects backfill without a Consultation as a workflow conflict without creat
     expect(error.error.code).toBe('WORKFLOW_CONFLICT')
     expect(await read()).toEqual(before)
     expect(runtime.database.driver.prepare('SELECT count(*) AS count FROM consultation_recording_job').get()).toMatchObject({ count: 0 })
+    const activated = await runtime.app.request(`/api/his/v1/encounters/${registration.encounterId}/consultation-recording/actions/control`, {
+      method: 'POST', headers: headers(doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${registration.encounterId}`]: visit.encounterVersion },
+        input: { action: 'activate', expectedRecordingVersion: 0 } }),
+    })
+    expect(activated.status).toBe(200)
+    expect((await read()).consultationRecording).toMatchObject({ status: 'idle', version: 1, sources: [] })
+    const context = await runtime.identity.resolveActorContext(new Headers({ cookie: doctor }), 'encounter.consultation.recording.control')
+    runtime.workflow.recordDoctorSupplement({ context, encounterId: registration.encounterId, sourceId: 'doctor-only-source',
+      content: '我考虑急性上呼吸道感染。', sessionId: 'synthetic-session', rpcId: 'synthetic-rpc', messageId: 'synthetic-message',
+      recordedAt: '2026-10-14T01:00:00.000Z', expectedVersions: { [`Encounter/${registration.encounterId}`]: visit.encounterVersion }, idempotencyKey: randomUUID() })
+    await runtime.dispatchPending()
+    const recorded = await read()
+    expect(recorded.consultation).toBeUndefined()
+    expect(recorded.clinicalDocument!.draft).toMatchObject({ assessment: '医生考虑急性上呼吸道感染' })
+    expect(recorded.consultationRecording!.sources).toMatchObject([{ kind: 'doctor', id: 'doctor-only-source' }])
+    const document = { chiefComplaint: '发热伴咽痛两天。', historyOfPresentIllness: '合成患者自诉发热咽痛。',
+      physicalExamination: '医生查体咽部充血。', assessment: recorded.clinicalDocument!.draft!.assessment,
+      disposition: '医生决定门诊观察。', followUp: '医生安排三日后复诊。' }
+    const saved = await runtime.app.request(`/api/his/v1/encounters/${registration.encounterId}/clinical-document/draft`, {
+      method: 'PUT', headers: headers(doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${registration.encounterId}`]: visit.encounterVersion },
+        input: { expectedDraftVersion: recorded.clinicalDocument!.draft!.version, document } }),
+    })
+    expect(saved.status).toBe(200)
+    const preview = await runtime.app.request(`/api/his/v1/encounters/${registration.encounterId}/clinical-document/actions/preview-sign`, {
+      method: 'POST', headers: headers(doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${registration.encounterId}`]: visit.encounterVersion },
+        input: { expectedDraftVersion: (await read()).clinicalDocument!.draft!.version } }),
+    })
+    expect(preview.status).toBe(200)
+    const prepared = clinicalDocumentSignPreviewResponseSchema.parse(await preview.json()).data
+    expect(prepared.consultationReview).toMatchObject({ consultationVersion: 0, unreviewedCount: 1 })
+    const denied = await runtime.app.request(`/api/his/v1/encounters/${registration.encounterId}/clinical-document/actions/sign`, {
+      method: 'POST', headers: headers(doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${registration.encounterId}`]: visit.encounterVersion },
+        input: { previewId: prepared.previewId, commitToken: prepared.commitToken } }),
+    })
+    expect(denied.status).toBe(409)
+    const signed = await runtime.app.request(`/api/his/v1/encounters/${registration.encounterId}/clinical-document/actions/sign`, {
+      method: 'POST', headers: headers(doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${registration.encounterId}`]: visit.encounterVersion },
+        input: { previewId: prepared.previewId, commitToken: prepared.commitToken, consultationReviewed: true } }),
+    })
+    expect(signed.status).toBe(200)
   } finally {
     await runtime.close()
     await rm(directory, { recursive: true, force: true })

@@ -152,6 +152,7 @@ export interface ImagingRequestHost {
   assertExpectedVersions(expectedVersions: Record<string, string>, references: string[]): void
   caseByEncounter(context: ActorContext, encounterId: string): { case_id: string; patient_id: string; status: string }
   hasConsultation(context: ActorContext, caseId: string): boolean
+  reportPublished(transaction: CommandTransaction, context: ActorContext, caseId: string, reportReference: string): void
   virtualTime(context: ActorContext): string
 }
 
@@ -994,6 +995,7 @@ export class ImagingRequestService {
       input.result.impression,
       input.now,
     )
+    this.#host.reportPublished(transaction, context, request.case_id, `DiagnosticReport/${report.id}/_history/${report.meta?.versionId ?? '1'}`)
     return report
   }
 
