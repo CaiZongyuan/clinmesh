@@ -86,7 +86,7 @@ it('activates a new case without consultation and requires review before signing
     const supplement = { context, encounterId: registration.encounterId, sourceId: 'doctor-only-source',
       content: '我考虑急性上呼吸道感染。', sessionId: 'synthetic-session', rpcId: 'synthetic-rpc', messageId: 'synthetic-message',
       recordedAt: '2026-10-14T01:00:00.000Z', expectedVersions: { [`Encounter/${registration.encounterId}`]: visit.encounterVersion }, idempotencyKey: randomUUID() }
-    runtime.workflow.recordDoctorSupplement(supplement)
+    runtime.workflow.consultationRecording.recordDoctorSupplement(supplement)
     await runtime.dispatchPending()
     const recorded = await read()
     expect(recorded.consultation).toBeUndefined()
@@ -117,7 +117,7 @@ it('activates a new case without consultation and requires review before signing
         input: { previewId: prepared.previewId, commitToken: prepared.commitToken, consultationReviewed: true } }),
     })
     expect(signed.status).toBe(200)
-    expect(() => runtime.workflow.recordDoctorSupplement(supplement)).toThrow('not editable')
+    expect(() => runtime.workflow.consultationRecording.recordDoctorSupplement(supplement)).toThrow('not editable')
   } finally {
     await runtime.close()
     await rm(directory, { recursive: true, force: true })

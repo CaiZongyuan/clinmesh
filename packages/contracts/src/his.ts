@@ -995,10 +995,11 @@ export const consultationHistorySourceSchema = z.object({
 export const consultationRecordingSourceSchema = z.object({
   id: z.string().min(1).max(128),
   kind: z.enum(['patient', 'doctor', 'report']),
-  messageText: z.string().min(1).max(20_000),
+  messageText: z.string().min(1),
   recordedAt: z.string().min(1),
   consultationTurnId: z.string().min(1).max(128).optional(),
   reportReference: z.string().regex(/^DiagnosticReport\/[A-Za-z0-9.-]+\/_history\/\d+$/).optional(),
+  reportContentHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   sessionId: z.string().min(1).max(128).optional(),
   messageId: z.string().min(1).max(128).optional(),
   rpcId: z.string().min(1).max(128).optional(),

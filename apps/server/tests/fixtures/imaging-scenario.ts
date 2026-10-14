@@ -240,6 +240,7 @@ export async function createImagingRuntime(bundles: unknown[], options: {
   catalog?: boolean
   performanceObserver?: SqlitePerformanceObserver
   persona?: boolean
+  recording?: boolean
   targetedGeneration?: boolean
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-imaging-'))
@@ -266,6 +267,8 @@ export async function createImagingRuntime(bundles: unknown[], options: {
     databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!',
     dshBridgeSecret,
+    ...(options.recording !== true ? {} : { dshModelBridge: { origin: 'http://127.0.0.1:1',
+      secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 } }),
     ...(options.assets === false ? {} : { imagingAssetDirectory: assetDirectory }),
     ...(options.catalog === false ? {} : { imagingCatalogDirectory: catalogDirectory }),
     migrationMode: 'apply',

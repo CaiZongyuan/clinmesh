@@ -3406,10 +3406,6 @@ export class WorkflowService {
     })
   }
 
-  recordDoctorSupplement(input: Parameters<ConsultationRecordingService['recordDoctorSupplement']>[0]) {
-    return this.consultationRecording.recordDoctorSupplement(input)
-  }
-
   appendPatientConsultationTurn(input: {
     context: ActorContext
     encounterId: string
@@ -9912,6 +9908,7 @@ export class WorkflowService {
     const parsed = /^DiagnosticReport\/([A-Za-z0-9.-]+)\/_history\/(\d+)$/u.exec(reportReference)
     if (parsed === null) throw new Error('The published report reference must contain a fixed version')
     const report = z.object({ status: z.enum(['final', 'amended', 'corrected']),
+      category: z.array(z.object({ coding: z.array(z.object({ code: z.string().optional() })).optional() })).optional(),
       encounter: z.object({ reference: z.string() }), subject: z.object({ reference: z.string() }),
       conclusion: z.string().optional(), code: z.object({ text: z.string().optional() }).optional(),
       result: z.array(z.object({ reference: z.string() })).optional(), issued: z.string(),
@@ -9936,10 +9933,14 @@ export class WorkflowService {
       if (value === undefined) throw new Error('The published report result has no supported value')
       return `${name}：${value}。`
     })
-    const messageText = [report.code?.text, report.conclusion, ...observations].filter(Boolean).join('\n')
+    const categories = report.category?.flatMap(category => category.coding?.map(coding => coding.code) ?? []) ?? []
+    const published = categories.includes('RAD') ? this.imaging.publishedReportText(context, caseId, parsed[1]!)
+      : categories.includes('SP') ? this.pathology.publishedReportText(context, caseId, parsed[1]!) : undefined
+    const messageText = [report.code?.text, published?.text ?? report.conclusion, ...observations].filter(Boolean).join('\n')
     if (report.conclusion === undefined && observations.length === 0) throw new Error('The published report contains no recordable facts')
     this.consultationRecording.enqueueReport(context, transaction, { caseId, encounterId: outpatientCase.encounter_id,
-      messageText, recordedAt: report.issued, reportReference })
+      messageText, recordedAt: report.issued, reportReference,
+      ...(published === undefined ? {} : { reportContentHash: published.reportContentHash }) })
   }
 
   #prepareRecordingReports(transaction: CommandTransaction, context: ActorContext, caseId: string): void {

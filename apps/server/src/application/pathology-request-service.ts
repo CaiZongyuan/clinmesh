@@ -102,6 +102,7 @@ const requestRowSchema = z.object({
 }).strict()
 
 const reportContentRowSchema = z.object({
+  case_id: z.string().min(1),
   diagnosis: z.string().min(1),
   diagnostic_report_id: z.string().min(1),
   immunohistochemistry: z.string().min(1),
@@ -110,6 +111,7 @@ const reportContentRowSchema = z.object({
   note: z.string().min(1),
   received_at: z.string().min(1),
   report_revision: z.number().int().positive(),
+  report_content_sha256: z.string().regex(/^[a-f0-9]{64}$/),
   slide_count: z.number().int().positive(),
   specimen_id: z.string().min(1),
   study_id: z.string().min(1),
@@ -1301,11 +1303,18 @@ export class PathologyRequestService {
     })
   }
 
+  publishedReportText(context: ActorContext, caseId: string, diagnosticReportId: string) {
+    const content = this.#reportContent(context, diagnosticReportId)
+    if (content.case_id !== caseId) throw new WorkflowError('WORKFLOW_CONFLICT', 'The pathology report does not belong to the recording case')
+    return { text: [`镜下所见：\n${content.microscopy}`, `病理诊断：\n${content.diagnosis}`,
+      `免疫组化：\n${content.immunohistochemistry}`, `备注：\n${content.note}`].join('\n'), reportContentHash: content.report_content_sha256 }
+  }
+
   #reportContent(context: ActorContext, diagnosticReportId: string) {
     const row = reportContentRowSchema.optional().parse(this.#database.driver.prepare(`
-      SELECT content.diagnostic_report_id, content.study_id, content.report_revision,
+      SELECT content.diagnostic_report_id, content.study_id, content.report_revision, content.report_content_sha256,
         content.microscopy, content.diagnosis, content.immunohistochemistry, content.note,
-        content.slide_count, content.issued_at, study.received_at, study.specimen_id
+        content.slide_count, content.issued_at, study.received_at, study.specimen_id, study.case_id
       FROM pathology_report_content AS content
       JOIN pathology_study AS study
         ON study.workspace_id = content.workspace_id

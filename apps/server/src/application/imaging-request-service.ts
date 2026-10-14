@@ -107,12 +107,14 @@ const requestRowSchema = z.object({
 }).strict()
 
 const reportContentRowSchema = z.object({
+  case_id: z.string().min(1),
   diagnostic_report_id: z.string().min(1),
   findings: z.string().min(1),
   impression: z.string().min(1),
   issued_at: z.string().min(1),
   performed_at: z.string().min(1),
   report_revision: z.number().int().positive(),
+  report_content_sha256: z.string().regex(/^[a-f0-9]{64}$/),
   study_id: z.string().min(1),
   technique: z.string().min(1),
 }).strict()
@@ -1187,11 +1189,18 @@ export class ImagingRequestService {
     })
   }
 
+  publishedReportText(context: ActorContext, caseId: string, diagnosticReportId: string) {
+    const content = this.#reportContent(context, diagnosticReportId)
+    if (content.case_id !== caseId) throw new WorkflowError('WORKFLOW_CONFLICT', 'The imaging report does not belong to the recording case')
+    return { text: [`检查方法：\n${content.technique}`, `影像所见：\n${content.findings}`, `诊断意见：\n${content.impression}`].join('\n'),
+      reportContentHash: content.report_content_sha256 }
+  }
+
   #reportContent(context: ActorContext, diagnosticReportId: string) {
     const row = reportContentRowSchema.optional().parse(this.#database.driver.prepare(`
-      SELECT content.diagnostic_report_id, content.study_id, content.report_revision,
+      SELECT content.diagnostic_report_id, content.study_id, content.report_revision, content.report_content_sha256,
         content.technique, content.findings, content.impression, content.issued_at,
-        study.performed_at
+        study.performed_at, study.case_id
       FROM imaging_report_content AS content
       JOIN imaging_study AS study
         ON study.workspace_id = content.workspace_id

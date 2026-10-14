@@ -269,9 +269,8 @@ export class ConsultationRecordingService {
       this.bindDoctorContext(input.context, access.caseId)
       this.#prepareReports(input.context, transaction, access.caseId)
       if (this.#state(input.context, access.caseId) !== undefined) {
-        for (const source of this.#sources(input.context, access.caseId).filter(source => source.kind === 'report')) {
-          this.enqueueSource(input.context, transaction, { ...source, caseId: access.caseId, encounterId: input.encounterId })
-        }
+        const source = this.#sources(input.context, access.caseId).find(source => source.kind === 'report')
+        if (source !== undefined) this.enqueueSource(input.context, transaction, { ...source, caseId: access.caseId, encounterId: input.encounterId })
       }
       this.#scheduleNext(input.context, transaction, access.caseId)
       return { data: this.read(input.context, access.caseId)!, effects: [{ kind: 'updated' as const,
@@ -356,11 +355,12 @@ export class ConsultationRecordingService {
   }
 
   enqueueReport(context: ActorContext, transaction: CommandTransaction, input: {
-    caseId: string; encounterId: string; reportReference: string; messageText: string; recordedAt: string
+    caseId: string; encounterId: string; reportReference: string; messageText: string; recordedAt: string; reportContentHash?: string
   }): void {
     this.#syncPatientSources(context, input.caseId)
     const source = consultationRecordingSourceSchema.parse({ id: createHash('sha256').update(input.reportReference).digest('hex'),
-      kind: 'report', reportReference: input.reportReference, messageText: input.messageText, recordedAt: input.recordedAt })
+      kind: 'report', reportReference: input.reportReference, messageText: input.messageText, recordedAt: input.recordedAt,
+      ...(input.reportContentHash === undefined ? {} : { reportContentHash: input.reportContentHash }) })
     const recorder = z.object({ actor_context_json: z.string().nullable() }).optional().parse(this.#database.driver.prepare(`
       SELECT actor_context_json FROM consultation_recording WHERE workspace_id = ? AND epoch = ? AND case_id = ?
     `).get(context.workspaceId, context.epoch, input.caseId))
@@ -459,14 +459,14 @@ export class ConsultationRecordingService {
       `).run(JSON.stringify(context), context.workspaceId, context.epoch, access.caseId)
       if (action !== 'pause') {
         this.#syncPatientSources(context, access.caseId)
-        const turns = z.array(z.object({ turn_id: z.string() })).parse(this.#database.driver.prepare(`SELECT t.source_id AS turn_id
+        const turn = z.object({ turn_id: z.string() }).optional().parse(this.#database.driver.prepare(`SELECT t.source_id AS turn_id
           FROM consultation_recording_source t WHERE t.workspace_id = ? AND t.epoch = ? AND t.case_id = ?
             AND t.sequence >= ?
             AND NOT EXISTS (SELECT 1 FROM consultation_recording_job j
               WHERE j.workspace_id = t.workspace_id AND j.epoch = t.epoch AND j.turn_id = t.source_id)
-          ORDER BY t.sequence
-        `).all(context.workspaceId, context.epoch, access.caseId, state?.start_sequence ?? 1))
-        for (const turn of turns) this.enqueueSource(context, transaction, { caseId: access.caseId, encounterId,
+          ORDER BY t.sequence LIMIT 1
+        `).get(context.workspaceId, context.epoch, access.caseId, state?.start_sequence ?? 1))
+        if (turn !== undefined) this.enqueueSource(context, transaction, { caseId: access.caseId, encounterId,
           ...this.#sources(context, access.caseId).find(source => source.id === turn.turn_id)! })
         this.#prepareReports(context, transaction, access.caseId)
         this.#scheduleNext(context, transaction, access.caseId)
