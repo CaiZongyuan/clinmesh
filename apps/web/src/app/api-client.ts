@@ -1452,7 +1452,7 @@ export function reviewConsultationHistory(input: {
 }
 
 export function controlConsultationRecording(input: {
-  action: 'pause' | 'resume' | 'backfill' | 'retry'; encounterId: string;
+  action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry'; encounterId: string;
   encounterVersion: string; expectedRecordingVersion: number;
 }, idempotencyKey: string) {
   return apiMutation(`/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/consultation-recording/actions/control`,
