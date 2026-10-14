@@ -81,7 +81,6 @@ import {
   reviseStructuredClinicalDocument,
   retryLaboratoryResultGeneration,
   saveClinicalDocumentDraft,
-  reviewConsultationHistory,
   controlConsultationRecording,
   saveDiagnosisDraft,
   saveFirstVisitDraft,
@@ -118,7 +117,6 @@ import {
   type ClinicalDocumentRevisionInput,
   type ClinicalDocumentSignPreview,
 } from './clinical-document-page.tsx'
-import { ConsultationSignReviewNotice, requiresConsultationReview } from './consultation-sign-review.tsx'
 import {
   ConsultationPage,
   type ConsultationPageAction,
@@ -1040,16 +1038,6 @@ function DoctorCaseController({
       await refreshCaseById(variables.caseId)
     },
   })
-  const reviewHistory = useMutation({
-    mutationFn: async ({ caseId, additionId, decision }: { caseId: string; additionId: string; decision: Parameters<typeof reviewConsultationHistory>[0]['decision'] }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return reviewConsultationHistory({ additionId, decision, encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId, expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0 }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
   const saveDocumentDraft = useMutation({
     mutationFn: ({ caseId, document }: { caseId: string; document: ClinicalDocumentContent }) => {
       const current = detail.data
@@ -1119,7 +1107,6 @@ function DoctorCaseController({
       const current = detail.data
       if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return signStructuredClinicalDocument({
-        consultationReviewed: preview.consultationReviewed === true,
         commitToken: preview.commitToken,
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
@@ -2343,16 +2330,12 @@ function DoctorCaseController({
                 content: locale => {
                   const reviewMessages = getWorkspaceMessages(locale)
                   return <div className="flex flex-col gap-3">
-                    <ConsultationSignReviewNotice review={preview.data.consultationReview} messages={reviewMessages} />
                     <ClinicalDocumentContentView content={preview.data.document.content} messages={reviewMessages} />
                   </div>
                 },
-                ...(requiresConsultationReview(preview.data.consultationReview)
-                  ? { confirmationLabel: (locale: WorkspaceLocale) => getWorkspaceMessages(locale).consultationSignReviewed } : {}),
                 confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
                 description: current.patient.name,
-                onConfirm: acknowledged => signStructuredClinicalDocument({
-                  consultationReviewed: acknowledged,
+                onConfirm: () => signStructuredClinicalDocument({
                   commitToken: preview.data.commitToken,
                   encounterId: current.encounter.id,
                   encounterVersion: current.encounter.versionId,
@@ -2648,12 +2631,6 @@ function DoctorCaseController({
                 error: cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId ? cancelClinicalDocumentSign.error : null,
                 pending: cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId,
                 onSubmit: previewId => cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId }),
-              },
-              reviewHistory: {
-                additionId: reviewHistory.variables?.caseId === detail.data.caseId ? reviewHistory.variables.additionId : undefined,
-                error: reviewHistory.variables?.caseId === detail.data.caseId ? reviewHistory.error : null,
-                pending: reviewHistory.isPending && reviewHistory.variables?.caseId === detail.data.caseId,
-                onSubmit: (additionId, decision) => reviewHistory.mutate({ caseId: detail.data.caseId, additionId, decision }),
               },
               controlRecording: {
                 error: controlRecording.variables?.caseId === detail.data.caseId ? controlRecording.error : null,

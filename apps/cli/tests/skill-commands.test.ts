@@ -20,7 +20,7 @@ it('keeps signing review and cancellation examples aligned with the narrow opera
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
   const reference = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
-  for (const [suffix, version] of [['preview', 2], ['commit', 2], ['cancel', 1]] as const) {
+  for (const [suffix, version] of [['preview', 3], ['commit', 3], ['cancel', 1]] as const) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh encounter clinical-document sign ${suffix}`))!
     expect(inspectExample(program, line).operation?.version).toBe(version)
   }
@@ -33,13 +33,11 @@ it('keeps signing review and cancellation examples aligned with the narrow opera
   expect(cancel.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview' }).success).toBe(true)
   expect(cancel.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview', document: {} }).success).toBe(false)
   const commit = getHisOperation('encounter.clinical-document.sign')
-  expect(commit.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview', commitToken: 'synthetic-commit-token', consultationReviewed: true }).success).toBe(true)
-  expect(reference).toContain('consultationReviewed: true')
+  expect(commit.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview', commitToken: 'synthetic-commit-token', }).success).toBe(true)
+  expect(reference).not.toContain('consultationReviewed')
   expect(reference).toContain('consultationRecording.signingPreparation')
   expect(reference).toContain('even without automatic recording')
-  for (const operation of ['encounter.clinical-document.sign.preview', 'encounter.clinical-document.sign'] as const) {
-    expect(getHisOperation(operation).summary).toContain('even without automatic recording')
-  }
+  expect(getHisOperation('encounter.clinical-document.sign.preview').summary).toContain('even without automatic recording')
 })
 
 function commandLines(markdown: string): string[] {
@@ -155,37 +153,19 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)
     expect(skill).toContain('processedCount')
     expect(skill).toContain('explicitly starts it')
-    expect(operation.version).toBe(2)
+    expect(operation.version).toBe(3)
     expect(operation.summary).toContain('backfill requires an existing Consultation')
     expect(operation.summary).toContain('WORKFLOW_CONFLICT')
     expect(skill).toContain('Backfill requires an existing Consultation')
     expect(skill).toContain('WORKFLOW_CONFLICT')
   })
-  it('keeps history review examples bound to the narrow versioned correction contract', async () => {
+  it('does not expose removed history review commands or signing acknowledgement', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
-    const operation = getHisOperation('encounter.consultation-history.review')
-    const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter consultation-history review'))!
-    expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
-    for (const decision of ['accept', 'ignore', 'confirm', 'undo']) {
-      expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
-        additionId: 'synthetic-correction', decision }).success).toBe(true)
-    }
-    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
-      additionId: 'synthetic-correction', decision: 'overwrite', document: {} }).success).toBe(false)
-    expect(operation.version).toBe(4)
-    expect(operation.summary).toContain('Generation never changes draft text')
-    expect(operation.summary).toContain('appends targetless additions')
-    expect(skill).toContain('Every new addition, update, correction and conflict remains pending')
-    expect(skill).toContain('generation never changes the draft')
-    expect(skill).toContain("clinician's explicit accept/ignore/confirm/undo decision")
-    expect(skill).toContain('undo-pending')
-    expect(operation.summary).toContain('draft field limits')
-    expect(skill).toContain('exceed a draft field limit')
-    expect(skill).toContain('new source reply')
-    expect(operation.summary).toContain('sourced or handwritten history')
-    expect(operation.summary).toContain('changed handwritten targets')
-    expect(skill).toContain('handwritten history')
-    expect(skill).toContain('changed handwritten target')
+    expect(skill).not.toContain('clinmesh encounter consultation-history review')
+    expect(skill).toContain('recorded directly')
+    expect(() => getHisOperation('encounter.consultation-history.review')).toThrow()
+    const sign = getHisOperation('encounter.clinical-document.sign')
+    expect(sign.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '1', commitToken: 'synthetic-sign-commit-token', previewId: 'synthetic-preview', consultationReviewed: true }).success).toBe(false)
   })
   it('keeps the doctor draft example compatible with incomplete content and the versioned Catalog', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
@@ -210,7 +190,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 7 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 8 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }

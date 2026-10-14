@@ -8,11 +8,11 @@ Status: implemented
 
 ## Decision
 
-共享可见旅程 `apps/web/e2e/consultation-recording-journey.ts` 只拥有组合交互：同一合成患者经历来源查看、局部人工修改、未保存编辑、撤销、更正冲突、暂停补录、失败重试和签署冻结。Web E2E 使用真实生产构建、Hono listener、file-backed SQLite 与公开病例 Query，仅替换外部模型边界。受控在途提取必须真正启动后才准备签署，并等待任务结算后检查草稿不变；取消后检查补录，人工确认后重新读取不可变文书。
+共享可见旅程 `apps/web/e2e/consultation-recording-journey.ts` 只拥有组合交互：同一合成患者经历来源查看、局部人工修改、未保存编辑、自动记录、更正与矛盾、暂停补录、失败重试和签署冻结。Web E2E 使用真实生产构建、Hono listener、file-backed SQLite 与公开病例 Query，仅替换外部模型边界。受控在途提取必须真正启动后才准备签署，并等待任务结算后检查草稿不变；取消后检查补录，正式签署后重新读取不可变文书。
 
 显式原生 smoke 复用同一旅程，在锁定 DSH 的隔离 Profile 中注册合成宿主 `LlmAdapter`。辅助调用不携带 Session/Tool；原生主会话独立建立 Session，实际请求当前工具 schema 并调用草稿 action 和签署 proposal。刷新通过 launcher 重新打开 Surface，发工具前等待当前浏览器客户端 lease 注册成功。模型桥接与 Agent Page Context 桥接分别配置，不能用自动记录成功或页面控件启用推断工具已注册。
 
-草稿 action 的工具结果保存 Command 回执，验收从该回执关联 request、audit 和 trace，并用 Query 核对实际草稿。人工批准 proposal 的服务端验证链独立检查 Tool call、proposal、review decision、Command receipt、audit 和 Action Trace；正式签署前必须看到零份已签文书及未确认按钮禁用。两种链路沿用既有授权合同，不要求草稿动作伪装成人工批准 proposal。
+草稿 action 的工具结果保存 Command 回执，验收从该回执关联 request、audit 和 trace，并用 Query 核对实际草稿。人工批准 proposal 的服务端验证链独立检查 Tool call、proposal、review decision、Command receipt、audit 和 Action Trace；正式签署前必须看到零份已签文书及无问诊人工确认框。两种链路沿用既有授权合同，不要求草稿动作伪装成人工批准 proposal。
 
 `--live` 在上述旅程后创建新合成病例，使用显式配置的真实宿主模型生成患者回答和病史增量，断言已写入及 quote 逐字属于患者原回答。报告绑定源码 commit 和关键文件 SHA-256，记录锁定组件、数量及关联 ID，不保存 prompt、模型响应正文或凭据。部署步骤由[部署教程](../../../../docs/deployment.md#问诊自动记录原生验收)拥有。
 

@@ -18,17 +18,17 @@ const detail: DoctorCaseDetail = {
     source: 'patient-agent', kind: 'text', messageText: '刚才说错了，头晕是六天。\n' + '我站起来会更明显，休息后会缓解。\n'.repeat(45) + '最后补充：夜间也会头晕。', sequence: 1,
     recordedAt: '2026-10-08T09:00:00+08:00', personaRevision: 1, reportReference: null }] },
   consultationRecording: { hasSavedDraft: true, version: 1, paused: false, processedCount: 1, remainingCount: 0, failedCount: 0,
-    status: 'pending',
+    status: 'updated',
     failures: [{ sourceTurnId: 'synthetic-reply', code: 'AI_TIMEOUT', retrying: false }],
     additions: [{ id: 'synthetic-correction', field: 'historyOfPresentIllness',
     sourceTurnId: 'synthetic-reply', quote: '刚才说错了，头晕是六天。', relation: 'correction', targetAdditionId: 'synthetic-original',
-    status: 'pending', reviewStatus: 'unreviewed', ownership: 'manual', currentText: '医生核对：头晕五天。', reviewable: true },
+    status: 'applied', ownership: 'manual', currentText: '医生核对：头晕五天。' },
     { id: 'synthetic-applied', field: 'historyOfPresentIllness', sourceTurnId: 'synthetic-reply',
-      quote: '刚才说错了，头晕是六天。', relation: 'correction', status: 'applied', reviewStatus: 'unreviewed',
-      ownership: 'automatic', currentText: '患者自述：刚才说错了，头晕是六天。', reviewable: false },
+      quote: '刚才说错了，头晕是六天。', relation: 'correction', status: 'applied',
+      ownership: 'automatic', currentText: '患者自述：刚才说错了，头晕是六天。' },
     { id: 'synthetic-superseded', field: 'historyOfPresentIllness', sourceTurnId: 'synthetic-reply',
-      quote: '刚才说错了，头晕是六天。', relation: 'correction', status: 'superseded', reviewStatus: 'undo-pending',
-      ownership: 'automatic', currentText: '患者自述：刚才说错了，头晕是六天。', reviewable: false }] },
+      quote: '刚才说错了，头晕是六天。', relation: 'correction', status: 'superseded',
+      ownership: 'automatic', currentText: '患者自述：刚才说错了，头晕是六天。' }] },
 }
 const host = document.createElement('div')
 host.style.cssText = 'position:absolute;left:20px;top:20px;width:340px;height:calc(100vh - 40px);contain:strict;overflow:hidden'
@@ -43,34 +43,30 @@ shadow.append(root)
 
 function App(): React.JSX.Element {
   const [locale, setLocale] = React.useState<'zh-CN' | 'en-US'>('zh-CN')
-  const [working, setWorking] = React.useState({ ...documentContent, historyOfPresentIllness: '医生尚未保存的编辑。' })
-  const [decisions, setDecisions] = React.useState<string[]>([])
+  const [working, setWorking] = React.useState(documentContent)
   const [recording, setRecording] = React.useState(detail.consultationRecording!)
   const [consultation, setConsultation] = React.useState(detail.consultation!)
   const [controls, setControls] = React.useState<string[]>([])
   const [blocked, setBlocked] = React.useState(false)
-  const [failReview, setFailReview] = React.useState(false)
-  const [reviewError, setReviewError] = React.useState<{ additionId: string; error: Error }>()
   const [signedView, setSignedView] = React.useState(false)
   return <PortalContainerProvider container={root}>
     <div className="h-full overflow-y-auto">
     <button type="button" onClick={() => setLocale(current => current === 'zh-CN' ? 'en-US' : 'zh-CN')}>切换语言</button>
     <button type="button" onClick={() => setWorking(documentContent)}>模拟保存编辑</button>
-    <button type="button" onClick={() => setRecording(current => ({ ...current, additions: [
+    <button type="button" onClick={() => { setWorking(current => ({ ...current, chiefComplaint: "自述头晕六天", priorMedicalHistory: "合成长病史记录。".repeat(80), familyHistory: "患者自述父亲患高血压。", allergyHistory: "患者自述青霉素用药后出现皮疹。" })); setRecording(current => ({ ...current, additions: [
       ...current.additions,
       { ...current.additions[0]!, id: 'synthetic-chief', field: 'chiefComplaint', relation: 'addition',
         targetAdditionId: undefined, currentText: '', summary: '自述头晕六天' },
       { ...current.additions[0]!, id: 'synthetic-prior', field: 'priorMedicalHistory', relation: 'addition',
-        targetAdditionId: undefined, currentText: '', summary: '合成长病史建议。'.repeat(80) },
+        targetAdditionId: undefined, currentText: '', summary: '合成长病史记录。'.repeat(80) },
       { ...current.additions[0]!, id: 'synthetic-family', field: 'familyHistory', relation: 'addition',
         targetAdditionId: undefined, currentText: '', summary: '患者自述父亲患高血压。' },
       { ...current.additions[0]!, id: 'synthetic-family-second', field: 'familyHistory', relation: 'addition',
         targetAdditionId: undefined, currentText: '', summary: '患者自述母亲无糖尿病。' },
       { ...current.additions[0]!, id: 'synthetic-allergy', field: 'allergyHistory', relation: 'addition',
         targetAdditionId: undefined, currentText: '', summary: '患者自述青霉素用药后出现皮疹。' },
-    ] }))}>模拟字段建议</button>
+    ] })) }}>模拟自动记录</button>
     <button type="button" onClick={() => setBlocked(true)}>模拟签署准备</button>
-    <button type="button" onClick={() => setFailReview(true)}>模拟应用失败</button>
     <button type="button" onClick={() => setSignedView(true)}>模拟已签内容</button>
     <button type="button" onClick={() => {
       setConsultation(current => ({ ...current, turns: [...current.turns,
@@ -92,13 +88,11 @@ function App(): React.JSX.Element {
         facts: [{ text: '自述发热', sources: [{ sourceTurnId: 'synthetic-reply', quote: '发热。' }] }],
       }) }))
     }}>模拟重复引用</button>
-    <output aria-label="核对结果">{decisions.join(',')}</output>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'backfill', version: 0, remainingCount: 2 }))}>模拟历史病例</button>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'failed', failedCount: 1 }))}>模拟整理失败</button>
     <output aria-label="控制结果">{controls.join(',')}</output>
     {signedView ? <ClinicalDocumentContentView content={documentContent} messages={getWorkspaceMessages(locale)}
-      history={{ detail: { ...detail, consultation, consultationRecording: recording }, workingDocument: documentContent,
-        action: undefined, disabled: true, messages: getWorkspaceMessages(locale), locale }} /> : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultation, consultationRecording: {
+      history={{ detail: { ...detail, consultation, consultationRecording: recording }, messages: getWorkspaceMessages(locale), locale }} /> : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultation, consultationRecording: {
       ...recording, ...(blocked ? { signingPreparation: { active: true, previewId: 'synthetic-preview', expiresAt: '2099-01-01T00:00:00Z' } } : {}),
     } }} elementId="record" locale={locale}
       messages={getWorkspaceMessages(locale)} workingDocument={working} onDocumentChange={setWorking}
@@ -106,13 +100,6 @@ function App(): React.JSX.Element {
         prepareSign: { data: undefined, error: null, onReset: () => {}, onSubmit: () => {}, pending: false },
         revise: { error: null, onSubmit: () => {}, pending: false, success: false },
         sign: { error: null, onSubmit: () => {}, pending: false, success: false },
-        reviewHistory: { error: reviewError?.error ?? null, additionId: reviewError?.additionId, pending: false, onSubmit: (id, decision) => {
-          if (failReview) { setReviewError({ additionId: id, error: new Error('Synthetic failure') }); return }
-          setDecisions(current => [...current, `${id}:${decision}`])
-          if (decision === 'confirm' || decision === 'undo') setRecording(current => ({ ...current,
-            additions: current.additions.map(addition => addition.id !== id ? addition : { ...addition,
-              reviewStatus: 'confirmed', status: decision === 'undo' ? 'undone' : addition.status }) }))
-        } },
         controlRecording: { error: null, pending: false, onSubmit: action => {
           setControls(current => [...current, action])
           setRecording(current => ({ ...current, version: current.version + 1, paused: action === 'pause',

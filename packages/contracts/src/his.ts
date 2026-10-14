@@ -1048,22 +1048,20 @@ export const consultationRecordingSchema = z.object({
   processedCount: z.number().int().nonnegative().default(0),
   remainingCount: z.number().int().nonnegative().default(0),
   failedCount: z.number().int().nonnegative().default(0),
-  status: z.enum(['idle', 'processing', 'updated', 'pending', 'paused', 'backfill', 'failed']),
+  status: z.enum(['idle', 'processing', 'updated', 'paused', 'backfill', 'failed']),
   failures: z.array(z.object({
     sourceTurnId: z.string().min(1),
     code: consultationRecordingErrorCodeSchema,
     retrying: z.boolean(),
   }).strict()).default([]),
-  // Historical suggestions may predate the required correction target in the extraction contract.
+  // Historical extracts may predate the required correction target in the extraction contract.
   additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({
     summary: z.string().optional(),
     facts: z.array(consultationHistoryFactSchema).optional(),
     id: z.string().min(1),
-    status: z.enum(['applied', 'pending', 'superseded', 'ignored', 'undone']),
-    reviewStatus: z.enum(['unreviewed', 'confirmed', 'undo-pending']).default('unreviewed'),
+    status: z.enum(['applied', 'superseded', 'ignored', 'undone']),
     ownership: z.enum(['automatic', 'manual']).default('automatic'),
     currentText: z.string().default(''),
-    reviewable: z.boolean().default(false),
   }).strict()),
 }).strict()
 
@@ -1076,21 +1074,6 @@ export const controlConsultationRecordingRequestSchema = z.object({
 }).strict()
 
 export const controlConsultationRecordingResponseSchema = commandResponseSchema(consultationRecordingSchema)
-
-export const reviewConsultationHistoryRequestSchema = z.object({
-  expectedVersions: fhirExpectedVersionsSchema,
-  input: z.object({
-    additionId: z.string().min(1).max(128),
-    decision: z.enum(['accept', 'ignore', 'confirm', 'undo']),
-    expectedDraftVersion: z.number().int().nonnegative(),
-  }).strict(),
-}).strict()
-
-export const reviewConsultationHistoryResponseSchema = commandResponseSchema(z.object({
-  draftVersion: z.number().int().nonnegative(),
-}).strict())
-
-export type ConsultationHistoryDecision = z.infer<typeof reviewConsultationHistoryRequestSchema>['input']['decision']
 
 export const saveClinicalDocumentDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
@@ -1112,17 +1095,7 @@ export const previewClinicalDocumentSignRequestSchema = z.object({
   }).strict(),
 }).strict()
 
-export const consultationSignReviewSchema = z.object({
-  consultationVersion: z.number().int().nonnegative(),
-  remainingCount: z.number().int().nonnegative(),
-  failedCount: z.number().int().nonnegative(),
-  paused: z.boolean(),
-  conflictCount: z.number().int().nonnegative(),
-  unreviewedCount: z.number().int().nonnegative(),
-}).strict()
-
 export const clinicalDocumentSignPreviewResponseSchema = commandResponseSchema(z.object({
-  consultationReview: consultationSignReviewSchema.nullable().default(null),
   commitToken: z.string().min(1),
   document: z.object({
     content: clinicalDocumentContentSchema,
@@ -1135,7 +1108,6 @@ export const clinicalDocumentSignPreviewResponseSchema = commandResponseSchema(z
 export const signClinicalDocumentRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
-    consultationReviewed: z.boolean().optional(),
     commitToken: z.string().min(16).max(256),
     previewId: z.string().min(1).max(128),
   }).strict(),

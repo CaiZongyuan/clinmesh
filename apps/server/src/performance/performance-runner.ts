@@ -1076,7 +1076,6 @@ export async function runTrajectoryPerformanceProfile() {
       idempotencyKey: 'performance-trajectory-document-preview',
     }))).data
     await measure(() => runtime.workflow.signStructuredClinicalDocument({
-      consultationReviewed: true,
       commitToken: preview.commitToken,
       context: doctorContext,
       encounterId: started.encounterId,

@@ -43,7 +43,6 @@ import {
   reviseClinicalDocumentRequestSchema,
   retryLaboratoryResultGenerationRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
-  reviewConsultationHistoryRequestSchema,
   controlConsultationRecordingRequestSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
@@ -1649,16 +1648,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) { return apiErrorResponse(context, error) }
     })
-    app.post('/api/his/v1/encounters/:encounterId/consultation-history/actions/review', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const body = reviewConsultationHistoryRequestSchema.parse(await context.req.json())
-        return context.json(workflow.consultationRecording.review({
-          ...body.input, context: await actor(context), encounterId: context.req.param('encounterId'),
-          expectedVersions: body.expectedVersions, idempotencyKey: idempotencyKey(context),
-        }))
-      } catch (error) { return apiErrorResponse(context, error) }
-    })
     app.put('/api/his/v1/encounters/:encounterId/clinical-document/draft', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -1706,7 +1695,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = signClinicalDocumentRequestSchema.parse(await context.req.json())
         return context.json(workflow.signStructuredClinicalDocument({
-          ...(body.input.consultationReviewed === undefined ? {} : { consultationReviewed: body.input.consultationReviewed }),
           commitToken: body.input.commitToken,
           context: await actor(context),
           encounterId: context.req.param('encounterId'),

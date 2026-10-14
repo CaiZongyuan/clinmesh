@@ -6,7 +6,7 @@ import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-
 import { journeyReplies, runRecordingJourney, type JourneyStage } from './consultation-recording-journey.ts'
 import { expect, test } from './fixtures.ts'
 
-test('combines source review, manual edits, undo, pause, retry and signing in one consultation', async ({ page, webRoot }) => {
+test('combines direct recording, sources, manual edits, pause, retry and signing in one consultation', async ({ page, webRoot }) => {
   let stage: JourneyStage = 'initial'
   let fail = false
   let release!: () => void

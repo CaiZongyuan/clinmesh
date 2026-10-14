@@ -1185,9 +1185,7 @@ function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry
       const expiresAt = new Date(Date.now() + 300_000).toISOString()
       recording = { ...recording, signingPreparation: { active: true, expiresAt, previewId } }
       const response = Response.json(commandResponse({ previewId, expiresAt,
-        document: { content: document, version: draftVersion }, commitToken: 'synthetic-sign-commit-token',
-        consultationReview: { consultationVersion: 1, remainingCount: recording.remainingCount,
-          failedCount: recording.failedCount, paused: recording.paused, conflictCount: 0, unreviewedCount: 0 } }))
+        document: { content: document, version: draftVersion }, commitToken: 'synthetic-sign-commit-token' }))
       return signingInterceptor === undefined ? response : signingInterceptor('preview', response)
     }
     if (path === '/api/his/v1/encounters/encounter-recording/clinical-document/actions/cancel-sign') {
@@ -3312,7 +3310,7 @@ describe('role workspaces', () => {
     const fixture = stubRecordingWorkspace('resume', true)
     const automaticAddition = { id: 'recorded-original', field: 'historyOfPresentIllness' as const,
       sourceTurnId: 'patient-turn-original', quote: '头晕五天。', relation: 'addition' as const,
-      status: 'applied' as const, reviewStatus: 'unreviewed' as const, ownership: 'automatic' as const, currentText: '患者自述：头晕五天。', reviewable: false }
+      status: 'applied' as const, ownership: 'automatic' as const, currentText: '患者自述：头晕五天。' }
     fixture.updateRecording({ hasSavedDraft: false, additions: [automaticAddition] })
     const queryClient = createWebQueryClient()
     const user = userEvent.setup()
@@ -3415,7 +3413,7 @@ describe('role workspaces', () => {
       return response
     })
     try {
-      await user.click(screen.getByRole('button', { name: '返回核对并恢复整理' }))
+      await user.click(screen.getByRole('button', { name: '返回编辑并恢复整理' }))
       await waitFor(() => expect(fixture.failedReads()).toBeGreaterThan(0))
       expect(readSignal?.aborted).toBe(true)
     } finally { await act(async () => { release(); await refresh }) }
@@ -3445,13 +3443,13 @@ describe('role workspaces', () => {
       fixture.updateRecording({ signingPreparation: reason === 'cancelled-elsewhere' ? undefined
         : { active: true, previewId: 'newer-sign-preview', expiresAt: new Date(Date.now() + 300_000).toISOString() } })
     }
-    await user.click(within(dialog).getByRole('button', { name: '返回核对并恢复整理' }))
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     const newer = reason === 'replaced-elsewhere'
     expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(newer)
     expect(screen.queryByText('签署准备尚未结束') !== null).toBe(newer)
     if (!newer) await user.click(screen.getByRole('button', { name: '签署病历' }))
-    else await user.click(screen.getByRole('button', { name: '返回核对并恢复整理' }))
+    else await user.click(screen.getByRole('button', { name: '返回编辑并恢复整理' }))
     if (newer) await waitFor(() => expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(false))
     else await screen.findByRole('alertdialog', { name: '确认签署病历' })
   })
@@ -3471,10 +3469,10 @@ describe('role workspaces', () => {
       }
       return response
     })
-    await user.click(within(dialog).getByRole('button', { name: '返回核对并恢复整理' }))
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
     await waitFor(() => expect(fixture.failedReads()).toBeGreaterThan(0))
-    await waitFor(() => expect((within(dialog).getByRole('button', { name: '返回核对并恢复整理' }) as HTMLButtonElement).disabled).toBe(false))
-    await user.click(within(dialog).getByRole('button', { name: '返回核对并恢复整理' }))
+    await waitFor(() => expect((within(dialog).getByRole('button', { name: '取消' }) as HTMLButtonElement).disabled).toBe(false))
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     expect(fixture.cancellations).toEqual(['sign-recording-preview', 'sign-recording-preview'])
     expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(false)
@@ -3497,13 +3495,11 @@ describe('role workspaces', () => {
     })
     await act(async () => { await tool.execute(boundAgentToolInput(tool, {}), new AbortController().signal) })
     const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
-    expect(within(dialog).getByText('签署前核对问诊病史')).toBeTruthy()
-    await userEvent.setup().click(within(dialog).getByRole('checkbox'))
+    expect(within(dialog).queryByRole('checkbox')).toBeNull()
     view.rerender(<WebApp runtime={{ ...runtime, surfaceLocale: 'en-US' }} />)
     const changed = await screen.findByRole('alertdialog', { name: 'Confirm medical record signature' })
-    expect(within(changed).getByText('Review consultation history before signing')).toBeTruthy()
     expect(within(changed).getByText('Chief complaint')).toBeTruthy()
-    expect(within(changed).getByRole('checkbox').getAttribute('aria-checked')).toBe('true')
+    expect(within(changed).queryByRole('checkbox')).toBeNull()
   })
 
   it.each(['abort', 'change-case', 'unmount'] as const)('cancels a late Agent sign preview after %s without opening an old review', async change => {
@@ -7206,7 +7202,6 @@ describe('role workspaces', () => {
         expect(body).toEqual({
           expectedVersions: { 'Encounter/encounter-1': '1' },
           input: {
-            consultationReviewed: false,
             commitToken: 'structured-sign-token-123456',
             previewId: 'structured-sign-preview-1',
           },
