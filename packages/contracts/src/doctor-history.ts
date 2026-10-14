@@ -74,7 +74,7 @@ export const visibleSourceClinicalSchema = z.object({
   performedDateTime: z.string().optional(), performedPeriod: periodSchema.optional(), period: periodSchema.optional(),
   reasonCode: z.array(conceptSchema).optional(), recordedDate: z.string().optional(),
   severity: conceptSchema.optional(), status: z.string().optional(), title: z.string().optional(),
-  type: z.array(conceptSchema).optional(), vaccineCode: conceptSchema.optional(), verificationStatus: conceptSchema.optional(),
+  type: z.union([conceptSchema, z.array(conceptSchema)]).optional(), vaccineCode: conceptSchema.optional(), verificationStatus: conceptSchema.optional(),
   dosageInstruction: z.array(z.object({
     asNeededBoolean: z.boolean().optional(), asNeededCodeableConcept: conceptSchema.optional(),
     doseAndRate: z.array(z.object({
