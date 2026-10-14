@@ -1351,7 +1351,7 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete eight-field draft and consultationRecording with hasSavedDraft, persistent control version, progress, patient/doctor/report sources (saved original text, native input identity or fixed report version), fact-level source IDs and exact quotes (legacy sourceTurnId fallback), fragment ownership, reviewStatus (unreviewed, confirmed, undo-pending), undone history and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
+    summary: 'Read the active doctor case, incomplete eight-field draft and consultationRecording with hasSavedDraft, persistent control version, progress, requiresContextBinding for trusted recovery of enabled legacy cases, patient/doctor/report sources (saved original text, native input identity or fixed report version), fact-level source IDs and exact quotes (legacy sourceTurnId fallback), fragment ownership, reviewStatus (unreviewed, confirmed, undo-pending), undone history and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
     version: 8,
   },
   {
@@ -1602,7 +1602,7 @@ const operationDefinitions = [
     mode: 'command', output: controlConsultationRecordingResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Activate a new editable unsigned case with no historical sources, pause, resume, explicitly backfill a historical consultation or retry failed recording; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed patient/doctor/report sources and manual edits',
+    summary: 'Activate a new editable unsigned case with no historical sources or restore an enabled case with requiresContextBinding without changing its version, pause or failed jobs; pause, resume, explicitly backfill a historical consultation or retry failed recording; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed patient/doctor/report sources and manual edits',
     version: 3,
   },
   {
@@ -1640,7 +1640,7 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Prepare a version-bound signing preview with patient/doctor/report source review counts even without automatic recording or a Consultation; freeze recording and invalidate in-flight extraction; cancel preparation to recover unfinished sources',
+    summary: 'Prepare a version-bound signing preview with enrolled source review counts and patient/doctor evidence even without automatic recording or a Consultation; raw reports alone retain legacy review rules; freeze recording and invalidate in-flight extraction; cancel preparation to recover unfinished sources',
     version: 3,
   },
   {
@@ -1659,7 +1659,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Sign an unchanged document and patient/doctor/report source review snapshot even without automatic recording or a Consultation; remaining sources or unreviewed content require consultationReviewed=true after human review; existing completeness, role and version checks still apply',
+    summary: 'Sign an unchanged document and eligible source review and every persisted source snapshot even without automatic recording or a Consultation; raw reports alone retain legacy review rules; remaining sources or unreviewed content require consultationReviewed=true after human review; existing completeness, role and version checks still apply',
     version: 3,
   },
   {
