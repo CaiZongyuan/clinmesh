@@ -2940,7 +2940,7 @@ describe('role workspaces', () => {
     const pendingButton = await screen.findByRole('button', { name: '正在等待患者回答' })
     expect((pendingButton as HTMLButtonElement).disabled).toBe(true)
     expect(within(consultationRegion).getByText('除了发热，还有哪里不舒服？')).toBeTruthy()
-    expect(screen.getByRole('status').textContent).toContain('患者正在输入')
+    expect(within(consultationRegion).getByRole('status').textContent).toContain('患者正在输入')
     await act(async () => releaseAnswer?.())
     expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
     expect(screen.getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()

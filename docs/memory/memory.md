@@ -54,6 +54,8 @@
 
 - React 18 的普通函数组件不会接收 `ref`；共享输入组件需要沿用 `forwardRef`，并用 ShadowRoot 的 `activeElement` 核对真实返回焦点。Query 刷新时重建的 mutation 回执对象不能作为清空草稿的效果依赖，按病例与业务版本处理，并忽略旧回执；删除草稿回归还须覆盖请求未完成时继续编辑、自动保存和迟到的查询刷新。相关回归与决定见[诊断与处方两阶段视图](../../.agents/notes/implemented/architecture/2026-10-10-diagnosis-prescription-workspace.md)。
 - JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
+- 工作台可以同时包含问诊输入状态和病历更新状态。测试具体状态时用 `within` 限定所属区域，不使用全页面的单数 `getByRole('status')`；保留各区域的可访问性提示及原有业务断言。
+- Zod 4 的 `z.ZodError` 子类可能不满足 `instanceof Error`；诊断先识别 `z.ZodError` 并读取安全的 `issues`，否则完整校验信息也可能被误记为 `unknown`。不输出原始模型响应或凭证。
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。浏览器回归验证真实指针命中，不能只检查文本可见。
 - 目录读取失败后，重设相同搜索条件不会改变 TanStack Query key，重试需显式 `refetch`。回归从真实页面观察第二次 HTTP 读取和恢复，不只断言搜索回调被调用。
 - 真实 WebApp 浏览器合同使用 `localhost` 或 HTTPS 的有效 origin：`about:blank` 的 opaque origin 无法使用存储，普通 HTTP 域名不提供 `crypto.randomUUID`。沿用产品需要的浏览器能力，不为测试给生产代码加 polyfill。
