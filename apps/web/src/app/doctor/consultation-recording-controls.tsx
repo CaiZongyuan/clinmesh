@@ -63,12 +63,19 @@ export function ConsultationRecordingControls({ recording, action, disabled, mes
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
+    {recording.requiresContextBinding !== true ? null : <>
+      <span role="status">{messages.consultationRecordingBindingRequired}</span>
+      {action === undefined ? null : <Button size="sm" type="button" variant="outline"
+        disabled={disabled || action.pending} onClick={() => action.onSubmit('activate')}>
+        {messages.consultationRecordingBindContext}
+      </Button>}
+    </>}
     {action === undefined ? null : <>
       <Button size="icon-sm" variant="outline" type="button" aria-label={intentLabel} title={intentLabel}
         disabled={disabled || action.pending} onClick={() => action.onSubmit(intent)}>
         {intent === 'backfill' ? <HistoryIcon /> : intent === 'resume' ? <PlayIcon /> : <PauseIcon />}
       </Button>
-      {recording.status !== 'failed' ? null : <Button size="icon-sm" variant="outline" type="button"
+      {recording.status !== 'failed' || recording.requiresContextBinding === true ? null : <Button size="icon-sm" variant="outline" type="button"
         aria-label={messages.consultationRecordingRetry} title={messages.consultationRecordingRetry}
         disabled={disabled || action.pending} onClick={() => action.onSubmit('retry')}><RotateCcwIcon /></Button>}
     </>}

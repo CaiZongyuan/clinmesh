@@ -15,6 +15,21 @@ CREATE TABLE consultation_recording (
 INSERT INTO consultation_recording (workspace_id, epoch, case_id, version, paused, start_sequence)
 SELECT workspace_id, epoch, case_id, version, paused, start_sequence FROM consultation_recording_legacy;
 
+-- Keep the authenticated task context, including its original Agent Grant.
+-- Cases with no matching task need a new trusted binding when opened.
+UPDATE consultation_recording AS recording SET actor_context_json = (
+  SELECT job.actor_context_json FROM consultation_recording_job AS job
+  JOIN consultation_turn AS turn ON turn.workspace_id = job.workspace_id AND turn.epoch = job.epoch AND turn.turn_id = job.turn_id
+    AND turn.case_id = job.case_id
+  JOIN outpatient_case_responsibility AS owner ON owner.workspace_id = job.workspace_id AND owner.epoch = job.epoch AND owner.case_id = job.case_id
+  WHERE job.workspace_id = recording.workspace_id AND job.epoch = recording.epoch AND job.case_id = recording.case_id
+    AND json_extract(job.actor_context_json, '$.workspaceId') = recording.workspace_id
+    AND json_extract(job.actor_context_json, '$.epoch') = recording.epoch
+    AND json_extract(job.actor_context_json, '$.roleCode') = 'outpatient-doctor'
+    AND json_extract(job.actor_context_json, '$.practitionerRoleId') = owner.practitioner_role_id
+  ORDER BY turn.sequence DESC LIMIT 1
+);
+
 CREATE TABLE consultation_recording_source (
   workspace_id TEXT NOT NULL,
   epoch TEXT NOT NULL,

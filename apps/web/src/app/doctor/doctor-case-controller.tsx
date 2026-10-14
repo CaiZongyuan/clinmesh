@@ -1041,7 +1041,17 @@ function DoctorCaseController({
       await queryClient.cancelQueries({ queryKey })
       queryClient.setQueriesData<DoctorCaseDetail>({ queryKey }, current => {
         // Control versions do not advance with saved drafts, ownership or background progress.
-        if (current === undefined || (current.consultationRecording?.version ?? 0) >= response.data.version) return current
+        const recording = current?.consultationRecording
+        const version = recording?.version ?? 0
+        if (current === undefined || version > response.data.version) return current
+        if (version === response.data.version) {
+          if (variables.action !== 'activate' || recording === undefined
+            || response.data.requiresContextBinding === undefined) return current
+          return { ...current, consultationRecording: { ...recording,
+            requiresContextBinding: response.data.requiresContextBinding,
+            status: recording.requiresContextBinding === true && recording.status === 'idle'
+              && recording.remainingCount > 0 && response.data.status === 'processing' ? 'processing' : recording.status } }
+        }
         return { ...current, consultationRecording: response.data }
       })
       await refreshCaseById(variables.caseId)
@@ -1050,9 +1060,11 @@ function DoctorCaseController({
   useEffect(() => {
     const current = detail.data
     const recording = current?.consultationRecording
+    const requiresBinding = recording?.requiresContextBinding === true
     if (current === undefined || current.encounter.status !== 'in-progress' || (current.clinicalDocument?.signed.length ?? 0) > 0
-      || (current.consultation?.turns.length ?? 0) > 0 || recording?.signingPreparation?.active === true
-      || (recording !== undefined && (recording.version !== 0 || recording.status !== 'idle'))) return
+      || recording?.signingPreparation?.active === true
+      || (!requiresBinding && ((current.consultation?.turns.length ?? 0) > 0
+        || (recording !== undefined && (recording.version !== 0 || recording.status !== 'idle'))))) return
     const key = `${scope[0]}:${scope[1]}:${current.caseId}`
     if (activatedRecordingCases.current.has(key)) return
     activatedRecordingCases.current.add(key)

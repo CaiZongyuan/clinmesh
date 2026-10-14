@@ -35,7 +35,8 @@ const jobSchema = z.object({
   status: z.enum(['queued', 'completed', 'failed']),
   generation: z.number().int().positive(),
 })
-const recordingStateSchema = z.object({ version: z.number().int().positive(), paused: z.number().int().min(0).max(1), start_sequence: z.number().int().positive() })
+const recordingStateSchema = z.object({ version: z.number().int().positive(), paused: z.number().int().min(0).max(1),
+  start_sequence: z.number().int().positive(), actor_context_json: z.string().nullable() })
 const sourceRowSchema = z.object({ source_id: z.string(), source_kind: consultationRecordingSourceSchema.shape.kind,
   message_text: z.string(), recorded_at: z.string(), metadata_json: z.string() })
 const sourceMetadataSchema = consultationRecordingSourceSchema.omit({ id: true, kind: true, messageText: true, recordedAt: true })
@@ -365,8 +366,8 @@ export class ConsultationRecordingService {
       SELECT actor_context_json FROM consultation_recording WHERE workspace_id = ? AND epoch = ? AND case_id = ?
     `).get(context.workspaceId, context.epoch, input.caseId))
     this.#saveSource(context, input.caseId, source)
-    if (recorder?.actor_context_json === undefined || recorder.actor_context_json === null) return
-    const doctor = contextSchema.parse(JSON.parse(recorder.actor_context_json))
+    const doctor = this.#boundContext(context, recorder?.actor_context_json ?? null)
+    if (doctor === undefined) return
     this.enqueueSource(doctor, transaction, { ...source, caseId: input.caseId, encounterId: input.encounterId })
   }
 
@@ -389,7 +390,7 @@ export class ConsultationRecordingService {
   }
 
   #state(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
-    return recordingStateSchema.optional().parse(this.#database.driver.prepare(`SELECT version, paused, start_sequence
+    return recordingStateSchema.optional().parse(this.#database.driver.prepare(`SELECT version, paused, start_sequence, actor_context_json
       FROM consultation_recording WHERE workspace_id = ? AND epoch = ? AND case_id = ?
     `).get(context.workspaceId, context.epoch, caseId))
   }
@@ -480,6 +481,7 @@ export class ConsultationRecordingService {
 
   read(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
     const state = this.#state(context, caseId)
+    const requiresContextBinding = state !== undefined && this.#enabled && this.#boundContext(context, state.actor_context_json) === undefined
     const signingPreparation = this.signingPreparation(context, caseId)
     if (state === undefined && (!this.#hasConsultation(context, caseId)
       || (!this.#enabled && signingPreparation === undefined))) return undefined
@@ -504,6 +506,7 @@ export class ConsultationRecordingService {
       reviewable: reviewTarget(rows, row, document) !== undefined,
     }))
     return consultationRecordingSchema.parse({
+      requiresContextBinding,
       sources: this.#sources(context, caseId),
       signingPreparation,
       hasSavedDraft: this.#database.driver.prepare(`SELECT 1 FROM command_effect
@@ -512,7 +515,7 @@ export class ConsultationRecordingService {
       `).get(context.workspaceId, context.epoch, `ClinicalDocumentDraft/${caseId}`) !== undefined,
       version: state?.version ?? 0, paused: state?.paused === 1,
       processedCount, remainingCount: total - processedCount, failedCount,
-      status: state === undefined ? 'backfill' : state.paused === 1 ? 'paused' : failedCount > 0 ? 'failed'
+      status: state === undefined ? 'backfill' : state.paused === 1 ? 'paused' : failedCount > 0 ? 'failed' : requiresContextBinding ? 'idle'
         : jobs.some(job => job.status === 'queued') ? 'processing'
         : additions.some(addition => addition.status === 'pending'
           || (addition.status === 'applied' && addition.reviewStatus === 'undo-pending')) ? 'pending'
@@ -522,6 +525,11 @@ export class ConsultationRecordingService {
         sourceTurnId: job.turn_id, code: job.error_code!, retrying: job.status === 'queued',
       })),
     })
+  }
+
+  #boundContext(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, stored: string | null) {
+    const parsed = stored === null ? undefined : contextSchema.safeParse(JSON.parse(stored))
+    return parsed?.success && parsed.data.workspaceId === context.workspaceId && parsed.data.epoch === context.epoch ? parsed.data : undefined
   }
 
   #sourceCount(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string, startSequence: number): number {

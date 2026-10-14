@@ -1047,6 +1047,7 @@ export const consultationRecordingErrorCodeSchema = z.enum([
 ])
 
 export const consultationRecordingSchema = z.object({
+  requiresContextBinding: z.boolean().optional(),
   sources: z.array(consultationRecordingSourceSchema).optional(),
   signingPreparation: z.object({
     previewId: z.string().min(1),
