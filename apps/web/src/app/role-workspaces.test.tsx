@@ -7643,6 +7643,8 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('heading', { name: '已完诊病例详情' })).toBeTruthy()
     expect(screen.getByText('只读详情')).toBeTruthy()
     expect(screen.getByText(longAssessment)).toBeTruthy()
+    expect(screen.queryByText('家族史', { exact: true })).toBeNull()
+    expect(screen.queryByText('过敏史', { exact: true })).toBeNull()
     expect(screen.getByText('处方号 RX-COMPLETED-001')).toBeTruthy()
     expect(screen.getByText('已确认无需用药')).toBeTruthy()
     expect(screen.getAllByText('Composition/composition-completed-1').length).toBeGreaterThanOrEqual(1)
