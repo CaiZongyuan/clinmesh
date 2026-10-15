@@ -94,10 +94,11 @@ test('reviews paused omissions, recovers preparation after reload and signs only
     await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(1)
     expect((await read()).clinicalDocument!.signed[0]!.content.historyOfPresentIllness).toBe('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
     // 保留退出中的病历面板，验证同名控件重叠时仍检查目标页签。
-    await recordPanel.evaluate(panel => {
-      panel.animate([{ opacity: 1 }, { opacity: 0.99 }], { duration: 10_000 })
+    await recordPanel.evaluate(async panel => {
+      await panel.animate([{ opacity: 1 }, { opacity: 0.99 }], { duration: 10_000 }).ready
     })
     await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toHaveCount(2)
     await expect(consultationPanel.getByRole('button', { name: '暂停自动整理', exact: true })).toBeDisabled()
     expect(errors).toEqual([])
   } finally { await server.close() }
