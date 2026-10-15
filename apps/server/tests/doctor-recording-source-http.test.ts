@@ -63,19 +63,20 @@ async function fixture(provider?: JsonChatCompletionsProvider) {
   const claim = { taskEpoch: randomUUID(), activeSection: 'record', version: 1, viewId: 'consultation',
     viewRevision: 'doctor-source-original', ui: { status: 'ready' }, selection: { kind: 'case', id: caseId, version: visit.encounterVersion } }
   let revision = 0
-  const context = async (overrides: Record<string, unknown> = {}) => agentPageContextBindingSchema.parse(await (await runtime.app.request('/api/agent/v1/page-contexts', {
+  const context = async (overrides: Record<string, unknown> = {}, dshSessionId = 'doctor-source-session') => agentPageContextBindingSchema.parse(await (await runtime.app.request('/api/agent/v1/page-contexts', {
     method: 'POST', headers: headers(doctor), body: JSON.stringify({ claim: { ...claim, ...overrides },
-      client: { id: 'doctor-source-client', revision: ++revision }, dshSessionId: 'doctor-source-session' }),
+      client: { id: 'doctor-source-client', revision: ++revision }, dshSessionId }),
   })).json())
   const read = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${caseId}`, { headers: { cookie: doctor } })).json())
-  const source = async (binding: Awaited<ReturnType<typeof context>>, content = '查体：双肺呼吸音清，无啰音。', rpcId = 'doctor-source-rpc') => {
+  const source = async (binding: Awaited<ReturnType<typeof context>>, content = '查体：双肺呼吸音清，无啰音。',
+    rpcId = 'doctor-source-rpc', messageId = 'native-doctor-message') => {
     const response = await runtime.app.request('/api/agent/v1/doctor-tasks/permit', { method: 'POST', headers: headers(doctor),
       body: JSON.stringify({ contextToken: binding.token, content, rpcId }) })
     expect(response.status).toBe(201)
     const { permit } = await response.json() as { permit: string }
     const encodedPermit = permit.split('.')[0]!
     const payload = { ...JSON.parse(Buffer.from(encodedPermit, 'base64url').toString()),
-      purpose: 'clinmesh-doctor-recording-source', version: 1, messageId: 'native-doctor-message', recordedAt: new Date().toISOString() }
+      purpose: 'clinmesh-doctor-recording-source', version: 1, messageId, recordedAt: new Date().toISOString() }
     const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url')
     return { content, sourceProof: `${encoded}.${createHmac('sha256', secret).update(encoded).digest('base64url')}` }
   }
@@ -106,6 +107,23 @@ it('records a proven doctor supplement without a Tool and reads it through the c
   await f.record(binding, freshPermit)
   expect((await f.read()).consultationRecording?.sources).toHaveLength(1)
   expect((await f.read()).consultationRecording?.remainingCount).toBe(1)
+})
+
+it.each([129, 256])('persists and queues doctor supplements with %i-character native identifiers', async length => {
+  const f = await fixture()
+  const sessionId = 's'.repeat(length)
+  const messageId = 'm'.repeat(length)
+  const rpcId = 'r'.repeat(length)
+  const binding = await f.context({}, sessionId)
+  const input = await f.source(binding, '查体：双肺呼吸音清，无啰音。', rpcId, messageId)
+  const response = await f.record(binding, input)
+  expect(response.status).toBe(200)
+  const receipt = doctorRecordingSourceResponseSchema.parse(await response.json())
+  expect((await f.read()).consultationRecording).toMatchObject({ remainingCount: 1,
+    sources: [{ id: receipt.data.sourceId, kind: 'doctor', messageText: input.content, sessionId, messageId, rpcId }] })
+  expect((await f.record(binding, input)).status).toBe(200)
+  expect((await f.read()).consultationRecording).toMatchObject({ remainingCount: 1,
+    sources: [{ id: receipt.data.sourceId, sessionId, messageId, rpcId }] })
 })
 
 it('automatically records four doctor fields without changing the patient consultation', async () => {
