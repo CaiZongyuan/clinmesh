@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+import { assertObjectJsonSchema, validateJsonSchemaValue, type ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import { agentExecutionProofPayloadSchema, agentToolCatalog, isDoctorReadOperation } from '@clinmesh/contracts/agent'
@@ -660,10 +660,16 @@ function bindingMismatchReason(
   const reason = 'CLINMESH_BINDING_MISMATCH: 调用参数与当前工具定义不一致，原调用尚未执行。'
     + (fields.length === 0 ? '当前工具绑定定义不可用。' : `不匹配字段：${fields.join(', ')}。`)
   const read = agent === undefined ? undefined : ctx.tools.get('clinmesh_read_current_context', agent)
-  const recoveryArguments = bindingFromParameters(read?.parameters)
+  let recoveryArguments = bindingFromParameters(read?.parameters)
     ?? (directoryBinding(ctx, agent) !== undefined && unboundContextReadSchema.safeParse(read?.parameters).success
       ? {}
       : undefined)
+  if (read !== undefined && recoveryArguments !== undefined) {
+    try {
+      assertObjectJsonSchema(read.parameters)
+      if (validateJsonSchemaValue(read.parameters, recoveryArguments).length > 0) recoveryArguments = undefined
+    } catch { recoveryArguments = undefined }
+  }
   if (recoveryArguments === undefined) {
     return reason + (read === undefined
       ? '当前 Agent 尚无可用的只读工具目录；等待系统重新发布后再读取，不能据此判断患者状态。'

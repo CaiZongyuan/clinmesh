@@ -195,6 +195,16 @@ describe('ClinMesh host Tool binding diagnostics', () => {
     ['invalid', { properties: { scopeKey: { const: '' }, pageRevision: { const: 'not-a-valid-binding' } } }],
     ['requires-input', { type: 'object', properties: {}, required: ['query'] }],
     ['non-object', { type: 'string' }],
+    ['bound-requires-input', { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+      query: { type: 'string' },
+    }, required: ['scopeKey', 'pageRevision', 'query'] }],
+    ['bound-non-object', { type: 'string', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }],
+    ['bound-invalid-type', { type: 'object', properties: {
+      scopeKey: { type: 'number', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }],
   ] as const)('does not invent recovery arguments when the current read definition is %s', async (kind, parameters) => {
     const { before, currentTool } = bridge()
     currentTool.mockImplementation(name => name === 'clinmesh_read_current_context'
