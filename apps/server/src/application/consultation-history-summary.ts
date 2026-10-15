@@ -13,8 +13,20 @@ export interface HistoryTurn { id: string; speaker: string; messageText: string 
 export interface HistoryTarget { id: string; field: HistorySummary['field']; text: string }
 export interface RejectedHistoryFact extends HistoryFact { field: HistorySummary['field'] }
 
+const verificationVerdictSchema = z.object({
+  index: z.number().int().nonnegative(),
+  faithful: z.boolean(),
+  complete: z.boolean(),
+  relationValid: z.boolean(),
+}).strict()
+export const recordingSourceDiagnosticSchema = z.object({
+  reason: z.enum(['citation', 'target', 'field-limit', 'verification-coverage', 'verification-rejected']),
+  verdicts: z.array(verificationVerdictSchema).max(12).optional(),
+}).strict()
+
 export class RecordingSourceError extends z.ZodError {
-  constructor(path: Array<string | number>, message: string) {
+  constructor(path: Array<string | number>, message: string,
+    readonly diagnostic: z.infer<typeof recordingSourceDiagnosticSchema>) {
     super([{ code: 'custom', path, message }])
   }
 }
@@ -48,29 +60,24 @@ export function validateHistorySummaries(additions: HistorySummary[], turns: His
       // Complete quotations establish attribution; the independent verifier decides
       // which statements, including those beside a question, support the facts.
       if (turn?.speaker !== 'patient' || findCompleteStatementQuote(turn.messageText, source.quote) === undefined) {
-        throw new RecordingSourceError(['additions', index, 'facts', factIndex, 'sources', sourceIndex], 'Summary must cite a complete saved patient statement in this case')
+        throw new RecordingSourceError(['additions', index, 'facts', factIndex, 'sources', sourceIndex], 'Summary must cite a complete saved patient statement in this case', { reason: 'citation' })
       }
     }
     if (addition.targetAdditionId !== undefined) {
       const target = [...manualHistory, ...history].find(item => item.id === addition.targetAdditionId)
       const signature = JSON.stringify(addition)
       if (target?.field !== addition.field || (targets.has(addition.targetAdditionId) && targets.get(addition.targetAdditionId) !== signature)) {
-        throw new RecordingSourceError(['additions', index, 'targetAdditionId'], 'Summary requires a unique live target in the same history field')
+        throw new RecordingSourceError(['additions', index, 'targetAdditionId'], 'Summary requires a unique live target in the same history field', { reason: 'target' })
       }
       targets.set(addition.targetAdditionId, signature)
     }
     if (summaryText(addition.facts).length > (addition.field === 'chiefComplaint' ? 1_000 : addition.field === 'historyOfPresentIllness' ? 5_000 : 4_000)) {
-      throw new RecordingSourceError(['additions', index, 'facts'], 'Summary exceeds the document field limit')
+      throw new RecordingSourceError(['additions', index, 'facts'], 'Summary exceeds the document field limit', { reason: 'field-limit' })
     }
   }
 }
 
-const verificationSchema = z.object({ additions: z.array(z.object({
-  index: z.number().int().nonnegative(),
-  faithful: z.boolean(),
-  complete: z.boolean(),
-  relationValid: z.boolean(),
-}).strict()).max(12) }).strict()
+const verificationSchema = z.object({ additions: z.array(verificationVerdictSchema).max(12) }).strict()
 
 // Exact citation matching proves attribution, not semantic entailment. A separate
 // bounded model request evaluates the proposed facts against saved evidence.
@@ -83,7 +90,7 @@ export async function verifyHistorySummaries(provider: JsonChatCompletionsProvid
     if (verdict.additions.length !== additions.length
       || new Set(verdict.additions.map(item => item.index)).size !== additions.length
       || verdict.additions.some(item => item.index >= additions.length)) {
-      throw new RecordingSourceError(['additions'], 'Summary verification must cover every candidate exactly once')
+      throw new RecordingSourceError(['additions'], 'Summary verification must cover every candidate exactly once', { reason: 'verification-coverage' })
     }
     return verdict
   }
@@ -108,7 +115,9 @@ export async function verifyHistorySummaries(provider: JsonChatCompletionsProvid
   const verdict = parseVerdict(JSON.parse(result.content))
   // A negative verdict is a valid response, not a formatting error to repair by
   // asking the verifier to change its answer until it approves the same facts.
-  if (verdict.additions.some(item => !item.faithful || !item.complete || !item.relationValid)) {
-    throw new RecordingSourceError(['additions'], 'Summary failed factual fidelity, coverage or relation verification')
+  const rejected = verdict.additions.filter(item => !item.faithful || !item.complete || !item.relationValid)
+  if (rejected.length > 0) {
+    throw new RecordingSourceError(['additions'], 'Summary failed factual fidelity, coverage or relation verification',
+      { reason: 'verification-rejected', verdicts: rejected })
   }
 }

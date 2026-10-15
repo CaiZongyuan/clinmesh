@@ -9,11 +9,12 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { chromium, expect, type Request } from '@playwright/test'
 import { z } from 'zod'
-import { doctorCaseDetailSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema } from '../packages/contracts/src/his.ts'
+import { doctorCaseDetailSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, consultationRecordingErrorCodeSchema } from '../packages/contracts/src/his.ts'
 import { doctorRecommendationStateSchema } from '../packages/contracts/src/doctor-recommendations.ts'
 import { decodeModelRoute } from '../packages/contracts/src/model-bridge.ts'
 import { createClinMeshRuntime } from '../apps/server/src/runtime.ts'
 import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model-provider.ts'
+import { recordingSourceDiagnosticSchema } from '../apps/server/src/application/consultation-history-summary.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../apps/server/tests/fixtures/consultation.ts'
 import { journeyReplies, runRecordingJourney } from '../apps/web/e2e/consultation-recording-journey.ts'
 import { recommendationFixture } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
@@ -560,6 +561,14 @@ export function apply(ctx) {
       }
     } finally {
       report.liveJobs = liveRuntime.database.driver.prepare('SELECT status, error_code FROM consultation_recording_job').all()
+      report.liveFailedAttempts = z.array(z.object({ response_json: z.string() })).parse(liveRuntime.database.driver.prepare(
+        "SELECT response_json FROM command_receipt WHERE operation = 'consultation.history.fail' ORDER BY rowid",
+      ).all()).map(row => z.object({ data: z.object({
+        code: consultationRecordingErrorCodeSchema,
+        diagnostic: recordingSourceDiagnosticSchema.partial({ reason: true }).extend({
+          stage: z.enum(['summary', 'verification', 'apply']),
+        }).optional(),
+      }) }).parse(JSON.parse(row.response_json)).data)
       hospital = original
       await liveRuntime.close()
     }

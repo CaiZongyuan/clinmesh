@@ -15,7 +15,7 @@ import type { ActorContext, CommandExecutor, CommandTransaction } from './comman
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import { WorkflowError } from './workflow-error.ts'
-import { historySummaryOutputSchema, historySummaryPrompt, validateHistorySummaries, RecordingSourceError,
+import { historySummaryOutputSchema, historySummaryPrompt, validateHistorySummaries, RecordingSourceError, recordingSourceDiagnosticSchema,
   summaryText, verifyHistorySummaries, type HistoryFact, type HistorySummary, type RejectedHistoryFact } from './consultation-history-summary.ts'
 
 const contextSchema = z.object({
@@ -37,6 +37,9 @@ const orderedJobsSchema = z.array(z.object({ turn_id: z.string(), status: jobSch
   generation: jobSchema.shape.generation, scheduled: z.number().int().min(0).max(1),
   error_code: consultationRecordingErrorCodeSchema.nullable() }))
 const draftSchema = z.object({ content_json: z.string(), version: z.number().int().positive() })
+const failureDiagnosticSchema = recordingSourceDiagnosticSchema.partial({ reason: true }).extend({
+  stage: z.enum(['summary', 'verification', 'apply']),
+})
 // Decode historical receipts without exposing removed review fields or pending suggestions.
 const recordingReceiptSchema = consultationRecordingSchema.extend({
   status: z.enum([...consultationRecordingSchema.shape.status.options, 'pending']),
@@ -483,6 +486,7 @@ export class ConsultationRecordingService {
       return { status: 'completed' }
     }
     if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
+    let stage: z.infer<typeof failureDiagnosticSchema>['stage'] = 'summary'
     try {
       const access = this.#assertAccess(context, job.encounter_id)
       if (access.caseId !== job.case_id) throw new Error('Recording case changed')
@@ -539,8 +543,10 @@ export class ConsultationRecordingService {
       })
       model.signal.throwIfAborted()
       const output = parseOutput(JSON.parse(result.content))
+      stage = 'verification'
       await verifyHistorySummaries(model.provider, pinned, model.signal, output.additions, turns, history, manualHistory, evidence.rejectedFacts)
       if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
+      stage = 'apply'
       if (this.#current(context, turnId, job)) this.#apply(context, event, turnId, job, baseline, output.additions, manualHistory, evidence.rejectedFacts)
       return { status: 'completed' }
     } catch (error) {
@@ -554,7 +560,8 @@ export class ConsultationRecordingService {
       // A timeout or exhausted structured-output repair must settle instead of multiplying long model calls.
       const retrying = event.attempt < 3 && ['AI_REQUEST_FAILED', 'CONSULTATION_RECORDING_FAILED',
         'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID'].includes(code)
-      this.#finish(context, event, turnId, job, 'failed', code, retrying)
+      this.#finish(context, event, turnId, job, 'failed', code, retrying,
+        { stage, ...(error instanceof RecordingSourceError ? error.diagnostic : {}) })
       return { status: retrying ? 'retryable-failed' : 'completed' }
     }
   }
@@ -660,7 +667,7 @@ export class ConsultationRecordingService {
         const next = replace ? fieldText.slice(0, start) + text + fieldText.slice(target.end_offset!)
           : [fieldText, text].filter(Boolean).join('\n')
         const limit = addition.field === 'chiefComplaint' ? 1_000 : addition.field === 'historyOfPresentIllness' ? 5_000 : 4_000
-        if (next.length > limit) throw new RecordingSourceError(['additions'], 'Recorded history exceeds the document field limit')
+        if (next.length > limit) throw new RecordingSourceError(['additions'], 'Recorded history exceeds the document field limit', { reason: 'field-limit' })
 
         if (replace) this.#supersede(context, job.case_id, target.addition_id)
         this.#trackReplacement(context, job.case_id, addition.field, fieldText, next,
@@ -704,18 +711,23 @@ export class ConsultationRecordingService {
   }
 
   #finish(context: ActorContext, event: OutboxHandlerInput, turnId: string,
-    job: z.infer<typeof jobSchema>, status: 'failed', code: z.infer<typeof consultationRecordingErrorCodeSchema>, retrying = false) {
+    job: z.infer<typeof jobSchema>, status: 'failed', code: z.infer<typeof consultationRecordingErrorCodeSchema>, retrying = false,
+    diagnostic?: z.infer<typeof failureDiagnosticSchema>) {
     if (!this.#current(context, turnId, job)) return
     const nextStatus = retrying ? 'queued' : status
     this.#commands.execute({ context, operation: 'consultation.history.fail', expectedVersions: {},
       contextRequirement: 'current',
       idempotencyKey: `history:${event.eventId}:failure:${event.attempt}`, input: { turnId, code },
-      dataSchema: z.object({ status: z.literal('failed') }),
+      dataSchema: z.object({ status: z.literal('failed'), code: consultationRecordingErrorCodeSchema,
+        diagnostic: failureDiagnosticSchema.optional() }),
     }, () => {
       this.#database.driver.prepare(`UPDATE consultation_recording_job SET status = ?, error_code = ?
         WHERE workspace_id = ? AND epoch = ? AND turn_id = ? AND generation = ? AND status != 'completed'
       `).run(nextStatus, code, context.workspaceId, context.epoch, turnId, job.generation)
-      return { data: { status }, effects: [{ kind: 'updated', reference: `ConsultationRecording/${job.case_id}`, versionId: turnId }] }
+      // Keep bounded reasons after a later retry clears the job's current error.
+      // Never persist provider messages, prompts or rejected clinical text here.
+      return { data: { status, code, ...(diagnostic === undefined ? {} : { diagnostic }) },
+        effects: [{ kind: 'updated', reference: `ConsultationRecording/${job.case_id}`, versionId: turnId }] }
     })
   }
 }

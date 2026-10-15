@@ -18,7 +18,7 @@
   container-type: size;
   mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
   mask-composite: exclude;
-  transition: opacity 800ms ease-out;
+  transition: opacity var(--clinical-update-fade-duration, 800ms) ease-out;
 }
 .clinical-document-update-flow::before {
   content: '';

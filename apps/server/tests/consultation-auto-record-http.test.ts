@@ -331,6 +331,41 @@ it.each([
       failures: [{ code: 'CONSULTATION_RECORDING_SOURCE_INVALID' }] })
   })
 
+it.each(['faithful', 'complete', 'relationValid'] as const)('retains the rejected %s verdict after an explicit retry succeeds', async rejectedCheck => {
+  let rejecting = true
+  const fixture = await setup({ reply: firstFeverReply, extract: feverSummaries,
+    verify: input => ({ additions: faithfulSummaryVerification(input).additions.map(item => ({
+      ...item, [rejectedCheck]: !rejecting,
+    })) }),
+  })
+  const manual = '医生记录：等待复查。'
+  expect((await fixture.save(manual)).status).toBe(200)
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(manual)
+  expect((await fixture.read()).consultationRecording?.status).toBe('failed')
+  const failures = () => fixture.runtime.database.driver.prepare(
+    "SELECT response_json FROM command_receipt WHERE operation = 'consultation.history.fail' ORDER BY rowid",
+  ).all().map(row => JSON.parse(z.object({ response_json: z.string() }).parse(row).response_json) as unknown)
+  const rejected = failures()
+  expect(rejected).toHaveLength(3)
+  for (const receipt of rejected) expect(receipt).toMatchObject({ data: {
+    status: 'failed', code: 'CONSULTATION_RECORDING_SOURCE_INVALID', diagnostic: {
+      stage: 'verification', reason: 'verification-rejected',
+      verdicts: [{ index: 0, faithful: true, complete: true, relationValid: true, [rejectedCheck]: false }],
+    },
+  } })
+  expect(JSON.stringify(rejected)).not.toContain(firstFeverReply)
+  expect(JSON.stringify(rejected)).not.toContain(manual)
+  await fixture.restart()
+  rejecting = false
+  expect((await fixture.control('retry')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', failures: [] })
+  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(`${manual}\n${feverSummary}`)
+  expect(failures()).toEqual(rejected)
+})
+
 it.each(['lost prior fact', 'unresolved contradiction'])('keeps the prior summary when verification rejects an update with %s', async reason => {
   let reply = firstFeverReply
   let update = false

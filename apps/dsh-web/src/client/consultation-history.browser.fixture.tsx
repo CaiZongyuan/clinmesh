@@ -49,6 +49,7 @@ function App(): React.JSX.Element {
   const [controls, setControls] = React.useState<string[]>([])
   const [blocked, setBlocked] = React.useState(false)
   const [signedView, setSignedView] = React.useState(false)
+  const [recordVisible, setRecordVisible] = React.useState(true)
   const updates = useClinicalDocumentUpdates(detail.caseId, working, true)
   return <PortalContainerProvider container={root}>
     <div className="h-full overflow-y-auto">
@@ -59,10 +60,11 @@ function App(): React.JSX.Element {
     }))}>模拟自动记录</button>
     <button type="button" onClick={() => setBlocked(true)}>模拟签署准备</button>
     <button type="button" onClick={() => setSignedView(true)}>模拟已签内容</button>
+    <button type="button" onClick={() => setRecordVisible(current => !current)}>切换病历显示</button>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'backfill', version: 0, remainingCount: 2 }))}>模拟历史病例</button>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'failed', failedCount: 1 }))}>模拟整理失败</button>
     <output aria-label="控制结果">{controls.join(',')}</output>
-    {signedView ? <ClinicalDocumentContentView content={working} messages={getWorkspaceMessages(locale)} />
+    {!recordVisible ? null : signedView ? <ClinicalDocumentContentView content={working} messages={getWorkspaceMessages(locale)} />
       : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: {
       ...recording, ...(blocked ? { signingPreparation: { active: true, previewId: 'synthetic-preview', expiresAt: '2099-01-01T00:00:00Z' } } : {}),
     } }} elementId="record" locale={locale}
