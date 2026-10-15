@@ -175,21 +175,52 @@ it('verifies the actual diagnosis identity before accepting an opaque catalog ID
   expect(await fixture.readCase()).toEqual(before)
 })
 
-it('reports the verification request budget when a valid eight-candidate output exceeds the transport envelope', async () => {
+it.each(['approve', 'oppose-final', 'omit-final', 'duplicate-final', 'wrong-final'])(
+  'verifies all eight candidates in bounded requests with complete original evidence when their combined payload exceeds the budget (%s)', async outcome => {
   const calls: string[] = []
+  const verifiedIds: string[] = []
+  let generationEvidence: unknown[] = []
+  let generationGuidelines: unknown[] = []
+  let activeVerifications = 0
+  let peakVerifications = 0
   let generationPayloadBytes = 0
   let outputBytes = 0
   let verificationPayloadBytes = 0
   const fixture = await setup(async input => {
     calls.push(input.schemaName)
-    if (input.schemaName === 'doctor_recommendation_verification') return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    if (input.schemaName === 'doctor_recommendation_verification') {
+      const payload = z.object({ items: z.array(z.object({ id: z.string(), caseEvidenceIds: z.array(z.string()) })),
+        guidelines: z.array(z.unknown()), caseEvidence: z.array(z.object({ id: z.string() }).passthrough()) }).parse(input.userPayload)
+      expect(Buffer.byteLength(JSON.stringify(input.userPayload))).toBeLessThanOrEqual(240 * 1024)
+      expect(payload.caseEvidence).toEqual(generationEvidence)
+      expect(payload.guidelines).toEqual(generationGuidelines)
+      for (const candidate of payload.items) expect(candidate.caseEvidenceIds.every(id => payload.caseEvidence.some(evidence => evidence.id === id))).toBe(true)
+      verifiedIds.push(...payload.items.map(item => item.id))
+      activeVerifications += 1
+      peakVerifications = Math.max(peakVerifications, activeVerifications)
+      await Promise.resolve()
+      activeVerifications -= 1
+      expect(await fixture.read()).toMatchObject({ status: 'pending', items: [] })
+      const output = verificationOutput(input)
+      if (payload.items.some(item => item.id === 'candidate-7')) {
+        if (outcome === 'oppose-final') output.items = output.items.map(item => ({ ...item, applicable: item.id !== 'candidate-7' }))
+        else if (outcome === 'omit-final') output.items = output.items.filter(item => item.id !== 'candidate-7')
+        else if (outcome === 'duplicate-final') output.items = output.items.map(item => item.id === 'candidate-7' ? output.items[0]! : item)
+        else if (outcome === 'wrong-final') output.items = output.items.map(item => ({ ...item, id: item.id === 'candidate-7' ? 'candidate-0' : item.id }))
+      }
+      return { content: JSON.stringify(output), model: input.model }
+    }
     generationPayloadBytes = Buffer.byteLength(JSON.stringify(input.userPayload))
     const candidate = diagnosisOutput(input).items[0]!
+    const payload = z.object({ kind: z.string(), guidelines: z.array(z.unknown()),
+      caseEvidence: z.array(z.object({ id: z.string() }).passthrough()) }).parse(input.userPayload)
+    generationEvidence = payload.caseEvidence
+    generationGuidelines = payload.guidelines
     const detail = '待'.repeat(2000)
     const output = { items: Array.from({ length: 8 }, (_, index) => ({ ...candidate, id: `candidate-${index}`,
+      caseEvidenceIds: [payload.caseEvidence[index % payload.caseEvidence.length]!.id],
       rationale: detail, supportingInformation: [detail], opposingInformation: [detail], missingInformation: [detail] })), missingInformation: [] }
     outputBytes = Buffer.byteLength(JSON.stringify(output))
-    const payload = z.object({ kind: z.string(), guidelines: z.unknown(), caseEvidence: z.unknown() }).parse(input.userPayload)
     verificationPayloadBytes = Buffer.byteLength(JSON.stringify({ ...payload, items: output.items }))
     return { content: JSON.stringify(output), model: input.model }
   })
@@ -204,8 +235,35 @@ it('reports the verification request budget when a valid eight-candidate output 
   expect(outputBytes).toBeGreaterThan(190 * 1024)
   expect(outputBytes).toBeLessThan(256 * 1024)
   expect(verificationPayloadBytes).toBeGreaterThan(256 * 1024)
+  const invalid = outcome === 'omit-final' || outcome === 'duplicate-final' || outcome === 'wrong-final'
+  expect(await fixture.read()).toMatchObject(invalid ? { status: 'failed', errorCode: 'AI_RESPONSE_INVALID', items: [] }
+    : { status: 'ready', items: Array.from({ length: outcome === 'oppose-final' ? 7 : 8 }, (_, index) => ({ id: `candidate-${index}` })) })
+  if (!invalid) expect((await fixture.read()).errorCode).toBeUndefined()
+  expect([...new Set(verifiedIds)].toSorted()).toEqual(Array.from({ length: 8 }, (_, index) => `candidate-${index}`))
+  if (!invalid) expect(verifiedIds).toHaveLength(8)
+  expect(calls.filter(schema => schema === 'doctor_recommendation_verification').length).toBeGreaterThan(1)
+  expect(peakVerifications).toBe(2)
+  expect(await fixture.readCase()).toEqual(before)
+})
+
+it('keeps a complete candidate unavailable when it cannot fit a verification request by itself', async () => {
+  const calls: string[] = []
+  const fixture = await setup(async input => {
+    calls.push(input.schemaName)
+    const candidate = diagnosisOutput(input).items[0]!
+    const detail = '待'.repeat(2000)
+    const output = { items: [{ ...candidate, rationale: detail, supportingInformation: Array(12).fill(detail),
+      opposingInformation: Array(12).fill(detail), missingInformation: Array(12).fill(detail) }], missingInformation: [] }
+    expect(Buffer.byteLength(JSON.stringify(output))).toBeLessThan(256 * 1024)
+    return { content: JSON.stringify(output), model: input.model }
+  })
+  const field = '合'.repeat(4000)
+  expect((await fixture.saveDocument({ assessment: field, auxiliaryExamination: field, chiefComplaint: '合'.repeat(1000),
+    disposition: field, followUp: field, historyOfPresentIllness: '合'.repeat(5000), physicalExamination: field, priorMedicalHistory: field })).status).toBe(200)
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
   expect(await fixture.read()).toMatchObject({ status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('核验请求预算')] })
-  expect((await fixture.read()).errorCode).toBeUndefined()
   expect(calls).toEqual(['doctor_recommendations'])
   expect(await fixture.readCase()).toEqual(before)
 })
@@ -832,7 +890,10 @@ it.each(['Device', 'SupplyDelivery'])('reads all recommendation kinds with a vis
     await fixture.runtime.dispatchPending()
     const state = await fixture.read(kind)
     expect(state.status).toBe('missing-evidence')
-    const history = state.caseEvidence.filter(item => item.kind === 'history').map(item => JSON.parse(item.text))
+    const history = state.caseEvidence.filter(item => item.kind === 'history').flatMap(item => {
+      const group = z.object({ resourceType: z.string(), entries: z.array(z.record(z.string(), z.unknown())) }).safeParse(JSON.parse(item.text))
+      return group.success ? group.data.entries.map(entry => ({ ...entry, resourceType: group.data.resourceType })) : []
+    })
     expect(history).toContainEqual(expect.objectContaining({
       entryId: 'urn:uuid:prior-history-type', resourceType,
       clinical: { type, ...(resourceType === 'Device' ? { status: 'active' }
@@ -874,8 +935,8 @@ it('generates from more than one hundred visible records while preserving every 
   expect(requests).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
 })
 
-it('reads every batch of a large history concurrently and reuses original-source selection across suggestion kinds', async () => {
-  const syntheaProvider = new class extends StubSyntheaProvider {
+function largeRecommendationHistory() {
+  return new class extends StubSyntheaProvider {
     override async generate() {
       const corpus = await super.generate()
       const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(corpus.sources[0]!.raw)
@@ -891,6 +952,10 @@ it('reads every batch of a large history concurrently and reuses original-source
       return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
     }
   }()
+}
+
+it('reads every batch of a large history concurrently and reuses original-source selection across suggestion kinds', async () => {
+  const syntheaProvider = largeRecommendationHistory()
   const selectedHistoryInputs: string[] = []
   const requests: string[] = []
   const requestChecks: Array<{ stage: string; safety: boolean; old?: boolean }> = []
@@ -919,8 +984,13 @@ it('reads every batch of a large history concurrently and reuses original-source
     requestChecks.push({ stage: input.schemaName, safety: text.includes('旧的抗凝药记录，停药情况尚不明确。'), old: text.includes('未标注异常的旧肝功能结果，尚不能排除异常，需复查。') })
     expect(text).toContain('旧的抗凝药记录，停药情况尚不明确。')
     expect(text).toContain('未标注异常的旧肝功能结果，尚不能排除异常，需复查。')
-    return { content: JSON.stringify(input.schemaName === 'doctor_recommendations'
-      ? diagnosisOutput(input) : verificationOutput(input)), model: input.model }
+    const payload = z.object({ kind: z.string() }).parse(input.userPayload)
+    const output = input.schemaName === 'doctor_recommendations'
+      ? payload.kind === 'prescription' ? prescriptionOutput(input) : diagnosisOutput(input)
+      : { items: verificationOutput(input).items.map(item => ({ ...item,
+        ...(payload.kind !== 'prescription' ? {} : { prescriptionFields: { doseText: true, frequencyCode: true, courseDays: true, quantity: true } }),
+      })) }
+    return { content: JSON.stringify(output), model: input.model }
   }, { syntheaProvider })
   const before = await fixture.readCase()
   expect((await fixture.generate()).status).toBe(200)
@@ -937,6 +1007,39 @@ it('reads every batch of a large history concurrently and reuses original-source
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).status).toBe('ready')
   expect(requests.filter(name => name === 'doctor_recommendation_history_selection')).toHaveLength(selections)
+  expect((await fixture.generate('prescription')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read('prescription')).status).toBe('ready')
+  expect(requests.filter(name => name === 'doctor_recommendation_history_selection')).toHaveLength(selections)
+  expect(await fixture.readCase()).toEqual(before)
+  expect((await fixture.saveDocument({ chiefComplaint: '新增本次症状，需重新核对旧结果。' })).status).toBe(200)
+  expect((await fixture.read()).stale).toBe(true)
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).status).toBe('ready')
+  expect(requests.filter(name => name === 'doctor_recommendation_history_selection')).toHaveLength(2 * selections)
+})
+
+it.each(['incomplete', 'foreign-id', 'provider-error', 'timeout'])('does not generate from an incomplete or invalid history selection (%s)', async failure => {
+  const requests: string[] = []
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    expect(input.schemaName).toBe('doctor_recommendation_history_selection')
+    if (failure === 'provider-error' || failure === 'timeout') return Response.json({
+      error: failure === 'timeout' ? 'MODEL_TIMEOUT' : 'MODEL_UNAVAILABLE',
+    }, { status: 503 })
+    return { content: JSON.stringify({ complete: failure !== 'incomplete',
+      selectedEvidenceIds: failure === 'foreign-id' ? ['evidence:another-patient'] : [] }), model: input.model }
+  }, { syntheaProvider: largeRecommendationHistory() })
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject(failure === 'incomplete'
+    ? { status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('完整读取')] }
+    : { status: 'failed', items: [], errorCode: failure === 'timeout' ? 'MODEL_TIMEOUT'
+      : failure === 'provider-error' ? 'MODEL_UNAVAILABLE' : 'AI_RESPONSE_INVALID' })
+  expect(requests.length).toBeGreaterThan(0)
+  expect(requests.every(name => name === 'doctor_recommendation_history_selection')).toBe(true)
   expect(await fixture.readCase()).toEqual(before)
 })
 

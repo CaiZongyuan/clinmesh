@@ -99,3 +99,27 @@ export function doctorVisibleHistoryDetail(database: ClinMeshDatabase, context: 
     resourceType: item.resource_type, source: 'visible-source', title: item.title,
   })
 }
+
+export function doctorVisibleHistoryDetails(database: ClinMeshDatabase, context: ActorContext, currentCaseId: string,
+  patientId: string) {
+  const caseId = materializedCase(database, context, currentCaseId, patientId)
+  if (caseId === undefined) return []
+  const rows = z.array(z.object({
+    clinical_date: z.string(), resource_type: z.string(), title: z.string(),
+    source_reference: z.string(), resource_json: z.string(),
+  })).parse(database.driver.prepare(`
+    SELECT history.clinical_date, history.resource_type, history.title,
+      history.source_reference, resource.resource_json
+    FROM synthetic_case_visible_history AS history
+    LEFT JOIN synthetic_case_visible_resource AS resource
+      ON resource.workspace_id = history.workspace_id AND resource.case_id = history.case_id
+     AND resource.source_reference = history.source_reference
+    WHERE history.workspace_id = ? AND history.case_id = ?
+    ORDER BY history.sequence
+  `).all(context.workspaceId, caseId))
+  return rows.map(row => doctorVisibleHistoryDetailSchema.parse({
+    clinical: JSON.parse(row.resource_json), clinicalDate: row.clinical_date,
+    entryId: row.source_reference, missingFieldMeaning: 'not-recorded',
+    resourceType: row.resource_type, source: 'visible-source', title: row.title,
+  }))
+}

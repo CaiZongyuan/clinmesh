@@ -329,3 +329,5 @@
 - 原生 DSH 合成模型替身须覆盖宿主的医生任务意图识别；这条辅助请求接收单条医生原文而非业务 JSON。只实现患者与病史输出的替身会在页面 Tool 前报 `CLINMESH_DELEGATION_UNCONFIRMED`，服务端没有工具记录；按真实输入返回 `discuss` 或合法委托结果，不能跳过执行授权。
 
 - 原生 DSH 验收的临时插件也须在 manifest 中声明非空 `name` 和 `version`。官方 DeepSeek 的插件清单扩展会检查全部 active package；缺少版本时真实模型请求在发出 HTTP 前失败为 `REQUEST_EXTENSION`，合成 adapter 不经过这条扩展，不能证明真实 Provider 可用。
+
+- 诊疗资料读取的性能测量必须经过公开 HTTP，计入授权、重复 prepare、分页、解析和装配；只比较裸 SQL 的 N+1 与 JOIN 可能低估数量级。先以 SQL 数量与阶段耗时定位，再在保持医生历史索引和白名单边界的前提下批量读取。产品合同由[分批证据读取决策](../../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)拥有。

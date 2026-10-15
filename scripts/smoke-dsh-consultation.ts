@@ -207,7 +207,8 @@ export function apply(ctx) {
       resolveModel: (route, signal) => provider.resolveModel(route === 'dsh:default'
         ? 'dsh:{"provider":"synthetic-consultation","model":"journey"}' : route, signal),
       completeJson: async input => {
-        if (recommendationsOnly && ['doctor_recommendations', 'doctor_recommendation_verification'].includes(input.schemaName)) {
+        if (recommendationsOnly && ['doctor_recommendations', 'doctor_recommendation_history_selection',
+          'doctor_recommendation_verification'].includes(input.schemaName)) {
           const control = JSON.parse(await readFile(controlPath, 'utf8')) as Record<string, unknown>
           await writeFile(controlPath, json({ ...control, recommendationResult: recommendationFixture(input) }))
         }

@@ -3,6 +3,7 @@ import {
   doctorCaseHistorySchema,
   doctorCompletedHistoryDetailSchema,
   type DoctorCaseHistoryInput,
+  type DoctorCaseHistoryDetail,
   type DoctorCaseHistoryDetailInput,
 } from '@clinmesh/contracts/agent'
 import { createHmac } from 'node:crypto'
@@ -54,6 +55,7 @@ import {
   type DiagnosisDraftEntry,
   type DiagnosisConfirmation,
   dispenseResponseSchema,
+  doctorCaseDetailSchema,
   doctorCompletedCaseDetailSchema,
   doctorCompletedCaseListSchema,
   doctorCompletedCaseTimelineEventSchema,
@@ -96,7 +98,7 @@ import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
-import { doctorHistoryEntryAllowed, doctorVisibleHistory, doctorVisibleHistoryDetail } from './doctor-case-history.ts'
+import { doctorHistoryEntryAllowed, doctorVisibleHistory, doctorVisibleHistoryDetail, doctorVisibleHistoryDetails } from './doctor-case-history.ts'
 import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction } from './command-executor.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
@@ -2770,6 +2772,19 @@ export class WorkflowService {
     })
   }
 
+  doctorRecommendationHistory(context: ActorContext, currentCaseId: string): DoctorCaseHistoryDetail[] {
+    const patientId = this.#doctorHistoryPatient(context, currentCaseId)
+    const history: DoctorCaseHistoryDetail[] = doctorVisibleHistoryDetails(this.#database, context, currentCaseId, patientId)
+    for (let page = 1; ; page += 1) {
+      const completed = this.doctorCompletedCases(context, { patientId, page, pageSize: 20 })
+      for (const item of completed.items) history.push(this.doctorCaseHistoryDetail(context, currentCaseId, {
+        source: 'local-completed', entryId: item.caseId,
+      }))
+      if (page * completed.pageSize >= completed.total) break
+    }
+    return history
+  }
+
   #doctorHistoryPatient(context: ActorContext, caseId: string): string {
     this.#assertRole(context, ['outpatient-doctor'])
     new WorkspaceRepository(this.#database).assertCurrent(context, context.scenarioRunId)
@@ -3123,22 +3138,25 @@ export class WorkflowService {
       }
     }
     const patient = patientSummary(parseStoredFhirResource(row.patient_json))
-    const priorFacts = this.#fhir.search(
-      context,
-      'Condition',
-      new URLSearchParams({ _count: '100', patient: `Patient/${patient.id}` }),
-    ).resources.flatMap((resource) => {
-      const condition = priorConditionSchema.parse(resource)
-      if (condition.encounter?.reference === `Encounter/${encounter.id}`) return []
-      const coding = condition.code?.coding?.[0]
-      return [{
-        clinicalStatus: condition.clinicalStatus?.coding?.[0]?.code ?? '',
-        code: coding?.code ?? '',
-        display: condition.code?.text ?? coding?.display ?? '',
-        id: resource.id,
-        ...(condition.recordedDate === undefined ? {} : { recordedDate: condition.recordedDate }),
-      }]
-    })
+    const priorFacts: z.infer<typeof doctorCaseDetailSchema>['priorFacts'] = []
+    const priorParameters = new URLSearchParams({ _count: '100', patient: `Patient/${patient.id}` })
+    for (;;) {
+      const page = this.#fhir.search(context, 'Condition', priorParameters)
+      priorFacts.push(...page.resources.flatMap(resource => {
+        const condition = priorConditionSchema.parse(resource)
+        if (condition.encounter?.reference === `Encounter/${encounter.id}`) return []
+        const coding = condition.code?.coding?.[0]
+        return [{
+          clinicalStatus: condition.clinicalStatus?.coding?.[0]?.code ?? '',
+          code: coding?.code ?? '',
+          display: condition.code?.text ?? coding?.display ?? '',
+          id: resource.id,
+          ...(condition.recordedDate === undefined ? {} : { recordedDate: condition.recordedDate }),
+        }]
+      }))
+      if (page.nextCursor === undefined) break
+      priorParameters.set('_cursor', page.nextCursor)
+    }
     const consultation = this.#consultationDetail(context, row.case_id)
     const clinicalDocumentDraft = this.#database.driver.prepare(`
       SELECT version, content_json, updated_at

@@ -14,7 +14,6 @@ import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatComple
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
-import type { DoctorCaseHistoryDetail } from '@clinmesh/contracts/agent'
 import { doctorGuidelineGroups, doctorGuidelineRevision } from './doctor-guideline-evidence.ts'
 import { normalizeDoctorDiagnosisRecommendation } from './doctor-diagnosis-recommendations.ts'
 import { normalizeInvestigationRecommendation, type DoctorInvestigationRecommendationCatalogs } from './doctor-investigation-recommendations.ts'
@@ -157,20 +156,12 @@ export class DoctorRecommendationsService {
     for (const request of [...detail.laboratoryRequests?.requests ?? [], ...detail.imagingRequests?.requests ?? [], ...detail.pathologyRequests?.requests ?? []]) {
       add(`report:${request.id}`, 'report', '已发布检查检验报告', request.report)
     }
-    const historyDetails: DoctorCaseHistoryDetail[] = []
-    for (const source of ['visible-source', 'local-completed'] as const) {
-      for (let page = 1; ; page += 1) {
-        const history = this.options.workflow.doctorCaseHistory(context, caseId, { source, page, pageSize: 20 })
-        for (const item of history.items) {
-          const detail = this.options.workflow.doctorCaseHistoryDetail(context, caseId, { source, entryId: item.entryId })
-          const text = JSON.stringify(detail)
-          sourceHashes.push(canonicalJsonHash({ id: `history:${source}:${item.entryId}`, text }))
-          for (const group of doctorGuidelineGroups) {
-            if (group.terms.some(term => text.toLowerCase().includes(term.toLowerCase()))) applicableGroups.add(group)
-          }
-          historyDetails.push(detail)
-        }
-        if (page * history.pageSize >= history.total) break
+    const historyDetails = this.options.workflow.doctorRecommendationHistory(context, caseId)
+    for (const detail of historyDetails) {
+      const text = JSON.stringify(detail)
+      sourceHashes.push(canonicalJsonHash({ id: `history:${detail.source}:${detail.entryId}`, text }))
+      for (const group of doctorGuidelineGroups) {
+        if (group.terms.some(term => text.toLowerCase().includes(term.toLowerCase()))) applicableGroups.add(group)
       }
     }
     const history = packDoctorRecommendationHistory(caseId, historyDetails)
@@ -448,43 +439,72 @@ export class DoctorRecommendationsService {
         const normalized = normalizeInvestigationRecommendation(item, snapshot.catalogs)
         return normalized === undefined ? [] : [normalized]
       })
-      const selectedCatalogItems = {
+      const selectedCatalogItems = (group: DoctorRecommendationSuggestion[]) => ({
         ...(snapshot.catalogs.laboratory === undefined ? {} : { laboratory: snapshot.catalogs.laboratory.items
-          .filter(entry => candidates.some(item => item.kind === 'laboratory' && item.catalogItemId === entry.id))
+          .filter(entry => group.some(item => item.kind === 'laboratory' && item.catalogItemId === entry.id))
           .map(({ id, localCode, nameZh, version, referenceConcept, specimen, sourceDataset, reportDefinition }) => ({ id, localCode, nameZh, version, referenceConcept, specimen, sourceDataset, reportDefinition })) }),
         ...(snapshot.catalogs.imaging === undefined ? {} : { imaging: snapshot.catalogs.imaging.items
-          .filter(entry => candidates.some(item => item.kind === 'imaging' && item.serviceId === entry.service.id)).map(entry => entry.service) }),
+          .filter(entry => group.some(item => item.kind === 'imaging' && item.serviceId === entry.service.id)).map(entry => entry.service) }),
         ...(snapshot.catalogs.pathology === undefined ? {} : { pathology: snapshot.catalogs.pathology.items
-          .filter(entry => candidates.some(item => item.kind === 'pathology' && item.serviceId === entry.service.id))
-          .map(entry => ({ service: entry.service, sourceProcedures: entry.sourceProcedures.filter(procedure => candidates.some(item =>
+          .filter(entry => group.some(item => item.kind === 'pathology' && item.serviceId === entry.service.id))
+          .map(entry => ({ service: entry.service, sourceProcedures: entry.sourceProcedures.filter(procedure => group.some(item =>
             item.kind === 'pathology' && item.serviceId === entry.service.id && item.sourceProcedureReference === procedure.sourceReference)) })) }),
-      }
-      const parseVerification = (value: unknown) => {
+      })
+      const parseVerification = (value: unknown, group: DoctorRecommendationSuggestion[]) => {
         const verification = verificationSchema.parse(value)
         const ids = new Set(verification.items.map(item => item.id))
-        if (ids.size !== candidates.length || verification.items.length !== candidates.length
-          || candidates.some(item => !ids.has(item.id))
+        if (ids.size !== group.length || verification.items.length !== group.length
+          || group.some(item => !ids.has(item.id))
           || (payload.kind === 'prescription' && verification.items.some(item => item.prescriptionFields === undefined))) {
           throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'Independent verification must cover every candidate and prescription field')
         }
         return verification
       }
-      let verified: z.infer<typeof verificationSchema> = { items: [] }
+      const verified: z.infer<typeof verificationSchema> = { items: [] }
       if (candidates.length > 0) {
         phase = 'verification'
-        const verificationRequest: JsonChatCompletionInput = {
-          model, signal, schemaName: 'doctor_recommendation_verification', systemPrompt: verificationPrompt,
-          jsonSchema: z.toJSONSchema(verificationSchema) as Record<string, unknown>,
-          userPayload: { kind: payload.kind, items: candidates, guidelines: snapshot.guidelines, caseEvidence: base.caseEvidence,
-            ...(Object.keys(selectedCatalogItems).length === 0 ? {} : { selectedCatalogItems }),
-            ...(payload.kind === 'prescription' ? { medicationPresentations: snapshot.catalogs.medications?.filter(medication =>
-              candidates.some(item => item.kind === 'prescription' && item.catalogItemId === medication.id)).map(({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification }) =>
-              ({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification })) } : {}) },
-          validate: value => { parseVerification(value); return true },
+        const requestForVerification = (group: DoctorRecommendationSuggestion[]): JsonChatCompletionInput => {
+          const selected = selectedCatalogItems(group)
+          return {
+            model, signal, schemaName: 'doctor_recommendation_verification', systemPrompt: verificationPrompt,
+            jsonSchema: z.toJSONSchema(verificationSchema) as Record<string, unknown>,
+            userPayload: { kind: payload.kind, items: group, guidelines: snapshot.guidelines, caseEvidence: base.caseEvidence,
+              ...(Object.keys(selected).length === 0 ? {} : { selectedCatalogItems: selected }),
+              ...(payload.kind === 'prescription' ? { medicationPresentations: snapshot.catalogs.medications?.filter(medication =>
+                group.some(item => item.kind === 'prescription' && item.catalogItemId === medication.id)).map(({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification }) =>
+                ({ id, nameZh, version, product, drugConcept, availableScopes, regulatoryVerification })) } : {}) },
+            validate: value => { parseVerification(value, group); return true },
+          }
         }
-        assertRecommendationRequestBudget(verificationRequest)
-        const verification = await this.options.provider.completeJson(verificationRequest)
-        verified = parseVerification(JSON.parse(verification.content))
+        const batches: DoctorRecommendationSuggestion[][] = []
+        let batch: DoctorRecommendationSuggestion[] = []
+        for (const candidate of candidates) {
+          if (batch.length > 0 && !recommendationRequestFits(requestForVerification([...batch, candidate]))) {
+            batches.push(batch)
+            batch = []
+          }
+          if (!recommendationRequestFits(requestForVerification([candidate]))) {
+            throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'A complete candidate and case evidence exceed the verification request budget')
+          }
+          batch.push(candidate)
+        }
+        if (batch.length > 0) batches.push(batch)
+        for (let index = 0; index < batches.length; index += 2) {
+          const results = await Promise.allSettled(batches.slice(index, index + 2).map(async group => {
+            signal.throwIfAborted()
+            this.#authorize(context, payload.caseId)
+            if (!current()) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation generation changed before verification')
+            const request = requestForVerification(group)
+            const result = await this.options.provider!.completeJson(request)
+            signal.throwIfAborted()
+            this.#authorize(context, payload.caseId)
+            return parseVerification(JSON.parse(result.content), group)
+          }))
+          for (const result of results) {
+            if (result.status === 'rejected') throw result.reason
+            verified.items.push(...result.value.items)
+          }
+        }
       }
       signal.throwIfAborted()
       const items = candidates.flatMap<DoctorRecommendationSuggestion>(item => {

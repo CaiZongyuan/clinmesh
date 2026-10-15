@@ -3,11 +3,14 @@ import {
   doctorCaseEvidenceSchema, doctorRecommendationKindSchema, doctorRecommendationSuggestionSchema,
   guidelineEvidenceSchema,
 } from '@clinmesh/contracts/doctor-recommendations'
-import { caseLaboratoryCatalogSearchSchema } from '@clinmesh/contracts/his'
 import type { JsonChatCompletionInput } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 
 // The external model is synthetic; the server still owns evidence, catalogs, verification and persistence.
 export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'schemaName' | 'userPayload'>): unknown {
+  if (input.schemaName === 'doctor_recommendation_history_selection') {
+    const payload = z.object({ historyEvidence: z.array(doctorCaseEvidenceSchema) }).parse(input.userPayload)
+    return { complete: true, selectedEvidenceIds: payload.historyEvidence.map(item => item.id) }
+  }
   if (input.schemaName === 'doctor_recommendation_verification') {
     const payload = z.object({ items: z.array(doctorRecommendationSuggestionSchema) }).parse(input.userPayload)
     return { items: payload.items.map(item => ({ id: item.id, guidelineSupported: true, caseSupported: true,
@@ -21,7 +24,9 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
     kind: doctorRecommendationKindSchema, guidelines: z.array(guidelineEvidenceSchema),
     caseEvidence: z.array(doctorCaseEvidenceSchema),
     catalogs: z.object({
-      laboratory: caseLaboratoryCatalogSearchSchema.optional(),
+      laboratory: z.object({ items: z.array(z.object({
+        id: z.string(), nameZh: z.string(), allowedIndicationCodes: z.array(z.string()),
+      })) }).optional(),
       diagnoses: z.object({ local: z.array(z.object({ id: z.string(), code: z.string(), nameZh: z.string() })) }).optional(),
       medications: z.array(z.object({ id: z.string(), nameZh: z.string() })).optional(),
     }),
