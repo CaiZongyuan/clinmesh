@@ -12,10 +12,8 @@ function projectCoding({ id, system, version, code, display }: ReferenceConceptS
   return { id, system, version, code, display }
 }
 
-export function projectRecommendationCatalogs(catalogs: DoctorRecommendationCatalogs) {
-  const laboratory = catalogs.laboratory
-  if (laboratory === undefined) return catalogs
-  return { ...catalogs, laboratory: { ...laboratory, items: laboratory.items.map(item => ({
+export function projectRecommendationCatalogs({ laboratory, ...catalogs }: DoctorRecommendationCatalogs) {
+  return { ...catalogs, ...(laboratory === undefined ? {} : { laboratory: { ...laboratory, items: laboratory.items.map(item => ({
     id: item.id, localCode: item.localCode, nameZh: item.nameZh, nameEn: item.nameEn, version: item.version,
     serviceKind: item.serviceKind, doctorOrderable: item.doctorOrderable,
     allowedIndicationCodes: item.allowedIndicationCodes, componentServiceIds: item.componentServiceIds,
@@ -29,5 +27,5 @@ export function projectRecommendationCatalogs(catalogs: DoctorRecommendationCata
         { high, low, normalValue, notes, referenceKind, sex }
       )),
     })) },
-  })) } }
+  })) } }) }
 }

@@ -27,7 +27,7 @@ export const modelBridgeRequestSchema = z.discriminatedUnion('operation', [
     schemaName: z.enum(['patient_persona', 'patient_dialogue_reply', 'consultation_history_increment',
       'consultation_history_summary', 'consultation_history_verification', 'investigation_result',
       'investigation_service_result', 'laboratory_service_enrichment', 'doctor_recommendations',
-      'doctor_recommendation_history_selection', 'doctor_recommendation_verification']),
+      'doctor_recommendation_history_selection', 'doctor_recommendation_catalog_selection', 'doctor_recommendation_verification']),
     jsonSchema: z.record(z.string(), z.unknown()),
     systemPrompt: z.string().min(1).max(64 * 1024),
     userPayload: z.unknown(),
