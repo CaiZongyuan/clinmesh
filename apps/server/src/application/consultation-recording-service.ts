@@ -5,7 +5,6 @@ import {
   consultationRecordingSourceSchema,
   consultationRecordingErrorCodeSchema,
   consultationRecordingSchema,
-  controlConsultationRecordingResponseSchema,
 } from '@clinmesh/contracts/his'
 import { hasStatementBoundaries, trackDocumentFragment } from '@clinmesh/core/document-text'
 import { createHash } from 'node:crypto'
@@ -231,7 +230,7 @@ export class ConsultationRecordingService {
     expectedRecordingVersion?: number }) {
     return this.#commands.execute({ ...input, operation: 'consultation.recording.control',
       input: { encounterId: input.encounterId, action: 'activate', expectedRecordingVersion: input.expectedRecordingVersion ?? 0 },
-      dataSchema: controlConsultationRecordingResponseSchema.shape.data,
+      dataSchema: recordingReceiptSchema,
     }, transaction => {
       const access = this.#assertAccess(input.context, input.encounterId)
       if (!access.editable || this.isSigning(input.context, access.caseId) || !this.#enabled

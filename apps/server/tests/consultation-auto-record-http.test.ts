@@ -204,34 +204,41 @@ async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
   return { complete, save, preview, request }
 }
 
-it('replays legacy recording and signing preview receipts without restoring review contracts or changing stored evidence', async () => {
+it('replays legacy activation, resume and signing preview receipts without restoring review contracts or changing stored evidence', async () => {
   const fixture = await setup()
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect((await fixture.control('pause')).status).toBe(200)
-  const key = randomUUID()
-  const resumed = await fixture.control('resume', { key })
-  expect(resumed.status).toBe(200)
-  const receipt = controlConsultationRecordingResponseSchema.parse(await resumed.json())
-  const legacy = { ...receipt, data: { ...receipt.data, status: 'pending', additions: receipt.data.additions.map(addition => ({
-    ...addition, status: 'pending', reviewStatus: 'unreviewed', reviewable: true,
-  })) } }
   const updateReceipt = (operation: string, key: string, value: unknown) => fixture.runtime.database.driver.prepare(
     'UPDATE command_receipt SET response_json = ? WHERE operation = ? AND idempotency_key = ?',
   ).run(JSON.stringify(value), operation, key)
   const storedReceipt = (operation: string, key: string) => fixture.runtime.database.driver.prepare(
     'SELECT response_json FROM command_receipt WHERE operation = ? AND idempotency_key = ?',
   ).get(operation, key)
-  updateReceipt('consultation.recording.control', key, legacy)
-  const before = await fixture.read()
-  const replay = await fixture.control('resume', { key, version: 2 })
-  expect(replay.status).toBe(200)
-  const projected = controlConsultationRecordingResponseSchema.parse(await replay.json())
-  expect(projected).toEqual({ ...receipt, data: { ...receipt.data, status: 'processing',
-    additions: receipt.data.additions.map(addition => ({ ...addition, status: 'superseded' })),
-  } })
-  expect(storedReceipt('consultation.recording.control', key)).toEqual({ response_json: JSON.stringify(legacy) })
-  expect(await fixture.read()).toEqual(before)
+  const auditCount = () => fixture.runtime.database.driver.prepare('SELECT COUNT(*) AS count FROM audit_log').get()
+  for (const action of ['activate', 'resume'] as const) {
+    if (action === 'resume') expect((await fixture.control('pause')).status).toBe(200)
+    const version = (await fixture.read()).consultationRecording!.version
+    const key = randomUUID()
+    const response = await fixture.control(action, { key, version })
+    expect(response.status).toBe(200)
+    const receipt = controlConsultationRecordingResponseSchema.parse(await response.json())
+    expect(receipt.data.additions.length).toBeGreaterThan(0)
+    const legacy = { ...receipt, data: { ...receipt.data, status: 'pending', additions: receipt.data.additions.map(addition => ({
+      ...addition, status: 'pending', reviewStatus: 'unreviewed', reviewable: true,
+    })) } }
+    updateReceipt('consultation.recording.control', key, legacy)
+    const before = await fixture.read()
+    const audits = auditCount()
+    const replay = await fixture.control(action, { key, version })
+    expect(replay.status).toBe(200)
+    const projected = controlConsultationRecordingResponseSchema.parse(await replay.json())
+    expect(projected).toEqual({ ...receipt, data: { ...receipt.data, status: 'processing',
+      additions: receipt.data.additions.map(addition => ({ ...addition, status: 'superseded' })),
+    } })
+    expect(storedReceipt('consultation.recording.control', key)).toEqual({ response_json: JSON.stringify(legacy) })
+    expect(await fixture.read()).toEqual(before)
+    expect(auditCount()).toEqual(audits)
+  }
 
   const sign = await signing(fixture)
   await sign.save()
@@ -244,7 +251,6 @@ it('replays legacy recording and signing preview receipts without restoring revi
     consultationVersion: 4, remainingCount: 0, failedCount: 0, paused: false, conflictCount: 1, unreviewedCount: 1,
   } } }
   updateReceipt('clinical-document.preview-sign', previewKey, oldPreview)
-  const auditCount = () => fixture.runtime.database.driver.prepare('SELECT COUNT(*) AS count FROM audit_log').get()
   const audits = auditCount()
   const previewReplay = await sign.request('actions/preview-sign', { expectedDraftVersion }, { key: previewKey })
   expect(previewReplay.status).toBe(200)
