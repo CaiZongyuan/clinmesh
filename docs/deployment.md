@@ -329,6 +329,8 @@ pnpm smoke:consultation:native
 
 真实模型验收显式指定一个已有配置的隔离 `DSH_HOME` 和完整 Provider/model 路由。脚本把凭据和 Profile patch 复制到新的临时环境，在完整确定性旅程后，对新合成病例运行两轮真实病史总结与独立事实核对；患者档案和两轮回答使用固定合成 fixture，以便逐项核对起病、发热、干咳、体温及胸痛、气促的否定。`--summary-only` 可单独运行该多轮总结及来源入口验收，完整合成旅程的断言保持在默认模式。真实调用可能产生费用，命令不进入 `pnpm check` 或 CI。
 
+通过 `HTTP_PROXY`／`HTTPS_PROXY` 访问模型 API 时，为验收命令设置 `NODE_USE_ENV_PROXY=1`；隔离 Node 宿主保留这一显式开关，仍不继承任意 `NODE_OPTIONS`。`NO_PROXY` 应包含 `localhost,127.0.0.1`，使本机模型桥和 Server 请求直接连接。
+
 ```sh
 export CLINMESH_DSH_SMOKE_HOME=/absolute/path/to/configured/dsh-home
 export CLINMESH_DSH_SMOKE_LIVE_MODEL='dsh:{"provider":"configured-provider","model":"configured-model"}'
