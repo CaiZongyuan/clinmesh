@@ -60,10 +60,12 @@ describe('Pathology consultation request HTTP contract', () => {
     breastCase: BreastCase,
     slides: SyntheticSlide[] = [{ assetId: luminal }],
     performanceObserver?: SqlitePerformanceProbe,
+    recording = false,
   ) {
     const created = await createImagingRuntime([breastCaseBundle(breastCase)], {
       ...(performanceObserver === undefined ? {} : { performanceObserver }),
       persona: true,
+      recording,
     })
     temporaryDirectories.push(created.directory)
     runtimes.push(created.runtime)
@@ -165,6 +167,31 @@ describe('Pathology consultation request HTTP contract', () => {
   }
 
   type Reported = Awaited<ReturnType<typeof reportedRequest>>
+
+  it('saves every published pathology text section in the recording source with its fixed version and hash', async () => {
+    const note = '本次会诊切片为原发灶组织，未包含淋巴结；淋巴结情况以原病例记录为准。' + '合成公开报告备注。'.repeat(2500)
+    const visit = await consultation({ name: '全文来源合成患者' }, [{ assetId: luminal, note }], undefined, true)
+    const { runtime, doctor, encounterId, outpatientCaseId } = visit
+    const initial = await caseDetail(runtime, doctor, outpatientCaseId)
+    const paused = await runtime.app.request(`/api/his/v1/encounters/${encounterId}/consultation-recording/actions/control`, mutation(doctor, {
+      expectedVersions: { [`Encounter/${encounterId}`]: initial.encounter.versionId },
+      input: { action: 'pause', expectedRecordingVersion: initial.consultationRecording!.version },
+    }))
+    expect(paused.status).toBe(200)
+    const report = (await reportedRequest(visit)).report!
+    const detail = await caseDetail(runtime, doctor, outpatientCaseId)
+    const source = detail.consultationRecording!.sources!.find(item => item.kind === 'report')!
+    expect(source.messageText).toContain(`镜下所见：\n${report.microscopy}`)
+    expect(source.messageText).toContain(`病理诊断：\n${report.diagnosis}`)
+    expect(source.messageText).toContain(`免疫组化：\n${report.immunohistochemistry}`)
+    expect(source.messageText).toContain(`备注：\n${report.note}`)
+    expect(report.note).toBe(note)
+    expect(source).toMatchObject({ reportReference: `DiagnosticReport/${report.diagnosticReportId}/_history/${report.diagnosticReportVersion}`,
+      reportContentHash: expect.stringMatching(/^[a-f0-9]{64}$/u) })
+    expect(detail.consultationRecording).toMatchObject({ status: 'paused', remainingCount: 1 })
+    await reportedRequest(visit, 2)
+    expect((await caseDetail(runtime, doctor, outpatientCaseId)).consultationRecording!.sources!.find(item => item.id === source.id)).toEqual(source)
+  })
 
   function reportVersions(request: Reported) {
     return {

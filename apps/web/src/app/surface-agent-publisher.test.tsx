@@ -2,6 +2,8 @@
 
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { WebPreferencesProvider } from './preferences-context.tsx'
 import type { AgentPageContextBinding, AgentPageContextClaim } from '@clinmesh/contracts/agent'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { AgentPageRegistryProvider, useRegisterAgentPage, type AgentPageRegistration } from './agent-page-context.tsx'
@@ -25,6 +27,7 @@ function PublishedPage({ page }: { page: AgentPageRegistration }) {
 }
 
 async function fixture(initialPatient?: string, holdHandoff = false) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
   const released: Array<Parameters<WebSurfaceAgentController['register']>[0]> = []
   const surfaceAgent: WebSurfaceAgentController = { register(value) {
@@ -93,9 +96,12 @@ async function fixture(initialPatient?: string, holdHandoff = false) {
     if (path.endsWith('/agent/v1/tool-calls/result')) return Response.json({ status: 'completed' })
     throw new Error(`Unexpected request: ${path}`)
   }))
-  const tree = (page: AgentPageRegistration) => <WebRuntimeProvider value={{ mode: 'surface',
+  const tree = (page: AgentPageRegistration) => <QueryClientProvider client={queryClient}>
+    <WebPreferencesProvider value={{ preferences: { locale: 'zh-CN', fontSize: 'standard', theme: 'system' }, setPreferences: () => {} }}>
+    <WebRuntimeProvider value={{ mode: 'surface',
     appearanceRoot: { current: null }, surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'synthetic-session',
   }}><AgentPageRegistryProvider><PublishedPage page={page} /></AgentPageRegistryProvider></WebRuntimeProvider>
+    </WebPreferencesProvider></QueryClientProvider>
   const rendered = render(tree(pageFor('page-1', oldAction, initialPatient)))
   const findSearch = (): WebSurfaceAgentTool | undefined => registration?.tools.find(tool => tool.name === 'clinmesh_search_patients')
   await waitFor(() => expect(findSearch()).toBeDefined())

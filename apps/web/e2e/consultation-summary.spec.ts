@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
-import { applySuggestion, expandHistory } from './consultation-suggestions.ts'
+import { confirmRecordedAddition, expandHistory } from './consultation-suggestions.ts'
 
 test('merges a readable history and shows both saved patient replies and their doctor context after reload', async ({ page, webRoot }) => {
   const replies = ['昨天晚上开始发烧，最高量到38.5度，还咳嗽，但是没有痰。',
@@ -46,25 +46,28 @@ test('merges a readable history and shows both saved patient replies and their d
       await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill(question)
       await page.getByRole('button', { name: '向患者提问', exact: true }).click()
       await expect(page.getByText(replies[replyIndex]!, { exact: true })).toBeVisible()
-      await expect.poll(async () => (await read()).consultationRecording?.status).toBe('pending')
+      await expect.poll(async () => (await read()).consultationRecording?.status).toBe('updated')
     }
-    await ask('何时开始发热，最高体温多少，有没有咳嗽和痰？')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     const before = await page.getByLabel('现病史', { exact: true }).inputValue()
+    await ask('何时开始发热，最高体温多少，有没有咳嗽和痰？')
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect(page.locator('[data-consultation-field-suggestions="historyOfPresentIllness"]')).toContainText(summary)
-    expect((await read()).clinicalDocument?.draft).toBeUndefined()
+    expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(summary)
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(summary)
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-    await applySuggestion(page, summary)
-    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(before + '\n' + summary)
+    await confirmRecordedAddition(page, summary)
+    expect(before).not.toBe('')
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(summary)
     replyIndex = 1
     await ask('咳嗽何时开始，有没有胸痛或气促？')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(before + '\n' + summary)
-    await applySuggestion(page, combined)
-    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(before + '\n' + combined)
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(combined)
+    await confirmRecordedAddition(page, combined)
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(combined)
     await page.reload()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(before + '\n' + combined)
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(combined)
     await expandHistory(page)
     const active = page.locator('[data-consultation-addition="applied"]')
     await active.getByRole('button', { name: '查看来源', exact: true }).click()
@@ -78,6 +81,6 @@ test('merges a readable history and shows both saved patient replies and their d
     expect(updated.facts![0]!.sources).toHaveLength(2)
     await page.keyboard.press('Escape')
     await active.getByRole('button', { name: '撤销此条', exact: true }).click()
-    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(before + '\n' + summary)
+    await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(summary)
   } finally { await server.close() }
 })

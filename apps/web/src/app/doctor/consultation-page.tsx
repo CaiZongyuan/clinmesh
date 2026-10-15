@@ -54,8 +54,8 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
         <h3 className="text-sm font-semibold" id="consultation-record-heading">{messages.consultationRecord}</h3>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="secondary">{consultation.turns.length}</Badge>
-          {recording === undefined ? null : <ConsultationRecordingControls recording={recording} action={recordingAction}
-            disabled={readOnly || recordingReadOnly === true || recording.signingPreparation?.active === true} messages={messages} />}
+          <ConsultationRecordingControls recording={recording} action={recordingAction}
+            disabled={readOnly || recordingReadOnly === true || recording?.signingPreparation?.active === true} messages={messages} />
         </div>
       </div>
       <MessageScrollerProvider autoScroll>

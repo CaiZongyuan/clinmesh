@@ -7,7 +7,7 @@ import {
   type DoctorCaseSection,
 } from './agent-tool-input.ts'
 import { hisOperationIdSchema } from './his-operations.ts'
-import { doctorCaseDetailSchema, doctorQueueSchema, roleCodeSchema,
+import { commandResponseSchema, doctorCaseDetailSchema, doctorQueueSchema, roleCodeSchema,
   caseImagingServiceCatalogSchema, casePathologyServiceCatalogSchema } from './his.ts'
 
 export * from './doctor-history.ts'
@@ -155,6 +155,25 @@ export const doctorAgentTaskPermitResponseSchema = z.object({
 export type DoctorAgentTaskPermitRequest = z.infer<typeof doctorAgentTaskPermitRequestSchema>
 export type DoctorAgentTaskSubmission = z.infer<typeof doctorAgentTaskPermitResponseSchema>
 export type DoctorAgentChatInput = Pick<DoctorAgentTaskSubmission, 'content' | 'dshSessionId' | 'rpcId'>
+
+export const doctorRecordingSourceProofPayloadSchema = doctorAgentTaskPermitPayloadSchema.omit({ purpose: true, version: true }).extend({
+  messageId: z.string().min(1).max(256),
+  recordedAt: z.iso.datetime({ offset: true }),
+  purpose: z.literal('clinmesh-doctor-recording-source'),
+  version: z.literal(1),
+}).strict()
+
+export const doctorRecordingSourceRequestSchema = z.object({
+  contextToken: z.string().min(32),
+  content: z.string().min(1).max(2000),
+  sourceProof: z.string().min(32).max(8192),
+}).strict()
+
+export const doctorRecordingSourceResponseSchema = commandResponseSchema(
+  z.object({ caseId: z.string().min(1), sourceId: z.string().min(1) }).strict(),
+)
+
+export type DoctorRecordingSourceInput = DoctorAgentChatInput & { sourceProof: string }
 
 export const agentExecutionProofPayloadSchema = z.object({
   callId: z.string().trim().min(1).max(256),

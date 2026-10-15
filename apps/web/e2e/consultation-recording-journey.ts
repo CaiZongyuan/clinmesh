@@ -1,6 +1,6 @@
 import { expect, type Page } from '@playwright/test'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
-import { applySuggestion, expandHistory } from './consultation-suggestions.ts'
+import { confirmRecordedAddition, expandHistory } from './consultation-suggestions.ts'
 
 export const journeyReplies = {
   initial: '头晕一周了。站起来时更明显。',
@@ -52,9 +52,9 @@ export async function runRecordingJourney(input: {
   await history.fill('')
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
   await ask('initial')
-  await expect(history).toHaveValue('')
-  await applySuggestion(page, '头晕一周了。')
-  await applySuggestion(page, '站起来时更明显。')
+  await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
+  await confirmRecordedAddition(page, '头晕一周了。')
+  await confirmRecordedAddition(page, '站起来时更明显。')
   await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
   await reload()
   await expandHistory(page)
@@ -64,10 +64,11 @@ export async function runRecordingJourney(input: {
   await expect(source).toHaveCount(0)
   await history.fill('医生核对：头晕五天。\n患者自述：站起来时更明显。')
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-  await expect.poll(async () => (await read()).consultationRecording!.additions[0]!.ownership).toBe('manual')
+  await expect.poll(async () => (await read()).consultationRecording!.additions
+    .find(addition => addition.field === 'historyOfPresentIllness' && addition.quote === '头晕一周了。')?.ownership).toBe('manual')
   await page.getByLabel('评估', { exact: true }).fill('医生未保存的评估。')
   await ask('addition')
-  await applySuggestion(page, journeyReplies.addition)
+  await confirmRecordedAddition(page, journeyReplies.addition)
   await expect(history).toHaveValue('医生核对：头晕五天。\n患者自述：站起来时更明显。\n患者自述：夜间也会头晕。')
   await expect(page.getByLabel('评估', { exact: true })).toHaveValue('医生未保存的评估。')
   await row('站起来时更明显。').getByRole('button', { name: '撤销此条', exact: true }).click()
@@ -97,7 +98,7 @@ export async function runRecordingJourney(input: {
   await reload()
   await expect(recording).toHaveAttribute('data-consultation-recording', 'paused')
   await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
-  await applySuggestion(page, journeyReplies.paused)
+  await confirmRecordedAddition(page, journeyReplies.paused)
   await expect(history).toHaveValue('医生核对：头晕五天。\n患者自述：夜间也会头晕。\n患者自述：躺着休息能缓过来。')
   await ask('failure', true)
   await expect(recording).toHaveAttribute('data-consultation-recording', 'failed')
@@ -107,7 +108,7 @@ export async function runRecordingJourney(input: {
   await page.keyboard.press('Escape')
   await input.stage('failure', false)
   await page.getByRole('button', { name: '重试病史整理', exact: true }).click()
-  await applySuggestion(page, journeyReplies.failure)
+  await confirmRecordedAddition(page, journeyReplies.failure)
   await expect(history).toHaveValue('医生核对：头晕五天。\n患者自述：夜间也会头晕。\n患者自述：躺着休息能缓过来。\n患者自述：坐着也会头晕。')
   expect((await read()).consultationRecording).toMatchObject({ remainingCount: 0, failedCount: 0 })
   expect((await read()).consultationRecording!.additions.filter(addition => addition.quote === '站起来时更明显。' && addition.status === 'applied')).toHaveLength(0)
@@ -125,8 +126,10 @@ export async function runRecordingJourney(input: {
   await expect(history).toHaveValue(frozen!.historyOfPresentIllness)
   await dialog.getByRole('button', { name: '返回核对并恢复整理', exact: true }).click()
   await expect(dialog).toHaveCount(0)
-  await expect(page.locator('[data-consultation-addition="pending"]')).toContainText(journeyReplies.late)
-  await expect(history).toHaveValue(frozen!.historyOfPresentIllness)
+  await expect(page.locator('[data-consultation-addition="pending"]')).toHaveCount(0)
+  await expect(page.locator('[data-consultation-addition="applied"]').filter({ hasText: journeyReplies.late }))
+    .toHaveAttribute('data-consultation-review', 'unreviewed')
+  await expect(history).toHaveValue(frozen!.historyOfPresentIllness + '\n患者自述：' + journeyReplies.late)
   if (input.agentSign) await input.agentSign()
   else await page.getByRole('button', { name: '签署病历', exact: true }).click()
   await expect(dialog).toBeVisible()
@@ -140,10 +143,20 @@ export async function runRecordingJourney(input: {
   const signed = (await read()).clinicalDocument!.signed
   await reload()
   expect((await read()).clinicalDocument!.signed).toEqual(signed)
-  for (const addition of (await read()).consultationRecording!.additions) {
-    const turn = (await read()).consultation!.turns.find(candidate => candidate.id === addition.sourceTurnId)
-    expect(turn?.speaker).toBe('patient')
-    expect(turn?.messageText).toContain(addition.quote)
+  const final = await read()
+  for (const addition of final.consultationRecording!.additions) {
+    const citations = addition.facts?.flatMap(fact => fact.sources)
+      ?? [{ sourceTurnId: addition.sourceTurnId, quote: addition.quote }]
+    for (const citation of citations) {
+      const source = final.consultationRecording!.sources?.find(candidate => candidate.id === citation.sourceTurnId)
+      expect(source).toBeDefined()
+      expect(source!.messageText).toContain(citation.quote)
+      if (source!.kind === 'patient') {
+        const turn = final.consultation!.turns.find(candidate => candidate.id === source!.consultationTurnId)
+        expect(turn?.speaker).toBe('patient')
+        expect(turn?.messageText).toContain(citation.quote)
+      }
+    }
   }
   input.progress?.('签署在途冻结、取消恢复、人工确认与不可变文书通过')
   return { processedCount: (await read()).consultationRecording!.processedCount, signedCount: signed.length }

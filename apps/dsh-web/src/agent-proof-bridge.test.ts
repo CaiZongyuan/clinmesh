@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { Readable } from 'node:stream'
+import { EventEmitter } from 'node:events'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installAgentProofBridge } from './agent-proof-bridge.ts'
@@ -26,7 +27,7 @@ function bridge() {
       yield { type: 'text-delta', text: '{"intent":"discuss","evidence":""}' }
       yield { type: 'finish', reason: { kind: 'stop' } }
     } },
-  } as unknown as Context, secret)
+  } as unknown as Context, secret, { handoffTimeoutMs: 30 })
   const before = on.mock.calls.find(([name]) => name === 'tools/pre-execute')![1] as (
     execution: ToolExecution, next: () => Promise<{ kind: 'allow' }>,
   ) => Promise<{ kind: string; reason?: string }>
@@ -67,7 +68,7 @@ function bridge() {
       turn: 1, step: 1, name: call.name, callId: call.callId, arguments: JSON.stringify(call.arguments),
     } })
   }
-  return { before, finish, currentTool, originate }
+  return { before, finish, currentTool, originate, routes, emit, secret }
 }
 
 function execution(args: unknown, session = true, name = 'clinmesh_fill_clinical_document_draft') {
@@ -77,6 +78,59 @@ function execution(args: unknown, session = true, name = 'clinmesh_fill_clinical
     ...(session ? { agent: { session: { id: 'synthetic-session' } } } : {}),
   } as ToolExecution
 }
+
+it('proves a saved native doctor input after a normal turn without executing a Tool', async () => {
+  const { routes, emit, secret } = bridge()
+  const agent = { session: { id: 'doctor-source-session', header: {} } }
+  const text = '查体：双肺呼吸音清，无啰音。'
+  const message = { id: 'doctor-source-message', source: { kind: 'user', rpcId: 'doctor-source-rpc' },
+    content: [{ type: 'text', text }] }
+  emit('agent/inbox/inserted', { agent, message })
+  emit('agent/inbox/claimed', { agent, message, turn: 1 })
+  emit('session/event', agent.session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  const permit = doctorInputPermit({ text, rpcId: 'doctor-source-rpc', dshSessionId: agent.session.id,
+    secret, scopeKey: 'scope', pageRevision: '["view-1",null]' })
+  const route = routes.get('/clinmesh-doctor-source')
+  expect(route).toBeDefined()
+  const request = Object.assign(Readable.from([Buffer.from(JSON.stringify({ permit }))]), {
+    method: 'POST', headers: { host: 'localhost', origin: 'http://localhost', 'content-type': 'application/json' },
+    socket: { remoteAddress: '127.0.0.1' },
+  })
+  let body: unknown
+  const response = Object.assign(new EventEmitter(), { statusCode: 200, setHeader: vi.fn(), end: (value: string) => { body = JSON.parse(value) } })
+  await route!(request as unknown as IncomingMessage, response as unknown as ServerResponse)
+  expect(response.statusCode).toBe(200)
+  expect(body).toMatchObject({ data: { sourceProof: expect.any(String) } })
+})
+
+it.each(['text', 'session', 'rpc', 'page', 'signature', 'origin', 'discard', 'dispose', 'abort', 'duplicate'] as const)(
+  'rejects a native recording proof with %s mismatch or cancellation', async invalid => {
+    const { routes, emit, secret } = bridge()
+    const agent = { session: { id: 'doctor-source-session', header: {} } }
+    const text = '查体：双肺呼吸音清，无啰音。'
+    const message = { id: 'native-record-source', source: { kind: 'user', rpcId: 'doctor-source-rpc' }, content: [{ type: 'text', text }] }
+    emit('agent/inbox/inserted', { agent, message })
+    if (invalid === 'discard') emit('agent/inbox/discarded', { agent, message })
+    if (invalid === 'dispose') emit('agent/disposed', { agent })
+    if (invalid === 'abort') {
+      emit('agent/inbox/claimed', { agent, message, turn: 1 })
+      emit('session/event', agent.session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted' } } })
+    }
+    if (invalid === 'duplicate') emit('agent/inbox/inserted', { agent, message: { ...message, id: 'duplicated-native-input' } })
+    let permit = doctorInputPermit({ text: invalid === 'text' ? '另一份查体结论。' : text,
+      rpcId: invalid === 'rpc' ? 'another-rpc' : message.source.rpcId,
+      dshSessionId: invalid === 'session' ? 'another-session' : agent.session.id,
+      secret, scopeKey: invalid === 'page' ? 'another-case' : 'scope', pageRevision: '["view-1",null]' })
+    if (invalid === 'signature') permit += 'x'
+    const request = Object.assign(Readable.from([Buffer.from(JSON.stringify({ permit }))]), {
+      method: 'POST', headers: { host: 'localhost', origin: invalid === 'origin' ? 'http://another-origin' : 'http://localhost',
+        'content-type': 'application/json' }, socket: { remoteAddress: '127.0.0.1' },
+    })
+    const response = Object.assign(new EventEmitter(), { statusCode: 200, setHeader: vi.fn(), end: vi.fn() })
+    await routes.get('/clinmesh-doctor-source')!(request as unknown as IncomingMessage, response as unknown as ServerResponse)
+    expect(response.statusCode).toBe(invalid === 'origin' ? 403 : 409)
+  },
+)
 
 describe('ClinMesh host Tool binding diagnostics', () => {
   it('rejects unobserved, changed, and replayed doctor calls before dispatch', async () => {

@@ -51,7 +51,11 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'scripts/smoke-dsh-consultation.ts', 'apps/web/e2e/consultation-recording-journey.ts', 'apps/web/e2e/consultation-recording-journey.spec.ts',
   'package.json', 'pnpm-lock.yaml', 'tsconfig.browser.json',
   'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
-  'apps/server/drizzle/0059_consultation-history-summary.sql', 'packages/contracts/src/his.ts',
+  'apps/server/src/application/agent-integration-service.ts', 'apps/server/src/application/workflow-service.ts',
+  'apps/server/src/app.ts', 'apps/dsh-web/src/agent-proof-bridge.ts', 'apps/dsh-web/src/execution-proof.ts',
+  'apps/dsh-web/src/client/doctor-task.ts', 'apps/web/src/app/surface-agent-publisher.ts',
+  'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0061_consultation-recording-sources.sql',
+  'packages/contracts/src/his.ts', 'packages/contracts/src/agent.ts',
   'apps/web/src/app/doctor/consultation-history-review.tsx',
   'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
   'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
@@ -156,9 +160,17 @@ class Adapter extends LlmAdapter {
         while(!control().released) { options.signal?.throwIfAborted(); await new Promise(done=>setTimeout(done,20)); }
       }
       const turn=payload.turns.at(-1);
-      const quotes=state.stage==='initial'?['头晕一周了。','站起来时更明显。']:[turn.messageText];
-      result={additions:quotes.map(quote=>({field:'historyOfPresentIllness',facts:[{text:'患者自述：'+quote,sources:[{sourceTurnId:turn.id,quote}]}],
-        relation:state.stage==='correction'?'correction':'addition',...(state.stage==='correction'?{targetAdditionId:payload.history[0].id}:{})}))};
+      if(state.stage==='doctor-supplement') {
+        result={additions:[['physicalExamination','神志清楚，四肢活动正常'],['assessment','头晕待查'],
+          ['disposition','先完善检查'],['followUp','三日后复诊']].map(([field,text])=>({field,
+          facts:[{text,sources:[{sourceTurnId:turn.id,quote:turn.messageText}]}],relation:'addition'}))};
+      } else if(turn.kind==='doctor') {
+        result={additions:[]};
+      } else {
+        const quotes=state.stage==='initial'?['头晕一周了。','站起来时更明显。']:[turn.messageText];
+        result={additions:quotes.map(quote=>({field:'historyOfPresentIllness',facts:[{text:'患者自述：'+quote,sources:[{sourceTurnId:turn.id,quote}]}],
+          relation:state.stage==='correction'?'correction':'addition',...(state.stage==='correction'?{targetAdditionId:payload.history.find(item=>item.field==='historyOfPresentIllness'&&item.text.includes('头晕五天')).id}:{})}))};
+      }
     } else if(options.system.includes('患者档案')) result=${JSON.stringify(persona)};
     else result={reply:replies[state.stage]};
     yield {type:'text-delta',index:0,text:JSON.stringify(result)};
@@ -357,6 +369,32 @@ export function apply(ctx) {
     await composer.fill('合成验收：请执行当前病历操作。')
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
   }
+  phase = 'doctor-supplement-without-tool'
+  const doctorContent = '查体：神志清楚，四肢活动正常。评估：头晕待查。处置：先完善检查。随访：三日后复诊。'
+  const callsBeforeDoctor = (await calls()).filter(call => call.kind === 'native-call').length
+  await updateControl({ stage: 'doctor-supplement', tool: null })
+  await page.locator('[contenteditable="true"]').last().fill(doctorContent)
+  await page.getByRole('button', { name: '发送消息', exact: true }).click()
+  await expect.poll(async () => (await read()).consultationRecording?.sources?.filter(source => source.kind === 'doctor').length,
+    { timeout: 30_000 }).toBe(1)
+  await expect.poll(async () => {
+    const draft = (await read()).clinicalDocument?.draft
+    return draft === undefined ? undefined : { physicalExamination: draft.physicalExamination,
+      assessment: draft.assessment, disposition: draft.disposition, followUp: draft.followUp }
+  }, { timeout: 30_000 }).toEqual({ physicalExamination: '神志清楚，四肢活动正常', assessment: '头晕待查',
+    disposition: '先完善检查', followUp: '三日后复诊' })
+  const doctorSource = (await read()).consultationRecording!.sources!.find(source => source.kind === 'doctor')!
+  expect(doctorSource.messageText).toBe(doctorContent)
+  expect(doctorSource.messageId).toBeTruthy()
+  expect(doctorSource.rpcId).toBeTruthy()
+  expect((await calls()).filter(call => call.kind === 'native-call').length).toBe(callsBeforeDoctor)
+  await page.locator('[data-clinical-document-field="physicalExamination"]').getByRole('button', { name: '查看来源', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText(doctorContent)
+  await expect(page.getByRole('dialog')).toContainText('医生')
+  await page.getByRole('dialog').press('Escape')
+  report.doctorSupplement = { sourceCount: 1, automaticFields: 4, nativeToolCalls: 0 }
+  await updateControl({ stage: 'initial' })
+  phase = 'recording-journey'
   report.journey = await runRecordingJourney({ page, read,
     reload: async () => {
       activeTools = []

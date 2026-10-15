@@ -103,6 +103,8 @@ function request(id: string, selectedService: LaboratoryServiceSnapshot, reporte
 }
 const detail: DoctorCaseDetail = {
   allergies: [], caseId: 'synthetic-case', consultation: { turns: [], version: 1 },
+  consultationRecording: { hasSavedDraft: false, version: 1, paused: false, processedCount: 0,
+    remainingCount: 0, failedCount: 0, status: 'idle', failures: [], additions: [] },
   encounter: { id: 'synthetic-encounter', status: 'in-progress', versionId: '1' },
   imagingRequests: { draftVersion: 0, requests: [] }, pathologyRequests: { draftVersion: 0, requests: [] },
   laboratoryRequests: {
