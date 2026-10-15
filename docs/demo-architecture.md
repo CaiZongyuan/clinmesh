@@ -87,6 +87,8 @@ CommandExecutor 在一个 SQLite 事务中提交幂等 receipt、FHIR current/hi
 
 Server 进程以 `migrationMode=verify` 打开数据库，发现未应用 migration 时拒绝启动。开发、裸机发布和容器入口在启动应用进程前单独执行 migration；应用运行期间不修改 schema。
 
+Operational 与 Reference SQLite 的迁移校验统一将 CRLF 转为 LF，新迁移记录 LF 校验值；既有原始 LF／CRLF 校验值继续有效且不被改写，其他 SQL 内容变化仍拒绝启动。兼容范围与回归依据见[迁移换行校验决策](../.agents/notes/implemented/bug-fix/2026-10-15-portable-migration-checksums.md)；参考来源文件与素材清单仍按原始字节校验。
+
 数据库 CLI 处理以下动作：
 
 - `migrate`：已有数据库落后于目标 schema 时，先在数据库同目录创建并验证带原版本和时间戳的升级前备份，再按文件名顺序应用 `apps/server/drizzle/` 中尚未执行的 migration，并验证 schema version 和完整性；空库不创建无意义备份。
