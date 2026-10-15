@@ -451,6 +451,7 @@ function DoctorCaseController({
   const clinicalDocumentBaselines = useRef<Record<string, {
     document: ClinicalDocumentContent
     persisted: ClinicalDocumentContent | undefined
+    recordedAdditionIds: ReadonlySet<string>
   }>>({})
   const [agentDraftHydrationRevisions, setAgentDraftHydrationRevisions] = useState<
     Record<string, DoctorAgentDraftHydrationRevisions>
@@ -660,19 +661,22 @@ function DoctorCaseController({
     clinicalDocumentBaselines.current[currentDetail.caseId] = {
       document: next,
       persisted: currentDetail.clinicalDocument?.draft ?? currentDetail.clinicalDocument?.signed.at(-1)?.content,
+      recordedAdditionIds: new Set(currentDetail.consultationRecording?.additions.map(addition => addition.id)),
     }
     setWorkingClinicalDocuments(current => {
       const working = current[currentDetail.caseId]
       const merged = { ...next }
       if (working !== undefined && previous !== undefined) {
         for (const field of Object.keys(next) as Array<keyof ClinicalDocumentContent>) {
+          const newlyRecorded = currentDetail.consultationRecording?.additions.some(addition => addition.status === 'applied'
+            && addition.ownership === 'automatic' && addition.field === field && !previous.recordedAdditionIds.has(addition.id))
           const firstAutomaticContent = currentDetail.consultationRecording?.hasSavedDraft === false
             && !previous.persisted?.[field]
             && currentDetail.consultationRecording.additions.some(addition => addition.status === 'applied' && addition.field === field)
           // 预填尚未持久化，首批自动内容来自空字段，应追加到已经改写的预填后。
           merged[field] = firstAutomaticContent && working[field] !== previous.document[field]
             ? [working[field], next[field]].filter(Boolean).join('\n')
-            : mergeDocumentText(previous.document[field] ?? '', working[field] ?? '', next[field] ?? '')
+            : mergeDocumentText(previous.document[field] ?? '', working[field] ?? '', next[field] ?? '', newlyRecorded ? '待核实补充：' : undefined)
         }
       }
       return { ...current, [currentDetail.caseId]: merged }

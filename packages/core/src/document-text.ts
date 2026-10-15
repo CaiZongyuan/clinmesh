@@ -1,4 +1,4 @@
-import { diffChars } from 'diff'
+import { diffArrays, diffChars } from 'diff'
 
 interface TextEdit { start: number; end: number; text: string }
 
@@ -66,19 +66,58 @@ export function trackDocumentFragment(before: string, after: string, start: numb
     modified: changes.some(edit => overlaps(edit, start, end)) }
 }
 
-/** Apply non-overlapping server changes while retaining all unsaved local edits. */
-export function mergeDocumentText(base: string, local: string, remote: string): string {
+function statementEdits(before: string, after: string): TextEdit[] {
+  // Keep line breaks separate so appending a line does not rewrite the previous statement.
+  const statements = (text: string) => text.match(/[^。！？!?；;\r\n]+[。！？!?；;]?|[。！？!?；;]|\r\n|[\r\n]/gu) ?? []
+  const result: TextEdit[] = []
+  let offset = 0
+  let change: { start: number; removed: string[]; added: string[] } | undefined
+  const flush = () => {
+    if (change === undefined) return
+    if (change.removed.length === change.added.length) {
+      let start = change.start
+      for (const [index, text] of change.removed.entries()) {
+        result.push({ start, end: start + text.length, text: change.added[index]! })
+        start += text.length
+      }
+    } else result.push({ start: change.start, end: offset, text: change.added.join('') })
+    change = undefined
+  }
+  for (const part of diffArrays(statements(before), statements(after))) {
+    if (!part.added && !part.removed) {
+      flush()
+      offset += part.value.join('').length
+    } else {
+      change ??= { start: offset, removed: [], added: [] }
+      if (part.removed) { change.removed.push(...part.value); offset += part.value.join('').length }
+      else change.added.push(...part.value)
+    }
+  }
+  flush()
+  return result
+}
+
+/** An explicit conflict label preserves complete remote statements beside unsaved edits. */
+export function mergeDocumentText(base: string, local: string, remote: string, conflictLabel?: string): string {
   if (local === base) return remote
   if (remote === base || local === remote) return local
-  const localEdits = edits(base, local)
-  const remoteEdits = edits(base, remote).filter(edit => !localEdits.some(other =>
-    overlaps(other, edit.start, edit.end) || overlaps(edit, other.start, other.end)
-    || (other.start === edit.start && (other.start === other.end || edit.start === edit.end))))
+  const changes = conflictLabel === undefined ? edits : statementEdits
+  const localEdits = changes(base, local)
+  const conflicts: string[] = []
+  const remoteEdits = changes(base, remote).filter(edit => {
+    if (localEdits.some(other => other.start === edit.start && other.end === edit.end && other.text === edit.text)) return false
+    const conflict = localEdits.some(other => overlaps(other, edit.start, edit.end) || overlaps(edit, other.start, other.end)
+      || (other.start === edit.start && (conflictLabel === undefined
+        ? other.start === other.end || edit.start === edit.end
+        : other.start === other.end && edit.start === edit.end)))
+    if (conflict && edit.text && conflictLabel !== undefined) conflicts.push([conflictLabel, edit.text].filter(Boolean).join('\n'))
+    return !conflict
+  })
   let result = local
   for (const edit of remoteEdits.reverse()) {
     const start = position(edit.start, localEdits, false)
     const end = position(edit.end, localEdits, true)
     result = result.slice(0, start) + edit.text + result.slice(Math.max(start, end))
   }
-  return result
+  return [result, ...conflicts].filter(Boolean).join('\n')
 }

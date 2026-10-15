@@ -84,3 +84,63 @@ test('merges readable history across replies and restores it without source cont
     expect((await read()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(combined)
   } finally { await server.close() }
 })
+
+for (const local of ['医生核对：头晕四天。', '医生核对头晕四天']) {
+  test(`preserves unsaved history and complete automatic rewrites through saving and reload: ${local}`, async ({ page, webRoot }) => {
+    const replies = ['头晕三天。', '昨夜出现恶心。', '昨夜还吐了一次。']
+    const summaries = ['患者自述头晕三天', '三天前出现头晕，伴昨夜恶心', '三天前出现头晕，伴昨夜恶心、呕吐']
+    let replyIndex = 0
+    const server = await startBrowserServer(webRoot, {
+      dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+      syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
+      chatCompletionsProvider: { async completeJson(input) {
+        if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
+        if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply: replies[replyIndex] }), model: 'synthetic' }
+        const { turns, history } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+          history: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+        return { model: 'synthetic', content: JSON.stringify({ additions: [{ field: 'historyOfPresentIllness',
+          relation: replyIndex === 0 ? 'addition' : 'update',
+          ...(replyIndex === 0 ? {} : { targetAdditionId: history[0]!.id }),
+          facts: [{ text: summaries[replyIndex], sources: replies.slice(0, replyIndex + 1).map(quote => ({
+            sourceTurnId: turns.find(turn => turn.messageText === quote)!.id, quote,
+          })) }],
+        }] }) }
+      } },
+    })
+    try {
+      const started = await startConsultationCase(server.runtime, server.password, server.origin)
+      const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
+        `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
+      await page.goto(`${server.origin}/consultation`)
+      await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+      await page.getByLabel('账户密码').fill(server.password)
+      await page.getByRole('button', { name: '登录', exact: true }).click()
+      await page.getByRole('tab', { name: '待诊', exact: true }).click()
+      await page.getByText('张琴', { exact: true }).first().click()
+      await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+      const history = page.getByLabel('现病史', { exact: true })
+      const ask = async () => {
+        await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+        await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充头晕和其他症状。')
+        await page.getByRole('button', { name: '向患者提问', exact: true }).click()
+        await expect.poll(async () => (await read()).consultationRecording?.processedCount).toBe(replyIndex + 1)
+        await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      }
+      await ask()
+      await expect(history).toHaveValue(summaries[0]!)
+      await history.fill(local)
+      for (replyIndex = 1; replyIndex < replies.length; replyIndex++) {
+        await ask()
+        await expect(history).toHaveValue(`${local}\n待核实补充：\n${summaries[replyIndex]}`)
+        expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(summaries[replyIndex])
+      }
+      const combined = `${local}\n待核实补充：\n${summaries.at(-1)}`
+      await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+      await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(combined)
+      await page.reload()
+      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await expect(history).toHaveValue(combined)
+      expect((await read()).consultationRecording).toMatchObject({ processedCount: 3, remainingCount: 0, failedCount: 0 })
+    } finally { await server.close() }
+  })
+}

@@ -94,7 +94,10 @@ export async function runRecordingJourney(input: {
   await ask('late')
   await input.waitForExtraction()
   await page.getByRole('button', { name: '签署病历', exact: true }).click()
-  const frozen = (await read()).clinicalDocument!.draft
+  await expect(dialog).toBeVisible()
+  const prepared = await read()
+  expect(prepared.consultationRecording?.signingPreparation?.active).toBe(true)
+  const frozen = prepared.clinicalDocument!.draft
   await input.releaseExtraction()
   await input.settleExtraction()
   expect((await read()).clinicalDocument!.draft).toEqual(frozen)
