@@ -994,8 +994,22 @@ export const consultationHistorySourceSchema = z.object({
   quote: z.string().trim().min(2).max(2_000),
 }).strict()
 
+export const consultationRecordingSourceSchema = z.object({
+  id: z.string().min(1).max(128),
+  kind: z.enum(['patient', 'doctor', 'report']),
+  messageText: z.string().min(1),
+  recordedAt: z.string().min(1),
+  consultationTurnId: z.string().min(1).max(128).optional(),
+  reportReference: z.string().regex(/^DiagnosticReport\/[A-Za-z0-9.-]+\/_history\/\d+$/).optional(),
+  reportContentHash: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  sessionId: z.string().min(1).max(256).optional(),
+  messageId: z.string().min(1).max(256).optional(),
+  rpcId: z.string().min(1).max(256).optional(),
+}).strict()
+
 export const consultationHistoryFieldSchema = z.enum([
   'chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'familyHistory', 'allergyHistory',
+  'physicalExamination', 'auxiliaryExamination', 'assessment', 'disposition', 'followUp',
 ])
 
 export const consultationHistoryFactSchema = z.object({
@@ -1037,6 +1051,8 @@ export const consultationRecordingErrorCodeSchema = z.enum([
 ])
 
 export const consultationRecordingSchema = z.object({
+  requiresContextBinding: z.boolean().optional(),
+  sources: z.array(consultationRecordingSourceSchema).optional(),
   signingPreparation: z.object({
     previewId: z.string().min(1),
     expiresAt: z.string().min(1),
@@ -1068,7 +1084,7 @@ export const consultationRecordingSchema = z.object({
 export const controlConsultationRecordingRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
-    action: z.enum(['pause', 'resume', 'backfill', 'retry']),
+    action: z.enum(['activate', 'pause', 'resume', 'backfill', 'retry']),
     expectedRecordingVersion: z.number().int().nonnegative(),
   }).strict(),
 }).strict()

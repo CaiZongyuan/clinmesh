@@ -46,6 +46,7 @@ export const syntheticPathologyMatching = {
 
 export interface SyntheticSlide {
   assetId: string
+  note?: string
   /** 缺省为 ER 阳性、PR 阳性、HER2 阴性（FISH）、N1、T2 的浸润性导管癌。 */
   clinical?: {
     er?: 'Negative' | 'Positive'
@@ -79,7 +80,7 @@ function report(slide: SyntheticSlide, revision: number) {
     microscopy: revision === 1
       ? '送检切片为 HE 染色乳腺组织，见浸润性癌，浸润纤维间质。'
       : `送检切片为 HE 染色乳腺组织，见浸润性癌，浸润纤维间质（第 ${['一', '二', '三', '四'][revision - 1]} 次修订）。`,
-    note: '本次会诊切片为原发灶组织，未包含淋巴结；淋巴结情况以原病例记录为准。',
+    note: slide.note ?? '本次会诊切片为原发灶组织，未包含淋巴结；淋巴结情况以原病例记录为准。',
     revision,
     specimen: { procedure: 'case-source-procedure' as const, slideCount: 1 as const, stain: 'HE' as const },
   }

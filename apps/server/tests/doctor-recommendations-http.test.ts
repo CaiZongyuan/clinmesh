@@ -718,6 +718,50 @@ it('uses authorized visible history beyond the first public page while keeping i
   expect((await fixture.read()).status).toBe('ready')
 })
 
+it.each(['Device', 'SupplyDelivery'])('reads all recommendation kinds with a visible %s type while preserving history field boundaries', async resourceType => {
+  const type = { coding: [{ code: 'SYN-TYPE', display: '合成历史类型', system: 'urn:synthetic:history-type' }], text: '合成历史类型' }
+  const syntheaProvider = new class extends StubSyntheaProvider {
+    override async generate() {
+      const corpus = await super.generate()
+      const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(corpus.sources[0]!.raw)
+      raw.entry.find(item => item.resource.id === 'pe')!.resource.type = [type]
+      raw.entry.push({ fullUrl: 'urn:uuid:prior-history-type', resource: {
+        id: 'prior-history-type', resourceType, patient: { reference: 'urn:uuid:patient' },
+        ...(resourceType === 'Device' ? { manufactureDate: '2025-01-10T09:10:00+08:00', status: 'active' }
+          : { occurrenceDateTime: '2025-01-10T09:10:00+08:00', status: 'completed' }),
+        type: { ...type, coding: [{ ...type.coding[0], extension: [{ url: 'https://untrusted.example/coding', valueString: 'private-coding-extension' }] }],
+          extension: [{ url: 'https://untrusted.example/type', valueString: 'private-type-extension' }],
+          reference: { reference: 'urn:uuid:index-condition' } },
+        extension: [{ url: 'https://untrusted.example/resource', valueString: 'private-resource-extension' }],
+        meta: { source: 'https://untrusted.example/source', tag: [{ code: 'private-metadata' }] },
+        url: 'https://untrusted.example/raw', text: { status: 'generated', div: '<div>private-narrative</div>' },
+      } })
+      return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
+    }
+  }()
+  const fixture = await setup(async input => ({ content: JSON.stringify({ items: [], missingInformation: [] }), model: input.model }), { syntheaProvider })
+  const before = await fixture.readCase()
+  for (const kind of ['laboratory', 'diagnosis', 'prescription']) {
+    expect(await fixture.read(kind)).toMatchObject({ kind, status: 'idle' })
+    expect((await fixture.generate(kind)).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    const state = await fixture.read(kind)
+    expect(state.status).toBe('missing-evidence')
+    const history = state.caseEvidence.filter(item => item.kind === 'history').map(item => JSON.parse(item.text))
+    expect(history).toContainEqual(expect.objectContaining({
+      entryId: 'urn:uuid:prior-history-type', resourceType,
+      clinical: { type, ...(resourceType === 'Device' ? { status: 'active' }
+        : { occurrenceDateTime: '2025-01-10T09:10:00+08:00', status: 'completed' }) },
+    }))
+    expect(history).toContainEqual(expect.objectContaining({
+      entryId: 'urn:uuid:prior-encounter', resourceType: 'Encounter', clinical: expect.objectContaining({ type: [type] }),
+    }))
+    expect(JSON.stringify(history)).not.toMatch(/"(?:extension|meta|url|patient|subject|reference)"|untrusted|private-/)
+    expect(JSON.stringify(state)).not.toMatch(/2 型糖尿病|index-condition|11\.2|untrusted|private-/)
+  }
+  expect(await fixture.readCase()).toEqual(before)
+})
+
 it('reports an explicit evidence budget limit instead of failing reads or silently truncating a large visible history', async () => {
   const syntheaProvider = new class extends StubSyntheaProvider {
     override async generate() {

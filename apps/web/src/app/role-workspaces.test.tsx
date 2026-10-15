@@ -1104,18 +1104,19 @@ function stubDoctorCompletedCaseLibrary(options: {
   }))
 }
 
-function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry', additionalCase = false) {
-  const initialVersion = action === 'backfill' ? 0 : 2
+function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry', additionalCase = false) {
+  const initialVersion = action === 'backfill' || action === 'activate' ? 0 : 2
   let recording: NonNullable<DoctorCaseDetail['consultationRecording']> = {
     hasSavedDraft: true, failures: [], version: initialVersion, paused: action === 'resume', processedCount: 0,
     remainingCount: action === 'pause' ? 0 : 1, failedCount: action === 'retry' ? 1 : 0,
-    status: action === 'pause' ? 'updated' : action === 'resume' ? 'paused' : action === 'retry' ? 'failed' : 'backfill',
+    status: action === 'activate' ? 'idle' : action === 'pause' ? 'updated' : action === 'resume' ? 'paused' : action === 'retry' ? 'failed' : 'backfill',
     additions: [],
   }
   let readFailure: number | undefined
   let failedReads = 0
   let readInterceptor: ((response: Response, signal: AbortSignal | null | undefined) => Promise<Response>) | undefined
   let controlInterceptor: ((response: Response) => Promise<Response>) | undefined
+  let controlFailure = false
   let signingInterceptor: ((action: 'preview' | 'cancel', response: Response) => Promise<Response>) | undefined
   const cancellations: string[] = []
   const cancellationReceipts = new Map<string, string>()
@@ -1123,11 +1124,12 @@ function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry
   let draftVersion = 1
   const savedDocuments: ClinicalDocumentContent[] = []
   const controls: Array<{ action: string; expectedRecordingVersion: number }> = []
+  let turns: NonNullable<DoctorCaseDetail['consultation']>['turns'] = []
   const patient = { birthDate: '1988-03-16', gender: 'female', id: 'patient-recording',
     identifier: 'CM-SYN-RECORDING', name: '合成病史患者', synthetic: true, versionId: '1' }
   const detail = () => ({
-    allergies: [], caseId: 'case-recording', consultation: { turns: [], version: 1 },
-    consultationRecording: recording,
+    allergies: [], caseId: 'case-recording', consultation: { turns, version: 1 },
+    consultationRecording: action === 'activate' && recording.version === 0 ? undefined : recording,
     clinicalDocument: { draft: { ...document, version: draftVersion, updatedAt: '2026-10-08T09:00:00+08:00' }, signed: [] },
     encounter: { id: 'encounter-recording', status: 'in-progress', versionId: '1' },
     patient, presentation: doctorPresentation, priorFacts: [], status: 'first-visit',
@@ -1208,8 +1210,12 @@ function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry
       const request = controlConsultationRecordingRequestSchema.parse(JSON.parse(String(init?.body)))
       controls.push(request.input)
       expect(request.input.expectedRecordingVersion).toBe(recording.version)
-      recording = { ...recording, version: recording.version + 1, paused: request.input.action === 'pause', failedCount: 0,
-        status: request.input.action === 'pause' ? 'paused' : 'processing', remainingCount: 1 }
+      if (controlFailure) return Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Synthetic activation failure' } }, { status: 503 })
+      recording = request.input.action === 'activate' && recording.version > 0
+        ? { ...recording, requiresContextBinding: false,
+          status: recording.paused ? 'paused' : recording.failedCount > 0 ? 'failed' : recording.remainingCount > 0 ? 'processing' : recording.status }
+        : { ...recording, version: recording.version + 1, paused: request.input.action === 'pause', failedCount: 0,
+          status: request.input.action === 'pause' ? 'paused' : 'processing', remainingCount: 1 }
       readFailure = 503
       const response = Response.json(commandResponse(recording))
       return controlInterceptor === undefined ? response : controlInterceptor(response)
@@ -1218,12 +1224,25 @@ function stubRecordingWorkspace(action: 'pause' | 'resume' | 'backfill' | 'retry
   }))
   return {
     controls, initialVersion, savedDocuments, cancellations,
+    failControl: (failed: boolean) => { controlFailure = failed },
+    recordAddition: (text: string) => {
+      document = { ...document, historyOfPresentIllness: `${document.historyOfPresentIllness}\n${text}` }
+      draftVersion += 1
+      recording = { ...recording, status: 'updated', additions: [...recording.additions, {
+        id: 'recorded-append', field: 'historyOfPresentIllness', sourceTurnId: 'patient-turn-append',
+        quote: '夜间也会头晕。', relation: 'addition', status: 'applied',
+        ownership: 'automatic', currentText: text,
+      }] }
+    },
     interceptSigning: (intercept: NonNullable<typeof signingInterceptor>) => { signingInterceptor = intercept },
     interceptControl: (intercept: NonNullable<typeof controlInterceptor>) => { controlInterceptor = intercept },
     updateRecording: (facts: Partial<NonNullable<DoctorCaseDetail['consultationRecording']>>) => { recording = { ...recording, ...facts } },
+    addHistoricalTurn: () => { turns = [{ id: 'legacy-patient-turn', kind: 'text', messageText: '头晕三天。',
+      actorId: null, practitionerId: null, personaRevision: 1, recordedAt: '2026-10-08T09:00:00+08:00',
+      reportReference: null, sequence: 1, source: 'patient-agent', speaker: 'patient' }] },
     failedReads: () => failedReads,
     interceptNextRead: (intercept: NonNullable<typeof readInterceptor>) => { readInterceptor = intercept },
-    failReads: (status: number) => { readFailure = status },
+    failReads: (status: number | undefined) => { readFailure = status },
     finish: () => { readFailure = undefined; recording = { ...recording, status: 'updated', processedCount: 1, remainingCount: 0 } },
   }
 }
@@ -3089,6 +3108,7 @@ describe('role workspaces', () => {
             signed: [],
           },
           consultation: { turns: recovered ? [doctorTurn, patientTurn] : failed ? [doctorTurn] : [], version: recovered ? 3 : failed ? 2 : 1 },
+          consultationRecording: { hasSavedDraft: true, version: 1, status: 'idle', additions: [] },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
           presentation: virtualPatientPresentation,
@@ -3304,6 +3324,123 @@ describe('role workspaces', () => {
     expect(await screen.findByText('已整理回答 1 · 待整理 0')).toBeTruthy()
     await user.keyboard('{Escape}')
     expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).value).toBe(unsavedHistory)
+  })
+
+  it('automatically adds a new recorded fact after an unsaved human addition without losing either or changing focus', async () => {
+    const fixture = stubRecordingWorkspace('pause')
+    const queryClient = createWebQueryClient()
+    render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    const history = await screen.findByLabelText('现病史', { exact: true }) as HTMLTextAreaElement
+    const local = `${structuredClinicalDocument.historyOfPresentIllness}\n医生尚未保存的补充。`
+    history.focus()
+    fireEvent.change(history, { target: { value: local } })
+    fireEvent.change(screen.getByLabelText('评估', { exact: true }), { target: { value: '医生未保存的评估。' } })
+    fixture.recordAddition('患者自述：夜间也会头晕。')
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+    await waitFor(() => expect(history.value).toBe(`${local}\n待核实补充：\n\n患者自述：夜间也会头晕。`))
+    expect((screen.getByLabelText('评估', { exact: true }) as HTMLTextAreaElement).value).toBe('医生未保存的评估。')
+    expect(document.activeElement).toBe(history)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('button', { name: '应用建议' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '确认已核对' })).toBeNull()
+  })
+
+  it('activates recording once when a new editable case is opened and leaves historical backfill explicit', async () => {
+    const fixture = stubRecordingWorkspace('activate')
+    const queryClient = createWebQueryClient()
+    render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByLabelText('现病史', { exact: true })
+    await waitFor(() => expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 0 }]))
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+    expect(fixture.controls).toHaveLength(1)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    cleanup()
+    const historical = stubRecordingWorkspace('backfill')
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByRole('button', { name: '补录历史回答' })
+    expect(historical.controls).toEqual([])
+  })
+
+  it('offers an explicit retry when activating a new case fails', async () => {
+    const fixture = stubRecordingWorkspace('activate')
+    fixture.failControl(true)
+    const user = userEvent.setup()
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByLabelText('现病史', { exact: true })
+    await screen.findByRole('alert')
+    const retry = await screen.findByRole('button', { name: '重试病史整理' })
+    expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 0 }])
+    fixture.failControl(false)
+    await user.click(retry)
+    await waitFor(() => expect(fixture.controls).toEqual([
+      { action: 'activate', expectedRecordingVersion: 0 }, { action: 'activate', expectedRecordingVersion: 0 },
+    ]))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it.each(['paused', 'failed'] as const)('rebinds an enabled historical case once and merges only its same-version binding receipt (%s)', async status => {
+    const fixture = stubRecordingWorkspace('resume')
+    fixture.addHistoricalTurn()
+    fixture.updateRecording({ version: 2, status, paused: status === 'paused', hasSavedDraft: false,
+      requiresContextBinding: true, failedCount: status === 'failed' ? 1 : 0 })
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    fixture.interceptControl(async response => { await held; return response })
+    const queryClient = createWebQueryClient()
+    const cached = () => queryClient.getQueriesData<DoctorCaseDetail>({ queryKey: ['doctor-case'] })
+      .find(([, value]) => value?.caseId === 'case-recording')?.[1]?.consultationRecording
+    render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    try {
+      await screen.findByLabelText('现病史', { exact: true })
+      await waitFor(() => expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 2 }]))
+      fixture.updateRecording({ requiresContextBinding: true, processedCount: 2, remainingCount: 0, hasSavedDraft: true,
+        additions: [{ id: 'legacy-manual', field: 'historyOfPresentIllness', sourceTurnId: 'legacy-patient-turn',
+          quote: '头晕三天。', relation: 'addition', status: 'applied', ownership: 'manual',
+          currentText: '医生已核对：头晕三天。' }] })
+      fixture.failReads(undefined)
+      await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+      await waitFor(() => expect(cached()).toMatchObject({ status, processedCount: 2, hasSavedDraft: true }))
+      const latest = cached()
+      fixture.failReads(503)
+      release()
+      await waitFor(() => expect(cached()?.requiresContextBinding).toBe(false))
+      expect(cached()).toEqual({ ...latest, requiresContextBinding: false })
+      expect(fixture.controls).toHaveLength(1)
+      expect(screen.queryByRole('button', { name: '恢复病历整理连接' })).toBeNull()
+    } finally { release() }
+  })
+
+  it('offers an explicit binding retry after automatic historical recovery fails', async () => {
+    const fixture = stubRecordingWorkspace('resume')
+    fixture.addHistoricalTurn()
+    fixture.updateRecording({ requiresContextBinding: true })
+    fixture.failControl(true)
+    const queryClient = createWebQueryClient()
+    const user = userEvent.setup()
+    render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByRole('alert')
+    const retry = await screen.findByRole('button', { name: '恢复病历整理连接' })
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+    expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 2 }])
+    fixture.failControl(false)
+    await user.click(retry)
+    await waitFor(() => expect(fixture.controls).toEqual([
+      { action: 'activate', expectedRecordingVersion: 2 }, { action: 'activate', expectedRecordingVersion: 2 },
+    ]))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '恢复病历整理连接' })).toBeNull())
+    expect(await screen.findByRole('button', { name: '恢复并补录' })).toBeTruthy()
+  })
+
+  it('keeps recording progress observable after same-version binding when the immediate refresh fails', async () => {
+    const fixture = stubRecordingWorkspace('pause')
+    fixture.addHistoricalTurn()
+    fixture.updateRecording({ requiresContextBinding: true, status: 'idle', remainingCount: 1 })
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await waitFor(() => expect(fixture.failedReads()).toBeGreaterThan(0))
+    expect(screen.getByText('问诊自动记录 · 整理中')).toBeTruthy()
+    fixture.finish()
+    await screen.findByText('问诊自动记录 · 已整理', {}, { timeout: 4_000 })
+    expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 2 }])
   })
 
   it('preserves newer recording facts and saved empty fields when a same-version control receipt arrives late', async () => {

@@ -56,7 +56,8 @@ export async function runRecordingJourney(input: {
   await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
   await history.fill('医生核对：头晕五天。\n患者自述：站起来时更明显。')
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-  await expect.poll(async () => (await read()).consultationRecording!.additions[0]!.ownership).toBe('manual')
+  await expect.poll(async () => (await read()).consultationRecording!.additions
+    .find(addition => addition.field === 'historyOfPresentIllness' && addition.quote === '头晕一周了。')?.ownership).toBe('manual')
   await page.getByLabel('评估', { exact: true }).fill('医生未保存的评估。')
   await ask('addition')
   await expect(history).toHaveValue(/夜间也会头晕/)
@@ -117,6 +118,21 @@ export async function runRecordingJourney(input: {
   expect(signed[0]!.content).toMatchObject({ familyHistory: '父亲患高血压，患者自述。', allergyHistory: '青霉素用药后皮疹，患者自述。' })
   await reload()
   expect((await read()).clinicalDocument!.signed).toEqual(signed)
+  const final = await read()
+  for (const addition of final.consultationRecording!.additions) {
+    const citations = addition.facts?.flatMap(fact => fact.sources)
+      ?? [{ sourceTurnId: addition.sourceTurnId, quote: addition.quote }]
+    for (const citation of citations) {
+      const source = final.consultationRecording!.sources?.find(candidate => candidate.id === citation.sourceTurnId)
+      expect(source).toBeDefined()
+      expect(source!.messageText).toContain(citation.quote)
+      if (source!.kind === 'patient') {
+        const turn = final.consultation!.turns.find(candidate => candidate.id === source!.consultationTurnId)
+        expect(turn?.speaker).toBe('patient')
+        expect(turn?.messageText).toContain(citation.quote)
+      }
+    }
+  }
   input.progress?.('在途冻结、取消恢复、直接记录与不可变文书签署通过')
   return { processedCount: (await read()).consultationRecording!.processedCount, signedCount: signed.length }
 }

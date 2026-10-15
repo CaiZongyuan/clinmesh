@@ -113,6 +113,8 @@ import {
   agentPageContextBindingSchema,
   doctorAgentTaskPermitRequestSchema,
   doctorAgentTaskPermitResponseSchema,
+  doctorRecordingSourceRequestSchema,
+  doctorRecordingSourceResponseSchema,
   type DoctorAgentTaskPermitRequest,
   agentPageContextRequestSchema,
   agentReviewDecisionRequestSchema,
@@ -376,6 +378,11 @@ export function createAgentPageContext(request: AgentPageContextRequest, signal?
 export function createDoctorTaskPermit(request: DoctorAgentTaskPermitRequest, signal?: AbortSignal) {
   return apiMutation('/api/agent/v1/doctor-tasks/permit', doctorAgentTaskPermitResponseSchema,
     doctorAgentTaskPermitRequestSchema.parse(request), signal === undefined ? {} : { signal })
+}
+
+export function recordDoctorSupplement(request: z.infer<typeof doctorRecordingSourceRequestSchema>, signal?: AbortSignal) {
+  return apiMutation('/api/agent/v1/doctor-inputs', doctorRecordingSourceResponseSchema,
+    doctorRecordingSourceRequestSchema.parse(request), signal === undefined ? {} : { signal })
 }
 
 export function queryAgentDoctor(request: z.infer<typeof agentDoctorQueryRequestSchema>, signal?: AbortSignal) {
@@ -1439,7 +1446,7 @@ export function saveFirstVisitDraft(input: {
 }
 
 export function controlConsultationRecording(input: {
-  action: 'pause' | 'resume' | 'backfill' | 'retry'; encounterId: string;
+  action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry'; encounterId: string;
   encounterVersion: string; expectedRecordingVersion: number;
 }, idempotencyKey: string) {
   return apiMutation(`/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/consultation-recording/actions/control`,

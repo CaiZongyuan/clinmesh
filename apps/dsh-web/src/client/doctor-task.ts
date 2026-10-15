@@ -1,10 +1,12 @@
-import type { DoctorAgentChatInput, DoctorAgentTaskSubmission } from '@clinmesh/contracts/agent'
+import type { DoctorAgentChatInput, DoctorAgentTaskSubmission, DoctorRecordingSourceInput } from '@clinmesh/contracts/agent'
 import { z } from 'zod'
 import type { ClientSessionBindingPort, ClientSessionInputPort } from './host-ports.ts'
 
 export function createDoctorInputBridge(
   ports: { current: ClientSessionBindingPort['adapter']['current']; sessions: ClientSessionInputPort },
   accept: (input: DoctorAgentChatInput, signal: AbortSignal) => Promise<DoctorAgentTaskSubmission>,
+  record?: (input: DoctorRecordingSourceInput, signal: AbortSignal) => Promise<void>,
+  sourceFailed?: (dshSessionId: string) => void,
 ): () => void {
   let session: NonNullable<ReturnType<ClientSessionInputPort['binding']>>['session'] | undefined
   let detach = () => {}
@@ -33,11 +35,24 @@ export function createDoctorInputBridge(
     detach = () => { controller.abort(); unsubscribe() }
   }
   async function register(input: DoctorAgentChatInput, signal: AbortSignal): Promise<void> {
-    const task = await accept(input, signal)
-    signal.throwIfAborted()
-    if (task.content !== input.content || task.dshSessionId !== input.dshSessionId || task.rpcId !== input.rpcId) {
-      throw new Error('助手未能核实本次医生输入。')
+    let task: DoctorAgentTaskSubmission
+    try {
+      task = await accept(input, signal)
+      signal.throwIfAborted()
+      if (task.content !== input.content || task.dshSessionId !== input.dshSessionId || task.rpcId !== input.rpcId) {
+        throw new Error('助手未能核实本次医生输入。')
+      }
+    } catch {
+      if (record !== undefined && !signal.aborted) sourceFailed?.(input.dshSessionId)
+      return
     }
+    const source = record === undefined ? Promise.resolve() : recordSource(task, input, signal).catch(() => {
+      if (!signal.aborted) sourceFailed?.(input.dshSessionId)
+    })
+    const registration = registerTask(task, signal)
+    await Promise.all([source, registration])
+  }
+  async function registerTask(task: DoctorAgentTaskSubmission, signal: AbortSignal): Promise<void> {
     const response = await fetch('/clinmesh-doctor-task', {
       method: 'POST', credentials: 'same-origin', signal,
       headers: { 'content-type': 'application/json' }, body: JSON.stringify({ permit: task.permit }),
@@ -45,6 +60,14 @@ export function createDoctorInputBridge(
     if (!response.ok || !z.object({ data: z.object({ registered: z.literal(true) }) }).safeParse(await response.json()).success) {
       throw new Error('助手未能核实本次医生输入。')
     }
+  }
+  async function recordSource(task: DoctorAgentTaskSubmission, input: DoctorAgentChatInput, signal: AbortSignal): Promise<void> {
+    const response = await fetch('/clinmesh-doctor-source', { method: 'POST', credentials: 'same-origin', signal,
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ permit: task.permit }) })
+    if (!response.ok) throw new Error('助手未能核实本次医生补充。')
+    const { data } = z.object({ data: z.object({ sourceProof: z.string().min(32).max(8192) }).strict() }).strict().parse(await response.json())
+    signal.throwIfAborted()
+    await record!({ ...input, sourceProof: data.sourceProof }, signal)
   }
   const unsubscribeCurrent = ports.current.subscribe(bind)
   bind()

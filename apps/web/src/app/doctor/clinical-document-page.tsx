@@ -132,10 +132,10 @@ export function ClinicalDocumentPage({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">{messages.structuredClinicalDocument}</h3>
-        {detail.consultationRecording === undefined ? null : <ConsultationRecordingControls
+        <ConsultationRecordingControls
           recording={detail.consultationRecording} action={actions.controlRecording}
           disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
-          messages={messages} />}
+          messages={messages} />
       </div>
       {actions.save?.error == null ? null : <ErrorAlert
         message={getWorkspaceErrorMessage(actions.save.error, messages)}

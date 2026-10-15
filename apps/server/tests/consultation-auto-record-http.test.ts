@@ -2,7 +2,6 @@ import { apiErrorSchema, sessionContextSchema, clinicalDocumentDraftContentSchem
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { clinicalDocumentSignPreviewResponseSchema, clinicalDocumentSignResponseSchema, cancelClinicalDocumentSignResponseSchema } from '@clinmesh/contracts/his'
 import { randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,11 +11,52 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
-import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
+import { persona, signIn, startConsultationCase, StubSyntheaProvider, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
-import { applyMigrations } from '../src/infrastructure/sqlite/database.ts'
+import { replaceWithPreSourceDatabase, replaceWithRecordingBranchDatabase } from './fixtures/legacy-recording-database.ts'
 
 const disposals: Array<() => Promise<void>> = []
+
+it.each(['main', 'fields'] as const)('integrates a populated %s branch database without losing field rows, sources or audit', async branch => {
+  const field = branch === 'main' ? 'physicalExamination' : 'familyHistory'
+  const quote = branch === 'main' ? '查体：双肺呼吸音清。' : '我父亲患高血压。'
+  const text = branch === 'main' ? '双肺呼吸音清' : '父亲患高血压，患者自述'
+  const fixture = await setup({ reply: quote, extract: input => {
+    const source = (input.userPayload as { turns: Array<{ id: string; kind: string; messageText: string }> }).turns.at(-1)!
+    return { additions: branch === 'main' && source.kind !== 'doctor' ? [] : [{ field, relation: 'addition',
+      facts: [{ text, sources: [{ sourceTurnId: source.id, quote }] }] }] }
+  } })
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  if (branch === 'main') {
+    const detail = await fixture.read()
+    const context = await fixture.runtime.identity.resolveActorContext(new Headers({ cookie: fixture.cookie }), 'encounter.consultation.recording.control')
+    fixture.runtime.workflow.consultationRecording.recordDoctorSupplement({ context,
+      encounterId: fixture.started.encounterId, sourceId: 'doctor-upgrade-source', content: quote,
+      sessionId: 'synthetic-upgrade-session', rpcId: 'synthetic-upgrade-rpc', messageId: 'synthetic-upgrade-message',
+      recordedAt: '2026-10-15T00:00:00.000Z', expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId },
+      idempotencyKey: randomUUID() })
+    await fixture.runtime.dispatchPending()
+  }
+  const before = await fixture.read()
+  expect(before.clinicalDocument!.draft![field]).toBe(text)
+  const snapshot = () => ({
+    rows: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_history_addition ORDER BY rowid').all(),
+    jobs: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_recording_job ORDER BY turn_id').all(),
+    receipts: fixture.runtime.database.driver.prepare('SELECT * FROM command_receipt ORDER BY rowid').all(),
+  })
+  const stored = snapshot()
+  await fixture.restart(path => replaceWithRecordingBranchDatabase(path, branch))
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 70, integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
+  expect(snapshot()).toEqual(stored)
+  const upgraded = await fixture.read()
+  expect(upgraded.clinicalDocument).toEqual(before.clinicalDocument)
+  expect(upgraded.consultationRecording!.additions).toEqual(before.consultationRecording!.additions)
+  expect(upgraded.consultationRecording!.sources).toEqual(before.consultationRecording!.sources)
+  await fixture.restart()
+  expect(snapshot()).toEqual(stored)
+})
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
 const summaryPayloadSchema = z.object({
@@ -52,12 +92,14 @@ async function setup(options: {
   reply?: string | (() => string)
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
   verify?: (input: JsonChatCompletionInput) => unknown
+  resolveModel?: JsonChatCompletionsProvider['resolveModel']
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auto-record-'))
   disposals.push(() => rm(directory, { recursive: true }))
   const requests: JsonChatCompletionInput[] = []
   let replyCalls = 0
   const provider: JsonChatCompletionsProvider = {
+    ...(options.resolveModel === undefined ? {} : { resolveModel: options.resolveModel }),
     async completeJson(input) {
       requests.push(input)
       if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
@@ -98,10 +140,10 @@ async function setup(options: {
       [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1',
     }, input: { expectedConsultationVersion: 2, message: '头晕多久了？有没有胸痛？' } }),
   })
-  const askMore = async () => {
+  const askMore = async (actorHeaders: Record<string, string> = { cookie }) => {
     const detail = await read()
     return runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
-      method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      method: 'POST', headers: { ...actorHeaders, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
       body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId,
         [`Task/${detail.taskId}`]: detail.taskVersion }, input: { expectedConsultationVersion: detail.consultation!.version, message: '再确认一下病史？' } }),
     })
@@ -121,7 +163,7 @@ async function setup(options: {
     if (response.status === 200) clinicalDocumentDraftResponseSchema.parse(await response.clone().json())
     return response
   }
-  const control = async (action: 'pause' | 'resume' | 'backfill' | 'retry', options: { key?: string; version?: number; headers?: Record<string, string> } = {}) => {
+  const control = async (action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry', options: { key?: string; version?: number; headers?: Record<string, string> } = {}) => {
     const detail = await read()
     return runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/consultation-recording/actions/control`, {
       method: 'POST', headers: { ...(options.headers ?? { cookie }), origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': options.key ?? randomUUID() },
@@ -130,7 +172,11 @@ async function setup(options: {
     })
   }
   return { get runtime() { return runtime }, read, ask, askMore, requests, started, cookie, save, control,
-    restart: async () => { await runtime.close(); runtime = await createRuntime() } }
+    restart: async (prepare?: (databasePath: string) => Promise<void>) => {
+      await runtime.close()
+      await prepare?.(join(directory, 'clinmesh.sqlite'))
+      runtime = await createRuntime()
+    } }
 }
 
 async function signing(fixture: Awaited<ReturnType<typeof setup>>) {
@@ -410,7 +456,7 @@ it('rejects a source from another case before semantic verification', async () =
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
 })
 
-it('signs the fixed document without a consultation acknowledgement even when recording is unavailable', async () => {
+it('rejects a changed consultation snapshot and signs a fresh preview without an acknowledgement when recording is unavailable', async () => {
   const fixture = await setup({ recording: false })
   expect((await fixture.ask()).status).toBe(200)
   const actions = await signing(fixture)
@@ -420,7 +466,12 @@ it('signs the fixed document without a consultation acknowledgement even when re
   expect((await fixture.askMore()).status).toBe(200)
   expect((await fixture.read()).consultation!.version).toBeGreaterThan(before)
   const denied = await actions.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken, })
-  expect(denied.status).toBe(200)
+  expect(denied.status).toBe(409)
+  expect((await fixture.read()).clinicalDocument?.signed).toHaveLength(0)
+  expect((await actions.request('actions/cancel-sign', { previewId: preview.previewId })).status).toBe(200)
+  const fresh = await actions.preview()
+  expect(fresh).not.toHaveProperty('consultationReview')
+  expect((await actions.request('actions/sign', { previewId: fresh.previewId, commitToken: fresh.commitToken })).status).toBe(200)
   expect((await fixture.read()).clinicalDocument?.signed).toHaveLength(1)
 })
 
@@ -1488,28 +1539,6 @@ it('rejects a late extraction after Epoch reset without contaminating the replay
   }
 })
 
-it('upgrades the old three-field history constraint without changing existing sources, review, anchors, inverses or order', async () => {
-  const fixture = await setup()
-  await fixture.ask()
-  await fixture.runtime.dispatchPending()
-  await fixture.save('医生手工记录。\n' + (await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness)
-  const database = fixture.runtime.database
-  const rows = () => database.driver.prepare('SELECT * FROM consultation_history_addition ORDER BY rowid').all()
-  const before = rows()
-  const migration = readFileSync(new URL('../drizzle/0061_clinical-document-history-fields.sql', import.meta.url), 'utf8')
-  database.driver.exec(migration.replace(
-    "'priorMedicalHistory', 'familyHistory', 'allergyHistory'", "'priorMedicalHistory'"))
-  database.driver.prepare("DELETE FROM schema_migration WHERE migration_id = '0061_clinical-document-history-fields.sql'").run()
-  expect(rows()).toEqual(before)
-  expect(applyMigrations(database).applied).toEqual(['0061_clinical-document-history-fields.sql'])
-  expect(rows()).toEqual(before)
-  expect(database.driver.pragma('foreign_key_check')).toEqual([])
-  await fixture.restart()
-  const addition = (await fixture.read()).consultationRecording!.additions.find(item => item.status === 'applied')!
-  expect(addition).toMatchObject({ status: 'applied', ownership: 'automatic' })
-  expect((await fixture.read()).clinicalDocument!.draft!.historyOfPresentIllness).toContain('医生手工记录。')
-})
-
 it.each([
   { field: 'familyHistory', reply: '我父亲患高血压。', text: '父亲患高血压，患者自述' },
   { field: 'allergyHistory', reply: '我用青霉素后出过皮疹。', text: '自述青霉素用药后出现皮疹' },
@@ -1588,4 +1617,173 @@ it.each(['preparing', 'signed'] as const)('discards an extraction that completes
   const frozen = (await fixture.read()).clinicalDocument
   release(); await processing
   expect((await fixture.read()).clinicalDocument).toEqual(frozen)
+})
+
+it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0061 database and resumes report recording without losing legacy facts (%s)', async kind => {
+  let reply = '头晕一周了。站起来时更明显。'
+  const fixture = await setup({ reply: () => reply, resolveModel: async model => `${model}-legacy-route`, extract: input => {
+    const payload = input.userPayload as { turns: Array<{ id: string; kind: string; messageText: string }>; history: Array<{ id: string; quote: string }> }
+    const answer = payload.turns.at(-1)!
+    if (answer.kind === 'report') return { additions: [] }
+    const target = reply.startsWith('刚才说错了') ? payload.history.find(row => row.quote === '头晕一周了。') : undefined
+    return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: answer.id, quote: reply,
+      relation: target === undefined ? 'addition' : 'correction', ...(target === undefined ? {} : { targetAdditionId: target.id }) }] }
+  } })
+  if (kind === 'job-with-grant') {
+    const { grant } = await createDoctorGrant(fixture.runtime, fixture.started.adminCookie, 'encounter.consultation.ask')
+    const actor = { authorization: `Bearer ${grant.token}` }
+    expect((await fixture.ask(actor)).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    reply = '刚才说错了，头晕三天。'
+    expect((await fixture.askMore(actor)).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    await fixture.save('患者自述：刚才说错了，头晕三天。\n医生核对：站立时更明显。')
+    reply = '夜间也会头晕。'
+    expect((await fixture.askMore(actor)).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    fixture.runtime.database.driver.prepare('UPDATE consultation_history_addition SET rejected = 1, undone = 1 WHERE addition_id = ?').run((await fixture.read()).consultationRecording!.additions.at(-1)!.id)
+  } else {
+    expect((await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/actions/start-first-visit`, {
+      method: 'POST', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: fixture.started.encounterVersion,
+        [`Task/${fixture.started.doctorTaskId}`]: '1' }, input: {} }),
+    })).status).toBe(200)
+  }
+  const before = await fixture.read()
+  const originalContext = z.object({ actor_context_json: z.string() }).parse(fixture.runtime.database.driver.prepare(
+    'SELECT actor_context_json FROM consultation_recording WHERE case_id = ?').get(fixture.started.outpatientCaseId)).actor_context_json
+  const snapshot = () => ({
+    recording: fixture.runtime.database.driver.prepare('SELECT workspace_id, epoch, case_id, version, paused, start_sequence FROM consultation_recording ORDER BY case_id').all(),
+    jobs: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_recording_job ORDER BY turn_id').all(),
+    models: fixture.runtime.database.driver.prepare('SELECT * FROM ai_model_binding ORDER BY task_id').all(),
+    additions: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_history_addition ORDER BY addition_id').all(),
+    receipts: fixture.runtime.database.driver.prepare('SELECT * FROM command_receipt ORDER BY operation, idempotency_key').all(),
+  })
+  const stored = snapshot()
+  if (kind === 'job-with-grant') {
+    expect(stored.jobs).toHaveLength(3)
+    expect(stored.models.length).toBeGreaterThan(0)
+    expect(stored.receipts.length).toBeGreaterThan(0)
+    expect(JSON.stringify(stored.jobs)).toContain('agentGrantId')
+    expect(before.consultationRecording!.additions.some(row => row.ownership === 'manual')).toBe(true)
+    expect(before.consultationRecording!.additions.some(row => row.status === 'undone')).toBe(true)
+    expect(stored.additions).toEqual(expect.arrayContaining([expect.objectContaining({ inverse_text: '患者自述：头晕一周了。' }),
+      expect.objectContaining({ ownership: 'manual' }), expect.objectContaining({ rejected: 1, undone: 1 })]))
+  }
+  await fixture.restart(replaceWithPreSourceDatabase)
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 70, foreignKeys: true, integrity: 'ok' })
+  expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
+  expect(snapshot()).toEqual(stored)
+  const upgraded = await fixture.read()
+  expect(upgraded.consultationRecording!.requiresContextBinding).toBe(kind === 'no-job-human')
+  expect(upgraded.clinicalDocument?.draft).toEqual(before.clinicalDocument?.draft)
+  expect(upgraded.consultationRecording!.additions).toEqual(before.consultationRecording!.additions)
+  if (kind === 'no-job-human') {
+    expect(upgraded.consultationRecording!.requiresContextBinding).toBe(true)
+    expect((await fixture.control('activate', { version: upgraded.consultationRecording!.version })).status).toBe(200)
+    expect((await fixture.read()).consultationRecording!.requiresContextBinding).toBe(false)
+  }
+  useSyntheticLaboratoryCatalog(fixture.runtime)
+  const detail = await fixture.read()
+  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId }
+  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
+  })
+  expect(draft.status).toBe(200)
+  const saved = await draft.json() as { data: { draftVersion: number } }
+  expect((await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
+  })).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ remainingCount: 0,
+    processedCount: kind === 'job-with-grant' ? 4 : 1, version: before.consultationRecording!.version })
+  const reportContext = z.object({ actor_context_json: z.string() }).parse(fixture.runtime.database.driver.prepare(`SELECT job.actor_context_json FROM consultation_recording_job AS job
+    JOIN consultation_recording_source AS source ON source.workspace_id = job.workspace_id AND source.epoch = job.epoch
+      AND source.source_id = job.turn_id WHERE source.source_kind = 'report' AND job.case_id = ?
+  `).get(fixture.started.outpatientCaseId))
+  expect(JSON.parse(reportContext.actor_context_json)).toEqual(JSON.parse(originalContext))
+})
+
+it('records published laboratory values and conclusion with a fixed report version while paused', async () => {
+  const fixture = await setup({ extract: input => {
+    const source = (input.userPayload as { turns: Array<{ id: string; kind: string; messageText: string }> }).turns.at(-1)!
+    return { additions: source.kind !== 'report' ? [] : [{ field: 'auxiliaryExamination', relation: 'addition',
+      facts: [{ text: '本院检验白细胞计数11.2×10^9/L', sources: [{ sourceTurnId: source.id, quote: source.messageText.split('\n').at(-1)! }] }],
+    }] }
+  } })
+  useSyntheticLaboratoryCatalog(fixture.runtime)
+  await fixture.ask()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.control('pause')).status).toBe(200)
+  const detail = await fixture.read()
+  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: detail.encounter.versionId }
+  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
+  })
+  expect(draft.status).toBe(200)
+  const saved = await draft.json() as { data: { draftVersion: number } }
+  const issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
+  })
+  expect(issued.status).toBe(200)
+  const actions = await signing(fixture)
+  await actions.save()
+  const preview = await actions.preview()
+  await fixture.runtime.dispatchPending()
+  const published = await fixture.read()
+  const report = published.laboratoryRequests!.requests[0]!.report!
+  const source = published.consultationRecording!.sources!.find(source => source.kind === 'report')!
+  expect(source).toMatchObject({ reportReference: `DiagnosticReport/${report.diagnosticReportId}/_history/1` })
+  expect(source.messageText).toContain(report.conclusion)
+  expect(source.messageText).toContain('11.2')
+  expect(published.consultationRecording).toMatchObject({ status: 'paused', remainingCount: 1 })
+  expect((await actions.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(409)
+  expect(published.clinicalDocument?.signed).toHaveLength(0)
+  expect((await actions.request('actions/cancel-sign', { previewId: preview.previewId })).status).toBe(200)
+  await fixture.restart()
+  expect((await fixture.read()).consultationRecording!.sources!.find(item => item.kind === 'report')).toEqual(source)
+  expect((await fixture.control('resume')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument!.draft).toMatchObject({ auxiliaryExamination: '本院检验白细胞计数11.2×10^9/L' })
+  expect((await fixture.read()).consultationRecording).toMatchObject({ remainingCount: 0, status: 'updated' })
+})
+
+it('records a published report before the first patient question using the assigned doctor context', async () => {
+  const fixture = await setup({ extract: input => {
+    const source = (input.userPayload as { turns: Array<{ id: string; kind: string; messageText: string }> }).turns.at(-1)!
+    return { additions: source.kind !== 'report' ? [] : [{ field: 'auxiliaryExamination', relation: 'addition',
+      facts: [{ text: '本院检验白细胞计数11.2×10^9/L', sources: [{ sourceTurnId: source.id, quote: source.messageText.split('\n').at(-1)! }] }],
+    }] }
+  } })
+  useSyntheticLaboratoryCatalog(fixture.runtime)
+  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const start = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/actions/start-first-visit`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({ expectedVersions: {
+      [`Encounter/${fixture.started.encounterId}`]: fixture.started.encounterVersion, [`Task/${fixture.started.doctorTaskId}`]: '1',
+    }, input: {} }),
+  })
+  expect(start.status).toBe(200)
+  const expectedVersions = { [`Encounter/${fixture.started.encounterId}`]: (await fixture.read()).encounter.versionId }
+  const draft = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
+  })
+  expect(draft.status).toBe(200)
+  const saved = await draft.json() as { data: { draftVersion: number } }
+  const issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${fixture.started.encounterId}/laboratory-request/actions/issue`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: saved.data.draftVersion } }),
+  })
+  expect(issued.status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const result = await fixture.read()
+  expect(result.consultation!.turns.filter(turn => turn.kind === 'text')).toHaveLength(1)
+  expect(result.clinicalDocument?.draft).toMatchObject({ auxiliaryExamination: '本院检验白细胞计数11.2×10^9/L' })
+  expect(result.consultationRecording).toMatchObject({ remainingCount: 0, status: 'updated', processedCount: 1 })
 })

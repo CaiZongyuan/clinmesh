@@ -1620,8 +1620,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Prepare a version-bound signing preview even without automatic recording; freeze recording and invalidate in-flight extraction; cancel preparation to recover unfinished answers',
-    version: 3,
+    summary: 'Prepare a version-bound signing preview even without automatic recording, including doctor-only cases without a Consultation; freeze recording and bind the Consultation or source snapshot; cancel preparation to recover unfinished sources',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'commit'],
@@ -1639,8 +1639,8 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Sign an unchanged structured document; automatic history recording needs no human acknowledgement; completeness, responsibility, preview token and version checks still apply',
-    version: 3,
+    summary: 'Sign an unchanged structured document even without automatic recording; reject a changed Consultation or source snapshot; automatic recording needs no human acknowledgement; completeness, responsibility, preview token and version checks still apply',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'cancel'],
@@ -1650,8 +1650,8 @@ const operationDefinitions = [
     mode: 'command', output: cancelClinicalDocumentSignResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Cancel an unconsumed signing preparation, including expired previews; a valid cancel-only Agent Grant authorizes recovery of unfinished recording without clearing an explicit pause or failed answers; re-read the case before retrying or signing',
-    version: 1,
+    summary: 'Cancel an unconsumed signing preparation, including expired previews; a valid cancel-only Agent Grant authorizes recovery of unfinished patient/doctor/report recording without clearing an explicit pause or failed sources; re-read the case before retrying or signing',
+    version: 2,
   },
   {
     cliPath: ['clinical-document', 'revise'],

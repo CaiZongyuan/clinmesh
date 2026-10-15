@@ -2,7 +2,7 @@
 
 Status: implemented
 
-无冲突内容自动应用与全局核对面板的决定由[字段内建议决策](2026-10-13-consultation-field-suggestions.md)取代；本记录的来源、片段保护、持久任务与逆操作理由继续适用。
+当前八字段统一来源与无冲突自动写入合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有；[字段内建议决策](2026-10-13-consultation-field-suggestions.md)仍拥有字段内布局与局部操作，其全部先应用方式已被部分取代。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
 
 ## Problem
 

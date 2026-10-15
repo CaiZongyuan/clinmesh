@@ -74,8 +74,8 @@ describe('Imaging request HTTP contract', () => {
   })
 
   /** 一个已安装并发布素材的运行时，病例已完成影像准备并进入医生接诊。 */
-  async function consultation(bundle: unknown) {
-    const created = await createImagingRuntime([bundle], { persona: true })
+  async function consultation(bundle: unknown, recording = false) {
+    const created = await createImagingRuntime([bundle], { persona: true, recording })
     temporaryDirectories.push(created.directory)
     runtimes.push(created.runtime)
     await installSyntheticImagingAssets({
@@ -155,6 +155,31 @@ describe('Imaging request HTTP contract', () => {
       kinds.push(`${event.kind}:${event.status}`)
     }
   }
+
+  it('saves every published imaging text section in the recording source with its fixed version and hash', async () => {
+    const visit = await consultation(caseBundle({ gender: 'male', index: [{ ...lungCancer, resourceType: 'Condition' }], name: '全文来源合成患者' }), true)
+    const { runtime, doctor, encounterId, outpatientCaseId } = visit
+    const initial = await caseDetail(runtime, doctor, outpatientCaseId)
+    const paused = await runtime.app.request(`/api/his/v1/encounters/${encounterId}/consultation-recording/actions/control`, mutation(doctor, {
+      expectedVersions: { [`Encounter/${encounterId}`]: initial.encounter.versionId },
+      input: { action: 'pause', expectedRecordingVersion: initial.consultationRecording!.version },
+    }))
+    expect(paused.status).toBe(200)
+    await order(visit, radiographService)
+    await dispatchAll(runtime)
+    const detail = await caseDetail(runtime, doctor, outpatientCaseId)
+    const report = detail.imagingRequests!.requests[0]!.report!
+    const source = detail.consultationRecording!.sources!.find(item => item.kind === 'report')!
+    expect(source.messageText).toContain(`检查方法：\n${report.technique}`)
+    expect(source.messageText).toContain(`影像所见：\n${report.findings}`)
+    expect(source.messageText).toContain(`诊断意见：\n${report.impression}`)
+    expect(source).toMatchObject({ reportReference: `DiagnosticReport/${report.diagnosticReportId}/_history/${report.diagnosticReportVersion}`,
+      reportContentHash: expect.stringMatching(/^[a-f0-9]{64}$/u) })
+    expect(detail.consultationRecording).toMatchObject({ status: 'paused', remainingCount: 1 })
+    await order(visit, ctService, 2)
+    await dispatchAll(runtime)
+    expect((await caseDetail(runtime, doctor, outpatientCaseId)).consultationRecording!.sources!.find(item => item.id === source.id)).toEqual(source)
+  })
 
   it('orders a chest radiograph, publishes the report, and gates completion on acknowledgement', async () => {
     const visit = await consultation(caseBundle({

@@ -1,4 +1,5 @@
 const zhCN = {
+  doctorSupplementSaveUnconfirmed: '暂未确认本条补充已加入病历，请核对后重新补充。',
   appName: '科灵脉智',
   recommendationFieldPending: '待医生补充',
   recommendationDraftNeedsResolution: '请先处理当前申请草稿，再采纳其他建议。',
@@ -605,6 +606,8 @@ const zhCN = {
   consultationRecordingUpdated: '患者回答已整理并记录到病历。',
   consultationRecordingReady: '患者回答后自动整理并记录病史。',
   consultationRecordingIdleShort: '已开启',
+  consultationRecordingBindingRequired: '病历整理连接待恢复',
+  consultationRecordingBindContext: '恢复病历整理连接',
   consultationRecordingProcessingShort: '整理中',
   consultationRecordingUpdatedShort: '已整理',
   consultationRecordingPausedShort: '已暂停',
@@ -859,6 +862,7 @@ export type WorkspaceMessages = { [Key in WorkspaceMessageKey]: string }
 export type WorkspaceLocale = 'zh-CN' | 'en-US'
 
 const enUS = {
+  doctorSupplementSaveUnconfirmed: 'This supplement has not been confirmed in the record. Check the record before adding it again.',
   recommendationFieldPending: 'Requires doctor input',
   recommendationDraftNeedsResolution: 'Resolve the current request draft before adopting another suggestion.',
   recommendationRequestTargetUnavailable: 'The current catalog or request information is unavailable for adoption.',
@@ -1465,6 +1469,8 @@ const enUS = {
   consultationRecordingUpdated: 'Patient replies have been organized and recorded in the draft.',
   consultationRecordingReady: 'Patient replies are organized and recorded automatically.',
   consultationRecordingIdleShort: 'Enabled',
+  consultationRecordingBindingRequired: 'Recording connection needs recovery',
+  consultationRecordingBindContext: 'Restore recording connection',
   consultationRecordingProcessingShort: 'Organizing',
   consultationRecordingUpdatedShort: 'Organized',
   consultationRecordingPausedShort: 'Paused',

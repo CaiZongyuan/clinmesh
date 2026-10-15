@@ -1024,8 +1024,9 @@ function DoctorCaseController({
       ])
     },
   })
+  const activatedRecordingCases = useRef(new Set<string>())
   const controlRecording = useMutation({
-    mutationFn: ({ caseId, action }: { caseId: string; action: 'pause' | 'resume' | 'backfill' | 'retry' }) => {
+    mutationFn: ({ caseId, action }: { caseId: string; action: Parameters<typeof controlConsultationRecording>[0]['action'] }) => {
       const current = detail.data
       if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return controlConsultationRecording({ action, encounterId: current.encounter.id,
@@ -1037,12 +1038,35 @@ function DoctorCaseController({
       await queryClient.cancelQueries({ queryKey })
       queryClient.setQueriesData<DoctorCaseDetail>({ queryKey }, current => {
         // Control versions do not advance with saved drafts, ownership or background progress.
-        if (current === undefined || (current.consultationRecording?.version ?? 0) >= response.data.version) return current
+        const recording = current?.consultationRecording
+        const version = recording?.version ?? 0
+        if (current === undefined || version > response.data.version) return current
+        if (version === response.data.version) {
+          if (variables.action !== 'activate' || recording === undefined
+            || response.data.requiresContextBinding === undefined) return current
+          return { ...current, consultationRecording: { ...recording,
+            requiresContextBinding: response.data.requiresContextBinding,
+            status: recording.requiresContextBinding === true && recording.status === 'idle'
+              && recording.remainingCount > 0 && response.data.status === 'processing' ? 'processing' : recording.status } }
+        }
         return { ...current, consultationRecording: response.data }
       })
       await refreshCaseById(variables.caseId)
     },
   })
+  useEffect(() => {
+    const current = detail.data
+    const recording = current?.consultationRecording
+    const requiresBinding = recording?.requiresContextBinding === true
+    if (current === undefined || current.encounter.status !== 'in-progress' || (current.clinicalDocument?.signed.length ?? 0) > 0
+      || recording?.signingPreparation?.active === true
+      || (!requiresBinding && ((current.consultation?.turns.length ?? 0) > 0
+        || (recording !== undefined && (recording.version !== 0 || recording.status !== 'idle'))))) return
+    const key = `${scope[0]}:${scope[1]}:${current.caseId}`
+    if (activatedRecordingCases.current.has(key)) return
+    activatedRecordingCases.current.add(key)
+    controlRecording.mutate({ caseId: current.caseId, action: 'activate' })
+  }, [detail.data, scope[0], scope[1], controlRecording.mutate])
   const saveDocumentDraft = useMutation({
     mutationFn: ({ caseId, document }: { caseId: string; document: ClinicalDocumentContent }) => {
       const current = detail.data

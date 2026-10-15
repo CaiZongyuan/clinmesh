@@ -20,7 +20,7 @@ it('keeps signing review and cancellation examples aligned with the narrow opera
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
   const reference = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
-  for (const [suffix, version] of [['preview', 3], ['commit', 3], ['cancel', 1]] as const) {
+  for (const [suffix, version] of [['preview', 4], ['commit', 4], ['cancel', 2]] as const) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh encounter clinical-document sign ${suffix}`))!
     expect(inspectExample(program, line).operation?.version).toBe(version)
   }
@@ -147,7 +147,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     const operation = getHisOperation('encounter.consultation-recording.control')
     const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter consultation-recording control'))!
     expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
-    for (const action of ['pause', 'resume', 'backfill', 'retry']) {
+    for (const action of ['activate', 'pause', 'resume', 'backfill', 'retry']) {
       expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedRecordingVersion: 1, action }).success).toBe(true)
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)

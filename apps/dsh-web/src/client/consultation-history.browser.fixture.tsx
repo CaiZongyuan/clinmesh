@@ -57,6 +57,8 @@ function App(): React.JSX.Element {
     <button type="button" onClick={() => setWorking(current => ({ ...current,
       chiefComplaint: '自述头晕六天', priorMedicalHistory: '合成长病史记录。'.repeat(80),
       familyHistory: '患者自述父亲患高血压。', allergyHistory: '患者自述青霉素用药后出现皮疹。',
+      physicalExamination: '双肺呼吸音清，未闻及啰音。', auxiliaryExamination: '检验报告：血钾正常。',
+      assessment: '头晕待查。', disposition: '先完善检查。', followUp: '三日后复诊。',
     }))}>模拟自动记录</button>
     <button type="button" onClick={() => setBlocked(true)}>模拟签署准备</button>
     <button type="button" onClick={() => setSignedView(true)}>模拟已签内容</button>

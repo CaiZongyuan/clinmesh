@@ -19,6 +19,19 @@ type HostContext = Parameters<typeof createModelBridgeHandler>[0]
 type GenerateOptions = Parameters<HostContext['llm']['stream']>[0]
 type StreamChunk = ReturnType<HostContext['llm']['stream']> extends AsyncIterable<infer Chunk> ? Chunk : never
 
+function modelPayload(options: GenerateOptions): unknown {
+  return JSON.parse(z.object({ text: z.string() }).parse(options.messages[0]?.content[0]).text)
+}
+
+function isSummaryCall(options: GenerateOptions): boolean {
+  return !isVerificationCall(options) && z.object({ turns: z.array(z.unknown()), history: z.array(z.unknown()) })
+    .safeParse(modelPayload(options)).success
+}
+
+function isVerificationCall(options: GenerateOptions): boolean {
+  return z.object({ additions: z.array(z.unknown()) }).safeParse(modelPayload(options)).success
+}
+
 const secret = 'synthetic-model-bridge-secret-at-least-32-characters'
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose() })
@@ -300,12 +313,12 @@ async function recordingCase(summarize: (turns: HistoryTurn[]) => unknown, faith
   const cookie = await signIn(instance.runtime, 'doctor@demo.clinmesh.local')
   let reply = ''
   dsh.respond(async options => {
-    const payload: unknown = JSON.parse(z.object({ text: z.string() }).parse(options.messages[0]?.content[0]).text)
-    if (options.system?.includes('独立病史核对者')) {
+    const payload = modelPayload(options)
+    if (isVerificationCall(options)) {
       const { additions } = z.object({ additions: z.array(z.unknown()) }).parse(payload)
       return verify?.(additions) ?? { additions: additions.map((_, index) => ({ index, faithful, complete: true, relationValid: true })) }
     }
-    if (options.system?.includes('病史整理助手')) {
+    if (isSummaryCall(options)) {
       const { turns } = z.object({ turns: z.array(z.object({ id: z.string(), speaker: z.string(), messageText: z.string() })) }).parse(payload)
       return summarize(turns)
     }
@@ -384,7 +397,7 @@ it.each(['citation', 'target', 'field-limit', 'verification-coverage'] as const)
       stage: reason === 'verification-coverage' ? 'verification' : 'summary', reason,
     } } })
     expect(JSON.stringify(failures)).not.toMatch(new RegExp(`${reply}|${summary}|未曾说过的合成引用|${secret}|病史整理助手`))
-    const repairedStage = reason === 'verification-coverage' ? '独立病史核对者' : '病史整理助手'
+    const repairedStage = reason === 'verification-coverage' ? '独立病史核对者' : '病历整理助手'
     expect(fixture.dsh.calls.filter(call => call.system?.includes(repairedStage))).toHaveLength(2)
     await fixture.instance.restart()
     invalid = false
@@ -415,8 +428,8 @@ it.each([
   expect(detail.consultationRecording).toMatchObject({ status: 'failed', additions: [],
     failures: [{ code: 'CONSULTATION_RECORDING_SOURCE_INVALID' }] })
   expect(detail.consultation!.turns.at(-1)!.messageText).toBe(reply)
-  const summaries = fixture.dsh.calls.filter(call => call.system?.includes('病史整理助手'))
-  const verifications = fixture.dsh.calls.filter(call => call.system?.includes('独立病史核对者'))
+  const summaries = fixture.dsh.calls.filter(isSummaryCall)
+  const verifications = fixture.dsh.calls.filter(isVerificationCall)
   expect(verifications.length).toBeGreaterThan(0)
   expect(verifications).toHaveLength(summaries.length)
   expect(verifications.every(call => !call.system?.includes('previous response failed validation'))).toBe(true)
@@ -430,7 +443,7 @@ it.each(['我是不是糖尿病？', '胸痛已经三天了吗？', '如果三�
     expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', processedCount: 1,
       remainingCount: 0, failedCount: 0, failures: [], additions: [] })
     expect((await fixture.read()).clinicalDocument?.draft).toBeUndefined()
-    expect(fixture.dsh.calls.filter(call => call.system?.includes('独立病史核对者'))).toHaveLength(0)
+    expect(fixture.dsh.calls.filter(isVerificationCall)).toHaveLength(0)
   },
 )
 
@@ -462,7 +475,7 @@ it('backfills complete mixed questions through DSH without rewriting saved repli
   await fixture.instance.restart()
   await fixture.instance.runtime.dispatchPending()
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'backfill', processedCount: 0, remainingCount: 2 })
-  expect(fixture.dsh.calls.filter(call => call.system?.includes('病史整理助手'))).toHaveLength(0)
+  expect(fixture.dsh.calls.filter(isSummaryCall)).toHaveLength(0)
   await fixture.control('backfill')
   await fixture.instance.runtime.dispatchPending()
   const detail = await fixture.read()
@@ -521,7 +534,7 @@ it('explicitly recovers five completed, one failed and one queued DSH recording 
     .map(payload => payload.currentTurnId ?? payload.turns.at(-1).id)).toEqual([failedTurn.id, failedTurn.id, queuedTurn.id, queuedTurn.id])
   await fixture.instance.restart()
   await fixture.instance.runtime.dispatchPending()
-  expect((await fixture.read()).clinicalDocument?.draft).toEqual(applied.clinicalDocument?.draft)
+  expect((await fixture.read()).clinicalDocument?.draft).toEqual(recovered.clinicalDocument?.draft)
   expect(fixture.dsh.calls).toHaveLength(callsBeforeRestart + 4)
 })
 
@@ -545,7 +558,7 @@ it.each([false, true].flatMap(metadata => [
   await instance.restart()
   const beforeRecording = dsh.calls.length
   dsh.respond(async options => ({ ...(metadata ? { $schema: 'https://json-schema.org/draft/2020-12/schema' } : {}),
-    additions: options.system?.includes('独立病史核对者')
+    additions: isVerificationCall(options)
       ? [{ index: 0, faithful: true, complete: true, relationValid: true }]
       : [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{ text: summary,
         sources: [{ sourceTurnId: answered.data.patientTurn.id, quote: reply }] }] }],
@@ -571,6 +584,7 @@ it.each([false, true].flatMap(metadata => [
   )).json())
   expect(applied.clinicalDocument?.draft?.historyOfPresentIllness).toBe(summary)
   expect(applied.consultationRecording!.additions[0]!.status).toBe('applied')
+  expect(applied.consultationRecording!.additions[0]).not.toHaveProperty('reviewStatus')
   const count = dsh.calls.length
   await instance.restart()
   await instance.runtime.dispatchPending()

@@ -37,11 +37,11 @@ Status: implemented
 
 ## 测试策略
 
-Contracts 验证五字段和移除的操作合同。Server HTTP 与 file-backed SQLite 覆盖直接记录、来源、重启、迁移、失败、签署冻结与原件不可变；Playwright 从真实 Web 和原生 DSH 验证旅程，React 18/19 合同覆盖记录正文、无来源入口与签署弹窗。
+Contracts 验证十字段和移除的操作合同。Server HTTP 与 file-backed SQLite 覆盖直接记录、来源、重启、迁移、失败、签署冻结与原件不可变；Playwright 从真实 Web 和原生 DSH 验证旅程，React 18/19 合同覆盖记录正文、无来源入口与签署弹窗。
 
 ## 范围外
 
-自动写入正式 AllergyIntolerance、推断家族疾病或未问及的阴性、全病历生成、Mobile 改造、自动签署和修改已签原件。医生补充来源与全病历整理由 [#177](https://github.com/CaiZongyuan/clinmesh/issues/177) 追踪。
+自动写入正式 AllergyIntolerance、推断家族疾病或未问及的阴性、Mobile 改造、自动签署和修改已签原件。医生补充来源、报告和十字段整理由[全病历规格](2026-10-14-doctor-full-document-recording.md)拥有，并沿用本文的直接记录、无来源界面和变动提醒。
 
 ## 依赖与风险
 

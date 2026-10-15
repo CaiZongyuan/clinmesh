@@ -2,7 +2,7 @@
 
 Status: implemented
 
-本文拥有自动触发、来源校验与任务恢复要求。五字段分类、直接写入、页面展示和签署行为由[病历字段补齐与问诊自动记录](2026-10-14-clinical-document-fields.md)拥有。
+本文拥有自动触发、来源校验与任务恢复要求。来源扩展和十字段整理由[全病历整理](2026-10-14-doctor-full-document-recording.md)拥有；独立家族史、过敏史、直接写入、页面展示和签署行为由[病历字段补齐与问诊自动记录](2026-10-14-clinical-document-fields.md)拥有。
 
 ## 问题与目标
 
@@ -10,7 +10,7 @@ Status: implemented
 
 ## 范围
 
-优先支持 DSH 中的门诊问诊。默认启用自动记录，按[五字段合同](2026-10-14-clinical-document-fields.md)分类患者病史。来源为本次 Consultation Record，不读取 Case Truth、患者未公开档案或 DSH Assistant reasoning。
+优先支持 DSH 中的门诊问诊。默认启用自动记录，按[十字段合同](2026-10-14-doctor-full-document-recording.md)分类患者病史；本文保留患者来源的触发与校验要求。患者来源为本次 Consultation Record，不读取 Case Truth、患者未公开档案或 DSH Assistant reasoning。
 
 ## 用户故事
 

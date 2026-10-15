@@ -6,6 +6,7 @@ import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
   consultationHistorySummarySchema,
+  consultationRecordingSourceSchema,
   completeEncounterRequestSchema,
   completedCaseClinicalDocumentSchema,
   deletePrescriptionDraftRequestSchema,
@@ -76,6 +77,18 @@ describe('HIS contracts', () => {
       relation: 'addition', facts: [{ text: '患者明确提供的病史', sources: [{ sourceTurnId: 'synthetic', quote: '患者明确提供的原话。' }] }],
     }).success).toBe(true)
   })
+  it.each(['sessionId', 'messageId', 'rpcId'])('keeps recording source %s within native identifier bounds', field => {
+    const source = { id: 'doctor-source-1', kind: 'doctor', messageText: '查体：双肺呼吸音清。',
+      recordedAt: '2026-10-15T09:00:00+08:00' }
+    for (const length of [129, 256]) {
+      const value = 'x'.repeat(length)
+      expect(consultationRecordingSourceSchema.parse({ ...source, [field]: value })).toMatchObject({ [field]: value })
+    }
+    for (const value of ['', 'x'.repeat(257)]) {
+      expect(consultationRecordingSourceSchema.safeParse({ ...source, [field]: value }).success).toBe(false)
+    }
+  })
+
   it('accepts Reference IDs in completed-case laboratory facts', () => {
     expect(completedCaseLaboratoryRequestSchema.parse({
       catalogItemId: 'laboratory:white-cell-count',
