@@ -1058,7 +1058,8 @@ function DoctorCaseController({
     const current = detail.data
     const recording = current?.consultationRecording
     const requiresBinding = recording?.requiresContextBinding === true
-    if (current === undefined || current.encounter.status !== 'in-progress' || (current.clinicalDocument?.signed.length ?? 0) > 0
+    if (current === undefined || current.status === 'awaiting-doctor'
+      || current.encounter.status !== 'in-progress' || (current.clinicalDocument?.signed.length ?? 0) > 0
       || recording?.signingPreparation?.active === true
       || (!requiresBinding && ((current.consultation?.turns.length ?? 0) > 0
         || (recording !== undefined && (recording.version !== 0 || recording.status !== 'idle'))))) return

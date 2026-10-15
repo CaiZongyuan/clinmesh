@@ -42,6 +42,8 @@
 
 - 同一张 SQLite 表在并行分支分别迁移时，整合须保留已执行 SQL 的文件名和校验和，并验证两条非空升级路径；来源外键、字段 CHECK、rowid 顺序和任务身份都需一起核对。合并后的字段并集不能只改 TypeScript。
 
+- DSH 自动诊疗显示“请切换到有权限的岗位后重试”时，先取失败请求的 HTTP 状态、`error.code` 与操作名，核对[前端错误映射](../../apps/web/src/app/workspace-error.ts)和 [Tool 恢复规则](../agent-capabilities.md#tool-绑定与恢复)，不要仅凭提示认定岗位选错。刷新后消失的自动记录错误还需对齐启用请求与接诊成功的实际时间，区分提前触发和旧错误残留；接诊边界见[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
+
 - 隔离测试手动调用 generation、persona 或 outbox `processNext`／`dispatchPending` 时，省略 `autoDispatchIntervalMs` 以关闭自动定时器；设置为 `0` 仍会创建定时器并按最小间隔执行，与手动 claim 竞争，可能使 fixture 误报任务不存在或生成失败。需要自动处理时使用正间隔，并从公开状态等待结果。
 
 - 多病例测试不能在同一 runtime 中反复使用完全相同的 Synthea 来源：生成按来源去重，会返回已经接诊的病例，后续 Persona 因病例状态不允许而失败。替身须返回身份或其他来源事实不同、hash 与内容一致的合成病例，并断言病例 ID 不同。

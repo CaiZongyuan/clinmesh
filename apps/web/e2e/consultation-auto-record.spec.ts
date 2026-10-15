@@ -24,6 +24,12 @@ test('records a conflict automatically without replacing handwritten history and
     const started = await startConsultationCase(server.runtime, server.password, server.origin)
     const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
+    const recordingResponses: number[] = []
+    page.on('response', response => {
+      if (new URL(response.url()).pathname.endsWith('/consultation-recording/actions/control')) {
+        recordingResponses.push(response.status())
+      }
+    })
     await page.goto(`${server.origin}/consultation`)
     await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
     await page.getByLabel('账户密码').fill(server.password)
@@ -32,6 +38,10 @@ test('records a conflict automatically without replacing handwritten history and
     await page.getByText('张琴', { exact: true }).first().click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(page.getByRole('tabpanel', { name: '病历记录', exact: true })
+      .locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'idle')
+    expect(recordingResponses).not.toContain(403)
+    await expect(page.getByText('请切换到有权限的岗位后重试。', { exact: true })).toHaveCount(0)
     const original = '医生核对：否认胸痛。\n平时睡眠正常。'
     const history = page.getByLabel('现病史', { exact: true })
     await history.fill(original)

@@ -1106,6 +1106,7 @@ function stubDoctorCompletedCaseLibrary(options: {
 
 function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry', additionalCase = false) {
   const initialVersion = action === 'backfill' || action === 'activate' ? 0 : 2
+  let caseStatus: DoctorCaseDetail['status'] = 'first-visit'
   let recording: NonNullable<DoctorCaseDetail['consultationRecording']> = {
     hasSavedDraft: true, failures: [], version: initialVersion, paused: action === 'resume', processedCount: 0,
     remainingCount: action === 'pause' ? 0 : 1, failedCount: action === 'retry' ? 1 : 0,
@@ -1132,7 +1133,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     consultationRecording: action === 'activate' && recording.version === 0 ? undefined : recording,
     clinicalDocument: { draft: { ...document, version: draftVersion, updatedAt: '2026-10-08T09:00:00+08:00' }, signed: [] },
     encounter: { id: 'encounter-recording', status: 'in-progress', versionId: '1' },
-    patient, presentation: doctorPresentation, priorFacts: [], status: 'first-visit',
+    patient, presentation: doctorPresentation, priorFacts: [], status: caseStatus,
     taskId: 'task-recording', taskVersion: '1',
   })
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1144,7 +1145,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
       prescriptionConclusionSupported: true })
     if (path === '/api/his/v1/doctor/queue') return Response.json({
       items: [{ caseId: 'case-recording', encounterId: 'encounter-recording', encounterVersion: '1',
-        patient, presentation: doctorPresentation, status: 'first-visit', taskId: 'task-recording', taskVersion: '1' },
+        patient, presentation: doctorPresentation, status: caseStatus, taskId: 'task-recording', taskVersion: '1' },
         ...(additionalCase ? [{ caseId: 'case-other', encounterId: 'encounter-other', encounterVersion: '1',
           patient: { ...patient, id: 'patient-other', name: '合成其他患者' }, presentation: doctorPresentation,
           status: 'first-visit', taskId: 'task-other', taskVersion: '1' }] : [])],
@@ -1182,6 +1183,10 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     if (path === '/api/his/v1/encounters/encounter-recording/completion') {
       return Response.json({ canComplete: false, encounterId: 'encounter-recording', encounterVersion: '1', items: [] })
     }
+    if (path === '/api/his/v1/encounters/encounter-recording/actions/start-first-visit') {
+      caseStatus = 'first-visit'
+      return Response.json(commandResponse({ encounterVersion: '1', status: caseStatus, taskVersion: '1' }))
+    }
     if (path === '/api/his/v1/encounters/encounter-recording/clinical-document/actions/preview-sign') {
       const previewId = 'sign-recording-preview'
       const expiresAt = new Date(Date.now() + 300_000).toISOString()
@@ -1210,6 +1215,9 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
       const request = controlConsultationRecordingRequestSchema.parse(JSON.parse(String(init?.body)))
       controls.push(request.input)
       expect(request.input.expectedRecordingVersion).toBe(recording.version)
+      if (caseStatus === 'awaiting-doctor') return Response.json({ error: {
+        code: 'ROLE_NOT_ALLOWED', message: 'The outpatient case belongs to another doctor',
+      } }, { status: 403 })
       if (controlFailure) return Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Synthetic activation failure' } }, { status: 503 })
       recording = request.input.action === 'activate' && recording.version > 0
         ? { ...recording, requiresContextBinding: false,
@@ -1224,6 +1232,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
   }))
   return {
     controls, initialVersion, savedDocuments, cancellations,
+    setCaseStatus: (status: DoctorCaseDetail['status']) => { caseStatus = status },
     failControl: (failed: boolean) => { controlFailure = failed },
     recordAddition: (text: string) => {
       document = { ...document, historyOfPresentIllness: `${document.historyOfPresentIllness}\n${text}` }
@@ -3359,6 +3368,23 @@ describe('role workspaces', () => {
     render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
     await screen.findByRole('button', { name: '补录历史回答' })
     expect(historical.controls).toEqual([])
+  })
+
+  it.each([0, 1])('waits for first visit before activating recording v%s without a stale permission error', async recordingVersion => {
+    const fixture = stubRecordingWorkspace('activate')
+    fixture.setCaseStatus('awaiting-doctor')
+    if (recordingVersion > 0) fixture.updateRecording({ version: recordingVersion, requiresContextBinding: true })
+    const user = userEvent.setup()
+    const queryClient = createWebQueryClient()
+    render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    const start = await screen.findByRole('button', { name: '开始首诊' })
+    expect(fixture.controls).toEqual([])
+    expect(screen.queryByText('请切换到有权限的岗位后重试。')).toBeNull()
+
+    await user.click(start)
+    await screen.findByLabelText('现病史', { exact: true })
+    await waitFor(() => expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: recordingVersion }]))
+    expect(screen.queryByText('请切换到有权限的岗位后重试。')).toBeNull()
   })
 
   it('offers an explicit retry when activating a new case fails', async () => {
