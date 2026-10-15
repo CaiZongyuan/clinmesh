@@ -23,6 +23,8 @@ import {
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   clinicalDocumentDraftResponseSchema,
+  clinicalDocumentQualityControlStateSchema,
+  clinicalDocumentQualityControlResponseSchema,
   reviewConsultationHistoryResponseSchema,
   controlConsultationRecordingResponseSchema,
   clinicalDocumentRevisionResponseSchema,
@@ -70,6 +72,7 @@ import {
   withdrawPrescriptionResponseSchema,
   type ApiConflict,
   type ClinicalDocumentContent,
+  type clinicalDocumentAgentFactSchema,
   type ConsultationHistoryDecision,
   type DiagnosisDraftEntry,
   type DoctorQueueView,
@@ -1470,6 +1473,8 @@ export function controlConsultationRecording(input: {
 }
 
 export function saveClinicalDocumentDraft(input: {
+  agentGenerated?: boolean
+  agentFacts?: Array<z.infer<typeof clinicalDocumentAgentFactSchema>>
   document: ClinicalDocumentContent
   encounterId: string
   encounterVersion: string
@@ -1481,12 +1486,43 @@ export function saveClinicalDocumentDraft(input: {
     {
       expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
       input: {
+        ...(input.agentGenerated === undefined ? {} : { agentGenerated: input.agentGenerated }),
+        ...(input.agentFacts === undefined ? {} : { agentFacts: input.agentFacts }),
         document: input.document,
         expectedDraftVersion: input.expectedDraftVersion,
       },
     },
     { idempotencyKey, method: 'PUT' },
   )
+}
+
+export function getClinicalDocumentQuality(caseId: string, clientId?: string, signal?: AbortSignal) {
+  return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/document-quality-control${clientId === undefined ? '' : `?clientId=${encodeURIComponent(clientId)}`}`,
+    clinicalDocumentQualityControlStateSchema, signal)
+}
+
+export async function checkClinicalDocumentQuality(input: {
+  caseId: string; encounterId: string; encounterVersion: string; expectedDraftVersion: number;
+  document?: ClinicalDocumentContent; clientId?: string; clientRevision?: number; refresh?: boolean;
+}, signal?: AbortSignal) {
+  const { caseId, encounterId, encounterVersion, ...candidate } = input
+  const response = await apiMutation(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/document-quality-control/actions/check`,
+    clinicalDocumentQualityControlResponseSchema,
+    { expectedVersions: { [`Encounter/${encounterId}`]: encounterVersion }, input: candidate },
+    { idempotencyKey: newIdempotencyKey(), ...(signal === undefined ? {} : { signal }) })
+  return response.data
+}
+
+export async function retainClinicalDocumentQualityIssue(input: {
+  caseId: string; encounterId: string; encounterVersion: string; issueId: string;
+  expectedInputFingerprint: string; clientId?: string; reason?: string;
+}) {
+  const { caseId, encounterId, encounterVersion, ...decision } = input
+  const response = await apiMutation(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/document-quality-control/actions/retain`,
+    clinicalDocumentQualityControlResponseSchema,
+    { expectedVersions: { [`Encounter/${encounterId}`]: encounterVersion }, input: decision },
+    { idempotencyKey: newIdempotencyKey() })
+  return response.data
 }
 
 export function previewStructuredClinicalDocumentSign(input: {

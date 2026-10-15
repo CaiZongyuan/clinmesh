@@ -31,6 +31,8 @@ import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 import { ConsultationHistoryReview, type ConsultationHistoryReviewAction } from './consultation-history-review.tsx'
 import { ConsultationSignReviewNotice, requiresConsultationReview, type ConsultationSignReview } from './consultation-sign-review.tsx'
+import { DocumentQualityFieldIssues, DocumentQualitySignSummary, DocumentQualityStatus, useDocumentQualityControl, type DocumentQualityControl } from './document-quality-control.tsx'
+import type { ClinicalDocumentQualityControlState } from '@clinmesh/contracts/his'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -43,6 +45,7 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
 }
 
 export interface ClinicalDocumentSignPreview {
+  qualityControl?: ClinicalDocumentQualityControlState | undefined
   consultationReview?: ConsultationSignReview | null
   consultationReviewed?: boolean
   expiresAt?: string
@@ -101,6 +104,7 @@ export function ClinicalDocumentPage({
   messages,
   onDocumentChange,
   workingDocument,
+  qualityScope,
 }: {
   actions: ClinicalDocumentPageActions
   allowRevision: boolean
@@ -110,11 +114,14 @@ export function ClinicalDocumentPage({
   messages: ReturnType<typeof getWorkspaceMessages>
   onDocumentChange: (document: ClinicalDocumentContent) => void
   workingDocument: ClinicalDocumentContent
+  qualityScope?: string | undefined
 }): React.JSX.Element | null {
   const signedDocuments = detail.clinicalDocument?.signed ?? []
   const latestSignedDocument = signedDocuments.at(-1)
   const [revisionPreview, setRevisionPreview] = useState<ClinicalDocumentRevisionInput>()
   const [reviewedPreviewId, setReviewedPreviewId] = useState<string>()
+  const quality = useDocumentQualityControl({ detail, document: workingDocument, scope: qualityScope,
+    enabled: signedDocuments.length === 0 && detail.encounter.status === 'in-progress' })
 
   if (
     signedDocuments.length === 0
@@ -278,6 +285,7 @@ export function ClinicalDocumentPage({
           </Alert>}
           {actions.cancelSign?.error == null ? null : <ErrorAlert title={messages.operationFailed}
             message={getWorkspaceErrorMessage(actions.cancelSign.error, messages)} />}
+          <DocumentQualityStatus quality={quality} messages={messages} />
           <form
             aria-label={messages.structuredClinicalDocument}
             className="flex flex-col gap-3"
@@ -292,6 +300,7 @@ export function ClinicalDocumentPage({
               idPrefix={`clinical-record-${detail.caseId}`}
               messages={messages}
               onChange={onDocumentChange}
+              quality={quality}
               history={{ detail, workingDocument, action: actions.reviewHistory,
                 disabled: detail.encounter.status !== 'in-progress' || preparing || cancelPending,
                 messages, locale }}
@@ -328,6 +337,7 @@ export function ClinicalDocumentPage({
               {currentPreview === undefined ? null : (
                 <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">
                   <ConsultationSignReviewNotice review={currentPreview.consultationReview} messages={messages} />
+                  <DocumentQualitySignSummary detail={detail} state={currentPreview.qualityControl} scope={qualityScope} locale={locale} />
                   <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
                   {requiresConsultationReview(currentPreview.consultationReview) ? <Field orientation="horizontal">
                     <Checkbox id="consultation-sign-reviewed" disabled={actions.sign.pending || cancelPending}
@@ -374,13 +384,14 @@ export function ClinicalDocumentPage({
   )
 }
 
-function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, history }: {
+function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, history, quality }: {
   content: ClinicalDocumentContent
   disabled: boolean
   idPrefix: string
   messages: ReturnType<typeof getWorkspaceMessages>
   onChange: (document: ClinicalDocumentContent) => void
   history: Omit<Parameters<typeof ConsultationHistoryReview>[0], 'field'>
+  quality: DocumentQualityControl
 }): React.JSX.Element {
   const fields = [
     { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
@@ -429,6 +440,7 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
               />
             )}
             <ConsultationHistoryReview {...history} field={field} />
+            <DocumentQualityFieldIssues field={field} quality={quality} messages={messages} locale={history.locale} />
             </div>
           </Field>
         )
