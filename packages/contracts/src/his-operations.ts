@@ -42,6 +42,10 @@ import {
   clinicalCatalogSchema,
   clinicalDocumentContentSchema,
   clinicalDocumentDraftResponseSchema,
+  checkClinicalDocumentQualityRequestSchema,
+  clinicalDocumentQualityControlStateSchema,
+  clinicalDocumentQualityControlResponseSchema,
+  retainClinicalDocumentQualityIssueRequestSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   clinicalDocumentSignResponseSchema,
@@ -381,6 +385,13 @@ const saveClinicalDocumentDraftOperationInputSchema = saveClinicalDocumentDraftR
   encounterVersion: z.string().regex(/^\d+$/),
 }).strict()
 
+const documentQualityCheckInputSchema = checkClinicalDocumentQualityRequestSchema.shape.input.safeExtend({
+  caseId: z.string().min(1), encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
+})
+const documentQualityRetainInputSchema = retainClinicalDocumentQualityIssueRequestSchema.shape.input.extend({
+  caseId: z.string().min(1), encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
+}).strict()
+
 const previewClinicalDocumentSignOperationInputSchema = previewClinicalDocumentSignRequestSchema.shape.input.extend({
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
@@ -649,6 +660,14 @@ function commandBody(
 }
 
 const bodyEncoders = {
+  'doctor.document-quality.check': (rawInput: unknown) => {
+    const { caseId: _caseId, encounterId, encounterVersion, ...input } = documentQualityCheckInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
+  'doctor.document-quality.retain': (rawInput: unknown) => {
+    const { caseId: _caseId, encounterId, encounterVersion, ...input } = documentQualityRetainInputSchema.parse(rawInput)
+    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
+  },
   'admin.laboratory-services.publish': (rawInput: unknown) => ({
     input: publishLaboratoryServicesOperationInputSchema.parse(rawInput),
   }),
@@ -1352,7 +1371,32 @@ const operationDefinitions = [
     risk: 'read',
     roles: ['outpatient-doctor'],
     summary: 'Read the active doctor case, incomplete eight-field draft and consultationRecording with hasSavedDraft, persistent control version, progress, requiresContextBinding for trusted recovery of enabled legacy cases, patient/doctor/report sources (saved original text, native input identity or fixed report version), fact-level source IDs and exact quotes (legacy sourceTurnId fallback), fragment ownership, reviewStatus (unreviewed, confirmed, undo-pending), undone history and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
-    version: 8,
+    version: 9,
+  },
+  {
+    cliPath: ['doctor', 'document-quality', 'get'],
+    http: { method: 'GET', path: '/api/his/v1/doctor/cases/:caseId/document-quality-control' },
+    id: 'doctor.document-quality.get',
+    input: caseIdInputSchema.extend({ clientId: z.string().min(1).max(128).optional() }),
+    mode: 'query', output: clinicalDocumentQualityControlStateSchema,
+    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['outpatient-doctor'],
+    summary: '读取当前病历质控、输入身份、字段问题及原始依据；clientId 只读取该客户端的未保存候选，不保存病历', version: 1,
+  },
+  {
+    cliPath: ['doctor', 'document-quality', 'check'],
+    http: { method: 'POST', path: '/api/his/v1/doctor/cases/:caseId/document-quality-control/actions/check' },
+    id: 'doctor.document-quality.check', input: documentQualityCheckInputSchema,
+    mode: 'command', output: clinicalDocumentQualityControlResponseSchema,
+    requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['outpatient-doctor'],
+    summary: '检查当前已保存病历或带 clientId/clientRevision 的未保存候选；不会保存或改写临床草稿，不新增签署门禁', version: 1,
+  },
+  {
+    cliPath: ['doctor', 'document-quality', 'retain'],
+    http: { method: 'POST', path: '/api/his/v1/doctor/cases/:caseId/document-quality-control/actions/retain' },
+    id: 'doctor.document-quality.retain', input: documentQualityRetainInputSchema,
+    mode: 'command', output: clinicalDocumentQualityControlResponseSchema,
+    requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['outpatient-doctor'],
+    summary: '医生核实当前问题后保留正文，原因选填；处理仅适用于相同相关正文与证据，记录审计且不成为新患者事实', version: 1,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -1621,8 +1665,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save a version-protected clinical document draft; empty fields are allowed, signing still requires complete content',
-    version: 2,
+    summary: '保存版本受保护的病历草稿；Agent 写入声明 agentGenerated 并可附 agentFacts 的已保存来源引用，缺源仍可保存并提示，不影响既有签署完整性校验',
+    version: 3,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'preview'],
@@ -1641,7 +1685,7 @@ const operationDefinitions = [
     risk: 'write',
     roles: ['outpatient-doctor'],
     summary: 'Prepare a version-bound signing preview with enrolled source review counts and patient/doctor evidence even without automatic recording or a Consultation; raw reports alone retain legacy review rules; freeze recording and invalidate in-flight extraction; cancel preparation to recover unfinished sources',
-    version: 3,
+    version: 4,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'commit'],
@@ -2432,6 +2476,9 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
 }
 
 const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillSchema>>> = {
+  'doctor.document-quality.get': 'clinmesh-doctor',
+  'doctor.document-quality.check': 'clinmesh-doctor',
+  'doctor.document-quality.retain': 'clinmesh-doctor',
   'admin.laboratory-services.candidates.search': 'clinmesh-administrator',
   'admin.laboratory-services.job.get': 'clinmesh-administrator',
   'admin.laboratory-services.publish': 'clinmesh-administrator',

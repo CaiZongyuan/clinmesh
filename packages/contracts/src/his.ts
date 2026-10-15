@@ -1104,11 +1104,96 @@ export const reviewConsultationHistoryResponseSchema = commandResponseSchema(z.o
 
 export type ConsultationHistoryDecision = z.infer<typeof reviewConsultationHistoryRequestSchema>['input']['decision']
 
+export const clinicalDocumentFieldSchema = consultationRecordingFieldSchema
+export const clinicalDocumentAgentFactSchema = z.object({
+  field: clinicalDocumentFieldSchema,
+  text: z.string().trim().min(1).max(5_000),
+  sources: z.array(consultationHistorySourceSchema).max(12),
+}).strict()
+
+export const clinicalDocumentQualityEvidenceSchema = z.object({
+  id: z.string().min(1).max(256),
+  kind: z.enum(['document', 'patient', 'doctor', 'report', 'clinical']),
+  label: z.string().min(1).max(256),
+  text: z.string().min(1).max(20_000),
+  field: clinicalDocumentFieldSchema.optional(),
+  recordedAt: z.string().optional(),
+  reference: z.string().max(512).optional(),
+}).strict()
+
+export const clinicalDocumentQualityIssueSchema = z.object({
+  id: z.string().min(1).max(128),
+  kind: z.enum(['missing-field', 'omission', 'inconsistency', 'agent-source']),
+  field: clinicalDocumentFieldSchema,
+  classification: z.enum(['needs-completion', 'needs-verification']),
+  message: z.string().trim().min(1).max(2_000),
+  basis: z.object({ label: z.string().min(1).max(1_000), kind: z.enum(['official', 'project']),
+    url: z.url().optional(), locator: z.string().max(256).optional() }).strict(),
+  evidence: z.array(clinicalDocumentQualityEvidenceSchema).max(12),
+  relatedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  status: z.enum(['open', 'retained']),
+  review: z.object({ actorId: z.string().min(1), reviewedAt: z.string().min(1), reason: z.string().max(1_000).optional() }).strict().optional(),
+}).strict()
+
+export const clinicalDocumentQualityControlStateSchema = z.object({
+  caseId: z.string().min(1), encounterId: z.string().min(1),
+  draftVersion: z.number().int().nonnegative(),
+  documentFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  clientId: z.string().min(1).max(128).optional(),
+  clientRevision: z.number().int().nonnegative().optional(),
+  generation: z.number().int().nonnegative(),
+  stale: z.boolean(),
+  status: z.enum(['idle', 'pending', 'ready', 'failed', 'incomplete', 'unavailable']),
+  issues: z.array(clinicalDocumentQualityIssueSchema).max(64),
+  notices: z.array(z.string().min(1).max(2_000)).max(12),
+  checkedAt: z.string().optional(),
+  errorCode: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT', 'AI_RESPONSE_INVALID', 'WORKFLOW_CONFLICT', 'INPUT_TOO_LARGE']).optional(),
+}).strict()
+
+export const checkClinicalDocumentQualityRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({
+    expectedDraftVersion: z.number().int().nonnegative(),
+    document: clinicalDocumentDraftContentSchema.optional(),
+    clientId: z.string().min(1).max(128).optional(),
+    clientRevision: z.number().int().nonnegative().optional(),
+    refresh: z.boolean().optional(),
+  }).strict().superRefine((input, context) => {
+    if ((input.document !== undefined) !== (input.clientId !== undefined && input.clientRevision !== undefined)) {
+      context.addIssue({ code: 'custom', path: ['document'], message: 'Unsaved checks require a document, client identity and revision together' })
+    }
+  }),
+}).strict()
+export const clinicalDocumentQualityControlResponseSchema = commandResponseSchema(clinicalDocumentQualityControlStateSchema)
+export const retainClinicalDocumentQualityIssueRequestSchema = z.object({
+  expectedVersions: fhirExpectedVersionsSchema,
+  input: z.object({ issueId: z.string().min(1).max(128), expectedInputFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    clientId: z.string().min(1).max(128).optional(), reason: z.string().trim().max(1_000).optional() }).strict(),
+}).strict()
+
+export type ClinicalDocumentQualityControlState = z.infer<typeof clinicalDocumentQualityControlStateSchema>
+export type ClinicalDocumentQualityIssue = z.infer<typeof clinicalDocumentQualityIssueSchema>
+export type ClinicalDocumentQualityEvidence = z.infer<typeof clinicalDocumentQualityEvidenceSchema>
+
+export const clinicalDocumentQualityGenerationSchema = z.object({
+  issues: z.array(z.object({
+    kind: z.enum(['missing-field', 'omission', 'inconsistency']), field: clinicalDocumentFieldSchema,
+    message: z.string().trim().min(1).max(2_000),
+    documentQuote: z.string().min(1).max(5_000).optional(),
+    sourceQuotes: z.array(z.object({ evidenceId: z.string().min(1).max(256),
+      quote: z.string().min(1).max(20_000) }).strict()).max(8),
+  }).strict()).max(32),
+  agentFactChecks: z.array(z.object({ id: z.string().min(1).max(256), supported: z.boolean() }).strict()).max(64),
+}).strict()
+
 export const saveClinicalDocumentDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     document: clinicalDocumentDraftContentSchema,
     expectedDraftVersion: z.number().int().nonnegative(),
+    agentGenerated: z.boolean().optional(),
+    agentFacts: z.array(clinicalDocumentAgentFactSchema).max(64).optional(),
   }).strict(),
 }).strict()
 
@@ -1135,6 +1220,7 @@ export const consultationSignReviewSchema = z.object({
 }).strict()
 
 export const clinicalDocumentSignPreviewResponseSchema = commandResponseSchema(z.object({
+  qualityControl: clinicalDocumentQualityControlStateSchema.optional(),
   consultationReview: consultationSignReviewSchema.nullable().default(null),
   commitToken: z.string().min(1),
   document: z.object({
@@ -1899,6 +1985,7 @@ export const doctorCompletedCaseDetailSchema = z.object({
 }).strict()
 
 export const doctorCaseDetailSchema = z.object({
+  qualityControl: clinicalDocumentQualityControlStateSchema.optional(),
   allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
   clinicalDocument: clinicalDocumentStateSchema.optional(),
