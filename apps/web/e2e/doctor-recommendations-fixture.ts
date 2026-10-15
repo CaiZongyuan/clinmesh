@@ -7,6 +7,13 @@ import type { JsonChatCompletionInput } from '../../server/src/infrastructure/ai
 
 // The external model is synthetic; the server still owns evidence, catalogs, verification and persistence.
 export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'schemaName' | 'userPayload'>): unknown {
+  if (input.schemaName === 'doctor_recommendation_catalog_selection') {
+    const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({
+      id: z.string(), nameZh: z.string(),
+    })) }) }) }).parse(input.userPayload)
+    return { complete: true, selectedCatalogItemIds: payload.catalogs.laboratory.items
+      .filter(item => item.nameZh === '合成白细胞计数').map(item => item.id) }
+  }
   if (input.schemaName === 'doctor_recommendation_history_selection') {
     const payload = z.object({ historyEvidence: z.array(doctorCaseEvidenceSchema) }).parse(input.userPayload)
     return { complete: true, selectedEvidenceIds: payload.historyEvidence.map(item => item.id) }

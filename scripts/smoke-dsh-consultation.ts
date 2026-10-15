@@ -149,7 +149,7 @@ class Adapter extends LlmAdapter {
     const history=Array.isArray(payload.turns)&&Array.isArray(payload.history);
     record({kind:'auxiliary',history,session:false,tools:!!options.tools});
     let result;
-    if(Array.isArray(payload.guidelines)&&Array.isArray(payload.caseEvidence)) {
+    if(Array.isArray(payload.guidelines)&&(Array.isArray(payload.caseEvidence)||Array.isArray(payload.historyEvidence))) {
       result=state.recommendationResult;
     } else if(Array.isArray(payload.additions)) {
       result={additions:payload.additions.map((_,index)=>({index,faithful:true,complete:true,relationValid:true}))};
@@ -220,7 +220,7 @@ export function apply(ctx) {
         ? 'dsh:{"provider":"synthetic-consultation","model":"journey"}' : route, signal),
       completeJson: async input => {
         if (recommendationsOnly && ['doctor_recommendations', 'doctor_recommendation_history_selection',
-          'doctor_recommendation_verification'].includes(input.schemaName)) {
+          'doctor_recommendation_catalog_selection', 'doctor_recommendation_verification'].includes(input.schemaName)) {
           const control = JSON.parse(await readFile(controlPath, 'utf8')) as Record<string, unknown>
           await writeFile(controlPath, json({ ...control, recommendationResult: recommendationFixture(input) }))
         }
