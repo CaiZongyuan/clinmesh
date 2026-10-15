@@ -560,8 +560,11 @@ export class ConsultationRecordingService {
       // A timeout or exhausted structured-output repair must settle instead of multiplying long model calls.
       const retrying = event.attempt < 3 && ['AI_REQUEST_FAILED', 'CONSULTATION_RECORDING_FAILED',
         'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID'].includes(code)
+      const sourceError = error instanceof RecordingSourceError ? error
+        : error instanceof ChatCompletionsError && error.code === 'AI_RESPONSE_INVALID' && error.cause instanceof RecordingSourceError
+          ? error.cause : undefined
       this.#finish(context, event, turnId, job, 'failed', code, retrying,
-        { stage, ...(error instanceof RecordingSourceError ? error.diagnostic : {}) })
+        { stage, ...sourceError?.diagnostic })
       return { status: retrying ? 'retryable-failed' : 'completed' }
     }
   }

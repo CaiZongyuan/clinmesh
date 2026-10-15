@@ -224,6 +224,21 @@ it('rejects unknown business properties even alongside harmless schema metadata'
   expect(dsh.calls).toHaveLength(2)
 })
 
+it.each(['invalid-json', 'schema-mismatch'])('does not retain an earlier validation cause after a final %s failure', async finalFailure => {
+  const dsh = await host()
+  const earlierFailure = new z.ZodError([{ code: 'custom', path: ['additions'], message: 'private synthetic validation detail' }])
+  let responses = 0
+  dsh.respond(async () => ++responses === 2 && finalFailure === 'invalid-json' ? 'invalid JSON' : { additions: [] })
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  let validations = 0
+  await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'consultation_history_summary',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+    validate: () => { if (++validations === 1) throw earlierFailure; return false },
+  })).rejects.toSatisfy((error: unknown) => error instanceof Error && error.cause !== earlierFailure
+    && error.message === 'The DSH model returned invalid structured output')
+  expect(dsh.calls).toHaveLength(2)
+})
+
 it('cancels an active auxiliary stream on caller disconnect or plugin unload', async () => {
   const dsh = await host()
   dsh.hold()
@@ -275,7 +290,8 @@ async function hospital(dsh: Awaited<ReturnType<typeof host>>, outboxRetryDelayM
   return { get runtime() { return runtime }, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
 }
 
-async function recordingCase(summarize: (turns: HistoryTurn[]) => unknown, faithful = true) {
+async function recordingCase(summarize: (turns: HistoryTurn[]) => unknown, faithful = true,
+  verify?: (additions: unknown[]) => unknown) {
   const dsh = await host()
   // Keep the pure diabetes question visible to the history path; hidden-diagnosis
   // leakage protection is covered separately by dialogue regressions.
@@ -287,7 +303,7 @@ async function recordingCase(summarize: (turns: HistoryTurn[]) => unknown, faith
     const payload: unknown = JSON.parse(z.object({ text: z.string() }).parse(options.messages[0]?.content[0]).text)
     if (options.system?.includes('独立病史核对者')) {
       const { additions } = z.object({ additions: z.array(z.unknown()) }).parse(payload)
-      return { additions: additions.map((_, index) => ({ index, faithful, complete: true, relationValid: true })) }
+      return verify?.(additions) ?? { additions: additions.map((_, index) => ({ index, faithful, complete: true, relationValid: true })) }
     }
     if (options.system?.includes('病史整理助手')) {
       const { turns } = z.object({ turns: z.array(z.object({ id: z.string(), speaker: z.string(), messageText: z.string() })) }).parse(payload)
@@ -333,6 +349,53 @@ function candidate(turn: HistoryTurn, text: string) {
   return { additions: [{ field: 'historyOfPresentIllness', relation: 'addition',
     facts: [{ text, sources: [{ sourceTurnId: turn.id, quote: turn.messageText }] }] }] }
 }
+
+it.each(['citation', 'target', 'field-limit', 'verification-coverage'] as const)(
+  'preserves the final DSH %s diagnostic in immutable failure receipts across explicit recovery', async reason => {
+    let invalid = true
+    const reply = '头晕一周了。'
+    const summary = '患者自述头晕一周'
+    const fixture = await recordingCase(turns => {
+      const output = candidate(turns.at(-1)!, summary)
+      if (!invalid) return output
+      const addition = output.additions[0]!
+      if (reason === 'citation') return { additions: [{ ...addition,
+        facts: [{ text: summary, sources: [{ sourceTurnId: turns.at(-1)!.id, quote: '未曾说过的合成引用。' }] }],
+      }] }
+      if (reason === 'target') return { additions: [{ ...addition, relation: 'update', targetAdditionId: 'synthetic-missing-target' }] }
+      if (reason === 'field-limit') return { additions: [{ ...addition, field: 'chiefComplaint',
+        facts: Array.from({ length: 2 }, () => ({ ...addition.facts[0]!, text: '合'.repeat(600) })),
+      }] }
+      return output
+    }, true, additions => ({ additions: invalid && reason === 'verification-coverage' ? []
+      : additions.map((_, index) => ({ index, faithful: true, complete: true, relationValid: true })) }))
+    await fixture.ask(reply)
+    await fixture.instance.runtime.dispatchPending()
+    const failed = await fixture.read()
+    expect(failed.clinicalDocument?.draft).toBeUndefined()
+    expect(failed.consultationRecording).toMatchObject({ status: 'failed', additions: [],
+      failures: [{ code: 'AI_RESPONSE_INVALID', retrying: false }] })
+    const receipts = () => fixture.instance.runtime.database.driver.prepare(
+      "SELECT response_json FROM command_receipt WHERE operation = 'consultation.history.fail' ORDER BY rowid",
+    ).all().map(row => JSON.parse(z.object({ response_json: z.string() }).parse(row).response_json) as unknown)
+    const failures = receipts()
+    expect(failures).toHaveLength(1)
+    expect(failures[0]).toMatchObject({ data: { status: 'failed', code: 'AI_RESPONSE_INVALID', diagnostic: {
+      stage: reason === 'verification-coverage' ? 'verification' : 'summary', reason,
+    } } })
+    expect(JSON.stringify(failures)).not.toMatch(new RegExp(`${reply}|${summary}|未曾说过的合成引用|${secret}|病史整理助手`))
+    const repairedStage = reason === 'verification-coverage' ? '独立病史核对者' : '病史整理助手'
+    expect(fixture.dsh.calls.filter(call => call.system?.includes(repairedStage))).toHaveLength(2)
+    await fixture.instance.restart()
+    invalid = false
+    await fixture.control('retry')
+    await fixture.instance.runtime.dispatchPending()
+    const recovered = await fixture.read()
+    expect(recovered.consultationRecording).toMatchObject({ status: 'updated', failures: [] })
+    expect(recovered.clinicalDocument?.draft?.historyOfPresentIllness).toBe(summary)
+    expect(receipts()).toEqual(failures)
+  },
+)
 
 it.each([
   [mixedQuestionReply, '患者已空腹至少8小时'],
