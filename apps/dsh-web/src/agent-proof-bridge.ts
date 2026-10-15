@@ -350,7 +350,8 @@ export function installAgentProofBridge(ctx: Context, secret: string,
           reason: 'CLINMESH_HOST_SESSION_REQUIRED: 当前调用未关联 DSH Agent 会话，尚未执行。请从打开 ClinMesh 工作台的 DSH 会话调用；参数补全无法修复会话关联。',
         }
       }
-      const current = toolBindingSchema.safeParse(ctx.tools.get(execution.name, execution.agent)?.parameters)
+      const currentParameters = ctx.tools.get(execution.name, execution.agent)?.parameters
+      const current = toolBindingSchema.safeParse(currentParameters)
       const executionRead = !current.success && doctorReadNames.has(execution.name)
       const sourceKey = `${executionKey(execution)}\u0000${execution.name}`
       const source = callSources.get(sourceKey)
@@ -359,7 +360,11 @@ export function installAgentProofBridge(ctx: Context, secret: string,
       if (binding === undefined || (!executionRead && (!current.success
         || current.data.properties.scopeKey.const !== binding.scopeKey
         || current.data.properties.pageRevision.const !== binding.pageRevision))) {
-        const expected = current.success ? bindingFromParameters(current.data) : undefined
+        let expected: ExecutionOrigin['request'] | undefined
+        try {
+          assertObjectJsonSchema(currentParameters)
+          expected = bindingFromParameters(currentParameters)
+        } catch { expected = undefined }
         const fields = expected !== undefined && binding !== undefined
           ? (['scopeKey', 'pageRevision'] as const).filter(field => expected[field] !== binding[field])
           : []

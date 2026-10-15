@@ -240,6 +240,37 @@ describe('ClinMesh host Tool binding diagnostics', () => {
     expect(dispatch).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['non-object', { type: 'string', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }],
+    ['invalid-binding-type', { type: 'object', properties: {
+      scopeKey: { type: 'number', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }],
+    ['invalid-business-input', { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+      assessment: { type: 'invalid' },
+    } }],
+  ] as const)('reports a malformed current action schema as unavailable despite binding consts: %s', async (_kind, parameters) => {
+    const { before, currentTool } = bridge()
+    currentTool.mockImplementation(name => name === 'clinmesh_fill_clinical_document_draft'
+      ? { parameters }
+      : { parameters: { type: 'object', properties: {
+          scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+        } } })
+    const args = { scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' }
+    const originalArgs = structuredClone(args)
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution(args), dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(denied.reason).toContain('CLINMESH_BINDING_MISMATCH')
+    expect(denied.reason).toContain('当前工具绑定定义不可用')
+    expect(denied.reason).not.toContain('不匹配字段')
+    expect(denied.reason).not.toContain('当前只读工具定义或医生目录绑定不可用')
+    expect(args).toEqual(originalArgs)
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
   it('rejects the previous patient write and provides current read-only recovery arguments', async () => {
     const { before, finish, currentTool, originate } = bridge()
     currentTool.mockReturnValue({ parameters: { type: 'object', properties: {
