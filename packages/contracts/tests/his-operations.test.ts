@@ -649,7 +649,7 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 3,
       'clinmesh-billing': 3,
-      'clinmesh-doctor': 53,
+      'clinmesh-doctor': 56,
       'clinmesh-fhir': 5,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,

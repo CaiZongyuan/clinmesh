@@ -1160,7 +1160,8 @@ export const checkClinicalDocumentQualityRequestSchema = z.object({
     clientRevision: z.number().int().nonnegative().optional(),
     refresh: z.boolean().optional(),
   }).strict().superRefine((input, context) => {
-    if ((input.document !== undefined) !== (input.clientId !== undefined && input.clientRevision !== undefined)) {
+    const candidateParts = [input.document, input.clientId, input.clientRevision].filter(value => value !== undefined).length
+    if (candidateParts !== 0 && candidateParts !== 3) {
       context.addIssue({ code: 'custom', path: ['document'], message: 'Unsaved checks require a document, client identity and revision together' })
     }
   }),
