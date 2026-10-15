@@ -2,7 +2,7 @@
 
 Status: implemented
 
-当前八字段统一来源与无冲突自动写入合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有；[字段内建议决策](2026-10-13-consultation-field-suggestions.md)仍拥有字段内布局与局部操作，其全部先应用方式已被部分取代。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
+当前十字段、统一来源与直接记录合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有，整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
 
 正文逐字摘录与单来源约束由[病史总结与多轮溯源](2026-10-12-consultation-agent-summary-sources.md)替代；本记录中的持久任务、共享 Command、患者自述边界与失败恢复理由继续适用。
 

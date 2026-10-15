@@ -2,7 +2,7 @@
 
 Status: implemented
 
-本记录保留字段内布局与全部先应用的原决策。当前自动写入和八字段统一来源合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有，部分取代本文的全部 pending、患者三字段限制；字段内布局、局部操作、来源展开、人工保护与签署边界继续适用。
+本记录保留字段内布局与全部先应用的原决策理由；当前十字段统一来源、直接记录与后台审计由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有，整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。
 
 ## Problem
 
