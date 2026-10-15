@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { flushSync } from 'react-dom'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { AgentActionFeedbackProvider, useAgentActionFeedback } from '../../../web/src/app/agent-action-feedback.tsx'
@@ -85,7 +86,7 @@ function Fixture(): React.JSX.Element {
     </PortalContainerProvider>
   </WebRuntimeProvider>
 }
-flushSync(() => createRoot(rootElement).render(<Fixture />))
+flushSync(() => createRoot(rootElement).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><Fixture /></QueryClientProvider>))
 
 const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 async function run(): Promise<void> {

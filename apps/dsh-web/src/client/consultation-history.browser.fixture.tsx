@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { ClinicalDocumentContentView, ClinicalDocumentPage } from '../../../web/src/app/doctor/clinical-document-page.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
@@ -163,4 +164,4 @@ function App(): React.JSX.Element {
     </div>
   </PortalContainerProvider>
 }
-createRoot(root).render(<App />)
+createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><App /></QueryClientProvider>)

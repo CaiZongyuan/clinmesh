@@ -11,6 +11,8 @@ const configurations = ['18', '19'].flatMap(version => [false, true].map(reduced
 configurations.push({ version: '19', reduced: false, webgl: false })
 for (const { version, reduced, webgl } of configurations) {
   test(`preserves editing and static human review on React ${version}, reduced motion=${reduced}, WebGL=${webgl}`, async ({ page }) => {
+    await page.route('http://localhost/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await page.goto('http://localhost/')
     await page.emulateMedia({ reducedMotion: reduced ? 'reduce' : 'no-preference' })
     if (!webgl) await page.evaluate(() => {
       Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { value: () => null })

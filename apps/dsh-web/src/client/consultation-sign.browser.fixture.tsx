@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { ClinicalDocumentPage, ClinicalDocumentContentView, type ClinicalDocumentSignPreview } from '../../../web/src/app/doctor/clinical-document-page.tsx'
@@ -78,4 +79,6 @@ function Fixture(): React.JSX.Element {
   const [locale, setLocale] = React.useState<WorkspaceLocale>('zh-CN')
   return <AgentReviewProvider locale={locale}><App locale={locale} onLocaleChange={setLocale} /></AgentReviewProvider>
 }
-createRoot(root).render(<PortalContainerProvider container={root}><Fixture /></PortalContainerProvider>)
+createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+  <PortalContainerProvider container={root}><Fixture /></PortalContainerProvider>
+</QueryClientProvider>)
