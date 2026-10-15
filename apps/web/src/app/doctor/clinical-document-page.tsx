@@ -12,8 +12,7 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Checkbox } from '@clinmesh/ui/components/checkbox'
-import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { Field, FieldDescription, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import {
@@ -29,8 +28,7 @@ import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-e
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
-import { ConsultationHistoryReview, type ConsultationHistoryReviewAction } from './consultation-history-review.tsx'
-import { ConsultationSignReviewNotice, requiresConsultationReview, type ConsultationSignReview } from './consultation-sign-review.tsx'
+import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -43,8 +41,6 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
 }
 
 export interface ClinicalDocumentSignPreview {
-  consultationReview?: ConsultationSignReview | null
-  consultationReviewed?: boolean
   expiresAt?: string
   commitToken: string
   document: { content: ClinicalDocumentContent }
@@ -64,7 +60,6 @@ export interface ClinicalDocumentRevisionInput {
 export interface ClinicalDocumentPageActions {
   cancelSign?: { error: Error | null; pending: boolean; onSubmit: (previewId: string) => void }
   controlRecording?: ConsultationRecordingAction
-  reviewHistory?: ConsultationHistoryReviewAction
   save?: {
     error: Error | null
     onSubmit: (document: ClinicalDocumentContent) => void
@@ -96,6 +91,7 @@ export function ClinicalDocumentPage({
   actions,
   allowRevision,
   detail,
+  updates,
   elementId,
   locale,
   messages,
@@ -105,6 +101,7 @@ export function ClinicalDocumentPage({
   actions: ClinicalDocumentPageActions
   allowRevision: boolean
   detail: DoctorCaseDetail
+  updates?: ClinicalDocumentUpdates | undefined
   elementId: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
@@ -114,7 +111,6 @@ export function ClinicalDocumentPage({
   const signedDocuments = detail.clinicalDocument?.signed ?? []
   const latestSignedDocument = signedDocuments.at(-1)
   const [revisionPreview, setRevisionPreview] = useState<ClinicalDocumentRevisionInput>()
-  const [reviewedPreviewId, setReviewedPreviewId] = useState<string>()
 
   if (
     signedDocuments.length === 0
@@ -182,9 +178,7 @@ export function ClinicalDocumentPage({
                       {messages.revisionReason}：{document.revisionReason}
                     </p>
                   )}
-                  <ClinicalDocumentContentView content={document.content} messages={messages}
-                    history={document === latestSignedDocument ? { detail, workingDocument: document.content,
-                      action: undefined, disabled: true, messages, locale } : undefined} />
+                  <ClinicalDocumentContentView content={document.content} messages={messages} />
                 </li>
               ))}
             </ol>
@@ -292,9 +286,7 @@ export function ClinicalDocumentPage({
               idPrefix={`clinical-record-${detail.caseId}`}
               messages={messages}
               onChange={onDocumentChange}
-              history={{ detail, workingDocument, action: actions.reviewHistory,
-                disabled: detail.encounter.status !== 'in-progress' || preparing || cancelPending,
-                messages, locale }}
+              updates={updates}
             />
             <div className="flex justify-end gap-2 border-t pt-3">
               {actions.save === undefined ? null : <Button disabled={actions.save.pending || preparing || cancelPending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
@@ -327,14 +319,7 @@ export function ClinicalDocumentPage({
               </AlertDialogHeader>
               {currentPreview === undefined ? null : (
                 <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">
-                  <ConsultationSignReviewNotice review={currentPreview.consultationReview} messages={messages} />
                   <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
-                  {requiresConsultationReview(currentPreview.consultationReview) ? <Field orientation="horizontal">
-                    <Checkbox id="consultation-sign-reviewed" disabled={actions.sign.pending || cancelPending}
-                      checked={reviewedPreviewId === currentPreview.previewId}
-                      onCheckedChange={checked => setReviewedPreviewId(checked ? currentPreview.previewId : undefined)} />
-                    <FieldLabel htmlFor="consultation-sign-reviewed">{messages.consultationSignReviewed}</FieldLabel>
-                  </Field> : null}
                   {actions.sign.error === null ? null : <ErrorAlert title={messages.operationFailed}
                     message={getWorkspaceErrorMessage(actions.sign.error, messages)} />}
                   {actions.cancelSign?.error == null ? null : <ErrorAlert title={messages.operationFailed}
@@ -343,14 +328,12 @@ export function ClinicalDocumentPage({
               )}
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={actions.sign.pending || cancelPending}>
-                  {requiresConsultationReview(currentPreview?.consultationReview) ? messages.consultationSignReturn : messages.cancel}
+                  {messages.cancel}
                 </AlertDialogCancel>
                 <Button
-                  disabled={currentPreview === undefined || actions.sign.pending || cancelPending
-                    || (requiresConsultationReview(currentPreview?.consultationReview) && reviewedPreviewId !== currentPreview?.previewId)}
+                  disabled={currentPreview === undefined || actions.sign.pending || cancelPending}
                   onClick={() => {
-                    if (currentPreview !== undefined) actions.sign.onSubmit({ ...currentPreview,
-                      consultationReviewed: reviewedPreviewId === currentPreview.previewId })
+                    if (currentPreview !== undefined) actions.sign.onSubmit(currentPreview)
                   }}
                   type="button"
                 >
@@ -374,18 +357,20 @@ export function ClinicalDocumentPage({
   )
 }
 
-function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, history }: {
+function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, updates }: {
   content: ClinicalDocumentContent
   disabled: boolean
   idPrefix: string
   messages: ReturnType<typeof getWorkspaceMessages>
   onChange: (document: ClinicalDocumentContent) => void
-  history: Omit<Parameters<typeof ConsultationHistoryReview>[0], 'field'>
+  updates: ClinicalDocumentUpdates | undefined
 }): React.JSX.Element {
   const fields = [
     { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
     { field: 'historyOfPresentIllness', label: messages.historyOfPresentIllness, maxLength: 5_000, multiline: true },
     { field: 'priorMedicalHistory', label: messages.priorMedicalHistory, maxLength: 4_000, multiline: true },
+    { field: 'familyHistory', label: messages.familyHistory, maxLength: 4_000, multiline: true },
+    { field: 'allergyHistory', label: messages.allergyHistory, maxLength: 4_000, multiline: true },
     { field: 'physicalExamination', label: messages.physicalExamination, maxLength: 4_000, multiline: true },
     { field: 'auxiliaryExamination', label: messages.auxiliaryExamination, maxLength: 4_000, multiline: true },
     { field: 'assessment', label: messages.assessment, maxLength: 4_000, multiline: true },
@@ -402,19 +387,24 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
       {fields.map(({ field, label, maxLength, multiline }) => {
         const id = `${idPrefix}-${field}`
         const value = content[field] ?? ''
+        const optional = field === 'familyHistory' || field === 'allergyHistory'
         return (
           <Field data-clinical-document-field={field} className="grid gap-2 border-b px-3 py-2.5 last:border-b-0 @min-[640px]/case-content:grid-cols-[6rem_minmax(0,1fr)] @min-[640px]/case-content:items-start" key={field}>
-            <FieldLabel className="pt-2" htmlFor={id}>{label}</FieldLabel>
+            <div className="flex flex-wrap items-center gap-2 pt-2 @min-[640px]/case-content:flex-col @min-[640px]/case-content:items-start @min-[640px]/case-content:gap-1">
+              <FieldLabel htmlFor={id}>{label}</FieldLabel>
+              {updates?.fields[field] === undefined ? null : <span className="clinical-document-update-label" role="status">{messages.clinicalDocumentFieldUpdated}</span>}
+            </div>
             <div className="flex min-w-0 flex-col gap-2">
+            <ClinicalDocumentUpdateControl field={field} updates={updates}>
             {multiline ? (
               <Textarea
                 disabled={disabled}
                 className="min-h-10 resize-y"
                 id={id}
                 maxLength={maxLength}
-                minLength={2}
+                minLength={optional ? undefined : 2}
                 onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
-                required
+                required={!optional}
                 value={value}
               />
             ) : (
@@ -422,13 +412,14 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
                 disabled={disabled}
                 id={id}
                 maxLength={maxLength}
-                minLength={2}
+                minLength={optional ? undefined : 2}
                 onChange={event => onChange({ ...content, [field]: event.currentTarget.value })}
-                required
+                required={!optional}
                 value={value}
               />
             )}
-            <ConsultationHistoryReview {...history} field={field} />
+            </ClinicalDocumentUpdateControl>
+            {optional ? <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription> : null}
             </div>
           </Field>
         )
@@ -465,11 +456,13 @@ function ClinicalDocumentForm({
         event.preventDefault()
         const data = new FormData(event.currentTarget)
         onSubmit({
+          allergyHistory: String(data.get('allergyHistory') ?? ''),
           assessment: String(data.get('assessment') ?? ''),
           auxiliaryExamination: String(data.get('auxiliaryExamination') ?? ''),
           chiefComplaint: String(data.get('chiefComplaint') ?? ''),
           disposition: String(data.get('disposition') ?? ''),
           followUp: String(data.get('followUp') ?? ''),
+          familyHistory: String(data.get('familyHistory') ?? ''),
           historyOfPresentIllness: String(data.get('historyOfPresentIllness') ?? ''),
           physicalExamination: String(data.get('physicalExamination') ?? ''),
           priorMedicalHistory: String(data.get('priorMedicalHistory') ?? ''),
@@ -511,6 +504,13 @@ function ClinicalDocumentForm({
             required
           />
         </Field>
+        {(['familyHistory', 'allergyHistory'] as const).map(field => (
+          <Field className="border-b p-3 @min-[768px]/case-content:col-span-2" key={field}>
+            <FieldLabel htmlFor={`${idPrefix}-${field}`}>{messages[field]}</FieldLabel>
+            <Textarea defaultValue={content[field] ?? ''} id={`${idPrefix}-${field}`} maxLength={4_000} name={field} />
+            <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription>
+          </Field>
+        ))}
         <Field className="border-b p-3 @min-[768px]/case-content:col-span-2">
           <FieldLabel htmlFor={`${idPrefix}-examination`}>{messages.physicalExamination}</FieldLabel>
           <Textarea
@@ -591,23 +591,19 @@ function ClinicalDocumentForm({
   )
 }
 
-export function ClinicalDocumentContentView({ content, messages, history }: {
+export function ClinicalDocumentContentView({ content, messages }: {
   content: ClinicalDocumentContent
   messages: ReturnType<typeof getWorkspaceMessages>
-  history?: Omit<Parameters<typeof ConsultationHistoryReview>[0], 'field'> | undefined
 }): React.JSX.Element {
-  const fields = ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'physicalExamination',
+  const fields = ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'familyHistory', 'allergyHistory', 'physicalExamination',
     'auxiliaryExamination', 'assessment', 'disposition', 'followUp'] as const
   return (
     <dl className="grid grid-cols-1 gap-3 text-sm @min-[768px]/case-content:grid-cols-2">
       {fields.map(field => {
-        const hasHistory = history?.detail.consultationRecording?.additions.some(addition => addition.field === field) === true
-        if (content[field] === undefined && !hasHistory) return null
+        if (content[field] === undefined) return null
         return <div key={field} data-clinical-document-field={field}>
           <dt className="text-muted-foreground">{messages[field]}</dt>
-          {content[field] === undefined ? null : <dd className="whitespace-pre-wrap font-medium">{content[field]}</dd>}
-          {history !== undefined
-            ? <dd><ConsultationHistoryReview {...history} field={field} /></dd> : null}
+          <dd className="whitespace-pre-wrap break-words font-medium">{content[field] || messages.clinicalHistoryNotRecorded}</dd>
         </div>
       })}
     </dl>

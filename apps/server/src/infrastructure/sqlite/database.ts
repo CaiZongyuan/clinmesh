@@ -13,6 +13,7 @@ import {
 } from 'node:fs/promises'
 import Database from 'better-sqlite3'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import { matchesMigrationChecksum, migrationChecksum } from './migration-checksum.ts'
 import {
   instrumentSqliteDriver,
   type SqlitePerformanceObserver,
@@ -99,10 +100,6 @@ export function expectedSchemaVersion(
   migrationDirectory = defaultMigrationDirectory(),
 ): number {
   return readdirSync(migrationDirectory).filter(file => MIGRATION_FILE_PATTERN.test(file)).length
-}
-
-function migrationChecksum(sql: string): string {
-  return createHash('sha256').update(sql).digest('hex')
 }
 
 function canonicalize(value: unknown): unknown {
@@ -245,7 +242,7 @@ export function applyMigrations(
     const existing = lookup.get(migrationFile) as { checksum: string } | undefined
 
     if (existing !== undefined) {
-      if (existing.checksum !== checksum) {
+      if (!matchesMigrationChecksum(sql, existing.checksum)) {
         throw new Error(`Applied migration checksum changed: ${migrationFile}`)
       }
       continue
@@ -288,14 +285,14 @@ export function verifyMigrations(
   `).all() as Array<{ checksum: string; migration_id: string }>
   const expected = new Map(migrationFiles.map((migrationFile) => {
     const sql = readFileSync(resolve(migrationDirectory, migrationFile), 'utf8')
-    return [migrationFile, migrationChecksum(sql)] as const
+    return [migrationFile, sql] as const
   }))
   for (const row of rows) {
-    const checksum = expected.get(row.migration_id)
-    if (checksum === undefined) {
+    const sql = expected.get(row.migration_id)
+    if (sql === undefined) {
       throw new Error(`Database migration is unknown to this release: ${row.migration_id}`)
     }
-    if (checksum !== row.checksum) {
+    if (!matchesMigrationChecksum(sql, row.checksum)) {
       throw new Error(`Applied migration checksum changed: ${row.migration_id}`)
     }
   }

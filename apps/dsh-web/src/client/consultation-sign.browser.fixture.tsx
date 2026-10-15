@@ -3,14 +3,12 @@ import { createRoot } from 'react-dom/client'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { ClinicalDocumentPage, ClinicalDocumentContentView, type ClinicalDocumentSignPreview } from '../../../web/src/app/doctor/clinical-document-page.tsx'
-import { ConsultationSignReviewNotice } from '../../../web/src/app/doctor/consultation-sign-review.tsx'
 import { AgentReviewProvider, useAgentReview } from '../../../web/src/app/agent-review.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../../../web/src/app/workspace-i18n.ts'
 
 const content: ClinicalDocumentContent = { chiefComplaint: '头晕一周。', historyOfPresentIllness: '医生核对病史。\n'.repeat(60),
   priorMedicalHistory: '既往高血压。', physicalExamination: '查体正常。', auxiliaryExamination: '暂无检查。',
   assessment: '进一步评估。', disposition: '门诊随访。', followUp: '加重及时就诊。' }
-const review = { consultationVersion: 3, remainingCount: 2, failedCount: 1, paused: true, conflictCount: 1, unreviewedCount: 2 }
 const detail: DoctorCaseDetail = {
   allergies: [], caseId: 'synthetic-sign-case', encounter: { id: 'synthetic-encounter', status: 'in-progress', versionId: '1' },
   patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', gender: 'female', birthDate: '1990-01-01', synthetic: true, versionId: '1' },
@@ -51,11 +49,9 @@ function App({ locale, onLocaleChange }: { locale: WorkspaceLocale; onLocaleChan
         description: locale => getWorkspaceMessages(locale).clinicalDocumentSignDescription,
         confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
         content: locale => <>
-          <ConsultationSignReviewNotice review={review} messages={getWorkspaceMessages(locale)} />
           <ClinicalDocumentContentView content={content} messages={getWorkspaceMessages(locale)} />
         </>,
-        confirmationLabel: locale => getWorkspaceMessages(locale).consultationSignReviewed,
-        onConfirm: acknowledged => setResult(`agent:${acknowledged}`) })
+        onConfirm: () => setResult(`agent:signed`) })
       task.bindDecisionGate(async () => {})
       void task.decision.catch(() => undefined)
     }}>Agent 签署提案</button>
@@ -67,10 +63,10 @@ function App({ locale, onLocaleChange }: { locale: WorkspaceLocale; onLocaleChan
         cancelSign: { error: cancelError, pending: false, onSubmit: cancel },
         prepareSign: { data: preview, error: null, pending: false, onReset: cancel, onSubmit: () => {
           setSerial(current => current + 1)
-          setPreview({ previewId: `preview-${serial}`, commitToken: 'synthetic-commit-token', document: { content }, consultationReview: review })
+          setPreview({ previewId: `preview-${serial}`, commitToken: 'synthetic-commit-token', document: { content } })
         } },
         revise: { error: null, pending: false, success: false, onSubmit: () => {} },
-        sign: { error: null, pending: false, success: false, onSubmit: value => { setResult(`signed:${value.consultationReviewed}`); setPreview(undefined) } },
+        sign: { error: null, pending: false, success: false, onSubmit: () => { setResult(`signed`); setPreview(undefined) } },
       }} />
   </div>
 }
