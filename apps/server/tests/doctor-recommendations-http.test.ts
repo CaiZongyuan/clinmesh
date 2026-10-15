@@ -274,6 +274,91 @@ it('maps a laboratory suggestion to the full current hospital catalog beyond its
   expect(await fixture.readCase()).toEqual(before)
 })
 
+it('generates from a lightweight complete laboratory catalog while preserving specimen, panel and clinical applicability', async () => {
+  const requests: string[] = []
+  let generationBytes = 0
+  let verificationPayload: unknown
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    if (input.schemaName === 'doctor_recommendation_verification') {
+      verificationPayload = input.userPayload
+      return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    }
+    generationBytes = Buffer.byteLength(JSON.stringify(input.userPayload))
+    const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() }).passthrough()) }) }) }).parse(input.userPayload)
+    expect(payload.catalogs.laboratory.items).toHaveLength(100)
+    expect(payload.catalogs.laboratory.items.find(item => item.id === 'lab-00')).not.toHaveProperty('minimumAgeYears')
+    expect(payload.catalogs.laboratory.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'lab-98', nameZh: '同名合成组合', specimen: { code: 'blood', display: '静脉血' } }),
+      expect.objectContaining({ id: 'lab-99', nameZh: '同名合成组合', specimen: { code: 'urine', display: '尿液' },
+        referenceConcept: { id: 'reference:lab-99', code: 'SYN-LAB', display: '合成生化指标', system: 'urn:synthetic:laboratory', version: '1' },
+        allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: ['leaf-quantity', 'leaf-qualitative'], minimumAgeYears: 18,
+        sourceDataset: { datasetId: 'laboratory-cn' }, standardStatus: { mode: 'future-standard-preview', standard: 'WS/T 886-2026', effectiveOn: '2026-11-01' },
+        reportDefinition: { results: [
+          expect.objectContaining({ referenceConcept: expect.objectContaining({ code: 'SYN-PANEL-QUANTITY' }),
+            alternateCodings: [{ code: 'synthetic-loinc', system: 'http://loinc.org', version: 'synthetic-1' }],
+            valueType: 'quantity', unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' },
+            referenceRange: { low: 0, high: 10, text: '0–10' },
+            adultReferenceRules: [{ low: 0, high: 10, notes: '限成年男性', referenceKind: 'range', sex: 'male' }] }),
+          expect.objectContaining({ referenceConcept: expect.objectContaining({ code: 'SYN-PANEL-QUALITATIVE' }), valueType: 'string',
+            allowedValues: ['阴性', '阳性'], adultReferenceRules: [{ normalValue: '阴性', notes: '限成年女性', referenceKind: 'coded', sex: 'female' }] }),
+        ] },
+      }),
+    ]))
+    expect(JSON.stringify(payload.catalogs)).not.toMatch(/conclusionTemplate|priceFen|executingDepartmentId|tatMinutes|healthyStrategy|precision|simulationLow|simulationHigh|sourceLocator|sourceLocation|sourceStandard|referenceReleaseId/)
+    const output = diagnosisOutput(input)
+    return { content: JSON.stringify({ ...output, items: [{ ...output.items[0], kind: 'laboratory',
+      catalogItemId: 'lab-99', indicationCode: 'clinical-evaluation' }] }), model: input.model }
+  })
+  const services = Array.from({ length: 100 }, (_, index) => {
+    const service = syntheticLaboratory(`lab-${String(index).padStart(2, '0')}`)
+    service.reportDefinition.conclusionTemplate = '合'.repeat(1000)
+    return service
+  })
+  services[98]!.nameZh = '同名合成组合'
+  const selected = services[99]!
+  selected.nameZh = '同名合成组合'
+  selected.specimen = { code: 'urine', display: '尿液' }
+  selected.sourceDataset = { datasetId: 'laboratory-cn', releaseId: 'synthetic-clinical-release' }
+  selected.standardStatus = { mode: 'future-standard-preview', standard: 'WS/T 886-2026', effectiveOn: '2026-11-01' }
+  selected.componentServiceIds = ['leaf-quantity', 'leaf-qualitative']
+  const provenance = { sourceLocation: '合成标准条款', sourceStandard: '合成标准', sourceType: 'national-standard' as const, sourceVersion: '1' }
+  selected.reportDefinition.results = [
+    { ...selected.reportDefinition.results[0]!, referenceConcept: { ...selected.referenceConcept, id: 'quantity-member', code: 'SYN-PANEL-QUANTITY' },
+      alternateCodings: [{ code: 'synthetic-loinc', system: 'http://loinc.org', version: 'synthetic-1' }], precision: 1, healthyStrategy: 'uniform',
+      adultReferenceRules: [{ ...provenance, low: 0, high: 10, notes: '限成年男性', referenceKind: 'range', sex: 'male', simulationLow: 1, simulationHigh: 9 }] },
+    { referenceConcept: { ...selected.referenceConcept, id: 'qualitative-member', code: 'SYN-PANEL-QUALITATIVE' }, alternateCodings: [],
+      valueType: 'string', referenceRange: { text: '阴性' }, allowedValues: ['阴性', '阳性'], healthyStrategy: 'fixed-normal',
+      adultReferenceRules: [{ ...provenance, normalValue: '阴性', notes: '限成年女性', referenceKind: 'coded', sex: 'female' }] },
+  ]
+  expect(Buffer.byteLength(JSON.stringify(services))).toBeGreaterThan(240 * 1024)
+  for (const service of services) {
+    fixture.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog
+      (workspace_id, epoch, service_id, code, name_zh, name_en, version, active, config_json)
+      VALUES ('workspace-demo', 'epoch-1', ?, ?, ?, ?, 1, 1, ?)
+    `).run(service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service }))
+  }
+  const before = await fixture.readCase()
+  expect((await fixture.generate('laboratory')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read('laboratory')).toMatchObject({ status: 'ready', stale: false, items: [{
+    kind: 'laboratory', catalogItemId: 'lab-99', label: '同名合成组合', indicationCode: 'clinical-evaluation',
+  }] })
+  expect(generationBytes).toBeLessThan(150 * 1024)
+  expect(requests).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+  expect(verificationPayload).toMatchObject({ selectedCatalogItems: { laboratory: [{ id: 'lab-99',
+    specimen: { code: 'urine', display: '尿液' }, sourceDataset: { datasetId: 'laboratory-cn', releaseId: 'synthetic-clinical-release' },
+    referenceConcept: { sourceLocator: 'synthetic:test:recommendations' },
+    reportDefinition: { results: [{ adultReferenceRules: [{ sourceStandard: '合成标准', simulationLow: 1, simulationHigh: 9 }] }, {}] },
+  }] } })
+  fixture.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET
+    config_json = json_set(config_json, '$.laboratoryService.tatMinutes', 240)
+    WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND service_id = 'lab-00'
+  `).run()
+  expect((await fixture.read('laboratory')).stale).toBe(true)
+  expect(await fixture.readCase()).toEqual(before)
+})
+
 it('uses installed imaging metadata and invalidates a suggestion when its actual offering disappears', async () => {
   let requests = 0
   let verificationPayload: unknown
@@ -762,7 +847,7 @@ it.each(['Device', 'SupplyDelivery'])('reads all recommendation kinds with a vis
   expect(await fixture.readCase()).toEqual(before)
 })
 
-it('reports an explicit evidence budget limit instead of failing reads or silently truncating a large visible history', async () => {
+it('generates from more than one hundred visible records while preserving every source and qualifier', async () => {
   const syntheaProvider = new class extends StubSyntheaProvider {
     override async generate() {
       const corpus = await super.generate()
@@ -775,12 +860,84 @@ it('reports an explicit evidence budget limit instead of failing reads or silent
       return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
     }
   }()
-  const fixture = await setup(undefined, { syntheaProvider })
+  const requests: string[] = []
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    const text = JSON.stringify(input.userPayload)
+    for (let index = 0; index < 110; index += 1) expect(text).toContain(`第${index}项可见病史，不能删除“尚未明确”的限定。`)
+    return { content: JSON.stringify(input.schemaName === 'doctor_recommendations' ? diagnosisOutput(input) : verificationOutput(input)), model: input.model }
+  }, { syntheaProvider })
   expect((await fixture.read()).status).toBe('idle')
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read()).toMatchObject({ status: 'missing-evidence', items: [],
-    missingInformation: [expect.stringContaining('完整可见资料超过')] })
+  expect(await fixture.read()).toMatchObject({ status: 'ready', items: [{ kind: 'diagnosis' }] })
+  expect(requests).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+})
+
+it('reads every batch of a large history concurrently and reuses original-source selection across suggestion kinds', async () => {
+  const syntheaProvider = new class extends StubSyntheaProvider {
+    override async generate() {
+      const corpus = await super.generate()
+      const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(corpus.sources[0]!.raw)
+      raw.entry.push(...Array.from({ length: 596 }, (_, index) => ({ fullUrl: `urn:uuid:historical-observation-${index}`,
+        resource: { resourceType: 'Observation', id: `historical-observation-${index}`, subject: { reference: 'urn:uuid:patient' },
+          encounter: { reference: 'urn:uuid:prior-encounter' }, status: 'final', effectiveDateTime: '2024-01-10T09:05:00+08:00',
+          code: { text: `历史观察编号${index}。` }, note: [{ text: index === 595 ? '未标注异常的旧肝功能结果，尚不能排除异常，需复查。'
+            : '本条历史记录未有进一步解释，不能推定正常。'.repeat(18) }] },
+      })), { fullUrl: 'urn:uuid:old-anticoagulation', resource: { resourceType: 'MedicationRequest', id: 'old-anticoagulation',
+        subject: { reference: 'urn:uuid:patient' }, encounter: { reference: 'urn:uuid:prior-encounter' },
+        status: 'unknown', intent: 'order', authoredOn: '2010-01-10T09:05:00+08:00',
+        medicationCodeableConcept: { text: '旧的抗凝药记录，停药情况尚不明确。' } } })
+      return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
+    }
+  }()
+  const selectedHistoryInputs: string[] = []
+  const requests: string[] = []
+  const requestChecks: Array<{ stage: string; safety: boolean; old?: boolean }> = []
+  let active = 0
+  let peak = 0
+  let release!: () => void
+  const parallel = new Promise<void>(resolve => { release = resolve })
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    expect(Buffer.byteLength(JSON.stringify(input.userPayload))).toBeLessThan(240 * 1024)
+    if (input.schemaName === 'doctor_recommendation_history_selection') {
+      const payload = z.object({ requiredEvidence: z.array(z.object({ text: z.string() })),
+        historyEvidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(input.userPayload)
+      requestChecks.push({ stage: input.schemaName, safety: JSON.stringify(payload.requiredEvidence).includes('旧的抗凝药记录，停药情况尚不明确。') })
+      expect(JSON.stringify(payload.requiredEvidence)).toContain('旧的抗凝药记录，停药情况尚不明确。')
+      selectedHistoryInputs.push(...payload.historyEvidence.map(item => item.text))
+      active += 1
+      peak = Math.max(peak, active)
+      if (active === 2) release()
+      await parallel
+      active -= 1
+      return { content: JSON.stringify({ complete: true, selectedEvidenceIds: payload.historyEvidence
+        .filter(item => item.text.includes('未标注异常的旧肝功能结果')).map(item => item.id) }), model: input.model }
+    }
+    const text = JSON.stringify(input.userPayload)
+    requestChecks.push({ stage: input.schemaName, safety: text.includes('旧的抗凝药记录，停药情况尚不明确。'), old: text.includes('未标注异常的旧肝功能结果，尚不能排除异常，需复查。') })
+    expect(text).toContain('旧的抗凝药记录，停药情况尚不明确。')
+    expect(text).toContain('未标注异常的旧肝功能结果，尚不能排除异常，需复查。')
+    return { content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+      ? diagnosisOutput(input) : verificationOutput(input)), model: input.model }
+  }, { syntheaProvider })
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const completed = await fixture.read()
+  expect(completed.status, JSON.stringify({ errorCode: completed.errorCode, requests, requestChecks, peak })).toBe('ready')
+  expect(completed.items).toMatchObject([{ kind: 'diagnosis' }])
+  for (let index = 0; index < 596; index += 1) expect(selectedHistoryInputs.join('\n')).toContain(`历史观察编号${index}。`)
+  expect(peak).toBe(2)
+  const selections = requests.filter(name => name === 'doctor_recommendation_history_selection').length
+  expect(selections).toBeGreaterThan(1)
+  expect(selections).toBeLessThanOrEqual(8)
+  expect((await fixture.generate('diagnosis', true)).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).status).toBe('ready')
+  expect(requests.filter(name => name === 'doctor_recommendation_history_selection')).toHaveLength(selections)
+  expect(await fixture.readCase()).toEqual(before)
 })
 
 it('declines to invent a guideline when the public case contains none of the acquired guideline scopes', async () => {
