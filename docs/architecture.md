@@ -610,6 +610,9 @@ DELETE /api/his/v1/encounters/{id}/prescription/draft
 POST /api/his/v1/encounters/{id}/prescription/actions/issue
 POST /api/his/v1/encounters/{id}/medication-conclusion/actions/confirm-no-medication
 PUT  /api/his/v1/encounters/{id}/clinical-document/draft
+GET  /api/his/v1/doctor/cases/{id}/document-quality-control
+POST /api/his/v1/doctor/cases/{id}/document-quality-control/actions/check
+POST /api/his/v1/doctor/cases/{id}/document-quality-control/actions/retain
 PUT  /api/his/v1/encounters/{id}/laboratory-request/draft
 DELETE /api/his/v1/encounters/{id}/laboratory-request/draft
 POST /api/his/v1/encounters/{id}/laboratory-request/actions/issue
@@ -863,6 +866,8 @@ DSH 模型桥接已配置时，新病例默认登记自动记录资格；已接�
 病例 Query 的 `consultationRecording` 返回持久控制版本、暂停／待补录／处理中／失败／待处理状态、已整理和剩余来源数量、统一 `sources`、片段与草稿保存事实；`sourceTurnId` 是兼容名称，可指向患者、医生或报告的 source ID。暂时失败最多自动尝试三次，超时和结构化修复耗尽直接转为失败；`failures` 返回安全错误码、来源与重试状态，预算和分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。任务、来源、人工归属、拒绝证据和逆操作在 SQLite 持久化，旧 Epoch 结果不得写入当前病例。暂停只停止整理，合法来源继续保存；恢复与失败重试按序处理未完成来源。控制 Command 推进任务代次，迟到结果不得越过暂停或新代次，已完成来源不重置；顺序与模型绑定见[记录恢复决策](../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
 
 自动内容可逐条查看来源、确认核对与局部撤销。安全撤销只逆转目标范围，更正恢复前一片段及来源，人工句子的显式替换恢复原文；无关新增保留，人工改写或超长恢复保留正文并转为 undo-pending。拒绝绑定原证据，新来源可形成新建议；既有拒绝证据及片段恢复规则见[审阅和撤销决策](../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)与[片段归属决策](../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。签署预览固定来源核对摘要：已启用整理的来源按资格起点及持久任务统计；未启用整理时仍核对患者问诊和真实医生补充，不将单独保存的原始报告快照算作待整理内容。纯报告、从未启用整理的旧病例继续使用原报告已阅和签署门禁；结构化签署的快照仍绑定全部持久来源数量。尚未处理、未核对与冲突内容须医生核对；准备冻结正文和来源快照，使在途结果失效，禁用整理及建议写操作，已签文书不可变。取消或过期恢复未完成任务，保留显式暂停与失败；签署协议见[签署准备决策](../.agents/notes/implemented/architecture/2026-10-10-consultation-signing-preparation.md)与[全病历自动整理规格](spec/2026-10-14-doctor-full-document-recording.md)。
+
+病历质控独立检查适用模板缺项、已知事实遗漏、事实不一致及 Agent 新增事实的来源，不以自动整理完成代表整份病历已核对。ClinMesh 通过共享 Command 与 outbox 保存检查输入、代次和人工处理记录，DSH 提供辅助模型；结果绑定实际正文、草稿版本、合法来源和授权上下文。未保存候选带独立客户端身份与编辑版本，仅用于检查，不隐式保存病历。字段内显示“待补充”或“待核实”，依据按需展开；医生核实保留的决定只适用于相关正文及证据。签署预览汇总问题与待完成、过期或失败状态，质控完成不单独使预览失效，不新增签署门禁。详细规则与范围由[四项质控规格](spec/2026-10-15-doctor-document-quality-control.md)拥有。
 
 结构化 Clinical Document 草稿包含主诉、现病史、既往史、查体、辅助检查、评估、处置和随访八个共享字段；草稿允许字段为空，正式签署仍校验主诉、现病史、查体、评估、处置和随访六项完整性。草稿按病例保存在 `clinical_document_draft`，以 `expectedDraftVersion` 和 Encounter expected version 做 CAS 更新。签署预览固定 Actor context、Encounter 版本、草稿正文和草稿版本；提交重新校验这些依赖与 token 后创建不可变 FHIR R5 Composition、带稳定 identifier 且首 entry 为该 Composition 的自包含 document Bundle，以及同时引用二者的 Provenance，但不改变 Encounter 或病例状态。`signed_clinical_document` 只保存 FHIR 资源关联、签署者、时间和修订父链；每个病例只允许一个根文书，修订只接受最新 Composition 并创建线性替代版本。首期复诊 `sign-and-complete` 是兼容入口，只能用于无 Consultation、未启用整理、无真实医生补充且尚无结构化签署根文书的病例；未启用时单独保存的报告快照不改变该兼容边界。存在问诊、已启用整理、真实医生补充或已有根文书时，预览和提交（包括旧 token）都返回稳定业务冲突。问诊核对不依赖自动记录是否启用；关闭自动记录时的摘要与取消投影见[签署准备决策](../.agents/notes/implemented/architecture/2026-10-10-consultation-signing-preparation.md)。
 

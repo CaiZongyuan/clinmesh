@@ -83,7 +83,7 @@
 | `outpatient.pathology.draft.set` | 独立诊疗流程且就诊进行中 | 保存病理会诊项目、送检的既往手术（取自读取结果 `pathologyServices` 的 `sourceProcedures`）与会诊目的；不签发申请 |
 | `outpatient.prescription.draft.set` | 当前尚无正式用药结论 | 保存处方条目；强调药品名称、剂量、频次、疗程、数量、目录入口及处方区域；药品目录打开时覆盖目录和包装控件 |
 | `outpatient.revisit.draft.set` | 兼容复诊草稿阶段 | 保存诊断、评估、计划与用药草稿 |
-| `outpatient.record.draft.set` | 独立诊疗流程且就诊进行中 | 保存结构化病历；同时强调本次病历字段 |
+| `outpatient.record.draft.set` | 独立诊疗流程且就诊进行中 | 保存结构化病历并保留 Agent 新增内容归属供来源质控；同时强调本次病历字段 |
 | `outpatient.preview.request` | 已有可预览草稿 | 生成签署预览；强调病历区域 |
 | `outpatient.visit.start.propose` | 病例可开始接诊 | 人工审阅开始接诊 |
 | `outpatient.diagnosis.confirm.propose` | 诊断满足当前确认条件 | 人工审阅诊断确认 |
@@ -102,7 +102,7 @@
 | `outpatient.prescription.issue.propose` | 已有可开立处方草稿 | 人工审阅开立处方 |
 | `outpatient.prescription.withdraw.propose` | 当前处方可撤回 | 人工审阅撤回处方 |
 | `outpatient.medication.none.propose` | 尚无正式用药结论 | 人工审阅无需用药结论 |
-| `outpatient.record.sign.propose` | 已有可签署草稿 | 生成预览并人工审阅签署 |
+| `outpatient.record.sign.propose` | 已有可签署草稿 | 生成预览，展示来源核对与独立质控摘要并人工审阅签署；新增质控提示不阻断签署 |
 | `outpatient.record.revise.propose` | 存在已签署文书 | 人工审阅文书更正 |
 | `outpatient.encounter.complete.propose` | 就诊进行中；提交时重验完成条件 | 人工审阅完成就诊 |
 | `billing.item.select` | 费用在当前收费队列页中 | 选择目标费用记录 |

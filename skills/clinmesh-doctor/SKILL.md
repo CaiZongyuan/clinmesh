@@ -108,10 +108,19 @@ Recording controls use `encounter.consultation-recording.control` with the curre
 
 A valid cancel-only Agent Grant can cancel a signing preparation and recover its unfinished recording. Recovery remains bound to that exact Grant; revocation, expiry or client disablement stops background recording. Follow the [clinical workflow reference](references/clinical-workflows.md#clinical-document-and-completion) for preparation, cancellation and receipt recovery.
 
+Read `qualityControl` for document completeness, known omissions, inconsistent facts and Agent facts without supported sources. Each issue identifies its field, original evidence and a project or official rule; `needs-completion` and `needs-verification` are review categories, not clinical risk grades. Different-time facts are not automatically contradictory. Empty issues do not certify clinical safety or regulatory compliance; inspect `status`, `stale`, `notices` and `errorCode` before describing coverage.
+
+`doctor document-quality check` checks the saved document, or an unsaved candidate supplied together with `clientId` and `clientRevision`; it does not save the clinical draft. Poll `doctor document-quality get` using the same `clientId` for a candidate, and compare its identity and input fingerprint before using the result. The recording control version is not a quality input version. After an explicit clinician decision to retain an issue, use `doctor document-quality retain` with its current `issueId` and `expectedInputFingerprint`; `reason` is optional. The decision applies only to the related unchanged text and evidence, remains audited, and is not a new patient fact. On a version conflict, reread rather than suppressing the warning.
+
+Keep Agent draft authorship through `agentGenerated: true` when setting a document; optional `agentFacts` identify the field, exact text and saved source quotes for server verification. A client citation does not prove a clinical fact, and unavailable sources remain visible for verification. The preview's `qualityControl` summarizes outstanding issues and any pending, stale or failed check; it does not add a signing gate. Existing required fields, source review, version checks and final clinician confirmation still apply.
+
 ```bash
 clinmesh encounter clinical-document draft set --input @document.json --idempotency-key <key>
 clinmesh encounter consultation-history review --input @history-review.json --idempotency-key <review-intent-key>
 clinmesh encounter consultation-recording control --input @recording-control.json --idempotency-key <control-intent-key>
+clinmesh doctor document-quality get --case-id <case-id>
+clinmesh doctor document-quality check --input @document-quality-check.json --idempotency-key <check-intent-key>
+clinmesh doctor document-quality retain --input @document-quality-retain.json --idempotency-key <retain-intent-key>
 clinmesh encounter clinical-document sign preview --input @document-preview.json --idempotency-key <key>
 clinmesh encounter clinical-document sign commit --input @document-sign.json --idempotency-key <key>
 clinmesh encounter clinical-document sign cancel --input @document-cancel.json --idempotency-key <cancel-intent-key>

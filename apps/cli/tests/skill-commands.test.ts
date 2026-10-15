@@ -20,7 +20,7 @@ it('keeps signing review and cancellation examples aligned with the narrow opera
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
   const reference = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
-  for (const [suffix, version] of [['preview', 3], ['commit', 3], ['cancel', 2]] as const) {
+  for (const [suffix, version] of [['preview', 4], ['commit', 3], ['cancel', 2]] as const) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh encounter clinical-document sign ${suffix}`))!
     expect(inspectExample(program, line).operation?.version).toBe(version)
   }
@@ -125,6 +125,28 @@ function inspectExample(program: Command, line: string) {
 }
 
 describe('ClinMesh CLI Agent Skills', () => {
+  it('keeps document quality examples narrow and separate from clinical draft writes', async () => {
+    const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+    const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+    for (const action of ['get', 'check', 'retain']) {
+      const operation = getHisOperation(`doctor.document-quality.${action}`)
+      const line = commandLines(skill).find(line => line.startsWith(`clinmesh doctor document-quality ${action}`))!
+      expect(line).toBeDefined()
+      expect(inspectExample(program, line).operation?.id).toBe(operation.id)
+      expect(operation.skill).toBe('clinmesh-doctor')
+    }
+    const check = getHisOperation('doctor.document-quality.check')
+    const context = { caseId: 'synthetic-case', encounterId: 'synthetic-encounter', encounterVersion: '3' }
+    expect(check.input.safeParse({ ...context, expectedDraftVersion: 0 }).success).toBe(true)
+    expect(check.input.safeParse({ ...context, expectedDraftVersion: 0, clientId: 'editor-1' }).success).toBe(false)
+    expect(check.input.safeParse({ ...context, expectedDraftVersion: 0, url: 'https://example.invalid' }).success).toBe(false)
+    const retain = getHisOperation('doctor.document-quality.retain')
+    expect(retain.input.safeParse({ ...context, issueId: 'synthetic-issue', expectedInputFingerprint: 'a'.repeat(64) }).success).toBe(true)
+    expect(retain.input.safeParse({ ...context, issueId: 'synthetic-issue' }).success).toBe(false)
+    expect(skill).toContain('does not save the clinical draft')
+    expect(skill).toContain('explicit clinician decision')
+    expect(skill).toContain('does not add a signing gate')
+  })
   it('keeps recording controls narrow, versioned and bound to the doctor skill', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
     const operation = getHisOperation('encounter.consultation-recording.control')
@@ -180,7 +202,7 @@ describe('ClinMesh CLI Agent Skills', () => {
   it('keeps the doctor draft example compatible with incomplete content and the versioned Catalog', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
     const operation = getHisOperation('encounter.clinical-document.draft.set')
-    expect(operation.version).toBe(2)
+    expect(operation.version).toBe(3)
     expect(skill).toContain('empty fields')
     expect(skill).toContain('consultationRecording')
     expect(skill).toContain('hasSavedDraft')
@@ -200,7 +222,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 8 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 9 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }
