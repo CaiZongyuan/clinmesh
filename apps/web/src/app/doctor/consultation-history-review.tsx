@@ -33,7 +33,7 @@ export interface ConsultationHistoryReviewAction {
 
 export function ConsultationHistoryReview({ detail, field, workingDocument, action, disabled, messages, locale }: {
   detail: DoctorCaseDetail
-  field: 'chiefComplaint' | 'historyOfPresentIllness' | 'priorMedicalHistory'
+  field: keyof ClinicalDocumentContent
   workingDocument: ClinicalDocumentContent
   action: ConsultationHistoryReviewAction | undefined
   disabled: boolean
@@ -44,6 +44,8 @@ export function ConsultationHistoryReview({ detail, field, workingDocument, acti
   if (additions.length === 0) return null
   const turns = detail.consultation?.turns ?? []
   const turnsById = new Map(turns.map(turn => [turn.id, turn]))
+  const recordingSources = detail.consultationRecording?.sources ?? []
+  const sourcesById = new Map(recordingSources.map(source => [source.id, source]))
   const active = additions.filter(addition => addition.status === 'pending'
     || (addition.status === 'applied' && addition.reviewStatus !== 'confirmed'))
   const history = additions.filter(addition => !active.includes(addition))
@@ -56,9 +58,22 @@ export function ConsultationHistoryReview({ detail, field, workingDocument, acti
     const summary = addition.summary || addition.quote
     const citations = facts.length === 0 ? [{ sourceTurnId: addition.sourceTurnId, quote: addition.quote }]
       : facts.flatMap(fact => fact.sources)
-    const sources = [...new Set(citations.map(source => source.sourceTurnId))]
-      .flatMap(id => { const turn = turnsById.get(id); return turn === undefined ? [] : [turn] })
-      .sort((left, right) => left.sequence - right.sequence)
+    const sourceIds = [...new Set(citations.map(source => source.sourceTurnId))]
+    const sources = sourceIds
+      .flatMap(id => {
+        const source = sourcesById.get(id)
+        if (source !== undefined) return [source]
+        const turn = turnsById.get(id)
+        return turn?.speaker !== 'patient' || turn.kind !== 'text' ? [] : [{ id: turn.id, kind: 'patient' as const,
+          messageText: turn.messageText, recordedAt: turn.recordedAt, consultationTurnId: turn.id }]
+      })
+      .sort((left, right) => left.recordedAt.localeCompare(right.recordedAt))
+    const kinds = [...new Set(sources.map(source => source.kind))]
+    const sourceLabels = { patient: messages.consultationHistoryPatientSource,
+      doctor: messages.consultationHistoryDoctorSource, report: messages.consultationHistoryReportSource }
+    const sourceTitle = kinds.length !== 1 || sources.length !== sourceIds.length ? messages.consultationHistoryMixedSource
+      : kinds[0] === 'patient' ? messages.consultationHistorySource
+        : kinds[0] === 'doctor' ? messages.consultationHistoryDoctorOriginal : messages.consultationHistoryReportOriginal
     const label = addition.status === 'undone' ? messages.consultationHistoryUndone
       : addition.status === 'ignored' ? messages.consultationHistoryIgnored
         : addition.status === 'superseded' ? messages.consultationHistorySuperseded
@@ -80,6 +95,8 @@ export function ConsultationHistoryReview({ detail, field, workingDocument, acti
         <p className="whitespace-pre-wrap break-words">{messages.consultationHistoryOriginal}：{addition.currentText}</p>
       </> : null}
       {(pending || applied) && dirty ? <p>{messages.consultationHistorySaveFirst}</p> : null}
+      {sources.length === sourceIds.length ? null
+        : <p>{messages.consultationHistorySourceUnavailable}</p>}
       {action?.additionId !== addition.id || action.error === null ? null : <p role="alert">{getWorkspaceErrorMessage(action.error, messages)}</p>}
       <div className="flex flex-wrap gap-2">
         {sources.length === 0 ? null : <Dialog>
@@ -88,21 +105,26 @@ export function ConsultationHistoryReview({ detail, field, workingDocument, acti
           </DialogTrigger>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{messages.consultationHistorySource}</DialogTitle>
-              <DialogDescription>{messages[addition.field]} · {messages.consultationHistoryPatientStatement}</DialogDescription>
+              <DialogTitle>{sourceTitle}</DialogTitle>
+              <DialogDescription>{messages[addition.field]} · {kinds.map(kind => sourceLabels[kind]).join(' / ')}
+                {kinds.includes('patient') ? ` · ${messages.consultationHistoryPatientStatement}` : ''}</DialogDescription>
             </DialogHeader>
             <div data-consultation-source-content className="flex min-h-0 flex-col gap-3 overflow-y-auto px-4 py-3">
               <p className="whitespace-pre-wrap break-words">{messages.consultationHistorySummary}：{summary}</p>
               {facts.length === 0 ? null : <ul className="flex flex-col gap-2">
                 {facts.map((fact, index) => <li key={index} className="whitespace-pre-wrap break-words">
                   {fact.text} · {messages.consultationHistoryCitation} {sources.filter(source => fact.sources.some(citation => citation.sourceTurnId === source.id))
-                    .map(source => source.sequence).join(', ')}
+                    .map(source => turnsById.get(source.consultationTurnId ?? source.id)?.sequence ?? sourceLabels[source.kind]).join(', ')}
                 </li>)}
               </ul>}
               {sources.map(source => {
-                const question = turns.findLast(turn => turn.sequence < source.sequence && turn.speaker === 'doctor' && turn.kind === 'text')
+                const sourceTurn = turnsById.get(source.consultationTurnId ?? source.id)
+                const question = source.kind !== 'patient' || sourceTurn === undefined ? undefined
+                  : turns.findLast(turn => turn.sequence < sourceTurn.sequence && turn.speaker === 'doctor' && turn.kind === 'text')
                 return <section key={source.id} className="flex flex-col gap-2" data-consultation-source={source.id}>
-                  <p>{messages.consultationHistoryTurn} {source.sequence} · {formatClinicalDateTime(source.recordedAt, locale)}</p>
+                  <p>{sourceLabels[source.kind]}{source.kind !== 'patient' || sourceTurn === undefined ? '' : ` · ${messages.consultationHistoryTurn} ${sourceTurn.sequence}`}
+                    {' · '}{formatClinicalDateTime(source.recordedAt, locale)}</p>
+                  {source.reportReference === undefined ? null : <p className="break-words">{source.reportReference}</p>}
                   {question === undefined ? null : <p className="whitespace-pre-wrap break-words">{messages.consultationHistoryQuestion}：{question.messageText}</p>}
                   <QuotedReply text={source.messageText} quotes={citations.filter(citation => citation.sourceTurnId === source.id).map(citation => citation.quote)} />
                 </section>

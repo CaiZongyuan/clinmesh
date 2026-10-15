@@ -8,15 +8,22 @@ import type { getWorkspaceMessages } from '../workspace-i18n.ts'
 export interface ConsultationRecordingAction {
   error: Error | null
   pending: boolean
-  onSubmit: (action: 'pause' | 'resume' | 'backfill' | 'retry') => void
+  onSubmit: (action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry') => void
 }
 
 export function ConsultationRecordingControls({ recording, action, disabled, messages }: {
-  recording: NonNullable<DoctorCaseDetail['consultationRecording']>
+  recording: DoctorCaseDetail['consultationRecording']
   action: ConsultationRecordingAction | undefined
   disabled: boolean
   messages: ReturnType<typeof getWorkspaceMessages>
-}): React.JSX.Element {
+}): React.JSX.Element | null {
+  if (recording === undefined || (recording.version === 0 && recording.status === 'idle' && action?.error != null)) {
+    return action?.error == null ? null : <div className="flex min-w-0 flex-wrap items-center gap-2">
+      <p role="alert">{getWorkspaceErrorMessage(action.error, messages)}</p>
+      <Button size="sm" type="button" variant="outline" disabled={disabled || action.pending}
+        onClick={() => action.onSubmit('activate')}>{messages.consultationRecordingRetry}</Button>
+    </div>
+  }
   const labels = {
     idle: messages.consultationRecordingReady, processing: messages.consultationRecordingProcessing,
     updated: messages.consultationRecordingUpdated, pending: messages.consultationRecordingPending,
@@ -56,12 +63,19 @@ export function ConsultationRecordingControls({ recording, action, disabled, mes
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
+    {recording.requiresContextBinding !== true ? null : <>
+      <span role="status">{messages.consultationRecordingBindingRequired}</span>
+      {action === undefined ? null : <Button size="sm" type="button" variant="outline"
+        disabled={disabled || action.pending} onClick={() => action.onSubmit('activate')}>
+        {messages.consultationRecordingBindContext}
+      </Button>}
+    </>}
     {action === undefined ? null : <>
       <Button size="icon-sm" variant="outline" type="button" aria-label={intentLabel} title={intentLabel}
         disabled={disabled || action.pending} onClick={() => action.onSubmit(intent)}>
         {intent === 'backfill' ? <HistoryIcon /> : intent === 'resume' ? <PlayIcon /> : <PauseIcon />}
       </Button>
-      {recording.status !== 'failed' ? null : <Button size="icon-sm" variant="outline" type="button"
+      {recording.status !== 'failed' || recording.requiresContextBinding === true ? null : <Button size="icon-sm" variant="outline" type="button"
         aria-label={messages.consultationRecordingRetry} title={messages.consultationRecordingRetry}
         disabled={disabled || action.pending} onClick={() => action.onSubmit('retry')}><RotateCcwIcon /></Button>}
     </>}

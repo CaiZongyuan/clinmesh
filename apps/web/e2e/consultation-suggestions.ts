@@ -7,9 +7,11 @@ export async function expandHistory(page: Page): Promise<void> {
   }
 }
 
-export async function applySuggestion(page: Page, quote: string): Promise<void> {
-  const pending = page.locator('[data-consultation-addition="pending"]').filter({ hasText: quote })
-  await pending.getByRole('button', { name: '应用建议', exact: true }).click()
-  await expect(pending).toHaveCount(0)
+export async function confirmRecordedAddition(page: Page, quote: string): Promise<void> {
+  const applied = page.locator('[data-consultation-addition="applied"]').filter({ hasText: quote })
+  await expect(applied).toHaveAttribute('data-consultation-review', 'unreviewed')
+  await expect(applied.getByRole('button', { name: '应用建议', exact: true })).toHaveCount(0)
+  await applied.getByRole('button', { name: '确认已核对', exact: true }).click()
+  await expect(applied).toHaveAttribute('data-consultation-review', 'confirmed')
   await expandHistory(page)
 }

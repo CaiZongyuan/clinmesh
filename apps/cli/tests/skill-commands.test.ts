@@ -20,7 +20,7 @@ it('keeps signing review and cancellation examples aligned with the narrow opera
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
   const reference = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
-  for (const [suffix, version] of [['preview', 2], ['commit', 2], ['cancel', 1]] as const) {
+  for (const [suffix, version] of [['preview', 3], ['commit', 3], ['cancel', 2]] as const) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh encounter clinical-document sign ${suffix}`))!
     expect(inspectExample(program, line).operation?.version).toBe(version)
   }
@@ -37,6 +37,8 @@ it('keeps signing review and cancellation examples aligned with the narrow opera
   expect(reference).toContain('consultationReviewed: true')
   expect(reference).toContain('consultationRecording.signingPreparation')
   expect(reference).toContain('even without automatic recording')
+  expect(reference).toContain('doctor-only cases without a Consultation')
+  expect(reference).toContain('changed Consultation or source snapshot')
   for (const operation of ['encounter.clinical-document.sign.preview', 'encounter.clinical-document.sign'] as const) {
     expect(getHisOperation(operation).summary).toContain('even without automatic recording')
   }
@@ -128,13 +130,16 @@ describe('ClinMesh CLI Agent Skills', () => {
     const operation = getHisOperation('encounter.consultation-recording.control')
     const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter consultation-recording control'))!
     expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
-    for (const action of ['pause', 'resume', 'backfill', 'retry']) {
+    for (const action of ['activate', 'pause', 'resume', 'backfill', 'retry']) {
       expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedRecordingVersion: 1, action }).success).toBe(true)
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)
     expect(skill).toContain('processedCount')
     expect(skill).toContain('explicitly starts it')
-    expect(operation.version).toBe(2)
+    expect(operation.version).toBe(3)
+    expect(operation.summary).toContain('Activate a new editable unsigned case')
+    expect(skill).toContain('expectedRecordingVersion: 0')
+    expect(skill).toContain('reading the case does not activate or backfill it')
     expect(operation.summary).toContain('backfill requires an existing Consultation')
     expect(operation.summary).toContain('WORKFLOW_CONFLICT')
     expect(skill).toContain('Backfill requires an existing Consultation')
@@ -151,11 +156,17 @@ describe('ClinMesh CLI Agent Skills', () => {
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
       additionId: 'synthetic-correction', decision: 'overwrite', document: {} }).success).toBe(false)
-    expect(operation.version).toBe(4)
-    expect(operation.summary).toContain('Generation never changes draft text')
+    expect(operation.version).toBe(5)
+    expect(operation.summary).toContain('automatically update the draft and remain unreviewed')
     expect(operation.summary).toContain('appends targetless additions')
-    expect(skill).toContain('Every new addition, update, correction and conflict remains pending')
-    expect(skill).toContain('generation never changes the draft')
+    expect(skill).toContain('Reliable additions, updates and clear corrections automatically update the draft')
+    expect(skill).toContain('factual conflicts and uncertain replacements remain pending')
+    expect(skill).toContain('Confirm acknowledges unreviewed automatic content')
+    expect(skill).toContain('consultationRecording.sources[].id')
+    expect(skill).toContain('independently verified native DSH input proof')
+    expect(skill).toContain('CLI cannot submit arbitrary doctor-source text')
+    for (const field of ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'physicalExamination',
+      'auxiliaryExamination', 'assessment', 'disposition', 'followUp']) expect(skill).toContain(`\`${field}\``)
     expect(skill).toContain("clinician's explicit accept/ignore/confirm/undo decision")
     expect(skill).toContain('undo-pending')
     expect(operation.summary).toContain('draft field limits')
@@ -189,7 +200,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 7 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 8 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }

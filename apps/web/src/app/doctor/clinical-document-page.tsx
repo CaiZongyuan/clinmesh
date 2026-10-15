@@ -136,10 +136,10 @@ export function ClinicalDocumentPage({
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">{messages.structuredClinicalDocument}</h3>
-        {detail.consultationRecording === undefined ? null : <ConsultationRecordingControls
+        <ConsultationRecordingControls
           recording={detail.consultationRecording} action={actions.controlRecording}
           disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
-          messages={messages} />}
+          messages={messages} />
       </div>
       {actions.save?.error == null ? null : <ErrorAlert
         message={getWorkspaceErrorMessage(actions.save.error, messages)}
@@ -428,8 +428,7 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
                 value={value}
               />
             )}
-            {field === 'chiefComplaint' || field === 'historyOfPresentIllness' || field === 'priorMedicalHistory'
-              ? <ConsultationHistoryReview {...history} field={field} /> : null}
+            <ConsultationHistoryReview {...history} field={field} />
             </div>
           </Field>
         )
@@ -607,7 +606,7 @@ export function ClinicalDocumentContentView({ content, messages, history }: {
         return <div key={field} data-clinical-document-field={field}>
           <dt className="text-muted-foreground">{messages[field]}</dt>
           {content[field] === undefined ? null : <dd className="whitespace-pre-wrap font-medium">{content[field]}</dd>}
-          {history !== undefined && (field === 'chiefComplaint' || field === 'historyOfPresentIllness' || field === 'priorMedicalHistory')
+          {history !== undefined
             ? <dd><ConsultationHistoryReview {...history} field={field} /></dd> : null}
         </div>
       })}

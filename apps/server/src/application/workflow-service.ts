@@ -1186,6 +1186,7 @@ export class WorkflowService {
       now: this.#now,
       virtualTime: context => this.#virtualTime(context),
       contextStatus: options.consultationRecordingContextStatus ?? (() => 'inactive'),
+      prepareReports: (context, transaction, caseId) => this.#prepareRecordingReports(transaction, context, caseId),
       assertAccess: (context, encounterId) => {
         this.#assertRole(context, ['outpatient-doctor'])
         const outpatientCase = this.#caseByEncounter(context, encounterId)
@@ -1203,6 +1204,8 @@ export class WorkflowService {
       ),
       caseByEncounter: (context: ActorContext, encounterId: string) => this.#caseByEncounter(context, encounterId),
       hasConsultation: (context: ActorContext, caseId: string) => this.#consultationState(context, caseId) !== undefined,
+      reportPublished: (transaction: CommandTransaction, context: ActorContext, caseId: string, reportReference: string) =>
+        this.#recordPublishedReport(transaction, context, caseId, reportReference),
       virtualTime: (context: ActorContext) => this.#virtualTime(context),
     }
     this.imaging = new ImagingRequestService({ commands, database, fhir, host: requestHost, requests: this.#requests })
@@ -6248,19 +6251,22 @@ export class WorkflowService {
   }
 
   #assertNoConsultationForLegacySigning(context: ActorContext, caseId: string): void {
-    if (this.#consultationState(context, caseId) !== undefined) {
+    if (this.#consultationState(context, caseId) !== undefined
+      || this.consultationRecording.signingProgress(context, caseId).hasRegisteredSources) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'Use structured clinical document signing to review the Consultation')
     }
   }
 
   #consultationSignReview(context: ActorContext, caseId: string) {
     const consultation = this.#consultationState(context, caseId)
-    if (consultation === undefined) return null
     const recording = this.consultationRecording.read(context, caseId)
+    const progress = this.consultationRecording.signingProgress(context, caseId)
+    const { sourceCount } = progress
+    if (consultation === undefined && sourceCount === undefined) return null
     return consultationSignReviewSchema.parse({
-      consultationVersion: consultation.version,
-      remainingCount: recording?.remainingCount ?? this.#consultationTurnRows(context, caseId)
-        .filter(turn => turn.speaker === 'patient' && turn.kind === 'text').length,
+      consultationVersion: consultation?.version ?? 0,
+      ...(sourceCount === undefined ? {} : { sourceCount }),
+      remainingCount: progress.remainingCount,
       failedCount: recording?.failedCount ?? 0,
       paused: recording?.paused ?? false,
       conflictCount: recording?.additions.filter(addition => addition.status === 'pending'
@@ -7449,7 +7455,7 @@ export class WorkflowService {
         serviceRequest,
         task,
       })
-      this.#appendReportCardTurn(input.context, request.case_id, {
+      this.#appendReportCardTurn(transaction, input.context, request.case_id, {
         reportName,
         reportReference: `DiagnosticReport/${diagnosticReportId}/_history/1`,
       })
@@ -7871,7 +7877,7 @@ export class WorkflowService {
           reference: `Observation/${observation.id}`,
         })),
       })
-      this.#appendReportCardTurn(input.context, request.case_id, {
+      this.#appendReportCardTurn(transaction, input.context, request.case_id, {
         reportName: input.reason.length > 0 ? '检验报告（已更正）' : '检验报告',
         reportReference: `DiagnosticReport/${diagnosticReportId}/_history/1`,
       })
@@ -9328,7 +9334,7 @@ export class WorkflowService {
           valueReference: { reference: `DiagnosticReport/${diagnosticReportId}` },
         }],
       })
-      this.#appendReportCardTurn(input.context, input.payload.caseId, {
+      this.#appendReportCardTurn(transaction, input.context, input.payload.caseId, {
         reportName: '呼吸道病原体检验报告',
         reportReference: `DiagnosticReport/${diagnosticReportId}/_history/1`,
       })
@@ -9554,6 +9560,7 @@ export class WorkflowService {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case state has changed')
     }
     this.#assignCaseResponsibility(context, input.caseId, now)
+    this.consultationRecording.bindDoctorContext(context, input.caseId)
     this.#database.driver.prepare(`
       UPDATE registration SET status = 'in-progress'
       WHERE workspace_id = ? AND epoch = ? AND case_id = ?
@@ -9897,10 +9904,12 @@ export class WorkflowService {
   }
 
   #appendReportCardTurn(
+    transaction: CommandTransaction,
     context: ActorContext,
     caseId: string,
     input: { reportName: string; reportReference: string },
   ): void {
+    this.#recordPublishedReport(transaction, context, caseId, input.reportReference)
     const state = this.#consultationState(context, caseId)
     if (state === undefined) return
     this.#insertConsultationTurn(context, caseId, {
@@ -9911,6 +9920,62 @@ export class WorkflowService {
       source: 'report-card',
       speaker: 'patient',
     })
+  }
+
+  #recordPublishedReport(transaction: CommandTransaction, context: ActorContext, caseId: string, reportReference: string): void {
+    const parsed = /^DiagnosticReport\/([A-Za-z0-9.-]+)\/_history\/(\d+)$/u.exec(reportReference)
+    if (parsed === null) throw new Error('The published report reference must contain a fixed version')
+    const report = z.object({ status: z.enum(['final', 'amended', 'corrected']),
+      category: z.array(z.object({ coding: z.array(z.object({ code: z.string().optional() })).optional() })).optional(),
+      encounter: z.object({ reference: z.string() }), subject: z.object({ reference: z.string() }),
+      conclusion: z.string().optional(), code: z.object({ text: z.string().optional() }).optional(),
+      result: z.array(z.object({ reference: z.string() })).optional(), issued: z.string(),
+    }).parse(transaction.fhir.vread(context, 'DiagnosticReport', parsed[1]!, parsed[2]!))
+    const outpatientCase = z.object({ encounter_id: z.string(), patient_id: z.string() }).parse(
+      this.#database.driver.prepare(`SELECT encounter_id, patient_id FROM outpatient_case
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).get(context.workspaceId, context.epoch, caseId))
+    if (report.encounter.reference !== `Encounter/${outpatientCase.encounter_id}` || report.subject.reference !== `Patient/${outpatientCase.patient_id}`) {
+      throw new Error('The published report does not belong to the recording case')
+    }
+    const observations = (report.result ?? []).map(result => {
+      const match = /^Observation\/([A-Za-z0-9.-]+)$/u.exec(result.reference)
+      if (match === null) throw new Error('The published report result must reference a local Observation')
+      const observation = z.object({ code: z.object({ text: z.string().optional(), coding: z.array(z.object({ display: z.string().optional() })).optional() }),
+        valueQuantity: z.object({ value: z.number(), unit: z.string().optional() }).optional(),
+        valueString: z.string().optional(), valueCodeableConcept: z.object({ text: z.string().optional(), coding: z.array(z.object({ display: z.string().optional() })).optional() }).optional(),
+        valueBoolean: z.boolean().optional(),
+      }).parse(transaction.fhir.read(context, 'Observation', match[1]!))
+      const name = observation.code.text ?? observation.code.coding?.[0]?.display ?? result.reference
+      const value = observation.valueQuantity === undefined ? observation.valueString
+        ?? observation.valueCodeableConcept?.text ?? observation.valueCodeableConcept?.coding?.[0]?.display
+        ?? observation.valueBoolean?.toString()
+        : `${observation.valueQuantity.value}${observation.valueQuantity.unit === undefined ? '' : ` ${observation.valueQuantity.unit}`}`
+      if (value === undefined) throw new Error('The published report result has no supported value')
+      return `${name}：${value}。`
+    })
+    const categories = report.category?.flatMap(category => category.coding?.map(coding => coding.code) ?? []) ?? []
+    const published = categories.includes('RAD') ? this.imaging.publishedReportText(context, caseId, parsed[1]!)
+      : categories.includes('SP') ? this.pathology.publishedReportText(context, caseId, parsed[1]!) : undefined
+    const messageText = [report.code?.text, published?.text ?? report.conclusion, ...observations].filter(Boolean).join('\n')
+    if (report.conclusion === undefined && observations.length === 0) throw new Error('The published report contains no recordable facts')
+    this.consultationRecording.enqueueReport(context, transaction, { caseId, encounterId: outpatientCase.encounter_id,
+      messageText, recordedAt: report.issued, reportReference,
+      ...(published === undefined ? {} : { reportContentHash: published.reportContentHash }) })
+  }
+
+  #prepareRecordingReports(transaction: CommandTransaction, context: ActorContext, caseId: string): void {
+    const reports = z.array(z.object({ diagnostic_report_id: z.string() })).parse(this.#database.driver.prepare(`
+      SELECT diagnostic_report_id FROM laboratory_request WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        AND diagnostic_report_id IS NOT NULL
+      UNION SELECT diagnostic_report_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        AND diagnostic_report_id IS NOT NULL
+    `).all(context.workspaceId, context.epoch, caseId, context.workspaceId, context.epoch, caseId))
+    const saved = new Set(this.consultationRecording.read(context, caseId)?.sources?.map(source => source.reportReference))
+    for (const report of reports) {
+      const resource = transaction.fhir.read(context, 'DiagnosticReport', report.diagnostic_report_id)
+      const reference = `DiagnosticReport/${report.diagnostic_report_id}/_history/${resource.meta?.versionId ?? '1'}`
+      if (!saved.has(reference)) this.#recordPublishedReport(transaction, context, caseId, reference)
+    }
   }
 
   caseIdByEncounter(context: ActorContext, encounterId: string): string {

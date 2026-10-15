@@ -1450,6 +1450,74 @@ describe('outpatient workflow HTTP contract', () => {
     await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true })))
   })
 
+  it.each(['legacy-preview', 'legacy-commit', 'structured'] as const)('preserves %s signing for a model-disabled unregistered case with only a raw public report', async path => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-raw-report-signing-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({ authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters', cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'), demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
+    })
+    runtimes.push(runtime)
+    const testCase = await createRevisitDraftCase(runtime, password)
+    const encounterId = testCase.registration.encounterId
+    const read = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${testCase.caseId}`,
+      { headers: { cookie: testCase.doctorCookie } })).json())
+    expect((await read()).consultation).toBeUndefined()
+    expect((await read()).consultationRecording).toBeUndefined()
+    const expectedVersions = { [`Encounter/${encounterId}`]: '6', [`Condition/${testCase.draft.conditionId}`]: '1',
+      [`Task/${testCase.report.taskId}`]: '2', ...Object.fromEntries(testCase.draft.medicationRequestIds.map(id => [`MedicationRequest/${id}`, '1'])) }
+    const request = (suffix: string, input: object, method: 'POST' | 'PUT' = 'POST') => runtime.app.request(`/api/his/v1/encounters/${encounterId}/${suffix}`,
+      { method, headers: commandHeaders(testCase.doctorCookie), body: JSON.stringify({ expectedVersions, input }) })
+    if (path !== 'structured') {
+      const response = await request('actions/preview-sign', { expectedDraftVersions: { documentDraft: 1, prescription: 1, revisitDraft: 1 } })
+      expect(response.status).toBe(200)
+      const preview = clinicalSignPreviewResponseSchema.parse(await response.json()).data
+      if (path === 'legacy-commit') expect((await request('actions/sign-and-complete', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(200)
+    } else {
+      expect((await request('clinical-document/draft', { expectedDraftVersion: 0, document: structuredClinicalDocument }, 'PUT')).status).toBe(200)
+      const response = await request('clinical-document/actions/preview-sign', { expectedDraftVersion: 1 })
+      expect(response.status).toBe(200)
+      const preview = clinicalDocumentSignPreviewResponseSchema.parse(await response.json()).data
+      expect(preview.consultationReview).toMatchObject({ sourceCount: 1, remainingCount: 0 })
+      expect((await request('clinical-document/actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(200)
+    }
+  })
+
+  it.each([true, false])('publishes a literal boolean laboratory result and preserves its report source (%s)', async detected => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-boolean-recording-source-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({ authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters', cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'), demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+    })
+    runtimes.push(runtime)
+    // Configure the synthetic simulator fixture; assertions observe the published HTTP report.
+    runtime.database.driver.prepare(`UPDATE scenario_hidden_fact SET value_json = ? WHERE fact_code = 'respiratory-pathogen'`)
+      .run(JSON.stringify({ code: 'influenza-a', detected }))
+    const testCase = await createPaidLabCase(runtime, password)
+    const read = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${testCase.caseId}`, { headers: { cookie: testCase.doctorCookie } },
+    )).json())
+    const initial = await read()
+    const activated = await runtime.app.request(`/api/his/v1/encounters/${testCase.registration.encounterId}/consultation-recording/actions/control`, {
+      method: 'POST', headers: commandHeaders(testCase.doctorCookie), body: JSON.stringify({
+        expectedVersions: { [`Encounter/${testCase.registration.encounterId}`]: initial.encounter.versionId },
+        input: { action: 'activate', expectedRecordingVersion: 0 },
+      }),
+    })
+    expect(activated.status).toBe(200)
+    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ status: 'completed' })
+    const published = await read()
+    expect(published.report!.results.find(result => result.code === '80382-5')!.value).toBe(detected)
+    const source = published.consultationRecording!.sources!.find(source => source.kind === 'report')!
+    expect(source.messageText).toContain(`Influenza virus A Ag：${detected}。`)
+    expect(source.reportReference).toBe(`DiagnosticReport/${published.report!.id}/_history/1`)
+  })
+
   it('returns formal facts from a completed sign-and-complete case', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-completed-case-legacy-facts-http-'))
     temporaryDirectories.push(directory)

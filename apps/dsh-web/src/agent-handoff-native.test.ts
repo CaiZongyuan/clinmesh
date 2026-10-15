@@ -19,6 +19,7 @@ import { installAgentProofBridge } from './agent-proof-bridge.ts'
 import { parseAgentExecutionProof } from './execution-proof.ts'
 import { doctorInputPermit } from './doctor-input-fixture.ts'
 import * as ClinMeshHost from './index.ts'
+import { doctorRecordingSourceProofPayloadSchema } from '@clinmesh/contracts/agent'
 
 const record = { scopeKey: 'record-scope', pageRevision: '["record",null]' }
 const consultation = { scopeKey: 'consultation-scope', pageRevision: '["consultation-1",null]' }
@@ -96,7 +97,7 @@ function browserChannel(ctx: Context, options: {
   async function post(path: string, body: unknown) {
     const route = routes.get(path)
     if (!route) return { status: 404, body: {} }
-    const returned = Promise.withResolvers<{ status: number; body: { data?: { proof?: string } } }>()
+    const returned = Promise.withResolvers<{ status: number; body: { data?: { proof?: string; sourceProof?: string } } }>()
     const request = Object.assign(Readable.from([Buffer.from(JSON.stringify(body))]), {
       method: 'POST', headers: { host: 'localhost', origin: 'http://localhost',
         'content-type': 'application/json' }, socket: { remoteAddress: '127.0.0.1' },
@@ -186,6 +187,40 @@ function directory(binding: typeof record): string[] {
   return binding === emptyDoctor ? [selectCase, read] : binding === record ? [select, read]
     : binding.scopeKey === record.scopeKey ? [select, read, draft] : [select, read, ask]
 }
+
+it.each(['input-first', 'permit-first', 'completed-first'] as const)('proves native doctor input with no Tool when %s', async order => {
+  const ctx = new Context()
+  const sessionId = `native-source-${order}`
+  const secret = 'synthetic-host-secret-with-at-least-32-characters'
+  const text = '查体：双肺呼吸音清，无啰音。'
+  try {
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    const browser = browserChannel(ctx)
+    installAgentProofBridge(ctx, secret)
+    browser.publish(record, true)
+    class NoToolModel extends LlmAdapter {
+      override async resolveModel(provider: string, model: string) { return { provider, id: model, name: model } }
+      override async *stream(): AsyncIterable<StreamChunk> { yield { type: 'finish', reason: { kind: 'stop' } } }
+    }
+    ctx.llm.registerAdapter(['scripted'], new NoToolModel())
+    const { agent } = await ctx.agents.create({ sessionId: SessionId(sessionId), agentOptions: { provider: 'scripted', model: 'source' } })
+    const message = createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user', rpcId: 'source-rpc' } })
+    const permit = doctorTaskPermit(text, sessionId, 'source-rpc', record)
+    let response = order === 'permit-first' ? browser.post('/clinmesh-doctor-source', { permit }) : undefined
+    agent.followup(message)
+    if (order === 'completed-first') await agent.whenIdle()
+    response ??= browser.post('/clinmesh-doctor-source', { permit })
+    const result = await response
+    expect(result.status).toBe(200)
+    const source = doctorRecordingSourceProofPayloadSchema.parse(JSON.parse(Buffer.from(result.body.data!.sourceProof!.split('.')[0]!, 'base64url').toString()))
+    expect(source).toMatchObject({ purpose: 'clinmesh-doctor-recording-source', dshSessionId: sessionId,
+      rpcId: 'source-rpc', messageId: String(message.id), inputHash: createHash('sha256').update(text).digest('hex') })
+    await agent.whenIdle()
+    expect(browser.executed).toEqual([])
+    expect((await browser.post('/clinmesh-doctor-source', { permit })).status).toBe(409)
+  } finally { await ctx.fiber.dispose() }
+})
 
 function doctorTaskPermit(text: string, dshSessionId: string, rpcId = 'delegate-rpc', binding = consultation) {
   return doctorInputPermit({ text, dshSessionId, rpcId, ...binding,

@@ -30,3 +30,11 @@ it.each([
 ])('rejects an unattributed mixed question citation: $speaker/$id', turn => {
   expect(() => validateHistorySummaries(summary('historyOfPresentIllness', patient.id, mixedReply), [turn], [], [])).toThrow()
 })
+
+it.each(['physicalExamination', 'assessment', 'disposition', 'followUp'] as const)(
+  'records %s only from saved explicit doctor sources', field => {
+    const doctor = { id: 'doctor-supplement', speaker: 'doctor', kind: 'doctor' as const, messageText: '查体右下腹压痛，考虑阑尾炎，安排腹部超声，明日复诊。' }
+    expect(() => validateHistorySummaries(summary(field, doctor.id, doctor.messageText), [doctor], [], [])).not.toThrow()
+    expect(() => validateHistorySummaries(summary(field, patient.id, mixedReply), [patient], [], [])).toThrow()
+  },
+)

@@ -6,12 +6,13 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import { agentExecutionProofPayloadSchema, agentToolCatalog, isDoctorReadOperation } from '@clinmesh/contracts/agent'
 import { z } from 'zod'
-import { AgentExecutionProofIssuer, parseAgentExecutionProof, parseDoctorAgentTaskPermit } from './execution-proof.ts'
+import { AgentExecutionProofIssuer, parseAgentExecutionProof, parseDoctorAgentTaskPermit, signDoctorRecordingSourceProof } from './execution-proof.ts'
 import { isDoctorDelegation } from './doctor-delegation.ts'
 
 export const CLINMESH_AGENT_PROOF_PATH = '/clinmesh-agent-proof'
 export const CLINMESH_AGENT_HANDOFF_PATH = '/clinmesh-agent-handoff'
 export const CLINMESH_DOCTOR_TASK_PATH = '/clinmesh-doctor-task'
+export const CLINMESH_DOCTOR_SOURCE_PATH = '/clinmesh-doctor-source'
 const MAX_PROOF_REQUEST_BYTES = 4096
 const MAX_HANDOFF_REQUEST_BYTES = 16_384
 const UNCONFIRMED_EXECUTION = 'CLINMESH_EXECUTION_UNCONFIRMED:'
@@ -80,6 +81,8 @@ export function installAgentProofBridge(ctx: Context, secret: string,
   const doctorTasks = new Map<string, { permit: ReturnType<typeof parseDoctorAgentTaskPermit>; timer: ReturnType<typeof setTimeout> }>()
   const usedDelegations = new Map<string, number>()
   const endedInputs = new Map<string, number>()
+  const recordingInputs = new Map<string, { scopeKey: string; pageRevision: string; inputHash: string;
+    messageId: string; recordedAt: string; expiresAt: number; unavailable: boolean }>()
   const changed = new Set<() => void>()
   const lifetime = new AbortController()
   const timeoutMs = options.handoffTimeoutMs ?? 30_000
@@ -225,6 +228,15 @@ export function installAgentProofBridge(ctx: Context, secret: string,
       messageId: String(message.id), rpcId: source.data.rpcId, acceptedAt: new Date().toISOString(),
     }, caseSelected: ctx.tools.get('clinmesh_select_doctor_section', agent) !== undefined,
       ...(content === undefined || content.length === 0 || content.length > 2000 ? {} : { text: content }) })
+    for (const [key, input] of recordingInputs) if (input.expiresAt <= Date.now()) recordingInputs.delete(key)
+    if (content !== undefined && content.trim() !== '' && content.length <= 2000 && recordingInputs.size < 256) {
+      const key = `${agent.session.id}\u0000${source.data.rpcId}`
+      const previous = recordingInputs.get(key)
+      if (previous !== undefined) previous.unavailable = true
+      else recordingInputs.set(key, { ...binding, inputHash: createHash('sha256').update(content).digest('hex'),
+        messageId: String(message.id), recordedAt: new Date().toISOString(), expiresAt: Date.now() + 60_000, unavailable: false })
+      notify()
+    }
   })
   ctx.on('agent/inbox/claimed', ({ agent, message, turn }) => {
     const key = `${agent.session.id}\u0000${message.id}`
@@ -250,6 +262,10 @@ export function installAgentProofBridge(ctx: Context, secret: string,
     if (queued !== undefined) endInput(String(agent.session.id), queued.task.rpcId)
     queuedTasks.delete(key)
     sidebandTasks.delete(`${agent.session.id}\u0000${message.id}`)
+    const source = humanSourceSchema.safeParse(message.source)
+    const input = source.success ? recordingInputs.get(`${agent.session.id}\u0000${source.data.rpcId}`) : undefined
+    if (input !== undefined) input.unavailable = true
+    notify()
   })
   ctx.on('session/event', (session, event) => {
     const sessionId = String(session.id)
@@ -259,6 +275,10 @@ export function installAgentProofBridge(ctx: Context, secret: string,
     }
     if (event.type === 'turn/end') {
       const task = activeTasks.get(sessionId)
+      if (task !== undefined && event.data.reason?.kind === 'aborted') {
+        const input = recordingInputs.get(`${sessionId}\u0000${task.rpcId}`)
+        if (input !== undefined) input.unavailable = true
+      }
       if (task !== undefined) endInput(sessionId, task.rpcId)
       activeTasks.delete(sessionId)
       turnCalls.delete(sessionId)
@@ -295,6 +315,8 @@ export function installAgentProofBridge(ctx: Context, secret: string,
   })
   ctx.on('agent/disposed', ({ agent }) => {
     const prefix = `${agent.session.id}\u0000`
+    for (const [key, input] of recordingInputs) if (key.startsWith(prefix)) input.unavailable = true
+    notify()
     activeTasks.delete(String(agent.session.id))
     turnCalls.delete(String(agent.session.id))
     for (const key of queuedTasks.keys()) if (key.startsWith(prefix)) queuedTasks.delete(key)
@@ -451,6 +473,48 @@ export function installAgentProofBridge(ctx: Context, secret: string,
     },
   }), 'clinmesh-dsh-web: directly submitted doctor tasks')
 
+  ctx.effect(() => ctx.webServer.register({ kind: 'exact', path: CLINMESH_DOCTOR_SOURCE_PATH,
+    handler: async (request, response) => {
+      const closed = new AbortController()
+      const onClose = (): void => { if (!response.writableEnded) closed.abort(new Error('DOCTOR_SOURCE_CANCELLED')) }
+      response.on('close', onClose)
+      let release = () => {}
+      try {
+        if (!isTrustedBrowserRequest(request)) { writeError(response, 403, 'REQUEST_NOT_TRUSTED', 'Doctor sources require the DSH Web origin'); return }
+        if (request.method !== 'POST') { response.setHeader('allow', 'POST'); writeError(response, 405, 'METHOD_NOT_ALLOWED', 'Doctor sources require POST'); return }
+        const body = z.object({ permit: z.string().min(32).max(8192) }).strict().parse(await readJson(request, 16_384))
+        const permit = parseDoctorAgentTaskPermit(body.permit, { secret })
+        const key = `${permit.dshSessionId}\u0000${permit.rpcId}`
+        await new Promise<void>((resolve, reject) => {
+          const signal = AbortSignal.any([closed.signal, lifetime.signal])
+          const timer = setTimeout(() => fail(new Error('Doctor source unavailable')), Math.min(timeoutMs, Date.parse(permit.expiresAt) - Date.now()))
+          const check = (): void => {
+            if (signal.aborted) { fail(signal.reason); return }
+            const input = recordingInputs.get(key)
+            if (input === undefined) return
+            if (input.unavailable || input.expiresAt <= Date.now() || input.inputHash !== permit.inputHash
+              || input.scopeKey !== permit.scopeKey || input.pageRevision !== permit.pageRevision) { fail(new Error('Doctor source mismatch')); return }
+            release(); resolve()
+          }
+          const fail = (error: unknown): void => { release(); reject(error) }
+          release = () => { clearTimeout(timer); changed.delete(check); signal.removeEventListener('abort', check) }
+          changed.add(check)
+          signal.addEventListener('abort', check, { once: true })
+          check()
+        })
+        const input = recordingInputs.get(key)!
+        if (input.unavailable || Date.parse(permit.expiresAt) <= Date.now()) throw new Error('Doctor source ended')
+        input.unavailable = true
+        const { purpose: _purpose, version: _version, ...binding } = permit
+        const sourceProof = signDoctorRecordingSourceProof({ ...binding, messageId: input.messageId,
+          recordedAt: input.recordedAt, purpose: 'clinmesh-doctor-recording-source', version: 1 }, secret)
+        writeJson(response, 200, { data: { sourceProof } })
+      } catch {
+        if (!response.destroyed) writeError(response, 409, 'DOCTOR_SOURCE_INVALID', 'The doctor source cannot be verified')
+      } finally { release(); response.off('close', onClose) }
+    },
+  }), 'clinmesh-dsh-web: native doctor recording source')
+
   ctx.effect(
     () => ctx.webServer.register({
       handler: async (request, response) => {
@@ -562,6 +626,7 @@ export function installAgentProofBridge(ctx: Context, secret: string,
     doctorTasks.clear()
     usedDelegations.clear()
     endedInputs.clear()
+    recordingInputs.clear()
   }, 'clinmesh-dsh-web: release Tool execution proofs')
 }
 
