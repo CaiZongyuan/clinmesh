@@ -12,8 +12,10 @@ function projectCoding({ id, system, version, code, display }: ReferenceConceptS
   return { id, system, version, code, display }
 }
 
-export function projectRecommendationCatalogs({ laboratory, ...catalogs }: DoctorRecommendationCatalogs) {
-  return { ...catalogs, ...(laboratory === undefined ? {} : { laboratory: { ...laboratory, items: laboratory.items.map(item => ({
+export function projectRecommendationCatalogs({ diagnoses, laboratory, ...catalogs }: DoctorRecommendationCatalogs) {
+  return { ...catalogs, ...(diagnoses === undefined ? {} : { diagnoses: {
+    ...diagnoses, reference: diagnoses.reference.map(({ sourceLocator: _sourceLocator, ...clinical }) => clinical),
+  } }), ...(laboratory === undefined ? {} : { laboratory: { ...laboratory, items: laboratory.items.map(item => ({
     id: item.id, localCode: item.localCode, nameZh: item.nameZh, nameEn: item.nameEn, version: item.version,
     serviceKind: item.serviceKind, doctorOrderable: item.doctorOrderable,
     allowedIndicationCodes: item.allowedIndicationCodes, componentServiceIds: item.componentServiceIds,
