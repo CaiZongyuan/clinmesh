@@ -3004,6 +3004,15 @@ export class WorkflowService {
     })
   }
 
+  doctorCaseRecordingRevision(context: ActorContext, caseId: string): string {
+    this.#assertRole(context, ['outpatient-doctor'])
+    const found = z.object({ case_id: z.string() }).optional().parse(this.#database.driver.prepare(`
+      SELECT case_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, caseId))
+    if (found === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case was not found')
+    return this.consultationRecording.revision(context, caseId)
+  }
+
   doctorCaseDetail(context: ActorContext, caseId: string) {
     const detail = this.#doctorCaseSnapshot(context, caseId)
     const responsibility = this.#database.driver.prepare(`SELECT 1 FROM outpatient_case_responsibility WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND practitioner_role_id = ?`).get(context.workspaceId, context.epoch, caseId, context.practitionerRoleId)

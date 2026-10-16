@@ -357,5 +357,10 @@
 - 原生实模验收的 `verificationEnvironment` 会净化子进程环境；配置了 `HTTPS_PROXY` 仍须显式传递 `NODE_USE_ENV_PROXY=1`。排查全阶段模型超时时先对同一 API 做无凭据连通性探测，区分隔离 Node 没有启用代理与输入规模、推理档位问题；本机桥接保留 `NO_PROXY` 的 loopback 排除项。操作入口由[真实模型验收](../deployment.md#问诊自动记录原生验收)拥有。
 - Windows 隔离文档校验 checkout 使用 `core.autocrlf=false`；Agent Note 格式检查按 LF 解析，CRLF 会把有效头部误报为格式错误。没有创建符号链接的权限时，仅在隔离校验目录将已核对的文件链接物化为目标内容（可用 hard link），目录依赖用 junction；不改原工作区的链接占位或共享 Git 配置。
 
+- 真实模型性能验收不能直接复用 `apps/server/tests/browser-server.ts` 的 `startBrowserServer`：该 fixture 会包装语义核对替身。需要显式装配真实 Provider、真实 Hono listener 与临时 SQLite，并从真实页面读取持久化结果；确认所有模型阶段均经过真实 Provider，再报告性能。最小探测也须先通过实际桥接请求 schema，使用允许的 schemaName；请求校验失败同样可能返回安全的 `MODEL_UNAVAILABLE`，不能据此判断 Provider 不可用。
+
+- 多客户端长轮询压测使用每客户端独立的 Playwright BrowserContext。多个页签共用会话会争用 Chromium 每源的 HTTP/1.1 连接池，让长轮询挤占正常 Query 连接；这不能代表不同浏览器客户端的服务器负载。观测循环用来源索引查找样本，避免随来源增长反复线性扫描全部样本。报告须记录客户端隔离方式、实际注入耗时和迟到情况，并把提交到页面可见的等待与模型耗时分开。
+
+- 并发队列的定时器只启动空闲槽位，不要每个 tick 都创建等待全部通道的排空调用。慢通道会积累大量等待者，结束时集中唤醒并重复调度，短测可能正常、持续负载才出现峰值；使用假时钟和受控慢通道，断言释放后新增调度调用仍有界。手动排空可复用槽位内的在途任务，但每次调用仍须启动空闲槽位；全局合并排空调用会让新来源等待无关的慢通道。
 - 真实模型排障先通过当前宿主 resolve 核对本次 Provider、模型和实际端点，历史绑定或另一条路由的结果不能代表当前配置。OpenAI 兼容网关的 baseURL 使用其实际 API 根路径（常见为 /v1）；HTTP 200 可能是网页，静态模型目录与 SSE 保活也不能证明生成成功。用同一凭据和最小合成请求对照代理、直连及真实模型桥，分别记录 401、429、有效数据帧和正常终止，不用扩大超时掩盖配置错误或上游限流。
 - 实模返回 `AI_RESPONSE_INVALID` 时先保存安全的形状、未知编号、重复编号和完整读取标志计数，区分 JSON 形状失败与来源成员校验失败；不记录模型正文、凭据或完整医疗内容，不通过放宽引用校验让失败变为成功。记录级选择的运行合同由[对应决策](../../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)拥有。

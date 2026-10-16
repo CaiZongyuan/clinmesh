@@ -11,6 +11,42 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { startServer } from '../src/server.ts'
 
 describe('Node.js runtime', () => {
+  it('keeps idle lanes moving without accumulating timer waiters behind a slow lane', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-runtime-dispatch-timer-'))
+    vi.useFakeTimers()
+    let release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://127.0.0.1', authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: `Test-${randomUUID()}-Aa1!`, migrationMode: 'apply', trustedOrigins: ['http://127.0.0.1'],
+      autoDispatchIntervalMs: 10,
+    })
+    let checks = 0
+    const dispatch = vi.spyOn(runtime.dispatcher, 'dispatchOnce').mockImplementation(async filter => {
+      if (filter?.kinds?.includes('consultation.verify-history') && checks++ < 4) {
+        await held
+        return { attempt: 1, correlationId: 'synthetic-correlation', dedupKey: randomUUID(), epoch: 'synthetic-epoch', eventId: randomUUID(),
+          kind: 'consultation.verify-history', payload: {}, scenarioRunId: 'synthetic-run', workspaceId: 'synthetic-workspace',
+          status: 'completed' }
+      }
+      return undefined
+    })
+    try {
+      await vi.advanceTimersByTimeAsync(500)
+      expect(dispatch.mock.calls.filter(([filter]) => filter?.kinds?.includes('consultation.record-history')).length).toBeGreaterThan(10)
+      const before = dispatch.mock.calls.length
+      release()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(dispatch.mock.calls.length - before).toBeLessThanOrEqual(4)
+    } finally {
+      release()
+      await runtime.close()
+      vi.useRealTimers()
+      await rm(directory, { recursive: true })
+    }
+  })
+
   it('serves the Hono application over a real HTTP listener', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-node-runtime-'))
     const webRoot = join(directory, 'web')
@@ -75,10 +111,11 @@ describe('Node.js runtime', () => {
       trustedOrigins: ['http://127.0.0.1'],
     })
     let releaseDispatch: (() => void) | undefined
+    const held = new Promise<void>(release => { releaseDispatch = release })
     const dispatchEntered = new Promise<void>(resolve => {
       vi.spyOn(runtime.dispatcher, 'dispatchOnce').mockImplementation(async () => {
         resolve()
-        await new Promise<void>(release => { releaseDispatch = release })
+        await held
         return undefined
       })
     })

@@ -533,7 +533,8 @@ it('reads every oversized clinical catalog batch with selected original history 
   expect((await fixture.read('laboratory')).status).toBe('ready')
   expect(requests.filter(name => name === 'doctor_recommendation_catalog_selection')).toHaveLength(2 * calls)
   expect(await fixture.readCase()).toEqual(before)
-})
+  // 596 条历史、100 项临床目录及长病历反复走完整读取、失效和重建，需覆盖较慢的 CI runner。
+}, 30_000)
 
 it.each(['incomplete', 'foreign-id', 'duplicate-id', 'cross-batch-id', 'none-supported'])(
   'does not generate from an incomplete or invalid clinical catalog selection (%s)', async failure => {
@@ -628,6 +629,7 @@ it.each(['history', 'catalog'])(
     expect(await fixture.read('laboratory')).toMatchObject({ generation: 2, status: 'ready', items: [{ catalogItemId: 'clinical-lab-99' }] })
     expect(requests.filter(name => name === 'doctor_recommendations')).toHaveLength(1)
   },
+  30_000,
 )
 
 it('uses installed imaging metadata and invalidates a suggestion when its actual offering disappears', async () => {

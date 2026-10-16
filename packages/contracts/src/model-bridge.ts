@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export const modelBridgePath = '/clinmesh-model-bridge'
+export const modelBridgeFirstTextHeader = 'x-clinmesh-model-first-text-ms'
 export const dshDefaultModel = 'dsh:default'
 export const modelRouteSchema = z.object({
   provider: z.string().min(1).max(128),

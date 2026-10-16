@@ -6284,7 +6284,7 @@ describe('role workspaces', () => {
     expect(screen.queryByText('流感伴其他呼吸道表现')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '检验检查' }))
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
-  })
+  }, 10_000)
 
   it('keeps each patient clinical record while aligning the consultation workbench', async () => {
     const questionText = '什么时候开始不舒服？'

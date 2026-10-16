@@ -1064,6 +1064,20 @@ export const consultationRecordingSchema = z.object({
   processedCount: z.number().int().nonnegative().default(0),
   remainingCount: z.number().int().nonnegative().default(0),
   failedCount: z.number().int().nonnegative().default(0),
+  sourceResults: z.array(z.object({
+    sourceId: z.string().min(1),
+    result: z.enum(['recorded', 'no-new-facts', 'needs-verification', 'failed']),
+  }).strict()).optional(),
+  verification: z.object({
+    pendingCount: z.number().int().nonnegative(),
+    flaggedCount: z.number().int().nonnegative(),
+    failedCount: z.number().int().nonnegative(),
+    issues: z.array(z.object({
+      additionId: z.string().min(1), field: consultationHistoryFieldSchema,
+      text: z.string(), sourceIds: z.array(z.string().min(1)),
+      reason: z.enum(['verification-rejected', 'verification-unavailable']),
+    }).strict()),
+  }).strict().optional(),
   status: z.enum(['idle', 'processing', 'updated', 'paused', 'backfill', 'failed']),
   failures: z.array(z.object({
     sourceTurnId: z.string().min(1),

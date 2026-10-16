@@ -1,5 +1,6 @@
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Button } from '@clinmesh/ui/components/button'
+import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuTrigger } from '@clinmesh/ui/components/dropdown-menu'
 import { ChevronDownIcon, HistoryIcon, PauseIcon, PlayIcon, RotateCcwIcon } from 'lucide-react'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
@@ -9,6 +10,31 @@ export interface ConsultationRecordingAction {
   error: Error | null
   pending: boolean
   onSubmit: (action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry') => void
+}
+
+export function ConsultationVerificationStatus({ recording, messages }: {
+  recording: DoctorCaseDetail['consultationRecording']; messages: ReturnType<typeof getWorkspaceMessages>
+}): React.JSX.Element | null {
+  const verification = recording?.verification
+  if (verification === undefined || verification.pendingCount + verification.flaggedCount + verification.failedCount === 0) return null
+  return <Alert role="note" data-recording-verification>
+    <AlertTitle>{verification.flaggedCount > 0 ? messages.consultationRecordingFlagged
+      : verification.failedCount > 0 ? messages.consultationRecordingVerificationFailed : messages.consultationRecordingUnverified}</AlertTitle>
+    <AlertDescription>
+      {verification.pendingCount === 0 ? null : <p>{messages.consultationRecordingUnverified} · {verification.pendingCount}</p>}
+      {verification.failedCount === 0 ? null : <p>{messages.consultationRecordingVerificationFailed} · {verification.failedCount}</p>}
+      {verification.issues.length === 0 ? null : <ul className="flex flex-col gap-2">
+        {verification.issues.map(issue => {
+          const addition = recording?.additions.find(addition => addition.id === issue.additionId)
+          const quotes = [...new Set(addition?.facts?.flatMap(fact => fact.sources.map(source => source.quote)) ?? [])]
+          return <li key={issue.additionId}>
+            <p>{messages[issue.field]}：{issue.text}</p>
+            {quotes.length === 0 ? null : <p>{messages.consultationRecordingEvidence}：{quotes.join('；')}</p>}
+          </li>
+        })}
+      </ul>}
+    </AlertDescription>
+  </Alert>
 }
 
 export function ConsultationRecordingControls({ recording, action, disabled, messages }: {
@@ -74,7 +100,7 @@ export function ConsultationRecordingControls({ recording, action, disabled, mes
         disabled={disabled || action.pending} onClick={() => action.onSubmit(intent)}>
         {intent === 'backfill' ? <HistoryIcon /> : intent === 'resume' ? <PlayIcon /> : <PauseIcon />}
       </Button>
-      {recording.status !== 'failed' || recording.requiresContextBinding === true ? null : <Button size="icon-sm" variant="outline" type="button"
+      {(recording.status !== 'failed' && (recording.verification?.failedCount ?? 0) === 0) || recording.paused || recording.requiresContextBinding === true ? null : <Button size="icon-sm" variant="outline" type="button"
         aria-label={messages.consultationRecordingRetry} title={messages.consultationRecordingRetry}
         disabled={disabled || action.pending} onClick={() => action.onSubmit('retry')}><RotateCcwIcon /></Button>}
     </>}
