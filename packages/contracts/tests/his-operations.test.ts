@@ -612,7 +612,6 @@ describe('HIS operation catalog', () => {
       [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
       [clinicalDocumentOperationIds.cancelSign]: `clinical-${'document'}.cancel-sign`,
       'encounter.consultation.ask': 'consultation.ask-question',
-      'encounter.consultation-history.review': 'consultation.history.review',
       'encounter.consultation-recording.control': 'consultation.recording.control',
       'encounter.consultation.reply.retry': 'consultation.reply.retry',
       'encounter.diagnosis.confirm': 'encounter.confirm-diagnosis',
@@ -649,7 +648,7 @@ describe('HIS operation catalog', () => {
     expect(counts).toEqual({
       'clinmesh-administrator': 3,
       'clinmesh-billing': 3,
-      'clinmesh-doctor': 56,
+      'clinmesh-doctor': 52,
       'clinmesh-fhir': 5,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,

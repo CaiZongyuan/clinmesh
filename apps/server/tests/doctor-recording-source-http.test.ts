@@ -283,7 +283,7 @@ it('rejects a source while signing is prepared and after an immutable document i
   const prepared = await preview.json() as { data: { previewId: string; commitToken: string } }
   const signed = await f.runtime.app.request(`/api/his/v1/encounters/${f.encounterId}/clinical-document/actions/sign`, {
     method: 'POST', headers: headers(f.doctor), body: JSON.stringify({ expectedVersions, input: {
-      commitToken: prepared.data.commitToken, previewId: prepared.data.previewId, consultationReviewed: true,
+      commitToken: prepared.data.commitToken, previewId: prepared.data.previewId,
     } }),
   })
   expect(signed.status).toBe(200)

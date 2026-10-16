@@ -33,15 +33,11 @@ import {
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   type ClinicalDocumentContent,
-  clinicalDocumentAgentFactSchema,
-  clinicalDocumentQualityControlStateSchema,
-  doctorCaseDetailSchema,
   clinicalDocumentDraftContentSchema,
   clinicalDocumentContentSchema,
   clinicalDocumentDraftResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   cancelClinicalDocumentSignResponseSchema,
-  consultationSignReviewSchema,
   clinicalDocumentSignResponseSchema,
   clinicalPresentationSchema,
   clinicalDocumentRevisionResponseSchema,
@@ -106,7 +102,6 @@ import { WorkflowError } from './workflow-error.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { PathologyRequestService } from './pathology-request-service.ts'
 import { ConsultationRecordingService } from './consultation-recording-service.ts'
-import { ClinicalDocumentQualityControl } from './clinical-document-quality.ts'
 import {
   ClinicalRequestKernel,
   laboratoryRequestPolicy,
@@ -793,7 +788,9 @@ const clinicalDocumentSections = [
   { code: 'chief-complaint', field: 'chiefComplaint', title: '主诉' },
   { code: 'history-of-present-illness', field: 'historyOfPresentIllness', title: '现病史' },
   { code: 'prior-medical-history', field: 'priorMedicalHistory', title: '既往史' },
-  { code: 'physical-examination', field: 'physicalExamination', title: '查体' },
+  { code: 'family-history', field: 'familyHistory', title: '家族史' },
+  { code: 'allergy-history', field: 'allergyHistory', title: '过敏史' },
+  { code: 'physical-examination', field: 'physicalExamination', title: '体格检查' },
   { code: 'auxiliary-examination', field: 'auxiliaryExamination', title: '辅助检查' },
   { code: 'assessment', field: 'assessment', title: '评估' },
   { code: 'disposition', field: 'disposition', title: '处置' },
@@ -1161,7 +1158,6 @@ export class WorkflowService {
   /** 病理会诊申请适配器；与检验、放射共用申请内核。 */
   readonly pathology: PathologyRequestService
   readonly consultationRecording: ConsultationRecordingService
-  readonly qualityControl: ClinicalDocumentQualityControl
 
   constructor(
     database: ClinMeshDatabase,
@@ -1169,7 +1165,6 @@ export class WorkflowService {
     commands: CommandExecutor,
     options: {
       consultationRecordingEnabled?: boolean
-      qualityModelAvailable?: boolean
       consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       investigation?: InvestigationCapabilityResolver
       now?: () => Date
@@ -1185,35 +1180,12 @@ export class WorkflowService {
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
-    this.qualityControl = new ClinicalDocumentQualityControl({
-      database, commands, modelAvailable: options.qualityModelAvailable === true,
-      contextStatus: options.consultationRecordingContextStatus ?? (() => 'active'),
-      readCase: (context, caseId) => {
-        this.#assertCaseResponsibility(context, caseId)
-        return doctorCaseDetailSchema.parse(this.#doctorCaseSnapshot(context, caseId))
-      },
-      automaticFacts: (context, caseId) => this.consultationRecording.qualityFacts(context, caseId),
-      history: (context, caseId) => {
-        const evidence = []
-        for (const source of ['visible-source', 'local-completed'] as const) {
-          for (let page = 1; ; page += 1) {
-            const history = this.doctorCaseHistory(context, caseId, { source, page, pageSize: 20 })
-            evidence.push(...history.items.map(item => ({ id: `history:${source}:${item.entryId}`, kind: 'clinical' as const,
-              label: item.title, text: JSON.stringify(this.doctorCaseHistoryDetail(context, caseId, { source, entryId: item.entryId })), recordedAt: item.clinicalDate })))
-            if (page * history.pageSize >= history.total) break
-          }
-        }
-        return evidence
-      },
-    })
     this.consultationRecording = new ConsultationRecordingService({
       database, commands, enabled: options.consultationRecordingEnabled === true,
       now: this.#now,
       virtualTime: context => this.#virtualTime(context),
       contextStatus: options.consultationRecordingContextStatus ?? (() => 'inactive'),
       prepareReports: (context, transaction, caseId) => this.#prepareRecordingReports(transaction, context, caseId),
-      qualityChanged: (context, transaction, caseId) => this.qualityControl.enqueue(context, transaction, caseId),
-      trackQualityDraft: (context, caseId, before, after) => this.qualityControl.trackDraft(context, caseId, before, after, false),
       assertAccess: (context, encounterId) => {
         this.#assertRole(context, ['outpatient-doctor'])
         const outpatientCase = this.#caseByEncounter(context, encounterId)
@@ -2989,12 +2961,6 @@ export class WorkflowService {
   }
 
   doctorCaseDetail(context: ActorContext, caseId: string) {
-    const detail = this.#doctorCaseSnapshot(context, caseId)
-    const responsibility = this.#database.driver.prepare(`SELECT 1 FROM outpatient_case_responsibility WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND practitioner_role_id = ?`).get(context.workspaceId, context.epoch, caseId, context.practitionerRoleId)
-    return responsibility === undefined || detail.encounter.status !== 'in-progress' ? detail : { ...detail, qualityControl: this.qualityControl.read(context, caseId) }
-  }
-
-  #doctorCaseSnapshot(context: ActorContext, caseId: string) {
     this.#assertRole(context, ['outpatient-doctor'])
     const row = this.#database.driver.prepare(`
       SELECT outpatient_case.case_id, outpatient_case.status, outpatient_case.diagnostic_report_id,
@@ -6199,8 +6165,6 @@ export class WorkflowService {
     expectedDraftVersion: number
     expectedVersions: Record<string, string>
     idempotencyKey: string
-    agentGenerated?: boolean
-    agentFacts?: z.infer<typeof clinicalDocumentAgentFactSchema>[]
   }): CommandResponse<{ caseId: string; draftVersion: number }> {
     return this.#commands.execute({
       context: input.context,
@@ -6211,8 +6175,6 @@ export class WorkflowService {
         document: input.document,
         encounterId: input.encounterId,
         expectedDraftVersion: input.expectedDraftVersion,
-        ...(input.agentGenerated === undefined ? {} : { agentGenerated: input.agentGenerated }),
-        ...(input.agentFacts === undefined ? {} : { agentFacts: input.agentFacts }),
       },
       operation: 'clinical-document.save-draft',
     }, transaction => {
@@ -6242,11 +6204,6 @@ export class WorkflowService {
       const draftVersion = currentVersion + 1
       const now = this.#virtualTime(input.context)
       this.consultationRecording.trackDraftSave(input.context, outpatientCase.case_id, input.document)
-      const before = this.#doctorCaseSnapshot(input.context, outpatientCase.case_id).clinicalDocument?.draft
-      const beforeContent = clinicalDocumentDraftContentSchema.parse(Object.fromEntries(Object.keys(clinicalDocumentDraftContentSchema.shape)
-        .map(field => [field, before?.[field as keyof typeof clinicalDocumentDraftContentSchema.shape] ?? (['priorMedicalHistory', 'auxiliaryExamination'].includes(field) ? undefined : '')]).filter(([, value]) => value !== undefined)))
-      this.qualityControl.trackDraft(input.context, outpatientCase.case_id, beforeContent, input.document,
-        input.agentGenerated === true || input.context.agentGrantId !== undefined, input.agentFacts)
       this.#database.driver.prepare(`
         INSERT INTO clinical_document_draft (
           workspace_id, epoch, case_id, version, content_json, updated_by, updated_at
@@ -6265,7 +6222,6 @@ export class WorkflowService {
         input.context.actorId,
         now,
       )
-      this.qualityControl.enqueue(input.context, transaction, outpatientCase.case_id)
       return {
         data: { caseId: outpatientCase.case_id, draftVersion },
         effects: [{
@@ -6282,25 +6238,6 @@ export class WorkflowService {
       || this.consultationRecording.signingProgress(context, caseId).hasRegisteredSources) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'Use structured clinical document signing to review the Consultation')
     }
-  }
-
-  #consultationSignReview(context: ActorContext, caseId: string) {
-    const consultation = this.#consultationState(context, caseId)
-    const recording = this.consultationRecording.read(context, caseId)
-    const progress = this.consultationRecording.signingProgress(context, caseId)
-    const { sourceCount } = progress
-    if (consultation === undefined && sourceCount === undefined) return null
-    return consultationSignReviewSchema.parse({
-      consultationVersion: consultation?.version ?? 0,
-      ...(sourceCount === undefined ? {} : { sourceCount }),
-      remainingCount: progress.remainingCount,
-      failedCount: recording?.failedCount ?? 0,
-      paused: recording?.paused ?? false,
-      conflictCount: recording?.additions.filter(addition => addition.status === 'pending'
-        || (addition.status === 'applied' && addition.reviewStatus === 'undo-pending')).length ?? 0,
-      unreviewedCount: recording?.additions.filter(addition => addition.status === 'applied'
-        && addition.reviewStatus === 'unreviewed').length ?? 0,
-    })
   }
 
   cancelStructuredClinicalDocumentSign(input: {
@@ -6334,6 +6271,13 @@ export class WorkflowService {
     })
   }
 
+  #consultationSignSnapshot(context: ActorContext, caseId: string) {
+    return {
+      consultationVersion: this.#consultationState(context, caseId)?.version ?? 0,
+      sourceCount: this.consultationRecording.signingProgress(context, caseId).sourceCount ?? 0,
+    }
+  }
+
   previewStructuredClinicalDocumentSign(input: {
     context: ActorContext
     encounterId: string
@@ -6341,8 +6285,6 @@ export class WorkflowService {
     expectedVersions: Record<string, string>
     idempotencyKey: string
   }): CommandResponse<{
-    consultationReview: z.infer<typeof consultationSignReviewSchema> | null
-    qualityControl?: z.infer<typeof clinicalDocumentQualityControlStateSchema> | undefined
     commitToken: string
     document: { content: ClinicalDocumentContent; version: number }
     expiresAt: string
@@ -6350,7 +6292,14 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
-      dataSchema: clinicalDocumentSignPreviewResponseSchema.shape.data,
+      dataSchema: clinicalDocumentSignPreviewResponseSchema.shape.data.extend({
+        consultationReview: z.object({
+          consultationVersion: z.number().int().nonnegative(), remainingCount: z.number().int().nonnegative(),
+          sourceCount: z.number().int().nonnegative().optional(),
+          failedCount: z.number().int().nonnegative(), paused: z.boolean(),
+          conflictCount: z.number().int().nonnegative(), unreviewedCount: z.number().int().nonnegative(),
+        }).strict().nullable().optional(),
+      }).transform(({ consultationReview: _consultationReview, ...data }) => data),
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
@@ -6381,7 +6330,6 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
       }
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
-      const consultationReview = this.#consultationSignReview(input.context, outpatientCase.case_id)
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(`clinical-document-sign:${previewId}`)}`
       const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
@@ -6408,12 +6356,10 @@ export class WorkflowService {
         expiresAt,
         encounterVersion,
         this.#actorContextHash(input.context),
-        JSON.stringify(consultationReview),
+        JSON.stringify(this.#consultationSignSnapshot(input.context, outpatientCase.case_id)),
       )
       return {
         data: {
-          consultationReview,
-          qualityControl: this.qualityControl.read(input.context, outpatientCase.case_id),
           commitToken,
           document: { content: document, version: draft.version },
           expiresAt,
@@ -6429,7 +6375,6 @@ export class WorkflowService {
   }
 
   signStructuredClinicalDocument(input: {
-    consultationReviewed?: boolean
     commitToken: string
     context: ActorContext
     encounterId: string
@@ -6450,7 +6395,6 @@ export class WorkflowService {
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
-        ...(input.consultationReviewed === undefined ? {} : { consultationReviewed: input.consultationReviewed }),
         commitToken: input.commitToken,
         encounterId: input.encounterId,
         previewId: input.previewId,
@@ -6511,18 +6455,15 @@ export class WorkflowService {
       }
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
       const previewDocument = clinicalDocumentContentSchema.parse(JSON.parse(preview.summary_json))
+      const preparedSnapshot = preview.consultation_review_json === null ? null : z.object({
+        consultationVersion: z.number().int().nonnegative(),
+        sourceCount: z.number().int().nonnegative().default(0),
+      }).parse(JSON.parse(preview.consultation_review_json))
+      if (JSON.stringify(preparedSnapshot) !== JSON.stringify(this.#consultationSignSnapshot(input.context, outpatientCase.case_id))) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Consultation or source snapshot changed; cancel preparation and create a fresh preview')
+      }
       if (JSON.stringify(previewDocument) !== JSON.stringify(document)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
-      }
-      const review = this.#consultationSignReview(input.context, outpatientCase.case_id)
-      const preparedReview = consultationSignReviewSchema.nullable().parse(
-        preview.consultation_review_json === null ? null : JSON.parse(preview.consultation_review_json))
-      if (JSON.stringify(review) !== JSON.stringify(preparedReview)) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'Consultation changed; cancel preparation and review a fresh preview')
-      }
-      if (review !== null && (review.remainingCount > 0 || review.conflictCount > 0 || review.unreviewedCount > 0)
-        && input.consultationReviewed !== true) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'Review unfinished answers and history conflicts before signing')
       }
       if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')

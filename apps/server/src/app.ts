@@ -43,7 +43,6 @@ import {
   reviseClinicalDocumentRequestSchema,
   retryLaboratoryResultGenerationRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
-  reviewConsultationHistoryRequestSchema,
   controlConsultationRecordingRequestSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
@@ -55,7 +54,6 @@ import { referenceDataItemIdSchema } from '@clinmesh/contracts/reference-data'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
-import { checkClinicalDocumentQualityRequestSchema, retainClinicalDocumentQualityIssueRequestSchema } from '@clinmesh/contracts/his'
 import { prepareImagingCasesRequestSchema } from '@clinmesh/contracts/imaging'
 import { preparePathologyCasesRequestSchema } from '@clinmesh/contracts/pathology'
 import {
@@ -1666,37 +1664,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) { return apiErrorResponse(context, error) }
     })
-    app.post('/api/his/v1/encounters/:encounterId/consultation-history/actions/review', async (context) => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        const body = reviewConsultationHistoryRequestSchema.parse(await context.req.json())
-        return context.json(workflow.consultationRecording.review({
-          ...body.input, context: await actor(context), encounterId: context.req.param('encounterId'),
-          expectedVersions: body.expectedVersions, idempotencyKey: idempotencyKey(context),
-        }))
-      } catch (error) { return apiErrorResponse(context, error) }
-    })
-    app.get('/api/his/v1/doctor/cases/:caseId/document-quality-control', async context => {
-      try {
-        const clientId = context.req.query('clientId')
-        if (clientId !== undefined) z.string().min(1).max(128).parse(clientId)
-        return context.json(workflow.qualityControl.read(await actor(context), context.req.param('caseId'), clientId))
-      } catch (error) { return apiErrorResponse(context, error) }
-    })
-    app.post('/api/his/v1/doctor/cases/:caseId/document-quality-control/actions/check', async context => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        return context.json(workflow.qualityControl.check(await actor(context), context.req.param('caseId'),
-          checkClinicalDocumentQualityRequestSchema.parse(await context.req.json()), idempotencyKey(context)))
-      } catch (error) { return apiErrorResponse(context, error) }
-    })
-    app.post('/api/his/v1/doctor/cases/:caseId/document-quality-control/actions/retain', async context => {
-      try {
-        identity.assertTrustedMutation(context.req.raw.headers)
-        return context.json(workflow.qualityControl.retain(await actor(context), context.req.param('caseId'),
-          retainClinicalDocumentQualityIssueRequestSchema.parse(await context.req.json()), idempotencyKey(context)))
-      } catch (error) { return apiErrorResponse(context, error) }
-    })
     app.put('/api/his/v1/encounters/:encounterId/clinical-document/draft', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -1704,8 +1671,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(workflow.saveClinicalDocumentDraft({
           context: await actor(context),
           document: body.input.document,
-          ...(body.input.agentGenerated === undefined ? {} : { agentGenerated: body.input.agentGenerated }),
-          ...(body.input.agentFacts === undefined ? {} : { agentFacts: body.input.agentFacts }),
           encounterId: context.req.param('encounterId'),
           expectedDraftVersion: body.input.expectedDraftVersion,
           expectedVersions: body.expectedVersions,
@@ -1746,7 +1711,6 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         identity.assertTrustedMutation(context.req.raw.headers)
         const body = signClinicalDocumentRequestSchema.parse(await context.req.json())
         return context.json(workflow.signStructuredClinicalDocument({
-          ...(body.input.consultationReviewed === undefined ? {} : { consultationReviewed: body.input.consultationReviewed }),
           commitToken: body.input.commitToken,
           context: await actor(context),
           encounterId: context.req.param('encounterId'),

@@ -7,7 +7,7 @@ import { expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { signIn } from './fixtures/consultation.ts'
 
-it('activates a new case without consultation and requires review before signing doctor-only recording', async () => {
+it('activates a new case without consultation and signs doctor-only recording without source acknowledgement', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-recording-control-'))
   const runtime = await createClinMeshRuntime({
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
@@ -106,15 +106,10 @@ it('activates a new case without consultation and requires review before signing
     })
     expect(preview.status).toBe(200)
     const prepared = clinicalDocumentSignPreviewResponseSchema.parse(await preview.json()).data
-    expect(prepared.consultationReview).toMatchObject({ consultationVersion: 0, unreviewedCount: 1 })
-    const denied = await runtime.app.request(`/api/his/v1/encounters/${registration.encounterId}/clinical-document/actions/sign`, {
-      method: 'POST', headers: headers(doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${registration.encounterId}`]: visit.encounterVersion },
-        input: { previewId: prepared.previewId, commitToken: prepared.commitToken } }),
-    })
-    expect(denied.status).toBe(409)
+    expect(prepared).not.toHaveProperty('consultationReview')
     const signed = await runtime.app.request(`/api/his/v1/encounters/${registration.encounterId}/clinical-document/actions/sign`, {
       method: 'POST', headers: headers(doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${registration.encounterId}`]: visit.encounterVersion },
-        input: { previewId: prepared.previewId, commitToken: prepared.commitToken, consultationReviewed: true } }),
+        input: { previewId: prepared.previewId, commitToken: prepared.commitToken } }),
     })
     expect(signed.status).toBe(200)
     expect(() => runtime.workflow.consultationRecording.recordDoctorSupplement(supplement)).toThrow('not editable')

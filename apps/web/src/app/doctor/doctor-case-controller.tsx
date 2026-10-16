@@ -4,8 +4,6 @@ import { mergeDocumentText } from '@clinmesh/core/document-text'
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
-  clinicalDocumentAgentFactSchema,
-  clinicalDocumentFieldSchema,
   diagnosisDraftEntrySchema,
   laboratoryRequestCatalogItemIdSchema,
   prescriptionDraftContentSchema,
@@ -83,7 +81,6 @@ import {
   reviseStructuredClinicalDocument,
   retryLaboratoryResultGeneration,
   saveClinicalDocumentDraft,
-  reviewConsultationHistory,
   controlConsultationRecording,
   saveDiagnosisDraft,
   saveFirstVisitDraft,
@@ -120,8 +117,6 @@ import {
   type ClinicalDocumentRevisionInput,
   type ClinicalDocumentSignPreview,
 } from './clinical-document-page.tsx'
-import { ConsultationSignReviewNotice, requiresConsultationReview } from './consultation-sign-review.tsx'
-import { DocumentQualitySignSummary } from './document-quality-control.tsx'
 import {
   ConsultationPage,
   type ConsultationPageAction,
@@ -142,6 +137,7 @@ import { PatientBanner } from './patient-summary.tsx'
 import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
 import { agentViewRevision, useRegisterAgentPage, useRegisterAgentForm } from '../agent-page-context.tsx'
 import { useAgentReview } from '../agent-review.tsx'
+import { useClinicalDocumentUpdates, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
 
 interface DoctorWorkspaceProps {
   locale: WorkspaceLocale
@@ -276,6 +272,7 @@ function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boo
 function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
   const vitals = detail.presentation?.vitalSigns
   const prefill: ClinicalDocumentContent = {
+    allergyHistory: '',
     assessment: '',
     auxiliaryExamination: detail.report === undefined
       ? emptyAuxiliaryExamination
@@ -283,6 +280,7 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
     chiefComplaint: detail.presentation?.chiefComplaint ?? '',
     disposition: '',
     followUp: '',
+    familyHistory: '',
     historyOfPresentIllness: detail.presentation?.summary ?? '',
     physicalExamination: vitals === undefined ? '' : `T ${vitals.temperatureC} °C，P ${vitals.pulseBpm} 次/分，R ${vitals.respirationBpm} 次/分，BP ${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg} mmHg，SpO₂ ${vitals.oxygenSaturationPct}%。`,
     priorMedicalHistory: detail.priorFacts.length === 0
@@ -293,11 +291,13 @@ function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocume
     ?? detail.clinicalDocument?.signed.at(-1)?.content
   if (persisted !== undefined) {
     const document: ClinicalDocumentContent = {
+      allergyHistory: persisted.allergyHistory,
       assessment: persisted.assessment,
       auxiliaryExamination: persisted.auxiliaryExamination,
       chiefComplaint: persisted.chiefComplaint,
       disposition: persisted.disposition,
       followUp: persisted.followUp,
+      familyHistory: persisted.familyHistory,
       historyOfPresentIllness: persisted.historyOfPresentIllness,
       physicalExamination: persisted.physicalExamination,
       priorMedicalHistory: persisted.priorMedicalHistory,
@@ -449,9 +449,9 @@ function DoctorCaseController({
     Record<string, ClinicalDocumentContent>
   >({})
   const clinicalDocumentBaselines = useRef<Record<string, {
-    appliedAdditionIds: Set<string>
     document: ClinicalDocumentContent
     persisted: ClinicalDocumentContent | undefined
+    recordedAdditionIds: ReadonlySet<string>
   }>>({})
   const [agentDraftHydrationRevisions, setAgentDraftHydrationRevisions] = useState<
     Record<string, DoctorAgentDraftHydrationRevisions>
@@ -659,30 +659,24 @@ function DoctorCaseController({
     const next = createWorkingClinicalDocument(currentDetail)
     const previous = clinicalDocumentBaselines.current[currentDetail.caseId]
     clinicalDocumentBaselines.current[currentDetail.caseId] = {
-      appliedAdditionIds: new Set(currentDetail.consultationRecording?.additions.filter(addition => addition.status === 'applied').map(addition => addition.id)),
       document: next,
       persisted: currentDetail.clinicalDocument?.draft ?? currentDetail.clinicalDocument?.signed.at(-1)?.content,
+      recordedAdditionIds: new Set(currentDetail.consultationRecording?.additions.map(addition => addition.id)),
     }
     setWorkingClinicalDocuments(current => {
       const working = current[currentDetail.caseId]
       const merged = { ...next }
       if (working !== undefined && previous !== undefined) {
         for (const field of Object.keys(next) as Array<keyof ClinicalDocumentContent>) {
+          const newlyRecorded = currentDetail.consultationRecording?.additions.some(addition => addition.status === 'applied'
+            && addition.ownership === 'automatic' && addition.field === field && !previous.recordedAdditionIds.has(addition.id))
           const firstAutomaticContent = currentDetail.consultationRecording?.hasSavedDraft === false
             && !previous.persisted?.[field]
             && currentDetail.consultationRecording.additions.some(addition => addition.status === 'applied' && addition.field === field)
           // 预填尚未持久化，首批自动内容来自空字段，应追加到已经改写的预填后。
           merged[field] = firstAutomaticContent && working[field] !== previous.document[field]
             ? [working[field], next[field]].filter(Boolean).join('\n')
-            : mergeDocumentText(previous.document[field] ?? '', working[field] ?? '', next[field] ?? '')
-          // 同一末尾的人工追加与自动追加都保留；已存在或改写的片段仍由文本合并保护。
-          for (const addition of currentDetail.consultationRecording?.additions ?? []) {
-            if (addition.field !== field || addition.status !== 'applied' || addition.ownership !== 'automatic'
-              || addition.relation !== 'addition' || previous.appliedAdditionIds.has(addition.id)
-              || !addition.currentText || !next[field]?.includes(addition.currentText)
-              || merged[field]?.includes(addition.currentText)) continue
-            merged[field] = [merged[field], addition.currentText].filter(Boolean).join('\n')
-          }
+            : mergeDocumentText(previous.document[field] ?? '', working[field] ?? '', next[field] ?? '', newlyRecorded ? '待核实补充：' : undefined)
         }
       }
       return { ...current, [currentDetail.caseId]: merged }
@@ -1064,7 +1058,8 @@ function DoctorCaseController({
     const current = detail.data
     const recording = current?.consultationRecording
     const requiresBinding = recording?.requiresContextBinding === true
-    if (current === undefined || current.encounter.status !== 'in-progress' || (current.clinicalDocument?.signed.length ?? 0) > 0
+    if (current === undefined || current.status === 'awaiting-doctor'
+      || current.encounter.status !== 'in-progress' || (current.clinicalDocument?.signed.length ?? 0) > 0
       || recording?.signingPreparation?.active === true
       || (!requiresBinding && ((current.consultation?.turns.length ?? 0) > 0
         || (recording !== undefined && (recording.version !== 0 || recording.status !== 'idle'))))) return
@@ -1073,16 +1068,6 @@ function DoctorCaseController({
     activatedRecordingCases.current.add(key)
     controlRecording.mutate({ caseId: current.caseId, action: 'activate' })
   }, [detail.data, scope[0], scope[1], controlRecording.mutate])
-  const reviewHistory = useMutation({
-    mutationFn: async ({ caseId, additionId, decision }: { caseId: string; additionId: string; decision: Parameters<typeof reviewConsultationHistory>[0]['decision'] }) => {
-      const current = detail.data
-      if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
-      return reviewConsultationHistory({ additionId, decision, encounterId: current.encounter.id,
-        encounterVersion: current.encounter.versionId, expectedDraftVersion: current.clinicalDocument?.draft?.version ?? 0 }, newIdempotencyKey())
-    },
-    onError: async (_error, variables) => refreshCaseById(variables.caseId),
-    onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
-  })
   const saveDocumentDraft = useMutation({
     mutationFn: ({ caseId, document }: { caseId: string; document: ClinicalDocumentContent }) => {
       const current = detail.data
@@ -1152,7 +1137,6 @@ function DoctorCaseController({
       const current = detail.data
       if (current?.caseId !== caseId) throw new Error(messages.consultationUnavailable)
       return signStructuredClinicalDocument({
-        consultationReviewed: preview.consultationReviewed === true,
         commitToken: preview.commitToken,
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
@@ -1380,6 +1364,8 @@ function DoctorCaseController({
   const currentClinicalDocument = detail.data === undefined
     ? undefined
     : workingClinicalDocuments[detail.data.caseId] ?? createWorkingClinicalDocument(detail.data)
+  const clinicalDocumentUpdates = useClinicalDocumentUpdates(detail.data?.caseId, currentClinicalDocument,
+    detail.data?.encounter.status === 'in-progress' && (detail.data.clinicalDocument?.signed.length ?? 0) === 0)
   const canCorrectReports = session.availableRoles.some(role => role.code === 'administrator')
   /** 放射提案经人工确认后提交对应命令，并刷新病例。 */
   const runImagingAction = async <Result,>(caseId: string, action: () => Promise<Result>): Promise<Result> => {
@@ -1761,18 +1747,10 @@ function DoctorCaseController({
           && detail.data.encounter.status === 'in-progress',
         parameters: {
           type: 'object' as const,
-          properties: { ...Object.fromEntries([
-            'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+          properties: Object.fromEntries([
+            'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
             'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
           ].map(key => [key, { type: 'string', maxLength: 4000 }])),
-            agentFacts: { type: 'array', maxItems: 64, items: { type: 'object', additionalProperties: false,
-              properties: { field: { type: 'string', enum: clinicalDocumentFieldSchema.options },
-                text: { type: 'string', minLength: 1, maxLength: 5000 },
-                sources: { type: 'array', maxItems: 12, items: { type: 'object', additionalProperties: false,
-                  properties: { sourceTurnId: { type: 'string', minLength: 1, maxLength: 128 },
-                    quote: { type: 'string', minLength: 2, maxLength: 2000 } }, required: ['sourceTurnId', 'quote'] } } },
-              required: ['field', 'text', 'sources'] } },
-          },
           required: [
             'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
             'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
@@ -1781,10 +1759,8 @@ function DoctorCaseController({
         },
         execute: async (raw: unknown) => {
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const { document, agentFacts } = doctorClinicalDocument(raw)
+          const document = doctorClinicalDocument(raw)
           const result = await saveClinicalDocumentDraft({
-            agentGenerated: true,
-            ...(agentFacts === undefined ? {} : { agentFacts }),
             document,
             encounterId: current.encounter.id,
             encounterVersion: current.encounter.versionId,
@@ -2386,17 +2362,12 @@ function DoctorCaseController({
                 content: locale => {
                   const reviewMessages = getWorkspaceMessages(locale)
                   return <div className="flex flex-col gap-3">
-                    <ConsultationSignReviewNotice review={preview.data.consultationReview} messages={reviewMessages} />
-                    <DocumentQualitySignSummary detail={current} state={preview.data.qualityControl} scope={proposalScope} locale={locale} />
                     <ClinicalDocumentContentView content={preview.data.document.content} messages={reviewMessages} />
                   </div>
                 },
-                ...(requiresConsultationReview(preview.data.consultationReview)
-                  ? { confirmationLabel: (locale: WorkspaceLocale) => getWorkspaceMessages(locale).consultationSignReviewed } : {}),
                 confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
                 description: current.patient.name,
-                onConfirm: acknowledged => signStructuredClinicalDocument({
-                  consultationReviewed: acknowledged,
+                onConfirm: () => signStructuredClinicalDocument({
                   commitToken: preview.data.commitToken,
                   encounterId: current.encounter.id,
                   encounterVersion: current.encounter.versionId,
@@ -2449,7 +2420,7 @@ function DoctorCaseController({
             document: {
               type: 'object',
               properties: Object.fromEntries([
-                'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
+                'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
                 'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
               ].map(key => [key, { type: 'string' }])),
               required: [
@@ -2683,6 +2654,7 @@ function DoctorCaseController({
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><ClipboardPenIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noConsultationCases}</EmptyTitle></EmptyHeader></Empty>
         ) : (
           <CaseDetail
+            clinicalDocumentUpdates={clinicalDocumentUpdates}
             recommendationScope={pageScope}
             recommendationRevision={String(recommendationInput.current.revision)}
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
@@ -2692,12 +2664,6 @@ function DoctorCaseController({
                 error: cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId ? cancelClinicalDocumentSign.error : null,
                 pending: cancelClinicalDocumentSign.isPending && cancelClinicalDocumentSign.variables?.caseId === detail.data.caseId,
                 onSubmit: previewId => cancelClinicalDocumentSign.mutate({ caseId: detail.data.caseId, previewId }),
-              },
-              reviewHistory: {
-                additionId: reviewHistory.variables?.caseId === detail.data.caseId ? reviewHistory.variables.additionId : undefined,
-                error: reviewHistory.variables?.caseId === detail.data.caseId ? reviewHistory.error : null,
-                pending: reviewHistory.isPending && reviewHistory.variables?.caseId === detail.data.caseId,
-                onSubmit: (additionId, decision) => reviewHistory.mutate({ caseId: detail.data.caseId, additionId, decision }),
               },
               controlRecording: {
                 error: controlRecording.variables?.caseId === detail.data.caseId ? controlRecording.error : null,
@@ -2980,6 +2946,7 @@ function DoctorCaseController({
             locale={locale}
             messages={messages}
             onClinicalDocumentChange={document => {
+              clinicalDocumentUpdates.onEdit(detail.data.caseId, document)
               setWorkingClinicalDocuments(current => ({
                 ...current,
                 [detail.data.caseId]: document,
@@ -3105,6 +3072,7 @@ function DoctorCaseController({
 }
 
 function CaseDetail({
+  clinicalDocumentUpdates,
   agentDraftHydrationRevisions,
   recommendationScope,
   recommendationRevision,
@@ -3161,6 +3129,7 @@ function CaseDetail({
   startRevisitPending,
   workingClinicalDocument,
 }: {
+  clinicalDocumentUpdates: ClinicalDocumentUpdates
   agentDraftHydrationRevisions: DoctorAgentDraftHydrationRevisions
   recommendationScope: string
   recommendationRevision: string
@@ -3529,12 +3498,20 @@ function CaseDetail({
               {detail.consultation === undefined ? null : (
                 <TabsTrigger data-agent-selection="consultation" id={doctorCaseSectionTabElementIds.consultation} value="consultation"><MessagesSquareIcon aria-hidden="true" />{messages.consultationRecord}</TabsTrigger>
               )}
-              <TabsTrigger data-agent-selection="record" id={doctorCaseSectionTabElementIds.record} value="record"><ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}</TabsTrigger>
+              <TabsTrigger data-agent-selection="record" id={doctorCaseSectionTabElementIds.record} value="record"
+                aria-describedby={Object.keys(clinicalDocumentUpdates.fields).length === 0 ? undefined : 'clinical-document-update-notice'}>
+                <ClipboardListIcon aria-hidden="true" />{messages.medicalRecord}
+                {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? null : <span className="clinical-document-update-notice" aria-hidden="true">{messages.clinicalDocumentUpdatesShort}</span>}
+              </TabsTrigger>
               <TabsTrigger data-agent-selection="laboratory" id={doctorCaseSectionTabElementIds.laboratory} value="laboratory"><TestTubesIcon aria-hidden="true" />{messages.laboratoryAndExamination}</TabsTrigger>
               <TabsTrigger data-agent-selection="diagnosis" id={doctorCaseSectionTabElementIds.diagnosis} value="diagnosis"><StethoscopeIcon aria-hidden="true" />{messages.diagnosis}</TabsTrigger>
               <TabsTrigger data-agent-selection="prescription" id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
             </TabsList>
           </div>
+
+          <span id="clinical-document-update-notice" className="sr-only" role="status">
+            {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? '' : messages.clinicalDocumentHasUpdates}
+          </span>
 
           {detail.consultation === undefined ? null : (
             <DoctorCasePanel value="consultation">
@@ -3574,13 +3551,13 @@ function CaseDetail({
                     actions={clinicalDocumentActions}
                     allowRevision={!clinicalReadOnly || correctionTarget === 'clinical-document'}
                     detail={detail}
+                    updates={clinicalDocumentUpdates}
                     elementId={encounterCompletionTargetElementIds['clinical-document']}
                     key={`structured-clinical-document:${detail.caseId}:${agentDraftHydrationRevisions.record ?? 0}`}
                     locale={locale}
                     messages={messages}
                     onDocumentChange={onClinicalDocumentChange}
                     workingDocument={workingClinicalDocument}
-                    qualityScope={recommendationScope}
                   />
                 )}
               </div>
@@ -3994,11 +3971,8 @@ function doctorDiagnosisEntries(value: unknown): DiagnosisDraftEntry[] {
   return entries.map(entry => diagnosisDraftEntrySchema.parse(entry))
 }
 
-function doctorClinicalDocument(value: unknown) {
-  const { agentFacts, ...document } = clinicalDocumentDraftContentSchema.extend({
-    agentFacts: z.array(clinicalDocumentAgentFactSchema).max(64).optional(),
-  }).parse(value)
-  return { document, agentFacts }
+function doctorClinicalDocument(value: unknown): ClinicalDocumentContent {
+  return clinicalDocumentDraftContentSchema.parse(value)
 }
 
 function requireDoctorDetail(

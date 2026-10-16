@@ -1,6 +1,6 @@
 ---
 name: clinmesh-doctor
-description: ClinMesh outpatient doctor CLI workflows for consultation, diagnosis, Hospital Services, laboratory and imaging requests, medication conclusions, structured clinical documents, automatic recording controls and patient/doctor/report source review, report acknowledgement, correction navigation, and Encounter completion.
+description: ClinMesh outpatient doctor CLI workflows for consultation, diagnosis, Hospital Services, laboratory and imaging requests, medication conclusions, structured clinical documents, automatic recording controls and patient/doctor/report source attribution, report acknowledgement, correction navigation, and Encounter completion.
 ---
 
 # ClinMesh Doctor
@@ -20,7 +20,7 @@ clinmesh encounter consultation retry-reply --input @reply-retry.json --idempote
 
 `--view waiting` selects cases awaiting first visit or revisit. `--view active` selects first visits, revisit drafts, and cases awaiting reports. Omit `--view` to list both groups. Filtering precedes pagination and the returned total belongs to the selected group. Completed Encounters use `doctor completed-cases list`.
 
-队列和病例详情中的 `presentation: null` 表示没有分诊来源的临床表现，不能推断无症状或生命体征正常。保留病例并读取已有病历、问诊记录等可见证据；不得从 Case Truth 补造主诉、体征或分诊记录。缺失时结构化病历的主诉、现病史和查体初始为空，已有持久草稿不受影响。
+队列和病例详情中的 `presentation: null` 表示没有分诊来源的临床表现，不能推断无症状或生命体征正常。保留病例并读取已有病历、问诊记录等可见证据；不得从 Case Truth 补造主诉、体征或分诊记录。缺失时结构化病历的主诉、现病史和体格检查初始为空，已有持久草稿不受影响。
 
 ## Clinical conclusions
 
@@ -90,15 +90,11 @@ clinmesh pathology-report correct --input @pathology-correction.json --idempoten
 
 ## Document and completion
 
+`familyHistory`（家族史）与 `allergyHistory`（过敏史）各最多 4,000 字，可缺失或留空，表示未记录，签署不要求补齐。读取旧草稿或文书时保留缺失状态；不得自动填“无”。新患者自述直接记录到这两个字段，旧条目保留持久 field。过敏史文本不创建正式 AllergyIntolerance，也不替代正式用药过敏校验。保存和修订完整文书时保留当前两字段；清空使用空字符串。
+
 Use independent lifecycle Commands. A document preview binds the current draft and versions; sign from that preview, and revise a signed document by creating a new revision. Document signing never completes the Encounter. Read the completion preview, resolve every blocking condition, then submit Encounter Completion with the current Encounter version. Do not use combined revisit, combined signing/completion or old laboratory-order entrypoints.
 
-Draft saves accept empty fields while facts are still being collected. Keep every required document key, use an empty string for unfinished content, and read the current draft version before saving. Sign preview still requires complete clinical content. Reliable additions, updates and clear corrections automatically update the draft and remain `unreviewed`; handwritten history, factual conflicts and uncertain replacements remain pending for clinician review. Read the draft and `consultationRecording` before editing or signing: each fragment retains its `ownership`, `currentText`, persistent `reviewStatus` and fact-level `sources` (`sourceTurnId`, exact `quote`). New sources can update untouched automatic fragments; superseded pending suggestions cannot be applied.
-
-Recording covers `chiefComplaint`, `historyOfPresentIllness`, `priorMedicalHistory`, `physicalExamination`, `auxiliaryExamination`, `assessment`, `disposition` and `followUp`. Physical examination requires explicit doctor evidence; assessment, disposition and follow-up only organize the doctor's expressed or adopted conclusions. Patient home measurements and external conclusions retain their patient attribution. Unasked or uncertain content stays missing; draft text, assistant reasoning and unadopted suggestions are not new evidence.
-
-Follow each fact's `sourceTurnId` to `consultationRecording.sources[].id`: the compatible name now identifies patient, doctor or report sources. Read `kind`, saved `messageText` and `recordedAt`; patient sources can link to a Consultation turn, doctor sources retain native Session/RPC/message identity, and report sources retain a fixed `reportReference`. Use the saved patient reply and doctor question only for patient sources; `sourceTurnId`/`quote` alone are the legacy fallback. Report source text includes published laboratory conclusions and linked values; imaging includes 检查方法、影像所见、诊断意见, and pathology includes 镜下所见、病理诊断、免疫组化、备注. These are complete published sections from the owning frozen report content, with validated case binding and stored publication hash; `reportContentHash` retains that hash where available. Arbitrary attachments, whole FHIR resources and imaging pixels are outside this source boundary. Doctor supplements require independently verified native DSH input proof; the CLI cannot submit arbitrary doctor-source text. Use the actual current-case DSH doctor chat, then re-read the case. Summaries retain uncertainty and source attribution; patient statements are not verified clinical findings.
-
-Save local edits in the target field before applying, confirming or undoing a fragment; preserve unsaved edits in other fields. Use `encounter.consultation-history.review` only for a clinician's explicit accept/ignore/confirm/undo decision with the current draft version. Accept/ignore handles pending suggestions: accept appends targetless additions or replaces only a valid sourced or handwritten range, requires `reviewable: true`, and completes review. A changed handwritten target requires fresh manual review rather than accepting the old suggestion. Treat `targetAdditionId` as an opaque server binding; always submit the suggestion's `id` as `additionId`. Confirm acknowledges unreviewed automatic content or resolves manual undo review; undo reverses only untouched applied text, restoring predecessor text and sources while preserving unrelated content. Modified text or a reversal that would exceed a draft field limit preserves current text and version as `undo-pending`: reread, let the clinician edit manually and then confirm. A version conflict requires a fresh read and review; an ambiguous write requires receipt recovery using the original input and idempotency key. Superseded, ignored and undone increments remain source-linked history. Rejected evidence stays rejected on replay; a new source reply may form a new suggestion even with the same quote.
+Draft saves accept empty fields while collecting history; keep required keys and read the current draft version before saving. Verified patient, doctor and report facts are recorded directly into all ten document fields, including independent family and allergy history. Physical examination, assessment, disposition and follow-up require explicit doctor sources; do not infer clinical decisions. There is no suggestion application, history review or undo operation. Read the current draft and consultationRecording after background progress. Entries retain ownership, currentText and ordered facts with exact patient/doctor/report sources; legacy entries use sourceTurnId and quote. Use the returned sources to trace saved evidence in the background; there is no source viewer or doctor acknowledgement step. Summaries preserve uncertainty and home/external attribution. Automatic updates replace only valid automatic ranges; manual text remains and supported corrections or contradictions are recorded separately with attribution and uncertainty. Use the normal versioned draft save for explicit text edits and preserve current fields and unsaved input.
 
 `consultationRecording.hasSavedDraft` records whether an explicit draft save has occurred; before that save, empty fields untouched by automatic additions can still have visible triage/history prefill. Read and preserve that visible content before submitting a complete draft; after an explicit save, saved empty values are intentional.
 
@@ -116,7 +112,6 @@ Keep Agent draft authorship through `agentGenerated: true` when setting a docume
 
 ```bash
 clinmesh encounter clinical-document draft set --input @document.json --idempotency-key <key>
-clinmesh encounter consultation-history review --input @history-review.json --idempotency-key <review-intent-key>
 clinmesh encounter consultation-recording control --input @recording-control.json --idempotency-key <control-intent-key>
 clinmesh doctor document-quality get --case-id <case-id>
 clinmesh doctor document-quality check --input @document-quality-check.json --idempotency-key <check-intent-key>

@@ -415,6 +415,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         return { pathology: workflow.pathology.serviceCatalog(context, offering.readyExamCodes, offering.sourceProcedures) }
       },
     })
+    workflow.consultationRecording.recoverQueued()
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
         'clinical-document.check-quality': event => workflow.qualityControl.process(event, {

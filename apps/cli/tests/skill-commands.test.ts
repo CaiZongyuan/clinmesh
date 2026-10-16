@@ -20,7 +20,7 @@ it('keeps signing review and cancellation examples aligned with the narrow opera
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
   const reference = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
-  for (const [suffix, version] of [['preview', 4], ['commit', 3], ['cancel', 2]] as const) {
+  for (const [suffix, version] of [['preview', 4], ['commit', 4], ['cancel', 2]] as const) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh encounter clinical-document sign ${suffix}`))!
     expect(inspectExample(program, line).operation?.version).toBe(version)
   }
@@ -33,15 +33,11 @@ it('keeps signing review and cancellation examples aligned with the narrow opera
   expect(cancel.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview' }).success).toBe(true)
   expect(cancel.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview', document: {} }).success).toBe(false)
   const commit = getHisOperation('encounter.clinical-document.sign')
-  expect(commit.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview', commitToken: 'synthetic-commit-token', consultationReviewed: true }).success).toBe(true)
-  expect(reference).toContain('consultationReviewed: true')
+  expect(commit.input.safeParse({ encounterId: 'synthetic', encounterVersion: '3', previewId: 'preview', commitToken: 'synthetic-commit-token', }).success).toBe(true)
+  expect(reference).not.toContain('consultationReviewed')
   expect(reference).toContain('consultationRecording.signingPreparation')
   expect(reference).toContain('even without automatic recording')
-  expect(reference).toContain('doctor-only cases without a Consultation')
-  expect(reference).toContain('changed Consultation or source snapshot')
-  for (const operation of ['encounter.clinical-document.sign.preview', 'encounter.clinical-document.sign'] as const) {
-    expect(getHisOperation(operation).summary).toContain('even without automatic recording')
-  }
+  expect(getHisOperation('encounter.clinical-document.sign.preview').summary).toContain('even without automatic recording')
 })
 
 function commandLines(markdown: string): string[] {
@@ -125,27 +121,26 @@ function inspectExample(program: Command, line: string) {
 }
 
 describe('ClinMesh CLI Agent Skills', () => {
-  it('keeps document quality examples narrow and separate from clinical draft writes', async () => {
-    const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  it('keeps document examples aligned with optional family and allergy history', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
-    for (const action of ['get', 'check', 'retain']) {
-      const operation = getHisOperation(`doctor.document-quality.${action}`)
-      const line = commandLines(skill).find(line => line.startsWith(`clinmesh doctor document-quality ${action}`))!
-      expect(line).toBeDefined()
-      expect(inspectExample(program, line).operation?.id).toBe(operation.id)
-      expect(operation.skill).toBe('clinmesh-doctor')
+    const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+    const document = { assessment: '继续评估。', chiefComplaint: '头晕一周。', disposition: '门诊随访。',
+      followUp: '加重时就诊。', historyOfPresentIllness: '站立时头晕。', physicalExamination: '神志清楚。' }
+    for (const [prefix, version, input] of [
+      ['clinmesh encounter clinical-document draft set', 3, { encounterId: 'synthetic', encounterVersion: '1', expectedDraftVersion: 0 }],
+      ['clinmesh clinical-document revise', 2, { compositionId: 'synthetic', compositionVersion: '1', encounterId: 'synthetic', encounterVersion: '1', reason: '补充病史。' }],
+    ] as const) {
+      const line = commandLines(skill).find(line => line.startsWith(prefix))!
+      const operation = inspectExample(program, line).operation!
+      expect(operation.version).toBe(version)
+      expect(operation.input.safeParse({ ...input, document }).success).toBe(true)
+      expect(operation.input.safeParse({ ...input, document: { ...document, familyHistory: '', allergyHistory: '' } }).success).toBe(true)
+      expect(operation.input.safeParse({ ...input, document: { ...document, familyHistory: '史'.repeat(4001) } }).success).toBe(false)
+      expect(operation.summary).toContain('familyHistory')
     }
-    const check = getHisOperation('doctor.document-quality.check')
-    const context = { caseId: 'synthetic-case', encounterId: 'synthetic-encounter', encounterVersion: '3' }
-    expect(check.input.safeParse({ ...context, expectedDraftVersion: 0 }).success).toBe(true)
-    expect(check.input.safeParse({ ...context, expectedDraftVersion: 0, clientId: 'editor-1' }).success).toBe(false)
-    expect(check.input.safeParse({ ...context, expectedDraftVersion: 0, url: 'https://example.invalid' }).success).toBe(false)
-    const retain = getHisOperation('doctor.document-quality.retain')
-    expect(retain.input.safeParse({ ...context, issueId: 'synthetic-issue', expectedInputFingerprint: 'a'.repeat(64) }).success).toBe(true)
-    expect(retain.input.safeParse({ ...context, issueId: 'synthetic-issue' }).success).toBe(false)
-    expect(skill).toContain('does not save the clinical draft')
-    expect(skill).toContain('explicit clinician decision')
-    expect(skill).toContain('does not add a signing gate')
+    expect(skill).toContain('`familyHistory`')
+    expect(skill).toContain('`allergyHistory`')
+    expect(skill).toContain('不创建正式 AllergyIntolerance')
   })
   it('keeps recording controls narrow, versioned and bound to the doctor skill', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
@@ -159,45 +154,18 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(skill).toContain('processedCount')
     expect(skill).toContain('explicitly starts it')
     expect(operation.version).toBe(3)
-    expect(operation.summary).toContain('Activate a new editable unsigned case')
-    expect(skill).toContain('expectedRecordingVersion: 0')
-    expect(skill).toContain('reading the case does not activate or backfill it')
     expect(operation.summary).toContain('backfill requires an existing Consultation')
     expect(operation.summary).toContain('WORKFLOW_CONFLICT')
     expect(skill).toContain('Backfill requires an existing Consultation')
     expect(skill).toContain('WORKFLOW_CONFLICT')
   })
-  it('keeps history review examples bound to the narrow versioned correction contract', async () => {
+  it('does not expose removed history review commands or signing acknowledgement', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
-    const operation = getHisOperation('encounter.consultation-history.review')
-    const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter consultation-history review'))!
-    expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
-    for (const decision of ['accept', 'ignore', 'confirm', 'undo']) {
-      expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
-        additionId: 'synthetic-correction', decision }).success).toBe(true)
-    }
-    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 2,
-      additionId: 'synthetic-correction', decision: 'overwrite', document: {} }).success).toBe(false)
-    expect(operation.version).toBe(5)
-    expect(operation.summary).toContain('automatically update the draft and remain unreviewed')
-    expect(operation.summary).toContain('appends targetless additions')
-    expect(skill).toContain('Reliable additions, updates and clear corrections automatically update the draft')
-    expect(skill).toContain('factual conflicts and uncertain replacements remain pending')
-    expect(skill).toContain('Confirm acknowledges unreviewed automatic content')
-    expect(skill).toContain('consultationRecording.sources[].id')
-    expect(skill).toContain('independently verified native DSH input proof')
-    expect(skill).toContain('CLI cannot submit arbitrary doctor-source text')
-    for (const field of ['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'physicalExamination',
-      'auxiliaryExamination', 'assessment', 'disposition', 'followUp']) expect(skill).toContain(`\`${field}\``)
-    expect(skill).toContain("clinician's explicit accept/ignore/confirm/undo decision")
-    expect(skill).toContain('undo-pending')
-    expect(operation.summary).toContain('draft field limits')
-    expect(skill).toContain('exceed a draft field limit')
-    expect(skill).toContain('new source reply')
-    expect(operation.summary).toContain('sourced or handwritten history')
-    expect(operation.summary).toContain('changed handwritten targets')
-    expect(skill).toContain('handwritten history')
-    expect(skill).toContain('changed handwritten target')
+    expect(skill).not.toContain('clinmesh encounter consultation-history review')
+    expect(skill).toContain('recorded directly')
+    expect(() => getHisOperation('encounter.consultation-history.review')).toThrow()
+    const sign = getHisOperation('encounter.clinical-document.sign')
+    expect(sign.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '1', commitToken: 'synthetic-sign-commit-token', previewId: 'synthetic-preview', consultationReviewed: true }).success).toBe(false)
   })
   it('keeps the doctor draft example compatible with incomplete content and the versioned Catalog', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
@@ -222,7 +190,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 9 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 8 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }

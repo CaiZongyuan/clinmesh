@@ -9,18 +9,16 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { chromium, expect, type Request } from '@playwright/test'
 import { z } from 'zod'
-import { doctorCaseDetailSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema,
-  clinicalDocumentQualityControlStateSchema } from '../packages/contracts/src/his.ts'
+import { doctorCaseDetailSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, consultationRecordingErrorCodeSchema } from '../packages/contracts/src/his.ts'
 import { doctorRecommendationStateSchema } from '../packages/contracts/src/doctor-recommendations.ts'
 import { decodeModelRoute } from '../packages/contracts/src/model-bridge.ts'
 import { createClinMeshRuntime } from '../apps/server/src/runtime.ts'
 import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model-provider.ts'
+import { recordingSourceDiagnosticSchema } from '../apps/server/src/application/consultation-history-summary.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../apps/server/tests/fixtures/consultation.ts'
 import { journeyReplies, runRecordingJourney } from '../apps/web/e2e/consultation-recording-journey.ts'
 import { recommendationFixture } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
 import { runRecommendationJourney } from '../apps/web/e2e/doctor-recommendations-journey.ts'
-import { documentQualityFixture, qualityPatientReply } from '../apps/web/e2e/doctor-document-quality-fixture.ts'
-import { runDocumentQualityJourney } from '../apps/web/e2e/doctor-document-quality-journey.ts'
 import { createInvestigationReferenceDatabase } from '../apps/web/e2e/investigation-workspace.fixture.ts'
 import { startManagedProcess } from './dsh-upstreams-process.ts'
 import { verificationEnvironment } from './dsh-upstreams-verify.ts'
@@ -37,10 +35,8 @@ const agUiDirectory = resolve(process.env.CLINMESH_DSH_SMOKE_AG_UI ?? join(root,
 const live = process.argv.includes('--live')
 const summaryOnly = process.argv.includes('--summary-only')
 const recommendationsOnly = process.argv.includes('--recommendations-only')
-const qualityOnly = process.argv.includes('--quality-only')
 if (summaryOnly && !live) throw new Error('--summary-only requires --live')
-if ([summaryOnly, recommendationsOnly, qualityOnly].filter(Boolean).length > 1) throw new Error('Choose one smoke journey')
-if (qualityOnly && live) throw new Error('--quality-only uses the synthetic model fixture')
+if (summaryOnly && recommendationsOnly) throw new Error('Choose one smoke journey')
 const sourceHome = process.env.CLINMESH_DSH_SMOKE_HOME
 if (live && !sourceHome) throw new Error('--live requires CLINMESH_DSH_SMOKE_HOME with a configured isolated host')
 const liveModel = process.env.CLINMESH_DSH_SMOKE_LIVE_MODEL
@@ -56,18 +52,13 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'scripts/smoke-dsh-consultation.ts', 'apps/web/e2e/consultation-recording-journey.ts', 'apps/web/e2e/consultation-recording-journey.spec.ts',
   'package.json', 'pnpm-lock.yaml', 'tsconfig.browser.json',
   'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
-  'apps/server/src/application/clinical-document-quality.ts',
-  'apps/server/src/application/agent-integration-service.ts', 'apps/server/src/application/workflow-service.ts',
-  'apps/server/src/app.ts', 'apps/dsh-web/src/agent-proof-bridge.ts', 'apps/dsh-web/src/execution-proof.ts',
-  'apps/dsh-web/src/client/doctor-task.ts', 'apps/web/src/app/surface-agent-publisher.ts',
-  'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0061_consultation-recording-sources.sql',
-  'apps/server/drizzle/0062_clinical-document-quality.sql',
-  'packages/contracts/src/his.ts', 'packages/contracts/src/agent.ts',
-  'apps/web/src/app/doctor/consultation-history-review.tsx',
-  'apps/web/src/app/doctor/document-quality-control.tsx', 'apps/web/src/app/doctor/clinical-document-page.tsx',
-  'apps/web/src/app/api-client.ts',
+  'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0062_consultation-direct-recording.sql', 'packages/contracts/src/his.ts',
+  'apps/server/drizzle/0060_z-recording-branch-staging.sql', 'apps/server/drizzle/0061_clinical-document-history-fields.sql',
+  'apps/server/drizzle/0061_consultation-recording-sources.sql', 'apps/server/drizzle/0063_integrated-document-recording.sql',
+  'apps/web/src/app/doctor/clinical-document-page.tsx',
+  'apps/web/src/app/doctor/clinical-document-updates.tsx', 'apps/web/src/app/doctor/clinical-document-updates.css',
+  'apps/web/src/app/doctor/doctor-case-controller.tsx',
   'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
-  'apps/web/e2e/doctor-document-quality-journey.ts', 'apps/web/e2e/doctor-document-quality-fixture.ts',
   'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
   'packages/contracts/src/doctor-recommendations.ts', 'packages/contracts/src/model-bridge.ts',
 ].map(async path => [path, createHash('sha256').update(await readFile(join(root, path))).digest('hex')])))
@@ -76,12 +67,11 @@ const home = join(scratch, 'home')
 const profile = join(home, 'profiles/web')
 const controlPath = join(scratch, 'control.json')
 const callsPath = join(scratch, 'calls.jsonl')
-const qualityResults = join(scratch, 'quality-results')
 const secret = randomBytes(32).toString('hex')
 const password = `Synthetic-${randomUUID()}-Aa1!`
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n'
 const report: Record<string, unknown> = { hostVersion: installedHost.version, agUiCommit, sourceCommit: await revision(root), sourceHashes,
-  components: lock.components.map(({ name, version, commit }) => ({ name, version, commit })), syntheticData: true, summaryOnly, recommendationsOnly, qualityOnly }
+  components: lock.components.map(({ name, version, commit }) => ({ name, version, commit })), syntheticData: true, summaryOnly, recommendationsOnly }
 const browser = await chromium.launch({ headless: true })
 let managed: ReturnType<typeof startManagedProcess> | undefined
 let hospital: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined
@@ -105,7 +95,6 @@ try {
   const hostOrigin = `http://127.0.0.1:${hostPort}`
   const serverOrigin = `http://127.0.0.1:${serverPort}`
   const provider = new DshModelProvider({ origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 })
-  await mkdir(qualityResults)
   await mkdir(join(profile, 'node_modules/@clinmesh'), { recursive: true })
   const links = [
     [join(root, 'apps/dsh-web'), join(profile, 'node_modules/@clinmesh/dsh-web')],
@@ -120,8 +109,7 @@ try {
   const sdk = pathToFileURL(join(runtimeDirectory, 'node_modules/@deepseek-ai/dsh-llm/lib/index.js')).href
   // The adapter records only routing/Tool metadata, never prompts, credentials or patient pixels.
   await writeFile(join(synthetic, 'index.js'), `import { LlmAdapter, ToolCallId } from ${JSON.stringify(sdk)};
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { appendFileSync, readFileSync } from 'node:fs';
 const controlPath=${JSON.stringify(controlPath)}, callsPath=${JSON.stringify(callsPath)};
 const replies=${JSON.stringify(journeyReplies)};
 const control=()=>JSON.parse(readFileSync(controlPath,'utf8'));
@@ -160,21 +148,13 @@ class Adapter extends LlmAdapter {
     }
     const payload=JSON.parse(options.messages[0].content[0].text);
     const history=Array.isArray(payload.turns)&&Array.isArray(payload.history);
-    const qualityPath=${JSON.stringify(qualityResults)}+'/'+createHash('sha256').update(JSON.stringify(payload)).digest('hex')+'.json';
-    const quality=existsSync(qualityPath)?JSON.parse(readFileSync(qualityPath,'utf8')):undefined;
-    record({kind:'auxiliary',history,session:false,tools:!!options.tools,...(quality?{schemaName:quality.schemaName}:{})});
+    record({kind:'auxiliary',history,session:false,tools:!!options.tools});
     let result;
-    if(quality) {
-      result=quality.result;
-    } else if(Array.isArray(payload.guidelines)&&Array.isArray(payload.caseEvidence)) {
+    if(Array.isArray(payload.guidelines)&&Array.isArray(payload.caseEvidence)) {
       result=state.recommendationResult;
     } else if(Array.isArray(payload.additions)) {
       result={additions:payload.additions.map((_,index)=>({index,faithful:true,complete:true,relationValid:true}))};
     } else if(history) {
-      if(${qualityOnly}) {
-        yield {type:'text-delta',index:0,text:JSON.stringify({additions:[]})};
-        yield {type:'finish',reason:{kind:'stop'}}; return;
-      }
       if(state.fail) { yield {type:'finish',reason:{kind:'error',failure:{code:'TIMEOUT',message:'Synthetic controlled timeout'}}}; return; }
       if(state.stage==='late') {
         record({kind:'held-extraction'});
@@ -193,7 +173,7 @@ class Adapter extends LlmAdapter {
           relation:state.stage==='correction'?'correction':'addition',...(state.stage==='correction'?{targetAdditionId:payload.history.find(item=>item.field==='historyOfPresentIllness'&&item.text.includes('头晕五天')).id}:{})}))};
       }
     } else if(options.system.includes('患者档案')) result=${JSON.stringify(persona)};
-    else result={reply:${qualityOnly ? JSON.stringify(qualityPatientReply) : 'replies[state.stage]'}};
+    else result={reply:replies[state.stage]};
     yield {type:'text-delta',index:0,text:JSON.stringify(result)};
     yield {type:'finish',reason:{kind:'stop'}};
     if(history) record({kind:'settled-extraction',stage:state.stage});
@@ -240,10 +220,6 @@ export function apply(ctx) {
       resolveModel: (route, signal) => provider.resolveModel(route === 'dsh:default'
         ? 'dsh:{"provider":"synthetic-consultation","model":"journey"}' : route, signal),
       completeJson: async input => {
-        if (['clinical_document_quality', 'clinical_document_quality_verification'].includes(input.schemaName)) {
-          const path = join(qualityResults, `${createHash('sha256').update(JSON.stringify(input.userPayload)).digest('hex')}.json`)
-          await writeFile(path, json({ schemaName: input.schemaName, result: documentQualityFixture(input) }))
-        }
         if (recommendationsOnly && ['doctor_recommendations', 'doctor_recommendation_verification'].includes(input.schemaName)) {
           const control = JSON.parse(await readFile(controlPath, 'utf8')) as Record<string, unknown>
           await writeFile(controlPath, json({ ...control, recommendationResult: recommendationFixture(input) }))
@@ -379,6 +355,8 @@ export function apply(ctx) {
     phase = 'recommendations-journey'
     report.recommendations = await runRecommendationJourney({ page, read })
   }
+  if (!summaryOnly && !recommendationsOnly) {
+  phase = 'recording-journey'
   let control: Record<string, unknown> = { stage: 'initial', fail: false, released: false }
   const updateControl = async (patch: Record<string, unknown>) => { control = { ...control, ...patch }; await writeFile(controlPath, json(control)) }
   const calls = async () => (await readFile(callsPath, 'utf8')).trim().split('\n').filter(Boolean).map(line =>
@@ -392,41 +370,6 @@ export function apply(ctx) {
     await composer.fill('合成验收：请执行当前病历操作。')
     await page.getByRole('button', { name: '发送消息', exact: true }).click()
   }
-  if (qualityOnly) {
-    phase = 'quality-journey'
-    const rejectedSchema = await fetch(`${hostOrigin}/clinmesh-model-bridge`, {
-      method: 'POST', headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ operation: 'complete', model: 'dsh:{"provider":"synthetic-consultation","model":"journey"}',
-        schemaName: 'arbitrary_quality_task', jsonSchema: {}, systemPrompt: '合成白名单校验。', userPayload: {} }),
-    })
-    expect(rejectedSchema.status).toBe(503)
-    expect(await rejectedSchema.json()).toEqual({ error: 'MODEL_UNAVAILABLE' })
-    report.qualitySchemaAllowlist = { arbitrarySchemaRejected: true }
-    report.qualityControl = await runDocumentQualityJourney({ page, read,
-      quality: async clientId => {
-        const response = await hospital!.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}/document-quality-control${clientId === undefined ? '' : `?clientId=${encodeURIComponent(clientId)}`}`,
-          { headers: { cookie } })
-        expect(response.status).toBe(200)
-        return clinicalDocumentQualityControlStateSchema.parse(await response.json())
-      },
-      agentDraft: async document => {
-        await nativeCall('clinmesh_fill_clinical_document_draft', { ...document, assessment: 'Agent新增：确诊合成疾病，尚无来源。' })
-        await expect(page.getByLabel('评估', { exact: true })).toHaveValue('Agent新增：确诊合成疾病，尚无来源。', { timeout: 30_000 })
-      },
-      agentSign: () => nativeCall('clinmesh_prepare_sign_document', {}),
-      progress: message => console.log(message),
-    })
-    const recorded = await calls()
-    expect(recorded.filter(call => call.kind === 'auxiliary').every(call => call.tools === false)).toBe(true)
-    expect(recorded.some(call => call.schemaName === 'clinical_document_quality')).toBe(true)
-    expect(recorded.some(call => call.schemaName === 'clinical_document_quality_verification')).toBe(true)
-    expect(recorded.some(call => call.kind === 'native-call' && call.name === 'clinmesh_fill_clinical_document_draft')).toBe(true)
-    report.qualityModelSchemas = [...new Set(recorded.flatMap(call => typeof call.schemaName === 'string' ? [call.schemaName] : []))]
-    report.nativeCalls = recorded.filter(call => call.kind === 'native-call').map(call => call.name)
-    expect(errors).toEqual([])
-  }
-  if (!summaryOnly && !recommendationsOnly && !qualityOnly) {
-  phase = 'recording-journey'
   phase = 'doctor-supplement-without-tool'
   const doctorContent = '查体：神志清楚，四肢活动正常。评估：头晕待查。处置：先完善检查。随访：三日后复诊。'
   const callsBeforeDoctor = (await calls()).filter(call => call.kind === 'native-call').length
@@ -446,10 +389,8 @@ export function apply(ctx) {
   expect(doctorSource.messageId).toBeTruthy()
   expect(doctorSource.rpcId).toBeTruthy()
   expect((await calls()).filter(call => call.kind === 'native-call').length).toBe(callsBeforeDoctor)
-  await page.locator('[data-clinical-document-field="physicalExamination"]').getByRole('button', { name: '查看来源', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText(doctorContent)
-  await expect(page.getByRole('dialog')).toContainText('医生')
-  await page.getByRole('dialog').press('Escape')
+  await expect(page.locator('[data-clinical-document-field="physicalExamination"] textarea')).toHaveValue('神志清楚，四肢活动正常')
+  await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
   report.doctorSupplement = { sourceCount: 1, automaticFields: 4, nativeToolCalls: 0 }
   await updateControl({ stage: 'initial' })
   phase = 'recording-journey'
@@ -477,7 +418,7 @@ export function apply(ctx) {
       await expect.poll(async () => (await read()).clinicalDocument!.draft!.assessment).toBe(assessment)
       const current = (await read()).clinicalDocument!.draft!
       const draft = clinicalDocumentDraftContentSchema.parse(Object.fromEntries([
-        'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition', 'followUp',
+        'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition', 'followUp',
         'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
       ].map(key => [key, current[key as keyof typeof current]])))
       await nativeCall('clinmesh_fill_clinical_document_draft', { ...draft, assessment: '原生 Agent 草稿评估，待进一步核对。',
@@ -488,8 +429,6 @@ export function apply(ctx) {
     agentSign: () => nativeCall('clinmesh_prepare_sign_document', {}),
     progress: message => console.log(message),
   })
-  }
-  if (!summaryOnly && !recommendationsOnly) {
   phase = 'agent-links'
   const linked = hospital.database.driver.prepare(`
     SELECT t.operation_id, t.status, t.result_json, t.request_id, t.audit_id, t.trace_id, t.proposal_id,
@@ -609,13 +548,13 @@ export function apply(ctx) {
           const recording = (await readLive()).consultationRecording!
           if (recording.status === 'failed') throw new Error('Live history generation failed')
           return recording.status
-        }, { timeout: 370_000 }).toBe('pending')
+        }, { timeout: 370_000 }).toBe('updated')
       }
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       const detail = await readLive()
-      const additions = detail.consultationRecording!.additions.filter(addition => addition.status === 'pending')
-      expect(detail.clinicalDocument?.draft).toBeUndefined()
-      report.liveEvidence = { draftUnchanged: true,
+      const additions = detail.consultationRecording!.additions.filter(addition => addition.status === 'applied')
+      expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).not.toBe('')
+      report.liveEvidence = { draftRecorded: true,
         replies: liveReplies, additions: additions.map(({ summary, facts }) => ({ summary, facts })) }
       phase = 'live-summary-quality'
       expect(additions.length).toBeGreaterThan(0)
@@ -646,18 +585,24 @@ export function apply(ctx) {
       const merged = additions.find(addition => addition.field === 'historyOfPresentIllness'
         && replyTurnIds.every(id => addition.facts!.some(fact => fact.sources.some(source => source.sourceTurnId === id))))
       expect(merged).toBeDefined()
-      phase = 'live-summary-source-dialog'
-      await page.locator('[data-consultation-addition="pending"]').filter({ hasText: merged!.summary! })
-        .getByRole('button', { name: '查看来源', exact: true }).click()
-      await expect(page.getByRole('dialog', { name: '患者原回答', exact: true }).locator('blockquote')).toHaveText(liveReplies)
-      await page.keyboard.press('Escape')
-      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'pending',
+      phase = 'live-summary-recorded-document'
+      await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(history)
+      await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
+      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'updated',
         sourceVerified: true, summary: history, replies: liveReplies, facts: additions.map(addition => addition.facts),
-        draftUnchanged: true, multiTurnSourceDialog: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
+        draftRecorded: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
       liveMode = true
       }
     } finally {
       report.liveJobs = liveRuntime.database.driver.prepare('SELECT status, error_code FROM consultation_recording_job').all()
+      report.liveFailedAttempts = z.array(z.object({ response_json: z.string() })).parse(liveRuntime.database.driver.prepare(
+        "SELECT response_json FROM command_receipt WHERE operation = 'consultation.history.fail' ORDER BY rowid",
+      ).all()).map(row => z.object({ data: z.object({
+        code: consultationRecordingErrorCodeSchema,
+        diagnostic: recordingSourceDiagnosticSchema.partial({ reason: true }).extend({
+          stage: z.enum(['summary', 'verification', 'apply']),
+        }).optional(),
+      }) }).parse(JSON.parse(row.response_json)).data)
       hospital = original
       await liveRuntime.close()
     }
@@ -666,9 +611,7 @@ export function apply(ctx) {
   report.pageErrors = errors.length
   expect(errors).toEqual([])
   console.log(recommendationsOnly ? '原生 DSH 指南建议、草稿采纳与人工确认验收通过'
-    : summaryOnly ? '原生 DSH 多轮病史总结与来源验收通过'
-      : qualityOnly ? '原生 DSH 四项病历质控及 Tool → 人工批准 → Command 关联通过'
-        : '原生 DSH 问诊组合验收及 Tool → 人工批准 → Command 关联通过')
+    : summaryOnly ? '原生 DSH 多轮病史总结与来源验收通过' : '原生 DSH 问诊组合验收及 Tool → 人工批准 → Command 关联通过')
   if (process.env.CLINMESH_DSH_SMOKE_REPORT) await writeFile(resolve(process.env.CLINMESH_DSH_SMOKE_REPORT), json(report))
 } catch (error) {
   // Playwright errors can contain the host token or provider input. Keep the public failure bounded.

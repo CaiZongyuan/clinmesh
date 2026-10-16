@@ -21,7 +21,9 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
   async completeJson(input: JsonChatCompletionInput) {
     const model = await this.resolveModel(input.model, input.signal)
     let issues: Array<{ code: string; path: string }> = []
+    let validationError: unknown
     for (let attempt = 0; attempt < 2; attempt++) {
+      validationError = undefined
       const result = await this.#request({
         operation: 'complete', model, schemaName: input.schemaName, jsonSchema: input.jsonSchema,
         systemPrompt: attempt === 0 ? input.systemPrompt : `${input.systemPrompt}\nThe previous response failed validation: ${JSON.stringify(issues)}. Generate a corrected JSON object using the original data and schema. Do not include $schema or other schema metadata.`,
@@ -39,12 +41,15 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         if (input.validate === undefined || input.validate(value)) return { content: JSON.stringify(value), model }
         issues = [{ code: 'schema_mismatch', path: '' }]
       } catch (error) {
+        validationError = error
         issues = error instanceof ZodError ? error.issues.slice(0, 12).map(issue => ({
           code: issue.code, path: issue.path.join('.').slice(0, 200),
         })) : [{ code: 'invalid_json_or_content', path: '' }]
       }
     }
-    throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The DSH model returned invalid structured output', { validationIssues: issues })
+    throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The DSH model returned invalid structured output', {
+      validationIssues: issues, cause: validationError,
+    })
   }
 
   async #request(payload: unknown, callerSignal?: AbortSignal) {

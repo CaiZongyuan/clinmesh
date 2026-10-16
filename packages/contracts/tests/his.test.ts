@@ -3,6 +3,9 @@ import {
   caseLaboratoryCatalogSearchSchema,
   completedCaseLaboratoryRequestSchema,
   clinicalCatalogSchema,
+  clinicalDocumentContentSchema,
+  clinicalDocumentDraftContentSchema,
+  consultationHistorySummarySchema,
   consultationRecordingSourceSchema,
   completeEncounterRequestSchema,
   completedCaseClinicalDocumentSchema,
@@ -59,6 +62,21 @@ function completedCaseLaboratoryRequestFixture() {
 }
 
 describe('HIS contracts', () => {
+  it('keeps old documents readable and allows explicitly empty family and allergy history without inventing negatives', () => {
+    const legacy = { assessment: '继续评估。', chiefComplaint: '头晕一周。', disposition: '门诊随访。',
+      followUp: '加重时就诊。', historyOfPresentIllness: '站立时头晕。', physicalExamination: '神志清楚。' }
+    expect(clinicalDocumentContentSchema.parse(legacy)).toEqual(legacy)
+    for (const schema of [clinicalDocumentContentSchema, clinicalDocumentDraftContentSchema]) {
+      expect(schema.parse({ ...legacy, familyHistory: '  ', allergyHistory: '' })).toEqual({ ...legacy, familyHistory: '', allergyHistory: '' })
+      expect(schema.parse({ ...legacy, familyHistory: '父亲患高血压。', allergyHistory: '青霉素过敏。' })).toMatchObject({
+        familyHistory: '父亲患高血压。', allergyHistory: '青霉素过敏。',
+      })
+      for (const field of ['familyHistory', 'allergyHistory']) expect(schema.safeParse({ ...legacy, [field]: '史'.repeat(4001) }).success).toBe(false)
+    }
+    for (const field of ['familyHistory', 'allergyHistory']) expect(consultationHistorySummarySchema.safeParse({ field,
+      relation: 'addition', facts: [{ text: '患者明确提供的病史', sources: [{ sourceTurnId: 'synthetic', quote: '患者明确提供的原话。' }] }],
+    }).success).toBe(true)
+  })
   it.each(['sessionId', 'messageId', 'rpcId'])('keeps recording source %s within native identifier bounds', field => {
     const source = { id: 'doctor-source-1', kind: 'doctor', messageText: '查体：双肺呼吸音清。',
       recordedAt: '2026-10-15T09:00:00+08:00' }

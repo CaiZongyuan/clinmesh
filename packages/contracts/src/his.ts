@@ -965,10 +965,12 @@ export const retryConsultationReplyResponseSchema = commandResponseSchema(z.obje
 }).strict())
 
 export const clinicalDocumentContentSchema = z.object({
+  allergyHistory: z.string().trim().max(4_000).optional(),
   assessment: z.string().trim().min(2).max(4_000),
   auxiliaryExamination: z.string().trim().min(2).max(4_000).optional(),
   chiefComplaint: z.string().trim().min(2).max(1_000),
   disposition: z.string().trim().min(2).max(4_000),
+  familyHistory: z.string().trim().max(4_000).optional(),
   followUp: z.string().trim().min(2).max(4_000),
   historyOfPresentIllness: z.string().trim().min(2).max(5_000),
   physicalExamination: z.string().trim().min(2).max(4_000),
@@ -1005,8 +1007,10 @@ export const consultationRecordingSourceSchema = z.object({
   rpcId: z.string().min(1).max(256).optional(),
 }).strict()
 
-const consultationRecordingFieldSchema = z.enum(['chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory',
-  'physicalExamination', 'auxiliaryExamination', 'assessment', 'disposition', 'followUp'])
+export const consultationHistoryFieldSchema = z.enum([
+  'chiefComplaint', 'historyOfPresentIllness', 'priorMedicalHistory', 'familyHistory', 'allergyHistory',
+  'physicalExamination', 'auxiliaryExamination', 'assessment', 'disposition', 'followUp',
+])
 
 export const consultationHistoryFactSchema = z.object({
   text: z.string().trim().min(2).max(600),
@@ -1014,7 +1018,7 @@ export const consultationHistoryFactSchema = z.object({
 }).strict()
 
 export const consultationHistorySummarySchema = z.object({
-  field: consultationRecordingFieldSchema,
+  field: consultationHistoryFieldSchema,
   facts: z.array(consultationHistoryFactSchema).min(1).max(12),
   relation: z.enum(['addition', 'update', 'correction', 'conflict']),
   targetAdditionId: z.string().min(1).max(128).optional(),
@@ -1027,7 +1031,7 @@ export const consultationHistorySummarySchema = z.object({
 
 // Retained for stored extracts and old Command receipts.
 export const consultationHistoryAdditionSchema = z.object({
-  field: consultationRecordingFieldSchema,
+  field: consultationHistoryFieldSchema,
   sourceTurnId: z.string().min(1).max(128),
   quote: z.string().trim().min(2).max(2_000),
   relation: z.enum(['addition', 'update', 'correction', 'conflict']),
@@ -1060,22 +1064,20 @@ export const consultationRecordingSchema = z.object({
   processedCount: z.number().int().nonnegative().default(0),
   remainingCount: z.number().int().nonnegative().default(0),
   failedCount: z.number().int().nonnegative().default(0),
-  status: z.enum(['idle', 'processing', 'updated', 'pending', 'paused', 'backfill', 'failed']),
+  status: z.enum(['idle', 'processing', 'updated', 'paused', 'backfill', 'failed']),
   failures: z.array(z.object({
     sourceTurnId: z.string().min(1),
     code: consultationRecordingErrorCodeSchema,
     retrying: z.boolean(),
   }).strict()).default([]),
-  // Historical suggestions may predate the required correction target in the extraction contract.
+  // Historical extracts may predate the required correction target in the extraction contract.
   additions: z.array(z.object(consultationHistoryAdditionSchema.shape).extend({
     summary: z.string().optional(),
     facts: z.array(consultationHistoryFactSchema).optional(),
     id: z.string().min(1),
-    status: z.enum(['applied', 'pending', 'superseded', 'ignored', 'undone']),
-    reviewStatus: z.enum(['unreviewed', 'confirmed', 'undo-pending']).default('unreviewed'),
+    status: z.enum(['applied', 'superseded', 'ignored', 'undone']),
     ownership: z.enum(['automatic', 'manual']).default('automatic'),
     currentText: z.string().default(''),
-    reviewable: z.boolean().default(false),
   }).strict()),
 }).strict()
 
@@ -1089,112 +1091,11 @@ export const controlConsultationRecordingRequestSchema = z.object({
 
 export const controlConsultationRecordingResponseSchema = commandResponseSchema(consultationRecordingSchema)
 
-export const reviewConsultationHistoryRequestSchema = z.object({
-  expectedVersions: fhirExpectedVersionsSchema,
-  input: z.object({
-    additionId: z.string().min(1).max(128),
-    decision: z.enum(['accept', 'ignore', 'confirm', 'undo']),
-    expectedDraftVersion: z.number().int().nonnegative(),
-  }).strict(),
-}).strict()
-
-export const reviewConsultationHistoryResponseSchema = commandResponseSchema(z.object({
-  draftVersion: z.number().int().nonnegative(),
-}).strict())
-
-export type ConsultationHistoryDecision = z.infer<typeof reviewConsultationHistoryRequestSchema>['input']['decision']
-
-export const clinicalDocumentFieldSchema = consultationRecordingFieldSchema
-export const clinicalDocumentAgentFactSchema = z.object({
-  field: clinicalDocumentFieldSchema,
-  text: z.string().trim().min(1).max(5_000),
-  sources: z.array(consultationHistorySourceSchema).max(12),
-}).strict()
-
-export const clinicalDocumentQualityEvidenceSchema = z.object({
-  id: z.string().min(1).max(256),
-  kind: z.enum(['document', 'patient', 'doctor', 'report', 'clinical']),
-  label: z.string().min(1).max(256),
-  text: z.string().min(1).max(20_000),
-  field: clinicalDocumentFieldSchema.optional(),
-  recordedAt: z.string().optional(),
-  reference: z.string().max(512).optional(),
-}).strict()
-
-export const clinicalDocumentQualityIssueSchema = z.object({
-  id: z.string().min(1).max(128),
-  kind: z.enum(['missing-field', 'omission', 'inconsistency', 'agent-source']),
-  field: clinicalDocumentFieldSchema,
-  classification: z.enum(['needs-completion', 'needs-verification']),
-  message: z.string().trim().min(1).max(2_000),
-  basis: z.object({ label: z.string().min(1).max(1_000), kind: z.enum(['official', 'project']),
-    url: z.url().optional(), locator: z.string().max(256).optional() }).strict(),
-  evidence: z.array(clinicalDocumentQualityEvidenceSchema).max(24),
-  relatedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-  status: z.enum(['open', 'retained']),
-  review: z.object({ actorId: z.string().min(1), reviewedAt: z.string().min(1), reason: z.string().max(1_000).optional() }).strict().optional(),
-}).strict()
-
-export const clinicalDocumentQualityControlStateSchema = z.object({
-  caseId: z.string().min(1), encounterId: z.string().min(1),
-  draftVersion: z.number().int().nonnegative(),
-  documentFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-  inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-  clientId: z.string().min(1).max(128).optional(),
-  clientRevision: z.number().int().nonnegative().optional(),
-  generation: z.number().int().nonnegative(),
-  stale: z.boolean(),
-  status: z.enum(['idle', 'pending', 'ready', 'failed', 'incomplete', 'unavailable']),
-  issues: z.array(clinicalDocumentQualityIssueSchema).max(64),
-  notices: z.array(z.string().min(1).max(2_000)).max(12),
-  checkedAt: z.string().optional(),
-  errorCode: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT', 'AI_RESPONSE_INVALID', 'WORKFLOW_CONFLICT', 'INPUT_TOO_LARGE']).optional(),
-}).strict()
-
-export const checkClinicalDocumentQualityRequestSchema = z.object({
-  expectedVersions: fhirExpectedVersionsSchema,
-  input: z.object({
-    expectedDraftVersion: z.number().int().nonnegative(),
-    document: clinicalDocumentDraftContentSchema.optional(),
-    clientId: z.string().min(1).max(128).optional(),
-    clientRevision: z.number().int().nonnegative().optional(),
-    refresh: z.boolean().optional(),
-  }).strict().superRefine((input, context) => {
-    const candidateParts = [input.document, input.clientId, input.clientRevision].filter(value => value !== undefined).length
-    if (candidateParts !== 0 && candidateParts !== 3) {
-      context.addIssue({ code: 'custom', path: ['document'], message: 'Unsaved checks require a document, client identity and revision together' })
-    }
-  }),
-}).strict()
-export const clinicalDocumentQualityControlResponseSchema = commandResponseSchema(clinicalDocumentQualityControlStateSchema)
-export const retainClinicalDocumentQualityIssueRequestSchema = z.object({
-  expectedVersions: fhirExpectedVersionsSchema,
-  input: z.object({ issueId: z.string().min(1).max(128), expectedInputFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
-    clientId: z.string().min(1).max(128).optional(), reason: z.string().trim().max(1_000).optional() }).strict(),
-}).strict()
-
-export type ClinicalDocumentQualityControlState = z.infer<typeof clinicalDocumentQualityControlStateSchema>
-export type ClinicalDocumentQualityIssue = z.infer<typeof clinicalDocumentQualityIssueSchema>
-export type ClinicalDocumentQualityEvidence = z.infer<typeof clinicalDocumentQualityEvidenceSchema>
-
-export const clinicalDocumentQualityGenerationSchema = z.object({
-  issues: z.array(z.object({
-    kind: z.enum(['missing-field', 'omission', 'inconsistency']), field: clinicalDocumentFieldSchema,
-    message: z.string().trim().min(1).max(2_000),
-    documentQuote: z.string().min(1).max(5_000).optional(),
-    sourceQuotes: z.array(z.object({ evidenceId: z.string().min(1).max(256),
-      quote: z.string().min(1).max(20_000) }).strict()).max(8),
-  }).strict()).max(32),
-  agentFactChecks: z.array(z.object({ id: z.string().min(1).max(256), supported: z.boolean() }).strict()).max(64),
-}).strict()
-
 export const saveClinicalDocumentDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
     document: clinicalDocumentDraftContentSchema,
     expectedDraftVersion: z.number().int().nonnegative(),
-    agentGenerated: z.boolean().optional(),
-    agentFacts: z.array(clinicalDocumentAgentFactSchema).max(64).optional(),
   }).strict(),
 }).strict()
 
@@ -1210,19 +1111,7 @@ export const previewClinicalDocumentSignRequestSchema = z.object({
   }).strict(),
 }).strict()
 
-export const consultationSignReviewSchema = z.object({
-  consultationVersion: z.number().int().nonnegative(),
-  sourceCount: z.number().int().nonnegative().optional(),
-  remainingCount: z.number().int().nonnegative(),
-  failedCount: z.number().int().nonnegative(),
-  paused: z.boolean(),
-  conflictCount: z.number().int().nonnegative(),
-  unreviewedCount: z.number().int().nonnegative(),
-}).strict()
-
 export const clinicalDocumentSignPreviewResponseSchema = commandResponseSchema(z.object({
-  qualityControl: clinicalDocumentQualityControlStateSchema.optional(),
-  consultationReview: consultationSignReviewSchema.nullable().default(null),
   commitToken: z.string().min(1),
   document: z.object({
     content: clinicalDocumentContentSchema,
@@ -1235,7 +1124,6 @@ export const clinicalDocumentSignPreviewResponseSchema = commandResponseSchema(z
 export const signClinicalDocumentRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
   input: z.object({
-    consultationReviewed: z.boolean().optional(),
     commitToken: z.string().min(16).max(256),
     previewId: z.string().min(1).max(128),
   }).strict(),
@@ -1986,7 +1874,6 @@ export const doctorCompletedCaseDetailSchema = z.object({
 }).strict()
 
 export const doctorCaseDetailSchema = z.object({
-  qualityControl: clinicalDocumentQualityControlStateSchema.optional(),
   allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
   clinicalDocument: clinicalDocumentStateSchema.optional(),
