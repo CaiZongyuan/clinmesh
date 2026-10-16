@@ -4,6 +4,7 @@ import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { ClinicalDocumentPage, ClinicalDocumentContentView, type ClinicalDocumentSignPreview } from '../../../web/src/app/doctor/clinical-document-page.tsx'
 import { AgentReviewProvider, useAgentReview } from '../../../web/src/app/agent-review.tsx'
+import { ConsultationVerificationStatus } from '../../../web/src/app/doctor/consultation-recording-controls.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../../../web/src/app/workspace-i18n.ts'
 
 const content: ClinicalDocumentContent = { chiefComplaint: '头晕一周。', historyOfPresentIllness: '医生核对病史。\n'.repeat(60),
@@ -62,6 +63,7 @@ function App({ locale, onLocaleChange }: { locale: WorkspaceLocale; onLocaleChan
         description: locale => getWorkspaceMessages(locale).clinicalDocumentSignDescription,
         confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
         content: locale => <>
+          <ConsultationVerificationStatus recording={detail.consultationRecording} messages={getWorkspaceMessages(locale)} />
           <ClinicalDocumentContentView content={content} messages={getWorkspaceMessages(locale)} />
         </>,
         onConfirm: () => setResult(`agent:signed`) })

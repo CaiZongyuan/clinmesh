@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import { syntheticCaseRegistrationListInputSchema } from '@clinmesh/contracts/his-operations'
@@ -1493,9 +1493,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         const bound = await actor(context)
         const caseId = context.req.param('caseId')
         const since = z.string().regex(/^[a-f0-9]{64}$/).optional().parse(context.req.query('since'))
-        const revision = (detail: ReturnType<typeof workflow.doctorCaseDetail>) => createHash('sha256')
-          .update(JSON.stringify({ recording: detail.consultationRecording, document: detail.clinicalDocument })).digest('hex')
-        let current = revision(workflow.doctorCaseDetail(bound, caseId))
+        let current = workflow.doctorCaseRecordingRevision(bound, caseId)
         if (since === current && options.commandEvents !== undefined) {
           await new Promise<void>(resolve => {
             const finish = () => {
@@ -1514,7 +1512,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
             if (context.req.raw.signal.aborted || options.recordingUpdatesSignal?.aborted) finish()
           })
           if (options.recordingUpdatesSignal?.aborted) return context.body(null, 503)
-          current = revision(workflow.doctorCaseDetail(await actor(context), caseId))
+          current = workflow.doctorCaseRecordingRevision(await actor(context), caseId)
         }
         context.header('Cache-Control', 'no-store')
         return context.json({ revision: current })

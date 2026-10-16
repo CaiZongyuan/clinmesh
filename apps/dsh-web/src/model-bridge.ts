@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-import { decodeModelRoute, encodeModelRoute, modelBridgeRequestSchema, modelRouteSchema } from '@clinmesh/contracts/model-bridge'
+import { decodeModelRoute, encodeModelRoute, modelBridgeFirstTextHeader, modelBridgeRequestSchema, modelRouteSchema } from '@clinmesh/contracts/model-bridge'
 
 class ModelAccessError extends Error {}
 class ModelTimeoutError extends Error {}
@@ -20,12 +20,12 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
     }
     if (request.method !== 'POST') { response.writeHead(405, { allow: 'POST' }).end(); return }
     let responseStarted = false
-    const send = (status: number, body: string) => {
+    const send = (status: number, body: string, firstTextMs?: number) => {
       if (responseStarted || response.destroyed || response.writableEnded) return
       // Host gzip can defer writableEnded after end(); retain ownership while it flushes.
       responseStarted = true
       response.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body),
-        'cache-control': 'no-store' }).end(body)
+        'cache-control': 'no-store', ...(firstTextMs === undefined ? {} : { [modelBridgeFirstTextHeader]: String(firstTextMs) }) }).end(body)
     }
     const cancelled = new AbortController()
     const abort = () => { if (!response.writableFinished) cancelled.abort() }
@@ -58,7 +58,9 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
       signal.throwIfAborted()
       const model = encodeModelRoute(route)
       let content: string | undefined
+      let firstTextMs: number | undefined
       if (input.operation === 'complete') {
+        const started = performance.now()
         const catalog = await ctx.llm.listModels(route.provider)
         signal.throwIfAborted()
         if (!catalog.some(item => item.id === route.model)) throw new Error('Model unavailable')
@@ -72,7 +74,10 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
           system: `${input.systemPrompt}\nReturn exactly one JSON data object matching this JSON Schema, without Markdown or $schema metadata:\n${JSON.stringify(input.jsonSchema)}`,
           messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input.userPayload) }] }],
         })) {
-          if (chunk.type === 'text-delta') content += chunk.text
+          if (chunk.type === 'text-delta') {
+            if (chunk.text.length > 0) firstTextMs ??= performance.now() - started
+            content += chunk.text
+          }
           if (Buffer.byteLength(content) > 1024 * 1024) throw new Error('Response too large')
           if (chunk.type === 'finish') {
             if (chunk.reason.kind === 'error'
@@ -91,7 +96,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
         content = content.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1')
       }
       const body = JSON.stringify({ model, ...(content === undefined ? {} : { content }) })
-      send(200, body)
+      send(200, body, firstTextMs)
     } catch (error) {
       // Provider failures can contain credentials and private prompts; do not relay or log them.
       const body = JSON.stringify({ error: error instanceof ModelAccessError ? 'MODEL_AUTH_FAILED'

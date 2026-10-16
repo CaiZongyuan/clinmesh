@@ -1,6 +1,6 @@
-import { dshDefaultModel, decodeModelRoute, modelBridgeErrorSchema, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
+import { dshDefaultModel, decodeModelRoute, modelBridgeErrorSchema, modelBridgeFirstTextHeader, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
 import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
-import { ZodError } from 'zod'
+import { z, ZodError } from 'zod'
 
 export class DshModelProvider implements JsonChatCompletionsProvider {
   readonly #endpoint: URL
@@ -29,6 +29,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         systemPrompt: attempt === 0 ? input.systemPrompt : `${input.systemPrompt}\nThe previous response failed validation: ${JSON.stringify(issues)}. Generate a corrected JSON object using the original data and schema. Do not include $schema or other schema metadata.`,
         userPayload: input.userPayload, timeoutMs: this.options.timeoutMs,
       }, input.signal, input.onResponse)
+      if (result.firstTextMs !== undefined) input.onFirstText?.(result.firstTextMs)
       if (result.model !== model) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the pinned route')
       try {
         let value: unknown = JSON.parse(result.content ?? '')
@@ -100,7 +101,10 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         }
         throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
       }
-      return modelBridgeResponseSchema.parse(JSON.parse(content))
+      const header = response.headers.get(modelBridgeFirstTextHeader)
+      const firstText = header === null ? undefined : z.coerce.number().finite().nonnegative().max(10 * 60_000).safeParse(header)
+      return { ...modelBridgeResponseSchema.parse(JSON.parse(content)),
+        ...(firstText?.success ? { firstTextMs: firstText.data } : {}) }
     } catch (error) {
       if (signal.aborted) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request was cancelled or timed out')
       if (error instanceof ChatCompletionsError) throw error

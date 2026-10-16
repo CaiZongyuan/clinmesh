@@ -133,6 +133,9 @@ it('persists the increment before semantic verification and batches saved source
     },
   }
   const f = await fixture(provider)
+  const revision = async () => z.object({ revision: z.string() }).parse(await (await f.runtime.app.request(
+    `/api/his/v1/doctor/cases/${f.caseId}/recording-events`, { headers: { cookie: f.doctor } })).json()).revision
+  const initialRevision = await revision()
   const binding = await f.context()
   for (const [index, text] of ['双肺呼吸音清。', '心律齐。'].entries()) {
     const input = await f.source(binding, text, `batch-rpc-${index}`, `batch-message-${index}`)
@@ -145,10 +148,13 @@ it('persists the increment before semantic verification and batches saved source
   expect(verifications).toBe(0)
   expect(recorded.consultationRecording).toMatchObject({ processedCount: 2, remainingCount: 0,
     verification: { pendingCount: 1, flaggedCount: 0 } })
+  const recordedRevision = await revision()
+  expect(recordedRevision).not.toBe(initialRevision)
   await f.runtime.dispatchPending()
   const checked = await f.read()
   expect(checked.consultationRecording).toMatchObject({ verification: { pendingCount: 0, flaggedCount: 1 } })
   expect(checked.clinicalDocument?.draft).toEqual(recorded.clinicalDocument?.draft)
+  expect(await revision()).not.toBe(recordedRevision)
 })
 
 it('retries an unavailable semantic check without regenerating the saved draft or repeating a negative verdict', async () => {
@@ -188,6 +194,34 @@ it('retries an unavailable semantic check without regenerating the saved draft o
   expect({ summaries, checks }).toEqual({ summaries: 1, checks: 2 })
   expect((await retry()).status).toBe(409)
 })
+
+it('preserves complete evidence beyond 128 KiB of identity metadata without enlarging model input', async () => {
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({ additions: [
+      { index: 0, faithful: true, complete: true, relationValid: true },
+    ] }), model: 'synthetic' }
+    expect(Buffer.byteLength(JSON.stringify(input.userPayload))).toBeLessThanOrEqual(128 * 1024)
+    const { turns, currentSourceIds } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+      currentSourceIds: z.array(z.string()) }).parse(input.userPayload)
+    return { content: JSON.stringify({ additions: currentSourceIds.map(id => {
+      const source = turns.find(turn => turn.id === id)!
+      return { field: 'physicalExamination', relation: 'addition', facts: [{ text: source.messageText.slice(0, -1),
+        sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] }
+    }) }), model: 'synthetic' }
+  } })
+  const binding = await f.context({}, 's'.repeat(256))
+  for (let index = 0; index < 160; index++) {
+    await f.record(binding, await f.source(binding, `第${index + 1}次复测心率${60 + index % 40}次每分钟。`,
+      String(index).padEnd(256, 'r'), String(index).padEnd(256, 'm')))
+    await f.runtime.dispatchPending()
+  }
+  expect((await f.read()).consultationRecording).toMatchObject({ processedCount: 160, failedCount: 0 })
+  const last = z.object({ snapshot_json: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT snapshot_json FROM consultation_recording_batch ORDER BY rowid DESC LIMIT 1').get())
+  expect(Buffer.byteLength(last.snapshot_json)).toBeGreaterThan(128 * 1024)
+  expect(Buffer.byteLength(last.snapshot_json)).toBeLessThanOrEqual(256 * 1024)
+  expect(JSON.parse(last.snapshot_json).sources).toHaveLength(160)
+}, 120_000)
 
 it('notifies authorized case readers after commit and cleans up cancelled subscriptions', async () => {
   const f = await fixture()
@@ -363,6 +397,43 @@ it('lets a new increment finish while another semantic check is still running', 
   } finally { release(); await Promise.all([first, second]) }
 })
 
+it('cancels an in-flight semantic request as soon as its exact fragment is superseded', async () => {
+  let entered!: () => void
+  let release!: () => void
+  let cancelled = false
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') {
+      entered()
+      await new Promise<void>((resolve, reject) => {
+        input.signal!.addEventListener('abort', () => { cancelled = true; reject(input.signal!.reason) }, { once: true })
+        void held.then(resolve)
+      })
+      return { content: JSON.stringify({ additions: [{ index: 0, faithful: true, complete: true, relationValid: true }] }), model: 'synthetic' }
+    }
+    const payload = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+      history: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+    const source = payload.turns.at(-1)!
+    const target = payload.history[0]
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: target === undefined ? 'addition' : 'update',
+      ...(target === undefined ? {} : { targetAdditionId: target.id, retainedFactIndexes: [0] }),
+      facts: [{ text: source.messageText.slice(0, -1), sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] }] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。'))
+  await f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.record-history'] })
+  const checking = f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.verify-history'] })
+  await started
+  try {
+    await f.record(binding, await f.source(binding, '心律齐。', 'cancel-check-rpc', 'cancel-check-message'))
+    await f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.record-history'] })
+    await expect.poll(() => cancelled, { timeout: 500 }).toBe(true)
+  } finally { release(); await checking }
+  expect((await f.read()).clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清；心律齐')
+  expect(f.runtime.database.driver.prepare("SELECT count(*) AS count FROM consultation_recording_verification WHERE status = 'stale'").get()).toEqual({ count: 1 })
+})
+
 it('cancels a timed out recording once and preserves its failure without blocking the next source', async () => {
   let calls = 0
   let cancelled = false
@@ -381,6 +452,11 @@ it('cancels a timed out recording once and preserves its failure without blockin
   expect(cancelled).toBe(true)
   expect(calls).toBe(1)
   expect((await f.read()).consultationRecording).toMatchObject({ failures: [{ code: 'AI_TIMEOUT', retrying: false }] })
+  const timing = z.object({ timings_json: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT timings_json FROM consultation_recording_batch').get())
+  expect(JSON.parse(timing.timings_json)).toMatchObject({ errorCode: 'AI_TIMEOUT', stage: 'summary', sourceCount: 1,
+    aggregationMs: 0, schedulingMs: expect.any(Number), modelMs: expect.any(Number), validationMs: 0,
+    persistenceMs: expect.any(Number), firstResponseMs: null, firstTextMs: null })
   await f.record(binding, await f.source(binding, '没有新增记录。', 'after-timeout-rpc', 'after-timeout-message'))
   await f.runtime.dispatchPending()
   expect(calls).toBe(2)

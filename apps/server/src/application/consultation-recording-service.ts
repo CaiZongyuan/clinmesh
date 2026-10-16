@@ -527,6 +527,27 @@ export class ConsultationRecordingService {
     return parsed?.success && parsed.data.workspaceId === context.workspaceId && parsed.data.epoch === context.epoch ? parsed.data : undefined
   }
 
+  revision(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string): string {
+    const key = [context.workspaceId, context.epoch, caseId]
+    const document = z.object({ version: z.number().int().positive() }).optional().parse(this.#database.driver.prepare(`
+      SELECT version FROM clinical_document_draft WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(...key))
+    const sources = z.object({ count: z.number().int().nonnegative(), sequence: z.number().int().nonnegative() }).parse(
+      this.#database.driver.prepare(`SELECT count(*) AS count, coalesce(max(sequence), 0) AS sequence
+        FROM consultation_recording_source WHERE workspace_id = ? AND epoch = ? AND case_id = ?`).get(...key))
+    const jobs = z.array(z.object({ status: jobSchema.shape.status, generation: jobSchema.shape.generation,
+      result: orderedJobsSchema.element.shape.result, error_code: consultationRecordingErrorCodeSchema.nullable(), count: z.number().int().nonnegative() }))
+      .parse(this.#database.driver.prepare(`SELECT status, generation, result, error_code, count(*) AS count
+        FROM consultation_recording_job WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        GROUP BY status, generation, result, error_code ORDER BY status, generation, result, error_code`).all(...key))
+    const checks = z.array(z.object({ status: z.enum(['pending', 'verified', 'flagged', 'failed', 'stale']),
+      count: z.number().int().nonnegative() })).parse(this.#database.driver.prepare(`SELECT status, count(*) AS count
+        FROM consultation_recording_verification WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        GROUP BY status ORDER BY status`).all(...key))
+    return recordingContentHash({ state: this.#state(context, caseId), document, sources, jobs, checks,
+      signing: this.signingPreparation(context, caseId) })
+  }
+
   #verification(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
     const rows = this.#rows(context, caseId)
     const checks = z.array(z.object({ addition_id: z.string(), content_hash: z.string(),
@@ -570,6 +591,19 @@ export class ConsultationRecordingService {
     const current = () => this.#rows(context, check.case_id).find(row => row.addition_id === additionId
       && row.status === 'applied' && row.undone === 0 && row.review_state === null
       && check.content_hash === recordingContentHash({ text: row.current_text, facts: rowFacts(row) }))
+    const obsolete = new AbortController()
+    const signal = AbortSignal.any([model.signal, obsolete.signal])
+    const unsubscribe = this.#commands.subscribe(source => {
+      if (source.workspaceId !== context.workspaceId || obsolete.signal.aborted) return
+      try {
+        if (current() === undefined || this.#contextStatus(context) !== 'active'
+          || !this.#assertAccess(context, check.encounter_id).editable
+          || this.#state(context, check.case_id)?.version !== recordingVersion
+          || this.#state(context, check.case_id)?.paused === 1 || this.isSigning(context, check.case_id)) {
+          obsolete.abort(new Error('Verification context changed'))
+        }
+      } catch { obsolete.abort(new Error('Verification context unavailable')) }
+    })
     const started = performance.now()
     let status: 'verified' | 'flagged' | 'failed' | 'stale' = 'stale'
     let reason: 'verification-rejected' | 'verification-unavailable' | null = null
@@ -579,8 +613,8 @@ export class ConsultationRecordingService {
         if (this.#contextStatus(context) !== 'active' || !this.#assertAccess(context, check.encounter_id).editable
           || this.#state(context, check.case_id)?.paused === 1 || this.isSigning(context, check.case_id)
           || model.provider === undefined || model.model === undefined) throw new Error('Verification unavailable')
-        const pinned = await model.models.bind(context.workspaceId, `verify-history:${event.eventId}`, model.model, model.signal)
-        await verifyHistorySummaries(model.provider, pinned, model.signal, [{ field: row.field, facts: rowFacts(row), relation: row.relation,
+        const pinned = await model.models.bind(context.workspaceId, `verify-history:${event.eventId}`, model.model, signal)
+        await verifyHistorySummaries(model.provider, pinned, signal, [{ field: row.field, facts: rowFacts(row), relation: row.relation,
           ...(row.target_addition_id === null ? {} : { targetAdditionId: row.target_addition_id }) }], recordingTurns(batch),
           batch.history, batch.manualHistory, batch.rejectedFacts, batch.members.map(member => member.id))
         status = 'verified'
@@ -589,7 +623,10 @@ export class ConsultationRecordingService {
       if (model.shutdownSignal?.aborted && event.attempt < 3) return { status: 'retryable-failed' }
       status = error instanceof RecordingSourceError && error.diagnostic.reason === 'verification-rejected' ? 'flagged' : 'failed'
       reason = status === 'flagged' ? 'verification-rejected' : 'verification-unavailable'
+    } finally {
+      unsubscribe()
     }
+    if (obsolete.signal.aborted) { status = 'failed'; reason = 'verification-unavailable' }
     if (this.#contextStatus(context) === 'superseded') return { status: 'completed' }
     if (this.#contextStatus(context) !== 'active') { status = 'failed'; reason = 'verification-unavailable' }
     try {
@@ -819,6 +856,12 @@ export class ConsultationRecordingService {
     let stage: z.infer<typeof failureDiagnosticSchema>['stage'] = 'summary'
     const started = performance.now()
     let firstResponseMs: number | null = null
+    let firstTextMs: number | null = null
+    const saved = z.object({ saved_at: z.string().nullable() }).optional().parse(this.#database.driver.prepare(`
+      SELECT saved_at FROM consultation_recording_source WHERE workspace_id = ? AND epoch = ? AND source_id = ?
+    `).get(context.workspaceId, context.epoch, turnId))
+    const schedulingMs = saved?.saved_at == null ? null : Math.max(0, this.#now().getTime() - Date.parse(saved.saved_at))
+    let modelCompleted: number | undefined
     try {
       const access = this.#assertAccess(context, job.encounter_id)
       if (access.caseId !== job.case_id) throw new Error('Recording case changed')
@@ -838,7 +881,8 @@ export class ConsultationRecordingService {
         })
       }
       const batch = this.#batch(context, event, turnId, job)
-      if (Buffer.byteLength(JSON.stringify(batch)) > 128 * 1024) {
+      const payload = recordingModelPayload(batch)
+      if (Buffer.byteLength(JSON.stringify(batch)) > 256 * 1024 || Buffer.byteLength(JSON.stringify(payload)) > 128 * 1024) {
         throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'Recording context exceeds its bounded input budget; retained for explicit recovery')
       }
       if (model.provider === undefined || model.model === undefined) throw new Error('Recording model unavailable')
@@ -847,13 +891,14 @@ export class ConsultationRecordingService {
       const result = await model.provider.completeJson({
         maxAttempts: 2,
         onResponse: () => { firstResponseMs ??= performance.now() - started },
+        onFirstText: elapsedMs => { firstTextMs ??= elapsedMs },
         model: pinned, signal: model.signal, schemaName: 'consultation_history_summary',
         jsonSchema: z.toJSONSchema(recordingOutputSchema) as Record<string, unknown>,
         systemPrompt: `${historySummaryPrompt}\n只处理 currentSourceIds 的新来源，其余 turns 是相邻上下文和原始证据。语义核对在保存后独立执行。\nupdate/correction/conflict 中保持不变的目标事实使用 retainedFactIndexes（目标 facts 的从零开始的下标）原样保留，不在 facts 重述；facts 只输出新增或更正的事实。保留事实在前、新事实在后，总数最多12；目标已满时将独立新事实写为 addition。旧事实来源通过 sources 的 sourceTurnId 从 turns 恢复，不能凭空添加或遗漏有效事实。`,
-        userPayload: recordingModelPayload(batch),
+        userPayload: payload,
         validate: value => { recordingOutputSchema.parse(value); return true },
       })
-      const modelCompleted = performance.now()
+      modelCompleted = performance.now()
       model.signal.throwIfAborted()
       const decoded = decodeRecordingCandidates(JSON.parse(result.content), batch)
       const additions = removeRejectedHistorySources(decoded.additions, evidence.blocked)
@@ -864,7 +909,8 @@ export class ConsultationRecordingService {
       stage = 'apply'
       if (this.#current(context, turnId, job)) this.#apply(context, event, turnId, job, batch.baseline, valid,
         batch.manualHistory, batch.rejectedFacts, batch, partition.failures,
-        { modelMs: modelCompleted - started, firstResponseMs, validationMs: performance.now() - modelCompleted })
+        { modelMs: modelCompleted - started, firstResponseMs, firstTextMs, schedulingMs,
+          validationMs: performance.now() - modelCompleted })
       return { status: 'completed' }
     } catch (error) {
       if (!this.#current(context, turnId, job)) return { status: 'completed' }
@@ -877,7 +923,9 @@ export class ConsultationRecordingService {
       const sourceError = error instanceof RecordingSourceError ? error
         : error instanceof ChatCompletionsError && error.cause instanceof RecordingSourceError ? error.cause : undefined
       this.#finish(context, event, turnId, job, 'failed', code, false, { stage, ...sourceError?.diagnostic },
-        { elapsedMs: performance.now() - started, firstResponseMs, stage })
+        { elapsedMs: performance.now() - started, firstResponseMs, firstTextMs, schedulingMs, stage,
+          modelMs: (modelCompleted ?? performance.now()) - started,
+          validationMs: modelCompleted === undefined ? 0 : performance.now() - modelCompleted })
       return { status: 'completed' }
     }
   }
@@ -945,7 +993,8 @@ export class ConsultationRecordingService {
     job: z.infer<typeof jobSchema>, baseline: { version: number; content: Draft }, additions: HistorySummary[], manualHistory: ManualFragment[],
     rejectedFacts: RejectedHistoryFact[], batch: RecordingBatch,
     failures: ReturnType<typeof partitionRecordingCandidates>['failures'],
-    timings: { modelMs: number; firstResponseMs: number | null; validationMs: number }) {
+    timings: { modelMs: number; firstResponseMs: number | null; firstTextMs: number | null;
+      schedulingMs: number | null; validationMs: number }) {
     const persistenceStarted = performance.now()
     const fragments: Addition[] = additions.map(item => {
       const sources = item.facts.flatMap(fact => fact.sources)
@@ -1073,14 +1122,10 @@ export class ConsultationRecordingService {
           reference: `ClinicalDocumentDraft/${job.case_id}`, versionId: String(draftVersion) }] : []),
       ] }
     })
-    const saved = z.object({ saved_at: z.string().nullable() }).optional().parse(this.#database.driver.prepare(`
-      SELECT saved_at FROM consultation_recording_source WHERE workspace_id = ? AND epoch = ? AND source_id = ?
-    `).get(context.workspaceId, context.epoch, turnId))
     this.#database.driver.prepare(`UPDATE consultation_recording_batch SET timings_json = ?
       WHERE workspace_id = ? AND epoch = ? AND batch_id = ?
     `).run(JSON.stringify({ ...timings, aggregationMs: 0, persistenceMs: performance.now() - persistenceStarted,
-      schedulingMs: saved?.saved_at == null ? null : Math.max(0, this.#now().getTime() - Date.parse(saved.saved_at)
-        - timings.modelMs - timings.validationMs - (performance.now() - persistenceStarted)), sourceCount: batch.members.length }),
+      sourceCount: batch.members.length }),
       context.workspaceId, context.epoch, event.eventId)
   }
 
@@ -1092,8 +1137,10 @@ export class ConsultationRecordingService {
 
   #finish(context: ActorContext, event: OutboxHandlerInput, turnId: string,
     job: z.infer<typeof jobSchema>, status: 'failed', code: z.infer<typeof consultationRecordingErrorCodeSchema>, retrying = false,
-    diagnostic?: z.infer<typeof failureDiagnosticSchema>, timings?: { elapsedMs: number; firstResponseMs: number | null; stage: string }) {
+    diagnostic?: z.infer<typeof failureDiagnosticSchema>, timings?: { elapsedMs: number; firstResponseMs: number | null;
+      firstTextMs: number | null; schedulingMs: number | null; modelMs: number; validationMs: number; stage: string }) {
     if (!this.#current(context, turnId, job)) return
+    const persistenceStarted = performance.now()
     const nextStatus = retrying ? 'queued' : status
     this.#commands.execute({ context, operation: 'consultation.history.fail', expectedVersions: {},
       contextRequirement: 'current',
@@ -1119,5 +1166,9 @@ export class ConsultationRecordingService {
       return { data: { status, code, ...(diagnostic === undefined ? {} : { diagnostic }) },
         effects: [{ kind: 'updated', reference: `ConsultationRecording/${job.case_id}`, versionId: turnId }] }
     })
+    this.#database.driver.prepare(`UPDATE consultation_recording_batch SET timings_json = json_set(timings_json, '$.persistenceMs', ?)
+      WHERE workspace_id = ? AND epoch = ? AND batch_id = ?
+    `).run(performance.now() - persistenceStarted,
+      context.workspaceId, context.epoch, event.eventId)
   }
 }

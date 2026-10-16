@@ -30,6 +30,7 @@ const secret = z.string().min(32).parse(environment.CLINMESH_DSH_BRIDGE_SECRET)
 const provider = new DshModelProvider({ origin: environment.CLINMESH_DSH_MODEL_ORIGIN ?? 'http://127.0.0.1:3080',
   secret, timeoutMs: 120_000, maxResponseBytes: 1_048_576 })
 const model = await provider.resolveModel(environment.CLINMESH_AI_RECORDING_MODEL ?? dshDefaultModel)
+const verificationModel = await provider.resolveModel(dshDefaultModel)
 const directory = await mkdtemp(join(tmpdir(), 'clinmesh-recording-benchmark-'))
 const webRoot = join(directory, 'web')
 await build({ root: resolve('apps/web'), envDir: false, logLevel: 'silent', build: { outDir: webRoot, emptyOutDir: true } })
@@ -41,13 +42,16 @@ if (address === null || typeof address === 'string') throw new Error('Missing li
 const origin = `http://127.0.0.1:${address.port}`
 const password = `Synthetic-${randomUUID()}-Aa1!`
 const browser = await chromium.launch(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : {})
-const samples: Array<{ caseIndex: number; sourceId: string; savedAt: number; visibleAt?: number }> = []
+type Sample = { caseIndex: number; sourceId: string; savedAt: number; visibleAt?: number }
+const samples: Sample[] = []
+const samplesBySource = new Map<string, Sample>()
+const injectionLateness: number[] = []
 const backlog: Array<{ elapsedSeconds: number; saved: number; visible: number; queued: number }> = []
 try {
   runtime = await createClinMeshRuntime({ authBaseUrl: origin, authSecret: randomUUID() + randomUUID(),
     cursorSecret: randomUUID() + randomUUID(), databasePath: join(directory, 'benchmark.sqlite'), demoPassword: password,
     migrationMode: 'apply', trustedOrigins: [origin], webRoot, autoDispatchIntervalMs: 100,
-    dshBridgeSecret: secret, chatCompletionsProvider: provider, consultationModel: model, consultationRecordingModel: model,
+    dshBridgeSecret: secret, chatCompletionsProvider: provider, consultationModel: verificationModel, consultationRecordingModel: model,
     dshModelBridge: { origin: environment.CLINMESH_DSH_MODEL_ORIGIN ?? 'http://127.0.0.1:3080', secret, timeoutMs: 120_000, maxResponseBytes: 1_048_576 } })
   const app = runtime
   const registrar = await signIn(app, 'registrar@demo.clinmesh.local', password, origin)
@@ -59,12 +63,14 @@ try {
     if (!response.ok) throw new Error(`Synthetic setup or source rejected: ${response.status}`)
     return response.json()
   }
-  const context = await browser.newContext({ locale: 'zh-CN' })
-  context.setDefaultTimeout(15_000)
   const [cookieName, ...cookieValue] = doctor.split('=')
-  await context.addCookies([{ name: cookieName!, value: cookieValue.join('='), url: origin }])
   const cases = []
   for (let index = 0; index < caseCount; index++) {
+    // Separate clients must not share Chromium's per-origin HTTP/1.1 pool:
+    // ten long polls in one context would consume the connections used by Query.
+    const context = await browser.newContext({ locale: 'zh-CN' })
+    context.setDefaultTimeout(15_000)
+    await context.addCookies([{ name: cookieName!, value: cookieValue.join('='), url: origin }])
     const name = `合成测量患者${index + 1}`
     const patient = createPatientResponseSchema.parse(await post('/api/his/v1/patients', registrar, { expectedVersions: {},
       input: { birthDate: '1990-05-10', gender: 'male', identifier: `CM-SYN-${randomUUID()}`, name } })).data.patient
@@ -90,7 +96,7 @@ try {
     cases.push({ caseId, claim, page })
     console.log(JSON.stringify({ phase: 'case-ready', caseIndex: index }))
   }
-  console.log(JSON.stringify({ phase: 'started', seconds, caseCount, workload, intervalMs: 3000, model }))
+  console.log(JSON.stringify({ phase: 'started', seconds, caseCount, workload, intervalMs: 3000, model, verificationModel }))
   let observing = true
   const observer = (async () => {
     while (observing) {
@@ -102,8 +108,8 @@ try {
           if (!values.some(value => value.includes(row.current_text))) continue
           const facts = row.facts_json === null ? [] : z.array(z.object({ sources: z.array(z.object({ sourceTurnId: z.string() })) })).parse(JSON.parse(row.facts_json))
           for (const source of facts.flatMap(fact => fact.sources)) {
-            const sample = samples.find(sample => sample.caseIndex === index && sample.sourceId === source.sourceTurnId)
-            if (sample !== undefined) sample.visibleAt ??= Date.now()
+            const sample = samplesBySource.get(source.sourceTurnId)
+            if (sample?.caseIndex === index) sample.visibleAt ??= Date.now()
           }
         }
       }))
@@ -113,6 +119,7 @@ try {
   const start = Date.now()
   for (let round = 0; round < Math.floor(seconds / 3); round++) {
     await delay(Math.max(0, start + round * 3000 - Date.now()))
+    injectionLateness.push(Math.max(0, Date.now() - (start + round * 3000)))
     await Promise.all(cases.map(async ({ claim }, index) => {
       const binding = agentPageContextBindingSchema.parse(await post('/api/agent/v1/page-contexts', doctor, { claim,
         client: { id: `benchmark-client-${index}`, revision: round + 1 }, dshSessionId: `benchmark-session-${index}` }))
@@ -127,7 +134,9 @@ try {
         content, sourceProof: `${encoded}.${createHmac('sha256', secret).update(encoded).digest('base64url')}` })).data
       const timing = z.object({ saved_at: z.string() }).parse(app.database.driver.prepare(
         'SELECT saved_at FROM consultation_recording_source WHERE source_id = ?').get(saved.sourceId))
-      samples.push({ caseIndex: index, sourceId: saved.sourceId, savedAt: Date.parse(timing.saved_at) })
+      const sample = { caseIndex: index, sourceId: saved.sourceId, savedAt: Date.parse(timing.saved_at) }
+      samples.push(sample)
+      samplesBySource.set(saved.sourceId, sample)
     }))
     if (round % 20 === 19) {
       const queued = z.object({ count: z.number() }).parse(app.database.driver.prepare(
@@ -138,23 +147,49 @@ try {
       console.log(JSON.stringify({ phase: 'progress', ...progress }))
     }
   }
+  const injectionElapsedMs = Date.now() - start
   await delay(15_000)
   observing = false
   await observer
   const percentile = (values: number[], p: number) => values.length === 0 ? null : values.toSorted((a, b) => a - b)[Math.ceil(values.length * p) - 1] ?? null
   const latencies = samples.flatMap(sample => sample.visibleAt === undefined ? [] : [sample.visibleAt - sample.savedAt])
   const results = app.database.driver.prepare('SELECT status, result, error_code, count(*) AS count FROM consultation_recording_job GROUP BY status, result, error_code').all()
-  const batches = app.database.driver.prepare('SELECT timings_json FROM consultation_recording_batch').all()
-  const verification = app.database.driver.prepare('SELECT status, count(*) AS count, avg(elapsed_ms) AS averageMs FROM consultation_recording_verification GROUP BY status').all()
-  const report = { timestamp: new Date().toISOString(), model, device: { platform: process.platform, cpu: cpus()[0]?.model, cores: cpus().length },
-    seconds, caseCount, workload, intervalMs: 3000, sourceCount: samples.length, visibleCount: latencies.length, missingVisibleCount: samples.length - latencies.length,
-    p50Ms: percentile(latencies, 0.5), p95Ms: percentile(latencies, 0.95), results, batches, verification, backlog,
+  const storedBatches = z.array(z.object({ completed_at: z.string().nullable(), snapshot_json: z.string(), timings_json: z.string().nullable() }))
+    .parse(app.database.driver.prepare('SELECT completed_at, snapshot_json, timings_json FROM consultation_recording_batch').all())
+  const persisted = new Map<string, number>()
+  const batches = storedBatches.map(batch => {
+    const timings = batch.timings_json === null ? null : z.record(z.string(), z.unknown()).parse(JSON.parse(batch.timings_json))
+    if (batch.completed_at !== null && timings?.errorCode === undefined) {
+      const snapshot = z.object({ members: z.array(z.object({ id: z.string() })) }).parse(JSON.parse(batch.snapshot_json))
+      for (const member of snapshot.members) persisted.set(member.id, Math.min(persisted.get(member.id) ?? Infinity, Date.parse(batch.completed_at)))
+    }
+    return { timings_json: batch.timings_json }
+  })
+  const distribution = (values: number[]) => ({ count: values.length, p50Ms: percentile(values, 0.5), p95Ms: percentile(values, 0.95) })
+  const pageVisibility = distribution(samples.flatMap(sample => {
+    const saved = persisted.get(sample.sourceId)
+    return saved === undefined || sample.visibleAt === undefined ? [] : [Math.max(0, sample.visibleAt - saved)]
+  }))
+  const verificationRows = z.array(z.object({ status: z.string(), elapsed_ms: z.number().nullable() }))
+    .parse(app.database.driver.prepare('SELECT status, elapsed_ms FROM consultation_recording_verification').all())
+  const verification = [...new Set(verificationRows.map(row => row.status))].map(status => {
+    const rows = verificationRows.filter(row => row.status === status)
+    return { status, count: rows.length, elapsed: distribution(rows.flatMap(row => row.elapsed_ms === null ? [] : [row.elapsed_ms])) }
+  })
+  const report = { timestamp: new Date().toISOString(), model, verificationModel, device: { platform: process.platform, cpu: cpus()[0]?.model, cores: cpus().length },
+    seconds, caseCount, clientIsolation: 'browser-context-per-case', workload, intervalMs: 3000, injectionElapsedMs,
+    injectionLateness: { ...distribution(injectionLateness), maxMs: Math.max(...injectionLateness) },
+    sourceCount: samples.length, visibleCount: latencies.length, missingVisibleCount: samples.length - latencies.length,
+    p50Ms: percentile(latencies, 0.5), p95Ms: percentile(latencies, 0.95), pageVisibility, results, batches, verification, backlog,
     perCase: cases.map((_, index) => { const subset = samples.filter(sample => sample.caseIndex === index)
       return { caseIndex: index, sources: subset.length, visible: subset.filter(sample => sample.visibleAt !== undefined).length } }) }
   await writeFile(resolve(process.argv[4] ?? '.cache/issue-215-live-benchmark.json'), JSON.stringify(report, null, 2) + '\n')
   console.log(JSON.stringify({ ...report, batches: undefined }))
   // A non-zero exit keeps a measured failure from looking like passed acceptance.
-  if (latencies.length !== samples.length || report.p50Ms === null || report.p50Ms > 3000 || report.p95Ms === null || report.p95Ms > 8000) process.exitCode = 1
+  const failed = z.array(z.object({ status: z.string(), result: z.string().nullable() })).parse(results)
+    .some(result => result.status !== 'completed' || !['recorded', 'no-new-facts'].includes(result.result ?? ''))
+  if (failed || Math.max(...injectionLateness) > 3000 || latencies.length !== samples.length
+    || report.p50Ms === null || report.p50Ms > 3000 || report.p95Ms === null || report.p95Ms > 8000) process.exitCode = 1
 } finally {
   await browser.close()
   if ('closeAllConnections' in server) server.closeAllConnections()

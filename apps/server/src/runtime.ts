@@ -613,24 +613,23 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       { id: 'business', concurrency: 2, filter: { excludedKinds: ['consultation.record-history', 'consultation.verify-history',
         'consultation.record-history-backfill', 'doctor.generate-recommendations'] } },
     ]
-    const pumpLane = (lane: typeof lanes[number]): Promise<number> => {
-      return Promise.all(Array.from({ length: lane.concurrency }, (_, slot) => {
-        const key = `${lane.id}:${slot}`
-        const running = dispatchCycles.get(key)
-        if (running !== undefined) return running
-        const cycle = (async () => {
-          let handled = 0
-          while (!closed && handled < 100 && await dispatcher.dispatchOnce(lane.filter) !== undefined) handled += 1
-          return handled
-        })().finally(() => dispatchCycles.delete(key))
-        dispatchCycles.set(key, cycle)
-        return cycle
-      })).then(counts => counts.reduce((sum, count) => sum + count, 0))
+    const pumpSlot = (lane: typeof lanes[number], slot: number): Promise<number> => {
+      const key = `${lane.id}:${slot}`
+      const running = dispatchCycles.get(key)
+      if (running !== undefined) return running
+      const cycle = (async () => {
+        let handled = 0
+        while (!closed && handled < 100 && await dispatcher.dispatchOnce(lane.filter) !== undefined) handled += 1
+        return handled
+      })().finally(() => dispatchCycles.delete(key))
+      dispatchCycles.set(key, cycle)
+      return cycle
     }
     const dispatchPending = async (): Promise<void> => {
       for (let round = 0; !closed && round < 100; round += 1) {
-        const counts = await Promise.all(lanes.map(pumpLane))
-        if (counts.every(count => count === 0)) break
+        const counts = await Promise.all(lanes.map(lane => Promise.all(Array.from(
+          { length: lane.concurrency }, (_, slot) => pumpSlot(lane, slot)))))
+        if (counts.every(lane => lane.every(count => count === 0))) break
       }
     }
     const dispatchScenarioGenerationJobs = (): Promise<void> => {
@@ -668,9 +667,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const dispatchTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
-          void dispatchPending().catch(error => {
-            reportRuntimeError({ error, scope: 'outbox-dispatch' })
-          })
+          for (const lane of lanes) for (let slot = 0; slot < lane.concurrency; slot++) {
+            if (dispatchCycles.has(`${lane.id}:${slot}`)) continue
+            void pumpSlot(lane, slot).catch(error => {
+              reportRuntimeError({ error, scope: 'outbox-dispatch' })
+            })
+          }
         }, options.autoDispatchIntervalMs)
     const generationTimer = options.autoDispatchIntervalMs === undefined
       ? undefined

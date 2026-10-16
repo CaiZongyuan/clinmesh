@@ -512,6 +512,7 @@ function DoctorCaseController({
     activeCaseId,
     selectedCase?.diagnosticReportId,
   ] as const
+  const [recordingNotificationCase, setRecordingNotificationCase] = useState<string>()
   const detail = useQuery({
     enabled: activeCaseId !== undefined,
     queryFn: ({ signal }) => getDoctorCase(activeCaseId ?? '', signal),
@@ -524,7 +525,8 @@ function DoctorCaseController({
       )
       || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
       || query.state.data?.pathologyRequests?.requests.some(isAwaitingResult) === true
-      || (query.state.data?.consultationRecording !== undefined && query.state.data.encounter.status === 'in-progress')
+      || (query.state.data?.consultationRecording !== undefined && query.state.data.encounter.status === 'in-progress'
+        && (recordingNotificationCase !== activeCaseId || query.state.status === 'error'))
       ? 1_500
       : false,
   })
@@ -532,6 +534,8 @@ function DoctorCaseController({
     if (activeCaseId === undefined) return
     return subscribeRecordingUpdates(activeCaseId, () => {
       void queryClient.invalidateQueries({ queryKey: ['doctor-case', ...scope, activeCaseId] })
+    }, connected => {
+      setRecordingNotificationCase(current => connected ? activeCaseId : current === activeCaseId ? undefined : current)
     })
   }, [activeCaseId, queryClient, scope])
   const investigationView = useMemo<InvestigationView>(() => {

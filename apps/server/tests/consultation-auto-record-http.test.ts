@@ -61,7 +61,7 @@ afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) awa
 
 const summaryPayloadSchema = z.object({
   turns: z.array(z.object({ id: z.string(), speaker: z.string(), messageText: z.string() })),
-  history: z.array(z.object({ id: z.string(), field: z.string(), text: z.string() })),
+  history: z.array(z.object({ id: z.string(), field: z.string(), text: z.string().optional() })),
 })
 const firstFeverReply = '昨天晚上开始发烧，最高量到38.5度，还咳嗽，但是没有痰。'
 const secondFeverReply = '咳嗽也是昨晚开始的，胸口不疼，也不觉得喘。'

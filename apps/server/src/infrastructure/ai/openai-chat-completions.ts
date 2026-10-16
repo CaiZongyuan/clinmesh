@@ -50,6 +50,8 @@ export class ChatCompletionsError extends Error {
 export interface JsonChatCompletionInput {
   maxAttempts?: 1 | 2
   onResponse?: () => void
+  /** Provider-observed first text, excluding transport; absent when unavailable. */
+  onFirstText?: (elapsedMs: number) => void
   jsonSchema: Record<string, unknown>
   model: string
   schemaName: string

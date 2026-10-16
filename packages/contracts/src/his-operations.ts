@@ -2548,6 +2548,11 @@ export interface ExcludedHisRoute {
 export const excludedHisRoutes = [
   {
     method: 'GET',
+    path: '/api/his/v1/doctor/cases/:caseId/recording-events',
+    reason: '医生页面加速 Query 刷新的有界等待通知；事实仍由 doctor.case.get 读取，不登记独立 CLI 或 Agent tool 操作。',
+  },
+  {
+    method: 'GET',
     path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind',
     reason: '医生页面的诊疗建议状态与依据辅助读取，本期不登记独立 CLI 或 Agent tool 操作。',
   },

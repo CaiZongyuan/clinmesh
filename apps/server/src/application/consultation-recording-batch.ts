@@ -34,7 +34,8 @@ export function recordingModelPayload(batch: RecordingBatch) {
   return {
     turns: recordingTurns(batch).map(turn => ({ ...turn, id: sourceId(turn.id) })),
     currentSourceIds: batch.members.map(member => sourceId(member.id)),
-    history: batch.history.map((item, index) => ({ id: `h${index}`, field: item.field, text: item.text, quote: item.quote,
+    history: batch.history.map((item, index) => ({ id: `h${index}`, field: item.field,
+      ...(item.facts.length === 0 ? { text: item.text } : {}), quote: item.quote,
       facts: item.facts.map(fact => ({ text: fact.text, sources: fact.sources.map(source => ({ sourceTurnId: sourceId(source.sourceTurnId) })) })),
     })),
     rejectedFacts: facts(batch.rejectedFacts),

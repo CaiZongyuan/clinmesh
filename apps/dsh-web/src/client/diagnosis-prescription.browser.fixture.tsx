@@ -137,6 +137,15 @@ const recommendationStates = new Map<string, DoctorRecommendationState>()
 const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const url = new URL(String(input), 'http://synthetic.test')
   const path = url.pathname
+  if (path.endsWith('/recording-events')) {
+    if (url.searchParams.has('since')) await new Promise<void>(resolve => {
+      const finish = () => { clearTimeout(timer); init?.signal?.removeEventListener('abort', finish); resolve() }
+      const timer = setTimeout(finish, 10_000)
+      if (init?.signal?.aborted) finish()
+      else init?.signal?.addEventListener('abort', finish, { once: true })
+    })
+    return Response.json({ revision: '0'.repeat(64) })
+  }
   if (path === '/api/auth/context') return Response.json(session)
   if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [],
     medications: recommendationsMode ? [{
