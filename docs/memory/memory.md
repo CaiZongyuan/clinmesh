@@ -342,3 +342,5 @@
 - 原生 DSH 合成模型替身须覆盖宿主的医生任务意图识别；这条辅助请求接收单条医生原文而非业务 JSON。只实现患者与病史输出的替身会在页面 Tool 前报 `CLINMESH_DELEGATION_UNCONFIRMED`，服务端没有工具记录；按真实输入返回 `discuss` 或合法委托结果，不能跳过执行授权。
 
 - 原生 DSH 验收的临时插件也须在 manifest 中声明非空 `name` 和 `version`。官方 DeepSeek 的插件清单扩展会检查全部 active package；缺少版本时真实模型请求在发出 HTTP 前失败为 `REQUEST_EXTENSION`，合成 adapter 不经过这条扩展，不能证明真实 Provider 可用。
+
+- Windows 隔离文档校验 checkout 使用 `core.autocrlf=false`；Agent Note 格式检查按 LF 解析，CRLF 会把有效头部误报为格式错误。没有创建符号链接的权限时，仅在隔离校验目录将已核对的文件链接物化为目标内容（可用 hard link），目录依赖用 junction；不改原工作区的链接占位或共享 Git 配置。

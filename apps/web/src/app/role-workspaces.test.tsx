@@ -7553,7 +7553,7 @@ describe('role workspaces', () => {
     expect(screen.getByText('版本 1')).toBeTruthy()
     expect(screen.getByText('版本 2')).toBeTruthy()
     expect(screen.getByText(structuredClinicalDocument.assessment)).toBeTruthy()
-    expect(screen.getByText(/检验结果回报后修订诊断与处置。/)).toBeTruthy()
+    expect(screen.getByText('版本 2').closest('summary')?.textContent).toContain('检验结果回报后修订诊断与处置。')
     expect(screen.getAllByRole('button', { name: '提交病历修订' })).toHaveLength(1)
 
     const revisionForm = screen.getByRole('form', { name: '修订病历版本' })
