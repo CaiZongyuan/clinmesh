@@ -233,7 +233,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 9 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 10 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }

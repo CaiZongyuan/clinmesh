@@ -31,7 +31,14 @@ async function fixture(provider?: JsonChatCompletionsProvider, recordingTimeoutM
     dshBridgeSecret: secret,
     ...(recordingTimeoutMs === undefined ? {} : { consultationRecordingTimeoutMs: recordingTimeoutMs }),
     dshModelBridge: { origin: 'http://127.0.0.1:1', secret, timeoutMs: 2000, maxResponseBytes: 8192 },
-    ...(provider === undefined ? {} : { chatCompletionsProvider: provider, syntheaProvider: new StubSyntheaProvider(),
+    ...(provider === undefined ? {} : { chatCompletionsProvider: { ...provider, async completeJson(input) {
+      if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
+        const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+        return { model: 'synthetic', content: JSON.stringify({ issues: [],
+          agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }) }
+      }
+      return provider.completeJson(input)
+    } }, syntheaProvider: new StubSyntheaProvider(),
       consultationModel: 'synthetic', patientPersonaModel: 'synthetic', investigationModel: 'synthetic' }),
   })
   disposals.push(() => runtime.close())
