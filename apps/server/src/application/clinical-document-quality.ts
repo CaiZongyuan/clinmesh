@@ -19,7 +19,8 @@ import { WorkflowError } from './workflow-error.ts'
 type Document = z.infer<typeof clinicalDocumentDraftContentSchema>
 type Field = z.infer<typeof clinicalDocumentFieldSchema>
 export interface QualityAgentFact { id: string; field: Field; text: string; sources: z.infer<typeof consultationHistorySourceSchema>[] }
-const fragmentSchema = clinicalDocumentAgentFactSchema.extend({ id: z.string(), start: z.number().int().nonnegative(), end: z.number().int().nonnegative() })
+const qualityAgentFactSchema = clinicalDocumentAgentFactSchema.extend({ id: z.string(), sources: z.array(consultationHistorySourceSchema).max(768) })
+const fragmentSchema = qualityAgentFactSchema.extend({ start: z.number().int().nonnegative(), end: z.number().int().nonnegative() })
 const fragmentsSchema = z.array(fragmentSchema)
 const rowSchema = z.object({ generation: z.number().int().positive(), actor_context_json: z.string(), input_json: z.string(), state_json: z.string() })
 const contextSchema = z.object({ actorId: z.string(), workspaceId: z.string(), epoch: z.string(), scenarioRunId: z.string(), roleCode: z.string(),
@@ -36,7 +37,7 @@ interface Snapshot { caseId: string; encounterId: string; draftVersion: number; 
 const snapshotSchema = z.object({ caseId: z.string(), encounterId: z.string(), draftVersion: z.number().int().nonnegative(), signed: z.boolean(),
   document: clinicalDocumentDraftContentSchema, evidence: z.array(z.object({ id: z.string(), kind: z.enum(['document', 'patient', 'doctor', 'report', 'clinical']),
     label: z.string(), text: z.string(), field: clinicalDocumentFieldSchema.optional(), recordedAt: z.string().optional(), reference: z.string().optional() })),
-  agentFacts: z.array(clinicalDocumentAgentFactSchema.extend({ id: z.string() })), contextKey: z.string() })
+  agentFacts: z.array(qualityAgentFactSchema), contextKey: z.string() })
 const verificationSchema = z.object({ issues: z.array(z.object({ index: z.number().int().nonnegative(), supported: z.boolean() }).strict()).max(32),
   agentFactChecks: clinicalDocumentQualityGenerationSchema.shape.agentFactChecks }).strict()
 
@@ -158,7 +159,7 @@ export class ClinicalDocumentQualityControl {
     return clinicalDocumentQualityControlStateSchema.parse({
       ...previous, caseId: snapshot.caseId, encounterId: snapshot.encounterId, draftVersion: snapshot.draftVersion,
       documentFingerprint: hash(snapshot.document), inputFingerprint: hash(snapshot), stale,
-      generation: previous?.generation ?? 0, status: overflow ? 'incomplete' : previous?.status ?? (this.options.modelAvailable ? 'idle' : 'unavailable'), issues: issues.slice(0, 64),
+      generation: previous?.generation ?? 0, status: overflow ? 'incomplete' : !this.options.modelAvailable ? 'unavailable' : previous?.status ?? 'idle', issues: issues.slice(0, 64),
       notices: [...previous?.notices ?? ['仅按普通门诊模板和当前可见事实辅助检查；初诊/复诊专项清单须有明确文书上下文。'],
         ...(overflow ? ['问题数量超过单次展示预算，检查不完整；当前仅展示前64项。'] : [])],
     })
@@ -243,6 +244,7 @@ export class ClinicalDocumentQualityControl {
       if (state.stale || state.inputFingerprint !== request.input.expectedInputFingerprint) throw new WorkflowError('WORKFLOW_CONFLICT', 'The quality-control evidence changed')
       const issue = state.issues.find(issue => issue.id === request.input.issueId)
       if (issue === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The quality-control issue is no longer current')
+      if (issue.status === 'retained') return { data: state, effects: [] }
       const review = { actorId: context.actorId, reviewedAt: new Date().toISOString(), ...(request.input.reason === undefined ? {} : { reason: request.input.reason }) }
       this.options.database.driver.prepare(`INSERT INTO clinical_document_quality_review (workspace_id, epoch, case_id, related_fingerprint, review_json)
         VALUES (?, ?, ?, ?, ?) ON CONFLICT (workspace_id, epoch, case_id, related_fingerprint) DO UPDATE SET review_json = excluded.review_json
@@ -289,7 +291,7 @@ export class ClinicalDocumentQualityControl {
       const evidence = [...baseline.evidence, ...documentEvidence]
       const agentFacts = baseline.agentFacts.filter(fact => this.#sourceValid(baseline, fact))
       const input = { document: baseline.document, evidence, agentFacts }
-      if (Buffer.byteLength(JSON.stringify(input)) > 160 * 1024 || agentFacts.length > 64 || evidence.length > 200) {
+      if (Buffer.byteLength(JSON.stringify(input)) > 160 * 1024 || agentFacts.length > 64 || evidence.length > 200 || agentFacts.some(fact => fact.sources.length > 12)) {
         finish({ ...pending, status: 'incomplete', errorCode: 'INPUT_TOO_LARGE', notices: [...pending.notices, '完整输入超过单次检查预算；语义检查未完成，未截断资料。'] }); return { status: 'completed' }
       }
       const selected = await model.models.bind(context.workspaceId, `quality:${context.epoch}:${payload.caseId}:${payload.scopeKey}:${payload.generation}`, model.model, model.signal)
@@ -345,7 +347,7 @@ export class ClinicalDocumentQualityControl {
       }
       model.signal.throwIfAborted()
       if (!current()) return { status: 'completed' }
-        const issues = this.#deterministic(context, baseline)
+      const issues = this.#deterministic(context, baseline)
       for (const [index, issue] of output.issues.entries()) {
         if (!verdict.issues.find(item => item.index === index)?.supported) continue
         const cited: Evidence[] = issue.sourceQuotes.map(quote => ({ ...evidence.find(item => item.id === quote.evidenceId)!, text: quote.quote }))

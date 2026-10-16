@@ -1129,7 +1129,7 @@ export const clinicalDocumentQualityIssueSchema = z.object({
   message: z.string().trim().min(1).max(2_000),
   basis: z.object({ label: z.string().min(1).max(1_000), kind: z.enum(['official', 'project']),
     url: z.url().optional(), locator: z.string().max(256).optional() }).strict(),
-  evidence: z.array(clinicalDocumentQualityEvidenceSchema).max(12),
+  evidence: z.array(clinicalDocumentQualityEvidenceSchema).max(24),
   relatedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   status: z.enum(['open', 'retained']),
   review: z.object({ actorId: z.string().min(1), reviewedAt: z.string().min(1), reason: z.string().max(1_000).optional() }).strict().optional(),

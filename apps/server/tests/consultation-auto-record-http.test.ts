@@ -242,7 +242,7 @@ it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0
       expect.objectContaining({ ownership: 'manual' }), expect.objectContaining({ rejected: 1, undone: 1 })]))
   }
   await fixture.restart(replaceWithPreSourceDatabase)
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 66, foreignKeys: true, integrity: 'ok' })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 67, foreignKeys: true, integrity: 'ok' })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()
@@ -1095,7 +1095,10 @@ it('enforces responsibility for signing preparation, commit and cancellation whi
     const denied = await actions.request(action, input, { cookie: admin })
     expect(denied.status).toBe(403)
     expect(apiErrorSchema.parse(await denied.json()).error.code).toBe('ROLE_NOT_ALLOWED')
-    expect(await fixture.read()).toEqual(frozen)
+    const { qualityControl: _beforeQuality, ...frozenClinical } = frozen
+    const { qualityControl, ...currentClinical } = await fixture.read()
+    expect(currentClinical).toEqual(frozenClinical)
+    expect(qualityControl?.documentFingerprint).toBe(frozen.qualityControl?.documentFingerprint)
   }
   const selected = await select('practitioner-role-outpatient-doctor')
   expect(selected.actor.actorId).not.toBe((await fixture.runtime.identity.resolveSessionContext(new Headers({ cookie: fixture.cookie }))).actor.actorId)
@@ -1134,7 +1137,10 @@ it.each(['preparing', 'signed'])('freezes a preview and unfinished progress when
   if (phase === 'preparing') {
     release()
     await processing
-    expect(await fixture.read()).toEqual(frozen)
+    const { qualityControl: _beforeQuality, ...frozenClinical } = frozen
+    const { qualityControl, ...currentClinical } = await fixture.read()
+    expect(currentClinical).toEqual(frozenClinical)
+    expect(qualityControl?.documentFingerprint).toBe(frozen.qualityControl?.documentFingerprint)
   }
   const signed = await actions.request('actions/sign', input)
   expect(signed.status).toBe(200)

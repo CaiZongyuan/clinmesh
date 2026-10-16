@@ -9,11 +9,12 @@ import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts
 import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
 import { clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
+import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 type ModelInput = { schemaName: string; userPayload: unknown }
-async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown>) {
+async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown>, syntheaProvider = new StubSyntheaProvider()) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-quality-'))
   disposals.push(() => rm(directory, { recursive: true, force: true }))
   const bridge = { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 1000, maxResponseBytes: 256 * 1024 }
@@ -23,7 +24,7 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', outboxRetryDelayMs: 0,
     imagingAssetDirectory: join(directory, 'imaging'), imagingCatalogDirectory: join(directory, 'imaging-catalog'),
     pathologyAssetDirectory: join(directory, 'pathology'), pathologyCatalogDirectory: join(directory, 'pathology-catalog'),
-    syntheaProvider: new StubSyntheaProvider(), trustedOrigins: ['http://localhost'],
+    syntheaProvider, trustedOrigins: ['http://localhost'],
     dshModelBridge: bridge,
     chatCompletionsProvider: new DshModelProvider({ ...bridge, fetch: async (_url, init) => {
       const input = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
@@ -76,7 +77,12 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
       }, input: { expectedConsultationVersion: detail.consultation!.version, message: '现在还有哪些不舒服？' } }) })
   }
   return { get runtime() { return runtime }, started, cookie, path, headers, readCase, read, mutate, save, ask,
-    restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
+    restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) },
+    restartWithoutModel: async () => {
+      await runtime.close()
+      const { dshModelBridge: _bridge, chatCompletionsProvider: _provider, ...withoutModel } = options
+      runtime = await createClinMeshRuntime(withoutModel)
+    } }
 }
 
 it('shows applicable empty template fields without requiring auxiliary tests or repeating encounter metadata', async () => {
@@ -99,6 +105,11 @@ it('persists retained issues with audit and idempotency, and rechecks only chang
   const first = await f.mutate('retain', input, key)
   expect(first.status).toBe(200)
   expect(await (await f.mutate('retain', input, key)).json()).toEqual(await first.json())
+  const retained = (await f.read()).issues.find(item => item.id === issue.id)!
+  const repeated = await f.mutate('retain', { ...input, reason: '重复点击不能覆盖首次核实记录。' })
+  expect(repeated.status).toBe(200)
+  expect(z.object({ effects: z.array(z.unknown()) }).parse(await repeated.json()).effects).toEqual([])
+  expect((await f.read()).issues.find(item => item.id === issue.id)?.review).toEqual(retained.review)
   await f.restart()
   expect((await f.read()).issues.find(item => item.id === issue.id)).toMatchObject({ status: 'retained', review: { reason: input.reason } })
   expect((await f.save({ historyOfPresentIllness: '今日头晕。', chiefComplaint: '头晕一天。' })).status).toBe(200)
@@ -126,6 +137,13 @@ it('independently verifies exact source omissions and preserves time-qualified c
   const issue = (await f.read()).issues.find(issue => issue.kind === 'omission')!
   expect(issue).toMatchObject({ field: 'priorMedicalHistory', classification: 'needs-completion', status: 'open' })
   expect(issue.evidence[0]).toMatchObject({ kind: 'patient', text: persona.openingStatement })
+  const detail = await f.readCase()
+  const document = { assessment: '', chiefComplaint: '', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '记录待补充。' }
+  expect((await f.mutate('check', { expectedDraftVersion: detail.clinicalDocument!.draft!.version, document, clientId: 'same-document', clientRevision: 1 })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const candidate = await f.read('same-document')
+  expect((await f.mutate('retain', { issueId: issue.id, clientId: 'same-document', expectedInputFingerprint: candidate.inputFingerprint })).status).toBe(200)
+  expect((await f.read()).issues.find(item => item.id === issue.id)?.status).toBe('retained')
 })
 
 it('drops a late candidate result after sources change and restores the latest queued check across restart', async () => {
@@ -204,6 +222,73 @@ it('reports excessive issue counts as incomplete and keeps the draft writable', 
   expect(state.notices.join('')).toContain('前64项')
   expect(state.issues).toHaveLength(64)
   expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(text)
+})
+
+it('keeps deterministic checks available without a configured model and leaves semantic quality explicitly unavailable', async () => {
+  const f = await setup()
+  await f.restartWithoutModel()
+  expect((await f.save({ chiefComplaint: '头晕一天。' })).status).toBe(200)
+  expect(await f.read()).toMatchObject({ status: 'unavailable', issues: expect.arrayContaining([expect.objectContaining({ field: 'assessment', kind: 'missing-field' })]) })
+  expect((await f.read()).notices.join('')).toContain('语义检查尚未完成')
+})
+
+it('reports an incomplete semantic check for complete oversized visible history without sending truncated model input', async () => {
+  let modelCalls = 0
+  const provider = new class extends StubSyntheaProvider {
+    override async generate() {
+      const corpus = await super.generate()
+      const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(corpus.sources[0]!.raw)
+      raw.entry.push(...Array.from({ length: 210 }, (_, index) => ({ fullUrl: `urn:uuid:quality-history-${index}`,
+        resource: { resourceType: 'Condition', id: `quality-history-${index}`, subject: { reference: 'urn:uuid:patient' },
+          encounter: { reference: 'urn:uuid:prior-encounter' }, recordedDate: '2025-01-10T09:05:00+08:00',
+          code: { text: `第${index}项合成公开病史，诊断尚未明确。` } } })))
+      return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
+    }
+  }()
+  const f = await setup(() => { modelCalls += 1; return { issues: [], agentFactChecks: [] } }, provider)
+  expect((await f.save({ chiefComplaint: '头晕一周。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'incomplete', errorCode: 'INPUT_TOO_LARGE' })
+  expect(modelCalls).toBe(0)
+  expect((await f.readCase()).clinicalDocument!.draft!.chiefComplaint).toBe('头晕一周。')
+})
+
+it('rejects circular document-only omissions and duplicate statements posed as factual contradictions', async () => {
+  let duplicate = false
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    const source = payload.evidence.find(item => item.kind === (duplicate ? 'patient' : 'document'))!
+    return { issues: [{ kind: duplicate ? 'inconsistency' : 'omission', field: 'historyOfPresentIllness', message: '无效问题依据。',
+      sourceQuotes: Array.from({ length: duplicate ? 2 : 1 }, () => ({ evidenceId: source.id, quote: source.text })) }], agentFactChecks: [] }
+  })
+  expect((await f.save({ historyOfPresentIllness: '今天头晕。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).status).toBe('failed')
+  duplicate = true
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version, refresh: true })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).status).toBe('failed')
+  expect((await f.read()).issues.every(issue => issue.kind === 'missing-field')).toBe(true)
+})
+
+it('keeps old-Epoch quality results out of a reset workspace', async () => {
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>(resolve => { enter = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  const f = await setup(async () => { enter(); await held; return { issues: [], agentFactChecks: [] } })
+  expect((await f.save({ chiefComplaint: '头晕。' })).status).toBe(200)
+  const dispatch = f.runtime.dispatchPending()
+  await entered
+  try {
+    expect((await f.runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', {
+      method: 'POST', headers: { ...f.headers(), cookie: f.started.adminCookie }, body: '{}',
+    })).status).toBe(200)
+  } finally { release() }
+  await dispatch
+  const doctorCookie = await signIn(f.runtime, 'doctor@demo.clinmesh.local')
+  const response = await f.runtime.app.request(f.path, { headers: { cookie: doctorCookie } })
+  expect([403, 404, 409]).toContain(response.status)
 })
 
 it('checks unsaved revisions without saving, isolates browser clients and rejects partial or older candidate identities', async () => {
