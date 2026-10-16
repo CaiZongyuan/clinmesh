@@ -22,7 +22,7 @@ Reference SQLite 接受既有 Dataset Schema v1 和 `loinc-zh-cn` Schema v2。Sc
 
 医生病例目录只返回 active、doctor-orderable Laboratory Service。选择器展示根 LOINC、报告结构、标本和 TAT，不返回 Case Truth、模型或 generation capability。草稿冻结 Hospital Service、根 Reference coding 和完整 report definition；开立重新校验 service ID 与版本。Reference Concept ID 不能替代 Hospital Service ID。旧 `outpatient_catalog` 单项路径只作为既有兼容调用保留，不在新医生目录公开。
 
-Investigation 按冻结 report definition 的叶子闭包执行。每个叶子先按精确 LOINC coding 读取 Case Truth；完整 panel 全部命中时不调用模型，partial panel 只生成缺失叶子。Agent 输入加入当前正式诊断和已有正式检验，并继续限制 Visible History 与私有证据各 20 项；输出必须保持结果全集、值类型、单位、参考范围和判读一致。outbox 最多自动尝试三次，连续失败后才进入 `generation-failed`，且不创建 Specimen、Observation 或 DiagnosticReport。人工重试不重新解释病例级 generation capability，而是为同一冻结申请开启新的三次尝试窗口。
+Investigation 按冻结 report definition 的叶子闭包执行。每个叶子先按精确 LOINC coding 读取 Case Truth；完整 panel 全部命中时不调用模型，partial panel 只生成缺失叶子。Agent 输入加入当前正式诊断和已有正式检验，并继续限制 Visible History 与私有证据各 20 项；输出必须保持结果全集、值类型、单位、参考范围和判读一致。outbox 对可恢复错误最多自动尝试三次，连续失败后进入 `generation-failed`，且不创建 Specimen、Observation 或 DiagnosticReport。人工重试不重新解释病例级 generation capability，而是为同一冻结申请开启新的三次尝试窗口；确定性错误的首次失败与重试限制由[真值单位换算与失败恢复](../bug-fix/2026-10-16-laboratory-truth-unit-conversion.md)拥有。
 
 Investigation Result Snapshot 的唯一键是 `workspace + case + Hospital Service + input/evidence hash`。hash 固定 Case revision、服务/报告版本、申请前正式证据与私有来源输入。同一 request 通过持久 snapshot ID 幂等复用；Reset 后相同初始证据复用旧 snapshot；完成报告或诊断变化后的复查形成新 hash 和新 snapshot。
 

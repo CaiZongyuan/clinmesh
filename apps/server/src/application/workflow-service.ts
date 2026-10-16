@@ -7561,6 +7561,10 @@ export class WorkflowService {
       if (request === undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request was not found')
       }
+      if (request.generation_error_code === 'INVESTIGATION_TRUTH_INCOMPATIBLE'
+        || request.generation_error_code === 'INVESTIGATION_UNSUPPORTED') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The incompatible or unsupported laboratory result cannot be retried')
+      }
       this.#requests.assertRetryable(
         laboratoryRequestPolicy,
         input.context,
