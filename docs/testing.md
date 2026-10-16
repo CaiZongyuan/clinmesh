@@ -46,7 +46,7 @@ CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，�
 
 指南建议由 `doctor-recommendations-http.test.ts` 从真实 DSH Provider 的网络边界验证引用、语义否定、字段缺证、动态目录、授权、迟到结果与恢复；公开 HTTP 和真实 SQLite 保持真实。`doctor-recommendations.spec.ts` 与共享旅程从真实 Web 核对诊断、处方、检验建议进入草稿，处方缺项保持待补充，人工确认后才正式生效；两组 DSH 浏览器合同同时覆盖 React 18/19 的五种建议、来源类型、ShadowRoot、Portal、焦点及窄宽度。`pnpm smoke:recommendations:native` 复用锁定的原生宿主与合成外部模型运行同一旅程，`pnpm smoke:recommendations:live` 再读取新合成病例，使用显式配置的真实模型验证建议响应与实际提供的引用，且不采纳或创建临床事实。真实模型样本不代表全病种医学质量或药学安全评估；这两个显式 smoke 不进入 CI。
 
-大病例回归使用 596 条合成历史与超过单次预算的检验目录，验证授权批量读取、完整诊断分页、原文包可恢复、全部历史批次覆盖、旧安全信息、同输入跨建议种类复用、输入变更失效、失败不发布和核验完整候选分批。SQL 数量、模型请求数、实际字节与并发边界作为稳定性能合同，公开 HTTP 耗时单独记录；不以裸 SQL 下界代替整条读取链，也不固定真实模型墙钟时间。输入组织的范围与限制见[分批证据读取决策](../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)。
+大病例回归使用 596 条合成历史与超过单次预算的检验目录，验证授权批量读取、完整诊断分页、全部历史批次覆盖、单条原文选择与重打包、短句柄到真实来源的追溯、旧安全信息、跨建议种类复用、输入变更失效、失败不发布和核验完整候选分批。限流回归组合真实模型桥与 Provider，验证有界等待、剩余预算、格式修复共享一次重试、取消和建议 outbox 不叠加重试。SQL 数量、模型请求数、实际字节与并发边界作为稳定性能合同，公开 HTTP 耗时单独记录；不以裸 SQL 下界代替整条读取链，也不固定真实模型墙钟时间。输入组织和恢复边界见[分批读取决策](../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)与[记录级筛选决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
 
 核心病例轨迹见[系统架构](architecture.md#144-场景测试)。每次运行固定 app build、数据库 schema、Operation Catalog hash、Workspace policy version、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG 时再把对应版本加入固定输入。
 

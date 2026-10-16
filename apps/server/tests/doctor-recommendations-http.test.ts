@@ -425,7 +425,7 @@ async function installLargeClinicalRecommendationCatalog(fixture: Awaited<Return
       ...service.reportDefinition.results[0]!,
       referenceConcept: { ...service.referenceConcept, id: `${service.id}:member-${member}`, code: `SYN-${index}-${member}`,
         display: `第${member}项合成生化指标，需结合实际标本与临床资料解读。` },
-      adultReferenceRules: [{ high: 10, low: 0, notes: '仅用于成人参考；缺乏明确的临床依据时应核实，不得以目录存在推定需要检查。',
+      adultReferenceRules: [{ high: 10, low: 0, notes: '仅用于成人参考；缺乏明确的临床依据时应核实，不得以目录存在推定需要检查。'.repeat(2),
         referenceKind: 'range', sex: 'all', sourceLocation: '合成标准条款', sourceStandard: '合成标准', sourceType: 'national-standard', sourceVersion: '1' }],
     }))
     fixture.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog
@@ -440,6 +440,7 @@ async function installLargeClinicalRecommendationCatalog(fixture: Awaited<Return
 
 it('reads every oversized clinical catalog batch with selected original history and reuses only an unchanged complete catalog selection', async () => {
   const reviewed: string[] = []
+  const batchSchemas: Array<{ ids: string[]; schema: Record<string, unknown> }> = []
   const requests: string[] = []
   let selectedEvidence: unknown[] = []
   let projectedCatalogBytes = 0
@@ -469,6 +470,7 @@ it('reads every oversized clinical catalog batch with selected original history 
         items: z.array(z.unknown()),
       }) }) }).parse(input.userPayload).catalogs.laboratory.items))
       reviewed.push(...payload.catalogs.laboratory.items.map(item => item.id))
+      batchSchemas.push({ ids: payload.catalogs.laboratory.items.map(item => item.id), schema: input.jsonSchema })
       active += 1
       peak = Math.max(peak, active)
       await Promise.resolve()
@@ -492,6 +494,9 @@ it('reads every oversized clinical catalog batch with selected original history 
   await fixture.runtime.dispatchPending()
   expect(await fixture.read('laboratory')).toMatchObject({ status: 'ready', items: [{ kind: 'laboratory', catalogItemId: 'clinical-lab-99' }] })
   expect(reviewed.toSorted()).toEqual(Array.from({ length: 100 }, (_, index) => `clinical-lab-${String(index).padStart(2, '0')}`))
+  for (const batch of batchSchemas) expect(batch.schema).toMatchObject({ properties: {
+    selectedCatalogItemIds: { items: { enum: batch.ids } },
+  } })
   expect(projectedCatalogBytes).toBeGreaterThan(240 * 1024)
   expect(peak).toBe(2)
   const calls = requests.filter(name => name === 'doctor_recommendation_catalog_selection').length
@@ -1135,7 +1140,9 @@ it('generates from more than one hundred visible records while preserving every 
   expect(requests).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
 })
 
-function largeRecommendationHistory() {
+function largeRecommendationHistory(noteForIndex = (index: number) => index === 595
+  ? '未标注异常的旧肝功能结果，尚不能排除异常，需复查。'
+  : '本条历史记录未有进一步解释，不能推定正常。'.repeat(18)) {
   return new class extends StubSyntheaProvider {
     override async generate() {
       const corpus = await super.generate()
@@ -1143,8 +1150,7 @@ function largeRecommendationHistory() {
       raw.entry.push(...Array.from({ length: 596 }, (_, index) => ({ fullUrl: `urn:uuid:historical-observation-${index}`,
         resource: { resourceType: 'Observation', id: `historical-observation-${index}`, subject: { reference: 'urn:uuid:patient' },
           encounter: { reference: 'urn:uuid:prior-encounter' }, status: 'final', effectiveDateTime: '2024-01-10T09:05:00+08:00',
-          code: { text: `历史观察编号${index}。` }, note: [{ text: index === 595 ? '未标注异常的旧肝功能结果，尚不能排除异常，需复查。'
-            : '本条历史记录未有进一步解释，不能推定正常。'.repeat(18) }] },
+          code: { text: `历史观察编号${index}。` }, note: [{ text: noteForIndex(index) }] },
       })), { fullUrl: 'urn:uuid:old-anticoagulation', resource: { resourceType: 'MedicationRequest', id: 'old-anticoagulation',
         subject: { reference: 'urn:uuid:patient' }, encounter: { reference: 'urn:uuid:prior-encounter' },
         status: 'unknown', intent: 'order', authoredOn: '2010-01-10T09:05:00+08:00',
@@ -1153,6 +1159,46 @@ function largeRecommendationHistory() {
     }
   }()
 }
+
+it('generates from individually selected complete history records without retaining unrelated neighbours in their original packs', async () => {
+  const selectedNote = '本次需复核的完整观察记录，尚不能排除肝功能异常，不能改为正常。' + '原始测量条件和备注必须完整保留。'.repeat(18)
+  const unrelatedNote = 'UNRELATED_ONLY_SENTINEL：这条完整记录已明确核对为与本次无关。'.repeat(18)
+  const reviewed: string[] = []
+  const selectionIds: string[] = []
+  const batchSchemas: Array<{ ids: string[]; schema: Record<string, unknown> }> = []
+  const completedStages: string[] = []
+  const fixture = await setup(async input => {
+    if (input.schemaName === 'doctor_recommendation_history_selection') {
+      const payload = z.object({ requiredEvidence: z.array(z.object({ text: z.string() })),
+        historyEvidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(input.userPayload)
+      expect(JSON.stringify(payload.requiredEvidence)).toContain('旧的抗凝药记录，停药情况尚不明确。')
+      reviewed.push(...payload.historyEvidence.map(item => item.text))
+      selectionIds.push(...payload.historyEvidence.map(item => item.id))
+      batchSchemas.push({ ids: payload.historyEvidence.map(item => item.id), schema: input.jsonSchema })
+      return { content: JSON.stringify({ complete: true,
+        selectedEvidenceIds: payload.historyEvidence.filter(item => item.text.includes(selectedNote)).map(item => item.id),
+      }), model: input.model }
+    }
+    completedStages.push(input.schemaName)
+    const text = JSON.stringify(input.userPayload)
+    expect(text).toContain(selectedNote)
+    expect(text).toContain('旧的抗凝药记录，停药情况尚不明确。')
+    expect(text).not.toContain('UNRELATED_ONLY_SENTINEL')
+    return { content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+      ? diagnosisOutput(input) : verificationOutput(input)), model: input.model }
+  }, { syntheaProvider: largeRecommendationHistory(index => index % 30 === 0 ? selectedNote : unrelatedNote) })
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).status).toBe('ready')
+  expect(Math.max(...selectionIds.map(id => Buffer.byteLength(id)))).toBeLessThanOrEqual(16)
+  for (const batch of batchSchemas) expect(batch.schema).toMatchObject({ properties: {
+    selectedEvidenceIds: { items: { enum: batch.ids } },
+  } })
+  for (let index = 0; index < 596; index += 1) expect(reviewed.join('\n')).toContain(`历史观察编号${index}。`)
+  expect(completedStages).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+  expect(await fixture.readCase()).toEqual(before)
+})
 
 it('reads every batch of a large history concurrently and reuses original-source selection across suggestion kinds', async () => {
   const syntheaProvider = largeRecommendationHistory()
@@ -1240,6 +1286,24 @@ it.each(['incomplete', 'foreign-id', 'provider-error', 'timeout'])('does not gen
       : failure === 'provider-error' ? 'MODEL_UNAVAILABLE' : 'AI_RESPONSE_INVALID' })
   expect(requests.length).toBeGreaterThan(0)
   expect(requests.every(name => name === 'doctor_recommendation_history_selection')).toBe(true)
+  expect(await fixture.readCase()).toEqual(before)
+})
+
+it('stops after the bounded Provider retry on rate limits and preserves clinical drafts for explicit recovery', async () => {
+  let requests = 0
+  const fixture = await setup(async () => {
+    requests += 1
+    return Response.json({ error: 'MODEL_RATE_LIMIT', retryAfterMs: 5 }, { status: 429 })
+  })
+  expect((await fixture.saveDocument({ chiefComplaint: '保留当前人工主诉。' })).status).toBe(200)
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(requests).toBe(2)
+  expect(await fixture.read()).toMatchObject({ status: 'failed', errorCode: 'MODEL_UNAVAILABLE', items: [],
+    missingInformation: [expect.stringContaining('限流')] })
+  await fixture.runtime.dispatchPending()
+  expect(requests).toBe(2)
   expect(await fixture.readCase()).toEqual(before)
 })
 

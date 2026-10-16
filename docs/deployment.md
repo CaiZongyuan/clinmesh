@@ -309,6 +309,8 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 DSH 每次模型生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖，并随受信请求贯通宿主。无效结构化输出最多修复一次，每次使用独立预算；持久任务和 lease 覆盖路由解析与两次生成。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。完整预算和失败分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
+OpenAI 兼容网关的 `baseURL` 使用实际 API 根路径；需要 `/v1` 的网关不能只填写站点首页。模型列表或 HTTP 200 不证明生成可用，应核对 JSON／SSE 类型、实际内容和正常终止。模型桥对明确限流返回安全的 HTTP 429；Provider 按服务端提示在剩余预算内最多重试一次，格式修复共用这一次机会，无提示时等待一秒。诊疗建议在持续限流后停止并显示原因，稍后可人工刷新；不会自动改用其他模型。恢复合同见[记录级筛选决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
+
 切换模型后的任务绑定与人工重试规则见[系统架构](architecture.md#103-场景定义)。宿主不可达、原 Provider 删除或凭据失效时任务可控失败，可修复原 Provider，或按[AI Provider 配置](#4-配置-ai-provider患者档案必需)中的步骤使用新模型恢复。切换 Server 来源前遗留的 OpenAI 任务不会被重映射到 DSH，需恢复原来源处理或显式发起新生成尝试。
 
 真实宿主模型 smoke 使用隔离 Profile 和合成 Provider，不调用付费模型；先构建 DSH adapter，再运行。默认使用本地 lock 对应的 runtime 槽位，可通过 `CLINMESH_DSH_SMOKE_RUNTIME` 指定槽位绝对目录：
