@@ -195,8 +195,8 @@ class Adapter extends LlmAdapter {
     } else if(options.system.includes('患者档案')) result=${JSON.stringify(persona)};
     else result={reply:${qualityOnly ? JSON.stringify(qualityPatientReply) : 'replies[state.stage]'}};
     yield {type:'text-delta',index:0,text:JSON.stringify(result)};
-    yield {type:'finish',reason:{kind:'stop'}};
     if(history) record({kind:'settled-extraction',stage:state.stage});
+    yield {type:'finish',reason:{kind:'stop'}};
   }
 }
 export function apply(ctx) {
