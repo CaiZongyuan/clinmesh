@@ -35,16 +35,24 @@ export const doctorCaseEvidenceSchema = z.object({
 }).strict()
 export type DoctorCaseEvidence = z.infer<typeof doctorCaseEvidenceSchema>
 
-const common = {
+const caseReasoning = {
   id: identity,
   label: text,
   rationale: text,
   supportingInformation: notes,
   opposingInformation: notes,
   missingInformation: notes,
-  guidelineEvidenceIds: ids,
   caseEvidenceIds: ids,
 }
+const common = { ...caseReasoning, guidelineEvidenceIds: ids }
+
+export const doctorRecommendationConsiderationSchema = z.object(caseReasoning).strict()
+export type DoctorRecommendationConsideration = z.infer<typeof doctorRecommendationConsiderationSchema>
+export const doctorRecommendationNoticeSchema = z.object({
+  category: z.enum(['guideline', 'catalog', 'verification', 'processing']),
+  message: text,
+}).strict()
+export type DoctorRecommendationNotice = z.infer<typeof doctorRecommendationNoticeSchema>
 
 export const doctorRecommendationSuggestionSchema = z.discriminatedUnion('kind', [
   z.object({ ...common, kind: z.literal('laboratory'), catalogItemId: identity, indicationCode: identity }).strict(),
@@ -63,8 +71,10 @@ export type DoctorRecommendationSuggestion = z.infer<typeof doctorRecommendation
 
 export const doctorRecommendationGenerationSchema = z.object({
   items: z.array(doctorRecommendationSuggestionSchema).max(8),
+  considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
   missingInformation: notes,
-}).strict()
+}).strict().refine(output => output.items.length + (output.considerations?.length ?? 0) <= 8,
+  'Suggestions and considerations together must not exceed eight')
 export type DoctorRecommendationGeneration = z.infer<typeof doctorRecommendationGenerationSchema>
 
 export const doctorRecommendationStateSchema = z.object({
@@ -77,6 +87,8 @@ export const doctorRecommendationStateSchema = z.object({
   generation: z.number().int().min(0),
   stale: z.boolean(),
   items: z.array(doctorRecommendationSuggestionSchema).max(8),
+  considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
+  notices: z.array(doctorRecommendationNoticeSchema).max(12).optional(),
   guidelines: z.array(guidelineEvidenceSchema).max(64),
   caseEvidence: z.array(doctorCaseEvidenceSchema).max(100),
   missingInformation: notes,
@@ -93,6 +105,13 @@ export const doctorRecommendationStateSchema = z.object({
     }
     itemIds.add(item.id)
   }
+  for (const [index, item] of (state.considerations ?? []).entries()) {
+    if (state.kind === 'prescription' || itemIds.has(item.id) || item.caseEvidenceIds.some(id => !sourceIds.has(id))) {
+      context.addIssue({ code: 'custom', path: ['considerations', index], message: 'Read-only diagnostic or investigation reasoning requires unique identity and actual case evidence' })
+    }
+    itemIds.add(item.id)
+  }
+  if (itemIds.size > 8) context.addIssue({ code: 'custom', path: ['items'], message: 'Suggestions and considerations together must not exceed eight' })
 })
 export type DoctorRecommendationState = z.infer<typeof doctorRecommendationStateSchema>
 
