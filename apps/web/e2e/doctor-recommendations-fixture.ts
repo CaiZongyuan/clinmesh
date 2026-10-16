@@ -1,9 +1,20 @@
 import { z } from 'zod'
+import { join } from 'node:path'
 import {
   doctorCaseEvidenceSchema, doctorRecommendationKindSchema, doctorRecommendationSuggestionSchema,
   guidelineEvidenceSchema,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { JsonChatCompletionInput } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
+import { syntheticGuidelineDocument, syntheticGuidelineMarker } from '../../server/tests/fixtures/guideline-corpus.ts'
+import { GuidelineCorpus } from '../../server/src/infrastructure/sqlite/guideline-corpus.ts'
+
+export function createRecommendationGuidelineDatabase(directory: string): string {
+  const databasePath = join(directory, 'guidelines.sqlite')
+  const corpus = new GuidelineCorpus({ databasePath })
+  try { corpus.importDocument(syntheticGuidelineDocument) }
+  finally { corpus.close() }
+  return databasePath
+}
 
 // The external model is synthetic; the server still owns evidence, catalogs, verification and persistence.
 export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'schemaName' | 'userPayload'>): unknown {
@@ -38,6 +49,18 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
       medications: z.array(z.object({ id: z.string(), nameZh: z.string() })).optional(),
     }),
   }).parse(input.userPayload)
+  const importedEvidence = payload.caseEvidence.find(item => item.text.includes(syntheticGuidelineMarker))
+  if (payload.kind === 'diagnosis' && importedEvidence !== undefined) {
+    const clause = payload.guidelines.find(item => item.title === syntheticGuidelineDocument.source.title
+      && item.sourceHash === syntheticGuidelineDocument.source.sha256)
+    if (clause === undefined) return { items: [], missingInformation: ['未收到已导入的合成糖尿病指南。'] }
+    const diagnosis = payload.catalogs.diagnoses?.local.find(item => item.code === 'E11.65')
+    if (diagnosis === undefined) throw new Error('Synthetic baseline must provide E11.65')
+    return { items: [{ id: 'synthetic-imported-diabetes', label: '合成导入糖尿病建议', kind: 'diagnosis',
+      catalogItemId: diagnosis.id, rationale: '合成新增主题仅供核对导入指南，不自动确诊。',
+      supportingInformation: ['医生已补充合成糖尿病病史。'], opposingInformation: [], missingInformation: ['仍需核对本次血糖。'],
+      guidelineEvidenceIds: [clause.id], caseEvidenceIds: [importedEvidence.id] }], missingInformation: [] }
+  }
   const evidence = payload.caseEvidence.find(item => item.text.includes('高血压'))
   const clauseId = payload.kind === 'prescription' ? 'viatris-norvasc-adult-hypertension-dose'
     : payload.kind === 'laboratory' ? 'ws-t-872-2025-initial-assessment' : 'ws-t-872-2025-treatment'

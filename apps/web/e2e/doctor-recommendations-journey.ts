@@ -1,10 +1,31 @@
 import { expect, type Page } from '@playwright/test'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
+import { syntheticGuidelineDocument, syntheticGuidelineMarker, syntheticGuidelineParagraph } from '../../server/tests/fixtures/guideline-corpus.ts'
 
 export async function runRecommendationJourney({ page, read }: { page: Page; read: () => Promise<DoctorCaseDetail> }) {
+  await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+  const history = page.getByLabel('现病史', { exact: true })
+  const originalHistory = await history.inputValue()
+  await history.fill(syntheticGuidelineMarker)
+  await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+  await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(syntheticGuidelineMarker)
   await page.getByRole('tab', { name: '诊断', exact: true }).click()
   const diagnosis = page.getByRole('region', { name: '诊断建议', exact: true })
   const adoptDiagnosis = diagnosis.getByRole('button', { name: /^采纳 / })
+  await expect(adoptDiagnosis).toBeEnabled()
+  await diagnosis.getByText('查看依据', { exact: true }).click()
+  await expect(diagnosis.getByRole('link', { name: syntheticGuidelineDocument.source.title, exact: true }))
+    .toHaveAttribute('href', syntheticGuidelineDocument.source.url)
+  await expect(diagnosis.getByText(syntheticGuidelineParagraph, { exact: true })).toBeVisible()
+  expect((await read()).diagnosis?.draft).toBeUndefined()
+  expect((await read()).diagnosis?.confirmation).toBeUndefined()
+
+  await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+  await history.fill(originalHistory)
+  await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+  await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(originalHistory)
+  await page.getByRole('tab', { name: '诊断', exact: true }).click()
+  await expect(diagnosis.getByText(syntheticGuidelineDocument.source.title, { exact: true })).toHaveCount(0)
   await expect(adoptDiagnosis).toBeEnabled()
   await diagnosis.getByText('查看依据', { exact: true }).click()
   await expect(diagnosis.getByRole('link', { name: /WS\/T 872/ })).toHaveAttribute('href', /^https:\/\/www\.nhc\.gov\.cn\//)
@@ -58,5 +79,7 @@ export async function runRecommendationJourney({ page, read }: { page: Page; rea
   expect((await read()).laboratoryRequests?.requests ?? []).toEqual([])
   await page.getByRole('button', { name: '开具检验申请', exact: true }).click()
   await expect.poll(async () => (await read()).laboratoryRequests?.requests.length).toBe(1)
-  return { diagnosisConfirmed: true, prescriptionIssued: true, laboratoryIssued: true, missingPrescriptionFieldsPreserved: true }
+  return { importedGuidelineViewed: true, importedSourceHash: syntheticGuidelineDocument.source.sha256,
+    importedGuidelineNotAdopted: true, diagnosisConfirmed: true, prescriptionIssued: true,
+    laboratoryIssued: true, missingPrescriptionFieldsPreserved: true }
 }
