@@ -7,6 +7,9 @@ import { decodeModelRoute, encodeModelRoute, modelBridgeFirstTextHeader, modelBr
 
 class ModelAccessError extends Error {}
 class ModelTimeoutError extends Error {}
+class ModelRateLimitError extends Error {
+  constructor(readonly retryAfterMs: number | undefined) { super('Model rate limit reached') }
+}
 
 export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaultModel'>, secret: string, selection: () => string) {
   const closing = new AbortController()
@@ -87,6 +90,11 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
             if (chunk.reason.kind === 'error' && chunk.reason.failure.code === 'TIMEOUT') {
               throw new ModelTimeoutError('Model request timed out')
             }
+            if (chunk.reason.kind === 'error' && chunk.reason.failure.code === 'RATE_LIMIT') {
+              const delay = chunk.reason.failure.providerRetryAfterMs
+              throw new ModelRateLimitError(typeof delay === 'number' && Number.isFinite(delay) && delay > 0
+                ? Math.min(10 * 60_000, Math.ceil(delay)) : undefined)
+            }
             if (chunk.reason.kind !== 'stop') throw new Error('Model call failed')
             finished = true
           }
@@ -99,9 +107,11 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
       send(200, body, firstTextMs)
     } catch (error) {
       // Provider failures can contain credentials and private prompts; do not relay or log them.
-      const body = JSON.stringify({ error: error instanceof ModelAccessError ? 'MODEL_AUTH_FAILED'
-        : error instanceof ModelTimeoutError ? 'MODEL_TIMEOUT' : 'MODEL_UNAVAILABLE' })
-      send(503, body)
+      const body = JSON.stringify(error instanceof ModelRateLimitError
+        ? { error: 'MODEL_RATE_LIMIT', ...(error.retryAfterMs === undefined ? {} : { retryAfterMs: error.retryAfterMs }) }
+        : { error: error instanceof ModelAccessError ? 'MODEL_AUTH_FAILED'
+          : error instanceof ModelTimeoutError ? 'MODEL_TIMEOUT' : 'MODEL_UNAVAILABLE' })
+      send(error instanceof ModelRateLimitError ? 429 : 503, body)
     } finally { response.off('close', abort); signal.removeEventListener('abort', disconnect) }
   }
   return { handler, dispose: () => closing.abort() }

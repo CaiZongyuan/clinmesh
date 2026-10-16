@@ -166,7 +166,7 @@ class Adapter extends LlmAdapter {
     let result;
     if(quality) {
       result=quality.result;
-    } else if(Array.isArray(payload.guidelines)&&Array.isArray(payload.caseEvidence)) {
+    } else if(Array.isArray(payload.guidelines)&&(Array.isArray(payload.caseEvidence)||Array.isArray(payload.historyEvidence))) {
       result=state.recommendationResult;
     } else if(Array.isArray(payload.additions)) {
       result={additions:payload.additions.map((_,index)=>({index,faithful:true,complete:true,relationValid:true}))};
@@ -244,7 +244,8 @@ export function apply(ctx) {
           const path = join(qualityResults, `${createHash('sha256').update(JSON.stringify(input.userPayload)).digest('hex')}.json`)
           await writeFile(path, json({ schemaName: input.schemaName, result: documentQualityFixture(input) }))
         }
-        if (recommendationsOnly && ['doctor_recommendations', 'doctor_recommendation_verification'].includes(input.schemaName)) {
+        if (recommendationsOnly && ['doctor_recommendations', 'doctor_recommendation_history_selection',
+          'doctor_recommendation_catalog_selection', 'doctor_recommendation_verification'].includes(input.schemaName)) {
           const control = JSON.parse(await readFile(controlPath, 'utf8')) as Record<string, unknown>
           await writeFile(controlPath, json({ ...control, recommendationResult: recommendationFixture(input) }))
         }

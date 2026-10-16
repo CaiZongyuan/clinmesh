@@ -307,7 +307,9 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 模型桥接地址只接受 HTTP loopback origin；DSH 使用非默认端口时同步修改 `CLINMESH_DSH_MODEL_ORIGIN`。同一 Server 的全部入口共用启动时选定的模型来源，打开或关闭 Surface 不切换来源。宿主设置权限允许的用户可以修改 ClinMesh 模型，修改对该 Profile 的新任务生效，刷新和重启后仍保留；没有候选时先在 DSH 模型设置中配置 Provider。
 
-DSH 每次模型生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖，并随受信请求贯通宿主。无效结构化输出最多修复一次，每次使用独立预算；持久任务和 lease 覆盖路由解析与两次生成。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。完整预算和失败分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+DSH 一次结构化生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖。路由解析、初次生成、最多一次格式修复及有限限流恢复共用原始截止时间，每次调用只向宿主传递剩余预算；持久任务和 lease 仍覆盖路由与模型处理。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。共享时限见[有限恢复决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务预算和失败分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+
+OpenAI 兼容网关的 `baseURL` 使用实际 API 根路径；需要 `/v1` 的网关不能只填写站点首页。模型列表或 HTTP 200 不证明生成可用，应核对 JSON／SSE 类型、实际内容和正常终止。模型桥对明确限流返回安全的 HTTP 429；Provider 按服务端提示在剩余预算内最多重试一次，格式修复共用这一次机会，无提示时等待一秒。诊疗建议在持续限流后停止并显示原因，稍后可人工刷新；不会自动改用其他模型。恢复合同见[记录级筛选决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
 
 切换模型后的任务绑定与人工重试规则见[系统架构](architecture.md#103-场景定义)。宿主不可达、原 Provider 删除或凭据失效时任务可控失败，可修复原 Provider，或按[AI Provider 配置](#4-配置-ai-provider患者档案必需)中的步骤使用新模型恢复。切换 Server 来源前遗留的 OpenAI 任务不会被重映射到 DSH，需恢复原来源处理或显式发起新生成尝试。
 
@@ -328,6 +330,8 @@ pnpm smoke:consultation:native
 ```
 
 真实模型验收显式指定一个已有配置的隔离 `DSH_HOME` 和完整 Provider/model 路由。脚本把凭据和 Profile patch 复制到新的临时环境，在完整确定性旅程后，对新合成病例运行两轮真实病史总结与独立事实核对；患者档案和两轮回答使用固定合成 fixture，以便逐项核对起病、发热、干咳、体温及胸痛、气促的否定。`--summary-only` 可单独运行该多轮总结及来源入口验收，完整合成旅程的断言保持在默认模式。真实调用可能产生费用，命令不进入 `pnpm check` 或 CI。
+
+通过 `HTTP_PROXY`／`HTTPS_PROXY` 访问模型 API 时，为验收命令设置 `NODE_USE_ENV_PROXY=1`；隔离 Node 宿主保留这一显式开关，仍不继承任意 `NODE_OPTIONS`。`NO_PROXY` 应包含 `localhost,127.0.0.1`，使本机模型桥和 Server 请求直接连接。
 
 ```sh
 export CLINMESH_DSH_SMOKE_HOME=/absolute/path/to/configured/dsh-home

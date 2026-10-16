@@ -23,6 +23,7 @@ export function verificationEnvironment(runtime: string, source: NodeJS.ProcessE
   return {
     ...Object.fromEntries(Object.entries(source).filter(([name, value]) => names.has(name.toLowerCase()) && value !== undefined)),
     ...Object.fromEntries(proxies),
+    ...(source.NODE_USE_ENV_PROXY === '1' ? { NODE_USE_ENV_PROXY: '1' } : {}),
     pnpm_config_verify_deps_before_run: 'error',
     npm_config_userconfig: join(runtime, 'npmrc'),
     DSH_HOME: join(runtime, 'data'), DSHVM_HOME: join(runtime, 'versions'), DSHVM_BIN_DIR: join(runtime, 'bin'),

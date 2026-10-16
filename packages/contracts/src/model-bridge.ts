@@ -27,7 +27,8 @@ export const modelBridgeRequestSchema = z.discriminatedUnion('operation', [
     model: z.string().min(1).max(1024),
     schemaName: z.enum(['patient_persona', 'patient_dialogue_reply', 'consultation_history_increment',
       'consultation_history_summary', 'consultation_history_verification', 'investigation_result',
-      'investigation_service_result', 'laboratory_service_enrichment', 'doctor_recommendations', 'doctor_recommendation_verification',
+      'investigation_service_result', 'laboratory_service_enrichment', 'doctor_recommendations',
+      'doctor_recommendation_history_selection', 'doctor_recommendation_catalog_selection', 'doctor_recommendation_verification',
       'clinical_document_quality', 'clinical_document_quality_verification']),
     jsonSchema: z.record(z.string(), z.unknown()),
     systemPrompt: z.string().min(1).max(64 * 1024),
@@ -39,6 +40,7 @@ export const modelBridgeResponseSchema = z.object({
   model: z.string().min(1).max(1024),
   content: z.string().optional(),
 }).strict()
-export const modelBridgeErrorSchema = z.object({
-  error: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT']),
-}).strict()
+export const modelBridgeErrorSchema = z.discriminatedUnion('error', [
+  z.object({ error: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT']) }).strict(),
+  z.object({ error: z.literal('MODEL_RATE_LIMIT'), retryAfterMs: z.number().int().positive().max(10 * 60_000).optional() }).strict(),
+])
