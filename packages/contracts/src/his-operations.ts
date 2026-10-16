@@ -1790,7 +1790,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Cancel an issued laboratory request before execution starts',
+    summary: '取消 issued 或 generation-failed 检验申请；保留原申请及冻结输入',
     version: 1,
   },
   {
@@ -1809,8 +1809,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Start a new Investigation generation attempt with current model settings; automatic retries keep that attempt’s model',
-    version: 2,
+    summary: '按当前模型配置重试生成，自动尝试固定该模型；INVESTIGATION_TRUTH_INCOMPATIBLE 或 INVESTIGATION_UNSUPPORTED 拒绝重试，可取消申请',
+    version: 3,
   },
   {
     cliPath: ['laboratory-report', 'acknowledge'],

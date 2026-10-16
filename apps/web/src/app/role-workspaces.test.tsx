@@ -4827,6 +4827,72 @@ describe('role workspaces', () => {
     expect(screen.queryByText('检验草稿已删除')).toBeNull()
   })
 
+  it.each(['INVESTIGATION_TRUTH_INCOMPATIBLE', 'INVESTIGATION_OUTPUT_INVALID'])(
+    'lets the Surface Agent propose cancellation of a failed laboratory request with %s', async code => {
+      window.history.replaceState(null, '', '/consultation')
+      let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+      const surfaceAgent: WebSurfaceAgentController = { register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      } }
+      const queueItem = {
+        caseId: 'case-failed-laboratory', encounterId: 'encounter-failed-laboratory', encounterVersion: '1',
+        patient: { id: 'patient-failed-laboratory', identifier: 'SYN-FAILED-LAB', name: '合成检验患者',
+          gender: 'female', birthDate: '1988-03-16', synthetic: true, versionId: '1' },
+        presentation: doctorPresentation, status: 'first-visit', taskId: 'task-failed-laboratory', taskVersion: '1',
+      }
+      let request: LaboratoryRequest = {
+        catalogItemId: 'lab-cbc', id: 'failed-laboratory-request', indicationCode: 'fever', previousReports: [],
+        serviceRequestId: 'failed-service-request', serviceRequestVersion: '2',
+        status: 'generation-failed', taskId: 'failed-laboratory-task', taskVersion: '4', version: 4,
+        generationError: { code, message: 'Synthetic laboratory generation failure' },
+      }
+      const cancellations: unknown[] = []
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input), 'http://localhost').pathname
+        const agentResponse = await doctorSurfaceAgentResponse(path, init)
+        if (agentResponse !== undefined) return agentResponse
+        if (path === '/api/auth/context') return Response.json(doctorSession)
+        if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+        if (path.endsWith('/doctor/queue')) return Response.json({ items: [queueItem], ...pagination(1) })
+        if (path === '/api/his/v1/doctor/cases/case-failed-laboratory') return Response.json({
+          ...queueItem, allergies: [], consultation: { turns: [], version: 1 }, priorFacts: [],
+          encounter: { id: queueItem.encounterId, status: 'in-progress', versionId: '1' },
+          laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [request] },
+        })
+        if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
+        if (path.endsWith('/failed-laboratory-request/actions/cancel')) {
+          cancellations.push(JSON.parse(String(init?.body)))
+          request = { ...request, status: 'cancelled', taskVersion: '5', version: 5 }
+          return Response.json(commandResponse({ request }))
+        }
+        throw new Error(`Unexpected request: ${path}`)
+      }))
+      render(<WebApp runtime={{ mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1' }} />)
+      const user = userEvent.setup()
+      await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+      const tool = await waitFor(() => {
+        const current = registration?.tools.find(tool => tool.name === 'clinmesh_prepare_cancel_laboratory')
+        expect(current).toBeDefined()
+        return current!
+      })
+      let proposal = ''
+      await act(async () => {
+        proposal = await tool.execute(boundAgentToolInput(tool, { requestId: request.id }), new AbortController().signal)
+      })
+      expect(JSON.parse(proposal)).toMatchObject({ ok: true, data: { status: 'awaiting-human-review' } })
+      const review = await screen.findByRole('alertdialog', { name: '确认取消检验申请' })
+      expect(cancellations).toEqual([])
+      await user.click(within(review).getByRole('button', { name: '确认取消' }))
+      await waitFor(() => expect(cancellations).toEqual([{
+        expectedVersions: { 'ServiceRequest/failed-service-request': '2', 'Task/failed-laboratory-task': '4' },
+        input: { expectedRequestVersion: 4, reasonCode: 'no-longer-needed' },
+      }]))
+      await waitFor(() => expect(within(screen.getByRole('region', { name: '申请列表' })).getByText('已取消')).toBeTruthy())
+      expect(screen.queryByRole('button', { name: /取消检验申请 lab-cbc/ })).toBeNull()
+    },
+  )
+
   it('shows laboratory request statuses and exposes only valid correction actions', async () => {
     window.history.replaceState(null, '', '/consultation')
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined

@@ -2,6 +2,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { doctorCaseDetailSchema, issueLaboratoryRequestResponseSchema } from '@clinmesh/contracts/his'
+import { z } from 'zod'
+import { sourceArtifactHash } from '../../server/src/application/scenario-data/provider.ts'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { test as base, expect } from './fixtures.ts'
@@ -14,7 +16,22 @@ const test = base.extend<{ investigationCase: Awaited<ReturnType<typeof startCon
       const referenceDatabasePath = await createInvestigationReferenceDatabase(directory)
       const app = await startBrowserServer(webRoot, {
         activeReferenceReleaseId: 'investigation-e2e-v1', referenceDatabasePath,
-        patientPersonaModel: 'synthetic-persona', syntheaProvider: new StubSyntheaProvider(),
+        patientPersonaModel: 'synthetic-persona', syntheaProvider: new class extends StubSyntheaProvider {
+          override async generate() {
+            const corpus = await super.generate()
+            const sources = corpus.sources.map(source => {
+              const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(source.raw)
+              raw.entry.find(entry => entry.resource.id === 'iwtest')!.resource.valueQuantity = {
+                code: '10*3/uL', system: 'http://unitsofmeasure.org', unit: '10*3/uL', value: 11.2,
+              }
+              raw.entry.find(entry => entry.resource.id === 'ihtest')!.resource.valueQuantity = {
+                code: 'g/dL', system: 'http://unitsofmeasure.org', unit: 'g/dL', value: 13.5,
+              }
+              return { ...source, raw, hash: sourceArtifactHash(raw) }
+            })
+            return { ...corpus, sources }
+          }
+        }(),
         chatCompletionsProvider: { completeJson: async input => {
           expect(input.schemaName).toBe('patient_persona')
           return { model: input.model, content: JSON.stringify(persona) }
@@ -27,6 +44,51 @@ const test = base.extend<{ investigationCase: Awaited<ReturnType<typeof startCon
   investigationCase: async ({ browserApp }, use) => {
     await use(await startConsultationCase(browserApp.runtime, browserApp.password, browserApp.origin))
   },
+})
+
+test('a doctor cancels an incompatible laboratory request after reviewing its failure through the real server', async ({ page, browserApp, investigationCase }) => {
+  await page.setViewportSize({ width: 390, height: 900 })
+  await page.goto(`${browserApp.origin}/consultation`)
+  await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+  await page.getByLabel('账户密码').fill(browserApp.password)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page.getByRole('tab', { name: '待诊', exact: true }).click()
+  await page.getByRole('button', { name: '候诊患者', exact: true }).click()
+  await page.getByRole('button', { name: /^选择病例 / }).click()
+  await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+  const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
+  await laboratory.getByRole('button', { name: '选择 合成不兼容检验 0101901A', exact: true }).click()
+  await expect(laboratory.getByText('草稿已自动保存', { exact: true })).toBeVisible()
+  const issueResponse = page.waitForResponse(response => response.url().endsWith('/laboratory-request/actions/issue'))
+  await laboratory.getByRole('button', { name: '开具检验申请', exact: true }).click()
+  const issuedResponse = await issueResponse
+  expect(issuedResponse.status()).toBe(200)
+  const issued = issueLaboratoryRequestResponseSchema.parse(await issuedResponse.json()).data.request
+  await browserApp.runtime.dispatchPending()
+  const detail = laboratory.getByRole('region', { name: '申请详情', exact: true })
+  await expect(detail.getByText('该病例的合成检验真值与申请的结果定义或单位不兼容，无法生成结果。请取消此申请。', { exact: true })).toBeVisible()
+  await expect(detail.getByRole('button', { name: /重试结果生成/ })).toHaveCount(0)
+  await detail.getByRole('button', { name: '取消检验申请 合成不兼容检验', exact: true }).click()
+  const confirmation = page.getByRole('alertdialog', { name: '确认取消检验申请', exact: true })
+  await expect(confirmation.getByText('结果生成失败', { exact: true })).toBeVisible()
+  const readCase = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
+    `${browserApp.origin}/api/his/v1/doctor/cases/${investigationCase.outpatientCaseId}`)).json())
+  const failed = (await readCase()).laboratoryRequests?.requests.find(request => request.id === issued.id)
+  expect(failed?.status).toBe('generation-failed')
+  expect(failed?.generationError?.code).toBe('INVESTIGATION_TRUTH_INCOMPATIBLE')
+  expect(failed?.report).toBeUndefined()
+  const cancelResponse = page.waitForResponse(response => response.url().endsWith(`/${issued.id}/actions/cancel`))
+  await confirmation.getByRole('button', { name: '确认取消', exact: true }).click()
+  expect((await cancelResponse).status()).toBe(200)
+  await expect(confirmation).toHaveCount(0)
+  await expect(detail.getByText('检验申请已取消', { exact: true })).toBeVisible()
+  expect((await readCase()).laboratoryRequests?.requests.find(request => request.id === issued.id)?.status).toBe('cancelled')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.reload()
+  await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+  await expect(laboratory.getByRole('region', { name: '申请列表', exact: true }).getByText('已取消', { exact: true })).toBeVisible()
+  await expect(detail.getByRole('button', { name: /取消检验申请|重试结果生成/ })).toHaveCount(0)
 })
 
 test('keeps the current category when another category finishes issuing a request', async ({ page, browserApp, investigationCase }) => {
@@ -133,6 +195,8 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await browserApp.runtime.dispatchPending()
   await expect(detail.getByRole('heading', { name: '合成白细胞计数 · 检验报告', exact: true })).toBeVisible()
   await expect(detail.getByRole('table').getByText('11.2', { exact: true })).toBeVisible()
+  await expect(detail.getByRole('table').getByText('×10^9/L', { exact: true })).toBeVisible()
+  await expect(detail.getByRole('table').getByText('偏高', { exact: true })).toBeVisible()
   await expect(laboratory.getByText('共 1 份申请 · 1 份待阅', { exact: true })).toBeVisible()
   await laboratory.getByRole('button', { name: '待阅', exact: true }).click()
   await detail.getByRole('button', { name: '确认已阅 合成白细胞计数', exact: true }).click()
@@ -160,6 +224,7 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await expect(detail.getByRole('heading', { name: '合成血红蛋白', exact: true })).toBeVisible()
   await browserApp.runtime.dispatchPending()
   await expect(detail.getByRole('table').getByText('135', { exact: true })).toBeVisible()
+  await expect(detail.getByRole('table').getByText('g/L', { exact: true })).toBeVisible()
   await expect(laboratory.getByRole('region', { name: '申请列表', exact: true }).getByRole('button', { name: '合成白细胞计数 医生已阅', exact: true })).toBeVisible()
 
   await page.reload()

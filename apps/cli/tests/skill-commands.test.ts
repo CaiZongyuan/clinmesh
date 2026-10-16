@@ -16,6 +16,20 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('keeps laboratory failure recovery instructions aligned with the command catalog', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  for (const path of ['cancel', 'retry-generation']) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh laboratory-request ${path} `))!
+    expect(inspectExample(program, line).operation?.id).toBe(`laboratory-request.${path}`)
+  }
+  const retry = getHisOperation('laboratory-request.retry-generation')
+  expect(retry.version).toBe(3)
+  expect(retry.summary).toContain('INVESTIGATION_TRUTH_INCOMPATIBLE')
+  expect(skill).toContain('INVESTIGATION_TRUTH_INCOMPATIBLE')
+  expect(getHisOperation('laboratory-request.cancel').summary).toContain('generation-failed')
+})
+
 it('keeps signing review and cancellation examples aligned with the narrow operation contracts', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')

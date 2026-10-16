@@ -483,8 +483,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             })
           } catch (error) {
             const failure = investigationFailure(error)
-            // 无底账属于确定性失败，重试不会改变结果，直接落为生成失败。
-            if (failure.code !== 'INVESTIGATION_UNSUPPORTED' && event.attempt < 3) {
+            // 无底账或精确真值不兼容均无法通过自动重试恢复。
+            if (failure.code !== 'INVESTIGATION_UNSUPPORTED'
+              && failure.code !== 'INVESTIGATION_TRUTH_INCOMPATIBLE' && event.attempt < 3) {
               return { status: 'retryable-failed' }
             }
             workflow.failLaboratoryResultGeneration({

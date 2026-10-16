@@ -261,11 +261,7 @@ function isLaboratoryRequestCatalogItemId(
 }
 
 function isCancellableLaboratoryRequest(request: LaboratoryRequest): boolean {
-  return request.status === 'issued'
-    || (
-      request.status === 'generation-failed'
-      && request.generationError?.code === 'INVESTIGATION_UNSUPPORTED'
-    )
+  return request.status === 'issued' || request.status === 'generation-failed'
 }
 
 function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boolean {
