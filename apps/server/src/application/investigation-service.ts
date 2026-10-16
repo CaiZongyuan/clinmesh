@@ -206,7 +206,10 @@ function quantity(value: unknown) {
 }
 
 function serviceQuantityValue(definition: ServiceResultDefinition, observation: Resource) {
-  const result = quantity(observation.valueQuantity)
+  const sourceQuantity = observation.valueQuantity
+  if (typeof sourceQuantity !== 'object' || sourceQuantity === null
+    || !('code' in sourceQuantity) || typeof sourceQuantity.code !== 'string') return undefined
+  const result = quantity(sourceQuantity)
   const unit = definition.unit
   if (result === undefined || unit === undefined || result.system !== unit.system) return undefined
   let multiplier: number | undefined

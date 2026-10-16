@@ -3022,12 +3022,15 @@ describe('Synthetic Case generation HTTP contract', () => {
     { name: 'wrong UCUM system', code: '6690-2', sourceUnit: '10*3/uL', targetUnit: '10*9/L', value: 19.8, system: 'urn:synthetic:wrong-unit-system' },
     { name: 'explicit unknown glucose version', code: '2339-0', sourceUnit: 'mg/dL', targetUnit: 'mmol/L', value: 200, version: 'unknown' },
     { name: 'unrelated leaf with extra glucose coding', code: '718-7', sourceUnit: 'mg/dL', targetUnit: 'mmol/L', value: 200, extraGlucose: true },
+    { name: 'source display without UCUM code', code: '718-7', sourceUnit: 'g/dL', targetUnit: 'g/L', value: 13.5, missingCode: true },
+    { name: 'same unit without UCUM code', code: '718-7', sourceUnit: 'g/L', targetUnit: 'g/L', value: 135, missingCode: true },
     { name: 'wrong value type', code: '6690-2', sourceUnit: '10*3/uL', targetUnit: '10*9/L', value: 19.8, scalar: true },
-  ])('rejects incompatible exact truth: $name', async ({ code, sourceUnit, targetUnit, value, system, scalar, version, extraGlucose }) => {
+  ])('rejects incompatible exact truth: $name', async ({ code, sourceUnit, targetUnit, value, system, scalar, version, extraGlucose, missingCode }) => {
     const observation: Record<string, unknown> = unitObservation(code, sourceUnit, value)
     if (version !== undefined) observation.code = { coding: [{ code, system: 'http://loinc.org', version }] }
     if (extraGlucose) observation.code = { coding: [{ code, system: 'http://loinc.org' }, { code: '2339-0', system: 'http://loinc.org' }] }
     if (system !== undefined) observation.valueQuantity = { code: sourceUnit, unit: sourceUnit, system, value }
+    if (missingCode) observation.valueQuantity = { unit: sourceUnit, system: 'http://unitsofmeasure.org', value }
     if (scalar) {
       Reflect.deleteProperty(observation, 'valueQuantity')
       observation.valueString = '阳性'
