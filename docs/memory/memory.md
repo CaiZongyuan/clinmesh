@@ -76,7 +76,7 @@
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
 
-- 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；修复调用保留独立预算，服务关闭取消与模型超时分开处理。回归同时覆盖慢速首次无效响应后的修复和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+- 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；一次结构化生成的修复与限流恢复共享原始截止时间，服务关闭取消与模型超时分开处理。回归同时覆盖剩余预算内修复、耗尽后不再调用和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前时限见[有限恢复决策](../../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务与失败边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
 - 病史任务反复报来源无效时，回归须组合真实记录服务与 DSH Provider，核对领域校验是否进入修复反馈；仅验证 JSON schema 或用忽略 `validate` 的 Provider stub 会漏掉无反馈重试。覆盖修复后成功、修复耗尽后停止及显式重试，仍验证完整逐字来源和不确定表述拒绝，见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
@@ -353,4 +353,9 @@
 
 - 原生 DSH 验收的临时插件也须在 manifest 中声明非空 `name` 和 `version`。官方 DeepSeek 的插件清单扩展会检查全部 active package；缺少版本时真实模型请求在发出 HTTP 前失败为 `REQUEST_EXTENSION`，合成 adapter 不经过这条扩展，不能证明真实 Provider 可用。
 
+- 诊疗资料读取的性能测量必须经过公开 HTTP，计入授权、重复 prepare、分页、解析和装配；只比较裸 SQL 的 N+1 与 JOIN 可能低估数量级。先以 SQL 数量与阶段耗时定位，再在保持医生历史索引和白名单边界的前提下批量读取。产品合同由[分批证据读取决策](../../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)拥有。
+- 原生实模验收的 `verificationEnvironment` 会净化子进程环境；配置了 `HTTPS_PROXY` 仍须显式传递 `NODE_USE_ENV_PROXY=1`。排查全阶段模型超时时先对同一 API 做无凭据连通性探测，区分隔离 Node 没有启用代理与输入规模、推理档位问题；本机桥接保留 `NO_PROXY` 的 loopback 排除项。操作入口由[真实模型验收](../deployment.md#问诊自动记录原生验收)拥有。
 - Windows 隔离文档校验 checkout 使用 `core.autocrlf=false`；Agent Note 格式检查按 LF 解析，CRLF 会把有效头部误报为格式错误。没有创建符号链接的权限时，仅在隔离校验目录将已核对的文件链接物化为目标内容（可用 hard link），目录依赖用 junction；不改原工作区的链接占位或共享 Git 配置。
+
+- 真实模型排障先通过当前宿主 resolve 核对本次 Provider、模型和实际端点，历史绑定或另一条路由的结果不能代表当前配置。OpenAI 兼容网关的 baseURL 使用其实际 API 根路径（常见为 /v1）；HTTP 200 可能是网页，静态模型目录与 SSE 保活也不能证明生成成功。用同一凭据和最小合成请求对照代理、直连及真实模型桥，分别记录 401、429、有效数据帧和正常终止，不用扩大超时掩盖配置错误或上游限流。
+- 实模返回 `AI_RESPONSE_INVALID` 时先保存安全的形状、未知编号、重复编号和完整读取标志计数，区分 JSON 形状失败与来源成员校验失败；不记录模型正文、凭据或完整医疗内容，不通过放宽引用校验让失败变为成功。记录级选择的运行合同由[对应决策](../../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)拥有。

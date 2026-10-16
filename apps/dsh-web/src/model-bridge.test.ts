@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { DshModelProvider } from '../../server/src/infrastructure/ai/dsh-model-provider.ts'
 import { createModelBridgeHandler } from './model-bridge.ts'
 
@@ -11,9 +11,9 @@ type StreamChunk = ReturnType<HostContext['llm']['stream']> extends AsyncIterabl
 
 const secret = 'synthetic-model-bridge-secret-at-least-32-characters'
 const cleanup: Array<() => Promise<void>> = []
-afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose() })
+afterEach(async () => { vi.restoreAllMocks(); for (const dispose of cleanup.splice(0).reverse()) await dispose() })
 
-async function host(compression: 'none' | 'gzip', providerTimeout = false) {
+async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 'RATE_LIMIT') {
   const ctx = new Context()
   cleanup.push(async () => { await ctx.fiber.dispose() })
   await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0, compression, compressionThresholdBytes: 0 })
@@ -24,10 +24,15 @@ async function host(compression: 'none' | 'gzip', providerTimeout = false) {
       listModels: async () => [{ provider: 'synthetic-provider', id: 'synthetic-model', name: 'Synthetic model' }],
       async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
         calls.push(options)
-        if (providerTimeout) {
-          yield { type: 'finish', reason: { kind: 'error', failure: {
-            code: 'TIMEOUT', message: 'private synthetic provider failure',
-          } } }
+        if (providerFailure !== undefined) {
+          if (providerFailure === 'RATE_LIMIT' && calls.length > 1) {
+            yield { type: 'text-delta', index: 0, text: '{"ok":true}' }
+            yield { type: 'finish', reason: { kind: 'stop' } }
+          } else {
+            yield { type: 'finish', reason: { kind: 'error', failure: {
+              code: providerFailure, providerRetryAfterMs: 20, message: 'private synthetic provider failure',
+            } } }
+          }
           return
         }
         await new Promise<void>((_resolve, reject) => {
@@ -47,6 +52,8 @@ const input = { model: dshDefaultModel, schemaName: 'patient_persona', jsonSchem
 
 it.each(['none', 'gzip'] as const)('returns a safe deadline error through the actual %s host and cancels the model stream', async compression => {
   const dsh = await host(compression)
+  // 固定客户端预算时钟，宿主仍用真实计时器触发超时和取消。
+  vi.spyOn(performance, 'now').mockReturnValue(0)
   const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 100, maxResponseBytes: 2048 })
   await expect(provider.completeJson(input)).rejects.toMatchObject({
     code: 'AI_TIMEOUT', message: 'The DSH model request timed out',
@@ -56,9 +63,19 @@ it.each(['none', 'gzip'] as const)('returns a safe deadline error through the ac
 })
 
 it('preserves a Provider timeout through gzip without exposing its private message', async () => {
-  const dsh = await host('gzip', true)
+  const dsh = await host('gzip', 'TIMEOUT')
+  vi.spyOn(performance, 'now').mockReturnValue(0)
   const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 100, maxResponseBytes: 2048 })
   await expect(provider.completeJson(input)).rejects.toMatchObject({
     code: 'AI_TIMEOUT', message: 'The DSH model request timed out',
   })
+  expect(dsh.calls).toHaveLength(1)
+})
+
+it.each(['none', 'gzip'] as const)('recovers from one rate limit through the actual %s host', async compression => {
+  const dsh = await host(compression, 'RATE_LIMIT')
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  const result = await provider.completeJson(input)
+  expect(JSON.parse(result.content)).toEqual({ ok: true })
+  expect(dsh.calls).toHaveLength(2)
 })

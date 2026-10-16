@@ -139,6 +139,17 @@ describe('候选安装准备入口', () => {
     expect(environment.HTTPS_PROXY).toBe('http://127.0.0.1:9999')
   })
 
+  it('向隔离 Node 宿主保留显式代理开关，同时隔离任意 Node 启动选项', () => {
+    const environment = verificationEnvironment('/isolated', {
+      HTTPS_PROXY: 'http://127.0.0.1:9999', NO_PROXY: 'localhost,127.0.0.1',
+      NODE_USE_ENV_PROXY: '1', NODE_OPTIONS: '--require synthetic-untrusted-module',
+    })
+    expect(environment.NODE_USE_ENV_PROXY).toBe('1')
+    expect(environment.NO_PROXY).toBe('localhost,127.0.0.1')
+    expect(environment.NODE_OPTIONS).toBeUndefined()
+    expect(verificationEnvironment('/isolated', { NODE_USE_ENV_PROXY: 'unexpected' }).NODE_USE_ENV_PROXY).toBeUndefined()
+  })
+
   it.skipIf(process.platform === 'win32')('launcher 先退出时仍回收其后台子进程', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-process-'))
     directories.push(directory)
