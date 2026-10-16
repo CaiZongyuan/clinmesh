@@ -55,6 +55,10 @@ type HistorySelection = {
 }
 type CatalogSelection = { reviewedCatalogItemIds: string[]; selectedCatalogItemIds: string[] }
 class IncompleteRecommendationSelectionError extends Error {}
+const considerationsGenerationSchema = doctorRecommendationGenerationSchema.safeExtend({
+  items: doctorRecommendationGenerationSchema.shape.items.max(0),
+  considerations: doctorRecommendationGenerationSchema.shape.considerations.unwrap(),
+})
 const documentFieldLabels: Record<string, string> = {
   allergyHistory: '过敏史', familyHistory: '家族史',
   assessment: '诊断分析', auxiliaryExamination: '辅助检查', chiefComplaint: '主诉', disposition: '处理意见',
@@ -64,7 +68,7 @@ const documentFieldLabels: Record<string, string> = {
 const generationPrompt = `你是医生的诊疗建议助手，输出当前kind的可采纳候选items和只读待核实思路considerations，两类合计最多8条。
 items仅依据给出的指南条款、当前医生可见病例和本院目录生成，每条必须引用实际guidelines与caseEvidence的id，说明支持、不符合和待核实信息。
 诊断或检查缺少适用指南、目录或明确支持时，可以结合当前病例与医学知识提出considerations，说明推断理由、支持、反对及相关核实事项；它们只是思路，不作确诊，不提供可执行目录身份或冒充指南依据，必须引用实际caseEvidence的id。
-mode为considerations-only时items必须为空。处方不生成considerations，也不凭模型记忆补药品或处方字段。
+mode为considerations-only时items必须为空，必须显式返回considerations，使用病例事实与医学知识评估诊断或检查方向，不能仅因没有指南或目录就放弃推理；仅在当前病例不支持任何可核实方向时返回空数组。处方不生成considerations，也不凭模型记忆补药品或处方字段。
 患者自述、分诊和报告是不同来源，分别保留原文、时间、否定、条件与不确定性；患者说没自行量过体温时，仍须保留本轮分诊已记录的数值，按各自时间解释其意义。
 待核实事项只列出会改变当前这条判断的信息，并说明它影响什么；没有检测结果不自动阻断该检测的建议，不把未安排检查、缺少全套实验室资料或未记录病史当成所有候选的前置门槛。
 未记录不代表阴性，医生的提问不是患者已经确认的自述。
@@ -538,10 +542,7 @@ export class DoctorRecommendationsService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed during model selection')
       }
       const parseGeneration = (value: unknown) => {
-        const output = doctorRecommendationGenerationSchema.parse(value)
-        if (considerationsOnly && output.items.length > 0) {
-          throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'Only read-only considerations are available without applicable guidelines or a hospital catalog')
-        }
+        const output = (considerationsOnly ? considerationsGenerationSchema : doctorRecommendationGenerationSchema).parse(value)
         const selectedIds = catalogSelection?.selectedCatalogItemIds
         if (selectedIds !== undefined && output.items.some(item => item.kind === 'laboratory'
           && !selectedIds.includes(item.catalogItemId))) {
@@ -552,7 +553,8 @@ export class DoctorRecommendationsService {
       }
       let catalogs = projectRecommendationCatalogs(snapshot.catalogs)
       const requestFor = (caseEvidence: DoctorCaseEvidence[], selectedCatalogs = catalogs): JsonChatCompletionInput => ({ model, signal, schemaName: 'doctor_recommendations',
-        systemPrompt: generationPrompt, jsonSchema: z.toJSONSchema(doctorRecommendationGenerationSchema) as Record<string, unknown>,
+        systemPrompt: generationPrompt,
+        jsonSchema: z.toJSONSchema(considerationsOnly ? considerationsGenerationSchema : doctorRecommendationGenerationSchema) as Record<string, unknown>,
         userPayload: { kind: payload.kind, mode: considerationsOnly ? 'considerations-only' : 'suggestions-and-considerations',
           guidelines: snapshot.guidelines, caseEvidence, catalogs: selectedCatalogs },
         validate: value => { parseGeneration(value); return true },

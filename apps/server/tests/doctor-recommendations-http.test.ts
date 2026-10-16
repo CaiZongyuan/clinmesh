@@ -1378,12 +1378,16 @@ it('independently checks read-only case reasoning when the public case has no ac
   }()
   const requests: string[] = []
   let suppliedEvidence: unknown
+  let generationAttempts = 0
   const fixture = await setup(async input => {
     requests.push(input.schemaName)
     const payload = z.object({ guidelines: z.array(z.unknown()), caseEvidence: z.array(z.object({ id: z.string(), kind: z.string() }).passthrough()),
       considerations: z.array(z.object({ id: z.string() })).optional() }).parse(input.userPayload)
     expect(payload.guidelines).toEqual([])
     if (input.schemaName === 'doctor_recommendations') {
+      expect(input.jsonSchema).toMatchObject({ required: expect.arrayContaining(['considerations']),
+        properties: { items: { maxItems: 0 } } })
+      if (generationAttempts++ === 0) return { model: input.model, content: JSON.stringify({ items: [], missingInformation: [] }) }
       suppliedEvidence = payload.caseEvidence
       const evidence = payload.caseEvidence.find(item => item.kind === 'presentation')!
       return { model: input.model, content: JSON.stringify({ items: [], considerations: [{
@@ -1403,7 +1407,7 @@ it('independently checks read-only case reasoning when the public case has no ac
   expect(await fixture.read()).toMatchObject({ status: 'ready', guidelines: [], items: [],
     considerations: [expect.objectContaining({ id: 'synthetic-dizziness-consideration' })],
     notices: [expect.objectContaining({ category: 'guideline' })] })
-  expect(requests).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+  expect(requests).toEqual(['doctor_recommendations', 'doctor_recommendations', 'doctor_recommendation_verification'])
   expect(await fixture.readCase()).toEqual(before)
 })
 
