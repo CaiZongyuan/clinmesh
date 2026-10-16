@@ -18,6 +18,7 @@ import { Textarea } from '@clinmesh/ui/components/textarea'
 import {
   CheckCircleIcon,
   CheckIcon,
+  ChevronDownIcon,
   CircleAlertIcon,
   ClipboardPenIcon,
   FileSignatureIcon,
@@ -108,8 +109,9 @@ export function ClinicalDocumentPage({
   onDocumentChange: (document: ClinicalDocumentContent) => void
   workingDocument: ClinicalDocumentContent
 }): React.JSX.Element | null {
-  const signedDocuments = detail.clinicalDocument?.signed ?? []
-  const latestSignedDocument = signedDocuments.at(-1)
+  const signedDocuments = (detail.clinicalDocument?.signed ?? [])
+    .toSorted((left, right) => right.revisionNumber - left.revisionNumber)
+  const latestSignedDocument = signedDocuments[0]
   const [revisionPreview, setRevisionPreview] = useState<ClinicalDocumentRevisionInput>()
 
   if (
@@ -157,34 +159,8 @@ export function ClinicalDocumentPage({
               <AlertTitle>{messages.clinicalDocumentRevisionSaved}</AlertTitle>
             </Alert>
           ) : null}
-          <section aria-labelledby="signed-clinical-document-history-heading" className="flex flex-col gap-3">
-            <h4 className="text-sm font-semibold" id="signed-clinical-document-history-heading">
-              {messages.signedClinicalDocumentHistory}
-            </h4>
-            <ol className="flex flex-col gap-4">
-              {signedDocuments.map(document => (
-                <li className="flex flex-col gap-3 border-b pb-4 last:border-b-0 last:pb-0" key={document.documentId}>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary">{messages.clinicalDocumentSigned}</Badge>
-                      <Badge variant="outline">{messages.documentVersion} {document.revisionNumber}</Badge>
-                    </div>
-                    <span className="text-xs text-muted-foreground">
-                      {messages.signedAt} {formatClinicalDateTime(document.signedAt, locale)}
-                    </span>
-                  </div>
-                  {document.revisionReason === undefined ? null : (
-                    <p className="text-sm text-muted-foreground">
-                      {messages.revisionReason}：{document.revisionReason}
-                    </p>
-                  )}
-                  <ClinicalDocumentContentView content={document.content} messages={messages} />
-                </li>
-              ))}
-            </ol>
-          </section>
           {!allowRevision || latestSignedDocument === undefined ? null : (
-            <div className="flex flex-col gap-3 border-t pt-5">
+            <div className="flex flex-col gap-3">
               <h4 className="text-sm font-semibold">
                 {messages.clinicalDocumentRevisionForm}
               </h4>
@@ -193,7 +169,7 @@ export function ClinicalDocumentPage({
                 formName={messages.clinicalDocumentRevisionForm}
                 idPrefix={`clinical-document-revision-${latestSignedDocument.compositionId}`}
                 includeRevisionReason
-                key={latestSignedDocument.compositionId}
+                key={`${detail.caseId}:${latestSignedDocument.compositionId}`}
                 messages={messages}
                 onSubmit={(document, reason) => setRevisionPreview({
                   caseId: detail.caseId,
@@ -259,6 +235,45 @@ export function ClinicalDocumentPage({
               )}
             </div>
           )}
+          <section aria-labelledby="signed-clinical-document-history-heading" className="flex min-w-0 flex-col gap-3 border-t pt-5" key={detail.caseId}>
+            <h4 className="text-sm font-semibold" id="signed-clinical-document-history-heading">
+              {messages.signedClinicalDocumentHistory}
+            </h4>
+            <ol className="flex min-w-0 flex-col gap-3">
+              {signedDocuments.map(document => (
+                <li className="min-w-0" key={document.documentId}>
+                  <details className="group rounded-md border">
+                    <summary className="flex cursor-pointer list-none items-start gap-3 rounded-md p-3 focus-visible:outline-2 focus-visible:outline-ring [&::-webkit-details-marker]:hidden">
+                      <span className="flex min-w-0 flex-1 flex-col gap-2">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <Badge variant="outline">{messages.documentVersion} {document.revisionNumber}</Badge>
+                          {document.documentId === latestSignedDocument?.documentId
+                            ? <Badge variant="secondary">{messages.latestClinicalDocumentVersion}</Badge> : null}
+                          <time className="text-xs text-muted-foreground" dateTime={document.signedAt}>
+                            {messages.signedAt} {formatClinicalDateTime(document.signedAt, locale)}
+                          </time>
+                        </span>
+                        {document.revisionReason === undefined ? null : (
+                          <span className="line-clamp-2 break-words text-sm text-muted-foreground">
+                            {messages.revisionReason}：{document.revisionReason}
+                          </span>
+                        )}
+                      </span>
+                      <ChevronDownIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 group-open:rotate-180" />
+                    </summary>
+                    <div className="flex min-w-0 flex-col gap-3 border-t p-3">
+                      {document.revisionReason === undefined ? null : (
+                        <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                          {messages.revisionReason}：{document.revisionReason}
+                        </p>
+                      )}
+                      <ClinicalDocumentContentView content={document.content} messages={messages} />
+                    </div>
+                  </details>
+                </li>
+              ))}
+            </ol>
+          </section>
         </>
       ) : (
         <>

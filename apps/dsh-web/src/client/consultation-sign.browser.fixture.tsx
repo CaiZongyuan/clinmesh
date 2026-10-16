@@ -34,6 +34,9 @@ function App({ locale, onLocaleChange }: { locale: WorkspaceLocale; onLocaleChan
   const [failCancel, setFailCancel] = React.useState(false)
   const [cancelError, setCancelError] = React.useState<Error | null>(null)
   const [recovery, setRecovery] = React.useState(false)
+  const [signed, setSigned] = React.useState<NonNullable<DoctorCaseDetail['clinicalDocument']>['signed']>([])
+  const [readOnly, setReadOnly] = React.useState(false)
+  const [caseId, setCaseId] = React.useState(detail.caseId)
   const agentReview = useAgentReview()
   const cancel = () => {
     if (failCancel) { setFailCancel(false); setCancelError(new Error('合成取消失败，请重试。')); return }
@@ -43,6 +46,14 @@ function App({ locale, onLocaleChange }: { locale: WorkspaceLocale; onLocaleChan
     <button onClick={() => setFailCancel(true)}>模拟取消失败</button>
     <button onClick={() => setRecovery(true)}>模拟重连恢复</button>
     <button onClick={() => onLocaleChange(locale === 'zh-CN' ? 'en-US' : 'zh-CN')}>切换宿主语言</button>
+    <button onClick={() => setSigned([2, 1, 3].map(revisionNumber => ({
+      bundleId: `bundle-${revisionNumber}`, compositionId: `composition-${revisionNumber}`, compositionVersion: '1',
+      content: { ...content, assessment: `第 ${revisionNumber} 版评估。` }, documentId: `document-${revisionNumber}`,
+      provenanceId: `provenance-${revisionNumber}`, revisionNumber, signedAt: '2026-10-16T09:00:00+08:00',
+      ...(revisionNumber > 1 ? { revisionReason: '补充病史后核对诊断与处置。'.repeat(40) } : {}),
+    })))}>回顾签署历史</button>
+    <button onClick={() => setReadOnly(true)}>只读回顾</button>
+    <button onClick={() => setCaseId('another-synthetic-case')}>切换合成病例</button>
     <button onClick={() => {
       const task = agentReview.request({ signal: new AbortController().signal,
         title: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
@@ -56,7 +67,7 @@ function App({ locale, onLocaleChange }: { locale: WorkspaceLocale; onLocaleChan
       void task.decision.catch(() => undefined)
     }}>Agent 签署提案</button>
     <output aria-label="签署结果">{result}</output>
-    <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: { ...detail.consultationRecording!,
+    <ClinicalDocumentPage allowRevision={!readOnly} detail={{ ...detail, caseId, clinicalDocument: { ...detail.clinicalDocument!, signed }, consultationRecording: { ...detail.consultationRecording!,
       ...(recovery ? { signingPreparation: { previewId: 'recovered', expiresAt: '2026-10-10T09:00:00Z', active: false } } : {}) } }}
       elementId="signing-record" locale={locale} messages={messages} workingDocument={content} onDocumentChange={() => {}}
       actions={{
@@ -65,7 +76,7 @@ function App({ locale, onLocaleChange }: { locale: WorkspaceLocale; onLocaleChan
           setSerial(current => current + 1)
           setPreview({ previewId: `preview-${serial}`, commitToken: 'synthetic-commit-token', document: { content } })
         } },
-        revise: { error: null, pending: false, success: false, onSubmit: () => {} },
+        revise: { error: null, pending: false, success: false, onSubmit: input => setResult(`revised:${input.compositionId}`) },
         sign: { error: null, pending: false, success: false, onSubmit: () => { setResult(`signed`); setPreview(undefined) } },
       }} />
   </div>
