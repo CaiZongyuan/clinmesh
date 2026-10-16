@@ -13,11 +13,12 @@ import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { syntheticGuidelineDocument as document, syntheticGuidelineParagraph as paragraph } from './fixtures/guideline-corpus.ts'
+import { doctorGuidelineGroups } from '../src/application/doctor-guideline-evidence.ts'
 
 const disposals: Array<() => Promise<void> | void> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
-async function setup() {
+async function setup(chiefComplaint = '糖尿病复查。') {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-guideline-http-'))
   disposals.push(() => rm(directory, { recursive: true, force: true }))
   const corpusPath = join(directory, 'guidelines.sqlite')
@@ -83,7 +84,7 @@ async function setup() {
     method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({
       expectedVersions: { [`Encounter/${started.encounterId}`]: clinical.encounter.versionId },
       input: { expectedDraftVersion: clinical.clinicalDocument?.draft?.version ?? 0,
-        document: { assessment: '', chiefComplaint: '糖尿病复查。', disposition: '', followUp: '',
+        document: { assessment: '', chiefComplaint, disposition: '', followUp: '',
           historyOfPresentIllness: '医生补充：既往确诊2型糖尿病，本次核对血糖和原治疗。', physicalExamination: '' } },
     }),
   })
@@ -141,4 +142,22 @@ it.each(['withdrawn', 'unverified'] as const)('stops using imported passages aft
   expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
   expect(refreshed.guidelines.some(item => item.title === document.source.title)).toBe(false)
   expect(refreshed.missingInformation).toContain('未收到已导入的糖尿病指南或病例资料。')
+})
+
+it.each(['withdrawn', 'superseded'] as const)('excludes fixed quotations as well as full text when their source is %s', async status => {
+  const fixture = await setup('糖尿病复查，咳嗽。')
+  const quotation = doctorGuidelineGroups[0]!.evidence[0]!
+  const source: GuidelineDocument['source'] = { ...document.source, id: 'synthetic-influenza-status',
+    title: quotation.title, url: quotation.url, sha256: quotation.sourceHash,
+    license: { ...document.source.license, usage: 'unverified' } }
+  fixture.writer.importDocument({ source, passages: [] })
+  const original = await fixture.generate()
+  expect(original.guidelines.some(item => item.id === 'nhc-influenza-2025-diagnosis')).toBe(true)
+  fixture.writer.importDocument({ source: { ...source, status, ...(status === 'superseded'
+    ? { sha256: 'a'.repeat(64) } : { url: 'https://www.who.int/synthetic-influenza-alias' }) }, passages: [] })
+  expect((await fixture.read()).stale).toBe(true)
+  const refreshed = await fixture.generate()
+  expect(refreshed.guidelines.some(item => item.sourceHash === quotation.sourceHash)).toBe(false)
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ sourceHash: quotation.sourceHash }))
 })

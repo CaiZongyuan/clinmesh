@@ -130,6 +130,7 @@ export class GuidelineCorpus {
       const revision = hash(JSON.stringify(rows.map(row => row.digest)))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
+      const inactiveSources: GuidelineSearchResult['inactiveSources'] = []
       const candidates: Array<{ evidence: GuidelineEvidence; queries: string[]; rank: number; topicMatches: number }> = []
       const queryText = text.toLowerCase()
       const tokens = text.match(/\p{Script=Han}+|[a-zA-Z0-9]+/gu) ?? []
@@ -139,7 +140,11 @@ export class GuidelineCorpus {
         .filter(term => [...term].length >= 2).slice(0, 96)
       for (const row of rows) {
         const source = guidelineSourceDefinitionSchema.parse(JSON.parse(row.metadata))
-        if (source.status !== 'active' || source.license.usage === 'unverified') continue
+        if (source.status !== 'active') {
+          inactiveSources.push({ url: source.url, sourceHash: source.sha256 })
+          continue
+        }
+        if (source.license.usage === 'unverified') continue
         const topics = source.topics.filter(topic => topic.terms.some(term => queryText.includes(term.toLowerCase())))
         const sourceTerms = [...new Set([...topics.flatMap(topic => topic.terms), ...terms])].slice(0, 128)
         const indexedTerms = sourceTerms.filter(term => [...term].length >= 3)
@@ -182,11 +187,11 @@ export class GuidelineCorpus {
         || left.rank - right.rank || left.evidence.id.localeCompare(right.evidence.id))) {
         if (guidelines.length === 8) break
         const queries = new Set([...diagnosisQueries, ...candidate.queries])
-        if (Buffer.byteLength(JSON.stringify({ guidelines: [...guidelines, candidate.evidence], diagnosisQueries: [...queries], revision })) > 48 * 1024) continue
+        if (Buffer.byteLength(JSON.stringify({ guidelines: [...guidelines, candidate.evidence], diagnosisQueries: [...queries], inactiveSources, revision })) > 48 * 1024) continue
         guidelines.push(candidate.evidence)
         for (const query of queries) diagnosisQueries.add(query)
       }
-      return { guidelines, diagnosisQueries: [...diagnosisQueries], revision }
+      return { guidelines, diagnosisQueries: [...diagnosisQueries], inactiveSources, revision }
     })()
   }
 

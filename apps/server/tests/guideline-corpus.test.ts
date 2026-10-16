@@ -227,7 +227,7 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     const corpus = open()
     corpus.importDocument(document())
     for (const query of ['', '  ', 'unknown-synthetic-condition', '"* OR ( )']) {
-      expect(corpus.search(query)).toEqual({ guidelines: [], diagnosisQueries: [], revision: corpus.search('').revision })
+      expect(corpus.search(query)).toEqual({ guidelines: [], diagnosisQueries: [], inactiveSources: [], revision: corpus.search('').revision })
     }
     expect(corpus.sources()).toHaveLength(1)
   })

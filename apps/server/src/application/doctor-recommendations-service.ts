@@ -188,7 +188,9 @@ export class DoctorRecommendationsService {
     const groups = doctorGuidelineGroups.filter(group => applicableGroups.has(group))
     const retrieved = this.options.guidelines?.search(caseEvidence.filter(item => item.kind !== 'demographics')
       .map(item => item.text).join('\n'))
-    const guidelines = [...groups.flatMap(group => group.evidence), ...retrieved?.guidelines ?? []]
+    const fixedEvidence = groups.flatMap(group => group.evidence).filter(evidence =>
+      !retrieved?.inactiveSources.some(source => source.sourceHash === evidence.sourceHash || source.url === evidence.url))
+    const guidelines = [...fixedEvidence, ...retrieved?.guidelines ?? []]
     let catalogs: DoctorRecommendationCatalogs
     if (kind === 'diagnosis') {
       const queries = new Set([...groups.map(group => group.terms[0]!), ...retrieved?.diagnosisQueries ?? []])

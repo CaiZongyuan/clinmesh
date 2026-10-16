@@ -48,6 +48,8 @@ CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，�
 
 指南建议由 `doctor-recommendations-http.test.ts` 从真实 DSH Provider 的网络边界验证引用、语义否定、字段缺证、动态目录、授权、迟到结果与恢复；公开 HTTP 和真实 SQLite 保持真实。`doctor-recommendations.spec.ts` 与共享旅程从真实 Web 核对诊断、处方、检验建议进入草稿，处方缺项保持待补充，人工确认后才正式生效；两组 DSH 浏览器合同同时覆盖 React 18/19 的五种建议、来源类型、ShadowRoot、Portal、焦点及窄宽度。`pnpm smoke:recommendations:native` 复用锁定的原生宿主与合成外部模型运行同一旅程，`pnpm smoke:recommendations:live` 再读取新合成病例，使用显式配置的真实模型验证建议响应与实际提供的引用，且不采纳或创建临床事实。真实模型样本不代表全病种医学质量或药学安全评估；这两个显式 smoke 不进入 CI。
 
+免费全文检索的 `guideline-corpus.test.ts` 使用真实临时 SQLite 验证跨主题召回、原文保留、许可、撤回、重复导入和独立 writer 更新；`import-guideline-source.test.ts` 在网络边界提供合成官方响应，验证重定向、预算、哈希、缓存和真实合成 PDF 页提取；`guideline-sync.test.ts` 覆盖同步、只读查询与失败更新。`doctor-guideline-corpus-http.test.ts` 经公开 HTTP 验证新增糖尿病主题的原文同时进入生成和独立核验，来源更新导致旧建议失效，撤回和替代也阻止固定引文复用。共享 Web／原生 DSH 旅程先通过真实病历 UI 引入合成糖尿病资料，核对导入正文的来源引用，恢复原病例后继续原有采纳、编辑保护与人工确认流程；合成模型证明接线合同，不代表实模或临床质量。
+
 大病例回归使用 596 条合成历史与超过单次预算的检验目录，验证授权批量读取、完整诊断分页、全部历史批次覆盖、单条原文选择与重打包、短句柄到真实来源的追溯、旧安全信息、跨建议种类复用、输入变更失效、失败不发布和核验完整候选分批。限流回归组合真实模型桥与 Provider，验证有界等待、初次生成与格式修复共享原始截止时间、预算耗尽后不再调用、共享一次限流重试、取消和建议 outbox 不叠加重试。SQL 数量、模型请求数、实际字节与并发边界作为稳定性能合同，公开 HTTP 耗时单独记录；不以裸 SQL 下界代替整条读取链，也不固定真实模型墙钟时间。输入组织和恢复边界见[分批读取决策](../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)与[记录级筛选决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
 
 核心病例轨迹见[系统架构](architecture.md#144-场景测试)。每次运行固定 app build、数据库 schema、Operation Catalog hash、Workspace policy version、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG 时再把对应版本加入固定输入。

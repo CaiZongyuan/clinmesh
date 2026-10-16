@@ -877,7 +877,9 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 临床目录响应以 `prescriptionConclusionSupported` 显式声明当前 Epoch 是否具有独立用药结论能力。v3 药品目录同时提供疗程、数量和诊断适应规则并返回 `true`；保留的 v1/v2 目录只提供组合、剂量和频次规则并返回 `false`，其组合复诊流程保持可用，独立处方与无需用药 Command 返回稳定目录冲突，Web 不显示独立用药结论面板。
 
-诊疗建议是绑定 Workspace、Epoch、负责医生、病例和建议类型的独立辅助结果。医生页面通过 `GET /api/his/v1/doctor/cases/:caseId/recommendations/:kind` 读取，通过同路径的 `POST actions/generate` 提交当前 Encounter 版本与资料指纹，类型为检验、放射、病理、诊断和处方。生成 Command 只更新建议状态并入持久 outbox，不创建正式临床资源。输入包括当前授权公开病例、完整问诊和病历字段、报告与可见历史、当前院内目录以及[已经核验的官方短条款](research/2026-10-13-clinical-recommendation-guidelines.md)，不读取 Case Truth、私有 Persona、影像像素或 DSH Session transcript。
+诊疗建议是绑定 Workspace、Epoch、负责医生、病例和建议类型的独立辅助结果。医生页面通过 `GET /api/his/v1/doctor/cases/:caseId/recommendations/:kind` 读取，通过同路径的 `POST actions/generate` 提交当前 Encounter 版本与资料指纹，类型为检验、放射、病理、诊断和处方。生成 Command 只更新建议状态并入持久 outbox，不创建正式临床资源。输入包括当前授权公开病例、完整问诊和病历字段、报告与可见历史、当前院内目录以及已核验的官方短条款和本地免费指南检索原文，不读取 Case Truth、私有 Persona、影像像素或 DSH Session transcript。
+
+免费指南使用独立 SQLite，维护来源元数据、原文定位和 FTS5 trigram 索引，不改变 HIS 或 Reference 数据库迁移。显式同步校验官方 HTTPS、逐跳重定向、文件大小与 SHA-256，以 PDF.js 提取物理页或保留 WHO 官方文本层；完整原文与缓存只存本地数据目录。建议服务在授权后按当前可见病例检索中英主题和正文，最多提供 8 段、受 48 KiB 检索预算约束；段落完整保留，不用摘要替代。仅启用 active 且用途已核实的全文，未核实资料保留入库状态；撤回或替代同时排除同源固定引文。全库 revision 纳入建议指纹，运行中的只读连接可见独立 writer 更新。取舍见[免费全文检索决策](../.agents/notes/implemented/architecture/2026-10-16-free-guideline-corpus.md)，同步入口和状态查询见[部署指南](deployment.md#免费指南全文同步)。
 
 建议按资料、目录与证据版本的指纹去重，显式刷新创建新代次；同一任务的生成、结构化修复、自动重试与重启恢复沿用固定模型，新的代次采用当前模型选择。候选先按真实目录固定名称、编码和所选检查来源，再由独立请求核对最终条目的条款支持、病例支持、适用性与限定语，核验后不替换临床身份；合法否定结论不触发格式修复。处方进一步核对所选本院药品的实际规格与每个字段依据，无法证实的字段保持 `null`；目录默认值与允许值只用于执行映射。来源、目录、授权或代次变化会阻止旧结果生效。持久输入与草稿边界见[来源决策](../.agents/notes/implemented/architecture/2026-10-13-doctor-guideline-recommendations.md)。
 

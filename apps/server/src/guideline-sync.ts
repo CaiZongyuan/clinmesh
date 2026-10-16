@@ -1,3 +1,16 @@
+import { readFile, stat } from 'node:fs/promises'
+import { resolve, join } from 'node:path'
+import { parseArgs } from 'node:util'
+import { z } from 'zod'
+import { defaultGuidelineDatabasePath } from './config.ts'
+import { GuidelineCorpus, guidelineSourceDefinitionSchema } from './infrastructure/sqlite/guideline-corpus.ts'
+import { importGuidelineSource } from './infrastructure/guidelines/import-guideline-source.ts'
+
+const repositoryRoot = resolve(import.meta.dirname, '../../..')
+const registrySchema = z.object({ schemaVersion: z.literal(1), sources: z.array(guidelineSourceDefinitionSchema).min(1).max(5_000) })
+  .strict().refine(registry => new Set(registry.sources.map(source => source.id)).size === registry.sources.length,
+    'Guideline source IDs must be unique')
+
 export interface GuidelineSyncResult {
   databasePath: string
   sourceCount: number
@@ -63,19 +76,6 @@ export async function runGuidelineSync(args: readonly string[], options: {
           : item.source.license.usage === 'unverified' ? 'withheld' : 'available', passageCount: item.passageCount })) : items }
   } finally { corpus.close() }
 }
-import { readFile, stat } from 'node:fs/promises'
-import { resolve, join } from 'node:path'
-import { parseArgs } from 'node:util'
-import { z } from 'zod'
-import { defaultGuidelineDatabasePath } from './config.ts'
-import { GuidelineCorpus, guidelineSourceDefinitionSchema } from './infrastructure/sqlite/guideline-corpus.ts'
-import { importGuidelineSource } from './infrastructure/guidelines/import-guideline-source.ts'
-
-const repositoryRoot = resolve(import.meta.dirname, '../../..')
-const registrySchema = z.object({ schemaVersion: z.literal(1), sources: z.array(guidelineSourceDefinitionSchema).min(1).max(5_000) })
-  .strict().refine(registry => new Set(registry.sources.map(source => source.id)).size === registry.sources.length,
-    'Guideline source IDs must be unique')
-
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(import.meta.filename)) {
   const result = await runGuidelineSync(process.argv.slice(2).filter(argument => argument !== '--'), {
