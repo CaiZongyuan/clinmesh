@@ -129,7 +129,7 @@ for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       await expect(page.locator('[data-consultation-recording]')).toHaveCount(2)
       const reason = code === 'AI_TIMEOUT' ? '自动记录超时，患者回答已保存，请根据问诊原文补充病史。'
-        : '自动记录结果未通过校验，病史未写入，请核对问诊原文。'
+        : '部分记录未通过校验，相关来源已保留，请核对原文后重试或补充。'
       await expect(recordPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
       await recordPanel.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
