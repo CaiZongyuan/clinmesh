@@ -27,11 +27,11 @@ const contextSchema = z.object({ actorId: z.string(), workspaceId: z.string(), e
   agentGrantId: z.string().optional(), locationId: z.string().optional(), organizationId: z.string().optional(),
   practitionerId: z.string().optional(), practitionerRoleId: z.string().optional() }).strict()
 const emptyDocument: Document = { assessment: '', chiefComplaint: '', disposition: '', followUp: '', historyOfPresentIllness: '', physicalExamination: '' }
-const labels: Record<Field, string> = { chiefComplaint: '主诉', historyOfPresentIllness: '现病史', priorMedicalHistory: '既往史',
+const labels: Record<Field, string> = { chiefComplaint: '主诉', historyOfPresentIllness: '现病史', priorMedicalHistory: '既往史', familyHistory: '家族史', allergyHistory: '过敏史',
   physicalExamination: '体格检查', auxiliaryExamination: '辅助检查', assessment: '评估', disposition: '处置', followUp: '随访' }
 const officialBasis = { kind: 'official' as const, label: '《病历书写基本规范》病历客观、真实、准确、完整要求', locator: '第三条；门诊适用范围第十三条',
   url: 'https://jyglj.guizhou.gov.cn/sfjcyy/zwgk/xxgkml/zcwj/201807/t20180717_25417252.html' }
-const projectBasis = { kind: 'project' as const, label: 'ClinMesh 普通门诊八字段文书模板与内容辅助提示；不代表国家门诊强制条款' }
+const projectBasis = { kind: 'project' as const, label: 'ClinMesh 普通门诊十字段文书模板与内容辅助提示；不代表国家门诊强制条款' }
 const requiredFields: Field[] = ['chiefComplaint', 'historyOfPresentIllness', 'physicalExamination', 'assessment', 'disposition', 'followUp']
 interface Snapshot { caseId: string; encounterId: string; draftVersion: number; signed: boolean; document: Document; evidence: Evidence[]; agentFacts: QualityAgentFact[]; contextKey: string }
 const snapshotSchema = z.object({ caseId: z.string(), encounterId: z.string(), draftVersion: z.number().int().nonnegative(), signed: z.boolean(),

@@ -47,7 +47,7 @@ it.each(['main', 'fields'] as const)('integrates a populated %s branch database 
   })
   const stored = snapshot()
   await fixture.restart(path => replaceWithRecordingBranchDatabase(path, branch))
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 70, integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 71, integrity: 'ok', foreignKeys: true })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()
@@ -1677,7 +1677,7 @@ it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0
       expect.objectContaining({ ownership: 'manual' }), expect.objectContaining({ rejected: 1, undone: 1 })]))
   }
   await fixture.restart(replaceWithPreSourceDatabase)
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 70, foreignKeys: true, integrity: 'ok' })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 71, foreignKeys: true, integrity: 'ok' })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()

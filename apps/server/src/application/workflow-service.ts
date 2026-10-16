@@ -33,6 +33,9 @@ import {
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   type ClinicalDocumentContent,
+  clinicalDocumentAgentFactSchema,
+  clinicalDocumentQualityControlStateSchema,
+  doctorCaseDetailSchema,
   clinicalDocumentDraftContentSchema,
   clinicalDocumentContentSchema,
   clinicalDocumentDraftResponseSchema,
@@ -102,6 +105,7 @@ import { WorkflowError } from './workflow-error.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { PathologyRequestService } from './pathology-request-service.ts'
 import { ConsultationRecordingService } from './consultation-recording-service.ts'
+import { ClinicalDocumentQualityControl } from './clinical-document-quality.ts'
 import {
   ClinicalRequestKernel,
   laboratoryRequestPolicy,
@@ -1158,6 +1162,7 @@ export class WorkflowService {
   /** 病理会诊申请适配器；与检验、放射共用申请内核。 */
   readonly pathology: PathologyRequestService
   readonly consultationRecording: ConsultationRecordingService
+  readonly qualityControl: ClinicalDocumentQualityControl
 
   constructor(
     database: ClinMeshDatabase,
@@ -1165,6 +1170,7 @@ export class WorkflowService {
     commands: CommandExecutor,
     options: {
       consultationRecordingEnabled?: boolean
+      qualityModelAvailable?: boolean
       consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       investigation?: InvestigationCapabilityResolver
       now?: () => Date
@@ -1180,12 +1186,35 @@ export class WorkflowService {
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
+    this.qualityControl = new ClinicalDocumentQualityControl({
+      database, commands, modelAvailable: options.qualityModelAvailable === true,
+      contextStatus: options.consultationRecordingContextStatus ?? (() => 'active'),
+      readCase: (context, caseId) => {
+        this.#assertCaseResponsibility(context, caseId)
+        return doctorCaseDetailSchema.parse(this.#doctorCaseSnapshot(context, caseId))
+      },
+      automaticFacts: (context, caseId) => this.consultationRecording.qualityFacts(context, caseId),
+      history: (context, caseId) => {
+        const evidence = []
+        for (const source of ['visible-source', 'local-completed'] as const) {
+          for (let page = 1; ; page += 1) {
+            const history = this.doctorCaseHistory(context, caseId, { source, page, pageSize: 20 })
+            evidence.push(...history.items.map(item => ({ id: `history:${source}:${item.entryId}`, kind: 'clinical' as const,
+              label: item.title, text: JSON.stringify(this.doctorCaseHistoryDetail(context, caseId, { source, entryId: item.entryId })), recordedAt: item.clinicalDate })))
+            if (page * history.pageSize >= history.total) break
+          }
+        }
+        return evidence
+      },
+    })
     this.consultationRecording = new ConsultationRecordingService({
       database, commands, enabled: options.consultationRecordingEnabled === true,
       now: this.#now,
       virtualTime: context => this.#virtualTime(context),
       contextStatus: options.consultationRecordingContextStatus ?? (() => 'inactive'),
       prepareReports: (context, transaction, caseId) => this.#prepareRecordingReports(transaction, context, caseId),
+      qualityChanged: (context, transaction, caseId) => this.qualityControl.enqueue(context, transaction, caseId),
+      trackQualityDraft: (context, caseId, before, after) => this.qualityControl.trackDraft(context, caseId, before, after, false),
       assertAccess: (context, encounterId) => {
         this.#assertRole(context, ['outpatient-doctor'])
         const outpatientCase = this.#caseByEncounter(context, encounterId)
@@ -2961,6 +2990,12 @@ export class WorkflowService {
   }
 
   doctorCaseDetail(context: ActorContext, caseId: string) {
+    const detail = this.#doctorCaseSnapshot(context, caseId)
+    const responsibility = this.#database.driver.prepare(`SELECT 1 FROM outpatient_case_responsibility WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND practitioner_role_id = ?`).get(context.workspaceId, context.epoch, caseId, context.practitionerRoleId)
+    return responsibility === undefined || detail.encounter.status !== 'in-progress' ? detail : { ...detail, qualityControl: this.qualityControl.read(context, caseId) }
+  }
+
+  #doctorCaseSnapshot(context: ActorContext, caseId: string) {
     this.#assertRole(context, ['outpatient-doctor'])
     const row = this.#database.driver.prepare(`
       SELECT outpatient_case.case_id, outpatient_case.status, outpatient_case.diagnostic_report_id,
@@ -6165,6 +6200,8 @@ export class WorkflowService {
     expectedDraftVersion: number
     expectedVersions: Record<string, string>
     idempotencyKey: string
+    agentGenerated?: boolean
+    agentFacts?: z.infer<typeof clinicalDocumentAgentFactSchema>[]
   }): CommandResponse<{ caseId: string; draftVersion: number }> {
     return this.#commands.execute({
       context: input.context,
@@ -6175,6 +6212,8 @@ export class WorkflowService {
         document: input.document,
         encounterId: input.encounterId,
         expectedDraftVersion: input.expectedDraftVersion,
+        ...(input.agentGenerated === undefined ? {} : { agentGenerated: input.agentGenerated }),
+        ...(input.agentFacts === undefined ? {} : { agentFacts: input.agentFacts }),
       },
       operation: 'clinical-document.save-draft',
     }, transaction => {
@@ -6189,10 +6228,11 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The signed Clinical Document requires a revision')
       }
       const current = this.#database.driver.prepare(`
-        SELECT version FROM clinical_document_draft
+        SELECT version, content_json FROM clinical_document_draft
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id) as {
         version: number
+        content_json: string
       } | undefined
       const currentVersion = current?.version ?? 0
       if (currentVersion !== input.expectedDraftVersion) {
@@ -6204,6 +6244,11 @@ export class WorkflowService {
       const draftVersion = currentVersion + 1
       const now = this.#virtualTime(input.context)
       this.consultationRecording.trackDraftSave(input.context, outpatientCase.case_id, input.document)
+      const before = current === undefined
+        ? { assessment: '', chiefComplaint: '', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '' }
+        : clinicalDocumentDraftContentSchema.parse(JSON.parse(current.content_json))
+      this.qualityControl.trackDraft(input.context, outpatientCase.case_id, before, input.document,
+        input.agentGenerated === true || input.context.agentGrantId !== undefined, input.agentFacts)
       this.#database.driver.prepare(`
         INSERT INTO clinical_document_draft (
           workspace_id, epoch, case_id, version, content_json, updated_by, updated_at
@@ -6222,6 +6267,7 @@ export class WorkflowService {
         input.context.actorId,
         now,
       )
+      this.qualityControl.enqueue(input.context, transaction, outpatientCase.case_id)
       return {
         data: { caseId: outpatientCase.case_id, draftVersion },
         effects: [{
@@ -6285,6 +6331,7 @@ export class WorkflowService {
     expectedVersions: Record<string, string>
     idempotencyKey: string
   }): CommandResponse<{
+    qualityControl?: z.infer<typeof clinicalDocumentQualityControlStateSchema> | undefined
     commitToken: string
     document: { content: ClinicalDocumentContent; version: number }
     expiresAt: string
@@ -6360,6 +6407,7 @@ export class WorkflowService {
       )
       return {
         data: {
+          qualityControl: this.qualityControl.read(input.context, outpatientCase.case_id),
           commitToken,
           document: { content: document, version: draft.version },
           expiresAt,

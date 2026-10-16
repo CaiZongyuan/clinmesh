@@ -209,7 +209,7 @@ it('summarizes pending quality before signing and does not invalidate the signin
   expect(preview.qualityControl).toMatchObject({ status: 'pending', draftVersion: detail.clinicalDocument!.draft!.version })
   await f.runtime.dispatchPending()
   expect((await f.read()).status).toBe('ready')
-  expect((await request('sign', { previewId: preview.previewId, commitToken: preview.commitToken, consultationReviewed: true })).status).toBe(200)
+  expect((await request('sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(200)
   expect((await f.readCase()).clinicalDocument!.signed).toHaveLength(1)
 })
 
