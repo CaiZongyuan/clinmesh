@@ -37,7 +37,8 @@ async function replaceWithRecordingDatabase(databasePath: string, branch: 'pre-s
       const quoted = `"${name.replaceAll('"', '""')}"`
       const columns = legacy.driver.pragma(`table_info(${quoted})`) as Array<{ name: string }>
       const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(', ')
-      legacy.driver.exec(`INSERT OR REPLACE INTO ${quoted} (${list}) SELECT ${list} FROM captured.${quoted}`)
+      const legacyRows = name === 'outbox_event' ? " WHERE kind != 'clinical-document.check-quality'" : ''
+      legacy.driver.exec(`INSERT OR REPLACE INTO ${quoted} (${list}) SELECT ${list} FROM captured.${quoted}${legacyRows}`)
     }
     legacy.driver.exec('COMMIT')
     legacy.driver.exec('DETACH DATABASE captured')

@@ -24,6 +24,9 @@ import {
   revokedAgentCapabilityGrantSchema,
 } from '@clinmesh/contracts/agent'
 
+const recordingContextOperations = ['encounter.consultation.ask', 'encounter.consultation.reply.retry',
+  'encounter.consultation-recording.control', 'encounter.clinical-document.sign.cancel']
+
 export const syntheticAccounts = [
   {
     actorId: 'actor-registrar',
@@ -224,6 +227,15 @@ export class IdentityService {
   }
 
   consultationRecordingContextStatus(context: ActorContext): 'active' | 'inactive' | 'superseded' {
+    return this.#doctorTaskContextStatus(context, recordingContextOperations)
+  }
+
+  clinicalDocumentQualityContextStatus(context: ActorContext): 'active' | 'inactive' | 'superseded' {
+    return this.#doctorTaskContextStatus(context, [...recordingContextOperations,
+      'encounter.clinical-document.draft.set', 'doctor.document-quality.check', 'doctor.document-quality.retain'])
+  }
+
+  #doctorTaskContextStatus(context: ActorContext, operations: readonly string[]): 'active' | 'inactive' | 'superseded' {
     try {
       this.#workspaces.assertCurrent(context, context.scenarioRunId)
     } catch (error) {
@@ -260,12 +272,11 @@ export class IdentityService {
             AND grant.practitioner_role_id = role.practitioner_role_id
             AND grant.revoked_at IS NULL AND grant.expires_at > ? AND grant.catalog_hash = ?
             AND grant.policy_version = workspace.policy_version
-            AND allowed.operation_id IN ('encounter.consultation.ask', 'encounter.consultation.reply.retry',
-              'encounter.consultation-recording.control', 'encounter.clinical-document.sign.cancel')
+            AND allowed.operation_id IN (SELECT value FROM json_each(?))
         )))
     `).get(context.workspaceId, context.actorId, context.practitionerRoleId ?? '', context.practitionerId ?? '',
       context.roleCode, context.organizationId ?? '', context.locationId ?? '', context.epoch, context.scenarioRunId, context.agentGrantId ?? '',
-      this.#now().toISOString(), this.#catalogHash)
+      this.#now().toISOString(), this.#catalogHash, JSON.stringify(operations))
     return authorized === undefined ? 'inactive' : 'active'
   }
 

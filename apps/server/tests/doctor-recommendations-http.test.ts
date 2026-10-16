@@ -39,6 +39,10 @@ async function setup(complete?: Complete, options: { syntheaProvider?: StubSynth
         const input = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
         if (input.operation === 'resolve') return Response.json({ model: options.route?.() ?? route })
         if (input.schemaName === 'patient_persona') return Response.json({ content: JSON.stringify(persona), model: input.model })
+        if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
+          const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+          return Response.json({ content: JSON.stringify({ issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }), model: input.model })
+        }
         if (complete !== undefined) {
           const result = await complete({ ...input, ...(init?.signal == null ? {} : { signal: init.signal }) })
           return result instanceof Response ? result : Response.json({ ...result, model: input.model })
@@ -207,7 +211,9 @@ it('reports the verification request budget when a valid eight-candidate output 
   expect(await fixture.read()).toMatchObject({ status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('核验请求预算')] })
   expect((await fixture.read()).errorCode).toBeUndefined()
   expect(calls).toEqual(['doctor_recommendations'])
-  expect(await fixture.readCase()).toEqual(before)
+  const { qualityControl: _beforeQuality, ...beforeClinical } = before
+  const { qualityControl: _afterQuality, ...afterClinical } = await fixture.readCase()
+  expect(afterClinical).toEqual(beforeClinical)
 })
 
 it('reports a generation response budget when valid candidates exceed the provider response limit', async () => {

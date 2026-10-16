@@ -40,6 +40,8 @@
 
 ## 运行与验证边界
 
+- 构造旧版本 SQLite fixture 时，只复制当时已有的 outbox 事件类型；不能丢弃新任务投影却保留其事件，否则重建任务代次可能撞幂等键并回滚无关业务事务。新增后台事件的调用者测试显式处理已知事件，保留原业务顺序与未知事件断言。
+
 - pnpm 11 默认会在运行脚本前检查依赖；复用依赖的 worktree 可能触发自动重装并因无 TTY 失败。已核对依赖与锁一致时，可通过进程环境 `pnpm_config_verify_deps_before_run=false` 运行检查，不修改仓库配置。复用外部依赖时仍须让 `@clinmesh/*` 链接指向目标 worktree 的包，否则集成测试可能误用原工作区源码。
 
 - DSH Tool 恢复回归同时使用医生无绑定字段的纯查询 schema 和其他页面保留 `const` 的读取 schema；给所有工具套用相同绑定 fixture 会掩盖恢复合同漂移。医生目录缺失或完整 schema 无效时，残留旧式 `const` 不能提供恢复；共享工具须覆盖原请求属于医生、目录损坏仍保留来源限制的情况，并验证合法目录回退及非医生页面的绑定恢复。字段诊断还须覆盖绑定 `const` 有效但原始 schema 的根类型或其他业务参数无效的组合；只检查提取后的绑定属性会丢失这些约束。原生连续用例消费实际拒绝结果中的恢复 JSON，并核对错误调用没有 proof 或业务执行、恢复后的写操作只执行一次；合成 browserChannel 不提供真实病例隔离证据，跨患者与任务失效须复用 Surface 和 Server 授权回归。
@@ -67,7 +69,9 @@
 - Zod 4 的 `z.ZodError` 子类可能不满足 `instanceof Error`；诊断先识别 `z.ZodError` 并读取安全的 `issues`，否则完整校验信息也可能被误记为 `unknown`。不输出原始模型响应或凭证。
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。浏览器回归验证真实指针命中，不能只检查文本可见。
 - 目录读取失败后，重设相同搜索条件不会改变 TanStack Query key，重试需显式 `refetch`。回归从真实页面观察第二次 HTTP 读取和恢复，不只断言搜索回调被调用。
-- 真实 WebApp 浏览器合同使用 `localhost` 或 HTTPS 的有效 origin：`about:blank` 的 opaque origin 无法使用存储，普通 HTTP 域名不提供 `crypto.randomUUID`。沿用产品需要的浏览器能力，不为测试给生产代码加 polyfill。
+- 真实 WebApp 浏览器合同使用 `localhost` 或 HTTPS 的有效 origin：`about:blank` 的 opaque origin 无法使用存储，普通 HTTP 域名不提供 `crypto.randomUUID`。`page.setContent` 不改变 origin；直接挂载真实组件的 fixture 先注册路由并 `goto` loopback origin，再设置内容，所需 QueryClient 由 fixture 显式提供。沿用产品需要的浏览器能力，不为测试给生产代码加 polyfill。
+
+- 临床时间按运行环境时区展示；测试核对首次核实时间未被覆盖时，从固定 ISO 时间计算当地显示值，同时保留首次时间、覆盖时间及业务状态断言。用 `TZ=UTC` 与 `TZ=Asia/Shanghai` 验证，不把 `+08:00` 原文中的钟点当作所有环境的显示时间，也不为测试改产品时区。
 - 新增 SQLite migration 后，先核对 `database.ts` 的文件名筛选与 `schema_migration` 中的实际应用记录；文件存在不代表启动时会被发现。描述部分误用下划线会被当前筛选忽略，表现为新接口缺少列的 500；修正文件名并通过公开 HTTP 验证，不以启动成功代替迁移证据。
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
@@ -82,7 +86,7 @@
 
 - 首次自动草稿从无到有时，不能将其未涉及字段的空值当作清空指令；页面预填值与人工输入都须覆盖回归。验证保留后还要保存、刷新，并主动清空再保存，避免修复变成永久恢复默认值。当前病史边界由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
 
-- 校验持久后台任务的 Grant 时，覆盖同一业务结果的所有公开触发路径，尤其失败后的显式重试、暂停恢复和取消签署；不能只检查主入口操作权限。失效回归保留原 Grant 撤销后同一 Client 仍有其他有效 Grant 的场景，防止借用另一授权继续旧任务。
+- 校验持久后台任务的 Grant 时，覆盖同一业务结果的所有公开触发路径，尤其失败后的显式重试、暂停恢复和取消签署；不能只检查主入口操作权限。失效回归保留原 Grant 撤销后同一 Client 仍有其他有效 Grant 的场景，防止借用另一授权继续旧任务。 同岗位的不同后台任务可以共享身份基础校验，但保留各自操作白名单，避免为新任务放宽旧任务权限。
 
 - 模型摘录的逐字匹配不能单独证明事实完整。引用边界回归同时覆盖限定语与疑问号在引用外、句间空白、逗号和小数点位于引用首尾，避免通过截断制造肯定事实、改变测量值或拒绝完整陈述；当前写入规则由[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
 
@@ -221,6 +225,8 @@
 - 验证副本和隔离 worktree 放在仓库外。Git 忽略的 `.data/` 仍可能被根 Vitest 的脚本文件 glob 遍历，仓库内嵌套 checkout 会重复运行它的测试；不能靠 `.gitignore` 隔离测试发现。
 
 ## 浏览器演示经验
+
+- 合成 DSH 模型的异步生成器在 `yield finish` 后不保证再次恢复执行；测试完成标记放在终止事件之前，再以 outbox 无在途 claim 和公开业务状态确认消费结束。不要把终止事件后的日志缺失当作晚到写入或恢复失败。
 
 - 将构建后的 JavaScript 或 CSS 内嵌到单文件 HTML 时，`String.replace` 使用返回正文的函数作为 replacement。直接传正文字符串会把其中的 `$$`、`$&` 等解释为替换标记并损坏产物；导出后用浏览器从本地文件打开，验证渲染与交互。
 

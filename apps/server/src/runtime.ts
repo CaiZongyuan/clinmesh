@@ -237,6 +237,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const workflow = new WorkflowService(database, fhir, commands, {
       consultationRecordingEnabled: options.dshModelBridge !== undefined,
+      qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
+      qualityContextStatus: context => identity.clinicalDocumentQualityContextStatus(context),
       consultationRecordingContextStatus: context => identity.consultationRecordingContextStatus(context),
       investigation,
       ...clockOptions,
@@ -417,6 +419,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     workflow.consultationRecording.recoverQueued()
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
+        'clinical-document.check-quality': event => workflow.qualityControl.process(event, {
+          models, shutdownSignal: generationAbort.signal,
+          ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
+          ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+          signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
+        }),
         'doctor.generate-recommendations': event => doctorRecommendations.process(event,
           AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]), generationAbort.signal),
         'consultation.record-history': event => workflow.consultationRecording.process(event, {

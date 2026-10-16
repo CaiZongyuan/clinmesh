@@ -43,6 +43,8 @@ import {
   reviseClinicalDocumentRequestSchema,
   retryLaboratoryResultGenerationRequestSchema,
   saveClinicalDocumentDraftRequestSchema,
+  checkClinicalDocumentQualityRequestSchema,
+  retainClinicalDocumentQualityIssueRequestSchema,
   controlConsultationRecordingRequestSchema,
   saveDiagnosisDraftRequestSchema,
   saveLaboratoryRequestDraftRequestSchema,
@@ -1664,6 +1666,27 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         }))
       } catch (error) { return apiErrorResponse(context, error) }
     })
+    app.get('/api/his/v1/doctor/cases/:caseId/document-quality-control', async context => {
+      try {
+        const clientId = context.req.query('clientId')
+        if (clientId !== undefined) z.string().min(1).max(128).parse(clientId)
+        return context.json(workflow.qualityControl.read(await actor(context), context.req.param('caseId'), clientId))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/doctor/cases/:caseId/document-quality-control/actions/check', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        return context.json(workflow.qualityControl.check(await actor(context), context.req.param('caseId'),
+          checkClinicalDocumentQualityRequestSchema.parse(await context.req.json()), idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/doctor/cases/:caseId/document-quality-control/actions/retain', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        return context.json(workflow.qualityControl.retain(await actor(context), context.req.param('caseId'),
+          retainClinicalDocumentQualityIssueRequestSchema.parse(await context.req.json()), idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.put('/api/his/v1/encounters/:encounterId/clinical-document/draft', async (context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
@@ -1671,6 +1694,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return context.json(workflow.saveClinicalDocumentDraft({
           context: await actor(context),
           document: body.input.document,
+          ...(body.input.agentGenerated === undefined ? {} : { agentGenerated: body.input.agentGenerated }),
+          ...(body.input.agentFacts === undefined ? {} : { agentFacts: body.input.agentFacts }),
           encounterId: context.req.param('encounterId'),
           expectedDraftVersion: body.input.expectedDraftVersion,
           expectedVersions: body.expectedVersions,
