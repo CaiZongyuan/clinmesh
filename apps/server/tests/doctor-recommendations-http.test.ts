@@ -39,6 +39,10 @@ async function setup(complete?: Complete, options: { syntheaProvider?: StubSynth
         const input = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
         if (input.operation === 'resolve') return Response.json({ model: options.route?.() ?? route })
         if (input.schemaName === 'patient_persona') return Response.json({ content: JSON.stringify(persona), model: input.model })
+        if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
+          const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+          return Response.json({ content: JSON.stringify({ issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }), model: input.model })
+        }
         if (complete !== undefined) {
           const result = await complete({ ...input, ...(init?.signal == null ? {} : { signal: init.signal }) })
           return result instanceof Response ? result : Response.json({ ...result, model: input.model })
@@ -73,9 +77,13 @@ async function setup(complete?: Complete, options: { syntheaProvider?: StubSynth
         input: { expectedInputFingerprint: state.inputFingerprint, refresh } }),
     })
   }
-  const readCase = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
-    `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
-  )).json())
+  const readCase = async () => {
+    const { qualityControl: _qualityControl, ...clinical } = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },
+    )).json())
+    // 质控拥有独立后台进度，本套回归比较完整诊疗事实与草稿。
+    return clinical
+  }
   const saveDocument = async (document: Record<string, string>) => runtime.app.request(
     `/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`, {
       method: 'PUT', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },

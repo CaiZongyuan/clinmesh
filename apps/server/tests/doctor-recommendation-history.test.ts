@@ -41,7 +41,7 @@ async function setup(syntheaProvider = new StubSyntheaProvider()) {
   return { runtime, started, actor, cookie, readCase, resetStatements: () => { statements = 0 }, statements: () => statements }
 }
 
-it('reads 596 visible resources through the public recommendation entry without repeating one authorization query per resource', async () => {
+it.each(['diagnosis', 'laboratory'])('reads 596 visible resources through the public %s recommendation entry without repeating one authorization query per resource', async kind => {
   const provider = new class extends StubSyntheaProvider {
     override async generate() {
       const corpus = await super.generate()
@@ -59,7 +59,7 @@ it('reads 596 visible resources through the public recommendation entry without 
   const fixture = await setup(provider)
   fixture.resetStatements()
   const response = await fixture.runtime.app.request(
-    `/api/his/v1/doctor/cases/${fixture.started.outpatientCaseId}/recommendations/diagnosis`, { headers: { cookie: fixture.cookie } },
+    `/api/his/v1/doctor/cases/${fixture.started.outpatientCaseId}/recommendations/${kind}`, { headers: { cookie: fixture.cookie } },
   )
 
   expect(response.status).toBe(200)

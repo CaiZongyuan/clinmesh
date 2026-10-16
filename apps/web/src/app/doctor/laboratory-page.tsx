@@ -447,6 +447,7 @@ function LaboratoryRequestEditor({
   const requests = state?.requests ?? []
   const selectRequest = (id: string) => { setLocalRequestId(id); onSelectRequest?.(id) }
   const activeRequest = requests.find(request => request.id === (selectedRequestId ?? localRequestId)) ?? requests[0]
+  const requestActionPending = actions.cancel.pending || actions.retry.pending
   const requestName = (request: LaboratoryRequest) => {
     const item = catalogById.get(request.catalogItemId)
     return (locale === 'zh-CN' ? item?.nameZh : item?.nameEn)
@@ -617,14 +618,19 @@ function LaboratoryRequestEditor({
               <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" />
                 <AlertTitle>{generationErrorMessage(activeRequest.generationError.code, locale)}</AlertTitle></Alert>
             )}
-            {readOnly ? null : activeRequest.status === 'generation-failed' && activeRequest.generationError?.code !== 'INVESTIGATION_UNSUPPORTED' ? (
-              <Button aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${requestName(activeRequest)}`}
-                disabled={actions.retry.pending} onClick={() => actions.retry.onSubmit(activeRequest)} size="sm" type="button" variant="outline">
-                <RefreshCwIcon data-icon="inline-start" />{locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
-              </Button>
-            ) : activeRequest.status === 'issued' ? (
-              <CancelLaboratoryRequestButton action={actions.cancel} itemName={requestName(activeRequest)} messages={messages} request={activeRequest} />
-            ) : null}
+            {readOnly || (activeRequest.status !== 'generation-failed' && activeRequest.status !== 'issued') ? null : (
+              <div className="flex flex-wrap items-center gap-2">
+                {activeRequest.status === 'generation-failed'
+                  && activeRequest.generationError?.code !== 'INVESTIGATION_UNSUPPORTED'
+                  && activeRequest.generationError?.code !== 'INVESTIGATION_TRUTH_INCOMPATIBLE' ? (
+                    <Button aria-label={`${locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'} ${requestName(activeRequest)}`}
+                      disabled={requestActionPending} onClick={() => actions.retry.onSubmit(activeRequest)} size="sm" type="button" variant="outline">
+                      <RefreshCwIcon data-icon="inline-start" />{locale === 'zh-CN' ? '重试结果生成' : 'Retry result generation'}
+                    </Button>
+                  ) : null}
+                <CancelLaboratoryRequestButton action={{ ...actions.cancel, pending: requestActionPending }} itemName={requestName(activeRequest)} messages={messages} request={activeRequest} />
+              </div>
+            )}
             {activeRequest.status === 'in-progress' ? (
               <Alert><RefreshCwIcon aria-hidden="true" className="animate-spin" /><AlertTitle>{messages.laboratoryResultPending}</AlertTitle></Alert>
             ) : null}
@@ -653,6 +659,10 @@ function generationErrorMessage(code: string, locale: WorkspaceLocale): string {
     INVESTIGATION_UNSUPPORTED: {
       'zh-CN': '该病例缺少此检验的合成结果底账，无法生成结果。',
       'en-US': 'This case has no synthetic result evidence for this laboratory item.',
+    },
+    INVESTIGATION_TRUTH_INCOMPATIBLE: {
+      'zh-CN': '该病例的合成检验真值与申请的结果定义或单位不兼容，无法生成结果。请取消此申请。',
+      'en-US': 'This case’s synthetic laboratory truth is incompatible with the requested result definition or unit. Cancel this request.',
     },
     INVESTIGATION_OUTPUT_INVALID: {
       'zh-CN': '生成结果未通过校验，请重试。',

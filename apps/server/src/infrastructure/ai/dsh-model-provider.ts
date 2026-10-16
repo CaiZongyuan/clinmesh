@@ -12,16 +12,16 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
     }
   }
 
-  async resolveModel(model: string, signal?: AbortSignal): Promise<string> {
+  async resolveModel(model: string, signal?: AbortSignal, deadline = performance.now() + this.options.timeoutMs): Promise<string> {
     if (model !== dshDefaultModel) { decodeModelRoute(model); return model }
-    const result = await this.#request({ operation: 'resolve' }, signal)
+    const result = await this.#request({ operation: 'resolve' }, signal, undefined, deadline)
     decodeModelRoute(result.model)
     return result.model
   }
 
   async completeJson(input: JsonChatCompletionInput) {
     const deadline = performance.now() + this.options.timeoutMs
-    const model = await this.resolveModel(input.model, input.signal)
+    const model = await this.resolveModel(input.model, input.signal, deadline)
     const rateLimitRetry = { available: true }
     let issues: Array<{ code: string; path: string }> = []
     let validationError: unknown

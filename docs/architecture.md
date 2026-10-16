@@ -446,7 +446,7 @@ Reference Concept 拥有检验术语、分类、值类型、UCUM 单位、标本
 
 医生病例级检验目录只返回当前 Workspace/Epoch 中 active、doctor-orderable 的 Hospital Laboratory Service；dependency-only 叶子不会单独出现。所有可见项目都可保存草稿和正式开立，响应不含 Case Truth、模型或 Investigation Generation Capability。开立时冻结服务版本、source coding 和完整 report definition；成人规则按 Virtual Time 计算年龄，男/女规则优先于 `all`，其他或未知性别只使用 `all`。不足 18 岁或任一叶子没有适用规则时，保存和开立都以稳定领域错误失败。
 
-Simulator 对每个冻结报告叶子先复用编码、值类型和单位均兼容的精确 Case Truth Observation；存在精确但不兼容的事实时失败，不生成正常值。缺少精确事实且存在适用的 `laboratory-cn` 规则时，generation policy v1 从 input hash、服务版本和 concept ID 的 SHA-256 固定位生成均匀值，使用独立 simulation bounds、precision 舍入和夹紧；fixed-normal 直接使用冻结字符串。其余 LOINC 叶子才进入 Investigation Agent。一个 panel 可以混合精确结果和 Adult Reference Baseline，每个结果记录来源；单侧临床范围只进入报告语义，不作为随机边界。outbox 最多自动尝试三次，连续失败进入 `generation-failed` 且报告事务不创建部分 Specimen、Observation、DiagnosticReport 或 Provenance。Snapshot 按 Case revision、冻结服务/报告版本和申请前证据形成 input hash；相同请求、重试和 Reset 初始证据复用，新正式证据产生新 Snapshot。
+Simulator 对每个冻结报告叶子先复用编码、值类型和单位兼容的精确 Case Truth Observation；单位兼容包括[受控真值换算](../.agents/notes/implemented/bug-fix/2026-10-16-laboratory-truth-unit-conversion.md)。存在精确但不兼容的事实时失败，不生成正常值。缺少精确事实且存在适用的 `laboratory-cn` 规则时，generation policy v1 从 input hash、服务版本和 concept ID 的 SHA-256 固定位生成均匀值，使用独立 simulation bounds、precision 舍入和夹紧；fixed-normal 直接使用冻结字符串。其余 LOINC 叶子才进入 Investigation Agent。一个 panel 可以混合精确结果和 Adult Reference Baseline，每个结果记录来源；单侧临床范围只进入报告语义，不作为随机边界。outbox 对可恢复错误最多自动尝试三次，确定性真值兼容错误首次即进入 `generation-failed`；失败不创建部分 Specimen、Observation、DiagnosticReport 或 Provenance。Snapshot 按 Case revision、冻结服务/报告版本和申请前证据形成 input hash；相同请求、重试和 Reset 初始证据复用，新正式证据产生新 Snapshot。
 
 `laboratory-cn` 的 Observation 以 ClinMesh-owned WS/T 886 system 为主并附可用 LOINC crosswalk，Quantity 使用 UCUM，fixed-normal 使用 `valueString`。Specimen 使用本地 specimen system；ServiceRequest 和 DiagnosticReport 同时保留本院服务与 source panel coding。Provenance 关联 Investigation Result Snapshot、ClinMesh Reference Release、Dataset Release、generation policy 和 input hash。WS/T 886—2026 在 2026-11-01 实施；更早的 Hospital Baseline 只能以明确 future-standard preview 方式启用，不能描述为已生效标准。
 
@@ -610,6 +610,9 @@ DELETE /api/his/v1/encounters/{id}/prescription/draft
 POST /api/his/v1/encounters/{id}/prescription/actions/issue
 POST /api/his/v1/encounters/{id}/medication-conclusion/actions/confirm-no-medication
 PUT  /api/his/v1/encounters/{id}/clinical-document/draft
+GET  /api/his/v1/doctor/cases/{id}/document-quality-control
+POST /api/his/v1/doctor/cases/{id}/document-quality-control/actions/check
+POST /api/his/v1/doctor/cases/{id}/document-quality-control/actions/retain
 PUT  /api/his/v1/encounters/{id}/laboratory-request/draft
 DELETE /api/his/v1/encounters/{id}/laboratory-request/draft
 POST /api/his/v1/encounters/{id}/laboratory-request/actions/issue
@@ -862,6 +865,8 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 自动记录没有医生确认状态，签署不要求逐条核对或问诊遗漏勾选。预览仍固定完整正文、草稿版本、负责身份、Encounter 版本与 Consultation/来源快照；准备推进提取代次，迟到结果失效，已签文书不可变。取消恢复未完成任务并保留暂停和失败；冻结与恢复见[签署准备决策](../.agents/notes/implemented/architecture/2026-10-10-consultation-signing-preparation.md)。正式签署与 Agent 高风险提案批准沿用原授权。
 
+病历质控独立检查适用模板缺项、已知事实遗漏、事实不一致及 Agent 新增事实的来源，不以自动整理完成代表整份病历已核对。ClinMesh 通过共享 Command 与 outbox 保存检查输入、代次和人工处理记录，DSH 提供辅助模型；结果绑定实际正文、草稿版本、合法来源和授权上下文。未保存候选带独立客户端身份与编辑版本，仅用于检查，不隐式保存病历。字段内显示“待补充”或“待核实”，依据按需展开；医生核实保留的决定只适用于相关正文及证据。签署预览汇总问题与待完成、过期或失败状态，质控完成不单独使预览失效，不新增签署门禁，也不恢复自动整理的逐条核对或来源界面。详细规则与范围由[四项质控规格](spec/2026-10-15-doctor-document-quality-control.md)拥有。
+
 结构化 Clinical Document 草稿包含主诉、现病史、既往史、家族史、过敏史、体格检查、辅助检查、评估、处置和随访十个共享字段；草稿允许字段为空，正式签署仍校验原六项核心完整性。家族史、过敏史允许缺失或留空，表示未记录，不自动补阴性或创建 AllergyIntolerance；新签署件使用稳定章节编码并统一体格检查标题，存量缺失章节及原件保持不变，详见[病历字段决策](../.agents/notes/implemented/architecture/2026-10-14-clinical-document-fields.md)。草稿按病例保存在 `clinical_document_draft`，以 `expectedDraftVersion` 和 Encounter expected version 做 CAS 更新。签署预览固定 Actor context、Encounter 版本、草稿正文和草稿版本；提交重新校验这些依赖与 token 后创建不可变 FHIR R5 Composition、带稳定 identifier 且首 entry 为该 Composition 的自包含 document Bundle，以及同时引用二者的 Provenance，但不改变 Encounter 或病例状态。`signed_clinical_document` 只保存 FHIR 资源关联、签署者、时间和修订父链；每个病例只允许一个根文书，修订只接受最新 Composition 并创建线性替代版本。首期复诊 `sign-and-complete` 是兼容入口，只能用于无 Consultation 且尚无结构化签署根文书的病例；存在问诊或已有根文书时，预览和提交（包括旧 token）都返回稳定业务冲突。签署准备不依赖自动记录是否启用；关闭自动记录时的取消投影见[签署准备决策](../.agents/notes/implemented/architecture/2026-10-10-consultation-signing-preparation.md)。
 
 诊断是病例级独立聚合。版本化 `diagnosis_catalog` 为当前 Workspace/Epoch 提供受控 ICD-10 条目；`diagnosis_state` 保存一至八条目录引用、主次角色和可选备注，草稿以 Encounter expected version 与单调 `expectedDraftVersion` 做 CAS。保存草稿不创建 Condition 或其他 FHIR 资源；已确认状态可以重新进入草稿，但不会改写既有确认。重复目录项、停用目录项、过期版本和已有首期复诊组合草稿分别返回稳定目录或业务冲突。
@@ -886,13 +891,13 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 带 Consultation 的病例使用独立检验申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。保存草稿重新读取 active、doctor-orderable Hospital Service 并冻结 service/report snapshot；开立再次校验相同 service ID 和版本，直接提交 Reference Concept ID 返回目录冲突。单一内部适应证 `clinical-evaluation` 不要求医生选择。没有病例责任人的 `awaiting-doctor` 病例必须先由接诊 Command 分配责任并推进状态，Web 才开放检验、诊断、处方和病历写入。开具时保存本院服务 coding、根 LOINC 和报告定义，创建 `ServiceRequest.status=active` 与 `Task.status=requested`，Task `focus` 指向该 ServiceRequest。服务配置保留合成价格，但该流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
 
-独立申请开具后由持久 outbox 绑定 `lis-system`，依次把领域状态和执行 Task 从 `issued/requested` 推进到 `accepted/accepted` 与 `in-progress/in-progress`。报告 consumer 对暂时失败和非法输出执行最多三次有界重试；前两次保持申请 `in-progress`，第三次失败才写入 `generation-failed`。成功后创建一个 Specimen、每个报告叶子一个 Observation、一个 DiagnosticReport 和 Provenance，并完成 ServiceRequest、执行 Task 与申请；同一 request 的重复投递返回已关联 snapshot，不重复调用模型或创建资源。
+独立申请开具后由持久 outbox 绑定 `lis-system`，依次把领域状态和执行 Task 从 `issued/requested` 推进到 `accepted/accepted` 与 `in-progress/in-progress`。报告 consumer 对暂时失败和可恢复非法输出执行最多三次有界尝试；前两次保持申请 `in-progress`，第三次失败写入 `generation-failed`。精确真值不兼容或缺少结果底账属于确定性错误，首次即写入失败。成功后创建一个 Specimen、每个报告叶子一个 Observation、一个 DiagnosticReport 和 Provenance，并完成 ServiceRequest、执行 Task 与申请；同一 request 的重复投递返回已关联 snapshot，不重复调用模型或创建资源。
 
 Report Acknowledgement 是按报告版本独立保存的领域事实，只能由原检查申请的开具医生对当前 `DiagnosticReport.status=final` 且申请为 `reported` 的报告创建。成功确认把申请推进到 `acknowledged` 并递增申请版本，但不更新 DiagnosticReport 或其 FHIR `meta.versionId`；确认 Command 以 `ReportAcknowledgement/<id>` effect 进入审计和 Action Trace。每个报告版本至多有一条确认事实，不同幂等键的重复确认返回第一次确认的 ID、时间和当时的申请版本。
 
 报告更正只接受当前 `reported` 或 `acknowledged` 报告、申请 expected version、原 DiagnosticReport expected version、原因、结论，以及覆盖既有结果代码全集且不重复的数值。每次更正为 DiagnosticReport 和全部 Observation 创建新的 logical ID，旧资源和旧 Report Acknowledgement 保持可读；新的 Provenance 以 `entity.role=revision` 引用被替代报告和结果，领域修订表以 latest-only 唯一约束维持线性链。更正后申请指向新报告并回到 `reported`，当前确认投影清空，医生必须对新版本重新确认；并发更正只有一次能通过申请 CAS。FHIR R5 DiagnosticReport 没有 Composition 式 `relatesTo`，因此替代关系由标准 Provenance 与领域修订链共同表达，不添加伪标准字段。公开 HTTP adapter 只接受登录账户具有 administrator 能力的受信 session，再把调用绑定为受信 `lis-system` Command context，同时保留该 session 当前选择的 Practitioner、Practitioner Role 和 Location 供 receipt 与 Audit 关联；其他账户和请求正文不能声明或伪造该系统角色。
 
-`issued` 申请可由原开具医生取消；取消把 ServiceRequest 改为 `revoked`、执行 Task 改为 `cancelled`，并递增正式申请版本。取消与受理竞争时由版本和条件更新决定唯一结果，已取消申请收到晚到受理事件时以无副作用完成。`generation-failed` 表达统一的系统执行异常，人工重试基于冻结的 Laboratory Service 和报告定义开启新的三次尝试窗口，Doctor Case Controller 和 Web 都不解释内部错误码或病例级生成 capability。医生病例详情读取草稿版本、可选草稿和全部正式申请；报告 DTO 从已签发的 DiagnosticReport 和 Observation 还原，不从当前目录或结果模板重建。Web 对失败申请显示统一的可重试状态，对当前 `reported` 报告显示确认已阅；内部 Agent 错误文案不直接暴露给医生。
+`issued` 或 `generation-failed` 申请可由原开具医生取消；取消把 ServiceRequest 改为 `revoked`、执行 Task 改为 `cancelled`，并递增正式申请版本。取消与受理竞争时由版本和条件更新决定唯一结果，已取消申请收到晚到受理事件时以无副作用完成。`generation-failed` 表达系统执行异常；可恢复错误的人工重试基于冻结 Laboratory Service 和报告定义开启新的三次尝试窗口，确定性错误拒绝重试。错误分类、存量恢复与多入口规则由[检验真值换算决策](../.agents/notes/implemented/bug-fix/2026-10-16-laboratory-truth-unit-conversion.md)拥有，不按病例级生成 capability 过滤医生目录。医生病例详情读取草稿版本、可选草稿和全部正式申请；报告 DTO 从已签发的 DiagnosticReport 和 Observation 还原，不从当前目录或结果模板重建。Web 对失败申请显示对应原因、取消及符合错误分类的重试入口，对当前 `reported` 报告显示确认已阅；内部 Agent 错误文案不直接暴露给医生。
 
 没有 Consultation 的既有挂号病例继续由 Web 使用 `issue-laboratory-order` 兼容入口和 `lab-fever-panel`，该命令绑定首诊草稿、Encounter 与医生 Queue Task，创建 ServiceRequest、ChargeItem 和待缴状态。独立草稿入口的请求 schema 不接受 `lab-fever-panel`；两条路径不共享草稿版本、正式申请领域状态或执行 Task 状态机。
 

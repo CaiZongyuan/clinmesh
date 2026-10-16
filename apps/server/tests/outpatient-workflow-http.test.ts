@@ -133,6 +133,15 @@ function commandHeaders(cookie: string, idempotencyKey = randomUUID()) {
   }
 }
 
+async function dispatchAfterQualityChecks(runtime: TestRuntime) {
+  let event = await runtime.dispatcher.dispatchOnce()
+  while (event?.kind === 'clinical-document.check-quality') {
+    expect(event.status).toBe('completed')
+    event = await runtime.dispatcher.dispatchOnce()
+  }
+  return event
+}
+
 async function expectCommandAudit(
   runtime: TestRuntime,
   cookie: string,
@@ -198,6 +207,13 @@ class QueuePersonaProvider implements JsonChatCompletionsProvider {
   }
 
   async completeJson(input: JsonChatCompletionInput) {
+    if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
+      const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })), issues: z.array(z.unknown()).optional() }).parse(input.userPayload)
+      return { content: JSON.stringify({
+        issues: input.schemaName === 'clinical_document_quality_verification' ? payload.issues!.map((_, index) => ({ index, supported: true })) : [],
+        agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      }), model: 'fake-quality-model' }
+    }
     if (input.schemaName === 'patient_persona') {
       return { content: JSON.stringify(syntheticPersonaContent), model: 'fake-persona-model' }
     }
@@ -510,7 +526,7 @@ async function createIndependentReportedLaboratoryRequest(
     'laboratory.start-request',
     'laboratory.report-request',
   ]) {
-    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind, status: 'completed' })
+    expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({ kind, status: 'completed' })
   }
   const detailResponse = await runtime.app.request(
     `/api/his/v1/doctor/cases/${started.caseId}`,
@@ -786,7 +802,7 @@ async function createCompletionReadyConsultation(
       'laboratory.start-request',
       'laboratory.report-request',
     ]) {
-      expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({ kind, status: 'completed' })
+      expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({ kind, status: 'completed' })
     }
     if (options.laboratory === 'acknowledged') {
       const detailResponse = await runtime.app.request(
@@ -2928,8 +2944,11 @@ describe('outpatient workflow HTTP contract', () => {
       `/api/his/v1/doctor/cases/${started.caseId}`,
       { headers: { cookie: doctorCookie } },
     )).json())
+    const { qualityControl: activeQuality, ...clinicalBefore } = caseBefore
+    expect(activeQuality?.caseId).toBe(started.caseId)
+    expect(caseAfter.qualityControl).toBeUndefined()
     expect(caseAfter).toEqual({
-      ...caseBefore,
+      ...clinicalBefore,
       encounter: {
         ...caseBefore.encounter,
         status: 'completed',
@@ -5156,13 +5175,13 @@ describe('outpatient workflow HTTP contract', () => {
     expect(laboratoryRequestActionResponseSchema.parse(
       await (await cancel(cancellable.request, cancelIdempotencyKey)).json(),
     )).toEqual(cancelled)
-    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+    expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({
       kind: 'laboratory.accept-request',
       status: 'completed',
     })
 
     const active = await saveAndIssue('lab-cbc', cancellable.draftVersion)
-    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+    expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({
       kind: 'laboratory.accept-request',
       status: 'completed',
     })
@@ -5204,7 +5223,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     })
 
-    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+    expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({
       kind: 'laboratory.start-request',
       status: 'completed',
     })
@@ -6088,11 +6107,11 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data.request
-    expect(await initialRuntime.dispatcher.dispatchOnce()).toMatchObject({
+    expect(await dispatchAfterQualityChecks(initialRuntime)).toMatchObject({
       kind: 'laboratory.accept-request',
       status: 'completed',
     })
-    expect(await initialRuntime.dispatcher.dispatchOnce()).toMatchObject({
+    expect(await dispatchAfterQualityChecks(initialRuntime)).toMatchObject({
       kind: 'laboratory.start-request',
       status: 'completed',
     })
@@ -6105,11 +6124,11 @@ describe('outpatient workflow HTTP contract', () => {
 
     const restartedRuntime = await createClinMeshRuntime(runtimeOptions)
     runtimes.push(restartedRuntime)
-    expect(await restartedRuntime.dispatcher.dispatchOnce()).toMatchObject({
+    expect(await dispatchAfterQualityChecks(restartedRuntime)).toMatchObject({
       kind: 'laboratory.report-request',
       status: 'completed',
     })
-    expect(await restartedRuntime.dispatcher.dispatchOnce()).toBeUndefined()
+    expect(await dispatchAfterQualityChecks(restartedRuntime)).toBeUndefined()
 
     const restartedDoctorCookie = await signIn(
       restartedRuntime,
@@ -6359,12 +6378,12 @@ describe('outpatient workflow HTTP contract', () => {
     })
 
     expect(report).toThrow('Only an in-progress laboratory request can be reported')
-    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+    expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({
       kind: 'laboratory.accept-request',
       status: 'completed',
     })
     expect(report).toThrow('Only an in-progress laboratory request can be reported')
-    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+    expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({
       kind: 'laboratory.start-request',
       status: 'completed',
     })
@@ -6412,11 +6431,11 @@ describe('outpatient workflow HTTP contract', () => {
         }),
       ]),
     })
-    expect(await runtime.dispatcher.dispatchOnce()).toMatchObject({
+    expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({
       kind: 'laboratory.report-request',
       status: 'completed',
     })
-    expect(await runtime.dispatcher.dispatchOnce()).toBeUndefined()
+    expect(await dispatchAfterQualityChecks(runtime)).toBeUndefined()
 
     const detailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${started.caseId}`,

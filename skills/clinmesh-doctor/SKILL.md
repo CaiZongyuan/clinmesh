@@ -39,7 +39,7 @@ clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
 
 Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Search the current case laboratory catalog before saving a draft; every returned item is an active, doctor-orderable Hospital Laboratory Service. Use its Hospital Service ID and current versioned report definition. A global Reference Concept is terminology, not an orderable service, and cannot be submitted as the catalog item. Only acknowledge a signed current report. Report correction requires an administrator Grant and creates a new immutable report chain. Other Hospital Service order and completion operations use their current ServiceRequest versions.
 
-保存草稿或签发返回 `LABORATORY_GENERATION_UNSUPPORTED` 时，该病例缺少所选检验的结果底账，不要重复提交同一开单。已有申请的 `generationError.code` 为 `INVESTIGATION_UNSUPPORTED` 时无法通过重试恢复；`INVESTIGATION_OUTPUT_INVALID`、`AI_TIMEOUT` 和 `AI_REQUEST_FAILED` 可按当前申请版本重试生成。
+保存草稿或签发返回 `LABORATORY_GENERATION_UNSUPPORTED` 时，该病例缺少所选检验的结果底账，不要重复提交同一开单。已有申请的 `generationError.code` 为 `INVESTIGATION_TRUTH_INCOMPATIBLE` 时，精确病例真值与冻结报告定义不兼容；该错误与 `INVESTIGATION_UNSUPPORTED` 均不能重试，可按当前申请版本取消。`INVESTIGATION_OUTPUT_INVALID`、`AI_TIMEOUT` 和 `AI_REQUEST_FAILED` 仍可按当前版本重试生成，也可取消。旧 `INVESTIGATION_OUTPUT_INVALID` 单位冲突申请可以重试，由当前解析规则换算或重新分类；申请继续使用原冻结服务。取消只适用于 `issued` 或 `generation-failed`，仍须使用当前版本与新的幂等键。
 
 ```bash
 clinmesh doctor case laboratory-catalog search --case-id <case-id> --query <term>
@@ -104,9 +104,18 @@ Recording controls use `encounter.consultation-recording.control` with the curre
 
 A valid cancel-only Agent Grant can cancel a signing preparation and recover its unfinished recording. Recovery remains bound to that exact Grant; revocation, expiry or client disablement stops background recording. Follow the [clinical workflow reference](references/clinical-workflows.md#clinical-document-and-completion) for preparation, cancellation and receipt recovery.
 
+Read `qualityControl` for document completeness, known omissions, inconsistent facts and Agent facts without supported sources. Each issue identifies its field, original evidence and a project or official rule; `needs-completion` and `needs-verification` are review categories, not clinical risk grades. Different-time facts are not automatically contradictory. Empty issues do not certify clinical safety or regulatory compliance; inspect `status`, `stale`, `notices` and `errorCode` before describing coverage.
+
+`doctor document-quality check` checks the saved document, or an unsaved candidate supplied together with `clientId` and `clientRevision`; it does not save the clinical draft. Poll `doctor document-quality get` using the same `clientId` for a candidate, and compare its identity and input fingerprint before using the result. The recording control version is not a quality input version. After an explicit clinician decision to retain an issue, use `doctor document-quality retain` with its current `issueId` and `expectedInputFingerprint`; `reason` is optional. The decision applies only to the related unchanged text and evidence, remains audited, and is not a new patient fact. On a version conflict, reread rather than suppressing the warning.
+
+Keep Agent draft authorship through `agentGenerated: true` when setting a document; optional `agentFacts` identify the field, exact text and saved source quotes for server verification. A client citation does not prove a clinical fact, and unavailable sources remain visible for verification. The preview's `qualityControl` summarizes outstanding issues and any pending, stale or failed check; it does not add a signing gate. Existing required fields, source snapshots, version checks and final clinician confirmation still apply. Quality evidence and explicit retention belong to quality issues; automatic recording does not regain per-fragment review or source controls.
+
 ```bash
 clinmesh encounter clinical-document draft set --input @document.json --idempotency-key <key>
 clinmesh encounter consultation-recording control --input @recording-control.json --idempotency-key <control-intent-key>
+clinmesh doctor document-quality get --case-id <case-id>
+clinmesh doctor document-quality check --input @document-quality-check.json --idempotency-key <check-intent-key>
+clinmesh doctor document-quality retain --input @document-quality-retain.json --idempotency-key <retain-intent-key>
 clinmesh encounter clinical-document sign preview --input @document-preview.json --idempotency-key <key>
 clinmesh encounter clinical-document sign commit --input @document-sign.json --idempotency-key <key>
 clinmesh encounter clinical-document sign cancel --input @document-cancel.json --idempotency-key <cancel-intent-key>

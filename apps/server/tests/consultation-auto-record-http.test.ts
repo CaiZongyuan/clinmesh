@@ -47,7 +47,7 @@ it.each(['main', 'fields'] as const)('integrates a populated %s branch database 
   })
   const stored = snapshot()
   await fixture.restart(path => replaceWithRecordingBranchDatabase(path, branch))
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 70, integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 71, integrity: 'ok', foreignKeys: true })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()
@@ -321,6 +321,7 @@ it.each(['\n', '\r\n'])('accepts separately cited patient statements delimited b
   expect(recorded.consultationRecording).toMatchObject({ status: 'updated', failures: [] })
   expect(recorded.clinicalDocument!.draft!.historyOfPresentIllness).toBe('发热三天；自述最高体温38.5℃')
   expect(recorded.consultation!.turns.at(-1)!.messageText).toBe(reply)
+  expect(recorded.qualityControl).toMatchObject({ status: 'ready', stale: false, draftVersion: recorded.clinicalDocument!.draft!.version })
 })
 
 it('ignores an old-only summary rewrite after a reply with no new history', async () => {
@@ -1677,7 +1678,7 @@ it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0
       expect.objectContaining({ ownership: 'manual' }), expect.objectContaining({ rejected: 1, undone: 1 })]))
   }
   await fixture.restart(replaceWithPreSourceDatabase)
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 70, foreignKeys: true, integrity: 'ok' })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 71, foreignKeys: true, integrity: 'ok' })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()

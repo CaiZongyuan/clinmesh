@@ -16,6 +16,12 @@ import {
 } from '../src/agent.ts'
 
 describe('ClinMesh DSH Agent contracts', () => {
+  it('accepts saved source attribution for an Agent clinical draft without inventing clinical evidence', () => {
+    const document = { assessment: '', chiefComplaint: '头晕一天。', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '' }
+    const agentFacts = [{ field: 'chiefComplaint', text: '头晕一天。', sources: [{ sourceTurnId: 'saved-source', quote: '我头晕一天了。' }] }]
+    expect(parseAgentToolInput('outpatient.record.draft.set', { ...document, agentFacts })).toEqual({ ...document, agentFacts })
+    expect(() => parseAgentToolInput('outpatient.record.draft.set', { ...document, agentFacts: [{ ...agentFacts[0], sources: [{ arbitraryUrl: 'https://example.com' }] }] })).toThrow()
+  })
   it('accepts bounded current-patient history queries without arbitrary context or patient identifiers', () => {
     expect(parseAgentToolInput('outpatient.history.search', { source: 'visible-source' })).toEqual({
       page: 1, pageSize: 10, source: 'visible-source',

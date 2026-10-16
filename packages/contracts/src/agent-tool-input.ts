@@ -3,6 +3,7 @@ import { doctorCaseHistoryInputSchema, doctorCaseHistoryDetailInputSchema } from
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
+  clinicalDocumentAgentFactSchema,
   diagnosisDraftContentSchema,
   correctImagingReportRequestSchema,
   correctPathologyReportRequestSchema,
@@ -153,7 +154,7 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.diagnosis.draft.set': diagnosisInputSchema,
   'outpatient.laboratory.draft.set': laboratoryDraftInputSchema,
   'outpatient.prescription.draft.set': prescriptionDraftContentSchema,
-  'outpatient.record.draft.set': clinicalDocumentDraftContentSchema,
+  'outpatient.record.draft.set': clinicalDocumentDraftContentSchema.extend({ agentFacts: z.array(clinicalDocumentAgentFactSchema).max(64).optional() }),
   'outpatient.revisit.draft.set': revisitDraftInputSchema,
   'outpatient.preview.request': emptyInputSchema,
   'outpatient.visit.start.propose': emptyInputSchema,
