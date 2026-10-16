@@ -42,7 +42,13 @@
 
 - DSH Tool 恢复回归同时使用医生无绑定字段的纯查询 schema 和其他页面保留 `const` 的读取 schema；给所有工具套用相同绑定 fixture 会掩盖恢复合同漂移。字段诊断还须覆盖绑定 `const` 有效但原始 schema 的根类型或其他业务参数无效的组合；只检查提取后的绑定属性会丢失这些约束。原生连续用例消费实际拒绝结果中的恢复 JSON，并核对错误调用没有 proof 或业务执行、恢复后的写操作只执行一次；合成 browserChannel 不提供真实病例隔离证据，跨患者与任务失效须复用 Surface 和 Server 授权回归。
 
-- 工作台新增默认后台动作时，所有使用真实控制器的浏览器 fixture 都须声明完整业务状态或处理该动作的真实窄请求；病例省略已启用状态会触发自动激活，造成原有诊断、处方或检查合同出现未声明请求。复用真实默认 DTO 并保留 fixture 的错误断言，不通过忽略额外请求掩盖装配遗漏。
+- 同一张 SQLite 表在并行分支分别迁移时，整合须保留已执行 SQL 的文件名和校验和，并验证两条非空升级路径；来源外键、字段 CHECK、rowid 顺序和任务身份都需一起核对。合并后的字段并集不能只改 TypeScript。
+
+- DSH 自动诊疗显示“请切换到有权限的岗位后重试”时，先取失败请求的 HTTP 状态、`error.code` 与操作名，核对[前端错误映射](../../apps/web/src/app/workspace-error.ts)和 [Tool 恢复规则](../agent-capabilities.md#tool-绑定与恢复)，不要仅凭提示认定岗位选错。刷新后消失的自动记录错误还需对齐启用请求与接诊成功的实际时间，区分提前触发和旧错误残留；接诊边界见[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
+
+- 隔离测试手动调用 generation、persona 或 outbox `processNext`／`dispatchPending` 时，省略 `autoDispatchIntervalMs` 以关闭自动定时器；设置为 `0` 仍会创建定时器并按最小间隔执行，与手动 claim 竞争，可能使 fixture 误报任务不存在或生成失败。需要自动处理时使用正间隔，并从公开状态等待结果。
+
+- 多病例测试不能在同一 runtime 中反复使用完全相同的 Synthea 来源：生成按来源去重，会返回已经接诊的病例，后续 Persona 因病例状态不允许而失败。替身须返回身份或其他来源事实不同、hash 与内容一致的合成病例，并断言病例 ID 不同。
 
 - 模型语义核对的否定结论是合法结果，结构化输出 `validate` 只校验完整性和形状；在请求完成后处理否定结论。把否定结论当成可修复格式错误，会诱导模型对同一候选改成通过。病史总结采用此边界，见[多轮溯源决策](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
 
@@ -54,6 +60,9 @@
 
 - React 18 的普通函数组件不会接收 `ref`；共享输入组件需要沿用 `forwardRef`，并用 ShadowRoot 的 `activeElement` 核对真实返回焦点。Query 刷新时重建的 mutation 回执对象不能作为清空草稿的效果依赖，按病例与业务版本处理，并忽略旧回执；删除草稿回归还须覆盖请求未完成时继续编辑、自动保存和迟到的查询刷新。相关回归与决定见[诊断与处方两阶段视图](../../.agents/notes/implemented/architecture/2026-10-10-diagnosis-prescription-workspace.md)。
 - JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
+- 工作台可以同时包含问诊输入状态和病历更新状态。测试具体状态时用 `within` 限定所属区域，不使用全页面的单数 `getByRole('status')`；保留各区域的可访问性提示及原有业务断言。
+- 新增临床文书字段时，核对活动病历与病例库各自的只读渲染器；草稿、签署和修订数据完整不代表病例库已经展示。回归同时检查签署原件、修订值、主动清空和缺少字段的旧文书，避免固定字段列表遗漏新内容。
+- Zod 4 的 `z.ZodError` 子类可能不满足 `instanceof Error`；诊断先识别 `z.ZodError` 并读取安全的 `issues`，否则完整校验信息也可能被误记为 `unknown`。不输出原始模型响应或凭证。
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。浏览器回归验证真实指针命中，不能只检查文本可见。
 - 目录读取失败后，重设相同搜索条件不会改变 TanStack Query key，重试需显式 `refetch`。回归从真实页面观察第二次 HTTP 读取和恢复，不只断言搜索回调被调用。
 - 真实 WebApp 浏览器合同使用 `localhost` 或 HTTPS 的有效 origin：`about:blank` 的 opaque origin 无法使用存储，普通 HTTP 域名不提供 `crypto.randomUUID`。沿用产品需要的浏览器能力，不为测试给生产代码加 polyfill。
@@ -64,6 +73,8 @@
 - 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；修复调用保留独立预算，服务关闭取消与模型超时分开处理。回归同时覆盖慢速首次无效响应后的修复和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
 - 病史任务反复报来源无效时，回归须组合真实记录服务与 DSH Provider，核对领域校验是否进入修复反馈；仅验证 JSON schema 或用忽略 `validate` 的 Provider stub 会漏掉无反馈重试。覆盖修复后成功、修复耗尽后停止及显式重试，仍验证完整逐字来源和不确定表述拒绝，见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+
+- 校验失败诊断的回归须穿过真实 Provider 适配器并检查持久失败回执；直接抛领域错误的替身会漏掉异常包装造成的原因丢失。具体边界见[直接记录决策](../../.agents/notes/implemented/architecture/2026-10-14-consultation-direct-recording.md)。
 
 - SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
 
@@ -79,14 +90,14 @@
 
 - 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)。
 - 预填与后台文本合并的回归须覆盖首次自动更新同一个未保存字段，以及其他字段已有自动草稿时该字段才首次更新；同时断言编辑框、保存后的服务端正文和刷新结果，防止界面丢弃新增后又通过保存删掉服务端已应用的内容。当前合并基线见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
+- 把待应用建议改为后台直接写入时，重新验证同一片段的未保存改写与整段自动更新；字符差异互不重叠不证明语义可以拼接。回归须覆盖完整新事实、连续更新、保存及刷新；病史当前取舍见[未保存病史合并决策](../../.agents/notes/implemented/bug-fix/2026-10-14-consultation-unsaved-summary-merges.md)。
+- 签署冻结等异步业务边界须等待真实预览和持久准备状态生效，再读取快照或释放在途替身；`click()` 完成不能证明对应 Command 已提交。保留冻结、取消恢复和最终签署断言，不用固定等待替代完成屏障。
+- 动效的逻辑寿命与真实渲染采样分开控制：窄时间窗口内的 `setTimeout` 会被机器调度推迟，不能据此断言保持阶段已经提前淡出；计时合同暂停时钟后直接取值，避免 Playwright 自动重试等待错误实现重播结束而误通过。保留真实 CSS、布局与绘制断言，取舍见[浏览器回归决策](../../.agents/notes/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
 - 自动记录的人工冲突回归同时覆盖纯手写病史和已改写自动片段的当前文本；仅提供患者原话无法证明当前手工内容参与比较。来源校验与冲突比较分开验证；并发既要覆盖旧目标修改，也要覆盖模型请求后新增人工矛盾、持续编辑后的有界失败与显式恢复。核对范围覆盖新增限定语、人工扩写多句及独立句子的无关编辑，防止旧建议替换新人工内容或删除无关句子。当前边界见[人工病史冲突决策](../../.agents/notes/implemented/bug-fix/2026-10-12-consultation-manual-history-conflicts.md)。
 - 共享 HTTP 请求替身改为异步后，调用者必须先 `await` 再判断是否命中；直接比较 Promise 与 `undefined` 会让未处理的普通请求返回空响应。`vi.fn` 的宽松返回类型可能使类型检查通过，主分支整合仍须运行受影响页面的完整测试，并同步最新目录响应合同。
 - 自动保存回归中，请求替身捕获 PUT 只证明请求已经发出，不能证明回执、Query 刷新和控件状态已经同步；断言后续操作可用时须等待实际按钮状态。较长交互旅程在本地触及默认时限时，可用命令行时限区分总耗时与断言失败，不通过固定等待或放宽仓库默认时限掩盖状态竞态。
 - 增量去重回归同时覆盖重复投递、同批重复、同句多目标更正，以及拒绝后的句界表示变化和新来源再次提出相同措辞。正常增量与拒绝证据不能共用去重范围；增量身份与普通事实去重见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)，拒绝证据见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
-- 局部撤销的长度回归同时覆盖恢复后恰好达到上限，以及短更正之后追加内容再恢复长原文。单次保存合法不证明逆操作仍合法；校验失败时应先保留正文、版本及锚点，再进入既有人工核对流程，见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
-- 聚合待核对状态和显示操作提示时，同时判断条目是否仍有效与其审阅状态；被替代历史的旧标记不代表当前可处理任务。回归应覆盖替代后提示消失、逆操作恢复原核对需求和重启，不通过伪造已确认状态清除历史事实，见[审阅和撤销决策](../../.agents/notes/implemented/architecture/2026-10-10-consultation-history-review-undo.md)。
 - 旧数据惰性恢复的回归先通过公开 Query 取得标识，再直接执行对应 Command；同时检查读取不落盘、失败事务不改状态和重试仍可使用公开标识。只在保存或新任务之后验证会掩盖标识在恢复中被替代的死循环，当前病史恢复见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
-- 带有待应用替代链的总结回归至少覆盖“已应用 → 待应用 → 更新待应用 → 再次更新”，并在链中间插入重启；只测相邻两轮会漏掉旧祖先重新进入模型上下文并覆盖中间事实。分别断言最新总结的全部事实与来源、正文仅在应用后改变及撤销后的原文，当前边界见[字段内建议决策](../../.agents/notes/implemented/architecture/2026-10-13-consultation-field-suggestions.md)。
 - Playwright 在页签切换后读取提示时，将 locator 限定到目标 tabpanel；退出中的旧面板可能短暂保留同名状态标记。不要用 `.first()` 或固定等待绕过双匹配，保留对目标页面状态的断言。
 - Playwright 的 `.all()` 返回按序号重新解析的 locator；若操作会使元素退出当前筛选（如打开 `details:not([open])`），后续序号会移动。逐次读取当前筛选的 `first()`，或按稳定标识定位，避免漏项与超时；不要增加等待掩盖定位变化。
 
@@ -159,7 +170,7 @@
 - 资源竞争使既有测试超时时，可在验证进程用 `VITEST_MAX_WORKERS=1` 收窄单元测试并发，不扩大超时或削弱断言。Turbo strict 环境会过滤此变量，通过 Turbo 的验证同时使用 `TURBO_ENV_MODE=loose` 才能把 worker 设置传给 Vitest；仅设置前者不证明实际并发已经收窄。不同包仍可并行，需要进一步隔离时用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行完成包级测试，再由 `pnpm check` 复用有效缓存并继续其他阶段。
 - 定向 Vitest 回归使用 `pnpm --filter <package> exec vitest run <file> -t <pattern>`，并核对实际文件和用例计数。当前 pnpm/Vitest 组合中，`pnpm --filter <package> test -- <file>` 把额外 `--` 传给 Vitest 后仍运行完整包，不能仅凭命令文本认定已限制范围。
 - 生产 Docker build 不能假设 `better-sqlite3` 一定有预编译件。Build stage 保留 `python3`、`make` 和 `g++` 供 `node-gyp` 回退编译，runtime stage 不携带工具链；升级 Node.js 或 `better-sqlite3` 后必须用实际 Docker build 和健康启动验证。
-- Command receipt 是跨版本持久数据。响应 DTO 新增必填字段时提供向后兼容默认值或迁移旧回执，并用原幂等键重放升级前响应形状；只验证新命令成功不能发现这类回归。
+- Command receipt 是跨版本持久数据。响应 DTO 新增必填字段时提供向后兼容默认值或迁移旧回执；删除 strict DTO 字段时投影旧响应，并覆盖提前委托到其他方法的动作分支。回归用原请求与原幂等键重放升级前响应形状，同时检查原回执和审计不变；只验证新命令成功不能发现这类回归。
 - 持久准备的取消回归须覆盖服务端已提交但响应丢失，以及其他会话先消费同一准备的场景。仅验证明确失败后重试不足以证明恢复：还要重新读取已提交状态，确认本地旧预览不会继续锁住编辑或遮挡恢复入口；重试同一取消意图应能复用幂等回执或根据最新读取结束失效的本地准备。
 
 - 异步创建人工审阅前，先检查 `AbortSignal.aborted` 和当前病例／Actor 范围；给已经终止的 signal 注册事件不会补发 abort。若先前请求已创建持久准备，提前退出也必须尝试取消，并保留 Query 恢复入口。回归覆盖预览返回前终止和切换病例。
@@ -176,7 +187,7 @@
 - Windows 上 Turborepo 包装 `tsx watch` 的持久任务（旧根 `pnpm dev:server`）会以约三成概率把整棵进程树冻结在启动阶段：父进程 IPC 管道已建、子进程已派生，但双方 CPU 归零、服务永不监听，且 forensics 期 inspector 无响应。常驻开发服务器一律直连 pnpm（`pnpm --filter @clinmesh/server dev`），不进 turbo；诊断该类挂起先用“绕开包装层”隔离，再比较冻结与正常实例的 CPU 增量。
 - Turborepo strict env 只转发任务声明的 `passThroughEnv` 变量，turbo 包装的任务拿不到未声明的 `CLINMESH_AI_*` 等变量。核对环境变量是否生效要从实际业务进程取证，只看父 shell 会把 provider 未配置误判为产品错误；这也是根 `dev:server` 改为直连 pnpm 的原因之一。
 - SQLite perf gate 统计数据库、WAL 和 SHM 总增长；同一 Command completion 更新的多个 nullable 关联列若各建独立索引，会放大短事务 WAL pages。优先按真实验证查询建立一个复合索引，并用 `pnpm perf:ci` 证明增长，而不是放宽预算。
-- 跨 CRLF/LF 工作区复用 SQLite 时，`Applied migration checksum changed` 可能只来自 SQL 换行差异。先逐项确认已应用 checksum 匹配来源 SQL，且来源与目标 SQL 仅换行不同；保留原库并建立一致备份后，只在隔离副本中重算对应迁移记录，核对迁移验证、完整性与业务 canonical hash。不能据此跳过校验、覆盖原库或接受实际 SQL 内容差异。
+- 跨 CRLF/LF 工作区复用 SQLite 时，先区分 SQL 内容改动与换行字节差异。迁移引擎兼容既有 LF／CRLF checksum，新迁移统一记录 LF checksum，不重写已应用记录；仍报 `Applied migration checksum changed` 时须追查真实内容或其他字节差异，不能跳过校验或手工重算原库记录。当前合同见[迁移换行校验决策](../../.agents/notes/implemented/bug-fix/2026-10-15-portable-migration-checksums.md)。
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。
 - 隔离验证副本复用已安装依赖时，VitePress 会在仓库根 `node_modules` 自动创建 `vue` 符号链接。验证副本应保留自己的 `node_modules` 真目录，将已有包分别链接到依赖缓存，让构建新增链接写入验证副本；整体链接共享依赖目录会把构建写入带到共享目录。
 - pnpm 在 Windows 的 `node_modules/.bin` 只生成 `.cmd`/`.ps1` shim，且 Node 直接 `execFile` `.cmd` 会被拒绝。需要子进程调用 workspace 依赖的 CLI 时，用 `process.execPath` 加包内 JS launcher（如 `node_modules/cn-health/bin/cn-health.js`），不要拼 `.bin` 路径；Linux 测试传 `cliPath` 桩会掩盖该断裂，默认解析路径必须有独立测试。`cn-health dataset materialize` 支持多进程并行写同一 `--data-dir`（内部有锁），默认 Dataset 可并行 materialize；`cn-health@0.5.1` 起子进程在 stderr 自带分阶段进度，reference-sync 逐行转发到 `onProgress`。升级被 `reference-data.lock.json` 的 `cli.version` 锁定，与 receipt 的 `cliVersion` 严格相等，升级时 lock、根 devDependency、`pnpm-workspace.yaml` 的 `minimumReleaseAgeExclude` 三处必须同步，且旧版本条目会因排除清单移除而被 `minimumReleaseAge` 政策拒绝——先临时双列排除完成重解析、`pnpm clean --lockfile` 清陈旧条目后再收窄清单。
@@ -271,7 +282,7 @@
 
 - Base UI Select 的长选项换行须同时处理 ItemText 的 `whitespace-nowrap`、`shrink-0`，以及选中值的单行限制与 Trigger 固定高度；ItemText 默认渲染为 `div`，不要凭其他组件的结构假定为 `span`。使用真实 DOM 核对文字宽高和裁切，覆盖窄窗口中的菜单与选中状态。
 
-- 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性。
+- 固定宽度的状态标签须验证中英文与三档应用字号。仅检查 Badge 或列表项边界会漏掉被 `overflow-hidden` 裁切的文字；浏览器回归用 DOM Range 检查各行文字边界，并验证内部换行后业务区末尾仍可滚动到达。字号偏好通过实际应用根的 `data-clinmesh-app` 与 `data-font-size` 生效，fixture 须沿用这些属性并核对实际计算字号变化，防止空根标记或无效字号让矩阵退回同一默认样式。
 
 - 验证独立滚动时只设置目标区域的 `scrollTop` 或使用真实滚轮，等待页签切换和滚动后的渲染帧，并将末尾边界与实际宿主比较。`scrollIntoView` 会滚动 `overflow-hidden` 祖先，可能掩盖内容已被固定头部挤出宿主的问题；头部 fixture 同时覆盖多条过敏、长文本、矮屏和大字号。
 

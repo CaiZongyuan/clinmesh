@@ -23,7 +23,6 @@ import {
   caseLaboratoryCatalogSearchSchema,
   laboratoryRequestActionResponseSchema,
   clinicalDocumentDraftResponseSchema,
-  reviewConsultationHistoryResponseSchema,
   controlConsultationRecordingResponseSchema,
   clinicalDocumentRevisionResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
@@ -70,7 +69,6 @@ import {
   withdrawPrescriptionResponseSchema,
   type ApiConflict,
   type ClinicalDocumentContent,
-  type ConsultationHistoryDecision,
   type DiagnosisDraftEntry,
   type DoctorQueueView,
   type LaboratoryRequestCatalogItemId,
@@ -1447,17 +1445,6 @@ export function saveFirstVisitDraft(input: {
   )
 }
 
-export function reviewConsultationHistory(input: {
-  additionId: string; decision: ConsultationHistoryDecision; encounterId: string;
-  encounterVersion: string; expectedDraftVersion: number;
-}, idempotencyKey: string) {
-  return apiMutation(`/api/his/v1/encounters/${encodeURIComponent(input.encounterId)}/consultation-history/actions/review`,
-    reviewConsultationHistoryResponseSchema, {
-      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
-      input: { additionId: input.additionId, decision: input.decision, expectedDraftVersion: input.expectedDraftVersion },
-    }, { idempotencyKey, method: 'POST' })
-}
-
 export function controlConsultationRecording(input: {
   action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry'; encounterId: string;
   encounterVersion: string; expectedRecordingVersion: number;
@@ -1506,7 +1493,6 @@ export function previewStructuredClinicalDocumentSign(input: {
 }
 
 export function signStructuredClinicalDocument(input: {
-  consultationReviewed?: boolean
   commitToken: string
   encounterId: string
   encounterVersion: string
@@ -1518,7 +1504,6 @@ export function signStructuredClinicalDocument(input: {
     {
       expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
       input: {
-        ...(input.consultationReviewed === undefined ? {} : { consultationReviewed: input.consultationReviewed }),
         commitToken: input.commitToken,
         previewId: input.previewId,
       },

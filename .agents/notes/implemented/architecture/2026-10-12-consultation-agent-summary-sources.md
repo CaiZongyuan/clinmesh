@@ -2,13 +2,17 @@
 
 Status: implemented
 
-当前八字段统一来源与无冲突自动写入合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有；[字段内建议决策](2026-10-13-consultation-field-suggestions.md)仍拥有字段内布局与局部操作，其全部先应用方式已被部分取代。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
+当前十字段、统一来源与直接记录合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有，整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
 
 ## Problem
 
 逐句摘录可以确定性证明原文归属，但跨轮问诊产生重复、口语化的病史。允许改写后，原文匹配只能证明患者说过引用，不能证明总结忠实；整字段重写又会覆盖人工编辑与其他自动片段。需求由[病史总结规格](../../../../docs/spec/2026-10-12-consultation-agent-summary-sources.md)拥有。
 
 ## Decision
+
+来源查看与高亮界面由[移除来源界面决策](2026-10-14-consultation-recording-without-source-ui.md)取代；持久来源、完整句校验与语义忠实性要求继续适用。
+
+建议、医生核对和局部撤销合同已由[直接记录决策](2026-10-14-consultation-direct-recording.md)取代；本 Note 保留仍有效的字段、来源、归属、冻结或恢复理由，当前写入行为以该决策和系统架构为准。
 
 每个总结片段保存有序事实，每项事实包含总结文字和一个或多个患者轮次的完整原文引用。正文由事实文字连接；引用只指向同 Workspace、Epoch、病例中截至当前回答已保存的 patient text。来源查看显示事实与轮次关联、完整回答、引用高亮、相邻医生问题和原时间。患者自述仍是自述，居家测量与外院诊断不升级为本院事实。
 

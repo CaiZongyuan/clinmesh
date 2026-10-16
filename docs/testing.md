@@ -38,7 +38,7 @@ E2E 从真实入口执行，并从外部观察结果：重新读取资源、数�
 
 `pnpm test:e2e` 使用 Playwright 从 standalone Web 的生产构建运行登录、岗位切换、窄屏外观设置和问诊自动记录旅程。每个测试使用独立的真实 Hono listener、临时 file-backed SQLite 和浏览器 context；Web 构建由同一 worker 复用。端口由系统分配，账户、密码、Auth secret 与数据库均由 fixture 创建并清理，不读取开发 `.env`、已有会话、真实影像或模型配置。页面断言与受 schema 验证的 HTTP 会话查询共同证明保存和刷新后的状态；此集合不替代原生 DSH Session 验收。
 
-问诊组合旅程由 `apps/web/e2e/consultation-recording-journey.ts` 同时驱动 CI Web 与原生 Surface，覆盖生成后正文不变、逐项应用、来源、局部人工保护、未保存编辑、撤销、冲突忽略、暂停补录、失败重试、签署准备冻结、取消恢复和人工签署。HTTP/SQLite 测试继续拥有完整业务输入矩阵。`pnpm smoke:consultation:native` 使用锁定的真实宿主与合成 `LlmAdapter`，额外执行真实 Session browser Tool 草稿保存与签署 proposal，并关联 Command 回执、审计和 Trace；`pnpm smoke:consultation:live` 再为一个新合成病例调用真实模型。后者验证成功输出及逐字来源约束，不代表医学语义质量评估。两种 smoke 均显式运行，不进入常规 CI；前置配置见[部署教程](deployment.md#问诊自动记录原生验收)，分层取舍见[组合验收决策](../.agents/notes/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。
+问诊组合旅程由 `apps/web/e2e/consultation-recording-journey.ts` 同时驱动 CI Web 与原生 Surface，覆盖生成后正文直接更新、无来源入口、局部人工保护、未保存编辑、患者更正与矛盾记录、暂停补录、失败重试、签署准备冻结、取消恢复和人工签署。HTTP/SQLite 测试继续拥有完整业务输入矩阵。`pnpm smoke:consultation:native` 使用锁定的真实宿主与合成 `LlmAdapter`，额外执行真实 Session browser Tool 草稿保存与签署 proposal，并关联 Command 回执、审计和 Trace；`pnpm smoke:consultation:live` 再为一个新合成病例调用真实模型。后者验证成功输出及逐字来源约束，不代表医学语义质量评估。两种 smoke 均显式运行，不进入常规 CI；前置配置见[部署教程](deployment.md#问诊自动记录原生验收)，分层取舍见[组合验收决策](../.agents/notes/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。
 
 检验目录的 React 18/19 浏览器合同按版本在 `beforeAll` 中构建生产 fixture，同一文件复用产物；构建与交互分别受原有时限约束，原因见[浏览器回归决策](../.agents/notes/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
 

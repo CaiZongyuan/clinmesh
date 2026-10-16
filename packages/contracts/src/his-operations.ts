@@ -90,8 +90,6 @@ import {
   registrationResponseSchema,
   roleCodeSchema,
   saveClinicalDocumentDraftRequestSchema,
-  reviewConsultationHistoryRequestSchema,
-  reviewConsultationHistoryResponseSchema,
   controlConsultationRecordingRequestSchema,
   controlConsultationRecordingResponseSchema,
   saveDiagnosisDraftRequestSchema,
@@ -605,9 +603,6 @@ const fhirSearchInputSchema = z.object({
   }
 })
 
-const reviewConsultationHistoryOperationInputSchema = reviewConsultationHistoryRequestSchema.shape.input.extend({
-  encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
-}).strict()
 const controlConsultationRecordingOperationInputSchema = controlConsultationRecordingRequestSchema.shape.input.extend({
   encounterId: z.string().min(1), encounterVersion: z.string().regex(/^\d+$/),
 }).strict()
@@ -730,10 +725,6 @@ const bodyEncoders = {
   },
   [clinicalDocumentOperationIds.draftSet]: (rawInput: unknown) => {
     const { encounterId, encounterVersion, ...input } = saveClinicalDocumentDraftOperationInputSchema.parse(rawInput)
-    return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
-  },
-  'encounter.consultation-history.review': (rawInput: unknown) => {
-    const { encounterId, encounterVersion, ...input } = reviewConsultationHistoryOperationInputSchema.parse(rawInput)
     return commandBody({ [`Encounter/${encounterId}`]: encounterVersion }, input)
   },
   'encounter.consultation-recording.control': (rawInput: unknown) => {
@@ -1351,7 +1342,7 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete eight-field draft and consultationRecording with hasSavedDraft, persistent control version, progress, requiresContextBinding for trusted recovery of enabled legacy cases, patient/doctor/report sources (saved original text, native input identity or fixed report version), fact-level source IDs and exact quotes (legacy sourceTurnId fallback), fragment ownership, reviewStatus (unreviewed, confirmed, undo-pending), undone history and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, fragment ownership, summary and fact-level multi-turn sources (legacy sourceTurnId fallback), automatic recorded history and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
     version: 8,
   },
   {
@@ -1584,17 +1575,6 @@ const operationDefinitions = [
     version: 1,
   },
   {
-    cliPath: ['encounter', 'consultation-history', 'review'],
-    http: { method: 'POST', path: '/api/his/v1/encounters/:encounterId/consultation-history/actions/review' },
-    id: 'encounter.consultation-history.review',
-    input: reviewConsultationHistoryOperationInputSchema,
-    mode: 'command', output: reviewConsultationHistoryResponseSchema,
-    requirements: { expectedVersions: true, idempotency: 'required' },
-    risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Confirm or undo automatic eight-field content, or explicitly apply or ignore a pending change to sourced or handwritten history. Reliable additions, updates and clear corrections automatically update the draft and remain unreviewed; manual targets and conflicts stay pending. Accept appends targetless additions or replaces only a valid range; changed handwritten targets require fresh manual review. Undo preserves unrelated content; reversals exceeding draft field limits remain undo-pending. Requires the current draft version; rejected evidence stays rejected while new source replies may create new suggestions',
-    version: 5,
-  },
-  {
     cliPath: ['encounter', 'consultation-recording', 'control'],
     http: { method: 'POST', path: '/api/his/v1/encounters/:encounterId/consultation-recording/actions/control' },
     id: 'encounter.consultation-recording.control',
@@ -1602,7 +1582,7 @@ const operationDefinitions = [
     mode: 'command', output: controlConsultationRecordingResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Activate a new editable unsigned case with no historical sources or restore an enabled case with requiresContextBinding without changing its version, pause or failed jobs; pause, resume, explicitly backfill a historical consultation or retry failed recording; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed patient/doctor/report sources and manual edits',
+    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed answers and manual edits',
     version: 3,
   },
   {
@@ -1621,8 +1601,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save a version-protected clinical document draft; empty fields are allowed, signing still requires complete content',
-    version: 2,
+    summary: 'Save a version-protected clinical document draft; empty fields are allowed. Optional familyHistory and allergyHistory allow empty or missing values meaning not recorded; allergy text does not create AllergyIntolerance. Signing still requires the existing core content',
+    version: 3,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'preview'],
@@ -1640,8 +1620,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Prepare a version-bound signing preview with enrolled source review counts and patient/doctor evidence even without automatic recording or a Consultation; raw reports alone retain legacy review rules; freeze recording and invalidate in-flight extraction; cancel preparation to recover unfinished sources',
-    version: 3,
+    summary: 'Prepare a version-bound signing preview even without automatic recording, including doctor-only cases without a Consultation; freeze recording and bind the Consultation or source snapshot; cancel preparation to recover unfinished sources',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'commit'],
@@ -1659,8 +1639,8 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Sign an unchanged document and eligible source review and every persisted source snapshot even without automatic recording or a Consultation; raw reports alone retain legacy review rules; remaining sources or unreviewed content require consultationReviewed=true after human review; existing completeness, role and version checks still apply',
-    version: 3,
+    summary: 'Sign an unchanged structured document even without automatic recording; reject a changed Consultation or source snapshot; automatic recording needs no human acknowledgement; completeness, responsibility, preview token and version checks still apply',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'cancel'],
@@ -1689,8 +1669,8 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Create a new revision from the latest signed clinical document',
-    version: 1,
+    summary: 'Create a new revision from the latest signed clinical document, preserving the immutable original. Optional familyHistory and allergyHistory allow empty or missing values meaning not recorded',
+    version: 2,
   },
   {
     cliPath: ['encounter', 'laboratory-request', 'draft', 'set'],
@@ -2402,7 +2382,6 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
   [clinicalDocumentOperationIds.cancelSign]: `clinical-${'document'}.cancel-sign`,
   'admin.laboratory-services.publish': 'laboratory-service-publication.create',
   [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
-  'encounter.consultation-history.review': 'consultation.history.review',
   'encounter.consultation-recording.control': 'consultation.recording.control',
   [clinicalDocumentOperationIds.previewSign]: clinicalDocumentOperationIds.storedPreviewSign,
   [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
@@ -2449,7 +2428,6 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'doctor.completed-cases.list': 'clinmesh-doctor',
   'doctor.queue.list': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.draftSet]: 'clinmesh-doctor',
-  'encounter.consultation-history.review': 'clinmesh-doctor',
   'encounter.consultation-recording.control': 'clinmesh-doctor',
   [clinicalDocumentOperationIds.previewSign]: 'clinmesh-doctor',
   [clinicalDocumentOperationIds.cancelSign]: 'clinmesh-doctor',
