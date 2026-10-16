@@ -1516,12 +1516,12 @@ export async function checkClinicalDocumentQuality(input: {
 export async function retainClinicalDocumentQualityIssue(input: {
   caseId: string; encounterId: string; encounterVersion: string; issueId: string;
   expectedInputFingerprint: string; clientId?: string; reason?: string;
-}) {
+}, idempotencyKey: string) {
   const { caseId, encounterId, encounterVersion, ...decision } = input
   const response = await apiMutation(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/document-quality-control/actions/retain`,
     clinicalDocumentQualityControlResponseSchema,
     { expectedVersions: { [`Encounter/${encounterId}`]: encounterVersion }, input: decision },
-    { idempotencyKey: newIdempotencyKey() })
+    { idempotencyKey })
   return response.data
 }
 

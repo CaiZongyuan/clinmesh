@@ -30,6 +30,7 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
   enabled?: boolean
 }) {
   const client = useQueryClient()
+  const retentionKeys = useRef(new Map<string, string>())
   const { qualityControl: _quality, ...clinicalContext } = detail
   const identity = JSON.stringify([scope, clinicalContext, document, enabled])
   const view = useRef<{ identity: string; revision: number; clientId: string; scope: string | undefined; refresh: boolean } | null>(null)
@@ -70,21 +71,29 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
     refetchInterval: query => query.state.error === null ? 1_500 : false,
   })
   const retention = useMutation({
-    mutationFn: async ({ issueId, reason, state, identity: _identity }: {
-      issueId: string; reason: string; state: ClinicalDocumentQualityControlState; identity: string;
+    mutationFn: async ({ issueId, reason, state, idempotencyKey }: {
+      issueId: string; reason: string; state: ClinicalDocumentQualityControlState; identity: string; idempotencyKey: string;
     }) => {
       await client.cancelQueries({ queryKey, exact: true })
+      const latest = await getClinicalDocumentQuality(detail.caseId, state.clientId)
+      if (!matches(latest) || latest.stale || latest.inputFingerprint !== state.inputFingerprint) {
+        throw new Error('DOCUMENT_QUALITY_INPUT_CHANGED')
+      }
+      if (latest.issues.find(issue => issue.id === issueId)?.status !== 'open') return latest
       return retainClinicalDocumentQualityIssue({ caseId: detail.caseId, encounterId: detail.encounter.id,
         encounterVersion: detail.encounter.versionId, expectedInputFingerprint: state.inputFingerprint,
-        issueId, ...(state.clientId === undefined ? {} : { clientId: state.clientId }), ...(reason.trim() ? { reason: reason.trim() } : {}) })
+        issueId, ...(state.clientId === undefined ? {} : { clientId: state.clientId }), ...(reason.trim() ? { reason: reason.trim() } : {}) }, idempotencyKey)
     },
-    onSuccess: (incoming, variables) => {
+    onSuccess: async (incoming, variables) => {
       if (view.current?.identity !== variables.identity || !matches(incoming)) return
+      await client.cancelQueries({ queryKey, exact: true })
+      if (view.current?.identity !== variables.identity) return
       client.setQueryData<ClinicalDocumentQualityControlState>(queryKey, previous => currentGeneration(previous, incoming))
     },
   })
   const state = query.data !== undefined && matches(query.data) ? query.data : undefined
   const stale = state?.stale === true || query.error?.message === 'DOCUMENT_QUALITY_INPUT_CHANGED'
+    || retention.variables?.identity === identity && retention.error?.message === 'DOCUMENT_QUALITY_INPUT_CHANGED'
   return {
     state, stale, error: query.error,
     retentionError: retention.variables?.identity === identity ? retention.error : null,
@@ -94,15 +103,18 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
     retry: () => { retention.reset(); request.refresh = true; void query.refetch() },
     retain: (issueId: string, reason: string) => {
       if (state === undefined || stale || query.isError) return
-      retention.mutate({ issueId, reason, state, identity })
+      const intent = JSON.stringify([scope, detail.caseId, detail.encounter.versionId, state.clientId, state.inputFingerprint, issueId, reason.trim()])
+      const idempotencyKey = retentionKeys.current.get(intent) ?? newIdempotencyKey()
+      retentionKeys.current.set(intent, idempotencyKey)
+      retention.mutate({ issueId, reason, state, identity, idempotencyKey })
     },
   }
 }
 
 export type DocumentQualityControl = ReturnType<typeof useDocumentQualityControl>
 
-export function DocumentQualityStatus({ quality, messages, title = messages.documentQualityTitle }: {
-  quality: DocumentQualityControl; messages: Messages; title?: string
+export function DocumentQualityStatus({ quality, messages }: {
+  quality: DocumentQualityControl; messages: Messages
 }) {
   const status = quality.stale ? messages.documentQualityStale : quality.error !== null ? messages.documentQualityFailed
     : quality.pending || quality.state?.status === 'pending' ? messages.documentQualityPending
@@ -110,10 +122,10 @@ export function DocumentQualityStatus({ quality, messages, title = messages.docu
         : quality.state?.status === 'failed' ? messages.documentQualityFailed
           : quality.state?.status === 'incomplete' ? messages.documentQualityIncomplete
             : quality.state?.status === 'unavailable' ? messages.documentQualityUnavailable : messages.documentQualityIdle
-  return <section aria-label={title} data-document-quality-status={quality.stale ? 'stale' : quality.error !== null ? 'failed'
+  return <section aria-label={messages.documentQualityTitle} data-document-quality-status={quality.stale ? 'stale' : quality.error !== null ? 'failed'
     : quality.pending ? 'pending' : quality.state?.status ?? 'idle'}>
     <Alert role="group">
-      <AlertTitle>{title}</AlertTitle>
+      <AlertTitle>{messages.documentQualityTitle}</AlertTitle>
       <AlertDescription>
         <p role="status">{status}</p>
         {quality.state?.notices.map(notice => <p key={notice}>{notice}</p>)}
@@ -155,7 +167,7 @@ function Issue({ issue, quality, messages, locale }: {
         {issue.basis.url !== undefined && /^https?:\/\//.test(issue.basis.url)
           ? <a className="underline" href={issue.basis.url} rel="noreferrer" target="_blank">{issue.basis.label}</a> : issue.basis.label}
         {issue.basis.locator ? ` · ${issue.basis.locator}` : ''}</p>
-      {issue.evidence.map(evidence => <blockquote className="flex min-w-0 flex-col gap-1 whitespace-pre-wrap break-words border-s-2 ps-3" key={evidence.id}>
+      {issue.evidence.map((evidence, index) => <blockquote className="flex min-w-0 flex-col gap-1 whitespace-pre-wrap break-words border-s-2 ps-3" key={`${evidence.id}:${index}`}>
         <p className="text-xs text-muted-foreground">{evidence.label}
           {evidence.recordedAt ? ` · ${formatClinicalDateTime(evidence.recordedAt, locale)}` : ''}
           {evidence.reference ? ` · ${evidence.reference}` : ''}</p>

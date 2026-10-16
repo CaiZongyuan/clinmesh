@@ -1147,6 +1147,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
   let document: ClinicalDocumentContent = { ...structuredClinicalDocument }
   let draftVersion = 1
   const savedDocuments: ClinicalDocumentContent[] = []
+  const savedDraftInputs: Array<ReturnType<typeof saveClinicalDocumentDraftRequestSchema.parse>['input']> = []
   const controls: Array<{ action: string; expectedRecordingVersion: number }> = []
   let turns: NonNullable<DoctorCaseDetail['consultation']>['turns'] = []
   const patient = { birthDate: '1988-03-16', gender: 'female', id: 'patient-recording',
@@ -1195,6 +1196,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     }
     if (path === '/api/his/v1/encounters/encounter-recording/clinical-document/draft') {
       const request = saveClinicalDocumentDraftRequestSchema.parse(JSON.parse(String(init?.body)))
+      savedDraftInputs.push(request.input)
       expect(request.expectedVersions).toEqual({ 'Encounter/encounter-recording': '1' })
       expect(request.input.expectedDraftVersion).toBe(draftVersion)
       document = request.input.document
@@ -1249,7 +1251,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     throw new Error(`Unexpected request: ${path}`)
   }))
   return {
-    controls, initialVersion, savedDocuments, cancellations,
+    controls, initialVersion, savedDocuments, savedDraftInputs, cancellations,
     failControl: (failed: boolean) => { controlFailure = failed },
     recordAddition: (text: string) => {
       document = { ...document, historyOfPresentIllness: `${document.historyOfPresentIllness}\n${text}` }
@@ -3641,6 +3643,27 @@ describe('role workspaces', () => {
     expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(false)
   })
 
+  it('preserves direct Agent document ownership and its source facts through the actual authorized Tool', async () => {
+    window.history.replaceState(null, '', '/consultation')
+    const fixture = stubRecordingWorkspace('pause')
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = { register(value) {
+      registration = value
+      return () => { if (registration === value) registration = undefined }
+    } }
+    render(<WebApp runtime={{ mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1' }} />)
+    const tool = await waitFor(() => {
+      const current = registration?.tools.find(tool => tool.name === 'clinmesh_fill_clinical_document_draft')
+      expect(current).toBeDefined()
+      return current!
+    })
+    const agentFacts = [{ field: 'historyOfPresentIllness', text: structuredClinicalDocument.historyOfPresentIllness,
+      sources: [{ sourceTurnId: 'patient-turn-synthetic', quote: '两天前出现发热和咽痛，最高体温 38.7 °C。' }] }]
+    await act(async () => { await tool.execute(boundAgentToolInput(tool, { ...structuredClinicalDocument, agentFacts }), new AbortController().signal) })
+    expect(fixture.savedDraftInputs).toHaveLength(1)
+    expect(fixture.savedDraftInputs[0]).toMatchObject({ agentGenerated: true, agentFacts, document: structuredClinicalDocument })
+  })
+
   it('translates an open Agent signing review when the host language changes', async () => {
     window.history.replaceState(null, '', '/consultation')
     stubRecordingWorkspace('resume')
@@ -3659,10 +3682,12 @@ describe('role workspaces', () => {
     await act(async () => { await tool.execute(boundAgentToolInput(tool, {}), new AbortController().signal) })
     const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
     expect(within(dialog).getByText('签署前核对问诊病史')).toBeTruthy()
+    expect(within(dialog).getByRole('region', { name: '签署前质控汇总' })).toBeTruthy()
     await userEvent.setup().click(within(dialog).getByRole('checkbox'))
     view.rerender(<WebApp runtime={{ ...runtime, surfaceLocale: 'en-US' }} />)
     const changed = await screen.findByRole('alertdialog', { name: 'Confirm medical record signature' })
     expect(within(changed).getByText('Review consultation history before signing')).toBeTruthy()
+    expect(within(changed).getByRole('region', { name: 'Quality summary before signing' })).toBeTruthy()
     expect(within(changed).getByText('Chief complaint')).toBeTruthy()
     expect(within(changed).getByRole('checkbox').getAttribute('aria-checked')).toBe('true')
   })
