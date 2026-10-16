@@ -610,6 +610,9 @@ DELETE /api/his/v1/encounters/{id}/prescription/draft
 POST /api/his/v1/encounters/{id}/prescription/actions/issue
 POST /api/his/v1/encounters/{id}/medication-conclusion/actions/confirm-no-medication
 PUT  /api/his/v1/encounters/{id}/clinical-document/draft
+GET  /api/his/v1/doctor/cases/{id}/document-quality-control
+POST /api/his/v1/doctor/cases/{id}/document-quality-control/actions/check
+POST /api/his/v1/doctor/cases/{id}/document-quality-control/actions/retain
 PUT  /api/his/v1/encounters/{id}/laboratory-request/draft
 DELETE /api/his/v1/encounters/{id}/laboratory-request/draft
 POST /api/his/v1/encounters/{id}/laboratory-request/actions/issue
@@ -861,6 +864,8 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 病例 Query 的 `consultationRecording` 返回持久控制版本、暂停／待补录／处理中／失败状态、已整理和剩余来源数量、来源及草稿保存事实。暂时失败最多自动尝试三次，超时和结构化修复耗尽直接转为失败；`failures` 返回安全错误码、来源与重试状态，预算和分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。任务、来源和应用状态在 SQLite 持久化，重启复用模型绑定，旧 Epoch 结果不得写入当前病例。暂停只停止整理，回答继续保存；恢复与失败重试按序补录未完成来源，既有病例首次补录须医生明确点击。控制 Command 推进任务代次，迟到结果不得越过暂停或新代次，完成回答不重置；顺序与模型绑定见[记录恢复决策](../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
 
 自动记录没有医生确认状态，签署不要求逐条核对或问诊遗漏勾选。预览仍固定完整正文、草稿版本、负责身份、Encounter 版本与 Consultation/来源快照；准备推进提取代次，迟到结果失效，已签文书不可变。取消恢复未完成任务并保留暂停和失败；冻结与恢复见[签署准备决策](../.agents/notes/implemented/architecture/2026-10-10-consultation-signing-preparation.md)。正式签署与 Agent 高风险提案批准沿用原授权。
+
+病历质控独立检查适用模板缺项、已知事实遗漏、事实不一致及 Agent 新增事实的来源，不以自动整理完成代表整份病历已核对。ClinMesh 通过共享 Command 与 outbox 保存检查输入、代次和人工处理记录，DSH 提供辅助模型；结果绑定实际正文、草稿版本、合法来源和授权上下文。未保存候选带独立客户端身份与编辑版本，仅用于检查，不隐式保存病历。字段内显示“待补充”或“待核实”，依据按需展开；医生核实保留的决定只适用于相关正文及证据。签署预览汇总问题与待完成、过期或失败状态，质控完成不单独使预览失效，不新增签署门禁，也不恢复自动整理的逐条核对或来源界面。详细规则与范围由[四项质控规格](spec/2026-10-15-doctor-document-quality-control.md)拥有。
 
 结构化 Clinical Document 草稿包含主诉、现病史、既往史、家族史、过敏史、体格检查、辅助检查、评估、处置和随访十个共享字段；草稿允许字段为空，正式签署仍校验原六项核心完整性。家族史、过敏史允许缺失或留空，表示未记录，不自动补阴性或创建 AllergyIntolerance；新签署件使用稳定章节编码并统一体格检查标题，存量缺失章节及原件保持不变，详见[病历字段决策](../.agents/notes/implemented/architecture/2026-10-14-clinical-document-fields.md)。草稿按病例保存在 `clinical_document_draft`，以 `expectedDraftVersion` 和 Encounter expected version 做 CAS 更新。签署预览固定 Actor context、Encounter 版本、草稿正文和草稿版本；提交重新校验这些依赖与 token 后创建不可变 FHIR R5 Composition、带稳定 identifier 且首 entry 为该 Composition 的自包含 document Bundle，以及同时引用二者的 Provenance，但不改变 Encounter 或病例状态。`signed_clinical_document` 只保存 FHIR 资源关联、签署者、时间和修订父链；每个病例只允许一个根文书，修订只接受最新 Composition 并创建线性替代版本。首期复诊 `sign-and-complete` 是兼容入口，只能用于无 Consultation 且尚无结构化签署根文书的病例；存在问诊或已有根文书时，预览和提交（包括旧 token）都返回稳定业务冲突。签署准备不依赖自动记录是否启用；关闭自动记录时的取消投影见[签署准备决策](../.agents/notes/implemented/architecture/2026-10-10-consultation-signing-preparation.md)。
 
