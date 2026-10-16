@@ -9,6 +9,7 @@ test('reviews unsaved document quality, retains evidence and signs without a new
   const server = await startBrowserServer(webRoot, {
     dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-quality-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
     patientPersonaModel: 'synthetic-persona', syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 30,
+    qualityCompletions: async input => ({ content: JSON.stringify(documentQualityFixture(input)), model: 'synthetic' }),
     chatCompletionsProvider: { async completeJson(input) {
       if (input.schemaName === 'patient_persona') return { content: JSON.stringify(persona), model: 'synthetic' }
       if (input.schemaName === 'patient_dialogue_reply') return { content: JSON.stringify({ reply: qualityPatientReply }), model: 'synthetic' }

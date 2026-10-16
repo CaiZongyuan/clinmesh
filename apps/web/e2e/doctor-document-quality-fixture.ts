@@ -22,8 +22,8 @@ export function documentQualityFixture(input: Pick<JsonChatCompletionInput, 'sch
   const issues = []
   if (payload.document.chiefComplaint === '头晕。') issues.push({ kind: 'missing-field', field: 'chiefComplaint',
     message: '主诉尚未记录持续时间，请结合已知病史补充。', documentQuote: '头晕。', sourceQuotes: [] })
-  if (source !== undefined && !payload.document.priorMedicalHistory?.includes('青霉素')) issues.push({
-    kind: 'omission', field: 'priorMedicalHistory', message: '患者已说明青霉素过敏，既往史中尚未记录，请核实后补充。', sourceQuotes,
+  if (source !== undefined && !payload.document.allergyHistory?.includes('青霉素')) issues.push({
+    kind: 'omission', field: 'allergyHistory', message: '患者已说明青霉素过敏，过敏史中尚未记录，请核实后补充。', sourceQuotes,
   })
   if (source !== undefined && payload.document.physicalExamination === '今天上午体温36.5℃。') issues.push({
     kind: 'inconsistency', field: 'physicalExamination', message: '同日上午体温与患者回答不一致，请核实测量时间及原文。',

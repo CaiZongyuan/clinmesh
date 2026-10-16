@@ -14,7 +14,7 @@ const state = (): ClinicalDocumentQualityControlState => ({
   stale: false, status: 'ready', notices: [], checkedAt: '2026-10-15T09:00:00+08:00',
   issues: ([
     ['missing-field', 'chiefComplaint', 'needs-completion', '主诉缺少持续时间，请根据已有信息补充。'],
-    ['omission', 'priorMedicalHistory', 'needs-completion', '既往史遗漏患者已经陈述的药物过敏信息。'],
+    ['omission', 'allergyHistory', 'needs-completion', '过敏史遗漏患者已经陈述的药物过敏信息。'],
     ['inconsistency', 'physicalExamination', 'needs-verification', '同一时间的体温记录需要核对，保留原文和来源。'],
     ['agent-source', 'assessment', 'needs-verification', 'Agent 新增的事实缺少可核对来源，请由医生核实。'],
   ] as const).map(([kind, field, classification, message], index) => ({
@@ -84,7 +84,7 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
   })
   await page.goto('http://localhost/')
   await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${await buildSurfaceStyles()}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
-  const prior = page.locator('[data-document-quality-field="priorMedicalHistory"]')
+  const prior = page.locator('[data-document-quality-field="allergyHistory"]')
   await expect(prior).toContainText('待补充')
   const evidence = prior.getByRole('button', { name: '查看依据', exact: true })
   await evidence.focus()

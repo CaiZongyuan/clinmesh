@@ -8,6 +8,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from '../../../web/src/app
 
 const content: ClinicalDocumentContent = {
   chiefComplaint: '头晕。', historyOfPresentIllness: '头晕一周，站立时明显。', priorMedicalHistory: '既往高血压。',
+  familyHistory: '父亲有高血压，患者自述。', allergyHistory: '药物过敏情况待核实。',
   physicalExamination: '今天上午体温36.5℃。', auxiliaryExamination: '暂无本次检查结果。',
   assessment: 'Agent新增：确诊合成疾病，尚无来源。', disposition: '进一步核实病史。', followUp: '加重时及时就诊。',
 }
