@@ -24,7 +24,7 @@ Status: implemented
 
 - [x] 调用仍返回 `CLINMESH_BINDING_MISMATCH`，明确原动作尚未执行；当前绑定可比较时准确列出不匹配的 `scopeKey`、`pageRevision`，不把拒绝表述为已确认的患者或岗位变化。
 - [x] 当前绑定定义不可用时说明定义状态，不猜测患者状态或编造不匹配字段。
-- [x] 医生当前上下文只读工具已发布、具有有效的无参数 object schema 且可取得医生目录绑定时，恢复调用是 `clinmesh_read_current_context`，参数为 `{}`。
+- [x] 医生恢复要求可取得当前医生目录绑定，旧式读取定义中的绑定 `const` 不能替代目录；无有效目录时不提供恢复调用。当前上下文只读工具已发布且具有有效的无参数 object schema 时，恢复调用是 `clinmesh_read_current_context`，参数为 `{}`。
 - [x] 读取仍需要绑定的其他页面沿用真实只读定义中的两项有效 `const`；不复制 Context ID、额外字段或任意业务参数。
 - [x] 只读工具确实不存在时说明目录尚未可用；工具存在但 schema 无效或缺少医生目录绑定时明确该状态，不误报工具缺失。两者均停止并等待有效定义，不返回猜测的恢复调用。
 - [x] 恢复提示要求先读取并核对患者、岗位与原任务，再按最新写 Tool schema 的固定字符串生成新调用；Host 不自动改写原参数或重放原写入。
@@ -39,7 +39,7 @@ Status: implemented
 
 ## 测试策略
 
-采用 TDD，通过安装的真实 Host listener 验证拒绝 reason、恢复 JSON、原参数保真和业务 dispatch 是否发生；覆盖现代医生只读、传统绑定读取、缺失或无效定义、单字段与双字段不匹配。复用 `agent-proof-bridge.test.ts`，不导出私有诊断函数作为测试入口。
+采用 TDD，通过安装的真实 Host listener 验证拒绝 reason、恢复 JSON、原参数保真和业务 dispatch 是否发生；覆盖现代医生只读、传统绑定读取、缺失或无效定义、单字段与双字段不匹配。医生动作以及原请求属于医生的共享工具均覆盖目录缺失但旧式读取仍带 `const` 的组合，同时验证非医生页面保留绑定恢复。复用 `agent-proof-bridge.test.ts`，不导出私有诊断函数作为测试入口。
 
 原生 DSH 测试复用真实 Cordis、Tool registry、AgentLoop 和合成模型，只替换浏览器传输与 HIS 响应，验证模型实际收到拒绝、按恢复 JSON 读取，并从当前 Tool schema 构造新的追问。跨患者与任务失效使用既有真实授权和 Surface 合同，不把 browserChannel 的合成成功响应当作患者隔离证据。
 

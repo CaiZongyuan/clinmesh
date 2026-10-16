@@ -357,6 +357,12 @@ export function installAgentProofBridge(ctx: Context, secret: string,
       const source = callSources.get(sourceKey)
       callSources.delete(sourceKey)
       const binding = executionRead ? directoryBinding(ctx, execution.agent) : bindingFromArguments(execution.arguments)
+      const originalDoctor = bindingFromParameters(execution.agent?.session.requestHeader?.()?.tools
+        ?.find(tool => tool.name === 'clinmesh_select_doctor_section')?.parameters)
+        ?? bindingFromParameters(execution.agent?.session.requestHeader?.()?.tools
+          ?.find(tool => tool.name === 'clinmesh_select_doctor_case')?.parameters)
+      const doctorCall = doctorToolNames.has(execution.name)
+        || directoryBinding(ctx, execution.agent) !== undefined || originalDoctor !== undefined
       if (binding === undefined || (!executionRead && (!current.success
         || current.data.properties.scopeKey.const !== binding.scopeKey
         || current.data.properties.pageRevision.const !== binding.pageRevision))) {
@@ -370,15 +376,9 @@ export function installAgentProofBridge(ctx: Context, secret: string,
           : []
         return {
           kind: 'deny',
-          reason: bindingMismatchReason(ctx, execution.agent, fields),
+          reason: bindingMismatchReason(ctx, execution.agent, fields, doctorCall),
         }
       }
-      const originalDoctor = bindingFromParameters(execution.agent?.session.requestHeader?.()?.tools
-        ?.find(tool => tool.name === 'clinmesh_select_doctor_section')?.parameters)
-        ?? bindingFromParameters(execution.agent?.session.requestHeader?.()?.tools
-          ?.find(tool => tool.name === 'clinmesh_select_doctor_case')?.parameters)
-      const doctorCall = doctorToolNames.has(execution.name)
-        || directoryBinding(ctx, execution.agent) !== undefined || originalDoctor !== undefined
       if ((doctorCall && source === undefined) || (source !== undefined
         && (source.origin.task !== activeTasks.get(String(dshSessionId))
           || JSON.stringify(source.arguments) !== JSON.stringify(execution.arguments)))
@@ -660,7 +660,7 @@ function directoryBinding(ctx: Context, agent: Agent | undefined): ExecutionOrig
 }
 
 function bindingMismatchReason(
-  ctx: Context, agent: ToolExecution['agent'], fields: readonly ('scopeKey' | 'pageRevision')[],
+  ctx: Context, agent: ToolExecution['agent'], fields: readonly ('scopeKey' | 'pageRevision')[], doctorCall: boolean,
 ): string {
   const reason = 'CLINMESH_BINDING_MISMATCH: 调用参数与当前工具定义不一致，原调用尚未执行。'
     + (fields.length === 0 ? '当前工具绑定定义不可用。' : `不匹配字段：${fields.join(', ')}。`)
@@ -675,7 +675,7 @@ function bindingMismatchReason(
       if (validateJsonSchemaValue(read.parameters, recoveryArguments).length > 0) recoveryArguments = undefined
     } catch { recoveryArguments = undefined }
   }
-  if (recoveryArguments === undefined) {
+  if (recoveryArguments === undefined || (doctorCall && directoryBinding(ctx, agent) === undefined)) {
     return reason + (read === undefined
       ? '当前 Agent 尚无可用的只读工具目录；等待系统重新发布后再读取，不能据此判断患者状态。'
       : '当前只读工具定义或医生目录绑定不可用，无法提供安全恢复参数；等待系统发布有效定义后再读取，不能据此判断患者状态。')

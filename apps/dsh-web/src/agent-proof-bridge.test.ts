@@ -241,6 +241,51 @@ describe('ClinMesh host Tool binding diagnostics', () => {
   })
 
   it.each([
+    ['clinmesh_fill_clinical_document_draft', false],
+    ['clinmesh_navigate', true],
+    ['clinmesh_read_current_context', true],
+  ] as const)('does not offer legacy doctor recovery without a directory binding: %s', async (name, doctorHeader) => {
+    const { before, currentTool } = bridge()
+    const parameters = { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }
+    currentTool.mockImplementation(tool => ['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case'].includes(tool)
+      ? undefined : { parameters })
+    const args = { scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' }
+    const originalArgs = structuredClone(args)
+    const call = execution(args, true, name)
+    if (doctorHeader) Object.assign(call.agent!.session, { requestHeader: () => ({ tools: [
+      { name: 'clinmesh_select_doctor_section', parameters },
+    ] }) })
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(call, dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(denied.reason).toContain('当前只读工具定义或医生目录绑定不可用')
+    expect(denied.reason).not.toContain('尚无可用的只读工具目录')
+    expect(denied.reason).not.toContain('"arguments"')
+    expect(call.arguments).toEqual(originalArgs)
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('keeps bound recovery available for a non-doctor page without a doctor directory', async () => {
+    const { before, currentTool } = bridge()
+    currentTool.mockImplementation(name => ['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case'].includes(name)
+      ? undefined : { parameters: { type: 'object', properties: {
+          scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+        } } })
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution({ scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' },
+      true, 'clinmesh_fill_registration_draft'), dispatch)
+    expect(denied.kind).toBe('deny')
+    const line = denied.reason?.split('\n').find(value => value.startsWith('{'))
+    expect(line).toBeDefined()
+    expect(JSON.parse(line!)).toEqual({ toolName: 'clinmesh_read_current_context', arguments: {
+      scopeKey: 'scope', pageRevision: '["view-1",null]',
+    } })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it.each([
     ['non-object', { type: 'string', properties: {
       scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
     } }],
