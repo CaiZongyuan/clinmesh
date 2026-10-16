@@ -362,7 +362,8 @@ export function installAgentProofBridge(ctx: Context, secret: string,
         ?? bindingFromParameters(execution.agent?.session.requestHeader?.()?.tools
           ?.find(tool => tool.name === 'clinmesh_select_doctor_case')?.parameters)
       const doctorCall = doctorToolNames.has(execution.name)
-        || directoryBinding(ctx, execution.agent) !== undefined || originalDoctor !== undefined
+        || ctx.tools.get('clinmesh_select_doctor_section', execution.agent) !== undefined
+        || ctx.tools.get('clinmesh_select_doctor_case', execution.agent) !== undefined || originalDoctor !== undefined
       if (binding === undefined || (!executionRead && (!current.success
         || current.data.properties.scopeKey.const !== binding.scopeKey
         || current.data.properties.pageRevision.const !== binding.pageRevision))) {
@@ -655,8 +656,13 @@ function bindingFromParameters(parameters: unknown): ExecutionOrigin['request'] 
 
 function directoryBinding(ctx: Context, agent: Agent | undefined): ExecutionOrigin['request'] | undefined {
   if (agent === undefined) return undefined
-  return bindingFromParameters(ctx.tools.get('clinmesh_select_doctor_section', agent)?.parameters)
-    ?? bindingFromParameters(ctx.tools.get('clinmesh_select_doctor_case', agent)?.parameters)
+  for (const name of ['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case']) {
+    const parameters = ctx.tools.get(name, agent)?.parameters
+    try { assertObjectJsonSchema(parameters) } catch { continue }
+    const binding = bindingFromParameters(parameters)
+    if (binding !== undefined) return binding
+  }
+  return undefined
 }
 
 function bindingMismatchReason(

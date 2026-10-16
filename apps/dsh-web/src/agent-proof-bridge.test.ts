@@ -160,7 +160,7 @@ describe('ClinMesh host Tool binding diagnostics', () => {
     currentTool.mockImplementation(name => name === 'clinmesh_read_current_context'
       ? { parameters: { type: 'object', properties: {}, additionalProperties: true } }
       : { parameters: { type: 'object', properties: {
-          scopeKey: { const: 'scope' }, pageRevision: { const: '["view-1",null]' },
+          scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
         } } })
     const args = { scopeKey: 'scope', pageRevision: '["view-1",[null]]', assessment: '合成草稿' }
     const originalArgs = structuredClone(args)
@@ -282,6 +282,59 @@ describe('ClinMesh host Tool binding diagnostics', () => {
     expect(JSON.parse(line!)).toEqual({ toolName: 'clinmesh_read_current_context', arguments: {
       scopeKey: 'scope', pageRevision: '["view-1",null]',
     } })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it.each(['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case'] as const)(
+    'does not offer recovery from a malformed doctor directory: %s', async directory => {
+      const { before, currentTool } = bridge()
+      const parameters = { type: 'object', properties: {
+        scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+      } }
+      currentTool.mockImplementation(name => name === directory
+        ? { parameters: { ...parameters, type: 'string' } }
+        : ['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case'].includes(name) ? undefined
+        : name === 'clinmesh_read_current_context' ? { parameters: { type: 'object', properties: {} } }
+        : { parameters })
+      const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+      const denied = await before(execution({ scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' }), dispatch)
+      expect(denied.kind).toBe('deny')
+      expect(denied.reason).toContain('当前只读工具定义或医生目录绑定不可用')
+      expect(denied.reason).not.toContain('"arguments"')
+      expect(dispatch).not.toHaveBeenCalled()
+    },
+  )
+
+  it('uses a valid case directory when the section definition is malformed', async () => {
+    const { before, currentTool } = bridge()
+    const parameters = { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }
+    currentTool.mockImplementation(name => name === 'clinmesh_select_doctor_section'
+      ? { parameters: { ...parameters, type: 'string' } }
+      : name === 'clinmesh_read_current_context' ? { parameters: { type: 'object', properties: {} } }
+      : { parameters })
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution({ scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' }), dispatch)
+    const line = denied.reason?.split('\n').find(value => value.startsWith('{'))
+    expect(line).toBeDefined()
+    expect(JSON.parse(line!)).toEqual({ toolName: 'clinmesh_read_current_context', arguments: {} })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('keeps shared calls in a malformed doctor directory subject to the doctor source guard', async () => {
+    const { before, currentTool } = bridge()
+    const parameters = { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }
+    currentTool.mockImplementation(name => name === 'clinmesh_select_doctor_section'
+      ? { parameters: { ...parameters, type: 'string' } }
+      : name === 'clinmesh_select_doctor_case' ? undefined : { parameters })
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution({ scopeKey: 'scope', pageRevision: '["view-1",null]' },
+      true, 'clinmesh_read_current_context'), dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(denied.reason).toContain('CLINMESH_CALL_SOURCE_REQUIRED')
     expect(dispatch).not.toHaveBeenCalled()
   })
 
