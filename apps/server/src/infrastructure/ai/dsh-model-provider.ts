@@ -1,6 +1,7 @@
 import { dshDefaultModel, decodeModelRoute, modelBridgeErrorSchema, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
 import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
 import { ZodError } from 'zod'
+import { setTimeout as delay } from 'node:timers/promises'
 
 export class DshModelProvider implements JsonChatCompletionsProvider {
   readonly #endpoint: URL
@@ -20,6 +21,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
 
   async completeJson(input: JsonChatCompletionInput) {
     const model = await this.resolveModel(input.model, input.signal)
+    const rateLimitRetry = { available: true }
     let issues: Array<{ code: string; path: string }> = []
     let validationError: unknown
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -28,7 +30,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         operation: 'complete', model, schemaName: input.schemaName, jsonSchema: input.jsonSchema,
         systemPrompt: attempt === 0 ? input.systemPrompt : `${input.systemPrompt}\nThe previous response failed validation: ${JSON.stringify(issues)}. Generate a corrected JSON object using the original data and schema. Do not include $schema or other schema metadata.`,
         userPayload: input.userPayload, timeoutMs: this.options.timeoutMs,
-      }, input.signal)
+      }, input.signal, rateLimitRetry)
       if (result.model !== model) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the pinned route')
       try {
         let value: unknown = JSON.parse(result.content ?? '')
@@ -52,57 +54,79 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
     })
   }
 
-  async #request(payload: unknown, callerSignal?: AbortSignal) {
+  async #request(payload: Record<string, unknown> & { operation: 'resolve' | 'complete' }, callerSignal?: AbortSignal,
+    rateLimitRetry?: { available: boolean }) {
+    const deadline = performance.now() + this.options.timeoutMs
     // Allow the host deadline to return its safe timeout code before the transport is cancelled.
     const signal = callerSignal === undefined ? AbortSignal.timeout(this.options.timeoutMs + 1_000)
       : AbortSignal.any([callerSignal, AbortSignal.timeout(this.options.timeoutMs + 1_000)])
-    const body = JSON.stringify(payload)
-    if (Buffer.byteLength(body) > 256 * 1024) throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'The model request exceeds the size limit')
+    const retrySignal = AbortSignal.any([signal, AbortSignal.timeout(this.options.timeoutMs)])
     try {
-      const response = await (this.options.fetch ?? fetch)(this.#endpoint, {
-        method: 'POST', redirect: 'error', signal,
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.options.secret}` }, body,
-      })
-      if (response.body === null) {
-        if (!response.ok) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
-        throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge returned no response')
-      }
-      const chunks: Uint8Array[] = []
-      let size = 0
-      const reader = response.body.getReader()
-      try {
-        while (true) {
-          const next = await reader.read()
-          if (next.done) break
-          const chunk = next.value
-          size += chunk.length
-          if (size > this.options.maxResponseBytes) throw new ChatCompletionsError('AI_RESPONSE_TOO_LARGE', 'The model response exceeds the size limit')
-          chunks.push(chunk)
+      for (let attempt = 0; attempt < 2; attempt++) {
+        signal.throwIfAborted()
+        if (attempt > 0) retrySignal.throwIfAborted()
+        const body = JSON.stringify(attempt === 0 ? payload : {
+          ...payload, timeoutMs: Math.max(100, Math.floor(deadline - performance.now())),
+        })
+        if (Buffer.byteLength(body) > 256 * 1024) throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'The model request exceeds the size limit')
+        const response = await (this.options.fetch ?? fetch)(this.#endpoint, {
+          method: 'POST', redirect: 'error', signal,
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${this.options.secret}` }, body,
+        })
+        if (response.body === null) {
+          if (!response.ok) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
+          throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge returned no response')
         }
-      } finally {
-        await reader.cancel().catch(() => {})
-        reader.releaseLock()
-      }
-      const content = Buffer.concat(chunks).toString('utf8')
-      if (!response.ok) {
-        let failure: unknown
-        try { failure = JSON.parse(content) } catch { /* Unrecognized errors use a static safe fallback. */ }
-        const parsed = modelBridgeErrorSchema.safeParse(failure)
-        if (parsed.success && parsed.data.error === 'MODEL_AUTH_FAILED') {
-          throw new ChatCompletionsError('AI_AUTH_FAILED',
-            'The selected DSH Provider rejected authentication or access; check its credentials and permissions',
-            { httpStatus: response.status })
+        const chunks: Uint8Array[] = []
+        let size = 0
+        const reader = response.body.getReader()
+        try {
+          while (true) {
+            const next = await reader.read()
+            if (next.done) break
+            const chunk = next.value
+            size += chunk.length
+            if (size > this.options.maxResponseBytes) throw new ChatCompletionsError('AI_RESPONSE_TOO_LARGE', 'The model response exceeds the size limit')
+            chunks.push(chunk)
+          }
+        } finally {
+          await reader.cancel().catch(() => {})
+          reader.releaseLock()
         }
-        if (parsed.success && parsed.data.error === 'MODEL_TIMEOUT') {
-          throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request timed out',
-            { httpStatus: response.status })
+        const content = Buffer.concat(chunks).toString('utf8')
+        if (!response.ok) {
+          let failure: unknown
+          try { failure = JSON.parse(content) } catch { /* Unrecognized errors use a static safe fallback. */ }
+          const parsed = modelBridgeErrorSchema.safeParse(failure)
+          if (parsed.success && parsed.data.error === 'MODEL_AUTH_FAILED') {
+            throw new ChatCompletionsError('AI_AUTH_FAILED',
+              'The selected DSH Provider rejected authentication or access; check its credentials and permissions',
+              { httpStatus: response.status })
+          }
+          if (parsed.success && parsed.data.error === 'MODEL_TIMEOUT') {
+            throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request timed out',
+              { httpStatus: response.status })
+          }
+          if (parsed.success && parsed.data.error === 'MODEL_RATE_LIMIT') {
+            const retryAfterMs = parsed.data.retryAfterMs ?? 1_000
+            if (rateLimitRetry?.available && attempt === 0
+              && deadline - performance.now() - retryAfterMs >= 100) {
+              rateLimitRetry.available = false
+              await delay(retryAfterMs, undefined, { signal: retrySignal })
+              continue
+            }
+            throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The selected DSH Provider is rate limited; retry later',
+              { httpStatus: 429 })
+          }
+          throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
         }
-        throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
+        return modelBridgeResponseSchema.parse(JSON.parse(content))
       }
-      return modelBridgeResponseSchema.parse(JSON.parse(content))
+      throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable')
     } catch (error) {
       if (signal.aborted) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request was cancelled or timed out')
       if (error instanceof ChatCompletionsError) throw error
+      if (retrySignal.aborted) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request was cancelled or timed out')
       throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge could not complete the request')
     }
   }

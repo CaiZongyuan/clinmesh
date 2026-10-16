@@ -38,6 +38,7 @@ export const modelBridgeResponseSchema = z.object({
   model: z.string().min(1).max(1024),
   content: z.string().optional(),
 }).strict()
-export const modelBridgeErrorSchema = z.object({
-  error: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT']),
-}).strict()
+export const modelBridgeErrorSchema = z.discriminatedUnion('error', [
+  z.object({ error: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT']) }).strict(),
+  z.object({ error: z.literal('MODEL_RATE_LIMIT'), retryAfterMs: z.number().int().positive().max(10 * 60_000).optional() }).strict(),
+])

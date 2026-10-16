@@ -44,7 +44,8 @@ async function host() {
   let fail = false
   let hold = false
   let available = true
-  let providerFailure: 'AUTH' | 'MISSING_CREDENTIAL' | 'INVALID_CREDENTIAL' | 'TIMEOUT' | undefined
+  let providerFailure: { code: string; providerRetryAfterMs?: number } | undefined
+  let remainingFailures = Infinity
   const calls: GenerateOptions[] = []
   const ctx = {
     agentDefaultModel: { currentSelection: () => route },
@@ -59,8 +60,8 @@ async function host() {
           options.signal?.addEventListener('abort', () => reject(new Error('Synthetic cancellation')), { once: true })
         })
         if (fail) throw new Error('private-provider-error-containing-a-secret')
-        if (providerFailure !== undefined) {
-          yield { type: 'finish', reason: { kind: 'error', failure: { code: providerFailure,
+        if (providerFailure !== undefined && remainingFailures-- > 0) {
+          yield { type: 'finish', reason: { kind: 'error', failure: { ...providerFailure,
             message: 'Provider failure with private-provider-credential and private-prompt' } } }
           return
         }
@@ -84,7 +85,10 @@ async function host() {
     respond: (callback: NonNullable<typeof responder>) => { responder = callback },
     hold: () => { hold = true }, dispose: bridge.dispose,
     available: (value: boolean) => { available = value },
-    providerFailure: (code: NonNullable<typeof providerFailure>) => { providerFailure = code },
+    providerFailure: (code: string, providerRetryAfterMs?: number, count = Infinity) => {
+      providerFailure = { code, ...(providerRetryAfterMs === undefined ? {} : { providerRetryAfterMs }) }
+      remainingFailures = count
+    },
   }
 }
 
@@ -124,6 +128,7 @@ it.each(['AUTH', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL'] as const)('distingu
     jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
   })).rejects.toMatchObject({ code: 'AI_AUTH_FAILED',
     message: 'The selected DSH Provider rejected authentication or access; check its credentials and permissions' })
+  expect(dsh.calls).toHaveLength(1)
   const response = await fetch(`${dsh.origin}/clinmesh-model-bridge`, { method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
     body: JSON.stringify({ operation: 'complete', model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
@@ -148,13 +153,172 @@ it('preserves Provider timeouts without relaying credentials or private prompts'
   expect(await response.json()).toEqual({ error: 'MODEL_TIMEOUT' })
 })
 
+it.each([
+  [40, 40], [1.5, 2], [600_001, 600_000], [undefined, undefined], [NaN, undefined], [-1, undefined],
+])('relays only the safe rate-limit code and bounded provider retry delay (%s)', async (delay, expectedDelay) => {
+  const dsh = await host()
+  dsh.providerFailure('RATE_LIMIT', delay)
+  const response = await fetch(`${dsh.origin}/clinmesh-model-bridge`, { method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+    body: JSON.stringify({ operation: 'complete', model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+      schemaName: 'patient_dialogue_reply', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {} }),
+  })
+  expect(response.status).toBe(429)
+  expect(await response.json()).toEqual({ error: 'MODEL_RATE_LIMIT',
+    ...(expectedDelay === undefined ? {} : { retryAfterMs: expectedDelay }) })
+})
+
+it('retries a transient rate limit once on the pinned route after the provider delay', async () => {
+  const dsh = await host()
+  dsh.providerFailure('RATE_LIMIT', 40, 1)
+  dsh.answer({ reply: '头晕一周了。' })
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  const started = performance.now()
+  const result = await provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })
+  expect(JSON.parse(result.content)).toEqual({ reply: '头晕一周了。' })
+  expect(performance.now() - started).toBeGreaterThanOrEqual(40)
+  expect(dsh.calls).toHaveLength(2)
+  expect(dsh.calls.map(call => call.provider)).toEqual(['synthetic-provider-a', 'synthetic-provider-a'])
+  expect(dsh.calls[1]?.messages).toEqual(dsh.calls[0]?.messages)
+})
+
+it('stops after one rate-limit retry without returning private Provider details', async () => {
+  const dsh = await host()
+  dsh.providerFailure('RATE_LIMIT', 20)
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED', httpStatus: 429,
+    message: 'The selected DSH Provider is rate limited; retry later' })
+  expect(dsh.calls).toHaveLength(2)
+})
+
+it('keeps the one rate-limit retry limit across structured-output repair attempts', async () => {
+  const dsh = await host()
+  dsh.providerFailure('RATE_LIMIT', 20, 1)
+  dsh.respond(async () => {
+    dsh.providerFailure('RATE_LIMIT', 20, 1)
+    return 'invalid JSON'
+  })
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED', httpStatus: 429 })
+  expect(dsh.calls).toHaveLength(3)
+})
+
+it('uses a finite one-second delay when the Provider sends no retry-after hint', async () => {
+  const dsh = await host()
+  dsh.providerFailure('RATE_LIMIT', undefined, 1)
+  dsh.answer({ reply: '头晕一周了。' })
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  const started = performance.now()
+  await provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })
+  expect(performance.now() - started).toBeGreaterThanOrEqual(1000)
+  expect(dsh.calls).toHaveLength(2)
+})
+
+it('reduces the retry host deadline by time already spent on the first request and backoff', async () => {
+  const dsh = await host()
+  dsh.providerFailure('RATE_LIMIT', 20, 1)
+  const deadlines: number[] = []
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 400, maxResponseBytes: 2048,
+    fetch: async (url, options) => {
+      const payload = JSON.parse(String(options?.body)) as { operation: string; timeoutMs?: number }
+      if (payload.operation === 'complete') {
+        deadlines.push(payload.timeoutMs!)
+        if (deadlines.length === 1) await delay(150)
+        else dsh.hold()
+      }
+      return fetch(url, options)
+    },
+  })
+  await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_TIMEOUT' })
+  expect(deadlines[0]).toBe(400)
+  expect(deadlines[1]).toBeLessThan(250)
+  expect(deadlines[1]).toBeGreaterThanOrEqual(100)
+  expect(dsh.calls[1]?.signal?.aborted).toBe(true)
+})
+
+it('does not retry earlier than a provider delay that exceeds the remaining deadline', async () => {
+  const dsh = await host()
+  dsh.providerFailure('RATE_LIMIT', 10_000)
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED', httpStatus: 429 })
+  expect(dsh.calls).toHaveLength(1)
+})
+
+it('cancels rate-limit backoff before dispatching another model request', async () => {
+  const dsh = await host()
+  dsh.providerFailure('RATE_LIMIT', 1000, 1)
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  const caller = new AbortController()
+  const completion = expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {}, signal: caller.signal,
+  })).rejects.toMatchObject({ code: 'AI_TIMEOUT' })
+  await expect.poll(() => dsh.calls.length).toBe(1)
+  caller.abort()
+  await completion
+  expect(dsh.calls).toHaveLength(1)
+})
+
+it('does not dispatch another model call after the plugin closes during rate-limit backoff', async () => {
+  const dsh = await host()
+  dsh.providerFailure('RATE_LIMIT', 80, 1)
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  const completion = expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED' })
+  await expect.poll(() => dsh.calls.length).toBe(1)
+  dsh.dispose()
+  await completion
+  expect(dsh.calls).toHaveLength(1)
+})
+
+it.each(['QUOTA', 'ACCOUNT_QUOTA', 'UNKNOWN'])('never retries the nontransient Provider failure %s', async code => {
+  const dsh = await host()
+  dsh.providerFailure(code, 20)
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
+    jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED' })
+  expect(dsh.calls).toHaveLength(1)
+})
+
 it.each(['', 'private-provider-error', '{"error":"UNKNOWN"}',
-  '{"error":"MODEL_AUTH_FAILED","message":"private-provider-credential"}'])('uses a safe fallback for an unrecognized bridge error body (%s)', async body => {
+  '{"error":"MODEL_AUTH_FAILED","message":"private-provider-credential"}',
+  '{"error":"MODEL_RATE_LIMIT","retryAfterMs":-1}',
+  '{"error":"MODEL_RATE_LIMIT","retryAfterMs":1000,"message":"private-provider-credential"}'])('uses a safe fallback for an unrecognized bridge error body (%s)', async body => {
   const provider = new DshModelProvider({ origin: 'http://127.0.0.1:3080', secret, timeoutMs: 2000, maxResponseBytes: 2048,
     fetch: async () => new Response(body, { status: 503 }),
   })
   await expect(provider.resolveModel(dshDefaultModel)).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED',
     message: 'The DSH model bridge is unavailable' })
+})
+
+it('never retries an unrecognized rate-limit JSON body or trusts its Retry-After header', async () => {
+  let calls = 0
+  const provider = new DshModelProvider({ origin: 'http://127.0.0.1:3080', secret, timeoutMs: 2000, maxResponseBytes: 2048,
+    fetch: async () => {
+      calls++
+      return new Response('{"error":"MODEL_RATE_LIMIT","retryAfterMs":1,"message":"private-provider-credential"}', {
+        status: 429, headers: { 'retry-after': '0' },
+      })
+    },
+  })
+  await expect(provider.completeJson({ model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+    schemaName: 'patient_dialogue_reply', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED', httpStatus: 429,
+    message: 'The DSH model bridge is unavailable' })
+  expect(calls).toBe(1)
 })
 
 it('bounds and cancels non-success bridge response bodies', async () => {
