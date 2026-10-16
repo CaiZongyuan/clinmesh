@@ -27,7 +27,8 @@ export async function runRecordingJourney(input: {
 }) {
   const { page, read } = input
   const history = page.getByLabel('现病史', { exact: true })
-  const recording = page.getByRole('tabpanel', { name: '病历记录', exact: true }).locator('[data-consultation-recording]')
+  const recordPanel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
+  const recording = recordPanel.locator('[data-consultation-recording]')
   const ask = async (stage: JourneyStage, fail = false) => {
     await input.stage(stage, fail)
     const previous = (await read()).consultation!.turns.length
@@ -72,7 +73,7 @@ export async function runRecordingJourney(input: {
     ['处置', '继续问诊并评估。'], ['随访', '加重时及时就诊。'],
   ]) await page.getByLabel(label!, { exact: true }).fill(value!)
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-  await page.getByRole('button', { name: '暂停自动整理', exact: true }).click()
+  await recordPanel.getByRole('button', { name: '暂停自动整理', exact: true }).click()
   await ask('paused')
   expect((await read()).consultationRecording).toMatchObject({ paused: true, remainingCount: 1 })
   await page.getByRole('button', { name: '签署病历', exact: true }).click()
@@ -81,13 +82,13 @@ export async function runRecordingJourney(input: {
   await dialog.getByRole('button', { name: '取消', exact: true }).click()
   await reload()
   await expect(recording).toHaveAttribute('data-consultation-recording', 'paused')
-  await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
+  await recordPanel.getByRole('button', { name: '恢复并补录', exact: true }).click()
   await expect(history).toHaveValue(/躺着休息能缓过来/)
   await ask('failure', true)
   await expect(recording).toHaveAttribute('data-consultation-recording', 'failed')
   await reload()
   await input.stage('failure', false)
-  await page.getByRole('button', { name: '重试病史整理', exact: true }).click()
+  await recordPanel.getByRole('button', { name: '重试病史整理', exact: true }).click()
   await expect(history).toHaveValue(/坐着也会头晕/)
   expect((await read()).consultationRecording).toMatchObject({ remainingCount: 0, failedCount: 0 })
   input.progress?.('暂停、取消准备、刷新补录与失败重试通过')
