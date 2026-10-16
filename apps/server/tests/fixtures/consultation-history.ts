@@ -1,13 +1,19 @@
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../../src/infrastructure/ai/openai-chat-completions.ts'
+import { z } from 'zod'
 
 // Older state-machine regressions use extract-shaped fixtures. Keep their text
 // and fragment boundaries while exercising the new wire contract. Summary
 // quality is covered separately with paraphrased multi-turn facts.
 export function recordingFixtureProvider(provider: JsonChatCompletionsProvider,
-  verify?: (input: JsonChatCompletionInput) => unknown): JsonChatCompletionsProvider {
+  verify?: (input: JsonChatCompletionInput) => unknown, quality?: JsonChatCompletionsProvider['completeJson']): JsonChatCompletionsProvider {
   return {
     ...(provider.resolveModel === undefined ? {} : { resolveModel: provider.resolveModel.bind(provider) }),
     async completeJson(input) {
+      if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
+        if (quality !== undefined) return quality(input)
+        const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+        return { model: 'synthetic', content: JSON.stringify({ issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }) }
+      }
       if (input.schemaName === 'consultation_history_verification') {
         if (verify !== undefined) return { model: 'synthetic', content: JSON.stringify(verify(input)) }
         const payload = input.userPayload as { additions: Array<{ facts: Array<{ text: string }> }> }

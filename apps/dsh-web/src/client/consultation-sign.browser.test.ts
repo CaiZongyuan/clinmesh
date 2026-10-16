@@ -7,6 +7,8 @@ import { buildSurfaceStyles } from '../surface-styles.ts'
 const require = createRequire(import.meta.url)
 for (const version of ['18', '19']) {
   test(`signs without history acknowledgement and recovers preparation inside a ShadowRoot on React ${version}`, async ({ page }) => {
+    await page.route('http://localhost/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await page.goto('http://localhost/')
     const react = version === '18' ? 'react18' : 'react'
     const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
     const result = await build({

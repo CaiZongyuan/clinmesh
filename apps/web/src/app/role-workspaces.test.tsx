@@ -28,7 +28,7 @@ import {
   agentToolsForContext,
   type AgentPageContextClaim,
 } from '@clinmesh/contracts/agent'
-import { cancelClinicalDocumentSignRequestSchema, controlConsultationRecordingRequestSchema, saveClinicalDocumentDraftRequestSchema } from '@clinmesh/contracts/his'
+import { cancelClinicalDocumentSignRequestSchema, checkClinicalDocumentQualityRequestSchema, clinicalDocumentQualityControlStateSchema, controlConsultationRecordingRequestSchema, saveClinicalDocumentDraftRequestSchema, type ClinicalDocumentQualityControlState } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -310,6 +310,30 @@ function pagination(total: number) {
 
 let doctorQueryContext: unknown
 
+function documentQualityFetch(implementation: typeof fetch) {
+  const states = new Map<string, ClinicalDocumentQualityControlState>()
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input), 'http://localhost')
+    const route = /^\/api\/his\/v1\/doctor\/cases\/([^/]+)\/document-quality-control(?:\/actions\/(check))?$/.exec(url.pathname)
+    if (route === null) return implementation(input, init)
+    const caseId = decodeURIComponent(route[1]!)
+    if (route[2] === 'check') {
+      const request = checkClinicalDocumentQualityRequestSchema.parse(JSON.parse(String(init?.body)))
+      const encounter = Object.keys(request.expectedVersions).find(reference => reference.startsWith('Encounter/'))
+      if (encounter === undefined) throw new Error('The quality fixture requires an Encounter version')
+      const state = clinicalDocumentQualityControlStateSchema.parse({ caseId, encounterId: encounter.slice('Encounter/'.length),
+        draftVersion: request.input.expectedDraftVersion, documentFingerprint: 'a'.repeat(64), inputFingerprint: 'b'.repeat(64),
+        clientId: request.input.clientId, clientRevision: request.input.clientRevision, generation: request.input.clientRevision ?? 1,
+        stale: false, status: 'ready', issues: [], notices: [] })
+      states.set(`${caseId}:${request.input.clientId ?? ''}`, state)
+      return Response.json(commandResponse(state))
+    }
+    const state = states.get(`${caseId}:${url.searchParams.get('clientId') ?? ''}`)
+    if (state === undefined) throw new Error(`A quality check has not been declared for ${caseId}`)
+    return Response.json(state)
+  })
+}
+
 async function doctorSurfaceAgentResponse(
   path: string,
   init?: RequestInit,
@@ -568,7 +592,7 @@ function stubScenarioDataWorkspace(options: {
     }
   }
   generated = options.profileAvailable === true
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname === '/api/auth/context') return Response.json(administratorSession)
     if (url.pathname === '/api/sim/v1/scenario-runs/current') {
@@ -873,7 +897,7 @@ function stubScenarioDataWorkspace(options: {
 }
 
 function stubEmptyRegistrarWorkspace() {
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
     const path = new URL(String(input), 'http://localhost').pathname
     if (path === '/api/auth/context') return Response.json(registrarSession)
     if (path === '/api/his/v1/catalogs/registration') {
@@ -890,7 +914,7 @@ function stubEmptyRegistrarWorkspace() {
 }
 
 function stubEmptyDoctorWorkspace() {
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname
     if (path === '/api/auth/context') return Response.json(doctorSession)
     if (path === '/api/his/v1/catalogs/clinical') {
@@ -975,7 +999,7 @@ function stubLaboratoryReportPolling(reportingSupported: boolean) {
     specimenId: 'specimen-crp-1',
     status: 'final',
   }
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
     if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -1061,7 +1085,7 @@ function stubDoctorCompletedCaseLibrary(options: {
   ) => Promise<Response | undefined> | Response | undefined
   session?: SessionContext
 }) {
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname === '/api/auth/context') return Response.json(options.session ?? doctorSession)
     const response = await options.onRequest?.(url, init)
@@ -1124,6 +1148,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
   let document: ClinicalDocumentContent = { ...structuredClinicalDocument }
   let draftVersion = 1
   const savedDocuments: ClinicalDocumentContent[] = []
+  const savedDraftInputs: Array<ReturnType<typeof saveClinicalDocumentDraftRequestSchema.parse>['input']> = []
   const controls: Array<{ action: string; expectedRecordingVersion: number }> = []
   let turns: NonNullable<DoctorCaseDetail['consultation']>['turns'] = []
   const patient = { birthDate: '1988-03-16', gender: 'female', id: 'patient-recording',
@@ -1136,7 +1161,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     patient, presentation: doctorPresentation, priorFacts: [], status: caseStatus,
     taskId: 'task-recording', taskVersion: '1',
   })
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+  vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname
     const agentResponse = await doctorSurfaceAgentResponse(path, init)
     if (agentResponse !== undefined) return agentResponse
@@ -1172,6 +1197,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     }
     if (path === '/api/his/v1/encounters/encounter-recording/clinical-document/draft') {
       const request = saveClinicalDocumentDraftRequestSchema.parse(JSON.parse(String(init?.body)))
+      savedDraftInputs.push(request.input)
       expect(request.expectedVersions).toEqual({ 'Encounter/encounter-recording': '1' })
       expect(request.input.expectedDraftVersion).toBe(draftVersion)
       document = request.input.document
@@ -1231,7 +1257,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     throw new Error(`Unexpected request: ${path}`)
   }))
   return {
-    controls, initialVersion, savedDocuments, cancellations,
+    controls, initialVersion, savedDocuments, savedDraftInputs, cancellations,
     setCaseStatus: (status: DoctorCaseDetail['status']) => { caseStatus = status },
     failControl: (failed: boolean) => { controlFailure = failed },
     recordAddition: (text: string) => {
@@ -2069,7 +2095,7 @@ describe('role workspaces', () => {
       name: '张琴',
       profileRevision: 1,
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       const path = url.pathname
       if (path === '/api/auth/context') return Response.json(registrarSession)
@@ -2259,7 +2285,7 @@ describe('role workspaces', () => {
       name: '张琴',
       profileRevision: 1,
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/catalogs/registration') {
@@ -2372,7 +2398,7 @@ describe('role workspaces', () => {
       name: '并发病例患者',
       profileRevision: 1,
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/catalogs/registration') {
@@ -2435,7 +2461,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
@@ -2540,7 +2566,7 @@ describe('role workspaces', () => {
     const patientSearch = new Promise<Response>((resolve) => {
       resolvePatientSearch = resolve
     })
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
@@ -2584,7 +2610,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '3',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
@@ -2646,7 +2672,7 @@ describe('role workspaces', () => {
   it('keeps a long Chinese patient name available through search and selection', async () => {
     window.history.replaceState(null, '', '/registration')
     const longName = '合成患者用于验证窄视口下超长中文姓名仍可被完整识别与选择'
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
@@ -2688,7 +2714,7 @@ describe('role workspaces', () => {
 
   it('navigates the registration queue to the requested server page', async () => {
     const requestedPages: number[] = []
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(registrarSession)
       if (url.pathname === '/api/his/v1/registration/synthetic-cases') {
@@ -2795,7 +2821,7 @@ describe('role workspaces', () => {
         nameZh: '普通门诊挂号费',
       },
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(triageNurseSession)
       if (url.pathname === '/api/his/v1/triage/queue') {
@@ -2880,7 +2906,7 @@ describe('role workspaces', () => {
     }
     let turns: Array<Omit<typeof opening, 'personaRevision'> & { personaRevision: number | null }> = [opening]
     let releaseAnswer: (() => void) | undefined
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -2995,7 +3021,7 @@ describe('role workspaces', () => {
       versionId: '1',
     }
     const question = { code: 'symptom-onset', text: '什么时候开始发热？' }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -3081,7 +3107,7 @@ describe('role workspaces', () => {
       recordedAt: '2026-09-16T09:00:00+08:00', reportReference: null, sequence: 1, source: 'doctor-typed', speaker: 'doctor' }
     const patientTurn = { ...doctorTurn, id: 'patient-turn', messageText: '昨天傍晚开始的。', personaRevision: 1, sequence: 2, source: 'patient-agent', speaker: 'patient' }
 
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
@@ -3204,7 +3230,7 @@ describe('role workspaces', () => {
       recordedAt: '2026-09-16T09:00:00+08:00', reportReference: null, sequence: 1, source: 'doctor-typed', speaker: 'doctor' }
     const patientTurn = { ...doctorTurn, id: 'patient-turn', messageText: '昨天傍晚开始的。', personaRevision: 1, sequence: 2, source: 'patient-agent', speaker: 'patient' }
 
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
@@ -3641,6 +3667,29 @@ describe('role workspaces', () => {
     expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(false)
   })
 
+  it('preserves direct Agent document ownership and its source facts through the actual authorized Tool', async () => {
+    window.history.replaceState(null, '', '/consultation')
+    const fixture = stubRecordingWorkspace('pause')
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = { register(value) {
+      registration = value
+      return () => { if (registration === value) registration = undefined }
+    } }
+    render(<WebApp runtime={{ mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1' }} />)
+    const tool = await waitFor(() => {
+      const current = registration?.tools.find(tool => tool.name === 'clinmesh_fill_clinical_document_draft')
+      expect(current).toBeDefined()
+      return current!
+    })
+    const document = { ...structuredClinicalDocument, familyHistory: '父亲患高血压。', allergyHistory: '青霉素后出现皮疹。' }
+    const agentFacts = [{ field: 'familyHistory', text: document.familyHistory,
+      sources: [{ sourceTurnId: 'patient-turn-family', quote: '父亲患高血压。' }] }, { field: 'allergyHistory', text: document.allergyHistory,
+      sources: [{ sourceTurnId: 'patient-turn-allergy', quote: '青霉素后出现皮疹。' }] }]
+    await act(async () => { await tool.execute(boundAgentToolInput(tool, { ...document, agentFacts }), new AbortController().signal) })
+    expect(fixture.savedDraftInputs).toHaveLength(1)
+    expect(fixture.savedDraftInputs[0]).toMatchObject({ agentGenerated: true, agentFacts, document })
+  })
+
   it('translates an open Agent signing review when the host language changes', async () => {
     window.history.replaceState(null, '', '/consultation')
     stubRecordingWorkspace('resume')
@@ -3659,8 +3708,10 @@ describe('role workspaces', () => {
     await act(async () => { await tool.execute(boundAgentToolInput(tool, {}), new AbortController().signal) })
     const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
     expect(within(dialog).queryByRole('checkbox')).toBeNull()
+    expect(within(dialog).getByRole('region', { name: '签署前质控汇总' })).toBeTruthy()
     view.rerender(<WebApp runtime={{ ...runtime, surfaceLocale: 'en-US' }} />)
     const changed = await screen.findByRole('alertdialog', { name: 'Confirm medical record signature' })
+    expect(within(changed).getByRole('region', { name: 'Quality summary before signing' })).toBeTruthy()
     expect(within(changed).getByText('Chief complaint')).toBeTruthy()
     expect(within(changed).queryByRole('checkbox')).toBeNull()
   })
@@ -3707,7 +3758,7 @@ describe('role workspaces', () => {
     const fixture = stubRecordingWorkspace('pause')
     const originalFetch = globalThis.fetch
     let recommendationNote = '合成建议资料版本一'
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/his/v1/catalogs/clinical') return Response.json({
         diagnoses: [{ id: 'diagnosis-fever', code: 'R50.9', nameZh: '发热', nameEn: 'Fever',
@@ -3784,7 +3835,7 @@ describe('role workspaces', () => {
       id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
       birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/agent/v1/page-contexts') {
         latestRequestedClaim = agentPageContextClaimSchema.parse(JSON.parse(String(init?.body)).claim)
@@ -3874,7 +3925,7 @@ describe('role workspaces', () => {
       patient: { ...patient, id: 'patient-' + index, name: '合成测试患者' + index },
       presentation: doctorPresentation, status: index === 1 ? 'first-visit' : 'awaiting-doctor', taskId: 'task-' + index, taskVersion: '1',
     }))
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
       const agentResponse = await doctorSurfaceAgentResponse(path, init)
       if (agentResponse !== undefined) return agentResponse
@@ -3992,7 +4043,7 @@ describe('role workspaces', () => {
     const requests: Array<{ body: unknown; path: string }> = []
     const toolResults: Array<{ ok: boolean; result?: unknown }> = []
     const proofRequests: Array<{ contextId: string; pageRevision: string }> = []
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/clinmesh-agent-proof') proofRequests.push(JSON.parse(String(init?.body)))
       if (path === '/api/agent/v1/tool-calls/result') {
@@ -4126,7 +4177,7 @@ describe('role workspaces', () => {
       version: 4,
     }
     let detailReads = 0
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') return Response.json(doctorSession)
       if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
@@ -4238,7 +4289,7 @@ describe('role workspaces', () => {
     }
     let issued = false
     let releaseIssue: (() => void) | undefined
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') return Response.json(doctorSession)
       if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
@@ -4312,7 +4363,7 @@ describe('role workspaces', () => {
       id: 'patient-investigation', identifier: 'CM-SYN-INV', name: '合成检查患者',
       birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') return Response.json(doctorSession)
       if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
@@ -4488,7 +4539,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/agent/v1/page-contexts' && draftVersion === 1) {
         const request = JSON.parse(String(init?.body)) as { claim: unknown }
@@ -4732,7 +4783,7 @@ describe('role workspaces', () => {
         gender: 'female', synthetic: true, versionId: '1' },
       presentation: doctorPresentation, status: 'first-visit', taskId: `task-deletion-${index}`, taskVersion: '1',
     }))
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') return Response.json(doctorSession)
       if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
@@ -4775,6 +4826,72 @@ describe('role workspaces', () => {
     expect(within(screen.getByRole('region', { name: '检验申请' })).getByText('血常规')).toBeTruthy()
     expect(screen.queryByText('检验草稿已删除')).toBeNull()
   })
+
+  it.each(['INVESTIGATION_TRUTH_INCOMPATIBLE', 'INVESTIGATION_OUTPUT_INVALID'])(
+    'lets the Surface Agent propose cancellation of a failed laboratory request with %s', async code => {
+      window.history.replaceState(null, '', '/consultation')
+      let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+      const surfaceAgent: WebSurfaceAgentController = { register(value) {
+        registration = value
+        return () => { if (registration === value) registration = undefined }
+      } }
+      const queueItem = {
+        caseId: 'case-failed-laboratory', encounterId: 'encounter-failed-laboratory', encounterVersion: '1',
+        patient: { id: 'patient-failed-laboratory', identifier: 'SYN-FAILED-LAB', name: '合成检验患者',
+          gender: 'female', birthDate: '1988-03-16', synthetic: true, versionId: '1' },
+        presentation: doctorPresentation, status: 'first-visit', taskId: 'task-failed-laboratory', taskVersion: '1',
+      }
+      let request: LaboratoryRequest = {
+        catalogItemId: 'lab-cbc', id: 'failed-laboratory-request', indicationCode: 'fever', previousReports: [],
+        serviceRequestId: 'failed-service-request', serviceRequestVersion: '2',
+        status: 'generation-failed', taskId: 'failed-laboratory-task', taskVersion: '4', version: 4,
+        generationError: { code, message: 'Synthetic laboratory generation failure' },
+      }
+      const cancellations: unknown[] = []
+      vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input), 'http://localhost').pathname
+        const agentResponse = await doctorSurfaceAgentResponse(path, init)
+        if (agentResponse !== undefined) return agentResponse
+        if (path === '/api/auth/context') return Response.json(doctorSession)
+        if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
+        if (path.endsWith('/doctor/queue')) return Response.json({ items: [queueItem], ...pagination(1) })
+        if (path === '/api/his/v1/doctor/cases/case-failed-laboratory') return Response.json({
+          ...queueItem, allergies: [], consultation: { turns: [], version: 1 }, priorFacts: [],
+          encounter: { id: queueItem.encounterId, status: 'in-progress', versionId: '1' },
+          laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [request] },
+        })
+        if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
+        if (path.endsWith('/failed-laboratory-request/actions/cancel')) {
+          cancellations.push(JSON.parse(String(init?.body)))
+          request = { ...request, status: 'cancelled', taskVersion: '5', version: 5 }
+          return Response.json(commandResponse({ request }))
+        }
+        throw new Error(`Unexpected request: ${path}`)
+      }))
+      render(<WebApp runtime={{ mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1' }} />)
+      const user = userEvent.setup()
+      await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+      const tool = await waitFor(() => {
+        const current = registration?.tools.find(tool => tool.name === 'clinmesh_prepare_cancel_laboratory')
+        expect(current).toBeDefined()
+        return current!
+      })
+      let proposal = ''
+      await act(async () => {
+        proposal = await tool.execute(boundAgentToolInput(tool, { requestId: request.id }), new AbortController().signal)
+      })
+      expect(JSON.parse(proposal)).toMatchObject({ ok: true, data: { status: 'awaiting-human-review' } })
+      const review = await screen.findByRole('alertdialog', { name: '确认取消检验申请' })
+      expect(cancellations).toEqual([])
+      await user.click(within(review).getByRole('button', { name: '确认取消' }))
+      await waitFor(() => expect(cancellations).toEqual([{
+        expectedVersions: { 'ServiceRequest/failed-service-request': '2', 'Task/failed-laboratory-task': '4' },
+        input: { expectedRequestVersion: 4, reasonCode: 'no-longer-needed' },
+      }]))
+      await waitFor(() => expect(within(screen.getByRole('region', { name: '申请列表' })).getByText('已取消')).toBeTruthy())
+      expect(screen.queryByRole('button', { name: /取消检验申请 lab-cbc/ })).toBeNull()
+    },
+  )
 
   it('shows laboratory request statuses and exposes only valid correction actions', async () => {
     window.history.replaceState(null, '', '/consultation')
@@ -4942,7 +5059,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
@@ -5277,7 +5394,7 @@ describe('role workspaces', () => {
     const visitVersions = () => status === 'awaiting-doctor'
       ? { encounterVersion: '2', taskVersion: '1' }
       : { encounterVersion: '3', taskVersion: '2' }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       const agentResponse = await doctorSurfaceAgentResponse(url.pathname, init)
       if (agentResponse !== undefined) return agentResponse
@@ -5469,7 +5586,7 @@ describe('role workspaces', () => {
       patient,
       status: paid ? 'paid' : 'billable',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(cashierSession)
       if (url.pathname === '/api/his/v1/billing/queue') {
@@ -5573,7 +5690,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(cashierSession)
       if (url.pathname === '/api/his/v1/billing/queue') {
@@ -5660,7 +5777,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -5948,7 +6065,7 @@ describe('role workspaces', () => {
     const savedDiagnosisEntries: DiagnosisDraftEntry[][] = []
     let diagnosis: DiagnosisState | undefined
     let encounterVersion = '6'
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/agent/v1/page-contexts') {
         latestRequestedClaim = agentPageContextClaimSchema.parse(JSON.parse(String(init?.body)).claim)
@@ -6189,7 +6306,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }]
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -6397,7 +6514,7 @@ describe('role workspaces', () => {
       target: 'clinical-document',
     }] as const
     let completed = false
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -6524,7 +6641,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -6701,7 +6818,7 @@ describe('role workspaces', () => {
     const medicationQueries: Array<string | null> = []
     let draftDeletionRequests = 0
     let medicationConclusion: DoctorCaseDetail['medicationConclusion']
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -6954,7 +7071,7 @@ describe('role workspaces', () => {
       frequencyCode: 'BID',
       quantity: 10,
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -7065,7 +7182,7 @@ describe('role workspaces', () => {
       'MedicationRequest/medication-request-1': '1',
       'Task/task-doctor-1': '2',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -7255,7 +7372,7 @@ describe('role workspaces', () => {
       synthetic: true,
       versionId: '1',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -7468,7 +7585,7 @@ describe('role workspaces', () => {
       revisionReason: '检验结果回报后修订诊断与处置。',
       signedAt: '2026-08-24T09:10:00+08:00',
     }]
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(doctorSession)
       if (url.pathname === '/api/his/v1/catalogs/clinical') {
@@ -8880,7 +8997,7 @@ describe('role workspaces', () => {
       prescriptionVersion: 3,
       status: 'awaiting-review',
     }
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(pharmacistSession)
       if (url.pathname === '/api/his/v1/pharmacy/queue') {

@@ -15,6 +15,7 @@ import type { ActorContext, CommandExecutor, CommandTransaction } from './comman
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import { WorkflowError } from './workflow-error.ts'
+import type { QualityAgentFact } from './clinical-document-quality.ts'
 import { historySummaryPrompt, RecordingSourceError, recordingSourceDiagnosticSchema,
   summaryText, verifyHistorySummaries, type HistoryFact, type HistorySummary, type RejectedHistoryFact } from './consultation-history-summary.ts'
 import { decodeRecordingCandidates, partitionRecordingCandidates, recordingBatchSchema, recordingContentHash, recordingModelPayload, recordingOutputSchema, recordingTurns,
@@ -175,6 +176,8 @@ export class ConsultationRecordingService {
   readonly #now: () => Date
   readonly #virtualTime: (context: ActorContext) => string
   readonly #contextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
+  readonly #qualityChanged: (context: ActorContext, transaction: CommandTransaction, caseId: string) => void
+  readonly #trackQualityDraft: (context: ActorContext, caseId: string, before: Draft, after: Draft) => void
   readonly #prepareReports: (context: ActorContext, transaction: CommandTransaction, caseId: string) => void
 
   constructor(input: {
@@ -186,6 +189,8 @@ export class ConsultationRecordingService {
     virtualTime: (context: ActorContext) => string
     contextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
     prepareReports: (context: ActorContext, transaction: CommandTransaction, caseId: string) => void
+    qualityChanged?: (context: ActorContext, transaction: CommandTransaction, caseId: string) => void
+    trackQualityDraft?: (context: ActorContext, caseId: string, before: Draft, after: Draft) => void
   }) {
     this.#database = input.database
     this.#commands = input.commands
@@ -195,6 +200,8 @@ export class ConsultationRecordingService {
     this.#virtualTime = input.virtualTime
     this.#contextStatus = input.contextStatus
     this.#prepareReports = input.prepareReports
+    this.#qualityChanged = input.qualityChanged ?? (() => {})
+    this.#trackQualityDraft = input.trackQualityDraft ?? (() => {})
   }
 
   recoverQueued(): void {
@@ -321,7 +328,7 @@ export class ConsultationRecordingService {
     const { caseId, encounterId, lane = 'realtime', ...source } = input
     this.#saveSource(context, caseId, source)
     const state = this.#state(context, caseId)
-    if (state === undefined) return
+    if (state === undefined) { this.#qualityChanged(context, transaction, caseId); return }
     this.bindDoctorContext(context, caseId)
     this.#database.driver.prepare(`INSERT INTO consultation_recording_job
       (workspace_id, epoch, case_id, encounter_id, turn_id, actor_context_json, status, scheduled, lane)
@@ -331,6 +338,7 @@ export class ConsultationRecordingService {
           AND j.epoch = s.epoch AND j.turn_id = s.source_id) ORDER BY sequence
     `).run(encounterId, JSON.stringify(context), lane, context.workspaceId, context.epoch, caseId, state.start_sequence)
     this.#scheduleNext(context, transaction, caseId)
+    this.#qualityChanged(context, transaction, caseId)
   }
 
   enqueueReport(context: ActorContext, transaction: CommandTransaction, input: {
@@ -344,6 +352,7 @@ export class ConsultationRecordingService {
       SELECT actor_context_json FROM consultation_recording WHERE workspace_id = ? AND epoch = ? AND case_id = ?
     `).get(context.workspaceId, context.epoch, input.caseId))
     this.#saveSource(context, input.caseId, source)
+    this.#qualityChanged(context, transaction, input.caseId)
     const doctor = this.#boundContext(context, recorder?.actor_context_json ?? null)
     if (doctor === undefined) return
     this.enqueueSource(doctor, transaction, { ...source, caseId: input.caseId, encounterId: input.encounterId })
@@ -710,6 +719,14 @@ export class ConsultationRecordingService {
       addGap(cursor, text.length)
     }
     return manual
+  }
+
+  qualityFacts(context: ActorContext, caseId: string): QualityAgentFact[] {
+    const document = this.#draft(context, caseId).content
+    return this.#rows(context, caseId).filter(row => row.status === 'applied' && row.undone === 0 && row.review_state === null
+      && row.ownership === 'automatic' && row.start_offset !== null && row.end_offset !== null
+      && (document[row.field] ?? '').slice(row.start_offset, row.end_offset) === row.current_text)
+      .flatMap(row => historyFacts(row).map((fact, index) => ({ ...fact, id: `${row.addition_id}:${index}`, field: row.field })))
   }
 
   #restoreLegacyRows(context: ActorContext, caseId: string, document = this.#draft(context, caseId).content): HistoryRow[] {
@@ -1094,6 +1111,7 @@ export class ConsultationRecordingService {
         changed = true
       }
       const draftVersion = current.version + (changed ? 1 : 0)
+      if (changed) this.#trackQualityDraft(context, job.case_id, current.content, document)
       if (changed) this.#database.driver.prepare(`INSERT INTO clinical_document_draft
         (workspace_id, epoch, case_id, version, content_json, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (workspace_id, epoch, case_id) DO UPDATE SET version = excluded.version,
@@ -1116,6 +1134,7 @@ export class ConsultationRecordingService {
       `).run(this.#now().toISOString(), JSON.stringify({ ...timings, aggregationMs: 0,
         sourceCount: batch.members.length }), context.workspaceId, context.epoch, event.eventId)
       this.#scheduleNext(context, transaction, job.case_id)
+      this.#qualityChanged(context, transaction, job.case_id)
       return { data: { draftVersion }, effects: [
         { kind: 'updated' as const, reference: `ConsultationRecording/${job.case_id}`, versionId: turnId },
         ...(changed ? [{ kind: current.version === 0 ? 'created' as const : 'updated' as const,

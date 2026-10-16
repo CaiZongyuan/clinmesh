@@ -32,6 +32,13 @@ function isVerificationCall(options: GenerateOptions): boolean {
   return z.object({ additions: z.array(z.unknown()) }).safeParse(modelPayload(options)).success
 }
 
+function qualityAnswer(options: GenerateOptions) {
+  const quality = z.object({ document: z.record(z.string(), z.string()), evidence: z.array(z.unknown()),
+    agentFacts: z.array(z.object({ id: z.string() })), issues: z.array(z.unknown()).optional() }).safeParse(modelPayload(options))
+  return quality.success ? { issues: quality.data.issues?.map((_, index) => ({ index, supported: true })) ?? [],
+    agentFactChecks: quality.data.agentFacts.map(fact => ({ id: fact.id, supported: true })) } : undefined
+}
+
 const secret = 'synthetic-model-bridge-secret-at-least-32-characters'
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose() })
@@ -314,6 +321,8 @@ async function recordingCase(summarize: (turns: HistoryTurn[], currentSourceIds:
   let reply = ''
   dsh.respond(async options => {
     const payload = modelPayload(options)
+    const quality = qualityAnswer(options)
+    if (quality !== undefined) return quality
     if (isVerificationCall(options)) {
       const { additions } = z.object({ additions: z.array(z.unknown()) }).parse(payload)
       return verify?.(additions) ?? { additions: additions.map((_, index) => ({ index, faithful, complete: true, relationValid: true })) }
@@ -558,15 +567,16 @@ it('explicitly recovers five completed, one failed and one queued DSH recording 
     completed.clinicalDocument!.draft!.historyOfPresentIllness + '\n患者自述：' + queuedTurn.messageText + '\n' + mixedQuestionSummary,
   )
   expect(jobs().slice(0, 5)).toEqual(completedJobs)
-  expect(fixture.dsh.calls).toHaveLength(callsBeforeRestart + 2)
-  const recordingCalls = fixture.dsh.calls.slice(callsBeforeRestart)
+  const recordingCalls = fixture.dsh.calls.slice(callsBeforeRestart).filter(call => isSummaryCall(call) || isVerificationCall(call))
+  expect(recordingCalls).toHaveLength(2)
   expect(recordingCalls.map(call => JSON.parse(z.object({ text: z.string() }).parse(call.messages[0]!.content[0]).text))
     .map(payload => payload.turns.find((turn: HistoryTurn) => turn.id === (payload.currentTurnId ?? payload.currentSourceIds[0])).messageText))
     .toEqual([mixedQuestionReply, mixedQuestionReply])
+  const callsAfterRecovery = fixture.dsh.calls.length
   await fixture.instance.restart()
   await fixture.instance.runtime.dispatchPending()
   expect((await fixture.read()).clinicalDocument?.draft).toEqual(recovered.clinicalDocument?.draft)
-  expect(fixture.dsh.calls).toHaveLength(callsBeforeRestart + 2)
+  expect(fixture.dsh.calls).toHaveLength(callsAfterRecovery)
 })
 
 it.each([false, true].flatMap(metadata => [
@@ -588,7 +598,7 @@ it.each([false, true].flatMap(metadata => [
   const answered = await response.json() as { data: { patientTurn: { id: string } } }
   await instance.restart()
   const beforeRecording = dsh.calls.length
-  dsh.respond(async options => ({ ...(metadata ? { $schema: 'https://json-schema.org/draft/2020-12/schema' } : {}),
+  dsh.respond(async options => qualityAnswer(options) ?? ({ ...(metadata ? { $schema: 'https://json-schema.org/draft/2020-12/schema' } : {}),
     additions: isVerificationCall(options)
       ? [{ index: 0, faithful: true, complete: true, relationValid: true }]
       : [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{ text: summary,
@@ -603,10 +613,12 @@ it.each([false, true].flatMap(metadata => [
     { text: summary, sources: [{ sourceTurnId: answered.data.patientTurn.id, quote: reply }] },
   ])
   expect(detail.consultationRecording).toMatchObject({ status: 'updated', additions: [{ status: 'applied' }] })
-  expect(dsh.calls).toHaveLength(beforeRecording + 2)
-  expect(dsh.calls.at(-2)?.system).toContain('跨轮归并')
-  expect(dsh.calls.at(-1)?.system).toContain('独立病史核对者')
-  const call = dsh.calls.at(-1)!
+  const recordingCalls = dsh.calls.slice(beforeRecording).filter(call => isSummaryCall(call) || isVerificationCall(call))
+  expect(recordingCalls).toHaveLength(2)
+  expect(recordingCalls[0]?.system).toContain('跨轮归并')
+  expect(recordingCalls[1]?.system).toContain('独立病史核对者')
+  const call = recordingCalls[1]!
+  expect(detail.qualityControl).toMatchObject({ status: 'ready', stale: false, draftVersion: detail.clinicalDocument!.draft!.version })
   expect(call.provider).toBe('synthetic-provider-a')
   expect(JSON.stringify(call)).toContain('sourceTurnId')
   expect(JSON.stringify(call)).not.toMatch(/hiddenResources|Case Truth|private-session-transcript|reasoning/)

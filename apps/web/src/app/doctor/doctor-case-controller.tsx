@@ -4,6 +4,8 @@ import { mergeDocumentText } from '@clinmesh/core/document-text'
 import {
   clinicalDocumentContentSchema,
   clinicalDocumentDraftContentSchema,
+  clinicalDocumentAgentFactSchema,
+  clinicalDocumentFieldSchema,
   diagnosisDraftEntrySchema,
   laboratoryRequestCatalogItemIdSchema,
   prescriptionDraftContentSchema,
@@ -119,6 +121,7 @@ import {
   type ClinicalDocumentRevisionInput,
   type ClinicalDocumentSignPreview,
 } from './clinical-document-page.tsx'
+import { DocumentQualitySignSummary } from './document-quality-control.tsx'
 import {
   ConsultationPage,
   type ConsultationPageAction,
@@ -260,11 +263,7 @@ function isLaboratoryRequestCatalogItemId(
 }
 
 function isCancellableLaboratoryRequest(request: LaboratoryRequest): boolean {
-  return request.status === 'issued'
-    || (
-      request.status === 'generation-failed'
-      && request.generationError?.code === 'INVESTIGATION_UNSUPPORTED'
-    )
+  return request.status === 'issued' || request.status === 'generation-failed'
 }
 
 function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boolean {
@@ -1765,10 +1764,18 @@ function DoctorCaseController({
           && detail.data?.encounter.status === 'in-progress',
         parameters: {
           type: 'object' as const,
-          properties: Object.fromEntries([
+          properties: { ...Object.fromEntries([
             'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
             'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
           ].map(key => [key, { type: 'string', maxLength: 4000 }])),
+            agentFacts: { type: 'array', maxItems: 64, items: { type: 'object', additionalProperties: false,
+              properties: { field: { type: 'string', enum: clinicalDocumentFieldSchema.options },
+                text: { type: 'string', minLength: 1, maxLength: 5000 },
+                sources: { type: 'array', maxItems: 12, items: { type: 'object', additionalProperties: false,
+                  properties: { sourceTurnId: { type: 'string', minLength: 1, maxLength: 128 },
+                    quote: { type: 'string', minLength: 2, maxLength: 2000 } }, required: ['sourceTurnId', 'quote'] } } },
+              required: ['field', 'text', 'sources'] } },
+          },
           required: [
             'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition',
             'followUp', 'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
@@ -1777,8 +1784,10 @@ function DoctorCaseController({
         },
         execute: async (raw: unknown) => {
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          const document = doctorClinicalDocument(raw)
+          const { document, agentFacts } = doctorClinicalDocument(raw)
           const result = await saveClinicalDocumentDraft({
+            agentGenerated: true,
+            ...(agentFacts === undefined ? {} : { agentFacts }),
             document,
             encounterId: current.encounter.id,
             encounterVersion: current.encounter.versionId,
@@ -2381,6 +2390,7 @@ function DoctorCaseController({
                   const reviewMessages = getWorkspaceMessages(locale)
                   return <div className="flex flex-col gap-3">
                     <ConsultationVerificationStatus recording={current.consultationRecording} messages={reviewMessages} />
+                    <DocumentQualitySignSummary detail={current} state={preview.data.qualityControl} scope={proposalScope} locale={locale} />
                     <ClinicalDocumentContentView content={preview.data.document.content} messages={reviewMessages} />
                   </div>
                 },
@@ -3577,6 +3587,7 @@ function CaseDetail({
                     messages={messages}
                     onDocumentChange={onClinicalDocumentChange}
                     workingDocument={workingClinicalDocument}
+                    qualityScope={recommendationScope}
                   />
                 )}
               </div>
@@ -3990,8 +4001,11 @@ function doctorDiagnosisEntries(value: unknown): DiagnosisDraftEntry[] {
   return entries.map(entry => diagnosisDraftEntrySchema.parse(entry))
 }
 
-function doctorClinicalDocument(value: unknown): ClinicalDocumentContent {
-  return clinicalDocumentDraftContentSchema.parse(value)
+function doctorClinicalDocument(value: unknown) {
+  const { agentFacts, ...document } = clinicalDocumentDraftContentSchema.extend({
+    agentFacts: z.array(clinicalDocumentAgentFactSchema).max(64).optional(),
+  }).parse(value)
+  return { document, agentFacts }
 }
 
 function requireDoctorDetail(

@@ -12,6 +12,9 @@ export async function createInvestigationReferenceDatabase(directory: string) {
   }, {
     code: '0100501A', display: '合成血红蛋白', loinc: '718-7', low: 115, high: 150,
     unitCode: 'g/L', unitDisplay: 'g/L',
+  }, {
+    code: '0101901A', display: '合成不兼容检验', loinc: '1988-5', low: 0, high: 8,
+    unitCode: 'mmol/L', unitDisplay: 'mmol/L',
   }]
   const artifactJson = `${JSON.stringify({
     schemaVersion: '1',

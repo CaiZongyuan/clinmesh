@@ -1,4 +1,4 @@
-import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
+import type { ClinicalDocumentContent, ClinicalDocumentQualityControlState, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -30,6 +30,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { ConsultationRecordingControls, ConsultationVerificationStatus, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
+import { DocumentQualityFieldIssues, DocumentQualitySignSummary, DocumentQualityStatus, useDocumentQualityControl, type DocumentQualityControl } from './document-quality-control.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -42,6 +43,7 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
 }
 
 export interface ClinicalDocumentSignPreview {
+  qualityControl?: ClinicalDocumentQualityControlState | undefined
   expiresAt?: string
   commitToken: string
   document: { content: ClinicalDocumentContent }
@@ -98,6 +100,7 @@ export function ClinicalDocumentPage({
   messages,
   onDocumentChange,
   workingDocument,
+  qualityScope,
 }: {
   actions: ClinicalDocumentPageActions
   allowRevision: boolean
@@ -108,11 +111,14 @@ export function ClinicalDocumentPage({
   messages: ReturnType<typeof getWorkspaceMessages>
   onDocumentChange: (document: ClinicalDocumentContent) => void
   workingDocument: ClinicalDocumentContent
+  qualityScope?: string | undefined
 }): React.JSX.Element | null {
   const signedDocuments = (detail.clinicalDocument?.signed ?? [])
     .toSorted((left, right) => right.revisionNumber - left.revisionNumber)
   const latestSignedDocument = signedDocuments[0]
   const [revisionPreview, setRevisionPreview] = useState<ClinicalDocumentRevisionInput>()
+  const quality = useDocumentQualityControl({ detail, document: workingDocument, scope: qualityScope,
+    enabled: signedDocuments.length === 0 && detail.encounter.status === 'in-progress' })
 
   if (
     signedDocuments.length === 0
@@ -288,6 +294,7 @@ export function ClinicalDocumentPage({
           </Alert>}
           {actions.cancelSign?.error == null ? null : <ErrorAlert title={messages.operationFailed}
             message={getWorkspaceErrorMessage(actions.cancelSign.error, messages)} />}
+          <DocumentQualityStatus quality={quality} messages={messages} />
           <form
             aria-label={messages.structuredClinicalDocument}
             className="flex flex-col gap-3"
@@ -303,6 +310,8 @@ export function ClinicalDocumentPage({
               messages={messages}
               onChange={onDocumentChange}
               updates={updates}
+              quality={quality}
+              locale={locale}
             />
             <div className="flex justify-end gap-2 border-t pt-3">
               {actions.save === undefined ? null : <Button disabled={actions.save.pending || preparing || cancelPending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
@@ -336,6 +345,7 @@ export function ClinicalDocumentPage({
               {currentPreview === undefined ? null : (
                 <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">
                   <ConsultationVerificationStatus recording={detail.consultationRecording} messages={messages} />
+                  <DocumentQualitySignSummary detail={detail} state={currentPreview.qualityControl} scope={qualityScope} locale={locale} />
                   <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
                   {actions.sign.error === null ? null : <ErrorAlert title={messages.operationFailed}
                     message={getWorkspaceErrorMessage(actions.sign.error, messages)} />}
@@ -374,13 +384,15 @@ export function ClinicalDocumentPage({
   )
 }
 
-function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, updates }: {
+function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, updates, quality, locale }: {
   content: ClinicalDocumentContent
   disabled: boolean
   idPrefix: string
   messages: ReturnType<typeof getWorkspaceMessages>
   onChange: (document: ClinicalDocumentContent) => void
   updates: ClinicalDocumentUpdates | undefined
+  quality: DocumentQualityControl
+  locale: WorkspaceLocale
 }): React.JSX.Element {
   const fields = [
     { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
@@ -437,6 +449,7 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
             )}
             </ClinicalDocumentUpdateControl>
             {optional ? <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription> : null}
+            <DocumentQualityFieldIssues field={field} quality={quality} messages={messages} locale={locale} />
             </div>
           </Field>
         )

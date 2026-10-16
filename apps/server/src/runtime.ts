@@ -241,6 +241,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const workflow = new WorkflowService(database, fhir, commands, {
       consultationRecordingEnabled: options.dshModelBridge !== undefined,
+      qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
+      qualityContextStatus: context => identity.clinicalDocumentQualityContextStatus(context),
       consultationRecordingContextStatus: context => identity.consultationRecordingContextStatus(context),
       investigation,
       ...clockOptions,
@@ -427,6 +429,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
+        'clinical-document.check-quality': event => workflow.qualityControl.process(event, {
+          models, shutdownSignal: generationAbort.signal,
+          ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
+          ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+          signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
+        }),
         'doctor.generate-recommendations': event => doctorRecommendations.process(event,
           AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]), generationAbort.signal),
         'consultation.record-history': event => recordHistory(event, recordingTimeoutMs),
@@ -487,8 +495,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             })
           } catch (error) {
             const failure = investigationFailure(error)
-            // 无底账属于确定性失败，重试不会改变结果，直接落为生成失败。
-            if (failure.code !== 'INVESTIGATION_UNSUPPORTED' && event.attempt < 3) {
+            // 无底账或精确真值不兼容均无法通过自动重试恢复。
+            if (failure.code !== 'INVESTIGATION_UNSUPPORTED'
+              && failure.code !== 'INVESTIGATION_TRUTH_INCOMPATIBLE' && event.attempt < 3) {
               return { status: 'retryable-failed' }
             }
             workflow.failLaboratoryResultGeneration({

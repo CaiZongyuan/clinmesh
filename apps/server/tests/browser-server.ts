@@ -10,7 +10,7 @@ import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
 export async function startBrowserServer(webRoot: string, options: Partial<Pick<CreateClinMeshRuntimeOptions,
   'activeReferenceReleaseId' | 'referenceDatabasePath' | 'syntheaProvider' | 'chatCompletionsProvider'
   | 'patientPersonaModel' | 'dshBridgeSecret' | 'trustedOrigins' | 'dshModelBridge' | 'autoDispatchIntervalMs'
->> = {}) {
+>> & { qualityCompletions?: NonNullable<CreateClinMeshRuntimeOptions['chatCompletionsProvider']>['completeJson'] } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-e2e-server-'))
   let runtime: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined
   const server = serve({
@@ -37,7 +37,7 @@ export async function startBrowserServer(webRoot: string, options: Partial<Pick<
     const password = `Synthetic-${randomUUID()}-Aa1!`
     runtime = await createClinMeshRuntime({
       ...options,
-      ...(options.chatCompletionsProvider === undefined ? {} : { chatCompletionsProvider: recordingFixtureProvider(options.chatCompletionsProvider) }),
+      ...(options.chatCompletionsProvider === undefined ? {} : { chatCompletionsProvider: recordingFixtureProvider(options.chatCompletionsProvider, undefined, options.qualityCompletions) }),
       authBaseUrl: origin,
       authSecret: randomUUID() + randomUUID(),
       cursorSecret: randomUUID() + randomUUID(),

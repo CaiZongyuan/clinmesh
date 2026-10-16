@@ -92,6 +92,82 @@ beforeEach(() => { vi.stubGlobal('fetch', vi.fn(async () => Response.json(recomm
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('laboratory investigation workspace', () => {
+  it.each(['zh-CN', 'en-US'] as const)('lets a doctor cancel incompatible truth without offering a retry in %s', async locale => {
+    const failed: LaboratoryRequest = {
+      ...request('failed', '不兼容合成检验', ''), status: 'generation-failed',
+      generationError: { code: 'INVESTIGATION_TRUTH_INCOMPATIBLE', message: 'Synthetic truth unit mismatch' },
+    }
+    delete failed.report
+    const page = props({ locale, messages: getWorkspaceMessages(locale), detail: {
+      ...detail, laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [failed] },
+    } })
+    render(<LaboratoryPage {...page} />)
+    expect(screen.getByText(locale === 'zh-CN'
+      ? '该病例的合成检验真值与申请的结果定义或单位不兼容，无法生成结果。请取消此申请。'
+      : 'This case’s synthetic laboratory truth is incompatible with the requested result definition or unit. Cancel this request.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /重试结果生成|Retry result generation/ })).toBeNull()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: `${page.messages.cancelLaboratoryRequest} ${locale === 'zh-CN' ? '不兼容合成检验' : service.nameEn}` }))
+    const confirmation = within(screen.getByRole('alertdialog', { name: page.messages.cancelLaboratoryRequestTitle }))
+    expect(confirmation.getByText(page.messages.laboratoryRequestStatus_generationFailed)).toBeTruthy()
+    expect(page.actions.cancel.onSubmit).not.toHaveBeenCalled()
+    await user.click(confirmation.getByRole('button', { name: page.messages.confirmCancelLaboratoryRequest }))
+    expect(page.actions.cancel.onSubmit).toHaveBeenCalledExactlyOnceWith(failed)
+    expect(page.actions.retry.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it.each(['INVESTIGATION_OUTPUT_INVALID', 'AI_TIMEOUT', 'AI_REQUEST_FAILED', 'INVESTIGATION_UNSUPPORTED'])(
+    'offers cancellation alongside the existing recovery for %s', async code => {
+      const failed: LaboratoryRequest = { ...request('failed', '失败合成检验', ''), status: 'generation-failed',
+        generationError: { code, message: 'Synthetic failure' } }
+      delete failed.report
+      const page = props({ detail: { ...detail, laboratoryRequests: {
+        draftVersion: 0, reportingSupported: true, requests: [failed],
+      } } })
+      render(<LaboratoryPage {...page} />)
+      expect(screen.getByRole('button', { name: '取消检验申请 失败合成检验' })).toBeTruthy()
+      const retry = screen.queryByRole('button', { name: '重试结果生成 失败合成检验' })
+      if (code === 'INVESTIGATION_UNSUPPORTED') expect(retry).toBeNull()
+      else {
+        await userEvent.setup().click(retry!)
+        expect(page.actions.retry.onSubmit).toHaveBeenCalledExactlyOnceWith(failed)
+      }
+    },
+  )
+
+  it.each(['cancel', 'retry'] as const)('blocks both recovery actions while %s is pending', async action => {
+    const failed: LaboratoryRequest = { ...request('failed', '失败合成检验', ''), status: 'generation-failed',
+      generationError: { code: 'INVESTIGATION_OUTPUT_INVALID', message: 'Synthetic output error' } }
+    delete failed.report
+    const page = props({ detail: { ...detail, laboratoryRequests: {
+      draftVersion: 0, reportingSupported: true, requests: [failed],
+    } } })
+    page.actions[action].pending = true
+    render(<LaboratoryPage {...page} />)
+    const cancel = screen.getByRole('button', { name: '取消检验申请 失败合成检验' }) as HTMLButtonElement
+    const retry = screen.getByRole('button', { name: '重试结果生成 失败合成检验' }) as HTMLButtonElement
+    expect(cancel.disabled).toBe(true)
+    expect(retry.disabled).toBe(true)
+    await userEvent.setup().click(cancel)
+    await userEvent.setup().click(retry)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(page.actions.cancel.onSubmit).not.toHaveBeenCalled()
+    expect(page.actions.retry.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { readOnly: true, status: 'generation-failed' as const },
+    { readOnly: false, status: 'in-progress' as const },
+    { readOnly: false, status: 'accepted' as const },
+  ])('keeps recovery actions unavailable with %o', ({ readOnly, status }) => {
+    const current: LaboratoryRequest = { ...request('current', '合成检验', ''), status }
+    delete current.report
+    render(<LaboratoryPage {...props({ readOnly, detail: { ...detail, laboratoryRequests: {
+      draftVersion: 0, reportingSupported: true, requests: [current],
+    } } })} />)
+    expect(screen.queryByRole('button', { name: /取消检验申请|重试结果生成/ })).toBeNull()
+  })
+
   it('adopts a recommended hospital service into the editable request without opening it formally', async () => {
     const recommendationState = recommendations()
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => (
