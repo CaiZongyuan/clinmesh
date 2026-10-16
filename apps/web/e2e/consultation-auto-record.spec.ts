@@ -63,6 +63,8 @@ test('records a conflict automatically without replacing handwritten history and
 
 for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
   test(`settles ${code} with a visible reason and saved patient reply after reload`, async ({ page, webRoot }) => {
+    const consultationPanel = page.getByRole('tabpanel', { name: '问诊记录', exact: true })
+    const recordPanel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
     const server = await startBrowserServer(webRoot, {
       dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
       syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
@@ -85,23 +87,30 @@ for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
       await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('头晕多久了？')
       await page.getByRole('button', { name: '向患者提问', exact: true }).click()
       await expect(page.getByText('头晕一周了。', { exact: true })).toBeVisible()
+      // 保留退出中的问诊面板，覆盖整理状态的双匹配回归。
+      await consultationPanel.evaluate(async panel => {
+        await panel.animate([{ opacity: 1 }, { opacity: 0.99 }], { duration: 10_000 }).ready
+      })
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await expect(page.locator('[data-consultation-recording]')).toHaveCount(2)
       const reason = code === 'AI_TIMEOUT' ? '自动记录超时，患者回答已保存，请根据问诊原文补充病史。'
         : '自动记录结果未通过校验，病史未写入，请核对问诊原文。'
-      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
-      await page.getByRole('button', { name: '问诊自动记录', exact: true }).click()
+      await expect(recordPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
+      await recordPanel.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
       await page.reload()
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
-      await page.getByRole('button', { name: '问诊自动记录', exact: true }).click()
+      await recordPanel.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
-      await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
+      await expect(recordPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
       expect(await page.locator('body').innerText()).not.toContain('private-provider-credential-and-prompt')
     } finally { await server.close() }
   })
 }
 
 test('pauses recording while asking, preserves it on reload, resumes missing replies and retries a failure', async ({ page, webRoot }) => {
+  const consultationPanel = page.getByRole('tabpanel', { name: '问诊记录', exact: true })
+  const recordPanel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
   let reply = '头晕一周了。'
   let fail = false
   const server = await startBrowserServer(webRoot, {
@@ -143,51 +152,51 @@ test('pauses recording while asking, preserves it on reload, resumes missing rep
     await page.getByLabel('现病史', { exact: true }).fill('')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await ask()
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+    await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await waitForRecordedHistory(page, reply)
     await page.getByLabel('现病史', { exact: true }).fill('医生核对：头晕五天。')
     await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
     await expect(page.getByText('病历草稿已保存', { exact: true })).toBeVisible()
     failCaseReads = true
-    await page.getByRole('button', { name: '暂停自动整理', exact: true }).click()
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'paused')
+    await recordPanel.getByRole('button', { name: '暂停自动整理', exact: true }).click()
+    await expect(recordPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'paused')
     await expect.poll(() => failedCaseReads).toBeGreaterThan(0)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('医生核对：头晕五天。')
     failCaseReads = false
     reply = '站起来时更明显。'
     await ask()
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'paused')
+    await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'paused')
     expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('医生核对：头晕五天。')
     await page.reload()
     await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
-    await expect(page.getByRole('button', { name: '恢复并补录', exact: true })).toBeVisible()
+    await expect(consultationPanel.getByRole('button', { name: '恢复并补录', exact: true })).toBeVisible()
     expect((await read()).consultationRecording).toMatchObject({ paused: true, processedCount: 1, remainingCount: 1 })
     const readsBeforeResume = failedCaseReads
     failCaseReads = true
-    await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
+    await consultationPanel.getByRole('button', { name: '恢复并补录', exact: true }).click()
     await expect.poll(() => failedCaseReads).toBeGreaterThan(readsBeforeResume)
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
-    await expect(page.getByRole('button', { name: '暂停自动整理', exact: true })).toBeEnabled()
+    await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
+    await expect(consultationPanel.getByRole('button', { name: '暂停自动整理', exact: true })).toBeEnabled()
     failCaseReads = false
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+    await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await waitForRecordedHistory(page, reply)
     await expect(page.getByLabel('现病史', { exact: true })).toHaveValue('医生核对：头晕五天。\n患者自述：站起来时更明显。')
     reply = '夜间也会头晕。'
     fail = true
     await ask()
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
+    await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
     await page.reload()
     await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
     fail = false
     const readsBeforeRetry = failedCaseReads
     failCaseReads = true
-    await page.getByRole('button', { name: '重试病史整理', exact: true }).click()
+    await consultationPanel.getByRole('button', { name: '重试病史整理', exact: true }).click()
     await expect.poll(() => failedCaseReads).toBeGreaterThan(readsBeforeRetry)
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
+    await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'processing')
     failCaseReads = false
-    await expect(page.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
+    await expect(consultationPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'updated')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await waitForRecordedHistory(page, reply)
     expect((await read()).consultationRecording).toMatchObject({ processedCount: 3, remainingCount: 0, failedCount: 0 })

@@ -15,6 +15,7 @@ import Tools from '@deepseek-ai/dsh-tools'
 import UserQuestions, { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
 import * as AskUser from '@deepseek-ai/dsh-tool-ask-user'
 import { expect, it } from 'vitest'
+import { z } from 'zod'
 import { installAgentProofBridge } from './agent-proof-bridge.ts'
 import { parseAgentExecutionProof } from './execution-proof.ts'
 import { doctorInputPermit } from './doctor-input-fixture.ts'
@@ -465,6 +466,79 @@ it('binds a native doctor read to its human input and original request after a r
       scopeKey: drafted.scopeKey, pageRevision: drafted.pageRevision,
       origin: { request: record, task: { ...record, rpcId: 'human-prompt-1', turn: 1 } },
     })
+  } finally { await browser?.drain(); await ctx.fiber.dispose() }
+})
+
+it('recovers a rejected question through an unbound read before asking exactly once in the same native turn', async () => {
+  const ctx = new Context()
+  let browser: ReturnType<typeof browserChannel> | undefined
+  const secret = 'synthetic-host-secret-with-at-least-32-characters'
+  const sessionId = 'native-binding-recovery'
+  const text = '替我向当前患者问清最近两周用药情况，问完说明结果。'
+  try {
+    for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    browser = browserChannel(ctx)
+    installAgentProofBridge(ctx, secret)
+    browser.publish(consultation, true)
+    class RecoveringModel extends LlmAdapter {
+      steps = 0
+      override async resolveModel(provider: string, model: string) { return { provider, id: model, name: model } }
+      override async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
+        if (request.tools === undefined) { yield* intentResponse(request); return }
+        const step = this.steps++
+        if (step === 0) {
+          yield* call('rejected-question', ask, { ...consultation,
+            pageRevision: '["consultation-1",[null]]', message: '最近两周服用了哪些药物？' })
+          return
+        }
+        const result = request.messages.findLast(message => message.role === 'tool')
+        if (result?.role !== 'tool') throw new Error('Missing native Tool result')
+        const output = result.content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
+        if (step === 1) {
+          expect(result.toolCallId).toBe('rejected-question')
+          expect(result.isError).toBe(true)
+          expect(output).toContain('不匹配字段：pageRevision。')
+          expect(output).not.toContain('尚无可用的只读工具目录')
+          const line = output.split('\n').find(value => value.startsWith('{'))
+          if (line === undefined) throw new Error('Missing current read recovery call')
+          const recovery = z.object({ toolName: z.literal(read), arguments: z.object({}).strict() }).parse(JSON.parse(line))
+          yield* call('read-before-new-question', recovery.toolName, recovery.arguments)
+          return
+        }
+        if (step === 2) {
+          expect(result.toolCallId).toBe('read-before-new-question')
+          expect(result.isError).not.toBe(true)
+          expect(JSON.parse(output)).toMatchObject({ ok: true, data: { section: 'consultation', questions: 0 } })
+          const current = z.object({ properties: z.object({
+            scopeKey: z.object({ const: z.string() }), pageRevision: z.object({ const: z.string() }),
+          }) }).parse(request.tools.find(tool => tool.name === ask)?.parameters).properties
+          yield* call('new-question', ask, { scopeKey: current.scopeKey.const,
+            pageRevision: current.pageRevision.const, message: '最近两周服用了哪些药物？' })
+          return
+        }
+        expect(step).toBe(3)
+        expect(result.toolCallId).toBe('new-question')
+        expect(result.isError).not.toBe(true)
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    }
+    const model = new RecoveringModel()
+    ctx.llm.registerAdapter(['scripted'], model)
+    const { agent } = await ctx.agents.create({ sessionId: SessionId(sessionId),
+      agentOptions: { provider: 'scripted', model: 'recovery' } })
+    expect((await browser.post('/clinmesh-doctor-task', { permit: doctorTaskPermit(text, sessionId) })).status).toBe(200)
+    agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user', rpcId: 'delegate-rpc' } }))
+    await agent.whenIdle()
+    expect(model.steps).toBe(4)
+    expect(browser.executed).toEqual([read, ask])
+    expect(browser.questions()).toBe(1)
+    expect(browser.proofs).toHaveLength(2)
+    for (const [index, callId] of ['read-before-new-question', 'new-question'].entries()) {
+      expect(parseAgentExecutionProof(browser.proofs[index]!, { secret })).toMatchObject({ callId,
+        origin: { request: consultation, task: { ...consultation,
+          rpcId: 'delegate-rpc', turn: 1, delegationId: expect.any(String) } } })
+    }
   } finally { await browser?.drain(); await ctx.fiber.dispose() }
 })
 

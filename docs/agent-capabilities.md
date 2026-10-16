@@ -22,7 +22,7 @@
 | --- | --- |
 | `CLINMESH_BINDING_ARGUMENTS_INVALID` | 调用缺少或包含无效绑定字段；按错误列出的字段补齐当前 schema 的值后重试。 |
 | `CLINMESH_HOST_SESSION_REQUIRED` | 宿主未关联 DSH Agent 会话；从打开 ClinMesh 工作台的会话调用，补参数不能恢复会话关联。 |
-| `CLINMESH_BINDING_MISMATCH` | 原调用尚未执行，参数与当前页面绑定不匹配；Host 在当前只读工具定义可用时附带恢复参数。按当前 schema 读取并核对目标后决定是否继续，不自动重放原写入。 |
+| `CLINMESH_BINDING_MISMATCH` | 原调用尚未执行；绑定可比较时列出不匹配的 `scopeKey`、`pageRevision`，定义不可用时说明绑定状态，不据此断言患者已切换。Host 按真实只读 schema 提供恢复调用：医生已选病例的无参数读取使用 `{}`，其他页面使用读取定义中的有效绑定。先读取并核对患者、岗位与原任务，再原样使用最新写 Tool 的 `const` 生成新调用，不重新拼装 `pageRevision` 或自动重放原写入。 |
 | `AGENT_CONTEXT_EXPIRED` / `AGENT_CONTEXT_INVALID` / `AGENT_CONTEXT_STALE` | 服务端授权拒绝过期、无效或资源已变化的上下文；等待页面更新工具定义，按当前绑定读取状态后决定是否重试。工具持续未更新时重新打开工作台。 |
 | `AGENT_OPERATION_NOT_ALLOWED` | 调用的 Tool、Session、scope 或语义 revision 与当前授权不一致；等待当前工具定义并读取页面状态，重新判断该动作是否仍适用，不自动沿用旧意图。 |
 
