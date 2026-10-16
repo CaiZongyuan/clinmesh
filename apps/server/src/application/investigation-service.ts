@@ -23,7 +23,7 @@ import {
   type JsonChatCompletionsProvider,
 } from '../infrastructure/ai/openai-chat-completions.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
-import { syntheticInvestigationReferenceRange } from './scenario-data/reference-coding-package.ts'
+import { resolveObservationMapping, syntheticInvestigationReferenceRange } from './scenario-data/reference-coding-package.ts'
 import {
   AdultReferenceApplicabilityError,
   adultReferenceGenerationPolicyVersion,
@@ -135,10 +135,10 @@ type AgentGenerationPlan =
     }
 
 export class InvestigationGenerationError extends Error {
-  readonly code: 'INVESTIGATION_OUTPUT_INVALID' | 'INVESTIGATION_UNSUPPORTED'
+  readonly code: 'INVESTIGATION_OUTPUT_INVALID' | 'INVESTIGATION_TRUTH_INCOMPATIBLE' | 'INVESTIGATION_UNSUPPORTED'
 
   constructor(
-    code: 'INVESTIGATION_OUTPUT_INVALID' | 'INVESTIGATION_UNSUPPORTED',
+    code: 'INVESTIGATION_OUTPUT_INVALID' | 'INVESTIGATION_TRUTH_INCOMPATIBLE' | 'INVESTIGATION_UNSUPPORTED',
     message: string,
   ) {
     super(message)
@@ -175,6 +175,7 @@ function conceptCodings(resource: Resource) {
           code: coding.code,
           display: typeof coding.display === 'string' ? coding.display : undefined,
           system: coding.system,
+          version: coding.version,
         }]
       : []
   })
@@ -204,6 +205,33 @@ function quantity(value: unknown) {
   }
 }
 
+function serviceQuantityValue(definition: ServiceResultDefinition, observation: Resource) {
+  const result = quantity(observation.valueQuantity)
+  const unit = definition.unit
+  if (result === undefined || unit === undefined || result.system !== unit.system) return undefined
+  let multiplier: number | undefined
+  if (result.code === unit.code
+    || (result.code === '10*3/uL' && unit.code === '10*9/L')
+    || (result.code === '10*6/uL' && unit.code === '10*12/L')) {
+    multiplier = 1
+  } else if (result.code === 'g/dL' && unit.code === 'g/L') {
+    multiplier = 10
+  } else {
+    const mapping = [definition.referenceConcept, ...definition.alternateCodings]
+      .map(coding => resolveObservationMapping({ code: coding.code, system: coding.system, version: coding.version }))
+      .find(candidate => candidate?.catalogItemId === 'lab-random-glucose')
+    const matchingGlucose = mapping !== undefined && conceptCodings(observation).some(coding => (
+      coding.code === mapping.coding.code && coding.system === mapping.coding.system
+      && (coding.version === undefined || coding.version === mapping.coding.version)
+    ))
+    if (mapping?.unit.code === unit.code && matchingGlucose) {
+      multiplier = mapping.sourceUnits.find(source => source.unitCode === result.code)?.multiplier
+    }
+  }
+  const value = multiplier === undefined ? undefined : result.value * multiplier
+  return value !== undefined && Number.isFinite(value) ? value : undefined
+}
+
 function scalarValue(
   resource: Resource,
 ): boolean | string | z.infer<typeof investigationCodeableValueSchema> | undefined {
@@ -221,7 +249,7 @@ function scalarValue(
     const display = (coding as Record<string, unknown>).display
     const system = (coding as Record<string, unknown>).system
     if (typeof code === 'string' && typeof display === 'string' && typeof system === 'string') {
-      return investigationCodeableValueSchema.parse({ code, display, system })
+      return investigationCodeableValueSchema.safeParse({ code, display, system }).data
     }
   }
   return typeof concept.text === 'string' ? concept.text : undefined
@@ -287,7 +315,7 @@ function evidence(resources: Resource[]) {
         : undefined
       const timestamp = clinicalTimestamp(resource)
       return {
-        codings: conceptCodings(resource).slice(0, 5),
+        codings: conceptCodings(resource).slice(0, 5).map(({ code, display, system }) => ({ code, display, system })),
         resourceType: resource.resourceType,
         ...(timestamp === 0
           ? {}
@@ -800,12 +828,10 @@ export class InvestigationService {
     adultRule?: ReturnType<typeof selectAdultReferenceRule>,
   ): InvestigationResultContent['results'][number] {
     if (definition.valueType === 'quantity') {
-      const result = quantity(observation.valueQuantity)
-      if (result === undefined || definition.unit === undefined
-        || result.code !== definition.unit.code
-        || result.system !== definition.unit.system) {
+      const value = serviceQuantityValue(definition, observation)
+      if (value === undefined || definition.unit === undefined) {
         throw new InvestigationGenerationError(
-          'INVESTIGATION_OUTPUT_INVALID',
+          'INVESTIGATION_TRUTH_INCOMPATIBLE',
           'The exact Case Truth Observation conflicts with the Laboratory Service unit',
         )
       }
@@ -815,10 +841,10 @@ export class InvestigationService {
       return {
         code: definition.referenceConcept.code,
         display: definition.referenceConcept.display,
-        interpretation: interpretationFor(result.value, referenceRange),
+        interpretation: interpretationFor(value, referenceRange),
         referenceRange,
         unit: definition.unit,
-        value: result.value,
+        value,
       }
     }
     const value = scalarValue(observation)
@@ -827,14 +853,14 @@ export class InvestigationService {
         return exactAdultReferenceScalarResult({ definition, rule: adultRule, value })
       } catch (error) {
         if (!(error instanceof AdultReferenceApplicabilityError)) throw error
-        throw new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', error.message)
+        throw new InvestigationGenerationError('INVESTIGATION_TRUTH_INCOMPATIBLE', error.message)
       }
     }
     if (value === undefined || definition.allowedValues?.some(
       item => canonicalJsonHash(item) === canonicalJsonHash(value),
     ) !== true) {
       throw new InvestigationGenerationError(
-        'INVESTIGATION_OUTPUT_INVALID',
+        'INVESTIGATION_TRUTH_INCOMPATIBLE',
         'The exact Case Truth Observation conflicts with the Laboratory Service value definition',
       )
     }
@@ -937,7 +963,7 @@ export class InvestigationService {
     const result = quantity(observation.valueQuantity)
     if (result === undefined) {
       throw new InvestigationGenerationError(
-        'INVESTIGATION_OUTPUT_INVALID',
+        'INVESTIGATION_TRUTH_INCOMPATIBLE',
         'The exact Synthea Observation has an unsupported value type',
       )
     }
@@ -947,7 +973,7 @@ export class InvestigationService {
       && (result.code !== expectedUnit.code || result.system !== expectedUnit.system)
     ) {
       throw new InvestigationGenerationError(
-        'INVESTIGATION_OUTPUT_INVALID',
+        'INVESTIGATION_TRUTH_INCOMPATIBLE',
         'The exact Synthea Observation unit conflicts with the requested item',
       )
     }

@@ -47,7 +47,9 @@ import type {
 } from '../src/application/scenario-data/provider.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository.ts'
 import { CommandExecutor } from '../src/application/command-executor.ts'
+import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
@@ -225,8 +227,10 @@ async function corpusFor(
   request: ScenarioGenerationRequest,
   qualified: boolean,
   followUp = true,
+  observations: Array<Record<string, unknown>> = [],
 ): Promise<SourcePatientCorpus> {
   const bundle = patientBundle(qualified, followUp)
+  bundle.entry.push(...observations.map((resource, index) => ({ fullUrl: `urn:uuid:unit-observation-${index}`, resource })))
   return {
     kind: 'synthea-r4',
     sources: [{
@@ -243,10 +247,12 @@ class RetryingSyntheaProvider implements ScenarioGenerationProvider {
   readonly requests: ScenarioGenerationRequest[] = []
   readonly #qualifyingAttempt: number | undefined
   readonly #followUp: boolean
+  readonly #observations: Array<Record<string, unknown>>
 
-  constructor(qualifyingAttempt?: number, followUp = true) {
+  constructor(qualifyingAttempt?: number, followUp = true, observations: Array<Record<string, unknown>> = []) {
     this.#qualifyingAttempt = qualifyingAttempt
     this.#followUp = followUp
+    this.#observations = observations
   }
 
   async capabilities(): Promise<ScenarioProviderCapabilities> {
@@ -261,7 +267,7 @@ class RetryingSyntheaProvider implements ScenarioGenerationProvider {
 
   async generate(request: ScenarioGenerationRequest): Promise<SourcePatientCorpus> {
     this.requests.push(request)
-    return corpusFor(request, this.requests.length === this.#qualifyingAttempt, this.#followUp)
+    return corpusFor(request, this.requests.length === this.#qualifyingAttempt, this.#followUp, this.#observations)
   }
 }
 
@@ -278,6 +284,7 @@ class ControlledBriefProvider implements JsonChatCompletionsProvider {
     this.requests.push(input)
     const output = this.#outputs.shift()
     if (output === undefined) throw new Error('No fake Patient Brief output remains')
+    if (output instanceof Error) throw output
     return { content: JSON.stringify(output), model: this.resolveModel === undefined ? 'resolved-fake-brief-model' : input.model }
   }
 }
@@ -1552,12 +1559,6 @@ describe('Synthetic Case generation HTTP contract', () => {
     })
     expect(failedRequest?.report).toBeUndefined()
     if (failedRequest === undefined) throw new Error('Failed laboratory request was not found')
-    runtime.database.driver.prepare(`
-      UPDATE laboratory_request
-      SET generation_error_code = 'INVESTIGATION_UNSUPPORTED',
-        generation_error_message = 'Synthetic unsupported investigation for Agent policy verification'
-      WHERE workspace_id = ? AND epoch = ? AND request_id = ?
-    `).run('workspace-demo', 'epoch-1', failedRequest.id)
     const contextResponse = await runtime.app.request('/api/agent/v1/page-contexts', {
       body: JSON.stringify({
         claim: {
@@ -2763,7 +2764,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(publicArtifacts).not.toMatch(/privateEpisodeEvidence|index-condition|hiddenResourceReferences/)
   }, 30_000)
 
-  it('rejects ledger-less laboratory service orders and fails generation fast', async () => {
+  async function prepareUnitConversionCase(observations: Array<Record<string, unknown>>, investigationOutputs: unknown[] = []) {
     const safeBrief: PatientPersonaContent = {
       chiefComplaint: '咽痛两天',
       knownHistorySummary: '既往体健。',
@@ -2777,8 +2778,8 @@ describe('Synthetic Case generation HTTP contract', () => {
       },
       symptomExperience: '两天前嗓子开始疼，吞口水更疼，喝了点热水没管用。',
     }
-    const briefProvider = new ControlledBriefProvider([safeBrief])
-    const runtime = await createRuntime(new RetryingSyntheaProvider(1, false), briefProvider)
+    const briefProvider = new ControlledBriefProvider([safeBrief, ...investigationOutputs])
+    const runtime = await createRuntime(new RetryingSyntheaProvider(1, false, observations), briefProvider)
     const cookie = await signIn(runtime)
     await enqueue(runtime, cookie)
     const generation = await runtime.scenarioData.processNextGenerationJob()
@@ -2909,6 +2910,293 @@ describe('Synthetic Case generation HTTP contract', () => {
       expect(response.status).toBe(200)
       return issueLaboratoryRequestResponseSchema.parse(await response.json()).data
     }
+    return { runtime, doctorCookie, caseId, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory }
+  }
+
+  function unitObservation(code: string, unitCode: string, value: number) {
+    return {
+      code: { coding: [{ code, system: 'http://loinc.org' }] },
+      effectiveDateTime: '2026-06-01T10:12:00+08:00',
+      encounter: { reference: 'urn:uuid:index-encounter' },
+      id: `unit-observation-${code}`,
+      resourceType: 'Observation',
+      status: 'final',
+      subject: { reference: 'urn:uuid:patient' },
+      valueQuantity: { code: unitCode, system: 'http://unitsofmeasure.org', unit: unitCode, value },
+    }
+  }
+
+  function unitService(id: string, sourceCode: string, targetUnit: string) {
+    const concept = {
+      code: sourceCode, display: `合成检验 ${sourceCode}`, id: `laboratory:${sourceCode}`,
+      sourceLocator: `synthetic:unit-test:${sourceCode}`, system: 'http://loinc.org', version: '2.83',
+    }
+    return laboratoryServiceSnapshotSchema.parse({
+      allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
+      executingDepartmentId: 'department-laboratory', id, localCode: id, nameZh: `合成检验 ${id}`,
+      priceFen: 0, publicationPolicyVersion: 'clinmesh-laboratory-defaults-v1', referenceConcept: concept,
+      referenceReleaseId: 'clinmesh-cn-health-2026-09-02.r1', serviceKind: 'laboratory',
+      specimen: { code: 'blood', display: '静脉血' }, tatMinutes: 30, version: 1,
+      reportDefinition: { conclusionTemplate: '合成检验报告', results: [{
+        alternateCodings: [], healthyStrategy: 'uniform', precision: 1, referenceConcept: concept,
+        referenceRange: { high: 9.5, low: 3.5, text: '冻结范围 3.5-9.5' },
+        unit: { code: targetUnit, display: targetUnit, system: 'http://unitsofmeasure.org' },
+        valueType: 'quantity',
+      }] },
+    })
+  }
+
+  function publishUnitService(
+    runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>,
+    service: ReturnType<typeof unitService>,
+  ) {
+    runtime.database.driver.prepare(`
+      INSERT INTO hospital_service_catalog (
+        workspace_id, epoch, service_id, code, name_zh, name_en, version, active, config_json
+      ) VALUES ('workspace-demo', 'epoch-1', ?, ?, ?, ?, 1, 1, ?)
+    `).run(service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service }))
+  }
+
+  it('converts equivalent Case Truth count units using the frozen laboratory service', async () => {
+    const { runtime, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase([
+      unitObservation('6690-2', '10*3/uL', 19.876),
+    ])
+    const service = unitService('synthetic-unit-wbc', '6690-2', '10*9/L')
+    publishUnitService(runtime, service)
+    const draft = await saveLaboratoryDraft(service.id, 0)
+    const request = (await issueLaboratory(draft.draftVersion)).request
+    await expect(runtime.investigation.resolveForRequest('workspace-demo', 'epoch-1', request.id))
+      .resolves.toMatchObject({ content: { results: [{
+        code: '6690-2', value: 19.876, interpretation: 'high',
+        unit: service.reportDefinition.results[0]!.unit,
+        referenceRange: service.reportDefinition.results[0]!.referenceRange,
+      }] } })
+  }, 30_000)
+
+  it.each([
+    { code: '789-8', sourceUnit: '10*6/uL', targetUnit: '10*12/L', value: 2.1234, expected: 2.1234 },
+    { code: '718-7', sourceUnit: 'g/dL', targetUnit: 'g/L', value: 10.123, expected: 101.22999999999999 },
+    { code: '2339-0', sourceUnit: 'mg/dL', targetUnit: 'mmol/L', value: 200, expected: 11.1015 },
+    { code: '777-3', sourceUnit: '10*9/L', targetUnit: '10*9/L', value: 333.1234, expected: 333.1234 },
+  ])('preserves exact $code truth while converting $sourceUnit to $targetUnit', async ({
+    code, sourceUnit, targetUnit, value, expected,
+  }) => {
+    const { runtime, doctorCookie, startedCommand, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase([
+      unitObservation(code, sourceUnit, value),
+    ])
+    const service = unitService(`synthetic-unit-${code}`, code, targetUnit)
+    if (code === '2339-0') {
+      const definition = service.reportDefinition.results[0]!
+      definition.alternateCodings = [{ code: '2339-0', system: 'http://loinc.org', version: '2.83' }]
+      definition.referenceConcept = { ...definition.referenceConcept,
+        code: '1700104A', id: 'wst-886:2026:1700104A', version: '2026',
+        system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026' }
+    }
+    publishUnitService(runtime, service)
+    const draft = await saveLaboratoryDraft(service.id, 0)
+    const request = (await issueLaboratory(draft.draftVersion)).request
+    // 发布目录随后改变，申请继续使用已冻结的单位、范围与精度。
+    runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET active = 0 WHERE service_id = ?`).run(service.id)
+    const snapshot = await runtime.investigation.resolveForRequest('workspace-demo', 'epoch-1', request.id)
+    expect(snapshot?.content.results[0]).toMatchObject({
+      value: expected, interpretation: expected > 9.5 ? 'high' : 'low',
+      unit: service.reportDefinition.results[0]!.unit,
+      referenceRange: service.reportDefinition.results[0]!.referenceRange,
+    })
+    await runtime.dispatchPending()
+    const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(detail.laboratoryRequests?.requests.find(item => item.id === request.id)).toMatchObject({
+      status: 'reported', report: { results: [{ value: expected, interpretation: expected > 9.5 ? 'high' : 'low' }] },
+    })
+    await expect(runtime.investigation.resolveForRequest('workspace-demo', 'epoch-1', request.id))
+      .resolves.toEqual(snapshot)
+  }, 30_000)
+
+  it.each([
+    { name: 'unsupported dimension', code: '6690-2', sourceUnit: 'mg/L', targetUnit: '10*9/L', value: 19.8 },
+    { name: 'another analyte cannot use the glucose factor', code: '718-7', sourceUnit: 'mg/dL', targetUnit: 'mmol/L', value: 200 },
+    { name: 'overflow', code: '718-7', sourceUnit: 'g/dL', targetUnit: 'g/L', value: Number.MAX_VALUE },
+    { name: 'wrong UCUM system', code: '6690-2', sourceUnit: '10*3/uL', targetUnit: '10*9/L', value: 19.8, system: 'urn:synthetic:wrong-unit-system' },
+    { name: 'explicit unknown glucose version', code: '2339-0', sourceUnit: 'mg/dL', targetUnit: 'mmol/L', value: 200, version: 'unknown' },
+    { name: 'unrelated leaf with extra glucose coding', code: '718-7', sourceUnit: 'mg/dL', targetUnit: 'mmol/L', value: 200, extraGlucose: true },
+    { name: 'wrong value type', code: '6690-2', sourceUnit: '10*3/uL', targetUnit: '10*9/L', value: 19.8, scalar: true },
+  ])('rejects incompatible exact truth: $name', async ({ code, sourceUnit, targetUnit, value, system, scalar, version, extraGlucose }) => {
+    const observation: Record<string, unknown> = unitObservation(code, sourceUnit, value)
+    if (version !== undefined) observation.code = { coding: [{ code, system: 'http://loinc.org', version }] }
+    if (extraGlucose) observation.code = { coding: [{ code, system: 'http://loinc.org' }, { code: '2339-0', system: 'http://loinc.org' }] }
+    if (system !== undefined) observation.valueQuantity = { code: sourceUnit, unit: sourceUnit, system, value }
+    if (scalar) {
+      Reflect.deleteProperty(observation, 'valueQuantity')
+      observation.valueString = '阳性'
+    }
+    const { runtime, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase([observation])
+    const service = unitService('synthetic-incompatible-truth', code, targetUnit)
+    publishUnitService(runtime, service)
+    const draft = await saveLaboratoryDraft(service.id, 0)
+    const request = (await issueLaboratory(draft.draftVersion)).request
+    await expect(runtime.investigation.resolveForRequest('workspace-demo', 'epoch-1', request.id))
+      .rejects.toMatchObject({ code: 'INVESTIGATION_TRUTH_INCOMPATIBLE' })
+  }, 30_000)
+
+  it('fails an incompatible panel atomically once and authorizes cancellation without allowing retry', async () => {
+    const { runtime, doctorCookie, caseId, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase([
+      unitObservation('6690-2', '10*3/uL', 19.8),
+      unitObservation('718-7', 'mg/L', 200),
+    ])
+    const service = unitService('synthetic-incompatible-panel', '6690-2', '10*9/L')
+    service.reportDefinition.results.push(unitService('unused', '718-7', 'g/L').reportDefinition.results[0]!)
+    publishUnitService(runtime, service)
+    const draft = await saveLaboratoryDraft(service.id, 0)
+    const request = (await issueLaboratory(draft.draftVersion)).request
+    const events = []
+    for (let index = 0; index < 20; index += 1) {
+      const event = await runtime.dispatcher.dispatchOnce()
+      if (event === undefined) break
+      if (event.kind === 'laboratory.report-request') events.push(event)
+    }
+    expect(events).toMatchObject([{ attempt: 1, status: 'completed' }])
+    const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`,
+      { headers: { cookie: doctorCookie } },
+    )).json())
+    const failed = detail.laboratoryRequests?.requests.find(item => item.id === request.id)
+    expect(failed).toMatchObject({ status: 'generation-failed', generationError: { code: 'INVESTIGATION_TRUTH_INCOMPATIBLE' } })
+    expect(failed?.report).toBeUndefined()
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM investigation_result_snapshot WHERE workspace_id = ? AND case_id = ?
+    `).get('workspace-demo', caseId)).toEqual({ count: 0 })
+    if (failed === undefined) throw new Error('The failed panel was not found')
+    const retryResponse = await runtime.app.request(`/api/his/v1/laboratory-requests/${failed.id}/actions/retry-generation`, {
+      body: JSON.stringify({ expectedVersions: { [`Task/${failed.taskId}`]: failed.taskVersion }, input: { expectedRequestVersion: failed.version } }),
+      headers: commandHeaders(), method: 'POST',
+    })
+    expect(retryResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await retryResponse.json())).toMatchObject({ error: { code: 'WORKFLOW_CONFLICT' } })
+    const contextResponse = await runtime.app.request('/api/agent/v1/page-contexts', {
+      body: JSON.stringify({
+        claim: { activeSection: 'laboratory', selection: { id: startedCommand.data.outpatientCaseId, kind: 'case', version: detail.encounter.versionId },
+          ui: { status: 'ready' }, version: 1, viewId: 'consultation', viewRevision: 'unit-truth-failure',
+          taskEpoch: 'a1b2c3d4-1234-4234-8234-123456789abc' },
+        client: { id: 'synthetic-unit-agent-test', revision: 1 }, dshSessionId: 'dsh-session-unit-truth',
+      }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+    })
+    expect(contextResponse.status).toBe(201)
+    const binding = agentPageContextBindingSchema.parse(await contextResponse.json())
+    expect(binding.snapshot.allowedOperationIds).toContain('outpatient.laboratory.cancel.propose')
+    const authorize = (requestId: string) => runtime.app.request('/api/agent/v1/tool-calls', {
+      body: JSON.stringify({ contextToken: binding.token, executionProof: agentExecutionProof({
+        callId: randomUUID(), contextId: binding.snapshot.id, pageRevision: agentPageBindingRevision(binding.snapshot.claim),
+        dshSessionId: binding.snapshot.dshSessionId, scopeKey: binding.snapshot.scopeKey, toolName: 'clinmesh_prepare_cancel_laboratory',
+      }), input: { requestId }, operationId: 'outpatient.laboratory.cancel.propose' }),
+      headers: { 'content-type': 'application/json', cookie: doctorCookie, origin: 'http://localhost' }, method: 'POST',
+    })
+    const wrongTarget = await authorize('missing-or-other-case-request')
+    expect(wrongTarget.status).toBe(409)
+    expect(await wrongTarget.json()).toMatchObject({ error: { code: 'AGENT_CONTEXT_STALE' } })
+    const authorized = await authorize(failed.id)
+    expect(authorized.status).toBe(201)
+    expect(agentToolAuthorizationResponseSchema.parse(await authorized.json())).toMatchObject({ status: 'authorized' })
+    // 提案授权没有执行取消；正式动作仍要求当前申请、FHIR 版本及医生身份。
+    const cancelBody = { expectedVersions: {
+      [`ServiceRequest/${failed.serviceRequestId}`]: failed.serviceRequestVersion, [`Task/${failed.taskId}`]: failed.taskVersion,
+    }, input: { expectedRequestVersion: failed.version, reasonCode: 'no-longer-needed' } }
+    const cancelled = await runtime.app.request(`/api/his/v1/laboratory-requests/${failed.id}/actions/cancel`, {
+      body: JSON.stringify(cancelBody), headers: commandHeaders(), method: 'POST',
+    })
+    expect(cancelled.status).toBe(200)
+    expect(laboratoryRequestActionResponseSchema.parse(await cancelled.json()).data.request).toMatchObject({ status: 'cancelled' })
+  }, 30_000)
+
+  it('recovers a legacy OUTPUT_INVALID request using its unchanged frozen service and truth', async () => {
+    const { runtime, doctorCookie, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase([
+      unitObservation('6690-2', '10*3/uL', 19.876),
+    ])
+    const service = unitService('synthetic-legacy-unit-recovery', '6690-2', '10*9/L')
+    publishUnitService(runtime, service)
+    const draft = await saveLaboratoryDraft(service.id, 0)
+    const request = (await issueLaboratory(draft.draftVersion)).request
+    for (let index = 0; index < 20; index += 1) {
+      const event = await runtime.dispatcher.dispatchOnce()
+      if (event?.kind === 'laboratory.start-request') break
+    }
+    // 复原升级前已完成的失败尝试；通过共享失败 Command 保留 Task 与申请的一致状态。
+    const outbox = new OutboxRepository(runtime.database)
+    const claim = outbox.claimNext({ leaseDurationMs: 60_000, leaseOwner: 'legacy-unit-fixture', now: new Date() })
+    expect(claim?.kind).toBe('laboratory.report-request')
+    if (claim === undefined) throw new Error('The report event was not found')
+    runtime.workflow.failLaboratoryResultGeneration({
+      context: { actorId: 'actor-lis-system', epoch: claim.epoch, organizationId: 'organization-clinmesh',
+        roleCode: 'lis-system', scenarioRunId: claim.scenarioRunId, workspaceId: claim.workspaceId },
+      error: { code: 'INVESTIGATION_OUTPUT_INVALID', message: 'Synthetic legacy unit mismatch' },
+      eventId: claim.eventId, requestId: request.id,
+    })
+    outbox.complete(claim, 'completed', { maxAttempts: 3, maxRetryDelayMs: 0, now: new Date(), retryDelayMs: 0 })
+    const readDetail = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`, { headers: { cookie: doctorCookie } },
+    )).json())
+    const failed = (await readDetail()).laboratoryRequests?.requests.find(item => item.id === request.id)
+    expect(failed).toMatchObject({ status: 'generation-failed', generationError: { code: 'INVESTIGATION_OUTPUT_INVALID' }, laboratoryService: service })
+    if (failed === undefined) throw new Error('The legacy failed request was not found')
+    runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET active = 0 WHERE service_id = ?`).run(service.id)
+    const retried = await runtime.app.request(`/api/his/v1/laboratory-requests/${failed.id}/actions/retry-generation`, {
+      body: JSON.stringify({ expectedVersions: { [`Task/${failed.taskId}`]: failed.taskVersion }, input: { expectedRequestVersion: failed.version } }),
+      headers: commandHeaders(), method: 'POST',
+    })
+    expect(retried.status).toBe(200)
+    await runtime.dispatchPending()
+    const recovered = (await readDetail()).laboratoryRequests?.requests.find(item => item.id === request.id)
+    expect(recovered).toMatchObject({
+      id: failed.id, status: 'reported', laboratoryService: service,
+      report: { results: [{ code: '6690-2', value: 19.876, unit: service.reportDefinition.results[0]!.unit, interpretation: 'high' }] },
+    })
+    expect(recovered?.generationError).toBeUndefined()
+  }, 30_000)
+
+  it.each([
+    new ChatCompletionsError('AI_TIMEOUT', 'Synthetic timeout'),
+    new ChatCompletionsError('AI_REQUEST_FAILED', 'Synthetic connection failure'),
+  ])('keeps automatic and manual retries for $code', async (failure) => {
+    const service = unitService(`synthetic-retry-${failure.code}`, '1988-5', 'mg/L')
+    const definition = service.reportDefinition.results[0]!
+    const output = { conclusion: '合成 C 反应蛋白升高', results: [{
+      code: '1988-5', interpretation: 'high', referenceRange: definition.referenceRange, unit: definition.unit, value: 24,
+    }] }
+    const { runtime, doctorCookie, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase(
+      [], [failure, failure, failure, output],
+    )
+    publishUnitService(runtime, service)
+    const draft = await saveLaboratoryDraft(service.id, 0)
+    const request = (await issueLaboratory(draft.draftVersion)).request
+    const attempts = []
+    for (let index = 0; index < 20; index += 1) {
+      const event = await runtime.dispatcher.dispatchOnce()
+      if (event === undefined) break
+      if (event.kind === 'laboratory.report-request') attempts.push({ attempt: event.attempt, status: event.status })
+    }
+    expect(attempts).toEqual([{ attempt: 1, status: 'failed' }, { attempt: 2, status: 'failed' }, { attempt: 3, status: 'completed' }])
+    const readDetail = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`, { headers: { cookie: doctorCookie } },
+    )).json())
+    const failed = (await readDetail()).laboratoryRequests?.requests.find(item => item.id === request.id)
+    expect(failed).toMatchObject({ status: 'generation-failed', generationError: { code: failure.code } })
+    if (failed === undefined) throw new Error('The recoverable request was not found')
+    const retried = await runtime.app.request(`/api/his/v1/laboratory-requests/${failed.id}/actions/retry-generation`, {
+      body: JSON.stringify({ expectedVersions: { [`Task/${failed.taskId}`]: failed.taskVersion }, input: { expectedRequestVersion: failed.version } }),
+      headers: commandHeaders(), method: 'POST',
+    })
+    expect(retried.status).toBe(200)
+    await runtime.dispatchPending()
+    expect((await readDetail()).laboratoryRequests?.requests.find(item => item.id === request.id)).toMatchObject({
+      status: 'reported', report: { results: [{ code: '1988-5', value: 24, interpretation: 'high' }] },
+    })
+  }, 30_000)
+
+  it('rejects ledger-less laboratory service orders and fails generation fast', async () => {
+    const { runtime, doctorCookie, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase([])
     const publishedService = laboratoryServiceSnapshotSchema.parse({
       allowedIndicationCodes: ['clinical-evaluation'],
       componentServiceIds: [],
@@ -3107,6 +3395,14 @@ describe('Synthetic Case generation HTTP contract', () => {
       }),
       expect.objectContaining({ id: legacyRequest.id, status: 'reported' }),
     ]))
+    const unsupported = detail.laboratoryRequests?.requests.find(item => item.id === publishedRequest.id)
+    if (unsupported === undefined) throw new Error('The unsupported laboratory request was not found')
+    const retryUnsupported = await runtime.app.request(`/api/his/v1/laboratory-requests/${unsupported.id}/actions/retry-generation`, {
+      body: JSON.stringify({ expectedVersions: { [`Task/${unsupported.taskId}`]: unsupported.taskVersion }, input: { expectedRequestVersion: unsupported.version } }),
+      headers: commandHeaders(), method: 'POST',
+    })
+    expect(retryUnsupported.status).toBe(409)
+    expect(apiErrorSchema.parse(await retryUnsupported.json())).toMatchObject({ error: { code: 'WORKFLOW_CONFLICT' } })
   }, 30_000)
 
   it('requeues an interrupted Patient Brief job after restart', async () => {
