@@ -104,6 +104,8 @@ const structuredClinicalDocument = {
 
 const revisedStructuredClinicalDocument = {
   ...structuredClinicalDocument,
+  familyHistory: '父亲患高血压，患者自述。',
+  allergyHistory: '青霉素过敏，患者自述。',
   assessment: '复核检验结果后考虑甲型流感，当前生命体征稳定。',
   disposition: '继续门诊治疗，按医嘱口服抗病毒药物并充分休息。',
   followUp: '三天后复诊；持续高热或出现呼吸困难时立即就医。',
@@ -554,7 +556,6 @@ async function createSignedStructuredClinicalDocument(runtime: TestRuntime, pass
       body: JSON.stringify({
         expectedVersions,
         input: {
-          consultationReviewed: true,
           commitToken: preview.commitToken,
           previewId: preview.previewId,
         },
@@ -622,7 +623,6 @@ async function createCompletionReadyConsultation(
           body: JSON.stringify({
             expectedVersions,
             input: {
-              consultationReviewed: true,
               commitToken: documentPreview.commitToken,
               previewId: documentPreview.previewId,
             },
@@ -1479,7 +1479,7 @@ describe('outpatient workflow HTTP contract', () => {
       const response = await request('clinical-document/actions/preview-sign', { expectedDraftVersion: 1 })
       expect(response.status).toBe(200)
       const preview = clinicalDocumentSignPreviewResponseSchema.parse(await response.json()).data
-      expect(preview.consultationReview).toMatchObject({ sourceCount: 1, remainingCount: 0 })
+      expect(preview).not.toHaveProperty('consultationReview')
       expect((await request('clinical-document/actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(200)
     }
   })
@@ -3361,7 +3361,6 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions,
           input: {
-            consultationReviewed: true,
             commitToken: preview.data.commitToken,
             previewId: preview.data.previewId,
           },
@@ -3399,7 +3398,6 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions,
           input: {
-            consultationReviewed: true,
             commitToken: currentPreview.data.commitToken,
             previewId: currentPreview.data.previewId,
           },
@@ -3597,7 +3595,6 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions: { [`Encounter/${encounterId}`]: '4' },
           input: {
-            consultationReviewed: true,
             commitToken: preview.commitToken,
             previewId: preview.previewId,
           },
@@ -3679,7 +3676,6 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions,
           input: {
-            consultationReviewed: true,
             commitToken: preview.commitToken,
             previewId: preview.previewId,
           },
@@ -3754,7 +3750,6 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions,
           input: {
-            consultationReviewed: true,
             commitToken: preview.commitToken,
             previewId: preview.previewId,
           },
@@ -3827,7 +3822,6 @@ describe('outpatient workflow HTTP contract', () => {
         body: JSON.stringify({
           expectedVersions: encounterVersions,
           input: {
-            consultationReviewed: true,
             commitToken: structuredPreview.commitToken,
             previewId: structuredPreview.previewId,
           },

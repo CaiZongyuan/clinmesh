@@ -11,6 +11,14 @@ const configurations = ['18', '19'].flatMap(version => [false, true].map(reduced
 configurations.push({ version: '19', reduced: false, webgl: false })
 for (const { version, reduced, webgl } of configurations) {
   test(`preserves editing and static human review on React ${version}, reduced motion=${reduced}, WebGL=${webgl}`, async ({ page }) => {
+    // Keep the hold/fade clock independent of renderer and worker scheduling.
+    // Timers, CSS transitions and WebGL frames still run in the real browser.
+    let feedbackTime = new Date('2026-09-20T09:00:00Z').getTime()
+    await page.clock.setFixedTime(feedbackTime)
+    await page.exposeFunction('advanceFeedbackClock', async (milliseconds: number) => {
+      feedbackTime += milliseconds
+      await page.clock.setFixedTime(feedbackTime)
+    })
     await page.emulateMedia({ reducedMotion: reduced ? 'reduce' : 'no-preference' })
     if (!webgl) await page.evaluate(() => {
       Object.defineProperty(HTMLCanvasElement.prototype, 'getContext', { value: () => null })

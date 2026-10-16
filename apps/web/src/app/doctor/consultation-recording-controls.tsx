@@ -26,24 +26,23 @@ export function ConsultationRecordingControls({ recording, action, disabled, mes
   }
   const labels = {
     idle: messages.consultationRecordingReady, processing: messages.consultationRecordingProcessing,
-    updated: messages.consultationRecordingUpdated, pending: messages.consultationRecordingPending,
+    updated: messages.consultationRecordingUpdated,
     paused: messages.consultationRecordingPaused, backfill: messages.consultationRecordingBackfill,
     failed: messages.consultationRecordingFailed,
   }
   const intent = recording.status === 'backfill' ? 'backfill' : recording.paused ? 'resume' : 'pause'
   const compact = {
     idle: messages.consultationRecordingIdleShort, processing: messages.consultationRecordingProcessingShort,
-    updated: messages.consultationRecordingUpdatedShort, pending: messages.consultationHistoryPending,
+    updated: messages.consultationRecordingUpdatedShort,
     paused: messages.consultationRecordingPausedShort, backfill: messages.consultationRecordingBackfillShort,
     failed: messages.consultationRecordingFailedShort,
   }
-  const pending = recording.additions.filter(addition => addition.status === 'pending').length
   const intentLabel = intent === 'backfill' ? messages.consultationRecordingStartBackfill
     : intent === 'resume' ? messages.consultationRecordingResume : messages.consultationRecordingPause
   return <div className="flex min-w-0 flex-wrap items-center gap-1" data-consultation-recording={recording.status}>
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button size="sm" variant="outline" type="button" aria-label={messages.consultationAutoRecord} />}>
-        <span role="status">{messages.consultationAutoRecord} · {compact[recording.status]}{pending > 0 ? ` ${pending}` : ''}</span>
+        <span role="status">{messages.consultationAutoRecord} · {compact[recording.status]}</span>
         <ChevronDownIcon data-icon="inline-end" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72 max-w-(--available-width)">

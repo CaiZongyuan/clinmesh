@@ -42,6 +42,7 @@ type Catalogs = DoctorInvestigationRecommendationCatalogs & {
   medications?: ReturnType<WorkflowService['doctorRecommendationMedications']>
 }
 const documentFieldLabels: Record<string, string> = {
+  allergyHistory: '过敏史', familyHistory: '家族史',
   assessment: '诊断分析', auxiliaryExamination: '辅助检查', chiefComplaint: '主诉', disposition: '处理意见',
   followUp: '随访计划', historyOfPresentIllness: '现病史', physicalExamination: '体格检查', priorMedicalHistory: '既往史',
 }

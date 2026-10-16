@@ -31,6 +31,7 @@ import {
 } from '@clinmesh/contracts/reference-data'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
+import { matchesMigrationChecksum, migrationChecksum } from './migration-checksum.ts'
 import { parseReferenceSourceArtifact } from '../reference-data/reference-source-importers.ts'
 import {
   parseCnHealthCandidateReferenceArtifact,
@@ -218,10 +219,10 @@ export function applyReferenceMigrations(
   const applied: string[] = []
   for (const migrationFile of migrationFiles) {
     const sql = readFileSync(resolve(migrationDirectory, migrationFile), 'utf8')
-    const migrationChecksum = checksum(sql)
+    const sqlChecksum = migrationChecksum(sql)
     const existing = lookup.get(migrationFile) as { checksum: string } | undefined
     if (existing !== undefined) {
-      if (existing.checksum !== migrationChecksum) {
+      if (!matchesMigrationChecksum(sql, existing.checksum)) {
         throw new Error(`Applied reference migration checksum changed: ${migrationFile}`)
       }
       continue
@@ -229,7 +230,7 @@ export function applyReferenceMigrations(
     database.driver.exec('BEGIN IMMEDIATE')
     try {
       database.driver.exec(sql)
-      record.run(migrationFile, migrationChecksum, new Date().toISOString())
+      record.run(migrationFile, sqlChecksum, new Date().toISOString())
       database.driver.exec('COMMIT')
       applied.push(migrationFile)
     } catch (error) {
@@ -257,14 +258,14 @@ export function verifyReferenceMigrations(
   ).all() as Array<{ checksum: string; migration_id: string }>
   const expected = new Map(migrationFiles.map((file) => {
     const sql = readFileSync(resolve(migrationDirectory, file), 'utf8')
-    return [file, checksum(sql)] as const
+    return [file, sql] as const
   }))
   for (const row of rows) {
-    const expectedChecksum = expected.get(row.migration_id)
-    if (expectedChecksum === undefined) {
+    const sql = expected.get(row.migration_id)
+    if (sql === undefined) {
       throw new Error(`Reference database migration is unknown: ${row.migration_id}`)
     }
-    if (expectedChecksum !== row.checksum) {
+    if (!matchesMigrationChecksum(sql, row.checksum)) {
       throw new Error(`Applied reference migration checksum changed: ${row.migration_id}`)
     }
   }
