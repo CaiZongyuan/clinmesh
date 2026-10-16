@@ -1147,7 +1147,7 @@ it.each(['Device', 'SupplyDelivery'])('reads all recommendation kinds with a vis
       return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
     }
   }()
-  const fixture = await setup(async input => ({ content: JSON.stringify({ items: [], missingInformation: [] }), model: input.model }), { syntheaProvider })
+  const fixture = await setup(async input => ({ content: JSON.stringify({ items: [], considerations: [], missingInformation: [] }), model: input.model }), { syntheaProvider })
   const before = await fixture.readCase()
   for (const kind of ['laboratory', 'diagnosis', 'prescription']) {
     expect(await fixture.read(kind)).toMatchObject({ kind, status: 'idle' })
