@@ -144,17 +144,22 @@ it.each(['withdrawn', 'unverified'] as const)('stops using imported passages aft
   expect(refreshed.missingInformation).toContain('未收到已导入的糖尿病指南或病例资料。')
 })
 
-it.each(['withdrawn', 'superseded'] as const)('excludes fixed quotations as well as full text when their source is %s', async status => {
+it.each([
+  { status: 'withdrawn', identity: 'hash' }, { status: 'superseded', identity: 'url' },
+  { status: 'withdrawn', identity: 'id' },
+] as const)('excludes fixed quotations for a $status source matched by $identity', async ({ status, identity }) => {
   const fixture = await setup('糖尿病复查，咳嗽。')
   const quotation = doctorGuidelineGroups[0]!.evidence[0]!
-  const source: GuidelineDocument['source'] = { ...document.source, id: 'synthetic-influenza-status',
+  const source: GuidelineDocument['source'] = { ...document.source,
+    id: identity === 'id' ? 'nhc-influenza-2025' : 'synthetic-influenza-status',
     title: quotation.title, url: quotation.url, sha256: quotation.sourceHash,
     license: { ...document.source.license, usage: 'unverified' } }
   fixture.writer.importDocument({ source, passages: [] })
   const original = await fixture.generate()
   expect(original.guidelines.some(item => item.id === 'nhc-influenza-2025-diagnosis')).toBe(true)
-  fixture.writer.importDocument({ source: { ...source, status, ...(status === 'superseded'
-    ? { sha256: 'a'.repeat(64) } : { url: 'https://www.who.int/synthetic-influenza-alias' }) }, passages: [] })
+  fixture.writer.importDocument({ source: { ...source, status,
+    ...(identity === 'hash' ? {} : { sha256: 'a'.repeat(64) }),
+    ...(identity === 'url' ? {} : { url: 'https://www.who.int/synthetic-influenza-alias' }) }, passages: [] })
   expect((await fixture.read()).stale).toBe(true)
   const refreshed = await fixture.generate()
   expect(refreshed.guidelines.some(item => item.sourceHash === quotation.sourceHash)).toBe(false)

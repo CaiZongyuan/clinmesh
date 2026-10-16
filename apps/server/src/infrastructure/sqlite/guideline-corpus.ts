@@ -141,7 +141,7 @@ export class GuidelineCorpus {
       for (const row of rows) {
         const source = guidelineSourceDefinitionSchema.parse(JSON.parse(row.metadata))
         if (source.status !== 'active') {
-          inactiveSources.push({ url: source.url, sourceHash: source.sha256 })
+          inactiveSources.push({ id: source.id, url: source.url, sourceHash: source.sha256 })
           continue
         }
         if (source.license.usage === 'unverified') continue

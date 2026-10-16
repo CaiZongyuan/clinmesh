@@ -14,7 +14,7 @@ import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatComple
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
-import { doctorGuidelineGroups, doctorGuidelineRevision } from './doctor-guideline-evidence.ts'
+import { doctorGuidelineGroups, doctorGuidelineRevision, doctorGuidelineSourceIds } from './doctor-guideline-evidence.ts'
 import { normalizeDoctorDiagnosisRecommendation } from './doctor-diagnosis-recommendations.ts'
 import { normalizeInvestigationRecommendation, type DoctorInvestigationRecommendationCatalogs } from './doctor-investigation-recommendations.ts'
 import { normalizePrescriptionRecommendation } from './doctor-prescription-recommendations.ts'
@@ -189,7 +189,8 @@ export class DoctorRecommendationsService {
     const retrieved = this.options.guidelines?.search(caseEvidence.filter(item => item.kind !== 'demographics')
       .map(item => item.text).join('\n'))
     const fixedEvidence = groups.flatMap(group => group.evidence).filter(evidence =>
-      !retrieved?.inactiveSources.some(source => source.sourceHash === evidence.sourceHash || source.url === evidence.url))
+      !retrieved?.inactiveSources.some(source => source.id === doctorGuidelineSourceIds.get(evidence.sourceHash)
+        || source.sourceHash === evidence.sourceHash || source.url === evidence.url))
     const guidelines = [...fixedEvidence, ...retrieved?.guidelines ?? []]
     let catalogs: DoctorRecommendationCatalogs
     if (kind === 'diagnosis') {
