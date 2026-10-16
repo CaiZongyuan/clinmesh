@@ -307,7 +307,7 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 模型桥接地址只接受 HTTP loopback origin；DSH 使用非默认端口时同步修改 `CLINMESH_DSH_MODEL_ORIGIN`。同一 Server 的全部入口共用启动时选定的模型来源，打开或关闭 Surface 不切换来源。宿主设置权限允许的用户可以修改 ClinMesh 模型，修改对该 Profile 的新任务生效，刷新和重启后仍保留；没有候选时先在 DSH 模型设置中配置 Provider。
 
-DSH 每次模型生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖，并随受信请求贯通宿主。无效结构化输出最多修复一次，每次使用独立预算；持久任务和 lease 覆盖路由解析与两次生成。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。完整预算和失败分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+DSH 一次结构化生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖。路由解析、初次生成、最多一次格式修复及有限限流恢复共用原始截止时间，每次调用只向宿主传递剩余预算；持久任务和 lease 仍覆盖路由与模型处理。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。共享时限见[有限恢复决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务预算和失败分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
 OpenAI 兼容网关的 `baseURL` 使用实际 API 根路径；需要 `/v1` 的网关不能只填写站点首页。模型列表或 HTTP 200 不证明生成可用，应核对 JSON／SSE 类型、实际内容和正常终止。模型桥对明确限流返回安全的 HTTP 429；Provider 按服务端提示在剩余预算内最多重试一次，格式修复共用这一次机会，无提示时等待一秒。诊疗建议在持续限流后停止并显示原因，稍后可人工刷新；不会自动改用其他模型。恢复合同见[记录级筛选决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
 

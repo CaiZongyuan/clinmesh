@@ -20,6 +20,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
   }
 
   async completeJson(input: JsonChatCompletionInput) {
+    const deadline = performance.now() + this.options.timeoutMs
     const model = await this.resolveModel(input.model, input.signal)
     const rateLimitRetry = { available: true }
     let issues: Array<{ code: string; path: string }> = []
@@ -29,8 +30,8 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
       const result = await this.#request({
         operation: 'complete', model, schemaName: input.schemaName, jsonSchema: input.jsonSchema,
         systemPrompt: attempt === 0 ? input.systemPrompt : `${input.systemPrompt}\nThe previous response failed validation: ${JSON.stringify(issues)}. Generate a corrected JSON object using the original data and schema. Do not include $schema or other schema metadata.`,
-        userPayload: input.userPayload, timeoutMs: this.options.timeoutMs,
-      }, input.signal, rateLimitRetry)
+        userPayload: input.userPayload,
+      }, input.signal, rateLimitRetry, deadline)
       if (result.model !== model) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the pinned route')
       try {
         let value: unknown = JSON.parse(result.content ?? '')
@@ -55,19 +56,20 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
   }
 
   async #request(payload: Record<string, unknown> & { operation: 'resolve' | 'complete' }, callerSignal?: AbortSignal,
-    rateLimitRetry?: { available: boolean }) {
-    const deadline = performance.now() + this.options.timeoutMs
+    rateLimitRetry?: { available: boolean }, deadline = performance.now() + this.options.timeoutMs) {
+    const timeoutMs = Math.ceil(deadline - performance.now())
+    if (timeoutMs < 100) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request timed out')
     // Allow the host deadline to return its safe timeout code before the transport is cancelled.
-    const signal = callerSignal === undefined ? AbortSignal.timeout(this.options.timeoutMs + 1_000)
-      : AbortSignal.any([callerSignal, AbortSignal.timeout(this.options.timeoutMs + 1_000)])
-    const retrySignal = AbortSignal.any([signal, AbortSignal.timeout(this.options.timeoutMs)])
+    const signal = callerSignal === undefined ? AbortSignal.timeout(timeoutMs + 1_000)
+      : AbortSignal.any([callerSignal, AbortSignal.timeout(timeoutMs + 1_000)])
+    const retrySignal = AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
     try {
       for (let attempt = 0; attempt < 2; attempt++) {
         signal.throwIfAborted()
         if (attempt > 0) retrySignal.throwIfAborted()
-        const body = JSON.stringify(attempt === 0 ? payload : {
-          ...payload, timeoutMs: Math.max(100, Math.floor(deadline - performance.now())),
-        })
+        const remainingMs = Math.ceil(deadline - performance.now())
+        if (remainingMs < 100) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request timed out')
+        const body = JSON.stringify(payload.operation === 'resolve' ? payload : { ...payload, timeoutMs: remainingMs })
         if (Buffer.byteLength(body) > 256 * 1024) throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'The model request exceeds the size limit')
         const response = await (this.options.fetch ?? fetch)(this.#endpoint, {
           method: 'POST', redirect: 'error', signal,

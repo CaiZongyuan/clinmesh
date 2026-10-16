@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import { z } from 'zod'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { encodeModelRoute, dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, sendConsultationMessageResponseSchema } from '@clinmesh/contracts/his'
 import { createModelBridgeHandler } from '../../dsh-web/src/model-bridge.ts'
@@ -240,7 +240,8 @@ it('reduces the retry host deadline by time already spent on the first request a
   await expect(provider.completeJson({ model: dshDefaultModel, schemaName: 'patient_dialogue_reply',
     jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
   })).rejects.toMatchObject({ code: 'AI_TIMEOUT' })
-  expect(deadlines[0]).toBe(400)
+  expect(deadlines[0]).toBeLessThanOrEqual(400)
+  expect(deadlines[0]).toBeGreaterThanOrEqual(100)
   expect(deadlines[1]).toBeLessThan(250)
   expect(deadlines[1]).toBeGreaterThanOrEqual(100)
   expect(dsh.calls[1]?.signal?.aborted).toBe(true)
@@ -360,7 +361,7 @@ it('pins the configured route while its Provider is unavailable and recovers on 
   expect(dsh.calls[0]?.provider).toBe('synthetic-provider-a')
 })
 
-it('repairs a slow invalid response with validation feedback and a fresh attempt budget', async () => {
+it('keeps a slow structured-output repair within the original generation deadline', async () => {
   const dsh = await host()
   const schema = z.object({ reply: z.string() }).strict()
   dsh.respond(async () => {
@@ -368,25 +369,86 @@ it('repairs a slow invalid response with validation feedback and a fresh attempt
     return dsh.calls.length === 1 ? { reply: 123 } : { reply: '头晕一周了。' }
   })
   const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 700, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+    schemaName: 'patient_dialogue_reply', jsonSchema: z.toJSONSchema(schema), systemPrompt: 'synthetic',
+    userPayload: { synthetic: true }, validate: value => { schema.parse(value); return true },
+  })).rejects.toMatchObject({ code: 'AI_TIMEOUT' })
+  expect(dsh.calls).toHaveLength(2)
+  expect(dsh.calls[1]?.system).toContain('invalid_type')
+  expect(dsh.calls[1]?.system).toContain('reply')
+  expect(dsh.calls[1]?.messages).toEqual(dsh.calls[0]?.messages)
+  expect(dsh.calls[1]?.signal?.aborted).toBe(true)
+})
+
+it('repairs structured output with validation feedback when the original deadline has time left', async () => {
+  const dsh = await host()
+  const schema = z.object({ reply: z.string() }).strict()
+  const deadlines: number[] = []
+  dsh.respond(async () => {
+    if (dsh.calls.length === 1) { await delay(200); return { reply: 123 } }
+    return { reply: '头晕一周了。' }
+  })
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 1000, maxResponseBytes: 2048,
+    fetch: async (url, options) => {
+      const payload = JSON.parse(String(options?.body)) as { timeoutMs: number }
+      deadlines.push(payload.timeoutMs)
+      return fetch(url, options)
+    },
+  })
   const result = await provider.completeJson({ model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
     schemaName: 'patient_dialogue_reply', jsonSchema: z.toJSONSchema(schema), systemPrompt: 'synthetic',
     userPayload: { synthetic: true }, validate: value => { schema.parse(value); return true },
   })
   expect(JSON.parse(result.content)).toEqual({ reply: '头晕一周了。' })
-  expect(dsh.calls).toHaveLength(2)
+  expect(deadlines).toHaveLength(2)
+  expect(deadlines[1]).toBeLessThanOrEqual(800)
+  expect(deadlines[1]).toBeGreaterThanOrEqual(100)
   expect(dsh.calls[1]?.system).toContain('invalid_type')
   expect(dsh.calls[1]?.system).toContain('reply')
   expect(dsh.calls[1]?.messages).toEqual(dsh.calls[0]?.messages)
+})
+
+it.each(['resolve', 'complete'])('does not dispatch another model call after the original deadline expires during %s', async stage => {
+  const dsh = await host()
+  dsh.respond(async () => dsh.calls.length === 1 ? 'invalid JSON' : { reply: '头晕一周了。' })
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 300, maxResponseBytes: 2048,
+    fetch: async (url, options) => {
+      const response = await fetch(url, options)
+      const payload = JSON.parse(String(options?.body)) as { operation: string }
+      if (payload.operation === stage) await delay(350)
+      return response
+    },
+  })
+  await expect(provider.completeJson({ model: dshDefaultModel,
+    schemaName: 'patient_dialogue_reply', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+  })).rejects.toMatchObject({ code: 'AI_TIMEOUT' })
+  expect(dsh.calls).toHaveLength(stage === 'resolve' ? 0 : 1)
 })
 
 it('enforces the configured host deadline and cancels its stream before the transport deadline', async () => {
   const dsh = await host()
   dsh.hold()
   const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 100, maxResponseBytes: 2048 })
-  await expect(provider.completeJson({ model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+  // 固定客户端时钟，单独验证宿主在最小预算下取消模型流。
+  const clock = vi.spyOn(performance, 'now').mockReturnValue(0)
+  try {
+    await expect(provider.completeJson({ model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+      schemaName: 'patient_dialogue_reply', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+    })).rejects.toMatchObject({ code: 'AI_TIMEOUT', message: 'The DSH model request timed out' })
+    expect(dsh.calls[0]?.signal?.aborted).toBe(true)
+  } finally { clock.mockRestore() }
+})
+
+it('does not start a model stream when route resolution leaves less than the minimum host budget', async () => {
+  const dsh = await host()
+  dsh.answer({ reply: '头晕一周了。' })
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 100, maxResponseBytes: 2048,
+    fetch: async (url, options) => { const response = await fetch(url, options); await delay(20); return response },
+  })
+  await expect(provider.completeJson({ model: dshDefaultModel,
     schemaName: 'patient_dialogue_reply', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
-  })).rejects.toMatchObject({ code: 'AI_TIMEOUT', message: 'The DSH model request timed out' })
-  expect(dsh.calls[0]?.signal?.aborted).toBe(true)
+  })).rejects.toMatchObject({ code: 'AI_TIMEOUT' })
+  expect(dsh.calls).toHaveLength(0)
 })
 
 it('rejects unknown business properties even alongside harmless schema metadata', async () => {

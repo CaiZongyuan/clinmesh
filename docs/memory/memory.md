@@ -70,7 +70,7 @@
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
 
-- 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；修复调用保留独立预算，服务关闭取消与模型超时分开处理。回归同时覆盖慢速首次无效响应后的修复和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+- 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；一次结构化生成的修复与限流恢复共享原始截止时间，服务关闭取消与模型超时分开处理。回归同时覆盖剩余预算内修复、耗尽后不再调用和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前时限见[有限恢复决策](../../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务与失败边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
 - 病史任务反复报来源无效时，回归须组合真实记录服务与 DSH Provider，核对领域校验是否进入修复反馈；仅验证 JSON schema 或用忽略 `validate` 的 Provider stub 会漏掉无反馈重试。覆盖修复后成功、修复耗尽后停止及显式重试，仍验证完整逐字来源和不确定表述拒绝，见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
