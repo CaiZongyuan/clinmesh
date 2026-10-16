@@ -1,12 +1,26 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render as renderComponent, screen, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import type { ReactElement } from 'react'
 import userEvent from '@testing-library/user-event'
 import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
+import { checkClinicalDocumentQualityRequestSchema, clinicalDocumentQualityControlStateSchema, type ClinicalDocumentQualityControlState } from '@clinmesh/contracts/his'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ClinicalDocumentPage, type ClinicalDocumentPageActions } from './clinical-document-page.tsx'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 
-afterEach(cleanup)
+const clients: QueryClient[] = []
+function render(element: ReactElement) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  clients.push(client)
+  const view = renderComponent(<QueryClientProvider client={client}>{element}</QueryClientProvider>)
+  return { ...view, rerender: (next: ReactElement) => view.rerender(<QueryClientProvider client={client}>{next}</QueryClientProvider>) }
+}
+afterEach(() => {
+  cleanup()
+  for (const client of clients.splice(0)) client.clear()
+  vi.unstubAllGlobals()
+})
 const content: ClinicalDocumentContent = {
   chiefComplaint: '头晕一周。', historyOfPresentIllness: '起立时明显。', priorMedicalHistory: '既往高血压。',
   familyHistory: '父亲患高血压。', allergyHistory: '无已知过敏。', physicalExamination: '查体正常。',
@@ -83,6 +97,20 @@ it('preserves open history across data refreshes, collapses new versions and res
 })
 
 it('allows read-only history review and keeps unsigned drafts free of empty history', async () => {
+  let quality: ClinicalDocumentQualityControlState | undefined
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    if (path === '/api/his/v1/doctor/cases/synthetic-case/document-quality-control/actions/check') {
+      const request = checkClinicalDocumentQualityRequestSchema.parse(JSON.parse(String(init?.body)))
+      quality = clinicalDocumentQualityControlStateSchema.parse({ caseId: 'synthetic-case', encounterId: 'encounter',
+        draftVersion: 0, clientId: request.input.clientId, clientRevision: request.input.clientRevision,
+        documentFingerprint: 'a'.repeat(64), inputFingerprint: 'b'.repeat(64), generation: 1,
+        stale: false, status: 'ready', issues: [], notices: [] })
+      return Response.json({ data: quality, auditId: 'audit-quality', effects: [], requestId: 'request-quality', warnings: [] })
+    }
+    if (path === '/api/his/v1/doctor/cases/synthetic-case/document-quality-control' && quality !== undefined) return Response.json(quality)
+    throw new Error(`Unexpected request: ${path}`)
+  }))
   const { props } = setup()
   const { rerender } = render(<ClinicalDocumentPage {...props} allowRevision={false} />)
   expect(screen.queryByRole('form')).toBeNull()
