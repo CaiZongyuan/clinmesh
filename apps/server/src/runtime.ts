@@ -238,6 +238,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const workflow = new WorkflowService(database, fhir, commands, {
       consultationRecordingEnabled: options.dshModelBridge !== undefined,
       qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
+      qualityContextStatus: context => identity.clinicalDocumentQualityContextStatus(context),
       consultationRecordingContextStatus: context => identity.consultationRecordingContextStatus(context),
       investigation,
       ...clockOptions,

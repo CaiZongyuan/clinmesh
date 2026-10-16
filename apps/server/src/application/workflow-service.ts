@@ -1171,6 +1171,7 @@ export class WorkflowService {
     options: {
       consultationRecordingEnabled?: boolean
       qualityModelAvailable?: boolean
+      qualityContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       consultationRecordingContextStatus?: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
       investigation?: InvestigationCapabilityResolver
       now?: () => Date
@@ -1188,7 +1189,7 @@ export class WorkflowService {
     this.#tokenSecret = options.tokenSecret
     this.qualityControl = new ClinicalDocumentQualityControl({
       database, commands, modelAvailable: options.qualityModelAvailable === true,
-      contextStatus: options.consultationRecordingContextStatus ?? (() => 'active'),
+      contextStatus: options.qualityContextStatus ?? (() => 'active'),
       readCase: (context, caseId) => {
         this.#assertCaseResponsibility(context, caseId)
         return doctorCaseDetailSchema.parse(this.#doctorCaseSnapshot(context, caseId))

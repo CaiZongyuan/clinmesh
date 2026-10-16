@@ -160,8 +160,8 @@ export class ClinicalDocumentQualityControl {
       ...previous, caseId: snapshot.caseId, encounterId: snapshot.encounterId, draftVersion: snapshot.draftVersion,
       documentFingerprint: hash(snapshot.document), inputFingerprint: hash(snapshot), stale,
       generation: previous?.generation ?? 0, status: overflow ? 'incomplete' : !this.options.modelAvailable ? 'unavailable' : previous?.status ?? 'idle', issues: issues.slice(0, 64),
-      notices: [...previous?.notices ?? ['仅按普通门诊模板和当前可见事实辅助检查；初诊/复诊专项清单须有明确文书上下文。'],
-        ...(overflow ? ['问题数量超过单次展示预算，检查不完整；当前仅展示前64项。'] : [])],
+      notices: [...new Set([...previous?.notices ?? ['仅按普通门诊模板和当前可见事实辅助检查；初诊/复诊专项清单须有明确文书上下文。'],
+        ...(overflow ? ['问题数量超过单次展示预算，检查不完整；当前仅展示前64项。'] : [])])],
     })
   }
 

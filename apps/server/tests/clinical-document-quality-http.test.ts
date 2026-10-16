@@ -8,17 +8,20 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
 import { clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 type ModelInput = { schemaName: string; userPayload: unknown }
-async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown>, syntheaProvider = new StubSyntheaProvider()) {
+async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown>, syntheaProvider = new StubSyntheaProvider(),
+  reply = '我头晕一周，没有胸痛。', now?: () => Date) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-quality-'))
   disposals.push(() => rm(directory, { recursive: true, force: true }))
   const bridge = { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 1000, maxResponseBytes: 256 * 1024 }
   const options: Parameters<typeof createClinMeshRuntime>[0] = {
+    ...(now === undefined ? {} : { now }),
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', outboxRetryDelayMs: 0,
@@ -31,7 +34,7 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
       if (input.operation === 'resolve') return Response.json({ model: encodeModelRoute({ provider: 'synthetic', model: 'synthetic' }) })
       const payload = input.schemaName === 'patient_persona' ? persona
         : input.schemaName === 'consultation_history_summary' ? { additions: [] }
-          : input.schemaName === 'patient_dialogue_reply' ? { reply: '我头晕一周，没有胸痛。' }
+          : input.schemaName === 'patient_dialogue_reply' ? { reply }
             : complete === undefined ? { issues: [], agentFactChecks: [] } : await complete(input)
       return Response.json({ content: JSON.stringify(payload), model: input.model })
     } }),
@@ -124,7 +127,20 @@ const qualityPayloadSchema = z.object({ document: z.record(z.string(), z.string(
   agentFacts: z.array(z.object({ id: z.string() })),
   issues: z.array(z.unknown()).optional() })
 
-it('independently verifies exact source omissions and preserves time-qualified contradictions as clinician prompts', async () => {
+async function qualityGrant(f: Awaited<ReturnType<typeof setup>>, operationId: string, ttlSeconds = 3600) {
+  const headers = { cookie: f.started.adminCookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }
+  const clientResponse = await f.runtime.app.request('/api/agent/v1/clients', { method: 'POST', headers,
+    body: JSON.stringify({ name: 'Synthetic quality checker' }) })
+  expect(clientResponse.status).toBe(200)
+  const client = agentClientSchema.parse(await clientResponse.json())
+  const granted = await f.runtime.app.request('/api/agent/v1/grants', { method: 'POST',
+    headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({ agentClientId: client.agentClientId,
+      operationIds: [operationId, 'doctor.document-quality.get'], practitionerRoleId: 'practitioner-role-outpatient-doctor', ttlSeconds }) })
+  expect(granted.status).toBe(200)
+  return agentCapabilityGrantSchema.parse(await granted.json())
+}
+
+it('independently verifies exact source omissions and shares retention across saved and unsaved scopes', async () => {
   const f = await setup(input => {
     const payload = qualityPayloadSchema.parse(input.userPayload)
     if (input.schemaName === 'clinical_document_quality_verification') return { issues: payload.issues!.map((_, index) => ({ index, supported: true })), agentFactChecks: [] }
@@ -144,6 +160,152 @@ it('independently verifies exact source omissions and preserves time-qualified c
   const candidate = await f.read('same-document')
   expect((await f.mutate('retain', { issueId: issue.id, clientId: 'same-document', expectedInputFingerprint: candidate.inputFingerprint })).status).toBe(200)
   expect((await f.read()).issues.find(item => item.id === issue.id)?.status).toBe('retained')
+})
+
+it('checks family and allergy history against saved patient facts without flagging already recorded facts or handwritten text as Agent content', async () => {
+  const reply = '我父亲患高血压。我对青霉素过敏。'
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    if (input.schemaName === 'clinical_document_quality_verification') return {
+      issues: payload.issues!.map((_, index) => ({ index, supported: true })), agentFactChecks: [],
+    }
+    const source = payload.evidence.find(item => item.kind === 'patient' && item.text === reply)
+    return { issues: source === undefined ? [] : [
+      { field: 'familyHistory', quote: '我父亲患高血压。', marker: '父亲患高血压' },
+      { field: 'allergyHistory', quote: '我对青霉素过敏。', marker: '青霉素过敏' },
+    ].filter(item => !payload.document[item.field]?.includes(item.marker)).map(item => ({
+      kind: 'omission', field: item.field, message: '已知患者事实尚未记录。', sourceQuotes: [{ evidenceId: source.id, quote: item.quote }],
+    })), agentFactChecks: [] }
+  }, new StubSyntheaProvider(), reply)
+  expect((await f.ask()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const issues = (await f.read()).issues.filter(issue => issue.kind === 'omission')
+  expect(issues.map(issue => issue.field)).toEqual(['familyHistory', 'allergyHistory'])
+  expect(issues.flatMap(issue => issue.evidence)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: 'patient', text: '我父亲患高血压。', recordedAt: expect.any(String) }),
+    expect.objectContaining({ kind: 'patient', text: '我对青霉素过敏。', recordedAt: expect.any(String) }),
+  ]))
+  expect((await f.save({ familyHistory: '患者自述父亲患高血压。', allergyHistory: '患者自述青霉素过敏。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).issues.filter(issue => issue.kind !== 'missing-field')).toEqual([])
+  expect((await f.readCase()).clinicalDocument!.draft).toMatchObject({ familyHistory: '患者自述父亲患高血压。', allergyHistory: '患者自述青霉素过敏。' })
+})
+
+it('publishes a same-time contradiction with original evidence and accepts negative verification for reasonable changes and explicit corrections', async () => {
+  const reply = '今天上午体温38.5℃。昨天没有发热。刚才说错了，现在没有胸痛。'
+  let verifications = 0
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    if (input.schemaName === 'clinical_document_quality_verification') {
+      verifications += 1
+      return { issues: payload.issues!.map((_, index) => ({ index, supported: index === 0 })), agentFactChecks: [] }
+    }
+    const source = payload.evidence.find(item => item.kind === 'patient' && item.text === reply)
+    if (source === undefined || payload.document.physicalExamination !== '今天上午体温36.5℃。') return { issues: [], agentFactChecks: [] }
+    return { issues: [
+      { kind: 'inconsistency', field: 'physicalExamination', message: '同日上午体温需要核实。', documentQuote: '今天上午体温36.5℃。',
+        sourceQuotes: [{ evidenceId: source.id, quote: '今天上午体温38.5℃。' }] },
+      ...['昨天没有发热。', '刚才说错了，现在没有胸痛。'].map(quote => ({ kind: 'inconsistency', field: 'historyOfPresentIllness',
+        message: '应由独立核验排除的候选。', documentQuote: '昨夜发热，现无胸痛。', sourceQuotes: [{ evidenceId: source.id, quote }] })),
+    ], agentFactChecks: [] }
+  }, new StubSyntheaProvider(), reply)
+  expect((await f.ask()).status).toBe(200)
+  expect((await f.save({ physicalExamination: '今天上午体温36.5℃。', historyOfPresentIllness: '昨夜发热，现无胸痛。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).issues.filter(issue => issue.kind === 'inconsistency')).toEqual([
+    expect.objectContaining({ field: 'physicalExamination', classification: 'needs-verification', evidence: [
+      expect.objectContaining({ kind: 'document', text: '今天上午体温36.5℃。' }),
+      expect.objectContaining({ kind: 'patient', text: '今天上午体温38.5℃。', recordedAt: expect.any(String) }),
+    ] }),
+  ])
+  expect(verifications).toBe(1)
+  expect((await f.read()).status).toBe('ready')
+})
+
+it('denies quality reads, checks and retention outside the responsible doctor session without modifying the draft', async () => {
+  const f = await setup()
+  expect((await f.save({ chiefComplaint: '头晕一周。' })).status).toBe(200)
+  const before = await f.readCase()
+  const state = await f.read()
+  const cookie = f.started.adminCookie
+  expect((await f.runtime.app.request(f.path)).status).toBe(401)
+  expect((await f.runtime.app.request(f.path, { headers: { cookie } })).status).toBe(403)
+  for (const [action, input] of [
+    ['check', { expectedDraftVersion: before.clinicalDocument!.draft!.version }],
+    ['retain', { issueId: state.issues[0]!.id, expectedInputFingerprint: state.inputFingerprint }],
+  ] as const) {
+    const response = await f.runtime.app.request(`${f.path}/actions/${action}`, { method: 'POST', headers: { ...f.headers(), cookie },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${f.started.encounterId}`]: before.encounter.versionId }, input }) })
+    expect(response.status).toBe(403)
+  }
+  expect((await f.readCase()).clinicalDocument).toEqual(before.clinicalDocument)
+  expect(await f.read()).toEqual(state)
+})
+
+it.each(['encounter.clinical-document.draft.set', 'doctor.document-quality.check', 'doctor.document-quality.retain'])(
+  'accepts a narrow %s Agent Grant without requiring unrelated consultation permissions', async operationId => {
+    const f = await setup()
+    const grant = await qualityGrant(f, operationId)
+    expect(grant.operationIds).not.toContain('encounter.consultation.ask')
+    const headers = { authorization: `Bearer ${grant.token}`, 'content-type': 'application/json', 'idempotency-key': randomUUID() }
+    const read = async () => {
+      const response = await f.runtime.app.request(f.path, { headers })
+      expect(response.status).toBe(200)
+      return clinicalDocumentQualityControlStateSchema.parse(await response.json())
+    }
+    const state = await read()
+    const detail = await f.readCase()
+    const draft = operationId === 'encounter.clinical-document.draft.set'
+    const input = draft ? { expectedDraftVersion: 0, document: { assessment: '', chiefComplaint: 'Agent 自述头晕一周。',
+      disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '' } }
+      : operationId.endsWith('.check') ? { expectedDraftVersion: 0 }
+        : { issueId: state.issues[0]!.id, expectedInputFingerprint: state.inputFingerprint }
+    const path = draft ? `/api/his/v1/encounters/${f.started.encounterId}/clinical-document/draft`
+      : `${f.path}/actions/${operationId.endsWith('.check') ? 'check' : 'retain'}`
+    const response = await f.runtime.app.request(path, { method: draft ? 'PUT' : 'POST', headers,
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${f.started.encounterId}`]: detail.encounter.versionId }, input }) })
+    expect(response.status, await response.clone().text()).toBe(200)
+    await f.runtime.dispatchPending()
+    if (operationId.endsWith('.retain')) expect((await read()).issues[0]!.status).toBe('retained')
+    else expect(await read()).toMatchObject({ status: 'ready', stale: false })
+    if (draft) expect((await read()).issues).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'agent-source', field: 'chiefComplaint' })]))
+    for (const [path, input] of [
+      ['actions/ask-consultation-question', { expectedConsultationVersion: detail.consultation!.version, message: '请继续说说病史。' }],
+      ['consultation-recording/actions/control', { action: 'resume', expectedRecordingVersion: detail.consultationRecording!.version }],
+    ] as const) expect((await f.runtime.app.request(`/api/his/v1/encounters/${f.started.encounterId}/${path}`, { method: 'POST',
+      headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({ expectedVersions: {
+        [`Encounter/${f.started.encounterId}`]: detail.encounter.versionId, [`Task/${detail.taskId}`]: detail.taskVersion,
+      }, input }) })).status).toBe(403)
+  },
+)
+
+it.each(['revoked', 'expired'] as const)('discards an in-flight quality result after its original Agent Grant is %s and permits trusted recovery', async invalidation => {
+  let clock = Date.now()
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>(resolve => { enter = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  const f = await setup(async () => { enter(); await held; return { issues: [], agentFactChecks: [] } },
+    new StubSyntheaProvider(), undefined, () => new Date(clock))
+  const grant = await qualityGrant(f, 'doctor.document-quality.check', 60)
+  const headers = { authorization: `Bearer ${grant.token}`, 'content-type': 'application/json', 'idempotency-key': randomUUID() }
+  const detail = await f.readCase()
+  expect((await f.runtime.app.request(`${f.path}/actions/check`, { method: 'POST', headers,
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${f.started.encounterId}`]: detail.encounter.versionId }, input: { expectedDraftVersion: 0 } }) })).status).toBe(200)
+  const dispatch = f.runtime.dispatchPending()
+  await entered
+  try {
+    if (invalidation === 'expired') clock += 61_000
+    else expect((await f.runtime.app.request(`/api/agent/v1/grants/${grant.grantId}/actions/revoke`, { method: 'POST',
+      headers: { ...f.headers(), cookie: f.started.adminCookie }, body: '{}' })).status).toBe(200)
+  } finally { release() }
+  await dispatch
+  expect((await f.runtime.app.request(f.path, { headers })).status).toBe(401)
+  expect(await f.read()).toMatchObject({ status: 'pending', stale: true })
+  expect((await f.readCase()).clinicalDocument?.draft).toBeUndefined()
+  expect((await f.mutate('check', { expectedDraftVersion: 0, refresh: true })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', stale: false })
 })
 
 it('drops a late candidate result after sources change and restores the latest queued check across restart', async () => {
@@ -221,6 +383,11 @@ it('reports excessive issue counts as incomplete and keeps the draft writable', 
   expect(state.status).toBe('incomplete')
   expect(state.notices.join('')).toContain('前64项')
   expect(state.issues).toHaveLength(64)
+  expect(new Set(state.notices).size).toBe(state.notices.length)
+  for (const issue of state.issues.slice(0, 12)) expect((await f.mutate('retain', {
+    issueId: issue.id, expectedInputFingerprint: state.inputFingerprint,
+  })).status).toBe(200)
+  expect((await f.read()).issues.filter(issue => issue.status === 'retained')).toHaveLength(12)
   expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(text)
 })
 

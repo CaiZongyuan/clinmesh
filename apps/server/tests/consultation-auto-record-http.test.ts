@@ -321,6 +321,7 @@ it.each(['\n', '\r\n'])('accepts separately cited patient statements delimited b
   expect(recorded.consultationRecording).toMatchObject({ status: 'updated', failures: [] })
   expect(recorded.clinicalDocument!.draft!.historyOfPresentIllness).toBe('发热三天；自述最高体温38.5℃')
   expect(recorded.consultation!.turns.at(-1)!.messageText).toBe(reply)
+  expect(recorded.qualityControl).toMatchObject({ status: 'ready', stale: false, draftVersion: recorded.clinicalDocument!.draft!.version })
 })
 
 it('ignores an old-only summary rewrite after a reply with no new history', async () => {

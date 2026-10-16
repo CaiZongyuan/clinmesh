@@ -216,7 +216,6 @@ export class ConsultationRecordingService {
         dataSchema: z.object({ caseId: z.string() }),
       }, transaction => {
         this.#scheduleNext(context, transaction, job.case_id)
-      this.#qualityChanged(context, transaction, job.case_id)
         return { data: { caseId: job.case_id }, effects: [] }
       })
     }
@@ -905,6 +904,7 @@ export class ConsultationRecordingService {
         WHERE workspace_id = ? AND epoch = ? AND turn_id = ?
       `).run(context.workspaceId, context.epoch, turnId)
       this.#scheduleNext(context, transaction, job.case_id)
+      this.#qualityChanged(context, transaction, job.case_id)
       return { data: { draftVersion }, effects: [
         { kind: 'updated' as const, reference: `ConsultationRecording/${job.case_id}`, versionId: turnId },
         ...(changed ? [{ kind: current.version === 0 ? 'created' as const : 'updated' as const,
