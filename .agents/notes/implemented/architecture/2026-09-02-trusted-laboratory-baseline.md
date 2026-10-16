@@ -14,7 +14,7 @@ Status: implemented
 
 `hospital_service_catalog` 继续是唯一 Hospital Service owner。管理员只发布 `laboratory-cn` panel 根，成员是 dependency-only 服务。发布使用确定性运营 policy，不调用 Catalog Enrichment；服务身份只含稳定 panel/leaf coding，不含复合 Reference Release，因此新数据 Release 重发同一 panel 会更新原服务并递增版本。
 
-Adult Reference Baseline 只适用于已冻结完整规则的成人服务。年龄按申请 Virtual Time 计算；男/女规则优先于 `all`，其他或未知性别只使用 `all`。Investigation 先读取完全兼容的 Case Truth，随后用独立 simulation bounds 和固定 SHA-256 算法生成缺项；fixed-normal 直接返回冻结字符串。精确事实不兼容、患者不适用或规则不完整都会失败。Snapshot 固定 Dataset/Reference Release、policy、规则、input hash 和逐项来源，FHIR 报告从该 Snapshot 原子生成。
+Adult Reference Baseline 只适用于已冻结完整规则的成人服务。年龄按申请 Virtual Time 计算；男/女规则优先于 `all`，其他或未知性别只使用 `all`。Investigation 先读取完全兼容的 Case Truth，随后用独立 simulation bounds 和固定 SHA-256 算法生成缺项；fixed-normal 直接返回冻结字符串。精确事实不兼容、患者不适用或规则不完整都会失败；单位兼容的受控换算边界由[真值换算决策](../bug-fix/2026-10-16-laboratory-truth-unit-conversion.md)拥有。Snapshot 固定 Dataset/Reference Release、policy、规则、input hash 和逐项来源，FHIR 报告从该 Snapshot 原子生成。
 
 ## Alternatives considered
 
