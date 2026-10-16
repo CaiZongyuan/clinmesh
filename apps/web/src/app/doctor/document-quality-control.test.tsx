@@ -189,8 +189,10 @@ it('recovers an already committed verification after its response is lost withou
   await user.click(within(issues).getByRole('button', { name: '确认保留' }))
   await user.click(await within(issues).findByText('已核实的提示 (1)'))
   expect(server.decisions).toHaveLength(1)
-  expect(within(issues).getByText(/09:30.*已核实原问诊。/)).toBeTruthy()
-  expect(within(issues).queryByText(/09:31/)).toBeNull()
+  const displayTime = new Intl.DateTimeFormat('zh-CN', { timeStyle: 'short' })
+  const reviewText = within(issues).getByText(/已核实原问诊。/).textContent
+  expect(reviewText).toContain(displayTime.format(new Date('2026-10-15T09:30:00+08:00')))
+  expect(reviewText).not.toContain(displayTime.format(new Date('2026-10-15T09:31:00+08:00')))
 })
 
 it('keeps a committed verification when an older poll finishes after its write receipt', async () => {
