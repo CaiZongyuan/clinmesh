@@ -475,6 +475,41 @@ it('checks unsaved revisions without saving, isolates browser clients and reject
   expect(await f.read('editor-1')).toMatchObject({ status: 'ready', clientRevision: 2 })
 })
 
+it('keeps Agent source warnings when an unsaved manual prefix moves the fragment within the same field', async () => {
+  const f = await setup()
+  const agentText = 'Agent 记录：近期反复口渴。'
+  expect((await f.save({ assessment: agentText }, { agentGenerated: true })).status).toBe(200)
+  const saved = (await f.readCase()).clinicalDocument!.draft!
+  const { version, updatedAt: _updatedAt, ...document } = saved
+  const response = await f.mutate('check', { expectedDraftVersion: version, clientId: 'editor-prefix', clientRevision: 1,
+    document: { ...document, assessment: `医生补充：待复查。\n${agentText}` } })
+  expect(response.status).toBe(200)
+  const candidate = await f.read('editor-prefix')
+  expect(candidate.issues.filter(issue => issue.kind === 'agent-source').flatMap(issue => issue.evidence.map(item => item.text)))
+    .toEqual([agentText])
+  expect((await f.readCase()).clinicalDocument!.draft).toEqual(saved)
+})
+
+it('accepts newly supplied sources for unchanged Agent text without attributing unchanged handwritten text to the Agent', async () => {
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }
+  })
+  const source = (await f.readCase()).consultation!.turns.find(turn => turn.speaker === 'patient')!
+  const manual = '医生保留原评估。'
+  expect((await f.save({ assessment: manual })).status).toBe(200)
+  const document = { chiefComplaint: source.messageText, assessment: manual }
+  expect((await f.save(document, { agentGenerated: true })).status).toBe(200)
+  expect((await f.read()).issues.filter(issue => issue.kind === 'agent-source').map(issue => issue.field)).toEqual(['chiefComplaint'])
+  expect((await f.save(document, { agentGenerated: true, agentFacts: [
+    { field: 'chiefComplaint', text: source.messageText, sources: [{ sourceTurnId: source.id, quote: source.messageText }] },
+    { field: 'assessment', text: manual, sources: [] },
+  ] })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).issues.filter(issue => issue.kind === 'agent-source')).toEqual([])
+  expect((await f.read()).status).toBe('ready')
+})
+
 it('attributes only Agent additions and keeps unrelated Agent fragments after a human edits another field', async () => {
   const f = await setup()
   const human = { historyOfPresentIllness: '今天头晕，无胸痛。', assessment: '待进一步明确。' }

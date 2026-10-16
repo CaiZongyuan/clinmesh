@@ -83,7 +83,9 @@ export class ClinicalDocumentQualityControl {
     agentGenerated: boolean, agentFacts: z.infer<typeof clinicalDocumentAgentFactSchema>[] = []) {
     const fragments: z.infer<typeof fragmentSchema>[] = this.#fragments(context, caseId).flatMap(fragment => {
       const tracked = trackDocumentFragment(before[fragment.field] ?? '', after[fragment.field] ?? '', fragment.start, fragment.end)
-      return tracked.modified || tracked.text !== fragment.text ? [] : [{ ...fragment, start: tracked.start, end: tracked.end }]
+      const facts = agentGenerated ? agentFacts.filter(fact => fact.field === fragment.field && fragment.text.includes(fact.text)) : []
+      return tracked.modified || tracked.text !== fragment.text ? [] : [{ ...fragment, start: tracked.start, end: tracked.end,
+        ...(facts.length === 0 ? {} : { sources: facts.flatMap(fact => fact.sources) }) }]
     })
     if (agentGenerated) for (const field of clinicalDocumentFieldSchema.options) {
       const text = after[field] ?? ''
@@ -116,8 +118,11 @@ export class ClinicalDocumentQualityControl {
     }
     if (this.options.modelAvailable) evidence.push(...this.options.history(context, caseId))
     const automatic = this.options.automaticFacts(context, caseId).filter(fact => (content[fact.field] ?? '').includes(fact.text))
-    const direct = this.#fragments(context, caseId).filter(fragment => (content[fragment.field] ?? '').slice(fragment.start, fragment.end) === fragment.text)
-      .map(({ id, field, text, sources }) => ({ id, field, text, sources }))
+    const direct = this.#fragments(context, caseId).flatMap(fragment => {
+      const tracked = trackDocumentFragment(persisted?.[fragment.field] ?? '', content[fragment.field] ?? '', fragment.start, fragment.end)
+      return tracked.modified || tracked.text !== fragment.text ? []
+        : [{ id: fragment.id, field: fragment.field, text: fragment.text, sources: fragment.sources }]
+    })
     return { caseId, encounterId: detail.encounter.id, draftVersion: persisted?.version ?? 0,
       signed: (detail.clinicalDocument?.signed.length ?? 0) > 0 || detail.encounter.status !== 'in-progress',
       document: content, evidence, agentFacts: [...automatic, ...direct], contextKey: hash(context) }
