@@ -146,6 +146,8 @@ export interface CreateClinMeshRuntimeOptions {
   investigationModel?: string
   catalogEnrichmentModel?: string
   consultationModel?: string
+  consultationRecordingModel?: string
+  consultationRecordingTimeoutMs?: number
   patientPersonaModel?: string
   now?: () => Date
   outboxRetryDelayMs?: number
@@ -223,6 +225,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const models = new GenerationModelBinding(database, chatCompletions)
     const patientPersonaModel = hostModel ?? options.patientPersonaModel ?? options.ai?.briefModel
     const consultationModel = hostModel ?? options.consultationModel ?? options.ai?.consultationModel
+    const recordingModel = options.consultationRecordingModel ?? consultationModel
+    const recordingTimeoutMs = options.consultationRecordingTimeoutMs ?? 6_000
     const investigationModel = hostModel ?? options.investigationModel ?? options.ai?.investigationModel
     const catalogEnrichmentModel = hostModel ?? options.catalogEnrichmentModel
       ?? options.ai?.catalogEnrichmentModel
@@ -415,11 +419,19 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       },
     })
     workflow.consultationRecording.recoverQueued()
+    const recordHistory = (event: Parameters<typeof workflow.consultationRecording.process>[0], timeoutMs: number) => workflow.consultationRecording.process(event, {
+      models, shutdownSignal: generationAbort.signal,
+      ...(recordingModel === undefined ? {} : { model: recordingModel }),
+      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(timeoutMs)]),
+    })
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
         'doctor.generate-recommendations': event => doctorRecommendations.process(event,
           AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]), generationAbort.signal),
-        'consultation.record-history': event => workflow.consultationRecording.process(event, {
+        'consultation.record-history': event => recordHistory(event, recordingTimeoutMs),
+        'consultation.record-history-backfill': event => recordHistory(event, aiTimeoutMs),
+        'consultation.verify-history': event => workflow.consultationRecording.verify(event, {
           models,
           shutdownSignal: generationAbort.signal,
           ...(consultationModel === undefined ? {} : { model: consultationModel }),
@@ -587,23 +599,39 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       retryDelayMs: options.outboxRetryDelayMs ?? 250,
     })
     let closed = false
-    let dispatchCycle: Promise<void> | undefined
+    const dispatchCycles = new Map<string, Promise<number>>()
     let generationCycle: Promise<void> | undefined
     let patientPersonaCycle: Promise<void> | undefined
     let laboratoryServicePublicationCycle: Promise<void> | undefined
     let closePromise: Promise<void> | undefined
     const generationAbort = new AbortController()
-    const dispatchPending = (): Promise<void> => {
-      if (closed) return Promise.resolve()
-      if (dispatchCycle !== undefined) return dispatchCycle
-      dispatchCycle = (async () => {
-        for (let handled = 0; handled < 100; handled += 1) {
-          if (closed || await dispatcher.dispatchOnce() === undefined) break
-        }
-      })().finally(() => {
-        dispatchCycle = undefined
-      })
-      return dispatchCycle
+    const lanes = [
+      { id: 'recording', concurrency: 10, filter: { kinds: ['consultation.record-history'] } },
+      { id: 'verification', concurrency: 4, filter: { kinds: ['consultation.verify-history'] } },
+      { id: 'backfill', concurrency: 1, filter: { kinds: ['consultation.record-history-backfill'] } },
+      { id: 'recommendations', concurrency: 1, filter: { kinds: ['doctor.generate-recommendations'] } },
+      { id: 'business', concurrency: 2, filter: { excludedKinds: ['consultation.record-history', 'consultation.verify-history',
+        'consultation.record-history-backfill', 'doctor.generate-recommendations'] } },
+    ]
+    const pumpLane = (lane: typeof lanes[number]): Promise<number> => {
+      return Promise.all(Array.from({ length: lane.concurrency }, (_, slot) => {
+        const key = `${lane.id}:${slot}`
+        const running = dispatchCycles.get(key)
+        if (running !== undefined) return running
+        const cycle = (async () => {
+          let handled = 0
+          while (!closed && handled < 100 && await dispatcher.dispatchOnce(lane.filter) !== undefined) handled += 1
+          return handled
+        })().finally(() => dispatchCycles.delete(key))
+        dispatchCycles.set(key, cycle)
+        return cycle
+      })).then(counts => counts.reduce((sum, count) => sum + count, 0))
+    }
+    const dispatchPending = async (): Promise<void> => {
+      for (let round = 0; !closed && round < 100; round += 1) {
+        const counts = await Promise.all(lanes.map(pumpLane))
+        if (counts.every(count => count === 0)) break
+      }
     }
     const dispatchScenarioGenerationJobs = (): Promise<void> => {
       if (closed) return Promise.resolve()
@@ -666,6 +694,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({
+      commandEvents: commands,
+      recordingUpdatesSignal: generationAbort.signal,
       doctorRecommendations,
       ...(agentIntegration === undefined ? {} : { agentIntegration }),
       fhir: {
@@ -719,7 +749,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         generationAbort.abort()
         closePromise = (async () => {
           await Promise.all([
-            dispatchCycle,
+            ...dispatchCycles.values(),
             generationCycle,
             laboratoryServicePublicationCycle,
             patientPersonaCycle,

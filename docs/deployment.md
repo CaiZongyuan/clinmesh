@@ -392,3 +392,9 @@ pnpm --filter @clinmesh/server db:migrate
 ```
 
 该操作删除本地 HIS 运行数据。独立的 `.data/clinmesh-reference.sqlite` 不在删除范围内，不需要重新导入；不要把 `CLINMESH_REFERENCE_DATABASE_PATH` 指向 operational database，也不要删除 Reference SQLite。备份与单实例约束的决策依据见 [Demo 部署架构](demo-architecture.md)。
+
+## 实时病历整理模型与负载验证
+
+`CLINMESH_AI_RECORDING_MODEL` 可为实时整理固定独立模型；不设置时沿用问诊模型，DSH 使用完整 `dsh:{"provider":"...","model":"..."}` 路由。`CLINMESH_AI_RECORDING_TIMEOUT_MS` 默认 6000，范围 100–6000；首次结构化生成与一次格式修复共用预算。核对和历史补录沿用常规模型预算。模型慢于实时预算时保留失败来源，医生可恢复；不要仅增加超时掩盖积压。
+
+启动本地 DSH 模型桥接并配置本地环境后，运行 `pnpm exec tsx apps/web/e2e/recording-benchmark.ts 600 10 /absolute/path/to/report.json`。脚本构建真实 Web，使用临时 SQLite、10 个合成病例及真实模型，每病例每 3 秒写入一份带分钟与心率数值的确认来源，连续 10 分钟，由 Playwright 读取真实病历输入框。报告包含完整来源数量、页面可见数量、P50/P95、失败/超时、积压趋势、分病例公平性、核对状态和阶段时间；未可见样本单独保留，不能只用成功分位数宣称达标。未满足完整分母或延迟目标时返回非零退出码。报告不含临床原文或凭据，临时数据库和构建在结束时清理。负载与目标见[低延迟记录规格](spec/2026-10-15-low-latency-document-recording.md)。

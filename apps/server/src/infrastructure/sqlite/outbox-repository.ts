@@ -23,6 +23,8 @@ export interface OutboxClaim extends OutboxEventView {
 }
 
 export interface ClaimOptions {
+  kinds?: readonly string[]
+  excludedKinds?: readonly string[]
   leaseDurationMs: number
   leaseOwner: string
   now: Date
@@ -97,9 +99,11 @@ export class OutboxRepository {
           (event.status IN ('queued', 'failed') AND event.next_attempt_at <= ?)
           OR (event.status = 'claimed' AND event.leased_until < ?)
         )
+        ${options.kinds === undefined ? '' : `AND event.kind IN (${options.kinds.map(() => '?').join(',')})`}
+        ${options.excludedKinds === undefined ? '' : `AND event.kind NOT IN (${options.excludedKinds.map(() => '?').join(',')})`}
         ORDER BY event.next_attempt_at, event.created_at, event.event_id
         LIMIT 1
-      `).get(now, now) as (OutboxRow & { epoch: string; workspace_id: string }) | undefined
+      `).get(now, now, ...(options.kinds ?? []), ...(options.excludedKinds ?? [])) as (OutboxRow & { epoch: string; workspace_id: string }) | undefined
       if (candidate === undefined) {
         this.#database.driver.exec('COMMIT')
         return undefined

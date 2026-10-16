@@ -69,6 +69,7 @@ import {
   deletePrescriptionDraft,
   getClinicalCatalog,
   getDoctorCase,
+  subscribeRecordingUpdates,
   getDoctorQueue,
   getEncounterCompletion,
   issueLaboratoryRequest,
@@ -107,6 +108,7 @@ import {
   getWorkspaceErrorTitle,
 } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
+import { ConsultationVerificationStatus } from './consultation-recording-controls.tsx'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { EncounterCompletionChecklist } from './completion-checklist.tsx'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
@@ -269,6 +271,11 @@ function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boo
   return request.status === 'issued' || request.status === 'accepted' || request.status === 'in-progress'
 }
 
+function usesStructuredClinicalDocument(detail: DoctorCaseDetail | undefined): boolean {
+  return detail !== undefined && (detail.consultation !== undefined || detail.consultationRecording !== undefined
+    || detail.clinicalDocument?.draft !== undefined || (detail.clinicalDocument?.signed.length ?? 0) > 0)
+}
+
 function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
   const vitals = detail.presentation?.vitalSigns
   const prefill: ClinicalDocumentContent = {
@@ -401,7 +408,8 @@ function DoctorCaseController({
   const messages = getWorkspaceMessages(locale)
   const agentReview = useAgentReview()
   const queryClient = useQueryClient()
-  const scope = [session.actor.workspaceId, session.actor.epoch] as const
+  const scope = useMemo(() => [session.actor.workspaceId, session.actor.epoch] as const,
+    [session.actor.workspaceId, session.actor.epoch])
   const [page, setPage] = useState(1)
   const [lastQueueView, setLastQueueView] = useState(queueView)
   if (lastQueueView !== queueView) {
@@ -516,10 +524,16 @@ function DoctorCaseController({
       )
       || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
       || query.state.data?.pathologyRequests?.requests.some(isAwaitingResult) === true
-      || query.state.data?.consultationRecording?.status === 'processing'
+      || (query.state.data?.consultationRecording !== undefined && query.state.data.encounter.status === 'in-progress')
       ? 1_500
       : false,
   })
+  useEffect(() => {
+    if (activeCaseId === undefined) return
+    return subscribeRecordingUpdates(activeCaseId, () => {
+      void queryClient.invalidateQueries({ queryKey: ['doctor-case', ...scope, activeCaseId] })
+    })
+  }, [activeCaseId, queryClient, scope])
   const investigationView = useMemo<InvestigationView>(() => {
     const view = investigationSelection?.caseId === activeCaseId ? investigationSelection : undefined
     const groups = caseInvestigationRequests(detail.data)
@@ -1497,7 +1511,7 @@ function DoctorCaseController({
       },
       'outpatient.first-visit.draft.set': {
         description: 'Validate and save the current first-visit draft without issuing an order.',
-        enabled: detail.data?.status === 'first-visit',
+        enabled: detail.data?.status === 'first-visit' && !usesStructuredClinicalDocument(detail.data),
         parameters: {
           type: 'object' as const,
           properties: {
@@ -1695,7 +1709,7 @@ function DoctorCaseController({
       'outpatient.revisit.draft.set': {
         description: 'Validate and save the current revisit draft without signing it.',
         enabled: detail.data?.status === 'revisit-draft'
-          && detail.data.consultation === undefined,
+          && !usesStructuredClinicalDocument(detail.data),
         parameters: {
           type: 'object' as const,
           properties: {
@@ -1743,8 +1757,8 @@ function DoctorCaseController({
       },
       'outpatient.record.draft.set': {
         description: 'Validate and save the structured clinical document draft without signing it.',
-        enabled: detail.data?.consultation !== undefined
-          && detail.data.encounter.status === 'in-progress',
+        enabled: usesStructuredClinicalDocument(detail.data)
+          && detail.data?.encounter.status === 'in-progress',
         parameters: {
           type: 'object' as const,
           properties: Object.fromEntries([
@@ -1777,13 +1791,13 @@ function DoctorCaseController({
       },
       'outpatient.preview.request': {
         description: 'Generate the current clinical sign preview without committing it.',
-        enabled: detail.data?.consultation === undefined
-          ? detail.data?.drafts?.document !== undefined
-          : detail.data?.clinicalDocument?.draft !== undefined,
+        enabled: usesStructuredClinicalDocument(detail.data)
+          ? detail.data?.clinicalDocument?.draft !== undefined
+          : detail.data?.drafts?.document !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: () => {
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          if (current.consultation === undefined) {
+          if (!usesStructuredClinicalDocument(current)) {
             return previewSign.mutateAsync({ caseId: current.caseId })
           }
           const draft = current.clinicalDocument?.draft
@@ -2332,13 +2346,13 @@ function DoctorCaseController({
       },
       'outpatient.record.sign.propose': {
         description: 'Generate a sign preview and open human review before signing clinical facts.',
-        enabled: detail.data?.consultation === undefined
-          ? detail.data?.drafts?.document !== undefined
-          : detail.data?.clinicalDocument?.draft !== undefined,
+        enabled: usesStructuredClinicalDocument(detail.data)
+          ? detail.data?.clinicalDocument?.draft !== undefined
+          : detail.data?.drafts?.document !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: async (_raw: unknown, signal: AbortSignal) => {
           const current = requireDoctorDetail(detail.data, messages.consultationUnavailable)
-          if (current.consultation !== undefined) {
+          if (usesStructuredClinicalDocument(current)) {
             const proposalScope = pageScopeRef.current
             signal.throwIfAborted()
             const draft = current.clinicalDocument?.draft
@@ -2362,6 +2376,7 @@ function DoctorCaseController({
                 content: locale => {
                   const reviewMessages = getWorkspaceMessages(locale)
                   return <div className="flex flex-col gap-3">
+                    <ConsultationVerificationStatus recording={current.consultationRecording} messages={reviewMessages} />
                     <ClinicalDocumentContentView content={preview.data.document.content} messages={reviewMessages} />
                   </div>
                 },
@@ -3546,7 +3561,7 @@ function CaseDetail({
           <DoctorCasePanel value="record">
             <div className="flex flex-col gap-4">
               <div className="min-w-0">
-                {visitNotStarted ? null : detail.consultation === undefined ? firstVisitRecord : (
+                {visitNotStarted ? null : !usesStructuredClinicalDocument(detail) ? firstVisitRecord : (
                   <ClinicalDocumentPage
                     actions={clinicalDocumentActions}
                     allowRevision={!clinicalReadOnly || correctionTarget === 'clinical-document'}

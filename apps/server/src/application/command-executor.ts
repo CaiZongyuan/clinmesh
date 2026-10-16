@@ -218,6 +218,12 @@ export class CommandTransaction {
 }
 
 export class CommandExecutor {
+  readonly #listeners = new Set<(context: ActorContext, effects: CommandEffect[]) => void>()
+
+  subscribe(listener: (context: ActorContext, effects: CommandEffect[]) => void): () => void {
+    this.#listeners.add(listener)
+    return () => { this.#listeners.delete(listener) }
+  }
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
   readonly #now: () => Date
@@ -376,6 +382,10 @@ export class CommandExecutor {
         ...receiptKey,
       )
       this.#database.driver.exec('COMMIT')
+      for (const listener of this.#listeners) {
+        // Best-effort notifications cannot turn a committed Command into a failure.
+        try { listener(context, result.effects) } catch { /* Queries recover missed notifications. */ }
+      }
       return response
     } catch (error) {
       if (this.#database.driver.inTransaction) this.#database.driver.exec('ROLLBACK')

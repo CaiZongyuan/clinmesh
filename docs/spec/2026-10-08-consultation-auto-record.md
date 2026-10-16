@@ -2,6 +2,8 @@
 
 Status: implemented
 
+实时批处理、异步语义核对、失败隔离及性能验收由[低延迟记录规格](2026-10-15-low-latency-document-recording.md)补充；来源、人工编辑与正式签署保护继续适用。
+
 本文拥有自动触发、来源校验与任务恢复要求。来源扩展和十字段整理由[全病历整理](2026-10-14-doctor-full-document-recording.md)拥有；独立家族史、过敏史、直接写入、页面展示和签署行为由[病历字段补齐与问诊自动记录](2026-10-14-clinical-document-fields.md)拥有。
 
 ## 问题与目标

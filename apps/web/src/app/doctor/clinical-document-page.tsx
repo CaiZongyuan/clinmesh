@@ -28,7 +28,7 @@ import { useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
+import { ConsultationRecordingControls, ConsultationVerificationStatus, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
@@ -139,6 +139,7 @@ export function ClinicalDocumentPage({
           disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
           messages={messages} />
       </div>
+      <ConsultationVerificationStatus recording={detail.consultationRecording} messages={messages} />
       {actions.save?.error == null ? null : <ErrorAlert
         message={getWorkspaceErrorMessage(actions.save.error, messages)}
         title={messages.saveClinicalDocumentDraft}
@@ -334,6 +335,7 @@ export function ClinicalDocumentPage({
               </AlertDialogHeader>
               {currentPreview === undefined ? null : (
                 <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">
+                  <ConsultationVerificationStatus recording={detail.consultationRecording} messages={messages} />
                   <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
                   {actions.sign.error === null ? null : <ErrorAlert title={messages.operationFailed}
                     message={getWorkspaceErrorMessage(actions.sign.error, messages)} />}

@@ -1342,8 +1342,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, fragment ownership, summary and fact-level multi-turn sources (legacy sourceTurnId fallback), automatic recorded history and safe failures (code, sourceTurnId, retrying); presentation is null when no triage record exists',
-    version: 8,
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures and asynchronous verification (pending, flagged, failed with exact fragments and sourceIds), fragment ownership and fact-level sources; source validation precedes persistence, semantic verification follows it; presentation is null when no triage record exists',
+    version: 9,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -1582,8 +1582,8 @@ const operationDefinitions = [
     mode: 'command', output: controlConsultationRecordingResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed answers and manual edits',
-    version: 3,
+    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording and unavailable semantic verification; negative verdicts are never reasked; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed sources and manual edits',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'draft', 'set'],

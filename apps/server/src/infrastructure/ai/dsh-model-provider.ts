@@ -22,13 +22,13 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
     const model = await this.resolveModel(input.model, input.signal)
     let issues: Array<{ code: string; path: string }> = []
     let validationError: unknown
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < (input.maxAttempts ?? 2); attempt++) {
       validationError = undefined
       const result = await this.#request({
         operation: 'complete', model, schemaName: input.schemaName, jsonSchema: input.jsonSchema,
         systemPrompt: attempt === 0 ? input.systemPrompt : `${input.systemPrompt}\nThe previous response failed validation: ${JSON.stringify(issues)}. Generate a corrected JSON object using the original data and schema. Do not include $schema or other schema metadata.`,
         userPayload: input.userPayload, timeoutMs: this.options.timeoutMs,
-      }, input.signal)
+      }, input.signal, input.onResponse)
       if (result.model !== model) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the pinned route')
       try {
         let value: unknown = JSON.parse(result.content ?? '')
@@ -52,7 +52,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
     })
   }
 
-  async #request(payload: unknown, callerSignal?: AbortSignal) {
+  async #request(payload: unknown, callerSignal?: AbortSignal, onResponse?: () => void) {
     // Allow the host deadline to return its safe timeout code before the transport is cancelled.
     const signal = callerSignal === undefined ? AbortSignal.timeout(this.options.timeoutMs + 1_000)
       : AbortSignal.any([callerSignal, AbortSignal.timeout(this.options.timeoutMs + 1_000)])
@@ -63,6 +63,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         method: 'POST', redirect: 'error', signal,
         headers: { 'content-type': 'application/json', authorization: `Bearer ${this.options.secret}` }, body,
       })
+      onResponse?.()
       if (response.body === null) {
         if (!response.ok) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
         throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge returned no response')

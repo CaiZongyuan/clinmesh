@@ -15,6 +15,8 @@ const detail: DoctorCaseDetail = {
   presentation: null, priorFacts: [], status: 'first-visit', taskId: 'synthetic-task', taskVersion: '1',
   clinicalDocument: { draft: { ...content, version: 1, updatedAt: '2026-10-10T09:00:00+08:00' }, signed: [] },
   consultationRecording: { hasSavedDraft: true, version: 1, paused: true, processedCount: 1, remainingCount: 2, failedCount: 1,
+    verification: { pendingCount: 1, flaggedCount: 1, failedCount: 1, issues: [{ additionId: 'synthetic-flagged',
+      field: 'historyOfPresentIllness', text: '合成待核实片段。', sourceIds: ['synthetic-source'], reason: 'verification-rejected' }] },
     status: 'paused', failures: [], additions: [] },
 }
 const host = document.createElement('div')

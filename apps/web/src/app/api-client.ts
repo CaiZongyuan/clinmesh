@@ -176,6 +176,27 @@ function resolveApiPath(path: string): string {
   return `${configuredApiBasePath}${path.slice('/api'.length)}`
 }
 
+export function subscribeRecordingUpdates(caseId: string, onChange: () => void): () => void {
+  const controller = new AbortController()
+  let retry: ReturnType<typeof setTimeout> | undefined
+  let revision: string | undefined
+  const poll = async () => {
+    try {
+      while (!controller.signal.aborted) {
+        const result = await apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/recording-events${revision === undefined ? '' : `?since=${revision}`}`,
+          z.object({ revision: z.string().regex(/^[a-f0-9]{64}$/) }).strict(), controller.signal)
+        if (controller.signal.aborted) return
+        if (result.revision !== revision) onChange()
+        revision = result.revision
+      }
+    } catch {
+      if (!controller.signal.aborted) retry = setTimeout(() => { void poll() }, 1_000)
+    }
+  }
+  void poll()
+  return () => { clearTimeout(retry); controller.abort() }
+}
+
 export class ApiClientError extends Error {
   readonly code: string
   readonly conflict: ApiConflict | undefined
