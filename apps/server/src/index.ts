@@ -22,6 +22,7 @@ const runtime = await createClinMeshRuntime({
   autoDispatchIntervalMs: 250,
   cursorSecret: config.cursorSecret,
   databasePath,
+  guidelineDatabasePath: config.guidelineDatabasePath,
   demoPassword: config.demoPassword,
   imagingAssetDirectory: resolve(config.imagingAssetDirectory),
   imagingCatalogDirectory: resolve(config.imagingCatalogDirectory),

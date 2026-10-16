@@ -55,6 +55,21 @@ pnpm reference:sync
 
 正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。`.env.example` 已默认启用 `CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite`；当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`（lock 升级后自动跟随），仅覆盖 `CLINMESH_REFERENCE_RELEASE_ID` 时才需要手动维护。同步不会修改 `.env`，也不会热切换已启动的 Server。库中缺少当前 Release 时 Server 启动失败关闭（`REFERENCE_RELEASE_NOT_FOUND`），错误消息指引重跑 `pnpm reference:sync`。跳过本步时 Server 使用内置合成 fixture（`clinmesh-hospital-reference-fixture-2026-08-28`）：诊断与检验目录为空，药品目录只有 3 条合成产品，医生无法下诊断或开检验。
 
+### 免费指南全文同步
+
+完成依赖安装后，在仓库根目录运行：
+
+```sh
+pnpm guidelines:sync
+pnpm guidelines:sync -- --check
+```
+
+同步从 `apps/server/reference-data/guideline-sources.json` 登记的免费官方地址获取文件，逐项校验 SHA-256 并提取正文；默认数据库为 `.data/clinmesh-guidelines.sqlite`，原文件缓存为 `.data/guidelines/cache`。`--check` 只读现有数据库，不下载；stdout JSON 分别报告来源总数、可检索来源数、段落数、可检索段落数、失败数及逐项状态，进度和失败原因写到 stderr。失败来源使退出码非零，损坏或失败更新保留旧版；来源撤回、被替代或用途改为未核实会优先禁用旧版，不能因下载失败继续使用。
+
+首批注册表包含 21 份国内官方 PDF 和 5 份 WHO 正文文本，具体覆盖与许可事实由[来源研究](research/2026-10-13-clinical-recommendation-guidelines.md#免费路线的首批原文与正文核验)拥有。`sourceCount` 不等于可供模型使用的数量：国内全文用途暂未核实，标为 withheld；WHO 单篇采用非商业许可，仅适用于已核实的当前科研用途，不能据此承诺商业部署权益。新增或修订来源时由维护者核对版本、状态、许可、下载地址与哈希后更新注册表并重新同步，不自动抓取未知来源或推断最新版本。
+
+Server 默认从 `CLINMESH_GUIDELINE_DATABASE_PATH` 读取该库。库存在时只读打开；缺失时继续使用原有已核短引文，库存在但格式错误时启动失败。首次建立库或改变路径后重启 Server；已打开库的内容更新可被运行中的只读连接读取，并使旧建议失效。可显式使用 `--database <path>`、`--manifest <path>`、`--cache-dir <path>`，其中 `--database` 应与 Server 配置保持一致。备份时保留注册表版本与数据库，并按需保留可重新校验的下载缓存；完整原文和派生数据不提交 Git。正文抽取不等于表格、脚注、临床适用性或所有版本现行性已完成医学审校。
+
 ## 4. 配置 AI Provider（患者档案必需）
 
 Server 在启动时按 `CLINMESH_AI_SOURCE` 选择模型来源，默认 `openai`。`pnpm dev:dsh` 自动设置为 `dsh`，复用宿主 Provider 与凭据，无需重复填写下面的地址、密钥或模型变量。在 DSH“设置 → 通用 → ClinMesh 模型”中选择具体 Provider／模型，或保留“使用 DSH 默认模型”；右侧会话的模型选择独立。
@@ -343,7 +358,7 @@ pnpm smoke:consultation:live --summary-only
 
 可用 `CLINMESH_DSH_SMOKE_REPORT=/absolute/path/to/report.json` 保存版本、代码 commit/内容 hash、处理数量和 request/audit/trace 关联的验收摘要；真实总结模式还保存固定合成回答、总结和事实来源供逐项复核，不保存凭据或 prompt。`liveJobs` 保留当前任务错误码，`liveFailedAttempts` 从不可变回执保留历次失败的错误码、阶段与有界校验诊断，重试成功后仍可追查；诊断机制见[直接记录决策](../.agents/notes/implemented/architecture/2026-10-14-consultation-direct-recording.md)。成功说明本次合成样本满足总结质量与来源断言，不能证明所有病史的语义准确；模型局限与 CI 证据边界见[测试策略](testing.md#end-to-end)。
 
-指南建议复用上述宿主、组件和真实模型配置。`native` 使用已发布合成检验目录与合成模型，从引用、草稿采纳、处方缺项走到医生正式确认；`live` 在该旅程之后对新的合成病例读取诊断、处方和检验建议，不采纳真实模型结果，也不创建临床事实。响应及引用必须属于实际提供的指南与病例资料；缺少依据是合法结果。报告只保留该模式的状态、建议及来源数量，不能将少量样本视为临床语义质量评估。
+指南建议复用上述宿主、组件和真实模型配置。`native` 使用已发布合成检验目录与合成模型，从引用、草稿采纳、处方缺项走到医生正式确认；`live` 在该旅程之后对新的合成病例读取诊断、处方和检验建议，不采纳真实模型结果，也不创建临床事实。可采纳建议的引用必须属于实际提供的指南与病例资料；只读思路引用本轮病例，明确待核实，不进入采纳或正式操作。没有可发布条目是合法结果，界面分别说明指南覆盖、院内目录、核验和系统处理限制。报告只保留该模式的状态、建议及来源数量，不能将少量样本视为临床语义质量评估。
 
 ```sh
 pnpm smoke:recommendations:native

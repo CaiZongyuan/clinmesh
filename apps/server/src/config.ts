@@ -30,6 +30,7 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_AUTH_SECRET: z.string().min(32),
   CLINMESH_CURSOR_SECRET: z.string().min(32),
   CLINMESH_DATABASE_PATH: z.string().trim().min(1),
+  CLINMESH_GUIDELINE_DATABASE_PATH: z.string().trim().min(1).optional(),
   CLINMESH_DEMO_PASSWORD: z.string().min(12),
   CLINMESH_DSH_BRIDGE_SECRET: z.string().min(32).optional(),
   CLINMESH_HOST: z.string().trim().min(1).default('127.0.0.1'),
@@ -86,6 +87,7 @@ export interface ServerConfig {
   authSecret: string
   cursorSecret: string
   databasePath: string
+  guidelineDatabasePath: string
   demoPassword: string
   dshBridgeSecret?: string
   hostname: string
@@ -107,6 +109,7 @@ export const defaultImagingAssetDirectory = resolve(import.meta.dirname, '../../
 /** 病理切片素材包与放射分开：清单目录与素材目录各自独立，安装、修复与备份互不影响。 */
 export const defaultPathologyCatalogDirectory = resolve(import.meta.dirname, '../../../pathology-assets')
 export const defaultPathologyAssetDirectory = resolve(import.meta.dirname, '../../../.data/pathology-assets')
+export const defaultGuidelineDatabasePath = resolve(import.meta.dirname, '../../../.data/clinmesh-guidelines.sqlite')
 
 function findWorkspaceEnvironmentFile(startDirectory: string): string | undefined {
   let directory = resolve(startDirectory)
@@ -156,6 +159,7 @@ export function readServerEnvironment(
   const environmentDirectory = dirname(environmentFile)
   for (const name of [
     'CLINMESH_DATABASE_PATH',
+    'CLINMESH_GUIDELINE_DATABASE_PATH',
     'CLINMESH_IMAGING_ASSET_DIRECTORY',
     'CLINMESH_IMAGING_CATALOG_DIRECTORY',
     'CLINMESH_PATHOLOGY_ASSET_DIRECTORY',
@@ -216,6 +220,7 @@ export function readServerConfig(
     authSecret: parsed.CLINMESH_AUTH_SECRET,
     cursorSecret: parsed.CLINMESH_CURSOR_SECRET,
     databasePath: parsed.CLINMESH_DATABASE_PATH,
+    guidelineDatabasePath: parsed.CLINMESH_GUIDELINE_DATABASE_PATH ?? defaultGuidelineDatabasePath,
     demoPassword: parsed.CLINMESH_DEMO_PASSWORD,
     ...(parsed.CLINMESH_DSH_BRIDGE_SECRET === undefined
       ? {}

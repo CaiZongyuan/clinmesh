@@ -1108,12 +1108,18 @@ export const clinicalDocumentQualityEvidenceSchema = z.object({
   reference: z.string().max(512).optional(),
 }).strict()
 
+const clinicalDocumentQualityExplanationSchema = z.object({
+  impact: z.string().trim().min(1).max(1_000),
+  suggestion: z.string().trim().min(1).max(1_000),
+}).strict()
+
 export const clinicalDocumentQualityIssueSchema = z.object({
   id: z.string().min(1).max(128),
   kind: z.enum(['missing-field', 'omission', 'inconsistency', 'agent-source']),
   field: clinicalDocumentFieldSchema,
   classification: z.enum(['needs-completion', 'needs-verification']),
   message: z.string().trim().min(1).max(2_000),
+  explanation: clinicalDocumentQualityExplanationSchema.optional(),
   basis: z.object({ label: z.string().min(1).max(1_000), kind: z.enum(['official', 'project']),
     url: z.url().optional(), locator: z.string().max(256).optional() }).strict(),
   evidence: z.array(clinicalDocumentQualityEvidenceSchema).max(24),
@@ -1168,6 +1174,7 @@ export const clinicalDocumentQualityGenerationSchema = z.object({
   issues: z.array(z.object({
     kind: z.enum(['missing-field', 'omission', 'inconsistency']), field: clinicalDocumentFieldSchema,
     message: z.string().trim().min(1).max(2_000),
+    explanation: clinicalDocumentQualityExplanationSchema,
     documentQuote: z.string().min(1).max(5_000).optional(),
     sourceQuotes: z.array(z.object({ evidenceId: z.string().min(1).max(256),
       quote: z.string().min(1).max(20_000) }).strict()).max(8),
