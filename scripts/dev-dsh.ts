@@ -136,10 +136,11 @@ export async function awaitDshReadiness(
   return { serverReady, hostUrl }
 }
 
-/** Server 自身会把 .env 中的这三个相对路径按 .env 所在目录绝对化；进程 env 的原始相对值会覆盖该结果，因此直启前先按同一规则绝对化。 */
+/** Server 会按 .env 所在目录解析这些路径；直启前对进程覆盖值采用相同规则。 */
 const serverResolvedEnvironmentKeys = [
   'CLINMESH_DATABASE_PATH',
   'CLINMESH_REFERENCE_DATABASE_PATH',
+  'CLINMESH_GUIDELINE_DATABASE_PATH',
   'CLINMESH_WEB_ROOT',
 ] as const
 

@@ -20,6 +20,7 @@ import { normalizeInvestigationRecommendation, type DoctorInvestigationRecommend
 import { normalizePrescriptionRecommendation } from './doctor-prescription-recommendations.ts'
 import { packDoctorRecommendationHistory } from './doctor-recommendation-evidence.ts'
 import { projectRecommendationCatalogs, type DoctorRecommendationCatalogs } from './doctor-recommendation-catalogs.ts'
+import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.ts'
 
 const stateRowSchema = z.object({
   generation: z.number().int().positive(), input_fingerprint: z.string(),
@@ -115,6 +116,7 @@ export class DoctorRecommendationsService {
   constructor(private readonly options: {
     database: ClinMeshDatabase; workflow: WorkflowService; commands: CommandExecutor; referenceData: ReferenceDataService
     models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider
+    guidelines?: GuidelineCorpus
     contextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
     investigationCatalogs: (context: ActorContext, caseId: string, kind: DoctorRecommendationKind) => Promise<DoctorInvestigationRecommendationCatalogs>
   }) {}
@@ -184,10 +186,13 @@ export class DoctorRecommendationsService {
     caseEvidence.push(...history.required, ...history.optional)
     for (const message of history.missingInformation) missingInformation.add(message)
     const groups = doctorGuidelineGroups.filter(group => applicableGroups.has(group))
-    const guidelines = groups.flatMap(group => group.evidence)
+    const retrieved = this.options.guidelines?.search(caseEvidence.filter(item => item.kind !== 'demographics')
+      .map(item => item.text).join('\n'))
+    const guidelines = [...groups.flatMap(group => group.evidence), ...retrieved?.guidelines ?? []]
     let catalogs: DoctorRecommendationCatalogs
     if (kind === 'diagnosis') {
-      const reference = groups.flatMap(group => this.options.referenceData.searchDiagnoses(context, { page: 1, pageSize: 50, query: group.terms[0]! }).items)
+      const queries = new Set([...groups.map(group => group.terms[0]!), ...retrieved?.diagnosisQueries ?? []])
+      const reference = [...queries].flatMap(query => this.options.referenceData.searchDiagnoses(context, { page: 1, pageSize: 50, query }).items)
       catalogs = { diagnoses: { local: this.options.workflow.clinicalCatalog(context).diagnoses,
         reference: [...new Map(reference.map(item => [item.id, item])).values()] } }
     } else if (kind === 'prescription') catalogs = { medications: this.options.workflow.doctorRecommendationMedications(context) }
@@ -205,7 +210,7 @@ export class DoctorRecommendationsService {
     return { context, encounter: detail.encounter, kind, caseEvidence, catalogs, guidelines,
       sourceHashes, requiredCaseEvidenceIds, historyEvidenceIds: [...history.required, ...history.optional].map(item => item.id),
       missingInformation: [...missingInformation], contextPolicyVersion: 'record-history-2026-10-16-v2',
-      guidelineRevision: doctorGuidelineRevision,
+      guidelineRevision: retrieved === undefined ? doctorGuidelineRevision : `${doctorGuidelineRevision}:${retrieved.revision}`,
       ...(kind === 'diagnosis' ? { referenceRevision: this.options.referenceData.provenance() } : {}),
       prescriptionConcluded: detail.medicationConclusion?.prescription !== undefined || detail.medicationConclusion?.noMedication !== undefined }
   }

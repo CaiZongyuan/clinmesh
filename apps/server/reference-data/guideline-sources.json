@@ -1,0 +1,911 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "id": "nhc-rare-diseases-2025",
+      "title": "86个罕见病病种诊疗指南（2025年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "guideline",
+      "version": "2025",
+      "url": "https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/202507/P020250710595668350272.pdf",
+      "format": "pdf",
+      "sha256": "d03fe69585320fea7938bf85bea9ec346a3d5d7671c7d8627fff8393679bbfef",
+      "scope": "86个罕见病病种诊疗指南（2025年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/202507/content_7031426.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "86个罕见病病种"
+          ],
+          "diagnosisQueries": [
+            "86个罕见病病种"
+          ]
+        }
+      ],
+      "publishedAt": "2025-06-17"
+    },
+    {
+      "id": "nhc-influenza-2025",
+      "title": "流行性感冒诊疗方案（2025年版）",
+      "publisher": "国家卫生健康委办公厅、国家中医药局综合司",
+      "documentType": "official-protocol",
+      "version": "2025",
+      "url": "https://www.nhc.gov.cn/ylyjs/zcwj/202501/f8fcecca59a048bebc4a71847ce57594/files/1741764832851_94226.pdf",
+      "downloadUrl": "https://www.nhc.gov.cn/ylyjs/zcwj/202501/f8fcecca59a048bebc4a71847ce57594/files/1741764832851_94226.pdf",
+      "format": "pdf",
+      "sha256": "d19f8cba72af08fd11fe17c0d6c3614c9aaac8d8c77fa803e7e9b999abea1125",
+      "scope": "流行性感冒诊疗方案（2025年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/home/2014-02/23/content_5046258.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "流感",
+            "发热",
+            "咳嗽",
+            "influenza",
+            "fever",
+            "cough"
+          ],
+          "diagnosisQueries": [
+            "流感"
+          ]
+        }
+      ],
+      "publishedAt": "2025-01-20"
+    },
+    {
+      "id": "nhc-hypertension-wst-872-2025",
+      "title": "WS/T 872—2025 基层医疗卫生机构高血压防治管理标准",
+      "publisher": "国家卫生健康委员会",
+      "documentType": "health-standard",
+      "version": "2025",
+      "url": "https://www.nhc.gov.cn/fzs/c100048/202509/2f3f7cce449145f8b361e70b3ed4ae9a/files/WS%20T%20872%E2%80%942025-20250930105429913.pdf",
+      "downloadUrl": "https://www.nhc.gov.cn/fzs/c100048/202509/2f3f7cce449145f8b361e70b3ed4ae9a/files/WS%20T%20872%E2%80%942025-20250930105429913.pdf",
+      "format": "pdf",
+      "sha256": "4c099a4a656b72d6524c7acd05359da10b4dd861def402b80acd94a307d410d6",
+      "scope": "WS/T 872—2025 基层医疗卫生机构高血压防治管理标准；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/home/2014-02/23/content_5046258.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "高血压",
+            "hypertension",
+            "blood pressure",
+            "I10"
+          ],
+          "diagnosisQueries": [
+            "高血压"
+          ]
+        }
+      ],
+      "publishedAt": "2025-09-19"
+    },
+    {
+      "id": "nhc-breast-cancer-2022",
+      "title": "乳腺癌诊疗指南（2022年版）",
+      "publisher": "国家卫生健康委员会",
+      "documentType": "guideline",
+      "version": "2022",
+      "url": "https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930/files/1732863054702_65919.pdf",
+      "downloadUrl": "https://www.nhc.gov.cn/yzygj/c100068/202204/0c1f7d3aca0545abbeb02030ce255930/files/1732863054702_65919.pdf",
+      "format": "pdf",
+      "sha256": "9d3b51f20abe6b80fa2f6273d371c36e14554bfecceb84a274ffe60195c8ffae",
+      "scope": "乳腺癌诊疗指南（2022年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/home/2014-02/23/content_5046258.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "乳腺",
+            "breast"
+          ],
+          "diagnosisQueries": [
+            "乳腺"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nhc-obesity-2024",
+      "title": "肥胖症诊疗指南（2024年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "guideline",
+      "version": "2024",
+      "url": "https://www.gov.cn/zhengce/zhengceku/202410/content_6981734.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/202410/P020241020715873679737.pdf",
+      "format": "pdf",
+      "sha256": "8d7c5c87f8e58f56231e251b1aa588b9d640e74d32dbec2a45e68dcf141274c3",
+      "scope": "肥胖症诊疗指南（2024年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/202410/content_6981734.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "肥胖症"
+          ],
+          "diagnosisQueries": [
+            "肥胖症"
+          ]
+        }
+      ],
+      "publishedAt": "2024-10-12"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-01",
+      "title": "儿童再生障碍性贫血诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/b29c857050a84dfa81d66451982c40da.pdf",
+      "format": "pdf",
+      "sha256": "1c59c1c384b92271c1a6fc713f96fd57911cc27c29d942e48964c4b1ebad0ad6",
+      "scope": "儿童再生障碍性贫血诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童再生障碍性贫血"
+          ],
+          "diagnosisQueries": [
+            "儿童再生障碍性贫血"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-02",
+      "title": "儿童原发性免疫性血小板减少症诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/8308752d0648474489c722ecc8276173.pdf",
+      "format": "pdf",
+      "sha256": "2939507007af4fbe76e9d464f747ca7016308b249df59c799a9d3809fc2e3cc1",
+      "scope": "儿童原发性免疫性血小板减少症诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童原发性免疫性血小板减少症"
+          ],
+          "diagnosisQueries": [
+            "儿童原发性免疫性血小板减少症"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-03",
+      "title": "儿童血友病诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/280f9bcb5bea4aa3999945042854842e.pdf",
+      "format": "pdf",
+      "sha256": "219aee6a13ffc27f7d47ea8fefbde1853176e5b323d3af36df5c79edfb3eca30",
+      "scope": "儿童血友病诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童血友病"
+          ],
+          "diagnosisQueries": [
+            "儿童血友病"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-04",
+      "title": "儿童噬血细胞综合征诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/564dead118774a2da3c5699340ae7c50.pdf",
+      "format": "pdf",
+      "sha256": "f1f3ce53727c000bc29229e90013b167376127ee4fa17ca8f3366b7540ffb9f5",
+      "scope": "儿童噬血细胞综合征诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童噬血细胞综合征"
+          ],
+          "diagnosisQueries": [
+            "儿童噬血细胞综合征"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-05",
+      "title": "儿童淋巴母细胞淋巴瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/aaffd36f541548feaec2c9aa7e590bb7.pdf",
+      "format": "pdf",
+      "sha256": "0dc3ef63e3b3b8dd8efb8fc702e225a6017b7322c8fc202fd6ba360dbd92ee6f",
+      "scope": "儿童淋巴母细胞淋巴瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童淋巴母细胞淋巴瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童淋巴母细胞淋巴瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-06",
+      "title": "儿童霍奇金淋巴瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/9cc1df76296844308e797fc7744305fa.pdf",
+      "format": "pdf",
+      "sha256": "f4674a21a85f10ced6c6a169fa67a9d9e0b5c0d68535bf51c9ef9ff58987e0ac",
+      "scope": "儿童霍奇金淋巴瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童霍奇金淋巴瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童霍奇金淋巴瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-07",
+      "title": "儿童成熟B细胞淋巴瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/14dd79d1082446e99c3faba3218f703b.pdf",
+      "format": "pdf",
+      "sha256": "159871e3330fac5ad99b2ae6251bae8c4c61c9920072f40fd86037c7ce6346a4",
+      "scope": "儿童成熟B细胞淋巴瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童成熟B细胞淋巴瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童成熟B细胞淋巴瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-08",
+      "title": "儿童ALK阳性间变性大细胞淋巴瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/1c672c6cb8a542c9882bcad1755bf74c.pdf",
+      "format": "pdf",
+      "sha256": "9a2fd42f579880b0613c27f5717048ac1b531d6ad08d011c24d8f0c6ebde7c03",
+      "scope": "儿童ALK阳性间变性大细胞淋巴瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童ALK阳性间变性大细胞淋巴瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童ALK阳性间变性大细胞淋巴瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-09",
+      "title": "儿童神经母细胞瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/da502a439ad3453fb6800a8bfc0b4deb.pdf",
+      "format": "pdf",
+      "sha256": "c72b0f2da12526fc8bb1766cb13b603806fc6ceeeee5673d0720e5be3811efe1",
+      "scope": "儿童神经母细胞瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童神经母细胞瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童神经母细胞瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-10",
+      "title": "儿童及青少年骨肉瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/ec93ba85bc3541de9822d2e37226e7a8.pdf",
+      "format": "pdf",
+      "sha256": "36eaf3279cb2362ef5351fa22aa5c71f666642d970211c0167874d5ddc828d36",
+      "scope": "儿童及青少年骨肉瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童及青少年骨肉瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童及青少年骨肉瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-11",
+      "title": "儿童及青少年尤文肉瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/e02943aaccad42789c0b359594e65f9d.pdf",
+      "format": "pdf",
+      "sha256": "a279d452374947a30df524402d74f0d54ff2d1871de1f7b741054ff74afcef9d",
+      "scope": "儿童及青少年尤文肉瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童及青少年尤文肉瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童及青少年尤文肉瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-12",
+      "title": "儿童及青少年横纹肌肉瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/617e6f7bcd8e4022b3e9de4b004867ee.pdf",
+      "format": "pdf",
+      "sha256": "b0c307e94eac3caf96e52a82b2f405e09bc044edf552927d8679b8f405186e13",
+      "scope": "儿童及青少年横纹肌肉瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童及青少年横纹肌肉瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童及青少年横纹肌肉瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-13",
+      "title": "儿童及青少年非横纹肌肉瘤类软组织肉瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/af65aa8fe3ff404c961516bcf5592b3b.pdf",
+      "format": "pdf",
+      "sha256": "8eb99250e5deeb7a018f2f6e0a4316b02e4cafb31503dcdc097732566f772642",
+      "scope": "儿童及青少年非横纹肌肉瘤类软组织肉瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童及青少年非横纹肌肉瘤类软组织肉瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童及青少年非横纹肌肉瘤类软组织肉瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-14",
+      "title": "儿童肝母细胞瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/bda71c3bb97b44e7a1e9ad2721e1bab6.pdf",
+      "format": "pdf",
+      "sha256": "54152da0a3e8f86b1cd20d42252c168d56c69b1559418dc1818cf483128d091d",
+      "scope": "儿童肝母细胞瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童肝母细胞瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童肝母细胞瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-15",
+      "title": "儿童肾母细胞瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/34babceca4aa47eba3f2efd835bc54ca.pdf",
+      "format": "pdf",
+      "sha256": "c413694d54fa7a5687bb71c803b7f3189884bfd36103a0d7cadea2ce66bba3be",
+      "scope": "儿童肾母细胞瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童肾母细胞瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童肾母细胞瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "nhc-pediatric-oncohematology-2019-16",
+      "title": "儿童视网膜母细胞瘤诊疗规范(2019年版）",
+      "publisher": "国家卫生健康委员会办公厅",
+      "documentType": "official-protocol",
+      "version": "2019",
+      "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+      "downloadUrl": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/5452452/files/c0a8c6976e5d4b328ce821ba89687688.pdf",
+      "format": "pdf",
+      "sha256": "247f9e80d810b60f312a4d579fa7be8c77c41e4d0fd129ecb568185c11c5b048",
+      "scope": "儿童视网膜母细胞瘤诊疗规范(2019年版）；以原文适用人群、诊疗场景及版本为准。",
+      "status": "active",
+      "license": {
+        "id": "official-publication-rights-unverified",
+        "url": "https://www.gov.cn/zhengce/zhengceku/2019-11/15/content_5452452.htm",
+        "usage": "unverified"
+      },
+      "topics": [
+        {
+          "terms": [
+            "儿童视网膜母细胞瘤"
+          ],
+          "diagnosisQueries": [
+            "儿童视网膜母细胞瘤"
+          ]
+        }
+      ],
+      "publishedAt": "2019-09-04"
+    },
+    {
+      "id": "who-hypertension-2021",
+      "title": "Guideline for the pharmacological treatment of hypertension in adults",
+      "publisher": "World Health Organization",
+      "documentType": "guideline",
+      "version": "2021",
+      "url": "https://www.who.int/publications/i/item/9789240033986",
+      "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/26e99f3f-08ac-45c5-86f8-350af8cd548c/content",
+      "format": "text",
+      "sha256": "55e885409f25c79c8d5adf88c343e216840ebf1f5ebd13854cf2267020dea431",
+      "scope": "非妊娠成人高血压药物治疗；结合心血管风险、合并症、用药与随访条件；2021版，保留原文限定，不代表中国本地指南。",
+      "status": "active",
+      "license": {
+        "id": "CC-BY-NC-SA-3.0-IGO",
+        "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+        "usage": "non-commercial"
+      },
+      "topics": [
+        {
+          "terms": [
+            "高血压",
+            "hypertension",
+            "blood pressure",
+            "I10"
+          ],
+          "diagnosisQueries": [
+            "高血压"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "who-diabetes-medicines-2018",
+      "title": "Guidelines on second- and third-line medicines and type of insulin for the control of blood glucose levels in non-pregnant adults with diabetes mellitus",
+      "publisher": "World Health Organization",
+      "documentType": "guideline",
+      "version": "2018",
+      "url": "https://www.who.int/publications/i/item/9789241550284",
+      "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/3f0d5b5d-dff2-489b-8d37-da35562f898a/content",
+      "format": "text",
+      "sha256": "311c71cedc9f33c850dd690094a1d276e6dccf7df69f7844b80fabdfc5a72c60",
+      "scope": "资源受限初级医疗中的非妊娠成人糖尿病二三线药物及胰岛素选择；2018版，不是二甲双胍起始剂量或固定疗程的说明书。",
+      "status": "active",
+      "license": {
+        "id": "CC-BY-NC-SA-3.0-IGO",
+        "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+        "usage": "non-commercial"
+      },
+      "topics": [
+        {
+          "terms": [
+            "糖尿病",
+            "diabetes",
+            "血糖",
+            "glucose",
+            "胰岛素",
+            "insulin"
+          ],
+          "diagnosisQueries": [
+            "糖尿病"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "who-mhgap-2023",
+      "title": "Mental Health Gap Action Programme (mhGAP) guideline for mental, neurological and substance use disorders",
+      "publisher": "World Health Organization",
+      "documentType": "guideline",
+      "version": "3rd edition, 2023",
+      "url": "https://www.who.int/publications/i/item/9789240084278",
+      "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/ae7d9ad1-615e-4cd9-8e9d-f980db77ca29/content",
+      "format": "text",
+      "sha256": "2470706e541fa814f1e42aef5471aad47e923fc0d80b338be6add1fb3cec1aa9",
+      "scope": "非专科卫生人员对精神、神经与物质使用障碍的干预；第三版2023，按年龄、人群与章节条件核对。",
+      "status": "active",
+      "license": {
+        "id": "CC-BY-NC-SA-3.0-IGO",
+        "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+        "usage": "non-commercial"
+      },
+      "topics": [
+        {
+          "terms": [
+            "抑郁",
+            "depression",
+            "depressive"
+          ],
+          "diagnosisQueries": [
+            "抑郁"
+          ]
+        },
+        {
+          "terms": [
+            "焦虑",
+            "anxiety"
+          ],
+          "diagnosisQueries": [
+            "焦虑"
+          ]
+        },
+        {
+          "terms": [
+            "癫痫",
+            "epilepsy",
+            "seizure"
+          ],
+          "diagnosisQueries": [
+            "癫痫"
+          ]
+        },
+        {
+          "terms": [
+            "精神病",
+            "psychosis",
+            "psychotic"
+          ],
+          "diagnosisQueries": [
+            "精神病"
+          ]
+        },
+        {
+          "terms": [
+            "双相",
+            "bipolar"
+          ],
+          "diagnosisQueries": [
+            "双相"
+          ]
+        },
+        {
+          "terms": [
+            "痴呆",
+            "dementia"
+          ],
+          "diagnosisQueries": [
+            "痴呆"
+          ]
+        },
+        {
+          "terms": [
+            "自伤",
+            "自杀",
+            "self-harm",
+            "suicide"
+          ],
+          "diagnosisQueries": [
+            "自杀"
+          ]
+        },
+        {
+          "terms": [
+            "酒精",
+            "alcohol"
+          ],
+          "diagnosisQueries": [
+            "酒精"
+          ]
+        },
+        {
+          "terms": [
+            "物质使用",
+            "药物依赖",
+            "substance use",
+            "drug use disorder"
+          ],
+          "diagnosisQueries": [
+            "依赖综合征"
+          ]
+        },
+        {
+          "terms": [
+            "儿童心理",
+            "儿童精神",
+            "child mental",
+            "developmental"
+          ],
+          "diagnosisQueries": [
+            "儿童行为"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "who-pen-2020",
+      "title": "WHO package of essential noncommunicable (PEN) disease interventions for primary health care",
+      "publisher": "World Health Organization",
+      "documentType": "official-protocol",
+      "version": "2020",
+      "url": "https://www.who.int/publications/i/item/9789240009226",
+      "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/14021c81-cbf9-49c9-b3cf-bca2fa5de0cb/content",
+      "format": "text",
+      "sha256": "2bfa28d6d0905aa9b8e6974e6c9b816a1a89feb949d4cc8a9b2e3ef1bdff2b7e",
+      "scope": "初级医疗基本非传染病干预包；心血管病、糖尿病、哮喘和COPD；2020版，按资源与人群条件使用。",
+      "status": "active",
+      "license": {
+        "id": "CC-BY-NC-SA-3.0-IGO",
+        "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+        "usage": "non-commercial"
+      },
+      "topics": [
+        {
+          "terms": [
+            "高血压",
+            "hypertension",
+            "blood pressure",
+            "I10"
+          ],
+          "diagnosisQueries": [
+            "高血压"
+          ]
+        },
+        {
+          "terms": [
+            "糖尿病",
+            "diabetes",
+            "血糖",
+            "glucose",
+            "胰岛素",
+            "insulin"
+          ],
+          "diagnosisQueries": [
+            "糖尿病"
+          ]
+        },
+        {
+          "terms": [
+            "心血管",
+            "心脏病",
+            "cardiovascular",
+            "coronary"
+          ],
+          "diagnosisQueries": [
+            "冠心病"
+          ]
+        },
+        {
+          "terms": [
+            "哮喘",
+            "asthma"
+          ],
+          "diagnosisQueries": [
+            "哮喘"
+          ]
+        },
+        {
+          "terms": [
+            "慢阻肺",
+            "慢性阻塞性肺病",
+            "慢性阻塞性肺疾病",
+            "COPD",
+            "chronic obstructive"
+          ],
+          "diagnosisQueries": [
+            "慢性阻塞性肺病"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "who-physical-activity-2020",
+      "title": "WHO guidelines on physical activity and sedentary behaviour",
+      "publisher": "World Health Organization",
+      "documentType": "guideline",
+      "version": "2020",
+      "url": "https://www.who.int/publications/i/item/9789240015128",
+      "downloadUrl": "https://iris.who.int/server/api/core/bitstreams/718570db-809d-4fa8-aff5-a3fe11654d02/content",
+      "format": "text",
+      "sha256": "fe91cbf5ee2fb29315a3359f42a005c11e8d167630da72bf826098adf0bb6c46",
+      "scope": "儿童、成人、老年及特定人群的体力活动和久坐建议；2020版，保留年龄、妊娠产后、慢性病及残障限定。",
+      "status": "active",
+      "license": {
+        "id": "CC-BY-NC-SA-3.0-IGO",
+        "url": "https://creativecommons.org/licenses/by-nc-sa/3.0/igo/",
+        "usage": "non-commercial"
+      },
+      "topics": [
+        {
+          "terms": [
+            "体力活动",
+            "运动",
+            "久坐",
+            "physical activity",
+            "sedentary"
+          ],
+          "diagnosisQueries": []
+        }
+      ]
+    }
+  ]
+}
