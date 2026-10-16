@@ -1,11 +1,50 @@
 import { expect, type Page } from '@playwright/test'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { syntheticGuidelineDocument, syntheticGuidelineMarker, syntheticGuidelineParagraph } from '../../server/tests/fixtures/guideline-corpus.ts'
+import { recommendationProcessingMarker, recommendationReasoningMarker } from './doctor-recommendations-fixture.ts'
 
 export async function runRecommendationJourney({ page, read }: { page: Page; read: () => Promise<DoctorCaseDetail> }) {
   await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   const history = page.getByLabel('现病史', { exact: true })
   const originalHistory = await history.inputValue()
+  const reasoningMarker = recommendationReasoningMarker
+  await history.fill(reasoningMarker)
+  await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+  await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(reasoningMarker)
+  for (const target of [
+    { tab: '诊断', panel: '诊断建议' }, { tab: '检验检查', panel: '检验建议' },
+  ]) {
+    await page.getByRole('tab', { name: target.tab, exact: true }).click()
+    const panel = page.getByRole('region', { name: target.panel, exact: true })
+    const thoughts = panel.getByRole('region', { name: '待核实思路', exact: true })
+    await expect(thoughts).toBeVisible()
+    await expect(thoughts.getByRole('article')).toHaveCount(2)
+    const direct = thoughts.getByRole('article', { name: '合成体位相关头晕的评估思路', exact: true })
+    await expect(direct.getByText(reasoningMarker, { exact: true })).toBeVisible()
+    await expect(direct.getByText('询问起立时是否加重，以决定是否进行卧立位血压评估。', { exact: true })).toBeVisible()
+    await expect(thoughts.getByRole('button')).toHaveCount(0)
+    await expect(thoughts.getByRole('link')).toHaveCount(0)
+    await expect(panel.getByRole('button', { name: /^采纳 / })).toHaveCount(0)
+    await expect(panel.getByText('暂无可采纳的建议', { exact: true })).toHaveCount(0)
+    await expect(panel.getByRole('alert', { name: '指南覆盖', exact: true })).toContainText('未通过当前指南支持核验')
+    await expect(panel.getByRole('alert', { name: '院内目录', exact: true })).toContainText('未匹配当前可执行的本院目录')
+    await expect(panel.getByRole('alert', { name: '核验未通过', exact: true })).toContainText('不能改写为已排除')
+    await expect(thoughts.getByText('合成被核验拦截的确定性结论', { exact: true })).toHaveCount(0)
+    const unchanged = await read()
+    expect(unchanged.diagnosis?.draft).toBeUndefined()
+    expect(unchanged.diagnosis?.confirmation).toBeUndefined()
+    expect(unchanged.laboratoryRequests?.draft).toBeUndefined()
+    expect(unchanged.laboratoryRequests?.requests ?? []).toEqual([])
+  }
+  await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+  const processingMarker = recommendationProcessingMarker
+  await history.fill(processingMarker)
+  await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+  await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(processingMarker)
+  await page.getByRole('tab', { name: '诊断', exact: true }).click()
+  await expect(page.getByRole('region', { name: '诊断建议', exact: true })
+    .getByRole('alert', { name: '系统处理限制', exact: true })).toContainText('模型本轮未形成可发布的建议或待核实思路')
+  await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   await history.fill(syntheticGuidelineMarker)
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
   await expect.poll(async () => (await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(syntheticGuidelineMarker)
@@ -79,7 +118,8 @@ export async function runRecommendationJourney({ page, read }: { page: Page; rea
   expect((await read()).laboratoryRequests?.requests ?? []).toEqual([])
   await page.getByRole('button', { name: '开具检验申请', exact: true }).click()
   await expect.poll(async () => (await read()).laboratoryRequests?.requests.length).toBe(1)
-  return { importedGuidelineViewed: true, importedSourceHash: syntheticGuidelineDocument.source.sha256,
+  return { caseReasoningViewed: true, caseReasoningNotAdoptable: true, classifiedNoticesViewed: true,
+    rejectedReasoningWithheld: true, importedGuidelineViewed: true, importedSourceHash: syntheticGuidelineDocument.source.sha256,
     importedGuidelineNotAdopted: true, diagnosisConfirmed: true, prescriptionIssued: true,
     laboratoryIssued: true, missingPrescriptionFieldsPreserved: true }
 }

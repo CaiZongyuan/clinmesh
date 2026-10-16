@@ -1,12 +1,15 @@
 import { z } from 'zod'
 import { join } from 'node:path'
 import {
-  doctorCaseEvidenceSchema, doctorRecommendationKindSchema, doctorRecommendationSuggestionSchema,
+  doctorCaseEvidenceSchema, doctorRecommendationConsiderationSchema, doctorRecommendationKindSchema, doctorRecommendationSuggestionSchema,
   guidelineEvidenceSchema,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { JsonChatCompletionInput } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { syntheticGuidelineDocument, syntheticGuidelineMarker } from '../../server/tests/fixtures/guideline-corpus.ts'
 import { GuidelineCorpus } from '../../server/src/infrastructure/sqlite/guideline-corpus.ts'
+
+export const recommendationReasoningMarker = '合成待核实评估：患者近一周反复头晕；头晕与体位的关系尚未明确。'
+export const recommendationProcessingMarker = '合成处理说明验收：本轮不输出任何候选或思路。'
 
 export function createRecommendationGuidelineDatabase(directory: string): string {
   const databasePath = join(directory, 'guidelines.sqlite')
@@ -30,10 +33,25 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
     return { complete: true, selectedEvidenceIds: payload.historyEvidence.map(item => item.id) }
   }
   if (input.schemaName === 'doctor_recommendation_verification') {
-    const payload = z.object({ items: z.array(doctorRecommendationSuggestionSchema) }).parse(input.userPayload)
-    return { items: payload.items.map(item => ({ id: item.id, guidelineSupported: true, caseSupported: true,
-      applicable: true, qualifiersPreserved: true,
-      ...(item.kind === 'prescription' ? { prescriptionFields: {
+    const payload = z.object({ items: z.array(doctorRecommendationSuggestionSchema),
+      considerations: z.array(doctorRecommendationConsiderationSchema).optional(),
+      guidelines: z.array(guidelineEvidenceSchema), caseEvidence: z.array(doctorCaseEvidenceSchema),
+    }).parse(input.userPayload)
+    const entries = [...payload.items, ...payload.considerations ?? []]
+    for (const item of entries) {
+      if (item.caseEvidenceIds.some(id => !payload.caseEvidence.some(evidence => evidence.id === id))) {
+        throw new Error('Synthetic verification requires actual case evidence')
+      }
+    }
+    if (payload.items.some(item => item.guidelineEvidenceIds.some(id => !payload.guidelines.some(evidence => evidence.id === id)))) {
+      throw new Error('Synthetic verification requires actual guideline evidence')
+    }
+    return { items: entries.map(item => ({ id: item.id,
+      guidelineSupported: 'kind' in item && !item.id.endsWith('-downgraded'), caseSupported: true,
+      applicable: true, qualifiersPreserved: !item.id.endsWith('-rejected'),
+      ...(item.id.endsWith('-rejected') ? { reason: '原文仅记录体位关系未明确，不能改写为已排除。' }
+        : item.id.endsWith('-downgraded') ? { reason: '所引指南条款未支持本项合成判断。' } : {}),
+      ...('kind' in item && item.kind === 'prescription' ? { prescriptionFields: {
         doseText: true, frequencyCode: true, courseDays: false, quantity: false,
       } } : {}),
     })) }
@@ -49,6 +67,34 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
       medications: z.array(z.object({ id: z.string(), nameZh: z.string() })).optional(),
     }),
   }).parse(input.userPayload)
+  if (payload.caseEvidence.some(item => item.text.includes(recommendationProcessingMarker))) {
+    return { items: [], considerations: [], missingInformation: [] }
+  }
+  const reasoningEvidence = payload.caseEvidence.find(item => item.text === recommendationReasoningMarker)
+  if (reasoningEvidence !== undefined && (payload.kind === 'diagnosis' || payload.kind === 'laboratory')) {
+    const clause = payload.guidelines.find(item => item.id === (payload.kind === 'diagnosis'
+      ? 'ws-t-872-2025-treatment' : 'ws-t-872-2025-initial-assessment'))
+    if (clause === undefined) throw new Error('Synthetic reasoning fixture requires the baseline hypertension clause')
+    const reasoning = {
+      id: `synthetic-case-reasoning-${payload.kind}`, label: '合成体位相关头晕的评估思路',
+      rationale: '当前记录反复头晕，可先核实与体位变化的关系，不能据此确诊。',
+      supportingInformation: ['现病史记录近一周反复头晕。'],
+      opposingInformation: ['尚未记录头晕与体位变化的明确联系，不能据此确诊。'],
+      missingInformation: ['询问起立时是否加重，以决定是否进行卧立位血压评估。'], caseEvidenceIds: [reasoningEvidence.id],
+    }
+    const diagnosis = payload.catalogs.diagnoses?.local.find(item => item.code === 'I10')
+    const laboratory = payload.catalogs.laboratory?.items.find(item => item.nameZh === '合成白细胞计数')
+    const candidate = payload.kind === 'diagnosis'
+      ? { kind: payload.kind, catalogItemId: diagnosis?.id }
+      : { kind: payload.kind, catalogItemId: laboratory?.id, indicationCode: laboratory?.allowedIndicationCodes[0] }
+    if (candidate.catalogItemId === undefined) throw new Error('Synthetic reasoning fixture requires a matching baseline catalog item')
+    return { items: [
+      { ...reasoning, ...candidate, id: `${reasoning.id}-downgraded`, guidelineEvidenceIds: [clause.id] },
+      { ...reasoning, ...candidate, id: `${reasoning.id}-catalog`, label: '合成未开展的目录候选',
+        catalogItemId: 'synthetic-unavailable-catalog', guidelineEvidenceIds: [clause.id] },
+    ], considerations: [reasoning, { ...reasoning, id: `${reasoning.id}-rejected`, label: '合成被核验拦截的确定性结论',
+      rationale: '合成患者已证实排除体位性头晕。' }], missingInformation: [] }
+  }
   const importedEvidence = payload.caseEvidence.find(item => item.text.includes(syntheticGuidelineMarker))
   if (payload.kind === 'diagnosis' && importedEvidence !== undefined) {
     const clause = payload.guidelines.find(item => item.title === syntheticGuidelineDocument.source.title
