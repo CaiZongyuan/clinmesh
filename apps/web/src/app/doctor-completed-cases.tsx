@@ -672,7 +672,7 @@ function ClinicalDocumentFacts({ content, messages }: {
   content: DoctorCompletedCaseDetail['clinicalDocuments'][number]['content']
   messages: ReturnType<typeof getWorkspaceMessages>
 }): React.JSX.Element {
-  const facts: Array<[label: string, value: string]> = 'plan' in content
+  const facts: Array<[label: string, value: string | undefined]> = 'plan' in content
     ? [
         [messages.assessment, content.assessment],
         [messages.clinicalPlan, content.plan],
@@ -680,6 +680,8 @@ function ClinicalDocumentFacts({ content, messages }: {
     : [
         [messages.chiefComplaint, content.chiefComplaint],
         [messages.historyOfPresentIllness, content.historyOfPresentIllness],
+        [messages.familyHistory, content.familyHistory],
+        [messages.allergyHistory, content.allergyHistory],
         [messages.physicalExamination, content.physicalExamination],
         [messages.assessment, content.assessment],
         [messages.disposition, content.disposition],
@@ -687,10 +689,10 @@ function ClinicalDocumentFacts({ content, messages }: {
       ]
   return (
     <dl className="grid gap-x-5 gap-y-3 sm:grid-cols-2">
-      {facts.map(([label, value]) => (
+      {facts.map(([label, value]) => value === undefined ? null : (
         <div className="min-w-0" key={label}>
           <dt className="text-xs text-muted-foreground">{label}</dt>
-          <dd className="mt-1 whitespace-pre-wrap break-words text-sm">{value}</dd>
+          <dd className="mt-1 whitespace-pre-wrap break-words text-sm">{value || messages.clinicalHistoryNotRecorded}</dd>
         </div>
       ))}
     </dl>

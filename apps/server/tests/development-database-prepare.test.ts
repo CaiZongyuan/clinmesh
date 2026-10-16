@@ -45,12 +45,12 @@ describe('development database preparation', () => {
       databasePath,
       referenceDatabasePath,
     })).resolves.toMatchObject({
-      operational: { schemaVersion: 66 },
+      operational: { schemaVersion: 70 },
       reference: { schemaVersion: 10 },
     })
 
     const operational = openClinMeshDatabase({ busyTimeoutMs: 5_000, databasePath })
-    expect(verifyMigrations(operational)).toMatchObject({ schemaVersion: 66 })
+    expect(verifyMigrations(operational)).toMatchObject({ schemaVersion: 70 })
     operational.close()
     const reference = openReferenceDatabase({
       busyTimeoutMs: 5_000,

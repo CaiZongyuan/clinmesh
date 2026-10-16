@@ -9,11 +9,12 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { chromium, expect, type Request } from '@playwright/test'
 import { z } from 'zod'
-import { doctorCaseDetailSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema } from '../packages/contracts/src/his.ts'
+import { doctorCaseDetailSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, consultationRecordingErrorCodeSchema } from '../packages/contracts/src/his.ts'
 import { doctorRecommendationStateSchema } from '../packages/contracts/src/doctor-recommendations.ts'
 import { decodeModelRoute } from '../packages/contracts/src/model-bridge.ts'
 import { createClinMeshRuntime } from '../apps/server/src/runtime.ts'
 import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model-provider.ts'
+import { recordingSourceDiagnosticSchema } from '../apps/server/src/application/consultation-history-summary.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../apps/server/tests/fixtures/consultation.ts'
 import { journeyReplies, runRecordingJourney } from '../apps/web/e2e/consultation-recording-journey.ts'
 import { recommendationFixture } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
@@ -51,12 +52,12 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'scripts/smoke-dsh-consultation.ts', 'apps/web/e2e/consultation-recording-journey.ts', 'apps/web/e2e/consultation-recording-journey.spec.ts',
   'package.json', 'pnpm-lock.yaml', 'tsconfig.browser.json',
   'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
-  'apps/server/src/application/agent-integration-service.ts', 'apps/server/src/application/workflow-service.ts',
-  'apps/server/src/app.ts', 'apps/dsh-web/src/agent-proof-bridge.ts', 'apps/dsh-web/src/execution-proof.ts',
-  'apps/dsh-web/src/client/doctor-task.ts', 'apps/web/src/app/surface-agent-publisher.ts',
-  'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0061_consultation-recording-sources.sql',
-  'packages/contracts/src/his.ts', 'packages/contracts/src/agent.ts',
-  'apps/web/src/app/doctor/consultation-history-review.tsx',
+  'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0062_consultation-direct-recording.sql', 'packages/contracts/src/his.ts',
+  'apps/server/drizzle/0060_z-recording-branch-staging.sql', 'apps/server/drizzle/0061_clinical-document-history-fields.sql',
+  'apps/server/drizzle/0061_consultation-recording-sources.sql', 'apps/server/drizzle/0063_integrated-document-recording.sql',
+  'apps/web/src/app/doctor/clinical-document-page.tsx',
+  'apps/web/src/app/doctor/clinical-document-updates.tsx', 'apps/web/src/app/doctor/clinical-document-updates.css',
+  'apps/web/src/app/doctor/doctor-case-controller.tsx',
   'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
   'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
   'packages/contracts/src/doctor-recommendations.ts', 'packages/contracts/src/model-bridge.ts',
@@ -389,10 +390,8 @@ export function apply(ctx) {
   expect(doctorSource.messageId).toBeTruthy()
   expect(doctorSource.rpcId).toBeTruthy()
   expect((await calls()).filter(call => call.kind === 'native-call').length).toBe(callsBeforeDoctor)
-  await page.locator('[data-clinical-document-field="physicalExamination"]').getByRole('button', { name: '查看来源', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText(doctorContent)
-  await expect(page.getByRole('dialog')).toContainText('医生')
-  await page.getByRole('dialog').press('Escape')
+  await expect(page.locator('[data-clinical-document-field="physicalExamination"] textarea')).toHaveValue('神志清楚，四肢活动正常')
+  await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
   report.doctorSupplement = { sourceCount: 1, automaticFields: 4, nativeToolCalls: 0 }
   await updateControl({ stage: 'initial' })
   phase = 'recording-journey'
@@ -420,7 +419,7 @@ export function apply(ctx) {
       await expect.poll(async () => (await read()).clinicalDocument!.draft!.assessment).toBe(assessment)
       const current = (await read()).clinicalDocument!.draft!
       const draft = clinicalDocumentDraftContentSchema.parse(Object.fromEntries([
-        'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition', 'followUp',
+        'allergyHistory', 'familyHistory', 'assessment', 'auxiliaryExamination', 'chiefComplaint', 'disposition', 'followUp',
         'historyOfPresentIllness', 'physicalExamination', 'priorMedicalHistory',
       ].map(key => [key, current[key as keyof typeof current]])))
       await nativeCall('clinmesh_fill_clinical_document_draft', { ...draft, assessment: '原生 Agent 草稿评估，待进一步核对。',
@@ -550,13 +549,13 @@ export function apply(ctx) {
           const recording = (await readLive()).consultationRecording!
           if (recording.status === 'failed') throw new Error('Live history generation failed')
           return recording.status
-        }, { timeout: 370_000 }).toBe('pending')
+        }, { timeout: 370_000 }).toBe('updated')
       }
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       const detail = await readLive()
-      const additions = detail.consultationRecording!.additions.filter(addition => addition.status === 'pending')
-      expect(detail.clinicalDocument?.draft).toBeUndefined()
-      report.liveEvidence = { draftUnchanged: true,
+      const additions = detail.consultationRecording!.additions.filter(addition => addition.status === 'applied')
+      expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).not.toBe('')
+      report.liveEvidence = { draftRecorded: true,
         replies: liveReplies, additions: additions.map(({ summary, facts }) => ({ summary, facts })) }
       phase = 'live-summary-quality'
       expect(additions.length).toBeGreaterThan(0)
@@ -587,18 +586,24 @@ export function apply(ctx) {
       const merged = additions.find(addition => addition.field === 'historyOfPresentIllness'
         && replyTurnIds.every(id => addition.facts!.some(fact => fact.sources.some(source => source.sourceTurnId === id))))
       expect(merged).toBeDefined()
-      phase = 'live-summary-source-dialog'
-      await page.locator('[data-consultation-addition="pending"]').filter({ hasText: merged!.summary! })
-        .getByRole('button', { name: '查看来源', exact: true }).click()
-      await expect(page.getByRole('dialog', { name: '患者原回答', exact: true }).locator('blockquote')).toHaveText(liveReplies)
-      await page.keyboard.press('Escape')
-      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'pending',
+      phase = 'live-summary-recorded-document'
+      await expect(page.getByLabel('现病史', { exact: true })).toHaveValue(history)
+      await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
+      report.live = { elapsedMs: Math.round(performance.now() - begun), additions: additions.length, status: 'updated',
         sourceVerified: true, summary: history, replies: liveReplies, facts: additions.map(addition => addition.facts),
-        draftUnchanged: true, multiTurnSourceDialog: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
+        draftRecorded: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
       liveMode = true
       }
     } finally {
       report.liveJobs = liveRuntime.database.driver.prepare('SELECT status, error_code FROM consultation_recording_job').all()
+      report.liveFailedAttempts = z.array(z.object({ response_json: z.string() })).parse(liveRuntime.database.driver.prepare(
+        "SELECT response_json FROM command_receipt WHERE operation = 'consultation.history.fail' ORDER BY rowid",
+      ).all()).map(row => z.object({ data: z.object({
+        code: consultationRecordingErrorCodeSchema,
+        diagnostic: recordingSourceDiagnosticSchema.partial({ reason: true }).extend({
+          stage: z.enum(['summary', 'verification', 'apply']),
+        }).optional(),
+      }) }).parse(JSON.parse(row.response_json)).data)
       hospital = original
       await liveRuntime.close()
     }

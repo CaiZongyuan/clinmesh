@@ -39,7 +39,6 @@ import {
   clinicalDocumentDraftResponseSchema,
   clinicalDocumentSignPreviewResponseSchema,
   cancelClinicalDocumentSignResponseSchema,
-  consultationSignReviewSchema,
   clinicalDocumentSignResponseSchema,
   clinicalPresentationSchema,
   clinicalDocumentRevisionResponseSchema,
@@ -791,7 +790,9 @@ const clinicalDocumentSections = [
   { code: 'chief-complaint', field: 'chiefComplaint', title: '主诉' },
   { code: 'history-of-present-illness', field: 'historyOfPresentIllness', title: '现病史' },
   { code: 'prior-medical-history', field: 'priorMedicalHistory', title: '既往史' },
-  { code: 'physical-examination', field: 'physicalExamination', title: '查体' },
+  { code: 'family-history', field: 'familyHistory', title: '家族史' },
+  { code: 'allergy-history', field: 'allergyHistory', title: '过敏史' },
+  { code: 'physical-examination', field: 'physicalExamination', title: '体格检查' },
   { code: 'auxiliary-examination', field: 'auxiliaryExamination', title: '辅助检查' },
   { code: 'assessment', field: 'assessment', title: '评估' },
   { code: 'disposition', field: 'disposition', title: '处置' },
@@ -6257,25 +6258,6 @@ export class WorkflowService {
     }
   }
 
-  #consultationSignReview(context: ActorContext, caseId: string) {
-    const consultation = this.#consultationState(context, caseId)
-    const recording = this.consultationRecording.read(context, caseId)
-    const progress = this.consultationRecording.signingProgress(context, caseId)
-    const { sourceCount } = progress
-    if (consultation === undefined && sourceCount === undefined) return null
-    return consultationSignReviewSchema.parse({
-      consultationVersion: consultation?.version ?? 0,
-      ...(sourceCount === undefined ? {} : { sourceCount }),
-      remainingCount: progress.remainingCount,
-      failedCount: recording?.failedCount ?? 0,
-      paused: recording?.paused ?? false,
-      conflictCount: recording?.additions.filter(addition => addition.status === 'pending'
-        || (addition.status === 'applied' && addition.reviewStatus === 'undo-pending')).length ?? 0,
-      unreviewedCount: recording?.additions.filter(addition => addition.status === 'applied'
-        && addition.reviewStatus === 'unreviewed').length ?? 0,
-    })
-  }
-
   cancelStructuredClinicalDocumentSign(input: {
     context: ActorContext; encounterId: string; previewId: string;
     expectedVersions: Record<string, string>; idempotencyKey: string
@@ -6307,6 +6289,13 @@ export class WorkflowService {
     })
   }
 
+  #consultationSignSnapshot(context: ActorContext, caseId: string) {
+    return {
+      consultationVersion: this.#consultationState(context, caseId)?.version ?? 0,
+      sourceCount: this.consultationRecording.signingProgress(context, caseId).sourceCount ?? 0,
+    }
+  }
+
   previewStructuredClinicalDocumentSign(input: {
     context: ActorContext
     encounterId: string
@@ -6314,7 +6303,6 @@ export class WorkflowService {
     expectedVersions: Record<string, string>
     idempotencyKey: string
   }): CommandResponse<{
-    consultationReview: z.infer<typeof consultationSignReviewSchema> | null
     commitToken: string
     document: { content: ClinicalDocumentContent; version: number }
     expiresAt: string
@@ -6322,7 +6310,14 @@ export class WorkflowService {
   }> {
     return this.#commands.execute({
       context: input.context,
-      dataSchema: clinicalDocumentSignPreviewResponseSchema.shape.data,
+      dataSchema: clinicalDocumentSignPreviewResponseSchema.shape.data.extend({
+        consultationReview: z.object({
+          consultationVersion: z.number().int().nonnegative(), remainingCount: z.number().int().nonnegative(),
+          sourceCount: z.number().int().nonnegative().optional(),
+          failedCount: z.number().int().nonnegative(), paused: z.boolean(),
+          conflictCount: z.number().int().nonnegative(), unreviewedCount: z.number().int().nonnegative(),
+        }).strict().nullable().optional(),
+      }).transform(({ consultationReview: _consultationReview, ...data }) => data),
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
@@ -6353,7 +6348,6 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
       }
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
-      const consultationReview = this.#consultationSignReview(input.context, outpatientCase.case_id)
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(`clinical-document-sign:${previewId}`)}`
       const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
@@ -6380,11 +6374,10 @@ export class WorkflowService {
         expiresAt,
         encounterVersion,
         this.#actorContextHash(input.context),
-        JSON.stringify(consultationReview),
+        JSON.stringify(this.#consultationSignSnapshot(input.context, outpatientCase.case_id)),
       )
       return {
         data: {
-          consultationReview,
           commitToken,
           document: { content: document, version: draft.version },
           expiresAt,
@@ -6400,7 +6393,6 @@ export class WorkflowService {
   }
 
   signStructuredClinicalDocument(input: {
-    consultationReviewed?: boolean
     commitToken: string
     context: ActorContext
     encounterId: string
@@ -6421,7 +6413,6 @@ export class WorkflowService {
       expectedVersions: input.expectedVersions,
       idempotencyKey: input.idempotencyKey,
       input: {
-        ...(input.consultationReviewed === undefined ? {} : { consultationReviewed: input.consultationReviewed }),
         commitToken: input.commitToken,
         encounterId: input.encounterId,
         previewId: input.previewId,
@@ -6482,18 +6473,15 @@ export class WorkflowService {
       }
       const document = clinicalDocumentContentSchema.parse(JSON.parse(draft.content_json))
       const previewDocument = clinicalDocumentContentSchema.parse(JSON.parse(preview.summary_json))
+      const preparedSnapshot = preview.consultation_review_json === null ? null : z.object({
+        consultationVersion: z.number().int().nonnegative(),
+        sourceCount: z.number().int().nonnegative().default(0),
+      }).parse(JSON.parse(preview.consultation_review_json))
+      if (JSON.stringify(preparedSnapshot) !== JSON.stringify(this.#consultationSignSnapshot(input.context, outpatientCase.case_id))) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Consultation or source snapshot changed; cancel preparation and create a fresh preview')
+      }
       if (JSON.stringify(previewDocument) !== JSON.stringify(document)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document draft version has changed')
-      }
-      const review = this.#consultationSignReview(input.context, outpatientCase.case_id)
-      const preparedReview = consultationSignReviewSchema.nullable().parse(
-        preview.consultation_review_json === null ? null : JSON.parse(preview.consultation_review_json))
-      if (JSON.stringify(review) !== JSON.stringify(preparedReview)) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'Consultation changed; cancel preparation and review a fresh preview')
-      }
-      if (review !== null && (review.remainingCount > 0 || review.conflictCount > 0 || review.unreviewedCount > 0)
-        && input.consultationReviewed !== true) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'Review unfinished answers and history conflicts before signing')
       }
       if (this.#signedClinicalDocumentRoot(input.context, outpatientCase.case_id) !== undefined) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Clinical Document is already signed')

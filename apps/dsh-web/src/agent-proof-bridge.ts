@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createHash } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+import { assertObjectJsonSchema, validateJsonSchemaValue, type ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-user-questions'
 import { agentExecutionProofPayloadSchema, agentToolCatalog, isDoctorReadOperation } from '@clinmesh/contracts/agent'
@@ -31,6 +31,12 @@ const toolBindingSchema = z.object({
     pageRevision: z.object({ const: z.string() }),
   }),
 })
+const unboundContextReadSchema = z.object({
+  type: z.literal('object'),
+  properties: z.object({}).strict().optional(),
+  required: z.array(z.string()).max(0).optional(),
+  additionalProperties: z.boolean().optional(),
+}).strict()
 const humanSourceSchema = z.object({ kind: z.literal('user'), rpcId: z.string().min(1).max(256) })
 const questionReplySourceSchema = z.object({ kind: z.literal('user-question-reply'),
   callId: z.string().min(1).max(256), outcome: z.literal('answered') })
@@ -344,26 +350,36 @@ export function installAgentProofBridge(ctx: Context, secret: string,
           reason: 'CLINMESH_HOST_SESSION_REQUIRED: 当前调用未关联 DSH Agent 会话，尚未执行。请从打开 ClinMesh 工作台的 DSH 会话调用；参数补全无法修复会话关联。',
         }
       }
-      const current = toolBindingSchema.safeParse(ctx.tools.get(execution.name, execution.agent)?.parameters)
+      const currentParameters = ctx.tools.get(execution.name, execution.agent)?.parameters
+      const current = toolBindingSchema.safeParse(currentParameters)
       const executionRead = !current.success && doctorReadNames.has(execution.name)
       const sourceKey = `${executionKey(execution)}\u0000${execution.name}`
       const source = callSources.get(sourceKey)
       callSources.delete(sourceKey)
       const binding = executionRead ? directoryBinding(ctx, execution.agent) : bindingFromArguments(execution.arguments)
-      if (binding === undefined || (!executionRead && (!current.success
-        || current.data.properties.scopeKey.const !== binding.scopeKey
-        || current.data.properties.pageRevision.const !== binding.pageRevision))) {
-        return {
-          kind: 'deny',
-          reason: bindingMismatchReason(ctx, execution.agent),
-        }
-      }
       const originalDoctor = bindingFromParameters(execution.agent?.session.requestHeader?.()?.tools
         ?.find(tool => tool.name === 'clinmesh_select_doctor_section')?.parameters)
         ?? bindingFromParameters(execution.agent?.session.requestHeader?.()?.tools
           ?.find(tool => tool.name === 'clinmesh_select_doctor_case')?.parameters)
       const doctorCall = doctorToolNames.has(execution.name)
-        || directoryBinding(ctx, execution.agent) !== undefined || originalDoctor !== undefined
+        || ctx.tools.get('clinmesh_select_doctor_section', execution.agent) !== undefined
+        || ctx.tools.get('clinmesh_select_doctor_case', execution.agent) !== undefined || originalDoctor !== undefined
+      if (binding === undefined || (!executionRead && (!current.success
+        || current.data.properties.scopeKey.const !== binding.scopeKey
+        || current.data.properties.pageRevision.const !== binding.pageRevision))) {
+        let expected: ExecutionOrigin['request'] | undefined
+        try {
+          assertObjectJsonSchema(currentParameters)
+          expected = bindingFromParameters(currentParameters)
+        } catch { expected = undefined }
+        const fields = expected !== undefined && binding !== undefined
+          ? (['scopeKey', 'pageRevision'] as const).filter(field => expected[field] !== binding[field])
+          : []
+        return {
+          kind: 'deny',
+          reason: bindingMismatchReason(ctx, execution.agent, fields, doctorCall),
+        }
+      }
       if ((doctorCall && source === undefined) || (source !== undefined
         && (source.origin.task !== activeTasks.get(String(dshSessionId))
           || JSON.stringify(source.arguments) !== JSON.stringify(execution.arguments)))
@@ -640,24 +656,38 @@ function bindingFromParameters(parameters: unknown): ExecutionOrigin['request'] 
 
 function directoryBinding(ctx: Context, agent: Agent | undefined): ExecutionOrigin['request'] | undefined {
   if (agent === undefined) return undefined
-  return bindingFromParameters(ctx.tools.get('clinmesh_select_doctor_section', agent)?.parameters)
-    ?? bindingFromParameters(ctx.tools.get('clinmesh_select_doctor_case', agent)?.parameters)
+  for (const name of ['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case']) {
+    const parameters = ctx.tools.get(name, agent)?.parameters
+    try { assertObjectJsonSchema(parameters) } catch { continue }
+    const binding = bindingFromParameters(parameters)
+    if (binding !== undefined) return binding
+  }
+  return undefined
 }
 
-function bindingMismatchReason(ctx: Context, agent: ToolExecution['agent']): string {
-  const reason = 'CLINMESH_BINDING_MISMATCH: 当前患者、岗位、栏目或页面版本已变化，原调用尚未执行。'
-  const read = agent === undefined ? undefined : toolBindingSchema.safeParse(
-    ctx.tools.get('clinmesh_read_current_context', agent)?.parameters,
-  )
-  const binding = read?.success === true ? bindingSchema.safeParse({
-    scopeKey: read.data.properties.scopeKey.const,
-    pageRevision: read.data.properties.pageRevision.const,
-  }) : undefined
-  if (binding?.success !== true) {
-    return `${reason}当前 Agent 尚无可用的只读工具目录；等待系统重新发布后再读取，不能据此判断患者状态。`
+function bindingMismatchReason(
+  ctx: Context, agent: ToolExecution['agent'], fields: readonly ('scopeKey' | 'pageRevision')[], doctorCall: boolean,
+): string {
+  const reason = 'CLINMESH_BINDING_MISMATCH: 调用参数与当前工具定义不一致，原调用尚未执行。'
+    + (fields.length === 0 ? '当前工具绑定定义不可用。' : `不匹配字段：${fields.join(', ')}。`)
+  const read = agent === undefined ? undefined : ctx.tools.get('clinmesh_read_current_context', agent)
+  let recoveryArguments = bindingFromParameters(read?.parameters)
+    ?? (directoryBinding(ctx, agent) !== undefined && unboundContextReadSchema.safeParse(read?.parameters).success
+      ? {}
+      : undefined)
+  if (read !== undefined && recoveryArguments !== undefined) {
+    try {
+      assertObjectJsonSchema(read.parameters)
+      if (validateJsonSchemaValue(read.parameters, recoveryArguments).length > 0) recoveryArguments = undefined
+    } catch { recoveryArguments = undefined }
   }
-  return `${reason}先调用以下当前只读工具，核对实际岗位、患者与状态是否符合本轮目标，再决定是否写入；不能从本次拒绝推断患者是否已切换：\n${JSON.stringify({
-    toolName: 'clinmesh_read_current_context', arguments: binding.data,
+  if (recoveryArguments === undefined || (doctorCall && directoryBinding(ctx, agent) === undefined)) {
+    return reason + (read === undefined
+      ? '当前 Agent 尚无可用的只读工具目录；等待系统重新发布后再读取，不能据此判断患者状态。'
+      : '当前只读工具定义或医生目录绑定不可用，无法提供安全恢复参数；等待系统发布有效定义后再读取，不能据此判断患者状态。')
+  }
+  return `${reason}先调用以下当前只读工具，核对实际岗位、患者与原任务是否符合本轮目标，再决定是否写入；不能从本次拒绝推断患者是否已切换。确认后按最新写工具 schema 的 const 原样填写 scopeKey、pageRevision，不解析或重新拼装 pageRevision，生成新调用，不自动重放原写入：\n${JSON.stringify({
+    toolName: 'clinmesh_read_current_context', arguments: recoveryArguments,
   })}`
 }
 

@@ -1,6 +1,5 @@
 import { expect, type Page } from '@playwright/test'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
-import { confirmRecordedAddition, expandHistory } from './consultation-suggestions.ts'
 
 export const journeyReplies = {
   initial: '头晕一周了。站起来时更明显。',
@@ -28,7 +27,8 @@ export async function runRecordingJourney(input: {
 }) {
   const { page, read } = input
   const history = page.getByLabel('现病史', { exact: true })
-  const recording = page.getByRole('tabpanel', { name: '病历记录', exact: true }).locator('[data-consultation-recording]')
+  const recordPanel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
+  const recording = recordPanel.locator('[data-consultation-recording]')
   const ask = async (stage: JourneyStage, fail = false) => {
     await input.stage(stage, fail)
     const previous = (await read()).consultation!.turns.length
@@ -37,6 +37,7 @@ export async function runRecordingJourney(input: {
     await page.getByRole('button', { name: '向患者提问', exact: true }).click()
     await expect.poll(async () => (await read()).consultation!.turns.length).toBe(previous + 2)
     await expect(page.getByText(journeyReplies[stage], { exact: true })).toBeVisible()
+    if (stage === 'initial') await expect(page.getByRole('tab', { name: '病历记录', exact: true })).toContainText('有更新')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   }
   const reload = async () => {
@@ -44,103 +45,78 @@ export async function runRecordingJourney(input: {
     else await page.reload()
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   }
-  const row = (quote: string, status = 'applied') => page.locator(`[data-consultation-addition="${status}"]`).filter({ hasText: quote })
-  const source = page.getByRole('dialog', { name: '患者原回答', exact: true })
   const dialog = page.getByRole('alertdialog', { name: '确认签署病历', exact: true })
-
   await page.getByRole('tab', { name: '病历记录', exact: true }).click()
   await history.fill('')
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
   await ask('initial')
   await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
-  await confirmRecordedAddition(page, '头晕一周了。')
-  await confirmRecordedAddition(page, '站起来时更明显。')
-  await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
+  await expect(page.locator('[data-clinical-document-field="historyOfPresentIllness"]').getByRole('status')).toHaveText('已更新')
   await reload()
-  await expandHistory(page)
-  await row('站起来时更明显。').getByRole('button', { name: '查看来源', exact: true }).click()
-  await expect(source.locator('blockquote')).toHaveText(journeyReplies.initial)
-  await page.keyboard.press('Escape')
-  await expect(source).toHaveCount(0)
+  await expect(history).toHaveValue('患者自述：头晕一周了。\n患者自述：站起来时更明显。')
+  await expect(page.getByRole('button', { name: '查看来源', exact: true })).toHaveCount(0)
   await history.fill('医生核对：头晕五天。\n患者自述：站起来时更明显。')
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
   await expect.poll(async () => (await read()).consultationRecording!.additions
     .find(addition => addition.field === 'historyOfPresentIllness' && addition.quote === '头晕一周了。')?.ownership).toBe('manual')
   await page.getByLabel('评估', { exact: true }).fill('医生未保存的评估。')
   await ask('addition')
-  await confirmRecordedAddition(page, journeyReplies.addition)
-  await expect(history).toHaveValue('医生核对：头晕五天。\n患者自述：站起来时更明显。\n患者自述：夜间也会头晕。')
-  await expect(page.getByLabel('评估', { exact: true })).toHaveValue('医生未保存的评估。')
-  await row('站起来时更明显。').getByRole('button', { name: '撤销此条', exact: true }).click()
-  await expect(history).toHaveValue('医生核对：头晕五天。\n患者自述：夜间也会头晕。')
+  await expect(history).toHaveValue(/夜间也会头晕/)
   await expect(page.getByLabel('评估', { exact: true })).toHaveValue('医生未保存的评估。')
   await ask('correction')
-  await expect(row(journeyReplies.correction, 'pending')).toContainText('医生核对：头晕五天。')
-  await row(journeyReplies.correction, 'pending').getByRole('button', { name: '忽略建议', exact: true }).click()
-  await expect(history).toHaveValue('医生核对：头晕五天。\n患者自述：夜间也会头晕。')
-  input.progress?.('来源、刷新、局部撤销、未保存编辑与冲突核对通过')
-
+  await expect(history).toHaveValue(/医生核对：头晕五天。[\s\S]*患者更正：[\s\S]*头晕是六天/)
+  await expect(page.getByRole('button', { name: '应用建议', exact: true })).toHaveCount(0)
+  input.progress?.('自动记录、刷新、人工正文及未保存输入保护通过')
   for (const [label, value] of [
-    ['主诉', '头晕五天。'], ['查体', '查体尚待进一步核实。'], ['辅助检查', '本次暂无检查结果。'],
+    ['主诉', '头晕五天。'], ['体格检查', '查体尚待进一步核实。'], ['辅助检查', '本次暂无检查结果。'],
+    ['家族史', '父亲患高血压，患者自述。'], ['过敏史', '青霉素用药后皮疹，患者自述。'],
     ['处置', '继续问诊并评估。'], ['随访', '加重时及时就诊。'],
   ]) await page.getByLabel(label!, { exact: true }).fill(value!)
   await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
-  await expect(page.getByText('病历草稿已保存', { exact: true })).toBeVisible()
-  await page.getByRole('button', { name: '暂停自动整理', exact: true }).click()
-  await expect(recording).toHaveAttribute('data-consultation-recording', 'paused')
+  await recordPanel.getByRole('button', { name: '暂停自动整理', exact: true }).click()
   await ask('paused')
   expect((await read()).consultationRecording).toMatchObject({ paused: true, remainingCount: 1 })
   await page.getByRole('button', { name: '签署病历', exact: true }).click()
-  await expect(dialog).toContainText('待整理 1')
-  await expect(dialog.getByRole('button', { name: '确认签署病历', exact: true })).toBeDisabled()
-  await dialog.getByRole('button', { name: '返回核对并恢复整理', exact: true }).click()
-  await expect(dialog).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: '确认签署病历', exact: true })).toBeEnabled()
+  await expect(dialog.getByRole('checkbox')).toHaveCount(0)
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
   await reload()
   await expect(recording).toHaveAttribute('data-consultation-recording', 'paused')
-  await page.getByRole('button', { name: '恢复并补录', exact: true }).click()
-  await confirmRecordedAddition(page, journeyReplies.paused)
-  await expect(history).toHaveValue('医生核对：头晕五天。\n患者自述：夜间也会头晕。\n患者自述：躺着休息能缓过来。')
+  await recordPanel.getByRole('button', { name: '恢复并补录', exact: true }).click()
+  await expect(history).toHaveValue(/躺着休息能缓过来/)
   await ask('failure', true)
   await expect(recording).toHaveAttribute('data-consultation-recording', 'failed')
   await reload()
-  await page.getByRole('button', { name: '问诊自动记录', exact: true }).click()
-  await expect(page.getByText('自动记录超时，患者回答已保存，请根据问诊原文补充病史。', { exact: true })).toBeVisible()
-  await page.keyboard.press('Escape')
   await input.stage('failure', false)
-  await page.getByRole('button', { name: '重试病史整理', exact: true }).click()
-  await confirmRecordedAddition(page, journeyReplies.failure)
-  await expect(history).toHaveValue('医生核对：头晕五天。\n患者自述：夜间也会头晕。\n患者自述：躺着休息能缓过来。\n患者自述：坐着也会头晕。')
+  await recordPanel.getByRole('button', { name: '重试病史整理', exact: true }).click()
+  await expect(history).toHaveValue(/坐着也会头晕/)
   expect((await read()).consultationRecording).toMatchObject({ remainingCount: 0, failedCount: 0 })
-  expect((await read()).consultationRecording!.additions.filter(addition => addition.quote === '站起来时更明显。' && addition.status === 'applied')).toHaveLength(0)
-  input.progress?.('暂停遗漏、取消准备、刷新补录与失败重试通过')
-
+  input.progress?.('暂停、取消准备、刷新补录与失败重试通过')
   await input.agentDraft?.()
   await ask('late')
   await input.waitForExtraction()
   await page.getByRole('button', { name: '签署病历', exact: true }).click()
-  await expect(dialog).toContainText('待整理 1')
-  const frozen = (await read()).clinicalDocument!.draft
+  await expect(dialog).toBeVisible()
+  const prepared = await read()
+  expect(prepared.consultationRecording?.signingPreparation?.active).toBe(true)
+  const frozen = prepared.clinicalDocument!.draft
   await input.releaseExtraction()
   await input.settleExtraction()
   expect((await read()).clinicalDocument!.draft).toEqual(frozen)
-  await expect(history).toHaveValue(frozen!.historyOfPresentIllness)
-  await dialog.getByRole('button', { name: '返回核对并恢复整理', exact: true }).click()
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
   await expect(dialog).toHaveCount(0)
-  await expect(page.locator('[data-consultation-addition="pending"]')).toHaveCount(0)
-  await expect(page.locator('[data-consultation-addition="applied"]').filter({ hasText: journeyReplies.late }))
-    .toHaveAttribute('data-consultation-review', 'unreviewed')
-  await expect(history).toHaveValue(frozen!.historyOfPresentIllness + '\n患者自述：' + journeyReplies.late)
+  await expect(history).toHaveValue(/昨天晚上也头晕/)
   if (input.agentSign) await input.agentSign()
   else await page.getByRole('button', { name: '签署病历', exact: true }).click()
   await expect(dialog).toBeVisible()
-  const commit = dialog.getByRole('button', { name: '确认签署病历', exact: true })
-  await expect(commit).toBeDisabled()
-  expect((await read()).clinicalDocument!.signed).toHaveLength(0)
-  await dialog.getByRole('checkbox').check()
-  await commit.click()
+  await expect(dialog).toContainText('父亲患高血压，患者自述。')
+  await expect(dialog).toContainText('青霉素用药后皮疹，患者自述。')
+  await expect(dialog.getByRole('checkbox')).toHaveCount(0)
+  await dialog.getByRole('button', { name: '确认签署病历', exact: true }).click()
   await expect(dialog).toHaveCount(0)
   await expect.poll(async () => (await read()).clinicalDocument!.signed.length).toBe(1)
   const signed = (await read()).clinicalDocument!.signed
+  expect(signed[0]!.content).toMatchObject({ familyHistory: '父亲患高血压，患者自述。', allergyHistory: '青霉素用药后皮疹，患者自述。' })
   await reload()
   expect((await read()).clinicalDocument!.signed).toEqual(signed)
   const final = await read()
@@ -158,6 +134,6 @@ export async function runRecordingJourney(input: {
       }
     }
   }
-  input.progress?.('签署在途冻结、取消恢复、人工确认与不可变文书通过')
+  input.progress?.('在途冻结、取消恢复、直接记录与不可变文书签署通过')
   return { processedCount: (await read()).consultationRecording!.processedCount, signedCount: signed.length }
 }

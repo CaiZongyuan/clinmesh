@@ -87,7 +87,13 @@ function Fixture(): React.JSX.Element {
 }
 flushSync(() => createRoot(rootElement).render(<Fixture />))
 
-const wait = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
+declare global {
+  interface Window { advanceFeedbackClock: (milliseconds: number) => Promise<void> }
+}
+const wait = async (ms: number) => {
+  await new Promise<void>(resolve => setTimeout(resolve, ms))
+  await window.advanceFeedbackClock(ms)
+}
 async function run(): Promise<void> {
   await wait(50)
   const field = rootElement.querySelector<HTMLInputElement>('#patient-name')!

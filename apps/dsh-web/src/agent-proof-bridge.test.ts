@@ -155,20 +155,217 @@ describe('ClinMesh host Tool binding diagnostics', () => {
     expect(next).toHaveBeenCalledOnce()
   })
 
-  it.each(['absent', 'invalid'] as const)('does not invent recovery arguments when the current read definition is %s', async kind => {
+  it('provides an empty recovery call for a published doctor read without model binding fields', async () => {
     const { before, currentTool } = bridge()
     currentTool.mockImplementation(name => name === 'clinmesh_read_current_context'
-      ? kind === 'absent' ? undefined : { parameters: { properties: {
-          scopeKey: { const: '' }, pageRevision: { const: 'not-a-valid-binding' },
-        } } }
+      ? { parameters: { type: 'object', properties: {}, additionalProperties: true } }
+      : { parameters: { type: 'object', properties: {
+          scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+        } } })
+    const args = { scopeKey: 'scope', pageRevision: '["view-1",[null]]', assessment: '合成草稿' }
+    const originalArgs = structuredClone(args)
+    const call = execution(args)
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(call, dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(denied.reason).not.toContain('尚无可用的只读工具目录')
+    const recoveryLine = denied.reason?.split('\n').find(line => line.startsWith('{'))
+    expect(recoveryLine).toBeDefined()
+    expect(JSON.parse(recoveryLine!)).toEqual({ toolName: 'clinmesh_read_current_context', arguments: {} })
+    expect(call.arguments).toEqual(originalArgs)
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [{ scopeKey: 'previous-scope', pageRevision: '["view-1",null]' }, ['scopeKey']],
+    [{ scopeKey: 'scope', pageRevision: '["view-1",[null]]' }, ['pageRevision']],
+    [{ scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' }, ['scopeKey', 'pageRevision']],
+  ])('identifies mismatched binding fields without inferring a patient change: %j', async (args, fields) => {
+    const { before } = bridge()
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution(args), dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(denied.reason).toContain(`不匹配字段：${fields.join(', ')}。`)
+    expect(denied.reason).not.toContain('当前患者、岗位、栏目或页面版本已变化')
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['absent', undefined],
+    ['invalid', { properties: { scopeKey: { const: '' }, pageRevision: { const: 'not-a-valid-binding' } } }],
+    ['requires-input', { type: 'object', properties: {}, required: ['query'] }],
+    ['non-object', { type: 'string' }],
+    ['bound-requires-input', { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+      query: { type: 'string' },
+    }, required: ['scopeKey', 'pageRevision', 'query'] }],
+    ['bound-non-object', { type: 'string', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }],
+    ['bound-invalid-type', { type: 'object', properties: {
+      scopeKey: { type: 'number', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }],
+  ] as const)('does not invent recovery arguments when the current read definition is %s', async (kind, parameters) => {
+    const { before, currentTool } = bridge()
+    currentTool.mockImplementation(name => name === 'clinmesh_read_current_context'
+      ? parameters === undefined ? undefined : { parameters }
       : { parameters: { properties: {
           scopeKey: { const: 'scope' }, pageRevision: { const: '["view-1",null]' },
         } } })
     const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
     const denied = await before(execution({ scopeKey: 'previous-patient', pageRevision: '["old",null]' }), dispatch)
     expect(denied.kind).toBe('deny')
-    expect(denied.reason).toContain('尚无可用的只读工具目录')
+    if (kind === 'absent') expect(denied.reason).toContain('尚无可用的只读工具目录')
+    else {
+      expect(denied.reason).toContain('当前只读工具定义或医生目录绑定不可用')
+      expect(denied.reason).not.toContain('尚无可用的只读工具目录')
+    }
     expect(denied.reason).not.toContain('"arguments"')
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it.each(['absent', 'invalid'] as const)('does not guess binding differences or doctor read arguments when the current definition is %s', async kind => {
+    const { before, currentTool } = bridge()
+    currentTool.mockImplementation(name => name === 'clinmesh_read_current_context'
+      ? { parameters: { type: 'object', properties: {} } }
+      : name === 'clinmesh_fill_clinical_document_draft' && kind === 'invalid'
+        ? { parameters: { properties: { scopeKey: { const: '' }, pageRevision: { const: '["view-1",null]' } } } }
+      : undefined)
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution({ scopeKey: 'scope', pageRevision: '["view-1",null]' }), dispatch)
+    expect(denied.reason).toContain('当前工具绑定定义不可用')
+    expect(denied.reason).not.toContain('尚无可用的只读工具目录')
+    expect(denied.reason).not.toContain('不匹配字段')
+    expect(denied.reason).not.toContain('"arguments"')
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['clinmesh_fill_clinical_document_draft', false],
+    ['clinmesh_navigate', true],
+    ['clinmesh_read_current_context', true],
+  ] as const)('does not offer legacy doctor recovery without a directory binding: %s', async (name, doctorHeader) => {
+    const { before, currentTool } = bridge()
+    const parameters = { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }
+    currentTool.mockImplementation(tool => ['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case'].includes(tool)
+      ? undefined : { parameters })
+    const args = { scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' }
+    const originalArgs = structuredClone(args)
+    const call = execution(args, true, name)
+    if (doctorHeader) Object.assign(call.agent!.session, { requestHeader: () => ({ tools: [
+      { name: 'clinmesh_select_doctor_section', parameters },
+    ] }) })
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(call, dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(denied.reason).toContain('当前只读工具定义或医生目录绑定不可用')
+    expect(denied.reason).not.toContain('尚无可用的只读工具目录')
+    expect(denied.reason).not.toContain('"arguments"')
+    expect(call.arguments).toEqual(originalArgs)
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('keeps bound recovery available for a non-doctor page without a doctor directory', async () => {
+    const { before, currentTool } = bridge()
+    currentTool.mockImplementation(name => ['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case'].includes(name)
+      ? undefined : { parameters: { type: 'object', properties: {
+          scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+        } } })
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution({ scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' },
+      true, 'clinmesh_fill_registration_draft'), dispatch)
+    expect(denied.kind).toBe('deny')
+    const line = denied.reason?.split('\n').find(value => value.startsWith('{'))
+    expect(line).toBeDefined()
+    expect(JSON.parse(line!)).toEqual({ toolName: 'clinmesh_read_current_context', arguments: {
+      scopeKey: 'scope', pageRevision: '["view-1",null]',
+    } })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it.each(['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case'] as const)(
+    'does not offer recovery from a malformed doctor directory: %s', async directory => {
+      const { before, currentTool } = bridge()
+      const parameters = { type: 'object', properties: {
+        scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+      } }
+      currentTool.mockImplementation(name => name === directory
+        ? { parameters: { ...parameters, type: 'string' } }
+        : ['clinmesh_select_doctor_section', 'clinmesh_select_doctor_case'].includes(name) ? undefined
+        : name === 'clinmesh_read_current_context' ? { parameters: { type: 'object', properties: {} } }
+        : { parameters })
+      const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+      const denied = await before(execution({ scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' }), dispatch)
+      expect(denied.kind).toBe('deny')
+      expect(denied.reason).toContain('当前只读工具定义或医生目录绑定不可用')
+      expect(denied.reason).not.toContain('"arguments"')
+      expect(dispatch).not.toHaveBeenCalled()
+    },
+  )
+
+  it('uses a valid case directory when the section definition is malformed', async () => {
+    const { before, currentTool } = bridge()
+    const parameters = { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }
+    currentTool.mockImplementation(name => name === 'clinmesh_select_doctor_section'
+      ? { parameters: { ...parameters, type: 'string' } }
+      : name === 'clinmesh_read_current_context' ? { parameters: { type: 'object', properties: {} } }
+      : { parameters })
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution({ scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' }), dispatch)
+    const line = denied.reason?.split('\n').find(value => value.startsWith('{'))
+    expect(line).toBeDefined()
+    expect(JSON.parse(line!)).toEqual({ toolName: 'clinmesh_read_current_context', arguments: {} })
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it('keeps shared calls in a malformed doctor directory subject to the doctor source guard', async () => {
+    const { before, currentTool } = bridge()
+    const parameters = { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }
+    currentTool.mockImplementation(name => name === 'clinmesh_select_doctor_section'
+      ? { parameters: { ...parameters, type: 'string' } }
+      : name === 'clinmesh_select_doctor_case' ? undefined : { parameters })
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution({ scopeKey: 'scope', pageRevision: '["view-1",null]' },
+      true, 'clinmesh_read_current_context'), dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(denied.reason).toContain('CLINMESH_CALL_SOURCE_REQUIRED')
+    expect(dispatch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['non-object', { type: 'string', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }],
+    ['invalid-binding-type', { type: 'object', properties: {
+      scopeKey: { type: 'number', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+    } }],
+    ['invalid-business-input', { type: 'object', properties: {
+      scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+      assessment: { type: 'invalid' },
+    } }],
+  ] as const)('reports a malformed current action schema as unavailable despite binding consts: %s', async (_kind, parameters) => {
+    const { before, currentTool } = bridge()
+    currentTool.mockImplementation(name => name === 'clinmesh_fill_clinical_document_draft'
+      ? { parameters }
+      : { parameters: { type: 'object', properties: {
+          scopeKey: { type: 'string', const: 'scope' }, pageRevision: { type: 'string', const: '["view-1",null]' },
+        } } })
+    const args = { scopeKey: 'previous-scope', pageRevision: '["previous-view",null]' }
+    const originalArgs = structuredClone(args)
+    const dispatch = vi.fn(async () => ({ kind: 'allow' as const }))
+    const denied = await before(execution(args), dispatch)
+    expect(denied.kind).toBe('deny')
+    expect(denied.reason).toContain('CLINMESH_BINDING_MISMATCH')
+    expect(denied.reason).toContain('当前工具绑定定义不可用')
+    expect(denied.reason).not.toContain('不匹配字段')
+    expect(denied.reason).not.toContain('当前只读工具定义或医生目录绑定不可用')
+    expect(args).toEqual(originalArgs)
     expect(dispatch).not.toHaveBeenCalled()
   })
 

@@ -1106,6 +1106,7 @@ function stubDoctorCompletedCaseLibrary(options: {
 
 function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backfill' | 'retry', additionalCase = false) {
   const initialVersion = action === 'backfill' || action === 'activate' ? 0 : 2
+  let caseStatus: DoctorCaseDetail['status'] = 'first-visit'
   let recording: NonNullable<DoctorCaseDetail['consultationRecording']> = {
     hasSavedDraft: true, failures: [], version: initialVersion, paused: action === 'resume', processedCount: 0,
     remainingCount: action === 'pause' ? 0 : 1, failedCount: action === 'retry' ? 1 : 0,
@@ -1132,7 +1133,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     consultationRecording: action === 'activate' && recording.version === 0 ? undefined : recording,
     clinicalDocument: { draft: { ...document, version: draftVersion, updatedAt: '2026-10-08T09:00:00+08:00' }, signed: [] },
     encounter: { id: 'encounter-recording', status: 'in-progress', versionId: '1' },
-    patient, presentation: doctorPresentation, priorFacts: [], status: 'first-visit',
+    patient, presentation: doctorPresentation, priorFacts: [], status: caseStatus,
     taskId: 'task-recording', taskVersion: '1',
   })
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1144,7 +1145,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
       prescriptionConclusionSupported: true })
     if (path === '/api/his/v1/doctor/queue') return Response.json({
       items: [{ caseId: 'case-recording', encounterId: 'encounter-recording', encounterVersion: '1',
-        patient, presentation: doctorPresentation, status: 'first-visit', taskId: 'task-recording', taskVersion: '1' },
+        patient, presentation: doctorPresentation, status: caseStatus, taskId: 'task-recording', taskVersion: '1' },
         ...(additionalCase ? [{ caseId: 'case-other', encounterId: 'encounter-other', encounterVersion: '1',
           patient: { ...patient, id: 'patient-other', name: '合成其他患者' }, presentation: doctorPresentation,
           status: 'first-visit', taskId: 'task-other', taskVersion: '1' }] : [])],
@@ -1182,14 +1183,16 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     if (path === '/api/his/v1/encounters/encounter-recording/completion') {
       return Response.json({ canComplete: false, encounterId: 'encounter-recording', encounterVersion: '1', items: [] })
     }
+    if (path === '/api/his/v1/encounters/encounter-recording/actions/start-first-visit') {
+      caseStatus = 'first-visit'
+      return Response.json(commandResponse({ encounterVersion: '1', status: caseStatus, taskVersion: '1' }))
+    }
     if (path === '/api/his/v1/encounters/encounter-recording/clinical-document/actions/preview-sign') {
       const previewId = 'sign-recording-preview'
       const expiresAt = new Date(Date.now() + 300_000).toISOString()
       recording = { ...recording, signingPreparation: { active: true, expiresAt, previewId } }
       const response = Response.json(commandResponse({ previewId, expiresAt,
-        document: { content: document, version: draftVersion }, commitToken: 'synthetic-sign-commit-token',
-        consultationReview: { consultationVersion: 1, remainingCount: recording.remainingCount,
-          failedCount: recording.failedCount, paused: recording.paused, conflictCount: 0, unreviewedCount: 0 } }))
+        document: { content: document, version: draftVersion }, commitToken: 'synthetic-sign-commit-token' }))
       return signingInterceptor === undefined ? response : signingInterceptor('preview', response)
     }
     if (path === '/api/his/v1/encounters/encounter-recording/clinical-document/actions/cancel-sign') {
@@ -1212,6 +1215,9 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
       const request = controlConsultationRecordingRequestSchema.parse(JSON.parse(String(init?.body)))
       controls.push(request.input)
       expect(request.input.expectedRecordingVersion).toBe(recording.version)
+      if (caseStatus === 'awaiting-doctor') return Response.json({ error: {
+        code: 'ROLE_NOT_ALLOWED', message: 'The outpatient case belongs to another doctor',
+      } }, { status: 403 })
       if (controlFailure) return Response.json({ error: { code: 'SERVICE_UNAVAILABLE', message: 'Synthetic activation failure' } }, { status: 503 })
       recording = request.input.action === 'activate' && recording.version > 0
         ? { ...recording, requiresContextBinding: false,
@@ -1226,14 +1232,15 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
   }))
   return {
     controls, initialVersion, savedDocuments, cancellations,
+    setCaseStatus: (status: DoctorCaseDetail['status']) => { caseStatus = status },
     failControl: (failed: boolean) => { controlFailure = failed },
     recordAddition: (text: string) => {
       document = { ...document, historyOfPresentIllness: `${document.historyOfPresentIllness}\n${text}` }
       draftVersion += 1
       recording = { ...recording, status: 'updated', additions: [...recording.additions, {
         id: 'recorded-append', field: 'historyOfPresentIllness', sourceTurnId: 'patient-turn-append',
-        quote: '夜间也会头晕。', relation: 'addition', status: 'applied', reviewStatus: 'unreviewed',
-        ownership: 'automatic', currentText: text, reviewable: false,
+        quote: '夜间也会头晕。', relation: 'addition', status: 'applied',
+        ownership: 'automatic', currentText: text,
       }] }
     },
     interceptSigning: (intercept: NonNullable<typeof signingInterceptor>) => { signingInterceptor = intercept },
@@ -2961,7 +2968,7 @@ describe('role workspaces', () => {
     const pendingButton = await screen.findByRole('button', { name: '正在等待患者回答' })
     expect((pendingButton as HTMLButtonElement).disabled).toBe(true)
     expect(within(consultationRegion).getByText('除了发热，还有哪里不舒服？')).toBeTruthy()
-    expect(screen.getByRole('status').textContent).toContain('患者正在输入')
+    expect(within(consultationRegion).getByRole('status').textContent).toContain('患者正在输入')
     await act(async () => releaseAnswer?.())
     expect(await screen.findByText('咽痛，吞咽时更明显，没有气促。')).toBeTruthy()
     expect(screen.getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
@@ -2970,7 +2977,7 @@ describe('role workspaces', () => {
     expect(record).toBeTruthy()
     if (!hasTriage) {
       expect((within(record).getByLabelText('主诉') as HTMLTextAreaElement).value).toBe('')
-      expect((within(record).getByLabelText('查体') as HTMLTextAreaElement).value).toBe('')
+      expect((within(record).getByLabelText('体格检查') as HTMLTextAreaElement).value).toBe('')
     }
     expect(screen.queryByText('咽痛，吞咽时更明显，没有气促。')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '问诊记录' }))
@@ -3339,12 +3346,12 @@ describe('role workspaces', () => {
     fireEvent.change(screen.getByLabelText('评估', { exact: true }), { target: { value: '医生未保存的评估。' } })
     fixture.recordAddition('患者自述：夜间也会头晕。')
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
-    await waitFor(() => expect(history.value).toBe(`${local}\n患者自述：夜间也会头晕。`))
+    await waitFor(() => expect(history.value).toBe(`${local}\n待核实补充：\n\n患者自述：夜间也会头晕。`))
     expect((screen.getByLabelText('评估', { exact: true }) as HTMLTextAreaElement).value).toBe('医生未保存的评估。')
     expect(document.activeElement).toBe(history)
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.queryByRole('button', { name: '应用建议' })).toBeNull()
-    expect(screen.getByRole('button', { name: '确认已核对' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '确认已核对' })).toBeNull()
   })
 
   it('activates recording once when a new editable case is opened and leaves historical backfill explicit', async () => {
@@ -3361,6 +3368,23 @@ describe('role workspaces', () => {
     render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
     await screen.findByRole('button', { name: '补录历史回答' })
     expect(historical.controls).toEqual([])
+  })
+
+  it.each([0, 1])('waits for first visit before activating recording v%s without a stale permission error', async recordingVersion => {
+    const fixture = stubRecordingWorkspace('activate')
+    fixture.setCaseStatus('awaiting-doctor')
+    if (recordingVersion > 0) fixture.updateRecording({ version: recordingVersion, requiresContextBinding: true })
+    const user = userEvent.setup()
+    const queryClient = createWebQueryClient()
+    render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    const start = await screen.findByRole('button', { name: '开始首诊' })
+    expect(fixture.controls).toEqual([])
+    expect(screen.queryByText('请切换到有权限的岗位后重试。')).toBeNull()
+
+    await user.click(start)
+    await screen.findByLabelText('现病史', { exact: true })
+    await waitFor(() => expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: recordingVersion }]))
+    expect(screen.queryByText('请切换到有权限的岗位后重试。')).toBeNull()
   })
 
   it('offers an explicit retry when activating a new case fails', async () => {
@@ -3397,8 +3421,8 @@ describe('role workspaces', () => {
       await waitFor(() => expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 2 }]))
       fixture.updateRecording({ requiresContextBinding: true, processedCount: 2, remainingCount: 0, hasSavedDraft: true,
         additions: [{ id: 'legacy-manual', field: 'historyOfPresentIllness', sourceTurnId: 'legacy-patient-turn',
-          quote: '头晕三天。', relation: 'addition', status: 'applied', reviewStatus: 'confirmed', ownership: 'manual',
-          currentText: '医生已核对：头晕三天。', reviewable: false }] })
+          quote: '头晕三天。', relation: 'addition', status: 'applied', ownership: 'manual',
+          currentText: '医生已核对：头晕三天。' }] })
       fixture.failReads(undefined)
       await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
       await waitFor(() => expect(cached()).toMatchObject({ status, processedCount: 2, hasSavedDraft: true }))
@@ -3449,7 +3473,7 @@ describe('role workspaces', () => {
     const fixture = stubRecordingWorkspace('resume', true)
     const automaticAddition = { id: 'recorded-original', field: 'historyOfPresentIllness' as const,
       sourceTurnId: 'patient-turn-original', quote: '头晕五天。', relation: 'addition' as const,
-      status: 'applied' as const, reviewStatus: 'unreviewed' as const, ownership: 'automatic' as const, currentText: '患者自述：头晕五天。', reviewable: false }
+      status: 'applied' as const, ownership: 'automatic' as const, currentText: '患者自述：头晕五天。' }
     fixture.updateRecording({ hasSavedDraft: false, additions: [automaticAddition] })
     const queryClient = createWebQueryClient()
     const user = userEvent.setup()
@@ -3552,7 +3576,7 @@ describe('role workspaces', () => {
       return response
     })
     try {
-      await user.click(screen.getByRole('button', { name: '返回核对并恢复整理' }))
+      await user.click(screen.getByRole('button', { name: '返回编辑并恢复整理' }))
       await waitFor(() => expect(fixture.failedReads()).toBeGreaterThan(0))
       expect(readSignal?.aborted).toBe(true)
     } finally { await act(async () => { release(); await refresh }) }
@@ -3582,13 +3606,13 @@ describe('role workspaces', () => {
       fixture.updateRecording({ signingPreparation: reason === 'cancelled-elsewhere' ? undefined
         : { active: true, previewId: 'newer-sign-preview', expiresAt: new Date(Date.now() + 300_000).toISOString() } })
     }
-    await user.click(within(dialog).getByRole('button', { name: '返回核对并恢复整理' }))
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     const newer = reason === 'replaced-elsewhere'
     expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(newer)
     expect(screen.queryByText('签署准备尚未结束') !== null).toBe(newer)
     if (!newer) await user.click(screen.getByRole('button', { name: '签署病历' }))
-    else await user.click(screen.getByRole('button', { name: '返回核对并恢复整理' }))
+    else await user.click(screen.getByRole('button', { name: '返回编辑并恢复整理' }))
     if (newer) await waitFor(() => expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(false))
     else await screen.findByRole('alertdialog', { name: '确认签署病历' })
   })
@@ -3608,10 +3632,10 @@ describe('role workspaces', () => {
       }
       return response
     })
-    await user.click(within(dialog).getByRole('button', { name: '返回核对并恢复整理' }))
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
     await waitFor(() => expect(fixture.failedReads()).toBeGreaterThan(0))
-    await waitFor(() => expect((within(dialog).getByRole('button', { name: '返回核对并恢复整理' }) as HTMLButtonElement).disabled).toBe(false))
-    await user.click(within(dialog).getByRole('button', { name: '返回核对并恢复整理' }))
+    await waitFor(() => expect((within(dialog).getByRole('button', { name: '取消' }) as HTMLButtonElement).disabled).toBe(false))
+    await user.click(within(dialog).getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
     expect(fixture.cancellations).toEqual(['sign-recording-preview', 'sign-recording-preview'])
     expect((screen.getByLabelText('现病史', { exact: true }) as HTMLTextAreaElement).disabled).toBe(false)
@@ -3634,13 +3658,11 @@ describe('role workspaces', () => {
     })
     await act(async () => { await tool.execute(boundAgentToolInput(tool, {}), new AbortController().signal) })
     const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
-    expect(within(dialog).getByText('签署前核对问诊病史')).toBeTruthy()
-    await userEvent.setup().click(within(dialog).getByRole('checkbox'))
+    expect(within(dialog).queryByRole('checkbox')).toBeNull()
     view.rerender(<WebApp runtime={{ ...runtime, surfaceLocale: 'en-US' }} />)
     const changed = await screen.findByRole('alertdialog', { name: 'Confirm medical record signature' })
-    expect(within(changed).getByText('Review consultation history before signing')).toBeTruthy()
     expect(within(changed).getByText('Chief complaint')).toBeTruthy()
-    expect(within(changed).getByRole('checkbox').getAttribute('aria-checked')).toBe('true')
+    expect(within(changed).queryByRole('checkbox')).toBeNull()
   })
 
   it.each(['abort', 'change-case', 'unmount'] as const)('cancels a late Agent sign preview after %s without opening an old review', async change => {
@@ -7312,6 +7334,8 @@ describe('role workspaces', () => {
         expect(body.input.document).toEqual({
           ...structuredClinicalDocument,
           assessment: '复核并合并并发编辑后的最终评估。',
+          familyHistory: '',
+          allergyHistory: '',
         })
         document = body.input.document
         documentVersion = 3
@@ -7341,7 +7365,6 @@ describe('role workspaces', () => {
         expect(body).toEqual({
           expectedVersions: { 'Encounter/encounter-1': '1' },
           input: {
-            consultationReviewed: false,
             commitToken: 'structured-sign-token-123456',
             previewId: 'structured-sign-preview-1',
           },
@@ -7366,7 +7389,9 @@ describe('role workspaces', () => {
       .toBe(structuredClinicalDocument.chiefComplaint)
     expect((within(recoveredForm).getByLabelText('现病史') as HTMLTextAreaElement).value)
       .toBe(structuredClinicalDocument.historyOfPresentIllness)
-    expect((within(recoveredForm).getByLabelText('查体') as HTMLTextAreaElement).value)
+    expect((within(recoveredForm).getByLabelText('家族史') as HTMLTextAreaElement).value).toBe('')
+    expect((within(recoveredForm).getByLabelText('过敏史') as HTMLTextAreaElement).value).toBe('')
+    expect((within(recoveredForm).getByLabelText('体格检查') as HTMLTextAreaElement).value)
       .toBe(structuredClinicalDocument.physicalExamination)
     expect((within(recoveredForm).getByLabelText('评估') as HTMLTextAreaElement).value)
       .toBe(structuredClinicalDocument.assessment)
@@ -7528,16 +7553,20 @@ describe('role workspaces', () => {
     expect(screen.getByText('版本 1')).toBeTruthy()
     expect(screen.getByText('版本 2')).toBeTruthy()
     expect(screen.getByText(structuredClinicalDocument.assessment)).toBeTruthy()
-    expect(screen.getByText(/检验结果回报后修订诊断与处置。/)).toBeTruthy()
+    expect(screen.getByText('版本 2').closest('summary')?.textContent).toContain('检验结果回报后修订诊断与处置。')
     expect(screen.getAllByRole('button', { name: '提交病历修订' })).toHaveLength(1)
 
     const revisionForm = screen.getByRole('form', { name: '修订病历版本' })
+    await user.type(within(revisionForm).getByLabelText('家族史'), '父亲患高血压。')
+    await user.type(within(revisionForm).getByLabelText('过敏史'), '青霉素用药后皮疹。')
     await user.clear(within(revisionForm).getByLabelText('评估'))
     await user.type(within(revisionForm).getByLabelText('评估'), '修订后明确为甲型流感轻症。')
     await user.type(within(revisionForm).getByLabelText('修订原因'), '补充复诊时限和危险征象。')
     await user.click(within(revisionForm).getByRole('button', { name: '提交病历修订' }))
 
     const revisionDialog = await screen.findByRole('alertdialog', { name: '确认提交病历修订' })
+    expect(within(revisionDialog).getByText('父亲患高血压。')).toBeTruthy()
+    expect(within(revisionDialog).getByText('青霉素用药后皮疹。')).toBeTruthy()
     expect(clinicalRevisionRequest).toBeUndefined()
     expect(within(revisionDialog).getByText('修订后明确为甲型流感轻症。')).toBeTruthy()
     expect(within(revisionDialog).getByText('补充复诊时限和危险征象。')).toBeTruthy()
@@ -7777,6 +7806,8 @@ describe('role workspaces', () => {
     expect(await screen.findByRole('heading', { name: '已完诊病例详情' })).toBeTruthy()
     expect(screen.getByText('只读详情')).toBeTruthy()
     expect(screen.getByText(longAssessment)).toBeTruthy()
+    expect(screen.queryByText('家族史', { exact: true })).toBeNull()
+    expect(screen.queryByText('过敏史', { exact: true })).toBeNull()
     expect(screen.getByText('处方号 RX-COMPLETED-001')).toBeTruthy()
     expect(screen.getByText('已确认无需用药')).toBeTruthy()
     expect(screen.getAllByText('Composition/composition-completed-1').length).toBeGreaterThanOrEqual(1)

@@ -339,7 +339,7 @@ pnpm smoke:consultation:live
 pnpm smoke:consultation:live --summary-only
 ```
 
-可用 `CLINMESH_DSH_SMOKE_REPORT=/absolute/path/to/report.json` 保存版本、代码 commit/内容 hash、处理数量和 request/audit/trace 关联的验收摘要；真实总结模式还保存固定合成回答、总结和事实来源供逐项复核，不保存凭据或 prompt。失败报告保留安全任务错误码。成功说明本次合成样本满足总结质量与来源断言，不能证明所有病史的语义准确；模型局限与 CI 证据边界见[测试策略](testing.md#end-to-end)。
+可用 `CLINMESH_DSH_SMOKE_REPORT=/absolute/path/to/report.json` 保存版本、代码 commit/内容 hash、处理数量和 request/audit/trace 关联的验收摘要；真实总结模式还保存固定合成回答、总结和事实来源供逐项复核，不保存凭据或 prompt。`liveJobs` 保留当前任务错误码，`liveFailedAttempts` 从不可变回执保留历次失败的错误码、阶段与有界校验诊断，重试成功后仍可追查；诊断机制见[直接记录决策](../.agents/notes/implemented/architecture/2026-10-14-consultation-direct-recording.md)。成功说明本次合成样本满足总结质量与来源断言，不能证明所有病史的语义准确；模型局限与 CI 证据边界见[测试策略](testing.md#end-to-end)。
 
 指南建议复用上述宿主、组件和真实模型配置。`native` 使用已发布合成检验目录与合成模型，从引用、草稿采纳、处方缺项走到医生正式确认；`live` 在该旅程之后对新的合成病例读取诊断、处方和检验建议，不采纳真实模型结果，也不创建临床事实。响应及引用必须属于实际提供的指南与病例资料；缺少依据是合法结果。报告只保留该模式的状态、建议及来源数量，不能将少量样本视为临床语义质量评估。
 
