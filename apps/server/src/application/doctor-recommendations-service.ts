@@ -68,6 +68,7 @@ const documentFieldLabels: Record<string, string> = {
 const generationPrompt = `你是医生的诊疗建议助手，输出当前kind的可采纳候选items和只读待核实思路considerations，两类合计最多8条。
 items仅依据给出的指南条款、当前医生可见病例和本院目录生成，每条必须引用实际guidelines与caseEvidence的id，说明支持、不符合和待核实信息。
 诊断或检查缺少适用指南、目录或明确支持时，可以结合当前病例与医学知识提出considerations，说明推断理由、支持、反对及相关核实事项；它们只是思路，不作确诊，不提供可执行目录身份或冒充指南依据，必须引用实际caseEvidence的id。
+items与considerations的id在两类条目中全局唯一；caseEvidenceIds只能逐字选择本轮caseEvidence中提供的id，不使用其他病例、原始记录或自行构造的编号。
 mode为considerations-only时items必须为空，必须显式返回considerations，使用病例事实与医学知识评估诊断或检查方向，不能仅因没有指南或目录就放弃推理；仅在当前病例不支持任何可核实方向时返回空数组。处方不生成considerations，也不凭模型记忆补药品或处方字段。
 患者自述、分诊和报告是不同来源，分别保留原文、时间、否定、条件与不确定性；患者说没自行量过体温时，仍须保留本轮分诊已记录的数值，按各自时间解释其意义。
 待核实事项只列出会改变当前这条判断的信息，并说明它影响什么；没有检测结果不自动阻断该检测的建议，不把未安排检查、缺少全套实验室资料或未记录病史当成所有候选的前置门槛。
@@ -552,13 +553,19 @@ export class DoctorRecommendationsService {
         return output
       }
       let catalogs = projectRecommendationCatalogs(snapshot.catalogs)
-      const requestFor = (caseEvidence: DoctorCaseEvidence[], selectedCatalogs = catalogs): JsonChatCompletionInput => ({ model, signal, schemaName: 'doctor_recommendations',
-        systemPrompt: generationPrompt,
-        jsonSchema: z.toJSONSchema(considerationsOnly ? considerationsGenerationSchema : doctorRecommendationGenerationSchema) as Record<string, unknown>,
-        userPayload: { kind: payload.kind, mode: considerationsOnly ? 'considerations-only' : 'suggestions-and-considerations',
-          guidelines: snapshot.guidelines, caseEvidence, catalogs: selectedCatalogs },
-        validate: value => { parseGeneration(value); return true },
-      })
+      const requestFor = (caseEvidence: DoctorCaseEvidence[], selectedCatalogs = catalogs): JsonChatCompletionInput => {
+        const schema = considerationsOnly ? considerationsGenerationSchema.safeExtend({
+          considerations: z.array(considerationsGenerationSchema.shape.considerations.element.extend({
+            caseEvidenceIds: z.array(z.enum(caseEvidence.map(item => item.id))).min(1).max(12),
+          })).max(8),
+        }) : doctorRecommendationGenerationSchema
+        return { model, signal, schemaName: 'doctor_recommendations', systemPrompt: generationPrompt,
+          jsonSchema: z.toJSONSchema(schema) as Record<string, unknown>,
+          userPayload: { kind: payload.kind, mode: considerationsOnly ? 'considerations-only' : 'suggestions-and-considerations',
+            guidelines: snapshot.guidelines, caseEvidence, catalogs: selectedCatalogs },
+          validate: value => { schema.parse(value); parseGeneration(value); return true },
+        }
+      }
       const fits = (evidence: DoctorCaseEvidence[]) => evidence.length <= 100 && recommendationRequestFits(requestFor(evidence))
       let historyFits = fits
       if (payload.kind === 'laboratory' && !fits(snapshot.caseEvidence)) {

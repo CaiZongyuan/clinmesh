@@ -1367,7 +1367,7 @@ it('stops after the bounded Provider retry on rate limits and preserves clinical
   expect(await fixture.readCase()).toEqual(before)
 })
 
-it('independently checks read-only case reasoning when the public case has no acquired guideline', async () => {
+it.each(['legacy-format', 'foreign-case-reference'] as const)('independently checks read-only case reasoning with the supplied reference schema when no guideline is acquired (%s)', async failure => {
   const syntheaProvider = new class extends StubSyntheaProvider {
     override async generate() {
       const corpus = await super.generate()
@@ -1379,21 +1379,25 @@ it('independently checks read-only case reasoning when the public case has no ac
   const requests: string[] = []
   let suppliedEvidence: unknown
   let generationAttempts = 0
+  const generationSchemas: Array<{ schema: Record<string, unknown>; evidenceIds: string[]; prompt: string }> = []
   const fixture = await setup(async input => {
     requests.push(input.schemaName)
     const payload = z.object({ guidelines: z.array(z.unknown()), caseEvidence: z.array(z.object({ id: z.string(), kind: z.string() }).passthrough()),
       considerations: z.array(z.object({ id: z.string() })).optional() }).parse(input.userPayload)
     expect(payload.guidelines).toEqual([])
     if (input.schemaName === 'doctor_recommendations') {
+      generationSchemas.push({ schema: input.jsonSchema, evidenceIds: payload.caseEvidence.map(item => item.id), prompt: input.systemPrompt })
       expect(input.jsonSchema).toMatchObject({ required: expect.arrayContaining(['considerations']),
         properties: { items: { maxItems: 0 } } })
-      if (generationAttempts++ === 0) return { model: input.model, content: JSON.stringify({ items: [], missingInformation: [] }) }
+      const first = generationAttempts++ === 0
+      if (first && failure === 'legacy-format') return { model: input.model, content: JSON.stringify({ items: [], missingInformation: [] }) }
       suppliedEvidence = payload.caseEvidence
       const evidence = payload.caseEvidence.find(item => item.kind === 'presentation')!
       return { model: input.model, content: JSON.stringify({ items: [], considerations: [{
         id: 'synthetic-dizziness-consideration', label: '核对头晕的症状演变', rationale: '结合当前主诉提出待核实方向，不作确诊。',
         supportingInformation: ['当前主诉包含头晕。'], opposingInformation: [],
-        missingInformation: ['补问是否出现新的伴随表现，以决定后续评估方向。'], caseEvidenceIds: [evidence.id],
+        missingInformation: ['补问是否出现新的伴随表现，以决定后续评估方向。'],
+        caseEvidenceIds: [first && failure === 'foreign-case-reference' ? 'other-patient-evidence' : evidence.id],
       }], missingInformation: [] }) }
     }
     expect(input.schemaName).toBe('doctor_recommendation_verification')
@@ -1404,6 +1408,13 @@ it('independently checks read-only case reasoning when the public case has no ac
   const before = await fixture.readCase()
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
+  expect(generationSchemas).toHaveLength(2)
+  for (const generation of generationSchemas) expect(generation.schema).toMatchObject({ properties: {
+    considerations: { maxItems: 8, items: { properties: { caseEvidenceIds: {
+      minItems: 1, maxItems: 12, items: { enum: generation.evidenceIds },
+    } } } },
+  } })
+  if (failure === 'foreign-case-reference') expect(generationSchemas[1]!.prompt).toContain('considerations.0.caseEvidenceIds.0')
   expect(await fixture.read()).toMatchObject({ status: 'ready', guidelines: [], items: [],
     considerations: [expect.objectContaining({ id: 'synthetic-dizziness-consideration' })],
     notices: [expect.objectContaining({ category: 'guideline' })] })
