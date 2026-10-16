@@ -50,7 +50,7 @@ export const doctorRecommendationConsiderationSchema = z.object(caseReasoning).s
 export type DoctorRecommendationConsideration = z.infer<typeof doctorRecommendationConsiderationSchema>
 export const doctorRecommendationNoticeSchema = z.object({
   category: z.enum(['guideline', 'catalog', 'verification', 'processing']),
-  message: text,
+  message: z.string().trim().min(1).max(6_000),
 }).strict()
 export type DoctorRecommendationNotice = z.infer<typeof doctorRecommendationNoticeSchema>
 
@@ -91,7 +91,7 @@ export const doctorRecommendationStateSchema = z.object({
   notices: z.array(doctorRecommendationNoticeSchema).max(12).optional(),
   guidelines: z.array(guidelineEvidenceSchema).max(64),
   caseEvidence: z.array(doctorCaseEvidenceSchema).max(100),
-  missingInformation: notes,
+  missingInformation: z.array(doctorRecommendationNoticeSchema.shape.message).max(12),
   errorCode: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT', 'AI_RESPONSE_INVALID', 'WORKFLOW_CONFLICT']).optional(),
 }).strict().superRefine((state, context) => {
   const itemIds = new Set<string>()

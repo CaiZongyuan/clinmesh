@@ -141,7 +141,8 @@ it.each(['withdrawn', 'unverified'] as const)('stops using imported passages aft
   const refreshed = await fixture.generate()
   expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
   expect(refreshed.guidelines.some(item => item.title === document.source.title)).toBe(false)
-  expect(refreshed.missingInformation).toContain('未收到已导入的糖尿病指南或病例资料。')
+  expect(refreshed.notices).toContainEqual(expect.objectContaining({ category: 'processing', message: expect.stringContaining('本轮未形成') }))
+  expect(refreshed.missingInformation).not.toContain('未收到已导入的糖尿病指南或病例资料。')
 })
 
 it.each([
