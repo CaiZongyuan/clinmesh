@@ -40,6 +40,8 @@
 
 ## 运行与验证边界
 
+- DSH Tool 恢复回归同时使用医生无绑定字段的纯查询 schema 和其他页面保留 `const` 的读取 schema；给所有工具套用相同绑定 fixture 会掩盖恢复合同漂移。医生目录缺失或完整 schema 无效时，残留旧式 `const` 不能提供恢复；共享工具须覆盖原请求属于医生、目录损坏仍保留来源限制的情况，并验证合法目录回退及非医生页面的绑定恢复。字段诊断还须覆盖绑定 `const` 有效但原始 schema 的根类型或其他业务参数无效的组合；只检查提取后的绑定属性会丢失这些约束。原生连续用例消费实际拒绝结果中的恢复 JSON，并核对错误调用没有 proof 或业务执行、恢复后的写操作只执行一次；合成 browserChannel 不提供真实病例隔离证据，跨患者与任务失效须复用 Surface 和 Server 授权回归。
+
 - 同一张 SQLite 表在并行分支分别迁移时，整合须保留已执行 SQL 的文件名和校验和，并验证两条非空升级路径；来源外键、字段 CHECK、rowid 顺序和任务身份都需一起核对。合并后的字段并集不能只改 TypeScript。
 
 - DSH 自动诊疗显示“请切换到有权限的岗位后重试”时，先取失败请求的 HTTP 状态、`error.code` 与操作名，核对[前端错误映射](../../apps/web/src/app/workspace-error.ts)和 [Tool 恢复规则](../agent-capabilities.md#tool-绑定与恢复)，不要仅凭提示认定岗位选错。刷新后消失的自动记录错误还需对齐启用请求与接诊成功的实际时间，区分提前触发和旧错误残留；接诊边界见[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
