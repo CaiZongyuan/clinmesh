@@ -108,7 +108,11 @@ export async function runDocumentQualityJourney(input: {
     if (input.agentDraft !== undefined) {
       const { version: _version, updatedAt: _updatedAt, ...savedDocument } = (await read()).clinicalDocument!.draft!
       await input.agentDraft({ ...document, ...savedDocument })
-      await expect.poll(async () => (await current())?.issues.some(issue => issue.kind === 'agent-source')).toBe(true)
+      // The native Tool saved the draft; reused results need no new unsaved-client POST.
+      await expect.poll(async () => {
+        const state = await input.quality()
+        return state.status === 'ready' && !state.stale && state.issues.some(issue => issue.kind === 'agent-source')
+      }).toBe(true)
       await page.getByRole('button', { name: '依据与说明', exact: true }).click()
       await expect(page.getByRole('region', { name: '评估质控提示', exact: true })).toContainText('待核实')
       await page.keyboard.press('Escape')

@@ -577,7 +577,12 @@ export function apply(ctx) {
           ? Promise.resolve({ content: JSON.stringify(persona), model: input.model })
           : input.schemaName === 'patient_dialogue_reply'
             ? Promise.resolve({ content: JSON.stringify({ reply: liveReplies[liveReplyIndex] }), model: input.model })
-          : provider.completeJson(input) },
+          : provider.completeJson(input).catch(error => {
+            const safe = z.object({ code: z.string(), validationIssues: z.array(z.object({ code: z.string(), path: z.string() })).optional() }).safeParse(error)
+            if (safe.success) report.liveValidationErrors = [...(Array.isArray(report.liveValidationErrors) ? report.liveValidationErrors : []),
+              { schemaName: input.schemaName, ...safe.data }]
+            throw error
+          }) },
       dshModelBridge: { origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 },
       authBaseUrl: serverOrigin, trustedOrigins: [serverOrigin, hostOrigin], authSecret: secret, cursorSecret: secret,
       databasePath: join(scratch, 'live-hospital.sqlite'), migrationMode: 'apply', demoPassword: password,
