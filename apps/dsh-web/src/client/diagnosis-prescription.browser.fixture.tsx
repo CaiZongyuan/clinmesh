@@ -15,7 +15,7 @@ import {
 } from '@clinmesh/contracts/his'
 import type { ReferenceConcept, ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import {
-  doctorRecommendationKindSchema, doctorRecommendationStateSchema, generateDoctorRecommendationsRequestSchema,
+  confirmDoctorPreparationRequestSchema, doctorRecommendationKindSchema, doctorRecommendationStateSchema, generateDoctorRecommendationsRequestSchema,
   type DoctorRecommendationState, type GuidelineEvidence,
 } from '@clinmesh/contracts/doctor-recommendations'
 import { WebApp } from '../../../web/src/app/web-app.tsx'
@@ -132,6 +132,8 @@ window.addEventListener('unhandledrejection', event => errors.push(String(event.
 const command = (data: unknown) => Response.json({
   auditId: 'synthetic-audit', data, effects: [], requestId: 'synthetic-command', warnings: [],
 })
+let failNextConfirmation = false
+window.addEventListener('diagnosis-prescription-fail-confirmation', () => { failNextConfirmation = true })
 const recommendationStates = new Map<string, DoctorRecommendationState>()
 // 只替换网络边界；本合同不证明 Server Command、授权或审计。
 const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -151,6 +153,41 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     page: 1, pageSize: 20, total: 1,
   })
   if (path === '/api/his/v1/doctor/cases/synthetic-case') return Response.json(detail)
+  if (path.endsWith('/document-quality-control/actions/check')) {
+    return Response.json({ error: { code: 'MODEL_UNAVAILABLE', message: '本合同不运行病历质控。' } }, { status: 503 })
+  }
+  const preparedConfirmation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/(diagnosis|prescription)\/actions\/confirm$/.exec(path)
+  if (preparedConfirmation !== null) {
+    if (failNextConfirmation) {
+      failNextConfirmation = false
+      return Response.json({ error: { code: 'MODEL_UNAVAILABLE', message: '合成提交失败，未开具。' } }, { status: 503 })
+    }
+    const { input: saved } = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+    const kind = doctorRecommendationKindSchema.parse(preparedConfirmation[1])
+    let draftVersion: number
+    let recordIds: string[]
+    if (kind === 'diagnosis') {
+      const entries = saved.selections.map(item => {
+        if (item.kind !== 'diagnosis') throw new Error('Unexpected prepared diagnosis kind')
+        return { catalogItemId: item.catalogItemId, role: item.role, ...(item.note === undefined ? {} : { note: item.note }) }
+      })
+      const confirmation = confirm(entries, (detail.diagnosis?.confirmation?.revisionNumber ?? 0) + 1)
+      draftVersion = (detail.diagnosis?.draftVersion ?? 0) + 2
+      detail.diagnosis = { confirmation, draftVersion }
+      recordIds = confirmation.entries.map(item => item.conditionId)
+    } else {
+      const items = saved.selections.map(item => {
+        if (item.kind !== 'prescription') throw new Error('Unexpected prepared prescription kind')
+        return { catalogItemId: item.catalogItemId, doseText: item.doseText, frequencyCode: item.frequencyCode,
+          courseDays: item.courseDays, quantity: item.quantity }
+      })
+      const prescription = issue(items)
+      draftVersion = (detail.medicationConclusion?.draftVersion ?? 0) + 2
+      detail.medicationConclusion = { prescription, draftVersion }
+      recordIds = [prescription.id]
+    }
+    return command({ kind, draftVersion, encounterVersion: detail.encounter.versionId, recordIds })
+  }
   const recommendation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/([^/]+)(\/actions\/generate)?$/.exec(path)
   if (recommendation !== null) {
     const kind = doctorRecommendationKindSchema.parse(recommendation[1])
@@ -168,7 +205,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
         status: recommendationsMode && (kind === 'diagnosis' || kind === 'prescription') ? 'ready' : 'missing-evidence',
         items: !recommendationsMode ? [] : kind === 'diagnosis' ? diagnoses.slice(0, 2).map((concept, index) => ({
           ...common, id: `synthetic-recommendation-diagnosis-${index}`, kind, label: concept.display,
-          catalogItemId: concept.id, referenceConcept: diagnosisReference(concept),
+          catalogItemId: concept.id, role: index === 0 ? 'primary' : 'secondary', referenceConcept: diagnosisReference(concept),
           ...(index === 0 ? {} : { guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-evidence-2'] }),
         })) : kind === 'prescription' ? [{
           ...common, id: 'synthetic-recommendation-prescription', kind, label: medication.genericName,

@@ -6,10 +6,30 @@ import {
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { JsonChatCompletionInput } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { syntheticGuidelineDocument, syntheticGuidelineMarker } from '../../server/tests/fixtures/guideline-corpus.ts'
+import { StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
+import { sourceArtifactHash } from '../../server/src/application/scenario-data/provider.ts'
 import { GuidelineCorpus } from '../../server/src/infrastructure/sqlite/guideline-corpus.ts'
 
 export const recommendationReasoningMarker = '合成待核实评估：患者近一周反复头晕；头晕与体位的关系尚未明确。'
 export const recommendationProcessingMarker = '合成处理说明验收：本轮不输出任何候选或思路。'
+
+// Explicit UCUM codes let the real report publisher use the synthetic case's exact results.
+export class RecommendationSyntheaProvider extends StubSyntheaProvider {
+  override async generate() {
+    const corpus = await super.generate()
+    return { ...corpus, sources: corpus.sources.map(source => {
+      const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(source.raw)
+      for (const entry of raw.entry) {
+        const quantity = entry.resource.valueQuantity
+        if (quantity !== null && typeof quantity === 'object' && !Array.isArray(quantity)) {
+          const parsed = z.object({ unit: z.string() }).loose().parse(quantity)
+          entry.resource.valueQuantity = { ...parsed, code: parsed.unit }
+        }
+      }
+      return { ...source, raw, hash: sourceArtifactHash(raw) }
+    }) }
+  }
+}
 
 export function createRecommendationGuidelineDatabase(directory: string): string {
   const databasePath = join(directory, 'guidelines.sqlite')
@@ -85,7 +105,7 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
     const diagnosis = payload.catalogs.diagnoses?.local.find(item => item.code === 'I10')
     const laboratory = payload.catalogs.laboratory?.items.find(item => item.nameZh === '合成白细胞计数')
     const candidate = payload.kind === 'diagnosis'
-      ? { kind: payload.kind, catalogItemId: diagnosis?.id }
+      ? { kind: payload.kind, catalogItemId: diagnosis?.id, role: 'primary' }
       : { kind: payload.kind, catalogItemId: laboratory?.id, indicationCode: laboratory?.allowedIndicationCodes[0] }
     if (candidate.catalogItemId === undefined) throw new Error('Synthetic reasoning fixture requires a matching baseline catalog item')
     return { items: [
@@ -103,7 +123,7 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
     const diagnosis = payload.catalogs.diagnoses?.local.find(item => item.code === 'E11.65')
     if (diagnosis === undefined) throw new Error('Synthetic baseline must provide E11.65')
     return { items: [{ id: 'synthetic-imported-diabetes', label: '合成导入糖尿病建议', kind: 'diagnosis',
-      catalogItemId: diagnosis.id, rationale: '合成新增主题仅供核对导入指南，不自动确诊。',
+      catalogItemId: diagnosis.id, role: 'primary', rationale: '合成新增主题仅供核对导入指南，不自动确诊。',
       supportingInformation: ['医生已补充合成糖尿病病史。'], opposingInformation: [], missingInformation: ['仍需核对本次血糖。'],
       guidelineEvidenceIds: [clause.id], caseEvidenceIds: [importedEvidence.id] }], missingInformation: [] }
   }
@@ -125,7 +145,7 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
   if (payload.kind === 'diagnosis') {
     const diagnosis = payload.catalogs.diagnoses?.local.find(item => item.code === 'I10')
     if (diagnosis === undefined) throw new Error('Synthetic baseline must provide I10')
-    return { items: [{ ...common, kind: 'diagnosis', catalogItemId: diagnosis.id }], missingInformation: [] }
+    return { items: [{ ...common, kind: 'diagnosis', catalogItemId: diagnosis.id, role: 'primary' }], missingInformation: [] }
   }
   if (payload.kind === 'prescription') {
     const medication = payload.catalogs.medications?.find(item => item.id === 'medication-amlodipine')

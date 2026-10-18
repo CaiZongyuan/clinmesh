@@ -99,11 +99,11 @@ for (const version of ['18', '19']) {
     test.beforeAll(async () => { await buildFixture(version) })
 
     for (const scenario of [
-      { kind: 'laboratory', tab: '检验 0', title: '检验建议', label: '合成完整检验组合与扩展指标名称', issue: '开具检验申请' },
-      { kind: 'imaging', tab: '放射检查 0', title: '放射检查建议', label: '胸部 CT 平扫', issue: '签发申请' },
-      { kind: 'pathology', tab: '病理会诊 0', title: '病理会诊建议', label: '乳腺切片病理会诊', issue: '签发申请' },
+      { kind: 'laboratory', tab: '检验 0', title: '待开具检验', label: '合成完整检验组合与扩展指标名称', issue: '开具检验申请' },
+      { kind: 'imaging', tab: '放射检查 0', title: '待开具放射检查', label: '胸部 CT 平扫', issue: '签发申请' },
+      { kind: 'pathology', tab: '病理会诊 0', title: '待开具病理会诊', label: '乳腺切片病理会诊', issue: '签发申请' },
     ] as const) {
-      test(`adopts ${scenario.kind} recommendations into editable drafts before the doctor issues them on React ${version}`, async ({ page }) => {
+      test(`directly issues selected ${scenario.kind} with collapsed reasoning and preserved manual fields on React ${version}`, async ({ page }) => {
         await mount(page, version, 'recommendations')
         await page.setViewportSize({ width: 390, height: 900 })
         await page.evaluate(() => {
@@ -112,59 +112,57 @@ for (const version of ['18', '19']) {
         })
         await page.getByRole('tab', { name: scenario.tab, exact: true }).click()
         const panel = page.getByRole('region', { name: scenario.title, exact: true })
-        const thoughts = panel.getByRole('region', { name: '待核实思路', exact: true })
-        await expect(thoughts).toBeVisible()
+        const issue = panel.getByRole('button', { name: /^开具选中项目/ })
+        await expect(panel.getByRole('checkbox', { name: `选择${scenario.label}`, exact: true })).toBeChecked()
+        await expect(issue).toBeEnabled()
+        await expect(page.getByRole('region', { name: '待核实思路', exact: true })).toHaveCount(0)
+        await expect(panel.getByRole('button', { name: /^采纳 / })).toHaveCount(0)
+        await panel.getByRole('button', { name: '依据与说明', exact: true }).click()
+        const details = page.getByRole('dialog', { name: '依据与说明', exact: true })
+        expect(await details.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+        const thoughts = details.getByRole('region', { name: '待核实思路', exact: true })
         await expect(thoughts.getByText('合成病例依据：来源与当前病例绑定，不代表已开立检查。', { exact: true })).toBeVisible()
         await expect(thoughts.getByText('仅在核实症状与具体情境后，再判断本项检查是否改变处置。', { exact: true })).toBeVisible()
         await expect(thoughts.getByRole('button')).toHaveCount(0)
         await expect(thoughts.getByRole('link')).toHaveCount(0)
-        for (const label of ['指南覆盖', '院内目录', '核验未通过', '系统处理限制']) {
-          await expect(panel.getByRole('alert', { name: label, exact: true })).toBeVisible()
+        for (const message of ['当前接入指南未支持本项合成思路。', '本项合成思路尚无对应的本院可执行目录身份。',
+          '另一合成候选因限定语不成立而未发布。', '合成处理限制示例：本轮未能完整处理额外来源资料。']) {
+          await expect(details.getByText(message, { exact: true })).toBeVisible()
         }
+        await expect(details.getByRole('link', { name: /合成检查建议来源/ })).toHaveAttribute('href', 'https://example.test/investigation-guideline')
+        await expect(details.getByText('合成来源条款：长中文仅验证检查建议引用、医生草稿与正式开立入口。', { exact: true })).toBeVisible()
+        await page.keyboard.press('Escape')
+        await expect(details).toHaveCount(0)
         const before = await readCase(page)
         expect(before.laboratoryRequests?.draft).toBeUndefined()
         expect(before.imagingRequests?.draft).toBeUndefined()
         expect(before.pathologyRequests?.draft).toBeUndefined()
-        const adoptable = panel.getByRole('region', { name: '可采纳建议', exact: true })
-        await adoptable.getByText('查看依据', { exact: true }).click()
-        await expect(adoptable.getByRole('link', { name: '合成检查建议来源', exact: true })).toHaveAttribute('href', 'https://example.test/investigation-guideline')
-        await expect(adoptable.getByText('合成来源条款：长中文仅验证检查建议引用、医生草稿与正式开立入口。', { exact: true })).toBeVisible()
-        await expect(adoptable.getByText('合成病例依据：来源与当前病例绑定，不代表已开立检查。', { exact: true })).toBeVisible()
-        await panel.getByRole('button', { name: `采纳 ${scenario.label}`, exact: true }).click()
-        const issue = page.getByRole('button', { name: scenario.issue, exact: true })
-        if (scenario.kind === 'laboratory') {
-          await expect(page.getByRole('region', { name: '检验申请', exact: true }).getByText('合成静脉血标本', { exact: true })).toBeVisible()
-          await expect(page.getByText('临床评估', { exact: true })).toBeVisible()
-        } else {
-          const input = page.getByRole('textbox', { name: scenario.kind === 'imaging' ? '检查指征' : '会诊目的', exact: true })
+        if (scenario.kind !== 'laboratory') {
+          await panel.getByRole('button', { name: '调整', exact: true }).click()
+          const edit = page.getByRole('dialog', { name: '调整项目', exact: true })
+          const input = edit.getByRole('textbox', { name: scenario.kind === 'imaging' ? '检查目的' : '会诊目的', exact: true })
           await expect(input).toHaveValue(scenario.kind === 'imaging' ? '合成建议检查指征，需医生核对。' : '合成建议复核既往手术切片，需医生核对。')
-          if (scenario.kind === 'pathology') {
-            await expect(page.getByRole('combobox', { name: '送检的既往手术', exact: true })).toContainText('乳腺病灶切除术')
-          }
           await input.fill('医生手改的合成申请内容，刷新建议必须保留。')
+          await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
         }
-        await panel.getByRole('button', { name: '刷新建议', exact: true }).click()
+        await panel.getByRole('button', { name: '刷新', exact: true }).click()
         await expect.poll(async () => doctorRecommendationStateSchema.parse(await page.evaluate(async kind =>
           await (await fetch(`/api/his/v1/doctor/cases/synthetic-case/recommendations/${kind}`)).json(), scenario.kind,
         )).generation).toBe(2)
         if (scenario.kind !== 'laboratory') {
-          await expect(page.getByRole('textbox', { name: scenario.kind === 'imaging' ? '检查指征' : '会诊目的', exact: true }))
+          await panel.getByRole('button', { name: '调整', exact: true }).click()
+          const edit = page.getByRole('dialog', { name: '调整项目', exact: true })
+          await expect(edit.getByRole('textbox', { name: scenario.kind === 'imaging' ? '检查目的' : '会诊目的', exact: true }))
             .toHaveValue('医生手改的合成申请内容，刷新建议必须保留。')
-          await page.getByRole('button', { name: '保存草稿', exact: true }).click()
+          await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
         }
-        await expect(issue).toBeEnabled()
-        await expect.poll(async () => {
-          const detail = await readCase(page)
-          return scenario.kind === 'laboratory' ? detail.laboratoryRequests?.draft : scenario.kind === 'imaging' ? detail.imagingRequests?.draft : detail.pathologyRequests?.draft
-        }).toBeDefined()
         const draft = await readCase(page)
         expect(draft.laboratoryRequests?.requests).toEqual([])
         expect(draft.imagingRequests?.requests).toEqual([])
         expect(draft.pathologyRequests?.requests).toEqual([])
-        if (scenario.kind === 'laboratory') expect(draft.laboratoryRequests?.draft).toMatchObject({ catalogItemId: 'synthetic-lab', indicationCode: 'clinical-evaluation' })
-        else if (scenario.kind === 'imaging') expect(draft.imagingRequests?.draft).toMatchObject({ indication: '医生手改的合成申请内容，刷新建议必须保留。', service: { id: 'imaging-chest-ct-plain' } })
-        else expect(draft.pathologyRequests?.draft).toMatchObject({ purpose: '医生手改的合成申请内容，刷新建议必须保留。', sourceProcedure: { sourceReference: 'urn:uuid:procedure-1' } })
-        await expect(panel.getByRole('button', { name: `采纳 ${scenario.label}`, exact: true })).toBeDisabled()
+        expect(draft.laboratoryRequests?.draft).toBeUndefined()
+        expect(draft.imagingRequests?.draft).toBeUndefined()
+        expect(draft.pathologyRequests?.draft).toBeUndefined()
         const section = page.locator('[data-agent-section="laboratory"]')
         const overflow = await section.evaluate(element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth }))
         expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.width + 1)
@@ -177,6 +175,9 @@ for (const version of ['18', '19']) {
         const issued = await readCase(page)
         const request = scenario.kind === 'laboratory' ? issued.laboratoryRequests?.requests[0] : scenario.kind === 'imaging' ? issued.imagingRequests?.requests[0] : issued.pathologyRequests?.requests[0]
         expect(request).toMatchObject({ status: 'issued', serviceRequestId: `service-request-${scenario.kind}-1` })
+        if (scenario.kind === 'laboratory') expect(request).toMatchObject({ catalogItemId: 'synthetic-lab', indicationCode: 'clinical-evaluation' })
+        else if (scenario.kind === 'imaging') expect(request).toMatchObject({ indication: '医生手改的合成申请内容，刷新建议必须保留。', service: { id: 'imaging-chest-ct-plain' } })
+        else expect(request).toMatchObject({ purpose: '医生手改的合成申请内容，刷新建议必须保留。', sourceProcedure: { sourceReference: 'urn:uuid:procedure-1' } })
         const append = page.getByRole('button', { name: '追加申请', exact: true })
         await append.click()
         const dialog = page.getByRole('dialog', { name: '追加申请', exact: true })

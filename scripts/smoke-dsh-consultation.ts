@@ -18,7 +18,7 @@ import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model
 import { recordingSourceDiagnosticSchema } from '../apps/server/src/application/consultation-history-summary.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../apps/server/tests/fixtures/consultation.ts'
 import { journeyReplies, runRecordingJourney } from '../apps/web/e2e/consultation-recording-journey.ts'
-import { createRecommendationGuidelineDatabase, recommendationFixture } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
+import { createRecommendationGuidelineDatabase, recommendationFixture, RecommendationSyntheaProvider } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
 import { runRecommendationJourney } from '../apps/web/e2e/doctor-recommendations-journey.ts'
 import { documentQualityFixture, qualityPatientReply } from '../apps/web/e2e/doctor-document-quality-fixture.ts'
 import { runDocumentQualityJourney } from '../apps/web/e2e/doctor-document-quality-journey.ts'
@@ -65,7 +65,8 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'apps/web/src/app/doctor/clinical-document-page.tsx',
   'apps/web/src/app/doctor/document-quality-control.tsx', 'apps/web/src/app/api-client.ts',
   'apps/web/src/app/doctor/clinical-document-updates.tsx', 'apps/web/src/app/doctor/clinical-document-updates.css',
-  'apps/web/src/app/doctor/doctor-case-controller.tsx',
+  'apps/web/src/app/doctor/doctor-case-controller.tsx', 'apps/web/src/app/doctor/doctor-preparation-state.tsx',
+  'apps/web/src/app/doctor/doctor-recommendations.tsx',
   'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
   'apps/web/e2e/doctor-document-quality-journey.ts', 'apps/web/e2e/doctor-document-quality-fixture.ts',
   'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
@@ -79,6 +80,7 @@ const profile = join(home, 'profiles/web')
 const controlPath = join(scratch, 'control.json')
 const callsPath = join(scratch, 'calls.jsonl')
 const qualityResults = join(scratch, 'quality-results')
+const recommendationResults = join(scratch, 'recommendation-results')
 const secret = randomBytes(32).toString('hex')
 const password = `Synthetic-${randomUUID()}-Aa1!`
 const json = (value: unknown) => JSON.stringify(value, null, 2) + '\n'
@@ -108,6 +110,7 @@ try {
   const serverOrigin = `http://127.0.0.1:${serverPort}`
   const provider = new DshModelProvider({ origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 })
   await mkdir(qualityResults)
+  await mkdir(recommendationResults)
   await mkdir(join(profile, 'node_modules/@clinmesh'), { recursive: true })
   const links = [
     [join(root, 'apps/dsh-web'), join(profile, 'node_modules/@clinmesh/dsh-web')],
@@ -164,12 +167,14 @@ class Adapter extends LlmAdapter {
     const history=Array.isArray(payload.turns)&&Array.isArray(payload.history);
     const qualityPath=${JSON.stringify(qualityResults)}+'/'+createHash('sha256').update(JSON.stringify(payload)).digest('hex')+'.json';
     const quality=existsSync(qualityPath)?JSON.parse(readFileSync(qualityPath,'utf8')):undefined;
+    const recommendationPath=${JSON.stringify(recommendationResults)}+'/'+createHash('sha256').update(JSON.stringify(payload)).digest('hex')+'.json';
+    const recommendation=existsSync(recommendationPath)?JSON.parse(readFileSync(recommendationPath,'utf8')):undefined;
     record({kind:'auxiliary',history,session:false,tools:!!options.tools,...(quality?{schemaName:quality.schemaName}:{})});
     let result;
     if(quality) {
       result=quality.result;
-    } else if(Array.isArray(payload.guidelines)&&(Array.isArray(payload.caseEvidence)||Array.isArray(payload.historyEvidence))) {
-      result=state.recommendationResult;
+    } else if(recommendation) {
+      result=recommendation.result;
     } else if(Array.isArray(payload.additions)) {
       result={additions:payload.additions.map((_,index)=>({index,faithful:true,complete:true,relationValid:true}))};
     } else if(history) {
@@ -249,8 +254,8 @@ export function apply(ctx) {
         }
         if (recommendationsOnly && ['doctor_recommendations', 'doctor_recommendation_history_selection',
           'doctor_recommendation_catalog_selection', 'doctor_recommendation_verification'].includes(input.schemaName)) {
-          const control = JSON.parse(await readFile(controlPath, 'utf8')) as Record<string, unknown>
-          await writeFile(controlPath, json({ ...control, recommendationResult: recommendationFixture(input) }))
+          const path = join(recommendationResults, `${createHash('sha256').update(JSON.stringify(input.userPayload)).digest('hex')}.json`)
+          await writeFile(path, json({ schemaName: input.schemaName, result: recommendationFixture(input) }))
         }
         return provider.completeJson(input)
       },
@@ -259,7 +264,7 @@ export function apply(ctx) {
     dshModelBridge: { origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 },
     authBaseUrl: serverOrigin, trustedOrigins: [serverOrigin, hostOrigin], authSecret: secret, cursorSecret: secret,
     databasePath: join(scratch, 'hospital.sqlite'), migrationMode: 'apply', demoPassword: password,
-    syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
+    syntheaProvider: recommendationsOnly ? new RecommendationSyntheaProvider() : new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
   })
   listener = serve({ hostname: '127.0.0.1', port: serverPort, fetch: request => hospital!.app.fetch(request) })
   managed = startManagedProcess(process.execPath, [cli, '--profile', 'web', '--port', String(hostPort), '--no-open'], {
@@ -553,7 +558,7 @@ export function apply(ctx) {
       dshModelBridge: { origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 },
       authBaseUrl: serverOrigin, trustedOrigins: [serverOrigin, hostOrigin], authSecret: secret, cursorSecret: secret,
       databasePath: join(scratch, 'live-hospital.sqlite'), migrationMode: 'apply', demoPassword: password,
-      syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
+      syntheaProvider: recommendationsOnly ? new RecommendationSyntheaProvider() : new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
     })
     try {
       hospital = liveRuntime
@@ -672,7 +677,7 @@ export function apply(ctx) {
   }
   report.pageErrors = errors.length
   expect(errors).toEqual([])
-  console.log(recommendationsOnly ? '原生 DSH 指南建议、草稿采纳与人工确认验收通过'
+  console.log(recommendationsOnly ? '原生 DSH 后台准备、直接确认与开具验收通过'
     : summaryOnly ? '原生 DSH 多轮病史总结与来源验收通过'
       : qualityOnly ? '原生 DSH 四项病历质控及 Tool → 人工批准 → Command 关联通过'
         : '原生 DSH 问诊组合验收及 Tool → 人工批准 → Command 关联通过')

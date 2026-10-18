@@ -21,7 +21,7 @@ import {
   type SessionContext,
 } from '@clinmesh/contracts/his'
 import {
-  doctorRecommendationKindSchema, doctorRecommendationStateSchema, generateDoctorRecommendationsRequestSchema,
+  confirmDoctorPreparationRequestSchema, doctorRecommendationKindSchema, doctorRecommendationStateSchema, generateDoctorRecommendationsRequestSchema,
   type DoctorRecommendationState, type DoctorRecommendationSuggestion,
 } from '@clinmesh/contracts/doctor-recommendations'
 import { WebApp } from '../../../web/src/app/web-app.tsx'
@@ -139,6 +139,41 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     page: 1, pageSize: 20, total: 1,
   })
   if (path === '/api/his/v1/doctor/cases/synthetic-case') return Response.json(detail)
+  if (path.endsWith('/document-quality-control/actions/check')) {
+    return Response.json({ error: { code: 'MODEL_UNAVAILABLE', message: '本合同不运行病历质控。' } }, { status: 503 })
+  }
+  const preparedConfirmation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/(laboratory|imaging|pathology)\/actions\/confirm$/.exec(path)
+  if (preparedConfirmation !== null) {
+    const { input: saved } = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+    const kind = doctorRecommendationKindSchema.parse(preparedConfirmation[1])
+    const recordIds: string[] = []
+    let draftVersion = 0
+    for (const item of saved.selections) {
+      if (item.kind === 'laboratory') {
+        const issued = { ...request('laboratory-1', service, false), indicationCode: item.indicationCode }
+        detail.laboratoryRequests!.requests.unshift(issued)
+        draftVersion = detail.laboratoryRequests!.draftVersion += 2
+        recordIds.push(issued.id)
+      } else if (item.kind === 'imaging') {
+        const issued: ImagingRequest = { indication: item.indication, service: imagingService,
+          id: 'imaging-1', serviceRequestId: 'service-request-imaging-1', serviceRequestVersion: '1',
+          previousReports: [], status: 'issued', taskId: 'task-imaging-1', taskVersion: '1', version: 1 }
+        detail.imagingRequests!.requests.unshift(issued)
+        draftVersion = detail.imagingRequests!.draftVersion += 2
+        recordIds.push(issued.id)
+      } else if (item.kind === 'pathology') {
+        const sourceProcedure = sourceProcedures.find(source => source.sourceReference === item.sourceProcedureReference)
+        if (sourceProcedure === undefined) throw new Error('Unknown prepared source procedure')
+        const issued: PathologyRequest = { purpose: item.purpose, sourceProcedure, service: pathologyService,
+          id: 'pathology-1', serviceRequestId: 'service-request-pathology-1', serviceRequestVersion: '1',
+          previousReports: [], status: 'issued', taskId: 'task-pathology-1', taskVersion: '1', version: 1 }
+        detail.pathologyRequests!.requests.unshift(issued)
+        draftVersion = detail.pathologyRequests!.draftVersion += 2
+        recordIds.push(issued.id)
+      } else throw new Error('Unexpected prepared investigation kind')
+    }
+    return command({ kind, draftVersion, encounterVersion: detail.encounter.versionId, recordIds })
+  }
   const recommendation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/([^/]+)(\/actions\/generate)?$/.exec(path)
   if (recommendation !== null) {
     const kind = doctorRecommendationKindSchema.parse(recommendation[1])
