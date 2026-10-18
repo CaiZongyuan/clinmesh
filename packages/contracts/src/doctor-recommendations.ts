@@ -69,8 +69,15 @@ export const doctorRecommendationSuggestionSchema = z.discriminatedUnion('kind',
 ])
 export type DoctorRecommendationSuggestion = z.infer<typeof doctorRecommendationSuggestionSchema>
 
+const generationSuggestionSchema = z.discriminatedUnion('kind', [
+  doctorRecommendationSuggestionSchema.options[0],
+  doctorRecommendationSuggestionSchema.options[1],
+  doctorRecommendationSuggestionSchema.options[2],
+  doctorRecommendationSuggestionSchema.options[3].extend({ role: z.enum(['primary', 'secondary']) }),
+  doctorRecommendationSuggestionSchema.options[4],
+])
 export const doctorRecommendationGenerationSchema = z.object({
-  items: z.array(doctorRecommendationSuggestionSchema).max(8),
+  items: z.array(generationSuggestionSchema).max(8),
   considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
   missingInformation: notes,
 }).strict().refine(output => output.items.length + (output.considerations?.length ?? 0) <= 8,
@@ -160,9 +167,6 @@ export const confirmDoctorPreparationRequestSchema = z.object({
     expectedDraftVersion: z.number().int().nonnegative(),
     selections: z.array(doctorPreparationSelectionSchema).min(1).max(8),
   }).strict().superRefine((input, context) => {
-    if (!input.selections.some(selection => selection.source === 'agent')) {
-      context.addIssue({ code: 'custom', path: ['selections'], message: 'Prepared confirmation requires at least one explicitly selected agent item' })
-    }
     if (new Set(input.selections.map(selection => selection.kind)).size !== 1) {
       context.addIssue({ code: 'custom', path: ['selections'], message: 'Confirm one recommendation kind at a time' })
     }

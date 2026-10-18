@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { doctorRecommendationGenerationSchema, doctorRecommendationStateSchema } from '../src/doctor-recommendations.ts'
+import { doctorRecommendationGenerationSchema, doctorRecommendationStateSchema, confirmDoctorPreparationRequestSchema } from '../src/doctor-recommendations.ts'
 
 const state = {
   caseId: 'synthetic-case', kind: 'diagnosis', encounterId: 'synthetic-encounter', encounterVersion: '1',
@@ -38,4 +38,30 @@ it('bounds the combined generated suggestions and read-only considerations', () 
   const output = { items: [{ ...consideration, kind: 'diagnosis', catalogItemId: 'diagnosis-fever', guidelineEvidenceIds: ['real-guideline'] }],
     considerations: Array.from({ length: 8 }, (_, index) => ({ ...consideration, id: `idea-${index}` })), missingInformation: [] }
   expect(doctorRecommendationGenerationSchema.safeParse(output).success).toBe(false)
+})
+
+
+it('reads persisted diagnoses without an invented role while requiring model proposals to include one', () => {
+  const guideline = { id: 'synthetic-guideline', title: '合成指南', publisher: '合成机构', documentType: 'guideline',
+    version: '1', url: 'https://example.org/synthetic-guideline', locator: '第1段', scope: '合成病例验证',
+    text: '合成条款正文。', sourceHash: 'b'.repeat(64) }
+  const item = { ...consideration, kind: 'diagnosis', catalogItemId: 'diagnosis-fever', guidelineEvidenceIds: [guideline.id] }
+  const legacy = doctorRecommendationStateSchema.parse({ ...state, guidelines: [guideline], items: [item] })
+  expect(legacy.items[0]).not.toHaveProperty('role')
+  expect(doctorRecommendationGenerationSchema.safeParse({ items: [item], missingInformation: [] }).success).toBe(false)
+  expect(doctorRecommendationGenerationSchema.safeParse({ items: [{ ...item, role: 'secondary' }], missingInformation: [] }).success).toBe(true)
+})
+
+it('accepts explicit manual selection without pretending that it has an agent proof', () => {
+  const request = { expectedVersions: { 'Encounter/synthetic-encounter': '1' }, input: {
+    generation: 2, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 0,
+    selections: [{ kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary' }],
+  } }
+  expect(confirmDoctorPreparationRequestSchema.safeParse(request).success).toBe(true)
+  expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input,
+    selections: [{ ...request.input.selections[0], suggestionId: 'old-agent-item' }],
+  } }).success).toBe(false)
+  expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input,
+    selections: [{ ...request.input.selections[0], source: 'agent' }],
+  } }).success).toBe(false)
 })

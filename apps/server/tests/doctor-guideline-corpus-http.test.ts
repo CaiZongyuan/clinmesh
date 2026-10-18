@@ -43,7 +43,7 @@ async function setup(chiefComplaint = '糖尿病复查。') {
       const guideline = payload.guidelines.find(item => item.title === document.source.title)
       const fact = payload.caseEvidence.find(item => item.text.includes('糖尿病'))
       result = guideline === undefined || fact === undefined ? { items: [], considerations: [], missingInformation: ['未收到已导入的糖尿病指南或病例资料。'] } : {
-        items: [{ id: 'synthetic-diabetes-candidate', kind: 'diagnosis', catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia',
+        items: [{ id: 'synthetic-diabetes-candidate', kind: 'diagnosis', role: 'primary', catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia',
           label: '合成糖尿病候选', rationale: '仅验证指南检索和实际病例引用进入独立核验。', supportingInformation: ['医生已记录糖尿病病史。'],
           opposingInformation: [], missingInformation: ['仍由医生核对当前诊断。'], guidelineEvidenceIds: [guideline.id], caseEvidenceIds: [fact.id] }],
         missingInformation: [],

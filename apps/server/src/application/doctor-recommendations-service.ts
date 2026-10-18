@@ -4,10 +4,11 @@ import {
   doctorRecommendationStateSchema, type DoctorCaseEvidence, type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion,
   type DoctorRecommendationConsideration, type DoctorRecommendationNotice,
   type GenerateDoctorRecommendationsRequest, type GuidelineEvidence,
+  confirmDoctorPreparationResponseSchema, type ConfirmDoctorPreparationRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
-import type { ActorContext, CommandExecutor } from './command-executor.ts'
+import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
 import type { WorkflowService } from './workflow-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { WorkflowError } from './workflow-error.ts'
@@ -67,6 +68,7 @@ const documentFieldLabels: Record<string, string> = {
 
 const generationPrompt = `你是医生的诊疗建议助手，输出当前kind的可采纳候选items和只读待核实思路considerations，两类合计最多8条。
 items仅依据给出的指南条款、当前医生可见病例和本院目录生成，每条必须引用实际guidelines与caseEvidence的id，说明支持、不符合和待核实信息。
+诊断items必须明确给出role（primary主诊断或secondary次诊断），结合当前已确认诊断拟定主次，不用列表位置代替临床判断。
 诊断或检查缺少适用指南、目录或明确支持时，可以结合当前病例与医学知识提出considerations，说明推断理由、支持、反对及相关核实事项；它们只是思路，不作确诊，不提供可执行目录身份或冒充指南依据，必须引用实际caseEvidence的id。
 items与considerations的id在两类条目中全局唯一；caseEvidenceIds只能逐字选择本轮caseEvidence中提供的id，不使用其他病例、原始记录或自行构造的编号。
 mode为considerations-only时items必须为空，必须显式返回considerations，使用病例事实与医学知识评估诊断或检查方向，不能仅因没有指南或目录就放弃推理；仅在当前病例不支持任何可核实方向时返回空数组。处方不生成considerations，也不凭模型记忆补药品或处方字段。
@@ -78,7 +80,7 @@ mode为considerations-only时items必须为空，必须显式返回consideration
 只给建议或思路，不正式开立。缺项放在相关条目内，顶层missingInformation返回空数组；指南覆盖、目录和系统核验限制由系统单独说明，不生成无关联的缺项长清单。`
 const verificationPrompt = `独立核对items候选和considerations思路与实际提供的病例，恰好覆盖两类全部id，每个核验结果仍放在items数组中。
 items逐项判断指南支持、病例支持、适用性、否定和限定语是否保留；considerations是无采纳动作的诊断/检查推断，核对病例事实、合理适用性和限定语，缺少指南支持可以返回guidelineSupported:false，不能仅因缺少指南就把病例支持或思路适用性也判false。
-核对整条内容，包括理由、支持、反对和待核实事项。患者自述未自行测量、分诊体温记录和不同时间的发热感须分别核对；保留已有记录，未知状态保持未知，不推定为阴性、异常或禁忌存在。推断应保留不确定性，不输出疾病概率或改写成患者已确诊事实。
+核对整条内容，包括理由、支持、反对和待核实事项；诊断候选还要核对其role主次是否与本例相符，不成立时applicable返回false。患者自述未自行测量、分诊体温记录和不同时间的发热感须分别核对；保留已有记录，未知状态保持未知，不推定为阴性、异常或禁忌存在。推断应保留不确定性，不输出疾病概率或改写成患者已确诊事实。
 无检测结果本身不是拒绝推荐该检测的理由，未安排检查不是病例缺陷；缺项必须影响该条具体判断，不能把全套实验室检查作为统一前置条件。存在伪矛盾、虚构事实或无关缺项时qualifiersPreserved或caseSupported返回false。
 reason说明未通过的具体条目、原文或条件；不要只说缺少依据。全部成立时reason可简述成立依据。
 候选名称与诊断编码已按实际目录固定；selectedCatalogItems提供所选检查的真实编码、项目与授权手术来源，必须核对这一最终临床身份。
@@ -186,7 +188,9 @@ export class DoctorRecommendationsService {
     add('prior-facts', 'history', '已发布既往诊断', detail.priorFacts)
     add('report', 'report', '当前检验报告', detail.report)
     for (const request of [...detail.laboratoryRequests?.requests ?? [], ...detail.imagingRequests?.requests ?? [], ...detail.pathologyRequests?.requests ?? []]) {
-      add(`report:${request.id}`, 'report', '已发布检查检验报告', request.report)
+      const { report, previousReports: _previousReports, ...issuedRequest } = request
+      add(`request:${request.id}`, 'draft', '已开具检查检验申请及当前状态', issuedRequest, `ServiceRequest/${request.serviceRequestId}`)
+      add(`report:${request.id}`, 'report', '已发布检查检验报告', report)
     }
     const historyDetails = this.options.workflow.doctorRecommendationHistory(context, caseId)
     for (const detail of historyDetails) {
@@ -227,7 +231,7 @@ export class DoctorRecommendationsService {
       new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures]))) }
     return { context, encounter: detail.encounter, kind, caseEvidence, catalogs, guidelines,
       sourceHashes, requiredCaseEvidenceIds, historyEvidenceIds: [...history.required, ...history.optional].map(item => item.id),
-      missingInformation: [...missingInformation], contextPolicyVersion: 'case-reasoning-2026-10-16-v3',
+      missingInformation: [...missingInformation], contextPolicyVersion: 'ready-to-order-2026-10-18-v1',
       guidelineRevision: retrieved === undefined ? doctorGuidelineRevision : `${doctorGuidelineRevision}:${retrieved.revision}`,
       ...(kind === 'diagnosis' ? { referenceRevision: this.options.referenceData.provenance() } : {}),
       prescriptionConcluded: detail.medicationConclusion?.prescription !== undefined || detail.medicationConclusion?.noMedication !== undefined }
@@ -469,6 +473,122 @@ export class DoctorRecommendationsService {
       return { data: state, effects: [{ kind: 'updated', reference: `DoctorRecommendations/${caseId}:${kind}`, versionId: String(generation) }] }
     })
     return { ...response, data: this.#withAvailableGuidelines(response.data, snapshot.guidelines) }
+  }
+
+  async confirm(context: ActorContext, caseId: string, kind: DoctorRecommendationKind,
+    request: ConfirmDoctorPreparationRequest, idempotencyKey: string) {
+    this.#authorize(context, caseId)
+    const offerings = kind === 'imaging' || kind === 'pathology'
+      ? await this.options.investigationCatalogs(context, caseId, kind) : {}
+    return this.options.commands.execute({ context, operation: 'doctor.recommendations.confirm',
+      contextRequirement: 'current', expectedVersions: request.expectedVersions, idempotencyKey,
+      input: { caseId, kind, ...request.input }, dataSchema: confirmDoctorPreparationResponseSchema.shape.data,
+      authorize: () => { this.#authorize(context, caseId) },
+    }, transaction => {
+      const detail = this.#authorize(context, caseId)
+      const snapshot = this.#snapshot(context, caseId, kind, offerings)
+      const reference = `Encounter/${snapshot.encounter.id}`
+      if (snapshot.encounter.status !== 'in-progress' || Object.keys(request.expectedVersions).length !== 1
+        || request.expectedVersions[reference] !== snapshot.encounter.versionId) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The current active Encounter version is required')
+      }
+      const row = this.#row(context, caseId, kind)
+      const state = row === undefined ? undefined : doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
+      const hasAgentSelections = request.input.selections.some(selection => selection.source === 'agent')
+      if (state === undefined || (state.status !== 'ready' && (hasAgentSelections || state.status !== 'missing-evidence')) || state.generation !== request.input.generation
+        || row?.input_fingerprint !== request.input.inputFingerprint
+        || canonicalJsonHash(snapshot) !== request.input.inputFingerprint) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prepared items no longer match current clinical information; update them before confirming')
+      }
+      const selections = request.input.selections
+      const selectedIds = new Set<string>()
+      for (const selection of selections) {
+        if (selection.kind !== kind) throw new WorkflowError('WORKFLOW_CONFLICT', 'Select a single recommendation kind')
+        if (selection.source === 'manual') continue
+        const suggestion = state.items.find(item => item.id === selection.suggestionId && item.kind === kind)
+        if (suggestion === undefined || selectedIds.has(suggestion.id)) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The selected prepared item is no longer available')
+        }
+        selectedIds.add(suggestion.id)
+        const originalId = 'catalogItemId' in suggestion ? suggestion.catalogItemId : suggestion.serviceId
+        const selectedId = 'catalogItemId' in selection ? selection.catalogItemId : selection.serviceId
+        if (originalId !== selectedId || (selection.kind === 'pathology' && suggestion.kind === 'pathology'
+          && selection.sourceProcedureReference !== suggestion.sourceProcedureReference)) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'An agent selection must retain its verified clinical identity; use an explicit manual selection to replace it')
+        }
+      }
+      const base = { context, encounterId: snapshot.encounter.id,
+        expectedVersions: request.expectedVersions, idempotencyKey }
+      let draftVersion = request.input.expectedDraftVersion
+      const effects: CommandEffect[] = []
+      const recordIds: string[] = []
+      let encounterVersion = snapshot.encounter.versionId
+      if (kind === 'diagnosis') {
+        const entries = selections.flatMap(selection => selection.kind !== 'diagnosis' ? [] : [{
+          catalogItemId: selection.catalogItemId, role: selection.role,
+          ...(selection.note === undefined ? {} : { note: selection.note }),
+        }])
+        const saved = this.options.workflow.applySaveDiagnosisDraft(transaction, { ...base, expectedDraftVersion: draftVersion, entries })
+        const confirmed = this.options.workflow.applyConfirmDiagnosis(transaction, { ...base, expectedDraftVersion: saved.data.draftVersion })
+        draftVersion = confirmed.data.diagnosisVersion
+        encounterVersion = confirmed.data.encounterVersion
+        recordIds.push(confirmed.data.confirmation.id)
+        effects.push(...confirmed.effects)
+      } else if (kind === 'prescription') {
+        const items = selections.flatMap(selection => selection.kind !== 'prescription' ? [] : [{
+          catalogItemId: selection.catalogItemId, doseText: selection.doseText, frequencyCode: selection.frequencyCode,
+          courseDays: selection.courseDays, quantity: selection.quantity,
+        }])
+        const saved = this.options.workflow.applySavePrescriptionDraft(transaction, { ...base, expectedDraftVersion: draftVersion, items })
+        const issued = this.options.workflow.applyIssuePrescription(transaction, { ...base, expectedDraftVersion: saved.data.draftVersion })
+        draftVersion = issued.data.draftVersion
+        recordIds.push(issued.data.prescription.id)
+        effects.push(...issued.effects)
+      } else {
+        const currentDraft = kind === 'laboratory' ? detail.laboratoryRequests?.draft
+          : kind === 'imaging' ? detail.imagingRequests?.draft : detail.pathologyRequests?.draft
+        if (currentDraft !== undefined) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'An existing investigation draft needs explicit resolution before confirming prepared items')
+        }
+        for (const selection of selections) {
+          if (selection.kind === 'laboratory') {
+            const saved = this.options.workflow.applySaveLaboratoryRequestDraft(transaction, {
+              ...base, expectedDraftVersion: draftVersion, catalogItemId: selection.catalogItemId, indicationCode: selection.indicationCode,
+            })
+            const issued = this.options.workflow.applyIssueLaboratoryRequest(transaction, { ...base, expectedDraftVersion: saved.data.draftVersion })
+            draftVersion = issued.data.draftVersion
+            recordIds.push(issued.data.request.id)
+            effects.push(...issued.effects)
+          } else if (selection.kind === 'imaging') {
+            const saved = this.options.workflow.imaging.applySaveDraft(transaction, {
+              ...base, expectedDraftVersion: draftVersion, serviceId: selection.serviceId, indication: selection.indication,
+            })
+            const issued = this.options.workflow.imaging.applyIssue(transaction, {
+              ...base, expectedDraftVersion: saved.data.draftVersion,
+              readyExamCodes: new Set(offerings.imaging?.items.filter(item => item.available).map(item => item.service.examCode)),
+            })
+            draftVersion = issued.data.draftVersion
+            recordIds.push(issued.data.request.id)
+            effects.push(...issued.effects)
+          } else if (selection.kind === 'pathology') {
+            const saved = this.options.workflow.pathology.applySaveDraft(transaction, {
+              ...base, expectedDraftVersion: draftVersion, serviceId: selection.serviceId,
+              sourceProcedureReference: selection.sourceProcedureReference, purpose: selection.purpose,
+              sourceProcedures: new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures])),
+            })
+            const issued = this.options.workflow.pathology.applyIssue(transaction, {
+              ...base, expectedDraftVersion: saved.data.draftVersion,
+              readyExamCodes: new Set(offerings.pathology?.items.filter(item => item.available).map(item => item.service.examCode)),
+              sourceProcedures: new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures])),
+            })
+            draftVersion = issued.data.draftVersion
+            recordIds.push(issued.data.request.id)
+            effects.push(...issued.effects)
+          }
+        }
+      }
+      return { data: { kind, draftVersion, encounterVersion, recordIds }, effects }
+    })
   }
 
   async process(event: OutboxHandlerInput, signal: AbortSignal, shutdownSignal: AbortSignal): Promise<OutboxHandlerResult> {

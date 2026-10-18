@@ -2595,6 +2595,11 @@ export interface ExcludedHisRoute {
 
 export const excludedHisRoutes = [
   {
+    method: 'POST',
+    path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',
+    reason: '医生页面显式确认选中准备项目，复用正式领域内核并在单个受审计 Command 中校验资料；只接受医生 Session，不提供独立 CLI 或 Agent Grant 授权。',
+  },
+  {
     method: 'GET',
     path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind',
     reason: '医生页面的诊疗建议状态与依据辅助读取，本期不登记独立 CLI 或 Agent tool 操作。',

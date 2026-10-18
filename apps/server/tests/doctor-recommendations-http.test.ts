@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
-import { doctorRecommendationStateSchema, generateDoctorRecommendationsResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
+import { doctorRecommendationStateSchema, generateDoctorRecommendationsResponseSchema, confirmDoctorPreparationResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import type { JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { z } from 'zod'
@@ -150,9 +150,10 @@ it.each(['caseSupported', 'applicable', 'qualifiersPreserved'] as const)('does n
 })
 
 function diagnosisOutput(input: Parameters<JsonChatCompletionsProvider['completeJson']>[0]) {
-  const payload = z.object({ guidelines: z.array(z.object({ id: z.string() })),
+  const payload = z.object({ kind: z.string().optional(), guidelines: z.array(z.object({ id: z.string() })),
     caseEvidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(input.userPayload)
   return { items: [{ id: 'hypertension-candidate', kind: 'diagnosis', catalogItemId: 'diagnosis-hypertension',
+    ...(payload.kind === 'diagnosis' ? { role: 'primary' as const } : {}),
     label: '候选名称', rationale: '结合已公开高血压病史核对当前血压与症状。',
     supportingInformation: ['既往高血压病史'], opposingInformation: [], missingInformation: ['当前症状病因尚待核实'],
     guidelineEvidenceIds: [payload.guidelines[0]!.id],
@@ -753,6 +754,22 @@ it.each([false, true])('maps pathology only to an offered service and its author
     selectedCatalogItems: { pathology: [{ service: { code: 'PATH-BREAST-SLIDE-CONSULT' },
       sourceProcedures: [{ sourceReference: 'urn:uuid:procedure-0', code: '392021009', display: '乳房肿块切除术' }] }] } })
   expect(await fixture.readCase()).toEqual(before)
+  if (!fabricated) {
+    const prepared = await fixture.read('pathology')
+    const selection = { kind: 'pathology', source: 'agent', suggestionId: prepared.items[0]!.id,
+      serviceId: 'pathology-breast-slide-consultation', sourceProcedureReference: 'urn:uuid:procedure-0', purpose: '复核既往手术切片。' }
+    const wrongSource = await confirmPreparation(fixture, 'pathology', preparationBody(prepared, [{
+      ...selection, sourceProcedureReference: 'urn:uuid:other-patient-procedure',
+    }]))
+    expect(wrongSource.status).toBe(409)
+    expect(await fixture.readCase()).toEqual(before)
+    const response = await confirmPreparation(fixture, 'pathology', preparationBody(prepared, [selection]))
+    expect(response.status, await response.clone().text()).toBe(200)
+    const receipt = confirmDoctorPreparationResponseSchema.parse(await response.json())
+    expect((await fixture.readCase()).pathologyRequests?.requests[0]).toMatchObject({
+      id: receipt.data.recordIds[0], status: 'issued', sourceProcedure: { sourceReference: 'urn:uuid:procedure-0' },
+    })
+  }
 })
 
 it.each(['guideline', 'case'])('rejects an unknown %s citation through the real DSH repair boundary', async source => {
@@ -1456,7 +1473,7 @@ it('generates independently verified suggestions from actual visible evidence wi
       guidelines: z.array(z.object({ id: z.string() })), caseEvidence: z.array(z.object({ id: z.string() })),
     }).parse(input.userPayload)
     return { content: JSON.stringify({ items: [{
-      id: 'synthetic-hypertension-candidate', kind: 'diagnosis', catalogItemId: 'diagnosis-hypertension',
+      id: 'synthetic-hypertension-candidate', kind: 'diagnosis', role: 'primary', catalogItemId: 'diagnosis-hypertension',
       label: '模型给出的名称', rationale: '依据可见既往病史进一步核对当前血压。',
       supportingInformation: ['可见高血压病史'], opposingInformation: [], missingInformation: ['当前血压仍需核对'],
       guidelineEvidenceIds: [payload.guidelines[0]!.id], caseEvidenceIds: [payload.caseEvidence[0]!.id],
@@ -1501,4 +1518,324 @@ it('queues generation through an idempotent command while preserving every clini
   expect(replay.auditId).toBe(queued.auditId)
   expect(await read()).toMatchObject({ status: 'pending', generation: 1 })
   expect(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json()).toEqual(before)
+})
+
+
+it('confirms a selected prepared diagnosis atomically without requiring a separate draft save', async () => {
+  const fixture = await setup(async input => ({ content: JSON.stringify(
+    input.schemaName === 'doctor_recommendations' ? diagnosisOutput(input) : verificationOutput(input),
+  ), model: input.model }))
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const prepared = await fixture.read()
+  const candidate = prepared.items[0]!
+  const response = await fixture.runtime.app.request(`${fixture.path()}/actions/confirm`, {
+    method: 'POST', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${prepared.encounterId}`]: prepared.encounterVersion },
+      input: { generation: prepared.generation, inputFingerprint: prepared.inputFingerprint,
+        expectedDraftVersion: (await fixture.readCase()).diagnosis?.draftVersion ?? 0,
+        selections: [{ kind: 'diagnosis', source: 'agent', suggestionId: candidate.id,
+          catalogItemId: 'diagnosis-hypertension', role: 'primary' }] } }),
+  })
+  expect(response.status, await response.clone().text()).toBe(200)
+  expect((await fixture.readCase()).diagnosis).toMatchObject({
+    confirmation: { entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary' }] },
+  })
+})
+
+it('invalidates every prepared kind when a formal investigation is issued or cancelled before a report exists', async () => {
+  const fixture = await setup()
+  const service = syntheticLaboratory('lab-preparation')
+  fixture.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog
+    (workspace_id, epoch, service_id, code, name_zh, name_en, version, active, config_json)
+    VALUES ('workspace-demo', 'epoch-1', ?, ?, ?, ?, 1, 1, ?)
+  `).run(service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service }))
+  const before = await Promise.all(['diagnosis', 'laboratory', 'prescription'].map(kind => fixture.read(kind)))
+  const post = async (action: string, input: unknown, method = 'POST') => fixture.runtime.app.request(
+    `/api/his/v1/encounters/${fixture.started.encounterId}/${action}`, {
+      method, headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${fixture.started.encounterId}`]: before[0]!.encounterVersion }, input }),
+    })
+  const saved = await post('laboratory-request/draft', { catalogItemId: service.id, indicationCode: 'clinical-evaluation', expectedDraftVersion: 0 }, 'PUT')
+  expect(saved.status, await saved.clone().text()).toBe(200)
+  const issued = await post('laboratory-request/actions/issue', { expectedDraftVersion: 1 })
+  expect(issued.status, await issued.clone().text()).toBe(200)
+  const request = z.object({ data: z.object({ request: z.object({ id: z.string(), version: z.number(), serviceRequestId: z.string(), serviceRequestVersion: z.string(), taskId: z.string(), taskVersion: z.string() }) }) }).parse(await issued.json()).data.request
+  const afterIssue = await Promise.all(before.map(state => fixture.read(state.kind)))
+  expect((await fixture.readCase()).encounter.versionId).toBe(before[0]!.encounterVersion)
+  for (const [index, state] of afterIssue.entries()) expect(state.inputFingerprint).not.toBe(before[index]!.inputFingerprint)
+  const cancelled = await fixture.runtime.app.request(`/api/his/v1/laboratory-requests/${request.id}/actions/cancel`, {
+    method: 'POST', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion, [`Task/${request.taskId}`]: request.taskVersion }, input: { expectedRequestVersion: request.version, reasonCode: 'no-longer-needed' } }),
+  })
+  expect(cancelled.status, await cancelled.clone().text()).toBe(200)
+  for (const state of afterIssue) expect((await fixture.read(state.kind)).inputFingerprint).not.toBe(state.inputFingerprint)
+})
+
+function preparationBody(state: Awaited<ReturnType<Awaited<ReturnType<typeof setup>>['read']>>, selections: unknown[], expectedDraftVersion = 0) {
+  return { expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion }, input: {
+    generation: state.generation, inputFingerprint: state.inputFingerprint, expectedDraftVersion, selections,
+  } }
+}
+function confirmPreparation(fixture: Awaited<ReturnType<typeof setup>>, kind: string, body: unknown, key = randomUUID(), cookie = fixture.cookie) {
+  return fixture.runtime.app.request(`${fixture.path(kind)}/actions/confirm`, {
+    method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(body),
+  })
+}
+function installPreparationLaboratory(fixture: Awaited<ReturnType<typeof setup>>, id: string) {
+  const service = syntheticLaboratory(id)
+  fixture.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog
+    (workspace_id, epoch, service_id, code, name_zh, name_en, version, active, config_json)
+    VALUES ('workspace-demo', 'epoch-1', ?, ?, ?, ?, 1, 1, ?)
+  `).run(service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service }))
+}
+
+it('rejects a prepared confirmation after saved patient facts change without advancing the Encounter', async () => {
+  const fixture = await setup(async input => ({ content: JSON.stringify(input.schemaName === 'patient_dialogue_reply'
+    ? { reply: '我这两天还会心慌，站起来的时候更明显。' }
+    : input.schemaName === 'doctor_recommendations' ? diagnosisOutput(input) : verificationOutput(input)), model: input.model }))
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const prepared = await fixture.read()
+  const previous = await fixture.readCase()
+  const body = preparationBody(prepared, [{ kind: 'diagnosis', source: 'agent', suggestionId: prepared.items[0]!.id,
+    catalogItemId: 'diagnosis-hypertension', role: 'primary' }])
+  const answered = await fixture.runtime.app.request(`/api/his/v1/encounters/${prepared.encounterId}/actions/ask-consultation-question`, {
+    method: 'POST', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${prepared.encounterId}`]: prepared.encounterVersion,
+      [`Task/${fixture.started.doctorTaskId}`]: previous.taskVersion }, input: {
+      expectedConsultationVersion: previous.consultation!.version, message: '还有其他不舒服吗？',
+    } }),
+  })
+  expect(answered.status, await answered.clone().text()).toBe(200)
+  const changed = await fixture.readCase()
+  expect(changed.encounter.versionId).toBe(prepared.encounterVersion)
+  const rejected = await confirmPreparation(fixture, 'diagnosis', body)
+  expect(rejected.status, await rejected.clone().text()).toBe(409)
+  expect((await fixture.readCase()).diagnosis).toEqual(changed.diagnosis)
+})
+
+it('replays the same prepared confirmation receipt without creating another diagnosis revision', async () => {
+  const fixture = await setup(async input => ({ content: JSON.stringify(
+    input.schemaName === 'doctor_recommendations' ? diagnosisOutput(input) : verificationOutput(input),
+  ), model: input.model }))
+  await fixture.generate()
+  await fixture.runtime.dispatchPending()
+  const prepared = await fixture.read()
+  const key = randomUUID()
+  const body = preparationBody(prepared, [{ kind: 'diagnosis', source: 'agent', suggestionId: prepared.items[0]!.id,
+    catalogItemId: 'diagnosis-hypertension', role: 'primary' }])
+  const first = await confirmPreparation(fixture, 'diagnosis', body, key)
+  expect(first.status).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await first.json())
+  const replay = await confirmPreparation(fixture, 'diagnosis', body, key)
+  expect(replay.status, await replay.clone().text()).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await replay.json())).toEqual(receipt)
+  expect((await fixture.readCase()).diagnosis?.confirmation?.revisionNumber).toBe(1)
+})
+
+it.each(['generation', 'clinical-identity', 'directory', 'doctor-scope', 'draft-version'] as const)('rejects prepared confirmation with changed %s', async change => {
+  const fixture = await setup(async input => ({ content: JSON.stringify(
+    input.schemaName === 'doctor_recommendations' ? diagnosisOutput(input) : verificationOutput(input),
+  ), model: input.model }))
+  await fixture.generate()
+  await fixture.runtime.dispatchPending()
+  const prepared = await fixture.read()
+  const body = preparationBody(prepared, [{ kind: 'diagnosis', source: 'agent', suggestionId: prepared.items[0]!.id,
+    catalogItemId: change === 'clinical-identity' ? 'diagnosis-fever' : 'diagnosis-hypertension', role: 'primary' }], change === 'draft-version' ? 42 : 0)
+  if (change === 'generation') await fixture.generate('diagnosis', true)
+  if (change === 'directory') fixture.runtime.database.driver.prepare(`UPDATE diagnosis_catalog SET active = 0 WHERE item_id = 'diagnosis-hypertension'`).run()
+  const cookie = change === 'doctor-scope' ? await signIn(fixture.runtime, 'triage@demo.clinmesh.local') : fixture.cookie
+  const before = await fixture.readCase()
+  const response = await confirmPreparation(fixture, 'diagnosis', body, randomUUID(), cookie)
+  expect(response.status, await response.clone().text()).toBe(change === 'doctor-scope' ? 403 : 409)
+  expect(await fixture.readCase()).toEqual(before)
+})
+
+it('issues selected prepared laboratory items atomically and preserves an existing manual draft', async () => {
+  const fixture = await setup(async input => {
+    if (input.schemaName === 'doctor_recommendation_verification') return { model: input.model, content: JSON.stringify(verificationOutput(input)) }
+    const base = diagnosisOutput(input).items[0]!
+    return { model: input.model, content: JSON.stringify({ items: ['lab-preparation-a', 'lab-preparation-b'].map((id, index) => ({
+      ...base, id: `lab-candidate-${index}`, kind: 'laboratory', catalogItemId: id, indicationCode: 'clinical-evaluation',
+    })), missingInformation: [] }) }
+  })
+  installPreparationLaboratory(fixture, 'lab-preparation-a')
+  installPreparationLaboratory(fixture, 'lab-preparation-b')
+  await fixture.generate('laboratory')
+  await fixture.runtime.dispatchPending()
+  const prepared = await fixture.read('laboratory')
+  const selections = prepared.items.map(item => ({ kind: 'laboratory', source: 'agent', suggestionId: item.id,
+    catalogItemId: item.kind === 'laboratory' ? item.catalogItemId : '', indicationCode: 'clinical-evaluation' }))
+  expect(selections).toHaveLength(2)
+  const beforeBad = await fixture.readCase()
+  const bad = await confirmPreparation(fixture, 'laboratory', preparationBody(prepared,
+    selections.map((item, index) => index === 1 ? { ...item, indicationCode: 'not-allowed' } : item)))
+  expect(bad.status, await bad.clone().text()).toBe(409)
+  expect(await fixture.readCase()).toEqual(beforeBad)
+  const body = preparationBody(prepared, selections)
+  const key = randomUUID()
+  const issued = await confirmPreparation(fixture, 'laboratory', body, key)
+  expect(issued.status, await issued.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await issued.json())
+  expect(receipt).toMatchObject({ data: { kind: 'laboratory', draftVersion: 4, recordIds: [expect.any(String), expect.any(String)] }, effects: expect.arrayContaining([
+    expect.objectContaining({ kind: 'created', reference: expect.stringMatching(/^ServiceRequest\//) }),
+  ]) })
+  const replay = await confirmPreparation(fixture, 'laboratory', body, key)
+  expect(replay.status).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await replay.json())).toEqual(receipt)
+  expect((await fixture.readCase()).laboratoryRequests?.requests).toHaveLength(2)
+
+  const saved = await fixture.runtime.app.request(`/api/his/v1/encounters/${prepared.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: body.expectedVersions, input: { catalogItemId: 'lab-preparation-a', indicationCode: 'clinical-evaluation', expectedDraftVersion: 4 } }),
+  })
+  expect(saved.status).toBe(200)
+  await fixture.generate('laboratory')
+  await fixture.runtime.dispatchPending()
+  const next = await fixture.read('laboratory')
+  const before = await fixture.readCase()
+  const blocked = await confirmPreparation(fixture, 'laboratory', preparationBody(next, selections, 5))
+  expect(blocked.status).toBe(409)
+  expect(await fixture.readCase()).toEqual(before)
+})
+
+it('keeps a physician-edited diagnosis confirmable as explicit manual input when the new generation has no agent items', async () => {
+  let empty = false
+  const fixture = await setup(async input => ({ content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+    ? empty ? { items: [], missingInformation: [] } : diagnosisOutput(input) : verificationOutput(input)), model: input.model }))
+  await fixture.generate()
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).items).toHaveLength(1)
+  empty = true
+  await fixture.generate('diagnosis', true)
+  await fixture.runtime.dispatchPending()
+  const next = await fixture.read()
+  expect(next).toMatchObject({ generation: 2, status: 'missing-evidence', items: [] })
+  const result = await confirmPreparation(fixture, 'diagnosis', preparationBody(next, [{
+    kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-hypertension', role: 'primary', note: '医生核对后保留。',
+  }]))
+  expect(result.status, await result.clone().text()).toBe(200)
+  expect((await fixture.readCase()).diagnosis?.confirmation?.entries[0]).toMatchObject({ note: '医生核对后保留。' })
+})
+
+it('requires the model to propose the diagnosis role rather than inventing one from list position', async () => {
+  const fixture = await setup(async input => {
+    const output = input.schemaName === 'doctor_recommendations' ? diagnosisOutput(input) : verificationOutput(input)
+    return { content: JSON.stringify({ ...output, items: output.items.map(item => Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'role'))) }), model: input.model }
+  })
+  await fixture.generate()
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID', items: [] })
+})
+
+it('issues a prepared prescription through the existing diagnosis, dose and product validators without a separate draft', async () => {
+  const fixture = await setup(async input => {
+    const kind = z.object({ kind: z.string().optional() }).parse(input.userPayload).kind
+    const output = input.schemaName === 'doctor_recommendations'
+      ? kind === 'prescription' ? prescriptionOutput(input) : diagnosisOutput(input)
+      : { items: verificationOutput(input).items.map(item => ({ ...item, prescriptionFields: {
+        doseText: true, frequencyCode: true, courseDays: true, quantity: true,
+      } })) }
+    return { model: input.model, content: JSON.stringify(output) }
+  })
+  await fixture.generate()
+  await fixture.runtime.dispatchPending()
+  const diagnosis = await fixture.read()
+  expect((await confirmPreparation(fixture, 'diagnosis', preparationBody(diagnosis, [{ kind: 'diagnosis', source: 'agent',
+    suggestionId: diagnosis.items[0]!.id, catalogItemId: 'diagnosis-hypertension', role: 'primary' }]))).status).toBe(200)
+  await fixture.generate('prescription')
+  await fixture.runtime.dispatchPending()
+  const prepared = await fixture.read('prescription')
+  expect(prepared).toMatchObject({ status: 'ready', items: [expect.objectContaining({ doseText: '5 mg', courseDays: 30, quantity: 30 })] })
+  const selection = { kind: 'prescription', source: 'agent', suggestionId: prepared.items[0]!.id,
+    catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+  const before = await fixture.readCase()
+  const incomplete = await confirmPreparation(fixture, 'prescription', preparationBody(prepared, [{ ...selection, doseText: null }]))
+  expect(incomplete.status).toBe(400)
+  const invalid = await confirmPreparation(fixture, 'prescription', preparationBody(prepared, [{ ...selection, doseText: 'unsupported dose' }]))
+  expect(invalid.status, await invalid.clone().text()).toBe(409)
+  expect(await fixture.readCase()).toEqual(before)
+  const body = preparationBody(prepared, [selection])
+  const key = randomUUID()
+  const issued = await confirmPreparation(fixture, 'prescription', body, key)
+  expect(issued.status, await issued.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await issued.json())
+  expect(receipt).toMatchObject({ data: { kind: 'prescription', draftVersion: 2, recordIds: [expect.any(String)] } })
+  expect((await fixture.readCase()).medicationConclusion?.prescription).toMatchObject({ status: 'signed',
+    items: [{ catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }] })
+  expect(confirmDoctorPreparationResponseSchema.parse(await (await confirmPreparation(fixture, 'prescription', body, key)).json())).toEqual(receipt)
+})
+
+it('rejects prepared diagnosis confirmation when a report is published after the last recommendation GET', async () => {
+  let entered!: () => void
+  let release!: () => void
+  const reportStarted = new Promise<void>(resolve => { entered = resolve })
+  const reportHeld = new Promise<void>(resolve => { release = resolve })
+  const fixture = await setup(async input => {
+    if (input.schemaName === 'investigation_service_result') {
+      entered()
+      await reportHeld
+      return { model: input.model, content: JSON.stringify({ conclusion: '合成生化指标升高。', results: [{
+        code: 'SYN-LAB', interpretation: 'high', referenceRange: { low: 0, high: 10, text: '0–10' },
+        unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' }, value: 12,
+      }] }) }
+    }
+    return { model: input.model, content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+      ? diagnosisOutput(input) : verificationOutput(input)) }
+  })
+  installPreparationLaboratory(fixture, 'lab-report-race')
+  const initial = await fixture.read()
+  const headers = { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const saved = await fixture.runtime.app.request(`/api/his/v1/encounters/${initial.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${initial.encounterId}`]: initial.encounterVersion }, input: {
+      catalogItemId: 'lab-report-race', indicationCode: 'clinical-evaluation', expectedDraftVersion: 0,
+    } }),
+  })
+  expect(saved.status).toBe(200)
+  const issued = await fixture.runtime.app.request(`/api/his/v1/encounters/${initial.encounterId}/laboratory-request/actions/issue`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${initial.encounterId}`]: initial.encounterVersion }, input: { expectedDraftVersion: 1 } }),
+  })
+  expect(issued.status).toBe(200)
+  const reporting = fixture.runtime.dispatchPending()
+  try {
+    await reportStarted
+    expect((await fixture.generate()).status).toBe(200)
+    for (let step = 0; step < 10 && (await fixture.read()).status === 'pending'; step += 1) await fixture.runtime.dispatcher.dispatchOnce()
+    const prepared = await fixture.read()
+    expect(prepared.status).toBe('ready')
+    const body = preparationBody(prepared, [{ kind: 'diagnosis', source: 'agent', suggestionId: prepared.items[0]!.id,
+      catalogItemId: 'diagnosis-hypertension', role: 'primary' }])
+    release()
+    await reporting
+    const latest = await fixture.readCase()
+    expect(latest.encounter.versionId).toBe(prepared.encounterVersion)
+    expect(latest.laboratoryRequests?.requests[0]?.report).toMatchObject({ conclusion: '合成生化指标升高。' })
+    const rejected = await confirmPreparation(fixture, 'diagnosis', body)
+    expect(rejected.status, await rejected.clone().text()).toBe(409)
+    expect((await fixture.readCase()).diagnosis).toEqual(latest.diagnosis)
+  } finally { release(); await reporting }
+})
+
+it('confirms prepared imaging through its actual offering and returns the formal request identity', async () => {
+  const fixture = await setup(async input => {
+    if (input.schemaName === 'doctor_recommendation_verification') return { model: input.model, content: JSON.stringify(verificationOutput(input)) }
+    const { catalogItemId: _catalogItemId, ...base } = diagnosisOutput(input).items[0]!
+    return { model: input.model, content: JSON.stringify({ items: [{ ...base, kind: 'imaging', serviceId: 'imaging-chest-ct-plain',
+      indication: '核对当前病例的适用检查范围。' }], missingInformation: [] }) }
+  })
+  await installSyntheticImagingAssets({ assetDirectory: join(fixture.directory, 'imaging-assets'),
+    catalogDirectory: join(fixture.directory, 'imaging-catalog'), assets: [{ assetId: 'synthetic-ct', examCode: 'chest-ct-plain' }] })
+  await fixture.generate('imaging')
+  await fixture.runtime.dispatchPending()
+  const state = await fixture.read('imaging')
+  expect(state.status).toBe('ready')
+  const response = await confirmPreparation(fixture, 'imaging', preparationBody(state, [{ kind: 'imaging', source: 'agent',
+    suggestionId: state.items[0]!.id, serviceId: 'imaging-chest-ct-plain', indication: '核对当前病例的适用检查范围。' }]))
+  expect(response.status, await response.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await response.json())
+  expect((await fixture.readCase()).imagingRequests?.requests[0]).toMatchObject({ id: receipt.data.recordIds[0],
+    status: 'issued', service: { id: 'imaging-chest-ct-plain' } })
 })
