@@ -182,6 +182,30 @@ describe('prepared clinical confirmation', () => {
     expect(screen.getByRole('textbox', { name: '每次剂量' })).toHaveProperty('value', '尚未填完的剂量')
     expect(screen.getByText('请先保留当前调整，再查看其他待开具项目。')).toBeTruthy()
   })
+  it.each(['prescription', 'diagnosis'] as const)('preserves raw %s input when the first formal record moves the dialog into the detail column', async kind => {
+    stubRequests(() => kind === 'prescription' ? prescriptionState() : state())
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    const content = (hasRecords: boolean) => <QueryClientProvider client={client}>
+      <DoctorOrderWorkspace hasRecords={hasRecords} entry={null}
+        pending={<DoctorRecommendationsPanel {...props({ kind })} />}
+        records={<button type="button">查看已开具药品</button>} details={<p>已开具药品只读详情</p>} />
+    </QueryClientProvider>
+    const mounted = render(content(false))
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '调整' }))
+    const dialog = within(screen.getByRole('dialog', { name: '调整项目' }))
+    const field = kind === 'prescription' ? '每次剂量' : '备注'
+    const raw = '尚未完成的填写\n医生保留原文'
+    fireEvent.change(dialog.getByRole('textbox', { name: field }), { target: { value: raw } })
+    if (kind === 'prescription') fireEvent.change(dialog.getByRole('spinbutton', { name: '数量' }), { target: { value: '' } })
+    mounted.rerender(content(true))
+    await user.click(screen.getByRole('button', { name: `查看待开具 ${kind === 'prescription' ? '合成药品' : '发热，未特指'}` }))
+    const pending = within(screen.getByRole('region', { name: '待开具项目详情' }))
+    expect(pending.getByRole('textbox', { name: field })).toHaveProperty('value', kind === 'prescription' ? raw.replace('\n', '') : raw)
+    if (kind === 'prescription') expect(pending.getByRole('spinbutton', { name: '数量' })).toHaveProperty('value', '')
+    expect(confirmButton()).toHaveProperty('disabled', true)
+  })
   it('keeps a form-deleted adjusted item removed when its automatic copy remains and the case is revisited', async () => {
     stubRequests(() => prescriptionState())
     const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }

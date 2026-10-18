@@ -159,7 +159,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     else setLocalPreferences(previous => ({ ...previous, [preferenceKey]: fn(previous[preferenceKey] ?? { edits: {}, removed: {}, unselected: [], completed: {} }) }))
   }
   const [localDetails, setLocalDetails] = useState(false)
-  const [editing, setEditing] = useState<{ key: string; label: string; value: PreparationDraft; fingerprint: string; view: number }>()
+  const [editing, setEditing] = useState<{ key: string; label: string; value: PreparationDraft; fingerprint: string; view: number; fields?: Record<string, string> }>()
   const [editError, setEditError] = useState(false)
   const [editDirty, setEditDirty] = useState(false)
   const [editSwitchBlocked, setEditSwitchBlocked] = useState(false)
@@ -353,7 +353,15 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     }
     if (inlineEditing) orderDetails.setPendingVisible(true)
   }
-  const adjustmentForm = (activeEditing === undefined ? null : <form key={activeEditing.key} onChange={() => setEditDirty(true)} onSubmit={event => {
+  const changeEditingField = (field: string, value: string) => {
+    setEditDirty(true)
+    setEditing(previous => previous === undefined ? undefined : { ...previous, fields: { ...previous.fields, [field]: value } })
+  }
+  const editingFields: Array<[string, string]> = activeEditing?.value.kind === 'prescription' ? [['doseText', zh ? '每次剂量' : 'Dose'], ['frequencyCode', zh ? '频次' : 'Frequency'], ['courseDays', zh ? '疗程（天）' : 'Days'], ['quantity', zh ? '数量' : 'Quantity']]
+          : activeEditing?.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
+          : activeEditing?.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]
+          : activeEditing?.value.kind === 'pathology' ? [['purpose', zh ? '会诊目的' : 'Purpose']] : []
+  const adjustmentForm = (activeEditing === undefined ? null : <form key={activeEditing.key} onSubmit={event => {
         event.preventDefault();if (activeEditing.view !== navigation.current.token || disabled || submitting) return;const values = new FormData(event.currentTarget), { suggestionId: _id, ...base } = activeEditing.value
         const candidate = { ...base, source: 'manual', ...Object.fromEntries(values) }
         if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
@@ -373,11 +381,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       }}><FieldGroup className="max-h-[55svh] overflow-y-auto px-4 py-3">
         {needsReview(activeEditing.key) ? <p className="text-sm">{zh ? '新资料已到达，请核对后决定保留、修改或移除。' : 'New information arrived. Review this item before keeping it.'}</p> : null}
         {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel>{zh ? '诊断类别' : 'Diagnosis role'}</FieldLabel><ToggleGroup value={activeEditing.value.role === null ? [] : [activeEditing.value.role]} onValueChange={values => { setEditDirty(true);const role = values[0];if (role === 'primary' || role === 'secondary') setEditing(previous => previous?.value.kind === 'diagnosis' ? { ...previous, value: { ...previous.value, role } } : previous) }}><ToggleGroupItem value="primary">{zh ? '主诊断' : 'Primary'}</ToggleGroupItem><ToggleGroupItem value="secondary">{zh ? '次诊断' : 'Secondary'}</ToggleGroupItem></ToggleGroup></Field> : null}
-        {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Textarea defaultValue={activeEditing.value.note ?? ''} id="prepared-note" maxLength={500} name="note" /></Field> : null}
-        {(activeEditing.value.kind === 'prescription' ? [['doseText', zh ? '每次剂量' : 'Dose'], ['frequencyCode', zh ? '频次' : 'Frequency'], ['courseDays', zh ? '疗程（天）' : 'Days'], ['quantity', zh ? '数量' : 'Quantity']]
-          : activeEditing.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
-          : activeEditing.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]
-          : activeEditing.value.kind === 'pathology' ? [['purpose', zh ? '会诊目的' : 'Purpose']] : []).map(([field, label]) => {
+        {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Textarea value={activeEditing.fields?.note ?? activeEditing.value.note ?? ''} onChange={event => changeEditingField('note', event.currentTarget.value)} id="prepared-note" maxLength={500} name="note" /></Field> : null}
+        {editingFields.map(([field, label]) => {
             const value = field === 'doseText' && activeEditing.value.kind === 'prescription' ? activeEditing.value.doseText : field === 'frequencyCode' && activeEditing.value.kind === 'prescription' ? activeEditing.value.frequencyCode : field === 'courseDays' && activeEditing.value.kind === 'prescription' ? activeEditing.value.courseDays : field === 'quantity' && activeEditing.value.kind === 'prescription' ? activeEditing.value.quantity : field === 'indicationCode' && activeEditing.value.kind === 'laboratory' ? activeEditing.value.indicationCode : field === 'indication' && activeEditing.value.kind === 'imaging' ? activeEditing.value.indication : activeEditing.value.kind === 'pathology' ? activeEditing.value.purpose : ''
             return <Field key={field}><FieldLabel htmlFor={`prepared-${field}`}>{label}</FieldLabel>{field === 'frequencyCode' && activeEditing.value.kind === 'prescription'
               ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.frequencyCode} placeholder={zh ? '请选择频次' : 'Choose frequency'} items={[...new Set(['QD', 'BID', 'PRN', ...activeEditing.value.frequencyCode ? [activeEditing.value.frequencyCode] : []])].map(code => ({ value: code, label: frequencyLabel(code, zh) }))}
@@ -385,7 +390,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
               : field === 'indicationCode' && activeEditing.value.kind === 'laboratory'
                 ? <WorkspaceSelect id={`prepared-${field}`} value={activeEditing.value.indicationCode} items={[...new Set(['clinical-evaluation', 'fever', activeEditing.value.indicationCode])].map(code => ({ value: code, label: indicationLabel(code, zh) }))}
                   onValueChange={code => { setEditDirty(true);if (code !== null) setEditing(previous => previous?.value.kind === 'laboratory' ? { ...previous, value: { ...previous.value, indicationCode: code } } : previous) }} />
-                : <Input defaultValue={value ?? ''} id={`prepared-${field}`} min={1} name={field} required type={field === 'quantity' || field === 'courseDays' ? 'number' : 'text'} />}</Field>
+                : <Input value={activeEditing.fields?.[field] ?? value ?? ''} onChange={event => changeEditingField(field, event.currentTarget.value)} id={`prepared-${field}`} min={1} name={field} required type={field === 'quantity' || field === 'courseDays' ? 'number' : 'text'} />}</Field>
           })}
         {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}
         {editSwitchBlocked ? <p role="alert">{zh ? '请先保留当前调整，再查看其他待开具项目。' : 'Keep the current edits before opening another pending item.'}</p> : null}
