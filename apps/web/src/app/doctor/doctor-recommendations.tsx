@@ -169,6 +169,9 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     return [key, previous?.identity === rowIdentity ? previous : { identity: rowIdentity, token: manualOwnership.current.token }]
   }))
   const manualKeys = new Set(manualItems.map(row => identity(row.value)))
+  const recordIdentity = JSON.stringify([scope, caseId, kind])
+  const restoredForm = useRef<string | undefined>(undefined)
+  const restoringForm = restoredForm.current !== recordIdentity
   const conflicts = new Set(manualItems.filter(row => {
     const proposed = visible?.items.find(item => identity(item) === identity(row.value))
     return proposed !== undefined && clinicalValue(row.value) !== clinicalValue(selection(proposed))
@@ -178,7 +181,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     ...(visible?.items ?? []).filter(item => !manualKeys.has(identity(item))).map(item => ({ key: identity(item), label: item.label,
       item, value: selection(item), signature: evidenceSignature(visible!, item) })),
   ]
-  const deletedFormEdits = Object.entries(preferences.edits).filter(([key, edit]) => edit.formOwned && !manualKeys.has(key))
+  const deletedFormEdits = Object.entries(preferences.edits).filter(([key, edit]) => !restoringForm && edit.formOwned && !manualKeys.has(key))
   useEffect(() => {
     if (deletedFormEdits.length === 0) return
     update(previous => {
@@ -193,11 +196,10 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     })
   })
   const rows: Array<PreparedRow & { owner: DraftPreferences['edits'][string] | undefined }> = baseRows.filter(row => !deletedFormEdits.some(([key]) => key === row.key) && preferences.removed[row.key] !== removalSignature(row) && !preferences.completed[row.key]?.includes(row.signature))
-    .map(row => ({ ...row, value: onManualChange !== undefined && manualKeys.has(row.key) ? row.value : preferences.edits[row.key]?.selection ?? row.value, owner: preferences.edits[row.key] }))
+    .map(row => ({ ...row, value: onManualChange !== undefined && manualKeys.has(row.key) && !(restoringForm && preferences.edits[row.key]?.formOwned) ? row.value : preferences.edits[row.key]?.selection ?? row.value, owner: preferences.edits[row.key] }))
   for (const [key, edit] of Object.entries(preferences.edits)) if (!deletedFormEdits.some(([deleted]) => deleted === key) && !rows.some(row => row.key === key) && preferences.removed[key] === undefined) {
     rows.push({ key, label: edit.label, value: edit.selection, signature: edit.fingerprint, owner: edit })
   }
-  const recordIdentity = JSON.stringify([scope, caseId, kind])
   const recordView = useRef({ identity: recordIdentity, token: 0 })
   if (recordView.current.identity !== recordIdentity) recordView.current = { identity: recordIdentity, token: recordView.current.token + 1 }
   const navigationIdentity = JSON.stringify([scope, caseId, kind, enabled])
@@ -280,6 +282,16 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       && (conflicts.has(key) || edit !== undefined && edit.fingerprint !== state.inputFingerprint)
   }
   const submitting = submission.isPending && submission.variables?.view === view || preparation?.submitting(kind) === true
+  useEffect(() => {
+    if (!restoringForm || disabled || submitting) return
+    restoredForm.current = recordIdentity
+    for (const [key, edit] of Object.entries(preferences.edits)) {
+      if (!edit.formOwned) continue
+      if (onManualChange?.({ label: edit.label, value: edit.selection }) !== true) {
+        update(previous => ({ ...previous, edits: { ...previous.edits, [key]: { ...edit, formOwned: false } } }))
+      }
+    }
+  })
   const pending = job.pending || submitting
   const currentEncounter = encounter ?? detail?.encounter
   const manualOnly = available.every(row => row.value.source === 'manual') && currentEncounter !== undefined
