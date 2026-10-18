@@ -724,8 +724,8 @@ function DoctorCaseController({
   const draftIndicationCode = detail.data?.laboratoryRequests?.draft?.catalogItemId === resolvedLaboratoryItemId
     ? detail.data.laboratoryRequests.draft.indicationCode
     : undefined
-  const requestedIndicationCode = resolvedLaboratoryItem?.allowedIndicationCodes.includes(indicationCode)
-    ? indicationCode
+  const requestedIndicationCode = resolvedLaboratoryItem === undefined || resolvedLaboratoryItem.allowedIndicationCodes.includes(indicationCode)
+    ? indicationCode || draftIndicationCode
     : draftIndicationCode
   const resolvedIndicationCode = resolvedLaboratoryItem === undefined
     ? requestedIndicationCode ?? (indicationCode || (resolvedLaboratoryItemId === '' ? '' : 'clinical-evaluation'))
