@@ -89,6 +89,7 @@ import {
   CommandConflictError,
   CommandReceiptNotFoundError,
   ExpectedVersionConflictError,
+  type CommandExecutor,
 } from './application/command-executor.ts'
 import type { ScenarioService } from './application/scenario-service.ts'
 import { ScenarioError } from './application/scenario-service.ts'
@@ -136,6 +137,8 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  commandEvents?: Pick<CommandExecutor, 'subscribe'>
+  recordingUpdatesSignal?: AbortSignal
   doctorRecommendations?: DoctorRecommendationsService
   agentIntegration?: AgentIntegrationService
   caseVisits?: SyntheticCaseVisitService
@@ -1496,6 +1499,36 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         } catch (error) { return apiErrorResponse(context, error) }
       })
     }
+    app.get('/api/his/v1/doctor/cases/:caseId/recording-events', async context => {
+      try {
+        const bound = await actor(context)
+        const caseId = context.req.param('caseId')
+        const since = z.string().regex(/^[a-f0-9]{64}$/).optional().parse(context.req.query('since'))
+        let current = workflow.doctorCaseRecordingRevision(bound, caseId)
+        if (since === current && options.commandEvents !== undefined) {
+          await new Promise<void>(resolve => {
+            const finish = () => {
+              clearTimeout(timer); dispose()
+              context.req.raw.signal.removeEventListener('abort', finish)
+              options.recordingUpdatesSignal?.removeEventListener('abort', finish)
+              resolve()
+            }
+            const dispose = options.commandEvents!.subscribe((source, effects) => {
+              if (source.workspaceId === bound.workspaceId && source.epoch === bound.epoch && effects.some(effect =>
+                [`ConsultationRecording/${caseId}`, `ClinicalDocumentDraft/${caseId}`, `Consultation/${caseId}`].includes(effect.reference))) finish()
+            })
+            const timer = setTimeout(finish, 10_000)
+            context.req.raw.signal.addEventListener('abort', finish, { once: true })
+            options.recordingUpdatesSignal?.addEventListener('abort', finish, { once: true })
+            if (context.req.raw.signal.aborted || options.recordingUpdatesSignal?.aborted) finish()
+          })
+          if (options.recordingUpdatesSignal?.aborted) return context.body(null, 503)
+          current = workflow.doctorCaseRecordingRevision(await actor(context), caseId)
+        }
+        context.header('Cache-Control', 'no-store')
+        return context.json({ revision: current })
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/doctor/cases/:caseId', async (context) => {
       try {
         return context.json(workflow.doctorCaseDetail(

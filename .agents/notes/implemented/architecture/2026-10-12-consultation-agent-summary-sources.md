@@ -2,6 +2,8 @@
 
 Status: implemented
 
+同步语义核对、整轮自动重试和质量提示的当前边界由[增量记录决策](2026-10-15-low-latency-document-recording.md)补充或取代；本记录的其他来源与编辑保护理由继续适用。
+
 当前十字段、统一来源与直接记录合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有，整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。本记录的来源、片段保护、持久任务与逆操作理由继续适用。
 
 ## Problem

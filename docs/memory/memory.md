@@ -31,6 +31,8 @@
 
 ## 产品参考优先级
 
+- 病历自动整理直接保存草稿，医生发现问题时自行编辑正文；Web/DSH 的字段、旧处理记录和签署汇总不展示任何待补充提示或“查看依据”入口，也不增加“已核实，保留”、确认保留、原因填写或逐条确认步骤。既有正式签署流程仍沿用文书合同；展示边界见[安静质控提示决策](../../.agents/notes/implemented/architecture/2026-10-18-quiet-document-quality-hints.md)。
+
 - Agent 操作反馈采用已确认的 A 方案“环绕柔光”；人工审阅、批准、拒绝和人工提交保持静态，不用这些阶段展示 Agent 动效。已接受的独立 HTML 保留作设计参考，后续补充要求优先于原型中的模拟行为。
 
 - ClinMesh 与 DSH 的长期目标包括 Agent 参与整个 HIS、扮演患者或医生、多方仿真实验，以及从实践中发现基础设施和流程问题并形成持续改进（RSI）；医生使用场景同时重视提效、辅助诊断、医疗教学和病例落库后的重复分析。这些是产品方向，当前能力以 owner 文档和实现为准。
@@ -42,6 +44,10 @@
 
 - 需要跨病例导航复用后台检查时，组件 ref 只能记录当前视图，不能拥有请求身份；身份元数据跟随 QueryClient，完整输入对应的任务由服务端持久化。输入相同的 saved/unsaved 入口共享执行所有权并保留各自版本绑定，不把“复制 pending 状态”当成任务复用；否则刷新或失效后可能留下永久处理中的副本。质控当前合同见[输入归属决策](../../.agents/notes/implemented/architecture/2026-10-15-doctor-document-quality-control.md)。
 
+- 排查未保存病历丢失时，分别验证同一工作台内切换病例与工作台卸载重建；不能仅凭没有点击保存就认定普通病例切换会丢失。保存提醒回归同时检查失败、恢复原文和保存后继续编辑，避免陈旧的“已保存”状态误导操作。工作稿归属与持久化边界由[系统架构](../architecture.md#81-门诊闭环)拥有。
+
+- 模型任务失效后丢弃迟到结果，不等于取消实际 Provider 请求。把失效信号贯通模型绑定、生成与格式修复，并在任务结束后释放状态订阅；回归须在放行受控 Provider 前断言取消，再检查未完成来源与恢复处理。自动记录机制见[常规模型等待决策](../../.agents/notes/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
+
 - 构造旧版本 SQLite fixture 时，只复制当时已有的 outbox 事件类型；不能丢弃新任务投影却保留其事件，否则重建任务代次可能撞幂等键并回滚无关业务事务。新增后台事件的调用者测试显式处理已知事件，保留原业务顺序与未知事件断言。
 
 - pnpm 11 默认会在运行脚本前检查依赖；复用依赖的 worktree 可能触发自动重装并因无 TTY 失败。已核对依赖与锁一致时，可通过进程环境 `pnpm_config_verify_deps_before_run=false` 运行检查，不修改仓库配置。复用外部依赖时仍须让 `@clinmesh/*` 链接指向目标 worktree 的包，否则集成测试可能误用原工作区源码。
@@ -49,6 +55,10 @@
 - DSH Tool 恢复回归同时使用医生无绑定字段的纯查询 schema 和其他页面保留 `const` 的读取 schema；给所有工具套用相同绑定 fixture 会掩盖恢复合同漂移。医生目录缺失或完整 schema 无效时，残留旧式 `const` 不能提供恢复；共享工具须覆盖原请求属于医生、目录损坏仍保留来源限制的情况，并验证合法目录回退及非医生页面的绑定恢复。字段诊断还须覆盖绑定 `const` 有效但原始 schema 的根类型或其他业务参数无效的组合；只检查提取后的绑定属性会丢失这些约束。原生连续用例消费实际拒绝结果中的恢复 JSON，并核对错误调用没有 proof 或业务执行、恢复后的写操作只执行一次；合成 browserChannel 不提供真实病例隔离证据，跨患者与任务失效须复用 Surface 和 Server 授权回归。
 
 - 同一张 SQLite 表在并行分支分别迁移时，整合须保留已执行 SQL 的文件名和校验和，并验证两条非空升级路径；来源外键、字段 CHECK、rowid 顺序和任务身份都需一起核对。合并后的字段并集不能只改 TypeScript。
+
+- 本地启动报迁移校验和变化时，先对照 `schema_migration`、LF／CRLF 哈希及实际表结构，区分换行与已执行 SQL 被补改。缺列不能靠更新库内校验和解决；已知历史版本通过精确匹配及前向迁移修复，保留原回执，见[增量记录迁移兼容](../../.agents/notes/implemented/bug-fix/2026-10-18-incremental-recording-migration-compatibility.md)。
+
+- SQLite 连接在构造成功后设置 PRAGMA 仍可能因文件损坏而抛错。打开函数须在失败分支关闭原始连接，否则上层尚未拿到连接就无法释放，Windows 会在清理损坏备份时持续报 `EBUSY`；沿用数据库恢复回归验证活动库不变、恢复目标不创建且临时文件可清理。
 
 - DSH 自动诊疗显示“请切换到有权限的岗位后重试”时，先取失败请求的 HTTP 状态、`error.code` 与操作名，核对[前端错误映射](../../apps/web/src/app/workspace-error.ts)和 [Tool 恢复规则](../agent-capabilities.md#tool-绑定与恢复)，不要仅凭提示认定岗位选错。刷新后消失的自动记录错误还需对齐启用请求与接诊成功的实际时间，区分提前触发和旧错误残留；接诊边界见[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
 
@@ -82,11 +92,15 @@
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
 
+- Windows 上 `verify:agent-notes` 若大批报告空白行和 `Status` 行错误，先检查原始文件是否为 CRLF；当前校验器按 `\n` 分割并精确比较行内容，残留的 `\r` 会导致这些误报。若 `verify:docs` 报 `CLAUDE.md` 缺少末尾换行，再核对 Git 是否以 `120000` 跟踪它：Windows 可能把符号链接检出为仅含目标路径的普通文件。可在独立副本中统一换行并还原链接目标内容后验证，保留子模块以供相对链接检查；不为局部文档任务批量重写历史 Note 或修改共享 Git 配置。
+
 - 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；一次结构化生成的修复与限流恢复共享原始截止时间，服务关闭取消与模型超时分开处理。回归同时覆盖剩余预算内修复、耗尽后不再调用和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前时限见[有限恢复决策](../../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务与失败边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
 - 病史任务反复报来源无效时，回归须组合真实记录服务与 DSH Provider，核对领域校验是否进入修复反馈；仅验证 JSON schema 或用忽略 `validate` 的 Provider stub 会漏掉无反馈重试。覆盖修复后成功、修复耗尽后停止及显式重试，仍验证完整逐字来源和不确定表述拒绝，见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
 - 校验失败诊断的回归须穿过真实 Provider 适配器并检查持久失败回执；直接抛领域错误的替身会漏掉异常包装造成的原因丢失。具体边界见[直接记录决策](../../.agents/notes/implemented/architecture/2026-10-14-consultation-direct-recording.md)。
+
+- 批次候选隔离回归须同时穿过 Provider 的 `validate` 回调，并混入来自不同来源的合法候选；仅测试逐项解码会漏掉上游整批校验，只有正文断言也会漏掉成功来源被误记失败。另组合不合格候选与同目标竞争替换，避免过滤顺序破坏原子性；当前边界见[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-15-low-latency-document-recording.md)。
 
 - SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
 
@@ -99,6 +113,8 @@
 - 同一引用可能先出现在长句内部，再以完整句重复；引用校验回归同时覆盖后续合法匹配和全部匹配不合法。普通新增去重还须覆盖同一来源、同批和新回答的句尾表示差异，保持持久标识、不同更正目标及新来源拒绝证据的独立性；当前边界见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)与[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
 - 引用校验允许跳过不完整的首次匹配时，来源高亮也必须使用同一合法完整句定位；只用 `indexOf` 会高亮否定句内部的局部文字。浏览器回归须断言高亮前后的完整原文位置，不能只检查 `<mark>` 中的文字；当前规则见[多轮溯源决策](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
 - 多来源总结的拒绝回归须混入无关新事实，不能只验证全部引用已拒绝的重放；同时覆盖恢复前一版本、一个事实混用旧新引用、多事实共用引用、处理中撤销和患者再次提供同一事实。新引用只能支持对应事实，不能解除同组其他旧事实的拒绝；当前过滤与核对边界见[多轮溯源决策](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
+
+- 单来源模型流程改为批次后，同步核对提示词中的“本次来源”范围，不能只新增复数 ID 字段却继续按最后一个 ID 判断。回归检查实际发给 Provider 的提示词、完整来源与请求次数，覆盖首份新来源重新支持旧拒绝事实、末份来源无关和单来源兼容；提示词合同测试不能代替真实模型语义准确度评估。
 
 - 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)。
 - 预填与后台文本合并的回归须覆盖首次自动更新同一个未保存字段，以及其他字段已有自动草稿时该字段才首次更新；同时断言编辑框、保存后的服务端正文和刷新结果，防止界面丢弃新增后又通过保存删掉服务端已应用的内容。当前合并基线见[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
@@ -347,7 +363,7 @@
 - 排查 DSH Tool 参数失败时，对照该步的真实 `request/header` 与 `tool/call`：参数匹配模型收到的 schema、却被执行时新 schema 拒绝，是生成期间更新的竞态，不能只归因为模型填错。检查 SQL 报错时先核对运行中数据库路径和当前 schema，旧演示库的表名不能用于运行库。业务 preset 与恢复规则见 [DSH 页面操作](../agent-capabilities.md)。
 - DSH 工具目录交接回归必须在同一用户回合连续执行动作并检查第一条后续模型请求的实际 schema；分多个用户回合等页面稳定后再调用会漏掉竞态。测试模型收到结果后立即继续，不能用固定延时、重试或等待注册再发送第二条用户输入作为交接证据。
 
-- 排查 Agent 代问后病历未更新时，用 Tool 回执的 `patientTurn.id` 关联实际病例、记录任务与增量，并对照控制 Command 的时间；先确认人工提问和 Agent 提问是否发生在同一病例及相同记录状态。`outbox_event.status=completed` 只证明事件已结束，病史整理可能已经失败，须同时核对 `consultation_recording_job` 和失败 Command。暂停会重置未完成任务的当前错误码，既往失败应从 Command 记录追溯；启用、补录与恢复合同见[问诊自动记录规格](../spec/2026-10-08-consultation-auto-record.md)。
+- 排查 Agent 代问后病历未更新时，用 Tool 回执的 `patientTurn.id` 关联实际病例、记录任务与增量，并对照控制 Command 的时间；先确认人工提问和 Agent 提问是否发生在同一病例及相同记录状态。`outbox_event.status=completed` 只证明事件已结束，病史整理可能已经失败，须同时核对 `consultation_recording_job` 和失败 Command。暂停会重置未完成任务的当前错误码，既往失败应从 Command 记录追溯。耗时诊断同时核对排队、outbox 的真实创建／完成时间、尝试次数和失败回执；患者来源的 `recorded_at` 可能是虚拟时间，不能据此计算真实等待，后续来源的事件也可能直到前一任务结束才创建。启用、补录与恢复合同见[问诊自动记录规格](../spec/2026-10-08-consultation-auto-record.md)。
 - 新 worktree 的文档检查若把 `CLAUDE.md` 中的 `AGENTS.md` 路径当正文并报缺少末尾换行，先检查 Git 的 `120000` mode 与 `core.symlinks`：禁用 symlink 的 checkout 会生成普通文本占位文件。`core.symlinks=false` 时 `git status` 也可能仍显示干净。只在隔离 worktree 中恢复占位内容仍精确等于 index 目标的链接，不给目标文本补换行，也不修改共享 Git 配置。
 
 - `pnpm install --lockfile-only` 自动解决锁文件冲突时可能重新解析间接依赖，顺带升级两侧均未改动的版本。常规主分支整合先按合并后的 manifest 合并两侧已有锁条目，核对 package 版本与 integrity 沿用原值，再用 `pnpm install --frozen-lockfile` 验证；不要把自动解冲突成功等同于依赖范围未变。
@@ -363,11 +379,24 @@
 
 - 原生 DSH 验收的临时插件也须在 manifest 中声明非空 `name` 和 `version`。官方 DeepSeek 的插件清单扩展会检查全部 active package；缺少版本时真实模型请求在发出 HTTP 前失败为 `REQUEST_EXTENSION`，合成 adapter 不经过这条扩展，不能证明真实 Provider 可用。
 
-- 诊疗资料读取的性能测量必须经过公开 HTTP，计入授权、重复 prepare、分页、解析和装配；只比较裸 SQL 的 N+1 与 JOIN 可能低估数量级。先以 SQL 数量与阶段耗时定位，再在保持医生历史索引和白名单边界的前提下批量读取。产品合同由[分批证据读取决策](../../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)拥有。
+- 诊疗资料读取的性能测量必须经过公开 HTTP，计入授权、重复 prepare、分页、解析和装配；只比较裸 SQL 的 N+1 与 JOIN 可能低估数量级。先以 SQL 数量与阶段耗时定位，再在保持医生历史索引和白名单边界的前提下批量读取。新增质控等调用者须核对是否复用批量路径；“不等待模型”仍可能因同步历史装配拖慢切换患者和轮询。产品合同由[分批证据读取决策](../../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)和[质控输入归属](../../.agents/notes/implemented/architecture/2026-10-15-doctor-document-quality-control.md)拥有。
 - 原生实模验收的 `verificationEnvironment` 会净化子进程环境；配置了 `HTTPS_PROXY` 仍须显式传递 `NODE_USE_ENV_PROXY=1`。排查全阶段模型超时时先对同一 API 做无凭据连通性探测，区分隔离 Node 没有启用代理与输入规模、推理档位问题；本机桥接保留 `NO_PROXY` 的 loopback 排除项。操作入口由[真实模型验收](../deployment.md#问诊自动记录原生验收)拥有。
-- Windows 隔离文档校验 checkout 使用 `core.autocrlf=false`；Agent Note 格式检查按 LF 解析，CRLF 会把有效头部误报为格式错误。没有创建符号链接的权限时，仅在隔离校验目录将已核对的文件链接物化为目标内容（可用 hard link），目录依赖用 junction；不改原工作区的链接占位或共享 Git 配置。
+- Windows 隔离文档校验的 checkout 和 `git archive` 均显式使用 `core.autocrlf=false`；archive 同样可能按当前配置转换换行，Agent Note 格式检查按 LF 解析，CRLF 会把有效头部误报为格式错误。没有创建符号链接的权限时，仅在隔离校验目录将已核对的文件链接物化为目标内容（可用 hard link），目录依赖用 junction；不改原工作区的链接占位或共享 Git 配置。
 
+- 真实模型性能验收不能直接复用 `apps/server/tests/browser-server.ts` 的 `startBrowserServer`：该 fixture 会包装语义核对替身。需要显式装配真实 Provider、真实 Hono listener 与临时 SQLite，并从真实页面读取持久化结果；确认所有模型阶段均经过真实 Provider，再报告性能。最小探测也须先通过实际桥接请求 schema，使用允许的 schemaName；请求校验失败同样可能返回安全的 `MODEL_UNAVAILABLE`，不能据此判断 Provider 不可用。
+
+- 多客户端长轮询压测使用每客户端独立的 Playwright BrowserContext。多个页签共用会话会争用 Chromium 每源的 HTTP/1.1 连接池，让长轮询挤占正常 Query 连接；这不能代表不同浏览器客户端的服务器负载。观测循环用来源索引查找样本，避免随来源增长反复线性扫描全部样本。报告须记录客户端隔离方式、实际注入耗时和迟到情况，并把提交到页面可见的等待与模型耗时分开。
+
+- 并发队列的定时器只启动空闲槽位，不要每个 tick 都创建等待全部通道的排空调用。慢通道会积累大量等待者，结束时集中唤醒并重复调度，短测可能正常、持续负载才出现峰值；使用假时钟和受控慢通道，断言释放后新增调度调用仍有界。手动排空可复用槽位内的在途任务，但每次调用仍须启动空闲槽位；全局合并排空调用会让新来源等待无关的慢通道。
 - 真实模型排障先通过当前宿主 resolve 核对本次 Provider、模型和实际端点，历史绑定或另一条路由的结果不能代表当前配置。OpenAI 兼容网关的 baseURL 使用其实际 API 根路径（常见为 /v1）；HTTP 200 可能是网页，静态模型目录与 SSE 保活也不能证明生成成功。用同一凭据和最小合成请求对照代理、直连及真实模型桥，分别记录 401、429、有效数据帧和正常终止，不用扩大超时掩盖配置错误或上游限流。
 - 实模返回 `AI_RESPONSE_INVALID` 时先保存安全的形状、未知编号、重复编号和完整读取标志计数，区分 JSON 形状失败与来源成员校验失败；不记录模型正文、凭据或完整医疗内容，不通过放宽引用校验让失败变为成功。记录级选择的运行合同由[对应决策](../../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)拥有。
 
 - 全仓测试因并发争用触发既有交互超时时，先用原断言及原超时串行复现；本机需要限制 Vitest worker 时可使用 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1 pnpm check`。Turbo 严格环境模式会过滤未声明的 `VITEST_MAX_WORKERS`，单独设置该变量不影响其子任务；可用 dry-run 的 envMode 确认实际传递，不通过扩大超时或跳过用例制造通过。
+
+- 用户要求自动记录保持安静：问诊栏不常驻“整理失败”，不重复堆叠每条来源的错误；未写入内容按需说明并保留恢复能力，不能把后台失败改成成功。实时病历质控只检查本次已提供资料，不主动装入全量既往病历；范围与取舍由[本次就诊输入及安静记录决策](../../.agents/notes/implemented/architecture/2026-10-18-current-encounter-quality-and-quiet-recording.md)拥有。
+
+- 用户明确不要自动记录的 6 秒硬截止；实时记录沿用常规模型等待配置，不用短预算把尚在正常生成的请求提前判成失败。配置、取消与恢复边界见[常规模型预算决定](../../.agents/notes/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
+
+- 当前自动记录性能由用户自行试用认可，交付不再追加真实模型性能验收；沿用[规格中的验收约定](../spec/2026-10-15-low-latency-document-recording.md#验收条件)，不将体验确认写成量化延迟达标，也不重复将固定负载压测作为该交付的前置条件。
+
+- 按内容哈希去重前，先用完整业务 schema 规范化有效候选；首尾空格和 JSON 字段顺序不能制造竞争替换。不合格候选仍参与共享目标冲突判断，不能为去重先过滤掉坏候选而破坏原子拒绝；自动记录的归属与回归由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-15-low-latency-document-recording.md)拥有。

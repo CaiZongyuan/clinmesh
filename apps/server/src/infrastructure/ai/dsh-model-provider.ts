@@ -1,6 +1,6 @@
-import { dshDefaultModel, decodeModelRoute, modelBridgeErrorSchema, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
+import { dshDefaultModel, decodeModelRoute, modelBridgeErrorSchema, modelBridgeFirstTextHeader, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
 import { ChatCompletionsError, StructuredOutputValidationError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
-import { ZodError } from 'zod'
+import { z, ZodError } from 'zod'
 import { setTimeout as delay } from 'node:timers/promises'
 
 export class DshModelProvider implements JsonChatCompletionsProvider {
@@ -25,13 +25,14 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
     const rateLimitRetry = { available: true }
     let issues: Array<{ code: string; path: string }> = []
     let validationError: unknown
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < (input.maxAttempts ?? 2); attempt++) {
       validationError = undefined
       const result = await this.#request({
         operation: 'complete', model, schemaName: input.schemaName, jsonSchema: input.jsonSchema,
         systemPrompt: attempt === 0 ? input.systemPrompt : `${input.systemPrompt}\nThe previous response failed validation: ${JSON.stringify(issues)}. Generate a corrected JSON object using the original data and schema. Do not include $schema or other schema metadata.`,
         userPayload: input.userPayload,
-      }, input.signal, rateLimitRetry, deadline)
+      }, input.signal, rateLimitRetry, deadline, input.onResponse)
+      if (result.firstTextMs !== undefined) input.onFirstText?.(result.firstTextMs)
       if (result.model !== model) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the pinned route')
       try {
         let value: unknown = JSON.parse(result.content ?? '')
@@ -57,7 +58,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
   }
 
   async #request(payload: Record<string, unknown> & { operation: 'resolve' | 'complete' }, callerSignal?: AbortSignal,
-    rateLimitRetry?: { available: boolean }, deadline = performance.now() + this.options.timeoutMs) {
+    rateLimitRetry?: { available: boolean }, deadline = performance.now() + this.options.timeoutMs, onResponse?: () => void) {
     const timeoutMs = Math.ceil(deadline - performance.now())
     if (timeoutMs < 100) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request timed out')
     // Allow the host deadline to return its safe timeout code before the transport is cancelled.
@@ -76,6 +77,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
           method: 'POST', redirect: 'error', signal,
           headers: { 'content-type': 'application/json', authorization: `Bearer ${this.options.secret}` }, body,
         })
+        onResponse?.()
         if (response.body === null) {
           if (!response.ok) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
           throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge returned no response')
@@ -123,7 +125,10 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
           }
           throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
         }
-        return modelBridgeResponseSchema.parse(JSON.parse(content))
+        const header = response.headers.get(modelBridgeFirstTextHeader)
+        const firstText = header === null ? undefined : z.coerce.number().finite().nonnegative().max(10 * 60_000).safeParse(header)
+        return { ...modelBridgeResponseSchema.parse(JSON.parse(content)),
+          ...(firstText?.success ? { firstTextMs: firstText.data } : {}) }
       }
       throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable')
     } catch (error) {

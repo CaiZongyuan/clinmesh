@@ -29,7 +29,7 @@ import { useRef, useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { ConsultationRecordingControls, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
+import { ConsultationRecordingControls, ConsultationVerificationStatus, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
 import {
   DocumentQualityCompact, DocumentQualityDetails, DocumentQualitySignSummary, locateDocumentQualityIssue,
@@ -69,6 +69,7 @@ export interface ClinicalDocumentPageActions {
   controlRecording?: ConsultationRecordingAction
   save?: {
     error: Error | null
+    hasUnsavedChanges?: boolean
     onSubmit: (document: ClinicalDocumentContent) => void
     pending: boolean
     success: boolean
@@ -181,11 +182,12 @@ export function ClinicalDocumentPage({
           <div className="min-h-0 overflow-y-auto p-4"><DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={locateIssue} /></div>
         </DialogContent>
       </Dialog>
+      <ConsultationVerificationStatus recording={detail.consultationRecording} messages={messages} />
       {actions.save?.error == null ? null : <ErrorAlert
         message={getWorkspaceErrorMessage(actions.save.error, messages)}
         title={messages.saveClinicalDocumentDraft}
       />}
-      {actions.save?.success ? <p role="status" className="text-sm text-muted-foreground">{messages.clinicalDocumentDraftSaved}</p> : null}
+      {actions.save?.success && !actions.save.hasUnsavedChanges ? <p role="status" className="text-sm text-muted-foreground">{messages.clinicalDocumentDraftSaved}</p> : null}
       {actions.sign.success ? (
         <Alert>
           <CheckCircleIcon aria-hidden="true" />
@@ -346,7 +348,10 @@ export function ClinicalDocumentPage({
               onChange={onDocumentChange}
               updates={updates}
             />
-            <div className="flex justify-end gap-2 border-t pt-3">
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3">
+              {actions.save?.hasUnsavedChanges ? <p role="status" className="mr-auto text-sm text-muted-foreground">
+                {messages.clinicalDocumentDraftUnsaved}
+              </p> : null}
               {actions.save === undefined ? null : <Button disabled={actions.save.pending || preparing || cancelPending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
                 {messages.saveClinicalDocumentDraft}
               </Button>}
@@ -377,6 +382,7 @@ export function ClinicalDocumentPage({
               </AlertDialogHeader>
               {currentPreview === undefined ? null : (
                 <div className="flex max-h-[55vh] flex-col gap-3 overflow-y-auto">
+                  <ConsultationVerificationStatus recording={detail.consultationRecording} messages={messages} />
                   <DocumentQualitySignSummary detail={detail} state={currentPreview.qualityControl} scope={qualityScope} locale={locale} />
                   <ClinicalDocumentContentView content={currentPreview.document.content} messages={messages} />
                   {actions.sign.error === null ? null : <ErrorAlert title={messages.operationFailed}

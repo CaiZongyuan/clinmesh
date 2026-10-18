@@ -20,6 +20,7 @@ const serverEnvironmentSchema = z.object({
   }, 'DSH model origin must be an HTTP loopback origin').default('http://127.0.0.1:3080'),
   CLINMESH_AI_BASE_URL: httpUrlSchema.optional(),
   CLINMESH_AI_CONSULTATION_MODEL: z.string().trim().min(1).max(256).optional(),
+  CLINMESH_AI_RECORDING_MODEL: z.string().trim().min(1).max(1024).optional(),
   CLINMESH_AI_BRIEF_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_CATALOG_ENRICHMENT_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_INVESTIGATION_MODEL: z.string().trim().min(1).max(256).optional(),
@@ -75,6 +76,7 @@ const serverEnvironmentSchema = z.object({
 })
 
 export interface ServerConfig {
+  consultationRecordingModel?: string
   dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   ai?: {
     apiKey: string
@@ -198,6 +200,7 @@ export function readServerConfig(
     : parsed.CLINMESH_TRUSTED_ORIGINS.split(',').map(origin => z.url().parse(origin.trim()))
 
   return {
+    ...(parsed.CLINMESH_AI_RECORDING_MODEL === undefined ? {} : { consultationRecordingModel: parsed.CLINMESH_AI_RECORDING_MODEL }),
     ...(parsed.CLINMESH_AI_SOURCE === 'dsh' ? {
       dshModelBridge: {
         origin: parsed.CLINMESH_DSH_MODEL_ORIGIN, secret: parsed.CLINMESH_DSH_BRIDGE_SECRET!,

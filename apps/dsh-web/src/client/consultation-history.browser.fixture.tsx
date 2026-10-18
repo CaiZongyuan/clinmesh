@@ -65,7 +65,13 @@ function App(): React.JSX.Element {
     <button type="button" onClick={() => setSignedView(true)}>模拟已签内容</button>
     <button type="button" onClick={() => setRecordVisible(current => !current)}>切换病历显示</button>
     <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'backfill', version: 0, remainingCount: 2 }))}>模拟历史病例</button>
-    <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'failed', failedCount: 1 }))}>模拟整理失败</button>
+    <button type="button" onClick={() => setRecording(current => ({ ...current, status: 'failed', failedCount: 3, remainingCount: 3,
+      failures: [
+        { sourceTurnId: 'synthetic-1', code: 'AI_TIMEOUT', retrying: false },
+        { sourceTurnId: 'synthetic-2', code: 'AI_TIMEOUT', retrying: false },
+        { sourceTurnId: 'synthetic-3', code: 'CONSULTATION_RECORDING_SOURCE_INVALID', retrying: false },
+      ],
+    }))}>模拟整理失败</button>
     <output aria-label="控制结果">{controls.join(',')}</output>
     {!recordVisible ? null : signedView ? <ClinicalDocumentContentView content={working} messages={getWorkspaceMessages(locale)} />
       : <ClinicalDocumentPage allowRevision={false} detail={{ ...detail, consultationRecording: {

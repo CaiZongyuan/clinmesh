@@ -15,6 +15,10 @@ import Database from 'better-sqlite3'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { matchesMigrationChecksum, migrationChecksum } from './migration-checksum.ts'
 import {
+  matchesEarlyIncrementalRecordingMigration,
+  prepareIncrementalRecordingContextMigration,
+} from './incremental-recording-migration.ts'
+import {
   instrumentSqliteDriver,
   type SqlitePerformanceObserver,
 } from './performance-observer.ts'
@@ -206,12 +210,17 @@ async function removeDatabaseArtifacts(databasePath: string): Promise<void> {
 export function openClinMeshDatabase(options: OpenDatabaseOptions): ClinMeshDatabase {
   mkdirSync(dirname(resolve(options.databasePath)), { recursive: true })
   const driver = new Database(options.databasePath)
-  driver.pragma('foreign_keys = ON')
-  driver.pragma('journal_mode = WAL')
-  driver.pragma(`busy_timeout = ${options.busyTimeoutMs}`)
-  return new ClinMeshDatabase(options.performanceObserver === undefined
-    ? driver
-    : instrumentSqliteDriver(driver, options.performanceObserver))
+  try {
+    driver.pragma('foreign_keys = ON')
+    driver.pragma('journal_mode = WAL')
+    driver.pragma(`busy_timeout = ${options.busyTimeoutMs}`)
+    return new ClinMeshDatabase(options.performanceObserver === undefined
+      ? driver
+      : instrumentSqliteDriver(driver, options.performanceObserver))
+  } catch (error) {
+    driver.close()
+    throw error
+  }
 }
 
 export function applyMigrations(
@@ -242,7 +251,8 @@ export function applyMigrations(
     const existing = lookup.get(migrationFile) as { checksum: string } | undefined
 
     if (existing !== undefined) {
-      if (!matchesMigrationChecksum(sql, existing.checksum)) {
+      if (!matchesMigrationChecksum(sql, existing.checksum)
+        && !matchesEarlyIncrementalRecordingMigration(migrationFile, sql, existing.checksum)) {
         throw new Error(`Applied migration checksum changed: ${migrationFile}`)
       }
       continue
@@ -250,6 +260,7 @@ export function applyMigrations(
 
     database.driver.exec('BEGIN IMMEDIATE')
     try {
+      prepareIncrementalRecordingContextMigration(database.driver, migrationFile)
       database.driver.exec(sql)
       record.run(migrationFile, checksum, new Date().toISOString())
       database.driver.exec('COMMIT')
@@ -292,7 +303,8 @@ export function verifyMigrations(
     if (sql === undefined) {
       throw new Error(`Database migration is unknown to this release: ${row.migration_id}`)
     }
-    if (!matchesMigrationChecksum(sql, row.checksum)) {
+    if (!matchesMigrationChecksum(sql, row.checksum)
+      && !matchesEarlyIncrementalRecordingMigration(row.migration_id, sql, row.checksum)) {
       throw new Error(`Applied migration checksum changed: ${row.migration_id}`)
     }
   }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { apiGet, confirmDoctorPreparation, getSyntheticCaseHistory, onAuthenticationFailure } from './api-client.ts'
+import { apiGet, confirmDoctorPreparation, getSyntheticCaseHistory, onAuthenticationFailure, subscribeRecordingUpdates } from './api-client.ts'
 
 describe('Web API client errors', () => {
   afterEach(() => {
@@ -39,6 +39,41 @@ describe('Web API client errors', () => {
     expect(manualBody.input).not.toHaveProperty('generation')
     expect(manualBody.input).not.toHaveProperty('inputFingerprint')
     expect(JSON.parse(String(calls[1]?.[1]?.body)).input).toMatchObject({ generation: 2, inputFingerprint: 'a'.repeat(64) })
+  })
+
+  it('reports notification health for polling fallback and stops reconnecting after disposal', async () => {
+    vi.useFakeTimers()
+    let disconnect!: () => void
+    let activeSignal: AbortSignal | undefined
+    const fetch = vi.fn().mockResolvedValueOnce(Response.json({ revision: 'a'.repeat(64) }))
+      .mockImplementationOnce((_path, input: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        activeSignal = input.signal ?? undefined
+        disconnect = () => reject(new Error('Synthetic disconnect'))
+      }))
+      .mockResolvedValueOnce(Response.json({ revision: 'b'.repeat(64) }))
+      .mockImplementation((_path, input: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        activeSignal = input.signal ?? undefined
+        input.signal?.addEventListener('abort', () => reject(input.signal?.reason), { once: true })
+      }))
+    vi.stubGlobal('fetch', fetch)
+    const onChange = vi.fn()
+    const health = vi.fn()
+    const dispose = subscribeRecordingUpdates('synthetic-case', onChange, health)
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(health).toHaveBeenLastCalledWith(true)
+      expect(onChange).toHaveBeenCalledTimes(1)
+      disconnect()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(health).toHaveBeenLastCalledWith(false)
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(health).toHaveBeenLastCalledWith(true)
+      expect(onChange).toHaveBeenCalledTimes(2)
+    } finally { dispose() }
+    expect(activeSignal?.aborted).toBe(true)
+    const calls = fetch.mock.calls.length
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(fetch).toHaveBeenCalledTimes(calls)
   })
 
   it('normalizes a non-JSON response without exposing its body', async () => {

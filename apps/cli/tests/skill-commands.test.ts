@@ -197,9 +197,16 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)
     expect(skill).toContain('processedCount')
     expect(skill).toContain('explicitly starts it')
-    expect(operation.version).toBe(3)
+    expect(operation.version).toBe(4)
     expect(operation.summary).toContain('backfill requires an existing Consultation')
     expect(operation.summary).toContain('WORKFLOW_CONFLICT')
+    expect(operation.summary).toContain('unavailable semantic verification')
+    expect(operation.summary).toContain('negative verdicts are never reasked')
+    const read = getHisOperation('doctor.case.get')
+    expect(read.version).toBe(10)
+    expect(read.summary).toContain('sourceResults')
+    expect(read.summary).toContain('asynchronous verification')
+    expect(skill).toContain('verification.pendingCount')
     expect(skill).toContain('Backfill requires an existing Consultation')
     expect(skill).toContain('WORKFLOW_CONFLICT')
   })
@@ -234,7 +241,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 9 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 10 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }

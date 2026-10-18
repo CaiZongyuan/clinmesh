@@ -5,6 +5,7 @@ import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { ClinicalDocumentPage, ClinicalDocumentContentView, type ClinicalDocumentSignPreview } from '../../../web/src/app/doctor/clinical-document-page.tsx'
 import { AgentReviewProvider, useAgentReview } from '../../../web/src/app/agent-review.tsx'
+import { ConsultationVerificationStatus } from '../../../web/src/app/doctor/consultation-recording-controls.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../../../web/src/app/workspace-i18n.ts'
 
 const content: ClinicalDocumentContent = { chiefComplaint: '头晕一周。', historyOfPresentIllness: '医生核对病史。\n'.repeat(60),
@@ -16,6 +17,8 @@ const detail: DoctorCaseDetail = {
   presentation: null, priorFacts: [], status: 'first-visit', taskId: 'synthetic-task', taskVersion: '1',
   clinicalDocument: { draft: { ...content, version: 1, updatedAt: '2026-10-10T09:00:00+08:00' }, signed: [] },
   consultationRecording: { hasSavedDraft: true, version: 1, paused: true, processedCount: 1, remainingCount: 2, failedCount: 1,
+    verification: { pendingCount: 1, flaggedCount: 1, failedCount: 1, issues: [{ additionId: 'synthetic-flagged',
+      field: 'historyOfPresentIllness', text: '合成待核实片段。', sourceIds: ['synthetic-source'], reason: 'verification-rejected' }] },
     status: 'paused', failures: [], additions: [] },
 }
 const host = document.createElement('div')
@@ -61,6 +64,7 @@ function App({ locale, onLocaleChange }: { locale: WorkspaceLocale; onLocaleChan
         description: locale => getWorkspaceMessages(locale).clinicalDocumentSignDescription,
         confirmLabel: locale => getWorkspaceMessages(locale).confirmClinicalRecordSign,
         content: locale => <>
+          <ConsultationVerificationStatus recording={detail.consultationRecording} messages={getWorkspaceMessages(locale)} />
           <ClinicalDocumentContentView content={content} messages={getWorkspaceMessages(locale)} />
         </>,
         onConfirm: () => setResult(`agent:signed`) })

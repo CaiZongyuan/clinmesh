@@ -9,15 +9,18 @@ export async function replaceWithPreSourceDatabase(databasePath: string): Promis
   return replaceWithRecordingDatabase(databasePath, 'pre-source')
 }
 
-export async function replaceWithRecordingBranchDatabase(databasePath: string, branch: 'main' | 'fields'): Promise<void> {
+export async function replaceWithRecordingBranchDatabase(databasePath: string, branch: 'main' | 'fields' | 'incremental' | 'quality'): Promise<void> {
   return replaceWithRecordingDatabase(databasePath, branch)
 }
 
-async function replaceWithRecordingDatabase(databasePath: string, branch: 'pre-source' | 'main' | 'fields'): Promise<void> {
+async function replaceWithRecordingDatabase(databasePath: string, branch: 'pre-source' | 'main' | 'fields' | 'incremental' | 'quality'): Promise<void> {
   const directory = dirname(databasePath)
   const migrationDirectory = join(directory, 'pre-source-migrations')
   await mkdir(migrationDirectory)
   const migrations = (await readdir(join(process.cwd(), 'drizzle'))).filter(file => {
+    if (branch === 'incremental' || branch === 'quality') return /^\d{4}_.+\.sql$/u.test(file)
+      && file < '0065_'
+      && file !== (branch === 'incremental' ? '0064_clinical-document-quality.sql' : '0064_incremental-recording.sql')
     if (!/^\d{4}_.+\.sql$/u.test(file) || file === '0060_z-recording-branch-staging.sql') return false
     if (file < '0061_') return true
     if (branch === 'main') return file === '0061_consultation-recording-sources.sql'
@@ -27,7 +30,8 @@ async function replaceWithRecordingDatabase(databasePath: string, branch: 'pre-s
   const legacyPath = join(directory, 'legacy.sqlite')
   const legacy = openClinMeshDatabase({ databasePath: legacyPath, busyTimeoutMs: 5_000 })
   try {
-    assert.equal(applyMigrations(legacy, migrationDirectory).schemaVersion, branch === 'pre-source' ? 65 : branch === 'main' ? 66 : 67)
+    assert.equal(applyMigrations(legacy, migrationDirectory).schemaVersion,
+      branch === 'pre-source' ? 65 : branch === 'main' ? 66 : branch === 'fields' ? 67 : 71)
     legacy.driver.pragma('foreign_keys = OFF')
     legacy.driver.prepare('ATTACH DATABASE ? AS captured').run(databasePath)
     const tables = legacy.driver.prepare(`SELECT name FROM sqlite_schema WHERE type = 'table'
@@ -37,16 +41,19 @@ async function replaceWithRecordingDatabase(databasePath: string, branch: 'pre-s
       const quoted = `"${name.replaceAll('"', '""')}"`
       const columns = legacy.driver.pragma(`table_info(${quoted})`) as Array<{ name: string }>
       const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(', ')
-      const legacyRows = name === 'outbox_event' ? " WHERE kind != 'clinical-document.check-quality'" : ''
+      const legacyRows = name === 'outbox_event' ? ` WHERE kind NOT IN (${branch === 'quality'
+        ? "'consultation.verify-history'" : branch === 'incremental'
+          ? "'clinical-document.check-quality'" : "'clinical-document.check-quality', 'consultation.verify-history'"})` : ''
       legacy.driver.exec(`INSERT OR REPLACE INTO ${quoted} (${list}) SELECT ${list} FROM captured.${quoted}${legacyRows}`)
     }
     legacy.driver.exec('COMMIT')
     legacy.driver.exec('DETACH DATABASE captured')
     legacy.driver.pragma('foreign_keys = ON')
     assert.deepEqual(legacy.driver.pragma('foreign_key_check'), [])
-    assert.equal(legacy.driver.prepare(`SELECT 1 FROM sqlite_schema WHERE name = 'consultation_recording_source'`).get() !== undefined, branch === 'main')
+    const hasSources = branch === 'main' || branch === 'incremental' || branch === 'quality'
+    assert.equal(legacy.driver.prepare(`SELECT 1 FROM sqlite_schema WHERE name = 'consultation_recording_source'`).get() !== undefined, hasSources)
     assert.equal((legacy.driver.pragma('table_info(consultation_recording)') as Array<{ name: string }>)
-      .some(column => column.name === 'actor_context_json'), branch === 'main')
+      .some(column => column.name === 'actor_context_json'), hasSources)
   } finally { legacy.close() }
   await copyFile(legacyPath, databasePath)
 }
