@@ -1134,6 +1134,7 @@ export class ImagingRequestService {
       ? []
       : this.#reportVersions(context, request.request_id, request.diagnostic_report_id)
     return imagingRequestSchema.parse({
+      authoredAt: serviceRequest.authoredOn,
       ...(request.generation_error_code === null || request.generation_error_message === null
         ? {}
         : { generationError: { code: request.generation_error_code, message: request.generation_error_message } }),

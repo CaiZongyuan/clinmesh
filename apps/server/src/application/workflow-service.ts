@@ -10341,6 +10341,7 @@ export class WorkflowService {
           )
       return {
         catalogItemId: request.catalog_item_id,
+        authoredAt: serviceRequest.authoredOn,
         id: request.request_id,
         indicationCode: request.indication_code,
         ...(request.generation_error_code === null || request.generation_error_message === null

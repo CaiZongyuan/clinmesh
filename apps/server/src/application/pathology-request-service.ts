@@ -1243,6 +1243,7 @@ export class PathologyRequestService {
       ? []
       : this.#reportVersions(context, request, request.diagnostic_report_id)
     return pathologyRequestSchema.parse({
+      authoredAt: serviceRequest.authoredOn,
       ...(request.generation_error_code === null || request.generation_error_message === null
         ? {}
         : { generationError: { code: request.generation_error_code, message: request.generation_error_message } }),

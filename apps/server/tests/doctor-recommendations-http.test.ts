@@ -1689,7 +1689,9 @@ it('issues selected prepared laboratory items atomically and preserves an existi
   const replay = await confirmPreparation(fixture, 'laboratory', body, key)
   expect(replay.status).toBe(200)
   expect(confirmDoctorPreparationResponseSchema.parse(await replay.json())).toEqual(receipt)
-  expect((await fixture.readCase()).laboratoryRequests?.requests).toHaveLength(2)
+  const formalRequests = (await fixture.readCase()).laboratoryRequests?.requests
+  expect(formalRequests).toHaveLength(2)
+  expect(formalRequests?.every(request => Number.isFinite(Date.parse(request.authoredAt ?? '')))).toBe(true)
 
   const saved = await fixture.runtime.app.request(`/api/his/v1/encounters/${prepared.encounterId}/laboratory-request/draft`, {
     method: 'PUT', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },

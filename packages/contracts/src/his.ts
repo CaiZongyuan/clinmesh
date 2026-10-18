@@ -1530,6 +1530,7 @@ export const correctLaboratoryReportResponseSchema = commandResponseSchema(z.obj
 }).strict())
 
 export const laboratoryRequestSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }).optional(),
   catalogItemId: laboratoryRequestCatalogItemIdSchema,
   generationError: z.object({
     code: z.string().min(1).max(128),
@@ -1585,6 +1586,7 @@ const completedCaseLaboratoryReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const completedCaseLaboratoryRequestSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }).optional(),
   catalogDisplay: z.string().min(1).optional(),
   catalogItemId: referenceDataItemIdSchema.optional(),
   correctionSupported: z.boolean().default(false),
@@ -1719,6 +1721,7 @@ export const imagingReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const imagingRequestSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }).optional(),
   generationError: z.object({
     code: z.string().min(1).max(128),
     message: z.string().min(1).max(1_000),
@@ -1846,6 +1849,7 @@ export const pathologyReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const pathologyRequestSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }).optional(),
   generationError: z.object({
     code: z.string().min(1).max(128),
     message: z.string().min(1).max(1_000),
