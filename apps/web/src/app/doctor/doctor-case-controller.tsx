@@ -1613,11 +1613,11 @@ function DoctorCaseController({
             indicationCode: nextIndication,
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
+          hydrateAgentDraft(current.caseId, 'laboratory')
           if (activeCaseIdRef.current === current.caseId) {
             setLaboratoryItemId(catalogItemId)
             setIndicationCode(nextIndication)
             selectInvestigation('laboratory')
-            hydrateAgentDraft(current.caseId, 'laboratory')
           }
           return result
         },
@@ -1644,9 +1644,9 @@ function DoctorCaseController({
             expectedDraftVersion: current.imagingRequests?.draftVersion ?? 0,
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
+          hydrateAgentDraft(current.caseId, 'imaging')
           if (activeCaseIdRef.current === current.caseId) {
             selectInvestigation('imaging')
-            hydrateAgentDraft(current.caseId, 'imaging')
           }
           return result
         },
@@ -1674,9 +1674,9 @@ function DoctorCaseController({
             expectedDraftVersion: current.pathologyRequests?.draftVersion ?? 0,
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
+          hydrateAgentDraft(current.caseId, 'pathology')
           if (activeCaseIdRef.current === current.caseId) {
             selectInvestigation('pathology')
-            hydrateAgentDraft(current.caseId, 'pathology')
           }
           return result
         },
