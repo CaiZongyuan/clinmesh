@@ -1241,10 +1241,11 @@ it.each([false, true])('repairs malformed output once within each recording atte
         userPayload: { turns: Array<{ id: string }> } }
       prompts.push(request.systemPrompt)
       const repaired = request.systemPrompt.includes('previous response failed validation')
+      const valid = repaired && (!manualRetry || retryEnabled)
       return Response.json({ model: request.model, content: JSON.stringify({ additions: [{
-        field: repaired && (!manualRetry || retryEnabled) ? 'historyOfPresentIllness' : 'invalid-field', relation: 'addition',
-        sourceTurnId: request.userPayload.turns.at(-1)!.id,
-        quote: repaired && (!manualRetry || retryEnabled) ? confirmed : uncertain,
+        field: 'historyOfPresentIllness', relation: 'addition',
+        sourceTurnId: valid ? request.userPayload.turns.at(-1)!.id : undefined,
+        quote: valid ? confirmed : uncertain,
       }] }) })
     },
   })
@@ -1264,13 +1265,13 @@ it.each([false, true])('repairs malformed output once within each recording atte
     retryEnabled = true
     expect((await fixture.control('retry')).status).toBe(200)
     await fixture.runtime.dispatchPending()
-    }
+  }
   expect(await fixture.read()).toMatchObject({
     consultationRecording: { status: 'updated', processedCount: 1, remainingCount: 0, failures: [] },
     clinicalDocument: { draft: { historyOfPresentIllness: `患者自述：${confirmed}` } },
   })
   expect(prompts).toHaveLength(manualRetry ? 4 : 2)
-  expect(prompts.at(-1)).toContain('additions.0.field')
+  expect(prompts.at(-1)).toContain('additions.0.facts.0.sources.0.sourceTurnId')
 })
 
 it.each([

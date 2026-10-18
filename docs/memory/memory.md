@@ -94,6 +94,8 @@
 
 - 校验失败诊断的回归须穿过真实 Provider 适配器并检查持久失败回执；直接抛领域错误的替身会漏掉异常包装造成的原因丢失。具体边界见[直接记录决策](../../.agents/notes/implemented/architecture/2026-10-14-consultation-direct-recording.md)。
 
+- 批次候选隔离回归须同时穿过 Provider 的 `validate` 回调，并混入来自不同来源的合法候选；仅测试逐项解码会漏掉上游整批校验，只有正文断言也会漏掉成功来源被误记失败。另组合不合格候选与同目标竞争替换，避免过滤顺序破坏原子性；当前边界见[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-15-low-latency-document-recording.md)。
+
 - SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
 
 - 首次自动草稿从无到有时，不能将其未涉及字段的空值当作清空指令；页面预填值与人工输入都须覆盖回归。验证保留后还要保存、刷新，并主动清空再保存，避免修复变成永久恢复默认值。当前病史边界由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。

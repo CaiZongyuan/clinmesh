@@ -18,7 +18,7 @@ import { WorkflowError } from './workflow-error.ts'
 import type { QualityAgentFact } from './clinical-document-quality.ts'
 import { historySummaryPrompt, RecordingSourceError, recordingSourceDiagnosticSchema,
   summaryText, verifyHistorySummaries, type HistoryFact, type HistorySummary, type RejectedHistoryFact } from './consultation-history-summary.ts'
-import { decodeRecordingCandidates, partitionRecordingCandidates, recordingBatchSchema, recordingContentHash, recordingModelPayload, recordingOutputSchema, recordingTurns,
+import { decodeRecordingCandidates, partitionRecordingCandidates, recordingBatchSchema, recordingContentHash, recordingModelPayload, recordingOutputSchema, recordingResponseSchema, recordingTurns,
   type RecordingBatch } from './consultation-recording-batch.ts'
 
 const contextSchema = z.object({
@@ -925,7 +925,7 @@ export class ConsultationRecordingService {
         jsonSchema: z.toJSONSchema(recordingOutputSchema) as Record<string, unknown>,
         systemPrompt: `${historySummaryPrompt}\n只处理 currentSourceIds 的新来源，其余 turns 是相邻上下文和原始证据。语义核对在保存后独立执行。\nupdate/correction/conflict 中保持不变的目标事实使用 retainedFactIndexes（目标 facts 的从零开始的下标）原样保留，不在 facts 重述；facts 只输出新增或更正的事实。保留事实在前、新事实在后，总数最多12；目标已满时将独立新事实写为 addition。旧事实来源通过 sources 的 sourceTurnId 从 turns 恢复，不能凭空添加或遗漏有效事实。`,
         userPayload: payload,
-        validate: value => { recordingOutputSchema.parse(value); return true },
+        validate: value => { recordingResponseSchema.parse(value); return true },
       })
       modelCompleted = performance.now()
       signal.throwIfAborted()

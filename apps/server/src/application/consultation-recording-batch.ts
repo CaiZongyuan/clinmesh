@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import { clinicalDocumentDraftContentSchema, consultationHistoryFactSchema, consultationHistoryFieldSchema, consultationHistorySummarySchema,
-  consultationRecordingSourceSchema } from '@clinmesh/contracts/his'
+  consultationHistorySourceSchema, consultationRecordingSourceSchema } from '@clinmesh/contracts/his'
 import { RecordingSourceError, validateHistorySummaries, type HistorySummary } from './consultation-history-summary.ts'
 
 const targetSchema = z.object({ id: z.string(), field: consultationHistoryFieldSchema, text: z.string() })
@@ -21,10 +21,18 @@ export const recordingTurns = (batch: RecordingBatch) => batch.sources.map(sourc
 
 // The model can retain exact facts from its immutable target instead of generating
 // their text and evidence again. The public/persisted contract remains fully expanded.
-export const recordingOutputSchema = z.object({ additions: z.array(consultationHistorySummarySchema.safeExtend({
+const recordingCandidateSchema = consultationHistorySummarySchema.safeExtend({
   facts: z.array(consultationHistoryFactSchema).max(12),
   retainedFactIndexes: z.array(z.number().int().nonnegative()).max(12).optional(),
-})).max(12) }).strict()
+})
+export const recordingOutputSchema = z.object({ additions: z.array(recordingCandidateSchema).max(12) }).strict()
+
+// Keep complete citations and a bounded envelope at the transport boundary;
+// candidate content is validated separately so a bad sibling can be isolated.
+export const recordingResponseSchema = z.object({ additions: z.array(z.object({
+  targetAdditionId: z.unknown().optional(),
+  facts: z.array(z.object({ sources: z.array(consultationHistorySourceSchema).min(1) }).passthrough()),
+}).passthrough()).max(12) }).strict()
 
 export function recordingModelPayload(batch: RecordingBatch) {
   const sourceId = (id: string) => `t${batch.sources.findIndex(source => source.id === id)}`
@@ -48,25 +56,36 @@ export function recordingModelPayload(batch: RecordingBatch) {
 export function decodeRecordingCandidates(value: unknown, batch: RecordingBatch) {
   const additions: HistorySummary[] = []
   const failures: ReturnType<typeof partitionRecordingCandidates>['failures'] = []
-  const candidates = [...new Map(recordingOutputSchema.parse(value).additions.map(item => [recordingContentHash(item), item])).values()]
+  const candidates = [...new Map(recordingResponseSchema.parse(value).additions.map(item => [recordingContentHash(item), item])).values()]
   const targets = new Map<string, string>([...batch.history.map((item, index) => [`h${index}`, item.id] as const),
     ...batch.manualHistory.map((item, index) => [`m${index}`, item.id] as const)])
+  const resolveTarget = (value: unknown) => typeof value === 'string' ? targets.get(value) ?? value : undefined
+  const sourceIds = new Map(batch.sources.map((source, index) => [`t${index}`, source.id]))
   for (const [index, candidate] of candidates.entries()) {
-    const { retainedFactIndexes = [], ...addition } = candidate
-    const targetId = addition.targetAdditionId === undefined ? undefined : targets.get(addition.targetAdditionId) ?? addition.targetAdditionId
+    const targetId = resolveTarget(candidate.targetAdditionId)
+    const citedIds = new Set(candidate.facts.flatMap(fact => fact.sources.map(source => sourceIds.get(source.sourceTurnId) ?? source.sourceTurnId)))
+    const members = batch.members.filter(member => citedIds.has(member.id)).map(member => member.id)
+    const fail = (reason: 'citation' | 'target' | 'field-limit') => failures.push({ id: recordingContentHash([index, candidate]),
+      sourceIds: members.length === 0 ? batch.members.map(member => member.id) : members, reason })
+    const competing = targetId !== undefined && candidates.some((other, otherIndex) => otherIndex !== index
+      && resolveTarget(other.targetAdditionId) === targetId)
+    if (competing) { fail('target'); continue }
+    const parsed = recordingCandidateSchema.safeParse(candidate)
+    if (!parsed.success) {
+      fail(parsed.error.issues.some(issue => issue.code === 'too_big' && issue.path[0] === 'facts') ? 'field-limit' : 'target')
+      continue
+    }
+    const { retainedFactIndexes = [], ...addition } = parsed.data
     const target = batch.history.find(item => item.id === targetId)
     const retained = retainedFactIndexes.map(index => target?.facts[index])
     const expanded = consultationHistorySummarySchema.safeParse({ ...addition,
       ...(targetId === undefined ? {} : { targetAdditionId: targetId }),
       facts: [...retained, ...addition.facts.map(fact => ({ ...fact, sources: fact.sources.map(source => ({ ...source,
-        sourceTurnId: batch.sources.find((_, index) => `t${index}` === source.sourceTurnId)?.id ?? source.sourceTurnId,
+        sourceTurnId: sourceIds.get(source.sourceTurnId) ?? source.sourceTurnId,
       })) }))],
     })
-    const competing = targetId !== undefined && candidates.some((other, otherIndex) => otherIndex !== index
-      && (targets.get(other.targetAdditionId ?? '') ?? other.targetAdditionId) === targetId)
-    if (!expanded.success || competing || new Set(retainedFactIndexes).size !== retainedFactIndexes.length) {
-      failures.push({ id: recordingContentHash([index, candidate]), sourceIds: batch.members.map(member => member.id), reason: 'target' })
-    } else additions.push(expanded.data)
+    if (!expanded.success || new Set(retainedFactIndexes).size !== retainedFactIndexes.length) fail('target')
+    else additions.push(expanded.data)
   }
   return { additions, failures }
 }
