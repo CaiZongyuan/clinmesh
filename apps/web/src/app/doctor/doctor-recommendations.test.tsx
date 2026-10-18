@@ -137,18 +137,59 @@ describe('prepared clinical confirmation', () => {
     expect(screen.queryByText('private-internal-rule-detail')).toBeNull()
     expect(selectionCheckbox().getAttribute('aria-checked')).toBe('true')
   })
-  it.each([{ enabled: false }, { disabled: true }, { inputRevision: 'new-source' }])('notifies the same case of the issued record after %j without consuming its form values', async change => {
+  it.each([{ enabled: false }, { disabled: true }, { inputRevision: 'new-source' }])('consumes unchanged manual values after %j while preserving record notification', async change => {
     const delayed = deferredResponse()
-    stubRequests(() => state(), () => delayed.response)
+    stubRequests(() => state({ items: [] }), () => delayed.response)
     const onConfirmed = vi.fn()
-    const original = props({ onConfirmed })
+    const value = { source: 'manual' as const, kind: 'diagnosis' as const, catalogItemId: 'manual-diagnosis', role: 'primary' as const }
+    const original = props({ encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [{ label: '医生主诊断', value }], onConfirmed })
     const mounted = mount(original)
-    await screen.findByText('发热，未特指')
+    await screen.findByText('医生主诊断')
     await userEvent.setup().click(confirmButton())
     mounted.rerenderPanel({ ...original, ...change })
     await act(async () => { delayed.complete(receipt()) })
     await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(onConfirmed).toHaveBeenCalledWith([value], expect.objectContaining({ recordIds: ['formal-record-1'] }))
+    mounted.rerenderPanel(original)
+    expect(screen.queryByRole('checkbox', { name: '选择医生主诊断' })).toBeNull()
+  })
+  it('consumes only unchanged submitted manual rows when a different unselected row changes', async () => {
+    const delayed = deferredResponse()
+    stubRequests(() => prescriptionState({ items: [] }), () => delayed.response)
+    const selected = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-selected', doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }
+    const unselected = { ...selected, catalogItemId: 'medication-unselected' }
+    const onConfirmed = vi.fn()
+    const original = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, onConfirmed, manualItems: [
+      { label: '已选药品', value: selected }, { label: '未选药品', value: unselected },
+    ] })
+    const mounted = mount(original)
+    await screen.findByText('已选药品')
+    const user = userEvent.setup()
+    await user.click(selectionCheckbox('未选药品'))
+    await user.click(confirmButton())
+    mounted.rerenderPanel({ ...original, manualItems: [original.manualItems![0]!, { label: '未选药品', value: { ...unselected, doseText: '10 mg' } }] })
+    await act(async () => { delayed.complete(receipt('prescription')) })
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(onConfirmed).toHaveBeenCalledWith([selected], expect.objectContaining({ recordIds: ['formal-record-1'] }))
+    expect(screen.queryByRole('checkbox', { name: '选择已选药品' })).toBeNull()
+    expect(selectionCheckbox('未选药品').getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByText(/10 mg/)).toBeTruthy()
+  })
+  it('keeps a submitted manual row that was edited and then restored before success', async () => {
+    const delayed = deferredResponse()
+    stubRequests(() => prescriptionState({ items: [] }), () => delayed.response)
+    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication', doseText: '5 mg', frequencyCode: 'QD', courseDays: 3, quantity: 3 }
+    const onConfirmed = vi.fn()
+    const original = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [{ label: '医生药品', value }], onConfirmed })
+    const mounted = mount(original)
+    await screen.findByText('医生药品')
+    await userEvent.setup().click(confirmButton())
+    mounted.rerenderPanel({ ...original, manualItems: [{ label: '医生药品', value: { ...value, doseText: '10 mg' } }] })
+    mounted.rerenderPanel(original)
+    await act(async () => { delayed.complete(receipt('prescription')) })
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
     expect(onConfirmed).toHaveBeenCalledWith([], expect.objectContaining({ recordIds: ['formal-record-1'] }))
+    expect(selectionCheckbox('医生药品')).toBeTruthy()
   })
   it.each([{ caseId: 'other-case' }, { scope: 'other-doctor' }])('does not notify an identity after an A to B to A transition through %j', async change => {
     const delayed = deferredResponse()
@@ -305,7 +346,7 @@ describe('prepared clinical confirmation', () => {
     expect(await screen.findByText('新建议与医生填写内容不同，请核对。')).toBeTruthy()
     expect(confirmButton()).toHaveProperty('disabled', true)
   })
-  it('keeps an edit made during submission even when its value returns to the submitted value', async () => {
+  it('retains adjustment text during confirmation and applies it only after submission finishes', async () => {
     const delayed = deferredResponse(); const current = prescriptionState()
     stubRequests(() => current, () => delayed.response); const mounted = mount(props({ kind: 'prescription' }))
     await screen.findByText('合成药品'); const user = userEvent.setup()
@@ -314,9 +355,11 @@ describe('prepared clinical confirmation', () => {
     await waitFor(() => expect(mounted.client.isMutating()).toBe(1))
     await edit(); fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '20 mg' } })
     fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
-    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    expect(screen.getByRole('button', { name: '保留本次调整' })).toHaveProperty('disabled', true)
+    expect(screen.getByLabelText('每次剂量')).toHaveProperty('value', '10 mg')
     await act(async () => { delayed.complete(receipt('prescription')) })
     await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
     expect(screen.getByText(/10 mg/)).toBeTruthy()
   })
   it.each([
