@@ -86,6 +86,40 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it.each(['idle', 'pending', 'failed', 'missing-evidence', 'stale'] as const)('lets a doctor submit a manual item while preparation is %s', async status => {
+    const current = state({ items: [], status: status === 'stale' ? 'ready' : status,
+      stale: status === 'stale', generation: status === 'idle' ? 0 : 1 })
+    const calls = stubRequests(() => current)
+    const onConfirmed = vi.fn()
+    mount(props({ encounter: { id: 'encounter-fever', versionId: '7' }, expectedDraftVersion: 3, onConfirmed,
+      resolveExistingDraft: true,
+      manualItems: [{ label: '医生填写诊断', value: { source: 'manual', kind: 'diagnosis', catalogItemId: 'manual-diagnosis', role: 'primary', note: '医生已核对' } }] }))
+    const user = userEvent.setup(); await screen.findByText('医生填写诊断')
+    expect(confirmButton()).toHaveProperty('disabled', false)
+    await user.click(confirmButton())
+    await waitFor(() => expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1))
+    expect(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).toEqual({
+      expectedVersions: { 'Encounter/encounter-fever': '7' }, input: { expectedDraftVersion: 3, resolveExistingDraft: true,
+        selections: [{ source: 'manual', kind: 'diagnosis', catalogItemId: 'manual-diagnosis', role: 'primary', note: '医生已核对' }] },
+    })
+    await waitFor(() => expect(onConfirmed).toHaveBeenCalledWith([
+      expect.objectContaining({ source: 'manual', catalogItemId: 'manual-diagnosis' }),
+    ], expect.objectContaining({ recordIds: ['formal-record-1'] })))
+  })
+  it('keeps manual confirmation available when recommendation reading fails', async () => {
+    const calls: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/actions/confirm')) { calls.push(JSON.parse(String(init?.body))); return receipt() }
+      return Response.json({ error: { code: 'INTERNAL_ERROR', message: 'Synthetic failure' } }, { status: 503 })
+    }))
+    mount(props({ encounter: { id: 'encounter-fever', versionId: '4' },
+      manualItems: [{ label: '医生填写诊断', value: { source: 'manual', kind: 'diagnosis', catalogItemId: 'manual-diagnosis', role: 'primary' } }] }))
+    await screen.findByText('更新或提交未完成，草稿已保留，可重试。')
+    expect(confirmButton()).toHaveProperty('disabled', false)
+    await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(calls).toHaveLength(1))
+  })
+
   it('shares physician form values with row edits and exposes the manual entry in the same list', async () => {
     const current = prescriptionState(); stubRequests(() => current)
     const onManualChange = vi.fn(), onManualRemove = vi.fn()
@@ -593,7 +627,7 @@ it('can issue a retained unselected manual item after new preparation without re
     const confirmations = calls.filter(call => call.path.endsWith('/actions/confirm')).map(call => confirmDoctorPreparationRequestSchema.parse(call.body))
     expect(confirmations).toHaveLength(2)
     expect(confirmations[0]!.input.selections).toMatchObject([{ catalogItemId: 'lab-A', source: 'agent' }])
-    expect(confirmations[1]!.input).toMatchObject({ generation: 2, expectedDraftVersion: 2, inputFingerprint: 'b'.repeat(64), selections: [{ catalogItemId: 'lab-B', source: 'manual' }] })
+    expect(confirmations[1]!.input).toEqual({ expectedDraftVersion: 2, selections: [{ kind: 'laboratory', catalogItemId: 'lab-B', indicationCode: 'clinical-evaluation', source: 'manual' }] })
     expect(issued).toEqual(['A', 'B'])
   } finally { unsubscribe() }
 })

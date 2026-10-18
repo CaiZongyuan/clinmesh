@@ -129,7 +129,7 @@ function caseContainsConfirmation(detail: DoctorCaseDetail, result: Awaited<Retu
   return (version ?? 0) >= result.draftVersion && result.recordIds.every(id => ids.includes(id))
 }
 
-export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualItems = [], manualControls, onManualChange, onManualRemove, expectedDraftVersion, disabled = false }: {
+export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems = [], manualControls, onManualChange, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
   caseId: string; kind: DoctorRecommendationKind; enabled: boolean; inputRevision?: string | undefined; scope?: string | undefined; locale?: WorkspaceLocale | undefined
   disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
@@ -195,7 +195,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     : kind === 'laboratory' ? detail?.laboratoryRequests?.draftVersion ?? 0 : kind === 'imaging' ? detail?.imagingRequests?.draftVersion ?? 0 : detail?.pathologyRequests?.draftVersion ?? 0
   const draftVersion = expectedDraftVersion ?? currentDraftVersion
   const submissionKey = JSON.stringify([scope, kind])
-  type Submission = { state: DoctorRecommendationState; selections: DoctorPreparationSelection[]; view: number; navigation: number; rows: typeof rows; draftVersion: number; submissionKey: string; token: string; scope: string | undefined; manualOwnership: number }
+  type Submission = { state: Parameters<typeof confirmDoctorPreparation>[0]; selections: DoctorPreparationSelection[]; view: number; navigation: number; rows: typeof rows; draftVersion: number; resolveExistingDraft: boolean; submissionKey: string; token: string; scope: string | undefined; manualOwnership: number }
   const synchronization = useRef(new Map<string, 'owned' | 'applied'>())
   const recordVisible = (request: Submission, result: Awaited<ReturnType<typeof confirmDoctorPreparation>>) => client.getQueriesData<DoctorCaseDetail>({ predicate: query => query.queryKey[0] === 'doctor-case' && query.queryKey.includes(request.state.caseId) })
     .some(([key, clinical]) => {
@@ -218,9 +218,9 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     onMutate: request => { preparation?.setSubmitting(request.submissionKey, request.token, true) },
     onSettled: (_result, _error, request) => { preparation?.setSubmitting(request.submissionKey, request.token, false) },
     mutationFn: (request: Submission) => {
-      const intent = JSON.stringify([request.scope, request.state.caseId, request.state.kind, request.state.inputFingerprint, request.state.generation, request.draftVersion, request.selections])
+      const intent = JSON.stringify([request.scope, request.state.caseId, request.state.kind, request.state.inputFingerprint, request.state.generation, request.draftVersion, request.resolveExistingDraft, request.selections])
       const key = requestKeys.current.get(intent) ?? newIdempotencyKey();requestKeys.current.set(intent, key)
-      return confirmDoctorPreparation(request.state, request.draftVersion, request.selections, key)
+      return confirmDoctorPreparation(request.state, request.draftVersion, request.selections, key, request.resolveExistingDraft)
     },
     onSuccess: async (result, request) => {
       const ownsView = mounted.current && currentView.current.token === request.view && manualOwnership.current.token === request.manualOwnership
@@ -231,28 +231,36 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         return { ...previous, completed: { ...previous.completed, ...Object.fromEntries(unchanged.map(row => [row.key, row.signature])) },
           edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => !unchanged.some(row => row.key === key))) }
       })
+      if (ownsView) onConfirmed?.(request.rows.map(row => row.value), result)
       await synchronize(result, request)
     },
   })
-  const available = rows.filter(row => complete(row.value) && !preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined)
+  const automaticReady = state?.status === 'ready' && !state.stale && !job.pending && job.error === null && !job.paused
+  const available = rows.filter(row => complete(row.value) && !preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined
+    && (row.value.source === 'manual' || automaticReady))
   const needsReview = (key: string) => {
     if (preferences.removed[key] !== undefined) return true
     const edit = preferences.edits[key]
     return state !== undefined && edit?.reviewedFingerprint !== state.inputFingerprint
       && (conflicts.has(key) || edit !== undefined && edit.fingerprint !== state.inputFingerprint)
   }
-  const pending = job.pending || submission.isPending && submission.variables?.view === view || preparation?.submitting(kind) === true
+  const submitting = submission.isPending && submission.variables?.view === view || preparation?.submitting(kind) === true
+  const pending = job.pending || submitting
+  const currentEncounter = encounter ?? detail?.encounter
+  const manualOnly = available.every(row => row.value.source === 'manual') && currentEncounter !== undefined
+  const confirmationContext = manualOnly ? { caseId, kind, encounterId: currentEncounter.id, encounterVersion: currentEncounter.versionId } : state
   const rolesValid = kind !== 'diagnosis' || available.filter(row => row.value.kind === 'diagnosis' && row.value.role === 'primary').length === 1
   const succeeded = submission.isSuccess && submission.variables.navigation === navigation.current.token
   const recordsUpdated = succeeded && recordVisible(submission.variables, submission.data)
-  const subsequentIntent = succeeded && recordsUpdated && state !== undefined
-    && (state.generation > submission.variables.state.generation || state.inputFingerprint !== submission.variables.state.inputFingerprint)
-    && !available.some(row => submission.variables.rows.some(previous => clinicalValue(row.value) === clinicalValue(previous.value) && row.signature === previous.signature))
+  const subsequentIntent = succeeded && recordsUpdated
+    && available.some(row => !submission.variables.rows.some(previous => clinicalValue(row.value) === clinicalValue(previous.value) && row.signature === previous.signature))
   const completedIntent = succeeded && !subsequentIntent
   const refreshRecords = succeeded && !recordsUpdated
-  const canConfirm = !completedIntent && !disabled && rolesValid && state !== undefined && !state.stale && !pending && job.error === null && !job.paused
-    && (state.status === 'ready' || state.status === 'missing-evidence' && available.every(row => row.value.source === 'manual'))
-  const block = available.map(row => row.value.source === 'manual' || row.item === undefined ? undefined : unavailableReason?.(row.item)).find(reason => reason !== undefined)
+  const canConfirm = !completedIntent && !disabled && rolesValid && confirmationContext !== undefined && !submitting
+    && (manualOnly || !pending && !job.paused && job.error === null && !state?.stale
+      && (state?.status === 'ready' || state?.status === 'missing-evidence' && available.every(row => row.value.source === 'manual')))
+  const block = available.length > 8 ? zh ? '一次最多选择 8 项。' : 'Select at most eight items.'
+    : available.map(row => row.value.source === 'manual' ? manualUnavailableReason?.(row.value) : row.item === undefined ? undefined : unavailableReason?.(row.item)).find(reason => reason !== undefined)
   const failed = !completedIntent && (job.error !== null || state?.status === 'failed' || submission.isError && submission.variables?.view === view)
   if (!enabled) return null
   return <>
@@ -281,7 +289,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
               return { ...previous, removed: checked ? removed : previous.removed, unselected: checked ? previous.unselected.filter(key => key !== row.key) : [...previous.unselected.filter(key => key !== row.key), row.key] }
             })} />
             <div className="min-w-0 flex-1"><p className="break-words font-medium">{row.label}</p><p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
-            <Badge variant="secondary">{needsReview(row.key) ? zh ? '请核对新资料' : 'Review new information' : !complete(row.value) ? zh ? '待补充' : 'Incomplete' : row.value.source === 'manual' ? zh ? '医生已调整' : 'Edited by doctor' : !canConfirm ? zh ? '待更新' : 'Updating' : zh ? '待确认' : 'Ready'}</Badge>
+            <Badge variant="secondary">{needsReview(row.key) ? zh ? '请核对新资料' : 'Review new information' : !complete(row.value) ? zh ? '待补充' : 'Incomplete' : row.value.source === 'manual' ? zh ? '医生已调整' : 'Edited by doctor' : !automaticReady ? zh ? '待更新' : 'Updating' : zh ? '待确认' : 'Ready'}</Badge>
             <Button onClick={() => { setEditing({ key: row.key, label: row.label, value: { ...row.value }, fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token });setEditError(false) }} size="sm" type="button" variant="ghost">{needsReview(row.key) ? zh ? '核对' : 'Review' : zh ? '调整' : 'Edit'}</Button>
             <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => {
               if (row.value.source === 'manual' && manualKeys.has(row.key) && onManualRemove !== undefined) {
@@ -300,7 +308,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
         {block === undefined ? null : <p className="text-xs text-muted-foreground">{block}</p>}
       </CardContent>
-      <CardFooter className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button disabled={!canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key))} onClick={() => { if (state !== undefined) submission.mutate({ state, selections: available.map(row => doctorPreparationSelectionSchema.parse(row.value)), view, navigation: navigation.current.token, rows: available, draftVersion, submissionKey, token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token }) }} type="button">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>
+      <CardFooter className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button disabled={!canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key) && !(currentEncounter !== undefined && row.value.source === 'manual'))} onClick={() => { if (confirmationContext !== undefined) submission.mutate({ state: confirmationContext, selections: available.map(row => doctorPreparationSelectionSchema.parse(row.value)), view, navigation: navigation.current.token, rows: available, draftVersion, resolveExistingDraft, submissionKey, token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token }) }} type="button">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>
     </Card>
     {preparation === undefined ? <DoctorPreparationDetailsDialog open={localDetails} onOpenChange={setLocalDetails} title={zh ? '依据与说明' : 'Evidence and details'}><DoctorRecommendationDetails job={job} locale={locale} /></DoctorPreparationDetailsDialog> : null}
     <Dialog open={activeEditing !== undefined} onOpenChange={open => { if (!open) setEditing(undefined) }}><DialogContent><DialogHeader><DialogTitle>{zh ? '调整项目' : 'Edit item'}</DialogTitle><DialogDescription>{activeEditing?.label}</DialogDescription></DialogHeader>
