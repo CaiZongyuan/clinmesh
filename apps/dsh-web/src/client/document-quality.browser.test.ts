@@ -126,7 +126,7 @@ for (const version of ['18', '19']) test(`shows verification hints without compl
   await expect(verification).toContainText('待核实')
   await expect(verification.getByRole('button', { name: '已核实，保留', exact: true })).toHaveCount(0)
   await expect(verification.getByRole('button', { name: '确认保留', exact: true })).toHaveCount(0)
-  await expect(verification.getByLabel('保留原因（选填）', exact: true })).toHaveCount(0)
+  await expect(verification.getByLabel('保留原因（选填）', { exact: true })).toHaveCount(0)
 
   for (const locale of ['zh-CN', 'en-US']) for (const fontSize of ['standard', 'larger', 'large']) for (const width of [340, 700]) {
     await page.evaluate(({ locale, fontSize, width }) => {
