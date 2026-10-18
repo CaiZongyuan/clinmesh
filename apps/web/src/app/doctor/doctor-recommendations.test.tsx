@@ -12,7 +12,7 @@ function state(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecomm
     caseId: 'case-fever', kind: 'diagnosis', encounterId: 'encounter-fever', encounterVersion: '2',
     inputFingerprint: 'a'.repeat(64), status: 'ready', generation: 1, stale: false, missingInformation: [],
     items: [{
-      id: 'recommendation-fever', kind: 'diagnosis', catalogItemId: 'diagnosis-fever', label: '发热，未特指',
+      id: 'recommendation-fever', kind: 'diagnosis', role: 'primary', catalogItemId: 'diagnosis-fever', label: '发热，未特指',
       rationale: '现有资料支持症状性候选，仍须核实病因。', supportingInformation: ['合成患者自述发热伴咳嗽。'],
       opposingInformation: ['尚无病原学检查结果。'], missingInformation: ['待核实病原学资料。'],
       guidelineEvidenceIds: ['nhc-influenza-2025-diagnosis'], caseEvidenceIds: ['patient-statement-fever'],
@@ -64,6 +64,28 @@ function deferredResponse() {
 }
 
 describe('doctor recommendation panel current version checks', () => {
+  it('does not invent primary roles when reading an older diagnosis result', async () => {
+    const base = state()
+    const current = state({ items: base.items.map(item => item.kind === 'diagnosis' ? { ...item, role: undefined } : item) })
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
+    mount(props())
+    await screen.findByText(current.items[0]!.label)
+    expect(screen.getByRole('checkbox', { name: `选择${current.items[0]!.label}` }).getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByRole('button', { name: /确认选中诊断/ })).toHaveProperty('disabled', true)
+  })
+
+  it('shows executable pending items first and keeps clinical explanations behind one button', async () => {
+    const current = state()
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
+    mount(props())
+    await screen.findByText(current.items[0]!.label)
+    expect(screen.getByRole('checkbox', { name: `选择${current.items[0]!.label}` }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.queryByText(current.items[0]!.rationale)).toBeNull()
+    expect(screen.queryByText(current.guidelines[0]!.text)).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: '依据与说明' }))
+    expect(within(screen.getByRole('dialog')).getByText(current.items[0]!.rationale)).toBeTruthy()
+  })
+
   it.each(['zh-CN', 'en-US'] as const)('distinguishes system limitations from patient information without repeating legacy flat notes in %s', async locale => {
     const current = state({
       notices: [

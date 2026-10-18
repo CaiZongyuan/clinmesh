@@ -1,3 +1,6 @@
+import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-preparation-state.tsx'
+import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
+import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { mergeDocumentText } from '@clinmesh/core/document-text'
@@ -2624,6 +2627,9 @@ function DoctorCaseController({
   ])
   useRegisterAgentPage(agentPage)
   return (
+    <DoctorPreparationProvider detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
+      inputRevision={String(recommendationInput.current.revision)}
+      enabled={!detailUnavailable && detail.data?.consultation !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'}>
     <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail} queue={showDetail => (
       <DoctorQueueModule
         navigation={navigation}
@@ -3078,6 +3084,7 @@ function DoctorCaseController({
         )}
       </DoctorCaseDetailRegion>
     </DoctorWorkspaceLayout>
+    </DoctorPreparationProvider>
   )
 }
 
@@ -3219,6 +3226,10 @@ function CaseDetail({
   const readOnly = detail.encounter.status !== 'in-progress'
   const visitNotStarted = detail.status === 'awaiting-doctor'
   const clinicalReadOnly = readOnly || visitNotStarted
+  const preparation = useDoctorPreparation()
+  const quality = useDocumentQualityControl({ detail, document: workingClinicalDocument, scope: recommendationScope,
+    enabled: !clinicalReadOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0 })
+  const [pendingQualityIssue, setPendingQualityIssue] = useState<{ caseId: string; issue: QualityIssue }>()
   const [activeSection, setActiveSection] = useState<DoctorCaseSection>('record')
   const [pendingNavigation, setPendingNavigation] = useState<{
     source: 'checklist' | 'correction'
@@ -3226,6 +3237,19 @@ function CaseDetail({
   }>()
   const detailRoot = useRef<HTMLDivElement>(null)
   const correctionNavigationKey = useRef<string | undefined>(undefined)
+  const navigateToQualityIssue = (issue: QualityIssue) => {
+    preparation?.closeDetails()
+    setActiveSection('record')
+    setPendingQualityIssue({ caseId: detail.caseId, issue })
+  }
+  useEffect(() => {
+    if (activeSection !== 'record' || pendingQualityIssue === undefined || pendingQualityIssue.caseId !== detail.caseId) return
+    const frame = requestAnimationFrame(() => {
+      if (detailRoot.current !== null) locateDocumentQualityIssue(detailRoot.current, pendingQualityIssue.issue)
+      setPendingQualityIssue(undefined)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeSection, pendingQualityIssue, detail.caseId])
   const navigateInvestigationTarget = useCallback((target: EncounterCompletionTarget): void => {
     if (target === 'laboratory' || target === 'imaging' || target === 'pathology') {
       const requests = caseInvestigationRequests(detail)[target]
@@ -3470,6 +3494,11 @@ function CaseDetail({
   return (
     <DoctorCaseLayout>
       <div ref={detailRoot} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {preparation === undefined ? null : <DoctorPreparationDetailsDialog open={preparation.details.open}
+          onOpenChange={open => { if (!open) preparation.closeDetails() }} title={locale === 'zh-CN' ? '依据与说明' : 'Evidence and details'}>
+          {preparation.details.kind === 'quality' ? null : <DoctorRecommendationDetails job={preparation.jobs[preparation.details.kind]} locale={locale} />}
+          <DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} />
+        </DoctorPreparationDetailsDialog>}
         <PatientBanner
           {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
@@ -3518,6 +3547,8 @@ function CaseDetail({
               <TabsTrigger data-agent-selection="prescription" id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
             </TabsList>
           </div>
+
+          <div className="empty:hidden shrink-0 px-4 pt-3"><DocumentQualityCompact quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} /></div>
 
           <span id="clinical-document-update-notice" className="sr-only" role="status">
             {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? '' : messages.clinicalDocumentHasUpdates}
@@ -3569,6 +3600,8 @@ function CaseDetail({
                     onDocumentChange={onClinicalDocumentChange}
                     workingDocument={workingClinicalDocument}
                     qualityScope={recommendationScope}
+                    quality={quality}
+                    {...(preparation === undefined ? {} : { onOpenQualityDetails: () => preparation.openDetails('quality') })}
                   />
                 )}
               </div>

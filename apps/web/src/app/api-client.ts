@@ -143,6 +143,9 @@ import {
 import { z } from 'zod'
 import {
   doctorRecommendationStateSchema,
+  confirmDoctorPreparationRequestSchema,
+  confirmDoctorPreparationResponseSchema,
+  type DoctorPreparationSelection,
   generateDoctorRecommendationsResponseSchema,
   type DoctorRecommendationKind,
   type DoctorRecommendationState,
@@ -1256,6 +1259,19 @@ export async function generateDoctorRecommendations(state: DoctorRecommendationS
     { expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
       input: { expectedInputFingerprint: state.inputFingerprint, refresh } },
     { idempotencyKey: newIdempotencyKey() },
+  )
+  return response.data
+}
+
+export async function confirmDoctorPreparation(state: DoctorRecommendationState, expectedDraftVersion: number,
+  selections: DoctorPreparationSelection[], idempotencyKey: string) {
+  const body = confirmDoctorPreparationRequestSchema.parse({
+    expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
+    input: { generation: state.generation, inputFingerprint: state.inputFingerprint, expectedDraftVersion, selections },
+  })
+  const response = await apiMutation(
+    `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/actions/confirm`,
+    confirmDoctorPreparationResponseSchema, body, { idempotencyKey },
   )
   return response.data
 }
