@@ -1,8 +1,8 @@
 import {
   doctorPreparationSelectionSchema, type DoctorPreparationSelection, type DoctorRecommendationConsideration,
-  type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion,
+  type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion, type GuidelineEvidence, type DoctorRecommendationNotice,
 } from '@clinmesh/contracts/doctor-recommendations'
-import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
+import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from '@clinmesh/ui/components/card'
@@ -22,6 +22,15 @@ import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJo
 const titles: Record<DoctorRecommendationKind, [string, string]> = {
   laboratory: ['待开具检验', 'Laboratory orders'], imaging: ['待开具放射检查', 'Imaging orders'], pathology: ['待开具病理会诊', 'Pathology orders'],
   diagnosis: ['待确认诊断', 'Diagnoses to confirm'], prescription: ['待开具处方', 'Prescription to issue'],
+}
+const documentTypes: Record<GuidelineEvidence['documentType'], [string, string]> = {
+  'national-standard': ['国家标准', 'National standard'], 'health-standard': ['卫生行业标准', 'Health industry standard'],
+  'official-protocol': ['诊疗方案', 'Clinical protocol'], guideline: ['临床指南', 'Clinical guideline'],
+  'product-information': ['药品说明书', 'Product information'],
+}
+const noticeTitles: Record<DoctorRecommendationNotice['category'], [string, string]> = {
+  guideline: ['指南覆盖', 'Guideline coverage'], catalog: ['院内目录', 'Hospital catalog'],
+  verification: ['核验未通过', 'Verification not passed'], processing: ['系统处理限制', 'Processing limitations'],
 }
 export type PreparationDraft = Exclude<DoctorPreparationSelection, { kind: 'prescription' | 'diagnosis' }> | (Omit<Extract<DoctorPreparationSelection, { kind: 'diagnosis' }>, 'role'> & { role: 'primary' | 'secondary' | null }) | (Omit<Extract<DoctorPreparationSelection, { kind: 'prescription' }>, 'doseText' | 'frequencyCode' | 'courseDays' | 'quantity'> & { doseText: string | null; frequencyCode: string | null; courseDays: number | null; quantity: number | null })
 
@@ -65,11 +74,11 @@ export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: Do
       : job.pending ? zh ? '正在按最新资料核对。' : 'Checking the latest information.'
       : state?.stale ? zh ? '资料有变化，旧自动项目等待重新核对。' : 'Information changed; previous automatic items need another check.'
       : zh ? '仅使用当前医生可见资料，正式提交由医生确认。' : 'Uses information visible to this doctor. The doctor confirms all formal actions.'}</p>
-    {state?.notices?.map((notice, index) => <Alert key={`${notice.category}:${index}`}><AlertDescription>{notice.message}</AlertDescription></Alert>)}
-    {!state?.notices?.length ? state?.missingInformation.map(note => <p key={note}>{note}</p>) : null}
+    {state?.notices?.map((notice, index) => <Alert aria-label={noticeTitles[notice.category][zh ? 0 : 1]} key={`${notice.category}:${index}`}><AlertTitle>{noticeTitles[notice.category][zh ? 0 : 1]}</AlertTitle><AlertDescription>{notice.message}</AlertDescription></Alert>)}
+    {!state?.notices?.length && state?.missingInformation.length ? <Alert aria-label={zh ? '补充说明' : 'Additional notes'}><AlertTitle>{zh ? '补充说明' : 'Additional notes'}</AlertTitle><AlertDescription>{state.missingInformation.map(note => <p key={note}>{note}</p>)}</AlertDescription></Alert> : null}
     {state?.items.map(item => <section className="flex min-w-0 flex-col gap-2" key={item.id}>
       <h4 className="font-medium">{item.label}</h4>{reasoning(item, zh)}
-      {item.guidelineEvidenceIds.map(id => { const source = state.guidelines.find(source => source.id === id); return source === undefined ? null : <div key={id} className="flex flex-col gap-1"><a className="underline" href={source.url} rel="noreferrer noopener" target="_blank">{source.title} · {source.version} · {source.locator}</a><p className="text-xs text-muted-foreground">{source.publisher} · {source.scope}</p><p>{source.text}</p></div> })}
+      {item.guidelineEvidenceIds.map(id => { const source = state.guidelines.find(source => source.id === id); return source === undefined ? null : <div key={id} className="flex flex-col gap-1"><Badge variant="secondary">{documentTypes[source.documentType][zh ? 0 : 1]}</Badge><a className="underline" href={source.url} rel="noreferrer noopener" target="_blank">{source.title} · {source.version} · {source.locator}</a><p className="text-xs text-muted-foreground">{source.publisher} · {source.scope}</p><p>{source.text}</p></div> })}
       {item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <div key={id}><Badge variant="outline">{source.label}</Badge><p className="whitespace-pre-wrap break-words">{source.text}</p></div> })}<Separator />
     </section>)}
     {state?.considerations?.length ? <section aria-label={zh ? '待核实思路' : 'Considerations'} className="flex flex-col gap-4"><h4 className="font-medium">{zh ? '待核实思路' : 'Considerations'}</h4>{state.considerations.map(item => <article aria-label={item.label} key={item.id} className="flex flex-col gap-2"><h5>{item.label}</h5>{reasoning(item, zh)}{item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <p className="whitespace-pre-wrap break-words" key={id}>{source.text}</p> })}</article>)}</section> : null}

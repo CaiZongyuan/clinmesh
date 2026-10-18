@@ -460,3 +460,30 @@ describe('doctor recommendation panel current version checks', () => {
     expect(screen.queryByRole('button', { name: '采纳 发热，未特指' })).toBeNull()
   })
 })
+
+
+it.each([
+  ['national-standard', '国家标准'], ['health-standard', '卫生行业标准'], ['official-protocol', '诊疗方案'],
+  ['guideline', '临床指南'], ['product-information', '药品说明书'],
+] as const)('keeps source document type %s inside the collapsed evidence dialog', async (documentType, label) => {
+  const original = state()
+  const current = state({ guidelines: [{ ...original.guidelines[0]!, documentType }] })
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
+  mount(props())
+  await screen.findByText('发热，未特指')
+  expect(screen.queryByText(label)).toBeNull()
+  await userEvent.setup().click(screen.getByRole('button', { name: '依据与说明' }))
+  expect(within(await screen.findByRole('dialog')).getByText(label)).toBeTruthy()
+})
+it('keeps classified limitation labels inside evidence details without publishing legacy flat notes', async () => {
+  const current = state({ notices: [{ category: 'guideline', message: '合成指南范围。' }, { category: 'catalog', message: '合成目录范围。' },
+    { category: 'verification', message: '合成独立核验。' }, { category: 'processing', message: '合成处理限制。' }], missingInformation: ['旧未分类说明。'] })
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
+  mount(props())
+  await screen.findByText('发热，未特指')
+  expect(screen.queryByText('合成指南范围。')).toBeNull()
+  await userEvent.setup().click(screen.getByRole('button', { name: '依据与说明' }))
+  const dialog = within(await screen.findByRole('dialog'))
+  for (const label of ['指南覆盖', '院内目录', '核验未通过', '系统处理限制']) expect(dialog.getByRole('alert', { name: label })).toBeTruthy()
+  expect(dialog.queryByText('旧未分类说明。')).toBeNull()
+})
