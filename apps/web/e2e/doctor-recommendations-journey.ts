@@ -110,13 +110,11 @@ export async function runRecommendationJourney({ page, read }: { page: Page; rea
   await expect(edit.getByRole('spinbutton', { name: '疗程（天）', exact: true })).toHaveValue('30')
   await expect(edit.getByRole('spinbutton', { name: '数量', exact: true })).toHaveValue('30')
   await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
-  await page.getByRole('button', { name: '添加药品', exact: true }).click()
-  const medicationForm = page.getByRole('dialog', { name: '添加药品', exact: true })
+  const medicationForm = page.getByRole('region', { name: '填写处方', exact: true })
   await expect(medicationForm.getByLabel('剂量', { exact: true })).toContainText('5 mg')
   await expect(medicationForm.getByLabel('疗程', { exact: true })).toContainText('30')
   await expect(medicationForm.getByLabel('数量', { exact: true })).toContainText('30')
   await expect(medicationForm.getByRole('button', { name: '正式开具处方', exact: true })).toHaveCount(0)
-  await medicationForm.getByRole('button', { name: '完成填写', exact: true }).click()
   await expect.poll(async () => (await read()).medicationConclusion?.draft?.items).toEqual([{
     catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30,
   }])

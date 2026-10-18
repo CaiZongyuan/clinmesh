@@ -63,6 +63,7 @@ const directory = [service, secondService, ...Array.from({ length: 19 }, (_, ind
   nameZh: `合成目录项目 ${index + 1}`, nameEn: `Synthetic catalog item ${index + 1}`,
 }))]
 const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
+const multipleRecommendations = document.documentElement.dataset.fixtureMultiple === 'true'
 const failedRecommendations = document.documentElement.dataset.fixtureMode === 'failed'
 const imagingService: ImagingServiceSnapshot = {
   applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
@@ -225,6 +226,10 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       if (recommendationsMode && kind === 'laboratory') items.push({
         ...common, kind, label: service.nameZh, catalogItemId: service.id, indicationCode: 'clinical-evaluation',
       })
+      if (recommendationsMode && multipleRecommendations && kind === 'laboratory') items.push({
+        ...common, id: 'synthetic-laboratory-second-recommendation', kind,
+        label: secondService.nameZh, catalogItemId: secondService.id, indicationCode: 'clinical-evaluation',
+      })
       if (recommendationsMode && kind === 'imaging') items.push({
         ...common, kind, label: imagingService.name, serviceId: imagingService.id, indication: '合成建议检查指征，需医生核对。',
       })
@@ -272,6 +277,9 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   if (path.endsWith('/completion')) return Response.json({
     canComplete: false, encounterId: detail.encounter.id, encounterVersion: '1', items: [],
   })
+  if (path.endsWith('/reference-catalogs/diagnoses') || path.endsWith('/reference-catalogs/medications')) {
+    return Response.json({ items: [], page: 1, pageSize: 20, total: 0, releaseId: 'synthetic-release' })
+  }
   if (path.endsWith('/reference-catalogs/laboratory')) {
     const query = url.searchParams.get('query') ?? ''
     const items = directory.filter(item => `${item.nameZh} ${item.nameEn}`.includes(query))

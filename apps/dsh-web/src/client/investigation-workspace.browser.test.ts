@@ -39,13 +39,13 @@ async function buildFixture(version: string) {
   return artifact
 }
 
-async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations' | 'failed') {
+async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations' | 'failed', multiple = false) {
   const { script, styles } = await buildFixture(version)
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.route('http://localhost/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
   await page.goto('http://localhost/')
   expect(z.object({ ready: z.literal(true) }).parse(await readJsonFromBrowser(page,
-    `<!doctype html><html data-fixture-mode="${mode}"><head><meta charset="utf-8"><style>body{margin:0}</style><style data-fixture>${styles}</style></head><body><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>`,
+    `<!doctype html><html data-fixture-mode="${mode}" data-fixture-multiple="${multiple}"><head><meta charset="utf-8"><style>body{margin:0}</style><style data-fixture>${styles}</style></head><body><script>${script.replaceAll('</script', '<\\/script')}</script></body></html>`,
   ))).toEqual({ ready: true })
   try {
     await page.getByRole('button', { name: /合成浏览器患者/ }).click()
@@ -94,9 +94,49 @@ async function forEachAppearance(page: Page, locales: readonly ('zh-CN' | 'en-US
   }
 }
 
+async function expectWorkspaceColumns(page: Page, hasRecords: boolean) {
+  const workspace = page.locator('[data-doctor-order-workspace]:visible')
+  await expect(workspace).toHaveAttribute('data-has-records', String(hasRecords))
+  const bounds = await workspace.evaluate(element => {
+    const entry = element.querySelector('[data-order-entry]')!.getBoundingClientRect()
+    const pending = element.querySelector('[data-order-pending]')!.getBoundingClientRect()
+    const details = element.querySelector('[data-order-details]')?.getBoundingClientRect()
+    return { entryWidth: entry.width, entryRight: entry.right, pendingWidth: pending.width,
+      rightWidth: details?.width ?? pending.width, rightLeft: details?.left ?? pending.left }
+  })
+  if (hasRecords) expect(bounds.rightWidth).toBeGreaterThan(bounds.entryWidth)
+  else expect(bounds.entryWidth).toBeGreaterThan(bounds.pendingWidth)
+  expect(bounds.rightLeft).toBeGreaterThanOrEqual(bounds.entryRight)
+}
+
 for (const version of ['18', '19']) {
   test.describe(`investigation workspace on React ${version}`, () => {
     test.beforeAll(async () => { await buildFixture(version) })
+
+    test(`keeps the second AI laboratory request pending after issuing the first on React ${version}`, async ({ page }) => {
+      await mount(page, version, 'recommendations', true)
+      await expectWorkspaceColumns(page, false)
+      const panel = page.getByRole('region', { name: '待开具检验', exact: true })
+      const second = panel.getByRole('checkbox', { name: '选择合成第二检验项目', exact: true })
+      await expect(panel.getByRole('checkbox')).toHaveCount(2)
+      await second.uncheck()
+      const issue = panel.getByRole('button', { name: /^开具选中项目/ })
+      await issue.click()
+      await expect.poll(async () => (await readCase(page)).laboratoryRequests?.requests.length).toBe(1)
+      await expectWorkspaceColumns(page, true)
+      await expect(page.getByRole('textbox', { name: '搜索检验目录', exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name: '展开目录', exact: true })).toHaveAttribute('aria-expanded', 'false')
+      await expect(second).toBeVisible()
+      await expect(second).not.toBeChecked()
+      await second.check()
+      await issue.click()
+      await expect.poll(async () => (await readCase(page)).laboratoryRequests?.requests.length).toBe(2)
+      const list = page.getByRole('region', { name: '申请列表', exact: true })
+      await expect(list.getByRole('button', { name: '合成第二检验项目 已开具', exact: true })).toHaveAttribute('aria-pressed', 'true')
+      await expect(page.getByRole('region', { name: '申请详情', exact: true }).getByRole('heading', { name: '合成第二检验项目', exact: true })).toBeVisible()
+      expect((await readCase(page)).laboratoryRequests?.requests.map(item => item.catalogItemId)).toEqual(['synthetic-lab-second', 'synthetic-lab'])
+      await expectNoFixtureErrors(page)
+    })
 
     for (const scenario of [
       { kind: 'laboratory', tab: '检验 0', title: '待开具检验', label: '合成完整检验组合与扩展指标名称', issue: '开具检验申请' },
@@ -181,26 +221,29 @@ for (const version of ['18', '19']) {
         if (scenario.kind === 'laboratory') expect(request).toMatchObject({ catalogItemId: 'synthetic-lab', indicationCode: 'clinical-evaluation' })
         else if (scenario.kind === 'imaging') expect(request).toMatchObject({ indication: '医生手改的合成申请内容，刷新建议必须保留。', service: { id: 'imaging-chest-ct-plain' } })
         else expect(request).toMatchObject({ purpose: '医生手改的合成申请内容，刷新建议必须保留。', sourceProcedure: { sourceReference: 'urn:uuid:procedure-1' } })
-        const append = page.getByRole('button', { name: scenario.kind === 'laboratory' ? '添加检验' : scenario.kind === 'imaging' ? '添加检查' : '添加病理会诊', exact: true })
+        const append = page.getByRole(scenario.kind === 'pathology' ? 'searchbox' : 'textbox', { name: scenario.kind === 'laboratory' ? '搜索检验目录' : scenario.kind === 'imaging' ? '搜索放射目录' : '搜索病理目录', exact: true })
         await append.click()
-        const dialog = page.getByRole('dialog', { name: scenario.kind === 'laboratory' ? '添加检验' : scenario.kind === 'imaging' ? '添加检查' : '添加病理会诊', exact: true })
+        const dialog = page.locator('[data-order-entry]:visible')
         await expect(dialog).toBeVisible()
         expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
-        await page.keyboard.press('Escape')
-        await expect(dialog).toHaveCount(0)
-        await expect(append).toBeFocused()
+        const collapse = dialog.getByRole('button', { name: /^(展开目录|收起目录)$/ })
+        await collapse.click()
+        await expect(dialog).toBeVisible()
+        await expect(collapse).toHaveAttribute('aria-expanded', 'false')
+        await expect(collapse).toBeFocused()
         await expectNoFixtureErrors(page)
       })
     }
 
     test(`adds manual investigations, issues from one list and appends through the Surface on React ${version}`, async ({ page }) => {
       await mount(page, version, 'empty')
-      await expect(page.getByRole('textbox', { name: '搜索检验目录' })).toHaveCount(0)
+      await expect(page.getByRole('textbox', { name: '搜索检验目录' })).toBeVisible()
       await expect(page.getByRole('region', { name: '申请列表', exact: true })).toHaveCount(0)
-      const add = page.getByRole('button', { name: '添加检验', exact: true })
+      await expectWorkspaceColumns(page, false)
+      const add = page.getByRole('textbox', { name: '搜索检验目录', exact: true })
       await add.click()
       await forEachAppearance(page, ['zh-CN', 'en-US'], async (locale, width) => {
-        const dialog = page.getByRole('dialog', { name: locale === 'zh-CN' ? '添加检验' : 'Add laboratory test', exact: true })
+        const dialog = page.locator('[data-order-entry]:visible')
         await expect(dialog.getByRole('textbox', { name: locale === 'zh-CN' ? '搜索检验目录' : 'Search laboratory catalog' })).toBeVisible()
         const nextPage = dialog.locator('[data-agent-catalog="laboratory"]').getByRole('button', { name: locale === 'zh-CN' ? '下一页' : 'Next page', exact: true })
         await nextPage.scrollIntoViewIfNeeded()
@@ -216,7 +259,7 @@ for (const version of ['18', '19']) {
         document.getElementById('investigation-host')!.style.width = '1280px'
         window.dispatchEvent(new CustomEvent('investigation-appearance', { detail: { locale: 'zh-CN', theme: 'light', fontSize: 'standard' } }))
       })
-      const dialog = page.getByRole('dialog', { name: '添加检验', exact: true })
+      const dialog = page.locator('[data-order-entry]:visible')
       const catalog = dialog.getByRole('textbox', { name: '搜索检验目录' })
       await dialog.locator('[data-agent-catalog="laboratory"]').getByRole('button', { name: '下一页', exact: true }).click()
       await expect(dialog.getByRole('button', { name: '选择 合成目录项目 19 SYN-LAB', exact: true })).toBeVisible()
@@ -231,8 +274,8 @@ for (const version of ['18', '19']) {
       await page.keyboard.press('Enter')
       await expect(dialog.getByRole('region', { name: '检验申请', exact: true }).getByText('合成静脉血标本')).toBeVisible()
       await expect(dialog.getByRole('button', { name: '开具检验申请', exact: true })).toHaveCount(0)
-      await dialog.getByRole('button', { name: '返回待开具列表', exact: true }).click()
-      await expect(dialog).toHaveCount(0)
+      await expect(dialog).toBeVisible()
+      await add.focus()
       await expect(add).toBeFocused()
       const panel = page.getByRole('region', { name: '待开具检验', exact: true })
       const issue = panel.getByRole('button', { name: /^开具选中项目/ })
@@ -241,28 +284,25 @@ for (const version of ['18', '19']) {
       await expect(panel.getByRole('checkbox', { name: '选择合成完整检验组合与扩展指标名称', exact: true })).toBeChecked()
       await issue.click()
       await expect(page.getByRole('region', { name: '申请列表', exact: true })).toBeVisible()
+      await expectWorkspaceColumns(page, true)
       await expect(page.getByRole('button', { name: '合成完整检验组合与扩展指标名称 已开具', exact: true })).toHaveAttribute('aria-pressed', 'true')
       await expect(page.getByText('当前合成结论 issued-1', { exact: true })).toHaveCount(0)
       await page.evaluate(() => window.dispatchEvent(new Event('investigation-release-report')))
       await expect(page.getByText('当前合成结论 issued-1', { exact: false })).toBeVisible()
       await page.getByRole('tab', { name: '放射检查 0', exact: true }).click()
-      await page.getByRole('button', { name: '添加检查', exact: true }).click()
-      await expect(page.getByRole('dialog', { name: '添加检查', exact: true }).getByRole('textbox', { name: '搜索放射目录' })).toBeVisible()
-      await page.keyboard.press('Escape')
+      await expect(page.getByRole('region', { name: '开具放射申请', exact: true }).getByRole('textbox', { name: '搜索放射目录' })).toBeVisible()
       await page.getByRole('tab', { name: '病理会诊 0', exact: true }).click()
-      await page.getByRole('button', { name: '添加病理会诊', exact: true }).click()
-      await expect(page.getByRole('dialog', { name: '添加病理会诊', exact: true }).getByRole('searchbox', { name: '搜索病理目录' })).toBeVisible()
-      await page.keyboard.press('Escape')
+      await expect(page.getByRole('region', { name: '开具病理会诊', exact: true }).getByRole('searchbox', { name: '搜索病理目录' })).toBeVisible()
       await page.getByRole('tab', { name: '检验 1', exact: true }).click()
       await add.click()
       await expect(dialog.getByRole('textbox', { name: '搜索检验目录' })).toBeVisible()
       expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
-      await page.keyboard.press('Escape')
-      await expect(dialog).toHaveCount(0)
+      await expect(dialog).toBeVisible()
+      await add.focus()
       await expect(add).toBeFocused()
       await add.click()
       await dialog.getByRole('button', { name: '选择 合成第二检验项目 SYN-SECOND' }).click()
-      await dialog.getByRole('button', { name: '返回待开具列表', exact: true }).click()
+      await expect(dialog.getByRole('button', { name: '展开目录', exact: true })).toBeFocused()
       await expect(panel.getByRole('checkbox')).toHaveCount(1)
       await expect(panel.getByRole('checkbox', { name: '选择合成第二检验项目', exact: true })).toBeChecked()
       await issue.click()
@@ -285,9 +325,9 @@ for (const version of ['18', '19']) {
           window.dispatchEvent(new CustomEvent('investigation-appearance', { detail: { locale: 'zh-CN', theme: 'dark', fontSize: 'large' } }))
         })
         await page.getByRole('tab', { name: scenario.tab, exact: true }).click()
-        const add = page.getByRole('button', { name: scenario.add, exact: true })
+        const add = page.getByRole(scenario.kind === 'imaging' ? 'textbox' : 'searchbox', { name: scenario.kind === 'imaging' ? '搜索放射目录' : '搜索病理目录', exact: true })
         await add.click()
-        const dialog = page.getByRole('dialog', { name: scenario.add, exact: true })
+        const dialog = page.locator('[data-order-entry]:visible')
         expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
         if (scenario.kind === 'imaging') await dialog.getByRole('button', { name: /^胸部 CT 平扫/ }).click()
         else {
@@ -297,11 +337,12 @@ for (const version of ['18', '19']) {
         }
         await dialog.getByRole('textbox', { name: scenario.formField, exact: true }).fill('手动表单中的合成申请目的。')
         await expect(dialog.getByRole('button', { name: '签发申请', exact: true })).toHaveCount(0)
-        const done = dialog.getByRole('button', { name: '返回待开具列表', exact: true })
+        const done = dialog.getByRole('textbox', { name: scenario.formField, exact: true })
         await done.scrollIntoViewIfNeeded()
         await expect(done).toBeInViewport()
         await done.click()
-        await expect(dialog).toHaveCount(0)
+        await expect(dialog).toBeVisible()
+        await add.focus()
         await expect(add).toBeFocused()
         const panel = page.getByRole('region', { name: scenario.title, exact: true })
         await expect(panel.getByRole('checkbox')).toHaveCount(1)
@@ -313,7 +354,6 @@ for (const version of ['18', '19']) {
         await add.click()
         await expect(dialog.getByRole('textbox', { name: scenario.formField, exact: true })).toHaveValue('统一清单调整后的合成申请目的。')
         if (scenario.kind === 'pathology') await expect(dialog.getByRole('combobox', { name: '送检的既往手术', exact: true })).toContainText('乳腺病灶切除术')
-        await dialog.getByRole('button', { name: '返回待开具列表', exact: true }).click()
         await expect(page.getByRole('button', { name: /^开具选中项目/ })).toHaveCount(1)
         await panel.getByRole('button', { name: /^开具选中项目/ }).click()
         await expect.poll(async () => {
@@ -328,7 +368,7 @@ for (const version of ['18', '19']) {
     }
 
     for (const locale of ['zh-CN', 'en-US'] as const) {
-      test(`keeps investigation lists, dialogs and report ends reachable in ${locale} across Surface appearance settings on React ${version}`, async ({ page }) => {
+      test(`keeps investigation lists, inline catalogs and report ends reachable in ${locale} across Surface appearance settings on React ${version}`, async ({ page }) => {
         await mount(page, version, 'existing')
         const categories = page.getByRole('tablist', { name: '检查分类' })
         await expect(categories).toBeVisible()
@@ -371,9 +411,9 @@ for (const version of ['18', '19']) {
           const acknowledge = page.getByRole('button', { name: new RegExp(`^${zh ? '确认已阅' : 'Acknowledge report'}`) })
           await acknowledge.scrollIntoViewIfNeeded()
           await expect(acknowledge).toBeInViewport()
-          const append = page.getByRole('button', { name: zh ? '添加检验' : 'Add laboratory test', exact: true })
+          const append = page.getByRole('textbox', { name: zh ? '搜索检验目录' : 'Search laboratory catalog', exact: true })
           await append.click()
-          const dialog = page.getByRole('dialog', { name: zh ? '添加检验' : 'Add laboratory test', exact: true })
+          const dialog = page.locator('[data-order-entry]:visible')
           await expect(dialog.getByRole('textbox', { name: zh ? '搜索检验目录' : 'Search laboratory catalog' })).toBeVisible()
           const nextPage = dialog.getByRole('button', { name: zh ? '下一页' : 'Next page', exact: true })
           await nextPage.scrollIntoViewIfNeeded()
@@ -383,9 +423,11 @@ for (const version of ['18', '19']) {
           expect(dialogOverflow.scrollWidth).toBeLessThanOrEqual(dialogOverflow.width + 1)
           expect(dialogOverflow.left).toBeGreaterThanOrEqual(0)
           expect(dialogOverflow.right).toBeLessThanOrEqual(width + 1)
-          await page.keyboard.press('Escape')
-          await expect(dialog).toBeHidden()
-          await expect(append).toBeFocused()
+          const collapse = dialog.getByRole('button', { name: /^(展开目录|收起目录|Expand catalog|Collapse catalog)$/ })
+          await collapse.click()
+          await expect(dialog).toBeVisible()
+          await expect(collapse).toHaveAttribute('aria-expanded', 'false')
+          await expect(collapse).toBeFocused()
         })
         await expectNoFixtureErrors(page)
       })
