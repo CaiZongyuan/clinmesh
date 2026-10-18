@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { DiagnosisPage } from './diagnosis-page.tsx'
+import { DoctorPreparationProvider } from './doctor-preparation-state.tsx'
 
 function props(overrides: Partial<ComponentProps<typeof DiagnosisPage>> = {}): ComponentProps<typeof DiagnosisPage> {
   return {
@@ -109,6 +110,33 @@ function closeDiagnosisForm(): void {
 }
 
 describe('diagnosis workspace', () => {
+  it('restores the last primary diagnosis and every linked secondary role after returning to an unsaved case', async () => {
+    const confirmations: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith('/actions/confirm')) return Response.json(recommendationState())
+      confirmations.push(confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body))))
+      return Response.json({ auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-confirm', warnings: [],
+        data: { kind: 'diagnosis', draftVersion: 2, encounterVersion: '1', recordIds: ['synthetic-confirmed-diagnosis'] } })
+    }))
+    const page = props({ state: savedState() })
+    const content = (show: boolean) => <DoctorPreparationProvider caseId={page.caseId} scope="synthetic-scope"
+      detail={undefined} enabled inputRevision="1">{show ? <DiagnosisPage {...page} recommendationScope="synthetic-scope" /> : null}</DoctorPreparationProvider>
+    const mounted = render(content(true)), user = userEvent.setup()
+    for (const index of [0, 1, 0]) {
+      const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+      await user.click(panel.getAllByRole('button', { name: '调整' })[index]!)
+      const form = within(screen.getByRole('dialog', { name: '调整项目' }))
+      await user.click(form.getByRole('button', { name: '主诊断' }))
+      await user.click(form.getByRole('button', { name: '保留本次调整' }))
+    }
+    mounted.rerender(content(false))
+    mounted.rerender(content(true))
+    await user.click(screen.getByRole('button', { name: /^确认选中诊断/ }))
+    await waitFor(() => expect(confirmations).toEqual([expect.objectContaining({ input: expect.objectContaining({ selections: [
+      expect.objectContaining({ catalogItemId: 'diagnosis-1', role: 'primary' }),
+      expect.objectContaining({ catalogItemId: 'diagnosis-2', role: 'secondary' }),
+    ] }) })]))
+  })
   it('confirms a saved manual diagnosis through the only submission entry when recommendation loading fails', async () => {
     const confirmations: unknown[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

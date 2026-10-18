@@ -21,6 +21,7 @@ it.each(['empty', 'older'] as const)('restores unsaved form-owned edits after re
   function ManualForm({ initial }: { initial: ManualPreparedItem[] }) {
     const [items, setItems] = useState(initial)
     return <><output aria-label="原表单剂量">{items.map(item => item.value.kind === 'prescription' ? item.value.doseText : '').join(',')}</output>
+      <button onClick={() => setItems(items.map(item => item.value.kind === 'prescription' ? { ...item, value: { ...item.value, doseText: '20 mg' } } : item))}>原表单改为20mg</button>
       <DoctorRecommendationsPanel caseId="synthetic-case" kind="prescription" enabled scope="synthetic-scope"
         manualItems={items} onManualChange={item => { setItems([item]); return true }} />
     </>
@@ -38,10 +39,12 @@ it.each(['empty', 'older'] as const)('restores unsaved form-owned edits after re
   fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
   await user.click(screen.getByRole('button', { name: '保留本次调整' }))
   expect(screen.getByLabelText('原表单剂量').textContent).toBe('10 mg')
+  await user.click(screen.getByRole('button', { name: '原表单改为20mg' }))
+  expect(screen.getByLabelText('原表单剂量').textContent).toBe('20 mg')
   mounted.rerender(view(false, []))
   mounted.rerender(view(true, persisted === 'empty' ? [] : [item]))
   expect(screen.getByRole('checkbox', { name: '选择医生原选药品' })).toBeTruthy()
-  await waitFor(() => expect(screen.getByLabelText('原表单剂量').textContent).toBe('10 mg'))
+  await waitFor(() => expect(screen.getByLabelText('原表单剂量').textContent).toBe('20 mg'))
 })
 
 it.each(['remove', 'replace'] as const)('does not restore a cached row after the physician form chooses to %s it', async change => {

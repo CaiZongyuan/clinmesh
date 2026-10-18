@@ -21,7 +21,9 @@ import { WorkspaceSelect } from '../workspace-select.tsx'
 import { ApiClientError, confirmDoctorPreparation, newIdempotencyKey } from '../api-client.ts'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
-import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJob, type DraftPreferences } from './doctor-preparation-state.tsx'
+import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJob, type DraftPreferences, type PreparationDraft } from './doctor-preparation-state.tsx'
+
+export type { PreparationDraft } from './doctor-preparation-state.tsx'
 
 const titles: Record<DoctorRecommendationKind, [string, string]> = {
   laboratory: ['待开具检验', 'Laboratory orders'], imaging: ['待开具放射检查', 'Imaging orders'], pathology: ['待开具病理会诊', 'Pathology orders'],
@@ -36,8 +38,6 @@ const noticeTitles: Record<DoctorRecommendationNotice['category'], [string, stri
   guideline: ['指南覆盖', 'Guideline coverage'], catalog: ['院内目录', 'Hospital catalog'],
   verification: ['核验未通过', 'Verification not passed'], processing: ['系统处理限制', 'Processing limitations'],
 }
-export type PreparationDraft = Exclude<DoctorPreparationSelection, { kind: 'prescription' | 'diagnosis' }> | (Omit<Extract<DoctorPreparationSelection, { kind: 'diagnosis' }>, 'role'> & { role: 'primary' | 'secondary' | null }) | (Omit<Extract<DoctorPreparationSelection, { kind: 'prescription' }>, 'doseText' | 'frequencyCode' | 'courseDays' | 'quantity'> & { doseText: string | null; frequencyCode: string | null; courseDays: number | null; quantity: number | null })
-
 const identity = (item: DoctorRecommendationSuggestion | PreparationDraft) => JSON.stringify([item.kind,
   item.kind === 'imaging' || item.kind === 'pathology' ? item.serviceId : item.catalogItemId])
 const evidenceSignature = (state: DoctorRecommendationState, item: DoctorRecommendationSuggestion) => JSON.stringify([
@@ -182,8 +182,13 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       item, value: selection(item), signature: evidenceSignature(visible!, item) })),
   ]
   const deletedFormEdits = Object.entries(preferences.edits).filter(([key, edit]) => !restoringForm && edit.formOwned && !manualKeys.has(key))
+  const changedFormItems = restoringForm || onManualChange === undefined ? [] : manualItems.filter(item => {
+    const key = identity(item.value), edit = preferences.edits[key], row = baseRows.find(row => row.key === key)
+    return !preferences.completed[key]?.includes(row!.signature)
+      && (!edit?.formOwned || edit.label !== item.label || JSON.stringify(edit.selection) !== JSON.stringify(item.value))
+  })
   useEffect(() => {
-    if (deletedFormEdits.length === 0) return
+    if (deletedFormEdits.length === 0 && changedFormItems.length === 0) return
     update(previous => {
       const edits = { ...previous.edits }, removed = { ...previous.removed }
       for (const [key, edit] of deletedFormEdits) {
@@ -191,6 +196,11 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         delete edits[key]
         const automatic = baseRows.find(row => row.key === key && row.item !== undefined)
         if (automatic !== undefined) removed[key] = removalSignature(automatic)
+      }
+      for (const item of changedFormItems) {
+        const key = identity(item.value)
+        edits[key] = { ...edits[key], label: item.label, selection: item.value,
+          fingerprint: edits[key]?.fingerprint ?? state?.inputFingerprint ?? '', formOwned: true }
       }
       return { ...previous, edits, removed }
     })

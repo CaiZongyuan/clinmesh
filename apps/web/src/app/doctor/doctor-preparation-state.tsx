@@ -90,7 +90,8 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
 }
 
 export type DoctorPreparationJob = ReturnType<typeof useDoctorPreparationJob>
-export type PreparedEdit = { label: string; selection: DoctorPreparationSelection; fingerprint: string; reviewedFingerprint?: string; formOwned?: boolean }
+export type PreparationDraft = Exclude<DoctorPreparationSelection, { kind: 'prescription' | 'diagnosis' }> | (Omit<Extract<DoctorPreparationSelection, { kind: 'diagnosis' }>, 'role'> & { role: 'primary' | 'secondary' | null }) | (Omit<Extract<DoctorPreparationSelection, { kind: 'prescription' }>, 'doseText' | 'frequencyCode' | 'courseDays' | 'quantity'> & { doseText: string | null; frequencyCode: string | null; courseDays: number | null; quantity: number | null })
+export type PreparedEdit = { label: string; selection: PreparationDraft; fingerprint: string; reviewedFingerprint?: string; formOwned?: boolean }
 export type DraftPreferences = { edits: Record<string, PreparedEdit>; removed: Record<string, string>; unselected: string[]; completed: Record<string, string[]> }
 const emptyPreferences: DraftPreferences = { edits: {}, removed: {}, unselected: [], completed: {} }
 type PreparationContext = {
