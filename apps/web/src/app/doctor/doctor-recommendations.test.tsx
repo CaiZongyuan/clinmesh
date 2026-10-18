@@ -752,6 +752,28 @@ it('does not describe missing-evidence results as checked against the latest inf
   expect(screen.queryByText('已按最新资料核对，由医生确认。')).toBeNull()
 })
 
+it('explains an empty executable list when a ready result contains only considerations', async () => {
+  const { id, label, rationale, supportingInformation, opposingInformation, missingInformation, caseEvidenceIds } = state().items[0]!
+  stubRequests(() => state({ items: [], considerations: [{ id, label, rationale, supportingInformation, opposingInformation, missingInformation, caseEvidenceIds }] }))
+  mount(props())
+  await screen.findByText('暂无可直接确认或开具的项目。')
+  await waitFor(() => expect(screen.getByRole('status').textContent).not.toContain('正在'))
+  expect(screen.queryByText('已按最新资料核对，由医生确认。')).toBeNull()
+  expect(screen.getByRole('status').textContent).toContain('思路')
+  expect(confirmButton()).toHaveProperty('disabled', true)
+  expect((await details()).getByRole('article', { name: label })).toBeTruthy()
+})
+
+it('keeps an unissued prescription candidate visible without returning issued medication to the list', async () => {
+  const current = prescriptionState()
+  const first = current.items[0]!
+  stubRequests(() => prescriptionState({ items: [first, { ...first, id: 'prescription-2', catalogItemId: 'medication-2', label: '第二种未开具药品' }] }))
+  mount(props({ kind: 'prescription', disabled: true, issuedCatalogItemIds: new Set(['medication-1']) }))
+  await screen.findByRole('checkbox', { name: '选择第二种未开具药品' })
+  expect(screen.queryByRole('checkbox', { name: '选择合成药品' })).toBeNull()
+  expect(confirmButton()).toHaveProperty('disabled', true)
+})
+
 it('keeps a new manualItems edit visible while the confirmed case refresh is still pending', async () => {
   const read = deferredResponse(); const current = prescriptionState()
   stubRequests(() => current); const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }

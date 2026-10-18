@@ -131,11 +131,12 @@ function caseContainsConfirmation(detail: DoctorCaseDetail, result: Awaited<Retu
   return (version ?? 0) >= result.draftVersion && result.recordIds.every(id => ids.includes(id))
 }
 
-export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems = [], manualControls, onManualChange, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
+export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualUnavailableReason, manualItems = [], manualControls, issuedCatalogItemIds, onManualChange, onManualRemove, onConfirmed, encounter, resolveExistingDraft = false, expectedDraftVersion, disabled = false }: {
   caseId: string; kind: DoctorRecommendationKind; enabled: boolean; inputRevision?: string | undefined; scope?: string | undefined; locale?: WorkspaceLocale | undefined
   disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
   manualControls?: ReactNode
+  issuedCatalogItemIds?: ReadonlySet<string>
   onManualChange?: ((item: ManualPreparedItem) => boolean | void) | undefined
   onManualRemove?: ((value: PreparationDraft) => void) | undefined
   encounter?: { id: string; versionId: string } | undefined
@@ -205,9 +206,10 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       return { ...previous, edits, removed }
     })
   })
-  const rows: Array<PreparedRow & { owner: DraftPreferences['edits'][string] | undefined }> = baseRows.filter(row => !deletedFormEdits.some(([key]) => key === row.key) && preferences.removed[row.key] !== removalSignature(row) && !preferences.completed[row.key]?.includes(row.signature))
+  const alreadyIssued = (item: PreparationDraft | DoctorRecommendationSuggestion) => item.kind === 'prescription' && issuedCatalogItemIds?.has(item.catalogItemId) === true
+  const rows: Array<PreparedRow & { owner: DraftPreferences['edits'][string] | undefined }> = baseRows.filter(row => !alreadyIssued(row.value) && !deletedFormEdits.some(([key]) => key === row.key) && preferences.removed[row.key] !== removalSignature(row) && !preferences.completed[row.key]?.includes(row.signature))
     .map(row => ({ ...row, value: onManualChange !== undefined && manualKeys.has(row.key) && !(restoringForm && preferences.edits[row.key]?.formOwned) ? row.value : preferences.edits[row.key]?.selection ?? row.value, owner: preferences.edits[row.key] }))
-  for (const [key, edit] of Object.entries(preferences.edits)) if (!deletedFormEdits.some(([deleted]) => deleted === key) && !rows.some(row => row.key === key) && preferences.removed[key] === undefined) {
+  for (const [key, edit] of Object.entries(preferences.edits)) if (!alreadyIssued(edit.selection) && !deletedFormEdits.some(([deleted]) => deleted === key) && !rows.some(row => row.key === key) && preferences.removed[key] === undefined) {
     rows.push({ key, label: edit.label, value: edit.selection, signature: edit.fingerprint, owner: edit })
   }
   const recordView = useRef({ identity: recordIdentity, token: 0 })
@@ -325,8 +327,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const failed = !completedIntent && (job.error !== null || state?.status === 'failed' || submissionError !== null)
   if (!enabled) return null
   return <>
-    <Card aria-label={titles[kind][zh ? 0 : 1]} role="region" className="mb-4 min-w-0" data-agent-phase={job.pending ? 'working' : 'ready'}>
-      <CardHeader><CardTitle>{titles[kind][zh ? 0 : 1]}</CardTitle><CardAction><div className="flex flex-wrap gap-2">
+    <Card aria-label={titles[kind][zh ? 0 : 1]} role="region" size="sm" className="min-w-0" data-agent-phase={job.pending ? 'working' : 'ready'}>
+      <CardHeader className="flex flex-col gap-2"><CardTitle>{titles[kind][zh ? 0 : 1]}</CardTitle><CardAction className="self-stretch"><div className="flex flex-wrap gap-1">
         {manualControls}
         <Button disabled={refreshRecords ? false : pending || job.paused || state === undefined} onClick={() => {
           if (refreshRecords) { void synchronize(submission.data, submission.variables);return }
@@ -340,17 +342,20 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         <p className="text-xs text-muted-foreground" role="status">{completedIntent ? zh ? `已完成${kind === 'diagnosis' ? '确认' : '开具'}，${recordsUpdated ? '记录已更新。' : '记录暂未刷新，请刷新查看。'}` : recordsUpdated ? 'Confirmed; records are up to date.' : 'Confirmed; refresh the records to see the result.' : job.paused ? zh ? '自动准备已暂停' : 'Preparation paused' : pending ? zh ? '正在按最新资料更新，旧自动项目暂不可开具。' : 'Updating; previous automatic items cannot be submitted yet.'
           : failed ? zh ? '更新或提交未完成，草稿已保留，可重试。' : 'Update or submission failed. Your draft is preserved.'
           : state?.stale ? zh ? '资料有变化，等待重新核对。' : 'Information changed; another check is needed.'
-          : state?.status === 'ready' && job.ready ? zh ? '已按最新资料核对，由医生确认。' : 'Checked against the latest information; awaiting confirmation.'
+          : state?.status === 'ready' && job.ready ? rows.length === 0
+            ? state.considerations?.length ? zh ? '本轮仅有待核实思路，见“依据与说明”。' : 'Only considerations are available; see the details.'
+              : zh ? '暂无待开具项目。' : 'No pending items.'
+            : zh ? '待医生确认。' : 'Awaiting confirmation.'
           : state?.status === 'missing-evidence' ? zh ? '暂无可直接开具的项目，可查看说明。' : 'No executable items; see the details.'
           : zh ? '尚未完成核对。' : 'Checks are not complete.'}</p>
         {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}
         {rows.length === 0 ? <p className="text-sm text-muted-foreground">{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p> : <div className="flex flex-col divide-y">
-          {rows.map(row => <div className="flex min-w-0 flex-wrap items-center gap-3 py-3" key={row.key}>
+          {rows.map(row => <div className="flex min-w-0 flex-wrap items-start gap-2 py-3" key={row.key}>
             <Checkbox aria-label={`${zh ? '选择' : 'Select '}${row.label}`} checked={!preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined && complete(row.value)} disabled={!complete(row.value)} onCheckedChange={checked => update(previous => {
               const { [row.key]: _removed, ...removed } = previous.removed
               return { ...previous, removed: checked ? removed : previous.removed, unselected: checked ? previous.unselected.filter(key => key !== row.key) : [...previous.unselected.filter(key => key !== row.key), row.key] }
             })} />
-            <div className="min-w-0 flex-1"><p className="break-words font-medium">{row.label}</p><p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
+            <div className="min-w-0 basis-[calc(100%-1.75rem)] flex-1"><p className="break-words font-medium">{row.label}</p><p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
             <Badge variant="secondary">{needsReview(row.key) ? zh ? '请核对新资料' : 'Review new information' : !complete(row.value) ? zh ? '待补充' : 'Incomplete' : row.value.source === 'manual' ? zh ? '医生已调整' : 'Edited by doctor' : !automaticReady ? zh ? '待更新' : 'Updating' : zh ? '待确认' : 'Ready'}</Badge>
             <Button onClick={() => { setEditing({ key: row.key, label: row.label, value: { ...row.value }, fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token });setEditError(false) }} size="sm" type="button" variant="ghost">{needsReview(row.key) ? zh ? '核对' : 'Review' : zh ? '调整' : 'Edit'}</Button>
             <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => {
