@@ -93,6 +93,7 @@ export const doctorRecommendationStateSchema = z.object({
   status: z.enum(['idle', 'pending', 'ready', 'failed', 'missing-evidence']),
   generation: z.number().int().min(0),
   stale: z.boolean(),
+  hidePreviousResults: z.literal(true).optional(),
   items: z.array(doctorRecommendationSuggestionSchema).max(8),
   considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
   notices: z.array(doctorRecommendationNoticeSchema).max(12).optional(),

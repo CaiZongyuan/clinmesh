@@ -410,7 +410,7 @@ export class DoctorRecommendationsService {
     if (state.guidelines.every(previous => guidelines.some(current =>
       current.id === previous.id && current.sourceHash === previous.sourceHash))) return state
     const message = '原建议的部分指南依据已不可用，旧结果已隐藏，请更新建议。'
-    return { ...state, stale: true, items: [], considerations: [], guidelines: [], missingInformation: [message],
+    return { ...state, stale: true, hidePreviousResults: true, items: [], considerations: [], guidelines: [], missingInformation: [message],
       notices: [{ category: 'guideline', message }] }
   }
 

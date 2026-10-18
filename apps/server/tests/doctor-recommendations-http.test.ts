@@ -1018,7 +1018,9 @@ it('drops a late generation after a clinical draft changes and accepts a new gen
   await started
   try {
     expect((await fixture.saveDocument({ assessment: '不能把既往高血压直接当成本次头晕的病因。' })).status).toBe(200)
-    expect((await fixture.read()).stale).toBe(true)
+    const stale = await fixture.read()
+    expect(stale.stale).toBe(true)
+    expect(stale).not.toHaveProperty('hidePreviousResults')
   } finally { release() }
   await dispatch
   expect(await fixture.read()).toMatchObject({ status: 'failed', errorCode: 'WORKFLOW_CONFLICT', stale: true, items: [] })
