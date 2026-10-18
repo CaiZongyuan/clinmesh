@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
-import type { DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
+import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -142,21 +142,27 @@ describe('doctor imaging page', () => {
   })
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-  it('shows recommendations outside the add dialog and adopts an available examination without issuing it', async () => {
-    const calls = stubFetch(({ path }) => {
+  it('confirms prepared imaging orders directly with the current draft version without writing a temporary draft', async () => {
+    const confirmations: unknown[] = []
+    const calls = stubFetch(({ path, body }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
+      if (path.endsWith('/actions/confirm')) {
+        confirmations.push(confirmDoctorPreparationRequestSchema.parse(body))
+        return Response.json(confirmDoctorPreparationResponseSchema.parse(commandResponse({ kind: 'imaging', draftVersion: 3, encounterVersion: '3', recordIds: ['request-new'] })))
+      }
       return Response.json(recommendations())
     })
-    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [request()] }} />)
-
-    expect(await screen.findByText('依据当前病例完善胸部检查。')).toBeTruthy()
+    const onChanged = vi.fn()
+    renderPage(<Page onChanged={onChanged} state={{ draftVersion: 2, requests: [request({ report })] }} />)
+    const panel = within(screen.getByRole('region', { name: '待开具放射检查' }))
+    await panel.findByRole('checkbox', { name: '选择胸部 CT 平扫' })
+    await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-1': '3' }, input: {
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-imaging-suggestion', kind: 'imaging', serviceId: ctService.id, indication: '持续咳嗽，需要医生核对检查指征。' }],
+    } }]))
+    expect(calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/imaging/actions/confirm'])
     expect(screen.queryByRole('dialog')).toBeNull()
-    await userEvent.setup().click(screen.getByRole('button', { name: /采纳/ }))
-    const editor = within(await screen.findByRole('dialog', { name: '追加申请' }))
-    expect((editor.getByLabelText('检查指征') as HTMLTextAreaElement).value)
-      .toBe('持续咳嗽，需要医生核对检查指征。')
-    expect(editor.getByText(ctService.applicability)).toBeTruthy()
-    expect(calls.every(call => call.method === 'GET')).toBe(true)
+    expect(onChanged).not.toHaveBeenCalled()
   })
 
   it('preserves saved and unsaved request contents while suggestions are refreshed', async () => {
@@ -175,32 +181,34 @@ describe('doctor imaging page', () => {
     const user = userEvent.setup()
     const indication = await screen.findByLabelText('检查指征')
     await user.type(indication, '继续手工核对。')
-    expect((await screen.findByRole('button', { name: /采纳/ })).hasAttribute('disabled')).toBe(true)
-    await user.click(screen.getByRole('button', { name: '刷新建议' }))
+    expect((await screen.findByRole('button', { name: /^开具选中项目/ })).hasAttribute('disabled')).toBe(true)
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+    await user.click(screen.getByRole('button', { name: '依据与说明' }))
     expect(await screen.findByText('重新核对后的检查建议。')).toBeTruthy()
+    await user.keyboard('{Escape}')
     expect((indication as HTMLTextAreaElement).value).toBe('已保存的医生检查指征。继续手工核对。')
-    expect(screen.getByRole('button', { name: /采纳/ }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: /^开具选中项目/ }).hasAttribute('disabled')).toBe(true)
     expect(calls.filter(call => call.method !== 'GET').map(call => call.path))
       .toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/imaging/actions/generate'])
   })
 
-  it('cannot adopt an examination that is unavailable in the hospital catalog', async () => {
+  it('cannot issue an examination that is unavailable in the hospital catalog', async () => {
     const state = recommendations()
     state.items = [{ ...state.items[0]!, kind: 'imaging', serviceId: radiographService.id,
       indication: '待核对的检查指征。', label: radiographService.name }]
     const calls = stubFetch(({ path }) => Response.json(path.endsWith('/imaging-services') ? services : state))
     renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [] }} />)
-    expect((await screen.findByRole('button', { name: '采纳 胸片' })).hasAttribute('disabled')).toBe(true)
+    expect((await screen.findByRole('button', { name: /^开具选中项目/ })).hasAttribute('disabled')).toBe(true)
     expect(screen.queryByLabelText('检查指征')).toBeNull()
     expect(calls.every(call => call.method === 'GET')).toBe(true)
   })
 
-  it.each(['inactive', 'read-only'] as const)('does not generate or expose adoptable suggestions for an %s page', async mode => {
+  it.each(['inactive', 'read-only'] as const)('does not generate or expose prepared orders for an %s page', async mode => {
     const calls = stubFetch(() => Response.json(services))
     renderPage(<Page active={mode !== 'inactive'} readOnly={mode === 'read-only'} onChanged={() => undefined}
       state={{ draftVersion: 0, requests: [] }} />)
-    expect(screen.queryByRole('region', { name: '放射检查建议' })).toBeNull()
-    expect(screen.queryByRole('button', { name: /采纳/ })).toBeNull()
+    expect(screen.queryByRole('region', { name: '待开具放射检查' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^开具选中项目/ })).toBeNull()
     expect(calls.some(call => call.path.includes('/recommendations/'))).toBe(false)
   })
 

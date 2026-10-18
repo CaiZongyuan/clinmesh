@@ -538,15 +538,9 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
         locale={locale}
         scope={recommendationScope}
         enabled={active && !readOnly}
-        canAdopt={suggestion => recommendationUnavailableReason(suggestion) === undefined}
+        disabled={draftAction.isPending || services.isFetching}
+        expectedDraftVersion={draftVersion}
         unavailableReason={recommendationUnavailableReason}
-        onAdopt={suggestion => {
-          if (suggestion.kind !== 'pathology' || !active || readOnly || recommendationUnavailableReason(suggestion) !== undefined) return
-          setServiceId(suggestion.serviceId)
-          setProcedureReference(suggestion.sourceProcedureReference)
-          setPurpose(suggestion.purpose)
-          setAdding(true)
-        }}
       />
       <InvestigationRequestWorkspace
         adding={adding && active}

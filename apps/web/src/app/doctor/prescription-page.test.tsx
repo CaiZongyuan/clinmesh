@@ -2,7 +2,7 @@
 
 import type { ClinicalCatalog, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
-import type { DoctorRecommendationState, DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
+import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState, type DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -107,7 +107,7 @@ const recommendation: PrescriptionSuggestion = {
 
 function recommendationState(items: PrescriptionSuggestion[] = []): DoctorRecommendationState {
   return {
-    caseEvidence: [{ id: 'synthetic-case-evidence', kind: 'draft', label: '合成已知资料', text: '合成病例资料，用于测试建议采纳。' }],
+    caseEvidence: [{ id: 'synthetic-case-evidence', kind: 'draft', label: '合成已知资料', text: '合成病例资料，用于测试待开具清单。' }],
     caseId: detail.caseId,
     encounterId: detail.encounter.id,
     encounterVersion: detail.encounter.versionId,
@@ -183,8 +183,16 @@ afterEach(() => {
 })
 
 describe('PrescriptionPage', () => {
-  it('adopts a complete recommendation alongside the currently unsaved medication edits without issuing', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendationState([recommendation]))))
+  it('issues the prepared prescription together with the current manual dose in one versioned confirmation', async () => {
+    const confirmations: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/actions/confirm')) {
+        confirmations.push(confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body))))
+        return Response.json(confirmDoctorPreparationResponseSchema.parse({ auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-confirm', warnings: [],
+          data: { kind: 'prescription', draftVersion: 2, encounterVersion: '1', recordIds: ['prescription-new'] } }))
+      }
+      return Response.json(recommendationState([recommendation]))
+    }))
     const secondMedication: Medication = { ...medication, allowedCombinationIds: [medication.id], id: 'medication-b', nameZh: '合成第二药品' }
     const mounted = renderPage({ catalog: [medication, secondMedication], detail: { ...detail, medicationConclusion: {
       draft: { items: [{ catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 }] },
@@ -194,67 +202,69 @@ describe('PrescriptionPage', () => {
     act(() => screen.getByRole('combobox', { name: '剂量' }).focus())
     await user.keyboard('{Enter}')
     await user.click(await screen.findByRole('option', { name: '1 g' }))
-    await user.click(await screen.findByRole('button', { name: '采纳 合成第二药品' }))
-    expect(within(screen.getByRole('group', { name: '已选药品' })).getByRole('button', { name: '合成第二药品' })).toBeTruthy()
-    expect(within(screen.getByLabelText('疗程 2')).getByText('5 天')).toBeTruthy()
-    await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenLastCalledWith([
-      { catalogItemId: medication.id, courseDays: 3, doseText: '1 g', frequencyCode: 'PRN', quantity: 6 },
-      { catalogItemId: secondMedication.id, courseDays: 5, doseText: '1 g', frequencyCode: 'BID', quantity: 10 },
-    ]))
+    const panel = within(screen.getByRole('region', { name: '待开具处方' }))
+    await panel.findByRole('checkbox', { name: '选择合成第二药品' })
+    expect(panel.getByRole('checkbox', { name: '选择合成对乙酰氨基酚' }).getAttribute('aria-checked')).toBe('true')
+    await user.click(panel.getByRole('button', { name: /^开具处方/ }))
+    await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-prescription': '1' }, input: {
+      generation: 1, inputFingerprint: '1'.repeat(64), expectedDraftVersion: 1,
+      selections: [
+        { source: 'manual', kind: 'prescription', catalogItemId: 'medication-a', courseDays: 3, doseText: '1 g', frequencyCode: 'PRN', quantity: 6 },
+        { source: 'agent', suggestionId: 'recommendation-b', kind: 'prescription', catalogItemId: 'medication-b', courseDays: 5, doseText: '1 g', frequencyCode: 'BID', quantity: 10 },
+      ],
+    } }]))
+    expect(within(screen.getByRole('combobox', { name: '剂量' })).getByText('1 g')).toBeTruthy()
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
     expect(mounted.props.actions.confirmNoMedication.onSubmit).not.toHaveBeenCalled()
   })
 
-  it.each(['issue', 'confirmNoMedication', 'deleteDraft'] as const)('prevents recommendation adoption while %s is pending', async operation => {
+  it.each(['saveDraft', 'issue', 'confirmNoMedication', 'deleteDraft'] as const)('prevents prepared prescription confirmation while %s is pending', async operation => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendationState([recommendation]))))
     const actions = createActions()
     actions[operation].pending = true
     renderPage({ actions, catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }] })
-    expect((await screen.findByRole('button', { name: '采纳 合成第二药品' })).hasAttribute('disabled')).toBe(true)
+    await screen.findByRole('checkbox', { name: '选择合成第二药品' })
+    expect(within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: /^开具处方/ })).toHaveProperty('disabled', true)
     expect(actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
 
-  it('keeps missing suggested fields blank in the editor and Agent form until the doctor completes them', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendationState([{
-      ...recommendation, courseDays: null, doseText: null, frequencyCode: null, quantity: null,
-      missingInformation: ['合成病例尚需核对具体用药方案'],
-    }]))))
-    const secondMedication: Medication = { ...medication, allowedCombinationIds: [medication.id], id: 'medication-b', nameZh: '合成第二药品' }
-    const mounted = renderPage({ catalog: [medication, secondMedication], detail: { ...detail, medicationConclusion: {
-      draft: { items: [{ catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 }] },
-      draftVersion: 1,
-    } } })
-    const adopt = await screen.findByRole('button', { name: '采纳 合成第二药品' })
-    vi.useFakeTimers()
-    await act(async () => {
-      fireEvent.click(adopt)
-      await vi.advanceTimersByTimeAsync(0)
-    })
-    for (const name of ['剂量 2', '频次 2', '疗程 2', '数量 2']) {
-      expect(within(screen.getByRole('combobox', { name })).getByText('待医生补充')).toBeTruthy()
-    }
-    expect(mounted.readAgentState()).toEqual({ forms: { prescription: { mode: 'prescription', items: [
-      { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 },
-      { catalogItemId: secondMedication.id, courseDays: null, doseText: '', frequencyCode: '', quantity: null },
-    ] } } })
-    expect(screen.getByRole('button', { name: '正式开具处方' }).hasAttribute('disabled')).toBe(true)
-    await act(async () => { await vi.advanceTimersByTimeAsync(900) })
+  it('keeps incomplete automatic prescription fields empty and unselected without filling directory defaults or changing the Agent draft', async () => {
+    const writes: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') writes.push(String(input))
+      return Response.json(recommendationState([{ ...recommendation, courseDays: null, doseText: null, frequencyCode: null, quantity: null }]))
+    }))
+    const mounted = renderPage({ catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }] })
+    const panel = within(screen.getByRole('region', { name: '待开具处方' }))
+    const checkbox = await panel.findByRole('checkbox', { name: '选择合成第二药品' })
+    expect(checkbox.getAttribute('aria-checked')).toBe('false')
+    expect(checkbox.getAttribute('aria-disabled')).toBe('true')
+    expect(panel.getByRole('button', { name: /^开具处方/ })).toHaveProperty('disabled', true)
+    expect(mounted.readAgentState()).toEqual({ forms: { prescription: { mode: 'prescription', items: [] } } })
+    await userEvent.setup().click(panel.getByRole('button', { name: '调整' }))
+    const dialog = within(screen.getByRole('dialog', { name: '调整项目' }))
+    for (const label of ['每次剂量', '频次', '疗程（天）', '数量']) expect(dialog.getByLabelText(label)).toHaveProperty('value', '')
+    expect(writes).toEqual([])
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
-    vi.useRealTimers()
-    const user = userEvent.setup()
-    for (const { name, option } of [
-      { name: '剂量 2', option: '1 g' }, { name: '频次 2', option: 'BID' },
-      { name: '疗程 2', option: '5 天' }, { name: '数量 2', option: '10' },
-    ]) {
-      act(() => screen.getByRole('combobox', { name }).focus())
-      await user.keyboard('{Enter}')
-      await user.click(await screen.findByRole('option', { name: option }))
-    }
-    await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenLastCalledWith([
-      { catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 },
-      { catalogItemId: secondMedication.id, courseDays: 5, doseText: '1 g', frequencyCode: 'BID', quantity: 10 },
-    ]))
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('keeps a cleared manual prescription dose incomplete in the prepared list without restoring a default', async () => {
+    const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
+      draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct,
+        doseText: '75 mg', frequencyCode: 'BID', courseDays: 5, quantity: 10 }] },
+    } } })
+    await userEvent.setup().clear(screen.getByRole('textbox', { name: '剂量' }))
+    const panel = within(screen.getByRole('region', { name: '待开具处方' }))
+    const choice = panel.getByRole('checkbox', { name: '选择合成参考药品' })
+    expect(choice.getAttribute('aria-checked')).toBe('false')
+    expect(choice.getAttribute('aria-disabled')).toBe('true')
+    expect(panel.getByRole('button', { name: /^开具处方/ })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('textbox', { name: '剂量' })).toHaveProperty('value', '')
+    expect(mounted.readAgentState()).toEqual({ forms: { prescription: { mode: 'prescription', items: [{
+      catalogItemId: referenceProduct.id, courseDays: 5, doseText: '', frequencyCode: 'BID', quantity: 10,
+    }] } } })
+    expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -262,37 +272,39 @@ describe('PrescriptionPage', () => {
     ['frequency', { allowedFrequencyCodes: ['PRN'] }],
     ['course', { allowedCourseDays: [3] }],
     ['quantity', { allowedQuantities: [6] }],
-  ] satisfies [string, Partial<Medication>][])('prevents adoption when the current catalog no longer accepts the suggested %s', async (_field, changes) => {
+  ] satisfies [string, Partial<Medication>][])('prevents confirmation when the current catalog no longer accepts the suggested %s', async (_field, changes) => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendationState([recommendation]))))
     const mounted = renderPage({ catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }] })
-    const adopt = await screen.findByRole('button', { name: '采纳 合成第二药品' })
-    expect(adopt.hasAttribute('disabled')).toBe(false)
+    await screen.findByRole('checkbox', { name: '选择合成第二药品' })
+    const confirmPrepared = within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: /^开具处方/ })
+    expect(confirmPrepared.hasAttribute('disabled')).toBe(false)
     mounted.rerender(<PrescriptionPage {...mounted.props} catalog={[{
       ...medication, ...changes, id: 'medication-b', nameZh: '合成第二药品',
     }]} />)
-    expect(adopt.hasAttribute('disabled')).toBe(true)
-    fireEvent.click(adopt)
+    expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(confirmPrepared)
     expect(screen.queryByRole('group', { name: '已选药品' })).toBeNull()
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
 
-  it.each(['unavailable', 'duplicate', 'outward-combination', 'inward-combination'] as const)('rejects a currently %s medication recommendation without changing the draft', async conflict => {
+  it.each(['unavailable', 'outward-combination', 'inward-combination'] as const)('rejects a currently %s medication recommendation without changing the draft', async conflict => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendationState([recommendation]))))
     const secondMedication: Medication = { ...medication, allowedCombinationIds: conflict === 'inward-combination' ? [] : [medication.id], id: 'medication-b', nameZh: '合成第二药品' }
     const firstMedication: Medication = { ...medication, allowedCombinationIds: conflict === 'outward-combination' ? [] : ['medication-b'] }
-    const existingId = conflict === 'duplicate' ? secondMedication.id : firstMedication.id
+    const existingId = firstMedication.id
     const mounted = renderPage({ catalog: conflict === 'unavailable' ? [firstMedication] : [firstMedication, secondMedication], detail: { ...detail, medicationConclusion: {
       draft: { items: [{ catalogItemId: existingId, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 }] },
       draftVersion: 1,
     } } })
-    const adopt = await screen.findByRole('button', { name: '采纳 合成第二药品' })
-    expect(adopt.hasAttribute('disabled')).toBe(true)
-    fireEvent.click(adopt)
+    await screen.findByRole('checkbox', { name: '选择合成第二药品' })
+    const confirmPrepared = within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: /^开具处方/ })
+    expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(confirmPrepared)
     expect(within(screen.getByRole('group', { name: '已选药品' })).getAllByRole('button')).toHaveLength(1)
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
 
-  it('keeps the eight medication limit for recommendation adoption', async () => {
+  it('keeps the eight medication limit for prepared prescription confirmation', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendationState([recommendation]))))
     const ids = [...Array.from({ length: 8 }, (_, index) => `medication-limit-${index}`), recommendation.catalogItemId]
     const catalog = ids.map(id => ({ ...medication, id, allowedCombinationIds: ids, nameZh: id === recommendation.catalogItemId ? '合成第二药品' : id }))
@@ -300,18 +312,19 @@ describe('PrescriptionPage', () => {
       draft: { items: ids.slice(0, 8).map(catalogItemId => ({ catalogItemId, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 })) },
       draftVersion: 1,
     } } })
-    const adopt = await screen.findByRole('button', { name: '采纳 合成第二药品' })
-    expect(adopt.hasAttribute('disabled')).toBe(true)
-    fireEvent.click(adopt)
+    await screen.findByRole('checkbox', { name: '选择合成第二药品' })
+    const confirmPrepared = within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: /^开具处方/ })
+    expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
+    fireEvent.click(confirmPrepared)
     expect(within(screen.getByRole('group', { name: '已选药品' })).getAllByRole('button')).toHaveLength(8)
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
 
-  it.each(['signed', 'paid', 'dispensed', 'withdrawn'] as const)('does not generate or adopt suggestions once a %s prescription exists', async status => {
+  it.each(['signed', 'paid', 'dispensed', 'withdrawn'] as const)('does not prepare or confirm items once a %s prescription exists', async status => {
     const network = vi.fn(async () => Response.json(recommendationState([recommendation])))
     vi.stubGlobal('fetch', network)
     renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: { ...issuedPrescription, status } } } })
-    expect(screen.queryByRole('region', { name: '处方建议' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '待开具处方' })).toBeNull()
     await act(async () => {})
     expect(network).not.toHaveBeenCalled()
   })
@@ -322,33 +335,30 @@ describe('PrescriptionPage', () => {
       noMedication: { id: 'no-medication-1', version: 1, authoredAt: '2026-10-13T09:00:00+08:00',
         authoredByActorId: 'doctor-1', authoredByPractitionerRoleId: 'doctor-role-1' },
     } } } },
-  ])('does not generate or adopt suggestions in a $name state', async ({ props }) => {
+  ])('does not prepare or confirm items in a $name state', async ({ props }) => {
     const network = vi.fn(async () => Response.json(recommendationState([recommendation])))
     vi.stubGlobal('fetch', network)
     renderPage(props)
-    expect(screen.queryByRole('region', { name: '处方建议' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '待开具处方' })).toBeNull()
     await act(async () => {})
     expect(network).not.toHaveBeenCalled()
   })
 
-  it('keeps the adopted draft while no-medication mode suspends suggestions and autosave', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendationState([recommendation]))))
-    const mounted = renderPage({ catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }] })
-    const adopt = await screen.findByRole('button', { name: '采纳 合成第二药品' })
+  it('keeps manual draft edits while no-medication mode suspends preparations and autosave', async () => {
+    const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
+      draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] },
+    } } })
     vi.useFakeTimers()
-    await act(async () => {
-      fireEvent.click(adopt)
-      await vi.advanceTimersByTimeAsync(0)
-    })
+    fireEvent.change(screen.getByRole('textbox', { name: '剂量' }), { target: { value: '150 mg' } })
     fireEvent.click(screen.getByRole('button', { name: '无需用药' }))
-    expect(screen.queryByRole('region', { name: '处方建议' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '待开具处方' })).toBeNull()
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '开具处方' }))
-    expect(within(screen.getByRole('combobox', { name: '剂量' })).getByText('1 g')).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '剂量' })).toHaveProperty('value', '150 mg')
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([{
-      catalogItemId: 'medication-b', courseDays: 5, doseText: '1 g', frequencyCode: 'BID', quantity: 10,
+      catalogItemId: referenceProduct.id, referenceProduct, courseDays: 5, doseText: '150 mg', frequencyCode: 'BID', quantity: 10,
     }])
     expect(mounted.props.actions.confirmNoMedication.onSubmit).not.toHaveBeenCalled()
   })
@@ -365,13 +375,14 @@ describe('PrescriptionPage', () => {
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
 
-  it('preserves adopted edits when the source revision refreshes and the new suggestion changes', async () => {
+  it('preserves manual directions when a source revision changes the automatic suggestion for that medication', async () => {
     const initial = recommendationState([recommendation])
     let state = initial
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(state)))
-    const mounted = renderPage({ catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }], recommendationRevision: 'source-1' })
+    const mounted = renderPage({ catalog: [{ ...medication, id: 'medication-b', nameZh: '合成第二药品' }], recommendationRevision: 'source-1', detail: { ...detail, medicationConclusion: {
+      draftVersion: 1, draft: { items: [{ catalogItemId: 'medication-b', courseDays: 5, doseText: '1 g', frequencyCode: 'BID', quantity: 10 }] },
+    } } })
     const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: '采纳 合成第二药品' }))
     act(() => screen.getByRole('combobox', { name: '剂量' }).focus())
     await user.keyboard('{Enter}')
     await user.click(await screen.findByRole('option', { name: '500 mg' }))
@@ -379,9 +390,11 @@ describe('PrescriptionPage', () => {
       items: [{ ...recommendation, doseText: '1 g', rationale: '更新后的合成建议依据' }],
     }
     mounted.rerender(<PrescriptionPage {...mounted.props} recommendationRevision="source-2" />)
+    await user.click(screen.getByRole('button', { name: '依据与说明' }))
     await screen.findByText('更新后的合成建议依据')
+    await user.keyboard('{Escape}')
     expect(within(screen.getByRole('combobox', { name: '剂量' })).getByText('500 mg')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '采纳 合成第二药品' }).hasAttribute('disabled')).toBe(true)
+    expect(within(screen.getByRole('region', { name: '待开具处方' })).getAllByRole('checkbox')).toHaveLength(1)
     expect(within(screen.getByRole('group', { name: '已选药品' })).getAllByRole('button')).toHaveLength(1)
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
   })

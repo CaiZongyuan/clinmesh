@@ -508,14 +508,9 @@ export function ImagingPage({
         locale={locale}
         scope={recommendationScope}
         enabled={active && !readOnly}
-        canAdopt={suggestion => recommendationUnavailableReason(suggestion) === undefined}
+        disabled={draftAction.isPending || services.isFetching}
+        expectedDraftVersion={draftVersion}
         unavailableReason={recommendationUnavailableReason}
-        onAdopt={suggestion => {
-          if (suggestion.kind !== 'imaging' || readOnly || !active || recommendationUnavailableReason(suggestion) !== undefined) return
-          setServiceId(suggestion.serviceId)
-          setIndication(suggestion.indication)
-          setAdding(true)
-        }}
       />
       <InvestigationRequestWorkspace
         adding={adding && active}

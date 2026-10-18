@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
-import type { DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
+import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -145,17 +145,27 @@ function recommendations(overrides: Partial<DoctorRecommendationState> = {}): Do
 describe('doctor pathology consultation page', () => {
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-  it('adopts the recommended authorized source procedure into an editable draft without issuing it', async () => {
-    const calls = stubFetch(({ path }) => Response.json(path.endsWith('/pathology-services') ? services : recommendations()))
-    renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 0, requests: [request({ report })] }} />)
-
-    expect(await screen.findByText('依据当前可见手术资料核对病理会诊。')).toBeTruthy()
+  it('confirms prepared pathology orders directly with the current draft version without writing a temporary draft', async () => {
+    const confirmations: unknown[] = []
+    const calls = stubFetch(({ path, body }) => {
+      if (path.endsWith('/pathology-services')) return Response.json(services)
+      if (path.endsWith('/actions/confirm')) {
+        confirmations.push(confirmDoctorPreparationRequestSchema.parse(body))
+        return Response.json(confirmDoctorPreparationResponseSchema.parse(commandResponse({ kind: 'pathology', draftVersion: 3, encounterVersion: '3', recordIds: ['request-new'] })))
+      }
+      return Response.json(recommendations())
+    })
+    const onChanged = vi.fn()
+    renderPage(<Page onChanged={onChanged} state={{ draftVersion: 2, requests: [request({ report })] }} />)
+    const panel = within(screen.getByRole('region', { name: '待开具病理会诊' }))
+    await panel.findByRole('checkbox', { name: '选择乳腺切片病理会诊' })
+    await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-1': '3' }, input: {
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-pathology-suggestion', kind: 'pathology', serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '复核既往病灶切除的切片。' }],
+    } }]))
+    expect(calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/pathology/actions/confirm'])
     expect(screen.queryByRole('dialog')).toBeNull()
-    await userEvent.setup().click(screen.getByRole('button', { name: /采纳/ }))
-    const editor = within(await screen.findByRole('dialog', { name: '追加申请' }))
-    expect(editor.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(excision.display)
-    expect((editor.getByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('复核既往病灶切除的切片。')
-    expect(calls.every(call => call.method === 'GET')).toBe(true)
+    expect(onChanged).not.toHaveBeenCalled()
   })
 
   it('keeps saved and unsaved procedure and purpose when recommendations refresh', async () => {
@@ -174,24 +184,26 @@ describe('doctor pathology consultation page', () => {
     const user = userEvent.setup()
     const purpose = await screen.findByLabelText('会诊目的')
     await user.type(purpose, '追加未保存的核对内容。')
-    expect((await screen.findByRole('button', { name: /采纳/ })).hasAttribute('disabled')).toBe(true)
-    await user.click(screen.getByRole('button', { name: '刷新建议' }))
+    expect((await screen.findByRole('button', { name: /^开具选中项目/ })).hasAttribute('disabled')).toBe(true)
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+    await user.click(screen.getByRole('button', { name: '依据与说明' }))
     expect(await screen.findByText('新的病理会诊建议。')).toBeTruthy()
+    await user.keyboard('{Escape}')
     expect((purpose as HTMLTextAreaElement).value).toBe('医生已保存的会诊目的。追加未保存的核对内容。')
     expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
-    expect(screen.getByRole('button', { name: /采纳/ }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: /^开具选中项目/ }).hasAttribute('disabled')).toBe(true)
     expect(calls.filter(call => call.method !== 'GET').map(call => call.path))
       .toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/pathology/actions/generate'])
   })
 
-  it.each(['unavailable-service', 'unauthorized-procedure'] as const)('cannot adopt a suggestion with an %s target', async reason => {
+  it.each(['unavailable-service', 'unauthorized-procedure'] as const)('cannot issue a suggestion with an %s target', async reason => {
     const state = recommendations()
     const catalog = { items: services.items.map(item => ({ ...item, available: reason !== 'unavailable-service',
       sourceProcedures: reason === 'unauthorized-procedure' ? [lumpectomy] : item.sourceProcedures,
     })) }
     const calls = stubFetch(({ path }) => Response.json(path.endsWith('/pathology-services') ? catalog : state))
     renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 0, requests: [] }} />)
-    expect((await screen.findByRole('button', { name: /采纳/ })).hasAttribute('disabled')).toBe(true)
+    expect((await screen.findByRole('button', { name: /^开具选中项目/ })).hasAttribute('disabled')).toBe(true)
     expect(screen.queryByLabelText('会诊目的')).toBeNull()
     expect(calls.every(call => call.method === 'GET')).toBe(true)
   })
@@ -200,8 +212,8 @@ describe('doctor pathology consultation page', () => {
     const calls = stubFetch(() => Response.json(services))
     renderPage(<Page active={mode !== 'inactive'} readOnly={mode === 'read-only'} onChanged={vi.fn()}
       state={{ draftVersion: 0, requests: [] }} />)
-    expect(screen.queryByRole('region', { name: '病理会诊建议' })).toBeNull()
-    expect(screen.queryByRole('button', { name: /采纳/ })).toBeNull()
+    expect(screen.queryByRole('region', { name: '待开具病理会诊' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^开具选中项目/ })).toBeNull()
     expect(calls.some(call => call.path.includes('/recommendations/'))).toBe(false)
   })
 

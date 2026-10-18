@@ -47,7 +47,7 @@ import {
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { DoctorRecommendationsPanel, type ManualPreparedItem } from './doctor-recommendations.tsx'
 import { useAutosave } from './use-autosave.ts'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
@@ -251,7 +251,7 @@ export function PrescriptionPage({
     return selected?.allowedCombinationIds.includes(candidate.id) === true
       && candidate.allowedCombinationIds.includes(item.catalogItemId)
   })
-  const canAdoptRecommendation = (suggestion: DoctorRecommendationSuggestion) => {
+  const isRecommendationAvailable = (suggestion: DoctorRecommendationSuggestion) => {
     if (!canEditDraft || suggestion.kind !== 'prescription' || items.length >= 8
       || actions.issue.pending || actions.confirmNoMedication.pending || actions.deleteDraft.pending
       || usedCatalogItemIds.has(suggestion.catalogItemId)) return false
@@ -261,20 +261,6 @@ export function PrescriptionPage({
       && (suggestion.frequencyCode === null || medication.allowedFrequencyCodes.includes(suggestion.frequencyCode))
       && (suggestion.courseDays === null || medication.allowedCourseDays.includes(suggestion.courseDays))
       && (suggestion.quantity === null || medication.allowedQuantities.includes(suggestion.quantity))
-  }
-  const adoptRecommendation = (suggestion: DoctorRecommendationSuggestion) => {
-    if (suggestion.kind !== 'prescription' || !canAdoptRecommendation(suggestion)) return
-    const key = globalThis.crypto.randomUUID()
-    setItems(current => [...current, {
-      catalogItemId: suggestion.catalogItemId,
-      courseDays: suggestion.courseDays,
-      doseText: suggestion.doseText ?? '',
-      frequencyCode: suggestion.frequencyCode ?? '',
-      key,
-      quantity: suggestion.quantity,
-    }])
-    setSelectedDraftKey(key)
-    setDirty(true)
   }
   const medicationLine = (
     selection: MedicationCatalogSelection,
@@ -345,13 +331,21 @@ export function PrescriptionPage({
       </div>
 
       <DoctorRecommendationsPanel
-        canAdopt={canAdoptRecommendation}
         caseId={detail.caseId}
         enabled={canEditDraft}
+        disabled={actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending}
         inputRevision={recommendationRevision}
         kind="prescription"
         locale={locale}
-        onAdopt={adoptRecommendation}
+        expectedDraftVersion={state?.draftVersion ?? 0}
+        manualItems={items.map(item => ({
+          label: item.referenceProduct?.genericName
+            ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
+            ?? item.catalogItemId,
+          value: { source: 'manual', kind: 'prescription', catalogItemId: item.catalogItemId,
+            doseText: item.doseText || null, frequencyCode: item.frequencyCode || null, courseDays: item.courseDays, quantity: item.quantity },
+        } satisfies ManualPreparedItem))}
+        unavailableReason={suggestion => isRecommendationAvailable(suggestion) ? undefined : messages.recommendationRequestTargetUnavailable}
         scope={recommendationScope}
       />
 

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ComponentProps } from 'react'
-import { doctorRecommendationStateSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
+import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, doctorRecommendationStateSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import type { DiagnosisState } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render as testingRender, screen, waitFor, within } from '@testing-library/react'
@@ -51,7 +51,7 @@ function recommendationState(overrides: Partial<DoctorRecommendationState> = {})
 function diagnosisSuggestionState(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
   return doctorRecommendationStateSchema.parse(recommendationState({
     items: [{
-      id: 'suggestion-diagnosis-3', kind: 'diagnosis', catalogItemId: 'diagnosis-3', label: '合成建议诊断3',
+      id: 'suggestion-diagnosis-3', kind: 'diagnosis', role: 'primary', catalogItemId: 'diagnosis-3', label: '合成建议诊断3',
       rationale: '需要结合本次记录继续核实。', supportingInformation: ['本次症状支持该候选。'],
       opposingInformation: ['当前报告存在不符合信息。'], missingInformation: ['尚需核实病程。'],
       guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-source'],
@@ -102,57 +102,70 @@ function savedState(confirmed = false): DiagnosisState {
 describe('diagnosis workspace', () => {
   it('shows diagnosis suggestions separately from the editable draft', () => {
     render(<DiagnosisPage {...props()} />)
-    expect(screen.getByRole('region', { name: '诊断建议' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: '待确认诊断' })).toBeTruthy()
   })
-  it('adopts a reference candidate as a secondary draft diagnosis while preserving an unsaved primary note', async () => {
-    const recommendations = diagnosisSuggestionState()
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(recommendations), {
-      headers: { 'content-type': 'application/json' },
-    })))
-    const page = props({ state: savedState() })
+  it('confirms prepared diagnoses together with current manual roles and an unsaved note in one narrow request', async () => {
+    const source = diagnosisSuggestionState()
+    const recommendations = diagnosisSuggestionState({ items: source.items.map(item => item.kind === 'diagnosis' ? { ...item, role: 'secondary' } : item) })
+    const confirmations: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/actions/confirm')) {
+        confirmations.push(confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body))))
+        return Response.json(confirmDoctorPreparationResponseSchema.parse({ auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-confirm', warnings: [],
+          data: { kind: 'diagnosis', draftVersion: 2, encounterVersion: '1', recordIds: ['condition-1', 'condition-2', 'condition-3'] } }))
+      }
+      return Response.json(recommendations)
+    }))
+    const referenceConcept = { id: 'diagnosis-1', code: 'SYN-1', display: '合成诊断1',
+      system: 'https://clinmesh.example.com/icd-10', version: '1', sourceLocator: 'synthetic:reference-diagnosis' }
+    const saved = savedState()
+    if (saved.draft === undefined) throw new Error('Expected saved diagnosis draft')
+    const page = props({ state: { ...saved, draft: { entries: saved.draft.entries.map((entry, index) => index === 0
+      ? { ...entry, referenceConcept } : entry) } } })
     render(<DiagnosisPage {...page} />)
     const user = userEvent.setup()
     await user.type(screen.getByRole('textbox', { name: page.messages.diagnosisNote }), ' · 医生刚补充')
-    const panel = within(screen.getByRole('region', { name: '诊断建议' }))
-    const adopt = await panel.findByRole('button', { name: '采纳 合成建议诊断3' })
-    expect(panel.getByText('本次症状支持该候选。')).toBeTruthy()
-    expect(panel.getByText('当前报告存在不符合信息。')).toBeTruthy()
-    expect(panel.getByText('尚需核实病程。')).toBeTruthy()
-    await user.click(adopt)
-    const selected = within(screen.getByRole('group', { name: '已选诊断' }))
-    expect(selected.getByRole('button', { name: '合成建议诊断3' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: page.messages.secondaryDiagnosis }).getAttribute('aria-pressed')).toBe('true')
-    await user.click(selected.getByRole('button', { name: '合成诊断1' }))
-    expect((screen.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('第一条保存备注 · 医生刚补充')
-    expect(screen.getByRole('button', { name: page.messages.primaryDiagnosis }).getAttribute('aria-pressed')).toBe('true')
-    await waitFor(() => expect(page.actions.save.onSubmit).toHaveBeenLastCalledWith([
-      { catalogItemId: 'diagnosis-1', role: 'primary', note: '第一条保存备注 · 医生刚补充' },
-      { catalogItemId: 'diagnosis-2', role: 'secondary', note: '第二条保存备注' },
-      { catalogItemId: 'diagnosis-3', role: 'secondary', referenceConcept: {
-        id: 'diagnosis-3', code: 'SYN-3', display: '合成建议诊断3',
-        system: 'https://clinmesh.example.com/icd-10', version: '1', sourceLocator: 'synthetic:reference-diagnosis',
-      } },
-    ]), { timeout: 2000 })
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    await panel.findByRole('checkbox', { name: '选择合成建议诊断3' })
+    expect(panel.getByRole('checkbox', { name: '选择合成诊断1' }).getAttribute('aria-checked')).toBe('true')
+    expect(panel.getByRole('checkbox', { name: '选择合成诊断2' }).getAttribute('aria-checked')).toBe('true')
+    await user.click(panel.getByRole('button', { name: /^确认选中诊断/ }))
+    await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/synthetic-encounter': '1' }, input: {
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 1,
+      selections: [
+        { source: 'manual', kind: 'diagnosis', catalogItemId: 'diagnosis-1', role: 'primary', note: '第一条保存备注 · 医生刚补充', referenceConcept },
+        { source: 'manual', kind: 'diagnosis', catalogItemId: 'diagnosis-2', role: 'secondary', note: '第二条保存备注' },
+        { source: 'agent', suggestionId: 'suggestion-diagnosis-3', kind: 'diagnosis', catalogItemId: 'diagnosis-3', role: 'secondary' },
+      ],
+    } }]))
+    expect(screen.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注 · 医生刚补充')
     expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
   })
-  it('adopts the first candidate as primary and disables repeated adoption of the same diagnosis', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(diagnosisSuggestionState()), {
-      headers: { 'content-type': 'application/json' },
-    })))
-    const page = props()
+  it('keeps the original manual role and note when an automatic candidate names the same diagnosis', async () => {
+    const source = diagnosisSuggestionState()
+    const candidate = source.items[0]!
+    if (candidate.kind !== 'diagnosis') throw new Error('Expected diagnosis')
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(diagnosisSuggestionState({ items: [{ ...candidate, catalogItemId: 'diagnosis-1' }] }))))
+    const page = props({ state: savedState() })
     render(<DiagnosisPage {...page} />)
-    const user = userEvent.setup()
-    const panel = within(screen.getByRole('region', { name: '诊断建议' }))
-    const adopt = await panel.findByRole('button', { name: '采纳 合成建议诊断3' })
-    await user.click(adopt)
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    await panel.findByRole('checkbox', { name: '选择合成诊断1' })
+    expect(panel.getAllByRole('checkbox')).toHaveLength(2)
+    expect(panel.queryByRole('checkbox', { name: '选择合成建议诊断3' })).toBeNull()
+    expect(screen.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注')
     expect(screen.getByRole('button', { name: page.messages.primaryDiagnosis }).getAttribute('aria-pressed')).toBe('true')
-    expect(adopt.hasAttribute('disabled')).toBe(true)
-    expect(panel.getByText(page.messages.recommendationDiagnosisDuplicate)).toBeTruthy()
-    await user.click(adopt)
-    expect(within(screen.getByRole('group', { name: '已选诊断' })).getAllByRole('button')).toHaveLength(1)
-    expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
+    expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
-  it('does not allow suggestion adoption once the draft already contains eight diagnoses', async () => {
+  it.each(['save', 'confirm'] as const)('blocks prepared diagnosis confirmation while manual %s is pending', async operation => {
+    const page = props({ state: savedState() })
+    page.actions[operation].pending = true
+    render(<DiagnosisPage {...page} />)
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    await panel.findByRole('checkbox', { name: '选择合成诊断1' })
+    expect(panel.getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注')
+  })
+  it('does not allow prepared diagnosis confirmation once the draft already contains eight diagnoses', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(diagnosisSuggestionState()), {
       headers: { 'content-type': 'application/json' },
     })))
@@ -161,10 +174,11 @@ describe('diagnosis workspace', () => {
       ...[4, 5, 6, 7, 8, 9].map(id => ({ catalogItemId: `diagnosis-${id}`, role: 'secondary' as const })),
     ] } } })
     render(<DiagnosisPage {...page} />)
-    const adopt = await within(screen.getByRole('region', { name: '诊断建议' })).findByRole('button', { name: '采纳 合成建议诊断3' })
-    expect(adopt.hasAttribute('disabled')).toBe(true)
+    await within(screen.getByRole('region', { name: '待确认诊断' })).findByRole('checkbox', { name: '选择合成建议诊断3' })
+    const confirmPrepared = within(screen.getByRole('region', { name: '待确认诊断' })).getByRole('button', { name: /^确认选中诊断/ })
+    expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
     expect(screen.getByText(page.messages.recommendationDiagnosisLimit)).toBeTruthy()
-    await userEvent.setup().click(adopt)
+    await userEvent.setup().click(confirmPrepared)
     expect(within(screen.getByRole('group', { name: '已选诊断' })).getAllByRole('button')).toHaveLength(8)
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
@@ -183,12 +197,13 @@ describe('diagnosis workspace', () => {
     })))
     const page = props()
     const { rerender } = render(<DiagnosisPage {...page} />)
-    const adopt = await within(screen.getByRole('region', { name: '诊断建议' })).findByRole('button', { name: '采纳 合成诊断2' })
-    expect(adopt.hasAttribute('disabled')).toBe(false)
+    await within(screen.getByRole('region', { name: '待确认诊断' })).findByRole('checkbox', { name: '选择合成诊断2' })
+    const confirmPrepared = within(screen.getByRole('region', { name: '待确认诊断' })).getByRole('button', { name: /^确认选中诊断/ })
+    expect(confirmPrepared.hasAttribute('disabled')).toBe(false)
     rerender(<DiagnosisPage {...page} catalog={[page.catalog[0]!]} />)
-    expect(adopt.hasAttribute('disabled')).toBe(true)
+    expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
     expect(screen.getByText(page.messages.recommendationDiagnosisUnavailable)).toBeTruthy()
-    await userEvent.setup().click(adopt)
+    await userEvent.setup().click(confirmPrepared)
     expect(screen.queryByRole('group', { name: '已选诊断' })).toBeNull()
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
@@ -204,16 +219,17 @@ describe('diagnosis workspace', () => {
       }],
     } }
     const { rerender } = render(<DiagnosisPage {...page} referenceSearch={activeSearch} />)
-    const adopt = await within(screen.getByRole('region', { name: '诊断建议' })).findByRole('button', { name: '采纳 合成建议诊断3' })
-    expect(adopt.hasAttribute('disabled')).toBe(false)
+    await within(screen.getByRole('region', { name: '待确认诊断' })).findByRole('checkbox', { name: '选择合成建议诊断3' })
+    const confirmPrepared = within(screen.getByRole('region', { name: '待确认诊断' })).getByRole('button', { name: /^确认选中诊断/ })
+    expect(confirmPrepared.hasAttribute('disabled')).toBe(false)
     rerender(<DiagnosisPage {...page} referenceSearch={{ ...activeSearch, data: { ...activeSearch.data,
       items: activeSearch.data.items.map(item => item.id === 'diagnosis-3' ? { ...item, status: 'inactive' as const } : item),
     } }} />)
-    expect(adopt.hasAttribute('disabled')).toBe(true)
+    expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
     expect(screen.getByText(page.messages.recommendationDiagnosisUnavailable)).toBeTruthy()
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
-  it('keeps adopted diagnoses and an edited note when refreshing suggestions', async () => {
+  it('keeps manual diagnoses and an unsaved note when refreshing suggestions', async () => {
     let recommendations = diagnosisSuggestionState()
     const candidate = recommendations.items[0]!
     if (candidate.kind !== 'diagnosis') throw new Error('Expected the synthetic diagnosis candidate')
@@ -229,19 +245,19 @@ describe('diagnosis workspace', () => {
       }
       return new Response(JSON.stringify(recommendations), { headers: { 'content-type': 'application/json' } })
     }))
-    const page = props()
+    const page = props({ state: savedState() })
     render(<DiagnosisPage {...page} />)
     const user = userEvent.setup()
-    const panel = within(screen.getByRole('region', { name: '诊断建议' }))
-    await user.click(await panel.findByRole('button', { name: '采纳 合成建议诊断3' }))
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    await panel.findByRole('checkbox', { name: '选择合成建议诊断3' })
     await user.type(screen.getByRole('textbox', { name: page.messages.diagnosisNote }), '医生核实后保留')
-    await user.click(panel.getByRole('button', { name: '刷新建议' }))
-    await panel.findByRole('button', { name: '采纳 合成新候选4' })
+    await user.click(panel.getByRole('button', { name: '刷新' }))
+    await panel.findByRole('checkbox', { name: '选择合成新候选4' })
     const selected = within(screen.getByRole('group', { name: '已选诊断' }))
-    expect(selected.getAllByRole('button')).toHaveLength(1)
-    expect(selected.getByRole('button', { name: '合成建议诊断3' })).toBeTruthy()
+    expect(selected.getAllByRole('button')).toHaveLength(2)
+    expect(selected.getByRole('button', { name: '合成诊断1' })).toBeTruthy()
     expect(selected.queryByRole('button', { name: '合成新候选4' })).toBeNull()
-    expect((screen.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('医生核实后保留')
+    expect((screen.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('第一条保存备注医生核实后保留')
     expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
   })
   it.each([
@@ -266,11 +282,11 @@ describe('diagnosis workspace', () => {
     const { rerender } = render(<DiagnosisPage {...page} key="previous-case" />)
     await waitFor(() => expect(fetch).toHaveBeenCalled())
     rerender(<DiagnosisPage {...page} caseId={current.caseId} key="new-case" recommendationScope="current-actor" />)
-    const panel = within(screen.getByRole('region', { name: '诊断建议' }))
-    await panel.findByRole('button', { name: '采纳 当前病例候选' })
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    await panel.findByRole('checkbox', { name: '选择当前病例候选' })
     await act(async () => { finishPrevious(new Response(JSON.stringify(old), { headers: { 'content-type': 'application/json' } })) })
-    expect(panel.queryByRole('button', { name: '采纳 合成建议诊断3' })).toBeNull()
-    expect(panel.getByRole('button', { name: '采纳 当前病例候选' }).hasAttribute('disabled')).toBe(false)
+    expect(panel.queryByRole('checkbox', { name: '选择合成建议诊断3' })).toBeNull()
+    expect(panel.getByRole('button', { name: /^确认选中诊断/ }).hasAttribute('disabled')).toBe(false)
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
   it('starts with an inline directory and waits for an explicit diagnosis selection', () => {
@@ -412,7 +428,7 @@ describe('diagnosis workspace', () => {
     expect(screen.queryByRole('button', { name: /移除诊断/ })).toBeNull()
     expect(screen.queryByRole('button', { name: page.messages.confirmDiagnosis })).toBeNull()
     expect(screen.queryByRole('textbox', { name: '搜索疾病目录' })).toBeNull()
-    expect(screen.queryByRole('region', { name: '诊断建议' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '待确认诊断' })).toBeNull()
     expect(globalThis.fetch).not.toHaveBeenCalled()
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })

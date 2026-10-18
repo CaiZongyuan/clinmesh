@@ -42,7 +42,7 @@ import {
   type DiagnosisCatalogSelection,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
-import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { DoctorRecommendationsPanel, type ManualPreparedItem } from './doctor-recommendations.tsx'
 import { useAutosave } from './use-autosave.ts'
 
 export interface DiagnosisPageActions {
@@ -410,18 +410,13 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, locale, mes
           </Dialog>
         )}
       </div>
-      <DoctorRecommendationsPanel canAdopt={suggestion => recommendationUnavailableReason(suggestion) === undefined}
-        caseId={caseId} enabled={!readOnly} inputRevision={recommendationRevision}
-        kind="diagnosis" locale={locale} onAdopt={suggestion => {
-          if (suggestion.kind !== 'diagnosis' || recommendationUnavailableReason(suggestion) !== undefined) return
-          const local = catalogById.get(suggestion.catalogItemId)
-          const concept = suggestion.referenceConcept
-          const code = concept?.code ?? local?.code
-          const display = concept?.display ?? (locale === 'zh-CN' ? local?.nameZh : local?.nameEn)
-          if (code === undefined || display === undefined) return
-          addEntry({ catalogItemId: suggestion.catalogItemId, code, display,
-            ...(concept === undefined ? {} : { referenceConcept: concept }) })
-        }} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
+      <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
+        expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
+        kind="diagnosis" locale={locale} manualItems={entries.map(entry => ({ label: entryDisplay(entry).display,
+          value: { source: 'manual', kind: 'diagnosis', catalogItemId: entry.catalogItemId, role: entry.role,
+            ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
+            ...(entry.note.trim() ? { note: entry.note.trim() } : {}) },
+        } satisfies ManualPreparedItem))} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
       {state?.confirmation === undefined ? null : (
         <Alert>
           <CheckCircleIcon aria-hidden="true" />
