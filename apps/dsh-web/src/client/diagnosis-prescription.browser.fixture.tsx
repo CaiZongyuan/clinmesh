@@ -51,6 +51,7 @@ const medication: ReferenceMedicationProduct = {
 const products = [medication, { ...medication, id: 'synthetic-product-2', code: 'SYN-M2', packageDescription: '20片/盒' },
   { ...medication, id: 'synthetic-product-3', code: 'SYN-M3', genericName: '合成第二药品', packageDescription: '30片/盒' }]
 const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
+const failedRecommendations = document.documentElement.dataset.fixtureMode === 'failed'
 const recommendationGuidelines: GuidelineEvidence[] = [
   ...(['national-standard', 'official-protocol', 'guideline'] as const).map(documentType => ({
     id: `synthetic-${documentType}`, documentType, title: `合成浏览器来源分类 ${documentType}`,
@@ -173,24 +174,41 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       failNextConfirmation = false
       return Response.json({ error: { code: 'MODEL_UNAVAILABLE', message: '合成提交失败，未开具。' } }, { status: 503 })
     }
-    const { input: saved } = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+    const submitted = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+    const saved = submitted.input
     const kind = doctorRecommendationKindSchema.parse(preparedConfirmation[1])
+    if (Object.keys(submitted.expectedVersions).length !== 1
+      || submitted.expectedVersions[`Encounter/${detail.encounter.id}`] !== detail.encounter.versionId) throw new Error('Unexpected prepared Encounter version')
+    const agentSelections = saved.selections.filter(item => item.source === 'agent')
+    if (agentSelections.length > 0) {
+      const state = recommendationStates.get(kind)
+      if (state?.status !== 'ready' || state.generation !== saved.generation || state.inputFingerprint !== saved.inputFingerprint) throw new Error('Missing or outdated preparation proof')
+      for (const item of agentSelections) {
+        const original = state.items.find(candidate => candidate.id === item.suggestionId && candidate.kind === kind)
+        if (original === undefined || ('catalogItemId' in original ? original.catalogItemId !== ('catalogItemId' in item ? item.catalogItemId : undefined)
+          : original.serviceId !== ('serviceId' in item ? item.serviceId : undefined))) throw new Error('Changed prepared clinical identity')
+      }
+    } else if (saved.generation !== undefined || saved.inputFingerprint !== undefined) throw new Error('Manual confirmation must not require a preparation proof')
+    if (saved.selections.some(item => item.kind !== kind)) throw new Error('Unexpected mixed preparation kinds')
+    const currentVersion = kind === 'diagnosis' ? detail.diagnosis?.draftVersion ?? 0 : detail.medicationConclusion?.draftVersion ?? 0
+    if (saved.expectedDraftVersion !== currentVersion) throw new Error('Unexpected prepared draft version')
     let draftVersion: number
     let recordIds: string[]
     if (kind === 'diagnosis') {
       const entries = saved.selections.map(item => {
         if (item.kind !== 'diagnosis') throw new Error('Unexpected prepared diagnosis kind')
-        return { catalogItemId: item.catalogItemId, role: item.role, ...(item.note === undefined ? {} : { note: item.note }) }
+        return { catalogItemId: item.catalogItemId, role: item.role, referenceConcept: diagnosisReference(diagnoses.find(concept => concept.id === item.catalogItemId)!),
+          ...(item.note === undefined ? {} : { note: item.note }) }
       })
       const confirmation = confirm(entries, (detail.diagnosis?.confirmation?.revisionNumber ?? 0) + 1)
       draftVersion = (detail.diagnosis?.draftVersion ?? 0) + 2
       detail.diagnosis = { confirmation, draftVersion }
-      recordIds = confirmation.entries.map(item => item.conditionId)
+      recordIds = [confirmation.id]
     } else {
       const items = saved.selections.map(item => {
         if (item.kind !== 'prescription') throw new Error('Unexpected prepared prescription kind')
         return { catalogItemId: item.catalogItemId, doseText: item.doseText, frequencyCode: item.frequencyCode,
-          courseDays: item.courseDays, quantity: item.quantity }
+          courseDays: item.courseDays, quantity: item.quantity, referenceProduct: products.find(product => product.id === item.catalogItemId)! }
       })
       const prescription = issue(items)
       draftVersion = (detail.medicationConclusion?.draftVersion ?? 0) + 2
@@ -213,7 +231,8 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       state = doctorRecommendationStateSchema.parse({
         caseId: detail.caseId, kind, encounterId: detail.encounter.id, encounterVersion: detail.encounter.versionId,
         inputFingerprint: 'b'.repeat(64), generation: 1, stale: false,
-        status: recommendationsMode && (kind === 'diagnosis' || kind === 'prescription') ? 'ready' : 'missing-evidence',
+        status: failedRecommendations ? 'failed' : recommendationsMode && (kind === 'diagnosis' || kind === 'prescription') ? 'ready' : 'missing-evidence',
+        ...(failedRecommendations ? { errorCode: 'MODEL_UNAVAILABLE' } : {}),
         items: !recommendationsMode ? [] : kind === 'diagnosis' ? diagnoses.slice(0, 2).map((concept, index) => ({
           ...common, id: `synthetic-recommendation-diagnosis-${index}`, kind, label: concept.display,
           catalogItemId: concept.id, role: index === 0 ? 'primary' : 'secondary', referenceConcept: diagnosisReference(concept),

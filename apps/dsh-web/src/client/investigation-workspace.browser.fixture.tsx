@@ -63,6 +63,7 @@ const directory = [service, secondService, ...Array.from({ length: 19 }, (_, ind
   nameZh: `合成目录项目 ${index + 1}`, nameEn: `Synthetic catalog item ${index + 1}`,
 }))]
 const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
+const failedRecommendations = document.documentElement.dataset.fixtureMode === 'failed'
 const imagingService: ImagingServiceSnapshot = {
   applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
   department: '放射科', examCode: 'chest-ct-plain', id: 'imaging-chest-ct-plain',
@@ -153,17 +154,42 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   }
   const preparedConfirmation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/(laboratory|imaging|pathology)\/actions\/confirm$/.exec(path)
   if (preparedConfirmation !== null) {
-    const { input: saved } = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+    const submitted = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+    const saved = submitted.input
     const kind = doctorRecommendationKindSchema.parse(preparedConfirmation[1])
+    if (Object.keys(submitted.expectedVersions).length !== 1
+      || submitted.expectedVersions[`Encounter/${detail.encounter.id}`] !== detail.encounter.versionId) throw new Error('Unexpected prepared Encounter version')
+    const agentSelections = saved.selections.filter(item => item.source === 'agent')
+    if (agentSelections.length > 0) {
+      const state = recommendationStates.get(kind)
+      if (state?.status !== 'ready' || state.generation !== saved.generation || state.inputFingerprint !== saved.inputFingerprint) throw new Error('Missing or outdated preparation proof')
+      for (const item of agentSelections) {
+        const original = state.items.find(candidate => candidate.id === item.suggestionId && candidate.kind === kind)
+        if (original === undefined || ('catalogItemId' in original ? original.catalogItemId !== ('catalogItemId' in item ? item.catalogItemId : undefined)
+          : original.serviceId !== ('serviceId' in item ? item.serviceId : undefined))) throw new Error('Changed prepared clinical identity')
+        if (item.kind === 'pathology' && original.kind === 'pathology' && original.sourceProcedureReference !== item.sourceProcedureReference) throw new Error('Changed prepared source procedure')
+      }
+    } else if (saved.generation !== undefined || saved.inputFingerprint !== undefined) throw new Error('Manual confirmation must not require a preparation proof')
+    if (saved.selections.some(item => item.kind !== kind)) throw new Error('Unexpected mixed preparation kinds')
+    const pending = kind === 'laboratory' ? detail.laboratoryRequests! : kind === 'imaging' ? detail.imagingRequests! : detail.pathologyRequests!
+    if (saved.expectedDraftVersion !== pending.draftVersion) throw new Error('Unexpected prepared draft version')
+    if (pending.draft !== undefined) {
+      if (saved.resolveExistingDraft !== true) throw new Error('Existing investigation draft was not explicitly resolved')
+      pending.draftVersion += 1
+      delete pending.draft
+    }
     const recordIds: string[] = []
     let draftVersion = 0
     for (const item of saved.selections) {
       if (item.kind === 'laboratory') {
-        const issued = { ...request('laboratory-1', service, false), indicationCode: item.indicationCode }
+        const selected = directory.find(service => service.id === item.catalogItemId)
+        if (selected === undefined) throw new Error('Unknown selected laboratory service')
+        const issued = { ...request(`${recommendationsMode ? 'laboratory' : 'issued'}-${pending.requests.length + 1}`, selected, false), indicationCode: item.indicationCode }
         detail.laboratoryRequests!.requests.unshift(issued)
         draftVersion = detail.laboratoryRequests!.draftVersion += 2
         recordIds.push(issued.id)
       } else if (item.kind === 'imaging') {
+        if (item.serviceId !== imagingService.id) throw new Error('Unknown selected imaging service')
         const issued: ImagingRequest = { indication: item.indication, service: imagingService,
           id: 'imaging-1', serviceRequestId: 'service-request-imaging-1', serviceRequestVersion: '1',
           previousReports: [], status: 'issued', taskId: 'task-imaging-1', taskVersion: '1', version: 1 }
@@ -171,6 +197,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
         draftVersion = detail.imagingRequests!.draftVersion += 2
         recordIds.push(issued.id)
       } else if (item.kind === 'pathology') {
+        if (item.serviceId !== pathologyService.id) throw new Error('Unknown selected pathology service')
         const sourceProcedure = sourceProcedures.find(source => source.sourceReference === item.sourceProcedureReference)
         if (sourceProcedure === undefined) throw new Error('Unknown prepared source procedure')
         const issued: PathologyRequest = { purpose: item.purpose, sourceProcedure, service: pathologyService,
@@ -208,7 +235,8 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       current = doctorRecommendationStateSchema.parse({
         caseId: detail.caseId, kind, encounterId: detail.encounter.id, encounterVersion: detail.encounter.versionId,
         inputFingerprint: 'a'.repeat(64), generation: 1, stale: false,
-        status: items.length > 0 ? 'ready' : 'missing-evidence', items,
+        status: failedRecommendations ? 'failed' : items.length > 0 ? 'ready' : 'missing-evidence', items,
+        ...(failedRecommendations ? { errorCode: 'MODEL_UNAVAILABLE' } : {}),
         ...(recommendationsMode && kind !== 'prescription' ? { considerations: [{
           id: `synthetic-${kind}-consideration`, label: '合成当前病例待核实检查方向',
           rationale: '合成思路仅用于核对病例资料与适用性，不代表当前已开展或已开立检查。',
@@ -250,8 +278,8 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     const page = Number(url.searchParams.get('page') ?? '1')
     return Response.json({ items: items.slice((page - 1) * 20, page * 20), page, pageSize: 20, total: items.length })
   }
-  if (path.endsWith('/imaging-services')) return Response.json({ items: recommendationsMode ? [{ available: true, service: imagingService }] : [] })
-  if (path.endsWith('/pathology-services')) return Response.json({ items: recommendationsMode ? [{ available: true, service: pathologyService, sourceProcedures }] : [] })
+  if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService }] })
+  if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures }] })
   if (path.endsWith('/laboratory-request/draft') && init?.method === 'PUT') {
     const saved = saveLaboratoryRequestDraftRequestSchema.parse(JSON.parse(String(init.body))).input
     const selectedService = [service, secondService].find(item => item.id === saved.catalogItemId)
