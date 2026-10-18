@@ -2,6 +2,7 @@
 import { act, cleanup, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { CaseLaboratoryCatalogSearch } from '@clinmesh/contracts/his'
 import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { DiagnosisCatalogDialog, DiagnosisCatalogPicker, LaboratoryCatalogDialog, LaboratoryCatalogPicker, MedicationCatalogDialog, MedicationCatalogPicker } from './catalog-picker-dialogs.tsx'
 
@@ -10,6 +11,21 @@ const product: ReferenceMedicationProduct = {
   dosageForm: '片剂', strength: '10 mg', manufacturer: '合成药厂',
   approvalNumber: '合成批准号', packageDescription: '10片/盒', status: 'active',
   system: 'urn:synthetic:medication', version: '1', sourceLocator: 'synthetic:test',
+}
+const service: CaseLaboratoryCatalogSearch['items'][number] = {
+  allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
+  executingDepartmentId: 'laboratory', id: 'synthetic-laboratory-service', localCode: 'SYN-LAB',
+  nameEn: 'Synthetic laboratory test', nameZh: '合成检验项目', priceFen: 2500,
+  referenceConcept: { id: 'synthetic-reference', code: 'SYN-1', display: '合成检验项目',
+    system: 'urn:synthetic:laboratory', version: '1', sourceLocator: 'synthetic:test' },
+  referenceReleaseId: 'synthetic-release', reportDefinition: {
+    conclusionTemplate: '合成检验结果。', results: [{
+      referenceConcept: { id: 'synthetic-reference', code: 'SYN-1', display: '合成指标',
+        system: 'urn:synthetic:laboratory', version: '1', sourceLocator: 'synthetic:test' },
+      alternateCodings: [], referenceRange: { low: 0, high: 10, text: '0–10' },
+      unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' }, valueType: 'quantity',
+    }],
+  }, specimen: { code: 'blood', display: '静脉血' }, serviceKind: 'laboratory', tatMinutes: 180, version: 1,
 }
 function mount(items: ReferenceMedicationProduct[], excludedIds = new Set<string>()) {
   const onSearch = vi.fn()
@@ -23,6 +39,25 @@ function mount(items: ReferenceMedicationProduct[], excludedIds = new Set<string
 }
 afterEach(cleanup)
 describe('medication catalog picker', () => {
+  it('collapses after selecting an actual package and preserves that package when reopened', async () => {
+    const onSelect = vi.fn()
+    render(<MedicationCatalogPicker collapsible excludedIds={new Set()} localCatalog={[]} locale="zh-CN" onSelect={onSelect}
+      search={{ data: { items: [product, { ...product, id: 'product-2', packageDescription: '20片/盒' }], page: 1, pageSize: 20, total: 2, releaseId: 'synthetic' },
+        error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }} />)
+    const user = userEvent.setup()
+    expect(screen.getByRole('textbox', { name: '搜索药品目录' })).toBeTruthy()
+    expect(screen.queryByRole('combobox', { name: '包装 合成测试片 合成药厂' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '展开目录' }))
+    act(() => screen.getByRole('combobox', { name: '包装 合成测试片 合成药厂' }).focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '20片/盒' }))
+    expect(onSelect).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: /选择 合成测试片 10 mg 20片\/盒/ }))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith({ kind: 'reference', product: expect.objectContaining({ id: 'product-2' }) })
+    expect(screen.queryByRole('combobox', { name: '包装 合成测试片 合成药厂' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: '展开目录' }))
+    expect(screen.getByRole('combobox', { name: '包装 合成测试片 合成药厂' }).textContent).toContain('20片/盒')
+  })
   it('waits for an explicit inline choice after changing a package in an already added product group', async () => {
     const onSelect = vi.fn()
     render(<MedicationCatalogPicker excludedIds={new Set([product.id])} localCatalog={[]} locale="zh-CN" onSelect={onSelect} selectedId={product.id}
@@ -123,6 +158,43 @@ describe('medication catalog picker', () => {
 })
 
 describe('diagnosis and laboratory catalog search', () => {
+  it('keeps a collapsed laboratory search and pagination after a selection', async () => {
+    const onSearch = vi.fn()
+    const onSelect = vi.fn()
+    render(<LaboratoryCatalogPicker collapsible locale="zh-CN" onSelect={onSelect}
+      search={{ data: { items: [service], page: 1, pageSize: 20, total: 21 }, error: null, isError: false, isFetching: false, isPending: false, onSearch }} />)
+    const user = userEvent.setup()
+    const search = screen.getByRole('textbox', { name: '搜索检验目录' })
+    expect(screen.queryByRole('button', { name: '选择 合成检验项目 SYN-1' })).toBeNull()
+    await user.type(search, '合成')
+    await user.click(screen.getByRole('button', { name: '执行检验目录搜索' }))
+    await user.click(screen.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ catalogItemId: service.id, laboratoryService: service }))
+    expect(screen.queryByRole('button', { name: '下一页' })).toBeNull()
+    expect(search.getAttribute('value')).toBe('合成')
+    await user.click(screen.getByRole('button', { name: '展开目录' }))
+    await user.click(screen.getByRole('button', { name: '下一页' }))
+    expect(onSearch).toHaveBeenLastCalledWith('合成', 2)
+  })
+  it('keeps diagnosis search visible while its collapsible directory opens on focus and closes after selection', async () => {
+    const onSelect = vi.fn()
+    render(<DiagnosisCatalogPicker collapsible excludedIds={new Set()} localCatalog={[
+      { id: 'diagnosis-synthetic', code: 'SYN-1', nameZh: '合成诊断', nameEn: 'Synthetic diagnosis', system: 'synthetic', version: 1 },
+    ]} locale="zh-CN" onSelect={onSelect}
+      search={{ data: { items: [], page: 1, pageSize: 20, total: 0, releaseId: 'synthetic' }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }} />)
+    const user = userEvent.setup()
+    const search = screen.getByRole('textbox', { name: '搜索疾病目录' })
+    expect(screen.queryByRole('button', { name: '选择 合成诊断 SYN-1' })).toBeNull()
+    expect(screen.getByRole('button', { name: '展开目录' }).getAttribute('aria-expanded')).toBe('false')
+    await user.click(search)
+    await user.click(screen.getByRole('button', { name: '选择 合成诊断 SYN-1' }))
+    expect(onSelect).toHaveBeenCalledExactlyOnceWith({ catalogItemId: 'diagnosis-synthetic', code: 'SYN-1', display: '合成诊断' })
+    expect(screen.queryByRole('button', { name: '选择 合成诊断 SYN-1' })).toBeNull()
+    expect(screen.getByRole('textbox', { name: '搜索疾病目录' })).toBe(search)
+    await user.click(screen.getByRole('button', { name: '展开目录' }))
+    expect(screen.getByRole('button', { name: '收起目录' }).getAttribute('aria-expanded')).toBe('true')
+    expect(screen.getByRole('button', { name: '选择 合成诊断 SYN-1' })).toBeTruthy()
+  })
   it.each(['diagnosis', 'medication'])('restores the current %s search when the inline directory becomes active again', async kind => {
     const onSearch = vi.fn()
     const search = { data: { items: [], page: 1, pageSize: 20, total: 0, releaseId: 'synthetic' }, error: null, isError: false, isFetching: false, isPending: false, onSearch }
