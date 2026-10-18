@@ -182,15 +182,12 @@ describe('doctor pathology consultation page', () => {
       draft: { service, sourceProcedure: lumpectomy, purpose: '医生已保存的会诊目的。' },
     }} />)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
     await user.type(await screen.findByLabelText('会诊目的'), '追加未保存的核对内容。')
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     expect(screen.getByRole('region', { name: '待开具病理会诊' }).textContent).toContain('医生已保存的会诊目的。追加未保存的核对内容。')
     await user.click(screen.getByRole('button', { name: '刷新' }))
     await user.click(screen.getByRole('button', { name: '依据与说明' }))
     expect(await screen.findByText('新的病理会诊建议。')).toBeTruthy()
     await user.keyboard('{Escape}')
-    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
     expect((screen.getByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('医生已保存的会诊目的。追加未保存的核对内容。')
     expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
   })
@@ -216,15 +213,14 @@ describe('doctor pathology consultation page', () => {
     expect(calls.some(call => call.path.includes('/recommendations/'))).toBe(false)
   })
 
-  it('opens the manual pathology catalog from the unified list with no second issue action', async () => {
+  it('shows the pathology catalog and selected request fields inline beside the pending list', async () => {
     stubFetch(({ path }) => path.endsWith('/pathology-services') ? Response.json({ items: [
       ...services.items,
       { available: true, service: { ...service, id: 'pathology-second', name: '乳腺切片复核' }, sourceProcedures: [excision] },
     ] }) : Response.json(recommendations({ items: [] })))
     const user = userEvent.setup()
     renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 0, requests: [] }} />)
-    expect(screen.queryByRole('searchbox', { name: '搜索病理目录' })).toBeNull()
-    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
+    expect(await screen.findByRole('searchbox', { name: '搜索病理目录' })).toBeTruthy()
     const search = await screen.findByRole('searchbox', { name: '搜索病理目录' })
     expect(screen.getAllByRole('radio').every(radio => !(radio as HTMLInputElement).checked)).toBe(true)
     expect(screen.queryByLabelText('会诊目的')).toBeNull()
@@ -234,12 +230,11 @@ describe('doctor pathology consultation page', () => {
     expect(screen.getByRole('combobox', { name: '送检的既往手术' })).toBeTruthy()
     expect(screen.getByLabelText('会诊目的')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '签发申请' })).toBeNull()
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     expect(screen.getByRole('checkbox', { name: '选择乳腺切片复核' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /^开具选中项目/ })).toHaveProperty('disabled', true)
   })
 
-  it('shows only the selected request detail and keeps new consultations in the add dialog', async () => {
+  it('shows only the selected request detail and keeps the inline search available', async () => {
     stubFetch(() => Response.json(services))
     const user = userEvent.setup()
     renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 0, requests: [
@@ -249,14 +244,17 @@ describe('doctor pathology consultation page', () => {
 
     expect(await screen.findByText(report.diagnosis)).toBeTruthy()
     expect(screen.queryByText('第二份切片会诊诊断。')).toBeNull()
-    expect(screen.queryByRole('searchbox', { name: '搜索病理目录' })).toBeNull()
+    expect(await screen.findByRole('searchbox', { name: '搜索病理目录' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /乳腺切片病理会诊.*医生已阅/ }))
     expect(screen.getByText('第二份切片会诊诊断。')).toBeTruthy()
     expect(screen.queryByText(report.diagnosis)).toBeNull()
-    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
-    const dialog = await screen.findByRole('dialog', { name: '添加病理会诊' })
+    const dialog = await screen.findByRole('region', { name: '开具病理会诊' })
     expect(within(dialog).getByRole('searchbox', { name: '搜索病理目录' })).toBeTruthy()
+    expect(within(dialog).queryByRole('radio', { name: `选择${service.name}` })).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: '展开目录' }))
     expect(within(dialog).getByRole('radio', { name: `选择${service.name}` })).toBeTruthy()
+    await user.click(within(dialog).getByRole('radio', { name: `选择${service.name}` }))
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: '展开目录' }))
   })
 
   it('opens the targeted historical report while keeping other histories collapsed by default', async () => {
@@ -295,7 +293,6 @@ describe('doctor pathology consultation page', () => {
     })
     const user = userEvent.setup()
     renderPage(<Page onChanged={vi.fn()} state={{ draft: { purpose: '复核', service, sourceProcedure: lumpectomy }, draftVersion: 2, requests: [] }} />)
-    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
     expect(await screen.findByText('已保存草稿：乳腺切片病理会诊（乳房肿块切除术 · 2022-04-01）')).toBeTruthy()
     act(() => screen.getByRole('combobox', { name: '送检的既往手术' }).focus())
     await user.keyboard('{Enter}')
@@ -303,7 +300,6 @@ describe('doctor pathology consultation page', () => {
     const purpose = screen.getByLabelText('会诊目的')
     await user.clear(purpose)
     await user.type(purpose, '外院手术切片复核，明确病理类型')
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
     expect(calls.find(call => call.method !== 'GET')).toMatchObject({ method: 'POST',
@@ -324,7 +320,6 @@ describe('doctor pathology consultation page', () => {
     }} />)
     await user.click(await screen.findByRole('button', { name: /^开具选中项目/ }))
     expect(await screen.findByText('更新或提交未完成，草稿已保留，可重试。')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
     expect((await screen.findByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('保存的会诊目的')
     expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('乳房肿块切除术 · 2022-04-01')
     expect(screen.getByRole('searchbox', { name: '搜索病理目录' })).toBeTruthy()
@@ -342,7 +337,6 @@ describe('doctor pathology consultation page', () => {
     await user.clear(input)
     await user.type(input, '清单中修改的会诊目的')
     await user.click(within(adjust).getByRole('button', { name: '保留本次调整' }))
-    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
     expect((await screen.findByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('清单中修改的会诊目的')
     expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
   })
@@ -366,10 +360,8 @@ describe('doctor pathology consultation page', () => {
     await user.click(within(dialog).getByRole('button', { name: '保留本次调整' }))
     expect(screen.getByRole('checkbox', { name: '选择人工病理复核' })).toBeTruthy()
     expect(screen.getByRole('checkbox', { name: '选择乳腺切片病理会诊' })).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
     expect((await screen.findByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('原人工会诊目的')
     expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
     expect(calls.find(call => call.method !== 'GET')?.body).toMatchObject({ input: { selections: [
@@ -392,7 +384,7 @@ describe('doctor pathology consultation page', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('keeps issued requests in management until an agent-prepared draft explicitly opens for editing', async () => {
+  it('keeps issued requests readable and restores an agent-prepared draft inline', async () => {
     stubFetch(() => Response.json(services))
     const state = {
       draft: { purpose: '保存的会诊目的', service, sourceProcedure: excision },
@@ -404,9 +396,11 @@ describe('doctor pathology consultation page', () => {
     expect(screen.getByText(report.diagnosis)).toBeTruthy()
     rerenderPage(<Page editDraft key="agent-prepared" onChanged={vi.fn()} state={state} />)
 
-    const dialog = await screen.findByRole('dialog', { name: '添加病理会诊' })
+    const dialog = await screen.findByRole('region', { name: '开具病理会诊' })
     expect((await within(dialog).findByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('保存的会诊目的')
     expect(within(dialog).getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('乳腺病灶切除术 · 2023-01-05')
+    expect(within(dialog).getByRole('button', { name: '展开目录' }).getAttribute('aria-expanded')).toBe('false')
+    await userEvent.setup().click(within(dialog).getByRole('button', { name: '展开目录' }))
     expect((within(dialog).getByRole('radio', { name: `选择${service.name}` }) as HTMLInputElement).checked).toBe(true)
   })
 
@@ -419,7 +413,6 @@ describe('doctor pathology consultation page', () => {
     }))
     const user = userEvent.setup()
     renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 0, requests: [] }} />)
-    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
 
     expect(await screen.findByText('其他切片会诊：本院当前未开展')).toBeTruthy()
     expect((screen.getByRole('radio', { name: '选择其他切片会诊' }) as HTMLInputElement).disabled).toBe(true)

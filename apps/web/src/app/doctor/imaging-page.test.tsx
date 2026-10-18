@@ -181,16 +181,13 @@ describe('doctor imaging page', () => {
       draft: { service: ctService, indication: '已保存的医生检查指征。' },
     }} />)
     const user = userEvent.setup()
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
     const indication = await screen.findByLabelText('检查指征')
     await user.type(indication, '继续手工核对。')
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     expect(screen.getByRole('region', { name: '待开具放射检查' }).textContent).toContain('已保存的医生检查指征。继续手工核对。')
     await user.click(screen.getByRole('button', { name: '刷新' }))
     await user.click(screen.getByRole('button', { name: '依据与说明' }))
     expect(await screen.findByText('重新核对后的检查建议。')).toBeTruthy()
     await user.keyboard('{Escape}')
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
     expect((screen.getByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('已保存的医生检查指征。继续手工核对。')
   })
 
@@ -214,12 +211,11 @@ describe('doctor imaging page', () => {
     expect(calls.some(call => call.path.includes('/recommendations/'))).toBe(false)
   })
 
-  it('opens the manual catalog from the unified list and returns without a second issue action', async () => {
+  it('shows the catalog and selected request fields inline beside the pending list', async () => {
     const calls = stubFetch(({ path }) => path.endsWith('/imaging-services') ? Response.json(services) : Response.json(recommendations({ items: [] })))
     const user = userEvent.setup()
     renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [] }} />)
-    expect(screen.queryByRole('textbox', { name: '搜索放射目录' })).toBeNull()
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
+    expect(await screen.findByRole('textbox', { name: '搜索放射目录' })).toBeTruthy()
     const search = await screen.findByRole('textbox', { name: '搜索放射目录' })
     expect(screen.queryByLabelText('检查指征')).toBeNull()
     expect(screen.queryByRole('button', { name: '签发申请' })).toBeNull()
@@ -229,7 +225,6 @@ describe('doctor imaging page', () => {
     await user.click(screen.getByRole('button', { name: /胸部 CT 平扫.*平扫/ }))
     expect(screen.getByText(ctService.applicability)).toBeTruthy()
     await user.type(screen.getByLabelText('检查指征'), '咳嗽两周')
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.getByRole('checkbox', { name: '选择胸部 CT 平扫' })).toBeTruthy()
     expect(screen.getByRole('button', { name: /^开具选中项目/ })).toHaveProperty('disabled', false)
@@ -245,13 +240,11 @@ describe('doctor imaging page', () => {
     const user = userEvent.setup()
     const onSelectRequest = vi.fn()
     renderPage(<Page onChanged={vi.fn()} onSelectRequest={onSelectRequest} state={{ draft: { indication: '咳嗽', service: ctService }, draftVersion: 2, requests: [] }} />)
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
     expect(await screen.findByText('胸片：本院当前未开展')).toBeTruthy()
     expect(screen.getByText('已保存草稿：胸部 CT 平扫')).toBeTruthy()
     const indication = screen.getByLabelText('检查指征')
     await user.clear(indication)
     await user.type(indication, '  咳嗽两周，排查肺部病变  ')
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
     expect(calls.find(call => call.method !== 'GET')).toMatchObject({ method: 'POST',
@@ -260,17 +253,16 @@ describe('doctor imaging page', () => {
         selections: [{ source: 'manual', kind: 'imaging', serviceId: ctService.id, indication: '咳嗽两周，排查肺部病变' }] } },
     })
     await waitFor(() => expect(onSelectRequest).toHaveBeenCalledWith('request-new'))
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
-    expect(within(screen.getByRole('dialog', { name: '添加检查' })).queryByLabelText('检查指征')).toBeNull()
+    expect(screen.queryByLabelText('检查指征')).toBeNull()
   })
 
-  it('restores an existing request draft in the add dialog when requests already exist', async () => {
+  it('restores an existing request draft inline when requests already exist', async () => {
     stubFetch(() => Response.json(services))
     renderPage(<Page editDraft onChanged={() => undefined} state={{
       draft: { indication: '保存的检查指征', service: ctService }, draftVersion: 3, requests: [request({ report })],
     }} />)
 
-    const dialog = await screen.findByRole('dialog', { name: '添加检查' })
+    const dialog = await screen.findByRole('region', { name: '开具放射申请' })
     expect((await within(dialog).findByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('保存的检查指征')
     expect(within(dialog).getByText('已保存草稿：胸部 CT 平扫')).toBeTruthy()
   })
@@ -287,10 +279,8 @@ describe('doctor imaging page', () => {
     await user.clear(input)
     await user.type(input, '医生在清单中补充的检查指征')
     await user.click(within(adjust).getByRole('button', { name: '保留本次调整' }))
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
     expect((await screen.findByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('医生在清单中补充的检查指征')
     expect(screen.getByRole('button', { name: /胸片.*X 线摄影/ })).toHaveProperty('disabled', true)
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     expect(screen.getAllByRole('checkbox')).toHaveLength(1)
   })
 
@@ -312,9 +302,7 @@ describe('doctor imaging page', () => {
     await user.click(within(dialog).getByRole('button', { name: '保留本次调整' }))
     expect(screen.getByRole('checkbox', { name: '选择胸片' })).toBeTruthy()
     expect(screen.getByRole('checkbox', { name: '选择胸部 CT 平扫' })).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
     expect((await screen.findByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('医生已保存的胸片指征')
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
     expect(calls.find(call => call.method !== 'GET')?.body).toMatchObject({ input: { selections: [
@@ -343,17 +331,15 @@ describe('doctor imaging page', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('defaults to request management and restores a saved draft only when adding is opened', async () => {
+  it('keeps the saved request fields beside the selected report without opening a dialog', async () => {
     stubFetch(() => Response.json(services))
-    const user = userEvent.setup()
     renderPage(<Page onChanged={() => undefined} state={{
       draft: { indication: '保存的检查指征', service: ctService }, draftVersion: 3, requests: [request({ report })],
     }} />)
 
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.getByText(report.impression)).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
-    const dialog = await screen.findByRole('dialog', { name: '添加检查' })
+    const dialog = await screen.findByRole('region', { name: '开具放射申请' })
     expect((await within(dialog).findByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('保存的检查指征')
   })
 
@@ -365,13 +351,10 @@ describe('doctor imaging page', () => {
     })
     const user = userEvent.setup()
     renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [] }} />)
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
     await user.click(await screen.findByRole('button', { name: /胸部 CT 平扫.*平扫/ }))
     await user.type(screen.getByLabelText('检查指征'), '咳嗽两周')
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
     expect(await screen.findByText('更新或提交未完成，草稿已保留，可重试。')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
     expect((screen.getByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('咳嗽两周')
     expect(screen.getByRole('button', { name: /胸部 CT 平扫.*平扫/ }).getAttribute('aria-pressed')).toBe('true')
   })
@@ -387,7 +370,7 @@ describe('doctor imaging page', () => {
     expect(await screen.findByText(report.impression)).toBeTruthy()
     expect(screen.getByText(/第 1 版/)).toBeTruthy()
     expect(screen.queryByText('胸片报告结论。')).toBeNull()
-    expect(screen.queryByRole('textbox', { name: '搜索放射目录' })).toBeNull()
+    expect(await screen.findByRole('textbox', { name: '搜索放射目录' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /胸片.*已报告/ }))
     expect(screen.getByText('胸片报告结论。')).toBeTruthy()
     expect(screen.queryByText(report.impression)).toBeNull()
@@ -400,10 +383,13 @@ describe('doctor imaging page', () => {
     const user = userEvent.setup()
     renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 1, requests: [request({ report })] }} />)
     expect(screen.getByText(report.impression)).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '添加检查' }))
+    const search = await screen.findByRole('textbox', { name: '搜索放射目录' })
+    expect(screen.queryByRole('button', { name: /胸部 CT 平扫.*平扫/ })).toBeNull()
+    expect(screen.getByRole('button', { name: '展开目录' }).getAttribute('aria-expanded')).toBe('false')
+    await user.click(search)
     await user.click(await screen.findByRole('button', { name: /胸部 CT 平扫.*平扫/ }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '展开目录' }))
     await user.type(screen.getByLabelText('检查指征'), '人工核对后排查肺部病变')
-    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     expect(screen.getByText(report.impression)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
     expect(await screen.findByText(/已完成开具/)).toBeTruthy()
