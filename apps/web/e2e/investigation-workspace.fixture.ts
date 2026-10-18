@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import { runReferenceDatabaseCli } from '../../server/src/reference-database-cli.ts'
 
-export async function createInvestigationReferenceDatabase(directory: string) {
+export async function createInvestigationReferenceDatabase(directory: string, medicationProducts: ReferenceMedicationProduct[] = []) {
   const sourceVersion = '2026-09-01'
   const system = 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026'
   const tests = [{
@@ -18,6 +19,7 @@ export async function createInvestigationReferenceDatabase(directory: string) {
   }]
   const artifactJson = `${JSON.stringify({
     schemaVersion: '1',
+    medicationProducts,
     concepts: tests.map(item => ({
       code: item.code, display: item.display, domain: 'laboratory',
       id: `wst-886:2026:${item.code}`, sourceLocator: `synthetic:e2e:${item.code}`,
