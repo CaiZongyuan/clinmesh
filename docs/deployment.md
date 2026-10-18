@@ -268,15 +268,15 @@ export DSHVM_HOME="$CLINMESH_DSH_SANDBOX/versions"
 export DSHVM_BIN_DIR="$CLINMESH_DSH_SANDBOX/bin"
 npm install --prefix "$CLINMESH_DSH_SANDBOX/tooling" @dsh-so/dshvm@0.2.0
 DSHVM_CLI="$CLINMESH_DSH_SANDBOX/tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js"
-node "$DSHVM_CLI" install 0.2.0-rc.2
-cp deployment/dsh/host/package*.json "$DSHVM_HOME/dsh-0.2.0-rc.2/"
-npm ci --prefix "$DSHVM_HOME/dsh-0.2.0-rc.2"
-node "$DSHVM_CLI" isolate 0.2.0-rc.2
-node "$DSHVM_CLI" use 0.2.0-rc.2
-node "$DSHVM_CLI" which 0.2.0-rc.2
+node "$DSHVM_CLI" install 0.2.1-rc.2
+cp deployment/dsh/host/package*.json "$DSHVM_HOME/dsh-0.2.1-rc.2/"
+npm ci --prefix "$DSHVM_HOME/dsh-0.2.1-rc.2"
+node "$DSHVM_CLI" isolate 0.2.1-rc.2
+node "$DSHVM_CLI" use 0.2.1-rc.2
+node "$DSHVM_CLI" which 0.2.1-rc.2
 node "$DSHVM_CLI" exec --version
-export DSH_HOME="$DSHVM_HOME/isolate/0.2.0-rc.2"
-DSH_CLI="$DSHVM_HOME/dsh-0.2.0-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
+export DSH_HOME="$DSHVM_HOME/isolate/0.2.1-rc.2"
+DSH_CLI="$DSHVM_HOME/dsh-0.2.1-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
 ```
 
 `which` 应指向该隔离槽位，`exec --version` 应返回锁定版本。宿主安装 manifest 的 `allowScripts` 明确审批 subprocess helper、koffi、node-pty 和 protobufjs，避免 npm 的默认脚本拦截遗漏原生运行支持。宿主安装必须在停止状态下使用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 执行 `npm ci`；dshvm 的初始安装用于建立槽位登记，不能代替锁文件恢复，因为 DSH 顶层版本的内部依赖仍使用版本范围。不要对已有共享槽位使用 `setup` 或 `isolate --copy` 来建立干净验收环境。Windows PowerShell 使用 `$env:DSHVM_HOME`、`$env:DSHVM_BIN_DIR` 和 `$env:DSH_HOME` 设置相同目录，普通路径变量使用 `$变量名`；Node CLI 的参数相同。新终端需要重新提供这些变量。DSH Provider 在隔离宿主设置页单独配置，密钥不写入 Profile 仓库或公开记录。

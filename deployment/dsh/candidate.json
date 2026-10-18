@@ -30,23 +30,23 @@
         "source": "https://github.com/keaideppk/dsh-ag-ui.git",
         "owner": "https://github.com/CaiZongyuan/dsh-ag-ui",
         "role": "原生 browser Tool broker；不另建 Gateway 模型会话",
-        "commit": "d8fe2ad4de4b5cd4441a0a88d92513170ecd03c0",
+        "commit": "a22b9e3c6a6d7837f2aaec328462309f6bc1989a",
         "requires": [
           "@deepseek-ai/dsh"
-        ],
-        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/65"
+        ]
       },
       {
         "name": "dsh-react-surface",
         "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
         "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
         "role": "React runtime、Surface 生命周期、布局和构建工具",
-        "commit": "2e83e877b9a88e861fdb6cb7f36f0b7b5e2c27cc",
+        "commit": "0fd9e1fa6253d2016b6227a75abc87ee7e84b9fd",
         "requires": [
           "@deepseek-ai/dsh",
           "dsh-ag-ui"
         ],
-        "checkout": "vendor/dsh-react-surface"
+        "checkout": "vendor/dsh-react-surface",
+        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/15"
       },
       {
         "name": "@clinmesh/dsh-web",
@@ -66,6 +66,16 @@
       "name": "@deepseek-ai/dsh",
       "from": "0.2.0-rc.2",
       "to": "0.2.1-rc.2"
+    },
+    {
+      "name": "dsh-react-surface",
+      "from": "2e83e877b9a88e861fdb6cb7f36f0b7b5e2c27cc",
+      "to": "0fd9e1fa6253d2016b6227a75abc87ee7e84b9fd"
+    },
+    {
+      "name": "dsh-ag-ui",
+      "from": "d8fe2ad4de4b5cd4441a0a88d92513170ecd03c0",
+      "to": "a22b9e3c6a6d7837f2aaec328462309f6bc1989a"
     }
   ]
 }
