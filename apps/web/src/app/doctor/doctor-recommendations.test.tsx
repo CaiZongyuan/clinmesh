@@ -255,6 +255,125 @@ it('retains cancelled selection and removal after a refresh of the same clinical
   expect(screen.queryByText('合成第二诊断')).toBeNull()
   expect(confirmButton()).toHaveProperty('disabled', true)
 })
+it('offers a removed item for explicit review when its relevant report changes', async () => {
+  let current = prescriptionState({ caseEvidence: state().caseEvidence.map(source => ({ ...source, kind: 'report', label: '合成相关报告' })) })
+  const calls = stubRequests(() => current)
+  const mounted = mount(props({ kind: 'prescription' })); const user = userEvent.setup()
+  await screen.findByText('合成药品'); await user.click(screen.getByRole('button', { name: '移除合成药品' }))
+  current = prescriptionState({ generation: 2, inputFingerprint: 'b'.repeat(64), items: current.items.map(item => ({ ...item, id: 'new-recommendation-id' })),
+    caseEvidence: [...current.caseEvidence, { id: 'unrelated-report', kind: 'report', label: '另一项合成报告', text: '与本项建议无关的合成资料。' }] })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  expect(screen.queryByText('合成药品')).toBeNull()
+  current = prescriptionState({ ...current, generation: 3, inputFingerprint: 'c'.repeat(64),
+    caseEvidence: current.caseEvidence.map(evidence => evidence.id === 'patient-statement-fever' ? { ...evidence, text: '相关合成报告已更新，需重新评估本项用药。' } : evidence) })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  await screen.findByText('合成药品')
+  expect(screen.getByText('已移除项目的依据或方案有变化，请核对。')).toBeTruthy()
+  expect(selectionCheckbox('合成药品').getAttribute('aria-checked')).toBe('false')
+  expect(confirmButton()).toHaveProperty('disabled', true)
+  await user.click(confirmButton())
+  expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(0)
+  await user.click(selectionCheckbox('合成药品'))
+  expect(confirmButton()).toHaveProperty('disabled', false)
+  await user.click(confirmButton())
+  await waitFor(() => expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1))
+  expect(confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).input.selections).toMatchObject([
+    { source: 'agent', suggestionId: 'new-recommendation-id', catalogItemId: 'medication-1' },
+  ])
+})
+it.each(['guideline source', 'guideline clause', 'dose', 'frequency', 'course', 'quantity'])('keeps a changed %s proposal unselected and respects removing it again', async change => {
+  let current = prescriptionState()
+  stubRequests(() => current); const mounted = mount(props({ kind: 'prescription' })); const user = userEvent.setup()
+  await screen.findByText('合成药品'); await user.click(screen.getByRole('button', { name: '移除合成药品' }))
+  current = prescriptionState({ ...current, generation: 2,
+    guidelines: current.guidelines.map(source => ({ ...source,
+      sourceHash: change === 'guideline source' ? 'b'.repeat(64) : source.sourceHash,
+      text: change === 'guideline clause' ? '更新后的相关合成条款。' : source.text,
+    })),
+    items: current.items.map(item => item.kind === 'prescription' ? { ...item, id: 'changed-proposal',
+      doseText: change === 'dose' ? '20 mg' : item.doseText,
+      frequencyCode: change === 'frequency' ? 'BID' : item.frequencyCode,
+      courseDays: change === 'course' ? 10 : item.courseDays,
+      quantity: change === 'quantity' ? 10 : item.quantity,
+    } : item),
+  })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  await screen.findByText('已移除项目的依据或方案有变化，请核对。')
+  expect(selectionCheckbox('合成药品').getAttribute('aria-checked')).toBe('false')
+  expect(confirmButton()).toHaveProperty('disabled', true)
+  await user.click(screen.getByRole('button', { name: '移除合成药品' }))
+  current = prescriptionState({ ...current, generation: 3, inputFingerprint: 'c'.repeat(64), items: current.items.map(item => ({ ...item, id: 'same-plan-new-id' })) })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  expect(screen.queryByText('合成药品')).toBeNull()
+})
+it('keeps removal when related sources only change identifiers or ordering', async () => {
+  const original = prescriptionState()
+  let current = prescriptionState({
+    caseEvidence: [...original.caseEvidence, { ...original.caseEvidence[0]!, id: 'second-source', text: '另一条相同相关依据。' }],
+    guidelines: [...original.guidelines, { ...original.guidelines[0]!, id: 'second-guide', text: '另一条相关指南原文。' }],
+    items: original.items.map(item => ({ ...item, caseEvidenceIds: ['patient-statement-fever', 'second-source'], guidelineEvidenceIds: ['nhc-influenza-2025-diagnosis', 'second-guide'] })),
+  })
+  stubRequests(() => current); const mounted = mount(props({ kind: 'prescription' })); const user = userEvent.setup()
+  await screen.findByText('合成药品'); await user.click(screen.getByRole('button', { name: '移除合成药品' }))
+  current = prescriptionState({ ...current, generation: 2, inputFingerprint: 'b'.repeat(64),
+    caseEvidence: current.caseEvidence.toReversed().map(source => ({ ...source, id: `new-${source.id}` })),
+    guidelines: current.guidelines.toReversed().map(source => ({ ...source, id: `new-${source.id}` })),
+    items: current.items.map(item => ({ ...item, id: 'new-proposal-id', rationale: '说明文字调整，临床方案与相关依据相同。',
+      caseEvidenceIds: item.caseEvidenceIds.toReversed().map(id => `new-${id}`), guidelineEvidenceIds: item.guidelineEvidenceIds.toReversed().map(id => `new-${id}`),
+    })),
+  })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  expect(screen.queryByText('合成药品')).toBeNull()
+  expect(confirmButton()).toHaveProperty('disabled', true)
+})
+it('preserves manual items, edits and cancelled choices when a removed automatic item needs review', async () => {
+  const original = prescriptionState(), first = original.items[0]!
+  if (first.kind !== 'prescription') throw new Error('Expected prescription fixture')
+  let current = prescriptionState({ items: [first, { ...first, id: 'cancelled', catalogItemId: 'cancelled-medication', label: '取消选择药品' }] })
+  stubRequests(() => current)
+  const manualValue = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-removed', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+  const mounted = mount(props({ kind: 'prescription', manualItems: [{ label: '移除人工药品', value: manualValue }, { label: '保留人工药品', value: { ...manualValue, catalogItemId: 'manual-kept' } }] }))
+  const user = userEvent.setup(); await screen.findByText('合成药品')
+  await user.click(selectionCheckbox('取消选择药品'))
+  await user.click(screen.getByRole('button', { name: '移除合成药品' }))
+  await user.click(screen.getByRole('button', { name: '移除移除人工药品' }))
+  await user.click(screen.getAllByRole('button', { name: '调整' })[0]!)
+  fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '15 mg' } })
+  await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+  current = prescriptionState({ ...current, generation: 2, inputFingerprint: 'b'.repeat(64),
+    caseEvidence: current.caseEvidence.map(source => ({ ...source, text: '新增相关合成报告。' })) })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  await screen.findByText('合成药品')
+  expect(selectionCheckbox('合成药品').getAttribute('aria-checked')).toBe('false')
+  expect(selectionCheckbox('取消选择药品').getAttribute('aria-checked')).toBe('false')
+  expect(screen.queryByText('移除人工药品')).toBeNull()
+  expect(screen.getByText('保留人工药品')).toBeTruthy()
+  expect(screen.getByText(/15 mg/)).toBeTruthy()
+  await user.click(screen.getAllByRole('button', { name: '核对' }).find(button => button.parentElement?.textContent?.includes('合成药品'))!)
+  fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '20 mg' } })
+  await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+  expect(selectionCheckbox('合成药品').getAttribute('aria-checked')).toBe('true')
+  expect(screen.getByText(/20 mg/)).toBeTruthy()
+  expect(screen.queryByText('已移除项目的依据或方案有变化，请核对。')).toBeNull()
+  await user.click(screen.getByRole('button', { name: '移除合成药品' }))
+  expect(screen.queryByText('合成药品')).toBeNull()
+})
+it.each([
+  { provider: false, otherCase: false }, { provider: true, otherCase: false },
+  { provider: false, otherCase: true }, { provider: true, otherCase: true },
+])('isolates removals between scopes with provider=$provider and otherCase=$otherCase', async ({ provider, otherCase }) => {
+  let current = prescriptionState()
+  stubRequests(() => current)
+  const initial = props({ kind: 'prescription' }), mounted = mount(initial, provider), user = userEvent.setup()
+  await screen.findByText('合成药品'); await user.click(screen.getByRole('button', { name: '移除合成药品' }))
+  current = prescriptionState({ caseId: otherCase ? 'case-other' : initial.caseId })
+  mounted.rerenderPanel({ ...initial, caseId: current.caseId, scope: `workspace-demo:epoch-1:${otherCase ? 'doctor:case-other' : 'doctor-b:case-fever'}` })
+  await screen.findByText('合成药品')
+  expect(selectionCheckbox('合成药品').getAttribute('aria-checked')).toBe('true')
+  current = prescriptionState()
+  mounted.rerenderPanel(initial)
+  expect(screen.queryByText('合成药品')).toBeNull()
+})
 it('keeps physician edits and retries the same confirmation intent with the same idempotency key after failure', async () => {
   let fail = true; const current = prescriptionState()
   const calls = stubRequests(() => current, () => fail ? Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: '合成资料变化。' } }, { status: 409 }) : receipt('prescription'))
