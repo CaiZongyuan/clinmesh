@@ -3630,6 +3630,7 @@ function CaseDetail({
                 recommendationRevision={recommendationRevision}
                 caseId={detail.caseId}
                 catalog={catalog.data.diagnoses}
+                encounter={detail.encounter}
                 elementId={encounterCompletionTargetElementIds.diagnosis}
                 key={`${detail.caseId}:${agentDraftHydrationRevisions.diagnosis ?? 0}:${preparation?.confirmedRevision('diagnosis') ?? 0}`}
                 locale={locale}
