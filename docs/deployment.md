@@ -64,9 +64,11 @@ pnpm guidelines:sync
 pnpm guidelines:sync -- --check
 ```
 
-同步从 `apps/server/reference-data/guideline-sources.json` 登记的免费官方地址获取文件，逐项校验 SHA-256 并提取正文；默认数据库为 `.data/clinmesh-guidelines.sqlite`，原文件缓存为 `.data/guidelines/cache`。`--check` 只读现有数据库，不下载；stdout JSON 分别报告来源总数、可检索来源数、段落数、可检索段落数、失败数及逐项状态，进度和失败原因写到 stderr。失败来源使退出码非零，损坏或失败更新保留旧版；来源撤回、被替代或用途改为未核实会优先禁用旧版，不能因下载失败继续使用。
+同步从 `apps/server/reference-data/guideline-sources.json` 登记的免费官方地址获取文件，逐项校验 SHA-256 并提取正文；默认数据库为 `.data/clinmesh-guidelines.sqlite`，原文件缓存为 `.data/guidelines/cache`。`--check` 只读现有数据库，不下载；stdout JSON 分别报告来源总数、可检索来源数、段落数、可检索段落数、失败数及逐项状态，进度和失败原因写到 stderr。失败来源使退出码非零，损坏或失败更新保留旧版；来源撤回、被替代或用途收紧为非商业、未核实会优先发布限制并停用旧版，不能因下载失败继续使用。
 
 首批注册表包含 21 份国内官方 PDF 和 5 份 WHO 正文文本，具体覆盖与许可事实由[来源研究](research/2026-10-13-clinical-recommendation-guidelines.md#免费路线的首批原文与正文核验)拥有。`sourceCount` 不等于可供模型使用的数量：国内全文用途暂未核实，标为 withheld；WHO 单篇采用非商业许可，仅适用于已核实的当前科研用途，不能据此承诺商业部署权益。新增或修订来源时由维护者核对版本、状态、许可、下载地址与哈希后更新注册表并重新同步，不自动抓取未知来源或推断最新版本。
+
+默认不启用 `non-commercial` 全文。只有核实本部署及所用模型服务的实际用途符合对应非商业许可后，才在根 `.env` 显式设置 `CLINMESH_GUIDELINE_NON_COMMERCIAL_USE=true`；未声明或设为 `false` 时，这些全文仍可保留在本地，但不进入建议、模型输入或可检索数量。Server 与同步 CLI 读取同一声明，变量只接受 `true`／`false`。首批默认可检索全文为 0，声明适用非商业用途后为 5 份／116 段，21 份国内全文仍为 withheld；原有已核短引文沿用其独立依据。更改用途声明后重启 Server，旧建议会失效；`pnpm guidelines:sync -- --check` 可只读核对当前用途下的可用数量。
 
 Server 默认从 `CLINMESH_GUIDELINE_DATABASE_PATH` 读取该库。库存在时只读打开；缺失时继续使用原有已核短引文，库存在但格式错误时启动失败。首次建立库或改变路径后重启 Server；已打开库的内容更新可被运行中的只读连接读取，并使旧建议失效。可显式使用 `--database <path>`、`--manifest <path>`、`--cache-dir <path>`，其中 `--database` 应与 Server 配置保持一致。备份时保留注册表版本与数据库，并按需保留可重新校验的下载缓存；完整原文和派生数据不提交 Git。正文抽取不等于表格、脚注、临床适用性或所有版本现行性已完成医学审校。
 

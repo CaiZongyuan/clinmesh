@@ -46,6 +46,22 @@ it('reports readable and searchable sources separately and makes only permitted 
   expect(corpus.search('糖尿病').guidelines.map(item => item.text)).toEqual([readable])
 })
 
+it('withholds non-commercial sources from sync availability unless deployment use is explicitly declared', async () => {
+  const text = 'Synthetic diabetes recommendation for non-commercial research only.\n'
+  const entry = source('synthetic-non-commercial', text)
+  entry.license.usage = 'non-commercial'
+  const data = await fixture([entry])
+  const imported = await runGuidelineSync(data.args, { fetch: async () => new Response(text) })
+  expect(imported).toMatchObject({ sourceCount: 1, passageCount: 1, searchableSourceCount: 0, searchablePassageCount: 0 })
+  expect(imported.items).toEqual([expect.objectContaining({ sourceId: entry.id, status: 'withheld' })])
+  const args = ['--check', '--database', data.database]
+  const fetch: typeof globalThis.fetch = async () => { throw new Error('Check-only must not download') }
+  expect(await runGuidelineSync(args, { fetch, allowNonCommercial: true }))
+    .toMatchObject({ searchableSourceCount: 1, searchablePassageCount: 1, items: [{ sourceId: entry.id, status: 'available', passageCount: 1 }] })
+  expect(await runGuidelineSync(args, { fetch }))
+    .toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0, items: [{ sourceId: entry.id, status: 'withheld', passageCount: 1 }] })
+})
+
 it('reuses verified bytes on a repeated sync and checks the corpus without downloading or replacing its revision', async () => {
   const text = 'Synthetic diabetes recommendation. Do not omit the individual conditions.\n'
   const data = await fixture([source('synthetic-cache', text)])
@@ -90,18 +106,25 @@ it('withdraws an installed source without requiring its bytes to remain availabl
   expect(reader.search('糖尿病').guidelines).toEqual([])
 })
 
-it('applies an unverified-use restriction before attempting an unavailable update', async () => {
-  const text = 'Synthetic diabetes recommendation. The use status later becomes unverified.\n'
+it.each([
+  { usage: 'unverified', allowNonCommercial: false },
+  { usage: 'non-commercial', allowNonCommercial: false },
+  { usage: 'non-commercial', allowNonCommercial: true },
+] as const)('applies a $usage restriction before attempting an unavailable update ($allowNonCommercial)', async ({ usage, allowNonCommercial }) => {
+  const text = 'Synthetic diabetes recommendation. The use status later becomes restricted.\n'
   const original = source('synthetic-use-restriction', text)
   const data = await fixture([original])
   await runGuidelineSync(data.args, { fetch: async () => new Response(text) })
   await writeFile(data.manifest, JSON.stringify({ schemaVersion: 1, sources: [{ ...original, sha256: 'c'.repeat(64),
-    license: { ...original.license, usage: 'unverified' } }] }))
-  const result = await runGuidelineSync(data.args, { fetch: async () => new Response(null, { status: 503 }) })
+    license: { ...original.license, usage } }] }))
+  const result = await runGuidelineSync(data.args, { allowNonCommercial, fetch: async () => new Response(null, { status: 503 }) })
   expect(result).toMatchObject({ sourceCount: 1, searchableSourceCount: 0, passageCount: 0, failedSourceCount: 1 })
-  const reader = new GuidelineCorpus({ databasePath: data.database, readOnly: true })
+  const reader = new GuidelineCorpus({ databasePath: data.database, readOnly: true, allowNonCommercial })
   disposals.push(() => reader.close())
   expect(reader.search('糖尿病').guidelines).toEqual([])
+  expect(reader.sources()[0]!.source.license.usage).toBe(usage)
+  expect(await runGuidelineSync(['--check', '--database', data.database], { allowNonCommercial }))
+    .toMatchObject({ searchableSourceCount: 0, items: [{ sourceId: original.id, status: 'withheld', passageCount: 0 }] })
 })
 
 it('rejects a duplicate source registry before touching the destination database', async () => {

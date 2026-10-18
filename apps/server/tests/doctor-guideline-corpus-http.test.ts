@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
-import { doctorRecommendationStateSchema } from '@clinmesh/contracts/doctor-recommendations'
+import { doctorRecommendationStateSchema, generateDoctorRecommendationsResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
@@ -90,17 +90,17 @@ async function setup(chiefComplaint = '糖尿病复查。') {
   })
   expect(saved.status).toBe(200)
   const path = `/api/his/v1/doctor/cases/${started.outpatientCaseId}/recommendations/diagnosis`
-  const read = async () => doctorRecommendationStateSchema.parse(await (await runtime.app.request(path, { headers: { cookie } })).json())
-  const generate = async () => {
-    const state = await read()
-    const response = await runtime.app.request(`${path}/actions/generate`, { method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+  const read = async (reader = runtime) => doctorRecommendationStateSchema.parse(await (await reader.app.request(path, { headers: { cookie } })).json())
+  const generate = async (target = runtime) => {
+    const state = await read(target)
+    const response = await target.app.request(`${path}/actions/generate`, { method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
       body: JSON.stringify({ expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
         input: { expectedInputFingerprint: state.inputFingerprint, refresh: true } }) })
     expect(response.status).toBe(200)
-    await runtime.dispatchPending()
-    return read()
+    await target.dispatchPending()
+    return read(target)
   }
-  return { runtime, options, writer, seen, read, readCase, generate }
+  return { runtime, options, writer, seen, read, readCase, generate, path, headers }
 }
 
 it('uses imported original guideline passages in generation and independent verification without changing clinical drafts', async () => {
@@ -112,6 +112,59 @@ it('uses imported original guideline passages in generation and independent veri
   expect(state).toMatchObject({ status: 'ready', stale: false, items: [expect.objectContaining({ kind: 'diagnosis', label: '2型糖尿病伴高血糖' })] })
   expect(fixture.seen.verification).toEqual(fixture.seen.generation)
   expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
+it('does not send non-commercial passages to the model without an explicit deployment declaration', async () => {
+  const fixture = await setup('糖尿病复查，咳嗽。')
+  fixture.writer.importDocument({ ...document, source: { ...document.source,
+    license: { ...document.source.license, usage: 'non-commercial' } } })
+  const before = (await fixture.readCase()).clinicalDocument
+  const state = await fixture.generate()
+  expect(state.guidelines.some(item => item.title === document.source.title)).toBe(false)
+  expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ title: document.source.title }))
+  expect(state.items).toEqual([])
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
+it('enables non-commercial passages only in the declared runtime and invalidates its cached recommendations in a restricted runtime', async () => {
+  const fixture = await setup('糖尿病复查，咳嗽。')
+  fixture.writer.importDocument({ ...document, source: { ...document.source,
+    license: { ...document.source.license, usage: 'non-commercial' } } })
+  const allowed = await createClinMeshRuntime({ ...fixture.options, guidelineNonCommercialUse: true })
+  disposals.push(() => allowed.close())
+  const original = await fixture.generate(allowed)
+  expect(original).toMatchObject({ status: 'ready', stale: false })
+  expect(original.guidelines).toContainEqual(expect.objectContaining({ title: document.source.title, text: paragraph }))
+  expect(original.guidelines).toContainEqual(expect.objectContaining({ id: 'nhc-influenza-2025-diagnosis' }))
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  const key = randomUUID()
+  const replayRequest = (target: typeof fixture.runtime) => target.app.request(`${fixture.path}/actions/generate`, {
+    method: 'POST', headers: { ...fixture.headers, 'idempotency-key': key },
+    body: JSON.stringify({ expectedVersions: { [`Encounter/${original.encounterId}`]: original.encounterVersion },
+      input: { expectedInputFingerprint: original.inputFingerprint, refresh: false } }),
+  })
+  const cachedResponse = await replayRequest(allowed)
+  expect(cachedResponse.status).toBe(200)
+  const cached = generateDoctorRecommendationsResponseSchema.parse(await cachedResponse.json())
+  expect(cached.data.guidelines).toContainEqual(expect.objectContaining({ text: paragraph }))
+  const restricted = await fixture.read()
+  expect(restricted.stale).toBe(true)
+  expect(restricted.inputFingerprint).not.toBe(original.inputFingerprint)
+  expect(restricted.guidelines).toEqual([])
+  expect(restricted.items).toEqual([])
+  expect(restricted.considerations).toEqual([])
+  expect(JSON.stringify(restricted)).not.toContain(paragraph)
+  expect(restricted.notices).toContainEqual(expect.objectContaining({ category: 'guideline', message: expect.stringContaining('旧结果已隐藏') }))
+  const replayedResponse = await replayRequest(fixture.runtime)
+  expect(replayedResponse.status).toBe(200)
+  const replayed = generateDoctorRecommendationsResponseSchema.parse(await replayedResponse.json())
+  expect(replayed.auditId).toBe(cached.auditId)
+  expect(replayed.data).toMatchObject({ generation: original.generation, stale: true, guidelines: [], items: [], considerations: [] })
+  expect(JSON.stringify(replayed)).not.toContain(paragraph)
+  const refreshed = await fixture.generate()
+  expect(refreshed.items).toEqual([])
+  expect(refreshed.guidelines.some(item => item.title === document.source.title)).toBe(false)
+  expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ title: document.source.title }))
 })
 
 it('makes an existing recommendation stale when the imported source changes through a separate writer', async () => {

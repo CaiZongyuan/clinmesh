@@ -25,6 +25,14 @@ describe('Node.js server configuration', () => {
     expect(readServerConfig(environment)).toHaveProperty('guidelineDatabasePath',
       expect.stringMatching(/[\\/]\.data[\\/]clinmesh-guidelines\.sqlite$/))
     expect(() => readServerConfig({ ...environment, CLINMESH_GUIDELINE_DATABASE_PATH: ' ' })).toThrow()
+    expect(readServerConfig(environment, '/clinmesh-config-test-isolated')).toHaveProperty('guidelineNonCommercialUse', false)
+    expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: 'true' }))
+      .toHaveProperty('guidelineNonCommercialUse', true)
+    expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: 'false' }))
+      .toHaveProperty('guidelineNonCommercialUse', false)
+    for (const value of ['', 'yes', '1']) {
+      expect(() => readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: value })).toThrow()
+    }
   })
 
   it('uses DSH without duplicate Provider configuration and requires a trusted bridge', () => {
@@ -59,6 +67,7 @@ describe('Node.js server configuration', () => {
       cursorSecret: 'cursor-secret-with-at-least-32-characters',
       databasePath: '/var/lib/clinmesh/clinmesh.sqlite',
       guidelineDatabasePath: defaultGuidelineDatabasePath,
+      guidelineNonCommercialUse: false,
       demoPassword: 'Synthetic-password-2026!',
       hostname: '127.0.0.1',
       // 影像素材默认位置：清单在仓库根目录，像素安装在 .data 下。

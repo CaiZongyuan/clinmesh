@@ -113,7 +113,28 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(corpus.search('软骨发育不全').guidelines).toEqual([])
     input.source.status = 'active'
     corpus.importDocument(input)
-    expect(corpus.search('软骨发育不全').guidelines).toHaveLength(1)
+    expect(corpus.search('软骨发育不全').guidelines).toEqual([])
+  })
+
+  it('默认不检索非商业全文，只有显式声明用途的连接可读取且两种用途的指纹不同', () => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    const input = document()
+    input.source.license.usage = 'non-commercial'
+    writer.importDocument(input)
+    const denied = writer.search('软骨发育不全')
+    expect(denied.guidelines).toEqual([])
+    expect(denied.diagnosisQueries).toEqual([])
+    const allowed = new GuidelineCorpus({ databasePath: path, readOnly: true, allowNonCommercial: true })
+    corpora.push(allowed)
+    const permitted = allowed.search('软骨发育不全')
+    expect(permitted.guidelines.map(item => item.text)).toEqual([input.passages[0]!.text])
+    expect(permitted.diagnosisQueries).toEqual(['软骨发育不全'])
+    expect(permitted.revision).not.toBe(denied.revision)
+    expect(open(path, true).search('软骨发育不全')).toEqual(denied)
+    input.source.license.usage = 'unverified'
+    writer.importDocument(input)
+    expect(allowed.search('软骨发育不全').guidelines).toEqual([])
   })
 
   it('结果限制为八段并遵守序列化预算，保留完整原段落及限定语', () => {

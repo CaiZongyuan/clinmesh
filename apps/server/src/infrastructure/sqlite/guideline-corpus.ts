@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 import { guidelineEvidenceSchema, type GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
+import { isGuidelineSourceUsable } from '../../application/guideline-corpus.ts'
 import type {
   GuidelineDocument,
   GuidelineSearchResult,
@@ -41,8 +42,8 @@ const documentSchema = z.object({
   source: guidelineSourceDefinitionSchema,
   passages: z.array(passageSchema),
 }).strict().refine(document => document.passages.length > 0
-  || document.source.status !== 'active' || document.source.license.usage === 'unverified',
-  'Searchable guidelines require readable passages')
+  || document.source.status !== 'active' || document.source.license.usage !== 'open',
+  'Open guidelines require readable passages')
   .refine(document => new Set(document.passages.map(passage => passage.locator)).size === document.passages.length,
   'Guideline passage locators must be unique')
 const sourceRowSchema = z.object({ metadata: z.string(), digest: z.string(), passageCount: z.number().int().nonnegative() })
@@ -55,8 +56,10 @@ function hash(value: string): string {
 
 export class GuidelineCorpus {
   readonly #database: Database.Database
+  readonly #allowNonCommercial: boolean
 
-  constructor(options: { databasePath: string; readOnly?: boolean }) {
+  constructor(options: { databasePath: string; readOnly?: boolean; allowNonCommercial?: boolean }) {
+    this.#allowNonCommercial = options.allowNonCommercial === true
     if (!options.readOnly) mkdirSync(dirname(options.databasePath), { recursive: true })
     this.#database = new Database(options.databasePath, options.readOnly
       ? { readonly: true, fileMustExist: true }
@@ -127,7 +130,7 @@ export class GuidelineCorpus {
   search(text: string): GuidelineSearchResult {
     return this.#database.transaction(() => {
       const rows = this.#sourceRows()
-      const revision = hash(JSON.stringify(rows.map(row => row.digest)))
+      const revision = hash(JSON.stringify([this.#allowNonCommercial, rows.map(row => row.digest)]))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
       const inactiveSources: GuidelineSearchResult['inactiveSources'] = []
@@ -144,7 +147,7 @@ export class GuidelineCorpus {
           inactiveSources.push({ id: source.id, url: source.url, sourceHash: source.sha256 })
           continue
         }
-        if (source.license.usage === 'unverified') continue
+        if (!isGuidelineSourceUsable(source, this.#allowNonCommercial)) continue
         const topics = source.topics.filter(topic => topic.terms.some(term => queryText.includes(term.toLowerCase())))
         const sourceTerms = [...new Set([...topics.flatMap(topic => topic.terms), ...terms])].slice(0, 128)
         const indexedTerms = sourceTerms.filter(term => [...term].length >= 3)

@@ -43,3 +43,8 @@ export interface GuidelineSourceStatus {
   source: GuidelineSourceDefinition
   passageCount: number
 }
+
+export function isGuidelineSourceUsable(source: GuidelineSourceDefinition, allowNonCommercial = false): boolean {
+  return source.status === 'active' && (source.license.usage === 'open'
+    || (source.license.usage === 'non-commercial' && allowNonCommercial))
+}

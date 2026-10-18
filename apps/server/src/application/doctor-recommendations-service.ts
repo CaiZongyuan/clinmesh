@@ -402,13 +402,21 @@ export class DoctorRecommendationsService {
     `).get(...this.#key(context, caseId, kind)))
   }
 
+  #withAvailableGuidelines(state: DoctorRecommendationState, guidelines: GuidelineEvidence[]): DoctorRecommendationState {
+    if (state.guidelines.every(previous => guidelines.some(current =>
+      current.id === previous.id && current.sourceHash === previous.sourceHash))) return state
+    const message = '原建议的部分指南依据已不可用，旧结果已隐藏，请更新建议。'
+    return { ...state, stale: true, items: [], considerations: [], guidelines: [], missingInformation: [message],
+      notices: [{ category: 'guideline', message }] }
+  }
+
   async read(context: ActorContext, caseId: string, kind: DoctorRecommendationKind) {
     const { snapshot, inputFingerprint } = await this.#input(context, caseId, kind)
     const row = this.#row(context, caseId, kind)
     if (row !== undefined) {
       const state = doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
-      return { ...state, inputFingerprint, encounterVersion: snapshot.encounter.versionId,
-        stale: row.input_fingerprint !== inputFingerprint }
+      return this.#withAvailableGuidelines({ ...state, inputFingerprint, encounterVersion: snapshot.encounter.versionId,
+        stale: row.input_fingerprint !== inputFingerprint }, snapshot.guidelines)
     }
     return doctorRecommendationStateSchema.parse({
       caseId, kind, encounterId: snapshot.encounter.id, encounterVersion: snapshot.encounter.versionId,
@@ -424,7 +432,7 @@ export class DoctorRecommendationsService {
     if (Object.keys(request.expectedVersions).length !== 1 || request.expectedVersions[encounterReference] === undefined) {
       throw new WorkflowError('WORKFLOW_CONFLICT', 'The current Encounter expected version is required')
     }
-    return this.options.commands.execute({ context, operation: 'doctor.recommendations.generate',
+    const response = this.options.commands.execute({ context, operation: 'doctor.recommendations.generate',
       contextRequirement: 'current', expectedVersions: request.expectedVersions, idempotencyKey,
       input: { caseId, kind, ...request.input }, dataSchema: doctorRecommendationStateSchema,
       authorize: () => { this.#authorize(context, caseId) },
@@ -460,6 +468,7 @@ export class DoctorRecommendationsService {
       })
       return { data: state, effects: [{ kind: 'updated', reference: `DoctorRecommendations/${caseId}:${kind}`, versionId: String(generation) }] }
     })
+    return { ...response, data: this.#withAvailableGuidelines(response.data, snapshot.guidelines) }
   }
 
   async process(event: OutboxHandlerInput, signal: AbortSignal, shutdownSignal: AbortSignal): Promise<OutboxHandlerResult> {
