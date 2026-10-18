@@ -180,7 +180,12 @@ class Adapter extends LlmAdapter {
       if(state.fail) { yield {type:'finish',reason:{kind:'error',failure:{code:'TIMEOUT',message:'Synthetic controlled timeout'}}}; return; }
       if(state.stage==='late') {
         record({kind:'held-extraction'});
-        while(!control().released) { options.signal?.throwIfAborted(); await new Promise(done=>setTimeout(done,20)); }
+        try {
+          while(!control().released) { options.signal?.throwIfAborted(); await new Promise(done=>setTimeout(done,20)); }
+        } catch(error) {
+          record({kind:'cancelled-extraction',stage:state.stage});
+          throw error;
+        }
       }
       const turn=payload.turns.at(-1);
       if(state.stage==='doctor-supplement') {
@@ -192,7 +197,7 @@ class Adapter extends LlmAdapter {
       } else {
         const quotes=state.stage==='initial'?['头晕一周了。','站起来时更明显。']:[turn.messageText];
         result={additions:quotes.map(quote=>({field:'historyOfPresentIllness',facts:[{text:'患者自述：'+quote,sources:[{sourceTurnId:turn.id,quote}]}],
-          relation:state.stage==='correction'?'correction':'addition',...(state.stage==='correction'?{targetAdditionId:payload.history.find(item=>item.field==='historyOfPresentIllness'&&item.text.includes('头晕五天')).id}:{})}))};
+          relation:state.stage==='correction'?'correction':'addition',...(state.stage==='correction'?{targetAdditionId:payload.manualHistory.find(item=>item.field==='historyOfPresentIllness'&&item.text.includes('头晕五天')).id}:{})}))};
       }
     } else if(options.system.includes('患者档案')) result=${JSON.stringify(persona)};
     else result={reply:${qualityOnly ? JSON.stringify(qualityPatientReply) : 'replies[state.stage]'}};
@@ -467,7 +472,7 @@ export function apply(ctx) {
     waitForExtraction: async () => { await expect.poll(async () => (await calls()).some(call => call.kind === 'held-extraction')).toBe(true) },
     releaseExtraction: () => updateControl({ released: true }),
     settleExtraction: async () => {
-      await expect.poll(async () => (await calls()).some(call => call.kind === 'settled-extraction' && call.stage === 'late')).toBe(true)
+      await expect.poll(async () => (await calls()).some(call => ['settled-extraction', 'cancelled-extraction'].includes(call.kind) && call.stage === 'late')).toBe(true)
       await expect.poll(() => hospital!.database.driver.prepare("SELECT count(*) AS count FROM outbox_event WHERE status = 'claimed'").get()).toEqual({ count: 0 })
     },
     agentDraft: async () => {
