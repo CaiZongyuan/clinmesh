@@ -583,7 +583,7 @@ export function apply(ctx) {
         const before = await readLive()
         const states = []
         for (const [kind, tab, region] of [
-          ['diagnosis', '诊断', '诊断建议'], ['prescription', '处方', '处方建议'], ['laboratory', '检验检查', '检验建议'],
+          ['diagnosis', '诊断', '待确认诊断'], ['prescription', '处方', '待开具处方'], ['laboratory', '检验检查', '待开具检验'],
         ] as const) {
           await page.getByRole('tab', { name: tab, exact: true }).click()
           await expect(page.getByRole('region', { name: region, exact: true })).toBeVisible()
