@@ -175,7 +175,7 @@ for (const version of ['18', '19']) {
     const course = edit.getByRole('spinbutton', { name: '疗程（天）', exact: true })
     const quantity = edit.getByRole('spinbutton', { name: '数量', exact: true })
     await expect(dose).toHaveValue('5 mg')
-    await expect(edit.getByRole('textbox', { name: '频次', exact: true })).toHaveValue('每日一次')
+    await expect(edit.getByRole('combobox', { name: '频次', exact: true })).toContainText('每日一次')
     await expect(course).toHaveValue('')
     await expect(quantity).toHaveValue('')
     expect((await readCase(page)).medicationConclusion?.draft).toBeUndefined()

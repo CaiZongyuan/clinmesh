@@ -95,7 +95,7 @@ export async function runRecommendationJourney({ page, read }: { page: Page; rea
   await prescription.getByRole('button', { name: '调整', exact: true }).click()
   const edit = page.getByRole('dialog', { name: '调整项目', exact: true })
   await expect(edit.getByRole('textbox', { name: '每次剂量', exact: true })).toHaveValue('5 mg')
-  await expect(edit.getByRole('textbox', { name: '频次', exact: true })).toHaveValue('QD')
+  await expect(edit.getByRole('combobox', { name: '频次', exact: true })).toContainText('每日一次')
   await expect(edit.getByRole('spinbutton', { name: '疗程（天）', exact: true })).toHaveValue('')
   await expect(edit.getByRole('spinbutton', { name: '数量', exact: true })).toHaveValue('')
   await edit.getByRole('textbox', { name: '每次剂量', exact: true }).fill('5 mg')

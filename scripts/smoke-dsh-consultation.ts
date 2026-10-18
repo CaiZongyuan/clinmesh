@@ -758,6 +758,7 @@ export function apply(ctx) {
 } catch (error) {
   // Playwright errors can contain the host token or provider input. Keep the public failure bounded.
   console.error('原生验收失败', phase, error instanceof Error ? error.name : 'UnknownError')
+  report.failureLocation = error instanceof Error ? [...(error.stack ?? '').matchAll(/(?:doctor-recommendations-journey|doctor-document-quality-journey|smoke-dsh-consultation)\.ts:(\d+):(\d+)/g)].map(match => match[0]) : []
   if (error instanceof Error && ['TimeoutError', 'Error'].includes(error.name) && phase !== 'live-model') {
     console.error(error.message.replaceAll(secret, 'REDACTED').replaceAll(password, 'REDACTED')
       .replace(/token=[A-Za-z0-9_-]+/g, 'token=REDACTED').slice(0, 1000))

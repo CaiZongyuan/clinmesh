@@ -143,9 +143,9 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [],
     medications: recommendationsMode ? [{
       id: medication.id, nameZh: medication.genericName, nameEn: 'Synthetic browser medication', version: 1,
-      allowedCombinationIds: [], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['每日一次', '每日两次'],
+      allowedCombinationIds: [], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['QD', 'BID'],
       allowedCourseDays: [3, 7], allowedQuantities: [1, 2],
-      defaultDoseText: '10 mg', defaultFrequencyCode: '每日两次', defaultCourseDays: 3, defaultQuantity: 1,
+      defaultDoseText: '10 mg', defaultFrequencyCode: 'BID', defaultCourseDays: 3, defaultQuantity: 1,
     }] : [], prescriptionConclusionSupported: true })
   if (path === '/api/his/v1/doctor/queue') return Response.json({
     items: [{ caseId: detail.caseId, encounterId: detail.encounter.id, encounterVersion: '1', patient: detail.patient,
@@ -209,7 +209,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
           ...(index === 0 ? {} : { guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-evidence-2'] }),
         })) : kind === 'prescription' ? [{
           ...common, id: 'synthetic-recommendation-prescription', kind, label: medication.genericName,
-          catalogItemId: medication.id, doseText: '5 mg', frequencyCode: '每日一次', courseDays: null, quantity: null,
+          catalogItemId: medication.id, doseText: '5 mg', frequencyCode: 'QD', courseDays: null, quantity: null,
         }] : [],
         guidelines: recommendationGuidelines,
         caseEvidence: [
