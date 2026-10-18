@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ClinMesh · 业务内嵌 Agent 交互原型 v3</title>
+  <!-- Throwaway prototype: show executable rows first, keep explanations behind one button. No real mutations or persistence. -->
+  <style>
+    :root{--blue:#0879d1;--blue-soft:#edf6ff;--ink:#20262d;--muted:#727b86;--line:#e3e8ee;--green:#168157;--amber:#9c680d}
+    *{box-sizing:border-box}[hidden]{display:none!important}body{margin:0;color:var(--ink);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","Noto Sans CJK SC",sans-serif;background:#f5f7fa}button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{cursor:not-allowed;opacity:.42}button,input,select,textarea{outline-offset:3px}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid #1686df}button{border:0;background:transparent;color:inherit}svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.7;vertical-align:middle;flex:none}h1,h2,h3,p{margin:0}button svg{pointer-events:none}.muted{color:var(--muted)}.small{font-size:12px}.mono{font-variant-numeric:tabular-nums}.pill{display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:4px;font-size:11px;white-space:nowrap;background:#edf2f7;color:#637083}.pill.green{background:#eaf7f0;color:var(--green)}.pill.amber{background:#fff5df;color:var(--amber)}.pill.blue{background:var(--blue-soft);color:var(--blue)}
+    .preview{height:40px;background:#253443;color:#dbe6ee;display:flex;align-items:center;gap:12px;padding:0 22px;font-size:12px}.preview strong{color:#fff;font-weight:600}.preview .spacer{flex:1}.preview select{background:#354658;color:#fff;border:1px solid #5a6a79;border-radius:5px;padding:3px 8px;font-size:12px}.preview button{color:#dde8f1;padding:4px 8px;border-radius:4px}.preview button:hover{background:#394b5d}.app{display:grid;grid-template-columns:188px minmax(0,1fr) 302px;grid-template-rows:62px minmax(0,1fr);height:calc(100dvh - 40px);min-height:700px}.topbar{grid-column:1/-1;background:white;display:flex;align-items:center;border-bottom:1px solid var(--line);padding:0 24px;gap:24px}.brand{display:flex;align-items:center;gap:9px;font-size:19px;font-weight:650;letter-spacing:-.5px}.brandmark{display:grid;place-items:center;background:var(--blue);color:#fff;width:27px;height:27px;border-radius:7px;font-size:21px}.topcrumb{color:#929ba5;font-size:12px;border-left:1px solid var(--line);padding-left:24px}.account{margin-left:auto;display:flex;gap:11px;align-items:center;font-size:12px;color:#697583}.avatar{display:grid;place-items:center;width:29px;height:29px;border-radius:50%;background:#e9f2fb;color:#2273ae;font-size:12px}
+    .queue{background:#f9fafc;border-right:1px solid var(--line);padding:20px 12px}.queue-head{padding:0 10px 16px;display:flex;justify-content:space-between;align-items:center}.queue-head strong{font-size:13px}.queue-tabs{font-size:12px;color:#7c8792;padding:0 10px 14px}.queue-tabs span{color:var(--blue);font-weight:600;margin-left:15px}.patient{padding:13px 11px;border-radius:7px;margin-bottom:8px;color:#697583;border:1px solid transparent;font-size:12px}.patient.active{border-color:#cce3f6;background:#eef6fd;color:#334b60}.patient .line{display:flex;justify-content:space-between;margin-bottom:5px}.patient strong{color:#253c50;font-size:13px}.patient-no{color:#9aa7b3;font-size:11px}.queue-bottom{border-top:1px solid var(--line);margin:26px 9px 0;padding-top:16px;font-size:11px;color:#919ba7;line-height:1.8}
+    main{min-width:0;overflow-y:auto;background:#f7f9fb}.case-banner{padding:20px 28px 17px;background:#fff;border-bottom:1px solid var(--line)}.case-line{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.case-line h1{font-size:18px;font-weight:620}.case-meta{margin-top:8px;color:#7b8591;font-size:12px;display:flex;gap:18px;flex-wrap:wrap}.context-line{font-size:12px;color:#6c7885;margin-top:13px;padding-top:12px;border-top:1px solid #f0f2f5}.tabs{display:flex;gap:29px;padding:0 28px;background:white;border-bottom:1px solid var(--line)}.tabs button{padding:14px 2px 12px;border-bottom:2px solid transparent;color:#77818d;font-size:13px}.tabs button.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:600}.workspace{padding:26px 28px;max-width:1100px;margin:auto}.section-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:15px;margin-bottom:18px}.section-heading h2{font-size:20px;letter-spacing:-.4px;font-weight:630}.section-heading .small{margin-top:4px}.generation{display:flex;align-items:center;gap:6px;color:var(--green);font-size:12px;padding-top:5px}.generation i{height:6px;width:6px;border-radius:50%;background:#2eae79}.sheet{background:#fff;border:1px solid var(--line);border-radius:9px;box-shadow:0 2px 5px #1a365004;overflow:hidden}.sheet-tools{padding:15px 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:12px}.sheet-tools strong{font-size:13px}.sheet-tools-actions{display:flex;align-items:center;gap:9px}.quiet{display:inline-flex;align-items:center;gap:6px;border-radius:5px;font-size:12px;color:#6f7c88;padding:5px 7px;min-height:31px}.quiet:hover{background:#f3f6f9}.explain-button{display:inline-flex;align-items:center;gap:6px;font-size:12px;border:1px solid #d9e2eb;padding:6px 11px;border-radius:5px;background:#fff;color:#526b80}.explain-button:hover{border-color:#a4c8e4;background:#f7fbff}.explain-button .number{color:#8c9da9;font-size:11px}.table-head{display:grid;grid-template-columns:30px minmax(0,1fr) 116px 93px;gap:12px;align-items:center;padding:11px 18px;color:#8a95a1;background:#fafbfd;font-size:11px}.check{accent-color:var(--blue);width:15px;height:15px;cursor:pointer;margin:0;flex-shrink:0}.table-head label{display:flex}.item-row{display:grid;grid-template-columns:30px minmax(0,1fr) 116px 93px;gap:12px;align-items:center;padding:18px;border-top:1px solid #edf0f4;min-height:92px}.item-row:first-child{border-top:0}.item-name{font-size:14px;font-weight:550;line-height:1.5}.item-info{font-size:12px;color:#8a95a0;margin-top:4px;line-height:1.7}.item-row .row-status{font-size:11px;white-space:nowrap}.actions{display:flex;justify-content:flex-end;align-items:center;gap:5px}.adjust{font-size:12px;color:var(--blue);padding:5px 7px;border-radius:4px}.adjust:hover{background:var(--blue-soft)}.delete{padding:5px;color:#9aa6b1;display:flex;align-items:center;border-radius:4px}.delete:hover{color:#c55050;background:#fff3f2}.missing{background:#fffdf8}.missing .item-info{color:#ac7c29}.footer{border-top:1px solid var(--line);background:#fcfdff;padding:17px 18px;display:flex;align-items:center;justify-content:space-between;gap:10px}.footer-left{font-size:12px;color:#7d8996}.footer-left strong{font-size:15px;color:#33495c;font-weight:600;padding:0 3px}.primary{display:inline-flex;align-items:center;justify-content:center;gap:7px;background:var(--blue);color:#fff;border:1px solid var(--blue);border-radius:6px;min-height:37px;padding:8px 19px;font-size:13px;font-weight:550}.primary:hover{background:#086dbb}.primary:disabled{background:#9eabb7;border-color:#9eabb7;opacity:.55}.secondary{border:1px solid #dae2e9;border-radius:5px;padding:7px 14px;background:white;font-size:12px}.notice{margin-top:13px;display:flex;gap:8px;align-items:flex-start;padding:10px 12px;background:#fff8e9;border:1px solid #f4e3bb;border-radius:6px;font-size:12px;color:#92712f}.tip{color:#98a3ae;font-size:11px;display:flex;align-items:center;gap:6px;margin-top:14px}.records{margin-top:27px}.records-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;color:#8592a0;font-size:12px}.record-empty{border:1px dashed #dee5ed;border-radius:7px;padding:23px;text-align:center;font-size:12px;color:#a1aab3}.record{display:flex;align-items:center;gap:10px;background:white;border:1px solid #e4eaeF;border-radius:6px;padding:12px 14px;margin-top:8px;font-size:12px}.record svg{color:var(--green);width:16px}.record .time{margin-left:auto;font-size:11px;color:#98a4af}.empty{padding:48px 20px;text-align:center}.empty-icon{display:grid;place-items:center;color:#2a9b70;width:42px;height:42px;border-radius:50%;background:#edf9f2;margin:0 auto 12px}.empty h3{font-size:15px;font-weight:550}.empty p{font-size:12px;color:#99a3ae;margin-top:6px}
+    .conversation{background:#fff;border-left:1px solid var(--line);display:flex;flex-direction:column;overflow:hidden;min-width:0}.conversation-head{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;gap:9px;font-size:13px}.conversation-head .pill{margin-left:auto}.chat-body{padding:21px 18px;overflow:auto;flex:1}.chat-note{font-size:11px;color:#97a2ad;text-align:center;margin-bottom:24px}.chat-speaker{font-size:11px;color:#8996a2;margin:17px 0 6px}.bubble{font-size:12px;line-height:1.9;padding:11px 13px;border-radius:7px;background:#f3f6f9;color:#52606d}.bubble.doctor{background:#edf5fc;color:#43637c}.conversation-foot{padding:14px 16px;border-top:1px solid var(--line)}.conversation-foot textarea{width:100%;height:70px;border:1px solid #e0e6ec;border-radius:6px;padding:10px;font-size:12px;resize:none;background:#fff;color:#5b6a78}.conversation-foot .foot-row{display:flex;justify-content:space-between;align-items:center;margin-top:9px;font-size:10px;color:#a0abb6}.send{padding:4px 11px;border-radius:5px;background:#eff3f7;color:#6c8193;font-size:11px}
+    dialog{border:0;padding:0;color:var(--ink);border-radius:11px;box-shadow:0 18px 90px #213c5a2c;width:min(650px,calc(100vw - 32px));max-height:86vh;background:#fff}dialog::backdrop{background:#1b2d4052;backdrop-filter:blur(2px)}.dialog-head{padding:19px 23px 16px;display:flex;align-items:flex-start;justify-content:space-between;border-bottom:1px solid var(--line)}.dialog-head h2{font-size:17px;font-weight:600}.dialog-head p{font-size:12px;color:#8b96a2;margin-top:4px}.close{font-size:22px;color:#98a2ac;padding:0 5px;line-height:1.2}.reason-tabs{display:flex;padding:0 23px;gap:24px;border-bottom:1px solid var(--line)}.reason-tabs button{font-size:12px;padding:13px 0 11px;border-bottom:2px solid transparent;color:#83909c}.reason-tabs button.active{color:var(--blue);border-bottom-color:var(--blue)}.reason-content{padding:22px 24px;max-height:55vh;overflow:auto;font-size:13px;line-height:1.85}.reason-card{padding:16px 17px;background:#f7f9fc;border:1px solid #e4eaf0;border-radius:7px;margin-bottom:14px}.reason-card:last-child{margin-bottom:0}.reason-card h3{font-size:13px;margin-bottom:7px;color:#41576b;font-weight:600}.reason-card p{font-size:12px;color:#7b8a98}.reason-card ul{font-size:12px;color:#718291;padding-left:17px;margin:6px 0}.reason-source{font-size:11px;color:#8d9aa5;border-top:1px solid #e4eaf0;margin-top:11px;padding-top:10px}.dialog-footer{padding:14px 23px;border-top:1px solid var(--line);text-align:right;background:#fcfdff}.edit-form{padding:20px 24px}.edit-form label{display:block;font-size:12px;color:#758392;margin-bottom:15px}.edit-form input,.edit-form select{display:block;width:100%;border:1px solid #d9e2eb;border-radius:5px;background:#fff;padding:9px 10px;margin-top:7px;color:#3c5264}.edit-form .field-pair{display:grid;grid-template-columns:1fr 1fr;gap:14px}.toast{position:fixed;bottom:27px;left:50%;transform:translateX(-50%);background:#263c4d;color:white;padding:11px 20px;border-radius:7px;box-shadow:0 6px 25px #142b4224;font-size:13px;z-index:10;display:none;align-items:center;gap:8px}.toast.visible{display:flex}.toast svg{color:#73d7ad}.prototype-state{font-size:10px;color:#9fb1c1;margin-left:12px}
+    @media(min-width:1550px){.app{grid-template-columns:205px minmax(0,1fr) 335px}.workspace{padding-top:30px}.item-row{padding-top:21px;padding-bottom:21px}}@media(max-width:1100px){.app{grid-template-columns:155px minmax(0,1fr) 245px}.workspace{padding:22px 19px}.case-banner{padding:17px 19px}.tabs{padding:0 19px;gap:23px}.table-head,.item-row{grid-template-columns:24px minmax(0,1fr) 88px 81px;gap:8px;padding-left:14px;padding-right:14px}.item-name{font-size:13px}.item-info{font-size:11px}.conversation-head{padding:0 14px}.chat-body{padding:19px 13px}.row-status .pill{padding:3px 6px;font-size:10px}}@media(max-width:820px){.app{grid-template-columns:minmax(400px,1fr) 245px;min-width:645px}.queue{display:none}.topcrumb{display:none}.topbar{padding:0 19px}.preview{min-width:645px;padding:0 14px}.prototype-state{display:none}.case-meta{gap:12px}.workspace{padding:22px 15px}.section-heading h2{font-size:18px}.generation{font-size:11px}.table-head,.item-row{grid-template-columns:22px minmax(0,1fr) 75px 73px;gap:6px}.adjust{font-size:11px;padding:5px}.sheet-tools{padding:12px}.sheet-tools-actions{gap:2px}.explain-button{font-size:11px;padding:6px 7px}.quiet{font-size:11px;padding:4px}.footer{padding:13px}.primary{padding:8px 12px;font-size:12px}.footer-left{font-size:11px}.item-info{max-width:100%}.preview-label{display:none}}
+
+    .agent-business{display:flex;align-items:center;gap:10px;padding:12px 18px;background:#f6faff;border-bottom:1px solid #e2edf7;min-height:54px}.agent-symbol{display:grid;place-items:center;width:26px;height:26px;border-radius:6px;background:#e5f1ff;color:#2781c6;font-size:22px;flex:none}.agent-business>div{min-width:0;flex:1}.agent-business strong{font-size:12px;font-weight:550;color:#42637e;display:block}.agent-business span:not(.pill):not(.agent-symbol){display:block;font-size:11px;color:#8599aa;margin-top:2px}.sheet[data-agent-phase=working]{animation:agent-ring 1.5s ease-in-out infinite}.sheet[data-agent-phase=working] .agent-symbol{animation:agent-pulse 1.2s ease-in-out infinite}.agent-fill{margin:0 24px 18px;padding:12px;background:#f5f9fd;border:1px solid #dfebf5;border-radius:6px}.agent-fill p{font-size:12px;color:#758c9f;line-height:1.7;margin-top:8px}.qc-brief{display:flex;align-items:center;gap:10px;padding:12px 14px;border:1px solid #eedbad;border-radius:7px;background:#fffaf0;color:#9c792c;margin-bottom:19px;font-size:12px}.qc-brief>span:nth-child(2){flex:1;min-width:0}.qc-brief strong{font-size:11px;font-weight:600;margin-right:10px}.qc-brief button{font-size:12px;font-weight:550;color:#9b6f12;white-space:nowrap;padding:5px}.doc-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:17px}.doc-heading h2{font-size:20px;font-weight:620}.document-fields{background:#fff;border:1px solid var(--line);border-radius:8px;overflow:hidden}.document-field{display:grid;grid-template-columns:90px minmax(0,1fr);gap:15px;padding:16px 18px;border-bottom:1px solid var(--line);scroll-margin:26px;transition:background .25s,border-color .25s}.document-field:last-child{border-bottom:0}.document-field label{font-size:12px;color:#657789;padding-top:8px}.document-field textarea,.document-field input{width:100%;padding:9px 11px;border:1px solid #dce4eb;border-radius:5px;background:white;font-size:13px;line-height:1.7;resize:vertical}.document-field textarea{min-height:74px}.document-field.attention{background:#fff8e5;box-shadow:inset 4px 0 #d3a53b}.document-field.attention textarea{border-color:#d9b96d}.field-issue{font-size:12px;color:#9c7627;margin-top:8px;display:flex;justify-content:space-between;gap:12px;align-items:center}.field-issue button{color:#9b6e0e;font-size:11px;text-decoration:underline;white-space:nowrap}.doc-actions{display:flex;justify-content:space-between;margin-top:17px}.agent-step{display:flex;gap:12px;padding:11px 0;border-bottom:1px solid #edf1f5}.agent-step:last-child{border-bottom:0}.agent-step .dot{color:#258b63}.agent-step p{font-size:12px;color:#7e8e9c;margin-top:3px}.reason-notice{font-size:12px;color:#7e8d99;line-height:1.8}.reason-card button{color:var(--blue);font-size:12px;margin-top:10px;padding:0}.reason-tabs{gap:21px}.quality-locate-primary{margin-top:12px!important;padding:7px 13px!important;background:var(--blue)!important;color:white!important;border-radius:5px}.qc-copy{display:inline}.qc-copy.long{display:block;margin-top:3px}@keyframes agent-ring{0%,100%{box-shadow:0 0 0 2px #6eacf510}50%{box-shadow:0 0 0 3px #5a9ee526}}@keyframes agent-pulse{50%{opacity:.48}}@media(prefers-reduced-motion:reduce){.sheet[data-agent-phase=working],.sheet[data-agent-phase=working] .agent-symbol{animation:none}.document-field{transition:none}}@media(max-width:1100px){.agent-business{padding:11px 14px;gap:8px}.agent-business .pill{font-size:10px;padding:3px 6px}.document-field{grid-template-columns:70px minmax(0,1fr);gap:10px;padding:13px}.doc-heading .small{max-width:180px;text-align:right}}@media(max-width:820px){.agent-business #agent-task-note{max-width:245px}.qc-copy{display:block;margin-top:2px}.qc-brief{padding:10px;font-size:11px}.qc-brief strong{font-size:11px}.qc-brief button{font-size:11px}.reason-tabs{gap:16px;padding-left:18px;padding-right:18px}}
+
+    body{display:flex;flex-direction:column;height:100dvh}.preview{height:auto;min-height:40px;flex-wrap:wrap;padding:7px 18px;gap:8px}.app{height:auto;min-height:620px;flex:1}.demo-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 20px;background:#eef4fa;border-bottom:1px solid #d9e5f0;font-size:12px}.demo-controls>div{margin-right:10px}.demo-controls strong{display:block;color:#3d5c77;font-size:12px}.demo-controls>div span{display:block;font-size:11px;color:#778da0;margin-top:2px}.demo-controls>button{background:white;border:1px solid #ccdae7;border-radius:5px;padding:7px 12px;color:#3d6587}.demo-controls>button:first-of-type{background:#0879d1;color:white;border-color:#0879d1}.demo-state{margin-left:auto;color:#6f8498;font-size:11px}.patient{display:block;width:100%;text-align:left}.tabs{gap:22px}.tabs button{white-space:nowrap}.tabs [data-tab-state]{font-size:10px;margin-left:2px;color:#8196a8}.tabs [data-tab-state][data-working=true]{color:var(--blue)}.consultation-card,.background-summary,.report-card{background:white;border:1px solid var(--line);border-radius:8px;padding:19px 21px;margin-bottom:18px}.consultation-label{font-size:12px;color:#8c9aa7;border-bottom:1px solid #edf1f5;padding-bottom:12px;margin-bottom:12px}.saved-turn{margin:13px 0}.saved-turn>span{font-size:11px;color:#8b9aa6}.saved-turn p{font-size:13px;color:#506477;line-height:1.9;margin-top:4px}.background-heading{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:10px}.background-heading strong{font-size:13px;color:#45667f}.background-module{display:flex;justify-content:space-between;align-items:center;width:100%;padding:13px 0;border-top:1px solid #edf1f5;text-align:left;font-size:12px}.background-module>span:last-child{font-size:11px;color:#8498a8}.background-summary>p{padding-top:10px}.report-card{border-color:#edddb3;background:#fffdf7}.report-card>strong{display:block;font-size:17px;color:#9c7024;margin-top:12px}.report-card p{font-size:12px;color:#8d7d61;margin:6px 0}.qc-brief .qc-main{min-width:0;flex:1;text-align:left;white-space:normal;font-weight:400}.qc-brief #qc-more{font-size:11px;text-decoration:underline}.item-row.stale{background:#fafbfc}.row-hint{display:block;font-size:11px;color:#a47528;margin-top:4px}.row-status .pill{white-space:normal;text-align:center}.record{flex-wrap:wrap;scroll-margin:18px}.record-warning{display:flex;align-items:center;gap:9px;flex-basis:100%;margin-left:26px;font-size:11px;color:#9c7024}.record-warning button{color:#0879d1;text-decoration:underline;font-size:11px}.agent-business{flex-wrap:wrap}.agent-business .quiet{font-size:10px}.agent-business>div{flex-basis:160px}.job-failed{color:#9c7024}.report-source{font-size:11px;color:#8b9baa}.tabs button:focus-visible{outline-offset:-4px}.reason-tabs{gap:16px}.agent-step .dot.pending{color:#a8b2bc}.item-name{overflow-wrap:anywhere}.qc-brief{align-items:flex-start}.field-issue button{white-space:normal}.empty{padding:35px 20px}
+    @media(max-width:1100px){.tabs{gap:15px}.demo-controls{padding:10px 14px;gap:7px}.demo-controls>button{font-size:11px;padding:6px 8px}.demo-state{flex-basis:100%;margin-left:0}.agent-business .quiet{margin-left:auto}.generation{max-width:125px;text-align:right;justify-content:flex-end}.section-heading{gap:8px}.consultation-card,.background-summary,.report-card{padding:16px}.reason-tabs{gap:13px}}@media(max-width:820px){.tabs{gap:12px;padding-left:15px;padding-right:15px}.tabs button{font-size:12px}.tabs [data-tab-state]{font-size:9px}.demo-controls>div span{max-width:220px}.preview{min-width:645px}.agent-business>div{flex-basis:135px}.generation{font-size:10px;max-width:100px}.section-heading .small{font-size:11px}.section-heading h2{font-size:18px}.demo-controls>div{flex-basis:100%}.doc-heading .small{display:none}.reason-tabs{gap:12px}.reason-tabs button{font-size:11px}}
+  </style>
+</head>
+<body>
+  <div class="preview">
+    <strong>交互原型 v3</strong><span class="preview-label">问诊逐步补充 → 自动准备三类待办 → 报告返回后联动更新</span><span class="spacer"></span>
+    <label for="scenario">演示场景</label><select id="scenario"><option value="normal">从问诊开始</option><option value="manual">保留医生手改</option><option value="issued">已有开具记录</option><option value="incomplete">有项目待补充</option><option value="quality">病历有多处问题</option><option value="unchecked">质控未完成</option><option value="failed">一个模块更新失败</option></select><button id="reset">重置演示</button>
+  </div>
+  <div class="demo-controls" aria-label="原型演示控制，非产品操作">
+    <div><strong>体验自动联动</strong><span id="demo-step">以下按钮模拟资料保存与报告发布</span></div>
+    <button id="next-turn">① 保存下一轮问诊</button><button id="publish-report" disabled>② 模拟检查结果返回</button><button id="end-visit">模拟结束接诊</button>
+    <span class="demo-state" id="prototype-state" aria-live="polite"></span>
+  </div>
+  <div class="app">
+    <header class="topbar"><div class="brand"><span class="brandmark">+</span>ClinMesh</div><div class="topcrumb">医院工作台 <span style="padding:0 10px">/</span> 门诊医生</div><div class="account"><span>全科门诊</span><span>·</span><span>合成医生</span><span class="avatar">医</span></div></header>
+    <aside class="queue" aria-label="就诊队列">
+      <div class="queue-head"><strong>门诊队列</strong><span class="pill">3</span></div><div class="queue-tabs">待诊 2 <span>在诊 1</span></div>
+      <button type="button" class="patient active" data-patient="A" aria-pressed="true"><div class="line"><strong>合成患者 A</strong><span class="pill blue">在诊</span></div><div>男 · 52 岁　高血压复诊</div><div class="patient-no" style="margin-top:6px">SYN-0001</div></button>
+      <button type="button" class="patient" data-patient="B" aria-pressed="false"><div class="line"><strong>合成患者 B</strong><span class="patient-no">02</span></div><div>女 · 61 岁　另一接诊病例</div></button>
+      <div class="patient"><div class="line"><strong>合成患者 C</strong><span class="patient-no">03</span></div><div>男 · 45 岁　待接诊</div></div>
+      <div class="queue-bottom">仅用于交互讨论<br>合成病例 · 预设生成结果<br>刷新页面会重置演示</div>
+    </aside>
+    <main>
+      <section class="case-banner" aria-label="当前合成病例"><div class="case-line"><h1 id="patient-name">合成患者 A</h1><span class="muted small" id="patient-meta">男 · 52 岁</span><span class="pill blue">复诊</span><span class="pill" id="patient-id">SYN-0001</span></div><div class="case-meta"><span>就诊科室：全科门诊</span><span>主诉：高血压随访</span><span id="visit-status">状态：在诊</span></div><p class="context-line">合成演示：问诊和报告每有新内容，Agent 自动更新待办，医生最终确认。</p></section>
+      <nav class="tabs" aria-label="诊疗栏目" role="tablist"><button id="tab-consultation" data-kind="consultation" role="tab" aria-selected="true">问诊</button><button id="tab-document" data-kind="document" role="tab" aria-selected="false">病历</button><button id="tab-diagnosis" data-kind="diagnosis" role="tab" aria-selected="false">诊断 <span data-tab-state="diagnosis"></span></button><button id="tab-laboratory" data-kind="laboratory" role="tab" aria-selected="false">检查检验 <span data-tab-state="laboratory"></span></button><button id="tab-prescription" data-kind="prescription" role="tab" aria-selected="false">处方 <span data-tab-state="prescription"></span></button></nav>
+      <section class="workspace" id="workspace" role="tabpanel" aria-labelledby="tab-consultation">
+        <div class="qc-brief" id="qc-brief" hidden><span data-icon="info"></span><button class="qc-main" id="qc-locate"></button><button id="qc-more" hidden></button></div>
+        <section id="consultation-workspace" aria-label="问诊中的自动准备演示">
+          <div class="section-heading"><div><h2>本次问诊</h2><p class="small muted">问诊继续进行，诊断、检查和处方在后台同步准备。</p></div></div>
+          <div class="consultation-card"><div class="consultation-label">当前已保存的问诊内容</div><div id="saved-consultation"></div></div>
+          <div class="background-summary"><div class="background-heading"><strong id="background-status">Agent 正在自动准备</strong><button class="quiet" id="pause-agent">暂停自动准备</button></div><div id="background-modules"></div><p class="small muted">待办准备好后，进入对应栏目调整、确认或开具。</p></div>
+          <div class="report-card" id="report-card" hidden><span class="pill amber">检查结果已发布</span><strong>血钾 5.8 mmol/L ↑</strong><p>合成报告 · Agent 已据此重新核对诊断、后续检查与处方。</p><button class="quiet" id="report-orders">查看相关待办 →</button></div>
+        </section>
+        <div id="order-workspace">
+        <div class="section-heading"><div><h2 id="section-title">待开具检查</h2><p class="small muted" id="section-subtitle">项目已整理好，可直接调整后开具。</p></div><div class="generation" id="generation-status"><i></i>已自动生成</div></div>
+        <div class="sheet">
+          <div class="sheet-tools"><strong id="sheet-title">本次检查项目</strong><div class="sheet-tools-actions"><button class="quiet" id="refresh" title="重新生成待开具项目"><span data-icon="refresh"></span>刷新</button><button class="explain-button" id="explain"><span data-icon="book"></span>依据与说明 </button></div></div>
+          <div class="agent-business" id="agent-business"><span class="agent-symbol" aria-hidden="true">✧</span><div><strong id="agent-task-title">Agent 已准备好本次项目</strong><span id="agent-task-note">已核对本院目录和必要信息。</span></div><span class="pill green" id="agent-task-state">待医生开具</span><button class="quiet" id="pause-order-agent">暂停自动准备</button></div>
+          <div id="table-wrap"><div class="table-head"><label><input class="check" type="checkbox" checked id="select-all" aria-label="全选可开具项目"></label><span id="column-title">项目 / 申请信息</span><span>状态</span><span style="text-align:right">操作</span></div><div id="items"></div></div>
+          <div class="footer"><div class="footer-left" id="selection-summary">已选 <strong>2</strong> 项</div><button class="primary" id="issue"><span data-icon="check"></span><span id="issue-label">开具选中项目（2）</span></button></div>
+        </div>
+        <div class="notice" id="manual-notice" hidden><span data-icon="shield"></span><span>已有医生修改，更新建议时会保留手改内容。</span></div>
+        <div class="tip"><span data-icon="info"></span>医生确认后才正式提交；缺少的必要信息保持待补充。</div>
+        <section class="records" aria-label="本次已开具记录"><div class="records-header"><span id="records-title">本次已开具</span><span id="record-count">0 项</span></div><div id="records"><div class="record-empty">开具后的项目显示在这里</div></div></section>
+        </div>
+        <section id="document-workspace" hidden aria-label="病历定位演示"><div class="doc-heading"><h2>病历</h2><span class="muted small">沿用现有病历编辑，仅演示问题定位</span></div><div class="document-fields" id="document-fields"></div><div class="doc-actions"><button class="secondary" id="back-to-orders">返回待开具项目</button><button class="primary" id="save-document">保存病历</button></div></section>
+      </section>
+    </main>
+    <aside class="conversation" aria-label="问诊记录"><div class="conversation-head"><span data-icon="chat"></span><strong>问诊记录</strong><span class="pill green">问诊中</span></div><div class="chat-body" id="chat-body"><div class="chat-note">本次门诊 · 合成对话</div><div class="chat-speaker">医生</div><div class="bubble doctor">这次复诊主要想了解哪些情况？</div><div class="chat-speaker">患者</div><div class="bubble">想复查一下血压，也看看之前的药能不能继续吃。</div><div class="chat-speaker">医生</div><div class="bubble doctor">我先核对现有病历和长期用药记录，再安排这次的项目。</div><div class="chat-speaker">诊疗助手</div><div class="bubble">待开具清单已准备好。详细依据和待核实事项，收在「依据与说明」中。</div></div><div class="conversation-foot"><textarea aria-label="演示问诊输入" placeholder="向患者提问，或补充医生观察…"></textarea><div class="foot-row"><span>此处仅展示问诊布局</span><button class="send" id="send">发送</button></div></div></aside>
+  </div>
+  <dialog id="reasons" aria-labelledby="reasons-title"><div class="dialog-head"><div><h2 id="reasons-title">依据与说明</h2><p>按需查看，不占用待开具清单。</p></div><button class="close" data-close="reasons" aria-label="关闭依据与说明">×</button></div><div class="reason-tabs" role="tablist" aria-label="说明类型"><button class="active" data-reason="evidence" role="tab" aria-selected="true">项目依据</button><button data-reason="reasoning" role="tab" aria-selected="false">待核实思路</button><button data-reason="quality" role="tab" aria-selected="false">病历问题 <span class="muted" id="quality-tab-count"></span></button><button data-reason="agent" role="tab" aria-selected="false">工作记录</button></div><div class="reason-content" id="reason-content"></div><div class="dialog-footer"><button class="secondary" data-close="reasons">关闭说明</button></div></dialog>
+  <dialog id="editor" aria-labelledby="editor-title"><div class="dialog-head"><div><h2 id="editor-title">调整项目</h2><p id="editor-item"></p></div><button class="close" data-close="editor" aria-label="关闭项目调整">×</button></div><form id="edit-form"><div class="edit-form" id="edit-fields"></div><div class="agent-fill" id="agent-fill" hidden><button class="secondary" id="agent-check-field" type="button">让 Agent 核对依据</button><p id="agent-field-result">缺少的信息保留待补充，不自动猜填。</p></div><div class="dialog-footer"><button class="secondary" data-close="editor" type="button">取消</button><button class="primary" type="submit" style="margin-left:8px">保存调整</button></div></form></dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"><span data-icon="check"></span><span id="toast-text"></span></div>
+  <script>
+    // All clinical rows, sources and verification outcomes below are synthetic fixtures.
+    const icons={refresh:'<path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 11-1l3 6M4 12l3 6a7 7 0 0 0 11-1"/>',book:'<path d="M12 5c-3-2-6-2-10 0v15c4-2 7-2 10 0 3-2 6-2 10 0V5c-4-2-7-2-10 0Z"/><path d="M12 5v15"/>',check:'<path d="m5 12 4 4L20 5"/>',trash:'<path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 10v7M14 10v7"/>',shield:'<path d="m12 2 8 4v6c0 5-8 10-8 10S4 17 4 12V6Z"/><path d="m8 12 3 3 5-6"/>',info:'<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v1"/>',chat:'<path d="M21 11a9 9 0 0 1-9 9H4l-2 2V11a9 9 0 0 1 19 0Z"/>'};
+    const icon=name=>`<svg viewBox="0 0 24 24" aria-hidden="true">${icons[name]||icons.info}</svg>`;
+    const $=id=>document.getElementById(id);
+    const escape=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const kinds=['diagnosis','laboratory','prescription'];
+    const config={diagnosis:{label:'诊断',title:'待确认诊断',sheet:'本次诊断',column:'诊断 / 编码',action:'确认选中诊断',record:'本次已确认'},laboratory:{label:'检查检验',title:'待开具检查',sheet:'本次检查项目',column:'项目 / 申请信息',action:'开具选中项目',record:'本次已开具'},prescription:{label:'处方',title:'待开具处方',sheet:'本次处方用药',column:'药品 / 用法用量',action:'开具处方',record:'本次已开具'}};
+    const recordLabels={chiefComplaint:'主诉',historyOfPresentIllness:'现病史',priorMedicalHistory:'既往史',familyHistory:'家族史',allergyHistory:'过敏史',physicalExamination:'体格检查',auxiliaryExamination:'辅助检查',assessment:'评估',disposition:'处置',followUp:'随访'};
+    const steps={diagnosis:['读取最新问诊与报告','匹配本次诊断候选','核对支持依据'],laboratory:['核对已有报告与检查需求','匹配院内项目','核对标本及申请信息'],prescription:['核对报告与当前用药','匹配药品和规格','核对用法用量与适用性']};
+    const firstTurn='我有高血压，这次来复查。';
+    const nextTurn='一直吃缬沙坦 80 mg，每天一次，这次想续方。最近没有查肾功能和电解质。';
+    const baseDocument={chiefComplaint:'高血压复诊。',historyOfPresentIllness:'高血压病史3年，本次复诊。',priorMedicalHistory:'既往已记录高血压病。',familyHistory:'未记录。',allergyHistory:'未记录。',physicalExamination:'以医生实际查体记录为准。',auxiliaryExamination:'近期结果待核对。',assessment:'高血压复诊。',disposition:'待医生确认。',followUp:'以本次医嘱为准。'};
+
+    // The small fixture model has no DOM, networking or persistence.
+    function candidatePlan(c){
+      const diagnosis=[{id:'hypertension',name:'高血压病',code:'I10',primary:true}];
+      if(c.stage===2)diagnosis.push({id:'hyperkalemia',name:'高钾血症',code:'E87.5',primary:false});
+      const laboratory=c.stage===0?[]:c.stage===1?[
+        {id:'renal',name:'肾功能',specimen:'血清',priority:'常规',department:'门诊检验科'},
+        {id:'electrolytes',name:'电解质',specimen:'血清',priority:'常规',department:'门诊检验科'}
+      ]:[
+        {id:'repeat-potassium',name:'复查血钾',specimen:'血清',priority:'急查',department:'门诊检验科'},
+        {id:'ecg',name:'十二导联心电图',specimen:'无需标本',priority:'常规',department:'心电图室'}
+      ];
+      const prescription=c.stage===1?[{id:'valsartan',name:'缬沙坦胶囊',strength:'80 mg / 粒',route:'口服',dose:'80 mg',frequency:'每日一次',days:'14',quantity:'14 粒'}]:[];
+      if(c.scenario==='incomplete'&&prescription.length)Object.assign(prescription[0],{dose:'',frequency:'',days:'',quantity:'',missing:true});
+      return {diagnosis,laboratory,prescription};
+    }
+    function clinicalConflict(c,row){return c.stage===2&&row.id==='valsartan';}
+    function rowInfo(type,row){
+      if(type==='diagnosis')return `${row.code} · ${row.primary?'主诊断':'次诊断'}`;
+      if(type==='laboratory')return `${row.specimen||'标本待补充'} · ${row.department} · ${row.priority}`;
+      return row.missing?'用法用量待核对':`${row.strength} · ${row.route} ${row.dose}，${row.frequency}，${row.days} 天，${row.quantity}`;
+    }
+    function mergeRows(c,type,generated){
+      const panel=c.panels[type],previous=new Map(panel.rows.map(row=>[row.id,row]));
+      const completed=new Set(panel.records.map(row=>row.id));
+      const rows=generated.filter(row=>!panel.removed.has(row.id)&&!completed.has(row.id)).map(row=>{
+        const old=previous.get(row.id);
+        if(old?.manual)return {...old,needsReview:clinicalConflict(c,old)&&old.ackStage!==c.stage};
+        return {...row,selected:row.missing?false:(old?.selected??true),manual:false,sourceRevision:c.revision,change:old?'':'新增'};
+      });
+      for(const row of panel.rows)if(row.manual&&!rows.some(next=>next.id===row.id)&&!completed.has(row.id))rows.push({...row,needsReview:clinicalConflict(c,row)&&row.ackStage!==c.stage});
+      return rows;
+    }
+    function canSubmit(c,row,type){return !c.ended&&!row.missing&&!row.needsReview&&(row.manual||(row.sourceRevision===c.revision&&c.jobs[type]?.status==='ready'));}
+    function qualityProblems(c){
+      if(c.scenario!=='quality')return [];
+      const problems=[];
+      if(c.savedDocument.allergyHistory.includes('无药物过敏史'))problems.push({id:'allergy',field:'allergyHistory',text:'过敏史与患者自述不一致，请核对。',match:'无药物过敏史',source:'患者说：“用青霉素后起过疹子。”'});
+      if(c.savedDocument.historyOfPresentIllness.includes('用药3个月'))problems.push({id:'duration',field:'historyOfPresentIllness',text:'用药时间与患者自述不一致，请核对。',match:'用药3个月',source:'患者说：“这药已经吃了3年。”'});
+      if(!c.savedDocument.chiefComplaint.trim())problems.push({id:'chief',field:'chiefComplaint',text:'主诉还没填写，请补充。',match:'',source:'当前主诉字段为空。'});
+      return problems.filter(p=>!c.resolved.has(`${p.id}|${c.savedDocument[p.field]}|${p.source}`));
+    }
+    function createCase(id,scenario){
+      const stage=scenario==='normal'||scenario==='unchecked'?0:1;
+      const c={id,name:`合成患者 ${id}`,meta:id==='A'?'男 · 52 岁':'女 · 61 岁',scenario,stage,revision:1,epoch:0,paused:false,ended:false,failedOnce:false,panels:{},jobs:{},log:[],turns:[firstTurn],document:{...baseDocument},savedDocument:{...baseDocument},resolved:new Set()};
+      if(stage)c.turns.push(nextTurn);
+      if(scenario==='quality'){Object.assign(c.document,{chiefComplaint:'',allergyHistory:'无药物过敏史。',historyOfPresentIllness:'高血压，用药3个月。'});c.turns.push('用青霉素后起过疹子。这药已经吃了3年。');c.savedDocument={...c.document};}
+      for(const type of kinds)c.panels[type]={rows:[],records:[],removed:new Set()};
+      if(['manual','issued','failed'].includes(scenario)){
+        const plan=candidatePlan(c);
+        for(const type of kinds)c.panels[type].rows=mergeRows(c,type,plan[type]);
+        if(scenario==='manual')Object.assign(c.panels.prescription.rows[0],{manual:true,days:'7',quantity:'7 粒',change:''});
+        if(scenario==='issued'){c.panels.prescription.records.push({...c.panels.prescription.rows[0]});c.panels.prescription.rows=[];}
+        if(scenario==='failed')c.revision++;
+      }
+      return c;
+    }
+
+    let cases={},activeId='A',kind='consultation',lastOrderKind='laboratory',scenario='normal',reasonTab='evidence',editing=null,toastTimer;
+    const current=()=>cases[activeId];
+    function log(c,message){c.log.push({revision:c.revision,message});if(c.log.length>20)c.log.shift();}
+    function stopJobs(c){c.epoch++;for(const job of Object.values(c.jobs))if(['working','queued'].includes(job.status))job.status='paused';}
+    function scheduleUpdate(c,reason,targets=kinds){
+      const epoch=c.epoch;
+      for(const type of targets){
+        const job={status:c.paused||c.ended||c.id!==activeId?'paused':'queued',revision:c.revision,step:0,reason};c.jobs[type]=job;
+        if(job.status==='paused')continue;
+        const valid=()=>cases[c.id]===c&&c.epoch===epoch&&c.jobs[type]===job&&c.id===activeId&&!c.paused&&!c.ended;
+        setTimeout(()=>{
+          if(!valid())return;job.status='working';render();
+          const advance=()=>{
+            if(!valid())return;
+            job.step++;
+            if(job.step<steps[type].length){render();setTimeout(advance,450);return;}
+            if(c.scenario==='failed'&&type==='prescription'&&!c.failedOnce){c.failedOnce=true;job.status='failed';log(c,'处方更新失败，原草稿保留，等待重试。');render();return;}
+            const panel=c.panels[type];panel.rows=mergeRows(c,type,candidatePlan(c)[type]);
+            panel.records.forEach(row=>{row.needsReview=clinicalConflict(c,row)&&row.ackStage!==c.stage;});
+            job.status='ready';log(c,`${config[type].label}已按${reason}更新，待办 ${panel.rows.length} 项。`);render();
+          };
+          setTimeout(advance,450);
+        },250);
+      }
+      render();
+    }
+    function sourceChanged(c,reason){
+      c.revision++;
+      for(const panel of Object.values(c.panels))for(const row of [...panel.rows,...panel.records])if(clinicalConflict(c,row))row.needsReview=true;
+      log(c,reason);scheduleUpdate(c,reason);
+    }
+    function resetDemo(nextScenario=scenario){
+      for(const c of Object.values(cases))stopJobs(c);
+      scenario=nextScenario;cases={A:createCase('A',scenario),B:createCase('B','normal')};activeId='A';kind='consultation';editing=null;
+      for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
+      $('scenario').value=scenario;renderDocument();renderConversation();scheduleUpdate(current(),'已保存问诊');
+    }
+    function switchPatient(id){
+      if(id===activeId)return;
+      stopJobs(current());activeId=id;editing=null;
+      for(const dialog of document.querySelectorAll('dialog[open]'))dialog.close();
+      kind='consultation';renderDocument();renderConversation();scheduleUpdate(current(),'本次最新资料');
+    }
+    function selectKind(target){if(kinds.includes(target))lastOrderKind=target;kind=target;if(kind==='document')renderDocument();render();}
+    function togglePause(){const c=current();if(c.ended)return;c.paused=!c.paused;if(c.paused){stopJobs(c);log(c,'医生暂停了自动准备。');render();}else scheduleUpdate(c,'恢复后的最新资料');}
+    function toast(message){$('toast-text').textContent=message;$('toast').classList.add('visible');clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').classList.remove('visible'),3600);}
+    function renderConversation(){
+      const c=current();
+      $('chat-body').innerHTML='<div class="chat-note">本次门诊 · 合成对话</div><div class="chat-speaker">医生</div><div class="bubble doctor">这次复诊主要想了解哪些情况？</div>'+c.turns.map(text=>`<div class="chat-speaker">患者</div><div class="bubble">${escape(text)}</div>`).join('');
+      $('saved-consultation').innerHTML=c.turns.map((text,index)=>`<div class="saved-turn"><span>第 ${index+1} 轮 · 已保存</span><p>${escape(text)}</p></div>`).join('');
+    }
+    function jobLabel(c,type){const job=c.jobs[type];if(c.ended)return '接诊已结束';if(c.paused)return '自动准备已暂停';if(!job)return '等待准备';if(['queued','working'].includes(job.status))return '更新中';if(job.status==='failed')return '更新失败，可重试';if(job.status==='paused')return '待更新';return `${c.panels[type].rows.length} 项待${type==='diagnosis'?'确认':'开具'}`;}
+    function render(){
+      const c=current(),problems=qualityProblems(c),allReady=kinds.every(type=>c.jobs[type]?.status==='ready'&&c.jobs[type].revision===c.revision);
+      $('patient-name').textContent=c.name;$('patient-meta').textContent=c.meta;$('patient-id').textContent=c.id==='A'?'SYN-0001':'SYN-0002';$('visit-status').textContent=c.ended?'状态：接诊已结束':'状态：在诊';
+      document.querySelectorAll('[data-patient]').forEach(button=>{const active=button.dataset.patient===activeId;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));});
+      document.querySelectorAll('[data-kind]').forEach(button=>{const active=button.dataset.kind===kind;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;button.setAttribute('aria-controls','workspace');});
+      $('workspace').setAttribute('aria-labelledby',`tab-${kind}`);
+      for(const type of kinds){const node=document.querySelector(`[data-tab-state="${type}"]`),job=c.jobs[type];node.textContent=job?.status==='failed'?'!':['queued','working'].includes(job?.status)?'更新中':c.panels[type].rows.length||'';node.dataset.working=String(['queued','working'].includes(job?.status));}
+      $('order-workspace').hidden=!kinds.includes(kind);$('document-workspace').hidden=kind!=='document';$('consultation-workspace').hidden=kind!=='consultation';
+      $('next-turn').disabled=c.stage!==0||c.ended;$('publish-report').disabled=c.stage!==1||c.ended;$('end-visit').disabled=c.ended;
+      $('demo-step').textContent=c.stage===0?'先保存下一轮问诊，观察三个栏目自动准备':c.stage===1?'可先调整或开具，再模拟检查结果返回':allReady?'检查结果已返回，三类清单已重新评估':'检查结果已返回，等待三类清单完成更新';
+      $('prototype-state').textContent=`${c.name} · 问诊 ${c.turns.length} 轮 · 报告 ${c.stage===2?'已返回':'未返回'} · ${c.ended?'已结束':c.paused?'已暂停':'自动准备开启'}`;
+      $('qc-brief').hidden=!problems.length;$('qc-locate').textContent=problems[0]?.text||'';$('qc-more').hidden=problems.length<2;$('qc-more').textContent=`另有 ${problems.length-1} 处`;$('quality-tab-count').textContent=problems.length||'';
+      const working=kinds.some(type=>['working','queued'].includes(c.jobs[type]?.status));
+      $('background-status').textContent=c.ended?'本次接诊已结束':c.paused?'自动准备已暂停':working?'Agent 正按最新资料更新待办':kinds.some(type=>c.jobs[type]?.status==='failed')?'部分待办更新失败，可进入对应栏目重试':'三类待办已按最新资料核对';
+      $('background-modules').innerHTML=kinds.map(type=>`<button class="background-module" data-open-module="${type}"><span>${config[type].label}</span><span>${escape(jobLabel(c,type))} →</span></button>`).join('');
+      for(const id of ['pause-agent','pause-order-agent']){$(id).textContent=c.paused?'恢复自动准备':'暂停自动准备';$(id).disabled=c.ended;}
+      $('report-card').hidden=c.stage!==2;
+      $('report-card').querySelector('p').textContent=allReady?'合成报告 · Agent 已据此重新评估诊断、后续检查与处方。':c.ended?'合成报告 · 接诊已结束，本报告对应的自动核对尚未完成。':c.paused?'合成报告 · 自动准备已暂停，恢复后将核对相关待办。':kinds.some(type=>c.jobs[type]?.status==='failed')?'合成报告 · 部分待办更新失败，请进入对应栏目重试。':working?'合成报告 · Agent 正在重新核对诊断、后续检查与处方。':'合成报告 · 等待核对相关待办。';
+      if(kinds.includes(kind))renderOrders(c);
+      if($('reasons').open)renderReasons();
+    }
+    function renderOrders(c){
+      const panel=c.panels[kind],job=c.jobs[kind],cfg=config[kind],working=['working','queued'].includes(job?.status),ready=job?.status==='ready'&&job.revision===c.revision,unfinishedMessage=c.ended?'本次接诊已结束':c.paused?'自动准备已暂停':job?.status==='failed'?'更新失败，请刷新重试':'等待核对最新资料',selected=panel.rows.filter(row=>row.selected&&canSubmit(c,row,kind));
+      $('section-title').textContent=cfg.title;$('sheet-title').textContent=cfg.sheet;$('column-title').textContent=cfg.column;$('records-title').textContent=cfg.record;
+      $('section-subtitle').textContent=kind==='diagnosis'?'Agent 拟定诊断及主次，由医生最终确认。':'项目自动准备到清单，调整后由医生开具。';
+      $('refresh').disabled=c.paused||c.ended||working;$('refresh').title='手动重新核对当前模块';
+      document.querySelector('.sheet').dataset.agentPhase=working?'working':'ready';
+      $('agent-task-title').textContent=c.ended?'接诊已结束':c.paused?'自动准备已暂停':working?`Agent 正在${steps[kind][job.step]}`:job?.status==='failed'?'更新失败，可点击刷新重试':`已根据${job?.reason||'最新资料'}更新`;
+      $('agent-task-note').textContent=c.ended?'本次接诊已结束，未完成的核对已停止。':c.paused?'自动准备已暂停，恢复后按最新资料核对。':working?'旧自动项目暂不可开具，医生可继续编辑。':job?.status==='failed'?'医生草稿已保留，旧自动项目等待重新核对。':panel.rows.some(row=>row.needsReview)?'新结果影响了医生选择，请核对标记项目。':panel.rows.some(row=>row.missing)?'必要信息待补充，完整项目可继续开具。':c.stage===2&&ready?'已核对本次检查结果及受影响项目。':c.stage===2?'本次检查结果尚待核对。':'仅使用当前医生可见资料。';
+      $('agent-task-state').className=`pill ${working?'blue':job?.status==='failed'?'amber':'green'}`;$('agent-task-state').textContent=jobLabel(c,kind);
+      $('generation-status').innerHTML=`<i style="background:${working?'#3287cb':job?.status==='failed'?'#be983c':'#2eae79'}"></i>${working?'自动更新中':job?.status==='failed'?'等待重试':c.paused?'已暂停':c.ended?'已结束':'已按最新资料更新'}`;
+      $('items').innerHTML=panel.rows.length?panel.rows.map(row=>{
+        const stale=!row.manual&&(row.sourceRevision!==c.revision||job?.status!=='ready'),status=row.needsReview?'请医生核对':row.missing?'待补充':stale?'待更新':row.manual?'医生已调整':kind==='diagnosis'?'可确认':'可开具';
+        return `<div class="item-row ${row.missing?'missing':''} ${stale?'stale':''}" data-item="${row.id}"><input class="check" type="checkbox" data-select="${row.id}" aria-label="选择${escape(row.name)}" ${row.selected?'checked':''} ${canSubmit(c,row,kind)?'':'disabled'}><div><div class="item-name">${escape(row.name)} ${row.change&&!row.manual?'<span class="pill blue">新增</span>':''}</div><div class="item-info">${escape(rowInfo(kind,row))}</div>${row.needsReview?'<span class="row-hint">新结果提示用药需核对，医生修改已保留。</span>':''}</div><div class="row-status"><span class="pill ${row.missing||row.needsReview?'amber':stale||row.manual?'blue':'green'}">${status}</span></div><div class="actions"><button class="adjust" data-edit="${row.id}" ${c.ended?'disabled':''}>${row.needsReview?'核对':row.missing?'补充':'调整'}</button><button class="delete" data-remove="${row.id}" ${c.ended?'disabled':''} aria-label="移除${escape(row.name)}">${icon('trash')}</button></div></div>`;
+      }).join(''):`<div class="empty"><div class="empty-icon">${icon('check')}</div><h3>${working?'正在按最新资料准备':!ready?unfinishedMessage:kind==='prescription'&&c.stage===2?'用药需结合新结果核对':'暂无待'+(kind==='diagnosis'?'确认诊断':'开具项目')}</h3><p>${working?'可以继续问诊或查看其他栏目。':!ready?'资料已保留，核对完成后再准备本次项目。':kind==='prescription'&&c.stage===2?'原自动续方候选已移出，后续用药由医生决定。':'有足够依据的项目会自动出现在这里。'}</p></div>`;
+      document.querySelector('.table-head').hidden=!panel.rows.length;
+      $('selection-summary').innerHTML=`已选 <strong>${selected.length}</strong> 项${panel.rows.some(row=>row.missing||row.needsReview)?' · 有项目待核对':''}`;
+      $('issue-label').textContent=`${cfg.action}（${selected.length}${kind==='prescription'?' 项用药':''}）`;$('issue').disabled=!selected.length;
+      const eligible=panel.rows.filter(row=>canSubmit(c,row,kind));$('select-all').disabled=!eligible.length;$('select-all').checked=eligible.length>0&&eligible.every(row=>row.selected);$('select-all').indeterminate=selected.length>0&&selected.length<eligible.length;
+      $('manual-notice').hidden=!panel.rows.some(row=>row.manual);$('record-count').textContent=`${panel.records.length} 项`;
+      $('records').innerHTML=panel.records.length?panel.records.map(row=>`<div class="record" id="issued-${row.id}">${icon('check')}<span>${escape(row.name)}</span><span class="pill green">${kind==='diagnosis'?'已确认':'已开具'}</span><span class="time">本次就诊</span>${row.needsReview?`<div class="record-warning"><span>新检查结果提示这项可能需要调整。</span><button data-review-issued="${row.id}">查看并处理</button></div>`:''}</div>`).join(''):'<div class="record-empty">正式确认后的记录显示在这里</div>';
+    }
+    function renderDocument(){
+      const c=current();$('document-fields').innerHTML=Object.entries(recordLabels).map(([field,label])=>`<div class="document-field" data-clinical-document-field="${field}" id="field-${field}"><label for="record-${field}">${label}</label><div><textarea id="record-${field}" data-record-field="${field}" aria-label="${label}">${escape(c.document[field])}</textarea></div></div>`).join('');
+    }
+    function locateQuality(id){
+      const problem=qualityProblems(current()).find(p=>p.id===id)||qualityProblems(current())[0];if(!problem)return;
+      if($('reasons').open)$('reasons').close();selectKind('document');
+      requestAnimationFrame(()=>{const field=$(`field-${problem.field}`),input=$(`record-${problem.field}`);field.classList.add('attention');field.scrollIntoView({behavior:'smooth',block:'center'});input.focus({preventScroll:true});const index=problem.match?input.value.indexOf(problem.match):-1;if(index>=0)input.setSelectionRange(index,index+problem.match.length);setTimeout(()=>field.classList.remove('attention'),4000);});
+    }
+    function renderReasons(){
+      const c=current(),type=kinds.includes(kind)?kind:lastOrderKind,job=c.jobs[type],panel=c.panels[type];
+      document.querySelectorAll('[data-reason]').forEach(button=>{const active=button.dataset.reason===reasonTab;button.classList.toggle('active',active);button.setAttribute('aria-selected',String(active));button.tabIndex=active?0:-1;});
+      if(reasonTab==='evidence')$('reason-content').innerHTML=`<div class="reason-card"><h3>本次项目依据</h3><p>这里展示病例事实、可核对的指南条款、院内目录与核对结果。当前文件的临床内容、来源及核验结果均为预设合成演示，不代表已接入真实模型或真实指南。</p><ul><li>已保存问诊 ${c.turns.length} 轮；${c.stage===2?'已发布血钾异常的合成报告。':'尚无本次发布报告。'}</li><li>${c.stage===1?'模拟已核对既往处方、本次续方需求及复查依据。':c.stage===2?'报告返回后，需重新评估诊断、后续检查候选及续方适用性。':'当前仅能准备已有依据的诊断候选。'}</li><li>缺项保持待补充；目录默认值不充当临床依据。</li></ul><div class="reason-source">正式实现继续沿用当前证据核验标准与免费来源使用范围。</div></div><div class="reason-card"><h3>医生选择</h3><p>人工修改与移除在后续更新中保留。已开具记录不会被自动撤回；新资料影响已有决定时提示医生处理。</p></div>`;
+      if(reasonTab==='reasoning')$('reason-content').innerHTML=`<div class="reason-card"><h3>${c.stage===2?'核对异常结果的适用性':'核对近期检查与实际用药'}</h3><p>${c.stage===2?'结合标本情况、复查结果和患者状态判断；这一思路不会自动形成诊断或处方。':'结合既往处方和近期报告判断是否需要续方或复查，未记录的信息保持未知。'}</p></div>`;
+      if(reasonTab==='quality'){
+        const problems=qualityProblems(c);$('reason-content').innerHTML=problems.length?problems.map(p=>`<div class="reason-card"><h3>${escape(p.text)}</h3><p>${escape(p.source)}</p><button class="quality-locate-primary" data-locate-quality="${p.id}">定位到${recordLabels[p.field]} ↗</button><button data-retain-quality="${p.id}" style="margin-left:14px">已核实，保留原文</button></div>`).join(''):c.scenario==='unchecked'?'<div class="reason-card"><h3>部分内容还没有检查完</h3><p>当前没有具体问题提示，不代表检查已通过。主页面保持收起。</p></div>':'<p class="reason-notice">当前没有待处理的病历问题提示。</p>';
+      }
+      if(reasonTab==='agent')$('reason-content').innerHTML=`<div class="reason-card"><h3>${config[type].label} · ${escape(jobLabel(c,type))}</h3>${steps[type].map((step,index)=>`<div class="agent-step"><span class="dot ${job?.status==='ready'?'':'pending'}">${job?.status==='ready'||(job?.status==='working'&&index<job.step)?'✓':'·'}</span><div><strong>${step}</strong><p>${job?.status==='ready'?'已完成':job?.status==='working'&&index===job.step?'正在处理':'等待核对'}</p></div></div>`).join('')}</div><div class="reason-card"><h3>本次更新记录</h3>${c.log.length?c.log.slice().reverse().map(entry=>`<p>第 ${entry.revision} 版资料 · ${escape(entry.message)}</p>`).join(''):'<p>已保存问诊，自动准备正在开始。</p>'}<div class="reason-source">工作记录仅展示资料变化、执行步骤与核对结果，不展示模型内部推理。</div></div>`;
+      if(reasonTab==='review'){
+        const row=panel.records.find(row=>row.id===editing?.id);$('reason-content').innerHTML=row?`<div class="reason-card"><h3>${escape(row.name)} · 已开具记录</h3><p>${escape(rowInfo(type,row))}</p><p>新报告：血钾 5.8 mmol/L。请结合实际情况核对是否需要调整或撤回。</p><div class="reason-source">此处仅演示处理入口；已开具记录保持原样，正式调整沿用现有业务流程。</div><button data-retain-issued="${row.id}">已核对，保留记录</button></div>`:'<p>记录已变化，请重新打开。</p>';
+      }
+    }
+    function openReasons(tab='evidence'){reasonTab=tab;renderReasons();if(!$('reasons').open)$('reasons').showModal();}
+    function openEditor(id){
+      const c=current();if(c.ended)return;const row=c.panels[kind].rows.find(row=>row.id===id);if(!row)return;
+      editing={caseId:c.id,type:kind,id:row.id,row:{...row},revision:c.revision,stage:c.stage};$('editor-title').textContent=row.needsReview?'核对受影响项目':row.missing?'补充项目信息':'调整项目';$('editor-item').textContent=row.name;
+      if(kind==='diagnosis')$('edit-fields').innerHTML=`<label>诊断名称<input name="name" value="${escape(row.name)}" required readonly></label><label>诊断类别<select name="primary"><option value="true" ${row.primary?'selected':''}>主诊断</option><option value="false" ${!row.primary?'selected':''}>次诊断</option></select></label>`;
+      if(kind==='laboratory')$('edit-fields').innerHTML=`<label>标本<select name="specimen" required><option value="">请选择</option>${['血清','血浆','晨尿','随机尿','无需标本'].map(value=>`<option ${row.specimen===value?'selected':''}>${value}</option>`).join('')}</select></label><label>优先级<select name="priority"><option ${row.priority==='常规'?'selected':''}>常规</option><option ${row.priority==='急查'?'selected':''}>急查</option></select></label>`;
+      if(kind==='prescription')$('edit-fields').innerHTML=`${row.needsReview?'<p class="row-hint">新检查结果提示用药需核对，请结合本次情况决定保留、修改或移除。</p>':''}<div class="field-pair"><label>每次剂量<input name="dose" value="${escape(row.dose)}" required></label><label>用药频次<input name="frequency" value="${escape(row.frequency)}" required></label></div><div class="field-pair"><label>疗程（天）<input type="number" min="1" name="days" value="${escape(row.days)}" required></label><label>数量及单位<input name="quantity" value="${escape(row.quantity)}" required></label></div>`;
+      $('agent-fill').hidden=!row.missing;$('agent-field-result').textContent='缺少必要依据的字段保持待补充，不用目录默认值代填。';$('agent-check-field').disabled=false;$('editor').showModal();
+    }
+    document.querySelectorAll('[data-icon]').forEach(el=>el.innerHTML=icon(el.dataset.icon));
+    document.querySelectorAll('[data-kind]').forEach(button=>button.onclick=()=>selectKind(button.dataset.kind));
+    document.querySelectorAll('[data-patient]').forEach(button=>button.onclick=()=>switchPatient(button.dataset.patient));
+    document.querySelectorAll('[data-close]').forEach(button=>button.onclick=()=>$(button.dataset.close).close());
+    document.querySelectorAll('[data-reason]').forEach(button=>button.onclick=()=>{reasonTab=button.dataset.reason;renderReasons();});
+    for(const list of document.querySelectorAll('[role=tablist]'))list.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;const buttons=[...list.querySelectorAll('[role=tab]')],index=buttons.indexOf(document.activeElement);if(index<0)return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+(event.key==='ArrowRight'?1:-1)+buttons.length)%buttons.length;buttons[next].click();buttons[next].focus();});
+    $('scenario').onchange=event=>resetDemo(event.target.value);$('reset').onclick=()=>resetDemo();
+    $('next-turn').onclick=()=>{const c=current();if(c.stage!==0||c.ended)return;c.stage=1;c.turns.push(nextTurn);renderConversation();sourceChanged(c,'新一轮问诊');};
+    $('publish-report').onclick=()=>{const c=current();if(c.stage!==1||c.ended)return;c.stage=2;sourceChanged(c,'新检查结果');};
+    $('end-visit').onclick=()=>{const c=current();c.ended=true;stopJobs(c);log(c,'本次接诊结束，停止自动准备。');render();};
+    $('pause-agent').onclick=togglePause;$('pause-order-agent').onclick=togglePause;
+    $('background-modules').onclick=event=>{const button=event.target.closest('[data-open-module]');if(button)selectKind(button.dataset.openModule);};
+    $('report-orders').onclick=()=>selectKind('diagnosis');
+    $('refresh').onclick=()=>{const c=current();if(!c.paused&&!c.ended)scheduleUpdate(c,'手动刷新',[kind]);};
+    $('send').onclick=()=>toast('此处沿用现有问诊布局；请用顶部演示按钮模拟新资料保存。');
+    $('items').onchange=event=>{if(event.target.dataset.select){const row=current().panels[kind].rows.find(row=>row.id===event.target.dataset.select);if(row&&canSubmit(current(),row,kind))row.selected=event.target.checked;render();}};
+    $('select-all').onchange=event=>{for(const row of current().panels[kind].rows)if(canSubmit(current(),row,kind))row.selected=event.target.checked;render();};
+    $('items').onclick=event=>{
+      const edit=event.target.closest('[data-edit]'),remove=event.target.closest('[data-remove]');if(edit)openEditor(edit.dataset.edit);
+      if(remove){const c=current(),panel=c.panels[kind];panel.removed.add(remove.dataset.remove);panel.rows=panel.rows.filter(row=>row.id!==remove.dataset.remove);log(c,'医生移除一项待办，同一依据下不自动加回。');render();}
+    };
+    $('issue').onclick=()=>{
+      const c=current(),panel=c.panels[kind],selected=panel.rows.filter(row=>row.selected&&canSubmit(c,row,kind));if(!selected.length)return;
+      if(kind==='diagnosis'&&selected.filter(row=>row.primary).length+panel.records.filter(row=>row.primary).length>1){toast('请先确定一个主诊断。');return;}
+      panel.records.push(...selected.map(row=>({...row,change:''})));const ids=new Set(selected.map(row=>row.id));panel.rows=panel.rows.filter(row=>!ids.has(row.id));toast(`演示：${kind==='diagnosis'?'已确认':'已开具'} ${selected.length} 项`);sourceChanged(c,kind==='diagnosis'?'已确认诊断':'已开具记录');
+    };
+    $('edit-form').onsubmit=event=>{
+      event.preventDefault();const c=current();if(!editing||editing.caseId!==c.id||c.ended)return;
+      const row=editing.row,type=editing.type,data=new FormData(event.target);
+      if(type==='laboratory')for(const key of ['specimen','priority'])row[key]=data.get(key).trim();
+      if(type==='diagnosis')row.primary=data.get('primary')==='true';
+      if(type==='prescription')for(const key of ['dose','frequency','days','quantity'])row[key]=data.get(key).trim();
+      if(type==='prescription'&&['dose','frequency','days','quantity'].some(key=>!row[key]))return;
+      row.manual=true;row.missing=false;row.selected=true;row.change='';row.ackStage=editing.stage;row.needsReview=clinicalConflict(c,row)&&editing.stage!==c.stage;
+      const panel=c.panels[type],index=panel.rows.findIndex(item=>item.id===row.id);if(index>=0)panel.rows[index]=row;else panel.rows.push(row);
+      $('editor').close();log(c,'医生调整已保留；后续自动更新不会覆盖。');render();toast(row.needsReview?'新资料在编辑期间到达，请再次核对。':'医生调整已保留');
+    };
+    $('document-fields').oninput=event=>{if(event.target.dataset.recordField)current().document[event.target.dataset.recordField]=event.target.value;};
+    $('save-document').onclick=()=>{const c=current();c.savedDocument={...c.document};sourceChanged(c,'医生保存病历');toast('演示：病历已保存，相关待办正在重新核对。');};
+    $('back-to-orders').onclick=()=>selectKind(lastOrderKind);$('qc-locate').onclick=()=>locateQuality();$('qc-more').onclick=()=>openReasons('quality');$('explain').onclick=()=>openReasons();
+    $('reason-content').onclick=event=>{
+      const locate=event.target.closest('[data-locate-quality]'),retain=event.target.closest('[data-retain-quality]'),keep=event.target.closest('[data-retain-issued]');
+      if(locate)locateQuality(locate.dataset.locateQuality);
+      if(retain){const c=current(),problem=qualityProblems(c).find(p=>p.id===retain.dataset.retainQuality);if(problem){c.resolved.add(`${problem.id}|${c.savedDocument[problem.field]}|${problem.source}`);render();toast('已核实保留，原文保持不变。');}}
+      if(keep){const c=current(),type=kinds.includes(kind)?kind:lastOrderKind,row=c.panels[type].records.find(row=>row.id===keep.dataset.retainIssued);if(row){row.ackStage=c.stage;row.needsReview=false;log(c,'医生核对后保留已开具记录。');$('reasons').close();render();}}
+    };
+    $('records').onclick=event=>{const button=event.target.closest('[data-review-issued]');if(button){editing={id:button.dataset.reviewIssued};openReasons('review');}};
+    $('agent-check-field').onclick=()=>{$('agent-field-result').textContent='当前预设资料仍不足以确定用法用量，请医生核对补充。';};
+    resetDemo();
+  </script>
+</body>
+</html>
