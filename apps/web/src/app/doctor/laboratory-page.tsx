@@ -4,7 +4,6 @@ import type {
   LaboratoryReport,
   LaboratoryRequest,
 } from '@clinmesh/contracts/his'
-import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -25,7 +24,6 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { useMutation } from '@tanstack/react-query'
 import {
   CheckIcon,
   CircleAlertIcon,
@@ -35,7 +33,6 @@ import {
   Trash2Icon,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { getDoctorRecommendations, searchReferenceLaboratory } from '../api-client.ts'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { formatLaboratoryPrice } from '../workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
@@ -48,6 +45,7 @@ import {
 import { useAutosave } from './use-autosave.ts'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 
 export interface LaboratoryPageActions {
@@ -120,7 +118,6 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
 
 export function LaboratoryPage({
   active = true,
-  editDraft = false,
   actions,
   catalogError,
   catalogPending,
@@ -267,9 +264,9 @@ export function LaboratoryPage({
         ) : (
           <LaboratoryRequestEditor
             active={active}
-            editDraft={editDraft}
             actions={actions}
             caseId={detail.caseId}
+            encounter={detail.encounter}
             catalog={laboratoryCatalog}
             indicationCode={indicationCode}
             indicationItems={indicationItems}
@@ -297,9 +294,9 @@ export function LaboratoryPage({
 
 function LaboratoryRequestEditor({
   active,
-  editDraft,
   actions,
   caseId,
+  encounter,
   catalog,
   indicationCode,
   indicationItems,
@@ -319,9 +316,9 @@ function LaboratoryRequestEditor({
   state,
 }: {
   active: boolean
-  editDraft: boolean
   actions: LaboratoryPageActions
   caseId: string
+  encounter: DoctorCaseDetail['encounter']
   catalog: ClinicalCatalog['laboratory']
   indicationCode: string
   indicationItems: Array<{ label: string; value: string }>
@@ -340,6 +337,8 @@ function LaboratoryRequestEditor({
   showCorrection: boolean
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
+  const preparation = useDoctorPreparation()
+  const submitting = preparation?.submitting('laboratory') === true
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const [selectedReference, setSelectedReference] = useState<LaboratoryCatalogSelection | undefined>(
     () => {
@@ -386,6 +385,7 @@ function LaboratoryRequestEditor({
   useAutosave({
     delayMs: 800,
     enabled: !readOnly
+      && !submitting
       && !actions.save.pending
       && laboratoryItemId.length > 0
       && indicationCode.length > 0
@@ -393,51 +393,9 @@ function LaboratoryRequestEditor({
     onSave: actions.save.onSubmit,
     revision: `${caseId}:${state?.draftVersion ?? 0}:${laboratoryItemId}:${indicationCode}`,
   })
-  const [adding, setAdding] = useState(() => editDraft && state?.draft !== undefined)
-  const recommendationContext = JSON.stringify([
-    recommendationScope, recommendationRevision, caseId, active, readOnly, state?.draftVersion ?? 0, laboratoryItemId, indicationCode,
-  ])
-  const currentRecommendationContext = useRef({ value: recommendationContext, revision: 0 })
-  if (currentRecommendationContext.current.value !== recommendationContext) {
-    currentRecommendationContext.current = { value: recommendationContext, revision: currentRecommendationContext.current.revision + 1 }
-  }
-  const recommendationEditorMounted = useRef(true)
-  useEffect(() => {
-    recommendationEditorMounted.current = true
-    return () => { recommendationEditorMounted.current = false }
-  }, [])
-  const recommendationAdoption = useMutation({
-    mutationFn: async (input: {
-      caseId: string
-      context: number
-      generation: number
-      inputFingerprint: string
-      suggestion: Extract<DoctorRecommendationSuggestion, { kind: 'laboratory' }>
-    }) => {
-      const result = await searchReferenceLaboratory(input.caseId, input.suggestion.label)
-      const service = result.items.find(item => item.id === input.suggestion.catalogItemId
-        && item.allowedIndicationCodes.includes(input.suggestion.indicationCode))
-      if (service === undefined) throw new Error(messages.recommendationRequestTargetUnavailable)
-      if (!recommendationEditorMounted.current || currentRecommendationContext.current.revision !== input.context) return
-      const latest = await getDoctorRecommendations(input.caseId, 'laboratory')
-      if (latest.caseId !== input.caseId || latest.kind !== 'laboratory' || latest.generation !== input.generation
-        || latest.inputFingerprint !== input.inputFingerprint || latest.status !== 'ready' || latest.stale
-        || JSON.stringify(latest.items.find(item => item.id === input.suggestion.id)) !== JSON.stringify(input.suggestion)) return
-      return service
-    },
-    onSuccess: (service, input) => {
-      if (service === undefined || !recommendationEditorMounted.current || currentRecommendationContext.current.revision !== input.context) return
-      setSelectedReference({ catalogItemId: service.id, code: service.referenceConcept.code,
-        display: locale === 'zh-CN' ? service.nameZh : service.nameEn ?? service.nameZh, laboratoryService: service,
-        referenceConcept: service.referenceConcept })
-      onLaboratoryItemChange(service.id)
-      onIndicationChange(input.suggestion.indicationCode)
-      setAdding(true)
-    },
-  })
+  const [selectionConflict, setSelectionConflict] = useState(false)
   const recommendationUnavailableReason = (): string | undefined => {
-    if (state?.draft !== undefined || laboratoryItemId !== '' || indicationCode !== '') return messages.recommendationDraftNeedsResolution
-    if (actions.save.pending || actions.issue.pending || actions.deleteDraft.pending || recommendationAdoption.isPending) {
+    if (actions.save.pending || actions.issue.pending || actions.deleteDraft.pending) {
       return messages.recommendationRequestTargetUnavailable
     }
     return undefined
@@ -447,6 +405,7 @@ function LaboratoryRequestEditor({
   const requests = state?.requests ?? []
   const selectRequest = (id: string) => { setLocalRequestId(id); onSelectRequest?.(id) }
   const activeRequest = requests.find(request => request.id === (selectedRequestId ?? localRequestId)) ?? requests[0]
+  const recordRef = useRef<HTMLElement>(null)
   const requestActionPending = actions.cancel.pending || actions.retry.pending
   const requestName = (request: LaboratoryRequest) => {
     const item = catalogById.get(request.catalogItemId)
@@ -458,15 +417,19 @@ function LaboratoryRequestEditor({
     const id = actions.issue.successRequestId
     if (id === undefined || id === handledIssueId.current || !requests.some(request => request.id === id)) return
     handledIssueId.current = id
-    setAdding(false)
     setLocalRequestId(id)
     onSelectRequest?.(id)
   }, [actions.issue.successRequestId, requests, onSelectRequest])
   const requestHeadingId = `laboratory-request-heading-${caseId}`
   const editor = (
-    <div className="grid min-w-0 gap-4 @2xl/laboratory:grid-cols-[minmax(0,1fr)_minmax(16rem,0.7fr)]">
-      <LaboratoryCatalogPicker active={active} locale={locale} search={referenceSearch} selectedId={laboratoryItemId}
+    <div className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
+      <LaboratoryCatalogPicker active={active} collapsible={requests.length > 0} locale={locale} search={referenceSearch} selectedId={laboratoryItemId}
         onSelect={selection => {
+          if (state?.draft !== undefined && selection?.catalogItemId !== state.draft.catalogItemId) {
+            setSelectionConflict(true)
+            return
+          }
+          setSelectionConflict(false)
           setSelectedReference(selection)
           onLaboratoryItemChange(selection?.catalogItemId ?? '')
         }} />
@@ -521,7 +484,6 @@ function LaboratoryRequestEditor({
                     : state?.draft === undefined ? '' : messages.autosaveSaved}
               </p>
               {state?.draft === undefined ? null : (
-                <>
                   <AlertDialog>
                     <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending || actions.issue.pending || actions.save.pending || !draftMatchesSelection} type="button" variant="destructive" />}>
                       <Trash2Icon data-icon="inline-start" />{messages.deleteLaboratoryRequestDraft}
@@ -556,14 +518,6 @@ function LaboratoryRequestEditor({
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>
-                  <Button
-                    disabled={actions.issue.pending || actions.save.pending || !draftMatchesSelection}
-                    onClick={actions.issue.onSubmit}
-                    type="button"
-                  >
-                    <FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryRequest}
-                  </Button>
-                </>
               )}
             </div>
             {actions.deleteDraft.success?.caseId === caseId
@@ -574,6 +528,8 @@ function LaboratoryRequestEditor({
                 <AlertTitle>{messages.laboratoryRequestDraftDeleted}</AlertTitle>
               </Alert>
             ) : null}
+            {selectionConflict ? <p role="alert" className="text-sm text-destructive">{locale === 'zh-CN' ? '请先开具或删除已有检验草稿，再选择其他项目。' : 'Issue or delete the existing laboratory draft before choosing another item.'}</p> : null}
+            {actions.save.error === null ? null : <Button disabled={actions.save.pending} onClick={actions.save.onSubmit} type="button" variant="outline">{locale === 'zh-CN' ? '重试保存' : 'Retry saving'}</Button>}
             {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
             {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
             {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
@@ -581,34 +537,62 @@ function LaboratoryRequestEditor({
         </section>
     </div>
   )
+  const pending = (
+    <DoctorRecommendationsPanel
+      caseId={caseId}
+      kind="laboratory"
+      inputRevision={recommendationRevision}
+      locale={locale}
+      scope={recommendationScope}
+      enabled={active && !readOnly}
+      disabled={actions.save.pending || actions.issue.pending || actions.deleteDraft.pending}
+      encounter={encounter}
+      expectedDraftVersion={state?.draftVersion ?? 0}
+      resolveExistingDraft={state?.draft !== undefined}
+      manualItems={laboratoryItemId === '' && indicationCode === '' ? [] : [{
+        label: selectedDisplay ?? laboratoryItemId,
+        value: { source: 'manual', kind: 'laboratory', catalogItemId: laboratoryItemId, indicationCode },
+      }]}
+      onManualChange={({ value }) => {
+        if (value.kind !== 'laboratory' || laboratoryItemId !== '' && laboratoryItemId !== value.catalogItemId) return false
+        onLaboratoryItemChange(value.catalogItemId)
+        onIndicationChange(value.indicationCode)
+        return true
+      }}
+      onConfirmed={(values, result) => {
+        if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
+        if (!values.some(value => value.source === 'manual' && value.kind === 'laboratory' && value.catalogItemId === laboratoryItemId && value.indicationCode === indicationCode)) return
+        onLaboratoryItemChange(''); onIndicationChange(''); setSelectedReference(undefined)
+      }}
+      onManualRemove={value => {
+        if (value.kind !== 'laboratory' || value.catalogItemId !== laboratoryItemId) return
+        if (state?.draft !== undefined) actions.deleteDraft.onSubmit()
+        else { onLaboratoryItemChange(''); onIndicationChange(''); setSelectedReference(undefined) }
+      }}
+      unavailableReason={recommendationUnavailableReason}
+      manualUnavailableReason={value => {
+        if (value.kind !== 'laboratory') return messages.recommendationRequestTargetUnavailable
+        const target = selectedService?.id === value.catalogItemId ? selectedService
+          : catalogById.get(value.catalogItemId) ?? referenceSearch.data?.items.find(item => item.id === value.catalogItemId)
+        return target === undefined || target.allowedIndicationCodes.includes(value.indicationCode) ? undefined : messages.recommendationRequestTargetUnavailable
+      }}
+    />
+  )
   return (
     <>
-      <DoctorRecommendationsPanel
-        caseId={caseId}
-        kind="laboratory"
-        inputRevision={recommendationRevision}
-        locale={locale}
-        scope={recommendationScope}
-        enabled={active && !readOnly}
-        canAdopt={suggestion => suggestion.kind === 'laboratory' && recommendationUnavailableReason() === undefined}
-        unavailableReason={recommendationUnavailableReason}
-        onAdopt={(suggestion, recommendation) => {
-          if (suggestion.kind !== 'laboratory' || !active || readOnly || recommendationUnavailableReason() !== undefined) return
-          recommendationAdoption.mutate({ caseId, context: currentRecommendationContext.current.revision,
-            generation: recommendation.generation, inputFingerprint: recommendation.inputFingerprint, suggestion })
-        }}
-      />
-      {recommendationAdoption.isError ? <ErrorAlert
-        message={getWorkspaceErrorMessage(recommendationAdoption.error, messages)}
-        title={messages.recommendationRequestTargetUnavailable}
-      /> : null}
-      <InvestigationRequestWorkspace adding={adding && active} onAddingChange={setAdding} editor={editor}
-        locale={locale} readOnly={readOnly} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
+      {readOnly || activeRequest === undefined || activeRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
+        authoredAt={activeRequest.authoredAt} locale={locale} onReview={() => {
+          selectRequest(activeRequest.id)
+          requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
+        }} />}
+      <InvestigationRequestWorkspace
+        entry={readOnly ? null : editor} pending={pending}
+        locale={locale} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
         requests={requests.map(request => ({ id: request.id, title: requestName(request),
           statusLabel: laboratoryRequestStatusLabel(request, messages), unread: request.status === 'reported',
           inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status) }))}>
         {activeRequest === undefined ? null : (
-          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)}>
+          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)} ref={recordRef} tabIndex={-1}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">{requestName(activeRequest)}</h3>
               <Badge variant="outline">{laboratoryRequestStatusLabel(activeRequest, messages)}</Badge>
@@ -1150,3 +1134,4 @@ function interpretationLabel(code: string, messages: ReturnType<typeof getWorksp
   if (code === 'POS') return messages.positive
   return messages.abnormal
 }
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'

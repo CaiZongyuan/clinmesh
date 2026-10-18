@@ -47,6 +47,13 @@ export class ChatCompletionsError extends Error {
   }
 }
 
+export class StructuredOutputValidationError extends Error {
+  constructor(readonly code: 'quality_source' | 'quality_coverage' | 'quality_scope', readonly path: string) {
+    super('The structured output failed a domain validation check')
+    this.name = 'StructuredOutputValidationError'
+  }
+}
+
 export interface JsonChatCompletionInput {
   maxAttempts?: 1 | 2
   onResponse?: () => void
@@ -207,6 +214,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
       }
     }
     let response: Response | undefined
+    let validationError: unknown
     try {
       const parseResponse = async (value: Response) => {
         if (!value.ok) {
@@ -236,12 +244,15 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           try {
             const value: unknown = JSON.parse(normalized)
             if (input.validate?.(value) === false) {
+              validationError = new Error('The structured output did not match its schema')
               console.warn(`[ai-chat-completions] ${path} content failed schema validation (model ${input.model})`)
               continue
             }
             return normalized
-          } catch {
-            console.warn(`[ai-chat-completions] ${path} content was not valid JSON (model ${input.model})`)
+          } catch (error) {
+            validationError = error
+            const category = error instanceof SyntaxError ? 'JSON syntax' : error instanceof StructuredOutputValidationError ? error.code : 'schema validation'
+            console.warn(`[ai-chat-completions] ${path} content failed ${category} (model ${input.model})`)
             continue
           }
         }
@@ -301,7 +312,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
         content = structuredJsonContent(contentPath, parsed)
       }
       if (content === undefined || parsed === undefined || contentPath === undefined) {
-        throw new Error('The expected structured result was not returned')
+        throw validationError ?? new Error('The expected structured result was not returned')
       }
       console.info(`[ai-chat-completions] structured result via ${contentPath} (model ${parsed.model ?? input.model})`)
       return {
@@ -322,7 +333,8 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
                   path: issue.path.join('.'),
                 })),
               }
-            : {}),
+            : error instanceof StructuredOutputValidationError ? { validationIssues: [{ code: error.code, path: error.path }] }
+              : error instanceof SyntaxError ? { validationIssues: [{ code: 'invalid_json', path: '' }] } : {}),
         },
       )
     }

@@ -156,6 +156,14 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(skill).toContain('does not save the clinical draft')
     expect(skill).toContain('explicit clinician decision')
     expect(skill).toContain('does not add a signing gate')
+    const get = getHisOperation('doctor.document-quality.get')
+    const failed = { caseId: 'synthetic-case', encounterId: 'synthetic-encounter', draftVersion: 1, generation: 1,
+      inputFingerprint: 'a'.repeat(64), documentFingerprint: 'b'.repeat(64), status: 'failed', stale: false,
+      issues: [], notices: [], errorCode: 'AI_RESPONSE_INVALID', failure: { stage: 'generation', reason: 'invalid-source' } }
+    expect(get.output.safeParse(failed).success).toBe(true)
+    expect(get.output.safeParse({ ...failed, failure: { ...failed.failure, rawContent: 'private model text' } }).success).toBe(false)
+    expect(skill).toContain('failure.stage')
+    expect(skill).toContain('refresh: true')
   })
   it('keeps document examples aligned with optional family and allergy history', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')

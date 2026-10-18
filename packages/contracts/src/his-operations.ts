@@ -1372,7 +1372,7 @@ const operationDefinitions = [
     input: caseIdInputSchema.extend({ clientId: z.string().min(1).max(128).optional() }),
     mode: 'query', output: clinicalDocumentQualityControlStateSchema,
     requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['outpatient-doctor'],
-    summary: '读取当前病历质控、输入身份、字段问题及原始依据；clientId 只读取该客户端的未保存候选，不保存病历', version: 1,
+    summary: '读取当前病历质控、输入身份、字段问题及安全失败阶段/原因；clientId 保留未保存候选版本，同完整输入复用持久任务，不保存病历', version: 2,
   },
   {
     cliPath: ['doctor', 'document-quality', 'check'],
@@ -1380,7 +1380,7 @@ const operationDefinitions = [
     id: 'doctor.document-quality.check', input: documentQualityCheckInputSchema,
     mode: 'command', output: clinicalDocumentQualityControlResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['outpatient-doctor'],
-    summary: '检查当前已保存病历或带 clientId/clientRevision 的未保存候选；不会保存或改写临床草稿，不新增签署门禁', version: 1,
+    summary: '检查已保存病历或带 clientId/clientRevision 的候选；同完整输入复用成功、在途及失败任务，refresh 仅用于明确重试；不保存病历或新增签署门禁', version: 2,
   },
   {
     cliPath: ['doctor', 'document-quality', 'retain'],
@@ -1388,7 +1388,7 @@ const operationDefinitions = [
     id: 'doctor.document-quality.retain', input: documentQualityRetainInputSchema,
     mode: 'command', output: clinicalDocumentQualityControlResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['outpatient-doctor'],
-    summary: '医生核实当前问题后保留正文，原因选填；处理仅适用于相同相关正文与证据，记录审计且不成为新患者事实', version: 1,
+    summary: '医生核实当前问题后保留正文，原因选填；仅适用于相同相关正文与证据，返回当前共享质控及安全失败说明，记录审计且不成为患者事实', version: 2,
   },
   {
     cliPath: ['doctor', 'case', 'laboratory-catalog', 'search'],
@@ -2594,6 +2594,11 @@ export interface ExcludedHisRoute {
 }
 
 export const excludedHisRoutes = [
+  {
+    method: 'POST',
+    path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',
+    reason: '医生页面显式确认选中准备项目，复用正式领域内核并在单个受审计 Command 中校验资料；只接受医生 Session，不提供独立 CLI 或 Agent Grant 授权。',
+  },
   {
     method: 'GET',
     path: '/api/his/v1/doctor/cases/:caseId/recording-events',

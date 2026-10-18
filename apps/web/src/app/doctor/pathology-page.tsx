@@ -11,7 +11,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import {
   acknowledgePathologyReport,
@@ -21,7 +21,6 @@ import {
   getCasePathologyServices,
   getImagingStudy,
   getImagingStudyBlock,
-  issuePathologyRequest,
   newIdempotencyKey,
   retryPathologyRequest,
   savePathologyRequestDraft,
@@ -33,7 +32,7 @@ import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
-import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -330,9 +329,9 @@ export function PathologyRequestList({ actions, active = true, locale, readOnly,
 
 /**
  * 医生工作台的病理会诊：选择本院会诊服务、从患者可见既往病史中选择送检对应的手术并填写会诊目的，
- * 无申请时直接选项目并保存草稿后签发；有申请时阅读选中详情，通过追加入口继续开立。
+ * 手工与自动项目共用待开具清单；目录与申请信息同屏填写，正式申请与剩余待开具项目分组管理。
  */
-export function PathologyPage({ actions, active = true, caseId, editDraft = false, elementId, encounter, locale, onSelectRequest, readOnly, recommendationRevision, recommendationScope, selectedReportId, selectedRequestId, state }: {
+export function PathologyPage({ actions, active = true, caseId, elementId, encounter, locale, onSelectRequest, readOnly, recommendationRevision, recommendationScope, selectedReportId, selectedRequestId, state }: {
   actions: PathologyPageActions
   active?: boolean | undefined
   caseId: string
@@ -355,10 +354,12 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
   const [procedureReference, setProcedureReference] = useState<string | null>(state?.draft?.sourceProcedure.sourceReference ?? null)
   const [purpose, setPurpose] = useState(state?.draft?.purpose ?? '')
   const [catalogSearch, setCatalogSearch] = useState('')
-  const [adding, setAdding] = useState(editDraft && state?.draft !== undefined)
+  const [catalogOpen, setCatalogOpen] = useState(false)
+  const catalogToggleRef = useRef<HTMLButtonElement>(null)
   const [localSelectedId, setLocalSelectedId] = useState<string>()
   const requests = state?.requests ?? []
   const selectedRequest = requests.find(request => request.id === (selectedRequestId ?? localSelectedId)) ?? requests[0]
+  const recordRef = useRef<HTMLDivElement>(null)
   const selectRequest = (requestId: string) => { setLocalSelectedId(requestId); onSelectRequest?.(requestId) }
   const services = useQuery({
     enabled: !readOnly,
@@ -378,43 +379,19 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
   })
   const encounterVersion = { encounterId: encounter.id, encounterVersion: encounter.versionId }
   const draftAction = useMutation({
-    mutationFn: async (kind: 'delete' | 'issue' | 'save') => {
+    mutationFn: async (kind: 'delete' | 'save') => {
       if (kind === 'delete') {
         await deletePathologyRequestDraft({ ...encounterVersion, expectedDraftVersion: draftVersion }, newIdempotencyKey())
         return
       }
       if (!parsedDraft.success) return
-      // 签发的是已保存的草稿：表单有改动时先保存，再按保存后的草稿版本签发。
-      const unchanged = state?.draft?.service.id === serviceId
-        && state.draft.sourceProcedure.sourceReference === procedureReference
-        && state.draft.purpose === purpose.trim()
-      const saved = unchanged
-        ? draftVersion
-        : (await savePathologyRequestDraft({
-            ...encounterVersion,
-            ...parsedDraft.data,
-          }, newIdempotencyKey())).data.draftVersion
-      if (kind === 'issue') {
-        return (await issuePathologyRequest({ ...encounterVersion, expectedDraftVersion: saved }, newIdempotencyKey())).data.request
-      }
+      await savePathologyRequestDraft({ ...encounterVersion, ...parsedDraft.data }, newIdempotencyKey())
     },
     onSettled: () => onChanged(),
-    onSuccess: (result, kind) => {
-      if (kind === 'save') return
-      setServiceId(null)
-      setProcedureReference(null)
-      setPurpose('')
-      if (kind === 'issue' && result !== undefined) {
-        selectRequest(result.id)
-        setAdding(false)
-      }
-    },
+    onSuccess: (_result, kind) => { if (kind === 'delete') { setServiceId(null); setProcedureReference(null); setPurpose('') } },
   })
   const selectedService = services.data?.items.find(item => item.service.id === serviceId)
-  const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion): string | undefined => {
-    if (state?.draft !== undefined || serviceId !== null || procedureReference !== null || purpose.trim() !== '') {
-      return messages.recommendationDraftNeedsResolution
-    }
+  const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion | PreparationDraft): string | undefined => {
     if (suggestion.kind !== 'pathology' || services.isFetching || draftAction.isPending) return messages.recommendationRequestTargetUnavailable
     const target = services.data?.items.find(item => item.service.id === suggestion.serviceId)
     if (target?.available !== true || !target.sourceProcedures.some(procedure => procedure.sourceReference === suggestion.sourceProcedureReference)
@@ -435,51 +412,54 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
       </AlertDescription>
     </Alert>
   ) : (
-    <div className="@container mt-3">
-      <div className="grid gap-4 @2xl:grid-cols-[minmax(0,1fr)_minmax(240px,320px)]">
-        <FieldSet className="min-w-0 rounded-lg border p-4">
+    <section aria-label={zh ? '开具病理会诊' : 'Prepare pathology consultation'} className="@container">
+      <div className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
+        <FieldSet className="min-w-0">
           <FieldLegend>{zh ? '本院病理会诊目录' : 'Hospital pathology catalog'}</FieldLegend>
           <Field>
             <FieldLabel htmlFor={`${elementId}-catalog-search`}>{zh ? '搜索病理目录' : 'Search pathology catalog'}</FieldLabel>
-            <Input disabled={draftAction.isPending} id={`${elementId}-catalog-search`} onChange={event => setCatalogSearch(event.target.value)} type="search" value={catalogSearch} />
+            <Input disabled={draftAction.isPending} id={`${elementId}-catalog-search`} onFocus={() => { if (requests.length > 0) setCatalogOpen(true) }} onChange={event => { setCatalogSearch(event.target.value); if (requests.length > 0) setCatalogOpen(true) }} type="search" value={catalogSearch} />
           </Field>
-          <Table aria-label={zh ? '病理会诊项目' : 'Pathology consultations'}>
-            <TableHeader>
-              <TableRow>
-                <TableHead><span className="sr-only">{zh ? '选择' : 'Select'}</span></TableHead>
-                <TableHead>{zh ? '会诊项目' : 'Consultation'}</TableHead>
-                <TableHead>{zh ? '标本' : 'Specimen'}</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visibleServices.map(item => (
-                <TableRow data-state={serviceId === item.service.id ? 'selected' : undefined} key={item.service.id}>
-                  <TableCell>
-                    <input
-                      aria-label={zh ? `选择${item.service.name}` : `Select ${item.service.name}`}
-                      checked={serviceId === item.service.id}
-                      className="size-4 accent-primary"
-                      disabled={!item.available || draftAction.isPending}
-                      id={`${elementId}-service-${item.service.id}`}
-                      name={`${elementId}-service`}
-                      onChange={() => { setServiceId(item.service.id); setProcedureReference(null) }}
-                      type="radio"
-                    />
-                  </TableCell>
-                  <TableCell className="whitespace-normal">
-                    <label htmlFor={`${elementId}-service-${item.service.id}`}>{item.service.name}</label>
-                    <p className="text-xs text-muted-foreground">{item.service.code}</p>
-                    {item.available ? null : <p className="text-xs text-muted-foreground">{zh ? `${item.service.name}：本院当前未开展` : `${item.service.name}: not currently available`}</p>}
-                    {item.sourceProcedures.length > 0 ? null : <p className="text-xs text-muted-foreground">{zh ? '无可送检的既往乳腺手术' : 'No eligible breast procedure'}</p>}
-                  </TableCell>
-                  <TableCell className="whitespace-normal">{item.service.specimenType}</TableCell>
+          {requests.length > 0 ? <Button aria-controls={`${elementId}-catalog-results`} aria-expanded={catalogOpen} ref={catalogToggleRef} onClick={() => setCatalogOpen(open => !open)} size="sm" type="button" variant="ghost">{zh ? catalogOpen ? '收起目录' : '展开目录' : catalogOpen ? 'Hide catalog' : 'Show catalog'}</Button> : null}
+          <div hidden={requests.length > 0 && !catalogOpen} id={`${elementId}-catalog-results`}>
+            <Table aria-label={zh ? '病理会诊项目' : 'Pathology consultations'}>
+              <TableHeader>
+                <TableRow>
+                  <TableHead><span className="sr-only">{zh ? '选择' : 'Select'}</span></TableHead>
+                  <TableHead>{zh ? '会诊项目' : 'Consultation'}</TableHead>
+                  <TableHead>{zh ? '标本' : 'Specimen'}</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          {visibleServices.length > 0 ? null : <p className="text-sm text-muted-foreground" role="status">{zh ? '没有匹配的病理会诊项目。' : 'No matching pathology consultations.'}</p>}
+              </TableHeader>
+              <TableBody>
+                {visibleServices.map(item => (
+                  <TableRow data-state={serviceId === item.service.id ? 'selected' : undefined} key={item.service.id}>
+                    <TableCell>
+                      <input
+                        aria-label={zh ? `选择${item.service.name}` : `Select ${item.service.name}`}
+                        checked={serviceId === item.service.id}
+                        className="size-4 accent-primary"
+                        disabled={!item.available || draftAction.isPending || (state?.draft !== undefined && state.draft.service.id !== item.service.id)}
+                        id={`${elementId}-service-${item.service.id}`}
+                        name={`${elementId}-service`}
+                        onChange={() => { setServiceId(item.service.id); setProcedureReference(null); setCatalogOpen(false); if (requests.length > 0) catalogToggleRef.current?.focus() }}
+                        type="radio"
+                      />
+                    </TableCell>
+                    <TableCell className="whitespace-normal">
+                      <label htmlFor={`${elementId}-service-${item.service.id}`}>{item.service.name}</label>
+                      <p className="text-xs text-muted-foreground">{item.service.code}</p>
+                      {item.available ? null : <p className="text-xs text-muted-foreground">{zh ? `${item.service.name}：本院当前未开展` : `${item.service.name}: not currently available`}</p>}
+                      {item.sourceProcedures.length > 0 ? null : <p className="text-xs text-muted-foreground">{zh ? '无可送检的既往乳腺手术' : 'No eligible breast procedure'}</p>}
+                    </TableCell>
+                    <TableCell className="whitespace-normal">{item.service.specimenType}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            {visibleServices.length > 0 ? null : <p className="text-sm text-muted-foreground" role="status">{zh ? '没有匹配的病理会诊项目。' : 'No matching pathology consultations.'}</p>}
+          </div>
         </FieldSet>
-        <div className="min-w-0 rounded-lg border p-4">
+        <div className="min-w-0">
           <h4 className="mb-4 text-sm font-semibold">{zh ? '申请信息' : 'Request details'}</h4>
           {selectedService === undefined ? <p className="text-sm text-muted-foreground">{zh ? '从目录选择一个会诊项目。' : 'Select a consultation from the catalog.'}</p> : (
             <FieldSet disabled={draftAction.isPending}>
@@ -508,7 +488,6 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
           )}
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button disabled={!formReady || draftAction.isPending} onClick={() => draftAction.mutate('save')} size="sm" variant="outline">{zh ? '保存草稿' : 'Save draft'}</Button>
-            <Button disabled={!formReady || selectedService?.available !== true || draftAction.isPending} onClick={() => draftAction.mutate('issue')} size="sm">{zh ? '签发申请' : 'Issue request'}</Button>
             {state?.draft === undefined ? null : (
               <>
                 <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate('delete')} size="sm" variant="outline">{zh ? '删除草稿' : 'Delete draft'}</Button>
@@ -520,41 +499,55 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
           </div>
           {draftAction.isError ? (
             <Alert className="mt-3" variant="destructive">
-              <AlertTitle>{zh ? '病理会诊申请未提交' : 'The pathology request was not submitted'}</AlertTitle>
+              <AlertTitle>{draftAction.variables === 'delete' ? zh ? '草稿未移除' : 'Draft was not removed' : zh ? '病理会诊申请未提交' : 'The pathology request was not submitted'}</AlertTitle>
               <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
             </Alert>
           ) : null}
         </div>
       </div>
-    </div>
+    </section>
+  )
+  const pending = (
+    <DoctorRecommendationsPanel
+      caseId={caseId}
+      kind="pathology"
+      inputRevision={recommendationRevision}
+      locale={locale}
+      scope={recommendationScope}
+      enabled={active && !readOnly}
+      disabled={draftAction.isPending || services.isFetching}
+      encounter={encounter}
+      expectedDraftVersion={draftVersion}
+      resolveExistingDraft={state?.draft !== undefined}
+      manualItems={serviceId === null && procedureReference === null && purpose === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
+        value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose } }]}
+      onManualChange={({ value }) => {
+        if (value.kind !== 'pathology' || serviceId !== null && serviceId !== value.serviceId) return false
+        setServiceId(value.serviceId); setProcedureReference(value.sourceProcedureReference); setPurpose(value.purpose)
+        return true
+      }}
+      onConfirmed={(values, result) => {
+        if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
+        if (!values.some(value => value.source === 'manual' && value.kind === 'pathology' && value.serviceId === serviceId && value.sourceProcedureReference === procedureReference && value.purpose.trim() === purpose.trim())) return
+        setServiceId(null); setProcedureReference(null); setPurpose('')
+      }}
+      onManualRemove={value => { if (value.kind !== 'pathology' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate('delete'); else { setServiceId(null); setProcedureReference(null); setPurpose('') } }}
+      unavailableReason={recommendationUnavailableReason}
+      manualUnavailableReason={recommendationUnavailableReason}
+    />
   )
   return (
     <section aria-labelledby={`${elementId}-heading`} className="outline-none" id={elementId} tabIndex={-1}>
       <h3 className="mb-3 text-sm font-semibold" id={`${elementId}-heading`}>{zh ? '病理会诊' : 'Pathology consultation'}</h3>
-      <DoctorRecommendationsPanel
-        caseId={caseId}
-        kind="pathology"
-        inputRevision={recommendationRevision}
-        locale={locale}
-        scope={recommendationScope}
-        enabled={active && !readOnly}
-        canAdopt={suggestion => recommendationUnavailableReason(suggestion) === undefined}
-        unavailableReason={recommendationUnavailableReason}
-        onAdopt={suggestion => {
-          if (suggestion.kind !== 'pathology' || !active || readOnly || recommendationUnavailableReason(suggestion) !== undefined) return
-          setServiceId(suggestion.serviceId)
-          setProcedureReference(suggestion.sourceProcedureReference)
-          setPurpose(suggestion.purpose)
-          setAdding(true)
-        }}
-      />
+      {readOnly || selectedRequest === undefined || selectedRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
+        authoredAt={selectedRequest.authoredAt} locale={locale} onReview={() => {
+          selectRequest(selectedRequest.id)
+          requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
+        }} />}
       <InvestigationRequestWorkspace
-        adding={adding && active}
-        editor={editor}
+        entry={readOnly ? null : editor} pending={pending}
         locale={locale}
-        onAddingChange={setAdding}
         onSelectRequest={selectRequest}
-        readOnly={readOnly}
         requests={requests.map(request => ({
           id: request.id,
           inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status),
@@ -564,8 +557,9 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
         }))}
         selectedRequestId={selectedRequest?.id}
       >
-        {selectedRequest === undefined ? null : <PathologyRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} />}
+        {selectedRequest === undefined ? null : <div ref={recordRef} tabIndex={-1}><PathologyRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} /></div>}
       </InvestigationRequestWorkspace>
     </section>
   )
 }
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'

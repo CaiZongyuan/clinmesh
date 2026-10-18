@@ -1,3 +1,6 @@
+import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-preparation-state.tsx'
+import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
+import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { mergeDocumentText } from '@clinmesh/core/document-text'
@@ -571,12 +574,19 @@ function DoctorCaseController({
     queryFn: ({ signal }) => getClinicalCatalog(signal),
     queryKey: ['clinical-catalog', ...scope],
   })
-  const recommendationInput = useRef({ scope: pageScope, detail: detail.data, catalog: catalog.data, revision: 0 })
-  if (recommendationInput.current.scope !== pageScope || recommendationInput.current.detail !== detail.data
-    || recommendationInput.current.catalog !== catalog.data) {
-    recommendationInput.current = { scope: pageScope, detail: detail.data, catalog: catalog.data,
-      revision: recommendationInput.current.revision + 1 }
+  const recommendationIdentity = JSON.stringify([pageScope, detail.data === undefined ? null : {
+    encounter: detail.data.encounter, patient: detail.data.patient, presentation: detail.data.presentation,
+    triage: detail.data.triage, allergies: detail.data.allergies, priorFacts: detail.data.priorFacts,
+    turns: detail.data.consultation?.turns, clinicalDocument: detail.data.clinicalDocument,
+    drafts: detail.data.drafts, diagnosis: detail.data.diagnosis, medicationConclusion: detail.data.medicationConclusion,
+    report: detail.data.report, laboratoryRequests: detail.data.laboratoryRequests,
+    imagingRequests: detail.data.imagingRequests, pathologyRequests: detail.data.pathologyRequests,
+  }, catalog.data])
+  const recommendationInput = useRef({ identity: recommendationIdentity, revision: 0 })
+  if (recommendationInput.current.identity !== recommendationIdentity) {
+    recommendationInput.current = { identity: recommendationIdentity, revision: recommendationInput.current.revision + 1 }
   }
+  const recommendationRevision = String(recommendationInput.current.revision)
   const referenceDiagnoses = useQuery({
     enabled: diagnosisReferenceSearch.enabled,
     queryFn: ({ signal }) => searchReferenceDiagnoses(
@@ -714,8 +724,8 @@ function DoctorCaseController({
   const draftIndicationCode = detail.data?.laboratoryRequests?.draft?.catalogItemId === resolvedLaboratoryItemId
     ? detail.data.laboratoryRequests.draft.indicationCode
     : undefined
-  const requestedIndicationCode = resolvedLaboratoryItem?.allowedIndicationCodes.includes(indicationCode)
-    ? indicationCode
+  const requestedIndicationCode = resolvedLaboratoryItem === undefined || resolvedLaboratoryItem.allowedIndicationCodes.includes(indicationCode)
+    ? indicationCode || draftIndicationCode
     : draftIndicationCode
   const resolvedIndicationCode = resolvedLaboratoryItem === undefined
     ? requestedIndicationCode ?? (indicationCode || (resolvedLaboratoryItemId === '' ? '' : 'clinical-evaluation'))
@@ -1603,11 +1613,11 @@ function DoctorCaseController({
             indicationCode: nextIndication,
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
+          hydrateAgentDraft(current.caseId, 'laboratory')
           if (activeCaseIdRef.current === current.caseId) {
             setLaboratoryItemId(catalogItemId)
             setIndicationCode(nextIndication)
             selectInvestigation('laboratory')
-            hydrateAgentDraft(current.caseId, 'laboratory')
           }
           return result
         },
@@ -1634,9 +1644,9 @@ function DoctorCaseController({
             expectedDraftVersion: current.imagingRequests?.draftVersion ?? 0,
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
+          hydrateAgentDraft(current.caseId, 'imaging')
           if (activeCaseIdRef.current === current.caseId) {
             selectInvestigation('imaging')
-            hydrateAgentDraft(current.caseId, 'imaging')
           }
           return result
         },
@@ -1664,9 +1674,9 @@ function DoctorCaseController({
             expectedDraftVersion: current.pathologyRequests?.draftVersion ?? 0,
           }, newIdempotencyKey())
           await refreshCaseById(current.caseId)
+          hydrateAgentDraft(current.caseId, 'pathology')
           if (activeCaseIdRef.current === current.caseId) {
             selectInvestigation('pathology')
-            hydrateAgentDraft(current.caseId, 'pathology')
           }
           return result
         },
@@ -2647,6 +2657,10 @@ function DoctorCaseController({
   ])
   useRegisterAgentPage(agentPage)
   return (
+    <DoctorPreparationProvider detail={detailUnavailable ? undefined : detail.data} scope={pageScope}
+      inputRevision={recommendationRevision}
+      formRevisions={activeCaseId === undefined ? undefined : agentDraftHydrationRevisions[activeCaseId]}
+      enabled={!detailUnavailable && detail.data?.consultation !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'}>
     <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail} queue={showDetail => (
       <DoctorQueueModule
         navigation={navigation}
@@ -2689,7 +2703,7 @@ function DoctorCaseController({
           <CaseDetail
             clinicalDocumentUpdates={clinicalDocumentUpdates}
             recommendationScope={pageScope}
-            recommendationRevision={String(recommendationInput.current.revision)}
+            recommendationRevision={recommendationRevision}
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
               ?? emptyDoctorAgentDraftHydrationRevisions}
             clinicalDocumentActions={{
@@ -3102,6 +3116,7 @@ function DoctorCaseController({
         )}
       </DoctorCaseDetailRegion>
     </DoctorWorkspaceLayout>
+    </DoctorPreparationProvider>
   )
 }
 
@@ -3243,6 +3258,10 @@ function CaseDetail({
   const readOnly = detail.encounter.status !== 'in-progress'
   const visitNotStarted = detail.status === 'awaiting-doctor'
   const clinicalReadOnly = readOnly || visitNotStarted
+  const preparation = useDoctorPreparation()
+  const quality = useDocumentQualityControl({ detail, document: workingClinicalDocument, scope: recommendationScope,
+    enabled: !clinicalReadOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0 })
+  const [pendingQualityIssue, setPendingQualityIssue] = useState<{ caseId: string; issue: QualityIssue }>()
   const [activeSection, setActiveSection] = useState<DoctorCaseSection>('record')
   const [pendingNavigation, setPendingNavigation] = useState<{
     source: 'checklist' | 'correction'
@@ -3250,6 +3269,19 @@ function CaseDetail({
   }>()
   const detailRoot = useRef<HTMLDivElement>(null)
   const correctionNavigationKey = useRef<string | undefined>(undefined)
+  const navigateToQualityIssue = (issue: QualityIssue) => {
+    preparation?.closeDetails()
+    setActiveSection('record')
+    setPendingQualityIssue({ caseId: detail.caseId, issue })
+  }
+  useEffect(() => {
+    if (activeSection !== 'record' || pendingQualityIssue === undefined || pendingQualityIssue.caseId !== detail.caseId) return
+    const frame = requestAnimationFrame(() => {
+      if (detailRoot.current !== null) locateDocumentQualityIssue(detailRoot.current, pendingQualityIssue.issue)
+      setPendingQualityIssue(undefined)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [activeSection, pendingQualityIssue, detail.caseId])
   const navigateInvestigationTarget = useCallback((target: EncounterCompletionTarget): void => {
     if (target === 'laboratory' || target === 'imaging' || target === 'pathology') {
       const requests = caseInvestigationRequests(detail)[target]
@@ -3494,6 +3526,11 @@ function CaseDetail({
   return (
     <DoctorCaseLayout>
       <div ref={detailRoot} className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {preparation === undefined ? null : <DoctorPreparationDetailsDialog open={preparation.details.open}
+          onOpenChange={open => { if (!open) preparation.closeDetails() }} title={locale === 'zh-CN' ? '依据与说明' : 'Evidence and details'}>
+          {preparation.details.kind === 'quality' ? null : <DoctorRecommendationDetails job={preparation.jobs[preparation.details.kind]} locale={locale} />}
+          <DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} />
+        </DoctorPreparationDetailsDialog>}
         <PatientBanner
           {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
@@ -3542,6 +3579,8 @@ function CaseDetail({
               <TabsTrigger data-agent-selection="prescription" id={doctorCaseSectionTabElementIds.prescription} value="prescription"><PillIcon aria-hidden="true" />{messages.prescription}</TabsTrigger>
             </TabsList>
           </div>
+
+          <div className="empty:hidden shrink-0 px-4 pt-3"><DocumentQualityCompact quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} /></div>
 
           <span id="clinical-document-update-notice" className="sr-only" role="status">
             {Object.keys(clinicalDocumentUpdates.fields).length === 0 ? '' : messages.clinicalDocumentHasUpdates}
@@ -3593,13 +3632,15 @@ function CaseDetail({
                     onDocumentChange={onClinicalDocumentChange}
                     workingDocument={workingClinicalDocument}
                     qualityScope={recommendationScope}
+                    quality={quality}
+                    {...(preparation === undefined ? {} : { onOpenQualityDetails: () => preparation.openDetails('quality') })}
                   />
                 )}
               </div>
             </div>
           </DoctorCasePanel>
 
-          <DoctorCasePanel value="diagnosis">
+          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="diagnosis">
             {detail.consultation === undefined ? revisitWorkflow : catalog.isPending ? (
               <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -3608,12 +3649,13 @@ function CaseDetail({
                 title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
               />
             ) : (
-              <DiagnosisPage
+              <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('diagnosis') === true}><DiagnosisPage
                 actions={diagnosisActions}
                 recommendationScope={recommendationScope}
                 recommendationRevision={recommendationRevision}
                 caseId={detail.caseId}
                 catalog={catalog.data.diagnoses}
+                encounter={detail.encounter}
                 elementId={encounterCompletionTargetElementIds.diagnosis}
                 key={`${detail.caseId}:${agentDraftHydrationRevisions.diagnosis ?? 0}`}
                 locale={locale}
@@ -3621,11 +3663,11 @@ function CaseDetail({
                 readOnly={clinicalReadOnly}
                 referenceSearch={referenceCatalogSearches.diagnoses}
                 state={detail.diagnosis}
-              />
+              /></fieldset>
             )}
           </DoctorCasePanel>
 
-          <DoctorCasePanel value="prescription">
+          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="prescription">
             {detail.consultation === undefined || catalog.isPending ? (
               detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -3634,7 +3676,7 @@ function CaseDetail({
                 title={getWorkspaceErrorTitle(catalog.error, messages, messages.consultationUnavailable)}
               />
             ) : catalog.data.prescriptionConclusionSupported ? (
-              <PrescriptionPage
+              <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('prescription') === true}><PrescriptionPage
                 actions={prescriptionActions}
                 recommendationScope={recommendationScope}
                 recommendationRevision={recommendationRevision}
@@ -3647,7 +3689,7 @@ function CaseDetail({
                 messages={messages}
                 readOnly={clinicalReadOnly}
                 referenceSearch={referenceCatalogSearches.medications}
-              />
+              /></fieldset>
             ) : null}
           </DoctorCasePanel>
 
@@ -3659,7 +3701,7 @@ function CaseDetail({
                 <TabsTrigger value="pathology">{locale === 'zh-CN' ? '病理会诊' : 'Pathology'} <Badge variant="secondary">{detail.pathologyRequests?.requests.length ?? 0}</Badge></TabsTrigger>
               </TabsList>
               <TabsContent keepMounted value="laboratory">
-                <LaboratoryPage
+                <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('laboratory') === true}><LaboratoryPage
                   actions={laboratoryRequestActions}
                   recommendationScope={recommendationScope}
                   recommendationRevision={recommendationRevision}
@@ -3686,10 +3728,10 @@ function CaseDetail({
                   onSelectRequest={id => onSelectInvestigationRequest('laboratory', id)}
                   selectedReportId={investigationView.reportId}
                   showCorrection={correctionTarget === 'laboratory'}
-                />
+                /></fieldset>
               </TabsContent>
               <TabsContent keepMounted value="imaging">
-                <ImagingPage
+                <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('imaging') === true}><ImagingPage
                   actions={imagingActions}
                   recommendationScope={recommendationScope}
                   recommendationRevision={recommendationRevision}
@@ -3705,10 +3747,10 @@ function CaseDetail({
                   selectedRequestId={investigationView.selected.imaging}
                   onSelectRequest={id => onSelectInvestigationRequest('imaging', id)}
                   selectedReportId={investigationView.reportId}
-                />
+                /></fieldset>
               </TabsContent>
               <TabsContent keepMounted value="pathology">
-                <PathologyPage
+                <fieldset className="min-w-0 border-0 p-0" disabled={preparation?.submitting('pathology') === true}><PathologyPage
                   actions={pathologyActions}
                   recommendationScope={recommendationScope}
                   recommendationRevision={recommendationRevision}
@@ -3724,7 +3766,7 @@ function CaseDetail({
                   selectedRequestId={investigationView.selected.pathology}
                   onSelectRequest={id => onSelectInvestigationRequest('pathology', id)}
                   selectedReportId={investigationView.reportId}
-                />
+                /></fieldset>
               </TabsContent>
             </Tabs>
           </DoctorCasePanel>

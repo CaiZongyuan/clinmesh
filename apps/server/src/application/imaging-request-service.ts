@@ -313,40 +313,50 @@ export class ImagingRequestService {
         serviceId: input.serviceId,
       },
       operation: 'imaging-request.save-draft',
-    }, () => {
-      const outpatientCase = this.#caseForAction(input.context, input.encounterId)
-      this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const service = this.#activeService(input.context, input.serviceId)
-      const current = this.#draft(input.context, outpatientCase.case_id)
-      if ((current?.version ?? 0) !== input.expectedDraftVersion) throw this.#draftConflict()
-      const draftVersion = input.expectedDraftVersion + 1
-      const now = this.#host.virtualTime(input.context)
-      if (current === undefined) {
-        this.#database.driver.prepare(`
-          INSERT INTO imaging_request_state (
-            workspace_id, epoch, case_id, version, draft_service_id, draft_indication,
-            draft_service_snapshot_json, updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          input.context.workspaceId,
-          input.context.epoch,
-          outpatientCase.case_id,
-          draftVersion,
-          service.id,
-          input.indication,
-          JSON.stringify(service),
-          input.context.actorId,
-          now,
-        )
-      } else {
-        this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
-          indication: input.indication,
-          now,
-          service,
-        })
-      }
-      return { data: { caseId: outpatientCase.case_id, draftVersion }, effects: [] }
-    })
+    }, transaction => this.applySaveDraft(transaction, input))
+  }
+
+  applySaveDraft(_transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    indication: string
+    serviceId: string
+  }) {
+    const outpatientCase = this.#caseForAction(input.context, input.encounterId)
+    this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const service = this.#activeService(input.context, input.serviceId)
+    const current = this.#draft(input.context, outpatientCase.case_id)
+    if ((current?.version ?? 0) !== input.expectedDraftVersion) throw this.#draftConflict()
+    const draftVersion = input.expectedDraftVersion + 1
+    const now = this.#host.virtualTime(input.context)
+    if (current === undefined) {
+      this.#database.driver.prepare(`
+        INSERT INTO imaging_request_state (
+          workspace_id, epoch, case_id, version, draft_service_id, draft_indication,
+          draft_service_snapshot_json, updated_by, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        draftVersion,
+        service.id,
+        input.indication,
+        JSON.stringify(service),
+        input.context.actorId,
+        now,
+      )
+    } else {
+      this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
+        indication: input.indication,
+        now,
+        service,
+      })
+    }
+    return { data: { caseId: outpatientCase.case_id, draftVersion }, effects: [] }
   }
 
   deleteDraft(input: {
@@ -363,32 +373,40 @@ export class ImagingRequestService {
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, expectedDraftVersion: input.expectedDraftVersion },
       operation: 'imaging-request.delete-draft',
-    }, () => {
-      const outpatientCase = this.#caseForAction(input.context, input.encounterId)
-      this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const current = this.#draft(input.context, outpatientCase.case_id)
-      if (current?.version !== input.expectedDraftVersion || current.draft_service_id === null) {
-        throw this.#draftConflict({
-          currentStatus: current === undefined ? 'missing' : current.draft_service_id === null ? 'empty' : 'draft',
-          ...(current === undefined ? {} : { currentVersion: String(current.version) }),
-          expectedVersion: String(input.expectedDraftVersion),
-          owner: 'imaging-request-draft',
-          resource: `ImagingRequestDraft/${outpatientCase.case_id}`,
-        })
-      }
-      this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
-        now: this.#host.virtualTime(input.context),
+    }, transaction => this.applyDeleteDraft(transaction, input))
+  }
+
+  applyDeleteDraft(_transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    const outpatientCase = this.#caseForAction(input.context, input.encounterId)
+    this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const current = this.#draft(input.context, outpatientCase.case_id)
+    if (current?.version !== input.expectedDraftVersion || current.draft_service_id === null) {
+      throw this.#draftConflict({
+        currentStatus: current === undefined ? 'missing' : current.draft_service_id === null ? 'empty' : 'draft',
+        ...(current === undefined ? {} : { currentVersion: String(current.version) }),
+        expectedVersion: String(input.expectedDraftVersion),
+        owner: 'imaging-request-draft',
+        resource: `ImagingRequestDraft/${outpatientCase.case_id}`,
       })
-      const draftVersion = current.version + 1
-      return {
-        data: { caseId: outpatientCase.case_id, draftVersion },
-        effects: [{
-          kind: 'updated' as const,
-          reference: `ImagingRequestDraft/${outpatientCase.case_id}`,
-          versionId: String(draftVersion),
-        }],
-      }
+    }
+    this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
+      now: this.#host.virtualTime(input.context),
     })
+    const draftVersion = current.version + 1
+    return {
+      data: { caseId: outpatientCase.case_id, draftVersion },
+      effects: [{
+        kind: 'updated' as const,
+        reference: `ImagingRequestDraft/${outpatientCase.case_id}`,
+        versionId: String(draftVersion),
+      }],
+    }
   }
 
   issue(input: {
@@ -407,114 +425,124 @@ export class ImagingRequestService {
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, expectedDraftVersion: input.expectedDraftVersion },
       operation: 'imaging-request.issue',
-    }, (transaction) => {
-      const outpatientCase = this.#caseForAction(input.context, input.encounterId)
-      this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const draft = this.#draft(input.context, outpatientCase.case_id)
-      if (draft?.version !== input.expectedDraftVersion
-        || draft.draft_service_id === null
-        || draft.draft_indication === null
-        || draft.draft_service_snapshot_json === null) {
-        throw this.#draftConflict()
-      }
-      // 开立使用草稿保存时冻结的服务定义；服务此后变更时要求重新保存草稿。
-      const service = imagingServiceSnapshotSchema.parse(JSON.parse(draft.draft_service_snapshot_json))
-      if (JSON.stringify(this.#activeService(input.context, service.id)) !== JSON.stringify(service)) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The imaging service changed after the draft was saved')
-      }
-      if (!input.readyExamCodes.has(service.examCode)) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The imaging service is not currently offered')
-      }
-      const duplicate = this.#database.driver.prepare(`
-        SELECT request_id FROM laboratory_request
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND catalog_item_id = ?
-          AND status IN ('issued', 'accepted', 'in-progress', 'generation-failed')
-      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id, service.id)
-      if (duplicate !== undefined) {
-        throw new WorkflowError(
-          'IMAGING_REQUEST_DUPLICATE',
-          'An active imaging request already exists for this service',
-        )
-      }
-      const now = this.#host.virtualTime(input.context)
-      const requestId = uuidv7()
-      const serviceRequest = transaction.fhir.create(input.context, {
-        resourceType: 'ServiceRequest',
-        id: uuidv7(),
-        status: 'active',
-        intent: 'order',
-        category: [{
-          coding: [{ code: '363679005', display: 'Imaging', system: 'http://snomed.info/sct' }],
-        }],
-        code: {
-          concept: {
-            coding: [{ code: service.code, display: service.name, system: imagingServiceCodeSystem }],
-            text: service.name,
-          },
-        },
-        subject: { reference: `Patient/${outpatientCase.patient_id}` },
-        encounter: { reference: `Encounter/${input.encounterId}` },
-        authoredOn: now,
-        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-        reason: [{ concept: { text: draft.draft_indication } }],
-      })
-      const task = transaction.fhir.create(input.context, {
-        resourceType: 'Task',
-        id: uuidv7(),
-        status: 'requested',
-        intent: 'order',
-        code: {
-          coding: [{
-            code: 'imaging-request-execution',
-            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/task-kind',
-          }],
-          text: `${service.name}执行`,
-        },
-        focus: { reference: `ServiceRequest/${serviceRequest.id}` },
-        for: { reference: `Patient/${outpatientCase.patient_id}` },
-        encounter: { reference: `Encounter/${input.encounterId}` },
-        authoredOn: now,
-        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-        owner: { reference: 'Organization/organization-clinmesh' },
-      })
-      this.#database.driver.prepare(`
-        INSERT INTO laboratory_request (
-          workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id,
-          service_snapshot_json, indication_code, service_request_id, execution_task_id,
-          status, version, authored_by, authored_at
-        ) VALUES (?, ?, ?, ?, 'imaging', ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        requestId,
-        outpatientCase.case_id,
-        service.id,
-        JSON.stringify(service),
-        freeTextIndicationCode,
-        serviceRequest.id,
-        task.id,
-        input.context.practitionerId ?? input.context.actorId,
-        now,
+    }, transaction => this.applyIssue(transaction, input))
+  }
+
+  applyIssue(transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    /** 当前至少有一套已发布且已安装素材的检查；本院未开展的服务不能开立。 */
+    readyExamCodes: ReadonlySet<ImagingExamCode>
+  }) {
+    const outpatientCase = this.#caseForAction(input.context, input.encounterId)
+    this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const draft = this.#draft(input.context, outpatientCase.case_id)
+    if (draft?.version !== input.expectedDraftVersion
+      || draft.draft_service_id === null
+      || draft.draft_indication === null
+      || draft.draft_service_snapshot_json === null) {
+      throw this.#draftConflict()
+    }
+    // 开立使用草稿保存时冻结的服务定义；服务此后变更时要求重新保存草稿。
+    const service = imagingServiceSnapshotSchema.parse(JSON.parse(draft.draft_service_snapshot_json))
+    if (JSON.stringify(this.#activeService(input.context, service.id)) !== JSON.stringify(service)) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The imaging service changed after the draft was saved')
+    }
+    if (!input.readyExamCodes.has(service.examCode)) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The imaging service is not currently offered')
+    }
+    const duplicate = this.#database.driver.prepare(`
+      SELECT request_id FROM laboratory_request
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND catalog_item_id = ?
+        AND status IN ('issued', 'accepted', 'in-progress', 'generation-failed')
+    `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id, service.id)
+    if (duplicate !== undefined) {
+      throw new WorkflowError(
+        'IMAGING_REQUEST_DUPLICATE',
+        'An active imaging request already exists for this service',
       )
-      this.#database.driver.prepare(`
-        INSERT INTO imaging_request_detail (workspace_id, epoch, request_id, exam_code, indication)
-        VALUES (?, ?, ?, ?, ?)
-      `).run(input.context.workspaceId, input.context.epoch, requestId, service.examCode, draft.draft_indication)
-      this.#updateDraft(input.context, outpatientCase.case_id, draft.version, { now })
-      transaction.enqueue({
-        dedupKey: `imaging-request:${requestId}:accept`,
-        kind: 'imaging.accept-request',
-        payload: { requestId },
-      })
-      return {
-        data: {
-          caseId: outpatientCase.case_id,
-          draftVersion: draft.version + 1,
-          request: this.#projectedRequest(input.context, requestId),
+    }
+    const now = this.#host.virtualTime(input.context)
+    const requestId = uuidv7()
+    const serviceRequest = transaction.fhir.create(input.context, {
+      resourceType: 'ServiceRequest',
+      id: uuidv7(),
+      status: 'active',
+      intent: 'order',
+      category: [{
+        coding: [{ code: '363679005', display: 'Imaging', system: 'http://snomed.info/sct' }],
+      }],
+      code: {
+        concept: {
+          coding: [{ code: service.code, display: service.name, system: imagingServiceCodeSystem }],
+          text: service.name,
         },
-        effects: [serviceRequest, task].map(resourceEffect),
-      }
+      },
+      subject: { reference: `Patient/${outpatientCase.patient_id}` },
+      encounter: { reference: `Encounter/${input.encounterId}` },
+      authoredOn: now,
+      requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+      reason: [{ concept: { text: draft.draft_indication } }],
     })
+    const task = transaction.fhir.create(input.context, {
+      resourceType: 'Task',
+      id: uuidv7(),
+      status: 'requested',
+      intent: 'order',
+      code: {
+        coding: [{
+          code: 'imaging-request-execution',
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/task-kind',
+        }],
+        text: `${service.name}执行`,
+      },
+      focus: { reference: `ServiceRequest/${serviceRequest.id}` },
+      for: { reference: `Patient/${outpatientCase.patient_id}` },
+      encounter: { reference: `Encounter/${input.encounterId}` },
+      authoredOn: now,
+      requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+      owner: { reference: 'Organization/organization-clinmesh' },
+    })
+    this.#database.driver.prepare(`
+      INSERT INTO laboratory_request (
+        workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id,
+        service_snapshot_json, indication_code, service_request_id, execution_task_id,
+        status, version, authored_by, authored_at
+      ) VALUES (?, ?, ?, ?, 'imaging', ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
+    `).run(
+      input.context.workspaceId,
+      input.context.epoch,
+      requestId,
+      outpatientCase.case_id,
+      service.id,
+      JSON.stringify(service),
+      freeTextIndicationCode,
+      serviceRequest.id,
+      task.id,
+      input.context.practitionerId ?? input.context.actorId,
+      now,
+    )
+    this.#database.driver.prepare(`
+      INSERT INTO imaging_request_detail (workspace_id, epoch, request_id, exam_code, indication)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(input.context.workspaceId, input.context.epoch, requestId, service.examCode, draft.draft_indication)
+    this.#updateDraft(input.context, outpatientCase.case_id, draft.version, { now })
+    transaction.enqueue({
+      dedupKey: `imaging-request:${requestId}:accept`,
+      kind: 'imaging.accept-request',
+      payload: { requestId },
+    })
+    return {
+      data: {
+        caseId: outpatientCase.case_id,
+        draftVersion: draft.version + 1,
+        request: this.#projectedRequest(input.context, requestId),
+      },
+      effects: [serviceRequest, task].map(resourceEffect),
+    }
   }
 
   cancel(input: {
@@ -1114,6 +1142,7 @@ export class ImagingRequestService {
       ? []
       : this.#reportVersions(context, request.request_id, request.diagnostic_report_id)
     return imagingRequestSchema.parse({
+      authoredAt: serviceRequest.authoredOn,
       ...(request.generation_error_code === null || request.generation_error_message === null
         ? {}
         : { generationError: { code: request.generation_error_code, message: request.generation_error_message } }),

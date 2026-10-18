@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { doctorRecommendationStateSchema } from '@clinmesh/contracts/doctor-recommendations'
+import { confirmDoctorPreparationRequestSchema, doctorRecommendationStateSchema } from '@clinmesh/contracts/doctor-recommendations'
 import type {
   ClinicalDocumentContent,
   DiagnosisDraftEntry,
@@ -3779,21 +3779,56 @@ describe('role workspaces', () => {
     const view = render(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
     await screen.findByRole('button', { name: '暂停自动整理' })
     await user.click(screen.getByRole('tab', { name: '诊断' }))
+    await user.click(screen.getByRole('button', { name: '依据与说明' }))
     await screen.findByText('合成建议资料版本一')
+    await user.keyboard('{Escape}')
     await user.click(screen.getByRole('button', { name: '选择 发热 R50.9' }))
     fireEvent.change(screen.getByLabelText('诊断备注', { exact: true }), { target: { value: '医生未保存的备注' } })
     recommendationNote = '合成建议资料版本二'
-    fixture.updateRecording({ processedCount: 1 })
+    fixture.recordAddition('合成新增问诊资料。')
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+    await user.click(screen.getByRole('button', { name: '依据与说明' }))
     await screen.findByText('合成建议资料版本二')
+    await user.keyboard('{Escape}')
     expect((screen.getByLabelText('诊断备注', { exact: true }) as HTMLTextAreaElement).value).toBe('医生未保存的备注')
     recommendationNote = '合成建议新数据世代'
     const nextSession = { ...doctorSession, actor: { ...doctorSession.actor, epoch: 'epoch-recommendation-next' } }
     view.rerender(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={nextSession} /></QueryClientProvider>)
     await screen.findByRole('button', { name: '暂停自动整理' })
     await user.click(screen.getByRole('tab', { name: '诊断' }))
+    await user.click(screen.getByRole('button', { name: '依据与说明' }))
     await screen.findByText('合成建议新数据世代')
     expect(screen.queryByText('合成建议资料版本二')).toBeNull()
+  })
+
+  it('shows one quality hint per active section and returns to its record field from another section', async () => {
+    stubRecordingWorkspace('pause')
+    const originalFetch = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await originalFetch(input, init)
+      if (!String(input).includes('/document-quality-control')) return response
+      const body = await response.json()
+      const state = clinicalDocumentQualityControlStateSchema.parse(body.data ?? body)
+      const next = { ...state, issues: [{ id: 'synthetic-quality-duration', kind: 'missing-field', field: 'chiefComplaint',
+        classification: 'needs-completion', message: '合成主诉需补充持续时间。', basis: { label: '项目辅助提示', kind: 'project' },
+        evidence: [], relatedFingerprint: 'c'.repeat(64), status: 'open' }, {
+        id: 'synthetic-quality-chief', kind: 'inconsistency', field: 'chiefComplaint', classification: 'needs-verification',
+        message: '合成主诉与问诊的持续时间记录不一致。', basis: { label: '项目辅助提示', kind: 'project' },
+        evidence: [], relatedFingerprint: 'd'.repeat(64), status: 'open',
+      }] }
+      return Response.json(body.data === undefined ? next : { ...body, data: next })
+    }))
+    const client = createWebQueryClient()
+    const user = userEvent.setup()
+    render(<QueryClientProvider client={client}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByRole('button', { name: '暂停自动整理' })
+    await waitFor(() => expect(screen.getAllByRole('region', { name: '病历质控' })).toHaveLength(1))
+    expect(screen.queryByRole('button', { name: '主诉有内容待补充，请核对。' })).toBeNull()
+    await user.click(screen.getByRole('tab', { name: '诊断' }))
+    const hint = await screen.findByRole('region', { name: '病历质控' })
+    await user.click(within(hint).getByRole('button', { name: '主诉的记录不一致，请核对。' }))
+    await waitFor(() => expect(screen.getByRole('tab', { name: '病历记录' }).getAttribute('aria-selected')).toBe('true'))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '主诉' })))
   })
 
   it('hides a cached recording case when refresh denies access', async () => {
@@ -3890,8 +3925,10 @@ describe('role workspaces', () => {
         await act(async () => {
           await tool.execute(boundAgentToolInput(tool, { section }), new AbortController().signal)
         })
+        // jsdom 不会因 ShadowRoot 内 hidden 翻转失效样式缓存，更新测试宿主以刷新缓存。
+        if (shadow) host.dataset.section = section
         await waitFor(() => expect(queries.getByRole('tab', { name: label }).getAttribute('aria-selected')).toBe('true'))
-        expect(queries.getByRole('tabpanel', { name: label }).getAttribute('data-agent-section')).toBe(section)
+        expect((await queries.findByRole('tabpanel', { name: label })).getAttribute('data-agent-section')).toBe(section)
         expect(container.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('已完成')
         view.rerender(<WebApp runtime={{
           mode: 'surface', surfaceAgent, surfaceAgentStatus: 'connecting', surfaceSessionId: 'dsh-session-1',
@@ -4200,10 +4237,10 @@ describe('role workspaces', () => {
 
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     await user.click(screen.getByRole('tab', { name: '放射检查 1' }))
-    expect(await within(screen.getByRole('region', { name: '申请列表' })).findByText('已开具')).toBeTruthy()
+    expect(await within(screen.getByRole('region', { name: '申请列表' })).findByRole('button', { name: `${issued.service.name} 已开具` })).toBeTruthy()
     // 医生没有任何操作，报告到达后页面自行出现。
     expect(await screen.findByText('胸部 CT 平扫未见明确肺结节。', {}, { timeout: 8_000 })).toBeTruthy()
-    expect(within(screen.getByRole('region', { name: '申请列表' })).getByText('已报告')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '申请列表' })).getByRole('button', { name: `${issued.service.name} 已报告` })).toBeTruthy()
   }, 15_000)
 
   it('narrows an empty doctor page to common Tools while validating every grant', async () => {
@@ -4313,15 +4350,17 @@ describe('role workspaces', () => {
       if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService }] })
       if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures: [sourceProcedure] }] })
       if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: queueItem.encounterId, encounterVersion: '1', items: [] })
-      if (path.endsWith(`/${category}-request/actions/issue`)) {
+      if (path.endsWith(`/recommendations/${category}/actions/confirm`)) {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
-          expectedVersions: { [`Encounter/${queueItem.encounterId}`]: '1' }, input: { expectedDraftVersion: 1 },
+          expectedVersions: { [`Encounter/${queueItem.encounterId}`]: '1' }, input: { expectedDraftVersion: 1, resolveExistingDraft: true, selections: [category === 'imaging'
+            ? { source: 'manual', kind: category, serviceId: imagingService.id, indication: '咳嗽两周' }
+            : { source: 'manual', kind: category, serviceId: pathologyService.id, sourceProcedureReference: sourceProcedure.sourceReference, purpose: '外院手术切片复核' }] },
         })
         return new Promise<Response>(resolve => {
           releaseIssue = () => {
             issued = true
-            resolve(Response.json(commandResponse({ caseId: queueItem.caseId, draftVersion: 2, request: newRequest })))
+            resolve(Response.json(commandResponse({ kind: category, draftVersion: 2, encounterVersion: '1', recordIds: [newRequest.id] })))
           }
         })
       }
@@ -4334,29 +4373,29 @@ describe('role workspaces', () => {
     const otherCategory = category === 'imaging' ? '病理会诊' : '放射检查'
     const otherField = category === 'imaging' ? '会诊目的' : '检查指征'
     await user.click(screen.getByRole('tab', { name: `${originalCategory} 1` }))
-    await user.click(screen.getByRole('button', { name: '追加申请' }))
-    const dialog = await screen.findByRole('dialog', { name: '追加申请' })
-    await user.click(await within(dialog).findByRole('button', { name: '签发申请' }))
+    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(releaseIssue).toBeDefined())
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(screen.queryByRole('dialog')).toBeNull()
     await user.click(screen.getByRole('tab', { name: `${otherCategory} 0` }))
     const input = await screen.findByRole('textbox', { name: otherField })
     await user.clear(input)
     await user.type(input, '另一分类尚未保存的申请信息')
     await act(async () => { releaseIssue?.() })
-    await screen.findByRole('tab', { name: `${originalCategory} 2` })
-    expect(screen.getByRole('tab', { name: `${otherCategory} 0` }).getAttribute('aria-selected')).toBe('true')
+    await waitFor(() => expect(screen.getAllByRole('tab', { hidden: true }).find(tab => tab.textContent?.startsWith(originalCategory))?.textContent).toMatch(/2$/))
+    expect(screen.getByRole('region', { name: category === 'imaging' ? '开具病理会诊' : '开具放射申请' })).toBeTruthy()
     expect((screen.getByRole('textbox', { name: otherField }) as HTMLTextAreaElement).value).toBe('另一分类尚未保存的申请信息')
-    await user.click(screen.getByRole('tab', { name: `${originalCategory} 2` }))
+    expect(screen.getByRole('tab', { name: `${otherCategory} 0` }).getAttribute('aria-selected')).toBe('true')
+    await user.click(await screen.findByRole('tab', { name: `${originalCategory} 2` }))
     const list = screen.getByRole('region', { name: '申请列表' })
     const serviceName = category === 'imaging' ? imagingService.name : pathologyService.name
     const issuedStatus = category === 'imaging' ? '已开具' : '已开立'
+    const prepared = screen.getByRole('region', { name: category === 'imaging' ? '待开具放射检查' : '待开具病理会诊' })
+    expect(within(prepared).queryByRole('checkbox', { name: `选择${serviceName}` })).toBeNull()
     expect(within(list).getByRole('button', { name: `${serviceName} ${issuedStatus}` }).getAttribute('aria-pressed')).toBe('true')
     expect(within(list).getByRole('button', { name: `${serviceName} 已取消` }).getAttribute('aria-pressed')).toBe('false')
   })
 
-  it.each([false, true])('opens the investigation catalog directly and recovers a failed read=%s', async failFirstRead => {
+  it.each([false, true])('keeps the investigation catalog inline and recovers a failed read=%s', async failFirstRead => {
     window.history.replaceState(null, '', '/consultation')
     let laboratoryReads = 0
     const patient = {
@@ -4395,6 +4434,7 @@ describe('role workspaces', () => {
     const categories = screen.getByRole('tablist', { name: '检查分类' })
     expect(within(categories).getByRole('tab', { name: '检验 0' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('tabpanel', { name: '检验 0' })).toBeTruthy()
+    expect(screen.getByLabelText('搜索检验目录')).toBeTruthy()
     if (failFirstRead) {
       expect(await screen.findByText('无法加载本院检验目录')).toBeTruthy()
       const failure = screen.getByText('无法加载本院检验目录').closest<HTMLElement>('[role="alert"]')
@@ -4628,13 +4668,13 @@ describe('role workspaces', () => {
         draftVersion += 1
         return Response.json(commandResponse({ caseId: 'case-virtual-1', draftVersion }))
       }
-      if (url.pathname === '/api/his/v1/encounters/encounter-virtual-1/laboratory-request/actions/issue') {
-        const body = JSON.parse(String(init?.body)) as {
-          expectedVersions: Record<string, string>
-          input: { expectedDraftVersion: number }
-        }
+      if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1/recommendations/laboratory/actions/confirm') {
+        const body = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
         expect(body.expectedVersions).toEqual({ 'Encounter/encounter-virtual-1': '1' })
         expect(body.input.expectedDraftVersion).toBe(draftVersion)
+        expect(body.input.resolveExistingDraft).toBe(true)
+        expect(body.input.selections).toEqual([{ source: 'manual', kind: 'laboratory',
+          catalogItemId: agentLaboratoryService.id, indicationCode: 'clinical-evaluation' }])
         const issuedDraft = draft
         if (issuedDraft === undefined) throw new Error('Laboratory draft was not found')
         draft = undefined
@@ -4654,9 +4694,7 @@ describe('role workspaces', () => {
           version: 1,
         }
         return Response.json(commandResponse({
-          caseId: 'case-virtual-1',
-          draftVersion,
-          request,
+          kind: 'laboratory', draftVersion, encounterVersion: '1', recordIds: [request.id],
         }))
       }
       throw new Error(`Unexpected request: ${url.pathname}`)
@@ -4672,7 +4710,7 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     const requestRegion = await screen.findByRole('region', { name: '检验申请' })
     expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('region', { name: '检验申请' })).toBeTruthy()
     const laboratoryDirectory = screen
     await user.type(laboratoryDirectory.getByLabelText('搜索检验目录'), '血常')
     await user.click(laboratoryDirectory.getByRole('button', { name: '执行检验目录搜索' }))
@@ -4706,10 +4744,11 @@ describe('role workspaces', () => {
     const savedRequestRegion = screen.getByRole('region', { name: '检验申请' })
     expect(within(savedRequestRegion).getByText('草稿已自动保存')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '选择 血常规 58410-2' }))
-    expect(screen.getByRole('button', { name: '选择 血常规 58410-2' }).getAttribute('aria-pressed')).toBe('false')
-    expect((within(savedRequestRegion).getByRole('button', { name: '开具检验申请' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(within(savedRequestRegion).getByText('尚未选择检验项目')).toBeTruthy()
-    await waitFor(() => expect(registration?.tools.some(tool => tool.name === 'clinmesh_prepare_issue_laboratory')).toBe(false))
+    expect(screen.getByRole('button', { name: '选择 血常规 58410-2' }).getAttribute('aria-pressed')).toBe('true')
+    expect(within(savedRequestRegion).queryByRole('button', { name: '开具检验申请' })).toBeNull()
+    expect(within(savedRequestRegion).getByText('请先开具或删除已有检验草稿，再选择其他项目。')).toBeTruthy()
+    expect(draftSaves).toBe(1)
+    await expectVisibleLaboratoryDraft()
     await user.click(screen.getByRole('button', { name: '选择 血常规 58410-2' }))
 
     cleanup()
@@ -4738,19 +4777,25 @@ describe('role workspaces', () => {
       contextId: persistedDraftContextId,
       pageRevision: persistedDraftPageRevision,
     }
-    await act(async () => {
-      await fillLaboratory.execute(boundAgentToolInput(fillLaboratory, {
-        catalogItemId: agentLaboratoryService.id,
-        indicationCode: 'clinical-evaluation',
-      }), new AbortController().signal)
-    })
-    expect(proofRequests.at(-1)).toMatchObject(persistedBinding)
-    expect(within(screen.getByRole('region', { name: '检验申请' })).getByText(agentLaboratoryService.nameZh)).toBeTruthy()
-    await act(async () => new Promise(resolve => setTimeout(resolve, 900)))
-    expect(draft).toMatchObject({ catalogItemId: agentLaboratoryService.id })
-    expect(draftSaves).toBe(2)
-    const hydratedRequestRegion = screen.getByRole('region', { name: '检验申请' })
-    await user.click(within(hydratedRequestRegion).getByRole('button', { name: '开具检验申请' }))
+    // 回填前接管定时器，确保错误排定的反向保存也会在推进窗口时触发。
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await act(async () => {
+        await fillLaboratory.execute(boundAgentToolInput(fillLaboratory, {
+          catalogItemId: agentLaboratoryService.id,
+          indicationCode: 'clinical-evaluation',
+        }), new AbortController().signal)
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(proofRequests.at(-1)).toMatchObject(persistedBinding)
+      expect(within(screen.getByRole('region', { name: '检验申请' })).getByText(agentLaboratoryService.nameZh)).toBeTruthy()
+      await act(async () => { await vi.advanceTimersByTimeAsync(900) })
+      expect(draft).toMatchObject({ catalogItemId: agentLaboratoryService.id })
+      expect(draftSaves).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
 
     const issuedList = await screen.findByRole('region', { name: '申请列表' })
     expect(within(issuedList).getByRole('button', { name: `${agentLaboratoryService.nameZh} 已开具` }).getAttribute('aria-pressed')).toBe('true')
@@ -4771,6 +4816,254 @@ describe('role workspaces', () => {
           }] },
         }], ...pagination(1),
       }
+
+  it('retains the catalog query and page after issuing only the first of two AI laboratory items', async () => {
+    stubRecordingWorkspace('pause')
+    const originalFetch = globalThis.fetch
+    const first = laboratoryTestCatalog.items[0]!
+    const second = { ...first, id: 'lab-crp', nameZh: '合成第二项检验' }
+    const requests: LaboratoryRequest[] = []
+    const confirmations: Array<ReturnType<typeof confirmDoctorPreparationRequestSchema.parse>> = []
+    const directoryReads: Array<{ query: string | null; page: number }> = []
+    const prepared = doctorRecommendationStateSchema.parse({
+      caseId: 'case-recording', encounterId: 'encounter-recording', encounterVersion: '1', kind: 'laboratory',
+      inputFingerprint: 'a'.repeat(64), generation: 1, status: 'ready', stale: false,
+      guidelines: [{ id: 'synthetic-guideline', title: '合成检验指南', publisher: '合成发布机构', documentType: 'official-protocol',
+        version: '1', url: 'https://example.test/synthetic-guideline', locator: '检验章节', scope: '合成成人病例',
+        text: '依据合成病情核对检验指征。', sourceHash: 'b'.repeat(64) }],
+      caseEvidence: [{ id: 'synthetic-case-evidence', kind: 'consultation', label: '患者回答', text: '合成发热症状' }], missingInformation: [],
+      items: [first, second].map((service, index) => ({
+        id: `laboratory-suggestion-${index}`, kind: 'laboratory', catalogItemId: service.id,
+        label: service.nameZh, indicationCode: 'fever', rationale: '合成检验依据。',
+        supportingInformation: ['合成发热症状'], opposingInformation: [], missingInformation: [],
+        guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-evidence'],
+      })),
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname.endsWith('/reference-catalogs/laboratory')) {
+        const page = Number(url.searchParams.get('page') ?? 1)
+        directoryReads.push({ query: url.searchParams.get('query'), page })
+        return Response.json({ items: [first, second], ...pagination(41), page })
+      }
+      if (url.pathname.endsWith('/recommendations/laboratory')) return Response.json(prepared)
+      if (url.pathname.endsWith('/recommendations/laboratory/actions/confirm')) {
+        const body = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+        confirmations.push(body)
+        requests.push({ catalogItemId: first.id, id: 'laboratory-request-first', indicationCode: 'fever',
+          referenceConcept: first.referenceConcept, previousReports: [], serviceRequestId: 'service-request-first',
+          serviceRequestVersion: '1', status: 'issued', taskId: 'laboratory-task-first', taskVersion: '1', version: 1 })
+        return Response.json(commandResponse({ kind: 'laboratory', draftVersion: 1, encounterVersion: '1', recordIds: ['laboratory-request-first'] }))
+      }
+      const response = await originalFetch(input, init)
+      if (url.pathname !== '/api/his/v1/doctor/cases/case-recording') return response
+      return Response.json({ ...await response.json(), laboratoryRequests: { draftVersion: requests.length, reportingSupported: true, requests } })
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    const panel = screen.getByRole('region', { name: '待开具检验' })
+    await user.click(await within(panel).findByRole('checkbox', { name: '选择合成第二项检验' }))
+    const search = screen.getByRole('textbox', { name: '搜索检验目录' })
+    await user.type(search, '血常')
+    await user.click(screen.getByRole('button', { name: '执行检验目录搜索' }))
+    await user.click(screen.getByRole('button', { name: '下一页' }))
+    await waitFor(() => expect(directoryReads.at(-1)).toEqual({ query: '血常', page: 2 }))
+    await user.click(within(panel).getByRole('button', { name: /^开具选中项目/ }))
+    await within(await screen.findByRole('region', { name: '申请列表' })).findByRole('button', { name: /白细胞计数 已开具/ })
+    await user.click(screen.getByRole('button', { name: '展开目录' }))
+    expect(screen.getByRole('textbox', { name: '搜索检验目录' })).toHaveProperty('value', '血常')
+    expect(screen.getByText('共 41 条 · 2/3')).toBeTruthy()
+    expect(directoryReads.at(-1)).toEqual({ query: '血常', page: 2 })
+    expect(within(screen.getByRole('region', { name: '待开具检验' })).getByRole('checkbox', { name: '选择合成第二项检验' }).getAttribute('aria-checked')).toBe('false')
+    expect(within(screen.getByRole('region', { name: '待开具检验' })).getByText('发热')).toBeTruthy()
+    expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-recording': '1' }, input: {
+      expectedDraftVersion: 0, generation: 1, inputFingerprint: 'a'.repeat(64), selections: [
+        { source: 'agent', kind: 'laboratory', suggestionId: 'laboratory-suggestion-0', catalogItemId: first.id, indicationCode: 'fever' },
+      ],
+    } }])
+  })
+
+  it('saves the manual indication from a Reference-only laboratory directory instead of restoring the persisted indication', async () => {
+    stubRecordingWorkspace('pause')
+    const originalFetch = globalThis.fetch
+    const service = { ...laboratoryTestCatalog.items[0]!, allowedIndicationCodes: ['fever', 'clinical-evaluation'] }
+    let indicationCode = 'fever'
+    let draftVersion = 1
+    const saves: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(request), 'http://localhost').pathname
+      if (path.endsWith('/reference-catalogs/laboratory')) return Response.json({ items: [service], ...pagination(1) })
+      if (path === '/api/his/v1/encounters/encounter-recording/laboratory-request/draft') {
+        const body = JSON.parse(String(init?.body))
+        expect(init?.method).toBe('PUT')
+        saves.push(body)
+        indicationCode = body.input.indicationCode
+        draftVersion += 1
+        return Response.json(commandResponse({ caseId: 'case-recording', draftVersion }))
+      }
+      const response = await originalFetch(request, init)
+      if (path !== '/api/his/v1/doctor/cases/case-recording') return response
+      return Response.json({ ...await response.json(), laboratoryRequests: { draftVersion, reportingSupported: true, requests: [],
+        draft: { catalogItemId: service.id, indicationCode, laboratoryService: service } } })
+    }))
+    const user = userEvent.setup()
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    const panel = screen.getByRole('region', { name: '待开具检验' })
+    expect(within(panel).getByText('发热')).toBeTruthy()
+    await user.click(within(panel).getByRole('button', { name: '调整' }))
+    const edit = screen.getByRole('dialog', { name: '调整项目' })
+    await user.click(within(edit).getByRole('combobox', { name: '检查目的' }))
+    await user.click(await screen.findByRole('option', { name: '临床评估' }))
+    await user.click(within(edit).getByRole('button', { name: '保留本次调整' }))
+    await waitFor(() => expect(saves).toEqual([{ expectedVersions: { 'Encounter/encounter-recording': '1' },
+      input: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', expectedDraftVersion: 1 } }]))
+    expect(within(panel).getByText('临床评估')).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: '检验适应证' }).textContent).toContain('临床评估')
+  })
+
+  it.each(['laboratory', 'imaging', 'pathology'] as const)('restores a late Agent %s draft on return to its patient without changing another patient', async kind => {
+    window.history.replaceState(null, '', '/consultation')
+    const laboratory = { ...laboratoryTestCatalog.items[0]!, allowedIndicationCodes: ['fever', 'clinical-evaluation'] }
+    const imaging: ImagingServiceSnapshot = { id: 'imaging-late-agent', name: '合成胸部检查', code: 'SYN-CT',
+      applicability: '合成胸部检查资料', bodySite: '胸部', department: '放射科', examCode: 'chest-ct-plain',
+      method: '平扫', modality: 'CT', reportSections: ['technique', 'findings', 'impression'], version: 1 }
+    const pathology: PathologyServiceSnapshot = { id: 'pathology-late-agent', name: '合成切片会诊', code: 'SYN-PATH',
+      applicability: '合成既往乳腺手术切片', bodySite: '乳腺', department: '病理科', examCode: 'breast-slide-consultation',
+      reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'], specimenType: '石蜡切片', stain: 'HE', version: 1 }
+    const procedures = [{ code: '392021009', display: '合成原手术', performedAt: '2022-04-01T08:00:00+08:00', sourceReference: 'urn:uuid:late-agent-old' },
+      { code: '392023007', display: '合成新手术', performedAt: '2023-01-05T08:00:00+08:00', sourceReference: 'urn:uuid:late-agent-new' }]
+    const cases = ['甲', '乙'].map((name, index) => ({ caseId: `case-late-agent-${index}`, encounterId: `encounter-late-agent-${index}`, encounterVersion: '1',
+      patient: { id: `patient-late-agent-${index}`, identifier: `SYN-LATE-AGENT-${index}`, name: `合成回填患者${name}`,
+        gender: 'female', synthetic: true, versionId: '1' }, presentation: doctorPresentation, status: 'first-visit',
+      taskId: `task-late-agent-${index}`, taskVersion: '1' }))
+    const category = kind === 'laboratory' ? '检验' : kind === 'imaging' ? '放射检查' : '病理会诊'
+    const panelName = kind === 'laboratory' ? '待开具检验' : kind === 'imaging' ? '待开具放射检查' : '待开具病理会诊'
+    const newText = 'Agent已保存的新检查资料'
+    const input = kind === 'laboratory' ? { catalogItemId: laboratory.id, indicationCode: 'fever' }
+      : kind === 'imaging' ? { serviceId: imaging.id, indication: newText }
+        : { serviceId: pathology.id, sourceProcedureReference: procedures[1]!.sourceReference, purpose: newText }
+    let saved = false
+    let manualSaved = false
+    let releaseSave: (() => void) | undefined
+    const writes: string[] = []
+    let persistedPageRevision: string | undefined
+    let latestRequestedClaim: AgentPageContextClaim | undefined
+    let latestIssuedClaim: AgentPageContextClaim | undefined
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = { register(value) {
+      registration = value
+      return () => { if (registration === value) registration = undefined }
+    } }
+    vi.stubGlobal('fetch', documentQualityFetch(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(request), 'http://localhost').pathname
+      if (path === '/api/agent/v1/page-contexts') {
+        latestRequestedClaim = agentPageContextClaimSchema.parse(JSON.parse(String(init?.body)).claim)
+        if (manualSaved) persistedPageRevision = agentPageBindingRevision(latestRequestedClaim)
+      }
+      const agentResponse = await doctorSurfaceAgentResponse(path, init)
+      if (agentResponse !== undefined) {
+        if (path === '/api/agent/v1/page-contexts') latestIssuedClaim = agentPageContextBindingSchema.parse(await agentResponse.clone().json()).snapshot.claim
+        return agentResponse
+      }
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [{ id: laboratory.id, nameZh: laboratory.nameZh,
+        nameEn: laboratory.nameEn, allowedIndicationCodes: laboratory.allowedIndicationCodes, contraindicatedAllergyCodes: [], version: 1 }],
+        medications: [], prescriptionConclusionSupported: true })
+      if (path.endsWith('/doctor/queue')) return Response.json({ items: cases, ...pagination(2) })
+      const current = cases.find(item => path === `/api/his/v1/doctor/cases/${item.caseId}`)
+      if (current !== undefined) {
+        const updated = current === cases[0] && saved
+        const oldText = current === cases[0] ? '甲患者原检查资料' : '乙患者原检查资料'
+        const draft = kind === 'laboratory' ? { catalogItemId: laboratory.id, indicationCode: current !== cases[0] || manualSaved && !updated ? 'clinical-evaluation' : 'fever', laboratoryService: laboratory }
+          : kind === 'imaging' ? { service: imaging, indication: updated ? newText : oldText }
+            : { service: pathology, sourceProcedure: procedures[updated ? 1 : 0], purpose: updated ? newText : oldText }
+        return Response.json({ ...current, allergies: [], consultation: { turns: [], version: 1 }, priorFacts: [],
+          encounter: { id: current.encounterId, status: 'in-progress', versionId: '1' },
+          laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [] },
+          imagingRequests: { draftVersion: 0, requests: [] }, pathologyRequests: { draftVersion: 0, requests: [] },
+          [`${kind}Requests`]: { draft, draftVersion: updated ? kind === 'laboratory' ? 3 : 2 : current === cases[0] && manualSaved ? 2 : 1,
+            ...(kind === 'laboratory' ? { reportingSupported: true } : {}), requests: [] },
+        })
+      }
+      if (path.endsWith('/reference-catalogs/laboratory')) return Response.json({ items: [laboratory], ...pagination(1) })
+      if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imaging }] })
+      if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathology, sourceProcedures: procedures }] })
+      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: path.split('/')[5], encounterVersion: '1', items: [] })
+      if (path.endsWith(`/${kind}-request/draft`)) {
+        writes.push(path)
+        expect(init?.method).toBe('PUT')
+        const body = JSON.parse(String(init?.body))
+        expect(body.expectedVersions).toEqual({ 'Encounter/encounter-late-agent-0': '1' })
+        if (kind === 'laboratory' && body.input.indicationCode === 'clinical-evaluation') {
+          expect(body.input).toEqual({ catalogItemId: laboratory.id, indicationCode: 'clinical-evaluation', expectedDraftVersion: 1 })
+          manualSaved = true
+          return Response.json(commandResponse({ caseId: cases[0]!.caseId, draftVersion: 2 }))
+        }
+        expect(body.input).toEqual({ expectedDraftVersion: kind === 'laboratory' ? 2 : 1, ...input })
+        return new Promise<Response>(resolve => { releaseSave = () => {
+          saved = true
+          resolve(Response.json(commandResponse({ caseId: cases[0]!.caseId, draftVersion: kind === 'laboratory' ? 3 : 2 })))
+        } })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp runtime={{ mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1' }} />)
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    await user.click(screen.getByRole('tab', { name: `${category} 0` }))
+    expect(within(await screen.findByRole('region', { name: panelName })).getByText(kind === 'laboratory' ? '发热' : '甲患者原检查资料')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '调整' }))
+    const edit = screen.getByRole('dialog', { name: '调整项目' })
+    if (kind === 'laboratory') {
+      await user.click(within(edit).getByRole('combobox', { name: '检查目的' }))
+      await user.click(await screen.findByRole('option', { name: '临床评估' }))
+    } else {
+      const field = within(edit).getByRole('textbox', { name: kind === 'imaging' ? '检查目的' : '会诊目的' })
+      await user.clear(field)
+      await user.type(field, '甲患者人工修改的旧检查资料')
+    }
+    await user.click(within(edit).getByRole('button', { name: '保留本次调整' }))
+    if (kind === 'laboratory') await waitFor(() => expect(manualSaved).toBe(true), { timeout: 3_000 })
+    const tool = await waitFor(() => {
+      const candidate = registration?.tools.find(tool => tool.name === `clinmesh_fill_${kind}_draft`)
+      expect(candidate).toBeDefined()
+      expect(latestIssuedClaim).toBeDefined()
+      expect(latestIssuedClaim).toEqual(latestRequestedClaim)
+      expect(boundAgentToolInput(candidate!, {}).pageRevision).toBe(agentPageBindingRevision(latestIssuedClaim!))
+      if (kind === 'laboratory') {
+        expect(persistedPageRevision).toBeDefined()
+        expect(boundAgentToolInput(candidate!, {}).pageRevision).toBe(persistedPageRevision)
+      }
+      return candidate!
+    })
+    let execution!: ReturnType<WebSurfaceAgentTool['execute']>
+    act(() => { execution = tool.execute(boundAgentToolInput(tool, input), new AbortController().signal) })
+    const completion = Promise.resolve(execution)
+    void completion.catch(() => undefined)
+    try {
+      await waitFor(() => expect(releaseSave).toBeDefined())
+      await user.click(screen.getByRole('button', { name: '选择病例 合成回填患者乙' }))
+      await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+      await user.click(screen.getByRole('tab', { name: `${category} 0` }))
+      const patientBPanel = await screen.findByRole('region', { name: panelName })
+      expect(within(patientBPanel).getByText(kind === 'laboratory' ? '临床评估' : '乙患者原检查资料')).toBeTruthy()
+      await act(async () => { releaseSave?.(); expect(JSON.parse(await completion)).toMatchObject({ ok: true }) })
+      expect(screen.getByRole('heading', { name: '合成回填患者乙' })).toBeTruthy()
+      expect(within(patientBPanel).getByText(kind === 'laboratory' ? '临床评估' : '乙患者原检查资料')).toBeTruthy()
+      await user.click(screen.getByRole('button', { name: '选择病例 合成回填患者甲' }))
+      await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+      await user.click(screen.getByRole('tab', { name: `${category} 0` }))
+      const patientAPanel = await screen.findByRole('region', { name: panelName })
+      expect(await within(patientAPanel).findByText(kind === 'laboratory' ? '发热' : newText)).toBeTruthy()
+      expect(within(patientAPanel).queryByText(kind === 'laboratory' ? '临床评估' : '甲患者人工修改的旧检查资料')).toBeNull()
+      expect(writes).toEqual(Array(kind === 'laboratory' ? 2 : 1).fill(`/api/his/v1/encounters/encounter-late-agent-0/${kind}-request/draft`))
+      if (kind === 'pathology') {
+        expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('合成新手术')
+      }
+    } finally { releaseSave?.(); await completion }
+  })
 
   it('keeps the current case selection when another case draft deletion finishes late', async () => {
     window.history.replaceState(null, '', '/consultation')
@@ -5266,7 +5559,7 @@ describe('role workspaces', () => {
     expect(pageState.investigation).toMatchObject({ category: 'laboratory', selected: { laboratory: 'laboratory-request-1' } })
     const list = screen.getByRole('region', { name: '申请列表' })
     for (const label of ['已开具', '已受理', '执行中', '已报告', '已取消']) {
-      expect(within(list).getByText(label)).toBeTruthy()
+      expect(within(list).getByRole('button', { name: new RegExp(` ${label}$`) })).toBeTruthy()
     }
     expect(within(list).getByText('医生已阅')).toBeTruthy()
     expect(within(list).getAllByText('结果生成失败')).toHaveLength(2)
@@ -5322,10 +5615,9 @@ describe('role workspaces', () => {
     await user.click(within(retryCancelDialog).getByRole('button', { name: '确认取消' }))
     expect(await screen.findByText('检验申请已取消')).toBeTruthy()
     expect(cancellationRequests).toBe(2)
-    expect(within(screen.getByRole('region', { name: '申请列表' })).queryByText('已开具')).toBeNull()
-    await user.click(screen.getByRole('button', { name: '追加申请' }))
-    const addDialog = await screen.findByRole('dialog', { name: '追加申请' })
-    await user.click(within(addDialog).getByRole('button', { name: '删除检验草稿' }))
+    expect(within(screen.getByRole('region', { name: '申请列表' })).queryByRole('button', { name: / 已开具$/ })).toBeNull()
+    const addForm = await screen.findByRole('region', { name: '检验申请' })
+    await user.click(within(addForm).getByRole('button', { name: '删除检验草稿' }))
     const deleteDialog = await screen.findByRole('alertdialog', { name: '确认删除检验草稿' })
     expect(draftDeletionRequests).toBe(0)
     expect(within(deleteDialog).getByText('血常规')).toBeTruthy()
@@ -5333,7 +5625,7 @@ describe('role workspaces', () => {
     expect(await screen.findByText('检验草稿已删除')).toBeTruthy()
     expect(draftDeletionRequests).toBe(1)
     await waitFor(() => expect(screen.queryByText('草稿已自动保存')).toBeNull())
-    await user.click(within(addDialog).getByRole('button', { name: 'Close' }))
+    expect(within(addForm).getByText('尚未选择检验项目')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '选择病例 合成候选患者周远' }))
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     expect(await screen.findByText('尚未选择检验项目')).toBeTruthy()
@@ -6182,21 +6474,19 @@ describe('role workspaces', () => {
         }
         return Response.json(commandResponse({ draftVersion: nextVersion }))
       }
-      if (url.pathname === '/api/his/v1/encounters/encounter-independent-diagnosis/diagnosis/actions/confirm') {
+      if (url.pathname === '/api/his/v1/doctor/cases/case-independent-diagnosis/recommendations/diagnosis/actions/confirm') {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-independent-diagnosis': encounterVersion },
-          input: { expectedDraftVersion: diagnosis?.draftVersion },
+          input: { expectedDraftVersion: diagnosis?.draftVersion, resolveExistingDraft: true,
+            selections: draftEntries.map(entry => ({ source: 'manual', kind: 'diagnosis', ...entry })) },
         })
         expect(diagnosis?.draft?.entries).toHaveLength(2)
         encounterVersion = '7'
         const diagnosisVersion = (diagnosis?.draftVersion ?? 0) + 1
         diagnosis = { confirmation, draftVersion: diagnosisVersion }
         return Response.json(commandResponse({
-          confirmation,
-          diagnosisVersion,
-          encounterId: 'encounter-independent-diagnosis',
-          encounterVersion,
+          kind: 'diagnosis', draftVersion: diagnosisVersion, encounterVersion, recordIds: [confirmation.id],
         }))
       }
       throw new Error(`Unexpected request: ${url.pathname}`)
@@ -6233,15 +6523,13 @@ describe('role workspaces', () => {
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(2), { timeout: 3_000 })
     expect(await screen.findByText('草稿已自动保存')).toBeTruthy()
     expect(screen.queryByText('诊断已确认')).toBeNull()
-    await user.click(screen.getByRole('button', { name: '确认诊断' }))
-    const confirmDiagnosisDialog = await screen.findByRole('alertdialog', { name: '确认诊断版本' })
-    await user.click(within(confirmDiagnosisDialog).getByRole('button', { name: '确认诊断版本' }))
+    await user.click(screen.getByRole('button', { name: /^确认选中诊断/ }))
     expect(await screen.findByText(/诊断已确认/)).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('J10.1')).toBeTruthy()
     expect(screen.getAllByText('流感伴其他呼吸道表现').length).toBeGreaterThan(0)
     expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('I10')).toBeTruthy()
     expect(screen.getAllByText('原发性高血压').length).toBeGreaterThan(0)
-    expect(screen.getByRole('button', { name: '添加诊断' })).toBeTruthy()
+    expect(screen.getByRole('region', { name: '填写诊断' })).toBeTruthy()
     const priorDiagnosisRevision = await waitFor(() => {
       expect(latestIssuedClaim).toBeDefined()
       expect(latestIssuedClaim).toEqual(latestRequestedClaim)
@@ -6249,9 +6537,11 @@ describe('role workspaces', () => {
       return agentPageBindingRevision(latestIssuedClaim!)
     })
     await user.click(within(screen.getByRole('region', { name: '诊断列表' })).getByRole('button', { name: /原发性高血压/ }))
+    await user.click(screen.getByRole('button', { name: '修改已确认诊断' }))
+    await user.click(within(screen.getByRole('region', { name: '填写诊断' })).getByRole('button', { name: '原发性高血压' }))
     await user.click(screen.getByRole('button', { name: '移除诊断 2' }))
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(1), { timeout: 3_000 })
-    await waitFor(() => expect((screen.getByRole('button', { name: '确认诊断' }) as HTMLButtonElement).disabled).toBe(false))
+    await waitFor(() => expect((screen.getByRole('button', { name: /^确认选中诊断/ }) as HTMLButtonElement).disabled).toBe(false))
     const { fillDiagnosis, tools: diagnosisTools } = await waitFor(() => {
       const candidate = registration?.tools.find(tool => tool.name === 'clinmesh_fill_diagnosis_draft')
       expect(candidate).toBeDefined()
@@ -6279,9 +6569,10 @@ describe('role workspaces', () => {
         entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary' }],
       }), new AbortController().signal)
     })
-    expect(await within(screen.getByRole('region', { name: '诊断列表' })).findByText('发热，未特指')).toBeTruthy()
-    expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('R50.9')).toBeTruthy()
-    expect(screen.queryByText('流感伴其他呼吸道表现')).toBeNull()
+    expect(await within(screen.getByRole('region', { name: '待确认诊断' })).findByRole('checkbox', { name: '选择发热，未特指' })).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '待确认诊断' })).queryByText('流感伴其他呼吸道表现')).toBeNull()
+    expect(within(screen.getByRole('region', { name: '诊断列表' })).getByText('J10.1')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '填写诊断' })).getByText('R50.9')).toBeTruthy()
     await user.click(screen.getByRole('tab', { name: '检验检查' }))
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
   }, 10_000)
@@ -6712,10 +7003,10 @@ describe('role workspaces', () => {
         })
         return Response.json(commandResponse({ draftVersion: 2 }))
       }
-      if (url.pathname === '/api/his/v1/encounters/encounter-diagnosis-validation/diagnosis/actions/confirm') {
+      if (url.pathname === '/api/his/v1/doctor/cases/case-diagnosis-validation/recommendations/diagnosis/actions/confirm') {
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-diagnosis-validation': '6' },
-          input: { expectedDraftVersion: 1 },
+          input: { expectedDraftVersion: 1, resolveExistingDraft: true, selections: [{ source: 'manual', kind: 'diagnosis', catalogItemId: 'diagnosis-influenza', role: 'primary' }] },
         })
         return Response.json({
           error: {
@@ -6730,9 +7021,7 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '诊断' }))
-    await user.click(await screen.findByRole('button', { name: '确认诊断' }))
-    const confirmDialog = await screen.findByRole('alertdialog', { name: '确认诊断版本' })
-    await user.click(within(confirmDialog).getByRole('button', { name: '确认诊断版本' }))
+    await user.click(await screen.findByRole('button', { name: /^确认选中诊断/ }))
     expect(await screen.findByText('必须且只能选择一个主诊断。')).toBeTruthy()
   })
 
@@ -6925,16 +7214,15 @@ describe('role workspaces', () => {
         medicationConclusion = { draft: { items: [draftItem] }, draftVersion }
         return Response.json(commandResponse({ draftVersion }))
       }
-      if (url.pathname === '/api/his/v1/encounters/encounter-prescription-conclusion/prescription/actions/issue') {
+      if (url.pathname === '/api/his/v1/doctor/cases/case-prescription-conclusion/recommendations/prescription/actions/confirm') {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-prescription-conclusion': '6' },
-          input: { expectedDraftVersion: 3 },
+          input: { expectedDraftVersion: 3, resolveExistingDraft: true, selections: [{ source: 'manual', kind: 'prescription', ...draftItem }] },
         })
         medicationConclusion = { draftVersion: 4, prescription: issuedPrescription }
         return Response.json(commandResponse({
-          draftVersion: 4,
-          prescription: issuedPrescription,
+          kind: 'prescription', draftVersion: 4, encounterVersion: '6', recordIds: [issuedPrescription.id],
         }))
       }
       if (url.pathname === '/api/his/v1/prescriptions/prescription-independent-1/actions/withdraw') {
@@ -7031,10 +7319,8 @@ describe('role workspaces', () => {
     await user.clear(screen.getByLabelText('数量'))
     await user.type(screen.getByLabelText('数量'), '10')
     await waitFor(() => expect(medicationConclusion?.draftVersion).toBe(3), { timeout: 3_000 })
-    await waitFor(() => expect((screen.getByRole('button', { name: '正式开具处方' }) as HTMLButtonElement).disabled).toBe(false))
-    await user.click(screen.getByRole('button', { name: '正式开具处方' }))
-    const issueDialog = await screen.findByRole('alertdialog', { name: '确认正式开具处方' })
-    await user.click(within(issueDialog).getByRole('button', { name: '确认开具' }))
+    await waitFor(() => expect((screen.getByRole('button', { name: /^开具处方（/ }) as HTMLButtonElement).disabled).toBe(false))
+    await user.click(screen.getByRole('button', { name: /^开具处方（/ }))
     expect(await screen.findByText('处方已正式开具')).toBeTruthy()
     expect(screen.getByText(/CM-RX-20260824-0001/)).toBeTruthy()
     expect(screen.queryByRole('combobox', { name: '药品' })).toBeNull()
@@ -7131,11 +7417,11 @@ describe('role workspaces', () => {
           taskVersion: '2',
         })
       }
-      if (url.pathname === '/api/his/v1/encounters/encounter-prescription-conflict/prescription/actions/issue') {
+      if (url.pathname === '/api/his/v1/doctor/cases/case-prescription-conflict/recommendations/prescription/actions/confirm') {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { 'Encounter/encounter-prescription-conflict': '6' },
-          input: { expectedDraftVersion: 1 },
+          input: { expectedDraftVersion: 1, resolveExistingDraft: true, selections: [{ source: 'manual', kind: 'prescription', ...draftItem }] },
         })
         return Response.json({
           error: {
@@ -7150,12 +7436,8 @@ describe('role workspaces', () => {
     render(<WebApp />)
 
     await user.click(await screen.findByRole('tab', { name: '处方' }))
-    await user.click(await screen.findByRole('button', { name: '正式开具处方' }))
-    const issueDialog = await screen.findByRole('alertdialog', { name: '确认正式开具处方' })
-    await user.click(within(issueDialog).getByRole('button', { name: '确认开具' }))
-    await waitFor(() => expect(screen.queryByRole('alertdialog', {
-      name: '确认正式开具处方',
-    })).toBeNull())
+    await user.click(await screen.findByRole('button', { name: /^开具处方（/ }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(await screen.findByText('当前诊断、过敏信息、目录或处方状态不允许正式开具，请检查后重试。')).toBeTruthy()
     expect(screen.getAllByText('磷酸奥司他韦胶囊').length).toBeGreaterThan(0)
     expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
@@ -8661,7 +8943,7 @@ describe('role workspaces', () => {
         }
         if (
           url.pathname
-          === `/api/his/v1/encounters/${completedDetail.encounter.id}/prescription/actions/issue`
+          === `/api/his/v1/doctor/cases/${completedDetail.caseId}/recommendations/prescription/actions/confirm`
         ) {
           prescriptionIssueRequest = JSON.parse(String(init?.body))
           currentActiveDetail = {
@@ -8679,8 +8961,7 @@ describe('role workspaces', () => {
             timeline: [...currentCompletedDetail.timeline, prescriptionIssuedEvent],
           }
           return Response.json(commandResponse({
-            draftVersion: 4,
-            prescription: issuedPrescription,
+            kind: 'prescription', draftVersion: 4, encounterVersion: '6', recordIds: [issuedPrescription.id],
           }))
         }
         if (
@@ -8792,8 +9073,7 @@ describe('role workspaces', () => {
     )
 
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    await user.click(screen.getByRole('button', { name: '追加申请' }))
-    const addition = await screen.findByRole('dialog', { name: '追加申请' })
+    const addition = await screen.findByRole('region', { name: '检验申请' })
     await user.click(within(addition).getByRole('button', { name: '删除检验草稿' }))
     const laboratoryDraftDialog = await screen.findByRole('alertdialog', {
       name: '确认删除检验草稿',
@@ -8806,7 +9086,7 @@ describe('role workspaces', () => {
       input: { expectedDraftVersion: 1 },
     })
 
-    await user.click(within(addition).getByRole('button', { name: 'Close' }))
+    expect(within(addition).getByText('尚未选择检验项目')).toBeTruthy()
     await user.click(within(screen.getByRole('region', { name: '申请列表' })).getByRole('button', { name: /血常规 已开具/ }))
     await user.click(screen.getByRole('button', { name: '取消检验申请 血常规' }))
     const laboratoryCancellationDialog = await screen.findByRole('alertdialog', {
@@ -8847,14 +9127,12 @@ describe('role workspaces', () => {
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
       input: { expectedDraftVersion: 2, items: [prescriptionDraftItem] },
     }), { timeout: 3_000 })
-    await waitFor(() => expect((screen.getByRole('button', { name: '正式开具处方' }) as HTMLButtonElement).disabled).toBe(false))
-    await user.click(screen.getByRole('button', { name: '正式开具处方' }))
-    const issueDialog = await screen.findByRole('alertdialog', { name: '确认正式开具处方' })
-    await user.click(within(issueDialog).getByRole('button', { name: '确认开具' }))
+    await waitFor(() => expect((screen.getByRole('button', { name: /^开具处方（/ }) as HTMLButtonElement).disabled).toBe(false))
+    await user.click(screen.getByRole('button', { name: /^开具处方（/ }))
     expect(await screen.findByText('处方已正式开具')).toBeTruthy()
     expect(prescriptionIssueRequest).toEqual({
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
-      input: { expectedDraftVersion: 3 },
+      input: { expectedDraftVersion: 3, resolveExistingDraft: true, selections: [{ source: 'manual', kind: 'prescription', ...prescriptionDraftItem }] },
     })
 
     await user.click(screen.getByRole('button', { name: '撤回处方' }))

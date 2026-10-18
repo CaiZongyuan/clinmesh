@@ -1,11 +1,44 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { apiGet, getSyntheticCaseHistory, onAuthenticationFailure, subscribeRecordingUpdates } from './api-client.ts'
+import { apiGet, confirmDoctorPreparation, getSyntheticCaseHistory, onAuthenticationFailure, subscribeRecordingUpdates } from './api-client.ts'
 
 describe('Web API client errors', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
+  })
+
+  it('submits a manual selection from clinical context without depending on a recommendation state', async () => {
+    const fetch = vi.fn().mockResolvedValue(Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request',
+      effects: [], warnings: [], data: { kind: 'diagnosis', draftVersion: 2, encounterVersion: '3', recordIds: ['synthetic-confirmation'] },
+    }))
+    vi.stubGlobal('fetch', fetch)
+    await confirmDoctorPreparation({ caseId: 'synthetic-case', kind: 'diagnosis', encounterId: 'synthetic-encounter', encounterVersion: '2' }, 1,
+      [{ kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary' }], 'synthetic-key', true)
+    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))
+    expect(body).toEqual({ expectedVersions: { 'Encounter/synthetic-encounter': '2' }, input: {
+      expectedDraftVersion: 1, resolveExistingDraft: true,
+      selections: [{ kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary' }],
+    } })
+    expect(fetch.mock.calls[0]?.[1]?.headers).toMatchObject({ 'idempotency-key': 'synthetic-key' })
+  })
+
+  it('omits obsolete proof for manual items but keeps both proof fields for a mixed selection', async () => {
+    const fetch = vi.fn(async () => Response.json({ auditId: 'synthetic-audit', requestId: 'synthetic-request',
+      effects: [], warnings: [], data: { kind: 'diagnosis', draftVersion: 2, encounterVersion: '3', recordIds: ['synthetic-confirmation'] },
+    }))
+    vi.stubGlobal('fetch', fetch)
+    const context = { caseId: 'synthetic-case', kind: 'diagnosis' as const, encounterId: 'synthetic-encounter', encounterVersion: '2',
+      generation: 2, inputFingerprint: 'a'.repeat(64) }
+    const manual = { kind: 'diagnosis' as const, source: 'manual' as const, catalogItemId: 'diagnosis-fever', role: 'primary' as const }
+    await confirmDoctorPreparation(context, 0, [manual], 'manual-key')
+    await confirmDoctorPreparation(context, 0, [manual, { kind: 'diagnosis', source: 'agent', suggestionId: 'current-agent-item',
+      catalogItemId: 'diagnosis-hypertension', role: 'secondary' }], 'mixed-key')
+    const calls = vi.mocked(globalThis.fetch).mock.calls
+    const manualBody = JSON.parse(String(calls[0]?.[1]?.body))
+    expect(manualBody.input).not.toHaveProperty('generation')
+    expect(manualBody.input).not.toHaveProperty('inputFingerprint')
+    expect(JSON.parse(String(calls[1]?.[1]?.body)).input).toMatchObject({ generation: 2, inputFingerprint: 'a'.repeat(64) })
   })
 
   it('reports notification health for polling fallback and stops reconnecting after disposal', async () => {

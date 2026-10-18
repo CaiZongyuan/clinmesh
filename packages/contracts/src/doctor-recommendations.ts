@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { commandResponseSchema, saveDiagnosisDraftRequestSchema } from './his.ts'
+import { commandResponseSchema, saveDiagnosisDraftRequestSchema, prescriptionDraftItemSchema } from './his.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
 
 export const doctorRecommendationKindSchema = z.enum(['laboratory', 'imaging', 'pathology', 'diagnosis', 'prescription'])
@@ -58,7 +58,7 @@ export const doctorRecommendationSuggestionSchema = z.discriminatedUnion('kind',
   z.object({ ...common, kind: z.literal('laboratory'), catalogItemId: identity, indicationCode: identity }).strict(),
   z.object({ ...common, kind: z.literal('imaging'), serviceId: identity, indication: text }).strict(),
   z.object({ ...common, kind: z.literal('pathology'), serviceId: identity, sourceProcedureReference: identity, purpose: text }).strict(),
-  z.object({ ...common, kind: z.literal('diagnosis'), catalogItemId: identity,
+  z.object({ ...common, kind: z.literal('diagnosis'), catalogItemId: identity, role: z.enum(['primary', 'secondary']).optional(),
     referenceConcept: referenceConceptSnapshotSchema.optional() }).strict(),
   z.object({ ...common, kind: z.literal('prescription'), catalogItemId: identity,
     doseText: z.string().trim().min(1).max(256).nullable(),
@@ -69,8 +69,15 @@ export const doctorRecommendationSuggestionSchema = z.discriminatedUnion('kind',
 ])
 export type DoctorRecommendationSuggestion = z.infer<typeof doctorRecommendationSuggestionSchema>
 
+const generationSuggestionSchema = z.discriminatedUnion('kind', [
+  doctorRecommendationSuggestionSchema.options[0],
+  doctorRecommendationSuggestionSchema.options[1],
+  doctorRecommendationSuggestionSchema.options[2],
+  doctorRecommendationSuggestionSchema.options[3].extend({ role: z.enum(['primary', 'secondary']) }),
+  doctorRecommendationSuggestionSchema.options[4],
+])
 export const doctorRecommendationGenerationSchema = z.object({
-  items: z.array(doctorRecommendationSuggestionSchema).max(8),
+  items: z.array(generationSuggestionSchema).max(8),
   considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
   missingInformation: notes,
 }).strict().refine(output => output.items.length + (output.considerations?.length ?? 0) <= 8,
@@ -86,6 +93,7 @@ export const doctorRecommendationStateSchema = z.object({
   status: z.enum(['idle', 'pending', 'ready', 'failed', 'missing-evidence']),
   generation: z.number().int().min(0),
   stale: z.boolean(),
+  hidePreviousResults: z.literal(true).optional(),
   items: z.array(doctorRecommendationSuggestionSchema).max(8),
   considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
   notices: z.array(doctorRecommendationNoticeSchema).max(12).optional(),
@@ -125,3 +133,58 @@ export const generateDoctorRecommendationsRequestSchema = z.object({
   }).strict(),
 }).strict()
 export type GenerateDoctorRecommendationsRequest = z.infer<typeof generateDoctorRecommendationsRequestSchema>
+
+
+const preparationSelectionSource = {
+  source: z.enum(['agent', 'manual']),
+  suggestionId: identity.optional(),
+}
+
+export const doctorPreparationSelectionSchema = z.discriminatedUnion('kind', [
+  z.object({ ...preparationSelectionSource, kind: z.literal('diagnosis'),
+    catalogItemId: identity, role: z.enum(['primary', 'secondary']),
+    referenceConcept: referenceConceptSnapshotSchema.optional(),
+    note: z.string().trim().min(1).max(500).optional() }).strict(),
+  z.object({ ...prescriptionDraftItemSchema.shape,
+    ...preparationSelectionSource, kind: z.literal('prescription') }).strict(),
+  z.object({ ...preparationSelectionSource, kind: z.literal('laboratory'),
+    catalogItemId: identity, indicationCode: z.string().min(1).max(64) }).strict(),
+  z.object({ ...preparationSelectionSource, kind: z.literal('imaging'),
+    serviceId: z.string().min(1).max(128), indication: z.string().trim().min(2).max(500) }).strict(),
+  z.object({ ...preparationSelectionSource, kind: z.literal('pathology'),
+    serviceId: z.string().min(1).max(128), purpose: z.string().trim().min(2).max(500),
+    sourceProcedureReference: z.string().min(1).max(512) }).strict(),
+]).superRefine((selection, context) => {
+  if ((selection.source === 'agent') !== (selection.suggestionId !== undefined)) {
+    context.addIssue({ code: 'custom', path: ['suggestionId'], message: 'Agent selections require a suggestion identity; manual selections do not use an agent proof' })
+  }
+})
+export type DoctorPreparationSelection = z.infer<typeof doctorPreparationSelectionSchema>
+
+export const confirmDoctorPreparationRequestSchema = z.object({
+  expectedVersions: saveDiagnosisDraftRequestSchema.shape.expectedVersions,
+  input: z.object({
+    generation: z.number().int().positive().optional(),
+    inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    expectedDraftVersion: z.number().int().nonnegative(),
+    resolveExistingDraft: z.boolean().optional(),
+    selections: z.array(doctorPreparationSelectionSchema).min(1).max(8),
+  }).strict().superRefine((input, context) => {
+    if (new Set(input.selections.map(selection => selection.kind)).size !== 1) {
+      context.addIssue({ code: 'custom', path: ['selections'], message: 'Confirm one recommendation kind at a time' })
+    }
+    if (input.selections.some(selection => selection.source === 'agent')
+      && (input.generation === undefined || input.inputFingerprint === undefined)) {
+      context.addIssue({ code: 'custom', path: ['selections'], message: 'Agent selections require the current preparation generation and input fingerprint' })
+    }
+  }),
+}).strict()
+export type ConfirmDoctorPreparationRequest = z.infer<typeof confirmDoctorPreparationRequestSchema>
+
+export const confirmDoctorPreparationResponseSchema = commandResponseSchema(z.object({
+  kind: doctorRecommendationKindSchema,
+  draftVersion: z.number().int().positive(),
+  encounterVersion: z.string().regex(/^\d+$/),
+  recordIds: z.array(identity).min(1).max(8),
+}).strict())
+export type ConfirmDoctorPreparationResponse = z.infer<typeof confirmDoctorPreparationResponseSchema>

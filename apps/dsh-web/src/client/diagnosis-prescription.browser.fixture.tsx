@@ -15,7 +15,7 @@ import {
 } from '@clinmesh/contracts/his'
 import type { ReferenceConcept, ReferenceMedicationProduct } from '@clinmesh/contracts/reference-data'
 import {
-  doctorRecommendationKindSchema, doctorRecommendationStateSchema, generateDoctorRecommendationsRequestSchema,
+  confirmDoctorPreparationRequestSchema, doctorRecommendationKindSchema, doctorRecommendationStateSchema, generateDoctorRecommendationsRequestSchema,
   type DoctorRecommendationState, type GuidelineEvidence,
 } from '@clinmesh/contracts/doctor-recommendations'
 import { WebApp } from '../../../web/src/app/web-app.tsx'
@@ -51,6 +51,8 @@ const medication: ReferenceMedicationProduct = {
 const products = [medication, { ...medication, id: 'synthetic-product-2', code: 'SYN-M2', packageDescription: '20片/盒' },
   { ...medication, id: 'synthetic-product-3', code: 'SYN-M3', genericName: '合成第二药品', packageDescription: '30片/盒' }]
 const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
+const multipleRecommendations = document.documentElement.dataset.fixtureMultiple === 'true'
+const failedRecommendations = document.documentElement.dataset.fixtureMode === 'failed'
 const recommendationGuidelines: GuidelineEvidence[] = [
   ...(['national-standard', 'official-protocol', 'guideline'] as const).map(documentType => ({
     id: `synthetic-${documentType}`, documentType, title: `合成浏览器来源分类 ${documentType}`,
@@ -132,7 +134,11 @@ window.addEventListener('unhandledrejection', event => errors.push(String(event.
 const command = (data: unknown) => Response.json({
   auditId: 'synthetic-audit', data, effects: [], requestId: 'synthetic-command', warnings: [],
 })
+let failNextConfirmation = false
+window.addEventListener('diagnosis-prescription-fail-confirmation', () => { failNextConfirmation = true })
 const recommendationStates = new Map<string, DoctorRecommendationState>()
+let updateRecommendationEvidence = false
+window.addEventListener('diagnosis-prescription-change-evidence', () => { updateRecommendationEvidence = true })
 // 只替换网络边界；本合同不证明 Server Command、授权或审计。
 const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const url = new URL(String(input), 'http://synthetic.test')
@@ -148,18 +154,70 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
   }
   if (path === '/api/auth/context') return Response.json(session)
   if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [],
-    medications: recommendationsMode ? [{
-      id: medication.id, nameZh: medication.genericName, nameEn: 'Synthetic browser medication', version: 1,
-      allowedCombinationIds: [], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['每日一次', '每日两次'],
+    medications: recommendationsMode ? [medication, ...(multipleRecommendations ? [products[2]!] : [])].map(product => ({
+      id: product.id, nameZh: product.genericName, nameEn: 'Synthetic browser medication', version: 1,
+      allowedCombinationIds: [], allowedDoseTexts: ['5 mg', '10 mg'], allowedFrequencyCodes: ['QD', 'BID'],
       allowedCourseDays: [3, 7], allowedQuantities: [1, 2],
-      defaultDoseText: '10 mg', defaultFrequencyCode: '每日两次', defaultCourseDays: 3, defaultQuantity: 1,
-    }] : [], prescriptionConclusionSupported: true })
+      defaultDoseText: '10 mg', defaultFrequencyCode: 'BID', defaultCourseDays: 3, defaultQuantity: 1,
+    })) : [], prescriptionConclusionSupported: true })
   if (path === '/api/his/v1/doctor/queue') return Response.json({
     items: [{ caseId: detail.caseId, encounterId: detail.encounter.id, encounterVersion: '1', patient: detail.patient,
       presentation: detail.presentation, status: detail.status, taskId: detail.taskId, taskVersion: '1' }],
     page: 1, pageSize: 20, total: 1,
   })
   if (path === '/api/his/v1/doctor/cases/synthetic-case') return Response.json(detail)
+  if (path.endsWith('/document-quality-control/actions/check')) {
+    return Response.json({ error: { code: 'MODEL_UNAVAILABLE', message: '本合同不运行病历质控。' } }, { status: 503 })
+  }
+  const preparedConfirmation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/(diagnosis|prescription)\/actions\/confirm$/.exec(path)
+  if (preparedConfirmation !== null) {
+    if (failNextConfirmation) {
+      failNextConfirmation = false
+      return Response.json({ error: { code: 'MODEL_UNAVAILABLE', message: '合成提交失败，未开具。' } }, { status: 503 })
+    }
+    const submitted = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+    const saved = submitted.input
+    const kind = doctorRecommendationKindSchema.parse(preparedConfirmation[1])
+    if (Object.keys(submitted.expectedVersions).length !== 1
+      || submitted.expectedVersions[`Encounter/${detail.encounter.id}`] !== detail.encounter.versionId) throw new Error('Unexpected prepared Encounter version')
+    const agentSelections = saved.selections.filter(item => item.source === 'agent')
+    if (agentSelections.length > 0) {
+      const state = recommendationStates.get(kind)
+      if (state?.status !== 'ready' || state.generation !== saved.generation || state.inputFingerprint !== saved.inputFingerprint) throw new Error('Missing or outdated preparation proof')
+      for (const item of agentSelections) {
+        const original = state.items.find(candidate => candidate.id === item.suggestionId && candidate.kind === kind)
+        if (original === undefined || ('catalogItemId' in original ? original.catalogItemId !== ('catalogItemId' in item ? item.catalogItemId : undefined)
+          : original.serviceId !== ('serviceId' in item ? item.serviceId : undefined))) throw new Error('Changed prepared clinical identity')
+      }
+    } else if (saved.generation !== undefined || saved.inputFingerprint !== undefined) throw new Error('Manual confirmation must not require a preparation proof')
+    if (saved.selections.some(item => item.kind !== kind)) throw new Error('Unexpected mixed preparation kinds')
+    const currentVersion = kind === 'diagnosis' ? detail.diagnosis?.draftVersion ?? 0 : detail.medicationConclusion?.draftVersion ?? 0
+    if (saved.expectedDraftVersion !== currentVersion) throw new Error('Unexpected prepared draft version')
+    let draftVersion: number
+    let recordIds: string[]
+    if (kind === 'diagnosis') {
+      const entries = saved.selections.map(item => {
+        if (item.kind !== 'diagnosis') throw new Error('Unexpected prepared diagnosis kind')
+        return { catalogItemId: item.catalogItemId, role: item.role, referenceConcept: diagnosisReference(diagnoses.find(concept => concept.id === item.catalogItemId)!),
+          ...(item.note === undefined ? {} : { note: item.note }) }
+      })
+      const confirmation = confirm(entries, (detail.diagnosis?.confirmation?.revisionNumber ?? 0) + 1)
+      draftVersion = (detail.diagnosis?.draftVersion ?? 0) + 2
+      detail.diagnosis = { confirmation, draftVersion }
+      recordIds = [confirmation.id]
+    } else {
+      const items = saved.selections.map(item => {
+        if (item.kind !== 'prescription') throw new Error('Unexpected prepared prescription kind')
+        return { catalogItemId: item.catalogItemId, doseText: item.doseText, frequencyCode: item.frequencyCode,
+          courseDays: item.courseDays, quantity: item.quantity, referenceProduct: products.find(product => product.id === item.catalogItemId)! }
+      })
+      const prescription = issue(items)
+      draftVersion = (detail.medicationConclusion?.draftVersion ?? 0) + 2
+      detail.medicationConclusion = { prescription, draftVersion }
+      recordIds = [prescription.id]
+    }
+    return command({ kind, draftVersion, encounterVersion: detail.encounter.versionId, recordIds })
+  }
   const recommendation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/([^/]+)(\/actions\/generate)?$/.exec(path)
   if (recommendation !== null) {
     const kind = doctorRecommendationKindSchema.parse(recommendation[1])
@@ -174,14 +232,18 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       state = doctorRecommendationStateSchema.parse({
         caseId: detail.caseId, kind, encounterId: detail.encounter.id, encounterVersion: detail.encounter.versionId,
         inputFingerprint: 'b'.repeat(64), generation: 1, stale: false,
-        status: recommendationsMode && (kind === 'diagnosis' || kind === 'prescription') ? 'ready' : 'missing-evidence',
+        status: failedRecommendations ? 'failed' : recommendationsMode && (kind === 'diagnosis' || kind === 'prescription') ? 'ready' : 'missing-evidence',
+        ...(failedRecommendations ? { errorCode: 'MODEL_UNAVAILABLE' } : {}),
         items: !recommendationsMode ? [] : kind === 'diagnosis' ? diagnoses.slice(0, 2).map((concept, index) => ({
           ...common, id: `synthetic-recommendation-diagnosis-${index}`, kind, label: concept.display,
-          catalogItemId: concept.id, referenceConcept: diagnosisReference(concept),
+          catalogItemId: concept.id, role: index === 0 ? 'primary' : 'secondary', referenceConcept: diagnosisReference(concept),
           ...(index === 0 ? {} : { guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-evidence-2'] }),
-        })) : kind === 'prescription' ? [{
+        })) : kind === 'prescription' ? multipleRecommendations ? [medication, products[2]!].map((product, index) => ({
+          ...common, id: `synthetic-recommendation-prescription-${index}`, kind, label: product.genericName,
+          catalogItemId: product.id, doseText: '5 mg', frequencyCode: 'QD', courseDays: 7, quantity: 1,
+        })) : [{
           ...common, id: 'synthetic-recommendation-prescription', kind, label: medication.genericName,
-          catalogItemId: medication.id, doseText: '5 mg', frequencyCode: '每日一次', courseDays: null, quantity: null,
+          catalogItemId: medication.id, doseText: '5 mg', frequencyCode: 'QD', courseDays: null, quantity: null,
         }] : [],
         guidelines: recommendationGuidelines,
         caseEvidence: [
@@ -194,6 +256,11 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     if (recommendation[2] !== undefined) {
       generateDoctorRecommendationsRequestSchema.parse(JSON.parse(String(init?.body)))
       state = { ...state, generation: state.generation + 1 }
+      if (kind === 'diagnosis' && updateRecommendationEvidence) {
+        updateRecommendationEvidence = false
+        state = { ...state, inputFingerprint: 'c'.repeat(64), caseEvidence: state.caseEvidence.map(source => source.id === 'synthetic-case-evidence-2'
+          ? { ...source, text: '合成新报告已发布，需重新核对之前移除的第二诊断。' } : source) }
+      }
       recommendationStates.set(kind, state)
       return command(state)
     }

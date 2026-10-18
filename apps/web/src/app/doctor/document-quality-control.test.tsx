@@ -41,19 +41,21 @@ function actions(): ComponentProps<typeof ClinicalDocumentPage>['actions'] {
 }
 
 const clients: QueryClient[] = []
-function mount(pageActions = actions()) {
+function mount(pageActions = actions(), initialDocument = baseDocument) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
   function Page({ currentDetail = detail, scope = 'workspace:epoch:doctor' }: {
     currentDetail?: typeof detail; scope?: string;
   }) {
-    const [workingDocument, setDocument] = useState(baseDocument)
+    const [workingDocument, setDocument] = useState(initialDocument)
     return <ClinicalDocumentPage actions={pageActions} allowRevision={false} detail={currentDetail} qualityScope={scope}
       elementId="clinical-document" locale="zh-CN" messages={getWorkspaceMessages('zh-CN')}
       onDocumentChange={setDocument} workingDocument={workingDocument} />
   }
   const view = render(<QueryClientProvider client={client}><Page /></QueryClientProvider>)
-  return { ...view, client, actions: pageActions, rerenderPage: (currentDetail: typeof detail, scope = 'workspace:epoch:doctor') =>
+  return { ...view, client, actions: pageActions,
+    navigateToAnotherCase: () => view.rerender(<QueryClientProvider client={client}><p>合成病例 B</p></QueryClientProvider>),
+    rerenderPage: (currentDetail: typeof detail, scope = 'workspace:epoch:doctor') =>
     view.rerender(<QueryClientProvider client={client}><Page currentDetail={currentDetail} scope={scope} /></QueryClientProvider>) }
 }
 
@@ -91,13 +93,190 @@ function stubQuality() {
   }))
   return { requests,
     setSavedState: (state: ClinicalDocumentQualityControlState) => { candidates.set('', state) },
+    setState: (state: ClinicalDocumentQualityControlState) => { candidates.set(state.clientId ?? '', state) },
     interceptNextCheck: (intercept: NonNullable<typeof checkInterceptor>) => { checkInterceptor = intercept } }
+}
+
+async function openDetails() {
+  await userEvent.setup().click(screen.getByRole('button', { name: '依据与说明' }))
+  return screen.getByRole('dialog', { name: '依据与说明' })
 }
 
 afterEach(() => {
   cleanup()
   for (const client of clients.splice(0)) client.clear()
   vi.unstubAllGlobals()
+})
+
+it.each(['ready', 'pending', 'failed'] as const)('reuses an unchanged case across A → B → A while its check is %s', async status => {
+  const server = stubQuality()
+  let release: (() => void) | undefined
+  server.interceptNextCheck(async response => {
+    if (status === 'pending') await new Promise<void>(resolve => { release = resolve })
+    const body = await response.json()
+    body.data.status = status === 'pending' ? 'ready' : status
+    return Response.json(body)
+  })
+  const mounted = mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  if (status !== 'pending') await waitFor(() => expect(mounted.client.isFetching()).toBe(0))
+  mounted.navigateToAnotherCase()
+  mounted.rerenderPage(detail)
+  await act(async () => { release?.(); await new Promise(resolve => setTimeout(resolve, 650)) })
+  expect(server.requests).toHaveLength(1)
+})
+
+it('does not create a check revision for unrelated case workflow state changes', async () => {
+  const server = stubQuality()
+  const mounted = mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  await waitFor(() => expect(mounted.client.isFetching()).toBe(0))
+  mounted.rerenderPage({ ...detail, taskVersion: '2', consultationRecording: { ...detail.consultationRecording!, version: 9, status: 'paused' } })
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)) })
+  expect(server.requests).toHaveLength(1)
+})
+
+it('uses the saved check for identical working text and keeps a genuinely unsaved candidate separate', async () => {
+  const server = stubQuality()
+  const mounted = mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  expect(server.requests[0]?.input.document).toBeUndefined()
+  expect(server.requests[0]?.input.clientId).toBeUndefined()
+  const chief = screen.getByRole('textbox', { name: '主诉' })
+  const user = userEvent.setup()
+  await user.clear(chief)
+  await user.type(chief, '未保存的主诉。')
+  await waitFor(() => expect(server.requests.at(-1)?.input.document?.chiefComplaint).toBe('未保存的主诉。'))
+  expect(server.requests.at(-1)?.input.clientId).toBeTruthy()
+  await user.clear(chief)
+  await user.type(chief, baseDocument.chiefComplaint)
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)) })
+  expect(server.requests).toHaveLength(2)
+  expect(mounted.actions.save?.onSubmit).not.toHaveBeenCalled()
+})
+
+it('does not retry a transport failure while navigating and permits an explicit retry', async () => {
+  const server = stubQuality()
+  server.interceptNextCheck(async () => { throw new TypeError('Synthetic transport failure') })
+  const mounted = mount()
+  await openDetails()
+  await screen.findByText('病历检查暂时失败，不能据此确认内容完整。')
+  await userEvent.setup().keyboard('{Escape}')
+  mounted.navigateToAnotherCase()
+  mounted.rerenderPage(detail)
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)) })
+  expect(server.requests).toHaveLength(1)
+  await openDetails()
+  await userEvent.setup().click(screen.getByRole('button', { name: '重新检查病历' }))
+  await screen.findByRole('region', { name: '既往史质控提示' })
+  expect(server.requests).toHaveLength(2)
+})
+
+it('explains a safely classified JSON failure without showing internal details or treating scope notices as its cause', async () => {
+  const server = stubQuality()
+  server.interceptNextCheck(async response => {
+    const body = await response.json()
+    body.data.status = 'failed'
+    body.data.errorCode = 'AI_RESPONSE_INVALID'
+    body.data.failure = { stage: 'generation', reason: 'invalid-json' }
+    body.data.notices = ['仅按普通门诊模板和当前可见事实辅助检查。']
+    return Response.json(body)
+  })
+  mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  await openDetails()
+  expect(await screen.findByText('返回内容格式不正确，本次病历检查未完成，可重试。')).toBeTruthy()
+  expect(screen.queryByText(/SyntaxError|invalid-json|JSON.parse/)).toBeNull()
+})
+
+it.each(['ready', 'pending', 'failed', 'incomplete', 'unavailable', 'stale'] as const)('keeps %s checks with no open issues out of the document and explains them only on request', async status => {
+  const server = stubQuality()
+  server.interceptNextCheck(async response => {
+    const body = await response.json()
+    body.data.issues = []
+    body.data.status = status === 'stale' ? 'ready' : status
+    body.data.stale = status === 'stale'
+    body.data.notices = ['部分内容还没有检查完。']
+    return Response.json(body)
+  })
+  mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  await waitFor(() => expect(screen.queryByRole('region', { name: '病历质控' })).toBeNull())
+  expect(screen.queryByText('部分内容还没有检查完。')).toBeNull()
+  expect(screen.queryByText(/检查通过|质控通过/)).toBeNull()
+  await userEvent.setup().click(screen.getByRole('button', { name: '依据与说明' }))
+  const explanation = screen.getByRole('dialog', { name: '依据与说明' })
+  expect(within(explanation).getByText('部分内容还没有检查完。')).toBeTruthy()
+  expect(within(explanation).queryByText(/检查通过|质控通过/)).toBeNull()
+})
+
+it('keeps a no-issue pending check collapsed in the signature preview without blocking confirmation', async () => {
+  const server = stubQuality()
+  const state = clinicalDocumentQualityControlStateSchema.parse({ caseId: detail.caseId, encounterId: detail.encounter.id,
+    draftVersion: 1, documentFingerprint: 'a'.repeat(64), inputFingerprint: 'b'.repeat(64), generation: 1,
+    stale: false, status: 'pending', notices: [], issues: [] })
+  server.setSavedState(state)
+  const pageActions = actions()
+  pageActions.prepareSign.data = { previewId: 'preview-quality', commitToken: 'commit-quality',
+    document: { content: baseDocument }, qualityControl: state }
+  mount(pageActions)
+  const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
+  const summary = within(dialog).getByRole('region', { name: '签署前质控汇总' })
+  expect(within(summary).queryByRole('status')).toBeNull()
+  expect(within(summary).queryByRole('region', { name: '病历质控' })).toBeNull()
+  expect(within(dialog).getByRole('button', { name: '确认签署病历' })).not.toHaveProperty('disabled', true)
+  await userEvent.setup().click(within(summary).getByText('依据与说明', { selector: 'summary' }))
+  expect((await within(summary).findByRole('status')).textContent).toBe('正在检查病历，尚未完成全部核对。')
+  expect(within(summary).queryByText(/检查通过|质控通过/)).toBeNull()
+})
+
+it('shows one short issue and the remaining count, with full explanations behind one button', async () => {
+  const server = stubQuality()
+  server.interceptNextCheck(async response => {
+    const body = await response.json()
+    const issue = body.data.issues[0]
+    body.data.issues.push({ ...issue, id: 'allergy-conflict', field: 'allergyHistory' },
+      { ...issue, id: 'examination-conflict', field: 'physicalExamination' })
+    return Response.json(body)
+  })
+  mount()
+  const compact = await screen.findByRole('region', { name: '病历质控' })
+  expect(within(compact).getByRole('button', { name: '既往史的记录不一致，请核对。' })).toBeTruthy()
+  expect(within(compact).getByRole('button', { name: '另有 2 处' })).toBeTruthy()
+  expect(screen.queryByText('当前正文与患者自述的过敏情况不同，阅读者可能误解已核实的过敏史。')).toBeNull()
+  expect(screen.queryByRole('region', { name: '过敏史质控提示' })).toBeNull()
+  await userEvent.setup().click(within(compact).getByRole('button', { name: '另有 2 处' }))
+  expect(within(compact).getByRole('button', { name: '过敏史的记录不一致，请核对。' })).toBeTruthy()
+  expect(within(compact).getByRole('button', { name: '体格检查的记录不一致，请核对。' })).toBeTruthy()
+  await userEvent.setup().click(screen.getByRole('button', { name: '依据与说明' }))
+  const explanation = screen.getByRole('dialog', { name: '依据与说明' })
+  expect(within(explanation).getByRole('region', { name: '过敏史质控提示' })).toBeTruthy()
+  expect(within(explanation).getAllByText('影响')).toHaveLength(3)
+})
+
+it.each(['unique', 'edited', 'repeated', 'wrong-field'] as const)('locates the current field without saving and selects only a unique verified quotation (%s)', async anchor => {
+  const server = stubQuality()
+  server.interceptNextCheck(async response => {
+    const body = await response.json()
+    body.data.issues[0].field = 'allergyHistory'
+    body.data.issues[0].evidence = [{ id: 'document-allergy', kind: 'document', label: '当前病历',
+      text: anchor === 'unique' ? '过敏史' : anchor === 'repeated' ? '史' : '无药物过敏史。',
+      field: anchor === 'wrong-field' ? 'priorMedicalHistory' : 'allergyHistory' }]
+    server.setState(clinicalDocumentQualityControlStateSchema.parse(body.data))
+    return Response.json(body)
+  })
+  const mounted = mount(actions(), anchor === 'repeated' ? { ...baseDocument, allergyHistory: '过敏史待核实，药物过敏史待核实。' } : baseDocument)
+  const field = screen.getByRole<HTMLTextAreaElement>('textbox', { name: '过敏史' })
+  const original = field.value
+  const scroll = vi.fn()
+  field.closest('[data-clinical-document-field]')!.scrollIntoView = scroll
+  field.setSelectionRange(0, original.length)
+  await userEvent.setup().click(await screen.findByRole('button', { name: '过敏史的记录不一致，请核对。' }))
+  expect(document.activeElement).toBe(field)
+  expect(scroll).toHaveBeenCalled()
+  expect(field.value).toBe(original)
+  expect(field.value.slice(field.selectionStart, field.selectionEnd)).toBe(anchor === 'unique' ? '过敏史' : '')
+  expect(mounted.actions.save?.onSubmit).not.toHaveBeenCalled()
 })
 
 it.each([{ field: 'chiefComplaint', label: '主诉' }, { field: 'familyHistory', label: '家族史' }, { field: 'allergyHistory', label: '过敏史' }] as const)('checks unsaved $label without saving it or showing completion hints and preserves focus', async ({ field, label }) => {
@@ -107,6 +286,7 @@ it.each([{ field: 'chiefComplaint', label: '主诉' }, { field: 'familyHistory',
     documentFingerprint: 'a'.repeat(64), inputFingerprint: 'b'.repeat(64), generation: 1,
     stale: false, status: 'ready', issues: [], notices: [],
   })
+  const states = new Map<string, ClinicalDocumentQualityControlState>()
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname
     if (path === '/api/his/v1/doctor/cases/case-quality/document-quality-control/actions/check') {
@@ -116,12 +296,15 @@ it.each([{ field: 'chiefComplaint', label: '主诉' }, { field: 'familyHistory',
         issues: request.input.document?.[field] === '' ? [{ id: `missing-${field}`, kind: 'missing-field', field,
           classification: 'needs-completion', message: `尚未记录${label}。`, basis: { label: '项目门诊病历内容辅助提示', kind: 'project' },
           evidence: [], relatedFingerprint: 'c'.repeat(64), status: 'open' }] : [] }
+      states.set(request.input.clientId ?? '', current)
       return Response.json({ data: current, auditId: 'audit-quality', effects: [], requestId: 'request-quality', warnings: [] })
     }
-    if (path === '/api/his/v1/doctor/cases/case-quality/document-quality-control') return Response.json(current)
+    if (path === '/api/his/v1/doctor/cases/case-quality/document-quality-control') return Response.json(states.get(new URL(String(input), 'http://localhost').searchParams.get('clientId') ?? ''))
     throw new Error(`Unexpected request: ${path}`)
   }))
   const mounted = mount()
+  await waitFor(() => expect(requests).toHaveLength(1))
+  expect(requests[0]!.input.document).toBeUndefined()
   const input = screen.getByRole('textbox', { name: label })
   await userEvent.setup().clear(input)
   await waitFor(() => expect(requests.at(-1)?.input.document?.[field]).toBe(''))
@@ -132,18 +315,21 @@ it.each([{ field: 'chiefComplaint', label: '主诉' }, { field: 'familyHistory',
   expect(screen.queryByText('待补充')).toBeNull()
   expect(screen.queryByText(`尚未记录${label}。`)).toBeNull()
   expect(input).toHaveProperty('value', '')
-  expect(document.activeElement).toBe(input)
   if (field !== 'chiefComplaint') expect(input).toHaveProperty('required', false)
   await userEvent.setup().type(input, baseDocument[field]!)
-  await waitFor(() => expect(requests.at(-1)?.input.document?.[field]).toBe(baseDocument[field]))
   await waitFor(() => expect(screen.queryByRole('region', { name: `${label}质控提示` })).toBeNull())
   expect(input).toHaveProperty('value', baseDocument[field])
   expect(document.activeElement).toBe(input)
+  const explanation = await openDetails()
+  await within(explanation).findByText('本次检查已更新，请核对各字段提示。')
+  expect(requests).toHaveLength(2)
 })
 
 it('shows a verification hint without evidence controls, review actions or document changes', async () => {
   stubQuality()
   const mounted = mount()
+  const user = userEvent.setup()
+  await openDetails()
   const issues = await screen.findByRole('region', { name: '既往史质控提示' })
   expect(within(issues).getByText('影响')).toBeTruthy()
   expect(within(issues).getByText('当前正文与患者自述的过敏情况不同，阅读者可能误解已核实的过敏史。')).toBeTruthy()
@@ -156,6 +342,7 @@ it('shows a verification hint without evidence controls, review actions or docum
   expect(within(issues).queryByRole('button', { name: '已核实，保留' })).toBeNull()
   expect(within(issues).queryByRole('button', { name: '确认保留' })).toBeNull()
   expect(within(issues).queryByRole('textbox')).toBeNull()
+  await user.keyboard('{Escape}')
   expect(screen.getByRole('textbox', { name: '既往史' })).toHaveProperty('value', baseDocument.priorMedicalHistory)
   expect(mounted.actions.save?.onSubmit).not.toHaveBeenCalled()
 })
@@ -171,6 +358,7 @@ it('keeps an existing review readable as history without offering another confir
     return Response.json(body)
   })
   mount()
+  await openDetails()
   const issues = await screen.findByRole('region', { name: '既往史质控提示' })
   await userEvent.setup().click(within(issues).getByText('历史处理记录 (1)'))
   expect(within(issues).getByText(/历史核实记录。/)).toBeTruthy()
@@ -216,7 +404,8 @@ it.each(['case', 'scope', 'revision'] as const)('does not show a response with a
     if (mismatch === 'revision') body.data.clientRevision = 0
     return Response.json(body)
   })
-  mount()
+  mount(actions(), { ...baseDocument, chiefComplaint: '尚未保存的主诉。' })
+  await openDetails()
   await screen.findByText('正文或依据已变化，当前结果已过期，请重新检查。')
   expect(screen.queryByRole('region', { name: '既往史质控提示' })).toBeNull()
   await userEvent.setup().click(screen.getByRole('button', { name: '重新检查病历' }))
@@ -225,7 +414,8 @@ it.each(['case', 'scope', 'revision'] as const)('does not show a response with a
 
 it('rechecks on a new authorization scope without reusing the previous client identity', async () => {
   const server = stubQuality()
-  const mounted = mount()
+  const mounted = mount(actions(), { ...baseDocument, chiefComplaint: '尚未保存的主诉。' })
+  await openDetails()
   await screen.findByRole('region', { name: '既往史质控提示' })
   const previousClientId = server.requests.at(-1)!.input.clientId
   mounted.rerenderPage(detail, 'workspace:next-epoch:another-doctor')
@@ -245,6 +435,7 @@ it.each(['open', 'retained'] as const)('hides completion hints in all ten fields
     return Response.json(body)
   })
   const mounted = mount()
+  await openDetails()
   await screen.findByText('本次检查已更新，请核对各字段提示。')
   expect(mounted.container.querySelectorAll('[data-document-quality-field]')).toHaveLength(0)
   expect(screen.queryByText(/尚未记录，请按本次门诊实际情况补充。/)).toBeNull()
@@ -271,6 +462,7 @@ it.each([
   mount(pageActions)
   const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
   const summary = within(dialog).getByRole('region', { name: '签署前质控汇总' })
+  await userEvent.setup().click(within(summary).getByText('依据与说明', { selector: 'summary' }))
   await within(summary).findByText(label)
   expect(within(summary).queryByText('请核实主诉持续时间。')).toBeNull()
   expect(within(summary).queryByText('待补充')).toBeNull()

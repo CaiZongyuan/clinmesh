@@ -30,8 +30,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { cn } from '@clinmesh/ui/lib/utils'
 import {
   CheckIcon,
+  ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  ChevronUpIcon,
   CircleIcon,
   CircleAlertIcon,
   ListPlusIcon,
@@ -40,7 +42,7 @@ import {
   PlusIcon,
   SearchIcon,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 
 type TriggerMode = 'add' | 'replace' | 'select'
@@ -72,6 +74,8 @@ const copy = {
     chooseLaboratory: 'Select laboratory item',
     chooseMedication: 'Select medication',
     close: 'Cancel',
+    collapseCatalog: 'Collapse catalog',
+    expandCatalog: 'Expand catalog',
     confirmDiagnosis: 'Add diagnosis',
     confirmLaboratory: 'Select',
     confirmMedication: 'Add to prescription',
@@ -105,6 +109,8 @@ const copy = {
     chooseLaboratory: '选择检验项目',
     chooseMedication: '选择药品',
     close: '取消',
+    collapseCatalog: '收起目录',
+    expandCatalog: '展开目录',
     confirmDiagnosis: '加入诊断',
     confirmLaboratory: '确定选择',
     confirmMedication: '加入处方',
@@ -137,6 +143,7 @@ function totalLabel(template: string, total: number): string {
 
 function CatalogSearchForm({
   active,
+  expansion,
   query,
   input,
   inputLabel,
@@ -147,6 +154,7 @@ function CatalogSearchForm({
   placeholder,
 }: {
   active: boolean
+  expansion?: { expanded: boolean; onChange: (expanded: boolean) => void; resultsId: string; locale: WorkspaceLocale } | undefined
   query: string
   input: string
   inputLabel: string
@@ -167,6 +175,14 @@ function CatalogSearchForm({
     const timer = setTimeout(() => { searchLatestRef.current() }, 300)
     return () => clearTimeout(timer)
   }, [active, input, query])
+  const expansionTrigger = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const trigger = expansionTrigger.current
+    if (expansion?.expanded !== false || trigger === null) return
+    const root = trigger.getRootNode()
+    if (!(root instanceof Document || root instanceof ShadowRoot)) return
+    if (root.activeElement !== null && root.getElementById(expansion.resultsId)?.contains(root.activeElement)) trigger.focus()
+  }, [expansion?.expanded, expansion?.resultsId])
   const invalidLength = input.trim().length === 1
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -179,6 +195,7 @@ function CatalogSearchForm({
         aria-invalid={invalidLength}
         className="min-w-0 flex-1"
         onChange={event => onInputChange(event.currentTarget.value)}
+        onFocus={() => expansion?.onChange(true)}
         placeholder={placeholder}
         value={input}
       />
@@ -192,6 +209,18 @@ function CatalogSearchForm({
       >
         {pending ? <LoaderCircleIcon className="animate-spin" /> : <SearchIcon />}
       </Button>
+      {expansion === undefined ? null : <Button
+        ref={expansionTrigger}
+        aria-controls={expansion.resultsId}
+        aria-expanded={expansion.expanded}
+        aria-label={copy[expansion.locale][expansion.expanded ? 'collapseCatalog' : 'expandCatalog']}
+        onClick={() => expansion.onChange(!expansion.expanded)}
+        size="icon"
+        type="button"
+        variant="outline"
+      >
+        {expansion.expanded ? <ChevronUpIcon /> : <ChevronDownIcon />}
+      </Button>}
     </form>
   )
 }
@@ -331,9 +360,10 @@ function diagnosisReferenceSnapshot(concept: ReferenceConcept) {
 }
 
 export function DiagnosisCatalogPicker({
-  active = true, disabled = false, excludedIds, localCatalog, locale, onConfirm, onSearchReset, onSelect, search, selectedId,
+  active = true, collapsible = false, disabled = false, excludedIds, localCatalog, locale, onConfirm, onSearchReset, onSelect, search, selectedId,
 }: {
   active?: boolean
+  collapsible?: boolean
   disabled?: boolean
   excludedIds: ReadonlySet<string>
   localCatalog: ClinicalCatalog['diagnoses']
@@ -345,6 +375,13 @@ export function DiagnosisCatalogPicker({
   selectedId?: string | undefined
 }) {
   const messages = copy[locale]
+  const [expanded, setExpanded] = useState(false)
+  const resultsId = useId()
+  const resultsVisible = !collapsible || expanded
+  const select = (selection: DiagnosisCatalogSelection | undefined) => {
+    onSelect(selection)
+    if (selection !== undefined) setExpanded(false)
+  }
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
@@ -374,12 +411,14 @@ export function DiagnosisCatalogPicker({
   return <section aria-label={locale === 'zh-CN' ? '诊断目录' : 'Diagnosis catalog'} data-agent-catalog="diagnosis" className="flex min-h-0 min-w-0 flex-col">
         <CatalogSearchForm
           active={active}
+          expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
           query={query}
           input={input}
           inputLabel={messages.diagnosisSearchInput}
           label={messages.searchDiagnosis}
           onInputChange={setInput}
           onSearch={() => {
+            if (collapsible) setExpanded(true)
             setPage(1)
             onSearchReset?.()
             const nextQuery = input.trim()
@@ -389,6 +428,7 @@ export function DiagnosisCatalogPicker({
           pending={results.isFetching}
           placeholder={messages.diagnosisPlaceholder}
         />
+        <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载疾病目录' : 'Loading diagnosis catalog'} role="status" className="mx-4 min-h-0 flex-1"><Skeleton className="h-full min-h-24" /></div> : (
           <div className="mx-4 min-h-0 flex-1 overflow-auto border">
             {results.isError ? (
@@ -409,7 +449,7 @@ export function DiagnosisCatalogPicker({
                   return <li className="flex min-w-0 flex-col gap-2 rounded-lg border p-3" key={selection.catalogItemId}>
                     <div className="flex flex-wrap items-start justify-between gap-2"><strong className="break-words text-sm">{selection.display}</strong><Badge variant="outline">{selection.code}</Badge></div>
                     <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-muted-foreground">{useLocal ? messages.localCatalog : ('system' in item ? item.system : '')}</span>
-                      <Button aria-label={`${messages.choose} ${selection.display} ${selection.code}`} disabled={disabled || results.isFetching || inactive || excluded} onClick={() => onSelect(selection)} size="sm" type="button" variant="outline">
+                      <Button aria-label={`${messages.choose} ${selection.display} ${selection.code}`} disabled={disabled || results.isFetching || inactive || excluded} onClick={() => select(selection)} size="sm" type="button" variant="outline">
                         {excluded ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : inactive ? (locale === 'zh-CN' ? '停用' : 'Inactive') : messages.chooseDiagnosis}
                       </Button>
                     </div>
@@ -448,7 +488,7 @@ export function DiagnosisCatalogPicker({
                           <SelectionButton
                             disabled={unavailable}
                             label={label}
-                            onSelectedChange={next => onSelect(next ? selection : undefined)}
+                            onSelectedChange={next => select(next ? selection : undefined)}
                             selected={selectedId === selection.catalogItemId}
                           />
                         </TableCell>
@@ -486,6 +526,7 @@ export function DiagnosisCatalogPicker({
             total={results.data.total}
           />
         ) : null}
+        </div>
   </section>
 }
 
@@ -529,8 +570,9 @@ export interface LaboratoryCatalogSelection {
   referenceConcept?: ReferenceConceptSnapshot
 }
 
-export function LaboratoryCatalogPicker({ active = true, locale, onConfirm, onSearchReset, onSelect, search, selectedId }: {
+export function LaboratoryCatalogPicker({ active = true, collapsible = false, locale, onConfirm, onSearchReset, onSelect, search, selectedId }: {
   active?: boolean
+  collapsible?: boolean
   locale: WorkspaceLocale
   onConfirm?: (selection: LaboratoryCatalogSelection) => void
   onSearchReset?: () => void
@@ -539,6 +581,13 @@ export function LaboratoryCatalogPicker({ active = true, locale, onConfirm, onSe
   selectedId?: string
 }) {
   const messages = copy[locale]
+  const [expanded, setExpanded] = useState(false)
+  const resultsId = useId()
+  const resultsVisible = !collapsible || expanded
+  const select = (selection: LaboratoryCatalogSelection | undefined) => {
+    onSelect(selection)
+    if (selection !== undefined) setExpanded(false)
+  }
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
@@ -550,12 +599,14 @@ export function LaboratoryCatalogPicker({ active = true, locale, onConfirm, onSe
     <div data-agent-catalog="laboratory" className="flex min-w-0 flex-col gap-3">
         <CatalogSearchForm
           active={active}
+          expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
           query={query}
           input={input}
           inputLabel={messages.laboratorySearchInput}
           label={messages.searchLaboratory}
           onInputChange={setInput}
           onSearch={() => {
+            if (collapsible) setExpanded(true)
             setPage(1)
             onSearchReset?.()
             const nextQuery = input.trim()
@@ -565,6 +616,7 @@ export function LaboratoryCatalogPicker({ active = true, locale, onConfirm, onSe
           pending={results.isFetching}
           placeholder={messages.laboratoryPlaceholder}
         />
+        <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col gap-3', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <Skeleton aria-label={locale === 'zh-CN' ? '正在加载检验目录' : 'Loading laboratory catalog'} role="status" className="mx-4 min-h-48 flex-1" /> : results.isError ? (
           <Alert className="mx-4" variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '无法加载本院检验目录' : 'Unable to load the hospital laboratory catalog'}</AlertTitle><Button onClick={() => search.onSearch(query, page)} type="button" variant="outline">{locale === 'zh-CN' ? '重试' : 'Retry'}</Button></Alert>
         ) : (
@@ -604,13 +656,13 @@ export function LaboratoryCatalogPicker({ active = true, locale, onConfirm, onSe
                       <TableRow
                         className={cn(selectedId === selection.catalogItemId && 'bg-muted/70')}
                         key={selection.catalogItemId}
-                        onDoubleClick={() => (onConfirm ?? onSelect)(selection)}
+                        onDoubleClick={() => (onConfirm ?? select)(selection)}
                       >
                         <TableCell>
                           <SelectionButton
                             disabled={false}
                             label={label}
-                            onSelectedChange={next => onSelect(next ? selection : undefined)}
+                            onSelectedChange={next => select(next ? selection : undefined)}
                             selected={selectedId === selection.catalogItemId}
                           />
                         </TableCell>
@@ -640,6 +692,7 @@ export function LaboratoryCatalogPicker({ active = true, locale, onConfirm, onSe
             total={results.data.total}
           />
         ) : null}
+        </div>
     </div>
   )
 }
@@ -783,9 +836,10 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
 }
 
 export function MedicationCatalogPicker({
-  active = true, disabled = false, excludedIds, localCatalog, locale, onConfirm, onSearchReset, onSelect, search, selectedId: selectionId,
+  active = true, collapsible = false, disabled = false, excludedIds, localCatalog, locale, onConfirm, onSearchReset, onSelect, search, selectedId: selectionId,
 }: {
   active?: boolean
+  collapsible?: boolean
   disabled?: boolean
   excludedIds: ReadonlySet<string>
   localCatalog: PrescriptionMedication[]
@@ -797,6 +851,13 @@ export function MedicationCatalogPicker({
   selectedId?: string | undefined
 }) {
   const messages = copy[locale]
+  const [expanded, setExpanded] = useState(false)
+  const resultsId = useId()
+  const resultsVisible = !collapsible || expanded
+  const select = (selection: MedicationCatalogSelection | undefined) => {
+    onSelect(selection)
+    if (selection !== undefined) setExpanded(false)
+  }
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
@@ -829,12 +890,14 @@ export function MedicationCatalogPicker({
   return <section aria-label={locale === 'zh-CN' ? '药品目录' : 'Medication catalog'} data-agent-catalog="medication" className="flex min-h-0 min-w-0 flex-col">
         <CatalogSearchForm
           active={active}
+          expansion={collapsible ? { expanded: resultsVisible, onChange: setExpanded, resultsId, locale } : undefined}
           query={query}
           input={input}
           inputLabel={messages.medicationSearchInput}
           label={messages.searchMedication}
           onInputChange={setInput}
           onSearch={() => {
+            if (collapsible) setExpanded(true)
             setPage(1)
             onSearchReset?.()
             const nextQuery = input.trim()
@@ -844,6 +907,7 @@ export function MedicationCatalogPicker({
           pending={results.isFetching}
           placeholder={messages.medicationPlaceholder}
         />
+        <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="mx-4 min-h-0 flex-1"><Skeleton className="h-full min-h-24" /></div> : (
           <div className="mx-4 min-h-0 flex-1 overflow-auto border">
             {results.isError ? (
@@ -857,8 +921,8 @@ export function MedicationCatalogPicker({
               onConfirm === undefined ? <ul className="flex flex-col gap-2 p-2">
                 {useLocal ? localResults.map(item => <li className="flex min-w-0 flex-col gap-2 rounded-lg border p-3" key={item.id}>
                   <strong data-agent-medication-name="" className="break-words text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong><span className="text-xs text-muted-foreground">{messages.localCatalog}</span>
-                  <Button aria-label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} disabled={disabled || results.isFetching || excludedIds.has(item.id)} onClick={() => onSelect({ kind: 'local', medication: item })} size="sm" type="button" variant="outline">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : messages.chooseMedication}</Button>
-                </li>) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale} onSelect={onSelect} />)}
+                  <Button aria-label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} disabled={disabled || results.isFetching || excludedIds.has(item.id)} onClick={() => select({ kind: 'local', medication: item })} size="sm" type="button" variant="outline">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : messages.chooseMedication}</Button>
+                </li>) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale} onSelect={select} />)}
               </ul> : <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
                   <TableRow>
@@ -886,7 +950,7 @@ export function MedicationCatalogPicker({
                           <SelectionButton
                             disabled={disabled || results.isFetching || excluded}
                             label={`${messages.choose} ${genericName}`}
-                            onSelectedChange={next => onSelect(next ? selection : undefined)}
+                            onSelectedChange={next => select(next ? selection : undefined)}
                             selected={selectionId === id}
                           />
                         </TableCell>
@@ -900,7 +964,7 @@ export function MedicationCatalogPicker({
                   }) : referenceGroups.map(group => (
                     <MedicationProductRow key={medicationProductGroupKey(group.product)}
                       group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale}
-                      selectionId={selectionId} onSelect={onSelect} onConfirm={confirm} />
+                      selectionId={selectionId} onSelect={select} onConfirm={confirm} />
                   ))}
                 </TableBody>
               </Table>
@@ -920,6 +984,7 @@ export function MedicationCatalogPicker({
             total={results.data.total}
           />
         ) : null}
+        </div>
   </section>
 }
 

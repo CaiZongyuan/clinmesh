@@ -43,7 +43,7 @@ async function setup(chiefComplaint = '糖尿病复查。') {
       const guideline = payload.guidelines.find(item => item.title === document.source.title)
       const fact = payload.caseEvidence.find(item => item.text.includes('糖尿病'))
       result = guideline === undefined || fact === undefined ? { items: [], considerations: [], missingInformation: ['未收到已导入的糖尿病指南或病例资料。'] } : {
-        items: [{ id: 'synthetic-diabetes-candidate', kind: 'diagnosis', catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia',
+        items: [{ id: 'synthetic-diabetes-candidate', kind: 'diagnosis', role: 'primary', catalogItemId: 'diagnosis-type-2-diabetes-hyperglycemia',
           label: '合成糖尿病候选', rationale: '仅验证指南检索和实际病例引用进入独立核验。', supportingInformation: ['医生已记录糖尿病病史。'],
           opposingInformation: [], missingInformation: ['仍由医生核对当前诊断。'], guidelineEvidenceIds: [guideline.id], caseEvidenceIds: [fact.id] }],
         missingInformation: [],
@@ -97,6 +97,9 @@ async function setup(chiefComplaint = '糖尿病复查。') {
       body: JSON.stringify({ expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
         input: { expectedInputFingerprint: state.inputFingerprint, refresh: true } }) })
     expect(response.status).toBe(200)
+    const pending = generateDoctorRecommendationsResponseSchema.parse(await response.json())
+    expect(pending.data).toMatchObject({ status: 'pending' })
+    expect(pending.data).not.toHaveProperty('hidePreviousResults')
     await target.dispatchPending()
     return read(target)
   }
@@ -134,6 +137,7 @@ it('enables non-commercial passages only in the declared runtime and invalidates
   disposals.push(() => allowed.close())
   const original = await fixture.generate(allowed)
   expect(original).toMatchObject({ status: 'ready', stale: false })
+  expect(original).not.toHaveProperty('hidePreviousResults')
   expect(original.guidelines).toContainEqual(expect.objectContaining({ title: document.source.title, text: paragraph }))
   expect(original.guidelines).toContainEqual(expect.objectContaining({ id: 'nhc-influenza-2025-diagnosis' }))
   expect(fixture.seen.verification).toEqual(fixture.seen.generation)
@@ -148,7 +152,7 @@ it('enables non-commercial passages only in the declared runtime and invalidates
   const cached = generateDoctorRecommendationsResponseSchema.parse(await cachedResponse.json())
   expect(cached.data.guidelines).toContainEqual(expect.objectContaining({ text: paragraph }))
   const restricted = await fixture.read()
-  expect(restricted.stale).toBe(true)
+  expect(restricted).toMatchObject({ stale: true, hidePreviousResults: true })
   expect(restricted.inputFingerprint).not.toBe(original.inputFingerprint)
   expect(restricted.guidelines).toEqual([])
   expect(restricted.items).toEqual([])
@@ -159,10 +163,11 @@ it('enables non-commercial passages only in the declared runtime and invalidates
   expect(replayedResponse.status).toBe(200)
   const replayed = generateDoctorRecommendationsResponseSchema.parse(await replayedResponse.json())
   expect(replayed.auditId).toBe(cached.auditId)
-  expect(replayed.data).toMatchObject({ generation: original.generation, stale: true, guidelines: [], items: [], considerations: [] })
+  expect(replayed.data).toMatchObject({ generation: original.generation, stale: true, hidePreviousResults: true, guidelines: [], items: [], considerations: [] })
   expect(JSON.stringify(replayed)).not.toContain(paragraph)
   const refreshed = await fixture.generate()
   expect(refreshed.items).toEqual([])
+  expect(refreshed).not.toHaveProperty('hidePreviousResults')
   expect(refreshed.guidelines.some(item => item.title === document.source.title)).toBe(false)
   expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ title: document.source.title }))
 })
@@ -190,7 +195,7 @@ it.each(['withdrawn', 'unverified'] as const)('stops using imported passages aft
     ? { ...document.source, status: 'withdrawn' }
     : { ...document.source, license: { ...document.source.license, usage: 'unverified' } }
   fixture.writer.importDocument({ source, passages: [] })
-  expect((await fixture.read()).stale).toBe(true)
+  expect(await fixture.read()).toMatchObject({ stale: true, hidePreviousResults: true, items: [], guidelines: [] })
   const refreshed = await fixture.generate()
   expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
   expect(refreshed.guidelines.some(item => item.title === document.source.title)).toBe(false)
@@ -214,7 +219,7 @@ it.each([
   fixture.writer.importDocument({ source: { ...source, status,
     ...(identity === 'hash' ? {} : { sha256: 'a'.repeat(64) }),
     ...(identity === 'url' ? {} : { url: 'https://www.who.int/synthetic-influenza-alias' }) }, passages: [] })
-  expect((await fixture.read()).stale).toBe(true)
+  expect(await fixture.read()).toMatchObject({ stale: true, hidePreviousResults: true, items: [], guidelines: [] })
   const refreshed = await fixture.generate()
   expect(refreshed.guidelines.some(item => item.sourceHash === quotation.sourceHash)).toBe(false)
   expect(fixture.seen.verification).toEqual(fixture.seen.generation)

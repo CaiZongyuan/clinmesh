@@ -3582,77 +3582,86 @@ export class WorkflowService {
         expectedDraftVersion: input.expectedDraftVersion,
       },
       operation: 'encounter.save-diagnosis-draft',
-    }, () => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
-      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
-      const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
-      if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for diagnosis editing')
-      }
-      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      if (new Set(input.entries.map(entry => entry.catalogItemId)).size !== input.entries.length) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis draft contains a duplicate catalog item')
-      }
-      const resolvedEntries = input.entries.map(entry => (
-        this.#resolvedDiagnosisDraftEntry(input.context, entry)
-      ))
-      this.#assertNoLegacyDiagnosisOwner(input.context, outpatientCase.case_id)
-      const current = diagnosisStateRowSchema.optional().parse(
-        this.#database.driver.prepare(`
-          SELECT version, status, draft_json FROM diagnosis_state
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
+    }, transaction => this.applySaveDiagnosisDraft(transaction, input))
+  }
+
+  applySaveDiagnosisDraft(_transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    entries: DiagnosisDraftEntry[]
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    this.#assertRole(input.context, ['outpatient-doctor'])
+    const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+    const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
+    if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for diagnosis editing')
+    }
+    this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    if (new Set(input.entries.map(entry => entry.catalogItemId)).size !== input.entries.length) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis draft contains a duplicate catalog item')
+    }
+    const resolvedEntries = input.entries.map(entry => (
+      this.#resolvedDiagnosisDraftEntry(input.context, entry)
+    ))
+    this.#assertNoLegacyDiagnosisOwner(input.context, outpatientCase.case_id)
+    const current = diagnosisStateRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT version, status, draft_json FROM diagnosis_state
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
+    )
+    if ((current?.version ?? 0) !== input.expectedDraftVersion) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
+    }
+    const draft = diagnosisDraftContentSchema.parse({ entries: resolvedEntries })
+    const nextVersion = input.expectedDraftVersion + 1
+    const updatedAt = this.#virtualTime(input.context)
+    if (current === undefined) {
+      this.#database.driver.prepare(`
+        INSERT INTO diagnosis_state (
+          workspace_id, epoch, case_id, version, status, draft_json,
+          updated_by, updated_at
+        ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        nextVersion,
+        JSON.stringify(draft),
+        input.context.actorId,
+        updatedAt,
       )
-      if ((current?.version ?? 0) !== input.expectedDraftVersion) {
+    } else {
+      const update = this.#database.driver.prepare(`
+        UPDATE diagnosis_state
+        SET version = ?, status = 'draft', draft_json = ?, updated_by = ?, updated_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+          AND version = ?
+      `).run(
+        nextVersion,
+        JSON.stringify(draft),
+        input.context.actorId,
+        updatedAt,
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        input.expectedDraftVersion,
+      )
+      if (update.changes !== 1) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
       }
-      const draft = diagnosisDraftContentSchema.parse({ entries: resolvedEntries })
-      const nextVersion = input.expectedDraftVersion + 1
-      const updatedAt = this.#virtualTime(input.context)
-      if (current === undefined) {
-        this.#database.driver.prepare(`
-          INSERT INTO diagnosis_state (
-            workspace_id, epoch, case_id, version, status, draft_json,
-            updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?)
-        `).run(
-          input.context.workspaceId,
-          input.context.epoch,
-          outpatientCase.case_id,
-          nextVersion,
-          JSON.stringify(draft),
-          input.context.actorId,
-          updatedAt,
-        )
-      } else {
-        const update = this.#database.driver.prepare(`
-          UPDATE diagnosis_state
-          SET version = ?, status = 'draft', draft_json = ?, updated_by = ?, updated_at = ?
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-            AND version = ?
-        `).run(
-          nextVersion,
-          JSON.stringify(draft),
-          input.context.actorId,
-          updatedAt,
-          input.context.workspaceId,
-          input.context.epoch,
-          outpatientCase.case_id,
-          input.expectedDraftVersion,
-        )
-        if (update.changes !== 1) {
-          throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
-        }
-      }
-      return {
-        data: { draftVersion: nextVersion },
-        effects: [{
-          kind: current === undefined ? 'created' as const : 'updated' as const,
-          reference: `DiagnosisDraft/${outpatientCase.case_id}`,
-          versionId: String(nextVersion),
-        }],
-      }
-    })
+    }
+    return {
+      data: { draftVersion: nextVersion },
+      effects: [{
+        kind: current === undefined ? 'created' as const : 'updated' as const,
+        reference: `DiagnosisDraft/${outpatientCase.case_id}`,
+        versionId: String(nextVersion),
+      }],
+    }
   }
 
   confirmDiagnosis(input: {
@@ -3672,265 +3681,273 @@ export class WorkflowService {
         expectedDraftVersion: input.expectedDraftVersion,
       },
       operation: 'encounter.confirm-diagnosis',
-    }, transaction => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
-      if (input.context.practitionerRoleId === undefined) {
-        throw new WorkflowError('ROLE_NOT_ALLOWED', 'A Practitioner Role is required to confirm diagnosis')
-      }
-      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
-      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
-      if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for diagnosis confirmation')
-      }
-      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      this.#assertNoLegacyDiagnosisOwner(input.context, outpatientCase.case_id)
-      const state = diagnosisStateRowSchema.optional().parse(
-        this.#database.driver.prepare(`
-          SELECT version, status, draft_json FROM diagnosis_state
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
+    }, transaction => this.applyConfirmDiagnosis(transaction, input))
+  }
+
+  applyConfirmDiagnosis(transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    this.#assertRole(input.context, ['outpatient-doctor'])
+    if (input.context.practitionerRoleId === undefined) {
+      throw new WorkflowError('ROLE_NOT_ALLOWED', 'A Practitioner Role is required to confirm diagnosis')
+    }
+    const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+    const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+    if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for diagnosis confirmation')
+    }
+    this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    this.#assertNoLegacyDiagnosisOwner(input.context, outpatientCase.case_id)
+    const state = diagnosisStateRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT version, status, draft_json FROM diagnosis_state
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
+    )
+    if (
+      state?.status !== 'draft'
+      || state.draft_json === null
+      || state.version !== input.expectedDraftVersion
+    ) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
+    }
+    const draft = diagnosisDraftContentSchema.parse(JSON.parse(state.draft_json))
+    if (draft.entries.filter(entry => entry.role === 'primary').length !== 1) {
+      throw new WorkflowError(
+        'DIAGNOSIS_PRIMARY_REQUIRED',
+        'Exactly one primary diagnosis is required',
       )
-      if (
-        state?.status !== 'draft'
-        || state.draft_json === null
-        || state.version !== input.expectedDraftVersion
-      ) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
+    }
+    const resolvedEntries = draft.entries.map((entry) => {
+      const coding = entry.referenceConcept
+        ?? this.#resolvedDiagnosisDraftEntry(input.context, entry).referenceConcept
+      if (coding === undefined) {
+        throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis coding snapshot is unavailable')
       }
-      const draft = diagnosisDraftContentSchema.parse(JSON.parse(state.draft_json))
-      if (draft.entries.filter(entry => entry.role === 'primary').length !== 1) {
-        throw new WorkflowError(
-          'DIAGNOSIS_PRIMARY_REQUIRED',
-          'Exactly one primary diagnosis is required',
-        )
-      }
-      const resolvedEntries = draft.entries.map((entry) => {
-        const coding = entry.referenceConcept
-          ?? this.#resolvedDiagnosisDraftEntry(input.context, entry).referenceConcept
-        if (coding === undefined) {
-          throw new WorkflowError('CATALOG_CONFLICT', 'The diagnosis coding snapshot is unavailable')
-        }
-        return { ...entry, coding }
-      })
-      const previousConfirmation = this.#diagnosisConfirmation(
-        input.context,
-        outpatientCase.case_id,
-      )
-      const revisionNumber = (previousConfirmation?.revisionNumber ?? 0) + 1
-      const confirmedAt = this.#virtualTime(input.context)
-      const supersededConditions = (previousConfirmation?.entries ?? []).map((entry) => {
-        const condition = transaction.fhir.read(input.context, 'Condition', entry.conditionId)
-        const { clinicalStatus: _clinicalStatus, ...conditionWithoutClinicalStatus } = condition
-        return transaction.fhir.update(input.context, {
-          ...conditionWithoutClinicalStatus,
-          verificationStatus: {
+      return { ...entry, coding }
+    })
+    const previousConfirmation = this.#diagnosisConfirmation(
+      input.context,
+      outpatientCase.case_id,
+    )
+    const revisionNumber = (previousConfirmation?.revisionNumber ?? 0) + 1
+    const confirmedAt = this.#virtualTime(input.context)
+    const supersededConditions = (previousConfirmation?.entries ?? []).map((entry) => {
+      const condition = transaction.fhir.read(input.context, 'Condition', entry.conditionId)
+      const { clinicalStatus: _clinicalStatus, ...conditionWithoutClinicalStatus } = condition
+      return transaction.fhir.update(input.context, {
+        ...conditionWithoutClinicalStatus,
+        verificationStatus: {
+          coding: [{
+            code: 'entered-in-error',
+            system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status',
+          }],
+        },
+      }, entry.conditionVersion)
+    })
+    const confirmedEntries = resolvedEntries.map(entry => ({
+      condition: transaction.fhir.create(input.context, {
+        resourceType: 'Condition',
+        id: uuidv7(),
+        category: [{
+          coding: [{
+            code: 'encounter-diagnosis',
+            display: 'Encounter Diagnosis',
+            system: 'http://terminology.hl7.org/CodeSystem/condition-category',
+          }],
+        }],
+        clinicalStatus: {
+          coding: [{
+            code: 'active',
+            system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
+          }],
+        },
+        verificationStatus: {
+          coding: [{
+            code: 'confirmed',
+            system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status',
+          }],
+        },
+        code: {
+          coding: [{
+            code: entry.coding.code,
+            display: entry.coding.display,
+            system: entry.coding.system,
+          }],
+          text: entry.coding.display,
+        },
+        subject: { reference: `Patient/${outpatientCase.patient_id}` },
+        encounter: { reference: `Encounter/${input.encounterId}` },
+        recordedDate: confirmedAt,
+        recorder: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+        ...(entry.note === undefined ? {} : { note: [{ text: entry.note }] }),
+      }),
+      entry,
+    }))
+    const supersededConditionReferences = new Set(
+      (previousConfirmation?.entries ?? []).map(entry => `Condition/${entry.conditionId}`),
+    )
+    const currentEncounterDiagnoses = Array.isArray(encounter.diagnosis)
+      ? encounter.diagnosis.filter(diagnosis => (
+          !supersededConditionReferences.has(
+            encounterDiagnosisConditionReference(diagnosis) ?? '',
+          )
+        ))
+      : []
+    const updatedEncounter = transaction.fhir.update(input.context, {
+      ...encounter,
+      diagnosis: [
+        ...currentEncounterDiagnoses,
+        ...confirmedEntries.map(({ condition, entry }) => ({
+          condition: [{ reference: { reference: `Condition/${condition.id}` } }],
+          use: [{
             coding: [{
-              code: 'entered-in-error',
-              system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status',
-            }],
-          },
-        }, entry.conditionVersion)
-      })
-      const confirmedEntries = resolvedEntries.map(entry => ({
-        condition: transaction.fhir.create(input.context, {
-          resourceType: 'Condition',
-          id: uuidv7(),
-          category: [{
-            coding: [{
-              code: 'encounter-diagnosis',
-              display: 'Encounter Diagnosis',
-              system: 'http://terminology.hl7.org/CodeSystem/condition-category',
+              code: entry.role,
+              display: entry.role === 'primary'
+                ? 'Primary diagnosis'
+                : 'Secondary diagnosis',
+              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/encounter-diagnosis-role',
             }],
           }],
-          clinicalStatus: {
-            coding: [{
-              code: 'active',
-              system: 'http://terminology.hl7.org/CodeSystem/condition-clinical',
-            }],
-          },
-          verificationStatus: {
-            coding: [{
-              code: 'confirmed',
-              system: 'http://terminology.hl7.org/CodeSystem/condition-ver-status',
-            }],
-          },
-          code: {
-            coding: [{
-              code: entry.coding.code,
-              display: entry.coding.display,
-              system: entry.coding.system,
-            }],
-            text: entry.coding.display,
-          },
-          subject: { reference: `Patient/${outpatientCase.patient_id}` },
-          encounter: { reference: `Encounter/${input.encounterId}` },
-          recordedDate: confirmedAt,
-          recorder: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-          ...(entry.note === undefined ? {} : { note: [{ text: entry.note }] }),
-        }),
-        entry,
-      }))
-      const supersededConditionReferences = new Set(
-        (previousConfirmation?.entries ?? []).map(entry => `Condition/${entry.conditionId}`),
-      )
-      const currentEncounterDiagnoses = Array.isArray(encounter.diagnosis)
-        ? encounter.diagnosis.filter(diagnosis => (
-            !supersededConditionReferences.has(
-              encounterDiagnosisConditionReference(diagnosis) ?? '',
-            )
-          ))
-        : []
-      const updatedEncounter = transaction.fhir.update(input.context, {
-        ...encounter,
-        diagnosis: [
-          ...currentEncounterDiagnoses,
-          ...confirmedEntries.map(({ condition, entry }) => ({
-            condition: [{ reference: { reference: `Condition/${condition.id}` } }],
-            use: [{
-              coding: [{
-                code: entry.role,
-                display: entry.role === 'primary'
-                  ? 'Primary diagnosis'
-                  : 'Secondary diagnosis',
-                system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/encounter-diagnosis-role',
-              }],
-            }],
-          })),
-        ],
-      }, encounter.meta?.versionId ?? '1')
-      const provenanceId = uuidv7()
-      const provenance = transaction.fhir.createImmutable(input.context, {
-        resourceType: 'Provenance',
-        id: provenanceId,
-        target: [
-          ...supersededConditions.map(condition => ({ reference: `Condition/${condition.id}` })),
-          ...confirmedEntries.map(({ condition }) => ({ reference: `Condition/${condition.id}` })),
-          { reference: `Encounter/${input.encounterId}` },
-        ],
-        recorded: confirmedAt,
-        activity: {
-          text: previousConfirmation === undefined
-            ? 'Encounter diagnosis confirmation'
-            : 'Encounter diagnosis revision',
-        },
-        agent: provenanceAgents(input.context, 'Diagnosis confirmer'),
-      })
-      const confirmationId = uuidv7()
-      this.#database.driver.prepare(`
-        INSERT INTO diagnosis_confirmation (
-          workspace_id, epoch, confirmation_id, case_id, revision_number,
-          supersedes_confirmation_id, provenance_id,
-          confirmed_by_actor_id, confirmed_by_practitioner_role_id, confirmed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
+        })),
+      ],
+    }, encounter.meta?.versionId ?? '1')
+    const provenanceId = uuidv7()
+    const provenance = transaction.fhir.createImmutable(input.context, {
+      resourceType: 'Provenance',
+      id: provenanceId,
+      target: [
+        ...supersededConditions.map(condition => ({ reference: `Condition/${condition.id}` })),
+        ...confirmedEntries.map(({ condition }) => ({ reference: `Condition/${condition.id}` })),
+        { reference: `Encounter/${input.encounterId}` },
+      ],
+      recorded: confirmedAt,
+      activity: {
+        text: previousConfirmation === undefined
+          ? 'Encounter diagnosis confirmation'
+          : 'Encounter diagnosis revision',
+      },
+      agent: provenanceAgents(input.context, 'Diagnosis confirmer'),
+    })
+    const confirmationId = uuidv7()
+    this.#database.driver.prepare(`
+      INSERT INTO diagnosis_confirmation (
+        workspace_id, epoch, confirmation_id, case_id, revision_number,
+        supersedes_confirmation_id, provenance_id,
+        confirmed_by_actor_id, confirmed_by_practitioner_role_id, confirmed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.context.workspaceId,
+      input.context.epoch,
+      confirmationId,
+      outpatientCase.case_id,
+      revisionNumber,
+      previousConfirmation?.id ?? null,
+      provenanceId,
+      input.context.actorId,
+      input.context.practitionerRoleId,
+      confirmedAt,
+    )
+    const insertEntry = this.#database.driver.prepare(`
+      INSERT INTO diagnosis_entry (
+        workspace_id, epoch, confirmation_id, ordinal,
+        condition_id, catalog_item_id, coding_snapshot_json, role
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    confirmedEntries.forEach(({ condition, entry }, index) => {
+      insertEntry.run(
         input.context.workspaceId,
         input.context.epoch,
         confirmationId,
-        outpatientCase.case_id,
-        revisionNumber,
-        previousConfirmation?.id ?? null,
-        provenanceId,
-        input.context.actorId,
-        input.context.practitionerRoleId,
-        confirmedAt,
+        index + 1,
+        condition.id,
+        entry.catalogItemId,
+        JSON.stringify(entry.coding),
+        entry.role,
       )
-      const insertEntry = this.#database.driver.prepare(`
-        INSERT INTO diagnosis_entry (
-          workspace_id, epoch, confirmation_id, ordinal,
-          condition_id, catalog_item_id, coding_snapshot_json, role
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      confirmedEntries.forEach(({ condition, entry }, index) => {
-        insertEntry.run(
-          input.context.workspaceId,
-          input.context.epoch,
-          confirmationId,
-          index + 1,
-          condition.id,
-          entry.catalogItemId,
-          JSON.stringify(entry.coding),
-          entry.role,
-        )
-      })
-      const diagnosisVersion = state.version + 1
-      const update = this.#database.driver.prepare(`
-        UPDATE diagnosis_state
-        SET version = ?, status = 'confirmed', draft_json = NULL,
-          updated_by = ?, updated_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-          AND status = 'draft' AND version = ?
-      `).run(
-        diagnosisVersion,
-        input.context.actorId,
-        confirmedAt,
-        input.context.workspaceId,
-        input.context.epoch,
-        outpatientCase.case_id,
-        state.version,
-      )
-      if (update.changes !== 1) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
-      }
-      const confirmation: DiagnosisConfirmation = {
-        confirmedAt,
-        entries: confirmedEntries.map(({ condition, entry }) => ({
-          catalogItemId: entry.catalogItemId,
-          code: entry.coding.code,
-          conditionId: condition.id,
-          conditionVersion: condition.meta?.versionId ?? '1',
-          display: entry.coding.display,
-          ...(entry.note === undefined ? {} : { note: entry.note }),
-          role: entry.role,
-          system: entry.coding.system,
-        })),
-        id: confirmationId,
-        provenanceId,
-        revisionNumber,
-        ...(previousConfirmation === undefined
-          ? {}
-          : { supersedesConfirmationId: previousConfirmation.id }),
-      }
-      return {
-        data: {
-          confirmation,
-          diagnosisVersion,
-          encounterId: input.encounterId,
-          encounterVersion: updatedEncounter.meta?.versionId ?? '2',
-        },
-        effects: [
-          ...supersededConditions.map(condition => ({
-            kind: 'updated' as const,
-            reference: `Condition/${condition.id}`,
-            versionId: condition.meta?.versionId ?? '2',
-          })),
-          ...confirmedEntries.map(({ condition }) => ({
-            kind: 'created' as const,
-            reference: `Condition/${condition.id}`,
-            versionId: condition.meta?.versionId ?? '1',
-          })),
-          {
-            kind: 'updated' as const,
-            reference: `Encounter/${input.encounterId}`,
-            versionId: updatedEncounter.meta?.versionId ?? '2',
-          },
-          {
-            kind: 'created' as const,
-            reference: `Provenance/${provenance.id}`,
-            versionId: provenance.meta?.versionId ?? '1',
-          },
-          {
-            kind: 'created' as const,
-            reference: `DiagnosisConfirmation/${confirmationId}`,
-            versionId: '1',
-          },
-          {
-            kind: 'updated' as const,
-            reference: `DiagnosisDraft/${outpatientCase.case_id}`,
-            versionId: String(diagnosisVersion),
-          },
-        ],
-      }
     })
+    const diagnosisVersion = state.version + 1
+    const update = this.#database.driver.prepare(`
+      UPDATE diagnosis_state
+      SET version = ?, status = 'confirmed', draft_json = NULL,
+        updated_by = ?, updated_at = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        AND status = 'draft' AND version = ?
+    `).run(
+      diagnosisVersion,
+      input.context.actorId,
+      confirmedAt,
+      input.context.workspaceId,
+      input.context.epoch,
+      outpatientCase.case_id,
+      state.version,
+    )
+    if (update.changes !== 1) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The diagnosis draft version has changed')
+    }
+    const confirmation: DiagnosisConfirmation = {
+      confirmedAt,
+      entries: confirmedEntries.map(({ condition, entry }) => ({
+        catalogItemId: entry.catalogItemId,
+        code: entry.coding.code,
+        conditionId: condition.id,
+        conditionVersion: condition.meta?.versionId ?? '1',
+        display: entry.coding.display,
+        ...(entry.note === undefined ? {} : { note: entry.note }),
+        role: entry.role,
+        system: entry.coding.system,
+      })),
+      id: confirmationId,
+      provenanceId,
+      revisionNumber,
+      ...(previousConfirmation === undefined
+        ? {}
+        : { supersedesConfirmationId: previousConfirmation.id }),
+    }
+    return {
+      data: {
+        confirmation,
+        diagnosisVersion,
+        encounterId: input.encounterId,
+        encounterVersion: updatedEncounter.meta?.versionId ?? '2',
+      },
+      effects: [
+        ...supersededConditions.map(condition => ({
+          kind: 'updated' as const,
+          reference: `Condition/${condition.id}`,
+          versionId: condition.meta?.versionId ?? '2',
+        })),
+        ...confirmedEntries.map(({ condition }) => ({
+          kind: 'created' as const,
+          reference: `Condition/${condition.id}`,
+          versionId: condition.meta?.versionId ?? '1',
+        })),
+        {
+          kind: 'updated' as const,
+          reference: `Encounter/${input.encounterId}`,
+          versionId: updatedEncounter.meta?.versionId ?? '2',
+        },
+        {
+          kind: 'created' as const,
+          reference: `Provenance/${provenance.id}`,
+          versionId: provenance.meta?.versionId ?? '1',
+        },
+        {
+          kind: 'created' as const,
+          reference: `DiagnosisConfirmation/${confirmationId}`,
+          versionId: '1',
+        },
+        {
+          kind: 'updated' as const,
+          reference: `DiagnosisDraft/${outpatientCase.case_id}`,
+          versionId: String(diagnosisVersion),
+        },
+      ],
+    }
   }
 
   savePrescriptionDraft(input: {
@@ -3952,98 +3969,107 @@ export class WorkflowService {
         items: input.items,
       },
       operation: 'encounter.save-prescription-draft',
-    }, () => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
-      this.#assertPrescriptionConclusionSupported(input.context)
-      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
-      const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
-      if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for prescription editing')
-      }
-      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      this.#assertNoLegacyPrescriptionOwner(input.context, outpatientCase.case_id)
-      const formalConclusion = this.#database.driver.prepare(`
-        SELECT 1 AS present FROM prescription
+    }, transaction => this.applySavePrescriptionDraft(transaction, input))
+  }
+
+  applySavePrescriptionDraft(_transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    items: PrescriptionDraftItem[]
+  }) {
+    this.#assertRole(input.context, ['outpatient-doctor'])
+    this.#assertPrescriptionConclusionSupported(input.context)
+    const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+    const encounter = this.#fhir.read(input.context, 'Encounter', input.encounterId)
+    if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for prescription editing')
+    }
+    this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    this.#assertNoLegacyPrescriptionOwner(input.context, outpatientCase.case_id)
+    const formalConclusion = this.#database.driver.prepare(`
+      SELECT 1 AS present FROM prescription
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      UNION ALL
+      SELECT 1 AS present FROM no_medication_conclusion
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+      LIMIT 1
+    `).get(
+      input.context.workspaceId,
+      input.context.epoch,
+      outpatientCase.case_id,
+      input.context.workspaceId,
+      input.context.epoch,
+      outpatientCase.case_id,
+    )
+    if (formalConclusion !== undefined) {
+      throw new WorkflowError(
+        'WORKFLOW_CONFLICT',
+        'The Encounter already has a formal medication conclusion',
+      )
+    }
+    const resolvedMedications = this.#validatedPrescriptionDraftMedications(
+      input.context,
+      input.items,
+      false,
+    )
+    const current = prescriptionDraftStateRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT version, draft_json FROM prescription_draft_state
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        UNION ALL
-        SELECT 1 AS present FROM no_medication_conclusion
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        LIMIT 1
-      `).get(
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
+    )
+    if ((current?.version ?? 0) !== input.expectedDraftVersion) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
+    }
+    const draft = prescriptionDraftContentSchema.parse({
+      items: resolvedMedications.map(({ catalog: _catalog, external: _external, ...item }) => item),
+    })
+    const nextVersion = input.expectedDraftVersion + 1
+    const updatedAt = this.#virtualTime(input.context)
+    if (current === undefined) {
+      this.#database.driver.prepare(`
+        INSERT INTO prescription_draft_state (
+          workspace_id, epoch, case_id, version, draft_json, updated_by, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
         input.context.workspaceId,
         input.context.epoch,
         outpatientCase.case_id,
+        nextVersion,
+        JSON.stringify(draft),
+        input.context.actorId,
+        updatedAt,
+      )
+    } else {
+      const update = this.#database.driver.prepare(`
+        UPDATE prescription_draft_state
+        SET version = ?, draft_json = ?, updated_by = ?, updated_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
+      `).run(
+        nextVersion,
+        JSON.stringify(draft),
+        input.context.actorId,
+        updatedAt,
         input.context.workspaceId,
         input.context.epoch,
         outpatientCase.case_id,
+        input.expectedDraftVersion,
       )
-      if (formalConclusion !== undefined) {
-        throw new WorkflowError(
-          'WORKFLOW_CONFLICT',
-          'The Encounter already has a formal medication conclusion',
-        )
-      }
-      const resolvedMedications = this.#validatedPrescriptionDraftMedications(
-        input.context,
-        input.items,
-        false,
-      )
-      const current = prescriptionDraftStateRowSchema.optional().parse(
-        this.#database.driver.prepare(`
-          SELECT version, draft_json FROM prescription_draft_state
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
-      )
-      if ((current?.version ?? 0) !== input.expectedDraftVersion) {
+      if (update.changes !== 1) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
       }
-      const draft = prescriptionDraftContentSchema.parse({
-        items: resolvedMedications.map(({ catalog: _catalog, external: _external, ...item }) => item),
-      })
-      const nextVersion = input.expectedDraftVersion + 1
-      const updatedAt = this.#virtualTime(input.context)
-      if (current === undefined) {
-        this.#database.driver.prepare(`
-          INSERT INTO prescription_draft_state (
-            workspace_id, epoch, case_id, version, draft_json, updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          input.context.workspaceId,
-          input.context.epoch,
-          outpatientCase.case_id,
-          nextVersion,
-          JSON.stringify(draft),
-          input.context.actorId,
-          updatedAt,
-        )
-      } else {
-        const update = this.#database.driver.prepare(`
-          UPDATE prescription_draft_state
-          SET version = ?, draft_json = ?, updated_by = ?, updated_at = ?
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
-        `).run(
-          nextVersion,
-          JSON.stringify(draft),
-          input.context.actorId,
-          updatedAt,
-          input.context.workspaceId,
-          input.context.epoch,
-          outpatientCase.case_id,
-          input.expectedDraftVersion,
-        )
-        if (update.changes !== 1) {
-          throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
-        }
-      }
-      return {
-        data: { draftVersion: nextVersion },
-        effects: [{
-          kind: current === undefined ? 'created' as const : 'updated' as const,
-          reference: `PrescriptionDraft/${outpatientCase.case_id}`,
-          versionId: String(nextVersion),
-        }],
-      }
-    })
+    }
+    return {
+      data: { draftVersion: nextVersion },
+      effects: [{
+        kind: current === undefined ? 'created' as const : 'updated' as const,
+        reference: `PrescriptionDraft/${outpatientCase.case_id}`,
+        versionId: String(nextVersion),
+      }],
+    }
   }
 
   deletePrescriptionDraft(input: {
@@ -4184,339 +4210,347 @@ export class WorkflowService {
         expectedDraftVersion: input.expectedDraftVersion,
       },
       operation: 'encounter.issue-prescription',
-    }, transaction => {
-      this.#assertRole(input.context, ['outpatient-doctor'])
-      this.#assertPrescriptionConclusionSupported(input.context)
-      if (input.context.practitionerRoleId === undefined) {
-        throw new WorkflowError('ROLE_NOT_ALLOWED', 'A Practitioner Role is required to issue a prescription')
-      }
-      const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
-      const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
-      if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for prescription issuing')
-      }
-      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      this.#assertNoLegacyPrescriptionOwner(input.context, outpatientCase.case_id)
-      const noMedication = this.#database.driver.prepare(`
-        SELECT 1 AS present FROM no_medication_conclusion
+    }, transaction => this.applyIssuePrescription(transaction, input))
+  }
+
+  applyIssuePrescription(transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    this.#assertRole(input.context, ['outpatient-doctor'])
+    this.#assertPrescriptionConclusionSupported(input.context)
+    if (input.context.practitionerRoleId === undefined) {
+      throw new WorkflowError('ROLE_NOT_ALLOWED', 'A Practitioner Role is required to issue a prescription')
+    }
+    const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
+    const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
+    if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for prescription issuing')
+    }
+    this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    this.#assertNoLegacyPrescriptionOwner(input.context, outpatientCase.case_id)
+    const noMedication = this.#database.driver.prepare(`
+      SELECT 1 AS present FROM no_medication_conclusion
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
+    if (noMedication !== undefined) {
+      throw new WorkflowError(
+        'WORKFLOW_CONFLICT',
+        'The Encounter already has a no-medication conclusion',
+      )
+    }
+    const state = prescriptionDraftStateRowSchema.optional().parse(
+      this.#database.driver.prepare(`
+        SELECT version, draft_json FROM prescription_draft_state
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
-      if (noMedication !== undefined) {
-        throw new WorkflowError(
-          'WORKFLOW_CONFLICT',
-          'The Encounter already has a no-medication conclusion',
-        )
-      }
-      const state = prescriptionDraftStateRowSchema.optional().parse(
+      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
+    )
+    if (
+      state === undefined
+      || state.draft_json === null
+      || state.version !== input.expectedDraftVersion
+    ) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
+    }
+    const existingPrescription = this.#database.driver.prepare(`
+      SELECT 1 AS present FROM prescription
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
+    if (existingPrescription !== undefined) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription')
+    }
+    const draft = prescriptionDraftContentSchema.parse(JSON.parse(state.draft_json))
+    const medications = this.#validatedPrescriptionDraftMedications(
+      input.context,
+      draft.items,
+      true,
+    )
+    this.#assertMedicationAllergies(
+      input.context,
+      outpatientCase.patient_id,
+      medications.filter(medication => !medication.external).map(medication => medication.catalog),
+    )
+    const confirmedDiagnosisIds = new Set(
+      z.array(confirmedDiagnosisCatalogItemRowSchema).parse(
         this.#database.driver.prepare(`
-          SELECT version, draft_json FROM prescription_draft_state
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id),
-      )
-      if (
-        state === undefined
-        || state.draft_json === null
-        || state.version !== input.expectedDraftVersion
-      ) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
-      }
-      const existingPrescription = this.#database.driver.prepare(`
-        SELECT 1 AS present FROM prescription
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
-      if (existingPrescription !== undefined) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription')
-      }
-      const draft = prescriptionDraftContentSchema.parse(JSON.parse(state.draft_json))
-      const medications = this.#validatedPrescriptionDraftMedications(
-        input.context,
-        draft.items,
-        true,
-      )
-      this.#assertMedicationAllergies(
-        input.context,
-        outpatientCase.patient_id,
-        medications.filter(medication => !medication.external).map(medication => medication.catalog),
-      )
-      const confirmedDiagnosisIds = new Set(
-        z.array(confirmedDiagnosisCatalogItemRowSchema).parse(
-          this.#database.driver.prepare(`
-            SELECT diagnosis_entry.catalog_item_id
-            FROM diagnosis_confirmation
-            JOIN diagnosis_entry
-              ON diagnosis_entry.workspace_id = diagnosis_confirmation.workspace_id
-             AND diagnosis_entry.epoch = diagnosis_confirmation.epoch
-             AND diagnosis_entry.confirmation_id = diagnosis_confirmation.confirmation_id
-            WHERE diagnosis_confirmation.workspace_id = ?
-              AND diagnosis_confirmation.epoch = ? AND diagnosis_confirmation.case_id = ?
-              AND diagnosis_confirmation.revision_number = (
-                SELECT MAX(current_confirmation.revision_number)
-                FROM diagnosis_confirmation AS current_confirmation
-                WHERE current_confirmation.workspace_id = diagnosis_confirmation.workspace_id
-                  AND current_confirmation.epoch = diagnosis_confirmation.epoch
-                  AND current_confirmation.case_id = diagnosis_confirmation.case_id
-              )
-          `).all(
-            input.context.workspaceId,
-            input.context.epoch,
-            outpatientCase.case_id,
-          ),
-        ).map(row => row.catalog_item_id),
-      )
-      if (confirmedDiagnosisIds.size === 0) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'A confirmed diagnosis is required to issue a prescription')
-      }
-      for (const medication of medications) {
-        if (medication.external) continue
-        const config = prescriptionMedicationCatalogConfigSchema.parse(
-          JSON.parse(medication.catalog.config_json ?? '{}') as unknown,
-        )
-        if (!config.allowedDiagnosisCatalogItemIds.some(id => confirmedDiagnosisIds.has(id))) {
-          throw new WorkflowError(
-            'CATALOG_CONFLICT',
-            `The confirmed diagnosis does not allow ${medication.catalogItemId}`,
-          )
-        }
-      }
-      const prescriptionId = uuidv7()
-      const authoredAt = this.#virtualTime(input.context)
-      const prescriptionCount = countRowSchema.parse(this.#database.driver.prepare(`
-        SELECT COUNT(*) AS count FROM prescription WHERE workspace_id = ? AND epoch = ?
-      `).get(input.context.workspaceId, input.context.epoch)).count + 1
-      const prescriptionNumber
-        = `CM-RX-${authoredAt.slice(0, 10).replaceAll('-', '')}-${String(prescriptionCount).padStart(4, '0')}`
-      this.#database.driver.prepare(`
-        INSERT INTO prescription (
-          workspace_id, epoch, prescription_id, case_id, prescription_number,
-          status, version, authored_by, authored_at, signed_at
-        ) VALUES (?, ?, ?, ?, ?, 'signed', 1, ?, ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        prescriptionId,
-        outpatientCase.case_id,
-        prescriptionNumber,
-        input.context.actorId,
-        authoredAt,
-        authoredAt,
-      )
-      this.#database.driver.prepare(`
-        INSERT INTO prescription_authorship (
-          workspace_id, epoch, prescription_id,
-          authored_by_actor_id, authored_by_practitioner_role_id
-        ) VALUES (?, ?, ?, ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        prescriptionId,
-        input.context.actorId,
-        input.context.practitionerRoleId,
-      )
-      const insertItem = this.#database.driver.prepare(`
-        INSERT INTO prescription_item (
-          workspace_id, epoch, prescription_id, medication_request_id,
-          medication_id, medication_snapshot_json, quantity, dose_text,
-          frequency_code, course_days
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `)
-      const issuedItems = medications.map((medication) => {
-        const medicationResourceId = medication.external ? uuidv7() : medication.catalogItemId
-        if (medication.external) {
-          transaction.fhir.create(input.context, {
-            resourceType: 'Medication',
-            id: medicationResourceId,
-            status: 'active',
-            code: {
-              coding: [{
-                code: medication.catalog.code,
-                display: medication.catalog.name_zh,
-                system: medication.referenceProduct?.system,
-                version: medication.referenceProduct?.version,
-              }],
-              text: medication.catalog.name_zh,
-            },
-            doseForm: { text: medication.referenceProduct?.dosageForm },
-            marketingAuthorizationHolder: {
-              display: medication.referenceProduct?.manufacturer,
-            },
-          })
-        }
-        const medicationRequest = transaction.fhir.create(input.context, {
-          resourceType: 'MedicationRequest',
-          id: uuidv7(),
-          status: 'active',
-          intent: 'order',
-          medication: {
-            reference: {
-              display: medication.catalog.name_zh,
-              reference: `Medication/${medicationResourceId}`,
-            },
-          },
-          subject: { reference: `Patient/${outpatientCase.patient_id}` },
-          encounter: { reference: `Encounter/${input.encounterId}` },
-          authoredOn: authoredAt,
-          requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-          dosageInstruction: [{
-            text: `${medication.doseText} ${medication.frequencyCode} for ${medication.courseDays} days`,
-            timing: {
-              repeat: {
-                boundsDuration: {
-                  code: 'd',
-                  system: 'http://unitsofmeasure.org',
-                  unit: 'days',
-                  value: medication.courseDays,
-                },
-              },
-            },
-          }],
-          dispenseRequest: { quantity: { value: medication.quantity } },
-          groupIdentifier: {
-            system: 'https://caizongyuan.github.io/clinmesh/fhir/prescription-number',
-            value: prescriptionNumber,
-          },
-        })
-        insertItem.run(
+          SELECT diagnosis_entry.catalog_item_id
+          FROM diagnosis_confirmation
+          JOIN diagnosis_entry
+            ON diagnosis_entry.workspace_id = diagnosis_confirmation.workspace_id
+           AND diagnosis_entry.epoch = diagnosis_confirmation.epoch
+           AND diagnosis_entry.confirmation_id = diagnosis_confirmation.confirmation_id
+          WHERE diagnosis_confirmation.workspace_id = ?
+            AND diagnosis_confirmation.epoch = ? AND diagnosis_confirmation.case_id = ?
+            AND diagnosis_confirmation.revision_number = (
+              SELECT MAX(current_confirmation.revision_number)
+              FROM diagnosis_confirmation AS current_confirmation
+              WHERE current_confirmation.workspace_id = diagnosis_confirmation.workspace_id
+                AND current_confirmation.epoch = diagnosis_confirmation.epoch
+                AND current_confirmation.case_id = diagnosis_confirmation.case_id
+            )
+        `).all(
           input.context.workspaceId,
           input.context.epoch,
-          prescriptionId,
-          medicationRequest.id,
-          medication.catalogItemId,
-          JSON.stringify(medication.referenceProduct ?? {
-            code: medication.catalog.code,
-            display: medication.catalog.name_zh,
-            id: medication.catalogItemId,
-            sourceLocator: 'operational:outpatient_catalog',
-            system: 'urn:clinmesh:operational:medication',
-            version: String(medication.catalog.version),
-          }),
-          medication.quantity,
-          medication.doseText,
-          medication.frequencyCode,
-          medication.courseDays,
-        )
-        return {
-          catalogItemId: medication.catalogItemId,
-          courseDays: medication.courseDays,
-          display: medication.catalog.name_zh,
-          doseText: medication.doseText,
-          frequencyCode: medication.frequencyCode,
-          medicationRequestId: medicationRequest.id,
-          medicationRequestVersion: medicationRequest.meta?.versionId ?? '1',
-          quantity: medication.quantity,
-        }
-      })
-      const medicationTotalFen = medications.reduce(
-        (total, medication) => total + medication.catalog.price_fen * medication.quantity,
-        0,
+          outpatientCase.case_id,
+        ),
+      ).map(row => row.catalog_item_id),
+    )
+    if (confirmedDiagnosisIds.size === 0) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'A confirmed diagnosis is required to issue a prescription')
+    }
+    for (const medication of medications) {
+      if (medication.external) continue
+      const config = prescriptionMedicationCatalogConfigSchema.parse(
+        JSON.parse(medication.catalog.config_json ?? '{}') as unknown,
       )
-      const chargeItemId = uuidv7()
-      const chargeId = uuidv7()
-      const chargeItem = transaction.fhir.create(input.context, {
-        resourceType: 'ChargeItem',
-        id: chargeItemId,
-        status: 'billable',
-        code: { text: `Prescription ${prescriptionNumber}` },
+      if (!config.allowedDiagnosisCatalogItemIds.some(id => confirmedDiagnosisIds.has(id))) {
+        throw new WorkflowError(
+          'CATALOG_CONFLICT',
+          `The confirmed diagnosis does not allow ${medication.catalogItemId}`,
+        )
+      }
+    }
+    const prescriptionId = uuidv7()
+    const authoredAt = this.#virtualTime(input.context)
+    const prescriptionCount = countRowSchema.parse(this.#database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM prescription WHERE workspace_id = ? AND epoch = ?
+    `).get(input.context.workspaceId, input.context.epoch)).count + 1
+    const prescriptionNumber
+      = `CM-RX-${authoredAt.slice(0, 10).replaceAll('-', '')}-${String(prescriptionCount).padStart(4, '0')}`
+    this.#database.driver.prepare(`
+      INSERT INTO prescription (
+        workspace_id, epoch, prescription_id, case_id, prescription_number,
+        status, version, authored_by, authored_at, signed_at
+      ) VALUES (?, ?, ?, ?, ?, 'signed', 1, ?, ?, ?)
+    `).run(
+      input.context.workspaceId,
+      input.context.epoch,
+      prescriptionId,
+      outpatientCase.case_id,
+      prescriptionNumber,
+      input.context.actorId,
+      authoredAt,
+      authoredAt,
+    )
+    this.#database.driver.prepare(`
+      INSERT INTO prescription_authorship (
+        workspace_id, epoch, prescription_id,
+        authored_by_actor_id, authored_by_practitioner_role_id
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run(
+      input.context.workspaceId,
+      input.context.epoch,
+      prescriptionId,
+      input.context.actorId,
+      input.context.practitionerRoleId,
+    )
+    const insertItem = this.#database.driver.prepare(`
+      INSERT INTO prescription_item (
+        workspace_id, epoch, prescription_id, medication_request_id,
+        medication_id, medication_snapshot_json, quantity, dose_text,
+        frequency_code, course_days
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const issuedItems = medications.map((medication) => {
+      const medicationResourceId = medication.external ? uuidv7() : medication.catalogItemId
+      if (medication.external) {
+        transaction.fhir.create(input.context, {
+          resourceType: 'Medication',
+          id: medicationResourceId,
+          status: 'active',
+          code: {
+            coding: [{
+              code: medication.catalog.code,
+              display: medication.catalog.name_zh,
+              system: medication.referenceProduct?.system,
+              version: medication.referenceProduct?.version,
+            }],
+            text: medication.catalog.name_zh,
+          },
+          doseForm: { text: medication.referenceProduct?.dosageForm },
+          marketingAuthorizationHolder: {
+            display: medication.referenceProduct?.manufacturer,
+          },
+        })
+      }
+      const medicationRequest = transaction.fhir.create(input.context, {
+        resourceType: 'MedicationRequest',
+        id: uuidv7(),
+        status: 'active',
+        intent: 'order',
+        medication: {
+          reference: {
+            display: medication.catalog.name_zh,
+            reference: `Medication/${medicationResourceId}`,
+          },
+        },
         subject: { reference: `Patient/${outpatientCase.patient_id}` },
         encounter: { reference: `Encounter/${input.encounterId}` },
-        account: [{ reference: `Account/${outpatientCase.account_id}` }],
-        occurrenceDateTime: authoredAt,
-        quantity: { value: medications.reduce((total, medication) => total + medication.quantity, 0) },
-        ...(new Set(medications.map(medication => medication.catalog.price_fen)).size === 1
-          ? {
-              unitPriceComponent: {
-                amount: { currency: 'CNY', value: (medications[0]?.catalog.price_fen ?? 0) / 100 },
+        authoredOn: authoredAt,
+        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+        dosageInstruction: [{
+          text: `${medication.doseText} ${medication.frequencyCode} for ${medication.courseDays} days`,
+          timing: {
+            repeat: {
+              boundsDuration: {
+                code: 'd',
+                system: 'http://unitsofmeasure.org',
+                unit: 'days',
+                value: medication.courseDays,
               },
-            }
-          : {}),
-        totalPriceComponent: { amount: { currency: 'CNY', value: medicationTotalFen / 100 } },
+            },
+          },
+        }],
+        dispenseRequest: { quantity: { value: medication.quantity } },
+        groupIdentifier: {
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/prescription-number',
+          value: prescriptionNumber,
+        },
       })
-      this.#database.driver.prepare(`
-        INSERT INTO charge_record (
-          workspace_id, epoch, charge_id, case_id, account_id, charge_item_id,
-          category, source_reference, description_zh, description_en,
-          quantity, unit_price_fen, total_fen, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'medication', ?, '门诊药品', 'Outpatient medication',
-          ?, ?, ?, 'billable', ?)
-      `).run(
+      insertItem.run(
         input.context.workspaceId,
         input.context.epoch,
-        chargeId,
-        outpatientCase.case_id,
-        outpatientCase.account_id,
-        chargeItemId,
-        `Prescription/${prescriptionId}`,
-        medications.reduce((total, medication) => total + medication.quantity, 0),
-        medications.length === 1 ? medications[0]?.catalog.price_fen ?? 0 : medicationTotalFen,
-        medicationTotalFen,
-        authoredAt,
-      )
-      const updateCase = this.#database.driver.prepare(`
-        UPDATE outpatient_case
-        SET prescription_id = ?, version = version + 1, updated_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND prescription_id IS NULL
-      `).run(
         prescriptionId,
-        authoredAt,
-        input.context.workspaceId,
-        input.context.epoch,
-        outpatientCase.case_id,
+        medicationRequest.id,
+        medication.catalogItemId,
+        JSON.stringify(medication.referenceProduct ?? {
+          code: medication.catalog.code,
+          display: medication.catalog.name_zh,
+          id: medication.catalogItemId,
+          sourceLocator: 'operational:outpatient_catalog',
+          system: 'urn:clinmesh:operational:medication',
+          version: String(medication.catalog.version),
+        }),
+        medication.quantity,
+        medication.doseText,
+        medication.frequencyCode,
+        medication.courseDays,
       )
-      if (updateCase.changes !== 1) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription')
-      }
-      const draftVersion = state.version + 1
-      const updateDraft = this.#database.driver.prepare(`
-        UPDATE prescription_draft_state
-        SET version = ?, draft_json = NULL, updated_by = ?, updated_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-          AND version = ? AND draft_json IS NOT NULL
-      `).run(
-        draftVersion,
-        input.context.actorId,
-        authoredAt,
-        input.context.workspaceId,
-        input.context.epoch,
-        outpatientCase.case_id,
-        state.version,
-      )
-      if (updateDraft.changes !== 1) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
-      }
-      const prescription = issuedPrescriptionSchema.parse({
-        authoredAt,
-        authoredByPractitionerRoleId: input.context.practitionerRoleId,
-        id: prescriptionId,
-        items: issuedItems,
-        number: prescriptionNumber,
-        status: 'signed',
-        version: 1,
-      })
       return {
-        data: { draftVersion, prescription },
-        effects: [
-          {
-            kind: 'created' as const,
-            reference: `Prescription/${prescriptionId}`,
-            versionId: '1',
-          },
-          ...issuedItems.map(item => ({
-            kind: 'created' as const,
-            reference: `MedicationRequest/${item.medicationRequestId}`,
-            versionId: item.medicationRequestVersion,
-          })),
-          {
-            kind: 'created' as const,
-            reference: `ChargeItem/${chargeItem.id}`,
-            versionId: chargeItem.meta?.versionId ?? '1',
-          },
-          {
-            kind: 'updated' as const,
-            reference: `PrescriptionDraft/${outpatientCase.case_id}`,
-            versionId: String(draftVersion),
-          },
-        ],
+        catalogItemId: medication.catalogItemId,
+        courseDays: medication.courseDays,
+        display: medication.catalog.name_zh,
+        doseText: medication.doseText,
+        frequencyCode: medication.frequencyCode,
+        medicationRequestId: medicationRequest.id,
+        medicationRequestVersion: medicationRequest.meta?.versionId ?? '1',
+        quantity: medication.quantity,
       }
     })
+    const medicationTotalFen = medications.reduce(
+      (total, medication) => total + medication.catalog.price_fen * medication.quantity,
+      0,
+    )
+    const chargeItemId = uuidv7()
+    const chargeId = uuidv7()
+    const chargeItem = transaction.fhir.create(input.context, {
+      resourceType: 'ChargeItem',
+      id: chargeItemId,
+      status: 'billable',
+      code: { text: `Prescription ${prescriptionNumber}` },
+      subject: { reference: `Patient/${outpatientCase.patient_id}` },
+      encounter: { reference: `Encounter/${input.encounterId}` },
+      account: [{ reference: `Account/${outpatientCase.account_id}` }],
+      occurrenceDateTime: authoredAt,
+      quantity: { value: medications.reduce((total, medication) => total + medication.quantity, 0) },
+      ...(new Set(medications.map(medication => medication.catalog.price_fen)).size === 1
+        ? {
+            unitPriceComponent: {
+              amount: { currency: 'CNY', value: (medications[0]?.catalog.price_fen ?? 0) / 100 },
+            },
+          }
+        : {}),
+      totalPriceComponent: { amount: { currency: 'CNY', value: medicationTotalFen / 100 } },
+    })
+    this.#database.driver.prepare(`
+      INSERT INTO charge_record (
+        workspace_id, epoch, charge_id, case_id, account_id, charge_item_id,
+        category, source_reference, description_zh, description_en,
+        quantity, unit_price_fen, total_fen, status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 'medication', ?, '门诊药品', 'Outpatient medication',
+        ?, ?, ?, 'billable', ?)
+    `).run(
+      input.context.workspaceId,
+      input.context.epoch,
+      chargeId,
+      outpatientCase.case_id,
+      outpatientCase.account_id,
+      chargeItemId,
+      `Prescription/${prescriptionId}`,
+      medications.reduce((total, medication) => total + medication.quantity, 0),
+      medications.length === 1 ? medications[0]?.catalog.price_fen ?? 0 : medicationTotalFen,
+      medicationTotalFen,
+      authoredAt,
+    )
+    const updateCase = this.#database.driver.prepare(`
+      UPDATE outpatient_case
+      SET prescription_id = ?, version = version + 1, updated_at = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND prescription_id IS NULL
+    `).run(
+      prescriptionId,
+      authoredAt,
+      input.context.workspaceId,
+      input.context.epoch,
+      outpatientCase.case_id,
+    )
+    if (updateCase.changes !== 1) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription')
+    }
+    const draftVersion = state.version + 1
+    const updateDraft = this.#database.driver.prepare(`
+      UPDATE prescription_draft_state
+      SET version = ?, draft_json = NULL, updated_by = ?, updated_at = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        AND version = ? AND draft_json IS NOT NULL
+    `).run(
+      draftVersion,
+      input.context.actorId,
+      authoredAt,
+      input.context.workspaceId,
+      input.context.epoch,
+      outpatientCase.case_id,
+      state.version,
+    )
+    if (updateDraft.changes !== 1) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
+    }
+    const prescription = issuedPrescriptionSchema.parse({
+      authoredAt,
+      authoredByPractitionerRoleId: input.context.practitionerRoleId,
+      id: prescriptionId,
+      items: issuedItems,
+      number: prescriptionNumber,
+      status: 'signed',
+      version: 1,
+    })
+    return {
+      data: { draftVersion, prescription },
+      effects: [
+        {
+          kind: 'created' as const,
+          reference: `Prescription/${prescriptionId}`,
+          versionId: '1',
+        },
+        ...issuedItems.map(item => ({
+          kind: 'created' as const,
+          reference: `MedicationRequest/${item.medicationRequestId}`,
+          versionId: item.medicationRequestVersion,
+        })),
+        {
+          kind: 'created' as const,
+          reference: `ChargeItem/${chargeItem.id}`,
+          versionId: chargeItem.meta?.versionId ?? '1',
+        },
+        {
+          kind: 'updated' as const,
+          reference: `PrescriptionDraft/${outpatientCase.case_id}`,
+          versionId: String(draftVersion),
+        },
+      ],
+    }
   }
 
   confirmNoMedication(input: {
@@ -6633,103 +6667,113 @@ export class WorkflowService {
         indicationCode: input.indicationCode,
       },
       operation: 'laboratory-request.save-draft',
-    }, () => {
-      const outpatientCase = this.#laboratoryRequestCaseForAction(
+    }, transaction => this.applySaveLaboratoryRequestDraft(transaction, input))
+  }
+
+  applySaveLaboratoryRequestDraft(_transaction: CommandTransaction, input: {
+    catalogItemId: LaboratoryRequestCatalogItemId
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    indicationCode: string
+  }) {
+    const outpatientCase = this.#laboratoryRequestCaseForAction(
+      input.context,
+      input.encounterId,
+      'edit-draft',
+    )
+    this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const selection = this.#resolvedLaboratorySelection(
+      input.context,
+      input.catalogItemId,
+    )
+    const { config: catalogConfig, laboratoryService, referenceConcept } = selection
+    const now = this.#virtualTime(input.context)
+    if (laboratoryService !== undefined) {
+      this.#assertAdultLaboratoryServiceApplicable(
         input.context,
-        input.encounterId,
-        'edit-draft',
+        outpatientCase.patient_id,
+        laboratoryService,
+        now,
       )
-      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const selection = this.#resolvedLaboratorySelection(
+    }
+    if (laboratoryService === undefined) {
+      this.#assertInvestigationGenerationSupported(
         input.context,
+        outpatientCase.case_id,
         input.catalogItemId,
+        referenceConcept,
       )
-      const { config: catalogConfig, laboratoryService, referenceConcept } = selection
-      const now = this.#virtualTime(input.context)
-      if (laboratoryService !== undefined) {
-        this.#assertAdultLaboratoryServiceApplicable(
-          input.context,
-          outpatientCase.patient_id,
-          laboratoryService,
-          now,
-        )
-      }
-      if (laboratoryService === undefined) {
-        this.#assertInvestigationGenerationSupported(
-          input.context,
-          outpatientCase.case_id,
-          input.catalogItemId,
-          referenceConcept,
-        )
-      } else {
-        this.#assertLaboratoryServiceGenerationSupported(
-          input.context,
-          outpatientCase.case_id,
-        )
-      }
-      if (!catalogConfig.allowedIndicationCodes.includes(input.indicationCode)) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
-      }
-      const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
-      const currentVersion = current?.version ?? 0
-      if (currentVersion !== input.expectedDraftVersion) {
+    } else {
+      this.#assertLaboratoryServiceGenerationSupported(
+        input.context,
+        outpatientCase.case_id,
+      )
+    }
+    if (!catalogConfig.allowedIndicationCodes.includes(input.indicationCode)) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
+    }
+    const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
+    const currentVersion = current?.version ?? 0
+    if (currentVersion !== input.expectedDraftVersion) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        'The laboratory request draft version has changed',
+      )
+    }
+    const nextVersion = currentVersion + 1
+    if (current === undefined) {
+      this.#database.driver.prepare(`
+        INSERT INTO laboratory_request_state (
+          workspace_id, epoch, case_id, version, draft_catalog_item_id,
+          draft_indication_code, draft_reference_json, draft_service_snapshot_json,
+          updated_by, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        nextVersion,
+        input.catalogItemId,
+        input.indicationCode,
+        JSON.stringify(referenceConcept),
+        laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
+        input.context.actorId,
+        now,
+      )
+    } else {
+      const update = this.#database.driver.prepare(`
+        UPDATE laboratory_request_state
+        SET version = ?, draft_catalog_item_id = ?, draft_indication_code = ?,
+          draft_reference_json = ?, draft_service_snapshot_json = ?,
+          updated_by = ?, updated_at = ?
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
+      `).run(
+        nextVersion,
+        input.catalogItemId,
+        input.indicationCode,
+        JSON.stringify(referenceConcept),
+        laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
+        input.context.actorId,
+        now,
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        currentVersion,
+      )
+      if (update.changes !== 1) {
         throw new WorkflowError(
           'LABORATORY_REQUEST_VERSION_CONFLICT',
           'The laboratory request draft version has changed',
         )
       }
-      const nextVersion = currentVersion + 1
-      if (current === undefined) {
-        this.#database.driver.prepare(`
-          INSERT INTO laboratory_request_state (
-            workspace_id, epoch, case_id, version, draft_catalog_item_id,
-            draft_indication_code, draft_reference_json, draft_service_snapshot_json,
-            updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          input.context.workspaceId,
-          input.context.epoch,
-          outpatientCase.case_id,
-          nextVersion,
-          input.catalogItemId,
-          input.indicationCode,
-          JSON.stringify(referenceConcept),
-          laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
-          input.context.actorId,
-          now,
-        )
-      } else {
-        const update = this.#database.driver.prepare(`
-          UPDATE laboratory_request_state
-          SET version = ?, draft_catalog_item_id = ?, draft_indication_code = ?,
-            draft_reference_json = ?, draft_service_snapshot_json = ?,
-            updated_by = ?, updated_at = ?
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
-        `).run(
-          nextVersion,
-          input.catalogItemId,
-          input.indicationCode,
-          JSON.stringify(referenceConcept),
-          laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
-          input.context.actorId,
-          now,
-          input.context.workspaceId,
-          input.context.epoch,
-          outpatientCase.case_id,
-          currentVersion,
-        )
-        if (update.changes !== 1) {
-          throw new WorkflowError(
-            'LABORATORY_REQUEST_VERSION_CONFLICT',
-            'The laboratory request draft version has changed',
-          )
-        }
-      }
-      return {
-        data: { caseId: outpatientCase.case_id, draftVersion: nextVersion },
-        effects: [],
-      }
-    })
+    }
+    return {
+      data: { caseId: outpatientCase.case_id, draftVersion: nextVersion },
+      effects: [],
+    }
   }
 
   deleteLaboratoryRequestDraft(input: {
@@ -6767,84 +6811,92 @@ export class WorkflowService {
         resource: `Encounter/${input.encounterId}`,
       }),
       operation: 'laboratory-request.delete-draft',
-    }, () => {
-      const outpatientCase = this.#laboratoryRequestCaseForAction(
-        input.context,
-        input.encounterId,
-        'edit-draft',
+    }, transaction => this.applyDeleteLaboratoryRequestDraft(transaction, input))
+  }
+
+  applyDeleteLaboratoryRequestDraft(_transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    const outpatientCase = this.#laboratoryRequestCaseForAction(
+      input.context,
+      input.encounterId,
+      'edit-draft',
+    )
+    this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
+    if (current === undefined) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        'The laboratory request draft does not exist',
+        {
+          currentStatus: 'missing',
+          expectedVersion: String(input.expectedDraftVersion),
+          owner: 'laboratory-request-draft',
+          resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+        },
       )
-      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
-      if (current === undefined) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request draft does not exist',
-          {
-            currentStatus: 'missing',
-            expectedVersion: String(input.expectedDraftVersion),
-            owner: 'laboratory-request-draft',
-            resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
-          },
-        )
-      }
-      if (current.draft_catalog_item_id === null) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          `The laboratory request draft is empty at version ${current.version}`,
-          {
-            currentStatus: 'empty',
-            currentVersion: String(current.version),
-            expectedVersion: String(input.expectedDraftVersion),
-            owner: 'laboratory-request-draft',
-            resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
-          },
-        )
-      }
-      if (current.version !== input.expectedDraftVersion) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          `The laboratory request draft is at version ${current.version}; expected version ${input.expectedDraftVersion}`,
-          {
-            currentStatus: 'draft',
-            currentVersion: String(current.version),
-            expectedVersion: String(input.expectedDraftVersion),
-            owner: 'laboratory-request-draft',
-            resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
-          },
-        )
-      }
-      const draftVersion = current.version + 1
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request_state
-        SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
-          draft_reference_json = NULL, draft_service_snapshot_json = NULL,
-          updated_by = ?, updated_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
-          AND draft_catalog_item_id IS NOT NULL
-      `).run(
-        draftVersion,
-        input.context.actorId,
-        this.#virtualTime(input.context),
-        input.context.workspaceId,
-        input.context.epoch,
-        outpatientCase.case_id,
-        current.version,
+    }
+    if (current.draft_catalog_item_id === null) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        `The laboratory request draft is empty at version ${current.version}`,
+        {
+          currentStatus: 'empty',
+          currentVersion: String(current.version),
+          expectedVersion: String(input.expectedDraftVersion),
+          owner: 'laboratory-request-draft',
+          resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+        },
       )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request draft version has changed',
-        )
-      }
-      return {
-        data: { caseId: outpatientCase.case_id, draftVersion },
-        effects: [{
-          kind: 'updated' as const,
-          reference: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
-          versionId: String(draftVersion),
-        }],
-      }
-    })
+    }
+    if (current.version !== input.expectedDraftVersion) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        `The laboratory request draft is at version ${current.version}; expected version ${input.expectedDraftVersion}`,
+        {
+          currentStatus: 'draft',
+          currentVersion: String(current.version),
+          expectedVersion: String(input.expectedDraftVersion),
+          owner: 'laboratory-request-draft',
+          resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+        },
+      )
+    }
+    const draftVersion = current.version + 1
+    const update = this.#database.driver.prepare(`
+      UPDATE laboratory_request_state
+      SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
+        draft_reference_json = NULL, draft_service_snapshot_json = NULL,
+        updated_by = ?, updated_at = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
+        AND draft_catalog_item_id IS NOT NULL
+    `).run(
+      draftVersion,
+      input.context.actorId,
+      this.#virtualTime(input.context),
+      input.context.workspaceId,
+      input.context.epoch,
+      outpatientCase.case_id,
+      current.version,
+    )
+    if (update.changes !== 1) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        'The laboratory request draft version has changed',
+      )
+    }
+    return {
+      data: { caseId: outpatientCase.case_id, draftVersion },
+      effects: [{
+        kind: 'updated' as const,
+        reference: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+        versionId: String(draftVersion),
+      }],
+    }
   }
 
   issueLaboratoryRequest(input: {
@@ -6864,202 +6916,210 @@ export class WorkflowService {
         expectedDraftVersion: input.expectedDraftVersion,
       },
       operation: 'laboratory-request.issue',
-    }, (transaction) => {
-      const outpatientCase = this.#laboratoryRequestCaseForAction(
-        input.context,
-        input.encounterId,
-        'issue',
+    }, transaction => this.applyIssueLaboratoryRequest(transaction, input))
+  }
+
+  applyIssueLaboratoryRequest(transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    const outpatientCase = this.#laboratoryRequestCaseForAction(
+      input.context,
+      input.encounterId,
+      'issue',
+    )
+    this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const state = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
+    if (state === undefined
+      || state.version !== input.expectedDraftVersion
+      || state.draft_catalog_item_id === null
+      || state.draft_indication_code === null
+      || state.draft_reference_json === null) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        'The laboratory request draft version has changed',
       )
-      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const state = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
-      if (state === undefined
-        || state.version !== input.expectedDraftVersion
-        || state.draft_catalog_item_id === null
-        || state.draft_indication_code === null
-        || state.draft_reference_json === null) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request draft version has changed',
-        )
-      }
-      const duplicate = this.#database.driver.prepare(`
-        SELECT request_id FROM laboratory_request
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-          AND catalog_item_id = ?
-          AND status IN ('issued', 'accepted', 'in-progress', 'generation-failed')
-      `).get(
-        input.context.workspaceId,
-        input.context.epoch,
+    }
+    const duplicate = this.#database.driver.prepare(`
+      SELECT request_id FROM laboratory_request
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        AND catalog_item_id = ?
+        AND status IN ('issued', 'accepted', 'in-progress', 'generation-failed')
+    `).get(
+      input.context.workspaceId,
+      input.context.epoch,
+      outpatientCase.case_id,
+      state.draft_catalog_item_id,
+    )
+    if (duplicate !== undefined) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_DUPLICATE',
+        'An active laboratory request already exists for this catalog item',
+      )
+    }
+    const referenceConcept = referenceConceptSnapshotSchema.parse(
+      JSON.parse(state.draft_reference_json),
+    )
+    const laboratoryService = state.draft_service_snapshot_json === null
+      ? undefined
+      : laboratoryServiceSnapshotSchema.parse(JSON.parse(state.draft_service_snapshot_json))
+    const now = this.#virtualTime(input.context)
+    if (laboratoryService !== undefined) {
+      this.#assertAdultLaboratoryServiceApplicable(
+        input.context,
+        outpatientCase.patient_id,
+        laboratoryService,
+        now,
+      )
+    }
+    const { catalog, config: catalogConfig } = this.#laboratorySelectionFromSnapshot(
+      input.context,
+      state.draft_catalog_item_id,
+      referenceConcept,
+      state.draft_indication_code,
+      laboratoryService,
+    )
+    if (laboratoryService === undefined) {
+      this.#assertInvestigationGenerationSupported(
+        input.context,
         outpatientCase.case_id,
-        state.draft_catalog_item_id,
-      )
-      if (duplicate !== undefined) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_DUPLICATE',
-          'An active laboratory request already exists for this catalog item',
-        )
-      }
-      const referenceConcept = referenceConceptSnapshotSchema.parse(
-        JSON.parse(state.draft_reference_json),
-      )
-      const laboratoryService = state.draft_service_snapshot_json === null
-        ? undefined
-        : laboratoryServiceSnapshotSchema.parse(JSON.parse(state.draft_service_snapshot_json))
-      const now = this.#virtualTime(input.context)
-      if (laboratoryService !== undefined) {
-        this.#assertAdultLaboratoryServiceApplicable(
-          input.context,
-          outpatientCase.patient_id,
-          laboratoryService,
-          now,
-        )
-      }
-      const { catalog, config: catalogConfig } = this.#laboratorySelectionFromSnapshot(
-        input.context,
         state.draft_catalog_item_id,
         referenceConcept,
-        state.draft_indication_code,
-        laboratoryService,
       )
-      if (laboratoryService === undefined) {
-        this.#assertInvestigationGenerationSupported(
-          input.context,
-          outpatientCase.case_id,
-          state.draft_catalog_item_id,
-          referenceConcept,
-        )
-      } else {
-        this.#assertLaboratoryServiceGenerationSupported(
-          input.context,
-          outpatientCase.case_id,
-        )
-      }
-      if (!catalogConfig.allowedIndicationCodes.includes(state.draft_indication_code)) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
-      }
-      const allergyCodes = this.#patientAllergyCodes(input.context, outpatientCase.patient_id)
-      if (catalogConfig.contraindicatedAllergyCodes.some(code => allergyCodes.has(code))) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request is contraindicated')
-      }
-      const requestId = uuidv7()
-      const serviceRequestId = uuidv7()
-      const taskId = uuidv7()
-      const serviceRequest = transaction.fhir.create(input.context, {
-        resourceType: 'ServiceRequest',
-        id: serviceRequestId,
-        status: 'active',
-        intent: 'order',
-        code: {
-          concept: {
-            coding: laboratoryServiceCodings(catalog, catalogConfig),
-            text: catalog.name_zh,
-          },
+    } else {
+      this.#assertLaboratoryServiceGenerationSupported(
+        input.context,
+        outpatientCase.case_id,
+      )
+    }
+    if (!catalogConfig.allowedIndicationCodes.includes(state.draft_indication_code)) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The indication is not allowed for this laboratory request')
+    }
+    const allergyCodes = this.#patientAllergyCodes(input.context, outpatientCase.patient_id)
+    if (catalogConfig.contraindicatedAllergyCodes.some(code => allergyCodes.has(code))) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The laboratory request is contraindicated')
+    }
+    const requestId = uuidv7()
+    const serviceRequestId = uuidv7()
+    const taskId = uuidv7()
+    const serviceRequest = transaction.fhir.create(input.context, {
+      resourceType: 'ServiceRequest',
+      id: serviceRequestId,
+      status: 'active',
+      intent: 'order',
+      code: {
+        concept: {
+          coding: laboratoryServiceCodings(catalog, catalogConfig),
+          text: catalog.name_zh,
         },
-        subject: { reference: `Patient/${outpatientCase.patient_id}` },
-        encounter: { reference: `Encounter/${input.encounterId}` },
-        authoredOn: now,
-        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-        reason: [{
-          concept: {
-            coding: [{
-              code: state.draft_indication_code,
-              system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-indication',
-            }],
-          },
-        }],
-      })
-      const task = transaction.fhir.create(input.context, {
-        resourceType: 'Task',
-        id: taskId,
-        status: 'requested',
-        intent: 'order',
-        code: {
+      },
+      subject: { reference: `Patient/${outpatientCase.patient_id}` },
+      encounter: { reference: `Encounter/${input.encounterId}` },
+      authoredOn: now,
+      requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+      reason: [{
+        concept: {
           coding: [{
-            code: 'laboratory-request-execution',
-            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/task-kind',
+            code: state.draft_indication_code,
+            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-indication',
           }],
-          text: `${catalog.name_zh}执行`,
         },
-        focus: { reference: `ServiceRequest/${serviceRequestId}` },
-        for: { reference: `Patient/${outpatientCase.patient_id}` },
-        encounter: { reference: `Encounter/${input.encounterId}` },
-        authoredOn: now,
-        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-        owner: { reference: 'Organization/organization-clinmesh' },
-      })
-      this.#database.driver.prepare(`
-        INSERT INTO laboratory_request (
-          workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id,
-          reference_json, service_snapshot_json, indication_code,
-          service_request_id, execution_task_id, status, version, authored_by, authored_at
-        ) VALUES (?, ?, ?, ?, 'laboratory', ?, ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        requestId,
-        outpatientCase.case_id,
-        state.draft_catalog_item_id,
-        JSON.stringify(referenceConcept),
-        laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
-        state.draft_indication_code,
-        serviceRequestId,
-        taskId,
-        input.context.practitionerId ?? input.context.actorId,
-        now,
-      )
-      const draftVersion = state.version + 1
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request_state
-        SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
-          draft_reference_json = NULL, draft_service_snapshot_json = NULL,
-          updated_by = ?, updated_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
-      `).run(
-        draftVersion,
-        input.context.actorId,
-        now,
-        input.context.workspaceId,
-        input.context.epoch,
-        outpatientCase.case_id,
-        state.version,
-      )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request draft version has changed',
-        )
-      }
-      transaction.enqueue({
-        dedupKey: `laboratory-request:${requestId}:accept`,
-        kind: 'laboratory.accept-request',
-        payload: { requestId },
-      })
-      return {
-        data: {
-          caseId: outpatientCase.case_id,
-          draftVersion,
-          request: {
-            catalogItemId: state.draft_catalog_item_id,
-            id: requestId,
-            indicationCode: state.draft_indication_code,
-            previousReports: [],
-            ...(laboratoryService === undefined ? {} : { laboratoryService }),
-            referenceConcept,
-            serviceRequestId,
-            serviceRequestVersion: serviceRequest.meta?.versionId ?? '1',
-            status: 'issued' as const,
-            taskId,
-            taskVersion: task.meta?.versionId ?? '1',
-            version: 1,
-          },
-        },
-        effects: [serviceRequest, task].map(resource => ({
-          kind: 'created' as const,
-          reference: `${resource.resourceType}/${resource.id}`,
-          versionId: resource.meta?.versionId ?? '1',
-        })),
-      }
+      }],
     })
+    const task = transaction.fhir.create(input.context, {
+      resourceType: 'Task',
+      id: taskId,
+      status: 'requested',
+      intent: 'order',
+      code: {
+        coding: [{
+          code: 'laboratory-request-execution',
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/task-kind',
+        }],
+        text: `${catalog.name_zh}执行`,
+      },
+      focus: { reference: `ServiceRequest/${serviceRequestId}` },
+      for: { reference: `Patient/${outpatientCase.patient_id}` },
+      encounter: { reference: `Encounter/${input.encounterId}` },
+      authoredOn: now,
+      requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+      owner: { reference: 'Organization/organization-clinmesh' },
+    })
+    this.#database.driver.prepare(`
+      INSERT INTO laboratory_request (
+        workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id,
+        reference_json, service_snapshot_json, indication_code,
+        service_request_id, execution_task_id, status, version, authored_by, authored_at
+      ) VALUES (?, ?, ?, ?, 'laboratory', ?, ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
+    `).run(
+      input.context.workspaceId,
+      input.context.epoch,
+      requestId,
+      outpatientCase.case_id,
+      state.draft_catalog_item_id,
+      JSON.stringify(referenceConcept),
+      laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
+      state.draft_indication_code,
+      serviceRequestId,
+      taskId,
+      input.context.practitionerId ?? input.context.actorId,
+      now,
+    )
+    const draftVersion = state.version + 1
+    const update = this.#database.driver.prepare(`
+      UPDATE laboratory_request_state
+      SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
+        draft_reference_json = NULL, draft_service_snapshot_json = NULL,
+        updated_by = ?, updated_at = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
+    `).run(
+      draftVersion,
+      input.context.actorId,
+      now,
+      input.context.workspaceId,
+      input.context.epoch,
+      outpatientCase.case_id,
+      state.version,
+    )
+    if (update.changes !== 1) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        'The laboratory request draft version has changed',
+      )
+    }
+    transaction.enqueue({
+      dedupKey: `laboratory-request:${requestId}:accept`,
+      kind: 'laboratory.accept-request',
+      payload: { requestId },
+    })
+    return {
+      data: {
+        caseId: outpatientCase.case_id,
+        draftVersion,
+        request: {
+          catalogItemId: state.draft_catalog_item_id,
+          id: requestId,
+          indicationCode: state.draft_indication_code,
+          previousReports: [],
+          ...(laboratoryService === undefined ? {} : { laboratoryService }),
+          referenceConcept,
+          serviceRequestId,
+          serviceRequestVersion: serviceRequest.meta?.versionId ?? '1',
+          status: 'issued' as const,
+          taskId,
+          taskVersion: task.meta?.versionId ?? '1',
+          version: 1,
+        },
+      },
+      effects: [serviceRequest, task].map(resource => ({
+        kind: 'created' as const,
+        reference: `${resource.resourceType}/${resource.id}`,
+        versionId: resource.meta?.versionId ?? '1',
+      })),
+    }
   }
 
   cancelLaboratoryRequest(input: {
@@ -10286,6 +10346,7 @@ export class WorkflowService {
           )
       return {
         catalogItemId: request.catalog_item_id,
+        authoredAt: serviceRequest.authoredOn,
         id: request.request_id,
         indicationCode: request.indication_code,
         ...(request.generation_error_code === null || request.generation_error_message === null

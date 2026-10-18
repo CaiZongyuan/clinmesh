@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
-import type { DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
+import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -86,12 +86,13 @@ function renderPage(element: React.JSX.Element) {
 }
 
 /** 像医生工作台一样由调用方持有阅片状态。 */
-function Page({ active = true, canCorrect = false, editDraft = false, onChanged, onInsertSummary, readOnly = false, selectedReportId, state }: {
+function Page({ active = true, canCorrect = false, editDraft = false, onChanged, onInsertSummary, onSelectRequest, readOnly = false, selectedReportId, state }: {
   active?: boolean
   editDraft?: boolean
   canCorrect?: boolean
   onChanged: ImagingPageActions['onChanged']
   onInsertSummary?: ImagingPageActions['onInsertSummary']
+  onSelectRequest?: ((requestId: string) => void) | undefined
   readOnly?: boolean
   selectedReportId?: string | undefined
   state: Parameters<typeof ImagingPage>[0]['state']
@@ -106,6 +107,7 @@ function Page({ active = true, canCorrect = false, editDraft = false, onChanged,
       editDraft={editDraft}
       encounter={{ id: 'encounter-1', versionId: '3' }}
       locale="zh-CN"
+      onSelectRequest={onSelectRequest}
       readOnly={readOnly}
       selectedReportId={selectedReportId}
       state={state}
@@ -142,26 +144,32 @@ describe('doctor imaging page', () => {
   })
   afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
-  it('shows recommendations outside the add dialog and adopts an available examination without issuing it', async () => {
-    const calls = stubFetch(({ path }) => {
+  it('confirms prepared imaging orders directly with the current draft version without writing a temporary draft', async () => {
+    const confirmations: unknown[] = []
+    const calls = stubFetch(({ path, body }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
+      if (path.endsWith('/actions/confirm')) {
+        confirmations.push(confirmDoctorPreparationRequestSchema.parse(body))
+        return Response.json(confirmDoctorPreparationResponseSchema.parse(commandResponse({ kind: 'imaging', draftVersion: 3, encounterVersion: '3', recordIds: ['request-new'] })))
+      }
       return Response.json(recommendations())
     })
-    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [request()] }} />)
-
-    expect(await screen.findByText('依据当前病例完善胸部检查。')).toBeTruthy()
+    const onChanged = vi.fn()
+    renderPage(<Page onChanged={onChanged} state={{ draftVersion: 2, requests: [request({ report })] }} />)
+    const panel = within(screen.getByRole('region', { name: '待开具放射检查' }))
+    await panel.findByRole('checkbox', { name: '选择胸部 CT 平扫' })
+    await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-1': '3' }, input: {
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-imaging-suggestion', kind: 'imaging', serviceId: ctService.id, indication: '持续咳嗽，需要医生核对检查指征。' }],
+    } }]))
+    expect(calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/imaging/actions/confirm'])
     expect(screen.queryByRole('dialog')).toBeNull()
-    await userEvent.setup().click(screen.getByRole('button', { name: /采纳/ }))
-    const editor = within(await screen.findByRole('dialog', { name: '追加申请' }))
-    expect((editor.getByLabelText('检查指征') as HTMLTextAreaElement).value)
-      .toBe('持续咳嗽，需要医生核对检查指征。')
-    expect(editor.getByText(ctService.applicability)).toBeTruthy()
-    expect(calls.every(call => call.method === 'GET')).toBe(true)
+    expect(onChanged).not.toHaveBeenCalled()
   })
 
-  it('preserves saved and unsaved request contents while suggestions are refreshed', async () => {
+  it('preserves saved and unsaved request contents in both the list and manual editor when suggestions refresh', async () => {
     let current = recommendations()
-    const calls = stubFetch(({ method, path }) => {
+    stubFetch(({ method, path }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
       if (method === 'POST' && path.endsWith('/actions/generate')) {
         current = recommendations({ generation: 2, items: [{ ...current.items[0]!, rationale: '重新核对后的检查建议。' }] })
@@ -175,105 +183,143 @@ describe('doctor imaging page', () => {
     const user = userEvent.setup()
     const indication = await screen.findByLabelText('检查指征')
     await user.type(indication, '继续手工核对。')
-    expect((await screen.findByRole('button', { name: /采纳/ })).hasAttribute('disabled')).toBe(true)
-    await user.click(screen.getByRole('button', { name: '刷新建议' }))
+    expect(screen.getByRole('region', { name: '待开具放射检查' }).textContent).toContain('已保存的医生检查指征。继续手工核对。')
+    await user.click(screen.getByRole('button', { name: '刷新' }))
+    await user.click(screen.getByRole('button', { name: '依据与说明' }))
     expect(await screen.findByText('重新核对后的检查建议。')).toBeTruthy()
-    expect((indication as HTMLTextAreaElement).value).toBe('已保存的医生检查指征。继续手工核对。')
-    expect(screen.getByRole('button', { name: /采纳/ }).hasAttribute('disabled')).toBe(true)
-    expect(calls.filter(call => call.method !== 'GET').map(call => call.path))
-      .toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/imaging/actions/generate'])
+    await user.keyboard('{Escape}')
+    expect((screen.getByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('已保存的医生检查指征。继续手工核对。')
   })
 
-  it('cannot adopt an examination that is unavailable in the hospital catalog', async () => {
+  it('cannot issue an examination that is unavailable in the hospital catalog', async () => {
     const state = recommendations()
     state.items = [{ ...state.items[0]!, kind: 'imaging', serviceId: radiographService.id,
       indication: '待核对的检查指征。', label: radiographService.name }]
     const calls = stubFetch(({ path }) => Response.json(path.endsWith('/imaging-services') ? services : state))
     renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [] }} />)
-    expect((await screen.findByRole('button', { name: '采纳 胸片' })).hasAttribute('disabled')).toBe(true)
+    expect((await screen.findByRole('button', { name: /^开具选中项目/ })).hasAttribute('disabled')).toBe(true)
     expect(screen.queryByLabelText('检查指征')).toBeNull()
     expect(calls.every(call => call.method === 'GET')).toBe(true)
   })
 
-  it.each(['inactive', 'read-only'] as const)('does not generate or expose adoptable suggestions for an %s page', async mode => {
+  it.each(['inactive', 'read-only'] as const)('does not generate or expose prepared orders for an %s page', async mode => {
     const calls = stubFetch(() => Response.json(services))
     renderPage(<Page active={mode !== 'inactive'} readOnly={mode === 'read-only'} onChanged={() => undefined}
       state={{ draftVersion: 0, requests: [] }} />)
-    expect(screen.queryByRole('region', { name: '放射检查建议' })).toBeNull()
-    expect(screen.queryByRole('button', { name: /采纳/ })).toBeNull()
+    expect(screen.queryByRole('region', { name: '待开具放射检查' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^开具选中项目/ })).toBeNull()
     expect(calls.some(call => call.path.includes('/recommendations/'))).toBe(false)
   })
 
-  it('opens a searchable catalog without selecting an examination or enabling issuance', async () => {
-    const calls = stubFetch(() => Response.json(services))
+  it('shows the catalog and selected request fields inline beside the pending list', async () => {
+    const calls = stubFetch(({ path }) => path.endsWith('/imaging-services') ? Response.json(services) : Response.json(recommendations({ items: [] })))
     const user = userEvent.setup()
     renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [] }} />)
-
+    expect(await screen.findByRole('textbox', { name: '搜索放射目录' })).toBeTruthy()
     const search = await screen.findByRole('textbox', { name: '搜索放射目录' })
     expect(screen.queryByLabelText('检查指征')).toBeNull()
-    expect((screen.getByRole('button', { name: '签发申请' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.queryByText('本次就诊暂无放射申请。')).toBeNull()
-    expect((screen.getByRole('button', { name: /胸片.*本院当前未开展/ }) as HTMLButtonElement).disabled).toBe(true)
-
+    expect(screen.queryByRole('button', { name: '签发申请' })).toBeNull()
+    expect(screen.getByRole('button', { name: /胸片.*本院当前未开展/ })).toHaveProperty('disabled', true)
     await user.type(search, 'CT')
     expect(screen.queryByRole('button', { name: /胸片.*本院当前未开展/ })).toBeNull()
     await user.click(screen.getByRole('button', { name: /胸部 CT 平扫.*平扫/ }))
     expect(screen.getByText(ctService.applicability)).toBeTruthy()
     await user.type(screen.getByLabelText('检查指征'), '咳嗽两周')
-    expect((screen.getByRole('button', { name: '签发申请' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('checkbox', { name: '选择胸部 CT 平扫' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^开具选中项目/ })).toHaveProperty('disabled', false)
     expect(calls.every(call => call.method === 'GET')).toBe(true)
   })
 
-  it('saves the edited draft before issuing it and lists services the hospital does not currently offer', async () => {
-    const calls = stubFetch(({ method, path }) => {
+  it('issues the edited manual draft through the unified list with its saved draft version', async () => {
+    const calls = stubFetch(({ path }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
-      if (method === 'PUT') return Response.json(commandResponse({ caseId: 'case-1', draftVersion: 3 }))
-      return Response.json(commandResponse({ caseId: 'case-1', draftVersion: 4, request: request({ status: 'issued', version: 1 }) }))
+      if (path.endsWith('/actions/confirm')) return Response.json(commandResponse({ kind: 'imaging', draftVersion: 3, encounterVersion: '3', recordIds: ['request-new'] }))
+      return Response.json(recommendations())
     })
-    const onChanged = vi.fn()
     const user = userEvent.setup()
-    renderPage(
-      <Page
-        onChanged={onChanged}
-        state={{ draft: { indication: '咳嗽', service: ctService }, draftVersion: 2, requests: [] }}
-      />,
-    )
-
+    const onSelectRequest = vi.fn()
+    renderPage(<Page onChanged={vi.fn()} onSelectRequest={onSelectRequest} state={{ draft: { indication: '咳嗽', service: ctService }, draftVersion: 2, requests: [] }} />)
     expect(await screen.findByText('胸片：本院当前未开展')).toBeTruthy()
     expect(screen.getByText('已保存草稿：胸部 CT 平扫')).toBeTruthy()
     const indication = screen.getByLabelText('检查指征')
     await user.clear(indication)
-    await user.type(indication, '咳嗽两周，排查肺部病变')
-    await user.click(screen.getByRole('button', { name: '签发申请' }))
-
-    await waitFor(() => expect(onChanged).toHaveBeenCalled())
-    expect(calls.filter(call => call.method !== 'GET')).toEqual([
-      {
-        body: {
-          expectedVersions: { 'Encounter/encounter-1': '3' },
-          input: { expectedDraftVersion: 2, indication: '咳嗽两周，排查肺部病变', serviceId: 'imaging-chest-ct-plain' },
-        },
-        method: 'PUT',
-        path: '/api/his/v1/encounters/encounter-1/imaging-request/draft',
-      },
-      {
-        // 签发使用保存后返回的草稿版本。
-        body: { expectedVersions: { 'Encounter/encounter-1': '3' }, input: { expectedDraftVersion: 3 } },
-        method: 'POST',
-        path: '/api/his/v1/encounters/encounter-1/imaging-request/actions/issue',
-      },
-    ])
+    await user.type(indication, '  咳嗽两周，排查肺部病变  ')
+    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
+    expect(calls.find(call => call.method !== 'GET')).toMatchObject({ method: 'POST',
+      path: '/api/his/v1/doctor/cases/case-1/recommendations/imaging/actions/confirm',
+      body: { expectedVersions: { 'Encounter/encounter-1': '3' }, input: { expectedDraftVersion: 2, resolveExistingDraft: true,
+        selections: [{ source: 'manual', kind: 'imaging', serviceId: ctService.id, indication: '咳嗽两周，排查肺部病变' }] } },
+    })
+    await waitFor(() => expect(onSelectRequest).toHaveBeenCalledWith('request-new'))
+    expect(screen.queryByLabelText('检查指征')).toBeNull()
   })
 
-  it('restores an existing request draft in the add dialog when requests already exist', async () => {
+  it('restores an existing request draft inline when requests already exist', async () => {
     stubFetch(() => Response.json(services))
     renderPage(<Page editDraft onChanged={() => undefined} state={{
       draft: { indication: '保存的检查指征', service: ctService }, draftVersion: 3, requests: [request({ report })],
     }} />)
 
-    const dialog = await screen.findByRole('dialog', { name: '追加申请' })
+    const dialog = await screen.findByRole('region', { name: '开具放射申请' })
     expect((await within(dialog).findByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('保存的检查指征')
     expect(within(dialog).getByText('已保存草稿：胸部 CT 平扫')).toBeTruthy()
+  })
+
+  it('synchronizes a list adjustment back to the manual editor and protects another saved draft', async () => {
+    stubFetch(({ path }) => path.endsWith('/imaging-services')
+      ? Response.json({ items: services.items.map(item => ({ ...item, available: true })) })
+      : Response.json(recommendations({ items: [] })))
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 2, requests: [], draft: { service: ctService, indication: '已保存的检查指征' } }} />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '调整' }))
+    const adjust = screen.getByRole('dialog', { name: '调整项目' })
+    const input = within(adjust).getByRole('textbox', { name: '检查目的' })
+    await user.clear(input)
+    await user.type(input, '医生在清单中补充的检查指征')
+    await user.click(within(adjust).getByRole('button', { name: '保留本次调整' }))
+    expect((await screen.findByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('医生在清单中补充的检查指征')
+    expect(screen.getByRole('button', { name: /胸片.*X 线摄影/ })).toHaveProperty('disabled', true)
+    expect(screen.getAllByRole('checkbox')).toHaveLength(1)
+  })
+
+  it('preserves an existing manual examination when another automatic examination is adjusted', async () => {
+    const calls = stubFetch(({ path }) => path.endsWith('/imaging-services')
+      ? Response.json({ items: services.items.map(item => ({ ...item, available: true })) })
+      : path.endsWith('/actions/confirm')
+        ? Response.json(commandResponse({ kind: 'imaging', draftVersion: 3, encounterVersion: '3', recordIds: ['manual-new', 'adjusted-new'] }))
+        : Response.json(recommendations()))
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 2, requests: [],
+      draft: { service: radiographService, indication: '医生已保存的胸片指征' } }} />)
+    const user = userEvent.setup()
+    await screen.findByRole('checkbox', { name: '选择胸部 CT 平扫' })
+    await user.click(screen.getAllByRole('button', { name: '调整' })[1]!)
+    const dialog = screen.getByRole('dialog', { name: '调整项目' })
+    const input = within(dialog).getByRole('textbox', { name: '检查目的' })
+    await user.clear(input)
+    await user.type(input, '医生补充的 CT 检查指征')
+    await user.click(within(dialog).getByRole('button', { name: '保留本次调整' }))
+    expect(screen.getByRole('checkbox', { name: '选择胸片' })).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择胸部 CT 平扫' })).toBeTruthy()
+    expect((await screen.findByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('医生已保存的胸片指征')
+    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
+    expect(calls.find(call => call.method !== 'GET')?.body).toMatchObject({ input: { selections: [
+      { source: 'manual', kind: 'imaging', serviceId: radiographService.id, indication: '医生已保存的胸片指征' },
+      { source: 'manual', kind: 'imaging', serviceId: ctService.id, indication: '医生补充的 CT 检查指征' },
+    ] } })
+  })
+
+  it('keeps a saved manual row visible with a retryable error when removing its draft fails', async () => {
+    stubFetch(({ method, path }) => path.endsWith('/imaging-services') ? Response.json(services)
+      : method === 'DELETE' ? Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic draft deletion failed' } }, { status: 409 })
+      : Response.json(recommendations({ items: [] })))
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 2, requests: [], draft: { service: ctService, indication: '需保留的人工检查指征' } }} />)
+    await userEvent.setup().click(await screen.findByRole('button', { name: '移除胸部 CT 平扫' }))
+    expect(await screen.findByText('草稿未移除')).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择胸部 CT 平扫' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '移除胸部 CT 平扫' })).toHaveProperty('disabled', false)
   })
 
   it('keeps a restored draft dialog closed while its category is inactive', async () => {
@@ -285,35 +331,31 @@ describe('doctor imaging page', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('defaults to request management and restores a saved draft only when adding is opened', async () => {
+  it('keeps the saved request fields beside the selected report without opening a dialog', async () => {
     stubFetch(() => Response.json(services))
-    const user = userEvent.setup()
     renderPage(<Page onChanged={() => undefined} state={{
       draft: { indication: '保存的检查指征', service: ctService }, draftVersion: 3, requests: [request({ report })],
     }} />)
 
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.getByText(report.impression)).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '追加申请' }))
-    const dialog = await screen.findByRole('dialog', { name: '追加申请' })
+    const dialog = await screen.findByRole('region', { name: '开具放射申请' })
     expect((await within(dialog).findByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('保存的检查指征')
   })
 
-  it('retains the selected examination and indication when issuance fails', async () => {
-    stubFetch(({ method, path }) => {
+  it('retains the selected examination and indication when unified issuance fails', async () => {
+    stubFetch(({ path }) => {
       if (path.endsWith('/imaging-services')) return Response.json(services)
-      if (method === 'PUT') return Response.json(commandResponse({ caseId: 'case-1', draftVersion: 1 }))
+      if (path.endsWith('/recommendations/imaging')) return Response.json(recommendations({ items: [] }))
       return Response.json({ error: { code: 'CATALOG_CONFLICT', message: 'The selected imaging service is no longer available' } }, { status: 409 })
     })
     const user = userEvent.setup()
     renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 0, requests: [] }} />)
-
     await user.click(await screen.findByRole('button', { name: /胸部 CT 平扫.*平扫/ }))
     await user.type(screen.getByLabelText('检查指征'), '咳嗽两周')
-    await user.click(screen.getByRole('button', { name: '签发申请' }))
-    expect(await screen.findByText('放射申请未提交')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
+    expect(await screen.findByText('更新或提交未完成，草稿已保留，可重试。')).toBeTruthy()
     expect((screen.getByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('咳嗽两周')
-    expect(screen.queryByRole('textbox', { name: '搜索申请' })).toBeNull()
     expect(screen.getByRole('button', { name: /胸部 CT 平扫.*平扫/ }).getAttribute('aria-pressed')).toBe('true')
   })
 
@@ -328,39 +370,29 @@ describe('doctor imaging page', () => {
     expect(await screen.findByText(report.impression)).toBeTruthy()
     expect(screen.getByText(/第 1 版/)).toBeTruthy()
     expect(screen.queryByText('胸片报告结论。')).toBeNull()
-    expect(screen.queryByRole('textbox', { name: '搜索放射目录' })).toBeNull()
+    expect(await screen.findByRole('textbox', { name: '搜索放射目录' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /胸片.*已报告/ }))
     expect(screen.getByText('胸片报告结论。')).toBeTruthy()
     expect(screen.queryByText(report.impression)).toBeNull()
   })
 
-  it('selects a newly issued request and closes the add dialog while retaining existing reports', async () => {
-    let persisted = [request({ report })]
-    stubFetch(({ method, path }) => {
-      if (path.endsWith('/imaging-services')) return Response.json({ items: services.items.map(item => ({ ...item, available: true })) })
-      if (path.endsWith('/recommendations/imaging')) return Response.json(recommendations({ items: [] }))
-      if (method === 'PUT') return Response.json(commandResponse({ caseId: 'case-1', draftVersion: 2 }))
-      const added = request({ id: 'request-2', service: radiographService, status: 'issued', version: 1 })
-      persisted = [...persisted, added]
-      return Response.json(commandResponse({ caseId: 'case-1', draftVersion: 3, request: added }))
-    })
-    function RequestsPage() {
-      const [requests, setRequests] = useState(persisted)
-      return <Page onChanged={() => setRequests(persisted)} state={{ draftVersion: 1, requests }} />
-    }
+  it('keeps manual additions and existing reports available when the Agent cannot load', async () => {
+    stubFetch(({ path }) => path.endsWith('/imaging-services') ? Response.json(services)
+      : path.endsWith('/actions/confirm') ? Response.json(commandResponse({ kind: 'imaging', draftVersion: 2, encounterVersion: '3', recordIds: ['new'] }))
+      : Response.json({ error: { code: 'AI_REQUEST_FAILED', message: 'Synthetic model unavailable' } }, { status: 503 }))
     const user = userEvent.setup()
-    renderPage(<RequestsPage />)
-
-    await user.click(screen.getByRole('button', { name: '追加申请' }))
-    const dialog = await screen.findByRole('dialog', { name: '追加申请' })
-    await user.click(await within(dialog).findByRole('button', { name: /胸片.*X 线摄影/ }))
-    await user.type(within(dialog).getByLabelText('检查指征'), '肺部病变随访')
-    await user.click(within(dialog).getByRole('button', { name: '签发申请' }))
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(screen.getByRole('button', { name: /胸片.*已开具/ }).getAttribute('aria-pressed')).toBe('true')
-    expect(within(screen.getByRole('region', { name: '放射申请详情' })).queryByText(report.impression)).toBeNull()
-    await user.click(screen.getByRole('button', { name: /胸部 CT 平扫.*已报告/ }))
-    expect(within(screen.getByRole('region', { name: '放射申请详情' })).getByText(report.impression)).toBeTruthy()
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 1, requests: [request({ report })] }} />)
+    expect(screen.getByText(report.impression)).toBeTruthy()
+    const search = await screen.findByRole('textbox', { name: '搜索放射目录' })
+    expect(screen.queryByRole('button', { name: /胸部 CT 平扫.*平扫/ })).toBeNull()
+    expect(screen.getByRole('button', { name: '展开目录' }).getAttribute('aria-expanded')).toBe('false')
+    await user.click(search)
+    await user.click(await screen.findByRole('button', { name: /胸部 CT 平扫.*平扫/ }))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '展开目录' }))
+    await user.type(screen.getByLabelText('检查指征'), '人工核对后排查肺部病变')
+    expect(screen.getByText(report.impression)).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
+    expect(await screen.findByText(/已完成开具/)).toBeTruthy()
   })
 
   it('keeps report history collapsed until navigation targets an earlier report version', async () => {

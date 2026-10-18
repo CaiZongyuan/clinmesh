@@ -3,9 +3,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
-import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
+import { persona, startConsultationCase } from '../../server/tests/fixtures/consultation.ts'
 import { test as base, expect } from './fixtures.ts'
-import { createRecommendationGuidelineDatabase, recommendationFixture } from './doctor-recommendations-fixture.ts'
+import { createRecommendationGuidelineDatabase, recommendationFixture, RecommendationSyntheaProvider } from './doctor-recommendations-fixture.ts'
 import { runRecommendationJourney } from './doctor-recommendations-journey.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 
@@ -17,7 +17,7 @@ const test = base.extend<{ recommendationCase: Awaited<ReturnType<typeof startCo
       const app = await startBrowserServer(webRoot, {
         activeReferenceReleaseId: 'investigation-e2e-v1', referenceDatabasePath,
         guidelineDatabasePath: createRecommendationGuidelineDatabase(directory),
-        patientPersonaModel: 'synthetic-persona', syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 30,
+        patientPersonaModel: 'synthetic-persona', syntheaProvider: new RecommendationSyntheaProvider(), autoDispatchIntervalMs: 30,
         chatCompletionsProvider: { completeJson: async input => ({ model: input.model,
           content: JSON.stringify(input.schemaName === 'patient_persona' ? persona : recommendationFixture(input)) }) },
       })
@@ -30,8 +30,13 @@ const test = base.extend<{ recommendationCase: Awaited<ReturnType<typeof startCo
   },
 })
 
-for (const width of [1280, 390]) test(`adopts verified suggestions only into drafts before doctor confirmation at ${width}px`, async ({ page, browserApp, recommendationCase }) => {
+for (const width of [1280, 390]) test(`prepares in the background and directly confirms or issues selected verified items at ${width}px`, async ({ page, browserApp, recommendationCase }) => {
   const errors: string[] = []
+  const preparedKinds = new Set<string>()
+  page.on('response', response => {
+    const match = /recommendations\/(diagnosis|laboratory|imaging|pathology|prescription)$/.exec(new URL(response.url()).pathname)
+    if (response.status() === 200 && match?.[1] !== undefined) preparedKinds.add(match[1])
+  })
   page.on('pageerror', error => errors.push(error.message))
   await page.setViewportSize({ width, height: 900 })
   await page.goto(`${browserApp.origin}/consultation`)
@@ -42,6 +47,7 @@ for (const width of [1280, 390]) test(`adopts verified suggestions only into dra
   if (width === 390) await page.getByRole('button', { name: '候诊患者', exact: true }).click()
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expect.poll(() => [...preparedKinds].sort()).toEqual(['diagnosis', 'imaging', 'laboratory', 'pathology', 'prescription'])
   await runRecommendationJourney({ page, read: async () => {
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${recommendationCase.outpatientCaseId}`)
     expect(response.status()).toBe(200)

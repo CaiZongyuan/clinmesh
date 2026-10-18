@@ -31,6 +31,8 @@
 
 ## 产品参考优先级
 
+- 诊疗目录是否展开及主要栏宽度按开具阶段区分，不能将开具后目录默认收起套到开具前；融合表单、待开具列表与正式记录的当前布局由[开具工作区决策](../../.agents/notes/implemented/architecture/2026-10-19-clinical-order-workspace.md)拥有。
+
 - 病历自动整理直接保存草稿，医生发现问题时自行编辑正文；Web/DSH 的字段、旧处理记录和签署汇总不展示任何待补充提示或“查看依据”入口，也不增加“已核实，保留”、确认保留、原因填写或逐条确认步骤。既有正式签署流程仍沿用文书合同；展示边界见[安静质控提示决策](../../.agents/notes/implemented/architecture/2026-10-18-quiet-document-quality-hints.md)。
 
 - Agent 操作反馈采用已确认的 A 方案“环绕柔光”；人工审阅、批准、拒绝和人工提交保持静态，不用这些阶段展示 Agent 动效。已接受的独立 HTML 保留作设计参考，后续补充要求优先于原型中的模拟行为。
@@ -41,6 +43,20 @@
 - Tairex 虚拟诊室研究只参考虚拟诊疗产品模式和体验；`references/DSH-AGUI-demo` 与其他 Agent 案例只参考 UI 和交互布局，不作为 HIS 业务事实来源。发生冲突时以 OpenHIS、Medplum、当前 ClinMesh owner 文档和可执行流程为准。
 
 ## 运行与验证边界
+
+- 独立 worktree 借用已有依赖进行检查时，pnpm 11 的依赖状态检查可能自动尝试安装。明确使用 `--config.verify-deps-before-run=false` 或现有锁定 runner，不能让它清理、安装或重写其他任务共用的 `node_modules`；构建与测试产物仍按任务隔离。
+
+- CI 中容器健康接口持续拒绝连接时，先核对启动进程是否已因依赖未就绪而退出；重试端口不能重新启动进程。容器依赖顺序与清理前保留日志见[Synthea 运行时决策](../../.agents/notes/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
+
+- 检查后台回填不会触发额外自动保存时，在触发回填前控制 Timeout，完成回填与渲染后推进整个保存窗口，并在 finally 恢复真实时钟；不能等定时器已排定才启用假时钟。用额外保存的故障校准保留否定断言的有效性，避免用固定墙钟等待挤占 CI 用例预算。
+
+- 排查检验字段改后又恢复旧值时，分别核对小型本院目录与完整 Reference 目录；小型目录未包含当前项目时，也要保留医生刚选的字段值，不能先取持久草稿盖回。统一字段与恢复归属见[清单决策](../../.agents/notes/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
+
+- jsdom 在 ShadowRoot 内切换原生 `hidden` 后可能保留旧的 computed style 缓存，造成已显示控件被无障碍查询误判隐藏。先用最小 DOM 复现确认；测试宿主属性更新可以刷新缓存，保留真实可访问性断言，不用修改生产显示逻辑或忽略隐藏状态规避。
+
+- 后台保存的 pending 只表示暂时不能提交，不应推进同病例编辑器的导航身份或卸载弹窗；否则诊断、处方等自动保存会丢失正在填写的临时内容。输入保留、隐藏挂载与成功回调归属见[统一清单决策](../../.agents/notes/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
+
+- 需要跨病例导航复用后台检查时，组件 ref 只能记录当前视图，不能拥有请求身份；身份元数据跟随 QueryClient，完整输入对应的任务由服务端持久化。输入相同的 saved/unsaved 入口共享执行所有权并保留各自版本绑定，不把“复制 pending 状态”当成任务复用；否则刷新或失效后可能留下永久处理中的副本。质控当前合同见[输入归属决策](../../.agents/notes/implemented/architecture/2026-10-15-doctor-document-quality-control.md)。
 
 - 排查未保存病历丢失时，分别验证同一工作台内切换病例与工作台卸载重建；不能仅凭没有点击保存就认定普通病例切换会丢失。保存提醒回归同时检查失败、恢复原文和保存后继续编辑，避免陈旧的“已保存”状态误导操作。工作稿归属与持久化边界由[系统架构](../architecture.md#81-门诊闭环)拥有。
 
@@ -388,6 +404,8 @@
 - 并发队列的定时器只启动空闲槽位，不要每个 tick 都创建等待全部通道的排空调用。慢通道会积累大量等待者，结束时集中唤醒并重复调度，短测可能正常、持续负载才出现峰值；使用假时钟和受控慢通道，断言释放后新增调度调用仍有界。手动排空可复用槽位内的在途任务，但每次调用仍须启动空闲槽位；全局合并排空调用会让新来源等待无关的慢通道。
 - 真实模型排障先通过当前宿主 resolve 核对本次 Provider、模型和实际端点，历史绑定或另一条路由的结果不能代表当前配置。OpenAI 兼容网关的 baseURL 使用其实际 API 根路径（常见为 /v1）；HTTP 200 可能是网页，静态模型目录与 SSE 保活也不能证明生成成功。用同一凭据和最小合成请求对照代理、直连及真实模型桥，分别记录 401、429、有效数据帧和正常终止，不用扩大超时掩盖配置错误或上游限流。
 - 实模返回 `AI_RESPONSE_INVALID` 时先保存安全的形状、未知编号、重复编号和完整读取标志计数，区分 JSON 形状失败与来源成员校验失败；不记录模型正文、凭据或完整医疗内容，不通过放宽引用校验让失败变为成功。记录级选择的运行合同由[对应决策](../../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)拥有。
+
+- 全仓测试因并发争用触发既有交互超时时，先用原断言及原超时串行复现；本机需要限制 Vitest worker 时可使用 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1 pnpm check`。Turbo 严格环境模式会过滤未声明的 `VITEST_MAX_WORKERS`，单独设置该变量不影响其子任务；可用 dry-run 的 envMode 确认实际传递，不通过扩大超时或跳过用例制造通过。
 
 - 用户要求自动记录保持安静：问诊栏不常驻“整理失败”，不重复堆叠每条来源的错误；未写入内容按需说明并保留恢复能力，不能把后台失败改成成功。实时病历质控只检查本次已提供资料，不主动装入全量既往病历；范围与取舍由[本次就诊输入及安静记录决策](../../.agents/notes/implemented/architecture/2026-10-18-current-encounter-quality-and-quiet-recording.md)拥有。
 

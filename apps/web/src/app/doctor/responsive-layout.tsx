@@ -76,12 +76,14 @@ export function DoctorCaseDetailRegion({ children, containerRef, labelledBy }: {
   return <section ref={containerRef} aria-labelledby={labelledBy} className="flex h-full min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden @max-[400px]/case-detail:gap-0">{children}</section>
 }
 
-export function DoctorCasePanel({ children, value }: {
+export function DoctorCasePanel({ children, keepMounted = false, value }: {
   children: ReactNode
   value: DoctorCaseSection
+  keepMounted?: boolean
 }) {
   return (
     <TabsContent
+      keepMounted={keepMounted}
       data-agent-section={value}
       value={value}
       className={cn('min-h-0 overflow-y-auto overscroll-contain p-4', value === 'consultation' && 'flex flex-col')}

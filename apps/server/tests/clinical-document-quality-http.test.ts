@@ -39,6 +39,7 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
         : input.schemaName === 'consultation_history_summary' ? { additions: [] }
           : input.schemaName === 'patient_dialogue_reply' ? { reply }
             : complete === undefined ? { issues: [], agentFactChecks: [] } : await complete(input)
+      if (payload instanceof Response) return payload
       return Response.json({ content: JSON.stringify(payload), model: input.model })
     } }),
   }
@@ -188,6 +189,128 @@ const qualityPayloadSchema = z.object({ document: z.record(z.string(), z.string(
   evidence: z.array(z.object({ id: z.string(), kind: z.string(), text: z.string() })),
   agentFacts: z.array(z.object({ id: z.string() })),
   issues: z.array(z.unknown()).optional() })
+
+it.each(['saved', 'candidate'] as const)('reuses a failed %s task until an explicit retry without new outbox work or model calls', async mode => {
+  let calls = 0
+  const f = await setup(() => {
+    calls += 1
+    return Response.json({ model: encodeModelRoute({ provider: 'synthetic', model: 'synthetic' }), content: '{invalid-json' })
+  })
+  const input = { expectedDraftVersion: 0, ...(mode === 'candidate' ? { clientId: 'stable-editor', clientRevision: 1,
+    document: { assessment: '', chiefComplaint: '头晕。', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '' } } : {}) }
+  expect((await f.mutate('check', input)).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const state = await f.read(mode === 'candidate' ? 'stable-editor' : undefined)
+  expect(state.status).toBe('failed')
+  const taskCount = () => z.object({ count: z.number() }).parse(f.runtime.database.driver.prepare(
+    "SELECT count(*) AS count FROM outbox_event WHERE kind = 'clinical-document.check-quality'").get()).count
+  const tasks = taskCount(), completedCalls = calls
+  expect(completedCalls).toBe(2)
+  expect((await f.mutate('check', input)).status).toBe(200)
+  expect((await f.read(mode === 'candidate' ? 'stable-editor' : undefined)).generation).toBe(state.generation)
+  await f.runtime.dispatchPending()
+  expect(taskCount()).toBe(tasks)
+  expect(calls).toBe(completedCalls)
+  expect((await f.mutate('check', { ...input, refresh: true })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read(mode === 'candidate' ? 'stable-editor' : undefined)).generation).toBe(state.generation + 1)
+  expect(taskCount()).toBe(tasks + 1)
+  expect(calls).toBe(completedCalls + 2)
+})
+
+it('reuses semantic quality when saving the same document only changes its draft version', async () => {
+  let calls = 0
+  const f = await setup(() => { calls += 1; return { issues: [], agentFactChecks: [] } })
+  expect((await f.save({ chiefComplaint: '头晕一天。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const before = await f.read(), completedCalls = calls
+  expect((await f.save({ chiefComplaint: '头晕一天。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).draftVersion).toBe(before.draftVersion + 1)
+  expect((await f.read()).generation).toBe(before.generation)
+  expect(calls).toBe(completedCalls)
+})
+
+it('shares one pending task between an unsaved candidate, its saved document and another client across restart', async () => {
+  let calls = 0
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>(resolve => { enter = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  const f = await setup(async () => { calls += 1; enter(); await held; return { issues: [], agentFactChecks: [] } })
+  const document = { assessment: '', chiefComplaint: '头晕一天。', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '' }
+  expect((await f.mutate('check', { expectedDraftVersion: 0, document, clientId: 'editor-a', clientRevision: 1 })).status).toBe(200)
+  const dispatch = f.runtime.dispatchPending()
+  await entered
+  try {
+    expect((await f.save(document)).status).toBe(200)
+    expect((await f.mutate('check', { expectedDraftVersion: 1, document, clientId: 'editor-b', clientRevision: 9 })).status).toBe(200)
+    expect((await f.read()).status).toBe('pending')
+    expect((await f.read('editor-a')).clientRevision).toBe(1)
+    expect((await f.read('editor-b')).clientRevision).toBe(9)
+  } finally { release() }
+  await dispatch
+  const tasks = z.object({ count: z.number() }).parse(f.runtime.database.driver.prepare(
+    "SELECT count(*) AS count FROM outbox_event WHERE kind = 'clinical-document.check-quality'").get()).count
+  expect(tasks).toBe(1)
+  expect(calls).toBe(1)
+  await f.restart()
+  for (const clientId of [undefined, 'editor-a', 'editor-b']) expect(await f.read(clientId)).toMatchObject({ status: 'ready', stale: false, draftVersion: 1 })
+  expect((await f.read('editor-a')).clientRevision).toBe(1)
+  expect((await f.read('editor-b')).clientRevision).toBe(9)
+})
+
+it('shares failure and explicit retry generations across aliases without navigation retries', async () => {
+  let calls = 0
+  const f = await setup(() => { calls += 1; return Response.json({ model: encodeModelRoute({ provider: 'synthetic', model: 'synthetic' }), content: '{invalid-json' }) })
+  const document = { assessment: '', chiefComplaint: '头晕一天。', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '' }
+  const input = { expectedDraftVersion: 0, document, clientId: 'editor-a', clientRevision: 1 }
+  expect((await f.mutate('check', input)).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.mutate('check', { ...input, clientId: 'editor-b', clientRevision: 9 })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(calls).toBe(2)
+  expect(await f.read('editor-b')).toMatchObject({ status: 'failed', generation: 1, clientRevision: 9 })
+  expect((await f.mutate('check', { ...input, refresh: true })).status).toBe(200)
+  expect(await f.read('editor-b')).toMatchObject({ status: 'pending', generation: 2, clientRevision: 9 })
+  expect((await f.mutate('check', { ...input, clientId: 'editor-b', clientRevision: 10 })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(calls).toBe(4)
+  expect(await f.read('editor-a')).toMatchObject({ status: 'failed', generation: 2, clientRevision: 1 })
+  expect(await f.read('editor-b')).toMatchObject({ status: 'failed', generation: 2, clientRevision: 10 })
+  await f.restart()
+  expect((await f.mutate('check', { ...input, clientId: 'editor-b', clientRevision: 10 })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(calls).toBe(4)
+  expect(z.object({ count: z.number() }).parse(f.runtime.database.driver.prepare(
+    "SELECT count(*) AS count FROM outbox_event WHERE kind = 'clinical-document.check-quality'").get()).count).toBe(2)
+})
+
+it('rejects a late canonical generation after another alias explicitly retries it', async () => {
+  let enter!: () => void
+  let release!: () => void
+  const entered = new Promise<void>(resolve => { enter = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  let calls = 0
+  const f = await setup(async input => {
+    calls += 1
+    if (calls === 1) { enter(); await held; return { issues: [], agentFactChecks: [] } }
+    if (input.schemaName === 'clinical_document_quality_verification') return { issues: [{ index: 0, supported: true }], agentFactChecks: [] }
+    return { issues: [{ kind: 'missing-field', field: 'chiefComplaint', message: '新的质控提示。', documentQuote: '头晕。', sourceQuotes: [],
+      explanation: { impact: '病程还需要核实。', suggestion: '核对现有主诉。' } }], agentFactChecks: [] }
+  })
+  const document = { assessment: '', chiefComplaint: '头晕。', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '' }
+  const input = { expectedDraftVersion: 0, document, clientId: 'editor-a', clientRevision: 1 }
+  expect((await f.mutate('check', input)).status).toBe(200)
+  const dispatch = f.runtime.dispatchPending()
+  await entered
+  try { expect((await f.mutate('check', { ...input, clientId: 'editor-b', clientRevision: 9, refresh: true })).status).toBe(200) }
+  finally { release() }
+  await dispatch
+  expect(calls).toBe(3)
+  for (const clientId of ['editor-a', 'editor-b']) expect(await f.read(clientId)).toMatchObject({ status: 'ready', generation: 2,
+    issues: expect.arrayContaining([expect.objectContaining({ message: '新的质控提示。' })]) })
+})
 
 async function qualityGrant(f: Awaited<ReturnType<typeof setup>>, operationId: string, ttlSeconds = 3600) {
   const headers = { cookie: f.started.adminCookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }
@@ -541,9 +664,30 @@ it('rejects fabricated source citations instead of publishing semantic claims', 
     sourceQuotes: [{ evidenceId: 'source-from-another-case', quote: '不存在的患者事实。' }] }], agentFactChecks: [] }))
   expect((await f.save({ chiefComplaint: '头晕。' })).status).toBe(200)
   await f.runtime.dispatchPending()
-  expect(await f.read()).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID' })
+  expect(await f.read()).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID', failure: { stage: 'generation', reason: 'invalid-source' } })
   expect((await f.read()).issues.some(issue => issue.kind === 'omission')).toBe(false)
   expect((await f.read()).issues.some(issue => issue.kind === 'missing-field')).toBe(true)
+})
+
+it.each(['invalid-json', 'invalid-shape', 'invalid-scope', 'invalid-coverage'] as const)('preserves the safe %s reason and stage after bounded correction fails', async reason => {
+  const calls: string[] = []
+  const f = await setup(input => {
+    calls.push(input.schemaName)
+    if (reason === 'invalid-json') return Response.json({ model: encodeModelRoute({ provider: 'synthetic', model: 'synthetic' }), content: '{private-invalid-json-body' })
+    if (reason === 'invalid-shape') return { issues: [] }
+    if (reason === 'invalid-coverage' && input.schemaName === 'clinical_document_quality_verification') return { issues: [], agentFactChecks: [] }
+    return { issues: [{ kind: 'missing-field', field: reason === 'invalid-scope' ? 'priorMedicalHistory' : 'chiefComplaint',
+      message: '需核对已知病史的持续时间。', documentQuote: '头晕。', sourceQuotes: [],
+      explanation: { impact: '记录未说明已知病程。', suggestion: '核对已有原文后记录。' } }], agentFactChecks: [] }
+  })
+  expect((await f.save({ chiefComplaint: '头晕。', priorMedicalHistory: '头晕。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID',
+    failure: { stage: reason === 'invalid-coverage' ? 'verification' : 'generation', reason } })
+  expect(calls).toHaveLength(reason === 'invalid-coverage' ? 3 : 2)
+  const returned = JSON.stringify(await f.read())
+  expect(returned).not.toContain('private-invalid-json-body')
+  expect(returned).not.toContain('SyntaxError')
 })
 
 it('summarizes pending quality before signing and does not invalidate the signing preview when quality completes', async () => {

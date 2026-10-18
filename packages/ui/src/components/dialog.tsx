@@ -48,11 +48,12 @@ function DialogOverlay({ className, ...props }: DialogPrimitive.Backdrop.Props) 
 function DialogContent({
   children,
   className,
+  keepMounted,
   showCloseButton = true,
   ...props
-}: DialogPrimitive.Popup.Props & { showCloseButton?: boolean }) {
+}: DialogPrimitive.Popup.Props & Pick<DialogPrimitive.Portal.Props, "keepMounted"> & { showCloseButton?: boolean }) {
   return (
-    <DialogPortal>
+    <DialogPortal keepMounted={keepMounted}>
       <DialogOverlay />
       <DialogPrimitive.Popup
         className={cn(

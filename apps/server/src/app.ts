@@ -108,7 +108,7 @@ import { SyntheticCaseVisitError } from './application/synthetic-case-visit-serv
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
 import type { DoctorRecommendationsService } from './application/doctor-recommendations-service.ts'
-import { doctorRecommendationKindSchema, generateDoctorRecommendationsRequestSchema } from '@clinmesh/contracts/doctor-recommendations'
+import { doctorRecommendationKindSchema, generateDoctorRecommendationsRequestSchema, confirmDoctorPreparationRequestSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { createCapabilityStatement } from './fhir/capabilities.ts'
 import { isSupportedResourceType } from './fhir/capabilities.ts'
 import {
@@ -1478,6 +1478,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         try {
           return context.json(await options.doctorRecommendations!.read(
             await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.parse(context.req.param('kind')),
+          ))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.post('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          return context.json(await options.doctorRecommendations!.confirm(
+            await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.parse(context.req.param('kind')),
+            confirmDoctorPreparationRequestSchema.parse(await context.req.json()), requestIdempotencyKey(context),
           ))
         } catch (error) { return apiErrorResponse(context, error) }
       })

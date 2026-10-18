@@ -332,41 +332,54 @@ export class PathologyRequestService {
         sourceProcedureReference: input.sourceProcedureReference,
       },
       operation: 'pathology-request.save-draft',
-    }, () => {
-      const outpatientCase = this.#caseForAction(input.context, input.encounterId)
-      this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const service = this.#activeService(input.context, input.serviceId)
-      const sourceProcedure = this.#selectableProcedure(input.sourceProcedures, service, input.sourceProcedureReference)
-      const current = this.#draft(input.context, outpatientCase.case_id)
-      if ((current?.version ?? 0) !== input.expectedDraftVersion) throw this.#draftConflict()
-      const draftVersion = input.expectedDraftVersion + 1
-      const now = this.#host.virtualTime(input.context)
-      if (current === undefined) {
-        this.#database.driver.prepare(`
-          INSERT INTO pathology_request_state (
-            workspace_id, epoch, case_id, version, draft_service_id, draft_purpose,
-            draft_service_snapshot_json, draft_source_procedure_json, updated_by, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          input.context.workspaceId,
-          input.context.epoch,
-          outpatientCase.case_id,
-          draftVersion,
-          service.id,
-          input.purpose,
-          JSON.stringify(service),
-          JSON.stringify(sourceProcedure),
-          input.context.actorId,
-          now,
-        )
-      } else {
-        this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
-          content: { purpose: input.purpose, service, sourceProcedure },
-          now,
-        })
-      }
-      return { data: { caseId: outpatientCase.case_id, draftVersion }, effects: [] }
-    })
+    }, transaction => this.applySaveDraft(transaction, input))
+  }
+
+  applySaveDraft(_transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    purpose: string
+    serviceId: string
+    sourceProcedureReference: string
+    /** 该病例可见来源病史中各项会诊当前可送检的手术；只在命令真正执行时使用。 */
+    sourceProcedures: ReadonlyMap<PathologyExamCode, PathologySourceProcedure[]>
+  }) {
+    const outpatientCase = this.#caseForAction(input.context, input.encounterId)
+    this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const service = this.#activeService(input.context, input.serviceId)
+    const sourceProcedure = this.#selectableProcedure(input.sourceProcedures, service, input.sourceProcedureReference)
+    const current = this.#draft(input.context, outpatientCase.case_id)
+    if ((current?.version ?? 0) !== input.expectedDraftVersion) throw this.#draftConflict()
+    const draftVersion = input.expectedDraftVersion + 1
+    const now = this.#host.virtualTime(input.context)
+    if (current === undefined) {
+      this.#database.driver.prepare(`
+        INSERT INTO pathology_request_state (
+          workspace_id, epoch, case_id, version, draft_service_id, draft_purpose,
+          draft_service_snapshot_json, draft_source_procedure_json, updated_by, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        input.context.workspaceId,
+        input.context.epoch,
+        outpatientCase.case_id,
+        draftVersion,
+        service.id,
+        input.purpose,
+        JSON.stringify(service),
+        JSON.stringify(sourceProcedure),
+        input.context.actorId,
+        now,
+      )
+    } else {
+      this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
+        content: { purpose: input.purpose, service, sourceProcedure },
+        now,
+      })
+    }
+    return { data: { caseId: outpatientCase.case_id, draftVersion }, effects: [] }
   }
 
   deleteDraft(input: {
@@ -383,32 +396,40 @@ export class PathologyRequestService {
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, expectedDraftVersion: input.expectedDraftVersion },
       operation: 'pathology-request.delete-draft',
-    }, () => {
-      const outpatientCase = this.#caseForAction(input.context, input.encounterId)
-      this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const current = this.#draft(input.context, outpatientCase.case_id)
-      if (current?.version !== input.expectedDraftVersion || current.draft_service_id === null) {
-        throw this.#draftConflict({
-          currentStatus: current === undefined ? 'missing' : current.draft_service_id === null ? 'empty' : 'draft',
-          ...(current === undefined ? {} : { currentVersion: String(current.version) }),
-          expectedVersion: String(input.expectedDraftVersion),
-          owner: 'pathology-request-draft',
-          resource: `PathologyRequestDraft/${outpatientCase.case_id}`,
-        })
-      }
-      this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
-        now: this.#host.virtualTime(input.context),
+    }, transaction => this.applyDeleteDraft(transaction, input))
+  }
+
+  applyDeleteDraft(_transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    const outpatientCase = this.#caseForAction(input.context, input.encounterId)
+    this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const current = this.#draft(input.context, outpatientCase.case_id)
+    if (current?.version !== input.expectedDraftVersion || current.draft_service_id === null) {
+      throw this.#draftConflict({
+        currentStatus: current === undefined ? 'missing' : current.draft_service_id === null ? 'empty' : 'draft',
+        ...(current === undefined ? {} : { currentVersion: String(current.version) }),
+        expectedVersion: String(input.expectedDraftVersion),
+        owner: 'pathology-request-draft',
+        resource: `PathologyRequestDraft/${outpatientCase.case_id}`,
       })
-      const draftVersion = current.version + 1
-      return {
-        data: { caseId: outpatientCase.case_id, draftVersion },
-        effects: [{
-          kind: 'updated' as const,
-          reference: `PathologyRequestDraft/${outpatientCase.case_id}`,
-          versionId: String(draftVersion),
-        }],
-      }
+    }
+    this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
+      now: this.#host.virtualTime(input.context),
     })
+    const draftVersion = current.version + 1
+    return {
+      data: { caseId: outpatientCase.case_id, draftVersion },
+      effects: [{
+        kind: 'updated' as const,
+        reference: `PathologyRequestDraft/${outpatientCase.case_id}`,
+        versionId: String(draftVersion),
+      }],
+    }
   }
 
   issue(input: {
@@ -429,135 +450,147 @@ export class PathologyRequestService {
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, expectedDraftVersion: input.expectedDraftVersion },
       operation: 'pathology-request.issue',
-    }, (transaction) => {
-      const outpatientCase = this.#caseForAction(input.context, input.encounterId)
-      this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const draft = this.#draft(input.context, outpatientCase.case_id)
-      if (draft?.version !== input.expectedDraftVersion
-        || draft.draft_service_id === null
-        || draft.draft_purpose === null
-        || draft.draft_service_snapshot_json === null
-        || draft.draft_source_procedure_json === null) {
-        throw this.#draftConflict()
-      }
-      // 开立使用草稿保存时冻结的服务定义；服务此后变更时要求重新保存草稿。
-      const service = pathologyServiceSnapshotSchema.parse(JSON.parse(draft.draft_service_snapshot_json))
-      if (JSON.stringify(this.#activeService(input.context, service.id)) !== JSON.stringify(service)) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The pathology service changed after the draft was saved')
-      }
-      if (!input.readyExamCodes.has(service.examCode)) {
-        throw new WorkflowError('CATALOG_CONFLICT', 'The pathology service is not currently offered')
-      }
-      // 开立时所选手术必须仍在病例的可见清单内并与服务相容；保存的是来源引用快照，不引用本院资源。
-      const sourceProcedure = this.#selectableProcedure(
-        input.sourceProcedures,
-        service,
-        pathologySourceProcedureSchema.parse(JSON.parse(draft.draft_source_procedure_json)).sourceReference,
+    }, transaction => this.applyIssue(transaction, input))
+  }
+
+  applyIssue(transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    /** 当前至少有一份已发布且已安装切片的会诊；本院未开展的服务不能开立。 */
+    readyExamCodes: ReadonlySet<PathologyExamCode>
+    /** 该病例可见来源病史中各项会诊当前可送检的手术；只在命令真正执行时使用。 */
+    sourceProcedures: ReadonlyMap<PathologyExamCode, PathologySourceProcedure[]>
+  }) {
+    const outpatientCase = this.#caseForAction(input.context, input.encounterId)
+    this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const draft = this.#draft(input.context, outpatientCase.case_id)
+    if (draft?.version !== input.expectedDraftVersion
+      || draft.draft_service_id === null
+      || draft.draft_purpose === null
+      || draft.draft_service_snapshot_json === null
+      || draft.draft_source_procedure_json === null) {
+      throw this.#draftConflict()
+    }
+    // 开立使用草稿保存时冻结的服务定义；服务此后变更时要求重新保存草稿。
+    const service = pathologyServiceSnapshotSchema.parse(JSON.parse(draft.draft_service_snapshot_json))
+    if (JSON.stringify(this.#activeService(input.context, service.id)) !== JSON.stringify(service)) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The pathology service changed after the draft was saved')
+    }
+    if (!input.readyExamCodes.has(service.examCode)) {
+      throw new WorkflowError('CATALOG_CONFLICT', 'The pathology service is not currently offered')
+    }
+    // 开立时所选手术必须仍在病例的可见清单内并与服务相容；保存的是来源引用快照，不引用本院资源。
+    const sourceProcedure = this.#selectableProcedure(
+      input.sourceProcedures,
+      service,
+      pathologySourceProcedureSchema.parse(JSON.parse(draft.draft_source_procedure_json)).sourceReference,
+    )
+    // 申请内核对同一病例的同一服务只允许一条进行中的申请；另一次既往手术的会诊在前一条出报告或取消后开立。
+    const duplicate = this.#database.driver.prepare(`
+      SELECT request_id FROM laboratory_request
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND catalog_item_id = ?
+        AND status IN ('issued', 'accepted', 'in-progress', 'generation-failed')
+    `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id, service.id)
+    if (duplicate !== undefined) {
+      throw new WorkflowError(
+        'PATHOLOGY_REQUEST_DUPLICATE',
+        'An active pathology consultation already exists for this service',
       )
-      // 申请内核对同一病例的同一服务只允许一条进行中的申请；另一次既往手术的会诊在前一条出报告或取消后开立。
-      const duplicate = this.#database.driver.prepare(`
-        SELECT request_id FROM laboratory_request
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND catalog_item_id = ?
-          AND status IN ('issued', 'accepted', 'in-progress', 'generation-failed')
-      `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id, service.id)
-      if (duplicate !== undefined) {
-        throw new WorkflowError(
-          'PATHOLOGY_REQUEST_DUPLICATE',
-          'An active pathology consultation already exists for this service',
-        )
-      }
-      const now = this.#host.virtualTime(input.context)
-      const requestId = uuidv7()
-      const serviceRequest = transaction.fhir.create(input.context, {
-        resourceType: 'ServiceRequest',
-        id: uuidv7(),
-        status: 'active',
-        intent: 'order',
-        category: [{
-          coding: [{ code: 'SP', display: 'Surgical Pathology', system: 'http://terminology.hl7.org/CodeSystem/v2-0074' }],
-        }],
-        code: {
-          concept: {
-            coding: [{ code: service.code, display: service.name, system: pathologyServiceCodeSystem }],
-            text: service.name,
-          },
+    }
+    const now = this.#host.virtualTime(input.context)
+    const requestId = uuidv7()
+    const serviceRequest = transaction.fhir.create(input.context, {
+      resourceType: 'ServiceRequest',
+      id: uuidv7(),
+      status: 'active',
+      intent: 'order',
+      category: [{
+        coding: [{ code: 'SP', display: 'Surgical Pathology', system: 'http://terminology.hl7.org/CodeSystem/v2-0074' }],
+      }],
+      code: {
+        concept: {
+          coding: [{ code: service.code, display: service.name, system: pathologyServiceCodeSystem }],
+          text: service.name,
         },
-        subject: { reference: `Patient/${outpatientCase.patient_id}` },
-        encounter: { reference: `Encounter/${input.encounterId}` },
-        authoredOn: now,
-        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-        reason: [{ concept: { text: draft.draft_purpose } }],
-        // 送检标本来自既往来源手术；来源病史不是本院资源，这里只留文字说明。
-        note: [{
-          text: `送检既往手术：${sourceProcedure.display ?? sourceProcedure.code}（${sourceProcedure.performedAt.slice(0, 10)}）`,
-        }],
-      })
-      const task = transaction.fhir.create(input.context, {
-        resourceType: 'Task',
-        id: uuidv7(),
-        status: 'requested',
-        intent: 'order',
-        code: {
-          coding: [{
-            code: 'pathology-request-execution',
-            system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/task-kind',
-          }],
-          text: `${service.name}执行`,
-        },
-        focus: { reference: `ServiceRequest/${serviceRequest.id}` },
-        for: { reference: `Patient/${outpatientCase.patient_id}` },
-        encounter: { reference: `Encounter/${input.encounterId}` },
-        authoredOn: now,
-        requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
-        owner: { reference: 'Organization/organization-clinmesh' },
-      })
-      this.#database.driver.prepare(`
-        INSERT INTO laboratory_request (
-          workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id,
-          service_snapshot_json, indication_code, service_request_id, execution_task_id,
-          status, version, authored_by, authored_at
-        ) VALUES (?, ?, ?, ?, 'pathology', ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        requestId,
-        outpatientCase.case_id,
-        service.id,
-        JSON.stringify(service),
-        freeTextIndicationCode,
-        serviceRequest.id,
-        task.id,
-        input.context.practitionerId ?? input.context.actorId,
-        now,
-      )
-      this.#database.driver.prepare(`
-        INSERT INTO pathology_request_detail (
-          workspace_id, epoch, request_id, exam_code, purpose, source_procedure_reference, source_procedure_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        input.context.workspaceId,
-        input.context.epoch,
-        requestId,
-        service.examCode,
-        draft.draft_purpose,
-        sourceProcedure.sourceReference,
-        JSON.stringify(sourceProcedure),
-      )
-      this.#updateDraft(input.context, outpatientCase.case_id, draft.version, { now })
-      transaction.enqueue({
-        dedupKey: `pathology-request:${requestId}:accept`,
-        kind: 'pathology.accept-request',
-        payload: { requestId },
-      })
-      return {
-        data: {
-          caseId: outpatientCase.case_id,
-          draftVersion: draft.version + 1,
-          request: this.#projectedRequest(input.context, requestId),
-        },
-        effects: [serviceRequest, task].map(resourceEffect),
-      }
+      },
+      subject: { reference: `Patient/${outpatientCase.patient_id}` },
+      encounter: { reference: `Encounter/${input.encounterId}` },
+      authoredOn: now,
+      requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+      reason: [{ concept: { text: draft.draft_purpose } }],
+      // 送检标本来自既往来源手术；来源病史不是本院资源，这里只留文字说明。
+      note: [{
+        text: `送检既往手术：${sourceProcedure.display ?? sourceProcedure.code}（${sourceProcedure.performedAt.slice(0, 10)}）`,
+      }],
     })
+    const task = transaction.fhir.create(input.context, {
+      resourceType: 'Task',
+      id: uuidv7(),
+      status: 'requested',
+      intent: 'order',
+      code: {
+        coding: [{
+          code: 'pathology-request-execution',
+          system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/task-kind',
+        }],
+        text: `${service.name}执行`,
+      },
+      focus: { reference: `ServiceRequest/${serviceRequest.id}` },
+      for: { reference: `Patient/${outpatientCase.patient_id}` },
+      encounter: { reference: `Encounter/${input.encounterId}` },
+      authoredOn: now,
+      requester: { reference: `PractitionerRole/${input.context.practitionerRoleId}` },
+      owner: { reference: 'Organization/organization-clinmesh' },
+    })
+    this.#database.driver.prepare(`
+      INSERT INTO laboratory_request (
+        workspace_id, epoch, request_id, case_id, request_kind, catalog_item_id,
+        service_snapshot_json, indication_code, service_request_id, execution_task_id,
+        status, version, authored_by, authored_at
+      ) VALUES (?, ?, ?, ?, 'pathology', ?, ?, ?, ?, ?, 'issued', 1, ?, ?)
+    `).run(
+      input.context.workspaceId,
+      input.context.epoch,
+      requestId,
+      outpatientCase.case_id,
+      service.id,
+      JSON.stringify(service),
+      freeTextIndicationCode,
+      serviceRequest.id,
+      task.id,
+      input.context.practitionerId ?? input.context.actorId,
+      now,
+    )
+    this.#database.driver.prepare(`
+      INSERT INTO pathology_request_detail (
+        workspace_id, epoch, request_id, exam_code, purpose, source_procedure_reference, source_procedure_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.context.workspaceId,
+      input.context.epoch,
+      requestId,
+      service.examCode,
+      draft.draft_purpose,
+      sourceProcedure.sourceReference,
+      JSON.stringify(sourceProcedure),
+    )
+    this.#updateDraft(input.context, outpatientCase.case_id, draft.version, { now })
+    transaction.enqueue({
+      dedupKey: `pathology-request:${requestId}:accept`,
+      kind: 'pathology.accept-request',
+      payload: { requestId },
+    })
+    return {
+      data: {
+        caseId: outpatientCase.case_id,
+        draftVersion: draft.version + 1,
+        request: this.#projectedRequest(input.context, requestId),
+      },
+      effects: [serviceRequest, task].map(resourceEffect),
+    }
   }
 
   cancel(input: {
@@ -1218,6 +1251,7 @@ export class PathologyRequestService {
       ? []
       : this.#reportVersions(context, request, request.diagnostic_report_id)
     return pathologyRequestSchema.parse({
+      authoredAt: serviceRequest.authoredOn,
       ...(request.generation_error_code === null || request.generation_error_message === null
         ? {}
         : { generationError: { code: request.generation_error_code, message: request.generation_error_message } }),

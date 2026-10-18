@@ -47,8 +47,11 @@ import {
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
+import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { useAutosave } from './use-autosave.ts'
+import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -182,6 +185,8 @@ export function PrescriptionPage({
   recommendationScope?: string
   referenceSearch: ReferenceCatalogSearches['medications']
 }): React.JSX.Element {
+  const preparationSubmitting = useDoctorPreparation()?.submitting('prescription') ?? false
+  const pending = actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending || preparationSubmitting
   const state = detail.medicationConclusion
   const prescription = state?.prescription
   const noMedicationConclusion = state?.noMedication
@@ -193,7 +198,6 @@ export function PrescriptionPage({
     && !hasActivePrescription && mode === 'prescription' && prescription === undefined
   const [dirty, setDirty] = useState(false)
   const [deleteDraftOpen, setDeleteDraftOpen] = useState(false)
-  const [issueOpen, setIssueOpen] = useState(false)
   const [noMedicationOpen, setNoMedicationOpen] = useState(false)
   const [replacementOpen, setReplacementOpen] = useState(false)
   const [recordSearch, setRecordSearch] = useState('')
@@ -232,15 +236,17 @@ export function PrescriptionPage({
   }, [actions.saveDraft.savedRevision, actions.saveDraft.success, currentRevision])
   const deletedCaseId = actions.deleteDraft.data?.caseId
   const deletedDraftVersion = actions.deleteDraft.data?.draftVersion
+  const finalRemovalRevisionRef = useRef<string | undefined>(undefined)
   const handledDeletionRef = useRef<{ caseId: string; draftVersion: number } | undefined>(undefined)
   useEffect(() => {
     if (deletedCaseId !== detail.caseId || deletedDraftVersion === undefined) return
     if (handledDeletionRef.current?.caseId === deletedCaseId && handledDeletionRef.current.draftVersion === deletedDraftVersion) return
     handledDeletionRef.current = { caseId: deletedCaseId, draftVersion: deletedDraftVersion }
-    if (dirty || (state?.draftVersion ?? 0) > deletedDraftVersion) return
+    if ((dirty && finalRemovalRevisionRef.current !== currentRevision) || (state?.draftVersion ?? 0) > deletedDraftVersion) return
+    finalRemovalRevisionRef.current = undefined
     setItems([])
     setDirty(false)
-  }, [deletedCaseId, deletedDraftVersion, detail.caseId, dirty, state?.draftVersion])
+  }, [currentRevision, deletedCaseId, deletedDraftVersion, detail.caseId, dirty, state?.draftVersion])
   const usedCatalogItemIds = new Set(items.map(item => item.catalogItemId))
   const canCombineWithCurrentItems = (
     candidate: PrescriptionMedicationCatalogItem,
@@ -251,7 +257,7 @@ export function PrescriptionPage({
     return selected?.allowedCombinationIds.includes(candidate.id) === true
       && candidate.allowedCombinationIds.includes(item.catalogItemId)
   })
-  const canAdoptRecommendation = (suggestion: DoctorRecommendationSuggestion) => {
+  const isRecommendationAvailable = (suggestion: DoctorRecommendationSuggestion) => {
     if (!canEditDraft || suggestion.kind !== 'prescription' || items.length >= 8
       || actions.issue.pending || actions.confirmNoMedication.pending || actions.deleteDraft.pending
       || usedCatalogItemIds.has(suggestion.catalogItemId)) return false
@@ -262,20 +268,6 @@ export function PrescriptionPage({
       && (suggestion.courseDays === null || medication.allowedCourseDays.includes(suggestion.courseDays))
       && (suggestion.quantity === null || medication.allowedQuantities.includes(suggestion.quantity))
   }
-  const adoptRecommendation = (suggestion: DoctorRecommendationSuggestion) => {
-    if (suggestion.kind !== 'prescription' || !canAdoptRecommendation(suggestion)) return
-    const key = globalThis.crypto.randomUUID()
-    setItems(current => [...current, {
-      catalogItemId: suggestion.catalogItemId,
-      courseDays: suggestion.courseDays,
-      doseText: suggestion.doseText ?? '',
-      frequencyCode: suggestion.frequencyCode ?? '',
-      key,
-      quantity: suggestion.quantity,
-    }])
-    setSelectedDraftKey(key)
-    setDirty(true)
-  }
   const medicationLine = (
     selection: MedicationCatalogSelection,
     key: string = globalThis.crypto.randomUUID(),
@@ -283,6 +275,7 @@ export function PrescriptionPage({
     ? createReferencePrescriptionDraftLine(selection.product, key)
     : createPrescriptionDraftLine(selection.medication, key)
   const addMedication = (selection: MedicationCatalogSelection) => {
+    if (!canEditDraft || pending) return
     const line = medicationLine(selection)
     if (items.length >= 8 || usedCatalogItemIds.has(line.catalogItemId)) return
     setItems(current => [...current, line])
@@ -290,16 +283,54 @@ export function PrescriptionPage({
     setDirty(true)
   }
   const replaceMedication = (index: number, selection: MedicationCatalogSelection) => {
+    if (!canEditDraft || pending) return
     setItems(current => current.map((item, itemIndex) => (
       itemIndex === index ? medicationLine(selection, item.key) : item
     )))
     setDirty(true)
   }
   const updateItem = (index: number, update: Partial<PrescriptionDraftLine>) => {
+    if (!canEditDraft || pending) return
     setItems(current => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, ...update } : item
     )))
     setDirty(true)
+  }
+  const changePreparedItem = ({ value }: ManualPreparedItem) => {
+    if (value.kind !== 'prescription' || !canEditDraft || pending) return false
+    setItems(current => {
+      const previous = current.find(item => item.catalogItemId === value.catalogItemId)
+      const line: PrescriptionDraftLine = {
+        catalogItemId: value.catalogItemId, key: previous?.key ?? globalThis.crypto.randomUUID(),
+        courseDays: value.courseDays, doseText: value.doseText ?? '', frequencyCode: value.frequencyCode ?? '', quantity: value.quantity,
+        ...(value.referenceProduct === undefined ? {} : { referenceProduct: value.referenceProduct }),
+      }
+      return previous === undefined ? [...current, line] : current.map(item => item.key === previous.key ? line : item)
+    })
+    setDirty(true)
+    return true
+  }
+  const removeMedication = (catalogItemId: string) => {
+    if (!canEditDraft || pending) return
+    const remaining = items.filter(item => item.catalogItemId !== catalogItemId)
+    if (remaining.length === 0 && state?.draft !== undefined) {
+      finalRemovalRevisionRef.current = currentRevision
+      actions.deleteDraft.onSubmit()
+      return
+    }
+    setItems(remaining)
+    setDirty(true)
+  }
+  const removePreparedItem = (value: PreparationDraft) => {
+    if (value.kind === 'prescription') removeMedication(value.catalogItemId)
+  }
+  const consumePreparedItems = (values: PreparationDraft[]) => {
+    const remaining = items.filter(item => !values.some(value => value.kind === 'prescription'
+      && value.catalogItemId === item.catalogItemId && value.doseText === item.doseText
+      && value.frequencyCode === item.frequencyCode && value.courseDays === item.courseDays && value.quantity === item.quantity))
+    if (remaining.length === items.length) return
+    setItems(remaining)
+    setDirty(remaining.length > 0)
   }
   const canAddMedication = items.length < 8
   const invalidDraft = !draftValidation.success
@@ -308,7 +339,7 @@ export function PrescriptionPage({
   }
   useAutosave({
     delayMs: 800,
-    enabled: canEditDraft && dirty && !invalidDraft && !actions.saveDraft.pending && !actions.deleteDraft.pending,
+    enabled: canEditDraft && dirty && !invalidDraft && !pending,
     onSave: saveCurrentDraft,
     revision: `${state?.draftVersion ?? 0}:${currentRevision}`,
   })
@@ -331,6 +362,278 @@ export function PrescriptionPage({
     </div>
   )
 
+  const draftEditor = (
+    <FieldSet disabled={!canEditDraft || pending}>
+      <div className="flex min-w-0 flex-col gap-4">
+        <div className="min-w-0">
+          <MedicationCatalogPicker
+            active={!replacementOpen && !readOnly}
+            collapsible={prescription !== undefined}
+            disabled={!canEditDraft || !canAddMedication || pending}
+            excludedIds={usedCatalogItemIds}
+            localCatalog={catalog.filter(candidate => (
+              !usedCatalogItemIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
+            ))}
+            locale={locale}
+            onSelect={selection => { if (selection !== undefined) addMedication(selection) }}
+            search={referenceSearch}
+            selectedId={selectedDraft?.catalogItemId}
+          />
+        </div>
+        <section aria-label={locale === 'zh-CN' ? prescription === undefined ? '药品详情' : '填写药品' : prescription === undefined ? 'Medication details' : 'Enter medication'} className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
+          {items.length === 0 ? (
+            <Empty>
+              <EmptyHeader>
+                <EmptyTitle>{locale === 'zh-CN' ? '选择药品，填写用法' : 'Select medication and enter directions'}</EmptyTitle>
+                <EmptyDescription>{locale === 'zh-CN' ? '从药品目录选择具体产品与包装，加入同一张处方草稿。' : 'Choose a product and package from the catalog to add it to this prescription draft.'}</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <ToggleGroup
+              aria-label={locale === 'zh-CN' ? '已选药品' : 'Selected medications'}
+              className="flex w-full flex-wrap"
+              onValueChange={value => { if (value[0] !== undefined) setSelectedDraftKey(value[0]) }}
+              size="sm"
+              spacing={1}
+              value={selectedDraft === undefined ? [] : [selectedDraft.key]}
+              variant="outline"
+            >
+              {items.map(item => (
+                <ToggleGroupItem className="max-w-full whitespace-normal break-words" key={item.key} value={item.key}>
+                  {item.referenceProduct?.genericName
+                    ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
+                    ?? item.catalogItemId}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          )}
+          {items.map((item, index) => {
+            if (item.key !== selectedDraft?.key) return null
+            const invalidFields = new Set(draftValidation.success ? [] : draftValidation.error.issues.filter(issue => issue.path[1] === index).map(issue => issue.path[2]))
+            const suffix = index === 0 ? '' : ` ${index + 1}`
+            const selectedMedication = catalogById.get(item.catalogItemId)
+            const doseItems = selectedMedication?.allowedDoseTexts.map(value => ({ label: value, value })) ?? []
+            const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({ label: value, value })) ?? []
+            const courseItems = selectedMedication?.allowedCourseDays.map(value => ({
+              label: `${value} ${messages.days}`,
+              value: String(value),
+            })) ?? []
+            const quantityItems = selectedMedication?.allowedQuantities.map(value => ({
+              label: String(value),
+              value: String(value),
+            })) ?? []
+            const display = item.referenceProduct?.genericName
+              ?? (locale === 'zh-CN' ? selectedMedication?.nameZh : selectedMedication?.nameEn)
+              ?? item.catalogItemId
+            const replacementExcludedIds = new Set(
+              items.flatMap((candidate, candidateIndex) => (
+                candidateIndex === index ? [] : [candidate.catalogItemId]
+              )),
+            )
+            return (
+              <FieldSet
+                className="min-w-0 gap-4"
+                key={item.key}
+              >
+                <FieldLegend className="sr-only" variant="label">{messages.medication} {index + 1}</FieldLegend>
+                <div data-agent-medication-name="" className="min-w-0">
+                  <span className="min-w-0">
+                    <strong className="flex gap-1 break-words text-sm">
+                      <span aria-hidden="true">{index + 1}.</span>
+                      <span>{display}</span>
+                    </strong>
+                    {item.referenceProduct === undefined ? <span className="mt-1 block text-xs text-muted-foreground">{locale === 'zh-CN' ? '本院常用药' : 'Local common medication'}</span> : null}
+                  </span>
+                </div>
+                {item.referenceProduct === undefined ? null : <MedicationProductDetails locale={locale} product={item.referenceProduct} />}
+                <Separator />
+                <FieldGroup className="grid min-w-0 grid-cols-2 gap-3">
+                  <Field data-invalid={invalidFields.has('doseText')}>
+                    <FieldLabel htmlFor={`prescription-dose-${index}`}>{messages.dose}{suffix}</FieldLabel>
+                    {item.referenceProduct === undefined ? <WorkspaceSelect
+                      id={`prescription-dose-${index}`}
+                      items={doseItems}
+                      onValueChange={value => {
+                        if (value !== null) updateItem(index, { doseText: value })
+                      }}
+                      placeholder={messages.recommendationFieldPending}
+                      value={item.doseText || null}
+                    /> : <Input aria-invalid={invalidFields.has('doseText')} id={`prescription-dose-${index}`} maxLength={120} onChange={event => updateItem(index, { doseText: event.currentTarget.value })} value={item.doseText} />}
+                  </Field>
+                  <Field data-invalid={invalidFields.has('frequencyCode')}>
+                    <FieldLabel htmlFor={`prescription-frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel>
+                    {item.referenceProduct === undefined ? <WorkspaceSelect
+                      id={`prescription-frequency-${index}`}
+                      items={frequencyItems}
+                      onValueChange={value => {
+                        if (value !== null) updateItem(index, { frequencyCode: value })
+                      }}
+                      placeholder={messages.recommendationFieldPending}
+                      value={item.frequencyCode || null}
+                    /> : <Input aria-invalid={invalidFields.has('frequencyCode')} id={`prescription-frequency-${index}`} maxLength={32} onChange={event => updateItem(index, { frequencyCode: event.currentTarget.value })} value={item.frequencyCode} />}
+                  </Field>
+                  <Field data-invalid={invalidFields.has('courseDays')}>
+                    <FieldLabel htmlFor={`prescription-course-${index}`}>{messages.course}{suffix}</FieldLabel>
+                    {item.referenceProduct === undefined ? <WorkspaceSelect
+                      id={`prescription-course-${index}`}
+                      items={courseItems}
+                      onValueChange={value => {
+                        if (value !== null) updateItem(index, { courseDays: Number(value) })
+                      }}
+                      placeholder={messages.recommendationFieldPending}
+                      value={item.courseDays === null ? null : String(item.courseDays)}
+                    /> : <Input aria-invalid={invalidFields.has('courseDays')} id={`prescription-course-${index}`} max={30} min={1} onChange={event => updateItem(index, { courseDays: event.currentTarget.value === '' ? null : Number(event.currentTarget.value) })} step={1} type="number" value={item.courseDays ?? ''} />}
+                  </Field>
+                  <Field data-invalid={invalidFields.has('quantity')}>
+                    <FieldLabel htmlFor={`prescription-quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel>
+                    {item.referenceProduct === undefined ? <WorkspaceSelect
+                      id={`prescription-quantity-${index}`}
+                      items={quantityItems}
+                      onValueChange={value => {
+                        if (value !== null) updateItem(index, { quantity: Number(value) })
+                      }}
+                      placeholder={messages.recommendationFieldPending}
+                      value={item.quantity === null ? null : String(item.quantity)}
+                    /> : <Input aria-invalid={invalidFields.has('quantity')} id={`prescription-quantity-${index}`} max={1_000} min={1} onChange={event => updateItem(index, { quantity: event.currentTarget.value === '' ? null : Number(event.currentTarget.value) })} step={1} type="number" value={item.quantity ?? ''} />}
+                  </Field>
+                </FieldGroup>
+                {invalidFields.size === 0 ? null : <FieldError>{locale === 'zh-CN' ? '请填写剂量与频次，疗程为 1–30 天，数量为 1–1000 的整数。' : 'Enter dose and frequency. Course must be 1–30 days and quantity an integer from 1–1000.'}</FieldError>}
+                <div className="flex items-center justify-end gap-1 self-end">
+                  <MedicationCatalogDialog
+                    disabled={pending}
+                    excludedIds={replacementExcludedIds}
+                    localCatalog={catalog.filter(candidate => (
+                      candidate.id === item.catalogItemId
+                      || (!replacementExcludedIds.has(candidate.id)
+                        && canCombineWithCurrentItems(candidate, index))
+                    ))}
+                    locale={locale}
+                    mode="replace"
+                  onOpenChange={setReplacementOpen}
+                    onSelect={selection => replaceMedication(index, selection)}
+                    search={referenceSearch}
+                  />
+                  <Button
+                    disabled={pending}
+                    aria-label={`${messages.removeMedication}${suffix}`}
+                    onClick={() => removeMedication(item.catalogItemId)}
+                    size="icon-sm"
+                    title={`${messages.removeMedication}${suffix}`}
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Trash2Icon />
+                  </Button>
+                </div>
+              </FieldSet>
+            )
+          })}
+        </section>
+      </div>
+    </FieldSet>
+  )
+
+  const issuedSummary = prescription === undefined ? null : (
+    <div className="flex flex-col gap-3">
+      {readOnly || prescription.status === 'withdrawn' ? null : <DoctorRecordReviewNotice caseId={detail.caseId}
+        authoredAt={prescription.authoredAt} locale={locale} onReview={() => {
+          setRecordSearch(''); setSelectedRecordId(prescription.items[0]?.medicationRequestId)
+          requestAnimationFrame(() => { recordHeadingRef.current?.scrollIntoView({ block: 'nearest' }); recordHeadingRef.current?.focus() })
+        }} />}
+      <Alert>
+        {prescription.status === 'withdrawn'
+          ? <RotateCcwIcon aria-hidden="true" />
+          : <PillIcon aria-hidden="true" />}
+        <AlertTitle>
+          {prescription.status === 'signed'
+            ? messages.prescriptionIssued
+            : prescription.status === 'withdrawn'
+              ? messages.prescriptionWithdrawn
+              : prescriptionStatusLabel(prescription.status, messages)}
+        </AlertTitle>
+        <AlertDescription>
+          {messages.prescriptionNumber} {prescription.number} · {formatClinicalDateTime(prescription.authoredAt, locale)}
+        </AlertDescription>
+      </Alert>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-muted-foreground">{messages.prescriptionStatus}</span>
+          <Badge variant="secondary">{prescriptionStatusLabel(prescription.status, messages)}</Badge>
+        </div>
+        {allowWithdrawal
+          && (prescription.status === 'signed' || prescription.status === 'paid') ? (
+          <AlertDialog>
+            <AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" />}>
+              <RotateCcwIcon data-icon="inline-start" />{messages.withdrawPrescription}
+            </AlertDialogTrigger>
+            <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
+              <AlertDialogHeader>
+                <AlertDialogTitle>{messages.withdrawPrescriptionTitle}</AlertDialogTitle>
+                <AlertDialogDescription>{messages.withdrawPrescriptionDescription}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <dl className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <dt className="text-xs text-muted-foreground">{messages.prescriptionNumber}</dt>
+                  <dd className="mt-1 font-medium">{prescription.number}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">{messages.prescriptionStatus}</dt>
+                  <dd className="mt-1 font-medium">
+                    {prescriptionStatusLabel(prescription.status, messages)}
+                  </dd>
+                </div>
+              </dl>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={actions.withdraw.pending}
+                  onClick={actions.withdraw.onSubmit}
+                >
+                  <RotateCcwIcon data-icon="inline-start" />{messages.confirmWithdrawal}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
+      </div>
+      {prescription.status === 'withdrawn' ? (
+        <p className="text-xs text-muted-foreground">
+          {locale === 'zh-CN' ? '原处方明细保留，已支付记录不会自动退款。' : 'Original prescription details are retained. Payments are not automatically refunded.'}
+          {prescription.withdrawal === undefined ? null : ` · ${formatClinicalDateTime(prescription.withdrawal.withdrawnAt, locale)}`}
+        </p>
+      ) : (
+        <ol aria-label={locale === 'zh-CN' ? '处方进度' : 'Prescription progress'} className="grid min-w-0 grid-cols-3 gap-3 text-xs">
+          {(['signed', 'paid', 'dispensed'] as const).map((status, index) => {
+            const completed = ['signed', 'paid', 'dispensed'].indexOf(prescription.status) >= index
+            return (
+              <li className={cn('flex min-w-0 flex-col gap-1 border-t-2 pt-2', completed ? 'border-primary' : 'text-muted-foreground')} key={status}>
+                <span className="flex items-center gap-1">
+                  {completed ? <CheckIcon aria-hidden="true" className="size-3 shrink-0" /> : null}
+                  {status === 'signed'
+                    ? (locale === 'zh-CN' ? '开具' : 'Issuance')
+                    : status === 'paid'
+                      ? (locale === 'zh-CN' ? '缴费' : 'Payment')
+                      : (locale === 'zh-CN' ? '调剂' : 'Dispensing')}
+                </span>
+                {status === 'signed' ? <span>{formatClinicalDateTime(prescription.authoredAt, locale)}</span> : null}
+                {completed ? null : <span>{locale === 'zh-CN' ? '待完成' : 'Pending'}</span>}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {locale === 'zh-CN' ? `${prescription.items.length} 条药品医嘱 · 已开具处方不可直接编辑` : `${prescription.items.length} medication orders · Issued prescriptions are read only`}
+      </p>
+      {!allowWithdrawal || actions.withdraw.error === null ? null : (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(actions.withdraw.error, messages)}
+          title={getWorkspaceErrorTitle(actions.withdraw.error, messages, messages.operationFailed)}
+        />
+      )}
+    </div>
+  )
+
   return (
     <section
       aria-labelledby="medication-conclusion-heading"
@@ -344,105 +647,42 @@ export function PrescriptionPage({
         </h3>
       </div>
 
-      <DoctorRecommendationsPanel
-        canAdopt={canAdoptRecommendation}
-        caseId={detail.caseId}
-        enabled={canEditDraft}
-        inputRevision={recommendationRevision}
-        kind="prescription"
-        locale={locale}
-        onAdopt={adoptRecommendation}
-        scope={recommendationScope}
-      />
-
-      {prescription === undefined ? null : (
-        <div className="flex flex-col gap-3">
-          <Alert>
-            {prescription.status === 'withdrawn'
-              ? <RotateCcwIcon aria-hidden="true" />
-              : <PillIcon aria-hidden="true" />}
-            <AlertTitle>
-              {prescription.status === 'signed'
-                ? messages.prescriptionIssued
-                : prescription.status === 'withdrawn'
-                  ? messages.prescriptionWithdrawn
-                  : prescriptionStatusLabel(prescription.status, messages)}
-            </AlertTitle>
-            <AlertDescription>
-              {messages.prescriptionNumber} {prescription.number} · {formatClinicalDateTime(prescription.authoredAt, locale)}
-            </AlertDescription>
-          </Alert>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">{messages.prescriptionStatus}</span>
-              <Badge variant="secondary">{prescriptionStatusLabel(prescription.status, messages)}</Badge>
-            </div>
-            {allowWithdrawal
-              && (prescription.status === 'signed' || prescription.status === 'paid') ? (
-              <AlertDialog>
-                <AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" />}>
-                  <RotateCcwIcon data-icon="inline-start" />{messages.withdrawPrescription}
-                </AlertDialogTrigger>
-                <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{messages.withdrawPrescriptionTitle}</AlertDialogTitle>
-                    <AlertDialogDescription>{messages.withdrawPrescriptionDescription}</AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <dl className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <dt className="text-xs text-muted-foreground">{messages.prescriptionNumber}</dt>
-                      <dd className="mt-1 font-medium">{prescription.number}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-muted-foreground">{messages.prescriptionStatus}</dt>
-                      <dd className="mt-1 font-medium">
-                        {prescriptionStatusLabel(prescription.status, messages)}
-                      </dd>
-                    </div>
-                  </dl>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                    <AlertDialogAction
-                      disabled={actions.withdraw.pending}
-                      onClick={actions.withdraw.onSubmit}
-                    >
-                      <RotateCcwIcon data-icon="inline-start" />{messages.confirmWithdrawal}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            ) : null}
-          </div>
-          {prescription.status === 'withdrawn' ? (
-            <p className="text-xs text-muted-foreground">
-              {locale === 'zh-CN' ? '原处方明细保留，已支付记录不会自动退款。' : 'Original prescription details are retained. Payments are not automatically refunded.'}
-              {prescription.withdrawal === undefined ? null : ` · ${formatClinicalDateTime(prescription.withdrawal.withdrawnAt, locale)}`}
-            </p>
-          ) : (
-            <ol aria-label={locale === 'zh-CN' ? '处方进度' : 'Prescription progress'} className="grid min-w-0 grid-cols-3 gap-3 text-xs">
-              {(['signed', 'paid', 'dispensed'] as const).map((status, index) => {
-                const completed = ['signed', 'paid', 'dispensed'].indexOf(prescription.status) >= index
-                return (
-                  <li className={cn('flex min-w-0 flex-col gap-1 border-t-2 pt-2', completed ? 'border-primary' : 'text-muted-foreground')} key={status}>
-                    <span className="flex items-center gap-1">
-                      {completed ? <CheckIcon aria-hidden="true" className="size-3 shrink-0" /> : null}
-                      {status === 'signed'
-                        ? (locale === 'zh-CN' ? '开具' : 'Issuance')
-                        : status === 'paid'
-                          ? (locale === 'zh-CN' ? '缴费' : 'Payment')
-                          : (locale === 'zh-CN' ? '调剂' : 'Dispensing')}
-                    </span>
-                    {status === 'signed' ? <span>{formatClinicalDateTime(prescription.authoredAt, locale)}</span> : null}
-                    {completed ? null : <span>{locale === 'zh-CN' ? '待完成' : 'Pending'}</span>}
-                  </li>
-                )
-              })}
-            </ol>
-          )}
-          <p className="text-xs text-muted-foreground">
-            {locale === 'zh-CN' ? `${prescription.items.length} 条药品医嘱 · 已开具处方不可直接编辑` : `${prescription.items.length} medication orders · Issued prescriptions are read only`}
-          </p>
-          <div className="grid min-w-0 gap-4 @min-[640px]/case-content:grid-cols-[minmax(0,0.8fr)_minmax(0,1.5fr)]">
+      <DoctorOrderWorkspace
+        hasRecords={prescription !== undefined}
+        entry={readOnly || noMedicationConclusion !== undefined || mode !== 'prescription' ? null : <section aria-label={locale === 'zh-CN' ? '填写处方' : 'Enter prescription'} className="flex min-w-0 flex-col gap-3">
+          {hasActivePrescription ? <p className="text-xs text-muted-foreground">{locale === 'zh-CN'
+            ? '本次就诊已有有效处方；如需调整，请先按处方状态撤回。未开具项目仍保留在下方。'
+            : 'This encounter has an active prescription. Withdraw it according to its status before adjusting. Unissued items remain below.'}</p> : null}
+          {draftEditor}
+        </section>}
+        pending={
+          <DoctorRecommendationsPanel
+            caseId={detail.caseId}
+            enabled={!readOnly && noMedicationConclusion === undefined && mode === 'prescription'}
+            disabled={!canEditDraft || actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending}
+            inputRevision={recommendationRevision}
+            kind="prescription"
+            locale={locale}
+            issuedCatalogItemIds={new Set(prescription?.status === 'withdrawn' ? [] : prescription?.items.map(item => item.catalogItemId) ?? [])}
+            expectedDraftVersion={state?.draftVersion ?? 0}
+            encounter={detail.encounter}
+            resolveExistingDraft={state?.draft !== undefined}
+            onManualChange={changePreparedItem}
+            onManualRemove={removePreparedItem}
+            onConfirmed={consumePreparedItems}
+            manualItems={items.filter(item => !prescription?.items.some(record => record.catalogItemId === item.catalogItemId)).map(item => ({
+              label: item.referenceProduct?.genericName
+                ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
+                ?? item.catalogItemId,
+              value: { source: 'manual', kind: 'prescription', catalogItemId: item.catalogItemId,
+                doseText: item.doseText || null, frequencyCode: item.frequencyCode || null, courseDays: item.courseDays, quantity: item.quantity,
+                ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct }) },
+            } satisfies ManualPreparedItem))}
+            unavailableReason={suggestion => isRecommendationAvailable(suggestion) ? undefined : messages.recommendationRequestTargetUnavailable}
+            scope={recommendationScope}
+          />
+        }
+        records={prescription === undefined ? null : (
             <section aria-label={locale === 'zh-CN' ? '药品列表' : 'Medication list'} className={cn('min-w-0 flex-col gap-3 @min-[640px]/case-content:flex', selectedRecord === undefined ? 'flex' : 'hidden')}>
               <Input
                 aria-label={locale === 'zh-CN' ? '搜索处方药品' : 'Search prescription medications'}
@@ -480,6 +720,10 @@ export function PrescriptionPage({
                 </Button>
               ))}
             </section>
+        )}
+        details={prescription === undefined ? null : (
+          <div className="flex min-w-0 flex-col gap-4">
+            {issuedSummary}
             <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className={cn('min-w-0 flex-col gap-4 rounded-lg border p-4 @min-[640px]/case-content:flex', selectedRecord === undefined ? 'hidden' : 'flex')}>
               {selectedRecord === undefined ? (
                 <Empty>
@@ -517,14 +761,9 @@ export function PrescriptionPage({
               )}
             </section>
           </div>
-          {!allowWithdrawal || actions.withdraw.error === null ? null : (
-            <ErrorAlert
-              message={getWorkspaceErrorMessage(actions.withdraw.error, messages)}
-              title={getWorkspaceErrorTitle(actions.withdraw.error, messages, messages.operationFailed)}
-            />
-          )}
-        </div>
-      )}
+        )}
+      />
+
 
       {noMedicationConclusion === undefined ? null : (
         <Alert>
@@ -540,6 +779,7 @@ export function PrescriptionPage({
         <Field>
           <FieldLabel id="medication-conclusion-mode-label">{messages.medicationConclusionMode}</FieldLabel>
           <ToggleGroup
+            disabled={pending}
             aria-labelledby="medication-conclusion-mode-label"
             onValueChange={value => {
               const selectedMode = value[0]
@@ -561,180 +801,6 @@ export function PrescriptionPage({
       {canEditDraft ? (
           <div>
             <FieldGroup>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h4 className="text-sm font-semibold">{messages.prescription}</h4>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {locale === 'zh-CN' ? `${items.length} 条药品医嘱` : `${items.length} medication orders`}
-                  </p>
-                </div>
-              </div>
-              <div className="grid min-w-0 gap-4 @min-[640px]/case-content:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-                <div className="min-w-0">
-                  <MedicationCatalogPicker
-                    active={!replacementOpen}
-                    disabled={!canAddMedication}
-                    excludedIds={usedCatalogItemIds}
-                    localCatalog={catalog.filter(candidate => (
-                      !usedCatalogItemIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
-                    ))}
-                    locale={locale}
-                    onSelect={selection => { if (selection !== undefined) addMedication(selection) }}
-                    search={referenceSearch}
-                    selectedId={selectedDraft?.catalogItemId}
-                  />
-                </div>
-                <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
-                  {items.length === 0 ? (
-                    <Empty>
-                      <EmptyHeader>
-                        <EmptyTitle>{locale === 'zh-CN' ? '选择药品，填写用法' : 'Select medication and enter directions'}</EmptyTitle>
-                        <EmptyDescription>{locale === 'zh-CN' ? '从药品目录选择具体产品与包装，加入同一张处方草稿。' : 'Choose a product and package from the catalog to add it to this prescription draft.'}</EmptyDescription>
-                      </EmptyHeader>
-                    </Empty>
-                  ) : (
-                    <ToggleGroup
-                      aria-label={locale === 'zh-CN' ? '已选药品' : 'Selected medications'}
-                      className="flex w-full flex-wrap"
-                      onValueChange={value => { if (value[0] !== undefined) setSelectedDraftKey(value[0]) }}
-                      size="sm"
-                      spacing={1}
-                      value={selectedDraft === undefined ? [] : [selectedDraft.key]}
-                      variant="outline"
-                    >
-                      {items.map(item => (
-                        <ToggleGroupItem className="max-w-full whitespace-normal break-words" key={item.key} value={item.key}>
-                          {item.referenceProduct?.genericName
-                            ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
-                            ?? item.catalogItemId}
-                        </ToggleGroupItem>
-                      ))}
-                    </ToggleGroup>
-                  )}
-                  {items.map((item, index) => {
-                    if (item.key !== selectedDraft?.key) return null
-                    const invalidFields = new Set(draftValidation.success ? [] : draftValidation.error.issues.filter(issue => issue.path[1] === index).map(issue => issue.path[2]))
-                    const suffix = index === 0 ? '' : ` ${index + 1}`
-                    const selectedMedication = catalogById.get(item.catalogItemId)
-                    const doseItems = selectedMedication?.allowedDoseTexts.map(value => ({ label: value, value })) ?? []
-                    const frequencyItems = selectedMedication?.allowedFrequencyCodes.map(value => ({ label: value, value })) ?? []
-                    const courseItems = selectedMedication?.allowedCourseDays.map(value => ({
-                      label: `${value} ${messages.days}`,
-                      value: String(value),
-                    })) ?? []
-                    const quantityItems = selectedMedication?.allowedQuantities.map(value => ({
-                      label: String(value),
-                      value: String(value),
-                    })) ?? []
-                    const display = item.referenceProduct?.genericName
-                      ?? (locale === 'zh-CN' ? selectedMedication?.nameZh : selectedMedication?.nameEn)
-                      ?? item.catalogItemId
-                    const replacementExcludedIds = new Set(
-                      items.flatMap((candidate, candidateIndex) => (
-                        candidateIndex === index ? [] : [candidate.catalogItemId]
-                      )),
-                    )
-                    return (
-                      <FieldSet
-                        className="min-w-0 gap-4"
-                        key={item.key}
-                      >
-                        <FieldLegend className="sr-only" variant="label">{messages.medication} {index + 1}</FieldLegend>
-                        <div data-agent-medication-name="" className="min-w-0">
-                          <span className="min-w-0">
-                            <strong className="flex gap-1 break-words text-sm">
-                              <span aria-hidden="true">{index + 1}.</span>
-                              <span>{display}</span>
-                            </strong>
-                            {item.referenceProduct === undefined ? <span className="mt-1 block text-xs text-muted-foreground">{locale === 'zh-CN' ? '本院常用药' : 'Local common medication'}</span> : null}
-                          </span>
-                        </div>
-                        {item.referenceProduct === undefined ? null : <MedicationProductDetails locale={locale} product={item.referenceProduct} />}
-                        <Separator />
-                        <FieldGroup className="grid min-w-0 grid-cols-2 gap-3">
-                          <Field data-invalid={invalidFields.has('doseText')}>
-                            <FieldLabel htmlFor={`prescription-dose-${index}`}>{messages.dose}{suffix}</FieldLabel>
-                            {item.referenceProduct === undefined ? <WorkspaceSelect
-                              id={`prescription-dose-${index}`}
-                              items={doseItems}
-                              onValueChange={value => {
-                                if (value !== null) updateItem(index, { doseText: value })
-                              }}
-                              placeholder={messages.recommendationFieldPending}
-                              value={item.doseText || null}
-                            /> : <Input aria-invalid={invalidFields.has('doseText')} id={`prescription-dose-${index}`} maxLength={120} onChange={event => updateItem(index, { doseText: event.currentTarget.value })} value={item.doseText} />}
-                          </Field>
-                          <Field data-invalid={invalidFields.has('frequencyCode')}>
-                            <FieldLabel htmlFor={`prescription-frequency-${index}`}>{messages.frequency}{suffix}</FieldLabel>
-                            {item.referenceProduct === undefined ? <WorkspaceSelect
-                              id={`prescription-frequency-${index}`}
-                              items={frequencyItems}
-                              onValueChange={value => {
-                                if (value !== null) updateItem(index, { frequencyCode: value })
-                              }}
-                              placeholder={messages.recommendationFieldPending}
-                              value={item.frequencyCode || null}
-                            /> : <Input aria-invalid={invalidFields.has('frequencyCode')} id={`prescription-frequency-${index}`} maxLength={32} onChange={event => updateItem(index, { frequencyCode: event.currentTarget.value })} value={item.frequencyCode} />}
-                          </Field>
-                          <Field data-invalid={invalidFields.has('courseDays')}>
-                            <FieldLabel htmlFor={`prescription-course-${index}`}>{messages.course}{suffix}</FieldLabel>
-                            {item.referenceProduct === undefined ? <WorkspaceSelect
-                              id={`prescription-course-${index}`}
-                              items={courseItems}
-                              onValueChange={value => {
-                                if (value !== null) updateItem(index, { courseDays: Number(value) })
-                              }}
-                              placeholder={messages.recommendationFieldPending}
-                              value={item.courseDays === null ? null : String(item.courseDays)}
-                            /> : <Input aria-invalid={invalidFields.has('courseDays')} id={`prescription-course-${index}`} max={30} min={1} onChange={event => updateItem(index, { courseDays: event.currentTarget.value === '' ? null : Number(event.currentTarget.value) })} step={1} type="number" value={item.courseDays ?? ''} />}
-                          </Field>
-                          <Field data-invalid={invalidFields.has('quantity')}>
-                            <FieldLabel htmlFor={`prescription-quantity-${index}`}>{messages.quantity}{suffix}</FieldLabel>
-                            {item.referenceProduct === undefined ? <WorkspaceSelect
-                              id={`prescription-quantity-${index}`}
-                              items={quantityItems}
-                              onValueChange={value => {
-                                if (value !== null) updateItem(index, { quantity: Number(value) })
-                              }}
-                              placeholder={messages.recommendationFieldPending}
-                              value={item.quantity === null ? null : String(item.quantity)}
-                            /> : <Input aria-invalid={invalidFields.has('quantity')} id={`prescription-quantity-${index}`} max={1_000} min={1} onChange={event => updateItem(index, { quantity: event.currentTarget.value === '' ? null : Number(event.currentTarget.value) })} step={1} type="number" value={item.quantity ?? ''} />}
-                          </Field>
-                        </FieldGroup>
-                        {invalidFields.size === 0 ? null : <FieldError>{locale === 'zh-CN' ? '请填写剂量与频次，疗程为 1–30 天，数量为 1–1000 的整数。' : 'Enter dose and frequency. Course must be 1–30 days and quantity an integer from 1–1000.'}</FieldError>}
-                        <div className="flex items-center justify-end gap-1 self-end">
-                          <MedicationCatalogDialog
-                            excludedIds={replacementExcludedIds}
-                            localCatalog={catalog.filter(candidate => (
-                              candidate.id === item.catalogItemId
-                              || (!replacementExcludedIds.has(candidate.id)
-                                && canCombineWithCurrentItems(candidate, index))
-                            ))}
-                            locale={locale}
-                            mode="replace"
-                          onOpenChange={setReplacementOpen}
-                            onSelect={selection => replaceMedication(index, selection)}
-                            search={referenceSearch}
-                          />
-                          <Button
-                            aria-label={`${messages.removeMedication}${suffix}`}
-                            onClick={() => {
-                              setItems(current => current.filter((_, itemIndex) => itemIndex !== index))
-                              setDirty(true)
-                            }}
-                            size="icon-sm"
-                            title={`${messages.removeMedication}${suffix}`}
-                            type="button"
-                            variant="ghost"
-                          >
-                            <Trash2Icon />
-                          </Button>
-                        </div>
-                      </FieldSet>
-                    )
-                  })}
-                </section>
-              </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
                 {draftSaveFeedback}
                 {state?.draft === undefined ? null : (
@@ -788,61 +854,7 @@ export function PrescriptionPage({
                         </AlertDialogFooter>
                       </AlertDialogContent>
                     </AlertDialog>
-                    <AlertDialog onOpenChange={setIssueOpen} open={issueOpen}>
-                      <AlertDialogTrigger
-                        render={(
-                          <Button
-                            disabled={invalidDraft || dirty || actions.issue.pending || actions.saveDraft.pending}
-                            type="button"
-                          />
-                        )}
-                      >
-                        <PillIcon data-icon="inline-start" />{messages.issuePrescription}
-                      </AlertDialogTrigger>
-                      <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto sm:max-w-lg">
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            {locale === 'zh-CN' ? '确认正式开具处方' : 'Confirm prescription issuance'}
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            {locale === 'zh-CN'
-                              ? '正式开具后将创建药品请求，普通草稿不能继续覆盖。'
-                              : 'Issuance creates formal medication requests that an ordinary draft cannot overwrite.'}
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <ul className="divide-y border text-sm">
-                          {state.draft.items.map((draftItem) => {
-                            const medication = catalogById.get(draftItem.catalogItemId)
-                            return (
-                              <li className="flex flex-wrap items-center justify-between gap-3 px-3 py-2" key={draftItem.catalogItemId}>
-                                <span className="min-w-0 break-words font-medium">
-                                  {(locale === 'zh-CN' ? medication?.nameZh : medication?.nameEn)
-                                    ?? draftItem.referenceProduct?.genericName
-                                    ?? draftItem.catalogItemId}
-                                </span>
-                                <span className="text-muted-foreground">
-                                  {draftItem.doseText} · {draftItem.frequencyCode} · {draftItem.courseDays} {messages.days} · {messages.quantity} {draftItem.quantity}
-                                </span>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                          <AlertDialogCancel
-                            disabled={invalidDraft || dirty || actions.issue.pending || actions.saveDraft.pending}
-                            onClick={() => {
-                              setIssueOpen(false)
-                              queueMicrotask(actions.issue.onSubmit)
-                            }}
-                            variant="default"
-                          >
-                            <PillIcon data-icon="inline-start" />
-                            {locale === 'zh-CN' ? '确认开具' : 'Issue prescription'}
-                          </AlertDialogCancel>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+
                   </>
                 )}
               </div>

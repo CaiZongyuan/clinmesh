@@ -61,6 +61,11 @@ export async function runDocumentQualityJourney(input: {
       'inconsistency', 'missing-field', 'omission',
     ])
     expect((await read()).clinicalDocument?.draft).toEqual(saved)
+    const compact = page.locator('[data-document-quality-compact]')
+    await expect(compact.getByRole('button', { name: '体格检查的记录不一致，请核对。', exact: true })).toBeVisible()
+    await expect(page.getByText('影响', { exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: '依据与说明', exact: true }).click()
+    const explanation = page.getByRole('dialog', { name: '依据与说明', exact: true })
     await expect(page.getByRole('region', { name: '主诉质控提示', exact: true })).toHaveCount(0)
     const prior = page.getByRole('region', { name: '过敏史质控提示', exact: true })
     await expect(prior).toHaveCount(0)
@@ -76,6 +81,8 @@ export async function runDocumentQualityJourney(input: {
     await expect(prior.getByRole('button', { name: '已核实，保留', exact: true })).toHaveCount(0)
     await expect(prior.getByRole('button', { name: '确认保留', exact: true })).toHaveCount(0)
     await expect(prior.getByLabel('保留原因（选填）', { exact: true })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(explanation).toHaveCount(0)
     await page.getByLabel('评估', { exact: true }).fill('继续查明头晕原因。')
     await expect.poll(async () => (await current())?.issues.find(issue => issue.kind === 'omission')?.status).toBe('open')
     await page.getByLabel('过敏史', { exact: true }).fill('药物过敏情况仍待核实。')
@@ -90,13 +97,21 @@ export async function runDocumentQualityJourney(input: {
     if (input.agentDraft !== undefined) {
       const { version: _version, updatedAt: _updatedAt, ...savedDocument } = (await read()).clinicalDocument!.draft!
       await input.agentDraft({ ...document, ...savedDocument })
-      await expect.poll(async () => (await current())?.issues.some(issue => issue.kind === 'agent-source')).toBe(true)
+      // The native Tool saved the draft; reused results need no new unsaved-client POST.
+      await expect.poll(async () => {
+        const state = await input.quality()
+        return state.status === 'ready' && !state.stale && state.issues.some(issue => issue.kind === 'agent-source')
+      }).toBe(true)
+      await page.getByRole('button', { name: '依据与说明', exact: true }).click()
       await expect(page.getByRole('region', { name: '评估质控提示', exact: true })).toContainText('待核实')
+      await page.keyboard.press('Escape')
     }
     if (input.agentSign !== undefined) await input.agentSign()
     else await page.getByRole('button', { name: '签署病历', exact: true }).click()
     const dialog = page.getByRole('alertdialog', { name: '确认签署病历', exact: true })
     const summary = dialog.getByRole('region', { name: '签署前质控汇总', exact: true })
+    await expect(summary.getByText('处理建议', { exact: true })).toHaveCount(0)
+    await summary.locator('summary').filter({ hasText: '依据与说明' }).click()
     await expect(summary).toContainText('待核实')
     await expect(summary.getByText('待补充', { exact: true })).toHaveCount(0)
     await expect(summary.getByRole('button', { name: '查看依据', exact: true })).toHaveCount(0)

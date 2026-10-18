@@ -12,6 +12,7 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Field, FieldDescription, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Textarea } from '@clinmesh/ui/components/textarea'
@@ -24,13 +25,16 @@ import {
   FileSignatureIcon,
   RefreshCwIcon,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { ConsultationRecordingControls, ConsultationVerificationStatus, type ConsultationRecordingAction } from './consultation-recording-controls.tsx'
 import { ClinicalDocumentUpdateControl, type ClinicalDocumentUpdates } from './clinical-document-updates.tsx'
-import { DocumentQualityFieldIssues, DocumentQualitySignSummary, DocumentQualityStatus, useDocumentQualityControl, type DocumentQualityControl } from './document-quality-control.tsx'
+import {
+  DocumentQualityCompact, DocumentQualityDetails, DocumentQualitySignSummary, locateDocumentQualityIssue,
+  useDocumentQualityControl, type DocumentQualityControl, type QualityIssue,
+} from './document-quality-control.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -102,6 +106,8 @@ export function ClinicalDocumentPage({
   onDocumentChange,
   workingDocument,
   qualityScope,
+  quality: externalQuality,
+  onOpenQualityDetails,
 }: {
   actions: ClinicalDocumentPageActions
   allowRevision: boolean
@@ -113,13 +119,26 @@ export function ClinicalDocumentPage({
   onDocumentChange: (document: ClinicalDocumentContent) => void
   workingDocument: ClinicalDocumentContent
   qualityScope?: string | undefined
+  quality?: DocumentQualityControl | undefined
+  onOpenQualityDetails?: (() => void) | undefined
 }): React.JSX.Element | null {
   const signedDocuments = (detail.clinicalDocument?.signed ?? [])
     .toSorted((left, right) => right.revisionNumber - left.revisionNumber)
   const latestSignedDocument = signedDocuments[0]
   const [revisionPreview, setRevisionPreview] = useState<ClinicalDocumentRevisionInput>()
-  const quality = useDocumentQualityControl({ detail, document: workingDocument, scope: qualityScope,
-    enabled: signedDocuments.length === 0 && detail.encounter.status === 'in-progress' })
+  const internalQuality = useDocumentQualityControl({ detail, document: workingDocument, scope: qualityScope,
+    enabled: externalQuality === undefined && signedDocuments.length === 0 && detail.encounter.status === 'in-progress' })
+  const quality = externalQuality ?? internalQuality
+  const [explanationOpen, setExplanationOpen] = useState(false)
+  const root = useRef<HTMLElement>(null)
+  const pendingLocation = useRef<{ issue: QualityIssue; caseId: string; scope: string | undefined } | null>(null)
+  const explanationTitle = locale === 'zh-CN' ? '依据与说明' : 'Basis and details'
+  const locateIssue = (issue: QualityIssue) => {
+    if (explanationOpen) {
+      pendingLocation.current = { issue, caseId: detail.caseId, scope: qualityScope }
+      setExplanationOpen(false)
+    } else if (root.current !== null) locateDocumentQualityIssue(root.current, issue)
+  }
 
   if (
     signedDocuments.length === 0
@@ -137,15 +156,32 @@ export function ClinicalDocumentPage({
       aria-labelledby="structured-clinical-document-heading"
       className="flex flex-col gap-4"
       id={elementId}
+      ref={root}
       tabIndex={-1}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold" id="structured-clinical-document-heading">{messages.structuredClinicalDocument}</h3>
-        <ConsultationRecordingControls
-          recording={detail.consultationRecording} action={actions.controlRecording}
-          disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
-          messages={messages} />
+        <div className="flex flex-wrap items-center gap-2">
+          {signedDocuments.length > 0 ? null : <Button onClick={onOpenQualityDetails ?? (() => setExplanationOpen(true))}
+            size="sm" type="button" variant="ghost">{explanationTitle}</Button>}
+          <ConsultationRecordingControls
+            recording={detail.consultationRecording} action={actions.controlRecording}
+            disabled={signedDocuments.length > 0 || detail.encounter.status !== 'in-progress' || preparing}
+            messages={messages} />
+        </div>
       </div>
+      <Dialog onOpenChange={setExplanationOpen} onOpenChangeComplete={open => {
+        if (!open && pendingLocation.current !== null) {
+          const target = pendingLocation.current
+          if (root.current !== null && target.caseId === detail.caseId && target.scope === qualityScope) locateDocumentQualityIssue(root.current, target.issue)
+          pendingLocation.current = null
+        }
+      }} open={explanationOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader><DialogTitle>{explanationTitle}</DialogTitle></DialogHeader>
+          <div className="min-h-0 overflow-y-auto p-4"><DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={locateIssue} /></div>
+        </DialogContent>
+      </Dialog>
       <ConsultationVerificationStatus recording={detail.consultationRecording} messages={messages} />
       {actions.save?.error == null ? null : <ErrorAlert
         message={getWorkspaceErrorMessage(actions.save.error, messages)}
@@ -295,7 +331,7 @@ export function ClinicalDocumentPage({
           </Alert>}
           {actions.cancelSign?.error == null ? null : <ErrorAlert title={messages.operationFailed}
             message={getWorkspaceErrorMessage(actions.cancelSign.error, messages)} />}
-          <DocumentQualityStatus quality={quality} messages={messages} />
+          {externalQuality === undefined ? <DocumentQualityCompact quality={quality} messages={messages} locale={locale} onLocateIssue={locateIssue} /> : null}
           <form
             aria-label={messages.structuredClinicalDocument}
             className="flex flex-col gap-3"
@@ -311,8 +347,6 @@ export function ClinicalDocumentPage({
               messages={messages}
               onChange={onDocumentChange}
               updates={updates}
-              quality={quality}
-              locale={locale}
             />
             <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3">
               {actions.save?.hasUnsavedChanges ? <p role="status" className="mr-auto text-sm text-muted-foreground">
@@ -388,15 +422,13 @@ export function ClinicalDocumentPage({
   )
 }
 
-function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, updates, quality, locale }: {
+function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange, updates }: {
   content: ClinicalDocumentContent
   disabled: boolean
   idPrefix: string
   messages: ReturnType<typeof getWorkspaceMessages>
   onChange: (document: ClinicalDocumentContent) => void
   updates: ClinicalDocumentUpdates | undefined
-  quality: DocumentQualityControl
-  locale: WorkspaceLocale
 }): React.JSX.Element {
   const fields = [
     { field: 'chiefComplaint', label: messages.chiefComplaint, maxLength: 1_000, multiline: false },
@@ -453,7 +485,6 @@ function ClinicalRecordEditor({ content, disabled, idPrefix, messages, onChange,
             )}
             </ClinicalDocumentUpdateControl>
             {optional ? <FieldDescription>{messages.clinicalHistoryOptional}</FieldDescription> : null}
-            <DocumentQualityFieldIssues field={field} quality={quality} messages={messages} locale={locale} />
             </div>
           </Field>
         )

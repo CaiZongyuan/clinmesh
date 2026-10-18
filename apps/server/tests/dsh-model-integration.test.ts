@@ -10,6 +10,8 @@ import { encodeModelRoute, dshDefaultModel } from '@clinmesh/contracts/model-bri
 import { controlConsultationRecordingResponseSchema, doctorCaseDetailSchema, sendConsultationMessageResponseSchema } from '@clinmesh/contracts/his'
 import { createModelBridgeHandler } from '../../dsh-web/src/model-bridge.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
+import { StructuredOutputValidationError } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { clinicalDocumentQualityGenerationSchema } from '@clinmesh/contracts/his'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import type { HistoryTurn } from '../src/application/consultation-history-summary.ts'
@@ -427,6 +429,43 @@ it('repairs structured output with validation feedback when the original deadlin
   expect(deadlines[1]).toBeGreaterThanOrEqual(100)
   expect(dsh.calls[1]?.system).toContain('invalid_type')
   expect(dsh.calls[1]?.system).toContain('reply')
+  expect(dsh.calls[1]?.messages).toEqual(dsh.calls[0]?.messages)
+})
+
+it.each(['plain', 'fenced'] as const)('accepts the host-supported %s JSON response for document quality without inventing native structured-output options', async format => {
+  const dsh = await host()
+  const output = { issues: [], agentFactChecks: [] }
+  dsh.respond(async () => format === 'plain' ? JSON.stringify(output) : `\`\`\`json\n${JSON.stringify(output)}\n\`\`\``)
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 1000, maxResponseBytes: 8192 })
+  const result = await provider.completeJson({ model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+    schemaName: 'clinical_document_quality', jsonSchema: z.toJSONSchema(clinicalDocumentQualityGenerationSchema), systemPrompt: '合成病历质控',
+    userPayload: { synthetic: true }, validate: value => { clinicalDocumentQualityGenerationSchema.parse(value); return true } })
+  expect(JSON.parse(result.content)).toEqual(output)
+  expect(dsh.calls).toHaveLength(1)
+  expect(dsh.calls[0]?.system).toContain('Return exactly one JSON data object')
+  expect(dsh.calls[0]).not.toHaveProperty('response_format')
+})
+
+it('returns safe document-quality citation feedback to the existing host within one bounded correction', async () => {
+  const dsh = await host()
+  dsh.respond(async () => ({ issues: [{ kind: 'omission', field: 'priorMedicalHistory', message: '合成已知事实待补充。',
+    explanation: { impact: '病历遗漏已知事实。', suggestion: '核对原话后补充。' },
+    sourceQuotes: [{ evidenceId: dsh.calls.length === 1 ? 'private-invalid-citation-token' : 'source-1', quote: '合成患者原话。' }],
+  }], agentFactChecks: [] }))
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 1000, maxResponseBytes: 8192 })
+  const result = await provider.completeJson({ model: encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' }),
+    schemaName: 'clinical_document_quality', jsonSchema: z.toJSONSchema(clinicalDocumentQualityGenerationSchema), systemPrompt: '合成病历质控',
+    userPayload: { evidence: [{ id: 'source-1', text: '合成患者原话。' }] }, validate: value => {
+      const parsed = clinicalDocumentQualityGenerationSchema.parse(value)
+      if (parsed.issues.some(issue => issue.sourceQuotes.some(quote => quote.evidenceId !== 'source-1'))) {
+        throw new StructuredOutputValidationError('quality_source', 'issues.sourceQuotes')
+      }
+      return true
+    } })
+  expect(clinicalDocumentQualityGenerationSchema.parse(JSON.parse(result.content)).issues[0]?.sourceQuotes[0]?.evidenceId).toBe('source-1')
+  expect(dsh.calls).toHaveLength(2)
+  expect(dsh.calls[1]?.system).toContain('quality_source')
+  expect(dsh.calls[1]?.system).not.toContain('private-invalid-citation-token')
   expect(dsh.calls[1]?.messages).toEqual(dsh.calls[0]?.messages)
 })
 

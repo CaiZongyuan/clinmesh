@@ -1156,6 +1156,11 @@ export const clinicalDocumentQualityControlStateSchema = z.object({
   notices: z.array(z.string().min(1).max(2_000)).max(12),
   checkedAt: z.string().optional(),
   errorCode: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT', 'AI_RESPONSE_INVALID', 'WORKFLOW_CONFLICT', 'INPUT_TOO_LARGE']).optional(),
+  failure: z.object({
+    stage: z.enum(['generation', 'verification']),
+    reason: z.enum(['invalid-json', 'invalid-shape', 'invalid-source', 'invalid-coverage', 'invalid-scope',
+      'authentication', 'timeout', 'input-limit', 'transport', 'unavailable']),
+  }).strict().optional(),
 }).strict()
 
 export const checkClinicalDocumentQualityRequestSchema = z.object({
@@ -1544,6 +1549,7 @@ export const correctLaboratoryReportResponseSchema = commandResponseSchema(z.obj
 }).strict())
 
 export const laboratoryRequestSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }).optional(),
   catalogItemId: laboratoryRequestCatalogItemIdSchema,
   generationError: z.object({
     code: z.string().min(1).max(128),
@@ -1599,6 +1605,7 @@ const completedCaseLaboratoryReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const completedCaseLaboratoryRequestSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }).optional(),
   catalogDisplay: z.string().min(1).optional(),
   catalogItemId: referenceDataItemIdSchema.optional(),
   correctionSupported: z.boolean().default(false),
@@ -1733,6 +1740,7 @@ export const imagingReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const imagingRequestSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }).optional(),
   generationError: z.object({
     code: z.string().min(1).max(128),
     message: z.string().min(1).max(1_000),
@@ -1860,6 +1868,7 @@ export const pathologyReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const pathologyRequestSchema = z.object({
+  authoredAt: z.iso.datetime({ offset: true }).optional(),
   generationError: z.object({
     code: z.string().min(1).max(128),
     message: z.string().min(1).max(1_000),

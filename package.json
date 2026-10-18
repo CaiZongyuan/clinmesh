@@ -55,7 +55,7 @@
     "clinmesh": "pnpm --filter @clinmesh/cli clinmesh",
     "lint": "oxlint apps packages scripts --deny-warnings",
     "test": "pnpm test:unit && pnpm test:browser && pnpm test:e2e",
-    "test:unit": "turbo run test --filter=!@clinmesh/mobile && vitest run scripts/dev-lan.spec.ts scripts/dev-dsh.spec.ts scripts/development-processes.spec.ts scripts/synthea-runtime.spec.ts scripts/dsh-upstreams.spec.ts scripts/dsh-upstreams-verify.spec.ts",
+    "test:unit": "turbo run test --filter=!@clinmesh/mobile && vitest run scripts/dev-lan.spec.ts scripts/dev-dsh.spec.ts scripts/development-processes.spec.ts scripts/synthea-runtime.spec.ts scripts/dsh-upstreams.spec.ts scripts/dsh-upstreams-verify.spec.ts scripts/dsh-model-output-metadata.spec.ts",
     "test:browser": "playwright test --project=contracts",
     "test:e2e": "playwright test --project=web",
     "verify:docs": "tsx scripts/verify-docs.ts",
