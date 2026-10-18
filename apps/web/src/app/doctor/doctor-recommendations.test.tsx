@@ -86,6 +86,54 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it('submits only physician items while automatic preparation is paused', async () => {
+    const current = state({ items: state().items.map(item => item.kind === 'diagnosis' ? { ...item, role: 'secondary' } : item) })
+    const calls = stubRequests(() => current)
+    mount(props({ encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [{ label: '医生主诊断',
+      value: { source: 'manual', kind: 'diagnosis', catalogItemId: 'manual-diagnosis', role: 'primary' } }] }), true)
+    const user = userEvent.setup(); await screen.findByText('发热，未特指')
+    await user.click(screen.getByRole('button', { name: '暂停自动准备' }))
+    expect(confirmButton()).toHaveProperty('disabled', false)
+    await user.click(confirmButton())
+    await waitFor(() => expect(calls.some(call => call.path.endsWith('/actions/confirm'))).toBe(true))
+    expect(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).toEqual({ expectedVersions: { 'Encounter/encounter-fever': '2' },
+      input: { expectedDraftVersion: 0, selections: [{ source: 'manual', kind: 'diagnosis', catalogItemId: 'manual-diagnosis', role: 'primary' }] } })
+  })
+  it('does not reveal the old automatic copy after a confirmed manual item is removed from its form', async () => {
+    const current = prescriptionState(); stubRequests(() => current)
+    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+    const initial = props({ kind: 'prescription', encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [{ label: '合成药品', value }], onManualChange: vi.fn(), onConfirmed: vi.fn() })
+    const mounted = mount(initial)
+    await screen.findByText('合成药品'); await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(initial.onConfirmed).toHaveBeenCalled())
+    mounted.rerenderPanel({ ...initial, manualItems: [] })
+    expect(screen.queryByRole('checkbox', { name: '选择合成药品' })).toBeNull()
+    await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] })
+    expect(screen.queryByRole('checkbox', { name: '选择合成药品' })).toBeNull()
+  })
+  it('applies the refreshed formal record after its success callback consumes the matching manual form', async () => {
+    let confirmed = false
+    stubRequests(() => state({ items: [] }), () => { confirmed = true; return receipt() })
+    const initial = props({ encounter: { id: 'encounter-fever', versionId: '2' }, manualItems: [{ label: '医生主诊断',
+      value: { source: 'manual' as const, kind: 'diagnosis' as const, catalogItemId: 'manual-diagnosis', role: 'primary' as const } }],
+      onConfirmed: () => mounted.rerenderPanel({ ...initial, manualItems: [] }),
+    })
+    const mounted = mount(initial, true)
+    const observer = new QueryObserver(mounted.client, { queryKey: ['doctor-case', 'scope', 'case-fever'], queryFn: async () => doctorCaseDetailSchema.parse({
+      caseId: 'case-fever', allergies: [], encounter: { id: 'encounter-fever', versionId: confirmed ? '3' : '2', status: 'in-progress' },
+      patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', synthetic: true, versionId: '1' },
+      presentation: null, priorFacts: [], status: 'first-visit', taskId: 'task', taskVersion: '1',
+      ...confirmed ? { diagnosis: { draftVersion: 2, confirmation: { id: 'formal-record-1', confirmedAt: '2026-10-18T12:00:00+08:00', provenanceId: 'provenance-1', entries: [{
+        catalogItemId: 'manual-diagnosis', role: 'primary', code: 'R50.9', conditionId: 'condition-1', conditionVersion: '1', display: '发热', system: 'http://hl7.org/fhir/sid/icd-10',
+      }] } } } : {},
+    }) })
+    const unsubscribe = observer.subscribe(() => {})
+    try {
+      await screen.findByText('医生主诊断'); await userEvent.setup().click(confirmButton())
+      await waitFor(() => expect(screen.getByTestId('confirmed-revision').textContent).toBe('1'))
+      expect(screen.queryByRole('checkbox', { name: '选择医生主诊断' })).toBeNull()
+    } finally { unsubscribe() }
+  })
   it.each(['idle', 'pending', 'failed', 'missing-evidence', 'stale'] as const)('lets a doctor submit a manual item while preparation is %s', async status => {
     const current = state({ items: [], status: status === 'stale' ? 'ready' : status,
       stale: status === 'stale', generation: status === 'idle' ? 0 : 1 })
