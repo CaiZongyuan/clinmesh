@@ -112,7 +112,8 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   await expect(append).toBeFocused()
 
   await page.getByRole('tab', { name: '处方', exact: true }).click()
-  await expect(page.getByLabel('搜索药品目录')).toHaveCount(0)
+  await expect(page.getByLabel('搜索药品目录')).toBeHidden()
+  await expect(page.getByRole('textbox', { name: '搜索药品目录', exact: true })).toHaveCount(0)
   expect((await readCase()).medicationConclusion?.draft).toBeUndefined()
   await page.getByRole('button', { name: '添加药品', exact: true }).click()
   const medicationForm = page.getByRole('dialog', { name: '添加药品', exact: true })
