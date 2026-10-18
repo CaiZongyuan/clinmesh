@@ -3,7 +3,7 @@ import type { ComponentProps } from 'react'
 import { confirmDoctorPreparationRequestSchema, confirmDoctorPreparationResponseSchema, doctorRecommendationStateSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import type { DiagnosisState } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, render as testingRender, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render as testingRender, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
@@ -15,7 +15,7 @@ function props(overrides: Partial<ComponentProps<typeof DiagnosisPage>> = {}): C
       confirm: { error: null, onSubmit: vi.fn(), pending: false },
       save: { error: null, onSubmit: vi.fn(), pending: false, savedRevision: undefined, success: false },
     },
-    caseId: 'synthetic-case', catalog: [1, 2].map(id => ({
+    caseId: 'synthetic-case', encounter: { id: 'synthetic-encounter', versionId: '1' }, catalog: [1, 2].map(id => ({
       id: `diagnosis-${id}`, code: `SYN-${id}`, nameZh: `合成诊断${id}`, nameEn: `Synthetic diagnosis ${id}`,
       system: 'https://clinmesh.example.com/icd-10', version: 1,
     })), elementId: 'diagnosis', locale: 'zh-CN',
@@ -99,8 +99,101 @@ function savedState(confirmed = false): DiagnosisState {
   }
 }
 
+function openDiagnosisForm(): ReturnType<typeof within> {
+  fireEvent.click(screen.getByRole('button', { name: '添加诊断' }))
+  return within(screen.getByRole('dialog', { name: '添加诊断' }))
+}
+
+function closeDiagnosisForm(): void {
+  fireEvent.click(screen.getByRole('button', { name: '完成选择' }))
+}
+
 describe('diagnosis workspace', () => {
-  it('shows diagnosis suggestions separately from the editable draft', () => {
+  it('confirms a saved manual diagnosis through the only submission entry when recommendation loading fails', async () => {
+    const confirmations: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(input).endsWith('/actions/confirm')) throw new Error('Synthetic recommendation read failure')
+      confirmations.push(confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body))))
+      return Response.json(confirmDoctorPreparationResponseSchema.parse({ auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-confirm', warnings: [],
+        data: { kind: 'diagnosis', draftVersion: 2, encounterVersion: '1', recordIds: ['synthetic-confirmed-diagnosis'] } }))
+    }))
+    const page = props({ state: savedState() })
+    render(<DiagnosisPage {...page} />)
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    await userEvent.setup().click(panel.getByRole('button', { name: /^确认选中诊断/ }))
+    await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/synthetic-encounter': '1' }, input: {
+      expectedDraftVersion: 1, resolveExistingDraft: true, selections: [
+        { source: 'manual', kind: 'diagnosis', catalogItemId: 'diagnosis-1', role: 'primary', note: '第一条保存备注' },
+        { source: 'manual', kind: 'diagnosis', catalogItemId: 'diagnosis-2', role: 'secondary', note: '第二条保存备注' },
+      ],
+    } }]))
+    expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
+    expect(panel.queryByRole('checkbox')).toBeNull()
+    expect(openDiagnosisForm().queryByRole('textbox', { name: page.messages.diagnosisNote })).toBeNull()
+  })
+  it('uses the same diagnosis roles and notes in list adjustments and manual entry', async () => {
+    const page = props({ state: savedState() })
+    render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    await user.click(panel.getAllByRole('button', { name: '调整' })[1]!)
+    const adjustment = within(screen.getByRole('dialog', { name: '调整项目' }))
+    await user.click(adjustment.getByRole('button', { name: '主诊断' }))
+    await user.clear(adjustment.getByRole('textbox', { name: '备注' }))
+    await user.type(adjustment.getByRole('textbox', { name: '备注' }), '在清单里核实的备注')
+    await user.click(adjustment.getByRole('button', { name: '保留本次调整' }))
+    const form = openDiagnosisForm()
+    await user.click(form.getByRole('button', { name: '合成诊断2' }))
+    expect(form.getByRole('textbox', { name: `${page.messages.diagnosisNote} 2` })).toHaveProperty('value', '在清单里核实的备注')
+    expect(form.getByRole('button', { name: '主诊断' }).getAttribute('aria-pressed')).toBe('true')
+    await user.type(form.getByRole('textbox', { name: `${page.messages.diagnosisNote} 2` }), ' · 表单补充')
+    closeDiagnosisForm()
+    await user.click(panel.getAllByRole('button', { name: '调整' })[1]!)
+    expect(screen.getByRole('textbox', { name: '备注' })).toHaveProperty('value', '在清单里核实的备注 · 表单补充')
+    expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
+  })
+  it('moves an adjusted automatic diagnosis into the same manual form with its coding and note', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(diagnosisSuggestionState())))
+    const page = props()
+    render(<DiagnosisPage {...page} />)
+    const user = userEvent.setup()
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    await panel.findByRole('checkbox', { name: '选择合成建议诊断3' })
+    await user.click(panel.getByRole('button', { name: '调整' }))
+    const adjustment = within(screen.getByRole('dialog', { name: '调整项目' }))
+    await user.type(adjustment.getByRole('textbox', { name: '备注' }), '医生核实后保留')
+    await user.click(adjustment.getByRole('button', { name: '保留本次调整' }))
+    const form = openDiagnosisForm()
+    expect(form.getByRole('heading', { name: '合成建议诊断3' })).toBeTruthy()
+    expect(form.getByText('SYN-3')).toBeTruthy()
+    expect(form.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '医生核实后保留')
+    closeDiagnosisForm()
+    await user.click(panel.getByRole('button', { name: /^移除/ }))
+    expect(panel.queryByRole('checkbox')).toBeNull()
+    expect(openDiagnosisForm().queryByRole('textbox', { name: page.messages.diagnosisNote })).toBeNull()
+  })
+  it('opens the manual diagnosis form from the unified list and returns without a second confirmation entry', async () => {
+    const page = props()
+    render(<DiagnosisPage {...page} />)
+    expect(screen.queryByRole('textbox', { name: '搜索疾病目录' })).toBeNull()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加诊断' }))
+    const dialog = within(screen.getByRole('dialog', { name: '添加诊断' }))
+    await user.click(dialog.getByRole('button', { name: '选择 合成诊断1 SYN-1' }))
+    await user.type(dialog.getByRole('textbox', { name: page.messages.diagnosisNote }), '医生手动诊断备注')
+    expect(dialog.queryByRole('button', { name: page.messages.confirmDiagnosis })).toBeNull()
+    await user.click(dialog.getByRole('button', { name: '完成选择' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
+    expect(panel.getByRole('checkbox', { name: '选择合成诊断1' })).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: page.messages.diagnosisNote })).toBeNull()
+    expect(screen.queryByRole('button', { name: page.messages.confirmDiagnosis })).toBeNull()
+    await waitFor(() => expect(page.actions.save.onSubmit).toHaveBeenCalledWith([
+      { catalogItemId: 'diagnosis-1', role: 'primary', note: '医生手动诊断备注', referenceConcept: { id: 'diagnosis-1', code: 'SYN-1', display: '合成诊断1',
+        system: 'https://clinmesh.example.com/icd-10', version: '1', sourceLocator: 'synthetic:test' } },
+    ]), { timeout: 2000 })
+  })
+  it('uses a unified diagnosis list with manual entry available on demand', () => {
     render(<DiagnosisPage {...props()} />)
     expect(screen.getByRole('region', { name: '待确认诊断' })).toBeTruthy()
   })
@@ -124,21 +217,25 @@ describe('diagnosis workspace', () => {
       ? { ...entry, referenceConcept } : entry) } } })
     render(<DiagnosisPage {...page} />)
     const user = userEvent.setup()
+    openDiagnosisForm()
     await user.type(screen.getByRole('textbox', { name: page.messages.diagnosisNote }), ' · 医生刚补充')
+    closeDiagnosisForm()
     const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
     await panel.findByRole('checkbox', { name: '选择合成建议诊断3' })
     expect(panel.getByRole('checkbox', { name: '选择合成诊断1' }).getAttribute('aria-checked')).toBe('true')
     expect(panel.getByRole('checkbox', { name: '选择合成诊断2' }).getAttribute('aria-checked')).toBe('true')
     await user.click(panel.getByRole('button', { name: /^确认选中诊断/ }))
     await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/synthetic-encounter': '1' }, input: {
-      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 1,
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 1, resolveExistingDraft: true,
       selections: [
         { source: 'manual', kind: 'diagnosis', catalogItemId: 'diagnosis-1', role: 'primary', note: '第一条保存备注 · 医生刚补充', referenceConcept },
         { source: 'manual', kind: 'diagnosis', catalogItemId: 'diagnosis-2', role: 'secondary', note: '第二条保存备注' },
-        { source: 'agent', suggestionId: 'suggestion-diagnosis-3', kind: 'diagnosis', catalogItemId: 'diagnosis-3', role: 'secondary' },
+        { source: 'agent', suggestionId: 'suggestion-diagnosis-3', kind: 'diagnosis', catalogItemId: 'diagnosis-3', role: 'secondary',
+          referenceConcept: source.items[0]!.kind === 'diagnosis' ? source.items[0]!.referenceConcept : undefined },
       ],
     } }]))
-    expect(screen.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注 · 医生刚补充')
+    expect(panel.queryByRole('checkbox', { name: '选择合成诊断1' })).toBeNull()
+    expect(openDiagnosisForm().queryByRole('textbox', { name: page.messages.diagnosisNote })).toBeNull()
     expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
   })
   it('keeps the original manual role and note when an automatic candidate names the same diagnosis', async () => {
@@ -152,6 +249,7 @@ describe('diagnosis workspace', () => {
     await panel.findByRole('checkbox', { name: '选择合成诊断1' })
     expect(panel.getAllByRole('checkbox')).toHaveLength(2)
     expect(panel.queryByRole('checkbox', { name: '选择合成建议诊断3' })).toBeNull()
+    openDiagnosisForm()
     expect(screen.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注')
     expect(screen.getByRole('button', { name: page.messages.primaryDiagnosis }).getAttribute('aria-pressed')).toBe('true')
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
@@ -163,7 +261,7 @@ describe('diagnosis workspace', () => {
     const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
     await panel.findByRole('checkbox', { name: '选择合成诊断1' })
     expect(panel.getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', true)
-    expect(screen.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注')
+    expect(screen.getByRole('button', { name: '添加诊断' })).toHaveProperty('disabled', true)
   })
   it('does not allow prepared diagnosis confirmation once the draft already contains eight diagnoses', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(diagnosisSuggestionState()), {
@@ -177,9 +275,9 @@ describe('diagnosis workspace', () => {
     await within(screen.getByRole('region', { name: '待确认诊断' })).findByRole('checkbox', { name: '选择合成建议诊断3' })
     const confirmPrepared = within(screen.getByRole('region', { name: '待确认诊断' })).getByRole('button', { name: /^确认选中诊断/ })
     expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
-    expect(screen.getByText(page.messages.recommendationDiagnosisLimit)).toBeTruthy()
+    expect(screen.getByText('一次最多选择 8 项。')).toBeTruthy()
     await userEvent.setup().click(confirmPrepared)
-    expect(within(screen.getByRole('group', { name: '已选诊断' })).getAllByRole('button')).toHaveLength(8)
+    expect(within(screen.getByRole('region', { name: '待确认诊断' })).getAllByRole('checkbox')).toHaveLength(9)
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
   it('disables a local candidate when its diagnosis is removed from the currently available catalog', async () => {
@@ -250,9 +348,12 @@ describe('diagnosis workspace', () => {
     const user = userEvent.setup()
     const panel = within(screen.getByRole('region', { name: '待确认诊断' }))
     await panel.findByRole('checkbox', { name: '选择合成建议诊断3' })
+    openDiagnosisForm()
     await user.type(screen.getByRole('textbox', { name: page.messages.diagnosisNote }), '医生核实后保留')
+    closeDiagnosisForm()
     await user.click(panel.getByRole('button', { name: '刷新' }))
     await panel.findByRole('checkbox', { name: '选择合成新候选4' })
+    openDiagnosisForm()
     const selected = within(screen.getByRole('group', { name: '已选诊断' }))
     expect(selected.getAllByRole('button')).toHaveLength(2)
     expect(selected.getByRole('button', { name: '合成诊断1' })).toBeTruthy()
@@ -289,21 +390,23 @@ describe('diagnosis workspace', () => {
     expect(panel.getByRole('button', { name: /^确认选中诊断/ }).hasAttribute('disabled')).toBe(false)
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
-  it('starts with an inline directory and waits for an explicit diagnosis selection', () => {
+  it('waits for opening manual entry before searching or selecting from the diagnosis directory', () => {
     const page = props()
     render(<DiagnosisPage {...page} />)
-    expect(screen.getByRole('textbox', { name: '搜索疾病目录' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '选择 合成诊断1 SYN-1' }).hasAttribute('disabled')).toBe(false)
-    expect(screen.queryByRole('textbox', { name: page.messages.diagnosisNote })).toBeNull()
-    expect(screen.queryByRole('dialog')).toBeNull()
-    expect(page.referenceSearch.onSearch).toHaveBeenCalledExactlyOnceWith('', 1)
+    expect(screen.queryByRole('textbox', { name: '搜索疾病目录' })).toBeNull()
+    expect(page.referenceSearch.onSearch).not.toHaveBeenCalled()
+    const dialog = openDiagnosisForm()
+    expect(dialog.getByRole('textbox', { name: '搜索疾病目录' })).toBeTruthy()
+    expect(dialog.getByRole('button', { name: '选择 合成诊断1 SYN-1' })).toHaveProperty('disabled', false)
+    expect(dialog.queryByRole('textbox', { name: page.messages.diagnosisNote })).toBeNull()
+    expect(page.referenceSearch.onSearch).toHaveBeenCalledWith('', 1)
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: page.messages.confirmDiagnosis }).hasAttribute('disabled')).toBe(true)
   })
   it('adds only explicitly chosen diagnoses and keeps notes when switching the selected entry', async () => {
     const page = props()
     render(<DiagnosisPage {...page} />)
     const user = userEvent.setup()
+    openDiagnosisForm()
     await user.click(screen.getByRole('button', { name: '选择 合成诊断1 SYN-1' }))
     const firstNote = screen.getByRole('textbox', { name: page.messages.diagnosisNote })
     await user.type(firstNote, '第一条的备注')
@@ -315,22 +418,42 @@ describe('diagnosis workspace', () => {
     expect((screen.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('第一条的备注')
     expect(selected.getAllByRole('button')).toHaveLength(2)
   })
-  it('restores a saved draft inline and enters an editable list and detail view only after formal confirmation', async () => {
+  it('keeps saved drafts in the unified list and edits confirmed records only after an explicit request', async () => {
     const page = props({ state: savedState() })
     const { rerender } = render(<DiagnosisPage {...page} />)
-    expect(screen.getByRole('textbox', { name: '搜索疾病目录' })).toBeTruthy()
-    expect((screen.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('第一条保存备注')
-    expect(screen.queryByRole('region', { name: '诊断列表' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '搜索疾病目录' })).toBeNull()
+    expect(screen.queryByRole('textbox', { name: page.messages.diagnosisNote })).toBeNull()
+    openDiagnosisForm()
+    expect(screen.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注')
+    closeDiagnosisForm()
     rerender(<DiagnosisPage {...page} state={savedState(true)} />)
     const list = within(screen.getByRole('region', { name: '诊断列表' }))
-    expect(screen.queryByRole('textbox', { name: '搜索疾病目录' })).toBeNull()
     await userEvent.setup().click(list.getByRole('button', { name: /合成诊断2/ }))
-    const editor = within(screen.getByRole('region', { name: '诊断详情' }))
-    const note = editor.getByRole('textbox', { name: `${page.messages.diagnosisNote} 2` })
-    expect((note as HTMLTextAreaElement).value).toBe('第二条保存备注')
-    await userEvent.setup().type(note, ' · 已修订')
-    expect(screen.getByRole('button', { name: page.messages.confirmDiagnosis }).hasAttribute('disabled')).toBe(true)
-    expect(list.getAllByRole('button', { name: /合成诊断/ })).toHaveLength(2)
+    expect(screen.getByText('第二条保存备注')).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: /诊断备注/ })).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: '修改已确认诊断' }))
+    const dialog = within(screen.getByRole('dialog', { name: '添加诊断' }))
+    expect(dialog.getByRole('textbox', { name: `${page.messages.diagnosisNote} 2` })).toHaveProperty('value', '第二条保存备注')
+  })
+  it('does not turn formal diagnosis records into pending manual items when no draft exists', async () => {
+    const { draft: _draft, ...state } = savedState(true)
+    render(<DiagnosisPage {...props({ state })} />)
+    expect(within(screen.getByRole('region', { name: '待确认诊断' })).queryAllByRole('checkbox')).toHaveLength(0)
+    expect(within(screen.getByRole('region', { name: '诊断列表' })).getAllByRole('button', { name: /合成诊断/ })).toHaveLength(2)
+    await userEvent.setup().click(screen.getByRole('button', { name: '修改已确认诊断' }))
+    expect(screen.getByRole('textbox', { name: '诊断备注' })).toHaveProperty('value', '第一条保存备注')
+    closeDiagnosisForm()
+    expect(within(screen.getByRole('region', { name: '待确认诊断' })).getAllByRole('checkbox')).toHaveLength(2)
+  })
+  it('keeps an existing unconfirmed draft when opening edits from formal diagnosis records', async () => {
+    const page = props({ state: { ...savedState(true), draft: { entries: [
+      { catalogItemId: 'diagnosis-2', role: 'primary', note: '当前未确认的医生备注' },
+    ] } } })
+    render(<DiagnosisPage {...page} />)
+    await userEvent.setup().click(screen.getByRole('button', { name: '修改已确认诊断' }))
+    expect(screen.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '当前未确认的医生备注')
+    expect(within(screen.getByRole('group', { name: '已选诊断' })).getAllByRole('button')).toHaveLength(1)
+    expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
   it('filters and returns to the list without deleting diagnoses or losing their notes', async () => {
     const page = props({ state: savedState(true) })
@@ -348,11 +471,11 @@ describe('diagnosis workspace', () => {
     expect(list.queryByRole('button', { name: /合成诊断1/ })).toBeNull()
     await user.click(list.getByRole('button', { name: /合成诊断2/ }))
     expect(document.activeElement).toBe(within(screen.getByRole('region', { name: '诊断详情' })).getByRole('heading', { name: '合成诊断2' }))
-    expect((screen.getByRole('textbox', { name: `${page.messages.diagnosisNote} 2` }) as HTMLTextAreaElement).value).toBe('第二条保存备注')
+    expect(screen.getByText('第二条保存备注')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '返回诊断列表' }))
     await waitFor(() => expect(document.activeElement).toBe(search))
     await user.click(list.getByRole('button', { name: /合成诊断2/ }))
-    expect((screen.getByRole('textbox', { name: `${page.messages.diagnosisNote} 2` }) as HTMLTextAreaElement).value).toBe('第二条保存备注')
+    expect(screen.getByText('第二条保存备注')).toBeTruthy()
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
   it('adds a diagnosis in the shared directory and editor dialog and keeps its changes after finishing selection', async () => {
@@ -371,13 +494,17 @@ describe('diagnosis workspace', () => {
     await user.type(dialog.getByRole('textbox', { name: `${page.messages.diagnosisNote} 3` }), '新添加的备注')
     await user.click(dialog.getByRole('button', { name: '完成选择' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect((screen.getByRole('textbox', { name: `${page.messages.diagnosisNote} 3` }) as HTMLTextAreaElement).value).toBe('新添加的备注')
-    expect(within(screen.getByRole('region', { name: '诊断列表' })).getAllByRole('button', { name: /合成诊断/ })).toHaveLength(3)
+    expect(within(screen.getByRole('region', { name: '待确认诊断' })).getAllByRole('checkbox')).toHaveLength(3)
+    expect(within(screen.getByRole('region', { name: '诊断列表' })).getAllByRole('button', { name: /合成诊断/ })).toHaveLength(2)
+    openDiagnosisForm()
+    expect(screen.getByRole('textbox', { name: `${page.messages.diagnosisNote} 3` })).toHaveProperty('value', '新添加的备注')
+    closeDiagnosisForm()
     expect(screen.queryByRole('textbox', { name: '搜索疾病目录' })).toBeNull()
   })
-  it('keeps edited notes after autosave failure and retries the same draft before allowing whole-group confirmation', async () => {
+  it('keeps edited notes after autosave failure and retries the same draft without a second confirmation entry', async () => {
     const page = props({ state: savedState() })
     const { rerender } = render(<DiagnosisPage {...page} />)
+    openDiagnosisForm()
     const user = userEvent.setup()
     await user.type(screen.getByRole('textbox', { name: page.messages.diagnosisNote }), ' · 补充')
     const editedEntries = [
@@ -387,27 +514,15 @@ describe('diagnosis workspace', () => {
     await waitFor(() => expect(page.actions.save.onSubmit).toHaveBeenCalledExactlyOnceWith(editedEntries), { timeout: 2000 })
     const failed = { ...page.actions, save: { ...page.actions.save, error: new Error('synthetic save failure') } }
     rerender(<DiagnosisPage {...page} actions={failed} />)
-    expect((screen.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('第一条保存备注 · 补充')
-    expect(screen.getByRole('button', { name: page.messages.confirmDiagnosis }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('textbox', { name: page.messages.diagnosisNote })).toHaveProperty('value', '第一条保存备注 · 补充')
     await user.click(screen.getByRole('button', { name: '重试保存' }))
-    expect(page.actions.save.onSubmit).toHaveBeenCalledTimes(2)
     expect(page.actions.save.onSubmit).toHaveBeenLastCalledWith(editedEntries)
+    closeDiagnosisForm()
+    expect(screen.queryByRole('button', { name: page.messages.confirmDiagnosis })).toBeNull()
     const saved = { ...page.actions, save: { ...page.actions.save, success: true, savedRevision: JSON.stringify(editedEntries) } }
-    rerender(<DiagnosisPage {...page} actions={saved} state={{ draft: { entries: editedEntries }, draftVersion: 2 }} />)
-    await waitFor(() => expect(screen.getByRole('button', { name: page.messages.confirmDiagnosis }).hasAttribute('disabled')).toBe(false))
     rerender(<DiagnosisPage {...page} actions={{ ...saved, save: { ...saved.save, pending: true } }} state={{ draft: { entries: editedEntries }, draftVersion: 2 }} />)
-    expect(screen.getByRole('button', { name: page.messages.confirmDiagnosis }).hasAttribute('disabled')).toBe(true)
-    rerender(<DiagnosisPage {...page} actions={saved} state={{ draft: { entries: editedEntries }, draftVersion: 2 }} />)
-    await user.click(screen.getByRole('button', { name: page.messages.confirmDiagnosis }))
-    const review = within(screen.getByRole('alertdialog', { name: '确认诊断版本' }))
-    expect(review.getByText(/SYN-1/)).toBeTruthy()
-    expect(review.getByText(/SYN-2/)).toBeTruthy()
-    expect(review.getByText('第一条保存备注 · 补充')).toBeTruthy()
-    rerender(<DiagnosisPage {...page} actions={{ ...saved, save: { ...saved.save, pending: true } }} state={{ draft: { entries: editedEntries }, draftVersion: 2 }} />)
-    expect(review.getByRole('button', { name: '确认诊断版本' }).hasAttribute('disabled')).toBe(true)
-    rerender(<DiagnosisPage {...page} actions={saved} state={{ draft: { entries: editedEntries }, draftVersion: 2 }} />)
-    await user.click(review.getByRole('button', { name: '确认诊断版本' }))
-    expect(page.actions.confirm.onSubmit).toHaveBeenCalledOnce()
+    expect(within(screen.getByRole('region', { name: '待确认诊断' })).getByRole('button', { name: /^确认选中诊断/ })).toHaveProperty('disabled', true)
+    expect(page.actions.confirm.onSubmit).not.toHaveBeenCalled()
   })
   it('shows confirmed diagnoses in a searchable read-only list and detail view without exposing draft edits', async () => {
     const state = savedState(true)
@@ -440,12 +555,13 @@ describe('diagnosis workspace', () => {
       system: 'https://clinmesh.example.com/icd-10', version: 1,
     }]} referenceSearch={{ ...page.referenceSearch, isError: true, error: new Error('synthetic catalog failure') }} />)
     const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '修改已确认诊断' }))
     await user.click(screen.getByRole('button', { name: '更换诊断' }))
     const dialog = within(screen.getByRole('dialog', { name: '选择诊断' }))
     expect(dialog.getByRole('button', { name: '选择 合成诊断2 SYN-2' }).hasAttribute('disabled')).toBe(true)
     await user.click(dialog.getByRole('button', { name: '选择 合成诊断3 SYN-3' }))
     await user.click(dialog.getByRole('button', { name: '加入诊断' }))
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '选择诊断' })).toBeNull())
     const editor = within(screen.getByRole('region', { name: '诊断详情' }))
     expect(editor.getByRole('heading', { name: '合成诊断3' })).toBeTruthy()
     expect(editor.getByText('SYN-3')).toBeTruthy()
