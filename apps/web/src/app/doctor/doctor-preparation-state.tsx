@@ -9,6 +9,8 @@ export const preparationKinds = ['diagnosis', 'laboratory', 'imaging', 'patholog
 type JobInput = { caseId: string; kind: DoctorRecommendationKind; enabled: boolean; paused: boolean; scope?: string | undefined; inputRevision?: string | undefined }
 
 function newer(current: DoctorRecommendationState | undefined, incoming: DoctorRecommendationState) {
+  if (incoming.hidePreviousResults) return incoming
+  if (current?.hidePreviousResults && current.generation >= incoming.generation) return current
   if (current !== undefined && current.generation > incoming.generation) return current
   if (current?.generation === incoming.generation && current.inputFingerprint === incoming.inputFingerprint
     && ['ready', 'missing-evidence', 'failed'].includes(current.status) && incoming.status === 'pending' && !incoming.stale) return current
@@ -27,18 +29,22 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
   const lastAutomatic = useRef<string | undefined>(undefined)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const receive = (incoming: DoctorRecommendationState) => {
+    const previous = client.getQueryData<DoctorRecommendationState>(queryKey)
+    if (incoming.hidePreviousResults) {
+      for (const [key, cached] of client.getQueriesData<DoctorRecommendationState>({ queryKey: prefix })) {
+        if (cached !== undefined) client.setQueryData<DoctorRecommendationState>(key, { ...cached, hidePreviousResults: true,
+          items: [], considerations: [], guidelines: [], caseEvidence: [], stale: true })
+      }
+    } else if (previous?.status === 'ready' && !previous.stale && !previous.hidePreviousResults) {
+      client.setQueryData([...prefix, 'completed', previous.generation, previous.inputFingerprint], previous)
+    }
+    return newer(previous, incoming)
+  }
   const query = useQuery({
     queryKey, enabled, retry: false, refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => {
-      const incoming = await getDoctorRecommendations(caseId, kind, signal)
-      const previous = client.getQueryData<DoctorRecommendationState>(queryKey)
-      if (incoming.hidePreviousResults) {
-        for (const [key, cached] of client.getQueriesData<DoctorRecommendationState>({ queryKey: prefix })) {
-          if (cached !== undefined) client.setQueryData<DoctorRecommendationState>(key, { ...cached, items: [], considerations: [], guidelines: [], caseEvidence: [], stale: true })
-        }
-      }
-      if (!incoming.hidePreviousResults && previous?.status === 'ready' && !previous.stale) client.setQueryData([...prefix, 'completed', previous.generation, previous.inputFingerprint], previous)
-      return newer(previous, incoming)
+      return receive(await getDoctorRecommendations(caseId, kind, signal))
     },
     refetchInterval: query => query.state.data?.status === 'pending' ? 1_000 : false,
   })
@@ -46,9 +52,7 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
     mutationFn: ({ state, refresh }: { state: DoctorRecommendationState; refresh: boolean; identity: string; viewRevision: number }) => generateDoctorRecommendations(state, refresh),
     onSuccess: (state, request) => {
       if (mounted.current && current.current.identity === request.identity && current.current.revision === request.viewRevision) {
-        const previous = client.getQueryData<DoctorRecommendationState>(queryKey)
-        if (previous?.status === 'ready' && !previous.stale) client.setQueryData([...prefix, 'completed', previous.generation, previous.inputFingerprint], previous)
-        client.setQueryData<DoctorRecommendationState>(queryKey, previous => newer(previous, state))
+        client.setQueryData<DoctorRecommendationState>(queryKey, receive(state))
       }
     },
     onSettled: (_result, _error, request) => {
@@ -87,7 +91,7 @@ type PreparationContext = {
   detail: DoctorCaseDetail | undefined
   submitting: (kind: DoctorRecommendationKind) => boolean
   confirmedRevision: (kind: DoctorRecommendationKind) => number
-  setSubmitting: (key: string, active: boolean) => void
+  setSubmitting: (key: string, token: string, active: boolean) => void
   confirmed: (key: string) => void
   paused: boolean
   togglePaused: () => void
@@ -104,7 +108,7 @@ export function DoctorPreparationProvider({ children, detail, scope, inputRevisi
   children: ReactNode; detail: DoctorCaseDetail | undefined; scope: string; inputRevision: string; enabled: boolean; caseId?: string
 }) {
   const [pausedCases, setPausedCases] = useState<Record<string, boolean>>({})
-  const [submissions, setSubmissions] = useState<Record<string, boolean>>({})
+  const [submissions, setSubmissions] = useState<Record<string, string[]>>({})
   const [confirmations, setConfirmations] = useState<Record<string, number>>({})
   const [drafts, setDrafts] = useState<Record<string, DraftPreferences>>({})
   const [details, setDetails] = useState<{ scope: string; kind: DoctorRecommendationKind | 'quality'; open: boolean }>({ scope, kind: 'diagnosis', open: false })
@@ -117,9 +121,10 @@ export function DoctorPreparationProvider({ children, detail, scope, inputRevisi
   const prescription = useDoctorPreparationJob({ ...input, kind: 'prescription' })
   return <Context.Provider value={{
     jobs: { diagnosis, laboratory, imaging, pathology, prescription }, detail, paused,
-    submitting: kind => submissions[JSON.stringify([scope, kind])] === true,
+    submitting: kind => (submissions[JSON.stringify([scope, kind])]?.length ?? 0) > 0,
     confirmedRevision: kind => confirmations[JSON.stringify([scope, kind])] ?? 0,
-    setSubmitting: (key, active) => setSubmissions(previous => ({ ...previous, [key]: active })),
+    setSubmitting: (key, token, active) => setSubmissions(previous => ({ ...previous,
+      [key]: active ? [...new Set([...(previous[key] ?? []), token])] : (previous[key] ?? []).filter(value => value !== token) })),
     confirmed: key => setConfirmations(previous => ({ ...previous, [key]: (previous[key] ?? 0) + 1 })),
     togglePaused: () => setPausedCases(previous => ({ ...previous, [scope]: !previous[scope] })),
     preferences: kind => drafts[JSON.stringify([scope, kind])] ?? emptyPreferences,
