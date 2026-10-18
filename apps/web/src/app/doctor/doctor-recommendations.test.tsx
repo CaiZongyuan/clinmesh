@@ -64,6 +64,16 @@ function deferredResponse() {
 }
 
 describe('doctor recommendation panel current version checks', () => {
+  it('requires the doctor to resolve two primary diagnoses without rewriting either selection', async () => {
+    const first = state().items[0]!
+    const current = state({ items: [first, { ...first, id: 'second', catalogItemId: 'second-diagnosis', label: '合成第二诊断' }] })
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
+    mount(props())
+    await screen.findByText('合成第二诊断')
+    expect(screen.getByRole('button', { name: /确认选中诊断/ })).toHaveProperty('disabled', true)
+    expect(screen.getAllByText('主诊断')).toHaveLength(2)
+  })
+
   it('does not invent primary roles when reading an older diagnosis result', async () => {
     const base = state()
     const current = state({ items: base.items.map(item => item.kind === 'diagnosis' ? { ...item, role: undefined } : item) })

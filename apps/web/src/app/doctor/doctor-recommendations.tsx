@@ -83,8 +83,9 @@ export function DoctorPreparationDetailsDialog({ open, onOpenChange, title, chil
 export type ManualPreparedItem = { label: string; value: PreparationDraft }
 type PreparedRow = { key: string; label: string; value: PreparationDraft; signature: string; item?: DoctorRecommendationSuggestion }
 
-export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualItems = [], expectedDraftVersion }: {
+export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualItems = [], expectedDraftVersion, disabled = false }: {
   caseId: string; kind: DoctorRecommendationKind; enabled: boolean; inputRevision?: string | undefined; scope?: string | undefined; locale?: WorkspaceLocale | undefined
+  disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
   expectedDraftVersion?: number | undefined
   onAdopt?: ((suggestion: DoctorRecommendationSuggestion, state: DoctorRecommendationState) => void) | undefined
@@ -149,7 +150,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     return edit !== undefined && state !== undefined && edit.fingerprint !== state.inputFingerprint && edit.reviewedFingerprint !== state.inputFingerprint
   }
   const pending = job.pending || submission.isPending
-  const canConfirm = state !== undefined && !state.stale && !pending && job.error === null && !job.paused
+  const rolesValid = kind !== 'diagnosis' || available.filter(row => row.value.kind === 'diagnosis' && row.value.role === 'primary').length === 1
+  const canConfirm = !disabled && rolesValid && state !== undefined && !state.stale && !pending && job.error === null && !job.paused
     && (state.status === 'ready' || state.status === 'missing-evidence' && available.every(row => row.value.source === 'manual'))
   const block = available.map(row => row.value.source === 'manual' || row.item === undefined ? undefined : unavailableReason?.(row.item)).find(reason => reason !== undefined)
   const failed = job.error !== null || state?.status === 'failed' || submission.isError && submission.variables?.view === view
@@ -175,6 +177,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
             <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => update(previous => ({ ...previous, removed: [...previous.removed.filter(key => key !== row.key), row.key] }))} size="icon-sm" type="button" variant="ghost"><Trash2Icon /></Button>
           </div>)}
         </div>}
+        {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
         {block === undefined ? null : <p className="text-xs text-muted-foreground">{block}</p>}
       </CardContent>
       <CardFooter className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button disabled={!canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key))} onClick={() => { if (state !== undefined) submission.mutate({ state, selections: available.map(row => doctorPreparationSelectionSchema.parse(row.value)), view, rows: available, draftVersion, submissionKey }) }} type="button">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>
