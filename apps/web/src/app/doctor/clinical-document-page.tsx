@@ -65,6 +65,7 @@ export interface ClinicalDocumentPageActions {
   controlRecording?: ConsultationRecordingAction
   save?: {
     error: Error | null
+    hasUnsavedChanges?: boolean
     onSubmit: (document: ClinicalDocumentContent) => void
     pending: boolean
     success: boolean
@@ -150,7 +151,7 @@ export function ClinicalDocumentPage({
         message={getWorkspaceErrorMessage(actions.save.error, messages)}
         title={messages.saveClinicalDocumentDraft}
       />}
-      {actions.save?.success ? <p role="status" className="text-sm text-muted-foreground">{messages.clinicalDocumentDraftSaved}</p> : null}
+      {actions.save?.success && !actions.save.hasUnsavedChanges ? <p role="status" className="text-sm text-muted-foreground">{messages.clinicalDocumentDraftSaved}</p> : null}
       {actions.sign.success ? (
         <Alert>
           <CheckCircleIcon aria-hidden="true" />
@@ -313,7 +314,10 @@ export function ClinicalDocumentPage({
               quality={quality}
               locale={locale}
             />
-            <div className="flex justify-end gap-2 border-t pt-3">
+            <div className="flex flex-wrap items-center justify-end gap-2 border-t pt-3">
+              {actions.save?.hasUnsavedChanges ? <p role="status" className="mr-auto text-sm text-muted-foreground">
+                {messages.clinicalDocumentDraftUnsaved}
+              </p> : null}
               {actions.save === undefined ? null : <Button disabled={actions.save.pending || preparing || cancelPending} onClick={() => actions.save?.onSubmit(workingDocument)} type="button" variant="outline">
                 {messages.saveClinicalDocumentDraft}
               </Button>}

@@ -1378,9 +1378,13 @@ function DoctorCaseController({
     },
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
+  const persistedWorkingClinicalDocument = detail.data === undefined ? undefined : createWorkingClinicalDocument(detail.data)
   const currentClinicalDocument = detail.data === undefined
     ? undefined
-    : workingClinicalDocuments[detail.data.caseId] ?? createWorkingClinicalDocument(detail.data)
+    : workingClinicalDocuments[detail.data.caseId] ?? persistedWorkingClinicalDocument
+  const hasUnsavedClinicalDocumentChanges = persistedWorkingClinicalDocument !== undefined && currentClinicalDocument !== undefined
+    && (Object.keys(persistedWorkingClinicalDocument) as Array<keyof ClinicalDocumentContent>)
+      .some(field => (currentClinicalDocument[field] ?? '') !== (persistedWorkingClinicalDocument[field] ?? ''))
   const clinicalDocumentUpdates = useClinicalDocumentUpdates(detail.data?.caseId, currentClinicalDocument,
     detail.data?.encounter.status === 'in-progress' && (detail.data.clinicalDocument?.signed.length ?? 0) === 0)
   const canCorrectReports = session.availableRoles.some(role => role.code === 'administrator')
@@ -2701,6 +2705,7 @@ function DoctorCaseController({
               },
               save: {
                 error: saveDocumentDraft.variables?.caseId === detail.data.caseId ? saveDocumentDraft.error : null,
+                hasUnsavedChanges: hasUnsavedClinicalDocumentChanges,
                 onSubmit: document => saveDocumentDraft.mutate({ caseId: detail.data.caseId, document }),
                 pending: saveDocumentDraft.isPending && saveDocumentDraft.variables?.caseId === detail.data.caseId,
                 success: saveDocumentDraft.isSuccess && saveDocumentDraft.variables?.caseId === detail.data.caseId,
