@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-import { doctorRecommendationStateSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { doctorRecommendationStateSchema, confirmDoctorPreparationRequestSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
+import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
 
 function state(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
@@ -35,430 +37,124 @@ function state(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecomm
 }
 
 function props(overrides: Partial<ComponentProps<typeof DoctorRecommendationsPanel>> = {}): ComponentProps<typeof DoctorRecommendationsPanel> {
-  return { caseId: 'case-fever', kind: 'diagnosis', enabled: true, scope: 'workspace-demo:epoch-1:doctor:case-fever',
-    inputRevision: 'case-source-1', onAdopt: vi.fn(), ...overrides }
+  return { caseId: 'case-fever', kind: 'diagnosis', enabled: true, scope: 'workspace-demo:epoch-1:doctor:case-fever', inputRevision: 'case-source-1', ...overrides }
 }
-
-const clients: QueryClient[] = []
-function mount(panelProps: ComponentProps<typeof DoctorRecommendationsPanel>) {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
-  clients.push(client)
-  const rendered = render(<QueryClientProvider client={client}><DoctorRecommendationsPanel {...panelProps} /></QueryClientProvider>)
-  return { ...rendered, client,
-    rerenderPanel: (next: ComponentProps<typeof DoctorRecommendationsPanel>) => rendered.rerender(
-      <QueryClientProvider client={client}><DoctorRecommendationsPanel {...next} /></QueryClientProvider>,
-    ),
-  }
+function prescriptionState(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
+  const first = state().items[0]!
+  if (first.kind !== 'diagnosis') throw new Error('Expected diagnosis fixture')
+  const { role: _role, referenceConcept: _referenceConcept, ...common } = first
+  return state({ kind: 'prescription', items: [{ ...common, kind: 'prescription', id: 'prescription-1', catalogItemId: 'medication-1', label: '合成药品',
+    doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }], ...overrides })
 }
-
-afterEach(() => {
-  cleanup()
-  for (const client of clients.splice(0)) client.clear()
-  vi.unstubAllGlobals()
-})
-
+function receipt(kind: DoctorRecommendationState['kind'] = 'diagnosis') {
+  return Response.json({ data: { kind, draftVersion: 2, encounterVersion: '3', recordIds: ['formal-record-1'] }, auditId: 'audit-confirm', requestId: 'request-confirm', effects: [], warnings: [] })
+}
 function deferredResponse() {
-  let complete: (response: Response) => void = () => { throw new Error('The response has not started') }
+  let complete!: (response: Response) => void
   const response = new Promise<Response>(resolve => { complete = resolve })
   return { response, complete }
 }
+function stubRequests(get: () => DoctorRecommendationState = () => state(), confirm: () => Promise<Response> | Response = () => receipt(get().kind), generate?: () => Promise<Response> | Response) {
+  const calls: Array<{ path: string; method: string; body: unknown; key: string | null }> = []
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), 'http://localhost').pathname
+    calls.push({ path, method: init?.method ?? 'GET', body: init?.body === undefined ? undefined : JSON.parse(String(init.body)), key: new Headers(init?.headers).get('idempotency-key') })
+    if (path.endsWith('/actions/confirm')) return confirm()
+    if (path.endsWith('/actions/generate')) return generate?.() ?? Response.json({ data: get(), auditId: 'audit-generate', requestId: 'request-generate', effects: [], warnings: [] })
+    return Response.json(get())
+  }))
+  return calls
+}
+const clients: QueryClient[] = []
+function SubmissionProbe() {
+  const preparation = useDoctorPreparation()
+  return <><p data-testid="submitting">{preparation?.submitting('diagnosis') ? '提交中' : '空闲'}</p><p data-testid="confirmed-revision">{preparation?.confirmedRevision('diagnosis') ?? 0}</p></>
+}
+function mount(panelProps: ComponentProps<typeof DoctorRecommendationsPanel>, provider = false) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  clients.push(client)
+  const content = (next: ComponentProps<typeof DoctorRecommendationsPanel>) => <QueryClientProvider client={client}>{provider
+    ? <DoctorPreparationProvider caseId={next.caseId} detail={undefined} enabled={next.enabled} inputRevision={next.inputRevision ?? '1'} scope={next.scope ?? ''}><DoctorRecommendationsPanel {...next} /><SubmissionProbe /></DoctorPreparationProvider>
+    : <DoctorRecommendationsPanel {...next} />}</QueryClientProvider>
+  const rendered = render(content(panelProps))
+  return { ...rendered, client, rerenderPanel: (next: ComponentProps<typeof DoctorRecommendationsPanel>) => rendered.rerender(content(next)) }
+}
+const confirmButton = () => screen.getByRole('button', { name: /确认选中诊断|开具处方|开具选中项目|Confirm selected|Issue prescription|Issue selected/ })
+const selectionCheckbox = (label = '发热，未特指') => screen.getByRole('checkbox', { name: `选择${label}` })
+async function details() { await userEvent.setup().click(screen.getByRole('button', { name: /依据与说明|Evidence and details/ })); return within(await screen.findByRole('dialog')) }
+async function edit() { await userEvent.setup().click(screen.getByRole('button', { name: '调整' })); return within(await screen.findByRole('dialog')) }
+afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
-describe('doctor recommendation panel current version checks', () => {
-  it('requires the doctor to resolve two primary diagnoses without rewriting either selection', async () => {
-    const first = state().items[0]!
-    if (first.kind !== 'diagnosis') throw new Error('Expected the synthetic diagnosis fixture')
-    const current = state({ items: [first, { ...first, id: 'second', catalogItemId: 'second-diagnosis', label: '合成第二诊断' }] })
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
-    mount(props())
-    await screen.findByText('合成第二诊断')
-    expect(screen.getByRole('button', { name: /确认选中诊断/ })).toHaveProperty('disabled', true)
-    expect(screen.getAllByText('主诊断')).toHaveLength(2)
-  })
-
-  it('does not invent primary roles when reading an older diagnosis result', async () => {
-    const base = state()
-    const current = state({ items: base.items.map(item => item.kind === 'diagnosis' ? { ...item, role: undefined } : item) })
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
-    mount(props())
-    await screen.findByText(current.items[0]!.label)
-    expect(screen.getByRole('checkbox', { name: `选择${current.items[0]!.label}` }).getAttribute('aria-checked')).toBe('false')
-    expect(screen.getByRole('button', { name: /确认选中诊断/ })).toHaveProperty('disabled', true)
-  })
-
-  it('shows executable pending items first and keeps clinical explanations behind one button', async () => {
-    const current = state()
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
-    mount(props())
-    await screen.findByText(current.items[0]!.label)
-    expect(screen.getByRole('checkbox', { name: `选择${current.items[0]!.label}` }).getAttribute('aria-checked')).toBe('true')
+describe('prepared clinical confirmation', () => {
+  it('shows complete executable items selected and keeps explanations under one button', async () => {
+    const current = state(); stubRequests(() => current); mount(props())
+    await screen.findByText('发热，未特指')
+    expect(selectionCheckbox().getAttribute('aria-checked')).toBe('true')
     expect(screen.queryByText(current.items[0]!.rationale)).toBeNull()
     expect(screen.queryByText(current.guidelines[0]!.text)).toBeNull()
-    await userEvent.setup().click(screen.getByRole('button', { name: '依据与说明' }))
-    expect(within(screen.getByRole('dialog')).getByText(current.items[0]!.rationale)).toBeTruthy()
+    expect((await details()).getByText(current.items[0]!.rationale)).toBeTruthy()
   })
-
-  it.each(['zh-CN', 'en-US'] as const)('distinguishes system limitations from patient information without repeating legacy flat notes in %s', async locale => {
-    const current = state({
-      notices: [
-        { category: 'guideline', message: '当前指南未覆盖本项检查。' },
-        { category: 'catalog', message: '院内目录暂未开展该检查。' },
-        { category: 'verification', message: '流感候选未通过核验：引用未支持诊断限定语。' },
-        { category: 'processing', message: '本次无法完整读取历史资料。' },
-      ],
-      missingInformation: ['旧版未分类缺项长清单，不应重复显示。'],
-    })
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
-    mount(props({ locale }))
-    for (const [category, message] of (locale === 'zh-CN' ? [
-      ['指南覆盖', '当前指南未覆盖本项检查。'], ['院内目录', '院内目录暂未开展该检查。'],
-      ['核验未通过', '流感候选未通过核验：引用未支持诊断限定语。'], ['系统处理限制', '本次无法完整读取历史资料。'],
-    ] as const : [
-      ['Guideline coverage', '当前指南未覆盖本项检查。'], ['Hospital catalog', '院内目录暂未开展该检查。'],
-      ['Verification not passed', '流感候选未通过核验：引用未支持诊断限定语。'], ['Processing limitations', '本次无法完整读取历史资料。'],
-    ] as const)) {
-      const notice = await screen.findByRole('alert', { name: category })
-      expect(within(notice).getByText(message)).toBeTruthy()
-    }
-    expect(screen.queryByText(current.missingInformation[0]!)).toBeNull()
+  it('submits the selected current preparation directly through the formal confirmation API', async () => {
+    const calls = stubRequests(); mount(props({ expectedDraftVersion: 4 }))
+    await screen.findByText('发热，未特指'); await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1))
+    const submitted = calls.find(call => call.path.endsWith('/actions/confirm'))!
+    expect(confirmDoctorPreparationRequestSchema.parse(submitted.body)).toMatchObject({ expectedVersions: { 'Encounter/encounter-fever': '2' }, input: {
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 4,
+      selections: [{ source: 'agent', suggestionId: 'recommendation-fever', catalogItemId: 'diagnosis-fever', role: 'primary' }],
+    } })
+    expect(calls.some(call => call.path.includes('/draft'))).toBe(false)
   })
-
-  it('labels unclassified legacy notes as additional notes without blaming missing patient information', async () => {
-    const current = state({ status: 'missing-evidence', items: [], missingInformation: ['旧版未分类说明。'] })
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
-    mount(props())
-    const note = within(await screen.findByRole('alert', { name: '补充说明' }))
-    expect(note.getByText('旧版未分类说明。')).toBeTruthy()
-    expect(screen.getByText('本轮未发布建议，请查看上方说明，并结合病例继续评估。')).toBeTruthy()
-    expect(screen.queryByText('指南或病例资料不足时，先补充信息再刷新。')).toBeNull()
+  it('preserves a manual item with the same clinical identity and asks the doctor to review a conflicting new proposal', async () => {
+    const current = prescriptionState(); stubRequests(() => current)
+    mount(props({ kind: 'prescription', manualItems: [{ label: '医生手改药品', value: { source: 'manual', kind: 'prescription', catalogItemId: 'medication-1', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 } }] }))
+    await screen.findByText('医生手改药品')
+    expect(screen.queryByText('合成药品')).toBeNull()
+    expect(screen.getByText(/10 mg/)).toBeTruthy()
+    expect(await screen.findByText('新建议与医生填写内容不同，请核对。')).toBeTruthy()
+    expect(confirmButton()).toHaveProperty('disabled', true)
   })
-
-  it('keeps adoptable suggestions separate from read-only considerations', async () => {
-    const current = state({ considerations: [{
-      id: 'consideration-assessment', label: '核实上呼吸道感染的可能性', rationale: '围绕本次症状补充评估。',
-      supportingInformation: ['自述发热伴咳嗽。'], opposingInformation: [], missingInformation: ['核实症状起始时间。'],
-      caseEvidenceIds: ['patient-statement-fever'],
-    }] })
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
-    mount(props())
-    const adoptable = within(await screen.findByRole('region', { name: '可采纳建议' }))
-    expect(adoptable.getByRole('button', { name: '采纳 发热，未特指' })).toBeTruthy()
-    expect(adoptable.queryByText('核实上呼吸道感染的可能性')).toBeNull()
-    const thoughts = within(screen.getByRole('region', { name: '待核实思路' }))
-    expect(thoughts.getByText('核实上呼吸道感染的可能性')).toBeTruthy()
-    expect(thoughts.queryByRole('button')).toBeNull()
-    await userEvent.setup().click(adoptable.getByText('查看依据'))
-    expect(adoptable.getByText(current.guidelines[0]!.text)).toBeTruthy()
-    expect(adoptable.getByText(current.caseEvidence[0]!.text)).toBeTruthy()
+  it('keeps an edit made during submission even when its value returns to the submitted value', async () => {
+    const delayed = deferredResponse(); const current = prescriptionState()
+    stubRequests(() => current, () => delayed.response); const mounted = mount(props({ kind: 'prescription' }))
+    await screen.findByText('合成药品'); const user = userEvent.setup()
+    await edit(); fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
+    await user.click(screen.getByRole('button', { name: '保留本次调整' })); await user.click(confirmButton())
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(1))
+    await edit(); fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '20 mg' } })
+    fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    await act(async () => { delayed.complete(receipt('prescription')) })
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(screen.getByText(/10 mg/)).toBeTruthy()
   })
-
-  it.each(['diagnosis', 'laboratory', 'imaging', 'pathology'] as const)('shows case-based %s reasoning with its sources and no adoption action when guidance is absent', async kind => {
-    const consideration = {
-      id: 'consideration-fever', label: '考虑流感相关评估', rationale: '结合发热感与接触情况，先评估流感的可能性。',
-      supportingInformation: ['患者自述发热伴咳嗽。'], opposingInformation: ['分诊测得37℃，未记录发热时最高体温。'],
-      missingInformation: ['核对发病时间，以判断检测是否影响处置。'], caseEvidenceIds: ['patient-statement-fever'],
-    }
-    const current = state({ kind, status: 'missing-evidence', items: [], guidelines: [], considerations: [consideration], notices: [] })
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
-    const page = props({ kind })
-    mount(page)
-    const thoughts = within(await screen.findByRole('region', { name: '待核实思路' }))
-    const entry = within(thoughts.getByRole('article', { name: consideration.label }))
-    for (const text of [consideration.rationale, ...consideration.supportingInformation, ...consideration.opposingInformation,
-      ...consideration.missingInformation, current.caseEvidence[0]!.text]) expect(entry.getByText(text)).toBeTruthy()
-    expect(entry.getByText('病例依据').closest('details')).toBeNull()
-    expect(entry.queryByRole('button')).toBeNull()
-    expect(screen.queryByText('暂无可采纳的建议')).toBeNull()
-    expect(page.onAdopt).not.toHaveBeenCalled()
-  })
-
   it.each([
-    { documentType: 'product-information', label: '药品说明书', locale: 'zh-CN' },
-    { documentType: 'health-standard', label: '卫生行业标准', locale: 'zh-CN' },
-    { documentType: 'product-information', label: 'Product information', locale: 'en-US' },
-    { documentType: 'health-standard', label: 'Health industry standard', locale: 'en-US' },
-  ] as const)('shows the evidence document type as $label', async ({ documentType, label, locale }) => {
-    const source = state()
-    const current = state({ guidelines: [{ ...source.guidelines[0]!, documentType }] })
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
-    mount(props({ locale }))
-    const panel = within(screen.getByRole('region', { name: locale === 'zh-CN' ? '诊断建议' : 'Diagnosis suggestions' }))
-    await userEvent.setup().click(await panel.findByText(locale === 'zh-CN' ? '查看依据' : 'View evidence'))
-    expect(panel.getByText(label)).toBeTruthy()
-  })
-
-  it('rechecks the server before adoption and does not apply a cached ready suggestion after its sources become stale', async () => {
-    let current = state()
-    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === 'POST') return Response.json({ data: current, auditId: 'audit-refresh',
-        effects: [], requestId: 'request-refresh', warnings: [] })
-      return Response.json(current)
-    }))
-    const page = props()
-    mount(page)
-    const panel = within(screen.getByRole('region', { name: '诊断建议' }))
-    const adopt = await panel.findByRole('button', { name: '采纳 发热，未特指' })
-    current = state({ inputFingerprint: 'b'.repeat(64), stale: true, missingInformation: ['当前病例资料已更新，等待重新生成。'] })
-    await userEvent.setup().click(adopt)
-    expect(page.onAdopt).not.toHaveBeenCalled()
-    await panel.findByText('当前病例资料已更新，等待重新生成。')
-    await waitFor(() => expect(adopt.hasAttribute('disabled')).toBe(true))
-  })
-
-  it.each([
-    { change: 'input fingerprint', current: state({ inputFingerprint: 'b'.repeat(64) }) },
-    { change: 'generation', current: state({ generation: 2 }) },
-    { change: 'pending generation', current: state({ status: 'pending' }) },
-    { change: 'failed generation', current: state({ status: 'failed' }) },
-    { change: 'missing evidence', current: state({ status: 'missing-evidence' }) },
-    { change: 'removed suggestion', current: state({ items: [] }) },
-    { change: 'case identity', current: state({ caseId: 'case-other' }) },
-    { change: 'recommendation kind', current: state({ kind: 'prescription', items: [] }) },
-  ])('rejects adoption when the fresh server check changes the $change', async ({ current }) => {
-    const check = deferredResponse()
-    let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async () => ++reads === 1 ? Response.json(state()) : await check.response))
-    const page = props()
-    mount(page)
-    await userEvent.setup().click(await screen.findByRole('button', { name: '采纳 发热，未特指' }))
-    await screen.findByText('正在核对建议…')
-    await act(async () => { check.complete(Response.json(current)) })
-    await waitFor(() => expect(screen.queryByText('正在核对建议…')).toBeNull())
-    expect(page.onAdopt).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    { change: 'acting identity', next: { scope: 'actor-b' } },
-    { change: 'input revision', next: { inputRevision: 'case-source-2' } },
-    { change: 'selected case', next: { caseId: 'case-other' } },
-    { change: 'enabled page', next: { enabled: false } },
-  ])('does not adopt an old check after the $change changes from A to B and back to A', async ({ next }) => {
-    const check = deferredResponse()
-    let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async () => ++reads === 2 ? await check.response : Response.json(state())))
-    const page = props({ scope: 'actor-a' })
-    const mounted = mount(page)
-    await userEvent.setup().click(await screen.findByRole('button', { name: '采纳 发热，未特指' }))
-    await waitFor(() => expect(reads).toBe(2))
-    mounted.rerenderPanel({ ...page, ...next })
-    mounted.rerenderPanel(page)
-    await act(async () => { check.complete(Response.json(state())) })
-    await waitFor(() => expect(screen.queryByText('正在核对建议…')).toBeNull())
-    expect(page.onAdopt).not.toHaveBeenCalled()
-  })
-
-  it('does not let a delayed generation one response replace a newer generation already read from the server', async () => {
-    const post = deferredResponse()
-    const readAfterPost = deferredResponse()
-    const initial = state()
-    const newer = state({ generation: 2, items: [{ ...initial.items[0]!, rationale: '第二轮的核对结果仍须医生确认。' }] })
-    let reads = 0
-    let posts = 0
-    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === 'POST') { posts++; return post.response }
-      reads++
-      if (reads === 1) return Response.json(initial)
-      if (reads === 2) return Response.json(newer)
-      return readAfterPost.response
-    }))
-    const mounted = mount(props())
-    await screen.findByRole('button', { name: '采纳 发热，未特指' })
-    await userEvent.setup().click(screen.getByRole('button', { name: '刷新建议' }))
-    await waitFor(() => expect(posts).toBe(1))
-    await act(async () => { await mounted.client.refetchQueries({ type: 'active' }) })
-    await screen.findByText('第二轮的核对结果仍须医生确认。')
-    await act(async () => { post.complete(Response.json({ data: initial, auditId: 'audit-old-generation',
-      effects: [], requestId: 'request-old-generation', warnings: [] })) })
-    await waitFor(() => expect(reads).toBe(3))
-    try {
-      expect(screen.getByText('第二轮的核对结果仍须医生确认。')).toBeTruthy()
-      expect(screen.queryByText(initial.items[0]!.rationale)).toBeNull()
-    } finally {
-      await act(async () => { readAfterPost.complete(Response.json(newer)) })
-    }
-  })
-
-  it.each(['ready', 'missing-evidence', 'failed'] as const)('keeps a %s result when its delayed generation response still reports the same generation as pending', async status => {
-    const post = deferredResponse()
-    const readAfterPost = deferredResponse()
-    const initial = state()
-    const completed = state({ generation: 2, status,
-      items: status === 'ready' ? [{ ...initial.items[0]!, rationale: '第二轮已经完成，等待医生核对。' }] : [],
-      missingInformation: ['第二轮已核对，保留当前完成说明。'],
-    })
-    let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === 'POST') return post.response
-      reads++
-      if (reads === 1) return Response.json(initial)
-      if (reads === 2) return Response.json(completed)
-      return readAfterPost.response
-    }))
-    const mounted = mount(props())
-    await screen.findByRole('button', { name: '采纳 发热，未特指' })
-    await userEvent.setup().click(screen.getByRole('button', { name: '刷新建议' }))
-    await screen.findByText('正在生成建议…')
-    await act(async () => { await mounted.client.refetchQueries({ type: 'active' }) })
-    await screen.findByText('第二轮已核对，保留当前完成说明。')
-    await act(async () => {
-      post.complete(Response.json({ data: state({ generation: 2, status: 'pending', items: [] }),
-        auditId: 'audit-pending', effects: [], requestId: 'request-pending', warnings: [] }))
-    })
-    await waitFor(() => expect(reads).toBe(3))
-    try {
-      expect(screen.getByText('第二轮已核对，保留当前完成说明。')).toBeTruthy()
-      expect(screen.queryByText('正在生成建议…')).toBeNull()
-      expect(screen.getByRole('button', { name: '刷新建议' }).hasAttribute('disabled')).toBe(false)
-    } finally {
-      await act(async () => { readAfterPost.complete(Response.json(completed)) })
-    }
-  })
-
-  it.each(['generation', 'adoption'] as const)('does not expose an old scope %s request or its failure in the new scope', async operation => {
-    const request = deferredResponse()
-    const initial = state()
-    const current = state({ items: [{ ...initial.items[0]!, rationale: '当前医生上下文的建议。' }] })
-    let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === 'POST') return request.response
-      reads++
-      if (operation === 'adoption' && reads === 2) return request.response
-      return Response.json(reads === 1 ? initial : current)
-    }))
-    const page = props({ scope: 'actor-a' })
-    const mounted = mount(page)
-    await screen.findByRole('button', { name: '采纳 发热，未特指' })
-    await userEvent.setup().click(screen.getByRole('button', {
-      name: operation === 'generation' ? '刷新建议' : '采纳 发热，未特指',
-    }))
-    await screen.findByText(operation === 'generation' ? '正在生成建议…' : '正在核对建议…')
-    mounted.rerenderPanel({ ...page, scope: 'actor-b' })
-    await screen.findByText('当前医生上下文的建议。')
-    expect(screen.getByRole('button', { name: '采纳 发热，未特指' }).hasAttribute('disabled')).toBe(false)
-    expect(screen.queryByRole('status')).toBeNull()
-    await act(async () => {
-      request.complete(Response.json({ error: { code: 'MODEL_UNAVAILABLE', message: '合成旧请求失败。' } }, { status: 503 }))
-    })
+    { name: 'identity', next: { scope: 'doctor-b' } },
+    { name: 'input revision', next: { inputRevision: 'source-2' } },
+    { name: 'case', next: { caseId: 'other-case' } },
+    { name: 'enabled state', next: { enabled: false } },
+  ])('does not clear a new view when the $name changes A to B to A before an old confirmation succeeds', async ({ next }) => {
+    const delayed = deferredResponse(); stubRequests(() => state(), () => delayed.response)
+    const original = props(); const mounted = mount(original); const user = userEvent.setup()
+    await screen.findByText('发热，未特指'); await user.click(confirmButton())
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(1))
+    mounted.rerenderPanel({ ...original, ...next }); mounted.rerenderPanel(original)
+    await screen.findByText('发热，未特指'); await user.click(selectionCheckbox())
+    await act(async () => { delayed.complete(receipt()) })
     await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
-    expect(screen.queryByText('建议暂不可用。现有草稿已保留，可刷新重试。')).toBeNull()
-    expect(screen.getByText('当前医生上下文的建议。')).toBeTruthy()
-    expect(page.onAdopt).not.toHaveBeenCalled()
+    expect(screen.getByText('发热，未特指')).toBeTruthy()
+    expect(selectionCheckbox().getAttribute('aria-checked')).toBe('false')
   })
-
-  it('does not replace the current view with a generation response from an earlier visit to the same scope', async () => {
-    const post = deferredResponse()
-    const initial = state()
-    const current = state({ generation: 2, items: [{ ...initial.items[0]!, rationale: '身份往返后读取的当前建议。' }] })
-    let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if (init?.method === 'POST') return post.response
-      return Response.json(++reads === 1 ? initial : current)
-    }))
-    const page = props({ scope: 'actor-a' })
-    const mounted = mount(page)
-    await screen.findByRole('button', { name: '采纳 发热，未特指' })
-    await userEvent.setup().click(screen.getByRole('button', { name: '刷新建议' }))
-    await screen.findByText('正在生成建议…')
-    mounted.rerenderPanel({ ...page, scope: 'actor-b' })
-    mounted.rerenderPanel(page)
-    await screen.findByText('身份往返后读取的当前建议。')
-    await act(async () => {
-      post.complete(Response.json({ data: state({ generation: 3 }), auditId: 'audit-old-scope',
-        effects: [], requestId: 'request-old-scope', warnings: [] }))
-    })
+  it('invalidates the actual submitted case even when confirmation finishes after unmount', async () => {
+    const delayed = deferredResponse(); stubRequests(() => state(), () => delayed.response)
+    const mounted = mount(props()); mounted.client.setQueryData(['doctor-case', 'old-scope', 'case-fever'], { id: 'case-fever' })
+    await screen.findByText('发热，未特指'); await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(1)); mounted.unmount()
+    await act(async () => { delayed.complete(receipt()) })
     await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
-    expect(screen.getByText('身份往返后读取的当前建议。')).toBeTruthy()
-    expect(screen.queryByText(initial.items[0]!.rationale)).toBeNull()
+    expect(mounted.client.getQueryState(['doctor-case', 'old-scope', 'case-fever'])?.isInvalidated).toBe(true)
   })
 
-  it('does not adopt a check that completes after the panel unmounts', async () => {
-    const check = deferredResponse()
-    let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async () => ++reads === 1 ? Response.json(state()) : await check.response))
-    const page = props()
-    const mounted = mount(page)
-    await userEvent.setup().click(await screen.findByRole('button', { name: '采纳 发热，未特指' }))
-    await screen.findByText('正在核对建议…')
-    mounted.unmount()
-    await act(async () => { check.complete(Response.json(state())) })
-    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
-    expect(page.onAdopt).not.toHaveBeenCalled()
-  })
-
-  it.each([false, true])('uses the latest editor permission and callback while a check is pending (can adopt: %s)', async permitted => {
-    const check = deferredResponse()
-    let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async () => ++reads === 2 ? await check.response : Response.json(state())))
-    const previousAdopt = vi.fn()
-    const latestAdopt = vi.fn()
-    const page = props({ canAdopt: () => true, onAdopt: previousAdopt })
-    const mounted = mount(page)
-    await userEvent.setup().click(await screen.findByRole('button', { name: '采纳 发热，未特指' }))
-    await waitFor(() => expect(reads).toBe(2))
-    mounted.rerenderPanel({ ...page, canAdopt: () => permitted, onAdopt: latestAdopt })
-    const verified = state({ missingInformation: ['采纳前已完成本次核对。'] })
-    await act(async () => { check.complete(Response.json(verified)) })
-    await waitFor(() => expect(screen.queryByText('正在核对建议…')).toBeNull())
-    expect(previousAdopt).not.toHaveBeenCalled()
-    if (permitted) expect(latestAdopt).toHaveBeenCalledExactlyOnceWith(verified.items[0], verified)
-    else expect(latestAdopt).not.toHaveBeenCalled()
-  })
-
-  it('rejects a changed suggestion even when the case fingerprint and generation still match', async () => {
-    let current = state()
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
-    const page = props()
-    mount(page)
-    const adopt = await screen.findByRole('button', { name: '采纳 发热，未特指' })
-    current = state({ items: [{ ...current.items[0]!, rationale: '服务端已修正候选依据，医生需要重新核对。' }] })
-    await userEvent.setup().click(adopt)
-    await screen.findByText('服务端已修正候选依据，医生需要重新核对。')
-    expect(page.onAdopt).not.toHaveBeenCalled()
-  })
-
-  it('keeps a replacement visible and does not adopt an old check that arrives after a same-generation refresh', async () => {
-    const check = deferredResponse()
-    const initial = state()
-    const replacement = state({ items: [{ ...initial.items[0]!, rationale: '当前可见候选已经更正，请重新核对。' }] })
-    let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      reads++
-      if (reads === 1) return Response.json(initial)
-      if (reads === 2) return check.response
-      return Response.json(replacement)
-    }))
-    const page = props()
-    const mounted = mount(page)
-    await userEvent.setup().click(await screen.findByRole('button', { name: '采纳 发热，未特指' }))
-    await waitFor(() => expect(reads).toBe(2))
-    await act(async () => { await mounted.client.refetchQueries({ type: 'active' }) })
-    await screen.findByText('当前可见候选已经更正，请重新核对。')
-    await act(async () => { check.complete(Response.json(initial)) })
-    await waitFor(() => expect(screen.queryByText('正在核对建议…')).toBeNull())
-    expect(page.onAdopt).not.toHaveBeenCalled()
-    expect(screen.getByText('当前可见候选已经更正，请重新核对。')).toBeTruthy()
-    expect(screen.queryByText(initial.items[0]!.rationale)).toBeNull()
-  })
-
-  it('does not adopt a check after a background read has removed the visible case suggestion', async () => {
-    const check = deferredResponse()
-    let reads = 0
-    vi.stubGlobal('fetch', vi.fn(async () => {
-      reads++
-      if (reads === 1) return Response.json(state())
-      if (reads === 2) return check.response
-      return Response.json(state({ caseId: 'case-other' }))
-    }))
-    const page = props()
-    const mounted = mount(page)
-    await userEvent.setup().click(await screen.findByRole('button', { name: '采纳 发热，未特指' }))
-    await screen.findByText('正在核对建议…')
-    await act(async () => { await mounted.client.refetchQueries({ type: 'active' }) })
-    await waitFor(() => expect(screen.queryByRole('button', { name: '采纳 发热，未特指' })).toBeNull())
-    await act(async () => { check.complete(Response.json(state())) })
-    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
-    expect(page.onAdopt).not.toHaveBeenCalled()
-    expect(screen.queryByRole('button', { name: '采纳 发热，未特指' })).toBeNull()
-  })
 })
 
 
@@ -486,4 +182,222 @@ it('keeps classified limitation labels inside evidence details without publishin
   const dialog = within(await screen.findByRole('dialog'))
   for (const label of ['指南覆盖', '院内目录', '核验未通过', '系统处理限制']) expect(dialog.getByRole('alert', { name: label })).toBeTruthy()
   expect(dialog.queryByText('旧未分类说明。')).toBeNull()
+})
+
+it('uses clinical labels for frequency and laboratory purpose while retaining protocol codes in the request', async () => {
+  const current = prescriptionState(); const calls = stubRequests(() => current)
+  const mounted = mount(props({ kind: 'prescription' }))
+  await screen.findByText('合成药品')
+  expect(await screen.findByText(/每日一次/)).toBeTruthy()
+  expect(screen.queryByText(/ · QD · /)).toBeNull()
+  await userEvent.setup().click(confirmButton())
+  await waitFor(() => expect(calls.some(call => call.path.endsWith('/actions/confirm'))).toBe(true))
+  expect(confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).input.selections[0]).toMatchObject({ frequencyCode: 'QD' })
+  mounted.unmount()
+  const first = state().items[0]!
+  const { kind: _kind, role: _role, referenceConcept: _referenceConcept, catalogItemId: _catalogItemId, ...base } = first.kind === 'diagnosis' ? first : (() => { throw new Error('Expected diagnosis') })()
+  const laboratory = state({ kind: 'laboratory', items: [{ ...base, kind: 'laboratory', catalogItemId: 'lab-1', indicationCode: 'clinical-evaluation' }] })
+  stubRequests(() => laboratory); mount(props({ kind: 'laboratory' }))
+  await screen.findByText('发热，未特指')
+  expect(await screen.findByText('临床评估')).toBeTruthy()
+  expect(screen.queryByText('clinical-evaluation')).toBeNull()
+})
+
+it.each(['doseText', 'frequencyCode', 'courseDays', 'quantity'] as const)('keeps an absent prescription %s empty and unavailable instead of inventing a value', async field => {
+  const original = prescriptionState()
+  const current = prescriptionState({ items: original.items.map(item => ({ ...item, [field]: null })) })
+  const calls = stubRequests(() => current); mount(props({ kind: 'prescription' }))
+  await screen.findByText('合成药品')
+  expect(selectionCheckbox('合成药品').getAttribute('aria-checked')).toBe('false')
+  expect(selectionCheckbox('合成药品').getAttribute('aria-disabled')).toBe('true')
+  expect(confirmButton()).toHaveProperty('disabled', true)
+  expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(0)
+})
+it('does not invent a primary diagnosis for legacy results and requires the doctor to choose a role', async () => {
+  const current = state({ items: state().items.map(item => item.kind === 'diagnosis' ? { ...item, role: undefined } : item) })
+  stubRequests(() => current); mount(props()); await screen.findByText('发热，未特指')
+  expect(selectionCheckbox().getAttribute('aria-disabled')).toBe('true')
+  expect(confirmButton()).toHaveProperty('disabled', true)
+  await edit(); await userEvent.setup().click(screen.getByRole('button', { name: '主诊断' }))
+  await userEvent.setup().click(screen.getByRole('button', { name: '保留本次调整' }))
+  expect(confirmButton()).toHaveProperty('disabled', false)
+})
+it('keeps both proposed primary roles and asks for a clinical choice', async () => {
+  const first = state().items[0]!
+  if (first.kind !== 'diagnosis') throw new Error('Expected diagnosis fixture')
+  const current = state({ items: [first, { ...first, id: 'second', catalogItemId: 'diagnosis-other', label: '合成第二诊断' }] })
+  stubRequests(() => current); mount(props()); await screen.findByText('合成第二诊断')
+  expect(screen.getAllByText('主诊断')).toHaveLength(2)
+  expect(confirmButton()).toHaveProperty('disabled', true)
+})
+it('retains cancelled selection and removal after a refresh of the same clinical evidence', async () => {
+  const first = state().items[0]!
+  if (first.kind !== 'diagnosis') throw new Error('Expected diagnosis fixture')
+  let current = state({ items: [first, { ...first, id: 'second', catalogItemId: 'diagnosis-other', label: '合成第二诊断' }] })
+  stubRequests(() => current); const mounted = mount(props()); const user = userEvent.setup()
+  await screen.findByText('合成第二诊断'); await user.click(selectionCheckbox())
+  await user.click(screen.getByRole('button', { name: '移除合成第二诊断' }))
+  current = state({ ...current, generation: 2 })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  expect(selectionCheckbox().getAttribute('aria-checked')).toBe('false')
+  expect(screen.queryByText('合成第二诊断')).toBeNull()
+  expect(confirmButton()).toHaveProperty('disabled', true)
+})
+it('keeps physician edits and retries the same confirmation intent with the same idempotency key after failure', async () => {
+  let fail = true; const current = prescriptionState()
+  const calls = stubRequests(() => current, () => fail ? Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: '合成资料变化。' } }, { status: 409 }) : receipt('prescription'))
+  const mounted = mount(props({ kind: 'prescription' })); const user = userEvent.setup()
+  await screen.findByText('合成药品'); await edit(); fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
+  await user.click(screen.getByRole('button', { name: '保留本次调整' })); await user.click(confirmButton())
+  await screen.findByText('更新或提交未完成，草稿已保留，可重试。')
+  expect(screen.getByText(/10 mg/)).toBeTruthy()
+  fail = false; await user.click(confirmButton()); await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+  const submitted = calls.filter(call => call.path.endsWith('/actions/confirm'))
+  expect(submitted).toHaveLength(2); expect(submitted[0]!.key).toBeTruthy(); expect(submitted[1]!.key).toBe(submitted[0]!.key)
+  expect(confirmDoctorPreparationRequestSchema.parse(submitted[0]!.body).input.selections[0]).toMatchObject({ source: 'manual', doseText: '10 mg' })
+})
+it.each(['pending', 'failed', 'missing-evidence'] as const)('keeps automatic confirmation unavailable for a %s result', async status => {
+  const current = state({ status, items: status === 'missing-evidence' ? [] : state().items })
+  stubRequests(() => current); mount(props()); await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', true))
+})
+it.each([{ enabled: false }, { disabled: true }, { unavailableReason: () => '请先处理当前检查草稿。' }])('honors the current edit permission %j', async permission => {
+  const calls = stubRequests(); mount(props(permission))
+  if (permission.enabled === false) { expect(screen.queryByRole('region')).toBeNull(); expect(calls).toHaveLength(0) }
+  else { await screen.findByText('发热，未特指'); expect(confirmButton()).toHaveProperty('disabled', true) }
+})
+it('keeps manual input while hiding withdrawn source results and their explanations', async () => {
+  let current = prescriptionState(); stubRequests(() => current); const mounted = mount(props({ kind: 'prescription' }))
+  await screen.findByText('合成药品'); await edit(); fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
+  await userEvent.setup().click(screen.getByRole('button', { name: '保留本次调整' }))
+  current = prescriptionState({ hidePreviousResults: true, stale: false, status: 'missing-evidence', items: [], guidelines: [], considerations: [], caseEvidence: [] })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  expect(screen.getByText(/10 mg/)).toBeTruthy()
+  const dialog = await details()
+  expect(dialog.queryByText(state().guidelines[0]!.text)).toBeNull()
+  expect(dialog.queryByText(state().items[0]!.rationale)).toBeNull()
+})
+it('preserves the previous list during a pending refresh and prevents its formal submission', async () => {
+  let current = state(); stubRequests(() => current); const mounted = mount(props())
+  await screen.findByText('发热，未特指')
+  current = state({ generation: 2, status: 'pending', items: [] })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  expect(screen.getByText('发热，未特指')).toBeTruthy()
+  await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', true))
+  expect(screen.getByRole('button', { name: '调整' })).toHaveProperty('disabled', false)
+})
+it('marks the Provider busy for the complete lifetime of a formal confirmation request', async () => {
+  const delayed = deferredResponse(); stubRequests(() => state(), () => delayed.response)
+  const mounted = mount(props(), true); await screen.findByText('发热，未特指'); await userEvent.setup().click(confirmButton())
+  await waitFor(() => expect(screen.getByTestId('submitting').textContent).toBe('提交中'))
+  await act(async () => { delayed.complete(receipt()) }); await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+  expect(screen.getByTestId('submitting').textContent).toBe('空闲')
+})
+it.each(['diagnosis', 'laboratory', 'imaging', 'pathology'] as const)('keeps unguided %s considerations read-only inside details', async kind => {
+  const thought = { id: 'thought', label: '核对流感方向', rationale: '合成推测仅供核对。', supportingInformation: [], opposingInformation: [], missingInformation: [], caseEvidenceIds: ['patient-statement-fever'] }
+  const current = state({ kind, status: 'missing-evidence', items: [], guidelines: [], considerations: [thought] })
+  const calls = stubRequests(() => current); mount(props({ kind })); await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', true))
+  expect(screen.queryByText(thought.label)).toBeNull()
+  const dialog = await details(); const article = within(dialog.getByRole('article', { name: thought.label }))
+  expect(article.getByText(thought.rationale)).toBeTruthy(); expect(article.queryByRole('button')).toBeNull()
+  expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(0)
+})
+it('labels legacy unclassified notes without treating them as missing patient facts', async () => {
+  const current = state({ items: [], status: 'missing-evidence', missingInformation: ['旧版未分类说明。'] })
+  stubRequests(() => current); mount(props()); const dialog = await details()
+  expect(within(await dialog.findByRole('alert', { name: '补充说明' })).getByText('旧版未分类说明。')).toBeTruthy()
+})
+
+it('keeps a newer automatic result visible when an earlier confirmation response arrives late', async () => {
+  const delayed = deferredResponse(); let current = state()
+  stubRequests(() => current, () => delayed.response); const mounted = mount(props())
+  await screen.findByText('发热，未特指'); await userEvent.setup().click(confirmButton())
+  current = state({ generation: 2, inputFingerprint: 'b'.repeat(64), items: [{ ...state().items[0]!, label: '新资料下的诊断候选' }] })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  await screen.findByText('新资料下的诊断候选')
+  await act(async () => { delayed.complete(receipt()) }); await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+  expect(screen.getByText('新资料下的诊断候选')).toBeTruthy()
+})
+it.each(['identity', 'source', 'enabled'] as const)('hides a late confirmation failure after an A to B to A %s transition', async mode => {
+  const delayed = deferredResponse(); stubRequests(() => state(), () => delayed.response)
+  const original = props(); const mounted = mount(original); await screen.findByText('发热，未特指'); await userEvent.setup().click(confirmButton())
+  mounted.rerenderPanel({ ...original, ...(mode === 'identity' ? { scope: 'doctor-b' } : mode === 'source' ? { inputRevision: 'source-b' } : { enabled: false }) })
+  mounted.rerenderPanel(original); await screen.findByText('发热，未特指')
+  await act(async () => { delayed.complete(Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: '合成旧确认失败。' } }, { status: 409 })) })
+  await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+  expect(screen.queryByText('更新或提交未完成，草稿已保留，可重试。')).toBeNull()
+})
+it.each(['ready', 'missing-evidence', 'failed'] as const)('retains a completed %s read when its delayed generation receipt still says pending', async status => {
+  const delayed = deferredResponse(); let current = state()
+  stubRequests(() => current, () => receipt(), () => delayed.response)
+  const mounted = mount(props()); await screen.findByText('发热，未特指'); await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
+  current = state({ generation: 2, status, items: status === 'ready' ? state().items : [], missingInformation: ['本轮已经结束。'] })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  await act(async () => { delayed.complete(Response.json({ data: state({ generation: 2, status: 'pending', items: [] }), auditId: 'audit-generation', requestId: 'request-generation', effects: [], warnings: [] })) })
+  await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+  expect((await details()).getByText('本轮已经结束。')).toBeTruthy()
+  expect(screen.queryByText('正在按最新资料更新，旧自动项目暂不可开具。')).toBeNull()
+})
+it('retains a newer generation when an older completed generation receipt arrives late', async () => {
+  const delayed = deferredResponse(); let current = state()
+  stubRequests(() => current, () => receipt(), () => delayed.response)
+  const mounted = mount(props()); await screen.findByText('发热，未特指'); await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
+  current = state({ generation: 3, items: [{ ...state().items[0]!, label: '最新一轮诊断' }] })
+  await act(async () => { await mounted.client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+  await act(async () => { delayed.complete(Response.json({ data: state({ generation: 2 }), auditId: 'audit-generation', requestId: 'request-generation', effects: [], warnings: [] })) })
+  await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+  expect(screen.getByText('最新一轮诊断')).toBeTruthy()
+})
+
+it('keeps a known confirmation success when case refresh fails and refreshes records without issuing another command', async () => {
+  const calls = stubRequests(); const mounted = mount(props(), true)
+  let available = false
+  const clinical = doctorCaseDetailSchema.parse({ caseId: 'case-fever', allergies: [], encounter: { id: 'encounter-fever', versionId: '3', status: 'in-progress' },
+    patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', synthetic: true, versionId: '1' },
+    presentation: null, priorFacts: [], status: 'first-visit', taskId: 'task', taskVersion: '1', diagnosis: { draftVersion: 2,
+      confirmation: { id: 'formal-record-1', confirmedAt: '2026-10-18T12:00:00+08:00', provenanceId: 'provenance-1', entries: [{
+        catalogItemId: 'diagnosis-fever', role: 'primary', code: 'R50.9', conditionId: 'condition-1', conditionVersion: '1', display: '发热', system: 'http://hl7.org/fhir/sid/icd-10',
+      }] } } })
+  const observer = new QueryObserver(mounted.client, { queryKey: ['doctor-case', 'scope', 'case-fever'], queryFn: async () => {
+    if (!available) throw new Error('Synthetic case refresh failed')
+    return clinical
+  }, retry: false })
+  const unsubscribe = observer.subscribe(() => {})
+  try {
+    await screen.findByText('发热，未特指'); await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(screen.getByTestId('confirmed-revision').textContent).toBe('0')
+    expect(await screen.findByText('已完成确认，记录暂未刷新，请刷新查看。')).toBeTruthy()
+    available = true; await userEvent.setup().click(screen.getByRole('button', { name: '刷新记录' }))
+    await waitFor(() => expect(screen.getByTestId('confirmed-revision').textContent).toBe('1'))
+    expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1)
+  } finally { unsubscribe() }
+})
+
+it('does not describe missing-evidence results as checked against the latest information', async () => {
+  stubRequests(() => state({ status: 'missing-evidence', items: [] })); mount(props())
+  await screen.findByText('暂无可直接确认或开具的项目。')
+  await waitFor(() => expect(screen.getByRole('status').textContent).not.toContain('正在'))
+  expect(screen.queryByText('已按最新资料核对，由医生确认。')).toBeNull()
+})
+
+it('keeps a new manualItems edit visible while the confirmed case refresh is still pending', async () => {
+  const read = deferredResponse(); const current = prescriptionState()
+  stubRequests(() => current); const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+  const initial = props({ kind: 'prescription', manualItems: [{ label: '人工处方', value }] })
+  const mounted = mount(initial)
+  let first = true
+  const observer = new QueryObserver(mounted.client, { queryKey: ['doctor-case', 'scope', 'case-fever'], queryFn: async () => {
+    if (first) { first = false; return { caseId: 'case-fever' } }
+    return read.response
+  }, retry: false })
+  const unsubscribe = observer.subscribe(() => {})
+  try {
+    await screen.findByText('合成药品'); await userEvent.setup().click(confirmButton())
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(1))
+    await waitFor(() => expect(screen.queryByText('人工处方')).toBeNull())
+    mounted.rerenderPanel({ ...initial, manualItems: [{ label: '人工处方', value: { ...value, doseText: '20 mg' } }] })
+    expect(screen.getByText(/20 mg/)).toBeTruthy()
+    mounted.rerenderPanel(initial)
+    expect(screen.getByText(/10 mg/)).toBeTruthy()
+  } finally { await act(async () => { read.complete(Response.json({})) }); unsubscribe() }
 })
