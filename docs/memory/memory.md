@@ -31,6 +31,8 @@
 
 ## 产品参考优先级
 
+- 诊疗目录是否展开及主要栏宽度按开具阶段区分，不能将开具后目录默认收起套到开具前；融合表单、待开具列表与正式记录的当前布局由[开具工作区决策](../../.agents/notes/implemented/architecture/2026-10-19-clinical-order-workspace.md)拥有。
+
 - 病历自动整理直接保存草稿，医生发现问题时自行编辑正文；Web/DSH 的字段、旧处理记录和签署汇总不展示任何待补充提示或“查看依据”入口，也不增加“已核实，保留”、确认保留、原因填写或逐条确认步骤。既有正式签署流程仍沿用文书合同；展示边界见[安静质控提示决策](../../.agents/notes/implemented/architecture/2026-10-18-quiet-document-quality-hints.md)。
 
 - Agent 操作反馈采用已确认的 A 方案“环绕柔光”；人工审阅、批准、拒绝和人工提交保持静态，不用这些阶段展示 Agent 动效。已接受的独立 HTML 保留作设计参考，后续补充要求优先于原型中的模拟行为。
@@ -41,6 +43,8 @@
 - Tairex 虚拟诊室研究只参考虚拟诊疗产品模式和体验；`references/DSH-AGUI-demo` 与其他 Agent 案例只参考 UI 和交互布局，不作为 HIS 业务事实来源。发生冲突时以 OpenHIS、Medplum、当前 ClinMesh owner 文档和可执行流程为准。
 
 ## 运行与验证边界
+
+- 独立 worktree 借用已有依赖进行检查时，pnpm 11 的依赖状态检查可能自动尝试安装。明确使用 `--config.verify-deps-before-run=false` 或现有锁定 runner，不能让它清理、安装或重写其他任务共用的 `node_modules`；构建与测试产物仍按任务隔离。
 
 - CI 中容器健康接口持续拒绝连接时，先核对启动进程是否已因依赖未就绪而退出；重试端口不能重新启动进程。容器依赖顺序与清理前保留日志见[Synthea 运行时决策](../../.agents/notes/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
 
