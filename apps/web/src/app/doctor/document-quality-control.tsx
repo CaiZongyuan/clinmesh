@@ -12,7 +12,7 @@ import {
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 
-type QualityIssue = ClinicalDocumentQualityControlState['issues'][number]
+export type QualityIssue = ClinicalDocumentQualityControlState['issues'][number]
 type Messages = ReturnType<typeof getWorkspaceMessages>
 
 function currentGeneration(previous: ClinicalDocumentQualityControlState | undefined, incoming: ClinicalDocumentQualityControlState) {
@@ -113,6 +113,79 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
 
 export type DocumentQualityControl = ReturnType<typeof useDocumentQualityControl>
 
+export function locateDocumentQualityIssue(root: ParentNode, issue: QualityIssue): boolean {
+  const field = root.querySelector<HTMLElement>(`[data-clinical-document-field="${issue.field}"]`)
+  const input = field?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input, textarea')
+  if (input === undefined || input === null || input.disabled) return false
+  field?.scrollIntoView?.({ block: 'center', behavior: 'instant' })
+  input.focus({ preventScroll: true })
+  const quote = issue.evidence.find(evidence => evidence.kind === 'document' && evidence.field === issue.field
+    && input.value.includes(evidence.text) && input.value.indexOf(evidence.text) === input.value.lastIndexOf(evidence.text))?.text
+  const start = quote === undefined ? 0 : input.value.indexOf(quote)
+  input.setSelectionRange(start, quote === undefined ? start : start + quote.length)
+  return true
+}
+
+function openIssues(quality: DocumentQualityControl) {
+  return quality.stale || quality.error !== null ? [] : quality.state?.issues.filter(issue => issue.status === 'open') ?? []
+}
+
+function shortIssue(issue: QualityIssue, messages: Messages, locale: WorkspaceLocale) {
+  const field = messages[issue.field]
+  if (locale === 'zh-CN') {
+    switch (issue.kind) {
+      case 'missing-field': return `${field}有内容待补充，请核对。`
+      case 'omission': return `${field}有已知信息待补充。`
+      case 'inconsistency': return `${field}的记录不一致，请核对。`
+      case 'agent-source': return `${field}中有内容需要核实。`
+    }
+  }
+  switch (issue.kind) {
+    case 'missing-field': return `${field} needs more detail.`
+    case 'omission': return `${field} is missing known information.`
+    case 'inconsistency': return `Check conflicting information in ${field}.`
+    case 'agent-source': return `Verify information in ${field}.`
+  }
+}
+
+export function DocumentQualityCompact({ quality, messages, locale, onLocateIssue }: {
+  quality: DocumentQualityControl; messages: Messages; locale: WorkspaceLocale; onLocateIssue?: ((issue: QualityIssue) => void) | undefined
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const id = useId()
+  const issues = openIssues(quality)
+  const first = issues[0]
+  if (first === undefined) return null
+  const location = (issue: QualityIssue) => onLocateIssue === undefined ? <p className="break-words">{shortIssue(issue, messages, locale)}</p>
+    : <Button className="h-auto min-h-7 min-w-0 justify-start whitespace-normal break-words text-left"
+    onClick={() => onLocateIssue(issue)} size="sm" type="button" variant="link">{shortIssue(issue, messages, locale)}</Button>
+  return <section aria-label={messages.documentQualityTitle} data-document-quality-compact>
+    <Alert role="group">
+      <AlertDescription className="flex min-w-0 flex-col gap-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-1">
+          {location(first)}
+          {issues.length === 1 ? null : <Button aria-controls={id} aria-expanded={expanded} onClick={() => setExpanded(open => !open)}
+            size="sm" type="button" variant="ghost">{locale === 'zh-CN' ? `另有 ${issues.length - 1} 处` : `${issues.length - 1} more`}</Button>}
+        </div>
+        {!expanded || issues.length === 1 ? null : <ul className="flex min-w-0 flex-col gap-1" id={id}>
+          {issues.slice(1).map(issue => <li className="min-w-0" key={issue.id}>{location(issue)}</li>)}
+        </ul>}
+      </AlertDescription>
+    </Alert>
+  </section>
+}
+
+export function DocumentQualityDetails({ quality, messages, locale, onLocateIssue }: {
+  quality: DocumentQualityControl; messages: Messages; locale: WorkspaceLocale; onLocateIssue?: ((issue: QualityIssue) => void) | undefined
+}) {
+  const fields = [...new Set(quality.state?.issues.map(issue => issue.field) ?? [])]
+  return <div className="flex min-w-0 flex-col gap-3" data-document-quality-details>
+    <DocumentQualityStatus quality={quality} messages={messages} />
+    {fields.map(field => <DocumentQualityFieldIssues field={field} key={field} locale={locale} messages={messages}
+      onLocateIssue={onLocateIssue} quality={quality} />)}
+  </div>
+}
+
 export function DocumentQualityStatus({ quality, messages }: {
   quality: DocumentQualityControl; messages: Messages
 }) {
@@ -137,8 +210,9 @@ export function DocumentQualityStatus({ quality, messages }: {
   </section>
 }
 
-function Issue({ issue, quality, messages, locale }: {
+function Issue({ issue, quality, messages, locale, onLocateIssue }: {
   issue: QualityIssue; quality: DocumentQualityControl; messages: Messages; locale: WorkspaceLocale
+  onLocateIssue?: ((issue: QualityIssue) => void) | undefined
 }) {
   const [evidenceOpen, setEvidenceOpen] = useState(false)
   const [retaining, setRetaining] = useState(false)
@@ -162,11 +236,14 @@ function Issue({ issue, quality, messages, locale }: {
     {quality.retainedIssueId !== issue.id || quality.retentionError === null ? null
       : <p role="alert">{messages.documentQualityRetainFailed}</p>}
     <div className="flex flex-wrap gap-2">
+      {onLocateIssue === undefined || issue.status !== 'open' ? null : <Button onClick={() => onLocateIssue(issue)} size="sm" type="button" variant="outline">
+        {locale === 'zh-CN' ? '查看位置' : 'Go to field'}
+      </Button>}
       <Button aria-controls={`${id}-evidence`} aria-expanded={evidenceOpen} onClick={() => setEvidenceOpen(open => !open)} size="sm" type="button" variant="ghost">
         {evidenceOpen ? messages.documentQualityHideEvidence : messages.documentQualityViewEvidence}
       </Button>
       {issue.status !== 'open' ? null : <Button disabled={quality.stale || quality.error !== null || quality.retaining}
-        onClick={() => setRetaining(open => !open)} size="sm" type="button" variant="outline">{messages.documentQualityRetain}</Button>}
+        onClick={() => setRetaining(open => !open)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '已核实，保留原文' : messages.documentQualityRetain}</Button>}
     </div>
     {!evidenceOpen ? null : <div className="flex min-w-0 flex-col gap-2 rounded-md bg-muted p-3" id={`${id}-evidence`}>
       <p className="whitespace-pre-wrap break-words">{issue.basis.kind === 'official' ? messages.documentQualityOfficialBasis : messages.documentQualityProjectBasis}：{' '}
@@ -195,15 +272,16 @@ function Issue({ issue, quality, messages, locale }: {
   </li>
 }
 
-export function DocumentQualityFieldIssues({ field, quality, messages, locale }: {
+export function DocumentQualityFieldIssues({ field, quality, messages, locale, onLocateIssue }: {
   field: keyof ClinicalDocumentContent; quality: DocumentQualityControl; messages: Messages; locale: WorkspaceLocale
+  onLocateIssue?: ((issue: QualityIssue) => void) | undefined
 }) {
   const issues = quality.stale || quality.error !== null ? [] : quality.state?.issues.filter(issue => issue.field === field) ?? []
   if (issues.length === 0) return null
   const retained = issues.filter(issue => issue.status === 'retained')
   return <section aria-label={`${messages[field]}${messages.documentQualityFieldSuffix}`} className="flex min-w-0 flex-col gap-2" data-document-quality-field={field}>
     <ul className="flex min-w-0 flex-col gap-3">{issues.filter(issue => issue.status === 'open').map(issue =>
-      <Issue issue={issue} key={`${issue.id}:${issue.relatedFingerprint}`} quality={quality} messages={messages} locale={locale} />)}</ul>
+      <Issue issue={issue} key={`${issue.id}:${issue.relatedFingerprint}`} quality={quality} messages={messages} locale={locale} onLocateIssue={onLocateIssue} />)}</ul>
     {retained.length === 0 ? null : <details>
       <summary className="cursor-pointer text-xs text-muted-foreground">{messages.documentQualityRetainedHistory} ({retained.length})</summary>
       <ul className="mt-2 flex min-w-0 flex-col gap-3">{retained.map(issue => <Issue issue={issue} key={issue.id} quality={quality} messages={messages} locale={locale} />)}</ul>
@@ -216,13 +294,15 @@ export function DocumentQualitySignSummary({ detail, state, scope, locale }: {
 }) {
   const quality = useDocumentQualityControl({ detail, initialState: state, scope })
   const messages = getWorkspaceMessages(locale)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   return <section aria-label={messages.documentQualitySignSummary} className="flex min-w-0 flex-col gap-3" data-document-quality-sign-summary>
-    <DocumentQualityStatus quality={quality} messages={messages} />
-    <p className="text-xs text-muted-foreground">{messages.documentQualityAdvisory}</p>
-    {quality.stale || quality.error !== null ? null : <ul className="flex min-w-0 flex-col gap-3">{quality.state?.issues.filter(issue => issue.status === 'open').map(issue =>
-      <li className="flex min-w-0 flex-col gap-1" key={issue.id}>
-        <p className="text-xs font-medium">{messages[issue.field]}</p>
-        <ul><Issue issue={issue} quality={quality} messages={messages} locale={locale} /></ul>
-      </li>)}</ul>}
+    <DocumentQualityCompact quality={quality} messages={messages} locale={locale} />
+    <details onToggle={event => setDetailsOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer text-sm">{locale === 'zh-CN' ? '依据与说明' : 'Basis and details'}</summary>
+      {!detailsOpen ? null : <div className="mt-3 flex min-w-0 flex-col gap-3">
+        <p className="text-xs text-muted-foreground">{messages.documentQualityAdvisory}</p>
+        <DocumentQualityDetails quality={quality} messages={messages} locale={locale} />
+      </div>}
+    </details>
   </section>
 }

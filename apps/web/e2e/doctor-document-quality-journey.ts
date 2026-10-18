@@ -32,7 +32,8 @@ export async function runDocumentQualityJourney(input: {
     const saved = (await read()).clinicalDocument?.draft
     const chiefComplaint = page.getByLabel('主诉', { exact: true })
     await chiefComplaint.fill('')
-    await expect(page.getByRole('region', { name: '主诉质控提示', exact: true })).toContainText('待补充')
+    await expect(page.locator('[data-document-quality-compact]').getByRole('button', { name: '主诉有内容待补充，请核对。', exact: true })).toBeVisible()
+    await expect(page.locator('[data-document-quality-field]')).toHaveCount(0)
     await expect(chiefComplaint).toBeFocused()
     expect((await read()).clinicalDocument?.draft).toEqual(saved)
 
@@ -58,6 +59,11 @@ export async function runDocumentQualityJourney(input: {
       'inconsistency', 'missing-field', 'omission',
     ])
     expect((await read()).clinicalDocument?.draft).toEqual(saved)
+    const compact = page.locator('[data-document-quality-compact]')
+    await expect(compact.getByRole('button', { name: '另有 2 处', exact: true })).toBeVisible()
+    await expect(page.getByText('影响', { exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: '依据与说明', exact: true }).click()
+    const explanation = page.getByRole('dialog', { name: '依据与说明', exact: true })
     await expect(page.getByRole('region', { name: '主诉质控提示', exact: true })).toContainText('持续时间')
     const prior = page.getByRole('region', { name: '过敏史质控提示', exact: true })
     await expect(prior).toContainText('待补充')
@@ -81,11 +87,13 @@ export async function runDocumentQualityJourney(input: {
     await expect(verify).toContainText(qualityPatientReply)
     input.progress?.('未保存编辑、四类来源接线中的缺项/遗漏/矛盾与键盘依据展开通过')
 
-    await prior.getByRole('button', { name: '已核实，保留', exact: true }).click()
+    await prior.getByRole('button', { name: '已核实，保留原文', exact: true }).click()
     await prior.getByLabel('保留原因（选填）', { exact: true }).fill('已向患者复核，先保留当前书写。')
     await prior.getByRole('button', { name: '确认保留', exact: true }).click()
     await expect.poll(async () => (await input.quality(candidate?.clientId)).issues.find(issue => issue.kind === 'omission')?.review?.reason)
       .toBe('已向患者复核，先保留当前书写。')
+    await page.keyboard.press('Escape')
+    await expect(explanation).toHaveCount(0)
     await page.getByLabel('评估', { exact: true }).fill('继续查明头晕原因。')
     await expect.poll(async () => (await current())?.issues.find(issue => issue.kind === 'omission')?.status).toBe('retained')
     await page.getByLabel('过敏史', { exact: true }).fill('药物过敏情况仍待核实。')
@@ -101,12 +109,16 @@ export async function runDocumentQualityJourney(input: {
       const { version: _version, updatedAt: _updatedAt, ...savedDocument } = (await read()).clinicalDocument!.draft!
       await input.agentDraft({ ...document, ...savedDocument })
       await expect.poll(async () => (await current())?.issues.some(issue => issue.kind === 'agent-source')).toBe(true)
+      await page.getByRole('button', { name: '依据与说明', exact: true }).click()
       await expect(page.getByRole('region', { name: '评估质控提示', exact: true })).toContainText('待核实')
+      await page.keyboard.press('Escape')
     }
     if (input.agentSign !== undefined) await input.agentSign()
     else await page.getByRole('button', { name: '签署病历', exact: true }).click()
     const dialog = page.getByRole('alertdialog', { name: '确认签署病历', exact: true })
     const summary = dialog.getByRole('region', { name: '签署前质控汇总', exact: true })
+    await expect(summary.getByText('处理建议', { exact: true })).toHaveCount(0)
+    await summary.locator('summary').filter({ hasText: '依据与说明' }).click()
     await expect(summary).toContainText('待核实')
     await expect(summary).toContainText('处理建议')
     const checkboxes = dialog.getByRole('checkbox')
