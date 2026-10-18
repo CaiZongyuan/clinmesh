@@ -4792,17 +4792,24 @@ describe('role workspaces', () => {
       contextId: persistedDraftContextId,
       pageRevision: persistedDraftPageRevision,
     }
-    await act(async () => {
-      await fillLaboratory.execute(boundAgentToolInput(fillLaboratory, {
-        catalogItemId: agentLaboratoryService.id,
-        indicationCode: 'clinical-evaluation',
-      }), new AbortController().signal)
-    })
-    expect(proofRequests.at(-1)).toMatchObject(persistedBinding)
-    expect(within(screen.getByRole('region', { name: '检验申请' })).getByText(agentLaboratoryService.nameZh)).toBeTruthy()
-    await act(async () => new Promise(resolve => setTimeout(resolve, 900)))
-    expect(draft).toMatchObject({ catalogItemId: agentLaboratoryService.id })
-    expect(draftSaves).toBe(2)
+    // 回填前接管定时器，确保错误排定的反向保存也会在推进窗口时触发。
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      await act(async () => {
+        await fillLaboratory.execute(boundAgentToolInput(fillLaboratory, {
+          catalogItemId: agentLaboratoryService.id,
+          indicationCode: 'clinical-evaluation',
+        }), new AbortController().signal)
+      })
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(proofRequests.at(-1)).toMatchObject(persistedBinding)
+      expect(within(screen.getByRole('region', { name: '检验申请' })).getByText(agentLaboratoryService.nameZh)).toBeTruthy()
+      await act(async () => { await vi.advanceTimersByTimeAsync(900) })
+      expect(draft).toMatchObject({ catalogItemId: agentLaboratoryService.id })
+      expect(draftSaves).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
     await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
 
