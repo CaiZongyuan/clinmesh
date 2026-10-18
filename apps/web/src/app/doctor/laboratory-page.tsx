@@ -403,6 +403,7 @@ function LaboratoryRequestEditor({
   const requests = state?.requests ?? []
   const selectRequest = (id: string) => { setLocalRequestId(id); onSelectRequest?.(id) }
   const activeRequest = requests.find(request => request.id === (selectedRequestId ?? localRequestId)) ?? requests[0]
+  const recordRef = useRef<HTMLElement>(null)
   const requestActionPending = actions.cancel.pending || actions.retry.pending
   const requestName = (request: LaboratoryRequest) => {
     const item = catalogById.get(request.catalogItemId)
@@ -550,13 +551,18 @@ function LaboratoryRequestEditor({
         expectedDraftVersion={state?.draftVersion ?? 0}
         unavailableReason={recommendationUnavailableReason}
       />
+      {readOnly || activeRequest === undefined || activeRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
+        authoredAt={activeRequest.authoredAt} locale={locale} onReview={() => {
+          setAdding(false); selectRequest(activeRequest.id)
+          requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
+        }} />}
       <InvestigationRequestWorkspace adding={adding && active} onAddingChange={setAdding} editor={editor}
         locale={locale} readOnly={readOnly} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
         requests={requests.map(request => ({ id: request.id, title: requestName(request),
           statusLabel: laboratoryRequestStatusLabel(request, messages), unread: request.status === 'reported',
           inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status) }))}>
         {activeRequest === undefined ? null : (
-          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)}>
+          <section className="flex min-w-0 flex-col gap-3" aria-label={requestName(activeRequest)} ref={recordRef} tabIndex={-1}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">{requestName(activeRequest)}</h3>
               <Badge variant="outline">{laboratoryRequestStatusLabel(activeRequest, messages)}</Badge>
@@ -1098,3 +1104,4 @@ function interpretationLabel(code: string, messages: ReturnType<typeof getWorksp
   if (code === 'POS') return messages.positive
   return messages.abnormal
 }
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'

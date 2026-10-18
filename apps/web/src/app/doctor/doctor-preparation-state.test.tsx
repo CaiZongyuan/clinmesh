@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
-import { doctorRecommendationStateSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
+import { doctorRecommendationKindSchema, doctorRecommendationStateSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { useDoctorPreparationJob } from './doctor-preparation-state.tsx'
+import { DoctorPreparationProvider, useDoctorPreparation, useDoctorPreparationJob } from './doctor-preparation-state.tsx'
 
 function state(overrides: Partial<DoctorRecommendationState> = {}) {
   return doctorRecommendationStateSchema.parse({
@@ -21,19 +21,28 @@ function state(overrides: Partial<DoctorRecommendationState> = {}) {
   })
 }
 
-function Job() {
-  const job = useDoctorPreparationJob({ caseId: 'case-preparation', kind: 'diagnosis', enabled: true, paused: false, scope: 'workspace:epoch:doctor:case-preparation', inputRevision: '1' })
+function Job({ revision = '1' }: { revision?: string }) {
+  const job = useDoctorPreparationJob({ caseId: 'case-preparation', kind: 'diagnosis', enabled: true, paused: false, scope: 'workspace:epoch:doctor:case-preparation', inputRevision: revision })
   return <><p role="status">{job.pending ? '更新中' : '已结束'}</p>
     <p>当前：{job.state?.items.map(item => item.label).join('、') || '无'}</p>
     <p>保留：{job.previous?.items.map(item => item.label).join('、') || '无'}</p>
     <button onClick={job.refresh}>刷新</button></>
+}
+function SubmissionControls() {
+  const preparation = useDoctorPreparation()!
+  const key = JSON.stringify(['workspace:epoch:doctor:case-preparation', 'diagnosis'])
+  return <><p>{preparation.submitting('diagnosis') ? '正在确认' : '可继续'}</p>
+    <button onClick={() => preparation.setSubmitting(key, 'request-old', true)}>开始原请求</button>
+    <button onClick={() => preparation.setSubmitting(key, 'request-new', true)}>开始新请求</button>
+    <button onClick={() => preparation.setSubmitting(key, 'request-old', false)}>原请求结束</button>
+    <button onClick={() => preparation.setSubmitting(key, 'request-new', false)}>新请求结束</button></>
 }
 const clients: QueryClient[] = []
 function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
   const view = render(<QueryClientProvider client={client}><Job /></QueryClientProvider>)
-  return { ...view, client }
+  return { ...view, client, revise: (revision: string) => view.rerender(<QueryClientProvider client={client}><Job revision={revision} /></QueryClientProvider>) }
 }
 function deferred() {
   let resolve!: (value: Response) => void
@@ -43,6 +52,87 @@ function deferred() {
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('background clinical preparation', () => {
+  it('coalesces consecutive source updates and blocks cached automatic items immediately', async () => {
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async () => { reads += 1; return Response.json(state()) }))
+    const view = mount()
+    await screen.findByText('当前：合成发热候选')
+    view.revise('2')
+    expect(screen.getByText('更新中')).toBeTruthy()
+    expect(reads).toBe(1)
+    view.revise('3')
+    await waitFor(() => expect(reads).toBe(2))
+    await screen.findByText('已结束')
+  })
+
+  it('keeps the latest confirmation disabled until its own request settles', async () => {
+    const client = new QueryClient()
+    clients.push(client)
+    render(<QueryClientProvider client={client}><DoctorPreparationProvider detail={undefined} enabled={false}
+      scope="workspace:epoch:doctor:case-preparation" inputRevision="1"><SubmissionControls /></DoctorPreparationProvider></QueryClientProvider>)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '开始原请求' }))
+    await user.click(screen.getByRole('button', { name: '开始新请求' }))
+    await user.click(screen.getByRole('button', { name: '原请求结束' }))
+    expect(screen.getByText('正在确认')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '新请求结束' }))
+    expect(screen.getByText('可继续')).toBeTruthy()
+  })
+
+  it('prepares every clinical kind without mounting an order page', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      const kind = doctorRecommendationKindSchema.parse(path.split('/recommendations/')[1]?.split('/')[0])
+      calls.push(`${init?.method ?? 'GET'}:${kind}`)
+      const current = state({ kind, status: init?.method === 'POST' ? 'missing-evidence' : 'idle', items: [] })
+      return init?.method === 'POST'
+        ? Response.json({ data: current, auditId: `audit-${kind}`, effects: [], requestId: `request-${kind}`, warnings: [] })
+        : Response.json(current)
+    }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    const view = (revision: string) => <QueryClientProvider client={client}><DoctorPreparationProvider detail={undefined}
+      caseId="case-preparation" enabled scope="workspace:epoch:doctor:case-preparation" inputRevision={revision}><p>问诊正文</p></DoctorPreparationProvider></QueryClientProvider>
+    const rendered = render(view('1'))
+    await waitFor(() => expect(calls.filter(call => call.startsWith('POST:')).sort()).toEqual([
+      'POST:diagnosis', 'POST:imaging', 'POST:laboratory', 'POST:pathology', 'POST:prescription',
+    ]))
+    rendered.rerender(view('1'))
+    expect(calls.filter(call => call.startsWith('POST:'))).toHaveLength(5)
+    expect(screen.queryByText(/三类待办|暂停自动准备|项待确认|项待开具/)).toBeNull()
+  })
+
+  it('clears archived automatic items when the generation response removes access to their sources', async () => {
+    let hidden = false
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') hidden = true
+      const current = hidden ? state({ status: 'missing-evidence', items: [], hidePreviousResults: true }) : state()
+      return init?.method === 'POST'
+        ? Response.json({ data: current, auditId: 'audit-source', effects: [], requestId: 'request-source', warnings: [] })
+        : Response.json(current)
+    }))
+    mount()
+    await screen.findByText('保留：合成发热候选')
+    await userEvent.setup().click(screen.getByRole('button', { name: '刷新' }))
+    await screen.findByText('当前：无')
+    expect(screen.getByText('保留：无')).toBeTruthy()
+  })
+
+  it('marks cached automatic items as updating while a new server check is in flight', async () => {
+    const held = deferred()
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async () => ++reads === 1 ? Response.json(state()) : held.promise))
+    const { client } = mount()
+    await screen.findByText('当前：合成发热候选')
+    act(() => { void client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+    try {
+      await waitFor(() => expect(reads).toBe(2))
+      await screen.findByText('更新中')
+      expect(screen.getByText('当前：合成发热候选')).toBeTruthy()
+    } finally { await act(async () => { held.resolve(Response.json(state())) }) }
+  })
+
   it('honors an explicit source removal even when its generation is older than the cached ready result', async () => {
     let current = state()
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
@@ -50,7 +140,7 @@ describe('background clinical preparation', () => {
     await screen.findByText('当前：合成发热候选')
     current = state({ generation: 1, status: 'missing-evidence', stale: false, items: [], hidePreviousResults: true })
     await act(async () => { await client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
-    expect(screen.getByText('当前：无')).toBeTruthy()
+    await screen.findByText('当前：无')
     expect(screen.getByText('保留：无')).toBeTruthy()
   })
 })

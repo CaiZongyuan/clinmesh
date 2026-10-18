@@ -10,9 +10,9 @@ import { promisify } from 'node:util'
 import { chromium, expect, type Request } from '@playwright/test'
 import { z } from 'zod'
 import { doctorCaseDetailSchema, clinicalDocumentDraftContentSchema, clinicalDocumentDraftResponseSchema, consultationRecordingErrorCodeSchema,
-  clinicalDocumentQualityControlStateSchema } from '../packages/contracts/src/his.ts'
+  clinicalDocumentQualityControlStateSchema, checkClinicalDocumentQualityRequestSchema, clinicalDocumentQualityControlResponseSchema } from '../packages/contracts/src/his.ts'
 import { doctorRecommendationStateSchema } from '../packages/contracts/src/doctor-recommendations.ts'
-import { decodeModelRoute } from '../packages/contracts/src/model-bridge.ts'
+import { decodeModelRoute, modelBridgeRequestSchema } from '../packages/contracts/src/model-bridge.ts'
 import { createClinMeshRuntime } from '../apps/server/src/runtime.ts'
 import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model-provider.ts'
 import { recordingSourceDiagnosticSchema } from '../apps/server/src/application/consultation-history-summary.ts'
@@ -28,8 +28,8 @@ import { verificationEnvironment } from './dsh-upstreams-verify.ts'
 import { parseLock } from './dsh-upstreams.ts'
 
 // Explicit native smoke: the default uses only a synthetic host LlmAdapter.
-// --live validates real multi-turn summarization/verification with fixed synthetic
-// patient replies using an isolated copy of a configured profile.
+// --live validates the chosen journey's real auxiliary model with synthetic inputs
+// using an isolated copy of a configured profile.
 const root = resolve(import.meta.dirname, '..')
 const lock = parseLock(JSON.parse(await readFile(join(root, 'dsh-upstreams.lock.json'), 'utf8')))
 const hostVersion = lock.components.find(component => component.name === '@deepseek-ai/dsh')!.version!
@@ -41,7 +41,6 @@ const recommendationsOnly = process.argv.includes('--recommendations-only')
 const qualityOnly = process.argv.includes('--quality-only')
 if (summaryOnly && !live) throw new Error('--summary-only requires --live')
 if ([summaryOnly, recommendationsOnly, qualityOnly].filter(Boolean).length > 1) throw new Error('Choose one smoke journey')
-if (qualityOnly && live) throw new Error('--quality-only uses the synthetic model fixture')
 const sourceHome = process.env.CLINMESH_DSH_SMOKE_HOME
 if (live && !sourceHome) throw new Error('--live requires CLINMESH_DSH_SMOKE_HOME with a configured isolated host')
 const liveModel = process.env.CLINMESH_DSH_SMOKE_LIVE_MODEL
@@ -67,6 +66,7 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'apps/web/src/app/doctor/clinical-document-updates.tsx', 'apps/web/src/app/doctor/clinical-document-updates.css',
   'apps/web/src/app/doctor/doctor-case-controller.tsx', 'apps/web/src/app/doctor/doctor-preparation-state.tsx',
   'apps/web/src/app/doctor/doctor-recommendations.tsx',
+  'apps/web/src/app/doctor/doctor-record-review-notice.tsx', 'apps/server/src/infrastructure/ai/dsh-model-provider.ts',
   'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
   'apps/web/e2e/doctor-document-quality-journey.ts', 'apps/web/e2e/doctor-document-quality-fixture.ts',
   'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
@@ -93,6 +93,7 @@ let listener: ReturnType<typeof serve> | undefined
 let phase = 'startup'
 let hostOutput = ''
 const bridgeEvents: Array<{ path: string; status: number; code?: string }> = []
+const qualityModelRequests: Array<{ schemaName: string; bytes: number }> = []
 
 async function freePort() {
   const server = createServer()
@@ -108,7 +109,14 @@ try {
   const serverPort = await freePort()
   const hostOrigin = `http://127.0.0.1:${hostPort}`
   const serverOrigin = `http://127.0.0.1:${serverPort}`
-  const provider = new DshModelProvider({ origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 })
+  const provider = new DshModelProvider({ origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576,
+    fetch: async (url, init) => {
+      const request = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
+      if (request.operation === 'complete' && ['clinical_document_quality', 'clinical_document_quality_verification'].includes(request.schemaName)) {
+        qualityModelRequests.push({ schemaName: request.schemaName, bytes: Buffer.byteLength(String(init?.body)) })
+      }
+      return fetch(url, init)
+    } })
   await mkdir(qualityResults)
   await mkdir(recommendationResults)
   await mkdir(join(profile, 'node_modules/@clinmesh'), { recursive: true })
@@ -567,6 +575,70 @@ export function apply(ctx) {
       const readLive = async () => doctorCaseDetailSchema.parse(await (await liveRuntime.app.request(
         `/api/his/v1/doctor/cases/${liveCase.outpatientCaseId}`, { headers: { cookie: liveCookie } },
       )).json())
+      if (qualityOnly) {
+        phase = 'live-document-quality'
+        const startedAt = performance.now()
+        const initial = await readLive()
+        const headers = { cookie: liveCookie, origin: serverOrigin, 'content-type': 'application/json' }
+        const claim = await liveRuntime.app.request(`/api/his/v1/encounters/${initial.encounter.id}/actions/start-first-visit`, {
+          method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({
+            expectedVersions: { [`Encounter/${initial.encounter.id}`]: initial.encounter.versionId, [`Task/${initial.taskId}`]: initial.taskVersion }, input: {},
+          }),
+        })
+        expect(claim.status).toBe(200)
+        const currentCase = await readLive()
+        const document = clinicalDocumentDraftContentSchema.parse({
+          chiefComplaint: '发热、咳嗽1天。', historyOfPresentIllness: '患者自述昨日出现发热、干咳，尚待补问。',
+          priorMedicalHistory: '', familyHistory: '', allergyHistory: '', physicalExamination: '',
+          auxiliaryExamination: '', assessment: '发热原因待查。', disposition: '继续问诊并核实生命体征。', followUp: '',
+        })
+        const path = `/api/his/v1/doctor/cases/${liveCase.outpatientCaseId}/document-quality-control`
+        const expectedVersions = { [`Encounter/${currentCase.encounter.id}`]: currentCase.encounter.versionId }
+        const check = async (input: ReturnType<typeof checkClinicalDocumentQualityRequestSchema.parse>['input']) => {
+          const response = await liveRuntime.app.request(`${path}/actions/check`, { method: 'POST',
+            headers: { ...headers, 'idempotency-key': randomUUID() },
+            body: JSON.stringify(checkClinicalDocumentQualityRequestSchema.parse({ expectedVersions, input })),
+          })
+          expect(response.status).toBe(200)
+          return clinicalDocumentQualityControlResponseSchema.parse(await response.json()).data
+        }
+        const modelOffset = qualityModelRequests.length
+        const candidate = { document, clientId: 'native-live-quality-candidate', clientRevision: 1,
+          expectedDraftVersion: currentCase.clinicalDocument?.draft?.version ?? 0 }
+        await check(candidate)
+        const saved = await liveRuntime.app.request(`/api/his/v1/encounters/${currentCase.encounter.id}/clinical-document/draft`, {
+          method: 'PUT', headers: { ...headers, 'idempotency-key': randomUUID() },
+          body: JSON.stringify({ expectedVersions, input: { document, expectedDraftVersion: candidate.expectedDraftVersion } }),
+        })
+        expect(saved.status).toBe(200)
+        const savedVersion = clinicalDocumentDraftResponseSchema.parse(await saved.json()).data.draftVersion
+        await check({ expectedDraftVersion: savedVersion })
+        const readQuality = async () => {
+          const response = await liveRuntime.app.request(path, { headers: { cookie: liveCookie } })
+          expect(response.status).toBe(200)
+          return clinicalDocumentQualityControlStateSchema.parse(await response.json())
+        }
+        await expect.poll(async () => (await readQuality()).status, { timeout: 370_000 }).toMatch(/^(ready|incomplete|failed|unavailable)$/)
+        const completed = await readQuality()
+        const taskCount = () => z.object({ count: z.number() }).parse(liveRuntime.database.driver.prepare(
+          "SELECT COUNT(*) AS count FROM outbox_event WHERE kind = 'clinical-document.check-quality'",
+        ).get()).count
+        const tasks = taskCount(), requests = qualityModelRequests.length
+        await check({ ...candidate, expectedDraftVersion: savedVersion })
+        await check({ document, clientId: 'native-live-quality-return', clientRevision: 7, expectedDraftVersion: savedVersion })
+        await check({ expectedDraftVersion: savedVersion })
+        report.liveDocumentQuality = { status: completed.status, stale: completed.stale, issues: completed.issues.length,
+          errorCode: completed.errorCode, ...('failure' in completed ? { failure: completed.failure } : {}),
+          taskCount: taskCount(), modelCallCount: qualityModelRequests.length - modelOffset,
+          modelRequests: qualityModelRequests.slice(modelOffset), elapsedMs: Math.round(performance.now() - startedAt),
+          sameInputReused: taskCount() === tasks && qualityModelRequests.length === requests, realAuxiliaryModel: true }
+        expect(taskCount()).toBe(tasks)
+        expect(tasks).toBe(1)
+        expect(qualityModelRequests.length).toBe(requests)
+        expect(completed.status).toBe('ready')
+        expect(completed.stale).toBe(false)
+        liveMode = true
+      } else {
       await page.context().clearCookies()
       await page.goto(entry)
       await ready()
@@ -659,6 +731,7 @@ export function apply(ctx) {
         sourceVerified: true, summary: history, replies: liveReplies, facts: additions.map(addition => addition.facts),
         draftRecorded: true, realAuxiliaryModel: true, syntheticPatientReplies: true }
       liveMode = true
+      }
       }
     } finally {
       report.liveJobs = liveRuntime.database.driver.prepare('SELECT status, error_code FROM consultation_recording_job').all()

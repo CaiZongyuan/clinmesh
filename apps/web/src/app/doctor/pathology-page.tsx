@@ -11,7 +11,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import {
   acknowledgePathologyReport,
@@ -359,6 +359,7 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
   const [localSelectedId, setLocalSelectedId] = useState<string>()
   const requests = state?.requests ?? []
   const selectedRequest = requests.find(request => request.id === (selectedRequestId ?? localSelectedId)) ?? requests[0]
+  const recordRef = useRef<HTMLDivElement>(null)
   const selectRequest = (requestId: string) => { setLocalSelectedId(requestId); onSelectRequest?.(requestId) }
   const services = useQuery({
     enabled: !readOnly,
@@ -542,6 +543,11 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
         expectedDraftVersion={draftVersion}
         unavailableReason={recommendationUnavailableReason}
       />
+      {readOnly || selectedRequest === undefined || selectedRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
+        authoredAt={selectedRequest.authoredAt} locale={locale} onReview={() => {
+          setAdding(false); selectRequest(selectedRequest.id)
+          requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
+        }} />}
       <InvestigationRequestWorkspace
         adding={adding && active}
         editor={editor}
@@ -558,8 +564,9 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
         }))}
         selectedRequestId={selectedRequest?.id}
       >
-        {selectedRequest === undefined ? null : <PathologyRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} />}
+        {selectedRequest === undefined ? null : <div ref={recordRef} tabIndex={-1}><PathologyRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} /></div>}
       </InvestigationRequestWorkspace>
     </section>
   )
 }
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'

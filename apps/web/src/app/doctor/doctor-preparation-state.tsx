@@ -22,6 +22,13 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
   const prefix = ['doctor-recommendations', scope, caseId, kind] as const
   const requestKey = [...prefix, inputRevision, paused] as const
   const identity = JSON.stringify([requestKey, enabled])
+  const [settledIdentity, setSettledIdentity] = useState(identity)
+  useEffect(() => {
+    if (settledIdentity === identity) return
+    const timer = setTimeout(() => setSettledIdentity(identity), 250)
+    return () => clearTimeout(timer)
+  }, [identity, settledIdentity])
+  const settling = settledIdentity !== identity
   const current = useRef({ identity, revision: 0 })
   if (current.current.identity !== identity) current.current = { identity, revision: current.current.revision + 1 }
   const viewRevision = current.current.revision
@@ -42,7 +49,7 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
     return newer(previous, incoming)
   }
   const query = useQuery({
-    queryKey, enabled, retry: false, refetchOnWindowFocus: false,
+    queryKey, enabled: enabled && !settling, retry: false, refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => {
       return receive(await getDoctorRecommendations(caseId, kind, signal))
     },
@@ -63,21 +70,21 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
   const generating = generation.isPending && generation.variables?.identity === identity && generation.variables.viewRevision === viewRevision
   const mutate = generation.mutate
   useEffect(() => {
-    if (!enabled || paused || state === undefined || generating || query.isError || !(state.status === 'idle' || state.stale)) return
+    if (!enabled || settling || paused || state === undefined || generating || query.isError || !(state.status === 'idle' || state.stale)) return
     const request = `${identity}:${viewRevision}:${state.inputFingerprint}`
     if (lastAutomatic.current === request) return
     lastAutomatic.current = request
     mutate({ state, refresh: false, identity, viewRevision })
-  }, [enabled, paused, state, generating, query.isError, identity, viewRevision, mutate])
+  }, [enabled, settling, paused, state, generating, query.isError, identity, viewRevision, mutate])
   const previous = client.getQueriesData<DoctorRecommendationState>({ queryKey: prefix })
     .flatMap(([key, candidate]) => candidate?.caseId === caseId && candidate.kind === kind && candidate.status === 'ready' && !candidate.stale
       ? [{ state: candidate, updatedAt: client.getQueryState(key)?.dataUpdatedAt ?? 0 }] : [])
     .toSorted((left, right) => right.updatedAt - left.updatedAt)[0]?.state
   const error = query.error ?? (generation.variables?.identity === identity && generation.variables.viewRevision === viewRevision ? generation.error : null)
-  const pending = enabled && (query.isPending || generating || state?.status === 'pending')
+  const pending = enabled && (settling || query.isPending || query.isFetching || generating || state?.status === 'pending')
   return { state, previous, pending, error, paused,
     ready: enabled && !paused && !pending && !query.isFetching && error === null && state?.status === 'ready' && !state.stale,
-    refresh: () => { if (!paused && state !== undefined) generation.mutate({ state, refresh: true, identity, viewRevision }) },
+    refresh: () => { if (!paused && !settling && state !== undefined) generation.mutate({ state, refresh: true, identity, viewRevision }) },
     invalidate: () => client.invalidateQueries({ queryKey: prefix }),
   }
 }

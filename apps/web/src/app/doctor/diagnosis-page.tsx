@@ -1,4 +1,5 @@
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import type { ClinicalCatalog, DiagnosisDraftEntry, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
@@ -432,6 +433,11 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, locale, mes
           </AlertDescription>
         </Alert>
       )}
+      {readOnly || state?.confirmation === undefined ? null : <DoctorRecordReviewNotice caseId={caseId}
+        authoredAt={state.confirmation.confirmedAt} locale={locale} onReview={() => {
+          setRecordQuery(''); setRoleFilter('all'); setSelectedKey(entries[0]?.key); setMobileDetailOpen(true)
+          requestAnimationFrame(() => { detailsHeadingRef.current?.scrollIntoView({ block: 'nearest' }); detailsHeadingRef.current?.focus() })
+        }} />}
       {state?.confirmation === undefined ? (
         catalogEditor
       ) : (

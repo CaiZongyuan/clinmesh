@@ -1,4 +1,5 @@
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -10,7 +11,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import {
   acknowledgeImagingReport,
   cancelImagingRequest,
@@ -371,6 +372,7 @@ export function ImagingPage({
     onSelectRequest?.(id)
   }
   const selectedRequest = state?.requests.find(request => request.id === (selectedRequestId ?? localSelectedRequestId)) ?? state?.requests[0]
+  const recordRef = useRef<HTMLDivElement>(null)
   const services = useQuery({
     enabled: !readOnly,
     queryFn: ({ signal }) => getCaseImagingServices(caseId, signal),
@@ -512,6 +514,11 @@ export function ImagingPage({
         expectedDraftVersion={draftVersion}
         unavailableReason={recommendationUnavailableReason}
       />
+      {readOnly || selectedRequest === undefined || selectedRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
+        authoredAt={selectedRequest.authoredAt} locale={locale} onReview={() => {
+          setAdding(false); selectRequest(selectedRequest.id)
+          requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
+        }} />}
       <InvestigationRequestWorkspace
         adding={adding && active}
         editor={editor}
@@ -528,7 +535,7 @@ export function ImagingPage({
         }))}
         selectedRequestId={selectedRequest?.id}
       >
-        {selectedRequest === undefined ? null : <div aria-label={zh ? '放射申请详情' : 'Imaging request details'} role="region">
+        {selectedRequest === undefined ? null : <div aria-label={zh ? '放射申请详情' : 'Imaging request details'} role="region" ref={recordRef} tabIndex={-1}>
           <ImagingRequestList actions={actions} active={active} locale={locale} readOnly={readOnly} requests={[selectedRequest]} selectedReportId={selectedReportId} />
         </div>}
       </InvestigationRequestWorkspace>

@@ -351,6 +351,11 @@ export function PrescriptionPage({
 
       {prescription === undefined ? null : (
         <div className="flex flex-col gap-3">
+          {readOnly || prescription.status === 'withdrawn' ? null : <DoctorRecordReviewNotice caseId={detail.caseId}
+            authoredAt={prescription.authoredAt} locale={locale} onReview={() => {
+              setRecordSearch(''); setSelectedRecordId(prescription.items[0]?.medicationRequestId)
+              requestAnimationFrame(() => { recordHeadingRef.current?.scrollIntoView({ block: 'nearest' }); recordHeadingRef.current?.focus() })
+            }} />}
           <Alert>
             {prescription.status === 'withdrawn'
               ? <RotateCcwIcon aria-hidden="true" />
@@ -958,3 +963,4 @@ function getPrescriptionIssueErrorMessage(
   }
   return getWorkspaceErrorMessage(error, messages)
 }
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
