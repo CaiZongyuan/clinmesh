@@ -3813,9 +3813,13 @@ describe('role workspaces', () => {
       if (!String(input).includes('/document-quality-control')) return response
       const body = await response.json()
       const state = clinicalDocumentQualityControlStateSchema.parse(body.data ?? body)
-      const next = { ...state, issues: [{ id: 'synthetic-quality-chief', kind: 'missing-field', field: 'chiefComplaint',
+      const next = { ...state, issues: [{ id: 'synthetic-quality-duration', kind: 'missing-field', field: 'chiefComplaint',
         classification: 'needs-completion', message: '合成主诉需补充持续时间。', basis: { label: '项目辅助提示', kind: 'project' },
-        evidence: [], relatedFingerprint: 'c'.repeat(64), status: 'open' }] }
+        evidence: [], relatedFingerprint: 'c'.repeat(64), status: 'open' }, {
+        id: 'synthetic-quality-chief', kind: 'inconsistency', field: 'chiefComplaint', classification: 'needs-verification',
+        message: '合成主诉与问诊的持续时间记录不一致。', basis: { label: '项目辅助提示', kind: 'project' },
+        evidence: [], relatedFingerprint: 'd'.repeat(64), status: 'open',
+      }] }
       return Response.json(body.data === undefined ? next : { ...body, data: next })
     }))
     const client = createWebQueryClient()
@@ -3823,9 +3827,10 @@ describe('role workspaces', () => {
     render(<QueryClientProvider client={client}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
     await screen.findByRole('button', { name: '暂停自动整理' })
     await waitFor(() => expect(screen.getAllByRole('region', { name: '病历质控' })).toHaveLength(1))
+    expect(screen.queryByRole('button', { name: '主诉有内容待补充，请核对。' })).toBeNull()
     await user.click(screen.getByRole('tab', { name: '诊断' }))
     const hint = await screen.findByRole('region', { name: '病历质控' })
-    await user.click(within(hint).getByRole('button', { name: '主诉有内容待补充，请核对。' }))
+    await user.click(within(hint).getByRole('button', { name: '主诉的记录不一致，请核对。' }))
     await waitFor(() => expect(screen.getByRole('tab', { name: '病历记录' }).getAttribute('aria-selected')).toBe('true'))
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '主诉' })))
   })
