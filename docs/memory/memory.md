@@ -50,6 +50,10 @@
 
 - 同一张 SQLite 表在并行分支分别迁移时，整合须保留已执行 SQL 的文件名和校验和，并验证两条非空升级路径；来源外键、字段 CHECK、rowid 顺序和任务身份都需一起核对。合并后的字段并集不能只改 TypeScript。
 
+- 本地启动报迁移校验和变化时，先对照 `schema_migration`、LF／CRLF 哈希及实际表结构，区分换行与已执行 SQL 被补改。缺列不能靠更新库内校验和解决；已知历史版本通过精确匹配及前向迁移修复，保留原回执，见[增量记录迁移兼容](../../.agents/notes/implemented/bug-fix/2026-10-18-incremental-recording-migration-compatibility.md)。
+
+- SQLite 连接在构造成功后设置 PRAGMA 仍可能因文件损坏而抛错。打开函数须在失败分支关闭原始连接，否则上层尚未拿到连接就无法释放，Windows 会在清理损坏备份时持续报 `EBUSY`；沿用数据库恢复回归验证活动库不变、恢复目标不创建且临时文件可清理。
+
 - DSH 自动诊疗显示“请切换到有权限的岗位后重试”时，先取失败请求的 HTTP 状态、`error.code` 与操作名，核对[前端错误映射](../../apps/web/src/app/workspace-error.ts)和 [Tool 恢复规则](../agent-capabilities.md#tool-绑定与恢复)，不要仅凭提示认定岗位选错。刷新后消失的自动记录错误还需对齐启用请求与接诊成功的实际时间，区分提前触发和旧错误残留；接诊边界见[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
 
 - 隔离测试手动调用 generation、persona 或 outbox `processNext`／`dispatchPending` 时，省略 `autoDispatchIntervalMs` 以关闭自动定时器；设置为 `0` 仍会创建定时器并按最小间隔执行，与手动 claim 竞争，可能使 fixture 误报任务不存在或生成失败。需要自动处理时使用正间隔，并从公开状态等待结果。

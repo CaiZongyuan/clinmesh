@@ -19,6 +19,7 @@ async function replaceWithRecordingDatabase(databasePath: string, branch: 'pre-s
   await mkdir(migrationDirectory)
   const migrations = (await readdir(join(process.cwd(), 'drizzle'))).filter(file => {
     if (branch === 'incremental' || branch === 'quality') return /^\d{4}_.+\.sql$/u.test(file)
+      && file < '0065_'
       && file !== (branch === 'incremental' ? '0064_clinical-document-quality.sql' : '0064_incremental-recording.sql')
     if (!/^\d{4}_.+\.sql$/u.test(file) || file === '0060_z-recording-branch-staging.sql') return false
     if (file < '0061_') return true
