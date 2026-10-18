@@ -19,8 +19,6 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_AI_BASE_URL: httpUrlSchema.optional(),
   CLINMESH_AI_CONSULTATION_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_RECORDING_MODEL: z.string().trim().min(1).max(1024).optional(),
-  CLINMESH_AI_RECORDING_TIMEOUT_MS: z.string().regex(/^\d+$/)
-    .refine(value => Number(value) >= 100 && Number(value) <= 6_000).default('6000'),
   CLINMESH_AI_BRIEF_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_CATALOG_ENRICHMENT_MODEL: z.string().trim().min(1).max(256).optional(),
   CLINMESH_AI_INVESTIGATION_MODEL: z.string().trim().min(1).max(256).optional(),
@@ -75,7 +73,6 @@ const serverEnvironmentSchema = z.object({
 
 export interface ServerConfig {
   consultationRecordingModel?: string
-  consultationRecordingTimeoutMs: number
   dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   ai?: {
     apiKey: string
@@ -195,7 +192,6 @@ export function readServerConfig(
     : parsed.CLINMESH_TRUSTED_ORIGINS.split(',').map(origin => z.url().parse(origin.trim()))
 
   return {
-    consultationRecordingTimeoutMs: Number(parsed.CLINMESH_AI_RECORDING_TIMEOUT_MS),
     ...(parsed.CLINMESH_AI_RECORDING_MODEL === undefined ? {} : { consultationRecordingModel: parsed.CLINMESH_AI_RECORDING_MODEL }),
     ...(parsed.CLINMESH_AI_SOURCE === 'dsh' ? {
       dshModelBridge: {

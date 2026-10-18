@@ -399,7 +399,7 @@ pnpm --filter @clinmesh/server db:migrate
 
 ## 实时病历整理模型与负载验证
 
-`CLINMESH_AI_RECORDING_MODEL` 可为实时整理固定独立模型；不设置时沿用问诊模型，DSH 使用完整 `dsh:{"provider":"...","model":"..."}` 路由。`CLINMESH_AI_RECORDING_TIMEOUT_MS` 默认 6000，范围 100–6000；首次结构化生成与一次格式修复共用预算。核对和历史补录沿用常规模型预算。模型慢于实时预算时保留失败来源，医生可恢复；不要仅增加超时掩盖积压。
+`CLINMESH_AI_RECORDING_MODEL` 可为实时整理固定独立模型；不设置时沿用问诊模型，DSH 使用完整 `dsh:{"provider":"...","model":"..."}` 路由。自动记录、核对和历史补录沿用 `CLINMESH_AI_TIMEOUT_MS` 的常规模型等待配置；DSH 默认每次桥接请求 120 秒，OpenAI 默认 60 秒，不另加 6 秒截止。既有 `CLINMESH_AI_RECORDING_TIMEOUT_MS` 不再读取。任务仍有覆盖模型解析和格式修复的有界总等待，关闭或任务失效继续取消请求；真实模型失败保留来源供恢复。取消短截止不能证明已达到实时性能目标。
 
 实时路由应明确选择 Provider 支持的思考强度，不能从模型名称推断延迟。DSH DeepSeek 路由未指定强度时继承 Provider 策略，Provider 也未配置时默认为 high；需要关闭实时整理的思考时，可配置 `CLINMESH_AI_RECORDING_MODEL=dsh:{"provider":"deepseek-official","model":"deepseek-flash","reasoningEffort":"off"}`，重启 ClinMesh Server 后对新批次生效。该覆盖只选择实时整理模型，语义核对与主会话继续沿用各自配置；性能与来源完整性仍须按[低延迟记录规格](spec/2026-10-15-low-latency-document-recording.md)实测。
 

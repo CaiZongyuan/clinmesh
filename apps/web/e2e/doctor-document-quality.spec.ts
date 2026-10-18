@@ -5,7 +5,7 @@ import { expect, test } from './fixtures.ts'
 import { documentQualityFixture, qualityPatientReply } from './doctor-document-quality-fixture.ts'
 import { runDocumentQualityJourney } from './doctor-document-quality-journey.ts'
 
-test('reviews unsaved document quality, retains evidence and signs without a new gate', async ({ page, webRoot }) => {
+test('edits document quality issues directly and signs without individual review decisions', async ({ page, webRoot }) => {
   const server = await startBrowserServer(webRoot, {
     dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-quality-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
     patientPersonaModel: 'synthetic-persona', syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 30,
@@ -39,7 +39,7 @@ test('reviews unsaved document quality, retains evidence and signs without a new
         expect(response.status()).toBe(200)
         return clinicalDocumentQualityControlStateSchema.parse(await response.json())
       },
-    })).toEqual({ signedCount: 1, reviewedWithReason: true, agentSourceChecked: false })
+    })).toEqual({ signedCount: 1, editedDirectly: true, agentSourceChecked: false })
     expect(errors).toEqual([])
   } finally { await server.close() }
 })

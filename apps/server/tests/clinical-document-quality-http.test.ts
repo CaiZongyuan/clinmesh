@@ -100,7 +100,7 @@ it('shows applicable empty template fields without requiring auxiliary tests or 
   expect((await f.readCase()).clinicalDocument?.draft).toBeUndefined()
 })
 
-it('reads a case and its quality state with 596 visible history resources without per-resource authorization queries', async () => {
+it('checks current consultation without loading 596 visible history resources into real-time quality', async () => {
   const provider = new class extends StubSyntheaProvider {
     override async generate() {
       const corpus = await super.generate()
@@ -117,7 +117,11 @@ it('reads a case and its quality state with 596 visible history resources withou
     }
   }()
   let statements = 0
-  const f = await setup(undefined, provider, undefined, undefined, {
+  let modelInput: unknown
+  const f = await setup(input => {
+    modelInput = input.userPayload
+    return { issues: [], agentFactChecks: [] }
+  }, provider, undefined, undefined, {
     observeStatement: () => { statements += 1 }, observeTransaction: () => {},
   })
   statements = 0
@@ -134,11 +138,14 @@ it('reads a case and its quality state with 596 visible history resources withou
     SELECT input_json FROM clinical_document_quality WHERE case_id = ? AND scope_key = 'saved'
   `).get(f.started.outpatientCaseId))
   const input = z.object({ evidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(JSON.parse(row.input_json))
-  expect(input.evidence.filter(item => item.id.startsWith('history:visible-source:urn:uuid:quality-observation-'))).toHaveLength(596)
-  expect(JSON.parse(input.evidence.find(item => item.id.endsWith(':quality-observation-595'))!.text)).toMatchObject({
-    clinical: { valueQuantity: { value: 5.95, unit: 'mmol/L' } },
-  })
+  expect(input.evidence.some(item => item.id.startsWith('history:'))).toBe(false)
+  expect(input.evidence).toContainEqual(expect.objectContaining({ text: persona.openingStatement }))
+  expect(Buffer.byteLength(row.input_json)).toBeLessThan(16 * 1024)
   expect(row.input_json).not.toMatch(/private-extension|untrusted\.invalid|2 型糖尿病/)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).status).toBe('ready')
+  expect(modelInput).toMatchObject({ evidence: expect.arrayContaining([expect.objectContaining({ kind: 'patient', text: persona.openingStatement })]) })
+  expect((await f.read()).notices.join('')).toContain('不自动读取既往病历全文')
 })
 
 it('persists retained issues with audit and idempotency, and rechecks only changed relevant content', async () => {
@@ -442,7 +449,7 @@ it('keeps deterministic checks available without a configured model and leaves s
   expect((await f.read()).notices.join('')).toContain('语义检查尚未完成')
 })
 
-it('reports an incomplete semantic check for complete oversized visible history without sending truncated model input', async () => {
+it('does not automatically include all prior conditions in real-time quality', async () => {
   let modelCalls = 0
   const provider = new class extends StubSyntheaProvider {
     override async generate() {
@@ -458,9 +465,27 @@ it('reports an incomplete semantic check for complete oversized visible history 
   const f = await setup(() => { modelCalls += 1; return { issues: [], agentFactChecks: [] } }, provider)
   expect((await f.save({ chiefComplaint: '头晕一周。' })).status).toBe(200)
   await f.runtime.dispatchPending()
+  expect((await f.read()).status).toBe('ready')
+  expect(modelCalls).toBeGreaterThan(0)
+  const row = z.object({ input_json: z.string() }).parse(f.runtime.database.driver.prepare(`
+    SELECT input_json FROM clinical_document_quality WHERE case_id = ? AND scope_key = 'saved'
+  `).get(f.started.outpatientCaseId))
+  expect(row.input_json).not.toContain('第209项合成公开病史')
+  expect((await f.readCase()).clinicalDocument!.draft!.chiefComplaint).toBe('头晕一周。')
+})
+
+it('reports incomplete quality for an oversized current document without truncating saved text or calling the model', async () => {
+  let modelCalls = 0
+  const f = await setup(() => { modelCalls += 1; return { issues: [], agentFactChecks: [] } })
+  const text = '这是一段合成病历原文。'.repeat(300)
+  const document = { chiefComplaint: '头晕一周。', historyOfPresentIllness: text, priorMedicalHistory: text,
+    familyHistory: text, allergyHistory: text, auxiliaryExamination: text, physicalExamination: text,
+    assessment: text, disposition: text, followUp: text }
+  expect((await f.save(document)).status).toBe(200)
+  await f.runtime.dispatchPending()
   expect(await f.read()).toMatchObject({ status: 'incomplete', errorCode: 'INPUT_TOO_LARGE' })
   expect(modelCalls).toBe(0)
-  expect((await f.readCase()).clinicalDocument!.draft!.chiefComplaint).toBe('头晕一周。')
+  expect((await f.readCase()).clinicalDocument!.draft).toMatchObject(document)
 })
 
 it('rejects circular document-only omissions and duplicate statements posed as factual contradictions', async () => {

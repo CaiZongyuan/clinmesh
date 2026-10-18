@@ -147,7 +147,6 @@ export interface CreateClinMeshRuntimeOptions {
   catalogEnrichmentModel?: string
   consultationModel?: string
   consultationRecordingModel?: string
-  consultationRecordingTimeoutMs?: number
   patientPersonaModel?: string
   now?: () => Date
   outboxRetryDelayMs?: number
@@ -226,7 +225,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const patientPersonaModel = hostModel ?? options.patientPersonaModel ?? options.ai?.briefModel
     const consultationModel = hostModel ?? options.consultationModel ?? options.ai?.consultationModel
     const recordingModel = options.consultationRecordingModel ?? consultationModel
-    const recordingTimeoutMs = options.consultationRecordingTimeoutMs ?? 6_000
     const investigationModel = hostModel ?? options.investigationModel ?? options.ai?.investigationModel
     const catalogEnrichmentModel = hostModel ?? options.catalogEnrichmentModel
       ?? options.ai?.catalogEnrichmentModel
@@ -437,7 +435,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         }),
         'doctor.generate-recommendations': event => doctorRecommendations.process(event,
           AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]), generationAbort.signal),
-        'consultation.record-history': event => recordHistory(event, recordingTimeoutMs),
+        'consultation.record-history': event => recordHistory(event, aiTimeoutMs),
         'consultation.record-history-backfill': event => recordHistory(event, aiTimeoutMs),
         'consultation.verify-history': event => workflow.consultationRecording.verify(event, {
           models,

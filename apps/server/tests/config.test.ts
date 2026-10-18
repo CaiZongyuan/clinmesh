@@ -26,12 +26,11 @@ describe('Node.js server configuration', () => {
       timeoutMs: 120000, maxResponseBytes: 1048576,
     } })
     expect(readServerConfig(environment)).not.toHaveProperty('ai')
-    expect(readServerConfig(environment).consultationRecordingTimeoutMs).toBe(6000)
+    expect(readServerConfig(environment)).not.toHaveProperty('consultationRecordingTimeoutMs')
     expect(readServerConfig({ ...environment, CLINMESH_AI_RECORDING_MODEL: 'dsh:synthetic-fast',
-      CLINMESH_AI_RECORDING_TIMEOUT_MS: '5000' })).toMatchObject({ consultationRecordingModel: 'dsh:synthetic-fast', consultationRecordingTimeoutMs: 5000 })
-    for (const timeout of ['0', '99', '6001', 'invalid']) {
-      expect(() => readServerConfig({ ...environment, CLINMESH_AI_RECORDING_TIMEOUT_MS: timeout })).toThrow()
-    }
+      CLINMESH_AI_RECORDING_TIMEOUT_MS: '6000' })).toMatchObject({ consultationRecordingModel: 'dsh:synthetic-fast' })
+    expect(readServerConfig({ ...environment, CLINMESH_AI_RECORDING_TIMEOUT_MS: '6000' }))
+      .not.toHaveProperty('consultationRecordingTimeoutMs')
     expect(readServerConfig({ ...environment, CLINMESH_AI_TIMEOUT_MS: '180000' }).dshModelBridge?.timeoutMs).toBe(180000)
     expect(() => readServerConfig({ ...environment, CLINMESH_DSH_BRIDGE_SECRET: undefined })).toThrow()
     for (const origin of ['https://127.0.0.1:3080', 'http://remote.example', 'http://127.0.0.1:3080/path', 'http://user:password@127.0.0.1:3080']) {
@@ -48,7 +47,6 @@ describe('Node.js server configuration', () => {
       authBaseUrl: 'http://127.0.0.1:51868',
       authSecret: 'auth-secret-with-at-least-32-characters',
       cursorSecret: 'cursor-secret-with-at-least-32-characters',
-      consultationRecordingTimeoutMs: 6000,
       databasePath: '/var/lib/clinmesh/clinmesh.sqlite',
       demoPassword: 'Synthetic-password-2026!',
       hostname: '127.0.0.1',

@@ -21,7 +21,7 @@ function changeSignedSource(sourceProof: string, overrides: Record<string, unkno
   return `${encoded}.${createHmac('sha256', secret).update(encoded).digest('base64url')}`
 }
 
-async function fixture(provider?: JsonChatCompletionsProvider, recordingTimeoutMs?: number) {
+async function fixture(provider?: JsonChatCompletionsProvider, modelTimeoutMs?: number) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-doctor-source-'))
   disposals.push(() => rm(directory, { recursive: true }))
   const runtime = await createClinMeshRuntime({
@@ -29,8 +29,7 @@ async function fixture(provider?: JsonChatCompletionsProvider, recordingTimeoutM
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', trustedOrigins: ['http://localhost'],
     dshBridgeSecret: secret,
-    ...(recordingTimeoutMs === undefined ? {} : { consultationRecordingTimeoutMs: recordingTimeoutMs }),
-    dshModelBridge: { origin: 'http://127.0.0.1:1', secret, timeoutMs: 2000, maxResponseBytes: 8192 },
+    dshModelBridge: { origin: 'http://127.0.0.1:1', secret, timeoutMs: modelTimeoutMs ?? 2000, maxResponseBytes: 8192 },
     ...(provider === undefined ? {} : { chatCompletionsProvider: { ...provider, async completeJson(input) {
       if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
         const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
@@ -204,9 +203,12 @@ it('retries an unavailable semantic check without regenerating the saved draft o
 
 it('preserves complete evidence beyond 128 KiB of identity metadata without enlarging model input', async () => {
   const f = await fixture({ async completeJson(input) {
-    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({ additions: [
-      { index: 0, faithful: true, complete: true, relationValid: true },
-    ] }), model: 'synthetic' }
+    if (input.schemaName === 'consultation_history_verification') {
+      const { additions } = z.object({ additions: z.array(z.unknown()) }).parse(input.userPayload)
+      return { content: JSON.stringify({ additions: additions.map((_, index) => ({
+        index, faithful: true, complete: true, relationValid: true,
+      })) }), model: 'synthetic' }
+    }
     expect(Buffer.byteLength(JSON.stringify(input.userPayload))).toBeLessThanOrEqual(128 * 1024)
     const { turns, currentSourceIds } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
       currentSourceIds: z.array(z.string()) }).parse(input.userPayload)
@@ -220,8 +222,8 @@ it('preserves complete evidence beyond 128 KiB of identity metadata without enla
   for (let index = 0; index < 160; index++) {
     await f.record(binding, await f.source(binding, `第${index + 1}次复测心率${60 + index % 40}次每分钟。`,
       String(index).padEnd(256, 'r'), String(index).padEnd(256, 'm')))
-    await f.runtime.dispatchPending()
   }
+  await f.runtime.dispatchPending()
   expect((await f.read()).consultationRecording).toMatchObject({ processedCount: 160, failedCount: 0 })
   const last = z.object({ snapshot_json: z.string() }).parse(f.runtime.database.driver.prepare(
     'SELECT snapshot_json FROM consultation_recording_batch ORDER BY rowid DESC LIMIT 1').get())
@@ -439,6 +441,24 @@ it('cancels an in-flight semantic request as soon as its exact fragment is super
   } finally { release(); await checking }
   expect((await f.read()).clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清；心律齐')
   expect(f.runtime.database.driver.prepare("SELECT count(*) AS count FROM consultation_recording_verification WHERE status = 'stale'").get()).toEqual({ count: 1 })
+})
+
+it('persists a valid recording returned after six seconds within the normal model budget', async () => {
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({
+      additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
+    }), model: 'synthetic' }
+    const { turns } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })) }).parse(input.userPayload)
+    await new Promise(resolve => setTimeout(resolve, 6_100))
+    input.signal?.throwIfAborted()
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: 'addition',
+      facts: [{ text: turns[0]!.messageText, sources: [{ sourceTurnId: turns[0]!.id, quote: turns[0]!.messageText }] }] }] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。'))
+  await f.runtime.dispatchPending()
+  expect((await f.read()).clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清。')
+  expect((await f.read()).consultationRecording).toMatchObject({ processedCount: 1, failedCount: 0 })
 })
 
 it('cancels a timed out recording once and preserves its failure without blocking the next source', async () => {

@@ -97,7 +97,7 @@ test('records a conflict automatically without replacing handwritten history and
 })
 
 for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
-  test(`settles ${code} with a visible reason and saved patient reply after reload`, async ({ page, webRoot }) => {
+  test(`keeps ${code} quiet with saved patient text and an on-demand recovery explanation after reload`, async ({ page, webRoot }) => {
     const consultationPanel = page.getByRole('tabpanel', { name: '问诊记录', exact: true })
     const recordPanel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
     const server = await startBrowserServer(webRoot, {
@@ -128,15 +128,22 @@ for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
       })
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       await expect(page.locator('[data-consultation-recording]')).toHaveCount(2)
-      const reason = code === 'AI_TIMEOUT' ? '自动记录超时，患者回答已保存，请根据问诊原文补充病史。'
-        : '部分记录未通过校验，相关来源已保留，请核对原文后重试或补充。'
+      const reason = '部分内容尚未写入病历，问诊原文已保存。可重试或直接编辑病历。'
       await expect(recordPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
+      await expect(recordPanel.getByRole('button', { name: '问诊自动记录', exact: true })).toHaveText('问诊自动记录')
+      await expect(page.getByText(/病史整理失败|自动记录超时|未通过校验/)).toHaveCount(0)
+      await expect(page.getByText(reason, { exact: true })).toHaveCount(0)
       await recordPanel.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
+      await expect(page.getByText(reason, { exact: true })).toHaveCount(1)
+      await page.keyboard.press('Escape')
+      await expect(recordPanel.getByRole('button', { name: '重试病史整理', exact: true })).toBeEnabled()
       await page.reload()
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await expect(recordPanel.getByRole('button', { name: '问诊自动记录', exact: true })).toHaveText('问诊自动记录')
       await recordPanel.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
+      await expect(page.getByText(/病史整理失败|自动记录超时|未通过校验/)).toHaveCount(0)
       await expect(recordPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
       expect(await page.locator('body').innerText()).not.toContain('private-provider-credential-and-prompt')
     } finally { await server.close() }

@@ -8,6 +8,10 @@ Status: implemented
 
 ## Decision
 
+字段与签署汇总的待补充提示、依据入口展示范围由[安静质控提示决策](2026-10-18-quiet-document-quality-hints.md)取代。
+
+实时质控读取全量既往资料的范围由[本次就诊输入与安静记录决策](2026-10-18-current-encounter-quality-and-quiet-recording.md)取代；历史批量读取仍用于诊疗建议。界面的人工核实入口由[仅提示与直接编辑决策](2026-10-18-advisory-quality-without-confirmation.md)取代；本文继续拥有质控输入、授权、已有处理数据与公开协议的兼容边界。
+
 按[批准规格](../../../../docs/spec/2026-10-15-doctor-document-quality-control.md)建立独立的病例质控状态，复用现有 Command、outbox、模型绑定、输入哈希与授权校验。检查输入绑定实际候选正文、已保存草稿版本和可见来源；未保存候选只用于检查，不隐式写入临床草稿。持久任务完成前重新核对输入和授权，旧代次、旧来源或旧 Epoch 的结果不成为当前结果。
 
 质控读取完整可见来源历史时，与诊疗建议复用 `doctorVisibleHistoryDetails` 的授权索引批量读取及临床字段白名单，保留条目顺序、身份、原文和时间；本院完诊历史继续按患者、负责医生及完诊边界读取。病例详情、质控轮询和后台重新核对均不得为每条可见来源重复授权及读取，也不通过截断历史或缓存旧授权加速。批量边界的详细取舍见[分批证据读取决策](2026-10-15-recommendation-context-budget.md)。
@@ -35,4 +39,4 @@ Status: implemented
 
 公开 HTTP、真实 SQLite 与外部模型网络边界拥有语义、来源、版本、幂等、权限和恢复矩阵。真实 Web、React 18/19 ShadowRoot 与原生 DSH 拥有输入保留、键盘依据、核实与签署集成；测试入口由[测试策略](../../../../docs/testing.md)维护。
 
-596 条可见历史的 HTTP 回归同时限制病例详情和质控状态读取各少于 200 条 SQL，并核对最后一条历史仍进入完整输入、私有扩展和本次隐藏诊断没有进入输入。性能时间通过相同运行库的公开 HTTP 对照测量，SQL 数量提供不依赖机器速度的回归门禁。
+596 条历史的当前 HTTP 回归验证实时输入范围及读取开销，具体合同由[本次就诊输入决策](2026-10-18-current-encounter-quality-and-quiet-recording.md)拥有。SQL 数量提供不依赖机器速度的回归门禁。

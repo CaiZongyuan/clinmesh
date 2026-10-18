@@ -54,37 +54,30 @@ export function ConsultationRecordingControls({ recording, action, disabled, mes
     idle: messages.consultationRecordingReady, processing: messages.consultationRecordingProcessing,
     updated: messages.consultationRecordingUpdated,
     paused: messages.consultationRecordingPaused, backfill: messages.consultationRecordingBackfill,
-    failed: messages.consultationRecordingFailed,
+    failed: messages.consultationRecordingIncomplete,
   }
   const intent = recording.status === 'backfill' ? 'backfill' : recording.paused ? 'resume' : 'pause'
   const compact = {
     idle: messages.consultationRecordingIdleShort, processing: messages.consultationRecordingProcessingShort,
     updated: messages.consultationRecordingUpdatedShort,
     paused: messages.consultationRecordingPausedShort, backfill: messages.consultationRecordingBackfillShort,
-    failed: messages.consultationRecordingFailedShort,
+    failed: undefined,
   }
   const intentLabel = intent === 'backfill' ? messages.consultationRecordingStartBackfill
     : intent === 'resume' ? messages.consultationRecordingResume : messages.consultationRecordingPause
   return <div className="flex min-w-0 flex-wrap items-center gap-1" data-consultation-recording={recording.status}>
     <DropdownMenu>
       <DropdownMenuTrigger render={<Button size="sm" variant="outline" type="button" aria-label={messages.consultationAutoRecord} />}>
-        <span role="status">{messages.consultationAutoRecord} · {compact[recording.status]}</span>
+        <span role="status">{messages.consultationAutoRecord}{compact[recording.status] === undefined ? '' : ` · ${compact[recording.status]}`}</span>
         <ChevronDownIcon data-icon="inline-end" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-72 max-w-(--available-width)">
         <DropdownMenuGroup>
           <DropdownMenuLabel className="whitespace-normal">{labels[recording.status]}</DropdownMenuLabel>
           <DropdownMenuLabel className="whitespace-normal">{messages.consultationRecordingProcessed} {recording.processedCount} · {messages.consultationRecordingRemaining} {recording.remainingCount}</DropdownMenuLabel>
-          {recording.failures.map(failure => <DropdownMenuLabel className="whitespace-normal" key={failure.sourceTurnId}>
-            {failure.code === 'AI_TIMEOUT' ? messages.consultationRecordingTimeout
-              : ['AI_RESPONSE_INVALID', 'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID'].includes(failure.code)
-                ? messages.consultationRecordingInvalid
-                : failure.code === 'AI_AUTH_FAILED' ? messages.consultationRecordingAuthFailed
-                  : failure.code === 'CONSULTATION_RECORDING_NOT_EDITABLE' ? messages.consultationRecordingNotEditable
-                    : failure.code === 'CONSULTATION_RECORDING_CONTEXT_INACTIVE' ? messages.consultationRecordingInactive
-                      : messages.consultationRecordingFailed}
-            {failure.retrying ? ` ${messages.consultationRecordingRetrying}` : ''}
-          </DropdownMenuLabel>)}
+          {!recording.failures.some(failure => failure.retrying) ? null : <DropdownMenuLabel className="whitespace-normal">
+            {messages.consultationRecordingRetrying}
+          </DropdownMenuLabel>}
         </DropdownMenuGroup>
       </DropdownMenuContent>
     </DropdownMenu>
