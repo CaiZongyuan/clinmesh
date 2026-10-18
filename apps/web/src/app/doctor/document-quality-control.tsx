@@ -1,10 +1,10 @@
-import type { ClinicalDocumentContent, ClinicalDocumentQualityControlState, DoctorCaseDetail } from '@clinmesh/contracts/his'
+import { clinicalDocumentFieldSchema, type ClinicalDocumentContent, type ClinicalDocumentQualityControlState, type DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Textarea } from '@clinmesh/ui/components/textarea'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { useEffect, useId, useRef, useState } from 'react'
 import {
   checkClinicalDocumentQuality, getClinicalDocumentQuality, newIdempotencyKey, retainClinicalDocumentQualityIssue,
@@ -14,6 +14,8 @@ import { formatClinicalDateTime } from './clinical-date-time.ts'
 
 export type QualityIssue = ClinicalDocumentQualityControlState['issues'][number]
 type Messages = ReturnType<typeof getWorkspaceMessages>
+type QualityRequest = { identity: string; revision: number; clientId: string; refresh: boolean }
+const requestIdentities = new WeakMap<QueryClient, Map<string, QualityRequest>>()
 
 function currentGeneration(previous: ClinicalDocumentQualityControlState | undefined, incoming: ClinicalDocumentQualityControlState) {
   if (previous !== undefined && previous.generation > incoming.generation) return previous
@@ -31,40 +33,54 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
 }) {
   const client = useQueryClient()
   const retentionKeys = useRef(new Map<string, string>())
-  const { qualityControl: _quality, ...clinicalContext } = detail
-  const identity = JSON.stringify([scope, clinicalContext, document, enabled])
-  const view = useRef<{ identity: string; revision: number; clientId: string; scope: string | undefined; refresh: boolean } | null>(null)
-  if (view.current === null || view.current.identity !== identity) {
-    view.current = { identity, revision: (view.current?.revision ?? 0) + 1,
-      clientId: view.current !== null && view.current.scope === scope ? view.current.clientId : newIdempotencyKey(), scope, refresh: false }
+  const saved = detail.clinicalDocument?.draft
+  const candidate = document !== undefined && !clinicalDocumentFieldSchema.options.every(field => (document[field] ?? '') === (saved?.[field] ?? ''))
+    ? document : undefined
+  const identity = JSON.stringify([scope, detail.caseId, detail.encounter.id, saved?.version ?? 0,
+    clinicalDocumentFieldSchema.options.map(field => (candidate ?? saved)?.[field] ?? ''), candidate !== undefined,
+    detail.consultation?.turns.filter(turn => turn.kind === 'text' && turn.speaker === 'patient'),
+    detail.consultationRecording?.sources,
+    detail.consultationRecording?.additions.filter(addition => addition.status === 'applied' && addition.ownership === 'automatic'),
+    detail.allergies, detail.presentation, detail.triage, detail.diagnosis?.confirmation, detail.priorFacts,
+    detail.laboratoryRequests?.requests.map(request => [request.report, request.previousReports]),
+    detail.imagingRequests?.requests.map(request => [request.report, request.previousReports]),
+    detail.pathologyRequests?.requests.map(request => [request.report, request.previousReports]),
+  ])
+  let ledger = requestIdentities.get(client)
+  if (ledger === undefined) { ledger = new Map(); requestIdentities.set(client, ledger) }
+  const ledgerKey = JSON.stringify([scope, detail.caseId, candidate !== undefined])
+  const previousRequest = ledger.get(ledgerKey)
+  const request = previousRequest?.identity === identity ? previousRequest : {
+    identity, revision: (previousRequest?.revision ?? 0) + 1, clientId: previousRequest?.clientId ?? newIdempotencyKey(), refresh: false,
   }
-  const request = view.current
+  ledger.set(ledgerKey, request)
+  const view = useRef({ identity }); view.current = { identity }
   const [debouncedIdentity, setDebouncedIdentity] = useState<string>()
   useEffect(() => {
     if (!enabled) return
-    const timer = setTimeout(() => setDebouncedIdentity(identity), document === undefined ? 0 : 500)
+    const timer = setTimeout(() => setDebouncedIdentity(identity), candidate === undefined ? 0 : 500)
     return () => clearTimeout(timer)
-  }, [identity, enabled, document === undefined])
+  }, [identity, enabled, candidate === undefined])
   const draftVersion = detail.clinicalDocument?.draft?.version ?? 0
-  const queryKey = ['document-quality', scope, detail.caseId, request.clientId, request.revision] as const
+  const queryKey = ['document-quality', scope, detail.caseId, candidate === undefined ? 'saved' : request.clientId, request.revision] as const
   const matches = (incoming: ClinicalDocumentQualityControlState) => incoming.caseId === detail.caseId
     && incoming.encounterId === detail.encounter.id && incoming.draftVersion === draftVersion
-    && (document === undefined ? incoming.clientId === undefined
+    && (candidate === undefined ? incoming.clientId === undefined
       && (initialState === undefined || incoming.documentFingerprint === initialState.documentFingerprint)
       : incoming.clientId === request.clientId && incoming.clientRevision === request.revision)
   const query = useQuery({
-    queryKey, retry: false, refetchOnWindowFocus: false,
-    enabled: enabled && debouncedIdentity === identity,
+    queryKey, retry: false, retryOnMount: false, refetchOnMount: false, refetchOnWindowFocus: false,
+    enabled: enabled && debouncedIdentity === identity && client.getQueryState(queryKey)?.error == null,
     ...(initialState === undefined ? {} : { initialData: initialState }),
-    queryFn: async ({ signal }) => {
+    queryFn: async () => {
       const previous = client.getQueryData<ClinicalDocumentQualityControlState>(queryKey)
       const check = previous === undefined || previous.stale || previous.status === 'idle' || request.refresh
       const refresh = request.refresh || previous?.stale === true
       request.refresh = false
       const incoming = check ? await checkClinicalDocumentQuality({ caseId: detail.caseId,
         encounterId: detail.encounter.id, encounterVersion: detail.encounter.versionId, expectedDraftVersion: draftVersion,
-        ...(document === undefined ? {} : { document, clientId: request.clientId, clientRevision: request.revision }),
-        refresh }, signal) : await getClinicalDocumentQuality(detail.caseId, document === undefined ? undefined : request.clientId, signal)
+        ...(candidate === undefined ? {} : { document: candidate, clientId: request.clientId, clientRevision: request.revision }),
+        refresh }) : await getClinicalDocumentQuality(detail.caseId, candidate === undefined ? undefined : request.clientId)
       if (!matches(incoming)) throw new Error('DOCUMENT_QUALITY_INPUT_CHANGED')
       return currentGeneration(client.getQueryData<ClinicalDocumentQualityControlState>(queryKey), incoming)
     },
@@ -180,14 +196,27 @@ export function DocumentQualityDetails({ quality, messages, locale, onLocateIssu
 }) {
   const fields = [...new Set(quality.state?.issues.map(issue => issue.field) ?? [])]
   return <div className="flex min-w-0 flex-col gap-3" data-document-quality-details>
-    <DocumentQualityStatus quality={quality} messages={messages} />
+    <DocumentQualityStatus quality={quality} messages={messages} locale={locale} />
     {fields.map(field => <DocumentQualityFieldIssues field={field} key={field} locale={locale} messages={messages}
       onLocateIssue={onLocateIssue} quality={quality} />)}
   </div>
 }
 
-export function DocumentQualityStatus({ quality, messages }: {
-  quality: DocumentQualityControl; messages: Messages
+const failureMessages = {
+  'invalid-json': ['返回内容格式不正确，本次病历检查未完成，可重试。', 'The response format was invalid. The document check is incomplete; retry when ready.'],
+  'invalid-shape': ['返回的检查内容不完整，本次检查未完成，可重试。', 'The response was incomplete. The document check did not finish; retry when ready.'],
+  'invalid-source': ['引用的病历或资料无法核对，本次检查未完成，可重试。', 'A document or source quotation could not be verified. The check is incomplete; retry when ready.'],
+  'invalid-coverage': ['部分内容没有完成核对，本次检查未完成，可重试。', 'Some content was not reviewed. The check is incomplete; retry when ready.'],
+  'invalid-scope': ['返回内容超出本次病历检查范围，请重试。', 'The response exceeded the scope of this document check. Please retry.'],
+  authentication: ['辅助模型的账户或权限不可用，请检查设置后重试。', 'The model account or access is unavailable. Check settings before retrying.'],
+  timeout: ['病历检查等待超时，请稍后重试。', 'The document check timed out. Please retry later.'],
+  'input-limit': ['本次资料超过检查范围，部分内容还没有检查完。', 'The supplied information exceeded the check limit. Part of the review remains incomplete.'],
+  transport: ['病历检查服务暂时未能返回结果，请稍后重试。', 'The document check service could not return a result. Please retry later.'],
+  unavailable: ['辅助检查服务暂不可用，仍保留已确定的问题提示。', 'The review service is unavailable. Established document issues remain available.'],
+} satisfies Record<NonNullable<ClinicalDocumentQualityControlState['failure']>['reason'], [string, string]>
+
+export function DocumentQualityStatus({ quality, messages, locale = 'zh-CN' }: {
+  quality: DocumentQualityControl; messages: Messages; locale?: WorkspaceLocale
 }) {
   const status = quality.stale ? messages.documentQualityStale : quality.error !== null ? messages.documentQualityFailed
     : quality.pending || quality.state?.status === 'pending' ? messages.documentQualityPending
@@ -201,6 +230,9 @@ export function DocumentQualityStatus({ quality, messages }: {
       <AlertTitle>{messages.documentQualityTitle}</AlertTitle>
       <AlertDescription>
         <p role="status">{status}</p>
+        {quality.stale || quality.error !== null || quality.state?.failure === undefined ? null : <p data-document-quality-failure={quality.state.failure.reason}>
+          {failureMessages[quality.state.failure.reason][locale === 'zh-CN' ? 0 : 1]}
+        </p>}
         {quality.state?.notices.map(notice => <p key={notice}>{notice}</p>)}
         <Button disabled={quality.pending} onClick={quality.retry} size="sm" type="button" variant="outline">
           {messages.documentQualityRetry}

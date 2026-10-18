@@ -56,6 +56,7 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
   let oldRequested = false
   let oldSettled = false
   const errors: string[] = []
+  let checks = 0
   page.on('pageerror', error => errors.push(error.message))
   await page.route('http://localhost/**', async route => {
     const path = new URL(route.request().url()).pathname
@@ -67,6 +68,7 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
     let current = states.get(clientId) ?? state()
     let delay = false
     if (path.endsWith('/actions/check')) {
+      checks += 1
       const { input } = checkClinicalDocumentQualityRequestSchema.parse(route.request().postDataJSON())
       current = { ...current, clientId: input.clientId, clientRevision: input.clientRevision }
       const empty = emptyChecks.find(([text]) => input.document?.chiefComplaint === text)
@@ -101,6 +103,13 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
   await expect(compact.getByRole('button', { name: '另有 3 处', exact: true })).toBeVisible()
   await expect(page.getByText('影响', { exact: true })).toHaveCount(0)
   await expect(page.locator('[data-document-quality-field]')).toHaveCount(0)
+  const readyChecks = checks
+  await page.getByRole('button', { name: '查看合成病例B', exact: true }).click()
+  await page.getByRole('button', { name: '返回合成病例A', exact: true }).click()
+  await page.getByRole('button', { name: '依据与说明', exact: true }).click()
+  await expect(page.locator('[data-document-quality-status]')).toHaveAttribute('data-document-quality-status', 'ready')
+  expect(checks).toBe(readyChecks)
+  await page.keyboard.press('Escape')
   await compact.getByRole('button', { name: '另有 3 处', exact: true }).focus()
   await page.keyboard.press('Enter')
   const location = compact.getByRole('button', { name: '体格检查的记录不一致，请核对。', exact: true })
@@ -190,6 +199,15 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
     await expect(explanation.locator('[data-document-quality-status]')).toHaveAttribute('data-document-quality-status', status)
     await page.keyboard.press('Escape')
     await expect(explanation).toHaveCount(0)
+    const previousChecks = checks
+    await page.getByRole('button', { name: '查看合成病例B', exact: true }).click()
+    await page.getByRole('button', { name: '返回合成病例A', exact: true }).click()
+    await page.getByRole('button', { name: 'Basis and details', exact: true }).click()
+    await expect(page.locator('[data-document-quality-status]')).toHaveAttribute('data-document-quality-status', status)
+    await page.waitForTimeout(650)
+    // A stale result requests current sources again; unchanged completed or failed inputs reuse their request.
+    expect(checks).toBe(previousChecks + (status === 'stale' ? 1 : 0))
+    await page.keyboard.press('Escape')
   }
   await chiefComplaint.fill('头晕三天。')
   await expect(compact).toBeVisible()

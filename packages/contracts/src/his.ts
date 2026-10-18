@@ -1142,6 +1142,11 @@ export const clinicalDocumentQualityControlStateSchema = z.object({
   notices: z.array(z.string().min(1).max(2_000)).max(12),
   checkedAt: z.string().optional(),
   errorCode: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT', 'AI_RESPONSE_INVALID', 'WORKFLOW_CONFLICT', 'INPUT_TOO_LARGE']).optional(),
+  failure: z.object({
+    stage: z.enum(['generation', 'verification']),
+    reason: z.enum(['invalid-json', 'invalid-shape', 'invalid-source', 'invalid-coverage', 'invalid-scope',
+      'authentication', 'timeout', 'input-limit', 'transport', 'unavailable']),
+  }).strict().optional(),
 }).strict()
 
 export const checkClinicalDocumentQualityRequestSchema = z.object({

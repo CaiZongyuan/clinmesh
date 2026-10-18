@@ -1,5 +1,5 @@
 import { dshDefaultModel, decodeModelRoute, modelBridgeErrorSchema, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
-import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
+import { ChatCompletionsError, StructuredOutputValidationError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
 import { ZodError } from 'zod'
 import { setTimeout as delay } from 'node:timers/promises'
 
@@ -47,7 +47,8 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         validationError = error
         issues = error instanceof ZodError ? error.issues.slice(0, 12).map(issue => ({
           code: issue.code, path: issue.path.join('.').slice(0, 200),
-        })) : [{ code: 'invalid_json_or_content', path: '' }]
+        })) : error instanceof StructuredOutputValidationError ? [{ code: error.code, path: error.path }]
+          : [{ code: error instanceof SyntaxError ? 'invalid_json' : 'schema_mismatch', path: '' }]
       }
     }
     throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The DSH model returned invalid structured output', {

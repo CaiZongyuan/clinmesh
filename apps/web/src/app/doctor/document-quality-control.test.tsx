@@ -53,7 +53,9 @@ function mount(pageActions = actions(), initialDocument = baseDocument) {
       onDocumentChange={setDocument} workingDocument={workingDocument} />
   }
   const view = render(<QueryClientProvider client={client}><Page /></QueryClientProvider>)
-  return { ...view, client, actions: pageActions, rerenderPage: (currentDetail: typeof detail, scope = 'workspace:epoch:doctor') =>
+  return { ...view, client, actions: pageActions,
+    navigateToAnotherCase: () => view.rerender(<QueryClientProvider client={client}><p>合成病例 B</p></QueryClientProvider>),
+    rerenderPage: (currentDetail: typeof detail, scope = 'workspace:epoch:doctor') =>
     view.rerender(<QueryClientProvider client={client}><Page currentDetail={currentDetail} scope={scope} /></QueryClientProvider>) }
 }
 
@@ -121,6 +123,87 @@ afterEach(() => {
   cleanup()
   for (const client of clients.splice(0)) client.clear()
   vi.unstubAllGlobals()
+})
+
+it.each(['ready', 'pending', 'failed'] as const)('reuses an unchanged case across A → B → A while its check is %s', async status => {
+  const server = stubQuality()
+  let release: (() => void) | undefined
+  server.interceptNextCheck(async response => {
+    if (status === 'pending') await new Promise<void>(resolve => { release = resolve })
+    const body = await response.json()
+    body.data.status = status === 'pending' ? 'ready' : status
+    return Response.json(body)
+  })
+  const mounted = mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  if (status !== 'pending') await waitFor(() => expect(mounted.client.isFetching()).toBe(0))
+  mounted.navigateToAnotherCase()
+  mounted.rerenderPage(detail)
+  await act(async () => { release?.(); await new Promise(resolve => setTimeout(resolve, 650)) })
+  expect(server.requests).toHaveLength(1)
+})
+
+it('does not create a check revision for unrelated case workflow state changes', async () => {
+  const server = stubQuality()
+  const mounted = mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  await waitFor(() => expect(mounted.client.isFetching()).toBe(0))
+  mounted.rerenderPage({ ...detail, taskVersion: '2', consultationRecording: { ...detail.consultationRecording!, version: 9, status: 'paused' } })
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)) })
+  expect(server.requests).toHaveLength(1)
+})
+
+it('uses the saved check for identical working text and keeps a genuinely unsaved candidate separate', async () => {
+  const server = stubQuality()
+  const mounted = mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  expect(server.requests[0]?.input.document).toBeUndefined()
+  expect(server.requests[0]?.input.clientId).toBeUndefined()
+  const chief = screen.getByRole('textbox', { name: '主诉' })
+  const user = userEvent.setup()
+  await user.clear(chief)
+  await user.type(chief, '未保存的主诉。')
+  await waitFor(() => expect(server.requests.at(-1)?.input.document?.chiefComplaint).toBe('未保存的主诉。'))
+  expect(server.requests.at(-1)?.input.clientId).toBeTruthy()
+  await user.clear(chief)
+  await user.type(chief, baseDocument.chiefComplaint)
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)) })
+  expect(server.requests).toHaveLength(2)
+  expect(mounted.actions.save?.onSubmit).not.toHaveBeenCalled()
+})
+
+it('does not retry a transport failure while navigating and permits an explicit retry', async () => {
+  const server = stubQuality()
+  server.interceptNextCheck(async () => { throw new TypeError('Synthetic transport failure') })
+  const mounted = mount()
+  await openDetails()
+  await screen.findByText('病历检查暂时失败，不能据此确认内容完整。')
+  await userEvent.setup().keyboard('{Escape}')
+  mounted.navigateToAnotherCase()
+  mounted.rerenderPage(detail)
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)) })
+  expect(server.requests).toHaveLength(1)
+  await openDetails()
+  await userEvent.setup().click(screen.getByRole('button', { name: '重新检查病历' }))
+  await screen.findByRole('region', { name: '既往史质控提示' })
+  expect(server.requests).toHaveLength(2)
+})
+
+it('explains a safely classified JSON failure without showing internal details or treating scope notices as its cause', async () => {
+  const server = stubQuality()
+  server.interceptNextCheck(async response => {
+    const body = await response.json()
+    body.data.status = 'failed'
+    body.data.errorCode = 'AI_RESPONSE_INVALID'
+    body.data.failure = { stage: 'generation', reason: 'invalid-json' }
+    body.data.notices = ['仅按普通门诊模板和当前可见事实辅助检查。']
+    return Response.json(body)
+  })
+  mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  await openDetails()
+  expect(await screen.findByText('返回内容格式不正确，本次病历检查未完成，可重试。')).toBeTruthy()
+  expect(screen.queryByText(/SyntaxError|invalid-json|JSON.parse/)).toBeNull()
 })
 
 it.each(['ready', 'pending', 'failed', 'incomplete', 'unavailable', 'stale'] as const)('keeps %s checks with no open issues out of the document and explains them only on request', async status => {
@@ -378,7 +461,7 @@ it.each(['case', 'scope', 'revision'] as const)('does not show a response with a
     if (mismatch === 'revision') body.data.clientRevision = 0
     return Response.json(body)
   })
-  mount()
+  mount(actions(), { ...baseDocument, chiefComplaint: '尚未保存的主诉。' })
   await openDetails()
   await screen.findByText('正文或依据已变化，当前结果已过期，请重新检查。')
   expect(screen.queryByRole('region', { name: '既往史质控提示' })).toBeNull()
@@ -388,7 +471,7 @@ it.each(['case', 'scope', 'revision'] as const)('does not show a response with a
 
 it('rechecks on a new authorization scope without reusing the previous client identity', async () => {
   const server = stubQuality()
-  const mounted = mount()
+  const mounted = mount(actions(), { ...baseDocument, chiefComplaint: '尚未保存的主诉。' })
   await openDetails()
   await screen.findByRole('region', { name: '既往史质控提示' })
   const previousClientId = server.requests.at(-1)!.input.clientId
