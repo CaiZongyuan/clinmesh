@@ -4826,6 +4826,155 @@ describe('role workspaces', () => {
         }], ...pagination(1),
       }
 
+  it.each(['laboratory', 'imaging', 'pathology'] as const)('restores a late Agent %s draft on return to its patient without changing another patient', async kind => {
+    window.history.replaceState(null, '', '/consultation')
+    const laboratory = { ...laboratoryTestCatalog.items[0]!, allowedIndicationCodes: ['fever', 'clinical-evaluation'] }
+    const imaging: ImagingServiceSnapshot = { id: 'imaging-late-agent', name: '合成胸部检查', code: 'SYN-CT',
+      applicability: '合成胸部检查资料', bodySite: '胸部', department: '放射科', examCode: 'chest-ct-plain',
+      method: '平扫', modality: 'CT', reportSections: ['technique', 'findings', 'impression'], version: 1 }
+    const pathology: PathologyServiceSnapshot = { id: 'pathology-late-agent', name: '合成切片会诊', code: 'SYN-PATH',
+      applicability: '合成既往乳腺手术切片', bodySite: '乳腺', department: '病理科', examCode: 'breast-slide-consultation',
+      reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'], specimenType: '石蜡切片', stain: 'HE', version: 1 }
+    const procedures = [{ code: '392021009', display: '合成原手术', performedAt: '2022-04-01T08:00:00+08:00', sourceReference: 'urn:uuid:late-agent-old' },
+      { code: '392023007', display: '合成新手术', performedAt: '2023-01-05T08:00:00+08:00', sourceReference: 'urn:uuid:late-agent-new' }]
+    const cases = ['甲', '乙'].map((name, index) => ({ caseId: `case-late-agent-${index}`, encounterId: `encounter-late-agent-${index}`, encounterVersion: '1',
+      patient: { id: `patient-late-agent-${index}`, identifier: `SYN-LATE-AGENT-${index}`, name: `合成回填患者${name}`,
+        gender: 'female', synthetic: true, versionId: '1' }, presentation: doctorPresentation, status: 'first-visit',
+      taskId: `task-late-agent-${index}`, taskVersion: '1' }))
+    const category = kind === 'laboratory' ? '检验' : kind === 'imaging' ? '放射检查' : '病理会诊'
+    const panelName = kind === 'laboratory' ? '待开具检验' : kind === 'imaging' ? '待开具放射检查' : '待开具病理会诊'
+    const newText = 'Agent已保存的新检查资料'
+    const input = kind === 'laboratory' ? { catalogItemId: laboratory.id, indicationCode: 'fever' }
+      : kind === 'imaging' ? { serviceId: imaging.id, indication: newText }
+        : { serviceId: pathology.id, sourceProcedureReference: procedures[1]!.sourceReference, purpose: newText }
+    let saved = false
+    let manualSaved = false
+    let releaseSave: (() => void) | undefined
+    const writes: string[] = []
+    let persistedPageRevision: string | undefined
+    let latestRequestedClaim: AgentPageContextClaim | undefined
+    let latestIssuedClaim: AgentPageContextClaim | undefined
+    let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
+    const surfaceAgent: WebSurfaceAgentController = { register(value) {
+      registration = value
+      return () => { if (registration === value) registration = undefined }
+    } }
+    vi.stubGlobal('fetch', documentQualityFetch(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(request), 'http://localhost').pathname
+      if (path === '/api/agent/v1/page-contexts') {
+        latestRequestedClaim = agentPageContextClaimSchema.parse(JSON.parse(String(init?.body)).claim)
+        if (manualSaved) persistedPageRevision = agentPageBindingRevision(latestRequestedClaim)
+      }
+      const agentResponse = await doctorSurfaceAgentResponse(path, init)
+      if (agentResponse !== undefined) {
+        if (path === '/api/agent/v1/page-contexts') latestIssuedClaim = agentPageContextBindingSchema.parse(await agentResponse.clone().json()).snapshot.claim
+        return agentResponse
+      }
+      if (path === '/api/auth/context') return Response.json(doctorSession)
+      if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [{ id: laboratory.id, nameZh: laboratory.nameZh,
+        nameEn: laboratory.nameEn, allowedIndicationCodes: laboratory.allowedIndicationCodes, contraindicatedAllergyCodes: [], version: 1 }],
+        medications: [], prescriptionConclusionSupported: true })
+      if (path.endsWith('/doctor/queue')) return Response.json({ items: cases, ...pagination(2) })
+      const current = cases.find(item => path === `/api/his/v1/doctor/cases/${item.caseId}`)
+      if (current !== undefined) {
+        const updated = current === cases[0] && saved
+        const oldText = current === cases[0] ? '甲患者原检查资料' : '乙患者原检查资料'
+        const draft = kind === 'laboratory' ? { catalogItemId: laboratory.id, indicationCode: current !== cases[0] || manualSaved && !updated ? 'clinical-evaluation' : 'fever', laboratoryService: laboratory }
+          : kind === 'imaging' ? { service: imaging, indication: updated ? newText : oldText }
+            : { service: pathology, sourceProcedure: procedures[updated ? 1 : 0], purpose: updated ? newText : oldText }
+        return Response.json({ ...current, allergies: [], consultation: { turns: [], version: 1 }, priorFacts: [],
+          encounter: { id: current.encounterId, status: 'in-progress', versionId: '1' },
+          laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [] },
+          imagingRequests: { draftVersion: 0, requests: [] }, pathologyRequests: { draftVersion: 0, requests: [] },
+          [`${kind}Requests`]: { draft, draftVersion: updated ? kind === 'laboratory' ? 3 : 2 : current === cases[0] && manualSaved ? 2 : 1,
+            ...(kind === 'laboratory' ? { reportingSupported: true } : {}), requests: [] },
+        })
+      }
+      if (path.endsWith('/reference-catalogs/laboratory')) return Response.json({ items: [laboratory], ...pagination(1) })
+      if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imaging }] })
+      if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathology, sourceProcedures: procedures }] })
+      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: path.split('/')[5], encounterVersion: '1', items: [] })
+      if (path.endsWith(`/${kind}-request/draft`)) {
+        writes.push(path)
+        expect(init?.method).toBe('PUT')
+        const body = JSON.parse(String(init?.body))
+        expect(body.expectedVersions).toEqual({ 'Encounter/encounter-late-agent-0': '1' })
+        if (kind === 'laboratory' && body.input.indicationCode === 'clinical-evaluation') {
+          expect(body.input).toEqual({ catalogItemId: laboratory.id, indicationCode: 'clinical-evaluation', expectedDraftVersion: 1 })
+          manualSaved = true
+          return Response.json(commandResponse({ caseId: cases[0]!.caseId, draftVersion: 2 }))
+        }
+        expect(body.input).toEqual({ expectedDraftVersion: kind === 'laboratory' ? 2 : 1, ...input })
+        return new Promise<Response>(resolve => { releaseSave = () => {
+          saved = true
+          resolve(Response.json(commandResponse({ caseId: cases[0]!.caseId, draftVersion: kind === 'laboratory' ? 3 : 2 })))
+        } })
+      }
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp runtime={{ mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1' }} />)
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    await user.click(screen.getByRole('tab', { name: `${category} 0` }))
+    expect(within(await screen.findByRole('region', { name: panelName })).getByText(kind === 'laboratory' ? '发热' : '甲患者原检查资料')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '调整' }))
+    const edit = screen.getByRole('dialog', { name: '调整项目' })
+    if (kind === 'laboratory') {
+      await user.click(within(edit).getByRole('combobox', { name: '检查目的' }))
+      await user.click(await screen.findByRole('option', { name: '临床评估' }))
+    } else {
+      const field = within(edit).getByRole('textbox', { name: kind === 'imaging' ? '检查目的' : '会诊目的' })
+      await user.clear(field)
+      await user.type(field, '甲患者人工修改的旧检查资料')
+    }
+    await user.click(within(edit).getByRole('button', { name: '保留本次调整' }))
+    if (kind === 'laboratory') await waitFor(() => expect(manualSaved).toBe(true), { timeout: 3_000 })
+    const tool = await waitFor(() => {
+      const candidate = registration?.tools.find(tool => tool.name === `clinmesh_fill_${kind}_draft`)
+      expect(candidate).toBeDefined()
+      expect(latestIssuedClaim).toBeDefined()
+      expect(latestIssuedClaim).toEqual(latestRequestedClaim)
+      expect(boundAgentToolInput(candidate!, {}).pageRevision).toBe(agentPageBindingRevision(latestIssuedClaim!))
+      if (kind === 'laboratory') {
+        expect(persistedPageRevision).toBeDefined()
+        expect(boundAgentToolInput(candidate!, {}).pageRevision).toBe(persistedPageRevision)
+      }
+      return candidate!
+    })
+    let execution!: ReturnType<WebSurfaceAgentTool['execute']>
+    act(() => { execution = tool.execute(boundAgentToolInput(tool, input), new AbortController().signal) })
+    const completion = Promise.resolve(execution)
+    void completion.catch(() => undefined)
+    try {
+      await waitFor(() => expect(releaseSave).toBeDefined())
+      await user.click(screen.getByRole('button', { name: '选择病例 合成回填患者乙' }))
+      await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+      await user.click(screen.getByRole('tab', { name: `${category} 0` }))
+      const patientBPanel = await screen.findByRole('region', { name: panelName })
+      expect(within(patientBPanel).getByText(kind === 'laboratory' ? '临床评估' : '乙患者原检查资料')).toBeTruthy()
+      await act(async () => { releaseSave?.(); expect(JSON.parse(await completion)).toMatchObject({ ok: true }) })
+      expect(screen.getByRole('heading', { name: '合成回填患者乙' })).toBeTruthy()
+      expect(within(patientBPanel).getByText(kind === 'laboratory' ? '临床评估' : '乙患者原检查资料')).toBeTruthy()
+      await user.click(screen.getByRole('button', { name: '选择病例 合成回填患者甲' }))
+      const restoredEditor = screen.queryByRole('button', { name: '返回待开具列表' })
+      if (restoredEditor !== null) await user.click(restoredEditor)
+      await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+      const categoryEditor = screen.queryByRole('button', { name: '返回待开具列表' })
+      if (categoryEditor !== null) await user.click(categoryEditor)
+      await user.click(screen.getByRole('tab', { name: `${category} 0` }))
+      const openedEditor = screen.queryByRole('button', { name: '返回待开具列表' })
+      if (openedEditor !== null) await user.click(openedEditor)
+      const patientAPanel = await screen.findByRole('region', { name: panelName })
+      expect(await within(patientAPanel).findByText(kind === 'laboratory' ? '发热' : newText)).toBeTruthy()
+      expect(within(patientAPanel).queryByText(kind === 'laboratory' ? '临床评估' : '甲患者人工修改的旧检查资料')).toBeNull()
+      expect(writes).toEqual(Array(kind === 'laboratory' ? 2 : 1).fill(`/api/his/v1/encounters/encounter-late-agent-0/${kind}-request/draft`))
+      if (kind === 'pathology') {
+        await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
+        expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('合成新手术')
+      }
+    } finally { releaseSave?.(); await completion }
+  })
+
   it('keeps the current case selection when another case draft deletion finishes late', async () => {
     window.history.replaceState(null, '', '/consultation')
     let releaseDeletion: (() => void) | undefined
