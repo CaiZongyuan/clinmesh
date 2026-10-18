@@ -373,32 +373,40 @@ export class ImagingRequestService {
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, expectedDraftVersion: input.expectedDraftVersion },
       operation: 'imaging-request.delete-draft',
-    }, () => {
-      const outpatientCase = this.#caseForAction(input.context, input.encounterId)
-      this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const current = this.#draft(input.context, outpatientCase.case_id)
-      if (current?.version !== input.expectedDraftVersion || current.draft_service_id === null) {
-        throw this.#draftConflict({
-          currentStatus: current === undefined ? 'missing' : current.draft_service_id === null ? 'empty' : 'draft',
-          ...(current === undefined ? {} : { currentVersion: String(current.version) }),
-          expectedVersion: String(input.expectedDraftVersion),
-          owner: 'imaging-request-draft',
-          resource: `ImagingRequestDraft/${outpatientCase.case_id}`,
-        })
-      }
-      this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
-        now: this.#host.virtualTime(input.context),
+    }, transaction => this.applyDeleteDraft(transaction, input))
+  }
+
+  applyDeleteDraft(_transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    const outpatientCase = this.#caseForAction(input.context, input.encounterId)
+    this.#host.assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const current = this.#draft(input.context, outpatientCase.case_id)
+    if (current?.version !== input.expectedDraftVersion || current.draft_service_id === null) {
+      throw this.#draftConflict({
+        currentStatus: current === undefined ? 'missing' : current.draft_service_id === null ? 'empty' : 'draft',
+        ...(current === undefined ? {} : { currentVersion: String(current.version) }),
+        expectedVersion: String(input.expectedDraftVersion),
+        owner: 'imaging-request-draft',
+        resource: `ImagingRequestDraft/${outpatientCase.case_id}`,
       })
-      const draftVersion = current.version + 1
-      return {
-        data: { caseId: outpatientCase.case_id, draftVersion },
-        effects: [{
-          kind: 'updated' as const,
-          reference: `ImagingRequestDraft/${outpatientCase.case_id}`,
-          versionId: String(draftVersion),
-        }],
-      }
+    }
+    this.#updateDraft(input.context, outpatientCase.case_id, current.version, {
+      now: this.#host.virtualTime(input.context),
     })
+    const draftVersion = current.version + 1
+    return {
+      data: { caseId: outpatientCase.case_id, draftVersion },
+      effects: [{
+        kind: 'updated' as const,
+        reference: `ImagingRequestDraft/${outpatientCase.case_id}`,
+        versionId: String(draftVersion),
+      }],
+    }
   }
 
   issue(input: {

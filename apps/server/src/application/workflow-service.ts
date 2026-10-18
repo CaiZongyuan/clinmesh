@@ -6814,84 +6814,92 @@ export class WorkflowService {
         resource: `Encounter/${input.encounterId}`,
       }),
       operation: 'laboratory-request.delete-draft',
-    }, () => {
-      const outpatientCase = this.#laboratoryRequestCaseForAction(
-        input.context,
-        input.encounterId,
-        'edit-draft',
+    }, transaction => this.applyDeleteLaboratoryRequestDraft(transaction, input))
+  }
+
+  applyDeleteLaboratoryRequestDraft(_transaction: CommandTransaction, input: {
+    context: ActorContext
+    encounterId: string
+    expectedDraftVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+  }) {
+    const outpatientCase = this.#laboratoryRequestCaseForAction(
+      input.context,
+      input.encounterId,
+      'edit-draft',
+    )
+    this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
+    const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
+    if (current === undefined) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        'The laboratory request draft does not exist',
+        {
+          currentStatus: 'missing',
+          expectedVersion: String(input.expectedDraftVersion),
+          owner: 'laboratory-request-draft',
+          resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+        },
       )
-      this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
-      const current = this.#laboratoryRequestState(input.context, outpatientCase.case_id)
-      if (current === undefined) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request draft does not exist',
-          {
-            currentStatus: 'missing',
-            expectedVersion: String(input.expectedDraftVersion),
-            owner: 'laboratory-request-draft',
-            resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
-          },
-        )
-      }
-      if (current.draft_catalog_item_id === null) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          `The laboratory request draft is empty at version ${current.version}`,
-          {
-            currentStatus: 'empty',
-            currentVersion: String(current.version),
-            expectedVersion: String(input.expectedDraftVersion),
-            owner: 'laboratory-request-draft',
-            resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
-          },
-        )
-      }
-      if (current.version !== input.expectedDraftVersion) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          `The laboratory request draft is at version ${current.version}; expected version ${input.expectedDraftVersion}`,
-          {
-            currentStatus: 'draft',
-            currentVersion: String(current.version),
-            expectedVersion: String(input.expectedDraftVersion),
-            owner: 'laboratory-request-draft',
-            resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
-          },
-        )
-      }
-      const draftVersion = current.version + 1
-      const update = this.#database.driver.prepare(`
-        UPDATE laboratory_request_state
-        SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
-          draft_reference_json = NULL, draft_service_snapshot_json = NULL,
-          updated_by = ?, updated_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
-          AND draft_catalog_item_id IS NOT NULL
-      `).run(
-        draftVersion,
-        input.context.actorId,
-        this.#virtualTime(input.context),
-        input.context.workspaceId,
-        input.context.epoch,
-        outpatientCase.case_id,
-        current.version,
+    }
+    if (current.draft_catalog_item_id === null) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        `The laboratory request draft is empty at version ${current.version}`,
+        {
+          currentStatus: 'empty',
+          currentVersion: String(current.version),
+          expectedVersion: String(input.expectedDraftVersion),
+          owner: 'laboratory-request-draft',
+          resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+        },
       )
-      if (update.changes !== 1) {
-        throw new WorkflowError(
-          'LABORATORY_REQUEST_VERSION_CONFLICT',
-          'The laboratory request draft version has changed',
-        )
-      }
-      return {
-        data: { caseId: outpatientCase.case_id, draftVersion },
-        effects: [{
-          kind: 'updated' as const,
-          reference: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
-          versionId: String(draftVersion),
-        }],
-      }
-    })
+    }
+    if (current.version !== input.expectedDraftVersion) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        `The laboratory request draft is at version ${current.version}; expected version ${input.expectedDraftVersion}`,
+        {
+          currentStatus: 'draft',
+          currentVersion: String(current.version),
+          expectedVersion: String(input.expectedDraftVersion),
+          owner: 'laboratory-request-draft',
+          resource: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+        },
+      )
+    }
+    const draftVersion = current.version + 1
+    const update = this.#database.driver.prepare(`
+      UPDATE laboratory_request_state
+      SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
+        draft_reference_json = NULL, draft_service_snapshot_json = NULL,
+        updated_by = ?, updated_at = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
+        AND draft_catalog_item_id IS NOT NULL
+    `).run(
+      draftVersion,
+      input.context.actorId,
+      this.#virtualTime(input.context),
+      input.context.workspaceId,
+      input.context.epoch,
+      outpatientCase.case_id,
+      current.version,
+    )
+    if (update.changes !== 1) {
+      throw new WorkflowError(
+        'LABORATORY_REQUEST_VERSION_CONFLICT',
+        'The laboratory request draft version has changed',
+      )
+    }
+    return {
+      data: { caseId: outpatientCase.case_id, draftVersion },
+      effects: [{
+        kind: 'updated' as const,
+        reference: `LaboratoryRequestDraft/${outpatientCase.case_id}`,
+        versionId: String(draftVersion),
+      }],
+    }
   }
 
   issueLaboratoryRequest(input: {

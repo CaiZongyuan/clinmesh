@@ -1587,6 +1587,111 @@ function confirmPreparation(fixture: Awaited<ReturnType<typeof setup>>, kind: st
     method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(body),
   })
 }
+
+it('confirms manual diagnosis without reading or generating recommendations and replays the same audited receipt', async () => {
+  const fixture = await setup()
+  const clinical = await fixture.readCase()
+  const body = { expectedVersions: { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId }, input: {
+    expectedDraftVersion: 0, selections: [{ kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary', note: '医生手动添加。' }],
+  } }
+  const key = randomUUID()
+  const response = await confirmPreparation(fixture, 'diagnosis', body, key)
+  expect(response.status, await response.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await response.json())
+  expect(receipt.auditId).toBeTruthy()
+  expect((await fixture.readCase()).diagnosis?.confirmation).toMatchObject({ revisionNumber: 1,
+    entries: [{ catalogItemId: 'diagnosis-fever', role: 'primary', note: '医生手动添加。' }],
+  })
+  const replay = await confirmPreparation(fixture, 'diagnosis', body, key)
+  expect(replay.status, await replay.clone().text()).toBe(200)
+  expect(confirmDoctorPreparationResponseSchema.parse(await replay.json())).toEqual(receipt)
+  expect((await fixture.readCase()).diagnosis?.confirmation?.revisionNumber).toBe(1)
+})
+
+it.each(['pending', 'failed', 'stale', 'missing-evidence'] as const)('allows independent manual diagnosis while recommendations are %s', async status => {
+  let modelCalls = 0
+  const fixture = await setup(async input => {
+    modelCalls += 1
+    return { model: input.model, content: status === 'failed' ? 'invalid structured response'
+      : JSON.stringify(input.schemaName === 'doctor_recommendations'
+        ? status === 'missing-evidence' ? { items: [], missingInformation: [] } : diagnosisOutput(input) : verificationOutput(input)) }
+  })
+  expect((await fixture.generate()).status).toBe(200)
+  if (status !== 'pending') await fixture.runtime.dispatchPending()
+  if (status === 'stale') expect((await fixture.saveDocument({ assessment: '医生新增病情核对内容。' })).status).toBe(200)
+  const state = await fixture.read()
+  expect(state).toMatchObject(status === 'stale' ? { stale: true } : { status })
+  const clinical = await fixture.readCase()
+  const beforeCalls = modelCalls
+  const response = await confirmPreparation(fixture, 'diagnosis', {
+    expectedVersions: { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId }, input: {
+      expectedDraftVersion: 0, selections: [{ kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary' }],
+    },
+  })
+  expect(response.status, await response.clone().text()).toBe(200)
+  expect((await fixture.readCase()).diagnosis?.confirmation?.entries).toMatchObject([{ catalogItemId: 'diagnosis-fever' }])
+  expect(modelCalls).toBe(beforeCalls)
+})
+
+it('allows manual confirmation even when the saved recommendation state cannot be read', async () => {
+  const fixture = await setup()
+  expect((await fixture.generate()).status).toBe(200)
+  fixture.runtime.database.driver.prepare(`UPDATE doctor_recommendation_state SET state_json = '{}' WHERE case_id = ?`)
+    .run(fixture.started.outpatientCaseId)
+  expect((await fixture.runtime.app.request(fixture.path(), { headers: { cookie: fixture.cookie } })).status).toBe(400)
+  const clinical = await fixture.readCase()
+  const response = await confirmPreparation(fixture, 'diagnosis', {
+    expectedVersions: { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId }, input: {
+      expectedDraftVersion: 0, selections: [{ kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary' }],
+    },
+  })
+  expect(response.status, await response.clone().text()).toBe(200)
+  expect((await fixture.readCase()).diagnosis?.confirmation?.entries).toMatchObject([{ catalogItemId: 'diagnosis-fever' }])
+})
+
+it('rejects stale agent selections in a mixed batch while allowing current manual input without the old proof', async () => {
+  const fixture = await setup(async input => ({ content: JSON.stringify(
+    input.schemaName === 'doctor_recommendations' ? diagnosisOutput(input) : verificationOutput(input),
+  ), model: input.model }))
+  await fixture.generate()
+  await fixture.runtime.dispatchPending()
+  const prepared = await fixture.read()
+  expect((await fixture.saveDocument({ assessment: '新资料需要重新核对自动诊断。' })).status).toBe(200)
+  const manual = { kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary' }
+  const before = await fixture.readCase()
+  const mixed = await confirmPreparation(fixture, 'diagnosis', preparationBody(prepared, [manual, {
+    kind: 'diagnosis', source: 'agent', suggestionId: prepared.items[0]!.id, catalogItemId: 'diagnosis-hypertension', role: 'secondary',
+  }]))
+  expect(mixed.status, await mixed.clone().text()).toBe(409)
+  expect(await fixture.readCase()).toEqual(before)
+  const response = await confirmPreparation(fixture, 'diagnosis', {
+    expectedVersions: { [`Encounter/${before.encounter.id}`]: before.encounter.versionId }, input: { expectedDraftVersion: 0, selections: [manual] },
+  })
+  expect(response.status, await response.clone().text()).toBe(200)
+})
+
+it('keeps manual confirmation subject to current authorization, catalog and clinical versions', async () => {
+  const fixture = await setup()
+  const clinical = await fixture.readCase()
+  const manual = { kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary' }
+  const body = { expectedVersions: { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId },
+    input: { expectedDraftVersion: 0, selections: [manual] } }
+  for (const input of [
+    { ...body, expectedVersions: { [`Encounter/${clinical.encounter.id}`]: '1' } },
+    { ...body, input: { ...body.input, expectedDraftVersion: 8 } },
+    { ...body, input: { ...body.input, selections: [{ ...manual, catalogItemId: 'missing-diagnosis' }] } },
+    { ...body, input: { ...body.input, selections: [{ ...manual, role: 'secondary' }] } },
+  ]) {
+    const rejected = await confirmPreparation(fixture, 'diagnosis', input)
+    expect(rejected.status, await rejected.clone().text()).toBe(409)
+    expect(await fixture.readCase()).toEqual(clinical)
+  }
+  const triage = await signIn(fixture.runtime, 'triage@demo.clinmesh.local')
+  const unauthorized = await confirmPreparation(fixture, 'diagnosis', body, randomUUID(), triage)
+  expect(unauthorized.status).toBe(403)
+  expect(await fixture.readCase()).toEqual(clinical)
+})
+
 function installPreparationLaboratory(fixture: Awaited<ReturnType<typeof setup>>, id: string) {
   const service = syntheticLaboratory(id)
   fixture.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog
@@ -1705,6 +1810,79 @@ it('issues selected prepared laboratory items atomically and preserves an existi
   const blocked = await confirmPreparation(fixture, 'laboratory', preparationBody(next, selections, 5))
   expect(blocked.status).toBe(409)
   expect(await fixture.readCase()).toEqual(before)
+})
+
+it('requires explicit versioned resolution of an existing laboratory draft and rolls back the whole replacement batch on failure', async () => {
+  const fixture = await setup()
+  for (const id of ['lab-manual-original', 'lab-manual-next', 'lab-manual-other']) installPreparationLaboratory(fixture, id)
+  const clinical = await fixture.readCase()
+  const expectedVersions = { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId }
+  const saved = await fixture.runtime.app.request(`/api/his/v1/encounters/${clinical.encounter.id}/laboratory-request/draft`, {
+    method: 'PUT', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: 0, catalogItemId: 'lab-manual-original', indicationCode: 'clinical-evaluation' } }),
+  })
+  expect(saved.status, await saved.clone().text()).toBe(200)
+  const before = await fixture.readCase()
+  const selections = ['lab-manual-next', 'lab-manual-other'].map(catalogItemId => ({ kind: 'laboratory', source: 'manual', catalogItemId, indicationCode: 'clinical-evaluation' }))
+  const input = { expectedDraftVersion: 1, selections }
+  for (const changes of [{}, { resolveExistingDraft: false }, { resolveExistingDraft: true, expectedDraftVersion: 0 },
+    { resolveExistingDraft: true, selections: [selections[0], { ...selections[1], indicationCode: 'not-allowed' }] }]) {
+    const rejected = await confirmPreparation(fixture, 'laboratory', { expectedVersions, input: { ...input, ...changes } })
+    expect(rejected.status, await rejected.clone().text()).toBe(409)
+    expect(await fixture.readCase()).toEqual(before)
+  }
+  const body = { expectedVersions, input: { ...input, resolveExistingDraft: true } }
+  const key = randomUUID()
+  const issued = await confirmPreparation(fixture, 'laboratory', body, key)
+  expect(issued.status, await issued.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await issued.json())
+  expect(receipt.data).toMatchObject({ draftVersion: 6, recordIds: [expect.any(String), expect.any(String)] })
+  const after = await fixture.readCase()
+  expect(after.laboratoryRequests?.draft).toBeUndefined()
+  expect(after.laboratoryRequests?.requests.map(item => item.catalogItemId)).toEqual(['lab-manual-next', 'lab-manual-other'])
+  expect(confirmDoctorPreparationResponseSchema.parse(await (await confirmPreparation(fixture, 'laboratory', body, key)).json())).toEqual(receipt)
+})
+
+it.each(['imaging', 'pathology'] as const)('resolves an existing %s draft atomically before manual issuance without recommendations', async kind => {
+  const syntheaProvider = new class extends StubSyntheaProvider {
+    override async generate() {
+      const corpus = await super.generate()
+      const raw = breastCaseBundle({ name: '合成手动开具患者' })
+      return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
+    }
+  }()
+  const fixture = await setup(undefined, { syntheaProvider })
+  if (kind === 'imaging') await installSyntheticImagingAssets({ assetDirectory: join(fixture.directory, 'imaging-assets'),
+    catalogDirectory: join(fixture.directory, 'imaging-catalog'), assets: [{ assetId: 'synthetic-ct', examCode: 'chest-ct-plain' }] })
+  else await installSyntheticPathologySlides({ assetDirectory: join(fixture.directory, 'pathology-assets'),
+    catalogDirectory: join(fixture.directory, 'pathology-catalog'), slides: [{ assetId: 'synthetic-breast-slide' }] })
+  const clinical = await fixture.readCase()
+  const expectedVersions = { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId }
+  const fields = kind === 'imaging' ? { serviceId: 'imaging-chest-ct-plain', indication: '医生核对当前检查目的。' }
+    : { serviceId: 'pathology-breast-slide-consultation', sourceProcedureReference: 'urn:uuid:procedure-0', purpose: '复核既往手术切片。' }
+  const saved = await fixture.runtime.app.request(`/api/his/v1/encounters/${clinical.encounter.id}/${kind}-request/draft`, {
+    method: 'PUT', headers: { cookie: fixture.cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: 0, ...fields } }),
+  })
+  expect(saved.status, await saved.clone().text()).toBe(200)
+  const before = await fixture.readCase()
+  const selection = { ...fields, kind, source: 'manual' }
+  const input = { expectedDraftVersion: 1, selections: [selection] }
+  for (const changes of [{}, { resolveExistingDraft: true, expectedDraftVersion: 0 }, { resolveExistingDraft: true,
+    selections: [{ ...selection, ...(kind === 'imaging' ? { serviceId: 'unavailable-service' } : { sourceProcedureReference: 'urn:uuid:other-patient-procedure' }) }],
+  }]) {
+    const rejected = await confirmPreparation(fixture, kind, { expectedVersions, input: { ...input, ...changes } })
+    expect(rejected.status, await rejected.clone().text()).toBe(409)
+    expect(await fixture.readCase()).toEqual(before)
+  }
+  const response = await confirmPreparation(fixture, kind, { expectedVersions, input: { ...input, resolveExistingDraft: true } })
+  expect(response.status, await response.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await response.json())
+  expect(receipt.data.draftVersion).toBe(4)
+  const after = await fixture.readCase()
+  const state = kind === 'imaging' ? after.imagingRequests : after.pathologyRequests
+  expect(state?.draft).toBeUndefined()
+  expect(state?.requests).toMatchObject([{ id: receipt.data.recordIds[0], status: 'issued', service: { id: fields.serviceId } }])
 })
 
 it('keeps a physician-edited diagnosis confirmable as explicit manual input when the new generation has no agent items', async () => {
@@ -1847,7 +2025,7 @@ it('confirms prepared imaging through its actual offering and returns the formal
     status: 'issued', service: { id: 'imaging-chest-ct-plain' } })
 })
 
-it('preserves an existing physician diagnosis draft until manual selections explicitly describe the intended confirmation', async () => {
+it.each([false, true])('preserves an existing physician diagnosis draft until explicit selections or resolution (%s)', async resolveExistingDraft => {
   const fixture = await setup(async input => ({ model: input.model, content: JSON.stringify(
     input.schemaName === 'doctor_recommendations' ? diagnosisOutput(input) : verificationOutput(input),
   ) }))
@@ -1868,23 +2046,34 @@ it('preserves an existing physician diagnosis draft until manual selections expl
   const blocked = await confirmPreparation(fixture, 'diagnosis', preparationBody(prepared, [automatic], 1))
   expect(blocked.status, await blocked.clone().text()).toBe(409)
   expect(await fixture.readCase()).toEqual(before)
-  const confirmed = await confirmPreparation(fixture, 'diagnosis', preparationBody(prepared, [
+  const selections = resolveExistingDraft ? [automatic] : [
     { ...automatic, role: 'secondary' }, { kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever',
       role: 'primary', note: '医生手写的待核对备注。' },
-  ], 1))
+  ]
+  const body = preparationBody(prepared, selections, 1)
+  const stale = await confirmPreparation(fixture, 'diagnosis', { ...body, input: { ...body.input, expectedDraftVersion: 42, resolveExistingDraft: true } })
+  expect(stale.status).toBe(409)
+  expect(await fixture.readCase()).toEqual(before)
+  const confirmed = await confirmPreparation(fixture, 'diagnosis', { ...body, input: { ...body.input, resolveExistingDraft } })
   expect(confirmed.status, await confirmed.clone().text()).toBe(200)
-  expect((await fixture.readCase()).diagnosis?.confirmation?.entries).toMatchObject([
+  expect((await fixture.readCase()).diagnosis?.confirmation?.entries).toMatchObject(resolveExistingDraft ? [
+    { catalogItemId: 'diagnosis-hypertension', role: 'primary' },
+  ] : [
     { catalogItemId: 'diagnosis-hypertension', role: 'secondary' },
     { catalogItemId: 'diagnosis-fever', role: 'primary', note: '医生手写的待核对备注。' },
   ])
 })
 
 
+const preparationReferenceProduct = { approvalNumber: '合成批准文号', brandName: null, code: 'SYNTHETIC-AMLODIPINE', dosageForm: '片剂',
+  genericName: '合成苯磺酸氨氯地平片', id: 'reference-amlodipine', manufacturer: '合成药厂', packageDescription: '30片/盒',
+  sourceLocator: 'synthetic:medications[0]', status: 'active', strength: '5mg', system: 'https://example.org/synthetic-medications', version: 'synthetic-2026' }
+
 async function installPreparationReferenceDiagnoses(directory: string) {
   const artifact = JSON.stringify({ schemaVersion: '1', concepts: [{
     id: 'reference-hypertension', code: 'I10', display: '参考原发性高血压', domain: 'diagnosis', status: 'active',
     system: 'https://example.org/synthetic-icd10', version: 'synthetic-2026', sourceLocator: 'synthetic:diagnoses[0]',
-  }], medicationProducts: [], services: [], valueSetEntries: [] })
+  }], medicationProducts: [preparationReferenceProduct], services: [], valueSetEntries: [] })
   const manifest = { createdAt: '2026-08-28T00:00:00.000Z', releaseId: 'synthetic-preparation-reference', schemaVersion: '1', sources: [{
     acquisitionMethod: 'generated', artifactPath: 'diagnoses.json', checksum: createHash('sha256').update(artifact).digest('hex'),
     licenseId: 'CC0-1.0', retrievedAt: '2026-08-28T00:00:00.000Z', sourceId: 'synthetic-preparation-diagnoses',
@@ -1897,6 +2086,44 @@ async function installPreparationReferenceDiagnoses(directory: string) {
   await runReferenceDatabaseCli(['import', '--database', path, '--manifest', join(directory, 'diagnoses-release.json')])
   return path
 }
+
+it('re-resolves the real Reference medication rather than trusting a client product snapshot during manual issuance', async () => {
+  const fixture = await setup(undefined, { referenceDiagnoses: true })
+  const catalog = await fixture.runtime.app.request('/api/his/v1/reference-catalogs/medications?query=合成苯磺酸氨氯地平片&pageSize=20', { headers: { cookie: fixture.cookie } })
+  expect(catalog.status).toBe(200)
+  expect(await catalog.json()).toMatchObject({ items: [preparationReferenceProduct] })
+  const clinical = await fixture.readCase()
+  const diagnosis = await confirmPreparation(fixture, 'diagnosis', {
+    expectedVersions: { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId }, input: { expectedDraftVersion: 0,
+      selections: [{ kind: 'diagnosis', source: 'manual', catalogItemId: 'reference-hypertension', role: 'primary' }],
+    },
+  })
+  expect(diagnosis.status, await diagnosis.clone().text()).toBe(200)
+  const current = await fixture.readCase()
+  const selection = { kind: 'prescription', source: 'manual', catalogItemId: preparationReferenceProduct.id,
+    doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30,
+    referenceProduct: { ...preparationReferenceProduct, id: 'fabricated-product', genericName: '伪造药品', strength: '500mg', packageDescription: '999片/盒',
+      dosageForm: '伪造剂型', manufacturer: '伪造厂商' },
+  }
+  const expectedVersions = { [`Encounter/${current.encounter.id}`]: current.encounter.versionId }
+  const invalid = await confirmPreparation(fixture, 'prescription', { expectedVersions, input: { expectedDraftVersion: 0,
+    selections: [{ ...selection, catalogItemId: 'fabricated-product' }],
+  } })
+  expect(invalid.status, await invalid.clone().text()).toBe(409)
+  expect(await fixture.readCase()).toEqual(current)
+  const issued = await confirmPreparation(fixture, 'prescription', { expectedVersions, input: { expectedDraftVersion: 0, selections: [selection] } })
+  expect(issued.status, await issued.clone().text()).toBe(200)
+  const item = (await fixture.readCase()).medicationConclusion?.prescription?.items[0]
+  expect(item).toMatchObject({ catalogItemId: preparationReferenceProduct.id, display: preparationReferenceProduct.genericName })
+  const request = z.object({ medication: z.object({ reference: z.object({ reference: z.string() }) }) }).parse(await (await fixture.runtime.app.request(
+    `/fhir/R5/MedicationRequest/${item!.medicationRequestId}`, { headers: { cookie: fixture.cookie } },
+  )).json())
+  const medication = await fixture.runtime.app.request(`/fhir/R5/${request.medication.reference.reference}`, { headers: { cookie: fixture.cookie } })
+  expect(medication.status).toBe(200)
+  expect(await medication.json()).toMatchObject({ code: { coding: [{ code: preparationReferenceProduct.code, display: preparationReferenceProduct.genericName }] },
+    doseForm: { text: preparationReferenceProduct.dosageForm }, marketingAuthorizationHolder: { display: preparationReferenceProduct.manufacturer },
+  })
+})
 
 it.each(['agent', 'manual'] as const)('confirms a real Reference diagnosis from explicit %s selection and rejects a mismatched coding snapshot', async source => {
   const fixture = await setup(async input => {
@@ -1935,7 +2162,7 @@ it.each(['agent', 'manual'] as const)('confirms a real Reference diagnosis from 
   expect(condition.code.coding).toContainEqual({ code: 'I10', display: '参考原发性高血压', system: 'https://example.org/synthetic-icd10' })
 })
 
-it('preserves an existing physician prescription draft until manual selections explicitly describe the intended issuance', async () => {
+it.each([false, true])('preserves an existing physician prescription draft until explicit selections or resolution (%s)', async resolveExistingDraft => {
   const fixture = await setup(async input => {
     const kind = z.object({ kind: z.string().optional() }).parse(input.userPayload).kind
     const output = input.schemaName === 'doctor_recommendations'
@@ -1967,7 +2194,11 @@ it('preserves an existing physician prescription draft until manual selections e
   const blocked = await confirmPreparation(fixture, 'prescription', preparationBody(prepared, [automatic], 1))
   expect(blocked.status, await blocked.clone().text()).toBe(409)
   expect(await fixture.readCase()).toEqual(before)
-  const issued = await confirmPreparation(fixture, 'prescription', preparationBody(prepared, [{ ...prescription, kind: 'prescription', source: 'manual' }], 1))
+  const body = preparationBody(prepared, resolveExistingDraft ? [automatic] : [{ ...prescription, kind: 'prescription', source: 'manual' }], 1)
+  const stale = await confirmPreparation(fixture, 'prescription', { ...body, input: { ...body.input, expectedDraftVersion: 42, resolveExistingDraft: true } })
+  expect(stale.status).toBe(409)
+  expect(await fixture.readCase()).toEqual(before)
+  const issued = await confirmPreparation(fixture, 'prescription', { ...body, input: { ...body.input, resolveExistingDraft } })
   expect(issued.status, await issued.clone().text()).toBe(200)
   expect((await fixture.readCase()).medicationConclusion?.prescription?.items).toMatchObject([prescription])
 })

@@ -486,26 +486,28 @@ export class DoctorRecommendationsService {
       authorize: () => { this.#authorize(context, caseId) },
     }, transaction => {
       const detail = this.#authorize(context, caseId)
-      const snapshot = this.#snapshot(context, caseId, kind, offerings)
-      const reference = `Encounter/${snapshot.encounter.id}`
-      if (snapshot.encounter.status !== 'in-progress' || Object.keys(request.expectedVersions).length !== 1
-        || request.expectedVersions[reference] !== snapshot.encounter.versionId) {
+      const reference = `Encounter/${detail.encounter.id}`
+      if (detail.encounter.status !== 'in-progress' || Object.keys(request.expectedVersions).length !== 1
+        || request.expectedVersions[reference] !== detail.encounter.versionId) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The current active Encounter version is required')
       }
-      const row = this.#row(context, caseId, kind)
-      const state = row === undefined ? undefined : doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
       const hasAgentSelections = request.input.selections.some(selection => selection.source === 'agent')
-      if (state === undefined || (state.status !== 'ready' && (hasAgentSelections || state.status !== 'missing-evidence')) || state.generation !== request.input.generation
-        || row?.input_fingerprint !== request.input.inputFingerprint
-        || canonicalJsonHash(snapshot) !== request.input.inputFingerprint) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The prepared items no longer match current clinical information; update them before confirming')
+      let state: DoctorRecommendationState | undefined
+      if (hasAgentSelections) {
+        const row = this.#row(context, caseId, kind)
+        state = row === undefined ? undefined : doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
+        if (state?.status !== 'ready' || state.generation !== request.input.generation
+          || row?.input_fingerprint !== request.input.inputFingerprint
+          || canonicalJsonHash(this.#snapshot(context, caseId, kind, offerings)) !== request.input.inputFingerprint) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The prepared items no longer match current clinical information; update them before confirming')
+        }
       }
       const selections = request.input.selections
       const selectedIds = new Set<string>()
       for (const selection of selections) {
         if (selection.kind !== kind) throw new WorkflowError('WORKFLOW_CONFLICT', 'Select a single recommendation kind')
         if (selection.source === 'manual') continue
-        const suggestion = state.items.find(item => item.id === selection.suggestionId && item.kind === kind)
+        const suggestion = state?.items.find(item => item.id === selection.suggestionId && item.kind === kind)
         if (suggestion === undefined || selectedIds.has(suggestion.id)) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The selected prepared item is no longer available')
         }
@@ -519,23 +521,24 @@ export class DoctorRecommendationsService {
       }
       const currentClinicalDraft = kind === 'diagnosis' ? detail.diagnosis?.draft
         : kind === 'prescription' ? detail.medicationConclusion?.draft : undefined
-      if (currentClinicalDraft !== undefined && !selections.some(selection => selection.source === 'manual')) {
+      if (currentClinicalDraft !== undefined && request.input.resolveExistingDraft !== true
+        && !selections.some(selection => selection.source === 'manual')) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'An existing clinical draft requires explicit manual selections before prepared confirmation')
       }
-      const base = { context, encounterId: snapshot.encounter.id,
+      const base = { context, encounterId: detail.encounter.id,
         expectedVersions: request.expectedVersions, idempotencyKey }
       let draftVersion = request.input.expectedDraftVersion
       const effects: CommandEffect[] = []
       const recordIds: string[] = []
-      let encounterVersion = snapshot.encounter.versionId
+      let encounterVersion = detail.encounter.versionId
       if (kind === 'diagnosis') {
         const entries = selections.flatMap(selection => {
           if (selection.kind !== 'diagnosis') return []
-          const suggestion = selection.source === 'agent' ? state.items.find(item => item.id === selection.suggestionId) : undefined
+          const suggestion = selection.source === 'agent' ? state?.items.find(item => item.id === selection.suggestionId) : undefined
           const reference = selection.source === 'manual' ? this.options.referenceData.diagnosisById(context, selection.catalogItemId) : undefined
           const referenceConcept = suggestion?.kind === 'diagnosis' ? suggestion.referenceConcept
             : resolveDoctorDiagnosisReference(selection.catalogItemId, {
-              local: snapshot.catalogs.diagnoses?.local ?? [], reference: reference === undefined ? [] : [reference],
+              local: this.options.workflow.clinicalCatalog(context).diagnoses, reference: reference === undefined ? [] : [reference],
             })
           if (referenceConcept === undefined || (selection.referenceConcept !== undefined
             && canonicalJsonHash(selection.referenceConcept) !== canonicalJsonHash(referenceConcept))) {
@@ -565,7 +568,15 @@ export class DoctorRecommendationsService {
         const currentDraft = kind === 'laboratory' ? detail.laboratoryRequests?.draft
           : kind === 'imaging' ? detail.imagingRequests?.draft : detail.pathologyRequests?.draft
         if (currentDraft !== undefined) {
-          throw new WorkflowError('WORKFLOW_CONFLICT', 'An existing investigation draft needs explicit resolution before confirming prepared items')
+          if (request.input.resolveExistingDraft !== true) {
+            throw new WorkflowError('WORKFLOW_CONFLICT', 'An existing investigation draft needs explicit resolution before confirming prepared items')
+          }
+          const input = { ...base, expectedDraftVersion: draftVersion }
+          const deleted = kind === 'laboratory' ? this.options.workflow.applyDeleteLaboratoryRequestDraft(transaction, input)
+            : kind === 'imaging' ? this.options.workflow.imaging.applyDeleteDraft(transaction, input)
+              : this.options.workflow.pathology.applyDeleteDraft(transaction, input)
+          draftVersion = deleted.data.draftVersion
+          effects.push(...deleted.effects)
         }
         for (const selection of selections) {
           if (selection.kind === 'laboratory') {
