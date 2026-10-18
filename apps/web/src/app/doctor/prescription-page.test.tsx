@@ -192,6 +192,24 @@ function closeMedicationForm(): void {
 }
 
 describe('PrescriptionPage', () => {
+  it('retains the selected medication package while the manual form is closed and reopened', async () => {
+    const search: ReferenceCatalogSearches['medications'] = {
+      data: { items: [{ ...referenceProduct, id: 'reference-10', packageDescription: '10粒/盒' },
+        { ...referenceProduct, id: 'reference-12', packageDescription: '12粒/盒' }], page: 1, pageSize: 20, total: 2, releaseId: 'synthetic' },
+      error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
+    }
+    renderPage({ referenceSearch: search })
+    const user = userEvent.setup()
+    const form = openMedicationForm()
+    await user.click(form.getByRole('combobox', { name: /^包装 / }))
+    await user.click(screen.getByRole('option', { name: '12粒/盒' }))
+    closeMedicationForm()
+    expect(screen.queryByRole('textbox', { name: '搜索药品目录' })).toBeNull()
+    expect(search.onSearch).toHaveBeenCalledTimes(1)
+    const reopened = openMedicationForm()
+    expect(within(reopened.getByRole('combobox', { name: /^包装 / })).getByText('12粒/盒')).toBeTruthy()
+    expect(search.onSearch).toHaveBeenCalledTimes(2)
+  })
   it.each(['list', 'manual form'] as const)('deletes a saved prescription draft when its final medication is explicitly removed from the %s', async origin => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
       draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
@@ -297,7 +315,7 @@ describe('PrescriptionPage', () => {
   })
   it('opens manual medication entry from the unified list and returns without another issuance button', async () => {
     const mounted = renderPage()
-    expect(screen.queryByLabelText('搜索药品目录')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '搜索药品目录' })).toBeNull()
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: '添加药品' }))
     const dialog = within(screen.getByRole('dialog', { name: '添加药品' }))
@@ -782,7 +800,7 @@ describe('PrescriptionPage', () => {
     })
     expect(screen.getByRole('button', { name: '查看药品 合成对乙酰氨基酚' })).toBeTruthy()
     expect(screen.getByLabelText('搜索处方药品')).toBeTruthy()
-    expect(screen.queryByLabelText('搜索药品目录')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '搜索药品目录' })).toBeNull()
     expect(screen.queryByLabelText('剂量')).toBeNull()
     for (const name of ['正式开具处方', '删除处方草稿', '撤回处方', '确认无需用药']) {
       expect(screen.queryByRole('button', { name })).toBeNull()

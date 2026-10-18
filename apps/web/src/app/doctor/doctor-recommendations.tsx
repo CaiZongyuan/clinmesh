@@ -11,6 +11,7 @@ import { Checkbox } from '@clinmesh/ui/components/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
+import { Textarea } from '@clinmesh/ui/components/textarea'
 import { Separator } from '@clinmesh/ui/components/separator'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -18,6 +19,7 @@ import { BookOpenIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { confirmDoctorPreparation, newIdempotencyKey } from '../api-client.ts'
+import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJob, type DraftPreferences } from './doctor-preparation-state.tsx'
 
@@ -176,6 +178,9 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   for (const [key, edit] of Object.entries(preferences.edits)) if (!rows.some(row => row.key === key) && preferences.removed[key] === undefined) {
     rows.push({ key, label: edit.label, value: edit.selection, signature: edit.fingerprint, owner: edit })
   }
+  const recordIdentity = JSON.stringify([scope, caseId, kind])
+  const recordView = useRef({ identity: recordIdentity, token: 0 })
+  if (recordView.current.identity !== recordIdentity) recordView.current = { identity: recordIdentity, token: recordView.current.token + 1 }
   const navigationIdentity = JSON.stringify([scope, caseId, kind, enabled, disabled])
   const navigation = useRef({ identity: navigationIdentity, token: 0 })
   if (navigation.current.identity !== navigationIdentity) navigation.current = { identity: navigationIdentity, token: navigation.current.token + 1 }
@@ -195,7 +200,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     : kind === 'laboratory' ? detail?.laboratoryRequests?.draftVersion ?? 0 : kind === 'imaging' ? detail?.imagingRequests?.draftVersion ?? 0 : detail?.pathologyRequests?.draftVersion ?? 0
   const draftVersion = expectedDraftVersion ?? currentDraftVersion
   const submissionKey = JSON.stringify([scope, kind])
-  type Submission = { state: Parameters<typeof confirmDoctorPreparation>[0]; selections: DoctorPreparationSelection[]; view: number; navigation: number; rows: typeof rows; draftVersion: number; resolveExistingDraft: boolean; submissionKey: string; token: string; scope: string | undefined; manualOwnership: number; manualItems: ManualPreparedItem[] }
+  type Submission = { state: Parameters<typeof confirmDoctorPreparation>[0]; selections: DoctorPreparationSelection[]; view: number; recordView: number; navigation: number; rows: typeof rows; draftVersion: number; resolveExistingDraft: boolean; submissionKey: string; token: string; scope: string | undefined; manualOwnership: number; manualItems: ManualPreparedItem[] }
   const synchronization = useRef(new Map<string, 'owned' | 'applied'>())
   const recordVisible = (request: Submission, result: Awaited<ReturnType<typeof confirmDoctorPreparation>>) => client.getQueriesData<DoctorCaseDetail>({ predicate: query => query.queryKey[0] === 'doctor-case' && query.queryKey.includes(request.state.caseId) })
     .some(([key, clinical]) => {
@@ -237,7 +242,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         })) },
           edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => !unchanged.some(row => row.key === key))) }
       })
-      if (ownsView) onConfirmed?.(request.rows.map(row => row.value), result)
+      if (mounted.current && recordView.current.token === request.recordView) onConfirmed?.(ownsView ? request.rows.map(row => row.value) : [], result)
       await synchronize(result, request)
     },
   })
@@ -267,7 +272,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       && (state?.status === 'ready' || state?.status === 'missing-evidence' && available.every(row => row.value.source === 'manual')))
   const block = available.length > 8 ? zh ? '一次最多选择 8 项。' : 'Select at most eight items.'
     : available.map(row => row.value.source === 'manual' ? manualUnavailableReason?.(row.value) : row.item === undefined ? undefined : unavailableReason?.(row.item)).find(reason => reason !== undefined)
-  const failed = !completedIntent && (job.error !== null || state?.status === 'failed' || submission.isError && submission.variables?.view === view)
+  const submissionError = submission.isError && submission.variables?.view === view ? submission.error : null
+  const failed = !completedIntent && (job.error !== null || state?.status === 'failed' || submissionError !== null)
   if (!enabled) return null
   return <>
     <Card aria-label={titles[kind][zh ? 0 : 1]} role="region" className="mb-4 min-w-0" data-agent-phase={job.pending ? 'working' : 'ready'}>
@@ -288,6 +294,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           : state?.status === 'ready' && job.ready ? zh ? '已按最新资料核对，由医生确认。' : 'Checked against the latest information; awaiting confirmation.'
           : state?.status === 'missing-evidence' ? zh ? '暂无可直接开具的项目，可查看说明。' : 'No executable items; see the details.'
           : zh ? '尚未完成核对。' : 'Checks are not complete.'}</p>
+        {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(submissionError, getWorkspaceMessages(locale))}</AlertDescription></Alert>}
         {rows.length === 0 ? <p className="text-sm text-muted-foreground">{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p> : <div className="flex flex-col divide-y">
           {rows.map(row => <div className="flex min-w-0 flex-wrap items-center gap-3 py-3" key={row.key}>
             <Checkbox aria-label={`${zh ? '选择' : 'Select '}${row.label}`} checked={!preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined && complete(row.value)} disabled={!complete(row.value)} onCheckedChange={checked => update(previous => {
@@ -314,7 +321,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
         {block === undefined ? null : <p className="text-xs text-muted-foreground">{block}</p>}
       </CardContent>
-      <CardFooter className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button disabled={!canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key) && !(currentEncounter !== undefined && row.value.source === 'manual'))} onClick={() => { if (confirmationContext !== undefined) submission.mutate({ state: confirmationContext, selections: available.map(row => doctorPreparationSelectionSchema.parse(row.value)), view, navigation: navigation.current.token, rows: available, draftVersion, resolveExistingDraft, submissionKey, token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems }) }} type="button">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>
+      <CardFooter className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">{zh ? `已选 ${available.length} 项` : `${available.length} selected`}</p><Button disabled={!canConfirm || available.length === 0 || block !== undefined || available.some(row => needsReview(row.key) && !(currentEncounter !== undefined && row.value.source === 'manual'))} onClick={() => { if (confirmationContext !== undefined) submission.mutate({ state: confirmationContext, selections: available.map(row => doctorPreparationSelectionSchema.parse(row.value)), view, recordView: recordView.current.token, navigation: navigation.current.token, rows: available, draftVersion, resolveExistingDraft, submissionKey, token: newIdempotencyKey(), scope, manualOwnership: manualOwnership.current.token, manualItems }) }} type="button">{kind === 'diagnosis' ? zh ? '确认选中诊断' : 'Confirm selected diagnoses' : kind === 'prescription' ? zh ? '开具处方' : 'Issue prescription' : zh ? '开具选中项目' : 'Issue selected orders'}（{available.length}）</Button></CardFooter>
     </Card>
     {preparation === undefined ? <DoctorPreparationDetailsDialog open={localDetails} onOpenChange={setLocalDetails} title={zh ? '依据与说明' : 'Evidence and details'}><DoctorRecommendationDetails job={job} locale={locale} /></DoctorPreparationDetailsDialog> : null}
     <Dialog open={activeEditing !== undefined} onOpenChange={open => { if (!open) setEditing(undefined) }}><DialogContent><DialogHeader><DialogTitle>{zh ? '调整项目' : 'Edit item'}</DialogTitle><DialogDescription>{activeEditing?.label}</DialogDescription></DialogHeader>
@@ -335,7 +342,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       }}><FieldGroup className="max-h-[55svh] overflow-y-auto px-4 py-3">
         {needsReview(activeEditing.key) ? <p className="text-sm">{zh ? '新资料已到达，请核对后决定保留、修改或移除。' : 'New information arrived. Review this item before keeping it.'}</p> : null}
         {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel>{zh ? '诊断类别' : 'Diagnosis role'}</FieldLabel><ToggleGroup value={activeEditing.value.role === null ? [] : [activeEditing.value.role]} onValueChange={values => { const role = values[0];if (role === 'primary' || role === 'secondary') setEditing(previous => previous?.value.kind === 'diagnosis' ? { ...previous, value: { ...previous.value, role } } : previous) }}><ToggleGroupItem value="primary">{zh ? '主诊断' : 'Primary'}</ToggleGroupItem><ToggleGroupItem value="secondary">{zh ? '次诊断' : 'Secondary'}</ToggleGroupItem></ToggleGroup></Field> : null}
-        {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Input defaultValue={activeEditing.value.note ?? ''} id="prepared-note" maxLength={500} name="note" /></Field> : null}
+        {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Textarea defaultValue={activeEditing.value.note ?? ''} id="prepared-note" maxLength={500} name="note" /></Field> : null}
         {(activeEditing.value.kind === 'prescription' ? [['doseText', zh ? '每次剂量' : 'Dose'], ['frequencyCode', zh ? '频次' : 'Frequency'], ['courseDays', zh ? '疗程（天）' : 'Days'], ['quantity', zh ? '数量' : 'Quantity']]
           : activeEditing.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
           : activeEditing.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]

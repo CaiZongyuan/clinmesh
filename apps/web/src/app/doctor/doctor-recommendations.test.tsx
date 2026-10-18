@@ -86,6 +86,57 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it('preserves line breaks when a doctor adjusts a diagnosis note', async () => {
+    stubRequests()
+    const onManualChange = vi.fn()
+    mount(props({ onManualChange }))
+    await screen.findByText('发热，未特指')
+    const form = await edit()
+    const note = form.getByRole('textbox', { name: '备注' })
+    fireEvent.change(note, { target: { value: '第一行诊断依据\n第二行医生备注' } })
+    expect(note).toHaveProperty('maxLength', 500)
+    await userEvent.setup().click(form.getByRole('button', { name: '保留本次调整' }))
+    expect(onManualChange).toHaveBeenCalledWith(expect.objectContaining({ value: expect.objectContaining({ note: '第一行诊断依据\n第二行医生备注' }) }))
+  })
+  it.each([
+    ['DIAGNOSIS_PRIMARY_REQUIRED', '必须且只能选择一个主诊断。'],
+    ['CATALOG_CONFLICT', '目录或业务规则已变化，请刷新后重新选择。'],
+  ])('explains the current %s confirmation rejection without exposing internal details', async (code, explanation) => {
+    stubRequests(() => state(), () => Response.json({ error: { code, message: 'private-internal-rule-detail' } }, { status: 409 }))
+    mount(props())
+    await screen.findByText('发热，未特指')
+    await userEvent.setup().click(confirmButton())
+    expect(await screen.findByText(explanation)).toBeTruthy()
+    expect(screen.queryByText('private-internal-rule-detail')).toBeNull()
+    expect(selectionCheckbox().getAttribute('aria-checked')).toBe('true')
+  })
+  it.each([{ enabled: false }, { disabled: true }, { inputRevision: 'new-source' }])('notifies the same case of the issued record after %j without consuming its form values', async change => {
+    const delayed = deferredResponse()
+    stubRequests(() => state(), () => delayed.response)
+    const onConfirmed = vi.fn()
+    const original = props({ onConfirmed })
+    const mounted = mount(original)
+    await screen.findByText('发热，未特指')
+    await userEvent.setup().click(confirmButton())
+    mounted.rerenderPanel({ ...original, ...change })
+    await act(async () => { delayed.complete(receipt()) })
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(onConfirmed).toHaveBeenCalledWith([], expect.objectContaining({ recordIds: ['formal-record-1'] }))
+  })
+  it.each([{ caseId: 'other-case' }, { scope: 'other-doctor' }])('does not notify an identity after an A to B to A transition through %j', async change => {
+    const delayed = deferredResponse()
+    stubRequests(() => state(), () => delayed.response)
+    const onConfirmed = vi.fn()
+    const original = props({ onConfirmed })
+    const mounted = mount(original)
+    await screen.findByText('发热，未特指')
+    await userEvent.setup().click(confirmButton())
+    mounted.rerenderPanel({ ...original, ...change })
+    mounted.rerenderPanel(original)
+    await act(async () => { delayed.complete(receipt()) })
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(onConfirmed).not.toHaveBeenCalled()
+  })
   it('submits only physician items while automatic preparation is paused', async () => {
     const current = state({ items: state().items.map(item => item.kind === 'diagnosis' ? { ...item, role: 'secondary' } : item) })
     const calls = stubRequests(() => current)
@@ -549,14 +600,15 @@ it('keeps a newer automatic result visible when an earlier confirmation response
   await act(async () => { delayed.complete(receipt()) }); await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
   expect(screen.getByText('新资料下的诊断候选')).toBeTruthy()
 })
-it.each(['identity', 'source', 'enabled'] as const)('hides a late confirmation failure after an A to B to A %s transition', async mode => {
+it.each(['identity', 'source', 'enabled', 'case'] as const)('hides a late confirmation failure after an A to B to A %s transition', async mode => {
   const delayed = deferredResponse(); stubRequests(() => state(), () => delayed.response)
   const original = props(); const mounted = mount(original); await screen.findByText('发热，未特指'); await userEvent.setup().click(confirmButton())
-  mounted.rerenderPanel({ ...original, ...(mode === 'identity' ? { scope: 'doctor-b' } : mode === 'source' ? { inputRevision: 'source-b' } : { enabled: false }) })
+  mounted.rerenderPanel({ ...original, ...(mode === 'identity' ? { scope: 'doctor-b' } : mode === 'source' ? { inputRevision: 'source-b' } : mode === 'case' ? { caseId: 'other-case' } : { enabled: false }) })
   mounted.rerenderPanel(original); await screen.findByText('发热，未特指')
-  await act(async () => { delayed.complete(Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: '合成旧确认失败。' } }, { status: 409 })) })
+  await act(async () => { delayed.complete(Response.json({ error: { code: 'DIAGNOSIS_PRIMARY_REQUIRED', message: '合成旧确认失败。' } }, { status: 409 })) })
   await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
   expect(screen.queryByText('更新或提交未完成，草稿已保留，可重试。')).toBeNull()
+  expect(screen.queryByText('必须且只能选择一个主诊断。')).toBeNull()
 })
 it.each(['ready', 'missing-evidence', 'failed'] as const)('retains a completed %s read when its delayed generation receipt still says pending', async status => {
   const delayed = deferredResponse(); let current = state()

@@ -82,6 +82,7 @@ export function DoctorCasePanel({ children, value }: {
 }) {
   return (
     <TabsContent
+      keepMounted={value === 'diagnosis' || value === 'prescription'}
       data-agent-section={value}
       value={value}
       className={cn('min-h-0 overflow-y-auto overscroll-contain p-4', value === 'consultation' && 'flex flex-col')}

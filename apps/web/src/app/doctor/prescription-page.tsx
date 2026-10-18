@@ -562,14 +562,14 @@ export function PrescriptionPage({
           <DialogTrigger render={<Button disabled={pending} size="sm" type="button" variant="outline" />}>
             <PlusIcon data-icon="inline-start" />{locale === 'zh-CN' ? '添加药品' : 'Add medication'}
           </DialogTrigger>
-          <DialogContent className="@container/case-content h-[min(760px,calc(100svh-2rem))] sm:max-w-5xl">
+          <DialogContent keepMounted className="@container/case-content h-[min(760px,calc(100svh-2rem))] sm:max-w-5xl">
             <DialogHeader>
               <DialogTitle>{locale === 'zh-CN' ? '添加药品' : 'Add medication'}</DialogTitle>
               <DialogDescription>{locale === 'zh-CN'
                 ? '选择药品并填写用法，修改自动保存；完成后回到同一待开具清单。'
                 : 'Choose medication and enter directions. Edits save automatically; return to the same prepared list when done.'}</DialogDescription>
             </DialogHeader>
-            <div className="min-h-0 flex-1 overflow-y-auto">{addOpen ? draftEditor : null}</div>
+            <div className="min-h-0 flex-1 overflow-y-auto">{draftEditor}</div>
             {actions.saveDraft.error === null ? null : <ErrorAlert
               message={getWorkspaceErrorMessage(actions.saveDraft.error, messages)}
               title={getWorkspaceErrorTitle(actions.saveDraft.error, messages, messages.operationFailed)} />}
