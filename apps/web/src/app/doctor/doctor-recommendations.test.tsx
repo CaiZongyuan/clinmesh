@@ -767,6 +767,7 @@ it('explains an empty executable list when a ready result contains only consider
 it('keeps an unissued prescription candidate visible without returning issued medication to the list', async () => {
   const current = prescriptionState()
   const first = current.items[0]!
+  if (first.kind !== 'prescription') throw new Error('Expected prescription fixture')
   stubRequests(() => prescriptionState({ items: [first, { ...first, id: 'prescription-2', catalogItemId: 'medication-2', label: '第二种未开具药品' }] }))
   mount(props({ kind: 'prescription', disabled: true, issuedCatalogItemIds: new Set(['medication-1']) }))
   await screen.findByRole('checkbox', { name: '选择第二种未开具药品' })
