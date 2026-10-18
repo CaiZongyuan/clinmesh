@@ -1197,14 +1197,17 @@ export class WorkflowService {
       },
       automaticFacts: (context, caseId) => this.consultationRecording.qualityFacts(context, caseId),
       history: (context, caseId) => {
-        const evidence = []
-        for (const source of ['visible-source', 'local-completed'] as const) {
-          for (let page = 1; ; page += 1) {
-            const history = this.doctorCaseHistory(context, caseId, { source, page, pageSize: 20 })
-            evidence.push(...history.items.map(item => ({ id: `history:${source}:${item.entryId}`, kind: 'clinical' as const,
-              label: item.title, text: JSON.stringify(this.doctorCaseHistoryDetail(context, caseId, { source, entryId: item.entryId })), recordedAt: item.clinicalDate })))
-            if (page * history.pageSize >= history.total) break
-          }
+        const patientId = this.#doctorHistoryPatient(context, caseId)
+        const evidence = doctorVisibleHistoryDetails(database, context, caseId, patientId).map(item => ({
+          id: `history:visible-source:${item.entryId}`, kind: 'clinical' as const,
+          label: item.title, text: JSON.stringify(item), recordedAt: item.clinicalDate,
+        }))
+        const source = 'local-completed'
+        for (let page = 1; ; page += 1) {
+          const history = this.doctorCaseHistory(context, caseId, { source, page, pageSize: 20 })
+          evidence.push(...history.items.map(item => ({ id: `history:${source}:${item.entryId}`, kind: 'clinical' as const,
+            label: item.title, text: JSON.stringify(this.doctorCaseHistoryDetail(context, caseId, { source, entryId: item.entryId })), recordedAt: item.clinicalDate })))
+          if (page * history.pageSize >= history.total) break
         }
         return evidence
       },

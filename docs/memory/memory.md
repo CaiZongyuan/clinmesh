@@ -353,9 +353,9 @@
 
 - 原生 DSH 验收的临时插件也须在 manifest 中声明非空 `name` 和 `version`。官方 DeepSeek 的插件清单扩展会检查全部 active package；缺少版本时真实模型请求在发出 HTTP 前失败为 `REQUEST_EXTENSION`，合成 adapter 不经过这条扩展，不能证明真实 Provider 可用。
 
-- 诊疗资料读取的性能测量必须经过公开 HTTP，计入授权、重复 prepare、分页、解析和装配；只比较裸 SQL 的 N+1 与 JOIN 可能低估数量级。先以 SQL 数量与阶段耗时定位，再在保持医生历史索引和白名单边界的前提下批量读取。产品合同由[分批证据读取决策](../../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)拥有。
+- 诊疗资料读取的性能测量必须经过公开 HTTP，计入授权、重复 prepare、分页、解析和装配；只比较裸 SQL 的 N+1 与 JOIN 可能低估数量级。先以 SQL 数量与阶段耗时定位，再在保持医生历史索引和白名单边界的前提下批量读取。新增质控等调用者须核对是否复用批量路径；“不等待模型”仍可能因同步历史装配拖慢切换患者和轮询。产品合同由[分批证据读取决策](../../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)和[质控输入归属](../../.agents/notes/implemented/architecture/2026-10-15-doctor-document-quality-control.md)拥有。
 - 原生实模验收的 `verificationEnvironment` 会净化子进程环境；配置了 `HTTPS_PROXY` 仍须显式传递 `NODE_USE_ENV_PROXY=1`。排查全阶段模型超时时先对同一 API 做无凭据连通性探测，区分隔离 Node 没有启用代理与输入规模、推理档位问题；本机桥接保留 `NO_PROXY` 的 loopback 排除项。操作入口由[真实模型验收](../deployment.md#问诊自动记录原生验收)拥有。
-- Windows 隔离文档校验 checkout 使用 `core.autocrlf=false`；Agent Note 格式检查按 LF 解析，CRLF 会把有效头部误报为格式错误。没有创建符号链接的权限时，仅在隔离校验目录将已核对的文件链接物化为目标内容（可用 hard link），目录依赖用 junction；不改原工作区的链接占位或共享 Git 配置。
+- Windows 隔离文档校验的 checkout 和 `git archive` 均显式使用 `core.autocrlf=false`；archive 同样可能按当前配置转换换行，Agent Note 格式检查按 LF 解析，CRLF 会把有效头部误报为格式错误。没有创建符号链接的权限时，仅在隔离校验目录将已核对的文件链接物化为目标内容（可用 hard link），目录依赖用 junction；不改原工作区的链接占位或共享 Git 配置。
 
 - 真实模型性能验收不能直接复用 `apps/server/tests/browser-server.ts` 的 `startBrowserServer`：该 fixture 会包装语义核对替身。需要显式装配真实 Provider、真实 Hono listener 与临时 SQLite，并从真实页面读取持久化结果；确认所有模型阶段均经过真实 Provider，再报告性能。最小探测也须先通过实际桥接请求 schema，使用允许的 schemaName；请求校验失败同样可能返回安全的 `MODEL_UNAVAILABLE`，不能据此判断 Provider 不可用。
 
