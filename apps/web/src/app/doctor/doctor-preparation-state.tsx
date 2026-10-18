@@ -92,7 +92,7 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
 export type DoctorPreparationJob = ReturnType<typeof useDoctorPreparationJob>
 export type PreparationDraft = Exclude<DoctorPreparationSelection, { kind: 'prescription' | 'diagnosis' }> | (Omit<Extract<DoctorPreparationSelection, { kind: 'diagnosis' }>, 'role'> & { role: 'primary' | 'secondary' | null }) | (Omit<Extract<DoctorPreparationSelection, { kind: 'prescription' }>, 'doseText' | 'frequencyCode' | 'courseDays' | 'quantity'> & { doseText: string | null; frequencyCode: string | null; courseDays: number | null; quantity: number | null })
 export type PreparedEdit = { label: string; selection: PreparationDraft; fingerprint: string; reviewedFingerprint?: string; formOwned?: boolean }
-export type DraftPreferences = { edits: Record<string, PreparedEdit>; removed: Record<string, string>; unselected: string[]; completed: Record<string, string[]> }
+export type DraftPreferences = { edits: Record<string, PreparedEdit>; removed: Record<string, string>; unselected: string[]; completed: Record<string, string[]>; formRevision?: number }
 const emptyPreferences: DraftPreferences = { edits: {}, removed: {}, unselected: [], completed: {} }
 type PreparationContext = {
   jobs: Record<DoctorRecommendationKind, DoctorPreparationJob>
@@ -112,8 +112,9 @@ type PreparationContext = {
 const Context = createContext<PreparationContext | undefined>(undefined)
 export const useDoctorPreparation = () => useContext(Context)
 
-export function DoctorPreparationProvider({ children, detail, scope, inputRevision, enabled, caseId }: {
+export function DoctorPreparationProvider({ children, detail, scope, inputRevision, enabled, caseId, formRevisions }: {
   children: ReactNode; detail: DoctorCaseDetail | undefined; scope: string; inputRevision: string; enabled: boolean; caseId?: string
+  formRevisions?: Partial<Record<DoctorRecommendationKind, number>> | undefined
 }) {
   const [pausedCases, setPausedCases] = useState<Record<string, boolean>>({})
   const [submissions, setSubmissions] = useState<Record<string, string[]>>({})
@@ -127,6 +128,11 @@ export function DoctorPreparationProvider({ children, detail, scope, inputRevisi
   const imaging = useDoctorPreparationJob({ ...input, kind: 'imaging' })
   const pathology = useDoctorPreparationJob({ ...input, kind: 'pathology' })
   const prescription = useDoctorPreparationJob({ ...input, kind: 'prescription' })
+  const currentPreferences = (kind: DoctorRecommendationKind, previous: DraftPreferences) => {
+    const formRevision = formRevisions?.[kind] ?? 0
+    return (previous.formRevision ?? 0) === formRevision ? previous : { ...previous, formRevision,
+      edits: Object.fromEntries(Object.entries(previous.edits).filter(([, edit]) => !edit.formOwned)) }
+  }
   return <Context.Provider value={{
     jobs: { diagnosis, laboratory, imaging, pathology, prescription }, detail, paused,
     submitting: kind => (submissions[JSON.stringify([scope, kind])]?.length ?? 0) > 0,
@@ -135,10 +141,10 @@ export function DoctorPreparationProvider({ children, detail, scope, inputRevisi
       [key]: active ? [...new Set([...(previous[key] ?? []), token])] : (previous[key] ?? []).filter(value => value !== token) })),
     confirmed: key => setConfirmations(previous => ({ ...previous, [key]: (previous[key] ?? 0) + 1 })),
     togglePaused: () => setPausedCases(previous => ({ ...previous, [scope]: !previous[scope] })),
-    preferences: kind => drafts[JSON.stringify([scope, kind])] ?? emptyPreferences,
+    preferences: kind => currentPreferences(kind, drafts[JSON.stringify([scope, kind])] ?? emptyPreferences),
     updatePreferences: (kind, update) => setDrafts(previous => {
       const key = JSON.stringify([scope, kind])
-      return { ...previous, [key]: update(previous[key] ?? emptyPreferences) }
+      return { ...previous, [key]: update(currentPreferences(kind, previous[key] ?? emptyPreferences)) }
     }),
     details: details.scope === scope ? details : { kind: 'diagnosis', open: false },
     openDetails: kind => setDetails({ scope, kind, open: true }),
