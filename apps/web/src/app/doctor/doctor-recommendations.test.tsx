@@ -86,6 +86,18 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it('keeps the actual preparation result and source-change status inside the details button', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(state())))
+    mount(props())
+    await screen.findByText('发热，未特指')
+    expect(screen.queryByRole('region', { name: '准备记录' })).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: '依据与说明' }))
+    const log = within(screen.getByRole('region', { name: '准备记录' }))
+    expect(log.getByText('第 1 轮准备')).toBeTruthy()
+    expect(log.getByText('已读取 1 份病例依据、1 条指南依据。')).toBeTruthy()
+    expect(log.getByText('独立核验后发布 1 项，另有 0 项待核实思路。')).toBeTruthy()
+  })
+
   it('shows complete executable items selected and keeps explanations under one button', async () => {
     const current = state(); stubRequests(() => current); mount(props())
     await screen.findByText('发热，未特指')

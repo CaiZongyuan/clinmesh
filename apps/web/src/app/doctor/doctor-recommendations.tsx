@@ -93,6 +93,12 @@ export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: Do
       : job.pending ? zh ? '正在按最新资料核对。' : 'Checking the latest information.'
       : state?.stale ? zh ? '资料有变化，旧自动项目等待重新核对。' : 'Information changed; previous automatic items need another check.'
       : zh ? '仅使用当前医生可见资料，正式提交由医生确认。' : 'Uses information visible to this doctor. The doctor confirms all formal actions.'}</p>
+    {state === undefined ? null : <section aria-label={zh ? '准备记录' : 'Preparation record'} className="flex flex-col gap-2">
+      <h4 className="font-medium">{state.generation === 0 ? zh ? '尚未开始准备' : 'Preparation has not started' : zh ? `第 ${state.generation} 轮准备` : `Preparation ${state.generation}`}</h4>
+      {state.stale ? <p>{zh ? '资料或目录已更新，本轮结果等待重新核对。' : 'Information or catalog changed; this result needs another check.'}</p> : null}
+      <p>{zh ? `已读取 ${state.caseEvidence.length} 份病例依据、${state.guidelines.length} 条指南依据。` : `${state.caseEvidence.length} case sources and ${state.guidelines.length} guideline sources available.`}</p>
+      {state.status === 'ready' && !state.stale ? <p>{zh ? `独立核验后发布 ${state.items.length} 项，另有 ${state.considerations?.length ?? 0} 项待核实思路。` : `${state.items.length} verified items published; ${state.considerations?.length ?? 0} considerations.`}</p> : null}
+    </section>}
     {state?.notices?.map((notice, index) => <Alert aria-label={noticeTitles[notice.category][zh ? 0 : 1]} key={`${notice.category}:${index}`}><AlertTitle>{noticeTitles[notice.category][zh ? 0 : 1]}</AlertTitle><AlertDescription>{notice.message}</AlertDescription></Alert>)}
     {!state?.notices?.length && state?.missingInformation.length ? <Alert aria-label={zh ? '补充说明' : 'Additional notes'}><AlertTitle>{zh ? '补充说明' : 'Additional notes'}</AlertTitle><AlertDescription>{state.missingInformation.map(note => <p key={note}>{note}</p>)}</AlertDescription></Alert> : null}
     {state?.items.map(item => <section className="flex min-w-0 flex-col gap-2" key={item.id}>
