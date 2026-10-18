@@ -279,6 +279,8 @@
 
 - 更新增量病史输入后，同时运行 `pnpm smoke:consultation:native`：共享 Web 旅程通过不证明原生合成 Adapter 匹配。Fixture 需沿用[增量记录合同](../../.agents/notes/implemented/architecture/2026-10-15-low-latency-document-recording.md)的短引用与取消信号，不能依赖自动片段必有重复正文，也不能等待已取消请求正常返回。
 
+- `pnpm upstream:verify` 在全部检查通过后才写入候选锁，不能证明写锁后的版本提取测试仍通过。启动器单测使用固定输入验证字段提取，不把当前锁文件与旧发行常量绑定；最终 CI 同时检查提交后的真实锁组合。
+
 ## GitHub 操作经验
 
 - Actions 的 `pull-requests:write` 不等于仓库允许机器人创建 PR；出现明确的创建权限错误时先核对仓库设置，不反复重试。没有管理员权限时，可按[持续升级故障恢复](../deployment.md#dsh-持续升级)验证已有候选 PR 的更新与验收，并单独保留首次创建权限限制。
