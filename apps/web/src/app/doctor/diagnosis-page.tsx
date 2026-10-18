@@ -333,7 +333,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         </div> : null}
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
-            <h4 className="break-words font-semibold" ref={detailsHeadingRef} tabIndex={-1}>{diagnosis.display}</h4>
+            <h4 className="break-words font-semibold" ref={showChips ? undefined : detailsHeadingRef} tabIndex={-1}>{diagnosis.display}</h4>
             <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{diagnosis.code}</p>
           </div>
           <Badge variant={entry.role === 'primary' ? 'default' : 'secondary'}>
