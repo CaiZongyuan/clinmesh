@@ -135,6 +135,8 @@ const command = (data: unknown) => Response.json({
 let failNextConfirmation = false
 window.addEventListener('diagnosis-prescription-fail-confirmation', () => { failNextConfirmation = true })
 const recommendationStates = new Map<string, DoctorRecommendationState>()
+let updateRecommendationEvidence = false
+window.addEventListener('diagnosis-prescription-change-evidence', () => { updateRecommendationEvidence = true })
 // 只替换网络边界；本合同不证明 Server Command、授权或审计。
 const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const url = new URL(String(input), 'http://synthetic.test')
@@ -222,6 +224,11 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     if (recommendation[2] !== undefined) {
       generateDoctorRecommendationsRequestSchema.parse(JSON.parse(String(init?.body)))
       state = { ...state, generation: state.generation + 1 }
+      if (kind === 'diagnosis' && updateRecommendationEvidence) {
+        updateRecommendationEvidence = false
+        state = { ...state, inputFingerprint: 'c'.repeat(64), caseEvidence: state.caseEvidence.map(source => source.id === 'synthetic-case-evidence-2'
+          ? { ...source, text: '合成新报告已发布，需重新核对之前移除的第二诊断。' } : source) }
+      }
       recommendationStates.set(kind, state)
       return command(state)
     }

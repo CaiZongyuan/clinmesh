@@ -115,6 +115,32 @@ async function readRecommendations(page: Page, kind: DoctorRecommendationKind) {
 }
 
 for (const version of ['18', '19']) {
+  test(`resurfaces a removed proposal with changed evidence without selecting it on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'recommendations')
+    await appearance(page, 'zh-CN', 'light', 'large', 390)
+    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    const panel = page.getByRole('region', { name: '待确认诊断', exact: true })
+    const secondary = panel.getByRole('checkbox', { name: '选择合成第二诊断', exact: true })
+    await expect(secondary).toBeChecked()
+    await panel.getByRole('button', { name: '移除合成第二诊断', exact: true }).click()
+    await expect(secondary).toHaveCount(0)
+    await panel.getByRole('button', { name: '刷新', exact: true }).click()
+    await expect.poll(async () => (await readRecommendations(page, 'diagnosis')).generation).toBe(2)
+    await expect(secondary).toHaveCount(0)
+    await page.evaluate(() => window.dispatchEvent(new Event('diagnosis-prescription-change-evidence')))
+    await panel.getByRole('button', { name: '刷新', exact: true }).click()
+    await expect.poll(async () => (await readRecommendations(page, 'diagnosis')).generation).toBe(3)
+    await expect(secondary).toBeVisible()
+    await expect(secondary).not.toBeChecked()
+    await expect(panel.getByText('请核对新资料', { exact: true })).toBeVisible()
+    await expect(panel.getByRole('checkbox', { name: `选择${diagnosisName}`, exact: true })).toBeChecked()
+    await secondary.click()
+    await expect(secondary).toBeChecked()
+    await panel.getByRole('button', { name: /^确认选中诊断/ }).click()
+    await expect.poll(async () => (await readCase(page)).diagnosis?.confirmation?.entries.length).toBe(2)
+    await expectNoFixtureErrors(page)
+  })
+
   test(`keeps sources collapsed and directly confirms selected diagnoses in ShadowRoot on React ${version}`, async ({ page }) => {
     await mount(page, version, 'recommendations')
     await appearance(page, 'zh-CN', 'light', 'large', 390)
