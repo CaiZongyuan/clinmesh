@@ -562,7 +562,7 @@ function LaboratoryRequestEditor({
           value: { source: 'manual', kind: 'laboratory', catalogItemId: laboratoryItemId, indicationCode },
         }]}
         onManualChange={({ value }) => {
-          if (value.kind !== 'laboratory') return
+          if (value.kind !== 'laboratory' || laboratoryItemId !== '' && laboratoryItemId !== value.catalogItemId) return
           onLaboratoryItemChange(value.catalogItemId)
           onIndicationChange(value.indicationCode)
         }}
@@ -571,7 +571,8 @@ function LaboratoryRequestEditor({
           if (!values.some(value => value.source === 'manual' && value.kind === 'laboratory' && value.catalogItemId === laboratoryItemId && value.indicationCode === indicationCode)) return
           onLaboratoryItemChange(''); onIndicationChange(''); setSelectedReference(undefined); setAdding(false)
         }}
-        onManualRemove={() => {
+        onManualRemove={value => {
+          if (value.kind !== 'laboratory' || value.catalogItemId !== laboratoryItemId) return
           if (state?.draft !== undefined) actions.deleteDraft.onSubmit()
           else { onLaboratoryItemChange(''); onIndicationChange(''); setSelectedReference(undefined) }
         }}
@@ -584,8 +585,9 @@ function LaboratoryRequestEditor({
         unavailableReason={recommendationUnavailableReason}
         manualUnavailableReason={value => {
           if (value.kind !== 'laboratory') return messages.recommendationRequestTargetUnavailable
-          const target = selectedService?.id === value.catalogItemId ? selectedService : catalogById.get(value.catalogItemId)
-          return target?.allowedIndicationCodes.includes(value.indicationCode) === true ? undefined : messages.recommendationRequestTargetUnavailable
+          const target = selectedService?.id === value.catalogItemId ? selectedService
+            : catalogById.get(value.catalogItemId) ?? referenceSearch.data?.items.find(item => item.id === value.catalogItemId)
+          return target === undefined || target.allowedIndicationCodes.includes(value.indicationCode) ? undefined : messages.recommendationRequestTargetUnavailable
         }}
       />
       {readOnly || activeRequest === undefined || activeRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}

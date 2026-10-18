@@ -294,6 +294,35 @@ describe('doctor imaging page', () => {
     expect(screen.getAllByRole('checkbox')).toHaveLength(1)
   })
 
+  it('preserves an existing manual examination when another automatic examination is adjusted', async () => {
+    const calls = stubFetch(({ path }) => path.endsWith('/imaging-services')
+      ? Response.json({ items: services.items.map(item => ({ ...item, available: true })) })
+      : path.endsWith('/actions/confirm')
+        ? Response.json(commandResponse({ kind: 'imaging', draftVersion: 3, encounterVersion: '3', recordIds: ['manual-new', 'adjusted-new'] }))
+        : Response.json(recommendations()))
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 2, requests: [],
+      draft: { service: radiographService, indication: '医生已保存的胸片指征' } }} />)
+    const user = userEvent.setup()
+    await screen.findByRole('checkbox', { name: '选择胸部 CT 平扫' })
+    await user.click(screen.getAllByRole('button', { name: '调整' })[1]!)
+    const dialog = screen.getByRole('dialog', { name: '调整项目' })
+    const input = within(dialog).getByRole('textbox', { name: '检查目的' })
+    await user.clear(input)
+    await user.type(input, '医生补充的 CT 检查指征')
+    await user.click(within(dialog).getByRole('button', { name: '保留本次调整' }))
+    expect(screen.getByRole('checkbox', { name: '选择胸片' })).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择胸部 CT 平扫' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '添加检查' }))
+    expect((await screen.findByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('医生已保存的胸片指征')
+    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
+    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
+    expect(calls.find(call => call.method !== 'GET')?.body).toMatchObject({ input: { selections: [
+      { source: 'manual', kind: 'imaging', serviceId: radiographService.id, indication: '医生已保存的胸片指征' },
+      { source: 'manual', kind: 'imaging', serviceId: ctService.id, indication: '医生补充的 CT 检查指征' },
+    ] } })
+  })
+
   it('keeps a saved manual row visible with a retryable error when removing its draft fails', async () => {
     stubFetch(({ method, path }) => path.endsWith('/imaging-services') ? Response.json(services)
       : method === 'DELETE' ? Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Synthetic draft deletion failed' } }, { status: 409 })

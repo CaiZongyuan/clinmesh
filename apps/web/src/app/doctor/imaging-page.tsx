@@ -493,13 +493,13 @@ export function ImagingPage({
         resolveExistingDraft={state?.draft !== undefined}
         manualItems={serviceId === null && indication === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
           value: { source: 'manual', kind: 'imaging', serviceId: serviceId ?? '', indication } }]}
-        onManualChange={({ value }) => { if (value.kind === 'imaging') { setServiceId(value.serviceId); setIndication(value.indication) } }}
+        onManualChange={({ value }) => { if (value.kind === 'imaging' && (serviceId === null || serviceId === value.serviceId)) { setServiceId(value.serviceId); setIndication(value.indication) } }}
         onConfirmed={(values, result) => {
           if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
           if (!values.some(value => value.source === 'manual' && value.kind === 'imaging' && value.serviceId === serviceId && value.indication.trim() === indication.trim())) return
           setServiceId(null); setIndication(''); setAdding(false)
         }}
-        onManualRemove={() => { if (state?.draft !== undefined) draftAction.mutate('delete'); else { setServiceId(null); setIndication('') } }}
+        onManualRemove={value => { if (value.kind !== 'imaging' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate('delete'); else { setServiceId(null); setIndication('') } }}
         manualControls={readOnly ? null : <>
           <InvestigationManualControls adding={adding && active} disabled={draftAction.isPending} label={zh ? '添加检查' : 'Add imaging'} locale={locale} onAddingChange={setAdding}>{editor}</InvestigationManualControls>
           {adding || !draftAction.isError ? null : <Alert variant="destructive"><AlertTitle>{zh ? '草稿未移除' : 'Draft was not removed'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription></Alert>}

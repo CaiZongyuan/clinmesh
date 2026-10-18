@@ -519,13 +519,13 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
         resolveExistingDraft={state?.draft !== undefined}
         manualItems={serviceId === null && procedureReference === null && purpose === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
           value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose } }]}
-        onManualChange={({ value }) => { if (value.kind === 'pathology') { setServiceId(value.serviceId); setProcedureReference(value.sourceProcedureReference); setPurpose(value.purpose) } }}
+        onManualChange={({ value }) => { if (value.kind === 'pathology' && (serviceId === null || serviceId === value.serviceId)) { setServiceId(value.serviceId); setProcedureReference(value.sourceProcedureReference); setPurpose(value.purpose) } }}
         onConfirmed={(values, result) => {
           if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
           if (!values.some(value => value.source === 'manual' && value.kind === 'pathology' && value.serviceId === serviceId && value.sourceProcedureReference === procedureReference && value.purpose.trim() === purpose.trim())) return
           setServiceId(null); setProcedureReference(null); setPurpose(''); setAdding(false)
         }}
-        onManualRemove={() => { if (state?.draft !== undefined) draftAction.mutate('delete'); else { setServiceId(null); setProcedureReference(null); setPurpose('') } }}
+        onManualRemove={value => { if (value.kind !== 'pathology' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate('delete'); else { setServiceId(null); setProcedureReference(null); setPurpose('') } }}
         manualControls={readOnly ? null : <>
           <InvestigationManualControls adding={adding && active} disabled={draftAction.isPending} label={zh ? '添加病理会诊' : 'Add pathology'} locale={locale} onAddingChange={setAdding}>{editor}</InvestigationManualControls>
           {adding || !draftAction.isError ? null : <Alert variant="destructive"><AlertTitle>{zh ? '草稿未移除' : 'Draft was not removed'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription></Alert>}

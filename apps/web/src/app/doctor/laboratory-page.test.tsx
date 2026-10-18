@@ -312,6 +312,49 @@ describe('laboratory investigation workspace', () => {
     ] } })
   })
 
+  it.each([true, false])('preserves manual A when Reference B is adjusted, even when its directory page is loaded=%s', async directoryLoaded => {
+    const manualService = { ...service, id: 'manual-service', nameZh: '人工检验项目' }
+    const referenceService = { ...service, allowedIndicationCodes: ['clinical-evaluation', 'fever'] }
+    const bodies: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/actions/confirm')) {
+        bodies.push(JSON.parse(String(init?.body)))
+        return Response.json({ auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-confirm', warnings: [],
+          data: { kind: 'laboratory', draftVersion: 2, encounterVersion: '1', recordIds: ['manual-new', 'adjusted-new'] } })
+      }
+      return Response.json(recommendations())
+    }))
+    const page = props({ detail: { ...detail, laboratoryRequests: { draftVersion: 1, reportingSupported: true, requests: [],
+      draft: { catalogItemId: manualService.id, indicationCode: 'clinical-evaluation', laboratoryService: manualService } } },
+      referenceSearch: { ...props().referenceSearch, data: { items: directoryLoaded ? [referenceService] : [], page: 1, pageSize: 20, total: directoryLoaded ? 1 : 0 } },
+    })
+    function ControlledPage() {
+      const [itemId, setItemId] = useState(manualService.id)
+      const [indication, setIndication] = useState('clinical-evaluation')
+      return <LaboratoryPage {...page} laboratoryItemId={itemId} indicationCode={indication}
+        onLaboratoryItemChange={setItemId} onIndicationChange={setIndication} />
+    }
+    render(<ControlledPage />)
+    const user = userEvent.setup()
+    await screen.findByRole('checkbox', { name: '选择合成检验项目' })
+    await user.click(screen.getAllByRole('button', { name: '调整' })[1]!)
+    const dialog = screen.getByRole('dialog', { name: '调整项目' })
+    await user.click(within(dialog).getByRole('combobox', { name: '检查目的' }))
+    await user.click(await screen.findByRole('option', { name: '发热' }))
+    await user.click(within(dialog).getByRole('button', { name: '保留本次调整' }))
+    expect(screen.getByRole('checkbox', { name: '选择人工检验项目' })).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    expect(within(screen.getByRole('dialog', { name: '添加检验' })).getByRole('region', { name: '检验申请' }).textContent).toContain('人工检验项目')
+    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
+    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    expect(bodies[0]).toMatchObject({ input: { expectedDraftVersion: 1, resolveExistingDraft: true, selections: [
+      { source: 'manual', kind: 'laboratory', catalogItemId: manualService.id, indicationCode: 'clinical-evaluation' },
+      { source: 'manual', kind: 'laboratory', catalogItemId: service.id, indicationCode: 'fever' },
+    ] } })
+  })
+
   it.each(['save', 'issue', 'deleteDraft'] as const)('does not confirm prepared orders while manual %s is pending', async operation => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendations())))
     const page = props()

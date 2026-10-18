@@ -347,6 +347,37 @@ describe('doctor pathology consultation page', () => {
     expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
   })
 
+  it('preserves the manual consultation and its procedure when a different automatic consultation is edited', async () => {
+    const manualService = { ...service, id: 'manual-pathology', name: '人工病理复核' }
+    const calls = stubFetch(({ path }) => path.endsWith('/pathology-services')
+      ? Response.json({ items: [...services.items, { available: true, service: manualService, sourceProcedures: [lumpectomy] }] })
+      : path.endsWith('/actions/confirm')
+        ? Response.json(commandResponse({ kind: 'pathology', draftVersion: 3, encounterVersion: '3', recordIds: ['manual-new', 'adjusted-new'] }))
+        : Response.json(recommendations()))
+    renderPage(<Page onChanged={vi.fn()} state={{ draftVersion: 2, requests: [],
+      draft: { service: manualService, sourceProcedure: lumpectomy, purpose: '原人工会诊目的' } }} />)
+    const user = userEvent.setup()
+    await screen.findByRole('checkbox', { name: '选择乳腺切片病理会诊' })
+    await user.click(screen.getAllByRole('button', { name: '调整' })[1]!)
+    const dialog = screen.getByRole('dialog', { name: '调整项目' })
+    const input = within(dialog).getByRole('textbox', { name: '会诊目的' })
+    await user.clear(input)
+    await user.type(input, '医生调整后的第二项会诊目的')
+    await user.click(within(dialog).getByRole('button', { name: '保留本次调整' }))
+    expect(screen.getByRole('checkbox', { name: '选择人工病理复核' })).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择乳腺切片病理会诊' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
+    expect((await screen.findByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('原人工会诊目的')
+    expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain(lumpectomy.display)
+    await user.click(screen.getByRole('button', { name: '返回待开具列表' }))
+    await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(calls.filter(call => call.method !== 'GET')).toHaveLength(1))
+    expect(calls.find(call => call.method !== 'GET')?.body).toMatchObject({ input: { selections: [
+      { source: 'manual', kind: 'pathology', serviceId: manualService.id, sourceProcedureReference: lumpectomy.sourceReference, purpose: '原人工会诊目的' },
+      { source: 'manual', kind: 'pathology', serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '医生调整后的第二项会诊目的' },
+    ] } })
+  })
+
   it('keeps completed consultations readable with corrections but without request writes', async () => {
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
