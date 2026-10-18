@@ -111,6 +111,7 @@ function stubQuality() {
   return { requests, decisions, decisionKeys, failNextRetain: () => { failRetain = true },
     loseNextRetainResponse: () => { loseRetainResponse = true },
     setSavedState: (state: ClinicalDocumentQualityControlState) => { candidates.set('', state) },
+    setState: (state: ClinicalDocumentQualityControlState) => { candidates.set(state.clientId ?? '', state) },
     interceptNextCheck: (intercept: NonNullable<typeof checkInterceptor>) => { checkInterceptor = intercept } }
 }
 
@@ -279,6 +280,7 @@ it.each(['unique', 'edited', 'repeated', 'wrong-field'] as const)('locates the c
     body.data.issues[0].evidence = [{ id: 'document-allergy', kind: 'document', label: '当前病历',
       text: anchor === 'unique' ? '过敏史' : anchor === 'repeated' ? '史' : '无药物过敏史。',
       field: anchor === 'wrong-field' ? 'priorMedicalHistory' : 'allergyHistory' }]
+    server.setState(clinicalDocumentQualityControlStateSchema.parse(body.data))
     return Response.json(body)
   })
   const mounted = mount(actions(), anchor === 'repeated' ? { ...baseDocument, allergyHistory: '过敏史待核实，药物过敏史待核实。' } : baseDocument)

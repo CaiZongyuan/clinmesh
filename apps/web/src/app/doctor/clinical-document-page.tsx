@@ -329,7 +329,7 @@ export function ClinicalDocumentPage({
           </Alert>}
           {actions.cancelSign?.error == null ? null : <ErrorAlert title={messages.operationFailed}
             message={getWorkspaceErrorMessage(actions.cancelSign.error, messages)} />}
-          <DocumentQualityCompact quality={quality} messages={messages} locale={locale} onLocateIssue={locateIssue} />
+          {externalQuality === undefined ? <DocumentQualityCompact quality={quality} messages={messages} locale={locale} onLocateIssue={locateIssue} /> : null}
           <form
             aria-label={messages.structuredClinicalDocument}
             className="flex flex-col gap-3"

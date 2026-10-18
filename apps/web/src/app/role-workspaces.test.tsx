@@ -3801,6 +3801,31 @@ describe('role workspaces', () => {
     expect(screen.queryByText('合成建议资料版本二')).toBeNull()
   })
 
+  it('shows one quality hint per active section and returns to its record field from another section', async () => {
+    stubRecordingWorkspace('pause')
+    const originalFetch = globalThis.fetch
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await originalFetch(input, init)
+      if (!String(input).includes('/document-quality-control')) return response
+      const body = await response.json()
+      const state = clinicalDocumentQualityControlStateSchema.parse(body.data ?? body)
+      const next = { ...state, issues: [{ id: 'synthetic-quality-chief', kind: 'missing-field', field: 'chiefComplaint',
+        classification: 'needs-completion', message: '合成主诉需补充持续时间。', basis: { label: '项目辅助提示', kind: 'project' },
+        evidence: [], relatedFingerprint: 'c'.repeat(64), status: 'open' }] }
+      return Response.json(body.data === undefined ? next : { ...body, data: next })
+    }))
+    const client = createWebQueryClient()
+    const user = userEvent.setup()
+    render(<QueryClientProvider client={client}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await screen.findByRole('button', { name: '暂停自动整理' })
+    await waitFor(() => expect(screen.getAllByRole('region', { name: '病历质控' })).toHaveLength(1))
+    await user.click(screen.getByRole('tab', { name: '诊断' }))
+    const hint = await screen.findByRole('region', { name: '病历质控' })
+    await user.click(within(hint).getByRole('button', { name: '主诉有内容待补充，请核对。' }))
+    await waitFor(() => expect(screen.getByRole('tab', { name: '病历记录' }).getAttribute('aria-selected')).toBe('true'))
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '主诉' })))
+  })
+
   it('hides a cached recording case when refresh denies access', async () => {
     const fixture = stubRecordingWorkspace('resume')
     const queryClient = createWebQueryClient()
