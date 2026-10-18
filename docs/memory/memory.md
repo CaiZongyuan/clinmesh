@@ -384,3 +384,7 @@
 - 用户要求自动记录保持安静：问诊栏不常驻“整理失败”，不重复堆叠每条来源的错误；未写入内容按需说明并保留恢复能力，不能把后台失败改成成功。实时病历质控只检查本次已提供资料，不主动装入全量既往病历；范围与取舍由[本次就诊输入及安静记录决策](../../.agents/notes/implemented/architecture/2026-10-18-current-encounter-quality-and-quiet-recording.md)拥有。
 
 - 用户明确不要自动记录的 6 秒硬截止；实时记录沿用常规模型等待配置，不用短预算把尚在正常生成的请求提前判成失败。配置、取消与恢复边界见[常规模型预算决定](../../.agents/notes/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
+
+- 当前自动记录性能由用户自行试用认可，交付不再追加真实模型性能验收；沿用[规格中的验收约定](../spec/2026-10-15-low-latency-document-recording.md#验收条件)，不将体验确认写成量化延迟达标，也不重复将固定负载压测作为该交付的前置条件。
+
+- 按内容哈希去重前，先用完整业务 schema 规范化有效候选；首尾空格和 JSON 字段顺序不能制造竞争替换。不合格候选仍参与共享目标冲突判断，不能为去重先过滤掉坏候选而破坏原子拒绝；自动记录的归属与回归由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-15-low-latency-document-recording.md)拥有。

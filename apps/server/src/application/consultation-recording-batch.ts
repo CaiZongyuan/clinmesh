@@ -56,21 +56,24 @@ export function recordingModelPayload(batch: RecordingBatch) {
 export function decodeRecordingCandidates(value: unknown, batch: RecordingBatch) {
   const additions: HistorySummary[] = []
   const failures: ReturnType<typeof partitionRecordingCandidates>['failures'] = []
-  const candidates = [...new Map(recordingResponseSchema.parse(value).additions.map(item => [recordingContentHash(item), item])).values()]
+  const parsedCandidates = recordingResponseSchema.parse(value).additions.map(candidate => {
+    const parsed = recordingCandidateSchema.safeParse(candidate)
+    return { candidate: parsed.success ? parsed.data : candidate, parsed }
+  })
+  const candidates = [...new Map(parsedCandidates.map(item => [recordingContentHash(item.candidate), item])).values()]
   const targets = new Map<string, string>([...batch.history.map((item, index) => [`h${index}`, item.id] as const),
     ...batch.manualHistory.map((item, index) => [`m${index}`, item.id] as const)])
   const resolveTarget = (value: unknown) => typeof value === 'string' ? targets.get(value) ?? value : undefined
   const sourceIds = new Map(batch.sources.map((source, index) => [`t${index}`, source.id]))
-  for (const [index, candidate] of candidates.entries()) {
+  for (const [index, { candidate, parsed }] of candidates.entries()) {
     const targetId = resolveTarget(candidate.targetAdditionId)
     const citedIds = new Set(candidate.facts.flatMap(fact => fact.sources.map(source => sourceIds.get(source.sourceTurnId) ?? source.sourceTurnId)))
     const members = batch.members.filter(member => citedIds.has(member.id)).map(member => member.id)
     const fail = (reason: 'citation' | 'target' | 'field-limit') => failures.push({ id: recordingContentHash([index, candidate]),
       sourceIds: members.length === 0 ? batch.members.map(member => member.id) : members, reason })
     const competing = targetId !== undefined && candidates.some((other, otherIndex) => otherIndex !== index
-      && resolveTarget(other.targetAdditionId) === targetId)
+      && resolveTarget(other.candidate.targetAdditionId) === targetId)
     if (competing) { fail('target'); continue }
-    const parsed = recordingCandidateSchema.safeParse(candidate)
     if (!parsed.success) {
       fail(parsed.error.issues.some(issue => issue.code === 'too_big' && issue.path[0] === 'facts') ? 'field-limit' : 'target')
       continue

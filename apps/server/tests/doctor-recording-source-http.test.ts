@@ -218,6 +218,55 @@ it.each(['overlong-fact', 'dangling-index'])('records an independent source and 
   expect(summaries).toBe(2)
 })
 
+it('saves equivalent formatted updates once and keeps their source recorded', async () => {
+  let summaries = 0
+  let verifications = 0
+  const model = 'dsh:{"provider":"synthetic","model":"recording"}'
+  const response = (value?: unknown) => Response.json({ model,
+    ...(value === undefined ? {} : { content: JSON.stringify(value) }) })
+  const provider = new DshModelProvider({ origin: 'http://127.0.0.1:1', secret, timeoutMs: 2_000, maxResponseBytes: 8192,
+    async fetch(_url, init) {
+      const input = z.object({ operation: z.enum(['resolve', 'complete']), schemaName: z.string().optional(),
+        userPayload: z.unknown().optional() }).parse(JSON.parse(String(init?.body)))
+      if (input.operation === 'resolve') return response()
+      if (input.schemaName === 'consultation_history_verification') {
+        verifications++
+        return response({ additions: [{ index: 0, faithful: true, complete: true, relationValid: true }] })
+      }
+      summaries++
+      const payload = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+        history: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+      const source = payload.turns.at(-1)!
+      const fact = { text: source.messageText.slice(0, -1), sources: [{ sourceTurnId: source.id, quote: source.messageText }] }
+      const target = payload.history[0]
+      if (target === undefined) return response({ additions: [{ field: 'physicalExamination', relation: 'addition', facts: [fact] }] })
+      const update = { field: 'physicalExamination', relation: 'update', targetAdditionId: target.id,
+        retainedFactIndexes: [0], facts: [fact] }
+      return response({ additions: [update, { ...update, facts: [{ ...fact, text: ` ${fact.text} ` }] },
+        { relation: update.relation, facts: [{ sources: [{ quote: source.messageText, sourceTurnId: source.id }], text: fact.text }],
+          field: update.field, retainedFactIndexes: [0], targetAdditionId: target.id }] })
+    },
+  })
+  const f = await fixture(provider)
+  const binding = await f.context()
+  for (const [index, text] of ['双肺呼吸音清。', '心律齐。'].entries()) {
+    const recorded = await f.record(binding, await f.source(binding, text, `normalized-rpc-${index}`, `normalized-message-${index}`))
+    expect(recorded.status).toBe(200)
+    await f.runtime.dispatchPending()
+  }
+  const detail = await f.read()
+  expect(detail.clinicalDocument?.draft).toMatchObject({ version: 2, physicalExamination: '双肺呼吸音清；心律齐' })
+  expect(detail.consultationRecording).toMatchObject({ processedCount: 2, failedCount: 0, remainingCount: 0, failures: [],
+    sourceResults: [{ result: 'recorded' }, { result: 'recorded' }] })
+  expect(detail.consultationRecording?.additions.filter(addition => addition.status === 'applied')).toHaveLength(1)
+  expect(summaries).toBe(2)
+  expect(verifications).toBe(2)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).clinicalDocument).toEqual(detail.clinicalDocument)
+  expect(summaries).toBe(2)
+  expect(verifications).toBe(2)
+})
+
 it('retries an unavailable semantic check without regenerating the saved draft or repeating a negative verdict', async () => {
   let summaries = 0
   let checks = 0

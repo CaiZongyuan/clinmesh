@@ -50,6 +50,21 @@ const independentBatch = recordingBatchSchema.parse({ ...batch,
 const independentAddition = { field: 'followUp', relation: 'addition',
   facts: [{ text: '一周后复诊', sources: [{ sourceTurnId: 't2', quote: '一周后复诊。' }] }] }
 
+it.each([
+  { format: 'fact whitespace', duplicate: { ...update, facts: [{ ...update.facts[0]!, text: ' 心律齐 ' }] } },
+  { format: 'JSON key order', duplicate: { relation: update.relation, retainedFactIndexes: [0], facts: [
+    { sources: [{ quote: '心律齐。', sourceTurnId: 't1' }], text: '心律齐' },
+  ], targetAdditionId: 'h0', field: update.field } },
+])('records equivalent updates once despite $format', ({ duplicate }) => {
+  const decoded = decodeRecordingCandidates({ additions: [update, duplicate, independentAddition] }, independentBatch)
+  expect(decoded.failures).toEqual([])
+  expect(decoded.additions).toHaveLength(2)
+  expect(decoded.additions[0]).toMatchObject({ targetAdditionId: 'old-addition', facts: [batch.history[0]!.facts[0],
+    { text: '心律齐', sources: [{ sourceTurnId: 'new-source', quote: '心律齐。' }] }] })
+  expect(partitionRecordingCandidates(decoded.additions, independentBatch)).toMatchObject({ failures: [],
+    valid: [{ field: 'physicalExamination' }, { field: 'followUp' }] })
+})
+
 const overlongText = '咳'.repeat(601)
 it.each([
   { invalid: 'overlong-fact', change: { facts: [{ text: overlongText, sources: [{ sourceTurnId: 't1', quote: `${overlongText}。` }] }] }, reason: 'field-limit' },
