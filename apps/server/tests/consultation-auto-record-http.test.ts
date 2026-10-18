@@ -679,11 +679,13 @@ it.each([
 ] as const)('discards an in-flight result after pause with early resume %s and timeout %s', async (resumeFirst, timeout) => {
   let enter!: () => void
   let release!: () => void
+  let recordingSignal!: AbortSignal
   const entered = new Promise<void>(resolve => { enter = resolve })
   const held = new Promise<void>(resolve => { release = resolve })
   let calls = 0
   const fixture = await setup({ extract: async input => {
     if (calls++ === 0) {
+      recordingSignal = input.signal!
       enter(); await held
       if (timeout) throw new ChatCompletionsError('AI_TIMEOUT', 'Synthetic late timeout')
     }
@@ -695,6 +697,7 @@ it.each([
   await entered
   try {
     expect((await fixture.control('pause')).status).toBe(200)
+    expect(recordingSignal.aborted).toBe(true)
     if (resumeFirst) expect((await fixture.control('resume')).status).toBe(200)
   } finally { release(); await dispatch }
   if (!resumeFirst) {
@@ -1488,10 +1491,12 @@ it.each(['头晕一周了。', '头晕一周了'])('deduplicates ordinary additi
 it.each(['disable', 'revoke'] as const)('settles a late recording as failed after Agent authorization %s', async action => {
   let release!: (value: unknown) => void
   let entered!: () => void
+  let recordingSignal!: AbortSignal
   let sourceTurnId = ''
   const extracting = new Promise<void>(resolve => { entered = resolve })
   const held = new Promise<unknown>(resolve => { release = resolve })
   const { runtime, ask, read, started } = await setup({ extract: input => {
+    recordingSignal = input.signal!
     sourceTurnId = (input.userPayload as { turns: Array<{ id: string }> }).turns.at(-1)!.id
     entered()
     return held
@@ -1516,6 +1521,7 @@ it.each(['disable', 'revoke'] as const)('settles a late recording as failed afte
     const response = await runtime.app.request(path, { method: 'POST', body: '{}',
       headers: { ...adminHeaders, 'idempotency-key': randomUUID() } })
     expect(response.status).toBe(200)
+    expect(recordingSignal.aborted).toBe(true)
   } finally {
     release({ additions: [{ field: 'historyOfPresentIllness', sourceTurnId,
       quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] })
@@ -1531,10 +1537,12 @@ it.each(['disable', 'revoke'] as const)('settles a late recording as failed afte
 it('rejects a late extraction after Epoch reset without contaminating the replayed case', async () => {
   let release!: (value: unknown) => void
   let entered!: () => void
+  let recordingSignal!: AbortSignal
   let sourceTurnId = ''
   const extracting = new Promise<void>(resolve => { entered = resolve })
   const held = new Promise<unknown>(resolve => { release = resolve })
   const { runtime, ask, started, cookie } = await setup({ extract: input => {
+    recordingSignal = input.signal!
     sourceTurnId = (input.userPayload as { turns: Array<{ id: string }> }).turns.at(-1)!.id
     entered()
     return held
@@ -1548,6 +1556,7 @@ it('rejects a late extraction after Epoch reset without contaminating the replay
         'content-type': 'application/json', 'idempotency-key': randomUUID() },
     })
     expect(reset.status).toBe(200)
+    expect(recordingSignal.aborted).toBe(true)
     const triageCookie = await signIn(runtime, 'triage@demo.clinmesh.local')
     const replays = triageQueueSchema.parse(await (await runtime.app.request('/api/his/v1/triage/queue', {
       headers: { cookie: triageCookie },
@@ -1643,9 +1652,11 @@ it('requeues old pending suggestions on upgrade and records them without writing
 it.each(['preparing', 'signed'] as const)('discards an extraction that completes while %s and preserves the fixed document', async phase => {
   let release!: () => void
   let entered!: () => void
+  let recordingSignal!: AbortSignal
   const held = new Promise<void>(resolve => { release = resolve })
   const extracting = new Promise<void>(resolve => { entered = resolve })
   const fixture = await setup({ extract: async input => {
+    recordingSignal = input.signal!
     entered(); await held
     const answer = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!
     return { additions: [{ field: 'historyOfPresentIllness', relation: 'addition', sourceTurnId: answer.id, quote: answer.messageText }] }
@@ -1653,12 +1664,15 @@ it.each(['preparing', 'signed'] as const)('discards an extraction that completes
   await fixture.ask()
   const processing = fixture.runtime.dispatchPending()
   await extracting
-  const actions = await signing(fixture)
-  await actions.save()
-  const preview = await actions.preview()
-  if (phase === 'signed') expect((await actions.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(200)
-  const frozen = (await fixture.read()).clinicalDocument
-  release(); await processing
+  let frozen: z.infer<typeof doctorCaseDetailSchema>['clinicalDocument']
+  try {
+    const actions = await signing(fixture)
+    await actions.save()
+    const preview = await actions.preview()
+    expect(recordingSignal.aborted).toBe(true)
+    if (phase === 'signed') expect((await actions.request('actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken })).status).toBe(200)
+    frozen = (await fixture.read()).clinicalDocument
+  } finally { release(); await processing }
   expect((await fixture.read()).clinicalDocument).toEqual(frozen)
 })
 

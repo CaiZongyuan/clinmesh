@@ -443,6 +443,61 @@ it('cancels an in-flight semantic request as soon as its exact fragment is super
   expect(f.runtime.database.driver.prepare("SELECT count(*) AS count FROM consultation_recording_verification WHERE status = 'stale'").get()).toEqual({ count: 1 })
 })
 
+it.each(['binding', 'generation'] as const)('cancels an in-flight recording during %s on pause and resumes without waiting for the old model', async phase => {
+  let entered!: () => void
+  let release!: () => void
+  let recordingSignal!: AbortSignal
+  let calls = 0
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  const waitForCancellation = (signal: AbortSignal) => new Promise<void>((resolve, reject) => {
+    recordingSignal = signal
+    recordingSignal.addEventListener('abort', () => reject(recordingSignal.reason), { once: true })
+    entered()
+    void held.then(resolve)
+  })
+  const f = await fixture({ async resolveModel(model, signal) {
+    if (phase === 'binding' && recordingSignal === undefined) await waitForCancellation(signal!)
+    return model
+  }, async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({
+      additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
+    }), model: 'synthetic' }
+    calls++
+    if (phase === 'generation' && calls === 1) await waitForCancellation(input.signal!)
+    const { turns } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })) }).parse(input.userPayload)
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: 'addition',
+      facts: [{ text: '双肺呼吸音清', sources: [{ sourceTurnId: turns[0]!.id, quote: turns[0]!.messageText }] }] }] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  expect((await f.record(binding, await f.source(binding, '双肺呼吸音清。'))).status).toBe(200)
+  const control = async (action: 'pause' | 'resume') => {
+    const before = await f.read()
+    return f.runtime.app.request(`/api/his/v1/encounters/${f.encounterId}/consultation-recording/actions/control`, {
+      method: 'POST', headers: headers(f.doctor), body: JSON.stringify({
+        expectedVersions: { [`Encounter/${f.encounterId}`]: before.encounter.versionId },
+        input: { action, expectedRecordingVersion: before.consultationRecording!.version },
+      }),
+    })
+  }
+  const extracting = f.runtime.dispatchPending()
+  await started
+  try {
+    expect((await control('pause')).status).toBe(200)
+    expect(recordingSignal.aborted).toBe(true)
+    await extracting
+    const paused = await f.read()
+    expect(paused.clinicalDocument?.draft).toBeUndefined()
+    expect(paused.consultationRecording).toMatchObject({ paused: true, processedCount: 0, remainingCount: 1, failedCount: 0 })
+    expect((await control('resume')).status).toBe(200)
+    await f.runtime.dispatchPending()
+    expect(calls).toBe(phase === 'binding' ? 1 : 2)
+    const resumed = await f.read()
+    expect(resumed.clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清')
+    expect(resumed.consultationRecording).toMatchObject({ processedCount: 1, remainingCount: 0, failedCount: 0 })
+  } finally { release(); await extracting }
+})
+
 it('persists a valid recording returned after six seconds within the normal model budget', async () => {
   const f = await fixture({ async completeJson(input) {
     if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({

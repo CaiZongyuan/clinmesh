@@ -42,6 +42,8 @@
 
 ## 运行与验证边界
 
+- 模型任务失效后丢弃迟到结果，不等于取消实际 Provider 请求。把失效信号贯通模型绑定、生成与格式修复，并在任务结束后释放状态订阅；回归须在放行受控 Provider 前断言取消，再检查未完成来源与恢复处理。自动记录机制见[常规模型等待决策](../../.agents/notes/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
+
 - 构造旧版本 SQLite fixture 时，只复制当时已有的 outbox 事件类型；不能丢弃新任务投影却保留其事件，否则重建任务代次可能撞幂等键并回滚无关业务事务。新增后台事件的调用者测试显式处理已知事件，保留原业务顺序与未知事件断言。
 
 - pnpm 11 默认会在运行脚本前检查依赖；复用依赖的 worktree 可能触发自动重装并因无 TTY 失败。已核对依赖与锁一致时，可通过进程环境 `pnpm_config_verify_deps_before_run=false` 运行检查，不修改仓库配置。复用外部依赖时仍须让 `@clinmesh/*` 链接指向目标 worktree 的包，否则集成测试可能误用原工作区源码。
@@ -82,7 +84,7 @@
 
 - Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
 
-- Windows 上 `verify:agent-notes` 若大批报告空白行和 `Status` 行错误，先检查原始文件是否为 CRLF；当前校验器按 `\n` 分割并精确比较行内容，残留的 `\r` 会导致这些误报。区分新增文件的问题与已有 checkout 换行差异，不为局部文档任务批量重写历史 Note 或修改共享 Git 配置。
+- Windows 上 `verify:agent-notes` 若大批报告空白行和 `Status` 行错误，先检查原始文件是否为 CRLF；当前校验器按 `\n` 分割并精确比较行内容，残留的 `\r` 会导致这些误报。若 `verify:docs` 报 `CLAUDE.md` 缺少末尾换行，再核对 Git 是否以 `120000` 跟踪它：Windows 可能把符号链接检出为仅含目标路径的普通文件。可在独立副本中统一换行并还原链接目标内容后验证，保留子模块以供相对链接检查；不为局部文档任务批量重写历史 Note 或修改共享 Git 配置。
 
 - 模型超时配置须贯通 Provider、宿主请求、持久任务总预算和 outbox lease；一次结构化生成的修复与限流恢复共享原始截止时间，服务关闭取消与模型超时分开处理。回归同时覆盖剩余预算内修复、耗尽后不再调用和宿主主动超时，不用单层配置或本地 AbortSignal 代替整链证据。当前时限见[有限恢复决策](../../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务与失败边界见[自动病史调用决策](../../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
