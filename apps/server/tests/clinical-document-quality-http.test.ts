@@ -11,6 +11,7 @@ import { clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } fro
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
+import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -95,6 +96,13 @@ it('shows applicable empty template fields without requiring auxiliary tests or 
     'chiefComplaint', 'historyOfPresentIllness', 'physicalExamination', 'assessment', 'disposition', 'followUp',
   ])
   expect(quality.issues.every(issue => issue.classification === 'needs-completion')).toBe(true)
+  expect(quality.issues.find(issue => issue.field === 'physicalExamination')).toMatchObject({
+    message: '体格检查尚未记录。',
+    explanation: {
+      impact: '当前正文未说明本次实际完成的查体及其结果。',
+      suggestion: '记录实际完成的查体和结果；尚未查体可如实注明，不为补齐字段安排检查或补写正常。',
+    },
+  })
   expect((await f.readCase()).clinicalDocument?.draft).toBeUndefined()
 })
 
@@ -103,6 +111,10 @@ it('persists retained issues with audit and idempotency, and rechecks only chang
   expect((await f.save({ historyOfPresentIllness: '今日头晕。' }, { agentGenerated: true })).status).toBe(200)
   const state = await f.read()
   const issue = state.issues.find(issue => issue.kind === 'agent-source')!
+  expect(issue).toMatchObject({ message: '现病史中的 Agent 新增片段尚无可核对的已保存来源。', explanation: {
+    impact: '系统暂不能从已保存来源核验该片段，不据此断言患者事实错误。',
+    suggestion: '核对下方原文；内容属实可补充真实来源或核实后保留，表述不准确则修改正文。',
+  } })
   const key = randomUUID()
   const input = { issueId: issue.id, expectedInputFingerprint: state.inputFingerprint, reason: '已电话核实，保留当前表述。' }
   const first = await f.mutate('retain', input, key)
@@ -146,12 +158,18 @@ it('independently verifies exact source omissions and shares retention across sa
     if (input.schemaName === 'clinical_document_quality_verification') return { issues: payload.issues!.map((_, index) => ({ index, supported: true })), agentFactChecks: [] }
     const source = payload.evidence.find(item => item.kind === 'patient')!
     return { issues: [{ kind: 'omission', field: 'priorMedicalHistory', message: '当前问诊中的头晕病史可能尚未纳入正文。',
+      explanation: { impact: '正文未保留患者已陈述的头晕过程，后续阅读者可能不了解其持续时间。',
+        suggestion: '核对下方问诊原文后，将与本次就诊相关的病史写入现病史；不代患者补充未知内容。' },
       sourceQuotes: [{ evidenceId: source.id, quote: source.text }] }], agentFactChecks: [] }
   })
   expect((await f.save({ historyOfPresentIllness: '记录待补充。' })).status).toBe(200)
   await f.runtime.dispatchPending()
   const issue = (await f.read()).issues.find(issue => issue.kind === 'omission')!
   expect(issue).toMatchObject({ field: 'priorMedicalHistory', classification: 'needs-completion', status: 'open' })
+  expect(issue).toMatchObject({ basis: { kind: 'project' }, explanation: {
+    impact: '正文未保留患者已陈述的头晕过程，后续阅读者可能不了解其持续时间。',
+    suggestion: '核对下方问诊原文后，将与本次就诊相关的病史写入现病史；不代患者补充未知内容。',
+  } })
   expect(issue.evidence[0]).toMatchObject({ kind: 'patient', text: persona.openingStatement })
   const detail = await f.readCase()
   const document = { assessment: '', chiefComplaint: '', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '记录待补充。' }
@@ -160,6 +178,121 @@ it('independently verifies exact source omissions and shares retention across sa
   const candidate = await f.read('same-document')
   expect((await f.mutate('retain', { issueId: issue.id, clientId: 'same-document', expectedInputFingerprint: candidate.inputFingerprint })).status).toBe(200)
   expect((await f.read()).issues.find(item => item.id === issue.id)?.status).toBe('retained')
+})
+
+it.each(['auxiliaryExamination', 'familyHistory', 'physicalExamination'] as const)(
+  'does not publish arbitrary %s checklist requirements as missing template fields even if a model endorses them', async field => {
+    const f = await setup(input => {
+      const payload = qualityPayloadSchema.parse(input.userPayload)
+      if (input.schemaName === 'clinical_document_quality_verification') return {
+        issues: payload.issues!.map((_, index) => ({ index, supported: true })), agentFactChecks: [],
+      }
+      return { issues: [{ kind: 'missing-field', field, message: '缺少病种清单要求的记录。',
+        explanation: { impact: '尚无血常规、CRP或病原学结果。', suggestion: '补齐全套检查结果。' },
+        ...(payload.document[field] ? { documentQuote: payload.document[field] } : {}), sourceQuotes: [],
+      }], agentFactChecks: [] }
+    })
+    expect((await f.save({ physicalExamination: '一般情况可。', auxiliaryExamination: '尚无本次检查结果。' })).status).toBe(200)
+    await f.runtime.dispatchPending()
+    const quality = await f.read()
+    expect(quality).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID' })
+    expect(quality.issues.filter(issue => issue.field === field)).toEqual([])
+    expect((await f.readCase()).clinicalDocument?.draft).toMatchObject({ auxiliaryExamination: '尚无本次检查结果。' })
+  },
+)
+
+it('reads legacy persisted checks as stale and refreshes them without reusing an old semantic explanation', async () => {
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    if (input.schemaName === 'clinical_document_quality_verification') return {
+      issues: payload.issues!.map((_, index) => ({ index, supported: true })), agentFactChecks: [],
+    }
+    return { issues: [{ kind: 'missing-field', field: 'chiefComplaint', message: '主诉未说明持续时间。', documentQuote: '头晕。',
+      explanation: { impact: '正文中的主诉未说明症状持续多久。', suggestion: '核对已知病史后补录持续时间；无法确认可如实注明不详。' },
+      sourceQuotes: [],
+    }], agentFactChecks: [] }
+  })
+  expect((await f.save({ chiefComplaint: '头晕。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const row = z.object({ input_json: z.string(), state_json: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT input_json, state_json FROM clinical_document_quality WHERE case_id = ? AND scope_key = ?').get(f.started.outpatientCaseId, 'saved'))
+  const input = z.record(z.string(), z.unknown()).parse(JSON.parse(row.input_json))
+  delete input.policyRevision
+  const old = clinicalDocumentQualityControlStateSchema.parse(JSON.parse(row.state_json))
+  const legacy = { ...old, inputFingerprint: canonicalJsonHash(input), issues: old.issues.map(({ explanation: _explanation, ...issue }) => issue) }
+  f.runtime.database.driver.prepare('UPDATE clinical_document_quality SET input_json = ?, state_json = ? WHERE case_id = ? AND scope_key = ?')
+    .run(JSON.stringify(input), JSON.stringify(legacy), f.started.outpatientCaseId, 'saved')
+  await f.restart()
+  expect(await f.read()).toMatchObject({ stale: true })
+  expect((await f.read()).issues.some(issue => issue.field === 'chiefComplaint')).toBe(false)
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ stale: false, status: 'ready', issues: expect.arrayContaining([
+    expect.objectContaining({ field: 'chiefComplaint', explanation: { impact: '正文中的主诉未说明症状持续多久。',
+      suggestion: '核对已知病史后补录持续时间；无法确认可如实注明不详。' } }),
+  ]) })
+})
+
+it('reopens an otherwise unchanged issue when its verified explanation changes', async () => {
+  let suggestion = '核对现病史中的持续时间后补录主诉。'
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    if (input.schemaName === 'clinical_document_quality_verification') return {
+      issues: payload.issues!.map((_, index) => ({ index, supported: true })), agentFactChecks: [],
+    }
+    return { issues: [{ kind: 'missing-field', field: 'chiefComplaint', message: '主诉未说明持续时间。', documentQuote: '头晕。',
+      explanation: { impact: '主诉未说明症状持续多久。', suggestion }, sourceQuotes: [],
+    }], agentFactChecks: [] }
+  })
+  expect((await f.save({ chiefComplaint: '头晕。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const before = await f.read()
+  const issue = before.issues.find(item => item.field === 'chiefComplaint')!
+  expect((await f.mutate('retain', { issueId: issue.id, expectedInputFingerprint: before.inputFingerprint })).status).toBe(200)
+  suggestion = '核对患者原话；无法确认持续时间时如实注明不详。'
+  expect((await f.mutate('check', { expectedDraftVersion: before.draftVersion, refresh: true })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const changed = (await f.read()).issues.find(item => item.field === 'chiefComplaint')!
+  expect(changed).toMatchObject({ status: 'open', explanation: { suggestion } })
+  expect(changed.relatedFingerprint).not.toBe(issue.relatedFingerprint)
+  expect(changed.review).toBeUndefined()
+})
+
+it('does not publish a newly generated finding that omits its impact and suggested action', async () => {
+  const f = await setup(() => ({ issues: [{ kind: 'missing-field', field: 'chiefComplaint',
+    message: '主诉缺持续时间。', documentQuote: '头晕。', sourceQuotes: [],
+  }], agentFactChecks: [] }))
+  expect((await f.save({ chiefComplaint: '头晕。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID' })
+  expect((await f.read()).issues.some(issue => issue.field === 'chiefComplaint')).toBe(false)
+})
+
+it('keeps subjective fever and a triage measurement as separate evidence and honors rejection of a false contradiction', async () => {
+  const reply = '我觉得发热，但没量过体温。'
+  let verified = false
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    const triage = payload.evidence.find(item => item.id === 'clinical:triage')!
+    expect(JSON.parse(triage.text)).toMatchObject({ temperatureC: 36.5 })
+    if (input.schemaName === 'clinical_document_quality_verification') {
+      verified = true
+      return { issues: payload.issues!.map((_, index) => ({ index, supported: false })), agentFactChecks: [] }
+    }
+    const patient = payload.evidence.find(item => item.kind === 'patient' && item.text === reply)
+    return { issues: patient === undefined ? [] : [{ kind: 'inconsistency', field: 'physicalExamination',
+      message: '候选误把自述与分诊记录当成矛盾。', documentQuote: '分诊体温36.5℃。',
+      explanation: { impact: '候选没有区分患者自述和分诊测量。', suggestion: '保留自述和实际分诊记录，不直接判定其中一方错误。' },
+      sourceQuotes: [{ evidenceId: patient.id, quote: reply }, { evidenceId: triage.id, quote: triage.text }],
+    }], agentFactChecks: [] }
+  }, new StubSyntheaProvider(), reply)
+  expect((await f.ask()).status).toBe(200)
+  expect((await f.save({ physicalExamination: '分诊体温36.5℃。', historyOfPresentIllness: '患者自述发热感，未自行测量体温。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(verified).toBe(true)
+  expect(await f.read()).toMatchObject({ status: 'ready' })
+  expect((await f.read()).issues.some(issue => issue.kind === 'inconsistency')).toBe(false)
+  expect((await f.readCase()).clinicalDocument?.draft?.physicalExamination).toBe('分诊体温36.5℃。')
 })
 
 it('checks family and allergy history against saved patient facts without flagging already recorded facts or handwritten text as Agent content', async () => {
@@ -174,7 +307,9 @@ it('checks family and allergy history against saved patient facts without flaggi
       { field: 'familyHistory', quote: '我父亲患高血压。', marker: '父亲患高血压' },
       { field: 'allergyHistory', quote: '我对青霉素过敏。', marker: '青霉素过敏' },
     ].filter(item => !payload.document[item.field]?.includes(item.marker)).map(item => ({
-      kind: 'omission', field: item.field, message: '已知患者事实尚未记录。', sourceQuotes: [{ evidenceId: source.id, quote: item.quote }],
+      kind: 'omission', field: item.field, message: '已知患者事实尚未记录。',
+      explanation: { impact: `正文未保留患者自述的${item.marker}信息。`, suggestion: '核对下方患者原话后补录相关事实，保留自述限定。' },
+      sourceQuotes: [{ evidenceId: source.id, quote: item.quote }],
     })), agentFactChecks: [] }
   }, new StubSyntheaProvider(), reply)
   expect((await f.ask()).status).toBe(200)
@@ -204,9 +339,11 @@ it('publishes a same-time contradiction with original evidence and accepts negat
     if (source === undefined || payload.document.physicalExamination !== '今天上午体温36.5℃。') return { issues: [], agentFactChecks: [] }
     return { issues: [
       { kind: 'inconsistency', field: 'physicalExamination', message: '同日上午体温需要核实。', documentQuote: '今天上午体温36.5℃。',
+        explanation: { impact: '两处同日上午体温数值不同，尚不能确定对应时点。', suggestion: '核对两次测量的时间与来源，保留实际数值后修订时间表述。' },
         sourceQuotes: [{ evidenceId: source.id, quote: '今天上午体温38.5℃。' }] },
       ...['昨天没有发热。', '刚才说错了，现在没有胸痛。'].map(quote => ({ kind: 'inconsistency', field: 'historyOfPresentIllness',
-        message: '应由独立核验排除的候选。', documentQuote: '昨夜发热，现无胸痛。', sourceQuotes: [{ evidenceId: source.id, quote }] })),
+        message: '应由独立核验排除的候选。', explanation: { impact: '候选将不同时点或明确更正误作互斥事实。', suggestion: '该候选不应成为待核实问题。' },
+        documentQuote: '昨夜发热，现无胸痛。', sourceQuotes: [{ evidenceId: source.id, quote }] })),
     ], agentFactChecks: [] }
   }, new StubSyntheaProvider(), reply)
   expect((await f.ask()).status).toBe(200)
@@ -350,6 +487,7 @@ it('keeps a semantic unsupported-Agent finding on subsequent reads and treats a 
 
 it('rejects fabricated source citations instead of publishing semantic claims', async () => {
   const f = await setup(() => ({ issues: [{ kind: 'omission', field: 'priorMedicalHistory', message: '伪造的遗漏。',
+    explanation: { impact: '候选声称遗漏了外部事实。', suggestion: '核对来源是否属于本病例。' },
     sourceQuotes: [{ evidenceId: 'source-from-another-case', quote: '不存在的患者事实。' }] }], agentFactChecks: [] }))
   expect((await f.save({ chiefComplaint: '头晕。' })).status).toBe(200)
   await f.runtime.dispatchPending()
@@ -426,6 +564,7 @@ it('rejects circular document-only omissions and duplicate statements posed as f
     const payload = qualityPayloadSchema.parse(input.userPayload)
     const source = payload.evidence.find(item => item.kind === (duplicate ? 'patient' : 'document'))!
     return { issues: [{ kind: duplicate ? 'inconsistency' : 'omission', field: 'historyOfPresentIllness', message: '无效问题依据。',
+      explanation: { impact: '候选引用了循环依据或重复语句。', suggestion: '不能用正文证明其自身遗漏，也不能把相同语句当作互斥。' },
       sourceQuotes: Array.from({ length: duplicate ? 2 : 1 }, () => ({ evidenceId: source.id, quote: source.text })) }], agentFactChecks: [] }
   })
   expect((await f.save({ historyOfPresentIllness: '今天头晕。' })).status).toBe(200)

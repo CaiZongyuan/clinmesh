@@ -34,6 +34,12 @@ const amlodipine = {
   sourceHash: '6421355efdba7552efc1d814295f8dcff186dfbb44805af6d78c6673199e5689',
 }
 
+export const doctorGuidelineSourceIds: ReadonlyMap<string, string> = new Map([
+  [influenza.sourceHash, 'nhc-influenza-2025'],
+  [hypertension.sourceHash, 'nhc-hypertension-wst-872-2025'],
+  [breast.sourceHash, 'nhc-breast-cancer-2022'],
+])
+
 export const doctorGuidelineGroups: ReadonlyArray<{ terms: readonly string[]; evidence: readonly GuidelineEvidence[] }> = [
   { terms: ['流感', '发热', '咳嗽', 'influenza', 'fever', 'cough'], evidence: [
     { ...influenza, id: 'nhc-influenza-2025-diagnosis', locator: '第六节“诊断”，印刷第 5 页',

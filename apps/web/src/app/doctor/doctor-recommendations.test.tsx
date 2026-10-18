@@ -64,6 +64,80 @@ function deferredResponse() {
 }
 
 describe('doctor recommendation panel current version checks', () => {
+  it.each(['zh-CN', 'en-US'] as const)('distinguishes system limitations from patient information without repeating legacy flat notes in %s', async locale => {
+    const current = state({
+      notices: [
+        { category: 'guideline', message: '当前指南未覆盖本项检查。' },
+        { category: 'catalog', message: '院内目录暂未开展该检查。' },
+        { category: 'verification', message: '流感候选未通过核验：引用未支持诊断限定语。' },
+        { category: 'processing', message: '本次无法完整读取历史资料。' },
+      ],
+      missingInformation: ['旧版未分类缺项长清单，不应重复显示。'],
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
+    mount(props({ locale }))
+    for (const [category, message] of (locale === 'zh-CN' ? [
+      ['指南覆盖', '当前指南未覆盖本项检查。'], ['院内目录', '院内目录暂未开展该检查。'],
+      ['核验未通过', '流感候选未通过核验：引用未支持诊断限定语。'], ['系统处理限制', '本次无法完整读取历史资料。'],
+    ] as const : [
+      ['Guideline coverage', '当前指南未覆盖本项检查。'], ['Hospital catalog', '院内目录暂未开展该检查。'],
+      ['Verification not passed', '流感候选未通过核验：引用未支持诊断限定语。'], ['Processing limitations', '本次无法完整读取历史资料。'],
+    ] as const)) {
+      const notice = await screen.findByRole('alert', { name: category })
+      expect(within(notice).getByText(message)).toBeTruthy()
+    }
+    expect(screen.queryByText(current.missingInformation[0]!)).toBeNull()
+  })
+
+  it('labels unclassified legacy notes as additional notes without blaming missing patient information', async () => {
+    const current = state({ status: 'missing-evidence', items: [], missingInformation: ['旧版未分类说明。'] })
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
+    mount(props())
+    const note = within(await screen.findByRole('alert', { name: '补充说明' }))
+    expect(note.getByText('旧版未分类说明。')).toBeTruthy()
+    expect(screen.getByText('本轮未发布建议，请查看上方说明，并结合病例继续评估。')).toBeTruthy()
+    expect(screen.queryByText('指南或病例资料不足时，先补充信息再刷新。')).toBeNull()
+  })
+
+  it('keeps adoptable suggestions separate from read-only considerations', async () => {
+    const current = state({ considerations: [{
+      id: 'consideration-assessment', label: '核实上呼吸道感染的可能性', rationale: '围绕本次症状补充评估。',
+      supportingInformation: ['自述发热伴咳嗽。'], opposingInformation: [], missingInformation: ['核实症状起始时间。'],
+      caseEvidenceIds: ['patient-statement-fever'],
+    }] })
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
+    mount(props())
+    const adoptable = within(await screen.findByRole('region', { name: '可采纳建议' }))
+    expect(adoptable.getByRole('button', { name: '采纳 发热，未特指' })).toBeTruthy()
+    expect(adoptable.queryByText('核实上呼吸道感染的可能性')).toBeNull()
+    const thoughts = within(screen.getByRole('region', { name: '待核实思路' }))
+    expect(thoughts.getByText('核实上呼吸道感染的可能性')).toBeTruthy()
+    expect(thoughts.queryByRole('button')).toBeNull()
+    await userEvent.setup().click(adoptable.getByText('查看依据'))
+    expect(adoptable.getByText(current.guidelines[0]!.text)).toBeTruthy()
+    expect(adoptable.getByText(current.caseEvidence[0]!.text)).toBeTruthy()
+  })
+
+  it.each(['diagnosis', 'laboratory', 'imaging', 'pathology'] as const)('shows case-based %s reasoning with its sources and no adoption action when guidance is absent', async kind => {
+    const consideration = {
+      id: 'consideration-fever', label: '考虑流感相关评估', rationale: '结合发热感与接触情况，先评估流感的可能性。',
+      supportingInformation: ['患者自述发热伴咳嗽。'], opposingInformation: ['分诊测得37℃，未记录发热时最高体温。'],
+      missingInformation: ['核对发病时间，以判断检测是否影响处置。'], caseEvidenceIds: ['patient-statement-fever'],
+    }
+    const current = state({ kind, status: 'missing-evidence', items: [], guidelines: [], considerations: [consideration], notices: [] })
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
+    const page = props({ kind })
+    mount(page)
+    const thoughts = within(await screen.findByRole('region', { name: '待核实思路' }))
+    const entry = within(thoughts.getByRole('article', { name: consideration.label }))
+    for (const text of [consideration.rationale, ...consideration.supportingInformation, ...consideration.opposingInformation,
+      ...consideration.missingInformation, current.caseEvidence[0]!.text]) expect(entry.getByText(text)).toBeTruthy()
+    expect(entry.getByText('病例依据').closest('details')).toBeNull()
+    expect(entry.queryByRole('button')).toBeNull()
+    expect(screen.queryByText('暂无可采纳的建议')).toBeNull()
+    expect(page.onAdopt).not.toHaveBeenCalled()
+  })
+
   it.each([
     { documentType: 'product-information', label: '药品说明书', locale: 'zh-CN' },
     { documentType: 'health-standard', label: '卫生行业标准', locale: 'zh-CN' },

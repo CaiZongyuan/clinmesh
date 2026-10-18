@@ -19,6 +19,8 @@ const state = (): ClinicalDocumentQualityControlState => ({
     ['agent-source', 'assessment', 'needs-verification', 'Agent 新增的事实缺少可核对来源，请由医生核实。'],
   ] as const).map(([kind, field, classification, message], index) => ({
     id: `quality-${index}`, kind, field, classification, message,
+    explanation: { impact: '正文未明确区分已知来源和待核实内容，阅读者可能误解其确定程度。',
+      suggestion: '核对相关原文、时间与来源后补录已知信息或修订措辞；未知内容保留不确定性。' },
     basis: { kind: 'project', label: '合成浏览器质控依据，仅验证交互与来源展示。' },
     evidence: [{ id: `source-${index}`, kind: 'patient', label: '患者原回答', text: source,
       recordedAt: '2026-10-15T09:00:00+08:00' }],
@@ -86,6 +88,10 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
   await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${await buildSurfaceStyles()}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
   const prior = page.locator('[data-document-quality-field="allergyHistory"]')
   await expect(prior).toContainText('待补充')
+  await expect(prior.getByText('影响', { exact: true })).toBeVisible()
+  await expect(prior.getByText('处理建议', { exact: true })).toBeVisible()
+  await expect(prior).toContainText('核对相关原文、时间与来源后补录已知信息或修订措辞')
+  await expect(prior.getByText(source, { exact: true })).toHaveCount(0)
   const evidence = prior.getByRole('button', { name: '查看依据', exact: true })
   await evidence.focus()
   await page.keyboard.press('Enter')
@@ -107,6 +113,8 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
       window.dispatchEvent(new CustomEvent('document-quality-appearance', { detail: { locale, fontSize } }))
     }, { locale, fontSize, width })
     await expect(page.locator('[data-clinmesh-app="web"]')).toHaveAttribute('lang', locale)
+    await expect(prior.getByText(locale === 'zh-CN' ? '影响' : 'Impact', { exact: true })).toBeVisible()
+    await expect(prior.getByText(locale === 'zh-CN' ? '处理建议' : 'Suggested action', { exact: true })).toBeVisible()
     const fields = page.locator('[data-document-quality-field]')
     await expect(fields).toHaveCount(4)
     for (const field of await fields.all()) expect(await field.evaluate(element => {
