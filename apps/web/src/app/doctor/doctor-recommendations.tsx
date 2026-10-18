@@ -159,7 +159,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     else setLocalPreferences(previous => ({ ...previous, [preferenceKey]: fn(previous[preferenceKey] ?? { edits: {}, removed: {}, unselected: [], completed: {} }) }))
   }
   const [localDetails, setLocalDetails] = useState(false)
-  const [editing, setEditing] = useState<{ key: string; label: string; value: PreparationDraft; fingerprint: string; view: number; fields?: Record<string, string> }>()
+  const [editing, setEditing] = useState<{ key: string; label: string; value: PreparationDraft; sourceValue: string; fingerprint: string; view: number; fields?: Record<string, string> }>()
   const [editError, setEditError] = useState(false)
   const [editDirty, setEditDirty] = useState(false)
   const [editSwitchBlocked, setEditSwitchBlocked] = useState(false)
@@ -332,7 +332,15 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const failed = !completedIntent && (job.error !== null || state?.status === 'failed' || submissionError !== null)
   const inlineEditing = orderDetails?.hasRecords === true
   const pendingDetailVisible = inlineEditing && orderDetails.pendingVisible && activeEditing !== undefined
-  const editingAvailable = activeEditing !== undefined && rows.some(row => row.key === activeEditing.key)
+  const editingRow = rows.find(row => row.key === activeEditing?.key)
+  const editingAvailable = editingRow !== undefined
+  const manualEditingChanged = inlineEditing && editDirty && editingRow !== undefined && manualKeys.has(editingRow.key)
+    && activeEditing?.sourceValue !== JSON.stringify(editingRow.value)
+  useEffect(() => {
+    if (!inlineEditing || editDirty || activeEditing === undefined || editingRow === undefined) return
+    const next = { key: editingRow.key, label: editingRow.label, value: { ...editingRow.value }, sourceValue: JSON.stringify(editingRow.value), fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token }
+    if (JSON.stringify(activeEditing) !== JSON.stringify(next)) setEditing(next)
+  }, [activeEditing, editDirty, editingRow, inlineEditing, state?.inputFingerprint])
   useEffect(() => {
     if (!enabled || !editingAvailable) {
       orderDetails?.setPendingVisible(false)
@@ -346,8 +354,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       return
     }
     setEditSwitchBlocked(false)
-    if (!inlineEditing || activeEditing?.key !== row.key) {
-      setEditing({ key: row.key, label: row.label, value: { ...row.value }, fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token })
+    if (!inlineEditing || !editDirty || activeEditing?.key !== row.key) {
+      setEditing({ key: row.key, label: row.label, value: { ...row.value }, sourceValue: JSON.stringify(row.value), fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token })
       setEditDirty(false)
       setEditError(false)
     }
@@ -379,6 +387,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         if (inlineEditing) setEditing(previous => previous === undefined ? undefined : { ...previous, value: result.data })
         else setEditing(undefined)
       }}><FieldGroup className="max-h-[55svh] overflow-y-auto px-4 py-3">
+        {manualEditingChanged ? <p className="text-sm">{zh ? '左侧填写已更新，当前调整已保留，请核对后再保留。' : 'The manual fields changed. Your pending edits are preserved; review them before keeping them.'}</p> : null}
         {needsReview(activeEditing.key) ? <p className="text-sm">{zh ? '新资料已到达，请核对后决定保留、修改或移除。' : 'New information arrived. Review this item before keeping it.'}</p> : null}
         {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel>{zh ? '诊断类别' : 'Diagnosis role'}</FieldLabel><ToggleGroup value={activeEditing.value.role === null ? [] : [activeEditing.value.role]} onValueChange={values => { setEditDirty(true);const role = values[0];if (role === 'primary' || role === 'secondary') setEditing(previous => previous?.value.kind === 'diagnosis' ? { ...previous, value: { ...previous.value, role } } : previous) }}><ToggleGroupItem value="primary">{zh ? '主诊断' : 'Primary'}</ToggleGroupItem><ToggleGroupItem value="secondary">{zh ? '次诊断' : 'Secondary'}</ToggleGroupItem></ToggleGroup></Field> : null}
         {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Textarea value={activeEditing.fields?.note ?? activeEditing.value.note ?? ''} onChange={event => changeEditingField('note', event.currentTarget.value)} id="prepared-note" maxLength={500} name="note" /></Field> : null}

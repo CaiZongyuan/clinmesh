@@ -4,7 +4,7 @@ import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
 import { act, cleanup, fireEvent, isInaccessible, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { ComponentProps } from 'react'
+import { useState, type ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
@@ -71,6 +71,17 @@ function SubmissionProbe() {
   const preparation = useDoctorPreparation()
   return <><p data-testid="submitting">{preparation?.submitting('diagnosis') ? '提交中' : '空闲'}</p><p data-testid="confirmed-revision">{preparation?.confirmedRevision('diagnosis') ?? 0}</p></>
 }
+function InlineDiagnosisWorkspace() {
+  const [note, setNote] = useState('初始备注')
+  return <DoctorOrderWorkspace hasRecords
+    entry={<textarea aria-label="手动诊断备注" onChange={event => setNote(event.currentTarget.value)} value={note} />}
+    pending={<DoctorRecommendationsPanel {...props({
+      encounter: { id: 'encounter-fever', versionId: '2' },
+      manualItems: [{ label: '医生待确认诊断', value: { source: 'manual', kind: 'diagnosis', catalogItemId: 'diagnosis-fever', role: 'primary', note } }],
+      onManualChange: ({ value }) => { if (value.kind !== 'diagnosis') return false; setNote(value.note ?? ''); return true },
+    })} />}
+    records={<button type="button">查看正式诊断</button>} details={<p>正式诊断只读详情</p>} />
+}
 function mount(panelProps: ComponentProps<typeof DoctorRecommendationsPanel>, provider = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
@@ -87,6 +98,54 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it('refreshes a clean inline adjustment from newer manual fields without writing the old note back', async () => {
+    stubRequests()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    render(<QueryClientProvider client={client}><InlineDiagnosisWorkspace /></QueryClientProvider>)
+    const user = userEvent.setup()
+    const open = await screen.findByRole('button', { name: '查看待开具 医生待确认诊断' })
+    await user.click(open)
+    fireEvent.change(screen.getByRole('textbox', { name: '备注' }), { target: { value: '右栏保留的旧备注' } })
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    const manual = screen.getByRole('textbox', { name: '手动诊断备注' })
+    expect(manual).toHaveProperty('value', '右栏保留的旧备注')
+    fireEvent.change(manual, { target: { value: '医生后来填写的新备注' } })
+    await user.click(open)
+    expect(screen.getByRole('textbox', { name: '备注' })).toHaveProperty('value', '医生后来填写的新备注')
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    expect(manual).toHaveProperty('value', '医生后来填写的新备注')
+  })
+  it('keeps a clean inline adjustment synchronized while the manual fields change', async () => {
+    stubRequests()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    render(<QueryClientProvider client={client}><InlineDiagnosisWorkspace /></QueryClientProvider>)
+    await userEvent.setup().click(await screen.findByRole('button', { name: '查看待开具 医生待确认诊断' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '手动诊断备注' }), { target: { value: '左侧实时更新的备注' } })
+    expect(screen.getByRole('textbox', { name: '备注' })).toHaveProperty('value', '左侧实时更新的备注')
+  })
+  it('preserves dirty inline text and flags newer manual fields before the doctor keeps the adjustment', async () => {
+    stubRequests()
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    render(<QueryClientProvider client={client}><InlineDiagnosisWorkspace /></QueryClientProvider>)
+    const user = userEvent.setup()
+    const open = await screen.findByRole('button', { name: '查看待开具 医生待确认诊断' })
+    await user.click(open)
+    const raw = '右栏尚未完成的填写\n医生保留原文'
+    fireEvent.change(screen.getByRole('textbox', { name: '备注' }), { target: { value: raw } })
+    const manual = screen.getByRole('textbox', { name: '手动诊断备注' })
+    fireEvent.change(manual, { target: { value: '左侧后来填写的备注' } })
+    await user.click(open)
+    expect(screen.getByRole('textbox', { name: '备注' })).toHaveProperty('value', raw)
+    expect(manual).toHaveProperty('value', '左侧后来填写的备注')
+    expect(screen.getByText('左侧填写已更新，当前调整已保留，请核对后再保留。')).toBeTruthy()
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    expect(manual).toHaveProperty('value', raw)
+    expect(screen.queryByText('左侧填写已更新，当前调整已保留，请核对后再保留。')).toBeNull()
+  })
   it('opens the remaining prepared item in the issued workspace detail column', async () => {
     stubRequests(() => prescriptionState())
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
