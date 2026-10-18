@@ -2,12 +2,13 @@
 import { doctorRecommendationStateSchema, confirmDoctorPreparationRequestSchema, type DoctorRecommendationState } from '@clinmesh/contracts/doctor-recommendations'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, isInaccessible, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
 
 function state(overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
   return doctorRecommendationStateSchema.parse({
@@ -86,6 +87,101 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it('opens the remaining prepared item in the issued workspace detail column', async () => {
+    stubRequests(() => prescriptionState())
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    const view = render(<QueryClientProvider client={client}>
+      <DoctorOrderWorkspace hasRecords entry={null}
+        pending={<DoctorRecommendationsPanel {...props({ kind: 'prescription' })} />}
+        records={<button type="button">查看已开具药品</button>}
+        details={<p>已开具药品只读详情</p>} />
+    </QueryClientProvider>)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '调整' }))
+    const detail = within(view.container.querySelector('[data-order-details]')!)
+    expect(detail.getByRole('textbox', { name: '每次剂量' })).toHaveProperty('value', '5 mg')
+    expect(screen.queryByRole('dialog', { name: '调整项目' })).toBeNull()
+    expect(isInaccessible(screen.getByText('已开具药品只读详情'))).toBe(true)
+  })
+  it('preserves unsaved pending fields across record selection and temporary action blocking', async () => {
+    const calls = stubRequests(() => prescriptionState())
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    const content = (disabled = false) => <QueryClientProvider client={client}>
+      <DoctorOrderWorkspace hasRecords entry={null}
+        pending={<DoctorRecommendationsPanel {...props({ kind: 'prescription', disabled })} />}
+        records={<button type="button">查看已开具药品</button>}
+        details={<section aria-label="正式详情">已开具药品只读详情</section>} />
+    </QueryClientProvider>
+    const mounted = render(content())
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '查看待开具 合成药品' }))
+    const pending = within(screen.getByRole('region', { name: '待开具项目详情' }))
+    await user.clear(pending.getByRole('textbox', { name: '每次剂量' }))
+    await user.type(pending.getByRole('textbox', { name: '每次剂量' }), '10 mg')
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    mounted.rerender(content(true))
+    expect(pending.getByRole('textbox', { name: '每次剂量' })).toHaveProperty('value', '10 mg')
+    expect(pending.getByRole('button', { name: '保留本次调整' })).toHaveProperty('disabled', true)
+    await user.click(screen.getByRole('button', { name: '查看已开具药品' }))
+    expect(screen.getByRole('region', { name: '正式详情' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: '待开具项目详情' })).toBeNull()
+    expect(confirmButton()).toHaveProperty('disabled', true)
+    mounted.rerender(content())
+    await user.click(screen.getByRole('button', { name: '查看待开具 合成药品' }))
+    expect(pending.getByRole('textbox', { name: '每次剂量' })).toHaveProperty('value', '10 mg')
+    await user.click(pending.getByRole('button', { name: '保留本次调整' }))
+    expect(confirmButton()).toHaveProperty('disabled', false)
+    expect(screen.getAllByRole('button', { name: /开具处方/ })).toHaveLength(1)
+    await user.click(confirmButton())
+    await waitFor(() => expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(1))
+    expect(confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).input.selections).toEqual([
+      { source: 'manual', kind: 'prescription', catalogItemId: 'medication-1', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 },
+    ])
+    expect(await screen.findByRole('region', { name: '正式详情' })).toBeTruthy()
+  })
+  it('loads the selected pending item fields and confirms the clearly selected group', async () => {
+    const first = prescriptionState().items[0]!
+    if (first.kind !== 'prescription') throw new Error('Expected prescription fixture')
+    const calls = stubRequests(() => prescriptionState({ items: [first,
+      { ...first, id: 'second-prescription', catalogItemId: 'medication-2', label: '第二项待开具药品', doseText: '20 mg' },
+    ] }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    render(<QueryClientProvider client={client}><DoctorOrderWorkspace hasRecords entry={null}
+      pending={<DoctorRecommendationsPanel {...props({ kind: 'prescription' })} />}
+      records={<button type="button">查看正式记录</button>} details={<p>正式记录</p>} /></QueryClientProvider>)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '查看待开具 合成药品' }))
+    await user.click(screen.getByRole('button', { name: '查看待开具 第二项待开具药品' }))
+    expect(screen.getByRole('textbox', { name: '每次剂量' })).toHaveProperty('value', '20 mg')
+    expect(screen.getByRole('button', { name: '开具处方（2）' })).toHaveProperty('disabled', false)
+    await user.click(screen.getByRole('button', { name: '开具处方（2）' }))
+    await waitFor(() => expect(calls.some(call => call.path.endsWith('/actions/confirm'))).toBe(true))
+    expect(confirmDoctorPreparationRequestSchema.parse(calls.find(call => call.path.endsWith('/actions/confirm'))!.body).input.selections).toMatchObject([
+      { source: 'agent', catalogItemId: 'medication-1', doseText: '5 mg' },
+      { source: 'agent', catalogItemId: 'medication-2', doseText: '20 mg' },
+    ])
+  })
+  it('asks the doctor to keep unsaved edits before opening a different pending item', async () => {
+    const first = prescriptionState().items[0]!
+    if (first.kind !== 'prescription') throw new Error('Expected prescription fixture')
+    stubRequests(() => prescriptionState({ items: [first,
+      { ...first, id: 'second-prescription', catalogItemId: 'medication-2', label: '第二项待开具药品', doseText: '20 mg' },
+    ] }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    clients.push(client)
+    render(<QueryClientProvider client={client}><DoctorOrderWorkspace hasRecords entry={null}
+      pending={<DoctorRecommendationsPanel {...props({ kind: 'prescription' })} />}
+      records={<button type="button">查看正式记录</button>} details={<p>正式记录</p>} /></QueryClientProvider>)
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '查看待开具 合成药品' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '每次剂量' }), { target: { value: '尚未填完的剂量' } })
+    await user.click(screen.getByRole('button', { name: '查看待开具 第二项待开具药品' }))
+    expect(screen.getByRole('textbox', { name: '每次剂量' })).toHaveProperty('value', '尚未填完的剂量')
+    expect(screen.getByText('请先保留当前调整，再查看其他待开具项目。')).toBeTruthy()
+  })
   it('keeps a form-deleted adjusted item removed when its automatic copy remains and the case is revisited', async () => {
     stubRequests(() => prescriptionState())
     const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
