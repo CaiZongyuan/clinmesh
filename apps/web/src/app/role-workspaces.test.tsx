@@ -4826,6 +4826,46 @@ describe('role workspaces', () => {
         }], ...pagination(1),
       }
 
+  it('saves the manual indication from a Reference-only laboratory directory instead of restoring the persisted indication', async () => {
+    stubRecordingWorkspace('pause')
+    const originalFetch = globalThis.fetch
+    const service = { ...laboratoryTestCatalog.items[0]!, allowedIndicationCodes: ['fever', 'clinical-evaluation'] }
+    let indicationCode = 'fever'
+    let draftVersion = 1
+    const saves: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(request), 'http://localhost').pathname
+      if (path.endsWith('/reference-catalogs/laboratory')) return Response.json({ items: [service], ...pagination(1) })
+      if (path === '/api/his/v1/encounters/encounter-recording/laboratory-request/draft') {
+        const body = JSON.parse(String(init?.body))
+        expect(init?.method).toBe('PUT')
+        saves.push(body)
+        indicationCode = body.input.indicationCode
+        draftVersion += 1
+        return Response.json(commandResponse({ caseId: 'case-recording', draftVersion }))
+      }
+      const response = await originalFetch(request, init)
+      if (path !== '/api/his/v1/doctor/cases/case-recording') return response
+      return Response.json({ ...await response.json(), laboratoryRequests: { draftVersion, reportingSupported: true, requests: [],
+        draft: { catalogItemId: service.id, indicationCode, laboratoryService: service } } })
+    }))
+    const user = userEvent.setup()
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    const panel = screen.getByRole('region', { name: '待开具检验' })
+    expect(within(panel).getByText('发热')).toBeTruthy()
+    await user.click(within(panel).getByRole('button', { name: '调整' }))
+    const edit = screen.getByRole('dialog', { name: '调整项目' })
+    await user.click(within(edit).getByRole('combobox', { name: '检查目的' }))
+    await user.click(await screen.findByRole('option', { name: '临床评估' }))
+    await user.click(within(edit).getByRole('button', { name: '保留本次调整' }))
+    await waitFor(() => expect(saves).toEqual([{ expectedVersions: { 'Encounter/encounter-recording': '1' },
+      input: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', expectedDraftVersion: 1 } }]))
+    expect(within(panel).getByText('临床评估')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    expect(screen.getByRole('combobox', { name: '检验适应证' }).textContent).toContain('临床评估')
+  })
+
   it.each(['laboratory', 'imaging', 'pathology'] as const)('restores a late Agent %s draft on return to its patient without changing another patient', async kind => {
     window.history.replaceState(null, '', '/consultation')
     const laboratory = { ...laboratoryTestCatalog.items[0]!, allowedIndicationCodes: ['fever', 'clinical-evaluation'] }
