@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen, within, waitFor } from '@testing-library/react'
+import { act, cleanup, isInaccessible, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CaseLaboratoryCatalogSearch } from '@clinmesh/contracts/his'
@@ -158,6 +158,23 @@ describe('medication catalog picker', () => {
 })
 
 describe('diagnosis and laboratory catalog search', () => {
+  it.each(['diagnosis', 'medication', 'laboratory'])('collapses the %s directory on entering the ordered stage while keeping its query', async kind => {
+    const search = { data: { items: [], page: 1, pageSize: 20, total: 0, releaseId: 'synthetic' }, error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn() }
+    const picker = (collapsible: boolean) => kind === 'diagnosis'
+      ? <DiagnosisCatalogPicker collapsible={collapsible} excludedIds={new Set()} localCatalog={[]} locale="zh-CN" onSelect={vi.fn()} search={search} />
+      : kind === 'medication'
+        ? <MedicationCatalogPicker collapsible={collapsible} excludedIds={new Set()} localCatalog={[]} locale="zh-CN" onSelect={vi.fn()} search={search} />
+        : <LaboratoryCatalogPicker collapsible={collapsible} locale="zh-CN" onSelect={vi.fn()} search={search} />
+    const view = render(picker(false))
+    const user = userEvent.setup()
+    await user.type(screen.getByRole('textbox'), '合成')
+    await user.click(screen.getByRole('button', { name: /执行.*目录搜索/ }))
+    expect(screen.getByText('没有匹配记录')).toBeTruthy()
+    view.rerender(picker(true))
+    expect(screen.getByDisplayValue('合成')).toBeTruthy()
+    expect(isInaccessible(screen.getByText('没有匹配记录'))).toBe(true)
+    expect(screen.getByRole('button', { name: '展开目录' }).getAttribute('aria-expanded')).toBe('false')
+  })
   it('keeps a collapsed laboratory search and pagination after a selection', async () => {
     const onSearch = vi.fn()
     const onSelect = vi.fn()
@@ -191,6 +208,7 @@ describe('diagnosis and laboratory catalog search', () => {
     expect(onSelect).toHaveBeenCalledExactlyOnceWith({ catalogItemId: 'diagnosis-synthetic', code: 'SYN-1', display: '合成诊断' })
     expect(screen.queryByRole('button', { name: '选择 合成诊断 SYN-1' })).toBeNull()
     expect(screen.getByRole('textbox', { name: '搜索疾病目录' })).toBe(search)
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '展开目录' }))
     await user.click(screen.getByRole('button', { name: '展开目录' }))
     expect(screen.getByRole('button', { name: '收起目录' }).getAttribute('aria-expanded')).toBe('true')
     expect(screen.getByRole('button', { name: '选择 合成诊断 SYN-1' })).toBeTruthy()

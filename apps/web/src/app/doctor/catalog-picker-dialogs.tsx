@@ -175,6 +175,14 @@ function CatalogSearchForm({
     const timer = setTimeout(() => { searchLatestRef.current() }, 300)
     return () => clearTimeout(timer)
   }, [active, input, query])
+  const expansionTrigger = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    const trigger = expansionTrigger.current
+    if (expansion?.expanded !== false || trigger === null) return
+    const root = trigger.getRootNode()
+    if (!(root instanceof Document || root instanceof ShadowRoot)) return
+    if (root.activeElement !== null && root.getElementById(expansion.resultsId)?.contains(root.activeElement)) trigger.focus()
+  }, [expansion?.expanded, expansion?.resultsId])
   const invalidLength = input.trim().length === 1
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -202,6 +210,7 @@ function CatalogSearchForm({
         {pending ? <LoaderCircleIcon className="animate-spin" /> : <SearchIcon />}
       </Button>
       {expansion === undefined ? null : <Button
+        ref={expansionTrigger}
         aria-controls={expansion.resultsId}
         aria-expanded={expansion.expanded}
         aria-label={copy[expansion.locale][expansion.expanded ? 'collapseCatalog' : 'expandCatalog']}
