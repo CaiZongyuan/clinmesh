@@ -232,6 +232,7 @@ for (const existingAutomaticDraft of [false, true]) {
       await page.getByRole('tab', { name: '待诊', exact: true }).click()
       await page.getByText('张琴', { exact: true }).first().click()
       await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+      await expect(page.getByRole('tab', { name: '在诊', exact: true })).toHaveAttribute('aria-selected', 'true')
       const ask = async () => {
         await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
         await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('请补充病史？')

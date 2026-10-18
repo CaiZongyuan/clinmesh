@@ -16,6 +16,7 @@ import { UnavailableScenarioGenerationProvider } from './application/scenario-da
 import { WorkflowService } from './application/workflow-service.ts'
 import { OutboxDispatcher } from './application/outbox-dispatcher.ts'
 import { z } from 'zod'
+import { existsSync } from 'node:fs'
 import {
   applyMigrations,
   openClinMeshDatabase,
@@ -53,6 +54,7 @@ import { AgentIntegrationService } from './application/agent-integration-service
 import { reportRuntimeError } from './runtime-error-reporting.ts'
 import { GenerationModelBinding } from './application/generation-model-binding.ts'
 import { DoctorRecommendationsService } from './application/doctor-recommendations-service.ts'
+import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
 import { DshModelProvider } from './infrastructure/ai/dsh-model-provider.ts'
 import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { ImagingPreparationService } from './application/imaging-preparation-service.ts'
@@ -135,6 +137,8 @@ export interface CreateClinMeshRuntimeOptions {
   autoDispatchIntervalMs?: number
   cursorSecret: string
   databasePath: string
+  guidelineDatabasePath?: string
+  guidelineNonCommercialUse?: boolean
   demoPassword: string
   dshBridgeSecret?: string
   imagingAssetDirectory?: string
@@ -167,6 +171,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       : { performanceObserver: options.performanceObserver }),
   })
   let referenceDatabase: ReferenceDatabase | undefined
+  let guidelineCorpus: GuidelineCorpus | undefined
   try {
     if (options.migrationMode === 'apply') applyMigrations(database)
     else verifyMigrations(database)
@@ -188,6 +193,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...clockOptions,
     })
     const commands = new CommandExecutor(database, fhir, clockOptions)
+    if (options.guidelineDatabasePath !== undefined && existsSync(options.guidelineDatabasePath)) {
+      guidelineCorpus = new GuidelineCorpus({ databasePath: options.guidelineDatabasePath, readOnly: true,
+        allowNonCommercial: options.guidelineNonCommercialUse === true })
+    }
     if (options.referenceDatabasePath !== undefined) {
       referenceDatabase = openReferenceDatabase({
         busyTimeoutMs: 5_000,
@@ -407,6 +416,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const recommendationModel = consultationModel ?? investigationModel ?? patientPersonaModel
     const doctorRecommendations = new DoctorRecommendationsService({
       database, workflow, commands, models, referenceData,
+      ...(guidelineCorpus === undefined ? {} : { guidelines: guidelineCorpus }),
       contextStatus: context => identity.consultationRecordingContextStatus(context),
       ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
@@ -735,6 +745,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           ])
           referenceDatabase?.close()
           referenceDatabase = undefined
+          guidelineCorpus?.close()
+          guidelineCorpus = undefined
           database.close()
         })()
         return closePromise
@@ -760,6 +772,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     }
   } catch (error) {
     referenceDatabase?.close()
+    guidelineCorpus?.close()
     database.close()
     throw error
   }

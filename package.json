@@ -39,6 +39,7 @@
     "pathology:sync": "pnpm --filter @clinmesh/server pathology sync",
     "pathology:verify": "pnpm --filter @clinmesh/server pathology verify",
     "reference:sync": "pnpm --filter @clinmesh/server reference:sync",
+    "guidelines:sync": "pnpm --filter @clinmesh/server guidelines:sync",
     "smoke:patient-brief:live": "pnpm --filter @clinmesh/server smoke:patient-brief:live",
     "smoke:consultation:native": "tsx scripts/smoke-dsh-consultation.ts",
     "smoke:consultation:live": "tsx scripts/smoke-dsh-consultation.ts --live",
