@@ -20,7 +20,6 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldError, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -32,7 +31,6 @@ import {
   CheckIcon,
   CircleAlertIcon,
   PillIcon,
-  PlusIcon,
   RotateCcwIcon,
   Trash2Icon,
 } from 'lucide-react'
@@ -52,6 +50,8 @@ import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
 import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { useAutosave } from './use-autosave.ts'
+import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
+import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 
 function ErrorAlert({ message, title }: { message: string; title: string }): React.JSX.Element {
   return (
@@ -198,7 +198,6 @@ export function PrescriptionPage({
     && !hasActivePrescription && mode === 'prescription' && prescription === undefined
   const [dirty, setDirty] = useState(false)
   const [deleteDraftOpen, setDeleteDraftOpen] = useState(false)
-  const [addOpen, setAddOpen] = useState(false)
   const [noMedicationOpen, setNoMedicationOpen] = useState(false)
   const [replacementOpen, setReplacementOpen] = useState(false)
   const [recordSearch, setRecordSearch] = useState('')
@@ -276,7 +275,7 @@ export function PrescriptionPage({
     ? createReferencePrescriptionDraftLine(selection.product, key)
     : createPrescriptionDraftLine(selection.medication, key)
   const addMedication = (selection: MedicationCatalogSelection) => {
-    if (pending) return
+    if (!canEditDraft || pending) return
     const line = medicationLine(selection)
     if (items.length >= 8 || usedCatalogItemIds.has(line.catalogItemId)) return
     setItems(current => [...current, line])
@@ -284,14 +283,14 @@ export function PrescriptionPage({
     setDirty(true)
   }
   const replaceMedication = (index: number, selection: MedicationCatalogSelection) => {
-    if (pending) return
+    if (!canEditDraft || pending) return
     setItems(current => current.map((item, itemIndex) => (
       itemIndex === index ? medicationLine(selection, item.key) : item
     )))
     setDirty(true)
   }
   const updateItem = (index: number, update: Partial<PrescriptionDraftLine>) => {
-    if (pending) return
+    if (!canEditDraft || pending) return
     setItems(current => current.map((item, itemIndex) => (
       itemIndex === index ? { ...item, ...update } : item
     )))
@@ -364,12 +363,13 @@ export function PrescriptionPage({
   )
 
   const draftEditor = (
-    <FieldSet disabled={pending}>
-      <div className="grid min-w-0 gap-4 @min-[640px]/case-content:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+    <FieldSet disabled={!canEditDraft || pending}>
+      <div className="flex min-w-0 flex-col gap-4">
         <div className="min-w-0">
           <MedicationCatalogPicker
-            active={addOpen && !replacementOpen}
-            disabled={!canAddMedication || pending}
+            active={!replacementOpen && !readOnly}
+            collapsible={prescription !== undefined}
+            disabled={!canEditDraft || !canAddMedication || pending}
             excludedIds={usedCatalogItemIds}
             localCatalog={catalog.filter(candidate => (
               !usedCatalogItemIds.has(candidate.id) && canCombineWithCurrentItems(candidate)
@@ -380,7 +380,7 @@ export function PrescriptionPage({
             selectedId={selectedDraft?.catalogItemId}
           />
         </div>
-        <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
+        <section aria-label={locale === 'zh-CN' ? prescription === undefined ? '药品详情' : '填写药品' : prescription === undefined ? 'Medication details' : 'Enter medication'} className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
           {items.length === 0 ? (
             <Empty>
               <EmptyHeader>
@@ -533,6 +533,107 @@ export function PrescriptionPage({
     </FieldSet>
   )
 
+  const issuedSummary = prescription === undefined ? null : (
+    <div className="flex flex-col gap-3">
+      {readOnly || prescription.status === 'withdrawn' ? null : <DoctorRecordReviewNotice caseId={detail.caseId}
+        authoredAt={prescription.authoredAt} locale={locale} onReview={() => {
+          setRecordSearch(''); setSelectedRecordId(prescription.items[0]?.medicationRequestId)
+          requestAnimationFrame(() => { recordHeadingRef.current?.scrollIntoView({ block: 'nearest' }); recordHeadingRef.current?.focus() })
+        }} />}
+      <Alert>
+        {prescription.status === 'withdrawn'
+          ? <RotateCcwIcon aria-hidden="true" />
+          : <PillIcon aria-hidden="true" />}
+        <AlertTitle>
+          {prescription.status === 'signed'
+            ? messages.prescriptionIssued
+            : prescription.status === 'withdrawn'
+              ? messages.prescriptionWithdrawn
+              : prescriptionStatusLabel(prescription.status, messages)}
+        </AlertTitle>
+        <AlertDescription>
+          {messages.prescriptionNumber} {prescription.number} · {formatClinicalDateTime(prescription.authoredAt, locale)}
+        </AlertDescription>
+      </Alert>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-muted-foreground">{messages.prescriptionStatus}</span>
+          <Badge variant="secondary">{prescriptionStatusLabel(prescription.status, messages)}</Badge>
+        </div>
+        {allowWithdrawal
+          && (prescription.status === 'signed' || prescription.status === 'paid') ? (
+          <AlertDialog>
+            <AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" />}>
+              <RotateCcwIcon data-icon="inline-start" />{messages.withdrawPrescription}
+            </AlertDialogTrigger>
+            <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
+              <AlertDialogHeader>
+                <AlertDialogTitle>{messages.withdrawPrescriptionTitle}</AlertDialogTitle>
+                <AlertDialogDescription>{messages.withdrawPrescriptionDescription}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <dl className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <dt className="text-xs text-muted-foreground">{messages.prescriptionNumber}</dt>
+                  <dd className="mt-1 font-medium">{prescription.number}</dd>
+                </div>
+                <div>
+                  <dt className="text-xs text-muted-foreground">{messages.prescriptionStatus}</dt>
+                  <dd className="mt-1 font-medium">
+                    {prescriptionStatusLabel(prescription.status, messages)}
+                  </dd>
+                </div>
+              </dl>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+                <AlertDialogAction
+                  disabled={actions.withdraw.pending}
+                  onClick={actions.withdraw.onSubmit}
+                >
+                  <RotateCcwIcon data-icon="inline-start" />{messages.confirmWithdrawal}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        ) : null}
+      </div>
+      {prescription.status === 'withdrawn' ? (
+        <p className="text-xs text-muted-foreground">
+          {locale === 'zh-CN' ? '原处方明细保留，已支付记录不会自动退款。' : 'Original prescription details are retained. Payments are not automatically refunded.'}
+          {prescription.withdrawal === undefined ? null : ` · ${formatClinicalDateTime(prescription.withdrawal.withdrawnAt, locale)}`}
+        </p>
+      ) : (
+        <ol aria-label={locale === 'zh-CN' ? '处方进度' : 'Prescription progress'} className="grid min-w-0 grid-cols-3 gap-3 text-xs">
+          {(['signed', 'paid', 'dispensed'] as const).map((status, index) => {
+            const completed = ['signed', 'paid', 'dispensed'].indexOf(prescription.status) >= index
+            return (
+              <li className={cn('flex min-w-0 flex-col gap-1 border-t-2 pt-2', completed ? 'border-primary' : 'text-muted-foreground')} key={status}>
+                <span className="flex items-center gap-1">
+                  {completed ? <CheckIcon aria-hidden="true" className="size-3 shrink-0" /> : null}
+                  {status === 'signed'
+                    ? (locale === 'zh-CN' ? '开具' : 'Issuance')
+                    : status === 'paid'
+                      ? (locale === 'zh-CN' ? '缴费' : 'Payment')
+                      : (locale === 'zh-CN' ? '调剂' : 'Dispensing')}
+                </span>
+                {status === 'signed' ? <span>{formatClinicalDateTime(prescription.authoredAt, locale)}</span> : null}
+                {completed ? null : <span>{locale === 'zh-CN' ? '待完成' : 'Pending'}</span>}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+      <p className="text-xs text-muted-foreground">
+        {locale === 'zh-CN' ? `${prescription.items.length} 条药品医嘱 · 已开具处方不可直接编辑` : `${prescription.items.length} medication orders · Issued prescriptions are read only`}
+      </p>
+      {!allowWithdrawal || actions.withdraw.error === null ? null : (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(actions.withdraw.error, messages)}
+          title={getWorkspaceErrorTitle(actions.withdraw.error, messages, messages.operationFailed)}
+        />
+      )}
+    </div>
+  )
+
   return (
     <section
       aria-labelledby="medication-conclusion-heading"
@@ -546,150 +647,42 @@ export function PrescriptionPage({
         </h3>
       </div>
 
-      <DoctorRecommendationsPanel
-        caseId={detail.caseId}
-        enabled={canEditDraft}
-        disabled={actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending}
-        inputRevision={recommendationRevision}
-        kind="prescription"
-        locale={locale}
-        expectedDraftVersion={state?.draftVersion ?? 0}
-        encounter={detail.encounter}
-        resolveExistingDraft={state?.draft !== undefined}
-        onManualChange={changePreparedItem}
-        onManualRemove={removePreparedItem}
-        onConfirmed={consumePreparedItems}
-        manualControls={<Dialog open={addOpen} onOpenChange={setAddOpen}>
-          <DialogTrigger render={<Button disabled={pending} size="sm" type="button" variant="outline" />}>
-            <PlusIcon data-icon="inline-start" />{locale === 'zh-CN' ? '添加药品' : 'Add medication'}
-          </DialogTrigger>
-          <DialogContent keepMounted className="@container/case-content h-[min(760px,calc(100svh-2rem))] sm:max-w-5xl">
-            <DialogHeader>
-              <DialogTitle>{locale === 'zh-CN' ? '添加药品' : 'Add medication'}</DialogTitle>
-              <DialogDescription>{locale === 'zh-CN'
-                ? '选择药品并填写用法，修改自动保存；完成后回到同一待开具清单。'
-                : 'Choose medication and enter directions. Edits save automatically; return to the same prepared list when done.'}</DialogDescription>
-            </DialogHeader>
-            <div className="min-h-0 flex-1 overflow-y-auto">{draftEditor}</div>
-            {actions.saveDraft.error === null ? null : <ErrorAlert
-              message={getWorkspaceErrorMessage(actions.saveDraft.error, messages)}
-              title={getWorkspaceErrorTitle(actions.saveDraft.error, messages, messages.operationFailed)} />}
-            {actions.deleteDraft.error === null ? null : <ErrorAlert
-              message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)}
-              title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
-            <DialogFooter>
-              {draftSaveFeedback}
-              <DialogClose render={<Button type="button" />}>
-                {locale === 'zh-CN' ? '完成填写' : 'Done'}
-              </DialogClose>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>}
-        manualItems={items.map(item => ({
-          label: item.referenceProduct?.genericName
-            ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
-            ?? item.catalogItemId,
-          value: { source: 'manual', kind: 'prescription', catalogItemId: item.catalogItemId,
-            doseText: item.doseText || null, frequencyCode: item.frequencyCode || null, courseDays: item.courseDays, quantity: item.quantity,
-            ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct }) },
-        } satisfies ManualPreparedItem))}
-        unavailableReason={suggestion => isRecommendationAvailable(suggestion) ? undefined : messages.recommendationRequestTargetUnavailable}
-        scope={recommendationScope}
-      />
-
-      {prescription === undefined ? null : (
-        <div className="flex flex-col gap-3">
-          {readOnly || prescription.status === 'withdrawn' ? null : <DoctorRecordReviewNotice caseId={detail.caseId}
-            authoredAt={prescription.authoredAt} locale={locale} onReview={() => {
-              setRecordSearch(''); setSelectedRecordId(prescription.items[0]?.medicationRequestId)
-              requestAnimationFrame(() => { recordHeadingRef.current?.scrollIntoView({ block: 'nearest' }); recordHeadingRef.current?.focus() })
-            }} />}
-          <Alert>
-            {prescription.status === 'withdrawn'
-              ? <RotateCcwIcon aria-hidden="true" />
-              : <PillIcon aria-hidden="true" />}
-            <AlertTitle>
-              {prescription.status === 'signed'
-                ? messages.prescriptionIssued
-                : prescription.status === 'withdrawn'
-                  ? messages.prescriptionWithdrawn
-                  : prescriptionStatusLabel(prescription.status, messages)}
-            </AlertTitle>
-            <AlertDescription>
-              {messages.prescriptionNumber} {prescription.number} · {formatClinicalDateTime(prescription.authoredAt, locale)}
-            </AlertDescription>
-          </Alert>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="text-muted-foreground">{messages.prescriptionStatus}</span>
-              <Badge variant="secondary">{prescriptionStatusLabel(prescription.status, messages)}</Badge>
-            </div>
-            {allowWithdrawal
-              && (prescription.status === 'signed' || prescription.status === 'paid') ? (
-              <AlertDialog>
-                <AlertDialogTrigger render={<Button size="sm" type="button" variant="outline" />}>
-                  <RotateCcwIcon data-icon="inline-start" />{messages.withdrawPrescription}
-                </AlertDialogTrigger>
-                <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>{messages.withdrawPrescriptionTitle}</AlertDialogTitle>
-                    <AlertDialogDescription>{messages.withdrawPrescriptionDescription}</AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <dl className="grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <dt className="text-xs text-muted-foreground">{messages.prescriptionNumber}</dt>
-                      <dd className="mt-1 font-medium">{prescription.number}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-muted-foreground">{messages.prescriptionStatus}</dt>
-                      <dd className="mt-1 font-medium">
-                        {prescriptionStatusLabel(prescription.status, messages)}
-                      </dd>
-                    </div>
-                  </dl>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                    <AlertDialogAction
-                      disabled={actions.withdraw.pending}
-                      onClick={actions.withdraw.onSubmit}
-                    >
-                      <RotateCcwIcon data-icon="inline-start" />{messages.confirmWithdrawal}
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            ) : null}
-          </div>
-          {prescription.status === 'withdrawn' ? (
-            <p className="text-xs text-muted-foreground">
-              {locale === 'zh-CN' ? '原处方明细保留，已支付记录不会自动退款。' : 'Original prescription details are retained. Payments are not automatically refunded.'}
-              {prescription.withdrawal === undefined ? null : ` · ${formatClinicalDateTime(prescription.withdrawal.withdrawnAt, locale)}`}
-            </p>
-          ) : (
-            <ol aria-label={locale === 'zh-CN' ? '处方进度' : 'Prescription progress'} className="grid min-w-0 grid-cols-3 gap-3 text-xs">
-              {(['signed', 'paid', 'dispensed'] as const).map((status, index) => {
-                const completed = ['signed', 'paid', 'dispensed'].indexOf(prescription.status) >= index
-                return (
-                  <li className={cn('flex min-w-0 flex-col gap-1 border-t-2 pt-2', completed ? 'border-primary' : 'text-muted-foreground')} key={status}>
-                    <span className="flex items-center gap-1">
-                      {completed ? <CheckIcon aria-hidden="true" className="size-3 shrink-0" /> : null}
-                      {status === 'signed'
-                        ? (locale === 'zh-CN' ? '开具' : 'Issuance')
-                        : status === 'paid'
-                          ? (locale === 'zh-CN' ? '缴费' : 'Payment')
-                          : (locale === 'zh-CN' ? '调剂' : 'Dispensing')}
-                    </span>
-                    {status === 'signed' ? <span>{formatClinicalDateTime(prescription.authoredAt, locale)}</span> : null}
-                    {completed ? null : <span>{locale === 'zh-CN' ? '待完成' : 'Pending'}</span>}
-                  </li>
-                )
-              })}
-            </ol>
-          )}
-          <p className="text-xs text-muted-foreground">
-            {locale === 'zh-CN' ? `${prescription.items.length} 条药品医嘱 · 已开具处方不可直接编辑` : `${prescription.items.length} medication orders · Issued prescriptions are read only`}
-          </p>
-          <div className="grid min-w-0 gap-4 @min-[640px]/case-content:grid-cols-[minmax(0,0.8fr)_minmax(0,1.5fr)]">
+      <DoctorOrderWorkspace
+        hasRecords={prescription !== undefined}
+        entry={readOnly || noMedicationConclusion !== undefined || mode !== 'prescription' ? null : <section aria-label={locale === 'zh-CN' ? '填写处方' : 'Enter prescription'} className="flex min-w-0 flex-col gap-3">
+          {hasActivePrescription ? <p className="text-xs text-muted-foreground">{locale === 'zh-CN'
+            ? '本次就诊已有有效处方；如需调整，请先按处方状态撤回。未开具项目仍保留在下方。'
+            : 'This encounter has an active prescription. Withdraw it according to its status before adjusting. Unissued items remain below.'}</p> : null}
+          {draftEditor}
+        </section>}
+        pending={
+          <DoctorRecommendationsPanel
+            caseId={detail.caseId}
+            enabled={!readOnly && noMedicationConclusion === undefined && mode === 'prescription'}
+            disabled={!canEditDraft || actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending}
+            inputRevision={recommendationRevision}
+            kind="prescription"
+            locale={locale}
+            issuedCatalogItemIds={new Set(prescription?.status === 'withdrawn' ? [] : prescription?.items.map(item => item.catalogItemId) ?? [])}
+            expectedDraftVersion={state?.draftVersion ?? 0}
+            encounter={detail.encounter}
+            resolveExistingDraft={state?.draft !== undefined}
+            onManualChange={changePreparedItem}
+            onManualRemove={removePreparedItem}
+            onConfirmed={consumePreparedItems}
+            manualItems={items.filter(item => !prescription?.items.some(record => record.catalogItemId === item.catalogItemId)).map(item => ({
+              label: item.referenceProduct?.genericName
+                ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
+                ?? item.catalogItemId,
+              value: { source: 'manual', kind: 'prescription', catalogItemId: item.catalogItemId,
+                doseText: item.doseText || null, frequencyCode: item.frequencyCode || null, courseDays: item.courseDays, quantity: item.quantity,
+                ...(item.referenceProduct === undefined ? {} : { referenceProduct: item.referenceProduct }) },
+            } satisfies ManualPreparedItem))}
+            unavailableReason={suggestion => isRecommendationAvailable(suggestion) ? undefined : messages.recommendationRequestTargetUnavailable}
+            scope={recommendationScope}
+          />
+        }
+        records={prescription === undefined ? null : (
             <section aria-label={locale === 'zh-CN' ? '药品列表' : 'Medication list'} className={cn('min-w-0 flex-col gap-3 @min-[640px]/case-content:flex', selectedRecord === undefined ? 'flex' : 'hidden')}>
               <Input
                 aria-label={locale === 'zh-CN' ? '搜索处方药品' : 'Search prescription medications'}
@@ -727,6 +720,10 @@ export function PrescriptionPage({
                 </Button>
               ))}
             </section>
+        )}
+        details={prescription === undefined ? null : (
+          <div className="flex min-w-0 flex-col gap-4">
+            {issuedSummary}
             <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className={cn('min-w-0 flex-col gap-4 rounded-lg border p-4 @min-[640px]/case-content:flex', selectedRecord === undefined ? 'hidden' : 'flex')}>
               {selectedRecord === undefined ? (
                 <Empty>
@@ -764,14 +761,9 @@ export function PrescriptionPage({
               )}
             </section>
           </div>
-          {!allowWithdrawal || actions.withdraw.error === null ? null : (
-            <ErrorAlert
-              message={getWorkspaceErrorMessage(actions.withdraw.error, messages)}
-              title={getWorkspaceErrorTitle(actions.withdraw.error, messages, messages.operationFailed)}
-            />
-          )}
-        </div>
-      )}
+        )}
+      />
+
 
       {noMedicationConclusion === undefined ? null : (
         <Alert>
@@ -810,7 +802,7 @@ export function PrescriptionPage({
           <div>
             <FieldGroup>
               <div className="flex flex-wrap items-center justify-end gap-2">
-                {addOpen ? null : draftSaveFeedback}
+                {draftSaveFeedback}
                 {state?.draft === undefined ? null : (
                   <>
                     <AlertDialog onOpenChange={setDeleteDraftOpen} open={deleteDraftOpen}>
@@ -875,7 +867,7 @@ export function PrescriptionPage({
                   <AlertTitle>{messages.prescriptionDraftDeleted}</AlertTitle>
                 </Alert>
               ) : null}
-              {addOpen || actions.saveDraft.error === null ? null : (
+              {actions.saveDraft.error === null ? null : (
                 <ErrorAlert
                   message={getWorkspaceErrorMessage(actions.saveDraft.error, messages)}
                   title={getWorkspaceErrorTitle(actions.saveDraft.error, messages, messages.operationFailed)}
@@ -984,4 +976,3 @@ function getPrescriptionIssueErrorMessage(
   }
   return getWorkspaceErrorMessage(error, messages)
 }
-import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'

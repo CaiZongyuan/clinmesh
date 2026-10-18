@@ -4,16 +4,6 @@ import type { ClinicalCatalog, DiagnosisDraftEntry, DoctorCaseDetail } from '@cl
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
@@ -21,7 +11,7 @@ import { Separator } from '@clinmesh/ui/components/separator'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { ArrowLeftIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, PlusIcon, Trash2Icon } from 'lucide-react'
+import { ArrowLeftIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
@@ -35,6 +25,7 @@ import {
 import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
 import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { useAutosave } from './use-autosave.ts'
+import { DoctorOrderWorkspace } from './doctor-order-workspace.tsx'
 
 export interface DiagnosisPageActions {
   confirm: {
@@ -86,10 +77,10 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     return []
   })
   const [selectedKey, setSelectedKey] = useState<string | undefined>(() => entries[0]?.key)
+  const [selectedRecordCatalogItemId, setSelectedRecordCatalogItemId] = useState<string>()
   const [recordQuery, setRecordQuery] = useState('')
   const [roleFilter, setRoleFilter] = useState<'all' | DiagnosisDraftEntry['role']>('all')
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
-  const [addOpen, setAddOpen] = useState(false)
   const listSearchRef = useRef<HTMLInputElement>(null)
   const detailsHeadingRef = useRef<HTMLHeadingElement>(null)
   const [replacementOpen, setReplacementOpen] = useState(false)
@@ -267,10 +258,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   })
   const editConfirmedEntries = () => {
     if (pending || readOnly || state?.confirmation === undefined) return
-    if (entries.length > 0) {
-      setAddOpen(true)
-      return
-    }
+    if (entries.length > 0) return
     const confirmed = state.confirmation.entries.map((entry, index) => ({
       catalogItemId: entry.catalogItemId, key: `confirmed-${index}`, note: entry.note ?? '', role: entry.role,
       snapshotCode: entry.code, snapshotDisplay: entry.display,
@@ -279,7 +267,6 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     setEntries(confirmed)
     setSelectedKey(confirmed[0]?.key)
     setDirty(true)
-    setAddOpen(true)
   }
   const entryDisplay = (entry: DiagnosisDraftLine) => {
     const local = catalogById.get(entry.catalogItemId)
@@ -300,8 +287,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     snapshotCode: entry.code,
     snapshotDisplay: entry.display,
   })) ?? []
-  const activeKey = !displayedEntries.some(entry => entry.key === selectedKey)
-    ? displayedEntries[0]?.key : selectedKey
+  const activeKey = (displayedEntries.find(entry => entry.catalogItemId === selectedRecordCatalogItemId)
+    ?? displayedEntries[0])?.key
   const visibleEntries = displayedEntries.filter(entry => {
     const diagnosis = entryDisplay(entry)
     return (roleFilter === 'all' || entry.role === roleFilter)
@@ -326,7 +313,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     const diagnosis = entryDisplay(entry)
     const suffix = index === 0 ? '' : ` ${index + 1}`
     return (
-      <section aria-label={locale === 'zh-CN' ? '诊断详情' : 'Diagnosis details'} data-agent-diagnosis-entry=""
+      <section aria-label={locale === 'zh-CN' ? showChips && state?.confirmation !== undefined ? '填写诊断详情' : '诊断详情' : showChips && state?.confirmation !== undefined ? 'Enter diagnosis details' : 'Diagnosis details'} data-agent-diagnosis-entry=""
         className={cn('flex min-w-0 flex-col gap-4 p-4', !showChips && !showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
         {showChips ? null : (
           <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
@@ -393,8 +380,8 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     )
   }
   const catalogEditor = (
-    <div className="grid min-w-0 gap-4 @min-[760px]/case-content:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <DiagnosisCatalogPicker active={addOpen && !replacementOpen} disabled={pending || entries.length >= 8} excludedIds={usedCatalogItemIds}
+    <div className="flex min-w-0 flex-col gap-4">
+      <DiagnosisCatalogPicker active={!replacementOpen && !readOnly} collapsible={state?.confirmation !== undefined} disabled={pending || entries.length >= 8} excludedIds={usedCatalogItemIds}
         localCatalog={catalog} locale={locale} onSelect={selection => { if (selection !== undefined) addEntry(selection) }}
         search={referenceSearch} />
       {renderEditor()}
@@ -421,62 +408,27 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
               : `${displayedEntries.length} diagnoses · ${displayedEntries.filter(entry => entry.role === 'primary').length} primary`}</p>
         </div>
       </div>
-      <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
-        expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
-        encounter={encounter} resolveExistingDraft={state?.draft !== undefined}
-        manualControls={readOnly ? null : (
-          <Dialog onOpenChange={setAddOpen} open={addOpen}>
-            <DialogTrigger render={<Button data-agent-catalog-trigger="diagnosis" disabled={pending} size="sm" type="button" variant="outline" />}>
-              <PlusIcon data-icon="inline-start" />{locale === 'zh-CN' ? '添加诊断' : 'Add diagnosis'}
-            </DialogTrigger>
-            <DialogContent className="@container/case-content h-[min(760px,calc(100svh-2rem))] sm:max-w-5xl">
-              <DialogHeader>
-                <DialogTitle>{locale === 'zh-CN' ? '添加诊断' : 'Add diagnosis'}</DialogTitle>
-                <DialogDescription>{locale === 'zh-CN'
-                  ? '选择后加入本次诊断，修改自动保存；正式确认作用于整组诊断。'
-                  : 'Selections join this encounter and edits save automatically. Formal confirmation applies to the whole diagnosis group.'}</DialogDescription>
-              </DialogHeader>
-              <div className="min-h-0 flex-1 overflow-y-auto">{addOpen ? catalogEditor : null}</div>
-              {addOpen ? saveError : null}
-              <DialogFooter>
-                <p aria-live="polite" className="mr-auto text-xs text-muted-foreground">{saveStatus}</p>
-                {retrySave}
-                <DialogClose render={<Button type="button" />}>
-                  {locale === 'zh-CN' ? '完成选择' : 'Done selecting'}
-                </DialogClose>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        )}
-        onManualChange={changePreparedEntry} onManualRemove={removePreparedEntry} onConfirmed={consumePreparedEntries}
-        kind="diagnosis" locale={locale} manualItems={entries.map(entry => ({ label: entryDisplay(entry).display,
-          value: { source: 'manual', kind: 'diagnosis', catalogItemId: entry.catalogItemId, role: entry.role,
-            ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
-            ...(entry.note.trim() ? { note: entry.note.trim() } : {}) },
-        } satisfies ManualPreparedItem))} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
-      {state?.confirmation === undefined ? null : (
-        <Alert>
-          <CheckCircleIcon aria-hidden="true" />
-          <AlertTitle>
-            {messages.diagnosisConfirmed} · {locale === 'zh-CN'
-              ? `第 ${state.confirmation.revisionNumber} 版`
-              : `Revision ${state.confirmation.revisionNumber}`}
-          </AlertTitle>
-          <AlertDescription>
-            {readOnly ? `${messages.diagnosisConfirmedAt} · ${state.confirmation.confirmedAt}` : locale === 'zh-CN'
-              ? '本次就诊结束前仍可继续修改；再次确认会保留上一版本。'
-              : 'You can keep editing until the encounter ends; reconfirming preserves the previous revision.'}
-          </AlertDescription>
-        </Alert>
-      )}
-      {readOnly || state?.confirmation === undefined ? null : <Button disabled={pending} onClick={editConfirmedEntries}
-        className="self-start" size="sm" type="button" variant="outline">
-        {locale === 'zh-CN' ? '修改已确认诊断' : 'Edit confirmed diagnoses'}
-      </Button>}
-      {readOnly || state?.confirmation === undefined ? null : <DoctorRecordReviewNotice caseId={caseId}
-        authoredAt={state.confirmation.confirmedAt} locale={locale} onReview={editConfirmedEntries} />}
-      {state?.confirmation === undefined ? null : (
-        <div className="grid min-w-0 gap-4 @min-[760px]/case-content:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.2fr)]">
+      <DoctorOrderWorkspace
+        hasRecords={state?.confirmation !== undefined}
+        entry={readOnly ? null : <section aria-label={locale === 'zh-CN' ? '填写诊断' : 'Enter diagnosis'} className="flex min-w-0 flex-col gap-3">
+          {catalogEditor}
+          {state?.confirmation === undefined ? null : <Button disabled={pending} onClick={editConfirmedEntries}
+            className="self-start" size="sm" type="button" variant="outline">
+            {locale === 'zh-CN' ? '修改已确认诊断' : 'Edit confirmed diagnoses'}
+          </Button>}
+        </section>}
+        pending={
+          <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
+            expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
+            encounter={encounter} resolveExistingDraft={state?.draft !== undefined}
+            onManualChange={changePreparedEntry} onManualRemove={removePreparedEntry} onConfirmed={consumePreparedEntries}
+            kind="diagnosis" locale={locale} manualItems={entries.map(entry => ({ label: entryDisplay(entry).display,
+              value: { source: 'manual', kind: 'diagnosis', catalogItemId: entry.catalogItemId, role: entry.role,
+                ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
+                ...(entry.note.trim() ? { note: entry.note.trim() } : {}) },
+            } satisfies ManualPreparedItem))} scope={recommendationScope} unavailableReason={recommendationUnavailableReason} />
+        }
+        records={state?.confirmation === undefined ? null : (
           <section aria-label={locale === 'zh-CN' ? '诊断列表' : 'Diagnosis list'}
             className={cn('flex min-w-0 flex-col gap-3 border p-3', showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
             <Input aria-label={locale === 'zh-CN' ? '搜索本次诊断' : 'Search encounter diagnoses'}
@@ -503,7 +455,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
               const diagnosis = entryDisplay(entry)
               return (
                 <Button aria-pressed={entry.key === activeKey} className="h-auto min-w-0 justify-start whitespace-normal py-3"
-                  data-agent-diagnosis-entry="" key={entry.key} onClick={() => { setSelectedKey(entry.key); setMobileDetailOpen(true); queueMicrotask(() => detailsHeadingRef.current?.focus()) }}
+                  data-agent-diagnosis-entry="" key={entry.key} onClick={() => { setSelectedRecordCatalogItemId(entry.catalogItemId); setMobileDetailOpen(true); queueMicrotask(() => detailsHeadingRef.current?.focus()) }}
                   type="button" variant={entry.key === activeKey ? 'secondary' : 'outline'}>
                   <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
                     <span className="break-words text-left font-medium">{diagnosis.display}</span>
@@ -516,23 +468,40 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
               )
             })}
           </section>
-          {renderEditor(false)}
-        </div>
+        )}
+        details={state?.confirmation === undefined ? null : renderEditor(false)}
+      />
+      {state?.confirmation === undefined ? null : (
+        <Alert>
+          <CheckCircleIcon aria-hidden="true" />
+          <AlertTitle>
+            {messages.diagnosisConfirmed} · {locale === 'zh-CN'
+              ? `第 ${state.confirmation.revisionNumber} 版`
+              : `Revision ${state.confirmation.revisionNumber}`}
+          </AlertTitle>
+          <AlertDescription>
+            {readOnly ? `${messages.diagnosisConfirmedAt} · ${state.confirmation.confirmedAt}` : locale === 'zh-CN'
+              ? '本次就诊结束前仍可继续修改；再次确认会保留上一版本。'
+              : 'You can keep editing until the encounter ends; reconfirming preserves the previous revision.'}
+          </AlertDescription>
+        </Alert>
       )}
+      {readOnly || state?.confirmation === undefined ? null : <DoctorRecordReviewNotice caseId={caseId}
+        authoredAt={state.confirmation.confirmedAt} locale={locale} onReview={editConfirmedEntries} />}
       {!readOnly && entries.length > 0 && primaryCount !== 1 ? (
         <Alert variant="destructive">
           <CircleAlertIcon />
           <AlertTitle>{messages.diagnosisPrimaryRequiredDescription}</AlertTitle>
         </Alert>
       ) : null}
-      {readOnly || addOpen ? null : <div className="flex flex-wrap items-center justify-between gap-2">
+      {readOnly ? null : <div className="flex flex-wrap items-center justify-between gap-2">
         <p aria-live="polite" className="text-xs text-muted-foreground">{saveStatus}</p>
         {retrySave}
       </div>}
       {!readOnly && actions.save.success && !dirty ? (
         <Alert><CheckIcon /><AlertTitle>{messages.diagnosisDraftSaved}</AlertTitle></Alert>
       ) : null}
-      {readOnly || addOpen ? null : saveError}
+      {readOnly ? null : saveError}
       {readOnly || actions.confirm.error === null ? null : (
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
