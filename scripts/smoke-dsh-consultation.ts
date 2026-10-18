@@ -18,7 +18,7 @@ import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model
 import { recordingSourceDiagnosticSchema } from '../apps/server/src/application/consultation-history-summary.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../apps/server/tests/fixtures/consultation.ts'
 import { journeyReplies, runRecordingJourney } from '../apps/web/e2e/consultation-recording-journey.ts'
-import { recommendationFixture } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
+import { createRecommendationGuidelineDatabase, recommendationFixture } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
 import { runRecommendationJourney } from '../apps/web/e2e/doctor-recommendations-journey.ts'
 import { documentQualityFixture, qualityPatientReply } from '../apps/web/e2e/doctor-document-quality-fixture.ts'
 import { runDocumentQualityJourney } from '../apps/web/e2e/doctor-document-quality-journey.ts'
@@ -69,6 +69,8 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
   'apps/web/e2e/doctor-document-quality-journey.ts', 'apps/web/e2e/doctor-document-quality-fixture.ts',
   'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
+  'apps/server/src/application/guideline-corpus.ts', 'apps/server/src/infrastructure/sqlite/guideline-corpus.ts',
+  'apps/server/tests/fixtures/guideline-corpus.ts', 'apps/server/src/runtime.ts',
   'packages/contracts/src/doctor-recommendations.ts', 'packages/contracts/src/model-bridge.ts',
 ].map(async path => [path, createHash('sha256').update(await readFile(join(root, path))).digest('hex')])))
 const scratch = await mkdtemp(join(tmpdir(), 'clinmesh-dsh-consultation-'))
@@ -233,7 +235,8 @@ export function apply(ctx) {
 `)
   const recommendationReferenceDatabase = recommendationsOnly ? await createInvestigationReferenceDatabase(scratch) : undefined
   const recommendationReference = recommendationReferenceDatabase === undefined ? {}
-    : { activeReferenceReleaseId: 'investigation-e2e-v1', referenceDatabasePath: recommendationReferenceDatabase }
+    : { activeReferenceReleaseId: 'investigation-e2e-v1', referenceDatabasePath: recommendationReferenceDatabase,
+      guidelineDatabasePath: createRecommendationGuidelineDatabase(scratch) }
   hospital = await createClinMeshRuntime({
     ...recommendationReference,
     chatCompletionsProvider: {

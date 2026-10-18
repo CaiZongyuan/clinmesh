@@ -110,6 +110,12 @@ function Issue({ issue, messages, locale }: {
       <Badge variant={issue.status === 'retained' ? 'outline' : 'secondary'}>{issue.status === 'retained' ? messages.documentQualityRetained
         : messages.documentQualityVerification}</Badge>{' '}{issue.message}
     </p>
+    {issue.explanation === undefined ? null : <dl className="grid min-w-0 gap-1 whitespace-pre-wrap break-words">
+      <dt className="text-xs font-medium text-muted-foreground">{messages.documentQualityImpact}</dt>
+      <dd>{issue.explanation.impact}</dd>
+      <dt className="text-xs font-medium text-muted-foreground">{messages.documentQualitySuggestion}</dt>
+      <dd>{issue.explanation.suggestion}</dd>
+    </dl>}
     {issue.review === undefined ? null : <p className="whitespace-pre-wrap break-words text-xs text-muted-foreground">
       {issue.review.actorId} · {formatClinicalDateTime(issue.review.reviewedAt, locale)}
       {issue.review.reason ? ` · ${issue.review.reason}` : ''}

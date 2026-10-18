@@ -5,7 +5,7 @@ import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { test as base, expect } from './fixtures.ts'
-import { recommendationFixture } from './doctor-recommendations-fixture.ts'
+import { createRecommendationGuidelineDatabase, recommendationFixture } from './doctor-recommendations-fixture.ts'
 import { runRecommendationJourney } from './doctor-recommendations-journey.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 
@@ -16,6 +16,7 @@ const test = base.extend<{ recommendationCase: Awaited<ReturnType<typeof startCo
       const referenceDatabasePath = await createInvestigationReferenceDatabase(directory)
       const app = await startBrowserServer(webRoot, {
         activeReferenceReleaseId: 'investigation-e2e-v1', referenceDatabasePath,
+        guidelineDatabasePath: createRecommendationGuidelineDatabase(directory),
         patientPersonaModel: 'synthetic-persona', syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 30,
         chatCompletionsProvider: { completeJson: async input => ({ model: input.model,
           content: JSON.stringify(input.schemaName === 'patient_persona' ? persona : recommendationFixture(input)) }) },

@@ -137,6 +137,7 @@ describe('createDshDevelopmentPlan', () => {
       environment: {
         CLINMESH_DATABASE_PATH: '.data/clinmesh.sqlite',
         CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite',
+        CLINMESH_GUIDELINE_DATABASE_PATH: '.data/clinmesh-guidelines.sqlite',
         CLINMESH_WEB_ROOT: '/absolute/web-root',
         CLINMESH_PORT: '51869',
       },
@@ -154,6 +155,7 @@ describe('createDshDevelopmentPlan', () => {
           CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value',
           CLINMESH_DATABASE_PATH: resolve('/repo/.data/clinmesh.sqlite'),
           CLINMESH_REFERENCE_DATABASE_PATH: resolve('/repo/.data/clinmesh-reference.sqlite'),
+          CLINMESH_GUIDELINE_DATABASE_PATH: resolve('/repo/.data/clinmesh-guidelines.sqlite'),
           CLINMESH_WEB_ROOT: '/absolute/web-root',
         },
         output: { prefix: '[Server]' },

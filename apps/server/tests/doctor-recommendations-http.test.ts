@@ -117,12 +117,36 @@ it('reads prescription state from the installed medication config without treati
   expect(await fixture.read('prescription')).toMatchObject({ status: 'idle', items: [] })
 })
 
-it('explains an unavailable hospital laboratory catalog without making an unsupported model request', async () => {
-  const fixture = await setup()
+it('explains an unavailable hospital laboratory catalog while allowing only read-only reasoning', async () => {
+  const fixture = await setup(async input => {
+    expect(input.schemaName).toBe('doctor_recommendations')
+    expect(input.userPayload).toMatchObject({ kind: 'laboratory', mode: 'considerations-only' })
+    return { model: input.model, content: JSON.stringify({ items: [], considerations: [], missingInformation: [] }) }
+  })
   expect((await fixture.generate('laboratory')).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect(await fixture.read('laboratory')).toMatchObject({ status: 'missing-evidence', items: [],
     missingInformation: [expect.stringContaining('检验目录')] })
+})
+
+it.each(['caseSupported', 'applicable', 'qualifiersPreserved'] as const)('does not publish or downgrade a candidate rejected for %s, and names the actual review failure', async field => {
+  const fixture = await setup(async input => {
+    if (input.schemaName === 'doctor_recommendations') {
+      const output = diagnosisOutput(input)
+      output.items[0]!.rationale = '患者说没自行量过体温，因此没有任何体温资料。'
+      return { model: input.model, content: JSON.stringify({ ...output, missingInformation: ['需要先完成血常规、CRP和全套检查。'] }) }
+    }
+    return { model: input.model, content: JSON.stringify({ items: verificationOutput(input).items.map(item => ({ ...item,
+      [field]: false, reason: '已有分诊体温记录；患者未自行测量不能概括为没有体温资料。' })) }) }
+  })
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const state = await fixture.read()
+  expect(state).toMatchObject({ status: 'missing-evidence', items: [], considerations: [],
+    notices: [expect.objectContaining({ category: 'verification', message: expect.stringContaining('已有分诊体温记录') })] })
+  expect(state.missingInformation.join()).not.toContain('需要先完成血常规')
+  expect(await fixture.readCase()).toEqual(before)
 })
 
 function diagnosisOutput(input: Parameters<JsonChatCompletionsProvider['completeJson']>[0]) {
@@ -142,6 +166,19 @@ function verificationOutput(input: Parameters<JsonChatCompletionsProvider['compl
     guidelineSupported: true, caseSupported: true, applicable: true, qualifiersPreserved: true,
   })) }
 }
+
+it('keeps a case-supported diagnostic direction read-only when only guideline support is absent', async () => {
+  const fixture = await setup(async input => ({ model: input.model, content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+    ? diagnosisOutput(input) : { items: verificationOutput(input).items.map(item => ({ ...item, guidelineSupported: false,
+      reason: '现有条款提供评估背景，尚未支持该具体诊断。' })) }) }))
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject({ status: 'ready', items: [],
+    considerations: [expect.objectContaining({ id: 'hypertension-candidate', label: '高血压' })],
+    notices: [expect.objectContaining({ category: 'guideline', message: expect.stringContaining('尚未支持该具体诊断') })] })
+  expect(await fixture.readCase()).toEqual(before)
+})
 
 function prescriptionOutput(input: Parameters<JsonChatCompletionsProvider['completeJson']>[0]) {
   const base = diagnosisOutput(input)
@@ -537,10 +574,15 @@ it('reads every oversized clinical catalog batch with selected original history 
 }, 30_000)
 
 it.each(['incomplete', 'foreign-id', 'duplicate-id', 'cross-batch-id', 'none-supported'])(
-  'does not generate from an incomplete or invalid clinical catalog selection (%s)', async failure => {
+  'does not generate executable suggestions from an incomplete, invalid or empty catalog selection (%s)', async failure => {
     const requests: string[] = []
     const fixture = await setup(async input => {
       requests.push(input.schemaName)
+      if (input.schemaName === 'doctor_recommendations') {
+        expect(failure).toBe('none-supported')
+        expect(input.userPayload).toMatchObject({ mode: 'considerations-only', catalogs: { laboratory: { items: [] } } })
+        return { model: input.model, content: JSON.stringify({ items: [], considerations: [], missingInformation: [] }) }
+      }
       expect(input.schemaName).toBe('doctor_recommendation_catalog_selection')
       const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() })) }) }) }).parse(input.userPayload)
       const firstId = payload.catalogs.laboratory.items[0]!.id
@@ -559,7 +601,10 @@ it.each(['incomplete', 'foreign-id', 'duplicate-id', 'cross-batch-id', 'none-sup
       : failure === 'none-supported' ? { status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('适用的检验项目')] }
         : { status: 'failed', items: [], errorCode: 'AI_RESPONSE_INVALID' })
     expect(requests.length).toBeGreaterThan(0)
-    expect(requests.every(name => name === 'doctor_recommendation_catalog_selection')).toBe(true)
+    if (failure === 'none-supported') {
+      expect(requests.at(-1)).toBe('doctor_recommendations')
+      expect(requests.slice(0, -1).every(name => name === 'doctor_recommendation_catalog_selection')).toBe(true)
+    } else expect(requests.every(name => name === 'doctor_recommendation_catalog_selection')).toBe(true)
     expect(await fixture.readCase()).toEqual(before)
   },
 )
@@ -641,8 +686,12 @@ it('uses installed imaging metadata and invalidates a suggestion when its actual
       verificationPayload = input.userPayload
       return { content: JSON.stringify(verificationOutput(input)), model: input.model }
     }
-    const payload = z.object({ catalogs: z.object({ imaging: z.object({ items: z.array(z.object({ available: z.boolean(),
+    const payload = z.object({ mode: z.string(), catalogs: z.object({ imaging: z.object({ items: z.array(z.object({ available: z.boolean(),
       service: z.object({ id: z.string() }) })) }) }).strict() }).parse(input.userPayload)
+    if (payload.mode === 'considerations-only') {
+      expect(payload.catalogs.imaging.items.some(item => item.available)).toBe(false)
+      return { model: input.model, content: JSON.stringify({ items: [], considerations: [], missingInformation: [] }) }
+    }
     expect(payload.catalogs.imaging.items.find(item => item.service.id === 'imaging-chest-ct-plain')?.available).toBe(true)
     const { catalogItemId: _id, ...common } = diagnosisOutput(input).items[0]!
     return { content: JSON.stringify({ items: [{ ...common, kind: 'imaging', serviceId: 'imaging-chest-ct-plain',
@@ -661,7 +710,7 @@ it('uses installed imaging metadata and invalidates a suggestion when its actual
   expect((await fixture.generate('imaging')).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect(await fixture.read('imaging')).toMatchObject({ generation: 2, status: 'missing-evidence', items: [] })
-  expect(requests).toBe(2)
+  expect(requests).toBe(3)
   expect(await fixture.readCase()).toEqual(before)
 })
 
@@ -735,7 +784,10 @@ it.each(['guidelineSupported', 'caseSupported', 'applicable', 'qualifiersPreserv
   })
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read()).toMatchObject({ status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('独立核验')] })
+  expect(await fixture.read()).toMatchObject(field === 'guidelineSupported'
+    ? { status: 'ready', items: [], considerations: [expect.objectContaining({ id: 'hypertension-candidate' })],
+      notices: [expect.objectContaining({ category: 'guideline' })] }
+    : { status: 'missing-evidence', items: [], considerations: [], notices: [expect.objectContaining({ category: 'verification' })] })
   expect(schemas).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
 })
 
@@ -1097,7 +1149,7 @@ it.each(['Device', 'SupplyDelivery'])('reads all recommendation kinds with a vis
       return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
     }
   }()
-  const fixture = await setup(async input => ({ content: JSON.stringify({ items: [], missingInformation: [] }), model: input.model }), { syntheaProvider })
+  const fixture = await setup(async input => ({ content: JSON.stringify({ items: [], considerations: [], missingInformation: [] }), model: input.model }), { syntheaProvider })
   const before = await fixture.readCase()
   for (const kind of ['laboratory', 'diagnosis', 'prescription']) {
     expect(await fixture.read(kind)).toMatchObject({ kind, status: 'idle' })
@@ -1317,7 +1369,7 @@ it('stops after the bounded Provider retry on rate limits and preserves clinical
   expect(await fixture.readCase()).toEqual(before)
 })
 
-it('declines to invent a guideline when the public case contains none of the acquired guideline scopes', async () => {
+it.each(['legacy-format', 'foreign-case-reference'] as const)('independently checks read-only case reasoning with the supplied reference schema when no guideline is acquired (%s)', async failure => {
   const syntheaProvider = new class extends StubSyntheaProvider {
     override async generate() {
       const corpus = await super.generate()
@@ -1326,11 +1378,50 @@ it('declines to invent a guideline when the public case contains none of the acq
       return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
     }
   }()
-  const fixture = await setup(undefined, { syntheaProvider })
+  const requests: string[] = []
+  let suppliedEvidence: unknown
+  let generationAttempts = 0
+  const generationSchemas: Array<{ schema: Record<string, unknown>; evidenceIds: string[]; prompt: string }> = []
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    const payload = z.object({ guidelines: z.array(z.unknown()), caseEvidence: z.array(z.object({ id: z.string(), kind: z.string() }).passthrough()),
+      considerations: z.array(z.object({ id: z.string() })).optional() }).parse(input.userPayload)
+    expect(payload.guidelines).toEqual([])
+    if (input.schemaName === 'doctor_recommendations') {
+      generationSchemas.push({ schema: input.jsonSchema, evidenceIds: payload.caseEvidence.map(item => item.id), prompt: input.systemPrompt })
+      expect(input.jsonSchema).toMatchObject({ required: expect.arrayContaining(['considerations']),
+        properties: { items: { maxItems: 0 } } })
+      const first = generationAttempts++ === 0
+      if (first && failure === 'legacy-format') return { model: input.model, content: JSON.stringify({ items: [], missingInformation: [] }) }
+      suppliedEvidence = payload.caseEvidence
+      const evidence = payload.caseEvidence.find(item => item.kind === 'presentation')!
+      return { model: input.model, content: JSON.stringify({ items: [], considerations: [{
+        id: 'synthetic-dizziness-consideration', label: '核对头晕的症状演变', rationale: '结合当前主诉提出待核实方向，不作确诊。',
+        supportingInformation: ['当前主诉包含头晕。'], opposingInformation: [],
+        missingInformation: ['补问是否出现新的伴随表现，以决定后续评估方向。'],
+        caseEvidenceIds: [first && failure === 'foreign-case-reference' ? 'other-patient-evidence' : evidence.id],
+      }], missingInformation: [] }) }
+    }
+    expect(input.schemaName).toBe('doctor_recommendation_verification')
+    expect(payload.caseEvidence).toEqual(suppliedEvidence)
+    return { model: input.model, content: JSON.stringify({ items: payload.considerations!.map(item => ({ id: item.id,
+      guidelineSupported: false, caseSupported: true, applicable: true, qualifiersPreserved: true })) }) }
+  }, { syntheaProvider })
+  const before = await fixture.readCase()
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read()).toMatchObject({ status: 'missing-evidence', guidelines: [], items: [],
-    missingInformation: [expect.stringContaining('没有已取得的适用指南')] })
+  expect(generationSchemas).toHaveLength(2)
+  for (const generation of generationSchemas) expect(generation.schema).toMatchObject({ properties: {
+    considerations: { maxItems: 8, items: { properties: { caseEvidenceIds: {
+      minItems: 1, maxItems: 12, items: { enum: generation.evidenceIds },
+    } } } },
+  } })
+  if (failure === 'foreign-case-reference') expect(generationSchemas[1]!.prompt).toContain('considerations.0.caseEvidenceIds.0')
+  expect(await fixture.read()).toMatchObject({ status: 'ready', guidelines: [], items: [],
+    considerations: [expect.objectContaining({ id: 'synthetic-dizziness-consideration' })],
+    notices: [expect.objectContaining({ category: 'guideline' })] })
+  expect(requests).toEqual(['doctor_recommendations', 'doctor_recommendations', 'doctor_recommendation_verification'])
+  expect(await fixture.readCase()).toEqual(before)
 })
 
 it('preserves a formal no-medication conclusion and explains why a new prescription recommendation is unnecessary', async () => {

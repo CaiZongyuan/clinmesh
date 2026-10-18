@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import {
   defaultImagingAssetDirectory,
   defaultImagingCatalogDirectory,
+  defaultGuidelineDatabasePath,
   defaultPathologyAssetDirectory,
   defaultPathologyCatalogDirectory,
   readServerConfig,
@@ -12,6 +13,28 @@ import {
 } from '../src/config.ts'
 
 describe('Node.js server configuration', () => {
+  it('resolves an independent local guideline corpus and preserves an explicit override', () => {
+    const environment = {
+      CLINMESH_AUTH_SECRET: 'synthetic-auth-secret-at-least-32-characters',
+      CLINMESH_CURSOR_SECRET: 'synthetic-cursor-secret-at-least-32-characters',
+      CLINMESH_DATABASE_PATH: '/synthetic/hospital.sqlite',
+      CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+    }
+    expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_DATABASE_PATH: '/synthetic/guidelines.sqlite' }))
+      .toMatchObject({ guidelineDatabasePath: '/synthetic/guidelines.sqlite' })
+    expect(readServerConfig(environment)).toHaveProperty('guidelineDatabasePath',
+      expect.stringMatching(/[\\/]\.data[\\/]clinmesh-guidelines\.sqlite$/))
+    expect(() => readServerConfig({ ...environment, CLINMESH_GUIDELINE_DATABASE_PATH: ' ' })).toThrow()
+    expect(readServerConfig(environment, '/clinmesh-config-test-isolated')).toHaveProperty('guidelineNonCommercialUse', false)
+    expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: 'true' }))
+      .toHaveProperty('guidelineNonCommercialUse', true)
+    expect(readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: 'false' }))
+      .toHaveProperty('guidelineNonCommercialUse', false)
+    for (const value of ['', 'yes', '1']) {
+      expect(() => readServerConfig({ ...environment, CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: value })).toThrow()
+    }
+  })
+
   it('uses DSH without duplicate Provider configuration and requires a trusted bridge', () => {
     const environment = {
       CLINMESH_AUTH_SECRET: 'synthetic-auth-secret-at-least-32-characters',
@@ -48,6 +71,8 @@ describe('Node.js server configuration', () => {
       authSecret: 'auth-secret-with-at-least-32-characters',
       cursorSecret: 'cursor-secret-with-at-least-32-characters',
       databasePath: '/var/lib/clinmesh/clinmesh.sqlite',
+      guidelineDatabasePath: defaultGuidelineDatabasePath,
+      guidelineNonCommercialUse: false,
       demoPassword: 'Synthetic-password-2026!',
       hostname: '127.0.0.1',
       // 影像素材默认位置：清单在仓库根目录，像素安装在 .data 下。
@@ -211,6 +236,7 @@ describe('Node.js server configuration', () => {
       'CLINMESH_DEMO_PASSWORD=Env-demo-password-2026!',
       'CLINMESH_PORT=51869',
       'CLINMESH_REFERENCE_DATABASE_PATH=.data/reference.sqlite',
+      'CLINMESH_GUIDELINE_DATABASE_PATH=.data/guidelines.sqlite',
       'CLINMESH_REFERENCE_RELEASE_ID=reference-production-v1',
       '',
     ].join('\n'), 'utf8')
@@ -228,6 +254,7 @@ describe('Node.js server configuration', () => {
           databasePath: join(workspace, '.data/clinmesh.sqlite'),
           port: 51867,
           referenceDatabasePath: join(workspace, '.data/reference.sqlite'),
+          guidelineDatabasePath: join(workspace, '.data/guidelines.sqlite'),
           referenceReleaseId: 'reference-production-v1',
         })
     } finally {

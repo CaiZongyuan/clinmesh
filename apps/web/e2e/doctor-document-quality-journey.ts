@@ -66,8 +66,10 @@ export async function runDocumentQualityJourney(input: {
     await expect(prior).toHaveCount(0)
     await expect(page.getByText('待补充', { exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '查看依据', exact: true })).toHaveCount(0)
+    expect((await current())?.issues.filter(issue => issue.field === 'auxiliaryExamination')).toEqual([])
     const verify = page.getByRole('region', { name: '体格检查质控提示', exact: true })
     await expect(verify).toContainText('待核实')
+    await expect(verify).toContainText('对照原文核实两次测量的时间和来源')
     await expect(verify.locator('blockquote')).toHaveCount(0)
     input.progress?.('未保存编辑和四类来源接线正常，缺项/遗漏待补充提示及依据入口均不展示')
 

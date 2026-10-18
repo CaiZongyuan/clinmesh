@@ -73,6 +73,8 @@ function stubQuality() {
         documentFingerprint: 'a'.repeat(64), inputFingerprint: 'b'.repeat(64), generation: request.input.clientRevision ?? 1,
         stale: false, status: 'ready', notices: [], issues: [{ id: 'prior-history-conflict', kind: 'inconsistency',
           field: 'priorMedicalHistory', classification: 'needs-verification', message: '请核实过敏史的不同记录。',
+          explanation: { impact: '当前正文与患者自述的过敏情况不同，阅读者可能误解已核实的过敏史。',
+            suggestion: '对照患者原话核实药物名称、反应和时间，并修订当前表述或核实后保留。' },
           basis: { label: '病历事实一致性核对', kind: 'project' }, relatedFingerprint: 'c'.repeat(64), status: 'open',
           evidence: [{ id: 'patient-allergy', kind: 'patient', label: '患者自述', text: '曾经服用青霉素后起皮疹。',
             recordedAt: '2026-10-15T09:00:00+08:00' }, { id: 'document-history', kind: 'document', label: '当前病历',
@@ -143,6 +145,10 @@ it('shows a verification hint without evidence controls, review actions or docum
   stubQuality()
   const mounted = mount()
   const issues = await screen.findByRole('region', { name: '既往史质控提示' })
+  expect(within(issues).getByText('影响')).toBeTruthy()
+  expect(within(issues).getByText('当前正文与患者自述的过敏情况不同，阅读者可能误解已核实的过敏史。')).toBeTruthy()
+  expect(within(issues).getByText('处理建议')).toBeTruthy()
+  expect(within(issues).getByText('对照患者原话核实药物名称、反应和时间，并修订当前表述或核实后保留。')).toBeTruthy()
   expect(within(issues).queryByText('曾经服用青霉素后起皮疹。')).toBeNull()
   expect(within(issues).getByText('请核实过敏史的不同记录。')).toBeTruthy()
   expect(within(issues).queryByRole('button', { name: '查看依据' })).toBeNull()

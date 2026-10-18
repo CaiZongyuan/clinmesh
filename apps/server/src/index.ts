@@ -23,6 +23,8 @@ const runtime = await createClinMeshRuntime({
   cursorSecret: config.cursorSecret,
   ...(config.consultationRecordingModel === undefined ? {} : { consultationRecordingModel: config.consultationRecordingModel }),
   databasePath,
+  guidelineDatabasePath: config.guidelineDatabasePath,
+  guidelineNonCommercialUse: config.guidelineNonCommercialUse,
   demoPassword: config.demoPassword,
   imagingAssetDirectory: resolve(config.imagingAssetDirectory),
   imagingCatalogDirectory: resolve(config.imagingCatalogDirectory),
