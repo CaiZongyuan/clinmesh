@@ -235,23 +235,29 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const rolesValid = kind !== 'diagnosis' || available.filter(row => row.value.kind === 'diagnosis' && row.value.role === 'primary').length === 1
   const succeeded = submission.isSuccess && submission.variables.navigation === navigation.current.token
   const recordsUpdated = succeeded && recordVisible(submission.variables, submission.data)
-  const canConfirm = !succeeded && !disabled && rolesValid && state !== undefined && !state.stale && !pending && job.error === null && !job.paused
+  const subsequentIntent = succeeded && recordsUpdated && state !== undefined
+    && (state.generation > submission.variables.state.generation || state.inputFingerprint !== submission.variables.state.inputFingerprint)
+    && !available.some(row => submission.variables.rows.some(previous => clinicalValue(row.value) === clinicalValue(previous.value) && row.signature === previous.signature))
+  const completedIntent = succeeded && !subsequentIntent
+  const refreshRecords = succeeded && !recordsUpdated
+  const canConfirm = !completedIntent && !disabled && rolesValid && state !== undefined && !state.stale && !pending && job.error === null && !job.paused
     && (state.status === 'ready' || state.status === 'missing-evidence' && available.every(row => row.value.source === 'manual'))
   const block = available.map(row => row.value.source === 'manual' || row.item === undefined ? undefined : unavailableReason?.(row.item)).find(reason => reason !== undefined)
-  const failed = !succeeded && (job.error !== null || state?.status === 'failed' || submission.isError && submission.variables?.view === view)
+  const failed = !completedIntent && (job.error !== null || state?.status === 'failed' || submission.isError && submission.variables?.view === view)
   if (!enabled) return null
   return <>
     <Card aria-label={titles[kind][zh ? 0 : 1]} role="region" className="mb-4 min-w-0" data-agent-phase={job.pending ? 'working' : 'ready'}>
       <CardHeader><CardTitle>{titles[kind][zh ? 0 : 1]}</CardTitle><CardAction><div className="flex flex-wrap gap-2">
-        <Button disabled={succeeded ? false : pending || job.paused || state === undefined} onClick={() => {
-          if (succeeded) { void synchronize(submission.data, submission.variables);return }
-          submission.reset();job.refresh()
-        }} size="sm" type="button" variant="ghost"><RefreshCwIcon data-icon="inline-start" />{succeeded ? zh ? '刷新记录' : 'Refresh records' : zh ? '刷新' : 'Refresh'}</Button>
+        <Button disabled={refreshRecords ? false : pending || job.paused || state === undefined} onClick={() => {
+          if (refreshRecords) { void synchronize(submission.data, submission.variables);return }
+          if (!succeeded) submission.reset()
+          job.refresh()
+        }} size="sm" type="button" variant="ghost"><RefreshCwIcon data-icon="inline-start" />{refreshRecords ? zh ? '刷新记录' : 'Refresh records' : zh ? '刷新' : 'Refresh'}</Button>
         {preparation === undefined ? null : <Button onClick={preparation.togglePaused} size="sm" type="button" variant="ghost">{job.paused ? zh ? '恢复自动准备' : 'Resume' : zh ? '暂停自动准备' : 'Pause'}</Button>}
         <Button onClick={() => preparation === undefined ? setLocalDetails(true) : preparation.openDetails(kind)} size="sm" type="button" variant="outline"><BookOpenIcon data-icon="inline-start" />{zh ? '依据与说明' : 'Evidence and details'}</Button>
       </div></CardAction></CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-3">
-        <p className="text-xs text-muted-foreground" role="status">{succeeded ? zh ? `已完成${kind === 'diagnosis' ? '确认' : '开具'}，${recordsUpdated ? '记录已更新。' : '记录暂未刷新，请刷新查看。'}` : recordsUpdated ? 'Confirmed; records are up to date.' : 'Confirmed; refresh the records to see the result.' : job.paused ? zh ? '自动准备已暂停' : 'Preparation paused' : pending ? zh ? '正在按最新资料更新，旧自动项目暂不可开具。' : 'Updating; previous automatic items cannot be submitted yet.'
+        <p className="text-xs text-muted-foreground" role="status">{completedIntent ? zh ? `已完成${kind === 'diagnosis' ? '确认' : '开具'}，${recordsUpdated ? '记录已更新。' : '记录暂未刷新，请刷新查看。'}` : recordsUpdated ? 'Confirmed; records are up to date.' : 'Confirmed; refresh the records to see the result.' : job.paused ? zh ? '自动准备已暂停' : 'Preparation paused' : pending ? zh ? '正在按最新资料更新，旧自动项目暂不可开具。' : 'Updating; previous automatic items cannot be submitted yet.'
           : failed ? zh ? '更新或提交未完成，草稿已保留，可重试。' : 'Update or submission failed. Your draft is preserved.'
           : state?.stale ? zh ? '资料有变化，等待重新核对。' : 'Information changed; another check is needed.'
           : state?.status === 'ready' && job.ready ? zh ? '已按最新资料核对，由医生确认。' : 'Checked against the latest information; awaiting confirmation.'
@@ -263,7 +269,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
             <div className="min-w-0 flex-1"><p className="break-words font-medium">{row.label}</p><p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
             <Badge variant="secondary">{needsReview(row.key) ? zh ? '请核对新资料' : 'Review new information' : !complete(row.value) ? zh ? '待补充' : 'Incomplete' : row.value.source === 'manual' ? zh ? '医生已调整' : 'Edited by doctor' : !canConfirm ? zh ? '待更新' : 'Updating' : zh ? '待确认' : 'Ready'}</Badge>
             <Button onClick={() => { setEditing({ key: row.key, label: row.label, value: { ...row.value }, fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token });setEditError(false) }} size="sm" type="button" variant="ghost">{needsReview(row.key) ? zh ? '核对' : 'Review' : zh ? '调整' : 'Edit'}</Button>
-            <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => update(previous => ({ ...previous, removed: [...previous.removed.filter(key => key !== row.key), row.key] }))} size="icon-sm" type="button" variant="ghost"><Trash2Icon /></Button>
+            <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => update(previous => ({ ...previous, removed: [...previous.removed.filter(key => key !== row.key), row.key], edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)) }))} size="icon-sm" type="button" variant="ghost"><Trash2Icon /></Button>
           </div>)}
         </div>}
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}

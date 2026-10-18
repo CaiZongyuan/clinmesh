@@ -413,3 +413,49 @@ it('keeps a new manualItems edit visible while the confirmed case refresh is sti
     expect(screen.getByText(/10 mg/)).toBeTruthy()
   } finally { await act(async () => { read.complete(Response.json({})) }); unsubscribe() }
 })
+
+it('can issue a retained unselected manual item after new preparation without reissuing the completed item', async () => {
+  const first = state().items[0]!
+  if (first.kind !== 'diagnosis') throw new Error('Expected diagnosis fixture')
+  const { role: _role, referenceConcept: _referenceConcept, ...common } = first
+  const items = ['A', 'B'].map(name => ({ ...common, kind: 'laboratory' as const, id: `suggestion-${name}`,
+    catalogItemId: `lab-${name}`, label: `检查${name}`, indicationCode: 'clinical-evaluation' }))
+  let current = state({ kind: 'laboratory', items })
+  const issued: string[] = []
+  const calls = stubRequests(() => current, () => {
+    const name = issued.length === 0 ? 'A' : 'B'; issued.push(name)
+    return Response.json({ data: { kind: 'laboratory', draftVersion: issued.length * 2, encounterVersion: '2', recordIds: [`formal-${name}`] },
+      auditId: `audit-${name}`, requestId: `request-${name}`, effects: [], warnings: [] })
+  })
+  const original = props({ kind: 'laboratory', expectedDraftVersion: 0 })
+  const mounted = mount(original)
+  const observer = new QueryObserver(mounted.client, { queryKey: ['doctor-case', 'scope', 'case-fever'], retry: false,
+    queryFn: async () => doctorCaseDetailSchema.parse({ caseId: 'case-fever', allergies: [], encounter: { id: 'encounter-fever', versionId: '2', status: 'in-progress' },
+      patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', synthetic: true, versionId: '1' },
+      presentation: null, priorFacts: [], status: 'first-visit', taskId: 'task', taskVersion: '1', laboratoryRequests: {
+        draftVersion: issued.length * 2, reportingSupported: true, requests: issued.map(name => ({ id: `formal-${name}`, catalogItemId: `lab-${name}`,
+          indicationCode: 'clinical-evaluation', serviceRequestId: `service-${name}`, serviceRequestVersion: '1', taskId: `task-${name}`, taskVersion: '1', status: 'issued', version: 1 })),
+      } }) })
+  const unsubscribe = observer.subscribe(() => {})
+  try {
+    const user = userEvent.setup()
+    await screen.findByText('检查B'); await user.click(screen.getAllByRole('button', { name: '调整' })[1]!)
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    await user.click(selectionCheckbox('检查B')); await user.click(confirmButton())
+    await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    expect(issued).toEqual(['A'])
+    expect(screen.queryByText('检查A')).toBeNull()
+    expect(screen.getByText('检查B')).toBeTruthy()
+    current = state({ kind: 'laboratory', items, generation: 2, inputFingerprint: 'b'.repeat(64) })
+    mounted.rerenderPanel({ ...original, inputRevision: 'case-source-2', expectedDraftVersion: 2 })
+    await screen.findByText('请核对新资料'); await user.click(screen.getByRole('button', { name: '核对' }))
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', false))
+    await user.click(confirmButton()); await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+    const confirmations = calls.filter(call => call.path.endsWith('/actions/confirm')).map(call => confirmDoctorPreparationRequestSchema.parse(call.body))
+    expect(confirmations).toHaveLength(2)
+    expect(confirmations[0]!.input.selections).toMatchObject([{ catalogItemId: 'lab-A', source: 'agent' }])
+    expect(confirmations[1]!.input).toMatchObject({ generation: 2, expectedDraftVersion: 2, inputFingerprint: 'b'.repeat(64), selections: [{ catalogItemId: 'lab-B', source: 'manual' }] })
+    expect(issued).toEqual(['A', 'B'])
+  } finally { unsubscribe() }
+})
