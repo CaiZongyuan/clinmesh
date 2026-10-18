@@ -419,6 +419,12 @@ export function apply(ctx) {
     expect(rejectedSchema.status).toBe(503)
     expect(await rejectedSchema.json()).toEqual({ error: 'MODEL_UNAVAILABLE' })
     report.qualitySchemaAllowlist = { arbitrarySchemaRejected: true }
+    let lastQualityClientId: string | undefined
+    page.on('request', request => {
+      if (new URL(request.url()).pathname.endsWith('/document-quality-control/actions/check')) {
+        lastQualityClientId = checkClinicalDocumentQualityRequestSchema.parse(request.postDataJSON()).input.clientId
+      }
+    })
     report.qualityControl = await runDocumentQualityJourney({ page, read,
       quality: async clientId => {
         const response = await hospital!.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}/document-quality-control${clientId === undefined ? '' : `?clientId=${encodeURIComponent(clientId)}`}`,
@@ -432,6 +438,15 @@ export function apply(ctx) {
       },
       agentSign: () => nativeCall('clinmesh_prepare_sign_document', {}),
       progress: message => console.log(message),
+    }).catch(async error => {
+      report.qualityCompactOnFailure = await page.locator('[data-document-quality-compact]').getByRole('button').allTextContents()
+      const response = await hospital!.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}/document-quality-control${lastQualityClientId === undefined ? '' : `?clientId=${encodeURIComponent(lastQualityClientId)}`}`, { headers: { cookie } })
+      if (response.ok) {
+        const state = clinicalDocumentQualityControlStateSchema.parse(await response.json())
+        report.qualityStateOnFailure = { status: state.status, stale: state.stale, errorCode: state.errorCode,
+          issues: state.issues.map(issue => ({ kind: issue.kind, field: issue.field, status: issue.status })) }
+      }
+      throw error
     })
     const recorded = await calls()
     expect(recorded.filter(call => call.kind === 'auxiliary').every(call => call.tools === false)).toBe(true)
