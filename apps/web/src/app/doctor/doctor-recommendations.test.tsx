@@ -86,6 +86,33 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it.each(['CATALOG_CONFLICT', 'WORKFLOW_CONFLICT'])('keeps the prescription-specific explanation for a %s rejection', async code => {
+    stubRequests(() => prescriptionState(), () => Response.json({ error: { code, message: 'private-prescription-rule' } }, { status: 409 }))
+    mount(props({ kind: 'prescription' }))
+    await screen.findByText('合成药品')
+    await userEvent.setup().click(confirmButton())
+    expect(await screen.findByText('当前诊断、过敏信息、目录或处方状态不允许正式开具，请检查后重试。')).toBeTruthy()
+    expect(screen.queryByText('private-prescription-rule')).toBeNull()
+  })
+  it('preserves unsaved adjustment text while autosave temporarily disables actions', async () => {
+    stubRequests()
+    const onManualChange = vi.fn()
+    const initial = props({ onManualChange })
+    const mounted = mount(initial)
+    await screen.findByText('发热，未特指')
+    const form = await edit()
+    fireEvent.change(form.getByRole('textbox', { name: '备注' }), { target: { value: '正在调整\n尚未提交的备注' } })
+    mounted.rerenderPanel({ ...initial, disabled: true })
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: '备注' })).toHaveProperty('value', '正在调整\n尚未提交的备注')
+    const keep = screen.getByRole('button', { name: '保留本次调整' })
+    expect(keep).toHaveProperty('disabled', true)
+    fireEvent.submit(keep.closest('form')!)
+    expect(onManualChange).not.toHaveBeenCalled()
+    mounted.rerenderPanel(initial)
+    await userEvent.setup().click(screen.getByRole('button', { name: '保留本次调整' }))
+    expect(onManualChange).toHaveBeenCalledWith(expect.objectContaining({ value: expect.objectContaining({ note: '正在调整\n尚未提交的备注' }) }))
+  })
   it('preserves line breaks when a doctor adjusts a diagnosis note', async () => {
     stubRequests()
     const onManualChange = vi.fn()

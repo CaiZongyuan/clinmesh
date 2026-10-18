@@ -18,7 +18,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { BookOpenIcon, RefreshCwIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { WorkspaceSelect } from '../workspace-select.tsx'
-import { confirmDoctorPreparation, newIdempotencyKey } from '../api-client.ts'
+import { ApiClientError, confirmDoctorPreparation, newIdempotencyKey } from '../api-client.ts'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJob, type DraftPreferences } from './doctor-preparation-state.tsx'
@@ -181,7 +181,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const recordIdentity = JSON.stringify([scope, caseId, kind])
   const recordView = useRef({ identity: recordIdentity, token: 0 })
   if (recordView.current.identity !== recordIdentity) recordView.current = { identity: recordIdentity, token: recordView.current.token + 1 }
-  const navigationIdentity = JSON.stringify([scope, caseId, kind, enabled, disabled])
+  const navigationIdentity = JSON.stringify([scope, caseId, kind, enabled])
   const navigation = useRef({ identity: navigationIdentity, token: 0 })
   if (navigation.current.identity !== navigationIdentity) navigation.current = { identity: navigationIdentity, token: navigation.current.token + 1 }
   const viewIdentity = JSON.stringify([navigationIdentity, inputRevision])
@@ -273,6 +273,9 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const block = available.length > 8 ? zh ? '一次最多选择 8 项。' : 'Select at most eight items.'
     : available.map(row => row.value.source === 'manual' ? manualUnavailableReason?.(row.value) : row.item === undefined ? undefined : unavailableReason?.(row.item)).find(reason => reason !== undefined)
   const submissionError = submission.isError && submission.variables?.view === view ? submission.error : null
+  const submissionMessage = submissionError === null ? null : kind === 'prescription' && submissionError instanceof ApiClientError
+    && (submissionError.code === 'CATALOG_CONFLICT' || submissionError.code === 'WORKFLOW_CONFLICT')
+    ? getWorkspaceMessages(locale).prescriptionIssueConflictDescription : getWorkspaceErrorMessage(submissionError, getWorkspaceMessages(locale))
   const failed = !completedIntent && (job.error !== null || state?.status === 'failed' || submissionError !== null)
   if (!enabled) return null
   return <>
@@ -294,7 +297,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
           : state?.status === 'ready' && job.ready ? zh ? '已按最新资料核对，由医生确认。' : 'Checked against the latest information; awaiting confirmation.'
           : state?.status === 'missing-evidence' ? zh ? '暂无可直接开具的项目，可查看说明。' : 'No executable items; see the details.'
           : zh ? '尚未完成核对。' : 'Checks are not complete.'}</p>
-        {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(submissionError, getWorkspaceMessages(locale))}</AlertDescription></Alert>}
+        {submissionError === null ? null : <Alert variant="destructive"><AlertDescription>{submissionMessage}</AlertDescription></Alert>}
         {rows.length === 0 ? <p className="text-sm text-muted-foreground">{zh ? '暂无可直接确认或开具的项目。' : 'No items are ready to confirm or issue.'}</p> : <div className="flex flex-col divide-y">
           {rows.map(row => <div className="flex min-w-0 flex-wrap items-center gap-3 py-3" key={row.key}>
             <Checkbox aria-label={`${zh ? '选择' : 'Select '}${row.label}`} checked={!preferences.unselected.includes(row.key) && preferences.removed[row.key] === undefined && complete(row.value)} disabled={!complete(row.value)} onCheckedChange={checked => update(previous => {
@@ -326,7 +329,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     {preparation === undefined ? <DoctorPreparationDetailsDialog open={localDetails} onOpenChange={setLocalDetails} title={zh ? '依据与说明' : 'Evidence and details'}><DoctorRecommendationDetails job={job} locale={locale} /></DoctorPreparationDetailsDialog> : null}
     <Dialog open={activeEditing !== undefined} onOpenChange={open => { if (!open) setEditing(undefined) }}><DialogContent><DialogHeader><DialogTitle>{zh ? '调整项目' : 'Edit item'}</DialogTitle><DialogDescription>{activeEditing?.label}</DialogDescription></DialogHeader>
       {activeEditing === undefined ? null : <form onSubmit={event => {
-        event.preventDefault();if (activeEditing.view !== navigation.current.token) return;const values = new FormData(event.currentTarget), { suggestionId: _id, ...base } = activeEditing.value
+        event.preventDefault();if (activeEditing.view !== navigation.current.token || disabled || submitting) return;const values = new FormData(event.currentTarget), { suggestionId: _id, ...base } = activeEditing.value
         const candidate = { ...base, source: 'manual', ...Object.fromEntries(values) }
         if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
         if ('quantity' in candidate) candidate.quantity = Number(values.get('quantity'))
@@ -357,7 +360,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
                 : <Input defaultValue={value ?? ''} id={`prepared-${field}`} min={1} name={field} required type={field === 'quantity' || field === 'courseDays' ? 'number' : 'text'} />}</Field>
           })}
         {editError ? <p role="alert">{zh ? '请补齐有效的项目信息。' : 'Complete the item with valid values.'}</p> : null}
-      </FieldGroup><DialogFooter><Button type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form>}
+      </FieldGroup><DialogFooter><Button disabled={disabled || submitting} type="submit">{zh ? '保留本次调整' : 'Keep edits'}</Button></DialogFooter></form>}
     </DialogContent></Dialog>
   </>
 }

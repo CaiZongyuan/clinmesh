@@ -3639,7 +3639,7 @@ function CaseDetail({
             </div>
           </DoctorCasePanel>
 
-          <DoctorCasePanel value="diagnosis">
+          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="diagnosis">
             {detail.consultation === undefined ? revisitWorkflow : catalog.isPending ? (
               <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
@@ -3666,7 +3666,7 @@ function CaseDetail({
             )}
           </DoctorCasePanel>
 
-          <DoctorCasePanel value="prescription">
+          <DoctorCasePanel keepMounted={detail.consultation !== undefined} value="prescription">
             {detail.consultation === undefined || catalog.isPending ? (
               detail.consultation === undefined ? revisitWorkflow : <Skeleton className="h-72 w-full" />
             ) : catalog.isError ? (
