@@ -8,6 +8,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "scripts": {
+    "reference:prepare": "tsx scripts/reference-preparation/publish.ts",
     "upstream:discover": "tsx scripts/dsh-upstreams-cli.ts",
     "upstream:verify": "tsx scripts/dsh-upstreams-verify.ts",
     "dev:lan": "tsx scripts/dev-lan.ts",

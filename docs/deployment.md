@@ -39,7 +39,15 @@ cp .env.example .env
 
 ## 3. 同步参考目录（推荐）
 
-默认同步诊断（ICD-10）、药品和 `laboratory-cn` 三个数据集，独立 LOINC 目录不进入默认 lock。参考数据保存在独立 Reference SQLite；Server 启动时自动将 laboratory-cn 单项和组合的可开服务快照写入 HIS operational SQLite。仓库提交的 `reference-data.lock.json` 固定每个 Dataset Release 与 Manifest hash；同步只在开发、构建或运维阶段访问 Registry，Server 运行时不执行 `cn-health`，也不访问 GitHub 或 Registry。
+默认同步诊断（ICD-10）、药品和 `laboratory-cn` 三个签名数据集，以及 lock 声明的五类本地清洗来源快照；独立 LOINC 目录不进入默认 lock。参考数据保存在独立 Reference SQLite；Server 启动时自动将 laboratory-cn 单项和组合的可开服务快照写入 HIS operational SQLite。仓库提交的 `reference-data.lock.json` 分别固定签名 Dataset Release 和本地清洗清单哈希；Server 运行时不执行同步工具，也不访问 GitHub 或 Registry。
+
+本地清洗快照不随 Git 分发。先取得核验后的 `clinmesh-five-catalogues-2026-10-16.r3` 档案并生成发布文件，源目录为包含 `release-candidate.json`、`checksums.json` 和 `standardized/` 的完整目录：
+
+```sh
+pnpm reference:prepare --source /path/to/ClinMesh_参考数据清洗_2026-10-16_r3
+```
+
+该命令写入 `.data/reference-prepared/r3`，不修改原件；输出清单哈希必须与 lock 的 `preparedRelease.manifestSha256` 一致。五类资料、备注、层级、规则关系、补充价格与用途状态共 341,353 条表记录，包含不同用途的独立表，并非 341,353 个可收费项目。保密 `*`、未知价、历史价和未通过兼容性核对的编码继续保留原义。
 
 先运行 check-only，它按 lock materialize 每个精确 Release 并交叉验证签名、身份、hash、SQLite 和表不变量，不写正式数据库。三个 Dataset 的 materialize 并行执行，stderr 逐阶段输出进度与耗时（stdout 的 JSON 结果不受影响）：
 
@@ -54,6 +62,10 @@ pnpm reference:sync
 ```
 
 正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。`.env.example` 已默认启用 `CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite`；当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`（lock 升级后自动跟随），仅覆盖 `CLINMESH_REFERENCE_RELEASE_ID` 时才需要手动维护。同步不会修改 `.env`，也不会热切换已启动的 Server。库中缺少当前 Release 时 Server 启动失败关闭（`REFERENCE_RELEASE_NOT_FOUND`），错误消息指引重跑 `pnpm reference:sync`。跳过本步时 Server 使用内置合成 fixture（`clinmesh-hospital-reference-fixture-2026-08-28`）：诊断与检验目录为空，药品目录只有 3 条合成产品，医生无法下诊断或开检验。
+
+已有三个签名 Dataset 时，可以只同步本地清洗快照：`pnpm reference:sync --prepared-only`；加 `--check` 在临时库验证，不写正式库。自定义参考库路径须显式加 `--database /path/to/reference.sqlite`。这条分支只验证本地清洗的哈希身份，不执行或替代 Registry 的签名认证。
+
+完成参考库同步、运行 `pnpm --filter @clinmesh/server db:prepare` 并启动或重启 Server 后，以医生岗位进入“门诊诊疗 → 住院 DRG 模拟”。点击“新建合成住院病例”，可修改处方计价总数、确认诊断或已完成操作、查看增量与参考额变化，并记录执行、撤回或确认冲销。“参考数据与模拟映射”页签可检索五类原始依据和查看 `SIM-*` 映射。病例保存到业务 SQLite，刷新后重新选择即可继续；无需医院数据或 AI Provider。当前只演练明确列出的合成场景，规则、价格、成本和支付金额的范围见[DRG 设计方案](spec/2026-10-15-drg-prescription-budget.md)。
 
 ## 4. 配置 AI Provider（患者档案必需）
 

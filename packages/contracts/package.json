@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./drg": "./src/drg.ts",
     "./agent": "./src/agent.ts",
     "./fhir": "./src/fhir.ts",
     "./health": "./src/health.ts",

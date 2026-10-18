@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { preparedDatasetSchema, simCommandSchema, simPreviewSchema } from '@clinmesh/contracts/drg'
+import { DrgSimulationError, type DrgSimulationService } from './application/drg-simulation-service.ts'
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import { syntheticCaseRegistrationListInputSchema } from '@clinmesh/contracts/his-operations'
@@ -137,6 +139,7 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  drgSimulation?: DrgSimulationService
   commandEvents?: Pick<CommandExecutor, 'subscribe'>
   recordingUpdatesSignal?: AbortSignal
   doctorRecommendations?: DoctorRecommendationsService
@@ -223,6 +226,7 @@ function apiErrorResponse(
   }
     if (
       error instanceof IdentityError
+      || error instanceof DrgSimulationError
       || error instanceof AgentIntegrationError
       || error instanceof ConsultationDialogueError
       || error instanceof LaboratoryServicePublisherError
@@ -379,6 +383,51 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
     return context.json(response)
   })
+
+  if (options.identity !== undefined && options.drgSimulation !== undefined) {
+    const identity = options.identity
+    const drg = options.drgSimulation
+    const actor = async (context: Context) => (await identity.resolveSessionContext(context.req.raw.headers)).actor
+    app.get('/api/sim/v1/drg/catalog', async context => {
+      try { return context.json(drg.catalog(await actor(context))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/sim/v1/drg/references', async context => {
+      try {
+        return context.json(drg.search(await actor(context), {
+          dataset: preparedDatasetSchema.parse(context.req.query('dataset') ?? 'icd10'),
+          table: z.string().min(1).max(100).parse(context.req.query('table') ?? 'records'),
+          query: z.string().max(100).parse(context.req.query('query') ?? ''),
+          page: z.coerce.number().int().min(1).max(20000).parse(context.req.query('page') ?? 1),
+        }))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/sim/v1/drg/cases', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        z.object({}).strict().parse(await context.req.json())
+        return context.json(drg.create(await actor(context), requestIdempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/sim/v1/drg/cases/:id', async context => {
+      try { return context.json(drg.get(await actor(context), z.uuid().parse(context.req.param('id')))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/sim/v1/drg/cases/:id/preview', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        return context.json(drg.preview(await actor(context), z.uuid().parse(context.req.param('id')), simPreviewSchema.parse(await context.req.json())))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/sim/v1/drg/cases/:id/actions/change', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const request = simCommandSchema.parse(await context.req.json())
+        return context.json(drg.command(await actor(context), z.uuid().parse(context.req.param('id')),
+          requestIdempotencyKey(context), request.expectedRevision, request.action))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+  }
 
   if (options.identity !== undefined) {
     const identity = options.identity

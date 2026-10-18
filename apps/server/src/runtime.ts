@@ -1,4 +1,5 @@
 import { createApp } from './app.ts'
+import { DrgSimulationService } from './application/drg-simulation-service.ts'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
 import { ScenarioService } from './application/scenario-service.ts'
@@ -703,6 +704,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({
+      drgSimulation: new DrgSimulationService(database, commands, referenceDatabase),
       commandEvents: commands,
       recordingUpdatesSignal: generationAbort.signal,
       doctorRecommendations,

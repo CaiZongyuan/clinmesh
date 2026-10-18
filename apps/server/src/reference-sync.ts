@@ -8,6 +8,8 @@ import { performance } from 'node:perf_hooks'
 import { createInterface } from 'node:readline'
 import { z } from 'zod'
 import { runReferenceDatabaseCli } from './reference-database-cli.ts'
+import { importPreparedCatalogues, preparedLockSchema } from './infrastructure/reference-data/prepared-catalogues.ts'
+import { openReferenceDatabase } from './infrastructure/sqlite/reference-database.ts'
 
 const maxCliOutputBytes = 2 * 1024 * 1024
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -30,6 +32,7 @@ export function cnHealthInvocation(input: {
 }
 
 const referenceLockSchema = z.object({
+  preparedRelease: preparedLockSchema.optional(),
   cli: z.object({
     package: z.literal('cn-health'),
     version: z.string().regex(/^\d+\.\d+\.\d+$/),
@@ -112,6 +115,7 @@ const materializedDatasetManifestSchema = z.object({
 
 export interface ReferenceSyncOptions {
   checkOnly: boolean
+  preparedOnly?: boolean
   cliPath?: string
   databasePath: string
   lockPath: string
@@ -212,6 +216,22 @@ export async function runReferenceSync(options: ReferenceSyncOptions) {
   const repositoryRoot = resolve(options.repositoryRoot ?? defaultRepositoryRoot)
   const lockPath = resolve(options.lockPath)
   const lock = referenceLockSchema.parse(JSON.parse(await readFile(lockPath, 'utf8')))
+  const syncPrepared = async (databasePath: string) => {
+    if (lock.preparedRelease === undefined) return undefined
+    await runReferenceDatabaseCli(['migrate', '--database', databasePath])
+    const database = openReferenceDatabase({ databasePath, busyTimeoutMs: 5000 })
+    try {
+      return await importPreparedCatalogues(database, resolve(repositoryRoot, lock.preparedRelease.manifestPath), lock.preparedRelease)
+    } finally { database.close() }
+  }
+  if (options.preparedOnly === true) {
+    if (lock.preparedRelease === undefined) throw new Error('lock 未声明清洗发布版本')
+    const temporary = options.checkOnly ? await mkdtemp(join(tmpdir(), 'clinmesh-prepared-check-')) : undefined
+    try {
+      const prepared = await syncPrepared(temporary === undefined ? resolve(options.databasePath) : join(temporary, 'check.sqlite'))
+      return { checkOnly: options.checkOnly, prepared }
+    } finally { if (temporary !== undefined) await rm(temporary, { recursive: true }) }
+  }
   const publicKey = Buffer.from(lock.registry.publicKeyHex, 'hex')
   const publicKeySha256 = createHash('sha256').update(publicKey).digest('hex')
   if (publicKeySha256 !== lock.registry.publicKeySha256
@@ -366,8 +386,9 @@ export async function runReferenceSync(options: ReferenceSyncOptions) {
       onProgress: options.onProgress,
       run: () => runReferenceDatabaseCli(['verify', '--database', databasePath]),
     })
+    const prepared = await syncPrepared(databasePath)
     report(`reference:sync 完成 (总耗时 ${elapsedSeconds(syncStart)})`)
-    return { checkOnly: options.checkOnly, datasets, release }
+    return { checkOnly: options.checkOnly, datasets, release, prepared }
   } finally {
     await rm(staging, { recursive: true })
   }
@@ -382,6 +403,7 @@ function option(name: string): string | undefined {
 async function main(): Promise<void> {
   const result = await runReferenceSync({
     checkOnly: process.argv.includes('--check'),
+    preparedOnly: process.argv.includes('--prepared-only'),
     databasePath: option('--database') ?? join(defaultRepositoryRoot, '.data/clinmesh-reference.sqlite'),
     lockPath: option('--lock') ?? join(defaultRepositoryRoot, 'reference-data.lock.json'),
     onProgress: line => process.stderr.write(`${line}\n`),

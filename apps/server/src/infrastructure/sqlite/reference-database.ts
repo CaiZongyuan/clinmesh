@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { verifyPreparedDatabase } from '../reference-data/prepared-catalogues.ts'
 import { existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import {
@@ -1525,6 +1526,7 @@ export function importReferenceDataRelease(
 
 export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceDatabaseDiagnostics {
   const migration = verifyReferenceMigrations(database)
+  verifyPreparedDatabase(database)
   const integrity = String(database.driver.pragma('integrity_check', { simple: true }))
   if (integrity !== 'ok') throw new Error(`Reference database integrity check failed: ${integrity}`)
   const foreignKeyViolations = z.array(z.object({

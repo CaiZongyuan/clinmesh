@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DRG 处方费用质控 · ClinMesh 交互预览 V2</title>
+  <!-- 独立逻辑原型：全部病例、分组与金额均为合成示例，仅使用内存状态。 -->
+  <style>
+    :root{color-scheme:light;--bg:#fff;--fg:#242424;--muted:#666;--soft:#f7f7f5;--line:#e5e5e2;--blue:#0b84e5;--accent:#e8f3fc;--green:#127a3c;--amber:#946100;--red:#bc302c;--radius:6px}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.55 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}button,input,select{font:inherit;color:inherit}button,input,select{border:1px solid #d5d5d2;border-radius:var(--radius);background:var(--bg);min-height:32px}button{padding:5px 11px;cursor:pointer}button:hover:not(:disabled){background:var(--soft)}button:disabled{opacity:.45;cursor:default}button.primary{background:var(--blue);color:#fff;border-color:var(--blue)}button.primary:hover:not(:disabled){background:#0877cf}input,select{padding:5px 8px}input[type=checkbox]{min-height:auto;accent-color:var(--blue)}:focus-visible{outline:2px solid var(--blue);outline-offset:3px}h1,h2,h3,p{margin:0}h1{font-size:14px}h2{font-size:14px}h3{font-size:13px}.muted,small{color:var(--muted)}small{font-size:12px}.mono,.money{font-variant-numeric:tabular-nums}.money{font-weight:650}.good{color:var(--green)}.warn{color:var(--amber)}.bad{color:var(--red)}.badge{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:1px 7px;font-size:11px;white-space:nowrap}.badge.blue{color:#0877cf;background:var(--accent);border-color:#cce5fa}.top{height:54px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 22px}.brand{display:flex;gap:14px;align-items:center}.brand strong{letter-spacing:.3px}.brand .mark{background:var(--blue);width:20px;height:20px;border-radius:5px;color:#fff;text-align:center;font-weight:700}.intro{padding:14px 22px;background:var(--soft);border-bottom:1px solid var(--line)}.intro p{max-width:1050px}.intro small{display:block;margin-top:4px}.shell{max-width:1440px;margin:auto;padding:18px 22px 28px}.patient{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid var(--line)}.patient strong{font-size:16px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--line);border-radius:var(--radius);margin:16px 0 12px;overflow:hidden}.stat{padding:13px 16px;border-right:1px solid var(--line)}.stat:last-child{border-right:0}.stat .value{font-size:23px;line-height:1.5;white-space:nowrap}.stat small{display:block}.bar-wrap{padding:6px 0 15px}.bar-label{display:flex;justify-content:space-between;gap:10px;font-size:12px}.bar{height:10px;background:#ededeb;border-radius:3px;margin:8px 0;position:relative;overflow:hidden}.bar-fill{height:100%;max-width:100%;background:var(--blue)}.banner{padding:10px 12px;border:1px solid #e2c98d;background:#fffaf0;border-radius:var(--radius);margin-bottom:10px;color:#715000}.banner.danger{border-color:#e7b6b4;background:#fff5f4;color:var(--red)}.banner.neutral{border-color:var(--line);background:var(--soft);color:var(--muted)}.banner.success{border-color:#c9dfd0;background:#f5faf6;color:var(--green)}.layout{display:grid;grid-template-columns:minmax(0,1fr) 336px;gap:18px;margin-top:10px}.section{border-top:1px solid var(--line);padding:15px 0}.section-title{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:10px}.row{display:flex;align-items:center;flex-wrap:wrap;gap:8px}.row.between{justify-content:space-between}.grow{flex:1;min-width:180px}.clinical{display:grid;grid-template-columns:minmax(180px,1fr) 1fr;gap:12px;margin:10px 0}.field{display:flex;flex-direction:column;gap:5px}.checks{display:flex;gap:12px;flex-direction:column;justify-content:center}.check{display:flex;align-items:center;gap:7px}.callout{border-left:3px solid var(--blue);padding:7px 10px;background:var(--accent);font-size:12px;margin-top:10px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:12px}th,td{padding:9px 8px;text-align:left;border-bottom:1px solid var(--line);vertical-align:middle}th{color:var(--muted);font-weight:500;background:var(--soft)}td.num,th.num{text-align:right;white-space:nowrap}td input{width:65px;min-height:28px;padding:3px 6px;text-align:right}.empty{text-align:center;color:var(--muted);padding:25px}.actions{padding-top:12px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}.side{border:1px solid var(--line);border-radius:var(--radius);padding:14px;align-self:start}.side h2{margin-bottom:10px}.breakdown{display:grid;grid-template-columns:1fr auto auto;gap:8px 10px;font-size:12px;margin:12px 0}.breakdown .head{color:var(--muted);border-bottom:1px solid var(--line);padding-bottom:7px}.breakdown .sum{border-top:1px solid var(--line);padding-top:8px;font-weight:650}.side-tools{padding-top:12px;border-top:1px solid var(--line);display:grid;gap:8px}.side-tools input[type=number]{width:108px;text-align:right}.tool-label{display:flex;gap:8px;justify-content:space-between;align-items:center;font-size:12px}.history{list-style:none;padding:0;margin:10px 0 0;display:grid;gap:7px;font-size:12px}.history li{border-left:2px solid var(--line);padding-left:8px}.walk{margin-top:18px;border:1px solid var(--line);border-radius:var(--radius);padding:14px}.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}.tabs button{min-height:28px;padding:3px 9px;font-size:12px}.tabs button[aria-selected=true]{border-color:var(--blue);background:var(--accent);color:#0877cf}.steps{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.steps button.done{color:var(--green)}.log{margin-top:14px;padding:10px 12px;background:var(--soft);border-radius:var(--radius);font-size:12px}.footnote{margin-top:14px;font-size:12px;color:var(--muted)}dialog{border:1px solid var(--line);border-radius:8px;padding:20px;width:min(520px,calc(100% - 32px));color:var(--fg);box-shadow:0 18px 55px #0002}dialog::backdrop{background:#0005}dialog h2{font-size:16px;margin-bottom:12px}dialog .actions{margin-top:16px;border-top:1px solid var(--line)}.amount-row{display:flex;justify-content:space-between;gap:16px;margin:8px 0}.note-input{width:100%;margin-top:6px}.subtitle{margin-top:4px;font-size:12px;color:var(--muted)}
+    .layout>div{min-width:0}
+    @media(max-width:1050px){.layout{grid-template-columns:minmax(0,1fr) 300px}.stat{padding:10px}.stat .value{font-size:20px}.shell{padding:15px}.top,.intro{padding-left:15px;padding-right:15px}}
+    @media(max-width:760px){.layout{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.stat:nth-child(2){border-right:0}.stat:nth-child(-n+2){border-bottom:1px solid var(--line)}.clinical{grid-template-columns:1fr}.top{height:auto;min-height:54px;flex-wrap:wrap;padding-top:8px;padding-bottom:8px}.brand{gap:8px}.stats .value{font-size:20px}.bar-label{flex-wrap:wrap}.side{order:2}.intro{font-size:12px}table{min-width:580px}.section-title{align-items:flex-start;flex-wrap:wrap}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="brand"><span class="mark" aria-hidden="true">C</span><strong>ClinMesh</strong><h1>处方费用质控</h1><span class="badge blue">模拟规则 · V2</span></div><button id="reset">重置病例</button></header>
+  <div class="intro"><p><strong>交互问题：</strong>诊疗与开药发生变化时，医生能否通过费用进度、费用明细和预计结余自主判断？</p><small>独立原型，所有病例、药品、分组和金额均为示例。进度按 DRG 参考额计算，由医生结合临床需要把控。此处假设参考额为病例预计总收入，不含额外收入。</small></div>
+  <main class="shell">
+    <div class="patient"><strong>林晓敏</strong><span>女 · 58 岁</span><span>住院第 3 天</span><span class="mono">SIM-IP-001</span><span class="badge">内科 / 当前病例</span><span class="muted">费用按整次住院归集</span></div>
+    <section class="stats" aria-label="费用与结余总览">
+      <div class="stat"><small>DRG 预计支付参考额</small><div id="payment" class="value money"></div><small id="group-label"></small></div>
+      <div class="stat"><small>本次开药后 · 预计总收费</small><div id="projected-fee" class="value money"></div><small>含已发生、待执行及后续预留</small></div>
+      <div class="stat"><small>参考额未占用金额 / 负数为超出</small><div id="fee-remaining" class="value money"></div><small id="fee-detail"></small></div>
+      <div class="stat"><small>本次开药后 · 预计成本结余</small><div id="profit" class="value money"></div><small id="profit-detail"></small></div>
+    </section>
+    <div class="bar-wrap"><div class="bar-label"><span id="bar-title"></span><span>进度右端为 DRG 参考额；超过后仍显示实际比例</span></div><div id="fee-progress" class="bar" role="progressbar" aria-label="预计收费占 DRG 参考额比例" aria-valuemin="0" aria-valuemax="100"><div id="bar-fill" class="bar-fill"></div></div><small id="cost-detail"></small></div>
+    <div id="warnings" aria-live="polite"></div>
+    <div class="layout">
+      <div>
+        <section class="section" aria-labelledby="clinical-heading">
+          <div class="section-title"><h2 id="clinical-heading">当前诊疗依据</h2><span id="current-clinical" class="badge"></span></div>
+          <div class="clinical"><label class="field">主要诊断<select id="diagnosis"><option value="pneumonia">肺炎（临床情境示例）</option><option value="gallstone">胆囊结石（临床情境示例）</option><option value="unmapped">尚未明确 / 模拟规则未覆盖</option></select></label><div class="checks"><label class="check"><input id="complication" type="checkbox">已具备临床依据的并发症</label><label class="check"><input id="procedure" type="checkbox">已完成并确认的相关手术操作</label></div></div>
+          <div class="row between"><small>模拟选择仅用于观察分组变化，临床诊断须有独立依据。</small><button id="confirm-clinical">确认临床变化</button></div><div id="clinical-preview"></div>
+        </section>
+        <section class="section" aria-labelledby="prescription-heading">
+          <div class="section-title"><div><h2 id="prescription-heading">本次处方 · 开具前估算</h2><p class="subtitle">数量按包装计价；当前草稿只参与推演，开具后转入已承诺项目。</p></div><span id="draft-badge" class="badge"></span></div>
+          <div class="row" style="margin-bottom:12px"><label class="field grow"><span class="muted">模拟药品</span><select id="medication"><option value="a">示例口服药 A · 20 片/盒</option><option value="b">示例注射药 B · 1 支/支</option><option value="c">示例高价药 C · 1 盒/盒</option></select></label><button id="add" style="align-self:end">加入处方</button></div>
+          <div class="table-wrap"><table><thead><tr><th>药品 / 包装</th><th class="num">单价</th><th class="num">数量</th><th class="num">预计收费</th><th class="num">预计成本</th><th></th></tr></thead><tbody id="draft-table"></tbody><tfoot><tr><td colspan="3">本次处方合计</td><td id="draft-fee" class="num money"></td><td id="draft-cost" class="num money"></td><td></td></tr></tfoot></table></div>
+          <div class="actions"><small id="draft-message"></small><button class="primary" id="issue">查看费用并模拟开具</button></div>
+        </section>
+        <section class="section" aria-labelledby="orders-heading"><div class="section-title"><h2 id="orders-heading">本次已开具记录</h2><small>临床撤回与费用冲销分别处理</small></div><div id="orders"></div><div class="row" style="margin-top:12px"><button id="book">模拟执行并记费</button><button id="withdraw">撤回最近未执行处方</button><button id="reverse">确认未执行项目冲销</button></div></section>
+      </div>
+      <aside class="side" aria-label="全住院费用与模拟控制">
+        <h2>全住院费用构成</h2><small>收费与成本分别汇总，均包含待执行项目与后续预留。</small><div id="breakdown" class="breakdown"></div>
+        <div class="side-tools"><h3>自由探索</h3><label class="tool-label">后续治疗预留收费<input id="reserve-fee" type="number" min="0" step="100" aria-label="后续治疗预留收费"></label><label class="tool-label">后续治疗预留成本<input id="reserve-cost" type="number" min="0" step="100" aria-label="后续治疗预留成本"></label><button id="add-exam">追加检查：收费 +¥500 / 成本 +¥300</button><label class="check"><input id="missing-price" type="checkbox">模拟当前药品缺少价格</label><label class="check"><input id="missing-cost" type="checkbox">模拟成本数据未齐</label></div>
+        <div class="section" style="padding-bottom:0;margin-top:14px"><h3>额度变化记录</h3><ul id="history" class="history"></ul></div>
+      </aside>
+    </div>
+    <section class="walk" aria-labelledby="walk-heading"><h2 id="walk-heading">引导体验</h2><p class="subtitle">选择情境会重置到固定起点；按顺序点击步骤，或随时用上方控件自由探索。</p><div id="tabs" class="tabs" role="tablist" aria-label="引导情境"></div><div id="walk-panel" role="tabpanel" tabindex="0"><p id="walk-description"></p><div id="steps" class="steps"></div></div></section>
+    <div id="event" class="log" role="status"></div><p class="footnote">进度条提供费用参考，不代表医保硬性限额；收费超过参考额不等于实际亏损。正式使用需要匹配地区、年度、病例分组、支付政策，以及完整价格、费用与成本数据。</p>
+  </main>
+  <dialog id="review" aria-labelledby="review-heading"><h2 id="review-heading">开药前费用预览</h2><div id="review-body"></div><label class="field" style="margin-top:14px">临床说明（可选）<input id="review-note" class="note-input" placeholder="可记录本次诊疗考虑"></label><div class="actions"><button id="cancel-review">返回调整</button><button class="primary" id="confirm-issue">继续开具（模拟）</button></div></dialog>
+  <script>
+    // 纯逻辑：不读取 DOM，不持久化，不模拟正式 DRG 算法。
+    const DrgBudgetDemo = (() => {
+      const medicines = {
+        a: { name: '示例口服药 A', pack: '20 片/盒', unit: '盒', fee: 6000, cost: 3300 },
+        b: { name: '示例注射药 B', pack: '1 支/支', unit: '支', fee: 40000, cost: 22000 },
+        c: { name: '示例高价药 C', pack: '1 盒/盒', unit: '盒', fee: 160000, cost: 100000 },
+      };
+      const clinicalName = c => c.diagnosis === 'pneumonia' ? '肺炎' : c.diagnosis === 'gallstone' ? '胆囊结石' : '诊断待明确';
+      const sameClinical = (a, b) => a.diagnosis === b.diagnosis && a.complication === b.complication && a.procedure === b.procedure;
+      function group(c) {
+        if (c.diagnosis === 'unmapped') return null;
+        if (c.diagnosis === 'gallstone') return c.procedure ? { code: 'SIM-S1', name: '模拟手术治疗组', payment: 1800000 } : { code: 'SIM-S0', name: '模拟保守治疗组', payment: 1100000 };
+        return c.complication ? { code: 'SIM-M2', name: '模拟复杂内科组', payment: 1300000 } : { code: 'SIM-M1', name: '模拟常规内科组', payment: 1000000 };
+      }
+      function initial() {
+        const clinical = { diagnosis: 'pneumonia', complication: false, procedure: false };
+        return { clinical, clinicalDraft: { ...clinical }, incurred: { fee: 620000, cost: 390000 }, baseCommitment: { fee: 90000, cost: 65000 }, reserve: { fee: 60000, cost: 35000 }, draft: [{ medicine: 'a', quantity: 2 }], orders: [], missingPrice: false, missingCost: false, nextOrder: 1, history: ['初始模拟分组 SIM-M1，参考额 ¥10,000.00'], message: '病例已载入。可先调整处方数量，查看开药后的收费余量与成本结余。' };
+      }
+      const amounts = lines => lines.reduce((sum, line) => ({ fee: sum.fee + medicines[line.medicine].fee * line.quantity, cost: sum.cost + medicines[line.medicine].cost * line.quantity }), { fee: 0, cost: 0 });
+      function evaluate(s) {
+        const currentGroup = group(s.clinical);
+        const draft = amounts(s.draft);
+        const booked = s.orders.filter(o => o.status === 'booked').reduce((sum, o) => ({ fee: sum.fee + o.fee, cost: sum.cost + o.cost }), { fee: 0, cost: 0 });
+        const pending = s.orders.filter(o => o.status === 'ordered' || o.status === 'withdrawn').reduce((sum, o) => ({ fee: sum.fee + o.fee, cost: sum.cost + o.cost }), { fee: 0, cost: 0 });
+        const incurred = { fee: s.incurred.fee + booked.fee, cost: s.incurred.cost + booked.cost };
+        const committed = { fee: s.baseCommitment.fee + pending.fee, cost: s.baseCommitment.cost + pending.cost };
+        const totals = { fee: incurred.fee + committed.fee + draft.fee + s.reserve.fee, cost: incurred.cost + committed.cost + draft.cost + s.reserve.cost };
+        return { group: currentGroup, draft, incurred, committed, totals, feeComplete: !s.missingPrice, costComplete: !s.missingCost, feeRemaining: currentGroup && !s.missingPrice ? currentGroup.payment - totals.fee : null, profit: currentGroup && !s.missingCost ? currentGroup.payment - totals.cost : null, feeRatio: currentGroup && !s.missingPrice ? totals.fee / currentGroup.payment * 100 : null };
+      }
+      function reduce(state, action) {
+        const s = structuredClone(state);
+        switch (action.type) {
+          case 'clinical-draft': s.clinicalDraft[action.field] = action.value; s.message = '临床草稿已变化。可查看推演，当前参考额仍依据已确认记录。'; break;
+          case 'clinical-confirm': {
+            if (sameClinical(s.clinical, s.clinicalDraft)) { s.message = '当前没有待确认的临床变化。'; break; }
+            const before = group(s.clinical), after = group(s.clinicalDraft); s.clinical = { ...s.clinicalDraft };
+            s.history.unshift(`${clinicalName(s.clinical)}的临床变化已确认：${before?.code ?? '未分组'} → ${after?.code ?? '未分组'}；既有费用保留。`);
+            s.message = '已按确认后的临床事实重新评估，费用与已开立项目保持原有记录。'; break;
+          }
+          case 'add': if (!s.draft.some(x => x.medicine === action.medicine)) s.draft.push({ medicine: action.medicine, quantity: 1 }); s.message = '药品已加入本次草稿，额度预估已更新。'; break;
+          case 'quantity': { const line = s.draft.find(x => x.medicine === action.medicine); if (line && Number.isInteger(action.quantity) && action.quantity >= 1 && action.quantity <= 999) line.quantity = action.quantity; s.message = '数量已更新，收费和成本分别重新估算。'; break; }
+          case 'remove': s.draft = s.draft.filter(x => x.medicine !== action.medicine); s.message = '已移除草稿药品，未形成正式费用。'; break;
+          case 'issue': { if (!s.draft.length) break; const total = amounts(s.draft); s.orders.push({ id: s.nextOrder++, ...total, lines: s.draft, status: 'ordered' }); s.draft = []; s.message = '处方已模拟开具：草稿金额转入已承诺项目，总预计费用没有重复增加。'; break; }
+          case 'book': { const order = s.orders.find(x => x.status === 'ordered'); if (!order) break; order.status = 'booked'; s.message = '已模拟执行并记费：该项目由承诺转为已发生，预计总额保持不变。'; break; }
+          case 'withdraw': { const order = [...s.orders].reverse().find(x => x.status === 'ordered'); if (!order) break; order.status = 'withdrawn'; s.message = '处方已撤回，费用尚未确认冲销，仍保留在承诺金额中。'; break; }
+          case 'reverse': { const order = s.orders.find(x => x.status === 'withdrawn'); if (!order) break; order.status = 'reversed'; s.message = '未执行项目已确认冲销，收费与成本承诺已释放，原始记录保留。'; break; }
+          case 'exam': s.incurred.fee += 50000; s.incurred.cost += 30000; s.message = '已追加一项模拟检查：已发生收费增加 ¥500，成本增加 ¥300。'; break;
+          case 'reserve': if (Number.isFinite(action.value) && action.value >= 0) s.reserve[action.kind] = Math.round(action.value * 100); s.message = '后续治疗预留已调整，收费与成本按各自口径更新。'; break;
+          case 'missing-price': s.missingPrice = action.value; s.message = action.value ? '价格不完整：暂停给出确定的收费余量，成本仍可独立评估。' : '价格已恢复，收费评估已更新。'; break;
+          case 'missing-cost': s.missingCost = action.value; s.message = action.value ? '成本不完整：预计结余待核算，不用收费代替成本。' : '成本已补齐，预计结余已更新。'; break;
+          case 'preset-draft': s.draft = [{ medicine: 'c', quantity: action.quantity }]; s.message = '已载入高金额处方，用于观察收费风险与成本结余的差异。'; break;
+          case 'preset-cost': s.incurred.cost = 880000; s.message = '模拟已发生成本上升：收费进度未变化，预计结余单独更新。'; break;
+        }
+        return s;
+      }
+      return { medicines, initial, evaluate, reduce, group, clinicalName, sameClinical };
+    })();
+  </script>
+  <script>
+    const $ = id => document.getElementById(id);
+    const money = value => value === null ? '待评估' : new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(value / 100);
+    const escapeText = text => String(text).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+    let state = DrgBudgetDemo.initial();
+    let activeWalk = 0, walkStep = 0;
+    const walks = [
+      { title: '开药与记费', text: '开具前、开具后、执行记费后的总预计费用应一致。只有金额所属位置变化。', steps: [{ label: '开具当前处方', action: { type: 'issue' } }, { label: '执行并记费', action: { type: 'book' } }] },
+      { title: '诊疗动态变化', text: '先补充有临床依据的并发症草稿；确认前只显示推演，确认后更新参考额及费用进度，原有费用不清零。', steps: [{ label: '记录并发症草稿', action: { type: 'clinical-draft', field: 'complication', value: true } }, { label: '确认临床变化', action: { type: 'clinical-confirm' } }] },
+      { title: '收费与成本风险', text: '提高处方金额后观察进度超过参考额；再提高已发生成本，区分收费进度与预计亏损。', steps: [{ label: '载入高金额处方', action: { type: 'preset-draft', quantity: 2 } }, { label: '模拟成本上升', action: { type: 'preset-cost' } }] },
+      { title: '撤回与冲销', text: '撤回临床处方不会直接释放费用。确认未执行项目冲销后，费用进度才相应减少。', steps: [{ label: '开具处方', action: { type: 'issue' } }, { label: '撤回处方', action: { type: 'withdraw' } }, { label: '确认费用冲销', action: { type: 'reverse' } }] },
+      { title: '资料缺失', text: '缺价时收费余量待评估；缺成本时结余待核算；未能分组时不展示确定额度。', steps: [{ label: '模拟缺少价格', action: { type: 'missing-price', value: true } }, { label: '模拟缺少成本', action: { type: 'missing-cost', value: true } }, { label: '切到未覆盖诊断', action: { type: 'clinical-draft', field: 'diagnosis', value: 'unmapped' } }, { label: '确认诊断变化', action: { type: 'clinical-confirm' } }] },
+    ];
+    function warnings(e) {
+      const items = [];
+      if (!e.group) items.push(['neutral', '当前模拟规则无法分组，DRG 参考额、收费余量与预计结余待评估。']);
+      if (!e.feeComplete) items.push(['neutral', '药品价格资料不完整，收费合计与余量暂不确定。缺失金额未按零计算。']);
+      if (!e.costComplete) items.push(['neutral', '成本资料不完整，预计成本及结余待核算。收费仍可独立评估。']);
+      if (e.feeRemaining !== null && e.feeRemaining < 0) items.push(['neutral', `预计收费已达参考额的 ${e.feeRatio.toFixed(1)}%，超出 ${money(-e.feeRemaining)}。该差额不等同实际亏损，请结合临床需要及成本结余判断。`]);
+      if (e.profit !== null && e.profit < 0) items.push(['danger', `预计成本 ${money(e.totals.cost)} 高于参考收入，预计亏损 ${money(-e.profit)}。`]);
+      if (!items.length) items.push(['neutral', '费用进度与预计结余随诊疗、处方和其他费用变化，供医生结合临床需要自主判断。']);
+      return items;
+    }
+    function warningHtml(e) { return warnings(e).map(([type, text]) => `<div class="banner ${type}">${escapeText(text)}</div>`).join(''); }
+    function dispatch(action) { state = DrgBudgetDemo.reduce(state, action); render(); }
+    function render() {
+      const e = DrgBudgetDemo.evaluate(state), m = DrgBudgetDemo.medicines;
+      $('payment').textContent = money(e.group?.payment ?? null);
+      $('group-label').textContent = e.group ? `${e.group.code} · ${e.group.name}` : '没有可用分组';
+      $('projected-fee').textContent = e.feeComplete ? money(e.totals.fee) : '待评估';
+      $('fee-remaining').textContent = money(e.feeRemaining);
+      $('fee-remaining').className = `value money ${e.feeRemaining === null ? 'muted' : e.feeRemaining < 0 ? 'warn' : ''}`;
+      $('fee-detail').textContent = e.feeRemaining !== null ? e.feeRemaining < 0 ? `预计收费超出参考额 ${money(-e.feeRemaining)}` : '参考额减去开药后预计总收费' : '需要完整价格与可用分组';
+      $('profit').textContent = e.costComplete ? money(e.profit) : '待核算';
+      $('profit').className = `value money ${e.profit === null ? 'muted' : e.profit < 0 ? 'bad' : ''}`;
+      $('profit-detail').textContent = e.profit !== null ? `预计结余率 ${(e.profit / e.group.payment * 100).toFixed(1)}% · 按成本口径` : '需要完整成本与可用分组';
+      $('bar-title').textContent = e.group && e.feeComplete ? `开药后收费 ${money(e.totals.fee)} / ${(e.totals.fee / e.group.payment * 100).toFixed(1)}%` : '收费占用比例待评估';
+      $('bar-fill').style.width = `${e.feeRatio === null ? 0 : Math.min(100, e.feeRatio)}%`;
+      $('bar-fill').style.background = 'var(--blue)';
+      if (e.feeRatio === null) $('fee-progress').removeAttribute('aria-valuenow');
+      else $('fee-progress').setAttribute('aria-valuenow', String(Math.min(100, e.feeRatio)));
+      $('fee-progress').setAttribute('aria-valuetext', e.feeRatio === null ? '资料不足，费用进度待评估' : `实际费用比例 ${e.feeRatio.toFixed(1)}%`);
+      $('cost-detail').textContent = e.costComplete ? `预计总成本 ${money(e.totals.cost)}；收费进度与成本结余分别核算。` : '成本资料不完整，预计结余待核算。';
+      $('warnings').innerHTML = warningHtml(e);
+      $('diagnosis').value = state.clinicalDraft.diagnosis; $('complication').checked = state.clinicalDraft.complication; $('procedure').checked = state.clinicalDraft.procedure;
+      $('current-clinical').textContent = `已确认：${DrgBudgetDemo.clinicalName(state.clinical)}${state.clinical.complication ? ' / 伴并发症' : ''}${state.clinical.procedure ? ' / 有手术操作' : ''}`;
+      const changed = !DrgBudgetDemo.sameClinical(state.clinical, state.clinicalDraft), next = DrgBudgetDemo.group(state.clinicalDraft);
+      $('confirm-clinical').disabled = !changed;
+      $('clinical-preview').innerHTML = changed ? `<div class="callout">待确认推演：${next ? `${escapeText(next.code)}，参考额 ${money(next.payment)}` : '模拟规则未覆盖，无法确定参考额'}。当前参考额保持原值。</div>` : '';
+      $('draft-badge').textContent = `${state.draft.length} 种药品`;
+      $('draft-table').innerHTML = state.draft.length ? state.draft.map(line => `<tr><td><strong>${m[line.medicine].name}</strong><br><small>${m[line.medicine].pack}</small></td><td class="num">${state.missingPrice ? '待补价' : money(m[line.medicine].fee)} / ${m[line.medicine].unit}</td><td class="num"><input type="number" min="1" max="999" value="${line.quantity}" data-quantity="${line.medicine}" aria-label="${m[line.medicine].name}数量"></td><td class="num">${state.missingPrice ? '待评估' : money(m[line.medicine].fee * line.quantity)}</td><td class="num">${state.missingCost ? '待核算' : money(m[line.medicine].cost * line.quantity)}</td><td><button data-remove="${line.medicine}" aria-label="移除${m[line.medicine].name}">移除</button></td></tr>`).join('') : '<tr><td colspan="6" class="empty">当前没有未开具药品，可从上方加入。</td></tr>';
+      $('draft-fee').textContent = state.missingPrice ? '待评估' : money(e.draft.fee); $('draft-cost').textContent = state.missingCost ? '待核算' : money(e.draft.cost);
+      $('draft-message').textContent = '当前草稿未占用正式额度。'; $('issue').disabled = state.draft.length === 0;
+      const rows = [['已发生', e.incurred], ['已承诺待记费', e.committed], ['本次处方', e.draft], ['后续治疗预留', state.reserve], ['预计合计', e.totals]];
+      $('breakdown').innerHTML = '<span class="head">构成</span><span class="head">收费</span><span class="head">成本</span>' + rows.map(([label, amount], index) => `<span class="${index === 4 ? 'sum' : ''}">${label}</span><span class="money ${index === 4 ? 'sum' : ''}">${state.missingPrice && index >= 2 && index !== 3 ? '待评估' : money(amount.fee)}</span><span class="money ${index === 4 ? 'sum' : ''}">${state.missingCost ? '待核算' : money(amount.cost)}</span>`).join('');
+      $('reserve-fee').value = state.reserve.fee / 100; $('reserve-cost').value = state.reserve.cost / 100; $('missing-price').checked = state.missingPrice; $('missing-cost').checked = state.missingCost;
+      $('history').innerHTML = state.history.slice(0, 5).map(text => `<li>${escapeText(text)}</li>`).join('');
+      const names = { ordered: '已开具 · 待执行记费', booked: '已执行并记费', withdrawn: '已撤回 · 待费用冲销', reversed: '已确认冲销' };
+      $('orders').innerHTML = state.orders.length ? state.orders.map(o => `<div class="row between" style="padding:8px 0;border-bottom:1px solid var(--line)"><span>处方 ${String(o.id).padStart(2, '0')} · ${o.lines.map(line => `${m[line.medicine].name} × ${line.quantity}`).join('，')}<br><small>${names[o.status]}</small></span><span class="money">${money(o.fee)}</span></div>`).join('') : '<p class="muted">暂无本次新开具记录，基线费用已列入全住院汇总。</p>';
+      $('book').disabled = !state.orders.some(x => x.status === 'ordered'); $('withdraw').disabled = $('book').disabled; $('reverse').disabled = !state.orders.some(x => x.status === 'withdrawn');
+      $('event').textContent = state.message;
+      renderWalk();
+    }
+    function renderWalk() {
+      $('tabs').innerHTML = walks.map((walk, index) => `<button role="tab" id="walk-tab-${index}" aria-selected="${index === activeWalk}" aria-controls="walk-panel" tabindex="${index === activeWalk ? 0 : -1}" data-walk="${index}">${walk.title}</button>`).join('');
+      $('walk-panel').setAttribute('aria-labelledby', `walk-tab-${activeWalk}`);
+      $('walk-description').textContent = walks[activeWalk].text;
+      $('steps').innerHTML = walks[activeWalk].steps.map((step, index) => `<button data-step="${index}" class="${index < walkStep ? 'done' : ''}" ${index !== walkStep ? 'disabled' : ''}>${index < walkStep ? '✓' : index + 1} ${step.label}</button>`).join('');
+    }
+    function showReview() {
+      if (!state.draft.length) return;
+      const e = DrgBudgetDemo.evaluate(state);
+      $('review-body').innerHTML = `<div class="amount-row"><span>本次处方预计收费</span><strong>${state.missingPrice ? '待评估' : money(e.draft.fee)}</strong></div><div class="amount-row"><span>开药后费用进度</span><strong>${e.feeRatio === null ? '待评估' : e.feeRatio.toFixed(1) + '%'}</strong></div><div class="amount-row"><span>参考额未占用金额</span><strong>${money(e.feeRemaining)}</strong></div><div class="amount-row"><span>开药后预计成本结余</span><strong>${state.missingCost ? '待核算' : money(e.profit)}</strong></div>${warningHtml(e)}<small>可返回调整，或依据临床需要继续模拟开具。</small>`;
+      $('review-note').value = ''; $('review').showModal();
+    }
+    $('reset').onclick = () => { state = DrgBudgetDemo.initial(); walkStep = 0; render(); };
+    $('diagnosis').onchange = event => dispatch({ type: 'clinical-draft', field: 'diagnosis', value: event.target.value });
+    $('complication').onchange = event => dispatch({ type: 'clinical-draft', field: 'complication', value: event.target.checked });
+    $('procedure').onchange = event => dispatch({ type: 'clinical-draft', field: 'procedure', value: event.target.checked });
+    $('confirm-clinical').onclick = () => dispatch({ type: 'clinical-confirm' });
+    $('add').onclick = () => dispatch({ type: 'add', medicine: $('medication').value });
+    $('draft-table').onchange = event => { if (event.target.dataset.quantity) dispatch({ type: 'quantity', medicine: event.target.dataset.quantity, quantity: Number(event.target.value) }); };
+    $('draft-table').onclick = event => { const button = event.target.closest('[data-remove]'); if (button) dispatch({ type: 'remove', medicine: button.dataset.remove }); };
+    $('issue').onclick = showReview;
+    $('cancel-review').onclick = () => $('review').close();
+    $('confirm-issue').onclick = () => { $('review').close(); dispatch({ type: 'issue' }); };
+    for (const type of ['book', 'withdraw', 'reverse']) $(type).onclick = () => dispatch({ type });
+    for (const kind of ['fee', 'cost']) $(`reserve-${kind}`).onchange = event => dispatch({ type: 'reserve', kind, value: Number(event.target.value) });
+    $('add-exam').onclick = () => dispatch({ type: 'exam' });
+    $('missing-price').onchange = event => dispatch({ type: 'missing-price', value: event.target.checked });
+    $('missing-cost').onchange = event => dispatch({ type: 'missing-cost', value: event.target.checked });
+    function chooseWalk(index, focus = false) { activeWalk = index; walkStep = 0; state = DrgBudgetDemo.initial(); render(); if (focus) $(`walk-tab-${index}`).focus(); }
+    $('tabs').onclick = event => { const button = event.target.closest('[data-walk]'); if (button) chooseWalk(Number(button.dataset.walk), true); };
+    $('tabs').onkeydown = event => { if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) { event.preventDefault(); const index = event.key === 'Home' ? 0 : event.key === 'End' ? walks.length - 1 : (activeWalk + (event.key === 'ArrowRight' ? 1 : -1) + walks.length) % walks.length; chooseWalk(index, true); } };
+    $('steps').onclick = event => { const button = event.target.closest('[data-step]'); if (!button || Number(button.dataset.step) !== walkStep) return; const action = walks[activeWalk].steps[walkStep].action; walkStep++; dispatch(action); };
+    render();
+  </script>
+</body>
+</html>

@@ -436,6 +436,8 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
+五类本地清洗来源参考与应用内住院 DRG 模拟沿用独立 Reference SQLite 和共享 Command 边界。来源快照不自动转为已启用院内项目，合成映射、规则和支付参数完整冻结在模拟病例；本地清洗的哈希发布与 `cn-health` 签名 Dataset 分别保留身份。具体取舍见[模拟实现决策](../.agents/notes/implemented/architecture/2026-10-18-drg-simulation.md)，使用与能力范围见[DRG 设计方案](spec/2026-10-15-drg-prescription-budget.md)。
+
 独立 Reference SQLite 通过 `reference-data.lock.json` 和 `pnpm reference:sync` 获取、验证并导入版本固定的疾病、药品与检验来源。项目内锁固定 `cn-health` 版本、Registry URL、Ed25519 信任根、Dataset Release、Manifest hash 和复合 Release 身份；`cn-health dataset materialize` 只在显式同步时访问 Registry，并把签名已验证的 Manifest、SQLite 和 receipt 原子交给 ClinMesh。ClinMesh 再校验 receipt、hash、SQLite、Schema 和 canonical 表不变量。check-only 使用临时 Reference SQLite，正式同步失败不留下部分 Release，也不切换 Server 当前 Release。运行中的 Server 只读 ClinMesh Reference SQLite，不调用 `cn-health`、GitHub 或 Registry。
 
 每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、materialization provenance、记录数、导入诊断和 content hash。`loinc-zh-cn` Dataset Schema v2 把完整 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边保存在同一不可变 Release，Class Type 1 进入 laboratory domain，其他 Class Type 进入 `other`。`laboratory-cn` Schema v2 在同一 Release 中保存 WS/T 886 原子项目、全部成人参考规则、项目整理 panel 和有序成员边；首个锁定 Release 的四张表分别有 84、96、15 和 88 条记录。Server 使用索引和 FTS 提供有界分页查询，不把全国目录复制进 Workspace、Epoch 或 operational SQLite。

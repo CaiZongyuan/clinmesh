@@ -47,5 +47,10 @@
     "url": "https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/registry.json"
   },
   "retrievedAt": "2026-09-02T00:00:00.000Z",
-  "schemaVersion": 1
+  "schemaVersion": 1,
+  "preparedRelease": {
+    "releaseId": "clinmesh-five-catalogues-2026-10-16.r3",
+    "manifestPath": ".data/reference-prepared/r3/manifest.json",
+    "manifestSha256": "336e28c60bc6b77fc704a19d826c2bd89cad3301f8c46171c29aa9aadf044705"
+  }
 }
