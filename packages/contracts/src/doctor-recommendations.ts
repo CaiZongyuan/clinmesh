@@ -143,6 +143,7 @@ const preparationSelectionSource = {
 export const doctorPreparationSelectionSchema = z.discriminatedUnion('kind', [
   z.object({ ...preparationSelectionSource, kind: z.literal('diagnosis'),
     catalogItemId: identity, role: z.enum(['primary', 'secondary']),
+    referenceConcept: referenceConceptSnapshotSchema.optional(),
     note: z.string().trim().min(1).max(500).optional() }).strict(),
   z.object({ ...prescriptionDraftItemSchema.omit({ referenceProduct: true }).shape,
     ...preparationSelectionSource, kind: z.literal('prescription') }).strict(),

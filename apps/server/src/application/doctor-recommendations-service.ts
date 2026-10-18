@@ -17,7 +17,7 @@ import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { doctorGuidelineGroups, doctorGuidelineRevision, doctorGuidelineSourceIds } from './doctor-guideline-evidence.ts'
-import { normalizeDoctorDiagnosisRecommendation } from './doctor-diagnosis-recommendations.ts'
+import { normalizeDoctorDiagnosisRecommendation, resolveDoctorDiagnosisReference } from './doctor-diagnosis-recommendations.ts'
 import { normalizeInvestigationRecommendation, type DoctorInvestigationRecommendationCatalogs } from './doctor-investigation-recommendations.ts'
 import { normalizePrescriptionRecommendation } from './doctor-prescription-recommendations.ts'
 import { packDoctorRecommendationHistory } from './doctor-recommendation-evidence.ts'
@@ -517,6 +517,11 @@ export class DoctorRecommendationsService {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'An agent selection must retain its verified clinical identity; use an explicit manual selection to replace it')
         }
       }
+      const currentClinicalDraft = kind === 'diagnosis' ? detail.diagnosis?.draft
+        : kind === 'prescription' ? detail.medicationConclusion?.draft : undefined
+      if (currentClinicalDraft !== undefined && !selections.some(selection => selection.source === 'manual')) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'An existing clinical draft requires explicit manual selections before prepared confirmation')
+      }
       const base = { context, encounterId: snapshot.encounter.id,
         expectedVersions: request.expectedVersions, idempotencyKey }
       let draftVersion = request.input.expectedDraftVersion
@@ -524,10 +529,22 @@ export class DoctorRecommendationsService {
       const recordIds: string[] = []
       let encounterVersion = snapshot.encounter.versionId
       if (kind === 'diagnosis') {
-        const entries = selections.flatMap(selection => selection.kind !== 'diagnosis' ? [] : [{
-          catalogItemId: selection.catalogItemId, role: selection.role,
-          ...(selection.note === undefined ? {} : { note: selection.note }),
-        }])
+        const entries = selections.flatMap(selection => {
+          if (selection.kind !== 'diagnosis') return []
+          const suggestion = selection.source === 'agent' ? state.items.find(item => item.id === selection.suggestionId) : undefined
+          const reference = selection.source === 'manual' ? this.options.referenceData.diagnosisById(context, selection.catalogItemId) : undefined
+          const referenceConcept = suggestion?.kind === 'diagnosis' ? suggestion.referenceConcept
+            : resolveDoctorDiagnosisReference(selection.catalogItemId, {
+              local: snapshot.catalogs.diagnoses?.local ?? [], reference: reference === undefined ? [] : [reference],
+            })
+          if (referenceConcept === undefined || (selection.referenceConcept !== undefined
+            && canonicalJsonHash(selection.referenceConcept) !== canonicalJsonHash(referenceConcept))) {
+            throw new WorkflowError('CATALOG_CONFLICT', 'The selected diagnosis coding snapshot does not match the current verified clinical identity')
+          }
+          return [{ catalogItemId: selection.catalogItemId, role: selection.role, referenceConcept,
+            ...(selection.note === undefined ? {} : { note: selection.note }),
+          }]
+        })
         const saved = this.options.workflow.applySaveDiagnosisDraft(transaction, { ...base, expectedDraftVersion: draftVersion, entries })
         const confirmed = this.options.workflow.applyConfirmDiagnosis(transaction, { ...base, expectedDraftVersion: saved.data.draftVersion })
         draftVersion = confirmed.data.diagnosisVersion
