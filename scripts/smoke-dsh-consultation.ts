@@ -26,6 +26,7 @@ import { createInvestigationReferenceDatabase } from '../apps/web/e2e/investigat
 import { startManagedProcess } from './dsh-upstreams-process.ts'
 import { verificationEnvironment } from './dsh-upstreams-verify.ts'
 import { parseLock } from './dsh-upstreams.ts'
+import { modelBridgeResponseMetadata, repairValidationMetadata } from './dsh-model-output-metadata.ts'
 
 // Explicit native smoke: the default uses only a synthetic host LlmAdapter.
 // --live validates the chosen journey's real auxiliary model with synthetic inputs
@@ -53,7 +54,7 @@ const agUiCommit = await revision(agUiDirectory)
 expect(agUiCommit).toBe(lock.components.find(component => component.name === 'dsh-ag-ui')!.commit)
 expect(await revision(join(root, 'vendor/dsh-react-surface'))).toBe(lock.components.find(component => component.name === 'dsh-react-surface')!.commit)
 const sourceHashes = Object.fromEntries(await Promise.all([
-  'scripts/smoke-dsh-consultation.ts', 'apps/web/e2e/consultation-recording-journey.ts', 'apps/web/e2e/consultation-recording-journey.spec.ts',
+  'scripts/smoke-dsh-consultation.ts', 'scripts/dsh-model-output-metadata.ts', 'apps/web/e2e/consultation-recording-journey.ts', 'apps/web/e2e/consultation-recording-journey.spec.ts',
   'package.json', 'pnpm-lock.yaml', 'tsconfig.browser.json',
   'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
   'apps/server/src/application/clinical-document-quality.ts',
@@ -93,7 +94,7 @@ let listener: ReturnType<typeof serve> | undefined
 let phase = 'startup'
 let hostOutput = ''
 const bridgeEvents: Array<{ path: string; status: number; code?: string }> = []
-const qualityModelRequests: Array<{ schemaName: string; bytes: number }> = []
+const qualityModelRequests: Array<{ schemaName: string; bytes: number; repairValidationIssues: Array<{ code: string; path: string }>; httpStatus?: number; response?: Record<string, unknown> }> = []
 
 async function freePort() {
   const server = createServer()
@@ -112,10 +113,18 @@ try {
   const provider = new DshModelProvider({ origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576,
     fetch: async (url, init) => {
       const request = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
+      let metadata: typeof qualityModelRequests[number] | undefined
       if (request.operation === 'complete' && ['clinical_document_quality', 'clinical_document_quality_verification'].includes(request.schemaName)) {
-        qualityModelRequests.push({ schemaName: request.schemaName, bytes: Buffer.byteLength(String(init?.body)) })
+        metadata = { schemaName: request.schemaName, bytes: Buffer.byteLength(String(init?.body)),
+          repairValidationIssues: repairValidationMetadata(request.systemPrompt) }
+        qualityModelRequests.push(metadata)
       }
-      return fetch(url, init)
+      const response = await fetch(url, init)
+      if (metadata !== undefined) {
+        metadata.httpStatus = response.status
+        metadata.response = await modelBridgeResponseMetadata(response, 1048576)
+      }
+      return response
     } })
   await mkdir(qualityResults)
   await mkdir(recommendationResults)
