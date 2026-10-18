@@ -21,6 +21,7 @@ const runtime = await createClinMeshRuntime({
   authSecret: config.authSecret,
   autoDispatchIntervalMs: 250,
   cursorSecret: config.cursorSecret,
+  ...(config.consultationRecordingModel === undefined ? {} : { consultationRecordingModel: config.consultationRecordingModel }),
   databasePath,
   guidelineDatabasePath: config.guidelineDatabasePath,
   guidelineNonCommercialUse: config.guidelineNonCommercialUse,

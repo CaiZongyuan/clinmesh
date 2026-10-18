@@ -11,18 +11,20 @@ import { clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } fro
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
+import type { SqlitePerformanceObserver } from '../src/infrastructure/sqlite/performance-observer.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 type ModelInput = { schemaName: string; userPayload: unknown }
 async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown>, syntheaProvider = new StubSyntheaProvider(),
-  reply = '我头晕一周，没有胸痛。', now?: () => Date) {
+  reply = '我头晕一周，没有胸痛。', now?: () => Date, performanceObserver?: SqlitePerformanceObserver) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-quality-'))
   disposals.push(() => rm(directory, { recursive: true, force: true }))
   const bridge = { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 1000, maxResponseBytes: 256 * 1024 }
   const options: Parameters<typeof createClinMeshRuntime>[0] = {
     ...(now === undefined ? {} : { now }),
+    ...(performanceObserver === undefined ? {} : { performanceObserver }),
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', outboxRetryDelayMs: 0,
@@ -104,6 +106,54 @@ it('shows applicable empty template fields without requiring auxiliary tests or 
     },
   })
   expect((await f.readCase()).clinicalDocument?.draft).toBeUndefined()
+})
+
+it('checks current consultation without loading 596 visible history resources into real-time quality', async () => {
+  const provider = new class extends StubSyntheaProvider {
+    override async generate() {
+      const corpus = await super.generate()
+      const source = corpus.sources[0]!
+      const raw = z.object({ entry: z.array(z.unknown()) }).passthrough().parse(source.raw)
+      raw.entry.push(...Array.from({ length: 596 }, (_, index) => ({ fullUrl: `urn:uuid:quality-observation-${index}`,
+        resource: { resourceType: 'Observation', id: `quality-observation-${index}`, status: 'final',
+          subject: { reference: 'urn:uuid:patient' }, encounter: { reference: 'urn:uuid:prior-encounter' },
+          effectiveDateTime: '2024-01-10T09:05:00+08:00', code: { text: `合成历史观察${index}` },
+          valueQuantity: { value: index / 100, unit: 'mmol/L' },
+          extension: [{ url: 'https://untrusted.invalid', valueString: 'private-extension' }] },
+      })))
+      return { ...corpus, sources: [{ ...source, raw, hash: sourceArtifactHash(raw) }] }
+    }
+  }()
+  let statements = 0
+  let modelInput: unknown
+  const f = await setup(input => {
+    modelInput = input.userPayload
+    return { issues: [], agentFactChecks: [] }
+  }, provider, undefined, undefined, {
+    observeStatement: () => { statements += 1 }, observeTransaction: () => {},
+  })
+  statements = 0
+  const detail = await f.readCase()
+  expect(detail.qualityControl?.caseId).toBe(f.started.outpatientCaseId)
+  expect(statements).toBeLessThan(200)
+  statements = 0
+  const quality = await f.read()
+  expect(quality.inputFingerprint).toBe(detail.qualityControl?.inputFingerprint)
+  expect(statements).toBeLessThan(200)
+
+  expect((await f.mutate('check', { expectedDraftVersion: 0 })).status).toBe(200)
+  const row = z.object({ input_json: z.string() }).parse(f.runtime.database.driver.prepare(`
+    SELECT input_json FROM clinical_document_quality WHERE case_id = ? AND scope_key = 'saved'
+  `).get(f.started.outpatientCaseId))
+  const input = z.object({ evidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(JSON.parse(row.input_json))
+  expect(input.evidence.some(item => item.id.startsWith('history:'))).toBe(false)
+  expect(input.evidence).toContainEqual(expect.objectContaining({ text: persona.openingStatement }))
+  expect(Buffer.byteLength(row.input_json)).toBeLessThan(16 * 1024)
+  expect(row.input_json).not.toMatch(/private-extension|untrusted\.invalid|2 型糖尿病/)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).status).toBe('ready')
+  expect(modelInput).toMatchObject({ evidence: expect.arrayContaining([expect.objectContaining({ kind: 'patient', text: persona.openingStatement })]) })
+  expect((await f.read()).notices.join('')).toContain('不自动读取既往病历全文')
 })
 
 it('persists retained issues with audit and idempotency, and rechecks only changed relevant content', async () => {
@@ -537,7 +587,7 @@ it('keeps deterministic checks available without a configured model and leaves s
   expect((await f.read()).notices.join('')).toContain('语义检查尚未完成')
 })
 
-it('reports an incomplete semantic check for complete oversized visible history without sending truncated model input', async () => {
+it('does not automatically include all prior conditions in real-time quality', async () => {
   let modelCalls = 0
   const provider = new class extends StubSyntheaProvider {
     override async generate() {
@@ -553,9 +603,27 @@ it('reports an incomplete semantic check for complete oversized visible history 
   const f = await setup(() => { modelCalls += 1; return { issues: [], agentFactChecks: [] } }, provider)
   expect((await f.save({ chiefComplaint: '头晕一周。' })).status).toBe(200)
   await f.runtime.dispatchPending()
+  expect((await f.read()).status).toBe('ready')
+  expect(modelCalls).toBeGreaterThan(0)
+  const row = z.object({ input_json: z.string() }).parse(f.runtime.database.driver.prepare(`
+    SELECT input_json FROM clinical_document_quality WHERE case_id = ? AND scope_key = 'saved'
+  `).get(f.started.outpatientCaseId))
+  expect(row.input_json).not.toContain('第209项合成公开病史')
+  expect((await f.readCase()).clinicalDocument!.draft!.chiefComplaint).toBe('头晕一周。')
+})
+
+it('reports incomplete quality for an oversized current document without truncating saved text or calling the model', async () => {
+  let modelCalls = 0
+  const f = await setup(() => { modelCalls += 1; return { issues: [], agentFactChecks: [] } })
+  const text = '这是一段合成病历原文。'.repeat(300)
+  const document = { chiefComplaint: '头晕一周。', historyOfPresentIllness: text, priorMedicalHistory: text,
+    familyHistory: text, allergyHistory: text, auxiliaryExamination: text, physicalExamination: text,
+    assessment: text, disposition: text, followUp: text }
+  expect((await f.save(document)).status).toBe(200)
+  await f.runtime.dispatchPending()
   expect(await f.read()).toMatchObject({ status: 'incomplete', errorCode: 'INPUT_TOO_LARGE' })
   expect(modelCalls).toBe(0)
-  expect((await f.readCase()).clinicalDocument!.draft!.chiefComplaint).toBe('头晕一周。')
+  expect((await f.readCase()).clinicalDocument!.draft).toMatchObject(document)
 })
 
 it('rejects circular document-only omissions and duplicate statements posed as factual contradictions', async () => {

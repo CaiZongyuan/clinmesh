@@ -48,6 +48,10 @@ export class ChatCompletionsError extends Error {
 }
 
 export interface JsonChatCompletionInput {
+  maxAttempts?: 1 | 2
+  onResponse?: () => void
+  /** Provider-observed first text, excluding transport; absent when unavailable. */
+  onFirstText?: (elapsedMs: number) => void
   jsonSchema: Record<string, unknown>
   model: string
   schemaName: string
@@ -165,7 +169,12 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
     const signal = input.signal === undefined
       ? timeoutSignal
       : AbortSignal.any([input.signal, timeoutSignal])
+    let attempts = 0
     const request = async (payload: unknown): Promise<Response> => {
+      if (attempts >= (input.maxAttempts ?? 3)) {
+        throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The structured response attempt budget was exhausted')
+      }
+      attempts += 1
       const body = JSON.stringify(payload)
       if (Buffer.byteLength(body) > this.#maxRequestBytes) {
         throw new ChatCompletionsError(
@@ -174,7 +183,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
         )
       }
       try {
-        return await this.#fetch(this.#endpoint, {
+        const response = await this.#fetch(this.#endpoint, {
           body,
           headers: {
             accept: 'application/json',
@@ -184,6 +193,8 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           method: 'POST',
           signal,
         })
+        input.onResponse?.()
+        return response
       } catch (error) {
         if (signal.aborted) {
           throw new ChatCompletionsError('AI_TIMEOUT', 'The AI provider request timed out', {

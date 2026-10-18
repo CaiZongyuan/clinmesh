@@ -2,7 +2,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import { expect, test } from '@playwright/test'
-import { checkClinicalDocumentQualityRequestSchema, retainClinicalDocumentQualityIssueRequestSchema,
+import { checkClinicalDocumentQualityRequestSchema,
   type ClinicalDocumentQualityControlState } from '@clinmesh/contracts/his'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
@@ -28,7 +28,7 @@ const state = (): ClinicalDocumentQualityControlState => ({
   })),
 })
 
-for (const version of ['18', '19']) test(`reviews document quality by keyboard in a narrow bilingual ShadowRoot on React ${version}`, async ({ page }) => {
+for (const version of ['18', '19']) test(`shows verification hints without completion or evidence controls in a narrow bilingual ShadowRoot on React ${version}`, async ({ page }) => {
   const react = version === '18' ? 'react18' : 'react'
   const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
   const result = await build({
@@ -66,17 +66,12 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
       current = { ...current, clientId: input.clientId, clientRevision: input.clientRevision }
       if (input.document?.chiefComplaint === '过时病历内容。') {
         current = { ...current, issues: current.issues.map(issue => issue.field === 'chiefComplaint'
-          ? { ...issue, message: '过时质控提示不应显示。' } : issue) }
+          ? { ...issue, classification: 'needs-verification', message: '过时质控提示不应显示。' } : issue) }
         oldRequested = true; delay = true
       } else if (input.document?.chiefComplaint === '头晕三天。') {
         current = { ...current, issues: current.issues.map(issue => issue.field === 'chiefComplaint'
-          ? { ...issue, message: '当前草稿的质控提示。' } : issue) }
+          ? { ...issue, classification: 'needs-verification', message: '当前草稿的质控提示。' } : issue) }
       }
-    }
-    if (path.endsWith('/actions/retain')) {
-      const { input } = retainClinicalDocumentQualityIssueRequestSchema.parse(route.request().postDataJSON())
-      current = { ...current, issues: current.issues.map(issue => issue.id === input.issueId ? { ...issue, status: 'retained',
-        review: { actorId: 'synthetic-doctor', reviewedAt: '2026-10-15T09:01:00+08:00', ...(input.reason ? { reason: input.reason } : {}) } } : issue) }
     }
     states.set(clientId, current)
     if (delay) await held
@@ -87,25 +82,16 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
   await page.goto('http://localhost/')
   await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${await buildSurfaceStyles()}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
   const prior = page.locator('[data-document-quality-field="allergyHistory"]')
-  await expect(prior).toContainText('待补充')
-  await expect(prior.getByText('影响', { exact: true })).toBeVisible()
-  await expect(prior.getByText('处理建议', { exact: true })).toBeVisible()
-  await expect(prior).toContainText('核对相关原文、时间与来源后补录已知信息或修订措辞')
-  await expect(prior.getByText(source, { exact: true })).toHaveCount(0)
-  const evidence = prior.getByRole('button', { name: '查看依据', exact: true })
-  await evidence.focus()
-  await page.keyboard.press('Enter')
-  await expect(prior.getByText(source, { exact: true })).toBeVisible()
-  await expect(prior.locator('blockquote')).toContainText('2026')
-  await expect(prior.getByRole('button', { name: '收起依据', exact: true })).toBeFocused()
-  expect(await prior.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
-  await prior.getByRole('button', { name: '已核实，保留', exact: true }).click()
-  await prior.getByLabel('保留原因（选填）', { exact: true }).fill('合成核实原因。')
-  await prior.getByRole('button', { name: '确认保留', exact: true }).focus()
-  await page.keyboard.press('Enter')
-  await prior.locator('summary').click()
-  await expect(prior).toContainText('合成核实原因。')
-  await expect(prior).toContainText('synthetic-doctor')
+  await expect(page.locator('[data-document-quality-field="physicalExamination"]')).toContainText('待核实')
+  await expect(prior).toHaveCount(0)
+  await expect(page.getByText('待补充', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '查看依据', exact: true })).toHaveCount(0)
+  await expect(page.locator('blockquote')).toHaveCount(0)
+  const verification = page.locator('[data-document-quality-field="physicalExamination"]')
+  expect(await verification.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
+  await expect(verification.getByRole('button', { name: '已核实，保留', exact: true })).toHaveCount(0)
+  await expect(verification.getByRole('button', { name: '确认保留', exact: true })).toHaveCount(0)
+  await expect(verification.getByLabel('保留原因（选填）', { exact: true })).toHaveCount(0)
 
   for (const locale of ['zh-CN', 'en-US']) for (const fontSize of ['standard', 'larger', 'large']) for (const width of [340, 700]) {
     await page.evaluate(({ locale, fontSize, width }) => {
@@ -113,10 +99,10 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
       window.dispatchEvent(new CustomEvent('document-quality-appearance', { detail: { locale, fontSize } }))
     }, { locale, fontSize, width })
     await expect(page.locator('[data-clinmesh-app="web"]')).toHaveAttribute('lang', locale)
-    await expect(prior.getByText(locale === 'zh-CN' ? '影响' : 'Impact', { exact: true })).toBeVisible()
-    await expect(prior.getByText(locale === 'zh-CN' ? '处理建议' : 'Suggested action', { exact: true })).toBeVisible()
+    await expect(verification.getByText(locale === 'zh-CN' ? '影响' : 'Impact', { exact: true })).toBeVisible()
+    await expect(verification.getByText(locale === 'zh-CN' ? '处理建议' : 'Suggested action', { exact: true })).toBeVisible()
     const fields = page.locator('[data-document-quality-field]')
-    await expect(fields).toHaveCount(4)
+    await expect(fields).toHaveCount(2)
     for (const field of await fields.all()) expect(await field.evaluate(element => {
       if (element.scrollWidth > element.clientWidth) return false
       const box = element.getBoundingClientRect()
@@ -130,6 +116,8 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
     })).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   }
+  await expect(page.getByText('Needs completion', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'View evidence', exact: true })).toHaveCount(0)
   const chiefComplaint = page.getByLabel('Chief complaint', { exact: true })
   await chiefComplaint.fill('过时病历内容。')
   await expect.poll(() => oldRequested).toBe(true)
@@ -143,7 +131,11 @@ for (const version of ['18', '19']) test(`reviews document quality by keyboard i
   await page.getByRole('button', { name: 'Sign medical record', exact: true }).click()
   const dialog = page.getByRole('alertdialog', { name: 'Confirm medical record signature', exact: true })
   await expect(dialog.getByRole('region', { name: 'Quality summary before signing', exact: true })).toContainText('Needs verification')
+  await expect(dialog.getByText('Needs completion', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByText('过敏史遗漏患者已经陈述的药物过敏信息。', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'View evidence', exact: true })).toHaveCount(0)
   await expect(dialog.getByRole('checkbox')).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'Verified, keep text', exact: true })).toHaveCount(0)
   const confirm = dialog.getByRole('button', { name: 'Confirm medical record signature', exact: true })
   await expect(confirm).toBeEnabled()
   expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)

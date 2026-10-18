@@ -5,6 +5,41 @@ import { expect, test } from './fixtures.ts'
 import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { waitForRecordedHistory } from './consultation-recording.ts'
 
+test('uses healthy notifications without duplicate polling and resumes polling when notifications disconnect', async ({ page, webRoot }) => {
+  const server = await startBrowserServer(webRoot, {
+    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+    syntheaProvider: new StubSyntheaProvider(),
+    chatCompletionsProvider: { async completeJson() { return { content: JSON.stringify(persona), model: 'synthetic' } } },
+  })
+  try {
+    const started = await startConsultationCase(server.runtime, server.password, server.origin)
+    const casePath = `/api/his/v1/doctor/cases/${started.outpatientCaseId}`
+    let reads = 0
+    let connected = false
+    page.on('request', request => { if (new URL(request.url()).pathname === casePath) reads++ })
+    page.on('response', response => { if (new URL(response.url()).pathname === `${casePath}/recording-events`) connected = true })
+    await page.clock.install()
+    await page.goto(`${server.origin}/consultation`)
+    await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+    await page.getByLabel('账户密码').fill(server.password)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await page.getByRole('tab', { name: '待诊', exact: true }).click()
+    await page.getByText('张琴', { exact: true }).first().click()
+    await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(page.getByLabel('现病史', { exact: true })).toBeVisible()
+    await expect.poll(() => connected).toBe(true)
+    await page.clock.runFor(500)
+    const before = reads
+    await page.clock.runFor(4_500)
+    expect(reads).toBe(before)
+    // Keep the transport unavailable long enough for the client deadline to expire.
+    await page.route(`${server.origin}${casePath}/recording-events*`, route => route.abort('failed'))
+    await page.clock.runFor(15_000)
+    await expect.poll(() => reads).toBeGreaterThan(before)
+  } finally { await server.close() }
+})
+
 test('records a conflict automatically without replacing handwritten history and preserves the rest of the draft after reload', async ({ page, webRoot }) => {
   const reply = '胸痛两天了。'
   const server = await startBrowserServer(webRoot, {
@@ -62,7 +97,7 @@ test('records a conflict automatically without replacing handwritten history and
 })
 
 for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
-  test(`settles ${code} with a visible reason and saved patient reply after reload`, async ({ page, webRoot }) => {
+  test(`keeps ${code} quiet with saved patient text and an on-demand recovery explanation after reload`, async ({ page, webRoot }) => {
     const consultationPanel = page.getByRole('tabpanel', { name: '问诊记录', exact: true })
     const recordPanel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
     const server = await startBrowserServer(webRoot, {
@@ -93,15 +128,22 @@ for (const code of ['AI_TIMEOUT', 'AI_RESPONSE_INVALID'] as const) {
       })
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
       await expect(page.locator('[data-consultation-recording]')).toHaveCount(2)
-      const reason = code === 'AI_TIMEOUT' ? '自动记录超时，患者回答已保存，请根据问诊原文补充病史。'
-        : '自动记录结果未通过校验，病史未写入，请核对问诊原文。'
+      const reason = '部分内容尚未写入病历，问诊原文已保存。可重试或直接编辑病历。'
       await expect(recordPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
+      await expect(recordPanel.getByRole('button', { name: '问诊自动记录', exact: true })).toHaveText('问诊自动记录')
+      await expect(page.getByText(/病史整理失败|自动记录超时|未通过校验/)).toHaveCount(0)
+      await expect(page.getByText(reason, { exact: true })).toHaveCount(0)
       await recordPanel.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
+      await expect(page.getByText(reason, { exact: true })).toHaveCount(1)
+      await page.keyboard.press('Escape')
+      await expect(recordPanel.getByRole('button', { name: '重试病史整理', exact: true })).toBeEnabled()
       await page.reload()
       await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await expect(recordPanel.getByRole('button', { name: '问诊自动记录', exact: true })).toHaveText('问诊自动记录')
       await recordPanel.getByRole('button', { name: '问诊自动记录', exact: true }).click()
       await expect(page.getByText(reason, { exact: true })).toBeVisible()
+      await expect(page.getByText(/病史整理失败|自动记录超时|未通过校验/)).toHaveCount(0)
       await expect(recordPanel.locator('[data-consultation-recording]')).toHaveAttribute('data-consultation-recording', 'failed')
       expect(await page.locator('body').innerText()).not.toContain('private-provider-credential-and-prompt')
     } finally { await server.close() }
