@@ -44,7 +44,8 @@ const evidenceSignature = (state: DoctorRecommendationState, item: DoctorRecomme
 ])
 function selection(item: DoctorRecommendationSuggestion): PreparationDraft {
   const source = { source: 'agent' as const, suggestionId: item.id }
-  if (item.kind === 'diagnosis') return { ...source, kind: item.kind, catalogItemId: item.catalogItemId, role: item.role ?? null }
+  if (item.kind === 'diagnosis') return { ...source, kind: item.kind, catalogItemId: item.catalogItemId, role: item.role ?? null,
+    ...(item.referenceConcept === undefined ? {} : { referenceConcept: item.referenceConcept }) }
   if (item.kind === 'prescription') return { ...source, kind: item.kind, catalogItemId: item.catalogItemId,
     doseText: item.doseText, frequencyCode: item.frequencyCode, courseDays: item.courseDays, quantity: item.quantity }
   if (item.kind === 'laboratory') return { ...source, kind: item.kind, catalogItemId: item.catalogItemId, indicationCode: item.indicationCode }
@@ -128,7 +129,7 @@ function caseContainsConfirmation(detail: DoctorCaseDetail, result: Awaited<Retu
   return (version ?? 0) >= result.draftVersion && result.recordIds.every(id => ids.includes(id))
 }
 
-export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualItems = [], expectedDraftVersion, disabled = false }: {
+export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevision, scope, locale = 'zh-CN', unavailableReason, manualItems = [], manualControls, onManualChange, onManualRemove, expectedDraftVersion, disabled = false }: {
   caseId: string; kind: DoctorRecommendationKind; enabled: boolean; inputRevision?: string | undefined; scope?: string | undefined; locale?: WorkspaceLocale | undefined
   disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
@@ -137,6 +138,8 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   onManualRemove?: ((value: PreparationDraft) => void) | undefined
   encounter?: { id: string; versionId: string } | undefined
   resolveExistingDraft?: boolean | undefined
+  manualUnavailableReason?: ((value: PreparationDraft) => string | undefined) | undefined
+  onConfirmed?: ((values: PreparationDraft[], result: Awaited<ReturnType<typeof confirmDoctorPreparation>>) => void) | undefined
   expectedDraftVersion?: number | undefined
   unavailableReason?: ((suggestion: DoctorRecommendationSuggestion) => string | undefined) | undefined
 }) {
@@ -169,7 +172,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       item, value: selection(item), signature: evidenceSignature(visible!, item) })),
   ]
   const rows: Array<PreparedRow & { owner: DraftPreferences['edits'][string] | undefined }> = baseRows.filter(row => preferences.removed[row.key] !== removalSignature(row) && preferences.completed[row.key] !== row.signature)
-    .map(row => ({ ...row, value: preferences.edits[row.key]?.selection ?? row.value, owner: preferences.edits[row.key] }))
+    .map(row => ({ ...row, value: onManualChange !== undefined && manualKeys.has(row.key) ? row.value : preferences.edits[row.key]?.selection ?? row.value, owner: preferences.edits[row.key] }))
   for (const [key, edit] of Object.entries(preferences.edits)) if (!rows.some(row => row.key === key) && preferences.removed[key] === undefined) {
     rows.push({ key, label: edit.label, value: edit.selection, signature: edit.fingerprint, owner: edit })
   }
@@ -255,6 +258,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   return <>
     <Card aria-label={titles[kind][zh ? 0 : 1]} role="region" className="mb-4 min-w-0" data-agent-phase={job.pending ? 'working' : 'ready'}>
       <CardHeader><CardTitle>{titles[kind][zh ? 0 : 1]}</CardTitle><CardAction><div className="flex flex-wrap gap-2">
+        {manualControls}
         <Button disabled={refreshRecords ? false : pending || job.paused || state === undefined} onClick={() => {
           if (refreshRecords) { void synchronize(submission.data, submission.variables);return }
           if (!succeeded) submission.reset()
@@ -279,7 +283,18 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
             <div className="min-w-0 flex-1"><p className="break-words font-medium">{row.label}</p><p className="break-words text-xs text-muted-foreground">{summary(row.value, zh)}</p>{preferences.removed[row.key] !== undefined ? <p className="text-xs text-muted-foreground">{zh ? '已移除项目的依据或方案有变化，请核对。' : 'The evidence or plan for this removed item changed. Review it.'}</p> : conflicts.has(row.key) && needsReview(row.key) ? <p className="text-xs text-muted-foreground">{zh ? '新建议与医生填写内容不同，请核对。' : 'The new suggestion differs from your entry. Review this item.'}</p> : null}</div>
             <Badge variant="secondary">{needsReview(row.key) ? zh ? '请核对新资料' : 'Review new information' : !complete(row.value) ? zh ? '待补充' : 'Incomplete' : row.value.source === 'manual' ? zh ? '医生已调整' : 'Edited by doctor' : !canConfirm ? zh ? '待更新' : 'Updating' : zh ? '待确认' : 'Ready'}</Badge>
             <Button onClick={() => { setEditing({ key: row.key, label: row.label, value: { ...row.value }, fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token });setEditError(false) }} size="sm" type="button" variant="ghost">{needsReview(row.key) ? zh ? '核对' : 'Review' : zh ? '调整' : 'Edit'}</Button>
-            <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => update(previous => ({ ...previous, removed: { ...previous.removed, [row.key]: removalSignature(baseRows.find(base => base.key === row.key) ?? row) }, edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)) }))} size="icon-sm" type="button" variant="ghost"><Trash2Icon /></Button>
+            <Button aria-label={`${zh ? '移除' : 'Remove '}${row.label}`} disabled={submission.isPending} onClick={() => {
+              if (row.value.source === 'manual' && manualKeys.has(row.key) && onManualRemove !== undefined) {
+                onManualRemove(row.value)
+                const automatic = visible?.items.find(item => identity(item) === row.key)
+                update(previous => ({ ...previous,
+                  removed: automatic === undefined ? previous.removed : { ...previous.removed, [row.key]: removalSignature({ key: row.key, label: automatic.label, value: selection(automatic), item: automatic, signature: evidenceSignature(visible!, automatic) }) },
+                  edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)),
+                }))
+                return
+              }
+              update(previous => ({ ...previous, removed: { ...previous.removed, [row.key]: removalSignature(baseRows.find(base => base.key === row.key) ?? row) }, edits: Object.fromEntries(Object.entries(previous.edits).filter(([key]) => key !== row.key)) }))
+            }} size="icon-sm" type="button" variant="ghost"><Trash2Icon /></Button>
           </div>)}
         </div>}
         {!rolesValid && available.length > 0 ? <p className="text-xs text-muted-foreground">{zh ? '请核对主次诊断，保留一条主诊断。' : 'Review the diagnosis roles and keep one primary diagnosis.'}</p> : null}
@@ -294,16 +309,19 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         const candidate = { ...base, source: 'manual', ...Object.fromEntries(values) }
         if ('courseDays' in candidate) candidate.courseDays = Number(values.get('courseDays'))
         if ('quantity' in candidate) candidate.quantity = Number(values.get('quantity'))
+        if ('note' in candidate && typeof candidate.note === 'string' && candidate.note.trim() === '') delete candidate.note
         const result = doctorPreparationSelectionSchema.safeParse(candidate)
         if (!result.success || !complete(result.data)) { setEditError(true);return }
         update(previous => {
           const { [activeEditing.key]: _removed, ...removed } = previous.removed
           return { ...previous, removed, edits: { ...previous.edits, [activeEditing.key]: { label: activeEditing.label, selection: result.data, fingerprint: activeEditing.fingerprint, reviewedFingerprint: activeEditing.fingerprint } }, unselected: previous.unselected.filter(key => key !== activeEditing.key) }
         })
+        onManualChange?.({ label: activeEditing.label, value: result.data })
         setEditing(undefined)
       }}><FieldGroup className="max-h-[55svh] overflow-y-auto px-4 py-3">
         {needsReview(activeEditing.key) ? <p className="text-sm">{zh ? '新资料已到达，请核对后决定保留、修改或移除。' : 'New information arrived. Review this item before keeping it.'}</p> : null}
         {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel>{zh ? '诊断类别' : 'Diagnosis role'}</FieldLabel><ToggleGroup value={activeEditing.value.role === null ? [] : [activeEditing.value.role]} onValueChange={values => { const role = values[0];if (role === 'primary' || role === 'secondary') setEditing(previous => previous?.value.kind === 'diagnosis' ? { ...previous, value: { ...previous.value, role } } : previous) }}><ToggleGroupItem value="primary">{zh ? '主诊断' : 'Primary'}</ToggleGroupItem><ToggleGroupItem value="secondary">{zh ? '次诊断' : 'Secondary'}</ToggleGroupItem></ToggleGroup></Field> : null}
+        {activeEditing.value.kind === 'diagnosis' ? <Field><FieldLabel htmlFor="prepared-note">{zh ? '备注' : 'Note'}</FieldLabel><Input defaultValue={activeEditing.value.note ?? ''} id="prepared-note" maxLength={500} name="note" /></Field> : null}
         {(activeEditing.value.kind === 'prescription' ? [['doseText', zh ? '每次剂量' : 'Dose'], ['frequencyCode', zh ? '频次' : 'Frequency'], ['courseDays', zh ? '疗程（天）' : 'Days'], ['quantity', zh ? '数量' : 'Quantity']]
           : activeEditing.value.kind === 'laboratory' ? [['indicationCode', zh ? '检查目的' : 'Indication']]
           : activeEditing.value.kind === 'imaging' ? [['indication', zh ? '检查目的' : 'Indication']]

@@ -86,6 +86,25 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it('shares physician form values with row edits and exposes the manual entry in the same list', async () => {
+    const current = prescriptionState(); stubRequests(() => current)
+    const onManualChange = vi.fn(), onManualRemove = vi.fn()
+    const initial = props({ kind: 'prescription', onManualChange, onManualRemove,
+      manualControls: <button type="button">添加药品</button>,
+      manualItems: [{ label: '合成药品', value: { source: 'manual', kind: 'prescription', catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 } }] })
+    const mounted = mount(initial)
+    await screen.findByText('合成药品')
+    const user = userEvent.setup(); await edit()
+    fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
+    await user.click(screen.getByRole('button', { name: '保留本次调整' }))
+    expect(onManualChange).toHaveBeenCalledWith({ label: '合成药品', value: expect.objectContaining({ source: 'manual', doseText: '10 mg' }) })
+    mounted.rerenderPanel({ ...initial, manualItems: [{ label: '合成药品', value: { ...initial.manualItems![0]!.value, kind: 'prescription', source: 'manual', catalogItemId: 'medication-1', doseText: '20 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 } }] })
+    expect(screen.getByText(/20 mg/)).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: '添加药品' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: '移除合成药品' }))
+    expect(onManualRemove).toHaveBeenCalledWith(expect.objectContaining({ source: 'manual', doseText: '20 mg' }))
+  })
+
   it('keeps the actual preparation result and source-change status inside the details button', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(state())))
     mount(props())
