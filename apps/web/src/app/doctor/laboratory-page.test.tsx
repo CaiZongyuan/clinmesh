@@ -213,6 +213,7 @@ describe('laboratory investigation workspace', () => {
     expect(page.onIndicationChange).not.toHaveBeenCalled()
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
     expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
+    await userEvent.setup().click(screen.getByRole('button', { name: '添加检验' }))
     expect(screen.getByText('尚未选择检验项目')).toBeTruthy()
   })
 
@@ -232,12 +233,15 @@ describe('laboratory investigation workspace', () => {
     }
     render(<ControlledPage />)
     await waitFor(() => expect(requested).toBe(true))
+    await userEvent.setup().click(screen.getByRole('button', { name: '添加检验' }))
     await userEvent.setup().click(screen.getByRole('button', { name: '选择 人工选择的合成项目 SYN-1' }))
     await act(async () => { resolvePending(Response.json(recommendations())) })
     const draft = within(screen.getByRole('region', { name: '检验申请' }))
     expect(draft.getByText('人工选择的合成项目')).toBeTruthy()
     expect(draft.queryByText('合成检验项目')).toBeNull()
-    expect(screen.getByRole('button', { name: /^开具选中项目/ })).toHaveProperty('disabled', true)
+    await userEvent.setup().click(screen.getByRole('button', { name: '返回待开具列表' }))
+    expect(screen.getByRole('checkbox', { name: '选择人工选择的合成项目' })).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
   })
 
   it('does not write a delayed preparation response back through the parent after the editor unmounts', async () => {
@@ -255,8 +259,16 @@ describe('laboratory investigation workspace', () => {
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
   })
 
-  it.each(['saved', 'unsaved'] as const)('requires the doctor to resolve the current %s request before confirming automatic orders', async mode => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendations())))
+  it.each(['saved', 'unsaved'] as const)('includes the current %s manual draft in the single order list', async mode => {
+    const bodies: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/actions/confirm')) {
+        bodies.push(JSON.parse(String(init?.body)))
+        return Response.json({ auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-confirm', warnings: [],
+          data: { kind: 'laboratory', draftVersion: 2, encounterVersion: '1', recordIds: ['new'] } })
+      }
+      return Response.json(recommendations())
+    }))
     const page = props({ laboratoryItemId: service.id, indicationCode: 'clinical-evaluation',
       detail: { ...detail, laboratoryRequests: { draftVersion: mode === 'saved' ? 1 : 0,
         reportingSupported: true, requests: [], ...(mode === 'saved' ? {
@@ -266,9 +278,38 @@ describe('laboratory investigation workspace', () => {
     })
     render(<LaboratoryPage {...page} />)
     await screen.findByRole('checkbox', { name: '选择合成检验项目' })
-    expect(screen.getByRole('button', { name: /^开具选中项目/ })).toHaveProperty('disabled', true)
-    expect(screen.getByText(page.messages.recommendationDraftNeedsResolution)).toBeTruthy()
-    expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
+    expect(screen.getAllByRole('checkbox', { name: '选择合成检验项目' })).toHaveLength(1)
+    await userEvent.setup().click(screen.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    expect(bodies[0]).toMatchObject({ input: { expectedDraftVersion: mode === 'saved' ? 1 : 0,
+      ...(mode === 'saved' ? { resolveExistingDraft: true } : {}),
+      selections: [{ source: 'manual', kind: 'laboratory', catalogItemId: service.id, indicationCode: 'clinical-evaluation' }] } })
+    expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('keeps a saved manual item selected alongside a different automatic item for one submission', async () => {
+    const other = { ...service, id: 'manual-service', nameZh: '人工检验项目' }
+    const bodies: unknown[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith('/actions/confirm')) {
+        bodies.push(JSON.parse(String(init?.body)))
+        return Response.json({ auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-confirm', warnings: [],
+          data: { kind: 'laboratory', draftVersion: 2, encounterVersion: '1', recordIds: ['manual-new', 'auto-new'] } })
+      }
+      return Response.json(recommendations())
+    }))
+    const page = props({ laboratoryItemId: other.id, indicationCode: 'clinical-evaluation', detail: { ...detail,
+      laboratoryRequests: { draftVersion: 1, reportingSupported: true, requests: [],
+        draft: { catalogItemId: other.id, indicationCode: 'clinical-evaluation', laboratoryService: other } } } })
+    render(<LaboratoryPage {...page} />)
+    await screen.findByRole('checkbox', { name: '选择合成检验项目' })
+    expect(screen.getByRole('checkbox', { name: '选择人工检验项目' }).getAttribute('aria-checked')).toBe('true')
+    await userEvent.setup().click(screen.getByRole('button', { name: /^开具选中项目/ }))
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    expect(bodies[0]).toMatchObject({ input: { expectedDraftVersion: 1, resolveExistingDraft: true, selections: [
+      { source: 'manual', kind: 'laboratory', catalogItemId: other.id, indicationCode: 'clinical-evaluation' },
+      { source: 'agent', suggestionId: 'synthetic-laboratory-suggestion', kind: 'laboratory', catalogItemId: service.id, indicationCode: 'clinical-evaluation' },
+    ] } })
   })
 
   it.each(['save', 'issue', 'deleteDraft'] as const)('does not confirm prepared orders while manual %s is pending', async operation => {
@@ -280,15 +321,19 @@ describe('laboratory investigation workspace', () => {
     expect(screen.getByRole('button', { name: /^开具选中项目/ })).toHaveProperty('disabled', true)
   })
 
-  it('shows the searchable directory without selecting an item or an empty report area when no request exists', () => {
+  it('opens manual laboratory entry from the unified list without a second issue action', async () => {
     const page = props()
     render(<LaboratoryPage {...page} />)
-    expect(screen.getByRole('textbox', { name: '搜索检验目录' })).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '搜索检验目录' })).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: '添加检验' }))
+    const dialog = screen.getByRole('dialog', { name: '添加检验' })
+    expect(within(dialog).getByRole('textbox', { name: '搜索检验目录' })).toBeTruthy()
+    expect(within(dialog).queryByRole('button', { name: '开具检验申请' })).toBeNull()
     expect(screen.getByRole('button', { name: '选择 合成检验项目 SYN-1' }).getAttribute('aria-pressed')).toBe('false')
     expect(page.referenceSearch.onSearch).toHaveBeenCalledExactlyOnceWith('', 1)
     expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
     expect(screen.queryByText(page.messages.noLaboratoryRequests)).toBeNull()
-    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(within(dialog).getByRole('button', { name: '返回待开具列表' })).toBeTruthy()
   })
   it('shows only the selected current report when requests exist and switches it from the request list', async () => {
     const page = props({ detail: { ...detail, laboratoryRequests: { draftVersion: 0, reportingSupported: true,
@@ -345,6 +390,7 @@ describe('laboratory investigation workspace', () => {
       return <LaboratoryPage {...props({ laboratoryItemId: itemId, onLaboratoryItemChange: setItemId })} />
     }
     render(<Page />)
+    await userEvent.setup().click(screen.getByRole('button', { name: '添加检验' }))
     await userEvent.setup().click(screen.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
     const editor = within(screen.getByRole('region', { name: '检验申请' }))
     expect(editor.getByText('静脉血')).toBeTruthy()
@@ -361,44 +407,52 @@ describe('laboratory investigation workspace', () => {
     }
     render(<Page />)
     const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
     await user.click(screen.getByRole('button', { name: '选择 合成检验项目 SYN-1' }))
     await user.type(screen.getByRole('textbox', { name: '搜索检验目录' }), '另一个项目')
     await waitFor(() => expect(page.referenceSearch.onSearch).toHaveBeenCalledWith('另一个项目', 1))
     expect(within(screen.getByRole('region', { name: '检验申请' })).getByText('合成检验项目')).toBeTruthy()
   })
-  it('keeps a saved draft in the append dialog through autosave and issue failures, then selects the issued request', async () => {
-    const current = request('first', '合成第一项', '第一份结论')
-    const state = { draft: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', laboratoryService: service },
-      draftVersion: 1, reportingSupported: true, requests: [current] }
-    const page = props({ detail: { ...detail, laboratoryRequests: state }, laboratoryItemId: service.id,
-      indicationCode: 'clinical-evaluation' })
-    const { rerender } = render(<LaboratoryPage {...page} />)
-    expect(screen.queryByRole('dialog')).toBeNull()
-    await userEvent.setup().click(screen.getByRole('button', { name: '追加申请' }))
-    const dialog = screen.getByRole('dialog', { name: '追加申请' })
-    rerender(<LaboratoryPage {...page} detail={{ ...detail, laboratoryRequests: { ...state, draftVersion: 2 } }} />)
-    expect(screen.getByRole('dialog', { name: '追加申请' })).toBe(dialog)
-    rerender(<LaboratoryPage {...page} actions={{ ...page.actions, save: { ...page.actions.save, pending: true } }} />)
-    expect(within(dialog).getByRole('button', { name: '开具检验申请' }).hasAttribute('disabled')).toBe(true)
-    rerender(<LaboratoryPage {...page} actions={{ ...page.actions, issue: { ...page.actions.issue, error: new Error('synthetic failure') } }} />)
-    expect(within(dialog).getByRole('alert')).toBeTruthy()
-    await userEvent.setup().click(within(dialog).getByRole('button', { name: '开具检验申请' }))
-    expect(page.actions.issue.onSubmit).toHaveBeenCalledOnce()
-    expect(screen.getByRole('dialog', { name: '追加申请' })).toBe(dialog)
-    const issued = { ...request('new', '合成新项目', ''), status: 'issued' as const }
-    delete issued.report
-    rerender(<LaboratoryPage {...page} actions={{ ...page.actions, issue: { ...page.actions.issue, successRequestId: 'new' } }}
-      detail={{ ...detail, laboratoryRequests: { draftVersion: 3, reportingSupported: true, requests: [issued, current] } }} />)
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(screen.getByRole('region', { name: '合成新项目' })).toBeTruthy()
-    expect(screen.queryByText('第一份结论')).toBeNull()
+  it('does not replace a saved manual laboratory draft from a different catalog selection', async () => {
+    const other = { ...service, id: 'other-service', nameZh: '另一个合成项目' }
+    const page = props({ laboratoryItemId: service.id, indicationCode: 'clinical-evaluation', detail: { ...detail,
+      laboratoryRequests: { draftVersion: 1, reportingSupported: true, requests: [],
+        draft: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', laboratoryService: service } } },
+      referenceSearch: { ...props().referenceSearch, data: { items: [service, other], page: 1, pageSize: 20, total: 2 } },
+    })
+    render(<LaboratoryPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    await user.click(screen.getByRole('button', { name: '选择 另一个合成项目 SYN-1' }))
+    expect(screen.getByRole('alert').textContent).toContain('请先开具或删除已有检验草稿')
+    expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
   })
+
+  it('keeps the saved draft in its manual dialog through save failures and returns to the same list', async () => {
+    const state = { draft: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', laboratoryService: service },
+      draftVersion: 1, reportingSupported: true, requests: [request('first', '合成第一项', '第一份结论')] }
+    const page = props({ detail: { ...detail, laboratoryRequests: state }, laboratoryItemId: service.id, indicationCode: 'clinical-evaluation' })
+    const { rerender } = render(<LaboratoryPage {...page} />)
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const dialog = screen.getByRole('dialog', { name: '添加检验' })
+    rerender(<LaboratoryPage {...page} actions={{ ...page.actions, save: { ...page.actions.save, error: new Error('synthetic failure') } }} />)
+    expect(within(dialog).getByRole('alert')).toBeTruthy()
+    await user.click(within(dialog).getByRole('button', { name: '重试保存' }))
+    expect(page.actions.save.onSubmit).toHaveBeenCalledOnce()
+    expect(within(dialog).queryByRole('button', { name: '开具检验申请' })).toBeNull()
+    await user.click(within(dialog).getByRole('button', { name: '返回待开具列表' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
+    expect(screen.getByText('第一份结论')).toBeTruthy()
+  })
+
   it('keeps read-only requests readable without exposing catalog or append controls', () => {
     render(<LaboratoryPage {...props({ readOnly: true, detail: { ...detail, laboratoryRequests: {
       draftVersion: 0, reportingSupported: true, requests: [request('first', '合成第一项', '第一份结论')] } } })} />)
     expect(screen.getByText('第一份结论')).toBeTruthy()
     expect(screen.queryByRole('textbox', { name: '搜索检验目录' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '追加申请' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '添加检验' })).toBeNull()
     expect(screen.queryByRole('button', { name: /确认已阅/ })).toBeNull()
   })
   it('keeps cancelled records in management when a request search or progress filter has no matches', async () => {
@@ -411,7 +465,7 @@ describe('laboratory investigation workspace', () => {
     expect(list.getByRole('button', { name: /已取消合成项目/ })).toBeTruthy()
     await user.click(list.getByRole('button', { name: '进行中' }))
     expect(list.getByText('没有匹配的申请')).toBeTruthy()
-    expect(screen.getByRole('button', { name: '追加申请' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '添加检验' })).toBeTruthy()
     expect(screen.queryByRole('textbox', { name: '搜索检验目录' })).toBeNull()
     await user.click(list.getByRole('button', { name: '查看全部申请' }))
     await user.type(list.getByRole('textbox', { name: '搜索申请' }), '没有这个项目')
@@ -420,38 +474,21 @@ describe('laboratory investigation workspace', () => {
     expect(list.getByRole('button', { name: /已取消合成项目/ })).toBeTruthy()
     expect(list.getByRole('textbox', { name: '搜索申请' }).getAttribute('value')).toBe('')
   })
-  it('keeps the first saved request recoverable after issue failure and enters management only when the issued record arrives', async () => {
-    const state = { draft: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', laboratoryService: service },
-      draftVersion: 1, reportingSupported: true, requests: [] }
-    const onSelectRequest = vi.fn()
-    const page = props({ detail: { ...detail, laboratoryRequests: state }, laboratoryItemId: service.id,
-      indicationCode: 'clinical-evaluation', onSelectRequest })
-    const { rerender } = render(<LaboratoryPage {...page} />)
-    const editor = within(screen.getByRole('region', { name: '检验申请' }))
-    expect(screen.getByRole('textbox', { name: '搜索检验目录' })).toBeTruthy()
-    expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
-    rerender(<LaboratoryPage {...page} actions={{ ...page.actions, issue: { ...page.actions.issue, pending: true } }} />)
-    expect(editor.getByRole('button', { name: '开具检验申请' }).hasAttribute('disabled')).toBe(true)
-    rerender(<LaboratoryPage {...page} actions={{ ...page.actions, issue: { ...page.actions.issue,
-      error: new Error('synthetic issue failure') } }} />)
-    expect(editor.getByRole('alert')).toBeTruthy()
-    expect(editor.getByText('合成检验项目')).toBeTruthy()
-    await userEvent.setup().click(editor.getByRole('button', { name: '开具检验申请' }))
-    expect(page.actions.issue.onSubmit).toHaveBeenCalledOnce()
-    expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
-    const successActions = { ...page.actions, issue: { ...page.actions.issue, successRequestId: 'first-issued' } }
-    rerender(<LaboratoryPage {...page} actions={successActions} />)
-    expect(screen.getByRole('textbox', { name: '搜索检验目录' })).toBeTruthy()
-    const issued: LaboratoryRequest = { ...request('first-issued', '合成新申请', ''), status: 'issued' }
-    delete issued.report
-    rerender(<LaboratoryPage {...page} actions={successActions} laboratoryItemId="" indicationCode=""
-      detail={{ ...detail, laboratoryRequests: { draftVersion: 2, reportingSupported: true, requests: [issued] } }} />)
-    expect(screen.getByRole('region', { name: '申请列表' })).toBeTruthy()
-    expect(screen.getByRole('region', { name: '合成新申请' })).toBeTruthy()
-    expect(screen.queryByRole('textbox', { name: '搜索检验目录' })).toBeNull()
-    expect(screen.queryByRole('table')).toBeNull()
-    await waitFor(() => expect(onSelectRequest).toHaveBeenCalledWith('first-issued'))
+  it('keeps a failed unified confirmation recoverable without a second issue action', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/actions/confirm')
+      ? Response.json({ error: { code: 'CATALOG_CONFLICT', message: 'Synthetic issue failure' } }, { status: 409 })
+      : Response.json(recommendations())))
+    const page = props({ laboratoryItemId: service.id, indicationCode: 'clinical-evaluation', detail: { ...detail,
+      laboratoryRequests: { draftVersion: 1, reportingSupported: true, requests: [],
+        draft: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', laboratoryService: service } } } })
+    render(<LaboratoryPage {...page} />)
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^开具选中项目/ }))
+    expect(await screen.findByText('更新或提交未完成，草稿已保留，可重试。')).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '选择合成检验项目' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '开具检验申请' })).toBeNull()
+    expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
   })
+
   it('acknowledges the current report and can return to all requests after the last unread report is acknowledged', async () => {
     const current = request('first', '合成第一项', '当前结论')
     current.previousReports = [report('历史结论', 'historical-report')]
@@ -481,6 +518,7 @@ describe('laboratory investigation workspace', () => {
     const firstSearch = { ...page.referenceSearch, data: { items: [service], page: 1, pageSize: 1, total: 2 } }
     const { rerender } = render(<LaboratoryPage {...page} referenceSearch={firstSearch} />)
     const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
     expect(screen.getByRole('button', { name: '上一页' }).hasAttribute('disabled')).toBe(true)
     await user.click(screen.getByRole('button', { name: '下一页' }))
     expect(page.referenceSearch.onSearch).toHaveBeenLastCalledWith('', 2)

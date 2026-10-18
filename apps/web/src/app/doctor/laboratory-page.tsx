@@ -43,8 +43,9 @@ import {
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { useAutosave } from './use-autosave.ts'
-import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { InvestigationManualControls, InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 
 export interface LaboratoryPageActions {
@@ -267,6 +268,7 @@ export function LaboratoryPage({
             editDraft={editDraft}
             actions={actions}
             caseId={detail.caseId}
+            encounter={detail.encounter}
             catalog={laboratoryCatalog}
             indicationCode={indicationCode}
             indicationItems={indicationItems}
@@ -297,6 +299,7 @@ function LaboratoryRequestEditor({
   editDraft,
   actions,
   caseId,
+  encounter,
   catalog,
   indicationCode,
   indicationItems,
@@ -319,6 +322,7 @@ function LaboratoryRequestEditor({
   editDraft: boolean
   actions: LaboratoryPageActions
   caseId: string
+  encounter: DoctorCaseDetail['encounter']
   catalog: ClinicalCatalog['laboratory']
   indicationCode: string
   indicationItems: Array<{ label: string; value: string }>
@@ -337,6 +341,8 @@ function LaboratoryRequestEditor({
   showCorrection: boolean
   state: DoctorCaseDetail['laboratoryRequests']
 }): React.JSX.Element {
+  const preparation = useDoctorPreparation()
+  const submitting = preparation?.submitting('laboratory') === true
   const catalogById = useMemo(() => new Map(catalog.map(item => [item.id, item])), [catalog])
   const [selectedReference, setSelectedReference] = useState<LaboratoryCatalogSelection | undefined>(
     () => {
@@ -383,6 +389,7 @@ function LaboratoryRequestEditor({
   useAutosave({
     delayMs: 800,
     enabled: !readOnly
+      && !submitting
       && !actions.save.pending
       && laboratoryItemId.length > 0
       && indicationCode.length > 0
@@ -390,9 +397,10 @@ function LaboratoryRequestEditor({
     onSave: actions.save.onSubmit,
     revision: `${caseId}:${state?.draftVersion ?? 0}:${laboratoryItemId}:${indicationCode}`,
   })
+  const draftError = actions.deleteDraft.error ?? actions.save.error
+  const [selectionConflict, setSelectionConflict] = useState(false)
   const [adding, setAdding] = useState(() => editDraft && state?.draft !== undefined)
   const recommendationUnavailableReason = (): string | undefined => {
-    if (state?.draft !== undefined || laboratoryItemId !== '' || indicationCode !== '') return messages.recommendationDraftNeedsResolution
     if (actions.save.pending || actions.issue.pending || actions.deleteDraft.pending) {
       return messages.recommendationRequestTargetUnavailable
     }
@@ -424,6 +432,11 @@ function LaboratoryRequestEditor({
     <div className="grid min-w-0 gap-4 @2xl/laboratory:grid-cols-[minmax(0,1fr)_minmax(16rem,0.7fr)]">
       <LaboratoryCatalogPicker active={active} locale={locale} search={referenceSearch} selectedId={laboratoryItemId}
         onSelect={selection => {
+          if (state?.draft !== undefined && selection?.catalogItemId !== state.draft.catalogItemId) {
+            setSelectionConflict(true)
+            return
+          }
+          setSelectionConflict(false)
           setSelectedReference(selection)
           onLaboratoryItemChange(selection?.catalogItemId ?? '')
         }} />
@@ -478,7 +491,6 @@ function LaboratoryRequestEditor({
                     : state?.draft === undefined ? '' : messages.autosaveSaved}
               </p>
               {state?.draft === undefined ? null : (
-                <>
                   <AlertDialog>
                     <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending || actions.issue.pending || actions.save.pending || !draftMatchesSelection} type="button" variant="destructive" />}>
                       <Trash2Icon data-icon="inline-start" />{messages.deleteLaboratoryRequestDraft}
@@ -513,14 +525,6 @@ function LaboratoryRequestEditor({
                       </AlertDialogFooter>
                     </AlertDialogContent>
                   </AlertDialog>
-                  <Button
-                    disabled={actions.issue.pending || actions.save.pending || !draftMatchesSelection}
-                    onClick={actions.issue.onSubmit}
-                    type="button"
-                  >
-                    <FlaskConicalIcon data-icon="inline-start" />{messages.issueLaboratoryRequest}
-                  </Button>
-                </>
               )}
             </div>
             {actions.deleteDraft.success?.caseId === caseId
@@ -531,6 +535,8 @@ function LaboratoryRequestEditor({
                 <AlertTitle>{messages.laboratoryRequestDraftDeleted}</AlertTitle>
               </Alert>
             ) : null}
+            {selectionConflict ? <p role="alert" className="text-sm text-destructive">{locale === 'zh-CN' ? '请先开具或删除已有检验草稿，再选择其他项目。' : 'Issue or delete the existing laboratory draft before choosing another item.'}</p> : null}
+            {actions.save.error === null ? null : <Button disabled={actions.save.pending} onClick={actions.save.onSubmit} type="button" variant="outline">{locale === 'zh-CN' ? '重试保存' : 'Retry saving'}</Button>}
             {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
             {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
             {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
@@ -548,16 +554,47 @@ function LaboratoryRequestEditor({
         scope={recommendationScope}
         enabled={active && !readOnly}
         disabled={actions.save.pending || actions.issue.pending || actions.deleteDraft.pending}
+        encounter={encounter}
         expectedDraftVersion={state?.draftVersion ?? 0}
+        resolveExistingDraft={state?.draft !== undefined}
+        manualItems={laboratoryItemId === '' && indicationCode === '' ? [] : [{
+          label: selectedDisplay ?? laboratoryItemId,
+          value: { source: 'manual', kind: 'laboratory', catalogItemId: laboratoryItemId, indicationCode },
+        }]}
+        onManualChange={({ value }) => {
+          if (value.kind !== 'laboratory') return
+          onLaboratoryItemChange(value.catalogItemId)
+          onIndicationChange(value.indicationCode)
+        }}
+        onConfirmed={(values, result) => {
+          if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
+          if (!values.some(value => value.source === 'manual' && value.kind === 'laboratory' && value.catalogItemId === laboratoryItemId && value.indicationCode === indicationCode)) return
+          onLaboratoryItemChange(''); onIndicationChange(''); setSelectedReference(undefined); setAdding(false)
+        }}
+        onManualRemove={() => {
+          if (state?.draft !== undefined) actions.deleteDraft.onSubmit()
+          else { onLaboratoryItemChange(''); onIndicationChange(''); setSelectedReference(undefined) }
+        }}
+        manualControls={readOnly ? null : <>
+          <InvestigationManualControls adding={adding && active} disabled={submitting || actions.issue.pending || actions.deleteDraft.pending} label={locale === 'zh-CN' ? '添加检验' : 'Add laboratory test'} locale={locale} onAddingChange={setAdding}>{editor}</InvestigationManualControls>
+          {adding || draftError === null ? null : <ErrorAlert
+            message={getWorkspaceErrorMessage(draftError, messages)}
+            title={messages.operationFailed} />}
+        </>}
         unavailableReason={recommendationUnavailableReason}
+        manualUnavailableReason={value => {
+          if (value.kind !== 'laboratory') return messages.recommendationRequestTargetUnavailable
+          const target = selectedService?.id === value.catalogItemId ? selectedService : catalogById.get(value.catalogItemId)
+          return target?.allowedIndicationCodes.includes(value.indicationCode) === true ? undefined : messages.recommendationRequestTargetUnavailable
+        }}
       />
       {readOnly || activeRequest === undefined || activeRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
         authoredAt={activeRequest.authoredAt} locale={locale} onReview={() => {
           setAdding(false); selectRequest(activeRequest.id)
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
-      <InvestigationRequestWorkspace adding={adding && active} onAddingChange={setAdding} editor={editor}
-        locale={locale} readOnly={readOnly} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
+      <InvestigationRequestWorkspace
+        locale={locale} selectedRequestId={activeRequest?.id} onSelectRequest={selectRequest}
         requests={requests.map(request => ({ id: request.id, title: requestName(request),
           statusLabel: laboratoryRequestStatusLabel(request, messages), unread: request.status === 'reported',
           inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status) }))}>

@@ -20,7 +20,6 @@ import {
   getCaseImagingServices,
   getImagingStudy,
   getImagingStudyBlock,
-  issueImagingRequest,
   newIdempotencyKey,
   retryImagingRequest,
   saveImagingRequestDraft,
@@ -30,8 +29,8 @@ import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
-import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
-import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { InvestigationManualControls, InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -381,35 +380,17 @@ export function ImagingPage({
   const draftVersion = state?.draftVersion ?? 0
   const encounterVersion = { encounterId: encounter.id, encounterVersion: encounter.versionId }
   const draftAction = useMutation({
-    mutationFn: async (kind: 'delete' | 'issue' | 'save'): Promise<ImagingRequest | undefined> => {
+    mutationFn: async (kind: 'delete' | 'save'): Promise<void> => {
       if (kind === 'delete') {
         await deleteImagingRequestDraft({ ...encounterVersion, expectedDraftVersion: draftVersion }, newIdempotencyKey())
         return
       }
-      // 签发的是已保存的草稿：表单有改动时先保存，再按保存后的草稿版本签发。
-      const unchanged = state?.draft?.service.id === serviceId && state.draft.indication === indication.trim()
-      const saved = unchanged
-        ? draftVersion
-        : (await saveImagingRequestDraft({
-            ...encounterVersion,
-            expectedDraftVersion: draftVersion,
-            indication,
-            serviceId: serviceId!,
-          }, newIdempotencyKey())).data.draftVersion
-      if (kind === 'issue') {
-        return (await issueImagingRequest({ ...encounterVersion, expectedDraftVersion: saved }, newIdempotencyKey())).data.request
-      }
+      await saveImagingRequestDraft({
+        ...encounterVersion, expectedDraftVersion: draftVersion, indication, serviceId: serviceId!,
+      }, newIdempotencyKey())
     },
     onSettled: () => onChanged(),
-    onSuccess: (result, kind) => {
-      if (kind === 'save') return
-      if (result !== undefined) {
-        selectRequest(result.id)
-        setAdding(false)
-      }
-      setServiceId(null)
-      setIndication('')
-    },
+    onSuccess: (_result, kind) => { if (kind === 'delete') { setServiceId(null); setIndication('') } },
   })
   const draftInput = agentToolInputSchemas['outpatient.imaging.draft.set'].safeParse({ serviceId, indication: indication.trim() })
   useRegisterAgentForm({
@@ -417,8 +398,7 @@ export function ImagingPage({
     values: readOnly || !draftInput.success ? null : draftInput.data,
   })
   const selectedService = services.data?.items.find(item => item.service.id === serviceId)
-  const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion): string | undefined => {
-    if (state?.draft !== undefined || serviceId !== null || indication.trim() !== '') return messages.recommendationDraftNeedsResolution
+  const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion | PreparationDraft): string | undefined => {
     if (suggestion.kind !== 'imaging' || draftAction.isPending || services.isFetching
       || !services.data?.items.some(item => item.available && item.service.id === suggestion.serviceId)
       || !agentToolInputSchemas['outpatient.imaging.draft.set'].safeParse({
@@ -448,7 +428,7 @@ export function ImagingPage({
           {visibleServices.length === 0 ? <Empty role="status"><EmptyHeader><EmptyTitle>{zh ? '没有匹配的放射检查' : 'No matching imaging examinations'}</EmptyTitle></EmptyHeader></Empty> : (
             <ul className="flex flex-col gap-2">
               {visibleServices.map(({ available, service }) => <li key={service.id}>
-                <Button aria-pressed={serviceId === service.id} className="h-auto w-full justify-start whitespace-normal" disabled={!available || draftAction.isPending} onClick={() => setServiceId(service.id)} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
+                <Button aria-pressed={serviceId === service.id} className="h-auto w-full justify-start whitespace-normal" disabled={!available || draftAction.isPending || (state?.draft !== undefined && state.draft.service.id !== service.id)} onClick={() => setServiceId(service.id)} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
                   <span className="flex min-w-0 flex-col items-start gap-1 text-left">
                     <span>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
                     <span>{service.bodySite} · {service.method}</span>
@@ -475,9 +455,6 @@ export function ImagingPage({
           <div className="flex flex-wrap items-center gap-2">
             <Button disabled={!formReady || draftAction.isPending} onClick={() => draftAction.mutate('save')} size="sm" variant="outline">
               {zh ? '保存草稿' : 'Save draft'}
-            </Button>
-            <Button disabled={!formReady || selectedService?.available !== true || draftAction.isPending} onClick={() => draftAction.mutate('issue')} size="sm">
-              {zh ? '签发申请' : 'Issue request'}
             </Button>
             {state?.draft === undefined ? null : (
               <>
@@ -511,8 +488,24 @@ export function ImagingPage({
         scope={recommendationScope}
         enabled={active && !readOnly}
         disabled={draftAction.isPending || services.isFetching}
+        encounter={encounter}
         expectedDraftVersion={draftVersion}
+        resolveExistingDraft={state?.draft !== undefined}
+        manualItems={serviceId === null && indication === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
+          value: { source: 'manual', kind: 'imaging', serviceId: serviceId ?? '', indication } }]}
+        onManualChange={({ value }) => { if (value.kind === 'imaging') { setServiceId(value.serviceId); setIndication(value.indication) } }}
+        onConfirmed={(values, result) => {
+          if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
+          if (!values.some(value => value.source === 'manual' && value.kind === 'imaging' && value.serviceId === serviceId && value.indication.trim() === indication.trim())) return
+          setServiceId(null); setIndication(''); setAdding(false)
+        }}
+        onManualRemove={() => { if (state?.draft !== undefined) draftAction.mutate('delete'); else { setServiceId(null); setIndication('') } }}
+        manualControls={readOnly ? null : <>
+          <InvestigationManualControls adding={adding && active} disabled={draftAction.isPending} label={zh ? '添加检查' : 'Add imaging'} locale={locale} onAddingChange={setAdding}>{editor}</InvestigationManualControls>
+          {adding || !draftAction.isError ? null : <Alert variant="destructive"><AlertTitle>{zh ? '草稿未移除' : 'Draft was not removed'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription></Alert>}
+        </>}
         unavailableReason={recommendationUnavailableReason}
+        manualUnavailableReason={recommendationUnavailableReason}
       />
       {readOnly || selectedRequest === undefined || selectedRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
         authoredAt={selectedRequest.authoredAt} locale={locale} onReview={() => {
@@ -520,12 +513,8 @@ export function ImagingPage({
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
       <InvestigationRequestWorkspace
-        adding={adding && active}
-        editor={editor}
         locale={locale}
-        onAddingChange={setAdding}
         onSelectRequest={selectRequest}
-        readOnly={readOnly}
         requests={(state?.requests ?? []).map(request => ({
           id: request.id,
           title: request.service.name,

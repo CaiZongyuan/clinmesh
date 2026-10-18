@@ -1,6 +1,6 @@
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@clinmesh/ui/components/dialog'
 import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Input } from '@clinmesh/ui/components/input'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
@@ -16,26 +16,43 @@ interface RequestSummary {
   inProgress: boolean
 }
 
-/** 只组织申请的显示与选择；三类表单、报告及正式操作仍由各自页面拥有。 */
-export function InvestigationRequestWorkspace({
-  adding, children, editor, locale, onAddingChange, onSelectRequest, readOnly, requests, selectedRequestId,
-}: {
+/** 目录与表单只负责准备；正式开具统一在待开具清单中完成。 */
+export function InvestigationManualControls({ adding, children, disabled = false, label, locale, onAddingChange }: {
   adding: boolean
   children: ReactNode
-  editor: ReactNode
+  disabled?: boolean | undefined
+  label: string
   locale: WorkspaceLocale
   onAddingChange: (adding: boolean) => void
+}) {
+  const zh = locale === 'zh-CN'
+  return <Dialog onOpenChange={onAddingChange} open={adding}>
+    <DialogTrigger render={<Button disabled={disabled} type="button" variant="outline" />}>
+      <PlusIcon data-icon="inline-start" />{label}
+    </DialogTrigger>
+    {adding ? <DialogContent className="sm:max-w-5xl">
+      <DialogHeader>
+        <DialogTitle>{label}</DialogTitle>
+        <DialogDescription>{zh ? '选择项目并填写信息，返回列表后统一开具。已有手工草稿时请先调整或移除，避免覆盖。' : 'Choose an item and complete its fields, then return to the list to issue it. Edit or remove an existing manual draft before choosing another item.'}</DialogDescription>
+      </DialogHeader>
+      <div className="min-h-0 overflow-y-auto overscroll-contain p-4">{children}</div>
+      <DialogFooter><Button onClick={() => onAddingChange(false)} type="button">{zh ? '返回待开具列表' : 'Return to order list'}</Button></DialogFooter>
+    </DialogContent> : null}
+  </Dialog>
+}
+
+/** 只组织正式申请的显示与选择；准备清单由各页面拥有。 */
+export function InvestigationRequestWorkspace({ children, locale, onSelectRequest, requests, selectedRequestId }: {
+  children: ReactNode
+  locale: WorkspaceLocale
   onSelectRequest?: ((id: string) => void) | undefined
-  readOnly: boolean
   requests: RequestSummary[]
   selectedRequestId?: string | undefined
 }) {
   const zh = locale === 'zh-CN'
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
-  if (requests.length === 0) return readOnly ? (
-    <Empty><EmptyHeader><EmptyTitle>{zh ? '暂无申请' : 'No requests'}</EmptyTitle></EmptyHeader></Empty>
-  ) : editor
+  if (requests.length === 0) return null
 
   const visible = requests.filter(request => (
     request.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase())
@@ -43,25 +60,9 @@ export function InvestigationRequestWorkspace({
   ))
   return (
     <div className="@container/investigation flex min-w-0 flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          {zh ? `共 ${requests.length} 份申请 · ${requests.filter(request => request.unread).length} 份待阅` : `${requests.length} requests · ${requests.filter(request => request.unread).length} unread`}
-        </p>
-        {readOnly ? null : (
-          <Dialog onOpenChange={onAddingChange} open={adding}>
-            <DialogTrigger render={<Button type="button" variant="outline" />}>
-              <PlusIcon data-icon="inline-start" />{zh ? '追加申请' : 'Add request'}
-            </DialogTrigger>
-            {adding ? <DialogContent className="max-w-5xl">
-              <DialogHeader>
-                <DialogTitle>{zh ? '追加申请' : 'Add request'}</DialogTitle>
-                <DialogDescription>{zh ? '选择当前分类的项目，填写申请信息后正式开立。' : 'Select an item in this category, complete the request, and issue it.'}</DialogDescription>
-              </DialogHeader>
-              <div className="min-h-0 overflow-y-auto overscroll-contain p-4">{editor}</div>
-            </DialogContent> : null}
-          </Dialog>
-        )}
-      </div>
+      <p className="text-sm text-muted-foreground">
+        {zh ? `共 ${requests.length} 份申请 · ${requests.filter(request => request.unread).length} 份待阅` : `${requests.length} requests · ${requests.filter(request => request.unread).length} unread`}
+      </p>
       <div className="grid min-w-0 gap-4 @3xl/investigation:grid-cols-[minmax(14rem,0.7fr)_minmax(0,1.7fr)]">
         <section aria-label={zh ? '申请列表' : 'Request list'} className="flex min-w-0 flex-col gap-3">
           <Input aria-label={zh ? '搜索申请' : 'Search requests'} onChange={event => setQuery(event.target.value)} placeholder={zh ? '搜索申请名称' : 'Search request names'} value={query} />

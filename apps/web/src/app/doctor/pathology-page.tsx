@@ -21,7 +21,6 @@ import {
   getCasePathologyServices,
   getImagingStudy,
   getImagingStudyBlock,
-  issuePathologyRequest,
   newIdempotencyKey,
   retryPathologyRequest,
   savePathologyRequestDraft,
@@ -32,8 +31,8 @@ import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
-import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
-import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { InvestigationManualControls, InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
+import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -330,7 +329,7 @@ export function PathologyRequestList({ actions, active = true, locale, readOnly,
 
 /**
  * 医生工作台的病理会诊：选择本院会诊服务、从患者可见既往病史中选择送检对应的手术并填写会诊目的，
- * 无申请时直接选项目并保存草稿后签发；有申请时阅读选中详情，通过追加入口继续开立。
+ * 手工与自动项目共用待开具清单；通过添加入口填写，正式申请在下方独立管理。
  */
 export function PathologyPage({ actions, active = true, caseId, editDraft = false, elementId, encounter, locale, onSelectRequest, readOnly, recommendationRevision, recommendationScope, selectedReportId, selectedRequestId, state }: {
   actions: PathologyPageActions
@@ -379,43 +378,19 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
   })
   const encounterVersion = { encounterId: encounter.id, encounterVersion: encounter.versionId }
   const draftAction = useMutation({
-    mutationFn: async (kind: 'delete' | 'issue' | 'save') => {
+    mutationFn: async (kind: 'delete' | 'save') => {
       if (kind === 'delete') {
         await deletePathologyRequestDraft({ ...encounterVersion, expectedDraftVersion: draftVersion }, newIdempotencyKey())
         return
       }
       if (!parsedDraft.success) return
-      // 签发的是已保存的草稿：表单有改动时先保存，再按保存后的草稿版本签发。
-      const unchanged = state?.draft?.service.id === serviceId
-        && state.draft.sourceProcedure.sourceReference === procedureReference
-        && state.draft.purpose === purpose.trim()
-      const saved = unchanged
-        ? draftVersion
-        : (await savePathologyRequestDraft({
-            ...encounterVersion,
-            ...parsedDraft.data,
-          }, newIdempotencyKey())).data.draftVersion
-      if (kind === 'issue') {
-        return (await issuePathologyRequest({ ...encounterVersion, expectedDraftVersion: saved }, newIdempotencyKey())).data.request
-      }
+      await savePathologyRequestDraft({ ...encounterVersion, ...parsedDraft.data }, newIdempotencyKey())
     },
     onSettled: () => onChanged(),
-    onSuccess: (result, kind) => {
-      if (kind === 'save') return
-      setServiceId(null)
-      setProcedureReference(null)
-      setPurpose('')
-      if (kind === 'issue' && result !== undefined) {
-        selectRequest(result.id)
-        setAdding(false)
-      }
-    },
+    onSuccess: (_result, kind) => { if (kind === 'delete') { setServiceId(null); setProcedureReference(null); setPurpose('') } },
   })
   const selectedService = services.data?.items.find(item => item.service.id === serviceId)
-  const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion): string | undefined => {
-    if (state?.draft !== undefined || serviceId !== null || procedureReference !== null || purpose.trim() !== '') {
-      return messages.recommendationDraftNeedsResolution
-    }
+  const recommendationUnavailableReason = (suggestion: DoctorRecommendationSuggestion | PreparationDraft): string | undefined => {
     if (suggestion.kind !== 'pathology' || services.isFetching || draftAction.isPending) return messages.recommendationRequestTargetUnavailable
     const target = services.data?.items.find(item => item.service.id === suggestion.serviceId)
     if (target?.available !== true || !target.sourceProcedures.some(procedure => procedure.sourceReference === suggestion.sourceProcedureReference)
@@ -460,7 +435,7 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
                       aria-label={zh ? `选择${item.service.name}` : `Select ${item.service.name}`}
                       checked={serviceId === item.service.id}
                       className="size-4 accent-primary"
-                      disabled={!item.available || draftAction.isPending}
+                      disabled={!item.available || draftAction.isPending || (state?.draft !== undefined && state.draft.service.id !== item.service.id)}
                       id={`${elementId}-service-${item.service.id}`}
                       name={`${elementId}-service`}
                       onChange={() => { setServiceId(item.service.id); setProcedureReference(null) }}
@@ -509,7 +484,6 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
           )}
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button disabled={!formReady || draftAction.isPending} onClick={() => draftAction.mutate('save')} size="sm" variant="outline">{zh ? '保存草稿' : 'Save draft'}</Button>
-            <Button disabled={!formReady || selectedService?.available !== true || draftAction.isPending} onClick={() => draftAction.mutate('issue')} size="sm">{zh ? '签发申请' : 'Issue request'}</Button>
             {state?.draft === undefined ? null : (
               <>
                 <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate('delete')} size="sm" variant="outline">{zh ? '删除草稿' : 'Delete draft'}</Button>
@@ -540,8 +514,24 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
         scope={recommendationScope}
         enabled={active && !readOnly}
         disabled={draftAction.isPending || services.isFetching}
+        encounter={encounter}
         expectedDraftVersion={draftVersion}
+        resolveExistingDraft={state?.draft !== undefined}
+        manualItems={serviceId === null && procedureReference === null && purpose === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
+          value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose } }]}
+        onManualChange={({ value }) => { if (value.kind === 'pathology') { setServiceId(value.serviceId); setProcedureReference(value.sourceProcedureReference); setPurpose(value.purpose) } }}
+        onConfirmed={(values, result) => {
+          if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
+          if (!values.some(value => value.source === 'manual' && value.kind === 'pathology' && value.serviceId === serviceId && value.sourceProcedureReference === procedureReference && value.purpose.trim() === purpose.trim())) return
+          setServiceId(null); setProcedureReference(null); setPurpose(''); setAdding(false)
+        }}
+        onManualRemove={() => { if (state?.draft !== undefined) draftAction.mutate('delete'); else { setServiceId(null); setProcedureReference(null); setPurpose('') } }}
+        manualControls={readOnly ? null : <>
+          <InvestigationManualControls adding={adding && active} disabled={draftAction.isPending} label={zh ? '添加病理会诊' : 'Add pathology'} locale={locale} onAddingChange={setAdding}>{editor}</InvestigationManualControls>
+          {adding || !draftAction.isError ? null : <Alert variant="destructive"><AlertTitle>{zh ? '草稿未移除' : 'Draft was not removed'}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription></Alert>}
+        </>}
         unavailableReason={recommendationUnavailableReason}
+        manualUnavailableReason={recommendationUnavailableReason}
       />
       {readOnly || selectedRequest === undefined || selectedRequest.status === 'cancelled' ? null : <DoctorRecordReviewNotice caseId={caseId}
         authoredAt={selectedRequest.authoredAt} locale={locale} onReview={() => {
@@ -549,12 +539,8 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
           requestAnimationFrame(() => { recordRef.current?.scrollIntoView({ block: 'nearest' }); recordRef.current?.focus() })
         }} />}
       <InvestigationRequestWorkspace
-        adding={adding && active}
-        editor={editor}
         locale={locale}
-        onAddingChange={setAdding}
         onSelectRequest={selectRequest}
-        readOnly={readOnly}
         requests={requests.map(request => ({
           id: request.id,
           inProgress: ['issued', 'accepted', 'in-progress'].includes(request.status),
