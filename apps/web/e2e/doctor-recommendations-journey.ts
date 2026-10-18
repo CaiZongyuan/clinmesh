@@ -1,4 +1,5 @@
 import { expect, type Page } from '@playwright/test'
+import { z } from 'zod'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { syntheticGuidelineDocument, syntheticGuidelineMarker, syntheticGuidelineParagraph } from '../../server/tests/fixtures/guideline-corpus.ts'
 import { recommendationProcessingMarker, recommendationReasoningMarker } from './doctor-recommendations-fixture.ts'
@@ -125,6 +126,7 @@ export async function runRecommendationJourney({ page, read }: { page: Page; rea
   await expect.poll(async () => (await read()).laboratoryRequests?.requests.length).toBe(1)
   await expect.poll(async () => (await read()).laboratoryRequests?.requests[0]?.report?.status).toBe('final')
   const afterReport = await read()
+  z.object({ authoredAt: z.iso.datetime({ offset: true }) }).parse(afterReport.laboratoryRequests?.requests[0])
   expect(afterReport.diagnosis?.confirmation).toEqual(beforeReport.diagnosis?.confirmation)
   expect(afterReport.medicationConclusion?.prescription).toEqual(beforeReport.medicationConclusion?.prescription)
   await laboratory.getByRole('button', { name: '刷新', exact: true }).click()
