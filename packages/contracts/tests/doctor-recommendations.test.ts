@@ -65,3 +65,28 @@ it('accepts explicit manual selection without pretending that it has an agent pr
     selections: [{ ...request.input.selections[0], source: 'agent' }],
   } }).success).toBe(false)
 })
+
+it('allows manual confirmation without a preparation proof and requires both proof fields for any agent selection', () => {
+  const manual = { kind: 'diagnosis', source: 'manual', catalogItemId: 'diagnosis-fever', role: 'primary' }
+  const request = { expectedVersions: { 'Encounter/synthetic-encounter': '1' }, input: {
+    expectedDraftVersion: 1, resolveExistingDraft: true, selections: [manual],
+  } }
+  expect(confirmDoctorPreparationRequestSchema.safeParse(request).success).toBe(true)
+  const selections = [manual, { ...manual, source: 'agent', suggestionId: 'prepared-diagnosis', catalogItemId: 'diagnosis-hypertension', role: 'secondary' }]
+  expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input, selections } }).success).toBe(false)
+  expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input, selections, generation: 1 } }).success).toBe(false)
+  expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input, selections, inputFingerprint: 'a'.repeat(64) } }).success).toBe(false)
+  expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input, selections, generation: 1, inputFingerprint: 'a'.repeat(64) } }).success).toBe(true)
+  expect(confirmDoctorPreparationRequestSchema.safeParse({ ...request, input: { ...request.input, resolveExistingDraft: 'true' } }).success).toBe(false)
+})
+
+it('preserves the selected Reference medication product for the shared manual editor', () => {
+  const referenceProduct = { approvalNumber: '合成批准文号', brandName: null, code: 'SYNTHETIC-MED', dosageForm: '片剂',
+    genericName: '合成药品', id: 'reference-medication', manufacturer: '合成药厂', packageDescription: '30片/盒',
+    sourceLocator: 'synthetic:medications[0]', status: 'active', strength: '5mg', system: 'https://example.org/synthetic-medications', version: '1' }
+  const request = { expectedVersions: { 'Encounter/synthetic-encounter': '1' }, input: {
+    expectedDraftVersion: 0, selections: [{ kind: 'prescription', source: 'manual', catalogItemId: referenceProduct.id,
+      doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30, referenceProduct }],
+  } }
+  expect(confirmDoctorPreparationRequestSchema.parse(request).input.selections[0]).toHaveProperty('referenceProduct', referenceProduct)
+})

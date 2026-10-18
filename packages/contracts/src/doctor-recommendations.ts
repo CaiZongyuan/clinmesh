@@ -145,7 +145,7 @@ export const doctorPreparationSelectionSchema = z.discriminatedUnion('kind', [
     catalogItemId: identity, role: z.enum(['primary', 'secondary']),
     referenceConcept: referenceConceptSnapshotSchema.optional(),
     note: z.string().trim().min(1).max(500).optional() }).strict(),
-  z.object({ ...prescriptionDraftItemSchema.omit({ referenceProduct: true }).shape,
+  z.object({ ...prescriptionDraftItemSchema.shape,
     ...preparationSelectionSource, kind: z.literal('prescription') }).strict(),
   z.object({ ...preparationSelectionSource, kind: z.literal('laboratory'),
     catalogItemId: identity, indicationCode: z.string().min(1).max(64) }).strict(),
@@ -164,13 +164,18 @@ export type DoctorPreparationSelection = z.infer<typeof doctorPreparationSelecti
 export const confirmDoctorPreparationRequestSchema = z.object({
   expectedVersions: saveDiagnosisDraftRequestSchema.shape.expectedVersions,
   input: z.object({
-    generation: z.number().int().positive(),
-    inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    generation: z.number().int().positive().optional(),
+    inputFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     expectedDraftVersion: z.number().int().nonnegative(),
+    resolveExistingDraft: z.boolean().optional(),
     selections: z.array(doctorPreparationSelectionSchema).min(1).max(8),
   }).strict().superRefine((input, context) => {
     if (new Set(input.selections.map(selection => selection.kind)).size !== 1) {
       context.addIssue({ code: 'custom', path: ['selections'], message: 'Confirm one recommendation kind at a time' })
+    }
+    if (input.selections.some(selection => selection.source === 'agent')
+      && (input.generation === undefined || input.inputFingerprint === undefined)) {
+      context.addIssue({ code: 'custom', path: ['selections'], message: 'Agent selections require the current preparation generation and input fingerprint' })
     }
   }),
 }).strict()

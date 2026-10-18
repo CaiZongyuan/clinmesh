@@ -1263,11 +1263,15 @@ export async function generateDoctorRecommendations(state: DoctorRecommendationS
   return response.data
 }
 
-export async function confirmDoctorPreparation(state: DoctorRecommendationState, expectedDraftVersion: number,
-  selections: DoctorPreparationSelection[], idempotencyKey: string) {
+export async function confirmDoctorPreparation(state: {
+  caseId: string; kind: DoctorRecommendationKind; encounterId: string; encounterVersion: string
+  generation?: number; inputFingerprint?: string
+}, expectedDraftVersion: number, selections: DoctorPreparationSelection[], idempotencyKey: string, resolveExistingDraft = false) {
+  const proof = selections.some(selection => selection.source === 'agent')
+    ? { generation: state.generation, inputFingerprint: state.inputFingerprint } : {}
   const body = confirmDoctorPreparationRequestSchema.parse({
     expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
-    input: { generation: state.generation, inputFingerprint: state.inputFingerprint, expectedDraftVersion, selections },
+    input: { ...proof, expectedDraftVersion, selections, ...(resolveExistingDraft ? { resolveExistingDraft: true } : {}) },
   })
   const response = await apiMutation(
     `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/actions/confirm`,
