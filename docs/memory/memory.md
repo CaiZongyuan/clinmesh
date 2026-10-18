@@ -369,3 +369,5 @@
 
 - 真实模型排障先通过当前宿主 resolve 核对本次 Provider、模型和实际端点，历史绑定或另一条路由的结果不能代表当前配置。OpenAI 兼容网关的 baseURL 使用其实际 API 根路径（常见为 /v1）；HTTP 200 可能是网页，静态模型目录与 SSE 保活也不能证明生成成功。用同一凭据和最小合成请求对照代理、直连及真实模型桥，分别记录 401、429、有效数据帧和正常终止，不用扩大超时掩盖配置错误或上游限流。
 - 实模返回 `AI_RESPONSE_INVALID` 时先保存安全的形状、未知编号、重复编号和完整读取标志计数，区分 JSON 形状失败与来源成员校验失败；不记录模型正文、凭据或完整医疗内容，不通过放宽引用校验让失败变为成功。记录级选择的运行合同由[对应决策](../../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)拥有。
+
+- 全仓测试因并发争用触发既有交互超时时，先用原断言及原超时串行复现；本机需要限制 Vitest worker 时可使用 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1 pnpm check`。Turbo 严格环境模式会过滤未声明的 `VITEST_MAX_WORKERS`，单独设置该变量不影响其子任务；可用 dry-run 的 envMode 确认实际传递，不通过扩大超时或跳过用例制造通过。
