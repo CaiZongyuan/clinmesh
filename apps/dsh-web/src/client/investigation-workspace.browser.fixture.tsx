@@ -55,7 +55,7 @@ const service: LaboratoryServiceSnapshot = {
     }],
   }, specimen: { code: 'blood', display: '合成静脉血标本' }, serviceKind: 'laboratory', tatMinutes: 180, version: 1,
 }
-const secondService: LaboratoryServiceSnapshot = { ...service, id: 'synthetic-lab-second',
+const secondService: LaboratoryServiceSnapshot = { ...service, allowedIndicationCodes: ['clinical-evaluation', 'fever'], id: 'synthetic-lab-second',
   localCode: 'SYN-SECOND', nameZh: '合成第二检验项目', nameEn: 'Synthetic second laboratory test',
   referenceConcept: { ...referenceConcept, id: 'synthetic-second-reference', code: 'SYN-SECOND' } }
 const directory = [service, secondService, ...Array.from({ length: 19 }, (_, index) => ({

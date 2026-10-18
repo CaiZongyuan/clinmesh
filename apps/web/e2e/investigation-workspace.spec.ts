@@ -201,6 +201,7 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   const detail = laboratory.getByRole('region', { name: '申请详情', exact: true })
   await expect(detail.getByRole('heading', { name: '合成白细胞计数', exact: true })).toBeVisible()
   await expect(detail.getByRole('heading', { name: /检验报告/ })).toHaveCount(0)
+  await expect(laboratory.getByLabel('搜索检验目录')).toHaveValue('白细胞')
   await expect(laboratory.getByLabel('搜索检验目录')).toBeVisible()
   expect((await readCase()).laboratoryRequests?.requests[0]?.id).toBe(issuedId)
 
