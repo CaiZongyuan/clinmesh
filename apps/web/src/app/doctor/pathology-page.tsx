@@ -519,7 +519,11 @@ export function PathologyPage({ actions, active = true, caseId, editDraft = fals
         resolveExistingDraft={state?.draft !== undefined}
         manualItems={serviceId === null && procedureReference === null && purpose === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
           value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose } }]}
-        onManualChange={({ value }) => { if (value.kind === 'pathology' && (serviceId === null || serviceId === value.serviceId)) { setServiceId(value.serviceId); setProcedureReference(value.sourceProcedureReference); setPurpose(value.purpose) } }}
+        onManualChange={({ value }) => {
+          if (value.kind !== 'pathology' || serviceId !== null && serviceId !== value.serviceId) return false
+          setServiceId(value.serviceId); setProcedureReference(value.sourceProcedureReference); setPurpose(value.purpose)
+          return true
+        }}
         onConfirmed={(values, result) => {
           if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
           if (!values.some(value => value.source === 'manual' && value.kind === 'pathology' && value.serviceId === serviceId && value.sourceProcedureReference === procedureReference && value.purpose.trim() === purpose.trim())) return

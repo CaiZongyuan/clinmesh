@@ -190,7 +190,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     setDirty(true)
   }
   const changePreparedEntry = ({ label, value }: ManualPreparedItem) => {
-    if (value.kind !== 'diagnosis' || value.role === null || pending) return
+    if (value.kind !== 'diagnosis' || value.role === null || pending) return false
     const role = value.role
     setEntries(current => {
       const previous = current.find(entry => entry.catalogItemId === value.catalogItemId)
@@ -206,6 +206,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         ? { ...entry, role: 'secondary' } : entry) : updated
     })
     setDirty(true)
+    return true
   }
   const removePreparedEntry = (value: PreparationDraft) => {
     if (value.kind !== 'diagnosis' || pending) return

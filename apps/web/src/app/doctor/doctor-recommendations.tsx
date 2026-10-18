@@ -136,7 +136,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
   manualControls?: ReactNode
-  onManualChange?: ((item: ManualPreparedItem) => void) | undefined
+  onManualChange?: ((item: ManualPreparedItem) => boolean | void) | undefined
   onManualRemove?: ((value: PreparationDraft) => void) | undefined
   encounter?: { id: string; versionId: string } | undefined
   resolveExistingDraft?: boolean | undefined
@@ -178,9 +178,23 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     ...(visible?.items ?? []).filter(item => !manualKeys.has(identity(item))).map(item => ({ key: identity(item), label: item.label,
       item, value: selection(item), signature: evidenceSignature(visible!, item) })),
   ]
-  const rows: Array<PreparedRow & { owner: DraftPreferences['edits'][string] | undefined }> = baseRows.filter(row => preferences.removed[row.key] !== removalSignature(row) && !preferences.completed[row.key]?.includes(row.signature))
+  const deletedFormEdits = Object.entries(preferences.edits).filter(([key, edit]) => edit.formOwned && !manualKeys.has(key))
+  useEffect(() => {
+    if (deletedFormEdits.length === 0) return
+    update(previous => {
+      const edits = { ...previous.edits }, removed = { ...previous.removed }
+      for (const [key, edit] of deletedFormEdits) {
+        if (edits[key] !== edit) continue
+        delete edits[key]
+        const automatic = baseRows.find(row => row.key === key && row.item !== undefined)
+        if (automatic !== undefined) removed[key] = removalSignature(automatic)
+      }
+      return { ...previous, edits, removed }
+    })
+  })
+  const rows: Array<PreparedRow & { owner: DraftPreferences['edits'][string] | undefined }> = baseRows.filter(row => !deletedFormEdits.some(([key]) => key === row.key) && preferences.removed[row.key] !== removalSignature(row) && !preferences.completed[row.key]?.includes(row.signature))
     .map(row => ({ ...row, value: onManualChange !== undefined && manualKeys.has(row.key) ? row.value : preferences.edits[row.key]?.selection ?? row.value, owner: preferences.edits[row.key] }))
-  for (const [key, edit] of Object.entries(preferences.edits)) if (!rows.some(row => row.key === key) && preferences.removed[key] === undefined) {
+  for (const [key, edit] of Object.entries(preferences.edits)) if (!deletedFormEdits.some(([deleted]) => deleted === key) && !rows.some(row => row.key === key) && preferences.removed[key] === undefined) {
     rows.push({ key, label: edit.label, value: edit.selection, signature: edit.fingerprint, owner: edit })
   }
   const recordIdentity = JSON.stringify([scope, caseId, kind])
@@ -346,11 +360,11 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
         if ('note' in candidate && typeof candidate.note === 'string' && candidate.note.trim() === '') delete candidate.note
         const result = doctorPreparationSelectionSchema.safeParse(candidate)
         if (!result.success || !complete(result.data)) { setEditError(true);return }
+        const formOwned = onManualChange?.({ label: activeEditing.label, value: result.data }) === true || manualKeys.has(activeEditing.key)
         update(previous => {
           const { [activeEditing.key]: _removed, ...removed } = previous.removed
-          return { ...previous, removed, edits: { ...previous.edits, [activeEditing.key]: { label: activeEditing.label, selection: result.data, fingerprint: activeEditing.fingerprint, reviewedFingerprint: activeEditing.fingerprint } }, unselected: previous.unselected.filter(key => key !== activeEditing.key) }
+          return { ...previous, removed, edits: { ...previous.edits, [activeEditing.key]: { label: activeEditing.label, selection: result.data, fingerprint: activeEditing.fingerprint, reviewedFingerprint: activeEditing.fingerprint, formOwned } }, unselected: previous.unselected.filter(key => key !== activeEditing.key) }
         })
-        onManualChange?.({ label: activeEditing.label, value: result.data })
         setEditing(undefined)
       }}><FieldGroup className="max-h-[55svh] overflow-y-auto px-4 py-3">
         {needsReview(activeEditing.key) ? <p className="text-sm">{zh ? '新资料已到达，请核对后决定保留、修改或移除。' : 'New information arrived. Review this item before keeping it.'}</p> : null}

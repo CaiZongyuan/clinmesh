@@ -562,9 +562,10 @@ function LaboratoryRequestEditor({
           value: { source: 'manual', kind: 'laboratory', catalogItemId: laboratoryItemId, indicationCode },
         }]}
         onManualChange={({ value }) => {
-          if (value.kind !== 'laboratory' || laboratoryItemId !== '' && laboratoryItemId !== value.catalogItemId) return
+          if (value.kind !== 'laboratory' || laboratoryItemId !== '' && laboratoryItemId !== value.catalogItemId) return false
           onLaboratoryItemChange(value.catalogItemId)
           onIndicationChange(value.indicationCode)
+          return true
         }}
         onConfirmed={(values, result) => {
           if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])

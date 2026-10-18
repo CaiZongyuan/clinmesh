@@ -298,7 +298,7 @@ export function PrescriptionPage({
     setDirty(true)
   }
   const changePreparedItem = ({ value }: ManualPreparedItem) => {
-    if (value.kind !== 'prescription' || !canEditDraft || pending) return
+    if (value.kind !== 'prescription' || !canEditDraft || pending) return false
     setItems(current => {
       const previous = current.find(item => item.catalogItemId === value.catalogItemId)
       const line: PrescriptionDraftLine = {
@@ -309,6 +309,7 @@ export function PrescriptionPage({
       return previous === undefined ? [...current, line] : current.map(item => item.key === previous.key ? line : item)
     })
     setDirty(true)
+    return true
   }
   const removeMedication = (catalogItemId: string) => {
     if (!canEditDraft || pending) return

@@ -42,6 +42,8 @@
 
 ## 运行与验证边界
 
+- jsdom 在 ShadowRoot 内切换原生 `hidden` 后可能保留旧的 computed style 缓存，造成已显示控件被无障碍查询误判隐藏。先用最小 DOM 复现确认；测试宿主属性更新可以刷新缓存，保留真实可访问性断言，不用修改生产显示逻辑或忽略隐藏状态规避。
+
 - 后台保存的 pending 只表示暂时不能提交，不应推进同病例编辑器的导航身份或卸载弹窗；否则诊断、处方等自动保存会丢失正在填写的临时内容。输入保留、隐藏挂载与成功回调归属见[统一清单决策](../../.agents/notes/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
 - 需要跨病例导航复用后台检查时，组件 ref 只能记录当前视图，不能拥有请求身份；身份元数据跟随 QueryClient，完整输入对应的任务由服务端持久化。输入相同的 saved/unsaved 入口共享执行所有权并保留各自版本绑定，不把“复制 pending 状态”当成任务复用；否则刷新或失效后可能留下永久处理中的副本。质控当前合同见[输入归属决策](../../.agents/notes/implemented/architecture/2026-10-15-doctor-document-quality-control.md)。

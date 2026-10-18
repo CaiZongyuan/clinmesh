@@ -86,6 +86,24 @@ async function edit() { await userEvent.setup().click(screen.getByRole('button',
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('prepared clinical confirmation', () => {
+  it('keeps a form-deleted adjusted item removed when its automatic copy remains and the case is revisited', async () => {
+    stubRequests(() => prescriptionState())
+    const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'medication-1', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }
+    const initial = props({ kind: 'prescription', onManualChange: () => true, manualItems: [{ label: '合成药品', value }] })
+    const mounted = mount(initial, true)
+    await screen.findByRole('checkbox', { name: '选择合成药品' })
+    const form = await edit()
+    fireEvent.change(form.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
+    await userEvent.setup().click(form.getByRole('button', { name: '保留本次调整' }))
+    mounted.rerenderPanel({ ...initial, manualItems: [{ label: '合成药品', value: { ...value, doseText: '10 mg' } }] })
+    mounted.rerenderPanel({ ...initial, manualItems: [] })
+    expect(screen.queryByRole('checkbox', { name: '选择合成药品' })).toBeNull()
+    mounted.rerenderPanel({ ...initial, scope: 'another-scope', enabled: false, manualItems: [] })
+    mounted.rerenderPanel({ ...initial, manualItems: [] })
+    await waitFor(() => expect(screen.getByRole('button', { name: '刷新' })).toHaveProperty('disabled', false))
+    expect(screen.queryByRole('checkbox', { name: '选择合成药品' })).toBeNull()
+    expect(confirmButton()).toHaveProperty('disabled', true)
+  })
   it.each(['CATALOG_CONFLICT', 'WORKFLOW_CONFLICT'])('keeps the prescription-specific explanation for a %s rejection', async code => {
     stubRequests(() => prescriptionState(), () => Response.json({ error: { code, message: 'private-prescription-rule' } }, { status: 409 }))
     mount(props({ kind: 'prescription' }))

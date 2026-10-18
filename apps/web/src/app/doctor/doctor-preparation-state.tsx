@@ -90,7 +90,7 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
 }
 
 export type DoctorPreparationJob = ReturnType<typeof useDoctorPreparationJob>
-export type PreparedEdit = { label: string; selection: DoctorPreparationSelection; fingerprint: string; reviewedFingerprint?: string }
+export type PreparedEdit = { label: string; selection: DoctorPreparationSelection; fingerprint: string; reviewedFingerprint?: string; formOwned?: boolean }
 export type DraftPreferences = { edits: Record<string, PreparedEdit>; removed: Record<string, string>; unselected: string[]; completed: Record<string, string[]> }
 const emptyPreferences: DraftPreferences = { edits: {}, removed: {}, unselected: [], completed: {} }
 type PreparationContext = {

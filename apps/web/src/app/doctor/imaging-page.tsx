@@ -493,7 +493,11 @@ export function ImagingPage({
         resolveExistingDraft={state?.draft !== undefined}
         manualItems={serviceId === null && indication === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
           value: { source: 'manual', kind: 'imaging', serviceId: serviceId ?? '', indication } }]}
-        onManualChange={({ value }) => { if (value.kind === 'imaging' && (serviceId === null || serviceId === value.serviceId)) { setServiceId(value.serviceId); setIndication(value.indication) } }}
+        onManualChange={({ value }) => {
+          if (value.kind !== 'imaging' || serviceId !== null && serviceId !== value.serviceId) return false
+          setServiceId(value.serviceId); setIndication(value.indication)
+          return true
+        }}
         onConfirmed={(values, result) => {
           if (result.recordIds[0] !== undefined) selectRequest(result.recordIds[0])
           if (!values.some(value => value.source === 'manual' && value.kind === 'imaging' && value.serviceId === serviceId && value.indication.trim() === indication.trim())) return
