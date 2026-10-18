@@ -66,6 +66,7 @@ function deferredResponse() {
 describe('doctor recommendation panel current version checks', () => {
   it('requires the doctor to resolve two primary diagnoses without rewriting either selection', async () => {
     const first = state().items[0]!
+    if (first.kind !== 'diagnosis') throw new Error('Expected the synthetic diagnosis fixture')
     const current = state({ items: [first, { ...first, id: 'second', catalogItemId: 'second-diagnosis', label: '合成第二诊断' }] })
     vi.stubGlobal('fetch', vi.fn(async () => Response.json(current)))
     mount(props())
