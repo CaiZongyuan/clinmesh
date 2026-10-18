@@ -132,6 +132,11 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   caseId: string; kind: DoctorRecommendationKind; enabled: boolean; inputRevision?: string | undefined; scope?: string | undefined; locale?: WorkspaceLocale | undefined
   disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
+  manualControls?: ReactNode
+  onManualChange?: ((item: ManualPreparedItem) => void) | undefined
+  onManualRemove?: ((value: PreparationDraft) => void) | undefined
+  encounter?: { id: string; versionId: string } | undefined
+  resolveExistingDraft?: boolean | undefined
   expectedDraftVersion?: number | undefined
   unavailableReason?: ((suggestion: DoctorRecommendationSuggestion) => string | undefined) | undefined
 }) {
