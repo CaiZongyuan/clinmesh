@@ -155,6 +155,26 @@ describe('Synthea Docker Provider contract', () => {
     expect(memoryLimits).toHaveLength(2)
   })
 
+  it('starts the Provider only after localization is healthy and preserves startup diagnostics', async () => {
+    const workflow = await readFile(
+      new URL('../../../.github/workflows/synthea-provider.yml', import.meta.url),
+      'utf8',
+    )
+    const localizerStart = workflow.indexOf('--name cn-health-localizer')
+    const readiness = workflow.indexOf('test "$localizer_health" = healthy')
+    const providerStart = workflow.indexOf('--name synthea-provider')
+    const cleanup = workflow.indexOf('trap cleanup EXIT')
+
+    expect(localizerStart).toBeGreaterThan(0)
+    expect(readiness).toBeGreaterThan(localizerStart)
+    expect(providerStart).toBeGreaterThan(readiness)
+    expect(cleanup).toBeGreaterThan(0)
+    expect(cleanup).toBeLessThan(localizerStart)
+    expect(workflow).not.toContain('docker run --rm --detach')
+    expect(workflow).toContain('docker logs cn-health-localizer')
+    expect(workflow).toContain('docker logs synthea-provider')
+  })
+
   it('publishes the tested native-amd64 Provider image with attestations', async () => {
     const workflow = await readFile(
       new URL('../../../.github/workflows/synthea-provider.yml', import.meta.url),

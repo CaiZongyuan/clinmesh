@@ -16,6 +16,8 @@ Compose 只消费不可变镜像 digest。cn-health localizer 固定为 `ghcr.io
 
 Provider 镜像只发布当前部署支持的 `linux/amd64`，并在原生 amd64 runner 上构建。Provider build stage 在发布阶段下载固定 Synthea 源码与上游 profile 归档并校验 SHA-256；运行时不访问 GitHub、Registry 或其他构建来源。Provider 镜像 workflow 可在 pull request 上构建和组合 smoke，维护者显式 dispatch 才把同一份已验证镜像发布到 GHCR，并附加 SBOM 与 build provenance。
 
+组合镜像验收先等待 localizer 原有健康检查通过，再启动 Provider，与 Compose 的依赖顺序一致。Provider 在监听前读取并验证本地化元数据，依赖尚未就绪会使进程退出，后续重试访问 Provider 端口无法恢复它。CI 在启动任何容器前登记清理处理，失败时先输出双方日志，再移除容器与网络；容器保留到该处理结束，以便诊断启动失败。
+
 ClinMesh Server 只通过 `CLINMESH_SYNTHEA_PROVIDER_URL` 消费 Provider HTTP 接口；本地默认地址是 `http://127.0.0.1:51878`，完整 Compose 使用容器 DNS。Server 启动不等待 Provider，Provider 缺失、停止或失败只影响新的患者生成任务。生成请求、持久任务、重启重排队、Profile/Case 原子保存、Patient Brief 和开始门诊就诊合同不因部署收敛而改变。
 
 ## Alternatives considered

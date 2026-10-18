@@ -72,7 +72,18 @@ jobs:
           set -euo pipefail
           network=clinmesh-synthea-provider-test
           docker network create "$network"
-          docker run --rm --detach \
+          cleanup() {
+            exit_code=$?
+            if [ "$exit_code" -ne 0 ]; then
+              docker logs cn-health-localizer || true
+              docker logs synthea-provider || true
+            fi
+            docker rm --force synthea-provider cn-health-localizer >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+            exit "$exit_code"
+          }
+          trap cleanup EXIT
+          docker run --detach \
             --name cn-health-localizer \
             --network "$network" \
             --read-only \
@@ -80,7 +91,14 @@ jobs:
             --cap-drop ALL \
             --security-opt no-new-privileges:true \
             "$LOCALIZER_IMAGE"
-          docker run --rm --detach \
+          for attempt in {1..60}; do
+            localizer_health="$(docker inspect --format '{{.State.Health.Status}}' cn-health-localizer)"
+            if [ "$localizer_health" = healthy ]; then break; fi
+            if [ "$(docker inspect --format '{{.State.Running}}' cn-health-localizer)" != true ]; then break; fi
+            sleep 1
+          done
+          test "$localizer_health" = healthy
+          docker run --detach \
             --name synthea-provider \
             --network "$network" \
             --read-only \
@@ -89,7 +107,6 @@ jobs:
             --security-opt no-new-privileges:true \
             --publish 127.0.0.1:51878:51878 \
             clinmesh-synthea-provider:test
-          trap 'docker rm --force synthea-provider cn-health-localizer >/dev/null 2>&1 || true; docker network rm "$network" >/dev/null 2>&1 || true' EXIT
           curl --fail --retry 60 --retry-all-errors --retry-delay 1 \
             http://127.0.0.1:51878/health > /tmp/synthea-provider-health.json
           python - <<'PY'

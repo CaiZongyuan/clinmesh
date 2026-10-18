@@ -42,6 +42,8 @@
 
 ## 运行与验证边界
 
+- CI 中容器健康接口持续拒绝连接时，先核对启动进程是否已因依赖未就绪而退出；重试端口不能重新启动进程。容器依赖顺序与清理前保留日志见[Synthea 运行时决策](../../.agents/notes/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
+
 - 排查检验字段改后又恢复旧值时，分别核对小型本院目录与完整 Reference 目录；小型目录未包含当前项目时，也要保留医生刚选的字段值，不能先取持久草稿盖回。统一字段与恢复归属见[清单决策](../../.agents/notes/implemented/architecture/2026-10-18-prepared-clinical-confirmation.md)。
 
 - jsdom 在 ShadowRoot 内切换原生 `hidden` 后可能保留旧的 computed style 缓存，造成已显示控件被无障碍查询误判隐藏。先用最小 DOM 复现确认；测试宿主属性更新可以刷新缓存，保留真实可访问性断言，不用修改生产显示逻辑或忽略隐藏状态规避。
