@@ -4817,6 +4817,73 @@ describe('role workspaces', () => {
         }], ...pagination(1),
       }
 
+  it('retains the catalog query and page after issuing only the first of two AI laboratory items', async () => {
+    stubRecordingWorkspace('pause')
+    const originalFetch = globalThis.fetch
+    const first = laboratoryTestCatalog.items[0]!
+    const second = { ...first, id: 'lab-crp', nameZh: '合成第二项检验' }
+    const requests: LaboratoryRequest[] = []
+    const confirmations: Array<ReturnType<typeof confirmDoctorPreparationRequestSchema.parse>> = []
+    const directoryReads: Array<{ query: string | null; page: number }> = []
+    const prepared = doctorRecommendationStateSchema.parse({
+      caseId: 'case-recording', encounterId: 'encounter-recording', encounterVersion: '1', kind: 'laboratory',
+      inputFingerprint: 'a'.repeat(64), generation: 1, status: 'ready', stale: false,
+      guidelines: [{ id: 'synthetic-guideline', title: '合成检验指南', publisher: '合成发布机构', documentType: 'official-protocol',
+        version: '1', url: 'https://example.test/synthetic-guideline', locator: '检验章节', scope: '合成成人病例',
+        text: '依据合成病情核对检验指征。', sourceHash: 'b'.repeat(64) }],
+      caseEvidence: [{ id: 'synthetic-case-evidence', kind: 'consultation', label: '患者回答', text: '合成发热症状' }], missingInformation: [],
+      items: [first, second].map((service, index) => ({
+        id: `laboratory-suggestion-${index}`, kind: 'laboratory', catalogItemId: service.id,
+        label: service.nameZh, indicationCode: 'fever', rationale: '合成检验依据。',
+        supportingInformation: ['合成发热症状'], opposingInformation: [], missingInformation: [],
+        guidelineEvidenceIds: ['synthetic-guideline'], caseEvidenceIds: ['synthetic-case-evidence'],
+      })),
+    })
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname.endsWith('/reference-catalogs/laboratory')) {
+        const page = Number(url.searchParams.get('page') ?? 1)
+        directoryReads.push({ query: url.searchParams.get('query'), page })
+        return Response.json({ items: [first, second], ...pagination(41), page })
+      }
+      if (url.pathname.endsWith('/recommendations/laboratory')) return Response.json(prepared)
+      if (url.pathname.endsWith('/recommendations/laboratory/actions/confirm')) {
+        const body = confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+        confirmations.push(body)
+        requests.push({ catalogItemId: first.id, id: 'laboratory-request-first', indicationCode: 'fever',
+          referenceConcept: first.referenceConcept, previousReports: [], serviceRequestId: 'service-request-first',
+          serviceRequestVersion: '1', status: 'issued', taskId: 'laboratory-task-first', taskVersion: '1', version: 1 })
+        return Response.json(commandResponse({ kind: 'laboratory', draftVersion: 1, encounterVersion: '1', recordIds: ['laboratory-request-first'] }))
+      }
+      const response = await originalFetch(input, init)
+      if (url.pathname !== '/api/his/v1/doctor/cases/case-recording') return response
+      return Response.json({ ...await response.json(), laboratoryRequests: { draftVersion: requests.length, reportingSupported: true, requests } })
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+    await user.click(await screen.findByRole('tab', { name: '检验检查' }))
+    const panel = screen.getByRole('region', { name: '待开具检验' })
+    await user.click(await within(panel).findByRole('checkbox', { name: '选择合成第二项检验' }))
+    const search = screen.getByRole('textbox', { name: '搜索检验目录' })
+    await user.type(search, '血常')
+    await user.click(screen.getByRole('button', { name: '执行检验目录搜索' }))
+    await user.click(screen.getByRole('button', { name: '下一页' }))
+    await waitFor(() => expect(directoryReads.at(-1)).toEqual({ query: '血常', page: 2 }))
+    await user.click(within(panel).getByRole('button', { name: /^开具选中项目/ }))
+    await within(await screen.findByRole('region', { name: '申请列表' })).findByRole('button', { name: /白细胞计数 已开具/ })
+    await user.click(screen.getByRole('button', { name: '展开目录' }))
+    expect(screen.getByRole('textbox', { name: '搜索检验目录' })).toHaveProperty('value', '血常')
+    expect(screen.getByText('共 41 条 · 2/3')).toBeTruthy()
+    expect(directoryReads.at(-1)).toEqual({ query: '血常', page: 2 })
+    expect(within(screen.getByRole('region', { name: '待开具检验' })).getByRole('checkbox', { name: '选择合成第二项检验' }).getAttribute('aria-checked')).toBe('false')
+    expect(within(screen.getByRole('region', { name: '待开具检验' })).getByText('发热')).toBeTruthy()
+    expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-recording': '1' }, input: {
+      expectedDraftVersion: 0, generation: 1, inputFingerprint: 'a'.repeat(64), selections: [
+        { source: 'agent', kind: 'laboratory', suggestionId: 'laboratory-suggestion-0', catalogItemId: first.id, indicationCode: 'fever' },
+      ],
+    } }])
+  })
+
   it('saves the manual indication from a Reference-only laboratory directory instead of restoring the persisted indication', async () => {
     stubRecordingWorkspace('pause')
     const originalFetch = globalThis.fetch

@@ -3657,7 +3657,7 @@ function CaseDetail({
                 catalog={catalog.data.diagnoses}
                 encounter={detail.encounter}
                 elementId={encounterCompletionTargetElementIds.diagnosis}
-                key={`${detail.caseId}:${agentDraftHydrationRevisions.diagnosis ?? 0}:${preparation?.confirmedRevision('diagnosis') ?? 0}`}
+                key={`${detail.caseId}:${agentDraftHydrationRevisions.diagnosis ?? 0}`}
                 locale={locale}
                 messages={messages}
                 readOnly={clinicalReadOnly}
@@ -3684,7 +3684,7 @@ function CaseDetail({
                 catalog={catalog.data.medications}
                 detail={detail}
                 elementId={encounterCompletionTargetElementIds['medication-conclusion']}
-                key={`medication-conclusion:${detail.caseId}:${agentDraftHydrationRevisions.prescription ?? 0}:${preparation?.confirmedRevision('prescription') ?? 0}`}
+                key={`medication-conclusion:${detail.caseId}:${agentDraftHydrationRevisions.prescription ?? 0}`}
                 locale={locale}
                 messages={messages}
                 readOnly={clinicalReadOnly}
@@ -3714,7 +3714,7 @@ function CaseDetail({
                   issueLegacyOrderPending={issueOrderPending}
                   laboratoryCatalog={laboratoryCatalog}
                   laboratoryItemId={laboratoryItemId}
-                  key={`laboratory:${detail.caseId}:${agentDraftHydrationRevisions.laboratory ?? 0}:${preparation?.confirmedRevision('laboratory') ?? 0}`}
+                  key={`laboratory:${detail.caseId}:${agentDraftHydrationRevisions.laboratory ?? 0}`}
                   locale={locale}
                   messages={messages}
                   onIndicationChange={onIndicationChange}
@@ -3739,7 +3739,7 @@ function CaseDetail({
                   caseId={detail.caseId}
                   elementId={encounterCompletionTargetElementIds.imaging}
                   encounter={detail.encounter}
-                  key={`imaging:${detail.caseId}:${agentDraftHydrationRevisions.imaging ?? 0}:${preparation?.confirmedRevision('imaging') ?? 0}`}
+                  key={`imaging:${detail.caseId}:${agentDraftHydrationRevisions.imaging ?? 0}`}
                   locale={locale}
                   readOnly={clinicalReadOnly}
                   state={detail.imagingRequests}
@@ -3758,7 +3758,7 @@ function CaseDetail({
                   caseId={detail.caseId}
                   elementId={encounterCompletionTargetElementIds.pathology}
                   encounter={detail.encounter}
-                  key={`pathology:${detail.caseId}:${agentDraftHydrationRevisions.pathology ?? 0}:${preparation?.confirmedRevision('pathology') ?? 0}`}
+                  key={`pathology:${detail.caseId}:${agentDraftHydrationRevisions.pathology ?? 0}`}
                   locale={locale}
                   readOnly={clinicalReadOnly}
                   state={detail.pathologyRequests}
