@@ -5,10 +5,11 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { agentPageContextBindingSchema, doctorRecordingSourceResponseSchema } from '@clinmesh/contracts/agent'
 import { createPatientResponseSchema, doctorCaseDetailSchema, doctorQueueSchema, registrationResponseSchema,
-  startVisitResponseSchema, triageResponseSchema } from '@clinmesh/contracts/his'
+  startVisitResponseSchema, triageResponseSchema, consultationHistoryFieldSchema } from '@clinmesh/contracts/his'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import type { JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { z } from 'zod'
 
 const secret = 'synthetic-doctor-recording-secret-at-least-32-characters'
@@ -21,7 +22,7 @@ function changeSignedSource(sourceProof: string, overrides: Record<string, unkno
   return `${encoded}.${createHmac('sha256', secret).update(encoded).digest('base64url')}`
 }
 
-async function fixture(provider?: JsonChatCompletionsProvider) {
+async function fixture(provider?: JsonChatCompletionsProvider, modelTimeoutMs?: number) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-doctor-source-'))
   disposals.push(() => rm(directory, { recursive: true }))
   const runtime = await createClinMeshRuntime({
@@ -29,8 +30,15 @@ async function fixture(provider?: JsonChatCompletionsProvider) {
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', trustedOrigins: ['http://localhost'],
     dshBridgeSecret: secret,
-    dshModelBridge: { origin: 'http://127.0.0.1:1', secret, timeoutMs: 2000, maxResponseBytes: 8192 },
-    ...(provider === undefined ? {} : { chatCompletionsProvider: provider, syntheaProvider: new StubSyntheaProvider(),
+    dshModelBridge: { origin: 'http://127.0.0.1:1', secret, timeoutMs: modelTimeoutMs ?? 2000, maxResponseBytes: 8192 },
+    ...(provider === undefined ? {} : { chatCompletionsProvider: { ...provider, async completeJson(input) {
+      if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
+        const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+        return { model: 'synthetic', content: JSON.stringify({ issues: [],
+          agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }) }
+      }
+      return provider.completeJson(input)
+    } }, syntheaProvider: new StubSyntheaProvider(),
       consultationModel: 'synthetic', patientPersonaModel: 'synthetic', investigationModel: 'synthetic' }),
   })
   disposals.push(() => runtime.close())
@@ -85,6 +93,562 @@ async function fixture(provider?: JsonChatCompletionsProvider) {
   })
   return { runtime, doctor, registrar, caseId, encounterId: registration.encounterId, visit, context, read, source, record }
 }
+
+it('retains unchanged facts from the pinned batch without asking the model to repeat their evidence', async () => {
+  const provider: JsonChatCompletionsProvider = { async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({
+      additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
+    }), model: 'synthetic' }
+    const payload = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+      history: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+    const source = payload.turns.at(-1)!
+    const target = payload.history[0]
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination',
+      relation: target === undefined ? 'addition' : 'update',
+      ...(target === undefined ? {} : { targetAdditionId: target.id, retainedFactIndexes: [0] }),
+      facts: [{ text: source.messageText.slice(0, -1), sources: [{ sourceTurnId: source.id, quote: source.messageText }] }],
+    }] }), model: 'synthetic' }
+  } }
+  const f = await fixture(provider)
+  const binding = await f.context()
+  const saved = []
+  for (const [index, text] of ['双肺呼吸音清。', '心律齐。'].entries()) {
+    const input = await f.source(binding, text, `retain-rpc-${index}`, `retain-message-${index}`)
+    saved.push(doctorRecordingSourceResponseSchema.parse(await (await f.record(binding, input)).json()).data.sourceId)
+    await f.runtime.dispatchPending()
+  }
+  const detail = await f.read()
+  expect(detail.clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清；心律齐')
+  expect(detail.consultationRecording?.additions.filter(item => item.status === 'applied')).toHaveLength(1)
+  expect(detail.consultationRecording?.additions.find(item => item.status === 'applied')?.facts?.flatMap(fact => fact.sources)
+    .map(source => source.sourceTurnId)).toEqual(saved)
+})
+
+it('persists the increment before semantic verification and batches saved sources once', async () => {
+  let summaries = 0
+  let verifications = 0
+  const provider: JsonChatCompletionsProvider = {
+    async completeJson(input) {
+      if (input.schemaName === 'consultation_history_verification') {
+        verifications += 1
+        return { content: JSON.stringify({ additions: [{ index: 0, faithful: false, complete: true, relationValid: true }] }), model: 'synthetic' }
+      }
+      summaries += 1
+      const { turns } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })) }).parse(input.userPayload)
+      return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: 'addition',
+        facts: turns.map(turn => ({ text: turn.messageText.slice(0, -1), sources: [{ sourceTurnId: turn.id, quote: turn.messageText }] })) }] }), model: 'synthetic' }
+    },
+  }
+  const f = await fixture(provider)
+  const revision = async () => z.object({ revision: z.string() }).parse(await (await f.runtime.app.request(
+    `/api/his/v1/doctor/cases/${f.caseId}/recording-events`, { headers: { cookie: f.doctor } })).json()).revision
+  const initialRevision = await revision()
+  const binding = await f.context()
+  for (const [index, text] of ['双肺呼吸音清。', '心律齐。'].entries()) {
+    const input = await f.source(binding, text, `batch-rpc-${index}`, `batch-message-${index}`)
+    expect((await f.record(binding, input)).status).toBe(200)
+  }
+  await f.runtime.dispatcher.dispatchOnce()
+  const recorded = await f.read()
+  expect(recorded.clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清；心律齐')
+  expect(summaries).toBe(1)
+  expect(verifications).toBe(0)
+  expect(recorded.consultationRecording).toMatchObject({ processedCount: 2, remainingCount: 0,
+    verification: { pendingCount: 1, flaggedCount: 0 } })
+  const recordedRevision = await revision()
+  expect(recordedRevision).not.toBe(initialRevision)
+  await f.runtime.dispatchPending()
+  const checked = await f.read()
+  expect(checked.consultationRecording).toMatchObject({ verification: { pendingCount: 0, flaggedCount: 1 } })
+  expect(checked.clinicalDocument?.draft).toEqual(recorded.clinicalDocument?.draft)
+  expect(await revision()).not.toBe(recordedRevision)
+})
+
+it.each(['overlong-fact', 'dangling-index'])('records an independent source and only fails the source with an invalid %s candidate', async invalid => {
+  let summaries = 0
+  const model = 'dsh:{"provider":"synthetic","model":"recording"}'
+  const response = (value?: unknown) => new Response(JSON.stringify({ model,
+    ...(value === undefined ? {} : { content: JSON.stringify(value) }) }), { headers: { 'content-type': 'application/json' } })
+  const provider = new DshModelProvider({ origin: 'http://127.0.0.1:1', secret, timeoutMs: 2_000, maxResponseBytes: 8192,
+    async fetch(_url, init) {
+      const input = z.object({ operation: z.enum(['resolve', 'complete']), schemaName: z.string().optional(),
+        userPayload: z.unknown().optional() }).parse(JSON.parse(String(init?.body)))
+      if (input.operation === 'resolve') return response()
+      if (input.schemaName === 'consultation_history_verification') return response({
+        additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
+      })
+      summaries++
+      const payload = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+        currentSourceIds: z.array(z.string()), history: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+      const current = payload.currentSourceIds.map(id => payload.turns.find(turn => turn.id === id)!)
+      const first = current[0]!
+      const additions = payload.history.length === 0 ? [{ field: 'physicalExamination', relation: 'addition',
+        facts: [{ text: first.messageText.slice(0, -1), sources: [{ sourceTurnId: first.id, quote: first.messageText }] }] }]
+        : [{ field: 'physicalExamination', relation: invalid === 'dangling-index' ? 'update' : 'addition',
+          ...(invalid === 'dangling-index' ? { targetAdditionId: payload.history[0]!.id, retainedFactIndexes: [9] } : {}),
+          facts: [{ text: first.messageText.slice(0, -1), sources: [{ sourceTurnId: first.id, quote: first.messageText }] }] },
+        { field: 'followUp', relation: 'addition', facts: [{ text: current[1]!.messageText.slice(0, -1),
+          sources: [{ sourceTurnId: current[1]!.id, quote: current[1]!.messageText }] }] }]
+      return response({ additions })
+    },
+  })
+  const f = await fixture(provider)
+  const binding = await f.context()
+  expect((await f.record(binding, await f.source(binding, '双肺呼吸音清。'))).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清')
+  const texts = [invalid === 'overlong-fact' ? `${'咳'.repeat(601)}。` : '心律齐。', '一周后复诊。']
+  const sourceIds: string[] = []
+  for (const [index, text] of texts.entries()) {
+    const response = await f.record(binding, await f.source(binding, text, `isolation-rpc-${index}`, `isolation-message-${index}`))
+    expect(response.status).toBe(200)
+    sourceIds.push(doctorRecordingSourceResponseSchema.parse(await response.json()).data.sourceId)
+  }
+  await f.runtime.dispatchPending()
+  const detail = await f.read()
+  expect(detail.clinicalDocument?.draft).toMatchObject({ physicalExamination: '双肺呼吸音清', followUp: '一周后复诊' })
+  expect(detail.consultationRecording).toMatchObject({ processedCount: 2, failedCount: 1,
+    sourceResults: expect.arrayContaining([
+      { sourceId: sourceIds[0], result: 'needs-verification' }, { sourceId: sourceIds[1], result: 'recorded' },
+    ]) })
+  expect(detail.consultationRecording?.failures.map(failure => failure.sourceTurnId)).toEqual([sourceIds[0]])
+  expect(summaries).toBe(2)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).clinicalDocument).toEqual(detail.clinicalDocument)
+  expect(summaries).toBe(2)
+})
+
+it('saves equivalent formatted updates once and keeps their source recorded', async () => {
+  let summaries = 0
+  let verifications = 0
+  const model = 'dsh:{"provider":"synthetic","model":"recording"}'
+  const response = (value?: unknown) => Response.json({ model,
+    ...(value === undefined ? {} : { content: JSON.stringify(value) }) })
+  const provider = new DshModelProvider({ origin: 'http://127.0.0.1:1', secret, timeoutMs: 2_000, maxResponseBytes: 8192,
+    async fetch(_url, init) {
+      const input = z.object({ operation: z.enum(['resolve', 'complete']), schemaName: z.string().optional(),
+        userPayload: z.unknown().optional() }).parse(JSON.parse(String(init?.body)))
+      if (input.operation === 'resolve') return response()
+      if (input.schemaName === 'consultation_history_verification') {
+        verifications++
+        return response({ additions: [{ index: 0, faithful: true, complete: true, relationValid: true }] })
+      }
+      summaries++
+      const payload = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+        history: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+      const source = payload.turns.at(-1)!
+      const fact = { text: source.messageText.slice(0, -1), sources: [{ sourceTurnId: source.id, quote: source.messageText }] }
+      const target = payload.history[0]
+      if (target === undefined) return response({ additions: [{ field: 'physicalExamination', relation: 'addition', facts: [fact] }] })
+      const update = { field: 'physicalExamination', relation: 'update', targetAdditionId: target.id,
+        retainedFactIndexes: [0], facts: [fact] }
+      return response({ additions: [update, { ...update, facts: [{ ...fact, text: ` ${fact.text} ` }] },
+        { relation: update.relation, facts: [{ sources: [{ quote: source.messageText, sourceTurnId: source.id }], text: fact.text }],
+          field: update.field, retainedFactIndexes: [0], targetAdditionId: target.id }] })
+    },
+  })
+  const f = await fixture(provider)
+  const binding = await f.context()
+  for (const [index, text] of ['双肺呼吸音清。', '心律齐。'].entries()) {
+    const recorded = await f.record(binding, await f.source(binding, text, `normalized-rpc-${index}`, `normalized-message-${index}`))
+    expect(recorded.status).toBe(200)
+    await f.runtime.dispatchPending()
+  }
+  const detail = await f.read()
+  expect(detail.clinicalDocument?.draft).toMatchObject({ version: 2, physicalExamination: '双肺呼吸音清；心律齐' })
+  expect(detail.consultationRecording).toMatchObject({ processedCount: 2, failedCount: 0, remainingCount: 0, failures: [],
+    sourceResults: [{ result: 'recorded' }, { result: 'recorded' }] })
+  expect(detail.consultationRecording?.additions.filter(addition => addition.status === 'applied')).toHaveLength(1)
+  expect(summaries).toBe(2)
+  expect(verifications).toBe(2)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).clinicalDocument).toEqual(detail.clinicalDocument)
+  expect(summaries).toBe(2)
+  expect(verifications).toBe(2)
+})
+
+it('retries an unavailable semantic check without regenerating the saved draft or repeating a negative verdict', async () => {
+  let summaries = 0
+  let checks = 0
+  let unavailable = true
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') {
+      checks++
+      if (unavailable) throw new Error('Synthetic offline verifier')
+      return { content: JSON.stringify({ additions: [{ index: 0, faithful: false, complete: true, relationValid: true }] }), model: 'synthetic' }
+    }
+    summaries++
+    const payload = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })) }).parse(input.userPayload)
+    const source = payload.turns.at(-1)!
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: 'addition',
+      facts: [{ text: '双肺呼吸音清', sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] }] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。'))
+  await f.runtime.dispatchPending()
+  const before = await f.read()
+  expect(before.consultationRecording?.verification?.failedCount).toBe(1)
+  const retry = async () => {
+    const detail = await f.read()
+    return f.runtime.app.request(`/api/his/v1/encounters/${f.encounterId}/consultation-recording/actions/control`, {
+      method: 'POST', headers: headers(f.doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${f.encounterId}`]: detail.encounter.versionId },
+        input: { action: 'retry', expectedRecordingVersion: detail.consultationRecording!.version } }),
+    })
+  }
+  unavailable = false
+  expect((await retry()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const after = await f.read()
+  expect(after.consultationRecording?.verification).toMatchObject({ failedCount: 0, flaggedCount: 1 })
+  expect(after.clinicalDocument?.draft).toEqual(before.clinicalDocument?.draft)
+  expect({ summaries, checks }).toEqual({ summaries: 1, checks: 2 })
+  expect((await retry()).status).toBe(409)
+})
+
+it('preserves complete evidence beyond 128 KiB of identity metadata without enlarging model input', async () => {
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') {
+      const { additions } = z.object({ additions: z.array(z.unknown()) }).parse(input.userPayload)
+      return { content: JSON.stringify({ additions: additions.map((_, index) => ({
+        index, faithful: true, complete: true, relationValid: true,
+      })) }), model: 'synthetic' }
+    }
+    expect(Buffer.byteLength(JSON.stringify(input.userPayload))).toBeLessThanOrEqual(128 * 1024)
+    const { turns, currentSourceIds } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+      currentSourceIds: z.array(z.string()) }).parse(input.userPayload)
+    return { content: JSON.stringify({ additions: currentSourceIds.map(id => {
+      const source = turns.find(turn => turn.id === id)!
+      return { field: 'physicalExamination', relation: 'addition', facts: [{ text: source.messageText.slice(0, -1),
+        sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] }
+    }) }), model: 'synthetic' }
+  } })
+  const binding = await f.context({}, 's'.repeat(256))
+  for (let index = 0; index < 160; index++) {
+    await f.record(binding, await f.source(binding, `第${index + 1}次复测心率${60 + index % 40}次每分钟。`,
+      String(index).padEnd(256, 'r'), String(index).padEnd(256, 'm')))
+  }
+  await f.runtime.dispatchPending()
+  expect((await f.read()).consultationRecording).toMatchObject({ processedCount: 160, failedCount: 0 })
+  const last = z.object({ snapshot_json: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT snapshot_json FROM consultation_recording_batch ORDER BY rowid DESC LIMIT 1').get())
+  expect(Buffer.byteLength(last.snapshot_json)).toBeGreaterThan(128 * 1024)
+  expect(Buffer.byteLength(last.snapshot_json)).toBeLessThanOrEqual(256 * 1024)
+  expect(JSON.parse(last.snapshot_json).sources).toHaveLength(160)
+}, 120_000)
+
+it('notifies authorized case readers after commit and cleans up cancelled subscriptions', async () => {
+  const f = await fixture()
+  const url = `/api/his/v1/doctor/cases/${f.caseId}/recording-events`
+  expect((await f.runtime.app.request(url)).status).toBe(401)
+  expect((await f.runtime.app.request(url, { headers: { cookie: f.registrar } })).status).toBe(403)
+  const revisionSchema = z.object({ revision: z.string().regex(/^[a-f0-9]{64}$/) }).strict()
+  const initial = revisionSchema.parse(await (await f.runtime.app.request(url, { headers: { cookie: f.doctor } })).json())
+  const controller = new AbortController()
+  const cancelled = f.runtime.app.request(`${url}?since=${initial.revision}`, { headers: { cookie: f.doctor }, signal: controller.signal })
+  await new Promise<void>(resolve => setTimeout(resolve, 0))
+  controller.abort()
+  expect((await cancelled).status).toBe(200)
+  const waiting = f.runtime.app.request(`${url}?since=${initial.revision}`, { headers: { cookie: f.doctor } })
+  await new Promise<void>(resolve => setTimeout(resolve, 0))
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding))
+  const response = await waiting
+  expect(response.status).toBe(200)
+  expect(revisionSchema.parse(await response.json()).revision).not.toBe(initial.revision)
+})
+
+it('discards a semantic verdict for a fragment the doctor has edited while verification was running', async () => {
+  let entered!: () => void
+  let release!: () => void
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') {
+      entered(); await held
+      return { content: JSON.stringify({ additions: [{ index: 0, faithful: false, complete: true, relationValid: true }] }), model: 'synthetic' }
+    }
+    const source = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })) }).parse(input.userPayload).turns.at(-1)!
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: 'addition',
+      facts: [{ text: '双肺呼吸音清', sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] }] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。'))
+  await f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.record-history'] })
+  const checking = f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.verify-history'] })
+  await started
+  try {
+    const before = await f.read()
+    const response = await f.runtime.app.request(`/api/his/v1/encounters/${f.encounterId}/clinical-document/draft`, {
+      method: 'PUT', headers: headers(f.doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${f.encounterId}`]: before.encounter.versionId },
+        input: { expectedDraftVersion: before.clinicalDocument!.draft!.version,
+          document: { ...before.clinicalDocument!.draft, version: undefined, updatedAt: undefined, physicalExamination: '医生复核：右下肺呼吸音减弱。' } } }),
+    })
+    expect(response.status).toBe(200)
+  } finally { release(); await checking }
+  const after = await f.read()
+  expect(after.clinicalDocument!.draft!.physicalExamination).toBe('医生复核：右下肺呼吸音减弱。')
+  expect(after.consultationRecording?.verification).toMatchObject({ pendingCount: 0, flaggedCount: 0, failedCount: 0 })
+  expect(f.runtime.database.driver.prepare('SELECT status FROM consultation_recording_verification').get()).toEqual({ status: 'stale' })
+})
+
+it('keeps a concurrent manual field while recording an independent candidate in another field', async () => {
+  let entered!: () => void
+  let release!: () => void
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({
+      additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
+    }), model: 'synthetic' }
+    const source = z.object({ turns: z.array(z.object({ id: z.string() })) }).parse(input.userPayload).turns.at(-1)!
+    entered(); await held
+    return { content: JSON.stringify({ additions: [
+      { field: 'physicalExamination', relation: 'addition', facts: [{ text: '双肺呼吸音清',
+        sources: [{ sourceTurnId: source.id, quote: '双肺呼吸音清。' }] }] },
+      { field: 'assessment', relation: 'addition', facts: [{ text: '考虑上呼吸道感染',
+        sources: [{ sourceTurnId: source.id, quote: '考虑上呼吸道感染。' }] }] },
+    ] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。考虑上呼吸道感染。'))
+  const extracting = f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.record-history'] })
+  await started
+  try {
+    const before = await f.read()
+    const response = await f.runtime.app.request(`/api/his/v1/encounters/${f.encounterId}/clinical-document/draft`, {
+      method: 'PUT', headers: headers(f.doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${f.encounterId}`]: before.encounter.versionId },
+        input: { expectedDraftVersion: 0, document: { ...Object.fromEntries(consultationHistoryFieldSchema.options.map(field => [field, ''])),
+          assessment: '医生手工评估：尚待检查。' } } }),
+    })
+    expect(response.status).toBe(200)
+  } finally { release(); await extracting }
+  const detail = await f.read()
+  expect(detail.clinicalDocument?.draft).toMatchObject({ physicalExamination: '双肺呼吸音清', assessment: '医生手工评估：尚待检查。' })
+  expect(detail.consultationRecording?.sourceResults).toEqual([{ sourceId: expect.any(String), result: 'needs-verification' }])
+})
+
+it('does not send a paused document to a queued semantic check', async () => {
+  let checks = 0
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') { checks++; throw new Error('Paused verification must not run') }
+    const source = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })) }).parse(input.userPayload).turns.at(-1)!
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: 'addition',
+      facts: [{ text: '双肺呼吸音清', sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] }] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。'))
+  await f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.record-history'] })
+  const before = await f.read()
+  const paused = await f.runtime.app.request(`/api/his/v1/encounters/${f.encounterId}/consultation-recording/actions/control`, {
+    method: 'POST', headers: headers(f.doctor), body: JSON.stringify({ expectedVersions: { [`Encounter/${f.encounterId}`]: before.encounter.versionId },
+      input: { action: 'pause', expectedRecordingVersion: before.consultationRecording!.version } }),
+  })
+  expect(paused.status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(checks).toBe(0)
+  expect((await f.read()).clinicalDocument?.draft).toEqual(before.clinicalDocument?.draft)
+  expect((await f.read()).consultationRecording?.verification).toMatchObject({ pendingCount: 0, failedCount: 1 })
+})
+
+it('isolates a candidate with forged citations and continues recording later sources', async () => {
+  const provider: JsonChatCompletionsProvider = { async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({
+      additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
+    }), model: 'synthetic' }
+    const { turns, currentSourceIds } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+      currentSourceIds: z.array(z.string()) }).parse(input.userPayload)
+    const source = turns.find(turn => turn.id === currentSourceIds[0])!
+    return { model: 'synthetic', content: JSON.stringify({ additions: [
+      { field: 'physicalExamination', relation: 'addition', facts: [{ text: source.messageText.slice(0, -1),
+        sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] },
+      ...(source.messageText === '双肺呼吸音清。' ? [{ field: 'assessment', relation: 'addition',
+        facts: [{ text: '无依据的诊断', sources: [{ sourceTurnId: 'forged-source', quote: '伪造来源。' }] }] }] : []),
+    ] }) }
+  } }
+  const f = await fixture(provider)
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。'))
+  await f.runtime.dispatchPending()
+  expect((await f.read()).clinicalDocument?.draft).toMatchObject({ physicalExamination: '双肺呼吸音清', assessment: '' })
+  expect((await f.read()).consultationRecording).toMatchObject({ failedCount: 1,
+    sourceResults: [{ result: 'needs-verification' }] })
+  await f.record(binding, await f.source(binding, '心律齐。', 'next-rpc', 'next-message'))
+  await f.runtime.dispatchPending()
+  const detail = await f.read()
+  expect(detail.clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清\n心律齐')
+  expect(detail.consultationRecording).toMatchObject({ failedCount: 1, processedCount: 1 })
+})
+
+it('lets a new increment finish while another semantic check is still running', async () => {
+  let signalStarted!: () => void
+  let release!: () => void
+  const checking = new Promise<void>(resolve => { signalStarted = resolve })
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const provider: JsonChatCompletionsProvider = { async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') {
+      signalStarted()
+      await gate
+      return { content: JSON.stringify({ additions: [{ index: 0, faithful: true, complete: true, relationValid: true }] }), model: 'synthetic' }
+    }
+    const { turns, currentSourceIds } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+      currentSourceIds: z.array(z.string()) }).parse(input.userPayload)
+    const source = turns.find(turn => turn.id === currentSourceIds[0])!
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: 'addition',
+      facts: [{ text: source.messageText.slice(0, -1), sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] }] }), model: 'synthetic' }
+  } }
+  const f = await fixture(provider)
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。'))
+  const first = f.runtime.dispatchPending()
+  await checking
+  let second: Promise<void> | undefined
+  try {
+    await f.record(binding, await f.source(binding, '心律齐。', 'parallel-rpc', 'parallel-message'))
+    second = f.runtime.dispatchPending()
+    await expect.poll(async () => (await f.read()).clinicalDocument?.draft?.physicalExamination)
+      .toBe('双肺呼吸音清\n心律齐')
+  } finally { release(); await Promise.all([first, second]) }
+})
+
+it('cancels an in-flight semantic request as soon as its exact fragment is superseded', async () => {
+  let entered!: () => void
+  let release!: () => void
+  let cancelled = false
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') {
+      entered()
+      await new Promise<void>((resolve, reject) => {
+        input.signal!.addEventListener('abort', () => { cancelled = true; reject(input.signal!.reason) }, { once: true })
+        void held.then(resolve)
+      })
+      return { content: JSON.stringify({ additions: [{ index: 0, faithful: true, complete: true, relationValid: true }] }), model: 'synthetic' }
+    }
+    const payload = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })),
+      history: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
+    const source = payload.turns.at(-1)!
+    const target = payload.history[0]
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: target === undefined ? 'addition' : 'update',
+      ...(target === undefined ? {} : { targetAdditionId: target.id, retainedFactIndexes: [0] }),
+      facts: [{ text: source.messageText.slice(0, -1), sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] }] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。'))
+  await f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.record-history'] })
+  const checking = f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.verify-history'] })
+  await started
+  try {
+    await f.record(binding, await f.source(binding, '心律齐。', 'cancel-check-rpc', 'cancel-check-message'))
+    await f.runtime.dispatcher.dispatchOnce({ kinds: ['consultation.record-history'] })
+    await expect.poll(() => cancelled, { timeout: 500 }).toBe(true)
+  } finally { release(); await checking }
+  expect((await f.read()).clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清；心律齐')
+  expect(f.runtime.database.driver.prepare("SELECT count(*) AS count FROM consultation_recording_verification WHERE status = 'stale'").get()).toEqual({ count: 1 })
+})
+
+it.each(['binding', 'generation'] as const)('cancels an in-flight recording during %s on pause and resumes without waiting for the old model', async phase => {
+  let entered!: () => void
+  let release!: () => void
+  let recordingSignal!: AbortSignal
+  let calls = 0
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const held = new Promise<void>(resolve => { release = resolve })
+  const waitForCancellation = (signal: AbortSignal) => new Promise<void>((resolve, reject) => {
+    recordingSignal = signal
+    recordingSignal.addEventListener('abort', () => reject(recordingSignal.reason), { once: true })
+    entered()
+    void held.then(resolve)
+  })
+  const f = await fixture({ async resolveModel(model, signal) {
+    if (phase === 'binding' && recordingSignal === undefined) await waitForCancellation(signal!)
+    return model
+  }, async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({
+      additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
+    }), model: 'synthetic' }
+    calls++
+    if (phase === 'generation' && calls === 1) await waitForCancellation(input.signal!)
+    const { turns } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })) }).parse(input.userPayload)
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: 'addition',
+      facts: [{ text: '双肺呼吸音清', sources: [{ sourceTurnId: turns[0]!.id, quote: turns[0]!.messageText }] }] }] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  expect((await f.record(binding, await f.source(binding, '双肺呼吸音清。'))).status).toBe(200)
+  const control = async (action: 'pause' | 'resume') => {
+    const before = await f.read()
+    return f.runtime.app.request(`/api/his/v1/encounters/${f.encounterId}/consultation-recording/actions/control`, {
+      method: 'POST', headers: headers(f.doctor), body: JSON.stringify({
+        expectedVersions: { [`Encounter/${f.encounterId}`]: before.encounter.versionId },
+        input: { action, expectedRecordingVersion: before.consultationRecording!.version },
+      }),
+    })
+  }
+  const extracting = f.runtime.dispatchPending()
+  await started
+  try {
+    expect((await control('pause')).status).toBe(200)
+    expect(recordingSignal.aborted).toBe(true)
+    await extracting
+    const paused = await f.read()
+    expect(paused.clinicalDocument?.draft).toBeUndefined()
+    expect(paused.consultationRecording).toMatchObject({ paused: true, processedCount: 0, remainingCount: 1, failedCount: 0 })
+    expect((await control('resume')).status).toBe(200)
+    await f.runtime.dispatchPending()
+    expect(calls).toBe(phase === 'binding' ? 1 : 2)
+    const resumed = await f.read()
+    expect(resumed.clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清')
+    expect(resumed.consultationRecording).toMatchObject({ processedCount: 1, remainingCount: 0, failedCount: 0 })
+  } finally { release(); await extracting }
+})
+
+it('persists a valid recording returned after six seconds within the normal model budget', async () => {
+  const f = await fixture({ async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({
+      additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
+    }), model: 'synthetic' }
+    const { turns } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })) }).parse(input.userPayload)
+    await new Promise(resolve => setTimeout(resolve, 6_100))
+    input.signal?.throwIfAborted()
+    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination', relation: 'addition',
+      facts: [{ text: turns[0]!.messageText, sources: [{ sourceTurnId: turns[0]!.id, quote: turns[0]!.messageText }] }] }] }), model: 'synthetic' }
+  } })
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding, '双肺呼吸音清。'))
+  await f.runtime.dispatchPending()
+  expect((await f.read()).clinicalDocument?.draft?.physicalExamination).toBe('双肺呼吸音清。')
+  expect((await f.read()).consultationRecording).toMatchObject({ processedCount: 1, failedCount: 0 })
+})
+
+it('cancels a timed out recording once and preserves its failure without blocking the next source', async () => {
+  let calls = 0
+  let cancelled = false
+  const provider: JsonChatCompletionsProvider = { async completeJson(input) {
+    if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({ additions: [] }), model: 'synthetic' }
+    calls += 1
+    if (calls === 1) await new Promise<void>((_resolve, reject) => input.signal!.addEventListener('abort', () => {
+      cancelled = true; reject(input.signal!.reason)
+    }, { once: true }))
+    return { content: JSON.stringify({ additions: [] }), model: 'synthetic' }
+  } }
+  const f = await fixture(provider, 100)
+  const binding = await f.context()
+  await f.record(binding, await f.source(binding))
+  await f.runtime.dispatchPending()
+  expect(cancelled).toBe(true)
+  expect(calls).toBe(1)
+  expect((await f.read()).consultationRecording).toMatchObject({ failures: [{ code: 'AI_TIMEOUT', retrying: false }] })
+  const timing = z.object({ timings_json: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT timings_json FROM consultation_recording_batch').get())
+  expect(JSON.parse(timing.timings_json)).toMatchObject({ errorCode: 'AI_TIMEOUT', stage: 'summary', sourceCount: 1,
+    aggregationMs: 0, schedulingMs: expect.any(Number), modelMs: expect.any(Number), validationMs: 0,
+    persistenceMs: expect.any(Number), firstResponseMs: null, firstTextMs: null })
+  await f.record(binding, await f.source(binding, '没有新增记录。', 'after-timeout-rpc', 'after-timeout-message'))
+  await f.runtime.dispatchPending()
+  expect(calls).toBe(2)
+  expect((await f.read()).consultationRecording).toMatchObject({ processedCount: 1, failedCount: 1,
+    sourceResults: [{ result: 'failed' }, { result: 'no-new-facts' }] })
+})
 
 it('records a proven doctor supplement without a Tool and reads it through the case Query', async () => {
   const f = await fixture()

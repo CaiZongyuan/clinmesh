@@ -40,7 +40,7 @@ export const historySummaryPrompt = [
   '完整原句可以同时包含明确自述和疑问。只总结明确自述，quote 保留整句及原问号，不删除标点或截断疑问；不能仅因含中英文问号而丢弃自述。纯提问没有可记录事实时返回 additions: []。',
   '条件假设不是已发生事实，疑问不是确诊或已满足条件的证据；进食、饮水自述不能推出空腹时长、符合采血条件或已完成采血。否定和具体不确定自述须保留原语义。',
   '只有不知道、未问及、客套话或无关指令，没有可记录的事实或医生明确决定时返回 additions: []，不生成占位病历。',
-  'history 是已经自动记录的有效片段，manualHistory 是医生拥有的正文，仅用来比较，不能作为新事实来源。人工 text 优先用于冲突比较。通过来源与独立语义校验的总结直接写入草稿；人工正文保留，有矛盾时完整记录双方及待核实措辞。',
+  'history 是已经自动记录的片段，可能尚未完成独立语义核对。manualHistory 是医生拥有的正文，仅用来比较，不能作为新事实来源。只引用原始 turns，不能把 history 当成证据。人工正文保留，有矛盾时完整记录双方及待核实措辞。',
   'rejectedFacts 是历史已拒绝的候选事实。history 中仍保留的事实可以继续归并；其余已拒绝事实只有本次新来源重新提供支持才可记录，不能用无关的新事实夹带恢复旧事实。',
   '相关新信息用 update 指向同字段的一个 history.id，重新总结该片段的全部仍有效事实并保留各自来源；无关的新事实才用 addition。相同事实再次出现返回 additions: []，不堆积同义片段。',
   '来源明确更正用 correction，并保留被更正的旧事实和明确更正的来源；没有明确更正的矛盾用 conflict，保留矛盾两方与待核对措辞，不能任意选择一方。update 不得偷偷更正旧事实。',
@@ -86,7 +86,7 @@ const verificationSchema = z.object({ additions: z.array(verificationVerdictSche
 // bounded model request evaluates the proposed facts against saved evidence.
 export async function verifyHistorySummaries(provider: JsonChatCompletionsProvider, model: string,
   signal: AbortSignal, additions: HistorySummary[], turns: HistoryTurn[], history: HistoryTarget[],
-  manualHistory: HistoryTarget[], rejectedFacts: RejectedHistoryFact[]): Promise<void> {
+  manualHistory: HistoryTarget[], rejectedFacts: RejectedHistoryFact[], currentSourceIds?: string[]): Promise<void> {
   if (additions.length === 0) return
   const parseVerdict = (value: unknown) => {
     const verdict = verificationSchema.parse(value)
@@ -109,9 +109,11 @@ export async function verifyHistorySummaries(provider: JsonChatCompletionsProvid
       '每项事实必须包含该字段可记录的临床事实、具体不确定事实或医生明确决定；仅记录不知道、未问及、客套话或无关指令为 faithful: false。',
       'complete 检查替换是否保留目标片段的全部仍有效来源事实；correction 可替代明确更正的部分，conflict 必须呈现矛盾两方及待核对。人工草稿不是来源证据。',
       'relationValid 检查 addition 是否真的新增且无重复或与 history/manualHistory 矛盾；update 只归并补充或同义表达，不能选择矛盾一方；correction 必须有同一可信来源明确纠正语义（报告新版明确更正旧版也可）；其余矛盾必须 conflict。',
-      'rejectedFacts 是历史已拒绝的事实。history 中仍有效的事实可继续保留；其他已拒绝事实只有 currentTurnId 的新来源重新支持才为 relationValid: true。旧来源重新摘引或无关新事实的引用不能解除拒绝；同一旧引用支持多个事实时，不能因为其中一个仍有效就恢复其余被拒绝事实。',
+      'rejectedFacts 是历史已拒绝的事实。history 中仍有效的事实可继续保留；其他已拒绝事实只有 currentSourceIds 中任一新来源重新支持对应事实才为 relationValid: true；未提供 currentSourceIds 时，才以 currentTurnId 作为本次新来源。旧来源重新摘引或无关新事实的引用不能解除拒绝；同一旧引用支持多个事实时，不能因为其中一个仍有效就恢复其余被拒绝事实。',
     ].join('\n'),
-    userPayload: { additions, turns, history, manualHistory, rejectedFacts, currentTurnId: turns.at(-1)?.id },
+    userPayload: { additions, turns, history, manualHistory, rejectedFacts,
+      currentTurnId: currentSourceIds?.at(-1) ?? turns.at(-1)?.id,
+      ...(currentSourceIds === undefined ? {} : { currentSourceIds }) },
     validate: value => { parseVerdict(value); return true },
   })
   signal.throwIfAborted()

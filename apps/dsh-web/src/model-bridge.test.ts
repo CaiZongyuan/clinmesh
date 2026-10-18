@@ -4,6 +4,7 @@ import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DshModelProvider } from '../../server/src/infrastructure/ai/dsh-model-provider.ts'
 import { createModelBridgeHandler } from './model-bridge.ts'
+import { setTimeout as delay } from 'node:timers/promises'
 
 type HostContext = Parameters<typeof createModelBridgeHandler>[0]
 type GenerateOptions = Parameters<HostContext['llm']['stream']>[0]
@@ -13,7 +14,7 @@ const secret = 'synthetic-model-bridge-secret-at-least-32-characters'
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { vi.restoreAllMocks(); for (const dispose of cleanup.splice(0).reverse()) await dispose() })
 
-async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 'RATE_LIMIT') {
+async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 'RATE_LIMIT', finishGate?: Promise<void>) {
   const ctx = new Context()
   cleanup.push(async () => { await ctx.fiber.dispose() })
   await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0, compression, compressionThresholdBytes: 0 })
@@ -24,6 +25,12 @@ async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 
       listModels: async () => [{ provider: 'synthetic-provider', id: 'synthetic-model', name: 'Synthetic model' }],
       async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
         calls.push(options)
+        if (finishGate !== undefined) {
+          yield { type: 'text-delta', index: 0, text: '{"ok":true}' }
+          await finishGate
+          yield { type: 'finish', reason: { kind: 'stop' } }
+          return
+        }
         if (providerFailure !== undefined) {
           if (providerFailure === 'RATE_LIMIT' && calls.length > 1) {
             yield { type: 'text-delta', index: 0, text: '{"ok":true}' }
@@ -78,4 +85,23 @@ it.each(['none', 'gzip'] as const)('recovers from one rate limit through the act
   const result = await provider.completeJson(input)
   expect(JSON.parse(result.content)).toEqual({ ok: true })
   expect(dsh.calls).toHaveLength(2)
+})
+
+it('reports Provider first text independently of the buffered gzip response', async () => {
+  let release!: () => void
+  const dsh = await host('gzip', undefined, new Promise<void>(resolve => { release = resolve }))
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  let firstTextMs: number | undefined
+  let responseAt: number | undefined
+  const started = performance.now()
+  const request = provider.completeJson({ ...input, onFirstText: elapsedMs => { firstTextMs = elapsedMs },
+    onResponse: () => { responseAt = performance.now() - started } })
+  try {
+    await expect.poll(() => dsh.calls.length).toBe(1)
+    await delay(75)
+    expect(responseAt).toBeUndefined()
+  } finally { release() }
+  await expect(request).resolves.toMatchObject({ content: '{"ok":true}' })
+  expect(firstTextMs).toBeGreaterThanOrEqual(0)
+  expect(responseAt! - firstTextMs!).toBeGreaterThanOrEqual(70)
 })

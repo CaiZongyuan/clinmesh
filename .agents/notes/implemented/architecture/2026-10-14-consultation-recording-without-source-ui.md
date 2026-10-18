@@ -2,6 +2,8 @@
 
 Status: implemented
 
+同步语义核对、整轮自动重试和质量提示的当前边界由[增量记录决策](2026-10-15-low-latency-document-recording.md)补充或取代；本记录的其他来源与编辑保护理由继续适用。
+
 ## Problem
 
 问诊整理已直接写入病历，自动记录来源区域和弹窗仍增加页面内容与操作。医生需要阅读和编辑正文，当前展示要求由[病历字段规格](../../../../docs/spec/2026-10-14-clinical-document-fields.md)拥有。

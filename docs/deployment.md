@@ -413,3 +413,11 @@ pnpm --filter @clinmesh/server db:migrate
 ```
 
 该操作删除本地 HIS 运行数据。独立的 `.data/clinmesh-reference.sqlite` 不在删除范围内，不需要重新导入；不要把 `CLINMESH_REFERENCE_DATABASE_PATH` 指向 operational database，也不要删除 Reference SQLite。备份与单实例约束的决策依据见 [Demo 部署架构](demo-architecture.md)。
+
+## 实时病历整理模型与负载验证
+
+`CLINMESH_AI_RECORDING_MODEL` 可为实时整理固定独立模型；不设置时沿用问诊模型，DSH 使用完整 `dsh:{"provider":"...","model":"..."}` 路由。自动记录、核对和历史补录沿用 `CLINMESH_AI_TIMEOUT_MS` 的常规模型等待配置；DSH 默认每次桥接请求 120 秒，OpenAI 默认 60 秒，不另加 6 秒截止。既有 `CLINMESH_AI_RECORDING_TIMEOUT_MS` 不再读取。任务仍有覆盖模型解析和格式修复的有界总等待，关闭或任务失效继续取消请求；真实模型失败保留来源供恢复。取消短截止不能证明已达到实时性能目标。
+
+实时路由应明确选择 Provider 支持的思考强度，不能从模型名称推断延迟。DSH DeepSeek 路由未指定强度时继承 Provider 策略，Provider 也未配置时默认为 high；需要关闭实时整理的思考时，可配置 `CLINMESH_AI_RECORDING_MODEL=dsh:{"provider":"deepseek-official","model":"deepseek-flash","reasoningEffort":"off"}`，重启 ClinMesh Server 后对新批次生效。该覆盖只选择实时整理模型，语义核对与主会话继续沿用各自配置；性能与来源完整性仍须按[低延迟记录规格](spec/2026-10-15-low-latency-document-recording.md)实测。
+
+启动本地 DSH 模型桥接并配置本地环境后，运行 `pnpm exec tsx apps/web/e2e/recording-benchmark.ts 600 10 /absolute/path/to/report.json`。脚本构建真实 Web，使用临时 SQLite、10 个合成病例及真实模型，每病例计划每 3 秒写入一份带分钟与心率数值的确认来源，持续 10 分钟，由独立 BrowserContext 读取真实病历输入框。报告包含实际注入耗时与迟到情况、完整来源数量、页面可见数量、P50/P95、失败/超时、积压趋势、分病例公平性、核对状态和阶段时间；未可见样本单独保留，不能只用成功分位数宣称达标。来源失败、完整分母未可见、注入迟到超过一个间隔或延迟超标时返回非零退出码。报告不含临床原文或凭据，临时数据库和构建在正常结束时清理。负载与目标见[低延迟记录规格](spec/2026-10-15-low-latency-document-recording.md)。

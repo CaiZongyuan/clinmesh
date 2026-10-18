@@ -19,6 +19,20 @@ const completionInput = {
 }
 
 describe('OpenAI-compatible Chat Completions client', () => {
+  it('limits realtime structured output to the initial request and one format repair', async () => {
+    const signals: Array<AbortSignal | null | undefined> = []
+    const client = new OpenAIChatCompletionsClient({ apiKey: secret, baseUrl: 'https://openrouter.example/api/v1',
+      fetch: async (_url, init) => {
+        signals.push(init?.signal)
+        return Response.json({ choices: [{ message: { content: '{"unexpected":true}' } }] })
+      },
+    })
+    await expect(client.completeJson({ ...completionInput, maxAttempts: 2,
+      validate: value => typeof value === 'object' && value !== null && 'chiefComplaint' in value,
+    })).rejects.toMatchObject({ code: 'AI_RESPONSE_INVALID' })
+    expect(signals).toHaveLength(2)
+    expect(signals[0]).toBe(signals[1])
+  })
   it('uses one fixed JSON-schema request and returns bounded message content', async () => {
     let requestUrl = ''
     let requestInit: RequestInit | undefined

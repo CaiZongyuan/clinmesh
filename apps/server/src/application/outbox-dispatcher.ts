@@ -53,16 +53,17 @@ export class OutboxDispatcher {
     this.#retryDelayMs = options.retryDelayMs ?? 1_000
   }
 
-  claimNext(): OutboxClaim | undefined {
+  claimNext(filter: { kinds?: readonly string[]; excludedKinds?: readonly string[] } = {}): OutboxClaim | undefined {
     return this.#outbox.claimNext({
       leaseDurationMs: this.#leaseDurationMs,
       leaseOwner: this.#leaseOwner,
       now: this.#now(),
+      ...filter,
     })
   }
 
-  async dispatchOnce(): Promise<OutboxEventView | undefined> {
-    const claim = this.claimNext()
+  async dispatchOnce(filter: { kinds?: readonly string[]; excludedKinds?: readonly string[] } = {}): Promise<OutboxEventView | undefined> {
+    const claim = this.claimNext(filter)
     if (claim === undefined) return undefined
     const handler = this.#handlers[claim.kind]
     const completion = handler === undefined

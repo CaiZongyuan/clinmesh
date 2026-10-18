@@ -2,6 +2,8 @@
 
 Status: implemented
 
+同步语义核对、整轮自动重试和质量提示的当前边界由[增量记录决策](2026-10-15-low-latency-document-recording.md)补充或取代；本记录的其他来源与编辑保护理由继续适用。
+
 ## Problem
 
 问诊病史整理经过来源校验和独立语义核对后仍等待逐条应用，增加重复操作。隐藏按钮不能消除后端待应用状态和签署核对门禁。需求由[病历字段规格](../../../../docs/spec/2026-10-14-clinical-document-fields.md)拥有。

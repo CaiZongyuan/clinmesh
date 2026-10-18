@@ -1196,18 +1196,6 @@ export class WorkflowService {
         return doctorCaseDetailSchema.parse(this.#doctorCaseSnapshot(context, caseId))
       },
       automaticFacts: (context, caseId) => this.consultationRecording.qualityFacts(context, caseId),
-      history: (context, caseId) => {
-        const evidence = []
-        for (const source of ['visible-source', 'local-completed'] as const) {
-          for (let page = 1; ; page += 1) {
-            const history = this.doctorCaseHistory(context, caseId, { source, page, pageSize: 20 })
-            evidence.push(...history.items.map(item => ({ id: `history:${source}:${item.entryId}`, kind: 'clinical' as const,
-              label: item.title, text: JSON.stringify(this.doctorCaseHistoryDetail(context, caseId, { source, entryId: item.entryId })), recordedAt: item.clinicalDate })))
-            if (page * history.pageSize >= history.total) break
-          }
-        }
-        return evidence
-      },
     })
     this.consultationRecording = new ConsultationRecordingService({
       database, commands, enabled: options.consultationRecordingEnabled === true,
@@ -3002,6 +2990,15 @@ export class WorkflowService {
       return presentation.availableScopes !== undefined && !presentation.availableScopes.includes('outpatient')
         ? [] : [{ ...medication, ...presentation }]
     })
+  }
+
+  doctorCaseRecordingRevision(context: ActorContext, caseId: string): string {
+    this.#assertRole(context, ['outpatient-doctor'])
+    const found = z.object({ case_id: z.string() }).optional().parse(this.#database.driver.prepare(`
+      SELECT case_id FROM outpatient_case WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).get(context.workspaceId, context.epoch, caseId))
+    if (found === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The outpatient case was not found')
+    return this.consultationRecording.revision(context, caseId)
   }
 
   doctorCaseDetail(context: ActorContext, caseId: string) {
