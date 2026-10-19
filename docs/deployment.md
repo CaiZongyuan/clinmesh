@@ -288,7 +288,7 @@ bun install --cwd vendor/dsh-react-surface --frozen-lockfile
 bun run --cwd vendor/dsh-react-surface build:runtime
 pnpm --filter @clinmesh/dsh-web build
 git clone https://github.com/keaideppk/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
-git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout d8fe2ad4de4b5cd4441a0a88d92513170ecd03c0
+git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout a22b9e3c6a6d7837f2aaec328462309f6bc1989a
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" install --frozen-lockfile
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" build
 DSH_PROFILE="$DSH_HOME/profiles/web"
