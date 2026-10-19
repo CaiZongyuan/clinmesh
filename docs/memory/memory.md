@@ -277,6 +277,8 @@
 
 - DSH 0.2.1 不再发布 invariants 服务；升级桥接组件时移除未使用依赖及已下线的可选 companion，不能拼造同版本包。JSONL 持久化插件使用命名空间入口；新版 present 需要 working-directory 服务，隔离文件系统的 preset 同时隔离该服务。全新无模型 Profile 的 GUI 回归依次点击预览说明的继续、添加 API Key、稍后配置，再断言弹框消失；两步引导之间侧栏短暂可点不证明启动完成，不能用任意设置标记替代版本化确认。原生模型设置 smoke 固定浏览器语言并经宿主实际菜单进入；不能依赖常驻设置按钮。升级宿主时同时核对部署教程中手工 checkout 的桥接 SHA 与上游锁；自动搭建和 CI 通过不能证明复制的手工命令仍使用已验收组合。
 
+- 桥接升级须逐项核对安装示例中的包与 owning manifest；代码和锁文件检查通过，仍可能遗漏示例里的旧 Cordis 或已下线服务。跨仓库合并已经验收的精确支持提交时，保留其 SHA 在主分支历史中，合并后确认锁定来源的全新 clone 可检出该 SHA，避免 squash 后只依赖临时 PR 分支。
+
 - 更新增量病史输入后，同时运行 `pnpm smoke:consultation:native`：共享 Web 旅程通过不证明原生合成 Adapter 匹配。Fixture 需沿用[增量记录合同](../../.agents/notes/implemented/architecture/2026-10-15-low-latency-document-recording.md)的短引用与取消信号，不能依赖自动片段必有重复正文，也不能等待已取消请求正常返回。
 
 - `pnpm upstream:verify` 在全部检查通过后才写入候选锁，不能证明写锁后的版本提取测试仍通过。启动器单测使用固定输入验证字段提取，不把当前锁文件与旧发行常量绑定；最终 CI 同时检查提交后的真实锁组合。
