@@ -33,7 +33,7 @@ Web HTTP adapter 为 fetch、完整响应体读取和 schema 校验设置 30 秒
 
 `apps/dsh-web` 是 DSH Host/Client adapter，不拥有医院状态或第二套页面。Host 注册固定 loopback `/clinmesh-api` proxy 与 execution-proof route；Client 把 `apps/web` 挂载为 `dsh-react-surface`，使用 DSH 共享 React runtime、Memory Router、独立 QueryClient 和 ShadowRoot 样式/Portal。
 
-Surface Agent controller 把当前页面注册投影成 DSH Session-scoped browser Tools。Client adapter 订阅 DSH 唯一的 current-session store 与 resolved theme，并把当前 Session ID 和 light/dark 结果作为 Web runtime 输入；切换 Session 会立即撤下旧 Page Context 与 review，ClinMesh 在 Surface 内始终跟随该结果，不读取本地主题选择覆盖宿主；独立 Web 保留本地主题选择。Capability availability 由 DSH bridge 拥有；publisher 先发布 registration 以启动冷探测，已 active 的 lease 报告失败状态时替换 Page Context 和 registration，正常 `connecting` 则完成刚发布 registration 的租约切换。完整生命周期见[系统架构](architecture.md#72-page-context)。Detached review 只在 lease 保持 `active` 时有效，离开时立即取消。Page Context、Tool catalog、proposal 和 review contract 位于 `packages/contracts` 与 Server；DSH adapter 不导入 Repository、Workflow 状态机或 Hidden Fact。默认使用左右分屏，手动全屏与容器响应式合同见[系统架构](architecture.md#71-surface-与-host-边界)；Web root 受宿主高度约束，业务 panel 独立纵向滚动，隐藏时 keep-alive 保留客户端草稿。
+Surface Agent controller 把当前页面注册投影成 DSH Session-scoped browser Tools。Client adapter 订阅 DSH 唯一的 current-session store 与 resolved theme，并把当前 Session ID 和 light/dark 结果作为 Web runtime 输入；切换 Session 会立即撤下旧 Page Context 与 review，ClinMesh 在 Surface 内始终跟随该结果，不读取本地主题选择覆盖宿主；独立 Web 保留本地主题选择。Capability availability 由 DSH bridge 拥有；publisher 先发布 registration 以启动冷探测，已 active 的 lease 报告失败状态时替换 Page Context 和 registration，正常 `connecting` 则完成刚发布 registration 的租约切换。完整生命周期见[系统架构](architecture/agent-integration.md#72-page-context)。Detached review 只在 lease 保持 `active` 时有效，离开时立即取消。Page Context、Tool catalog、proposal 和 review contract 位于 `packages/contracts` 与 Server；DSH adapter 不导入 Repository、Workflow 状态机或 Hidden Fact。默认使用左右分屏，手动全屏与容器响应式合同见[系统架构](architecture/agent-integration.md#71-surface-与-host-边界)；Web root 受宿主高度约束，业务 panel 独立纵向滚动，隐藏时 keep-alive 保留客户端草稿。
 
 DSH Client artifact 是一个 lazy-CJS 文件，React、ReactDOM 和 Surface runtime 保持 external，不生成动态 chunk 或第二份 React。`vendor/dsh-react-surface` 以 submodule 固定；pnpm 仍拥有 workspace 并通过 tsx 生成样式，Bun 只执行上游 Surface builder 和 artifact verifier。
 
@@ -113,7 +113,7 @@ interface NavigationAdapter {
 
 切片金字塔的几何与倍率规则是 `@clinmesh/core/imaging-pyramid` 中不读取 DOM 的纯函数：各层相对第 0 层的降采样倍数取自实际层级尺寸，不要求逐级减半（原生 20× 切片的层级在 5× 之后跳到 1.25×）；显示层级取“一个层级像素不小于半个设备像素”的层级中分辨率最高者，与 OpenSeadragon 的选择一致；倍率读数按第 0 层像素间距和当前屏幕比例换算（10× 对应 1 µm/px），最高显示 20×，缩放上限是第 0 层像素与屏幕像素一比一且不超过 20×。引擎把这些函数接入 OpenSeadragon 的瓦片源。
 
-DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon 因此随 Surface 一起加载；引擎引用它的压缩构建 `openseadragon/build/openseadragon/openseadragon.min.js`，以减少单文件体积。客户端上限见 [DSH 产物预算](../.agents/notes/implemented/testing/2026-10-07-dsh-client-size-budget.md)。选型依据与实测体积见 [Agent Note](../.agents/notes/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。引擎由合成金字塔的 React 18/19 浏览器合同验证；医生的病理会诊页面和管理员的切片复核预览都通过同一个阅片外壳使用它。
+DSH 单文件产物不压缩依赖，也不能生成动态 chunk，OpenSeadragon 因此随 Surface 一起加载；引擎引用它的压缩构建 `openseadragon/build/openseadragon/openseadragon.min.js`，以减少单文件体积。客户端上限见 [DSH 产物预算](decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md)。选型依据与实测体积见 [Agent Note](decisions/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。引擎由合成金字塔的 React 18/19 浏览器合同验证；医生的病理会诊页面和管理员的切片复核预览都通过同一个阅片外壳使用它。
 
 ## 状态所有权
 

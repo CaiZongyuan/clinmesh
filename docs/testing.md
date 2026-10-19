@@ -40,9 +40,9 @@ E2E 从真实入口执行，并从外部观察结果：重新读取资源、数�
 
 四项病历质控的完整输入矩阵由 `clinical-document-quality-http.test.ts` 通过公开 HTTP、真实 SQLite 和 DSH Provider 网络边界验证，包含辅助检查或可选字段伪缺项的拒绝、分诊记录与患者自述的语境核对、来源不能核验的解释、说明变更与旧缓存失效；大量既往资料不进入实时输入，本次来源仍完整检查，本次正文实际超限仍返回不完整。`doctor-document-quality.spec.ts` 与共享旅程验证未保存编辑不写入草稿、十字段待补充提示及依据入口隐藏、待核实问题的具体影响与处理建议、直接修改后重新检查、无逐条确认或保留写请求及签署汇总；`document-quality.browser.test.ts` 覆盖 React 18/19 ShadowRoot、键盘、文字边界和迟到响应，组件测试保留旧处理记录的只读展示。`pnpm exec tsx scripts/smoke-dsh-consultation.ts --quality-only` 从原生 DSH 入口运行同一旅程并验证实际 Agent 草稿 Tool 和模型 schema 白名单；默认仅使用合成模型；加 `--live` 后在新合成病例中通过当前配置的真实模型核对未保存、保存及第二客户端的同输入复用，分别记录持久任务和实际模型调用数量。真实样本不代表临床准确性；入口及证据字段见[部署教程](deployment.md#问诊自动记录原生验收)。
 
-问诊组合旅程由 `apps/web/e2e/consultation-recording-journey.ts` 同时驱动 CI Web 与原生 Surface，覆盖生成后正文直接更新、无来源入口、局部人工保护、未保存编辑、患者更正与矛盾记录、暂停补录、失败重试、签署准备冻结、取消恢复和人工签署。自动记录的 Web 与 React 18/19 ShadowRoot 回归还验证失败文字不常驻、重复错误合并为按需说明、原文保存和恢复入口。HTTP/SQLite 测试继续拥有完整业务输入矩阵。`pnpm smoke:consultation:native` 使用锁定的真实宿主与合成 `LlmAdapter`，额外执行真实 Session browser Tool 草稿保存与签署 proposal，并关联 Command 回执、审计和 Trace；`pnpm smoke:consultation:live` 再为一个新合成病例调用真实模型。后者验证成功输出及逐字来源约束，不代表医学语义质量评估。两种 smoke 均显式运行，不进入常规 CI；前置配置见[部署教程](deployment.md#问诊自动记录原生验收)，分层取舍见[组合验收决策](../.agents/notes/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。
+问诊组合旅程由 `apps/web/e2e/consultation-recording-journey.ts` 同时驱动 CI Web 与原生 Surface，覆盖生成后正文直接更新、无来源入口、局部人工保护、未保存编辑、患者更正与矛盾记录、暂停补录、失败重试、签署准备冻结、取消恢复和人工签署。自动记录的 Web 与 React 18/19 ShadowRoot 回归还验证失败文字不常驻、重复错误合并为按需说明、原文保存和恢复入口。HTTP/SQLite 测试继续拥有完整业务输入矩阵。`pnpm smoke:consultation:native` 使用锁定的真实宿主与合成 `LlmAdapter`，额外执行真实 Session browser Tool 草稿保存与签署 proposal，并关联 Command 回执、审计和 Trace；`pnpm smoke:consultation:live` 再为一个新合成病例调用真实模型。后者验证成功输出及逐字来源约束，不代表医学语义质量评估。两种 smoke 均显式运行，不进入常规 CI；前置配置见[部署教程](deployment.md#问诊自动记录原生验收)，分层取舍见[组合验收决策](decisions/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。
 
-检验目录的 React 18/19 浏览器合同按版本在 `beforeAll` 中构建生产 fixture，同一文件复用产物；构建与交互分别受原有时限约束，原因见[浏览器回归决策](../.agents/notes/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
+检验目录的 React 18/19 浏览器合同按版本在 `beforeAll` 中构建生产 fixture，同一文件复用产物；构建与交互分别受原有时限约束，原因见[浏览器回归决策](decisions/implemented/testing/2026-10-02-playwright-frontend-tests.md)。
 
 CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，并从独立 `clinmesh` 子进程执行 human login 和 Agent operation。主场景从生成 Synthetic Case 与 Brief 的受控 setup 开始，由不同单岗位 Grant 依次完成挂号、分诊、问诊、检查与报告确认、诊断、处方、病历签署、完诊、药品支付、处方审核和发药。响应丢失场景必须先证明 Server 已提交，再用原 operation ID/idempotency key 查询 receipt，并通过正式 query 证明 Effect 没有重复。
 
@@ -50,9 +50,9 @@ CLI E2E 先构建真实 bin，再启动 Node listener 与 file-backed SQLite，�
 
 免费全文检索的 `guideline-corpus.test.ts` 使用真实临时 SQLite 验证跨主题召回、原文保留、许可、撤回、重复导入和独立 writer 更新；`import-guideline-source.test.ts` 在网络边界提供合成官方响应，验证重定向、预算、哈希、缓存和真实合成 PDF 页提取；`guideline-sync.test.ts` 覆盖同步、只读查询与失败更新。`doctor-guideline-corpus-http.test.ts` 经公开 HTTP 验证新增糖尿病主题的原文同时进入生成和独立核验，来源更新导致旧建议失效，撤回和替代也阻止固定引文复用。共享 Web／原生 DSH 旅程先通过真实病历 UI 引入合成糖尿病资料，核对导入正文的来源引用，恢复原病例后继续待确认清单、编辑保护与医生正式确认流程；合成模型证明接线合同，不代表实模或临床质量。
 
-大病例回归使用 596 条合成历史与超过单次预算的检验目录，验证授权批量读取、完整诊断分页、全部历史批次覆盖、单条原文选择与重打包、短句柄到真实来源的追溯、旧安全信息、跨建议种类复用、输入变更失效、失败不发布和核验完整候选分批。限流回归组合真实模型桥与 Provider，验证有界等待、初次生成与格式修复共享原始截止时间、预算耗尽后不再调用、共享一次限流重试、取消和建议 outbox 不叠加重试。SQL 数量、模型请求数、实际字节与并发边界作为稳定性能合同，公开 HTTP 耗时单独记录；不以裸 SQL 下界代替整条读取链，也不固定真实模型墙钟时间。输入组织和恢复边界见[分批读取决策](../.agents/notes/implemented/architecture/2026-10-15-recommendation-context-budget.md)与[记录级筛选决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
+大病例回归使用 596 条合成历史与超过单次预算的检验目录，验证授权批量读取、完整诊断分页、全部历史批次覆盖、单条原文选择与重打包、短句柄到真实来源的追溯、旧安全信息、跨建议种类复用、输入变更失效、失败不发布和核验完整候选分批。限流回归组合真实模型桥与 Provider，验证有界等待、初次生成与格式修复共享原始截止时间、预算耗尽后不再调用、共享一次限流重试、取消和建议 outbox 不叠加重试。SQL 数量、模型请求数、实际字节与并发边界作为稳定性能合同，公开 HTTP 耗时单独记录；不以裸 SQL 下界代替整条读取链，也不固定真实模型墙钟时间。输入组织和恢复边界见[分批读取决策](decisions/implemented/architecture/2026-10-15-recommendation-context-budget.md)与[记录级筛选决策](decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
 
-核心病例轨迹见[系统架构](architecture.md#144-场景测试)。每次运行固定 app build、数据库 schema、Operation Catalog hash、Workspace policy version、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG 时再把对应版本加入固定输入。
+核心病例轨迹见[场景测试](#144-场景测试)。每次运行固定 app build、数据库 schema、Operation Catalog hash、Workspace policy version、Synthea commit、localization profile、生成参数与 Case Revision；未来实际发布 IG 时再把对应版本加入固定输入。
 
 ## 测试设计
 
@@ -148,7 +148,7 @@ pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 
 影像像素读取的预算由 Server HTTP 合同测试持有：读取检查描述和每个像素块各自不超过固定的只读语句数，零写入、零 Audit Event、零 Action Trace，单块不超过 2 MiB，预算不随 CT 层数增长。病理切片的每个瓦片请求遵守同一预算，不随层级或瓦片数增长。DSH 通道由代理合同测试覆盖整块 2 MiB 像素的原样透传与缓存策略。首帧延迟、翻片耗时和切片瓦片吞吐属于跨机器不稳定的时间指标，按上面的原则只在真实入口验证中记录，不作为 hard gate。
 
-`trajectory` 使用共享 application interfaces 从内置虚拟患者完成问诊、检验、诊断、处方、文书和完诊；Synthetic Case generation、历史、Brief、direct start、Investigation snapshot 与新 Epoch no-AI replay 由下述 Server HTTP 集成合同覆盖。`saturation` 以独立 Worker/SQLite sandbox 覆盖 1、5、10、25 actors，并报告 load runner 自身的 busy/retry；`full-import` 只读取调用者已合法取得的 manifest 和 artifact。所有 profile 只使用合成运行状态，不提供关闭 Audit Event 或 Action Trace 的运行开关。详细取舍见 [SQLite 性能工作负载与稳定门禁分离](../.agents/notes/implemented/testing/2026-08-28-sqlite-performance-contract.md)。
+`trajectory` 使用共享 application interfaces 从内置虚拟患者完成问诊、检验、诊断、处方、文书和完诊；Synthetic Case generation、历史、Brief、direct start、Investigation snapshot 与新 Epoch no-AI replay 由下述 Server HTTP 集成合同覆盖。`saturation` 以独立 Worker/SQLite sandbox 覆盖 1、5、10、25 actors，并报告 load runner 自身的 busy/retry；`full-import` 只读取调用者已合法取得的 manifest 和 artifact。所有 profile 只使用合成运行状态，不提供关闭 Audit Event 或 Action Trace 的运行开关。详细取舍见 [SQLite 性能工作负载与稳定门禁分离](decisions/implemented/testing/2026-08-28-sqlite-performance-contract.md)。
 
 ## 影像合同
 
@@ -175,3 +175,54 @@ pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 - Reset/replay 测试在新 Epoch 重新物化同一 Case Revision，复用 Brief、Case Truth 与 evidence hash 相同的 Investigation Result Snapshot，断言 provider 调用计数不增加、旧 callback 不能写入新 Epoch。
 - Docker smoke 使用固定 Synthea commit、全部模块模式、中国 profile/localization provenance、非 root、只读文件系统和有界资源，从真实 HTTP 入口完成多患者 generation，并验证全部 Bundle 成功以及 translation warning 按 ordinal 关联，再继续覆盖 history、Brief、direct start、诊断、检查与 LIS 结果。
 - OpenAI-compatible live smoke 是开发者显式运行的单个合成 Brief 检查，读取本机启动配置，不进入 `pnpm test`、`pnpm check` 或 CI，且不输出 prompt、响应正文、API key 或 provider header。
+
+## 14. 测试策略
+
+### 14.1 应用与 Web 测试
+
+- Hono 与真实临时 SQLite 的场景测试覆盖认证、角色、Scenario、挂号、分诊、医生首诊/复诊、签署/修订、支付三结局、LIS、发药和 Epoch 隔离。
+- Command 与 Repository 聚焦测试覆盖幂等、expected version、事务回滚、审计链、outbox lease/retry/ambiguous 和 SQLite 生命周期。
+- React 组件测试覆盖认证缓存隔离、五岗位 wiring、加载/空/错误/冲突/无权限状态、分页、支付拒绝重试、长中文文本和 locale/theme 控件。
+- DSH adapter 测试覆盖 proxy 限制、Cookie/Origin、proof 防重放、单文件 artifact、Page Context 续签、动态 Tool schema、detached review 和 ShadowRoot/Memory Router composition。
+
+### 14.2 FHIR 合约测试
+
+- CapabilityStatement 与实际 resource ownership、interaction 和 SearchParameter registry 一致。
+- HTTP 黑盒测试覆盖 read、vread、instance history、白名单 search、完整 `self`/`next` link、`_total=none|accurate` 和弱 ETag。
+- 两个 Workspace/Epoch 的 current、history、total 和签名 cursor 互不泄漏，cursor 不能跨 query、resource type、Workspace 或 Epoch 重放。
+- 未知资源、未知参数、坏 cursor 和 generic `PUT` 返回稳定 OperationOutcome。
+- 当前没有官方 R5 Profile Validator、OperationDefinition、create/update、If-Match、tombstone 或 `Prefer` 合约测试，因为服务器不宣告这些能力。
+
+### 14.3 Repository 合同测试
+
+首期 Repository contract suite 运行于真实临时 SQLite 文件。未来增加数据库 adapter 时，同一套外部行为测试必须同时运行于新旧 adapter，不能用 mock 声称可迁移。
+
+覆盖：
+
+- 当前资源 + 历史 + Search 索引原子更新与索引重建。
+- transaction/约束失败整体回滚、条件 update 零行识别和错误分类。
+- idempotency key 并发首请求、完成重放和不同 payload 冲突。
+- Workspace/Epoch 复合 foreign key、Registration、Prescription 和库存条件写。
+- outbox lease 竞争、过期回收、重复消费、retryable failure、ambiguous 和 Epoch abandon。
+- audit head 并发推进不分叉，审计与关键业务同事务提交。
+- reset 与晚到 callback 并发时旧 epoch 不得影响新数据。
+
+### 14.4 场景测试
+
+每个业务能力必须以可执行场景验收，而不是以类、页面或表存在验收。
+
+首期病例轨迹从 generation、Visible Source History、Brief、direct start、分诊、首诊、Investigation、复诊、处方与文书签署、Encounter 完诊、药品支付到发药和 Scenario Run 完成。自动化故障矩阵覆盖无合格 Index Encounter、Brief 泄漏拒绝、重复开始、模型失败、过敏拦截、旧版本冲突、支付拒绝/ambiguous、LIS 重试、未支付处方禁止发药、已签文书禁止覆盖、部分发药和 reset 后晚到结果隔离。
+
+### 14.5 Agent 安全测试
+
+当前自动化覆盖：
+
+- Page Context 严格 schema、岗位/view 不匹配、Hidden Fact/任意字段拒绝和 Epoch reset 失效。
+- execution proof 篡改、过期、Tool/operation/scope 不匹配、call replay 和重复 completion。
+- 动态岗位/view Tool 目录、32 Tool 上限、岗位导航收窄、DSH JSON Schema 子集和 context 到期注销。
+- 草稿 action 更新 context 但保持 page lease；proposal 立即返回 pending，明确批准关联 Command/Audit/Trace，取消或 scope 变化不产生 Effect。
+- 固定 loopback proxy、Cookie/Origin、body/response/timeout 限制和非 loopback 拒绝。
+
+Catalog seam 验证 operation、CLI path、HTTP mapping、岗位、风险、schema、canonical HIS route 覆盖和 FHIR 白名单。Identity seam 使用真实 SQLite 与 HTTP 验证 token hash、单岗位 allowlist、伪造 context header、Client 禁用、撤销、过期、Epoch reset、Catalog hash 和 policy version 失效。CLI process seam 验证 stdout/stderr/exit、stdin/file、human profile、Agent fail-closed 和 request shape；真实 Node listener 测试在服务端已提交但响应丢失后通过 receipt 恢复，并证明相同 idempotency key 不重复 Effect。Skill seam 要求每个命令示例存在于当前 Catalog。
+
+当前没有附件/OCR、Agent OAuth、MCP、自治 Agent Run 或不可信插件。模型内容安全仍需在引入具体 runner 或嵌入式助手时增加针对 prompt injection、恶意病历、术语 display、附件/OCR、历史结果和出站网络的运行时测试；CLI 的结构化 schema、DSH Tool schema 与服务端授权不能替代该层验证。

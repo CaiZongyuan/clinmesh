@@ -33,7 +33,7 @@ Status: implemented
 
 确定性检查负责可确定的原文归属、完整引用与目标边界；独立事实核对负责判断总结是否由患者明确自述支持。生成及核对要求明确区分混合句内的自述与提问，不能以问号本身判断所有内容是否可记录，也不能通过删除问号、截断原句或修改已保存回答规避校验。
 
-使用现有共享病史服务和有界模型修复，不增加病例专用分支，不改变队列调度或持久重试合同。疑问来源的处理及语义核对限制由[总结与多轮溯源 Agent Note](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)拥有。
+使用现有共享病史服务和有界模型修复，不增加病例专用分支，不改变队列调度或持久重试合同。疑问来源的处理及语义核对限制由[总结与多轮溯源 Agent Note](../decisions/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)拥有。
 
 ## 测试策略
 
@@ -47,6 +47,6 @@ Status: implemented
 
 ## 依赖与风险
 
-依赖 [#198](https://github.com/CaiZongyuan/clinmesh/issues/198) 与 [PR #199](https://github.com/CaiZongyuan/clinmesh/pull/199) 已交付的病史总结、完整来源及独立核对能力。基础合同由[病史总结与患者自述溯源规格](2026-10-12-consultation-agent-summary-sources.md)拥有，混合句处理决定见[多轮溯源 Agent Note](../../.agents/notes/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
+依赖 [#198](https://github.com/CaiZongyuan/clinmesh/issues/198) 与 [PR #199](https://github.com/CaiZongyuan/clinmesh/pull/199) 已交付的病史总结、完整来源及独立核对能力。基础合同由[病史总结与患者自述溯源规格](2026-10-12-consultation-agent-summary-sources.md)拥有，混合句处理决定见[多轮溯源 Agent Note](../decisions/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。
 
 语义核对存在概率性局限，允许问句作为完整来源不等于认可其全部内容；必须用纯疑问和假设反例验证错误肯定结论不会进入草稿，正式签署仍由医生审阅。

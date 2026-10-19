@@ -74,13 +74,13 @@ A 与 B 条件对应已实施的 [Issue #178](https://github.com/CaiZongyuan/cli
 
 ClinMesh 拥有质控输入、持久任务、校验、版本归属与人工处理记录，DSH 只提供辅助模型能力。复用现有 Command、outbox、模型绑定和授权机制，不把质控塞入诊疗建议的目录与指南分支，也不重建通用运行器。
 
-病历的十字段、直接记录、变动提醒与签署继续沿用[当前字段规格](2026-10-14-clinical-document-fields.md)。质控不展示待补充问题和依据入口，也不给病历录入添加逐条来源、应用、核对、核实保留或撤销入口；具体展示边界由[安静质控提示决策](../../.agents/notes/implemented/architecture/2026-10-18-quiet-document-quality-hints.md)拥有。
+病历的十字段、直接记录、变动提醒与签署继续沿用[当前字段规格](2026-10-14-clinical-document-fields.md)。质控不展示待补充问题和依据入口，也不给病历录入添加逐条来源、应用、核对、核实保留或撤销入口；具体展示边界由[安静质控提示决策](../decisions/implemented/architecture/2026-10-18-quiet-document-quality-hints.md)拥有。
 
 确定性检查负责适用模板的空字段、来源身份和可确定的引用归属；模型负责已知事实是否遗漏、语义不一致和正文完整性的辅助核对，必须返回可验证的位置和依据。模型否定结论是合法结果，不能用结构化修复诱导改为肯定。输入超出处理能力时说明检查不完整，不截断后宣称全部检查完成。
 
 同一输入的重复触发合并处理，旧代次和旧输入结果失效；录入控制版本不代替草稿与来源版本。未保存检查与临床草稿分别保存，签署摘要只呈现实际对应内容的结果，过期结果明确标识。已有人工保留只适用于该问题及其相关正文、证据，不以全病例永久忽略代替复核；既有公开接口保留兼容，页面不调用它生成新的核实记录。
 
-输入身份与独立授权见[质控决策](../../.agents/notes/implemented/architecture/2026-10-15-doctor-document-quality-control.md)，实时输入范围与安静记录状态见[实时辅助边界决策](../../.agents/notes/implemented/architecture/2026-10-18-current-encounter-quality-and-quiet-recording.md)，直接编辑与历史处理兼容的取舍见[提示交互决策](../../.agents/notes/implemented/architecture/2026-10-18-advisory-quality-without-confirmation.md)。
+输入身份与独立授权见[质控决策](../decisions/implemented/architecture/2026-10-15-doctor-document-quality-control.md)，实时输入范围与安静记录状态见[实时辅助边界决策](../decisions/implemented/architecture/2026-10-18-current-encounter-quality-and-quiet-recording.md)，直接编辑与历史处理兼容的取舍见[提示交互决策](../decisions/implemented/architecture/2026-10-18-advisory-quality-without-confirmation.md)。
 
 ## 测试策略
 

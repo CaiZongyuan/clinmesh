@@ -25,7 +25,7 @@ Status: implemented
 
 ## 设计决定
 
-以下为已确认的实施方案。只读绑定的动机和替代方案见 [Agent Note](../../.agents/notes/implemented/architecture/2026-10-08-doctor-agent-query-binding.md)。
+以下为已确认的实施方案。只读绑定的动机和替代方案见 [Agent Note](../decisions/implemented/architecture/2026-10-08-doctor-agent-query-binding.md)。
 
 ### 运行与调用来源
 

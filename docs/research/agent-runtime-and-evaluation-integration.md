@@ -60,7 +60,7 @@ evaluator-only 凭据 -> Hidden Fact + final state + ActionTrace
 
 控制平面负责选择并冻结运行输入，Runner 负责执行和回收进程，DSH 负责模型循环，Tool Gateway 负责把每次调用约束到医院业务能力，evaluator 负责判断结果。任何一层都不能通过“同一进程里方便访问”绕过边界。
 
-DSH 不应嵌入 Cloudflare Worker。TypeScript client 直接使用 `node:child_process.spawn`，DSH 又有明确的 Node 版本要求；Runner 因而是独立 Node 服务或容器工作负载，而不是 Worker 内的库调用。[ClinMesh 系统架构](../architecture.md#31-模块化单体)仍拥有医院模块化单体，Runner 只是其受限外部消费者。
+DSH 不应嵌入 Cloudflare Worker。TypeScript client 直接使用 `node:child_process.spawn`，DSH 又有明确的 Node 版本要求；Runner 因而是独立 Node 服务或容器工作负载，而不是 Worker 内的库调用。[ClinMesh 系统架构](../architecture/system.md#31-模块化单体)仍拥有医院模块化单体，Runner 只是其受限外部消费者。
 
 ### 所有权
 
@@ -149,7 +149,7 @@ SDK wire 只有 `initialize`、`session/prompt` 和 `shutdown` 三类 client req
 - in-flight 结果晚到时仍写入原 Workspace/Epoch 的 ActionTrace，并且必须通过 active Epoch 和业务版本条件，绝不能污染 reset 后的新 Epoch；
 - 首版 crash 后不自动 resume。同一业务意图是否重试由控制平面根据 receipt 和 canonical state 显式决定，并创建新的 Agent Run。
 
-这与[系统架构的 reset 和晚到副作用合同](../architecture.md#106-重置检查点和回放)一致：系统可以阻止旧结果污染新 Epoch，但不能声称已经发出的外部副作用会因本地取消自动撤销。
+这与[系统架构的 reset 和晚到副作用合同](../architecture/simulation.md#106-重置与-epoch-隔离)一致：系统可以阻止旧结果污染新 Epoch，但不能声称已经发出的外部副作用会因本地取消自动撤销。
 
 ## 临床 Cordis Composition
 
@@ -178,7 +178,7 @@ Runtime Profile 工具目录
 = effective capability manifest
 ```
 
-短期 token 至少绑定 `agentRunId`、Workspace、Epoch、Scenario Run、Actor、Patient、Encounter、工具 allowlist、预算、policy version、tool schema hash 和真实时间期限。业务参数只能进一步缩小范围；任何 `workspaceId`、`actorId`、`patientId` 或 `encounterId` 参数都只能作为与 token 一致的断言，不能切换上下文。[系统架构的 Workspace 与 Agent 工具约束](../architecture.md#101-workspace-隔离)继续是权威边界。
+短期 token 至少绑定 `agentRunId`、Workspace、Epoch、Scenario Run、Actor、Patient、Encounter、工具 allowlist、预算、policy version、tool schema hash 和真实时间期限。业务参数只能进一步缩小范围；任何 `workspaceId`、`actorId`、`patientId` 或 `encounterId` 参数都只能作为与 token 一致的断言，不能切换上下文。[系统架构的 Workspace 与 Agent 工具约束](../architecture/simulation.md#101-workspace-隔离)继续是权威边界。
 
 Better Auth 只负责 User Account 和浏览器会话，不应把人类 cookie、session token 或用户目录交给 DSH。自主 Runner 使用独立 Agent client 身份换取上述短期 token，ClinMesh 再把它绑定为受审计 Actor。代表真实用户的首个侧栏助手使用独立的授权、撤销、页面上下文和人工复核合同；这些合同由[嵌入式 HIS 助手融合研究](./embedded-his-assistant-integration.md#多用户认证授予和审计)拥有，不能套用本节的自主 Agent Run 身份。
 
@@ -215,7 +215,7 @@ DSH session 是追加式事件日志，完整 `assistant/message`、原始 `assi
 
 ## 独立评测平面
 
-evaluator 使用与 Agent、Runner 和普通 API 不同的凭据，只读 evaluator storage 中的 Hidden Fact、目标 Evaluation Spec、运行结束后的 canonical state 和 ActionTrace。隐藏输入永不进入 DSH composition、模型 prompt、tool result、普通服务日志、前端 bundle 或 Agent 可读 artifact。[ClinMesh Hidden Fact 设计](../architecture.md#105-隐藏真值与评分)已经要求独立 binding/storage；未来 Agent 评测沿用该边界。
+evaluator 使用与 Agent、Runner 和普通 API 不同的凭据，只读 evaluator storage 中的 Hidden Fact、目标 Evaluation Spec、运行结束后的 canonical state 和 ActionTrace。隐藏输入永不进入 DSH composition、模型 prompt、tool result、普通服务日志、前端 bundle 或 Agent 可读 artifact。[ClinMesh Hidden Fact 设计](../architecture/simulation.md#105-case-truthpersona-与-action-trace)已经要求独立 binding/storage；未来 Agent 评测沿用该边界。
 
 Evaluation Spec 至少支持：
 

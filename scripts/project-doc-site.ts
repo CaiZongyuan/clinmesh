@@ -20,11 +20,11 @@ const root = resolve(import.meta.dirname, '..')
 const generatedRoot = resolve(root, 'apps/docs/.generated')
 
 export function resolveRepositoryRef(environment: NodeJS.ProcessEnv): string {
-  return environment.DOCS_REPOSITORY_REF ?? 'master'
+  return environment.DOCS_REPOSITORY_REF ?? 'main'
 }
 
 export function resolveRepositoryUrl(environment: NodeJS.ProcessEnv): string {
-  return (environment.DOCS_REPOSITORY_URL ?? 'https://github.com/clinmesh/clinmesh').replace(/\/$/, '')
+  return (environment.DOCS_REPOSITORY_URL ?? 'https://github.com/CaiZongyuan/clinmesh').replace(/\/$/, '')
 }
 
 interface Replacement {

@@ -42,7 +42,7 @@ Status: implemented
 - 弹层界面归 ClinMesh 的 DSH client adapter；Session 与 Workspace 的读取、搜索和变更仍由 DSH 控制器拥有。
 - 默认弹层保持紧凑，低频操作放在更多菜单或会话行菜单；不提供分组/树形/平铺视图切换、手动排序和“全部/最近/已归档”筛选栏。
 - ClinMesh 不修改 DSH 官方源码。默认收起调用宿主公开布局操作一次，后续手动展开由宿主拥有；工作区区域经现有 Slot 处理，原生新会话按钮使用限定在当前宿主侧栏的显示兼容规则，并通过真实入口及升级回归验证。
-- 此需求改变了 [既有侧栏导航决定](../../.agents/notes/implemented/architecture/2026-09-14-dsh-inline-workspace-routes.md) 中的展示位置；实施时更新对应 Agent Note 和当前状态文档。
+- 此需求改变了 [既有侧栏导航决定](../decisions/implemented/architecture/2026-09-14-dsh-inline-workspace-routes.md) 中的展示位置；实施时更新对应 Agent Note 和当前状态文档。
 
 ## 测试策略
 
@@ -59,4 +59,4 @@ Status: implemented
 
 DSH `0.2.0-rc.2` 没有独立替换原生新会话按钮的 Slot。兼容规则必须只影响该按钮，不影响对话区的新会话入口、品牌展开控制、设置或其他应用；宿主升级时重新验证选择器和窄栏行为。弹层重做展示，但 Session 与 Workspace 的操作仍使用 DSH 公共控制器，不复制其持久化状态。
 
-目录选择复用锁定宿主已组合的 native/browse DirectoryFlow；当前公开注册表只提供 inspection surface，兼容层仅重用无 store、locale 或 child declaration 的获胜 flow entry，并在替换或卸载时释放。该边界与显示兼容规则一同纳入宿主升级回归；提供官方 picker factory 后移除适配，见 [会话历史决定](../../.agents/notes/implemented/architecture/2026-10-06-dsh-workspace-session-history.md)。
+目录选择复用锁定宿主已组合的 native/browse DirectoryFlow；当前公开注册表只提供 inspection surface，兼容层仅重用无 store、locale 或 child declaration 的获胜 flow entry，并在替换或卸载时释放。该边界与显示兼容规则一同纳入宿主升级回归；提供官方 picker factory 后移除适配，见 [会话历史决定](../decisions/implemented/architecture/2026-10-06-dsh-workspace-session-history.md)。

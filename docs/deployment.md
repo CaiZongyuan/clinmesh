@@ -156,7 +156,7 @@ pnpm synthea:doctor
 pnpm synthea:down
 ```
 
-该命令不删除 ClinMesh SQLite、业务数据、Docker volume 或其他服务。Provider 未启动、不可达或停止时，ClinMesh 普通 HIS 与已经生成的病例继续运行；只有新的患者生成任务不可用。运行与发行边界见 [一键 Synthea 运行时](../.agents/notes/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
+该命令不删除 ClinMesh SQLite、业务数据、Docker volume 或其他服务。Provider 未启动、不可达或停止时，ClinMesh 普通 HIS 与已经生成的病例继续运行；只有新的患者生成任务不可用。运行与发行边界见 [一键 Synthea 运行时](decisions/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
 
 ## 7. 可选运行方式
 
@@ -324,11 +324,11 @@ node "$DSHVM_CLI" exec web --port 3080 --no-open
 
 模型桥接地址只接受 HTTP loopback origin；DSH 使用非默认端口时同步修改 `CLINMESH_DSH_MODEL_ORIGIN`。同一 Server 的全部入口共用启动时选定的模型来源，打开或关闭 Surface 不切换来源。宿主设置权限允许的用户从侧栏底部“账号菜单 → 设置 → 通用设置”修改“ClinMesh 模型”，修改对该 Profile 的新任务生效，刷新和重启后仍保留；没有候选时先在 DSH 模型设置中配置 Provider。
 
-DSH 一次结构化生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖。路由解析、初次生成、最多一次格式修复及有限限流恢复共用原始截止时间，每次调用只向宿主传递剩余预算；持久任务和 lease 仍覆盖路由与模型处理。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。共享时限见[有限恢复决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务预算和失败分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
+DSH 一次结构化生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖。路由解析、初次生成、最多一次格式修复及有限限流恢复共用原始截止时间，每次调用只向宿主传递剩余预算；持久任务和 lease 仍覆盖路由与模型处理。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。共享时限见[有限恢复决策](decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务预算和失败分类见[自动病史调用决策](decisions/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
-OpenAI 兼容网关的 `baseURL` 使用实际 API 根路径；需要 `/v1` 的网关不能只填写站点首页。模型列表或 HTTP 200 不证明生成可用，应核对 JSON／SSE 类型、实际内容和正常终止。模型桥对明确限流返回安全的 HTTP 429；Provider 按服务端提示在剩余预算内最多重试一次，格式修复共用这一次机会，无提示时等待一秒。诊疗建议在持续限流后停止并显示原因，稍后可人工刷新；不会自动改用其他模型。恢复合同见[记录级筛选决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
+OpenAI 兼容网关的 `baseURL` 使用实际 API 根路径；需要 `/v1` 的网关不能只填写站点首页。模型列表或 HTTP 200 不证明生成可用，应核对 JSON／SSE 类型、实际内容和正常终止。模型桥对明确限流返回安全的 HTTP 429；Provider 按服务端提示在剩余预算内最多重试一次，格式修复共用这一次机会，无提示时等待一秒。诊疗建议在持续限流后停止并显示原因，稍后可人工刷新；不会自动改用其他模型。恢复合同见[记录级筛选决策](decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)。
 
-切换模型后的任务绑定与人工重试规则见[系统架构](architecture.md#103-场景定义)。宿主不可达、原 Provider 删除或凭据失效时任务可控失败，可修复原 Provider，或按[AI Provider 配置](#4-配置-ai-provider患者档案必需)中的步骤使用新模型恢复。切换 Server 来源前遗留的 OpenAI 任务不会被重映射到 DSH，需恢复原来源处理或显式发起新生成尝试。
+切换模型后的任务绑定与人工重试规则见[系统架构](architecture/simulation.md#103-场景定义)。宿主不可达、原 Provider 删除或凭据失效时任务可控失败，可修复原 Provider，或按[AI Provider 配置](#4-配置-ai-provider患者档案必需)中的步骤使用新模型恢复。切换 Server 来源前遗留的 OpenAI 任务不会被重映射到 DSH，需恢复原来源处理或显式发起新生成尝试。
 
 真实宿主模型 smoke 使用隔离 Profile 和合成 Provider，不调用付费模型；先构建 DSH adapter，再运行。默认使用本地 lock 对应的 runtime 槽位，可通过 `CLINMESH_DSH_SMOKE_RUNTIME` 指定槽位绝对目录：
 
@@ -358,7 +358,7 @@ pnpm smoke:consultation:live
 pnpm smoke:consultation:live --summary-only
 ```
 
-可用 `CLINMESH_DSH_SMOKE_REPORT=/absolute/path/to/report.json` 保存版本、代码 commit/内容 hash、处理数量和 request/audit/trace 关联的验收摘要；真实总结模式还保存固定合成回答、总结和事实来源供逐项复核，不保存凭据或 prompt。`liveJobs` 保留当前任务错误码，`liveFailedAttempts` 从不可变回执保留历次失败的错误码、阶段与有界校验诊断，重试成功后仍可追查；诊断机制见[直接记录决策](../.agents/notes/implemented/architecture/2026-10-14-consultation-direct-recording.md)。成功说明本次合成样本满足总结质量与来源断言，不能证明所有病史的语义准确；模型局限与 CI 证据边界见[测试策略](testing.md#end-to-end)。
+可用 `CLINMESH_DSH_SMOKE_REPORT=/absolute/path/to/report.json` 保存版本、代码 commit/内容 hash、处理数量和 request/audit/trace 关联的验收摘要；真实总结模式还保存固定合成回答、总结和事实来源供逐项复核，不保存凭据或 prompt。`liveJobs` 保留当前任务错误码，`liveFailedAttempts` 从不可变回执保留历次失败的错误码、阶段与有界校验诊断，重试成功后仍可追查；诊断机制见[直接记录决策](decisions/implemented/architecture/2026-10-14-consultation-direct-recording.md)。成功说明本次合成样本满足总结质量与来源断言，不能证明所有病史的语义准确；模型局限与 CI 证据边界见[测试策略](testing.md#end-to-end)。
 
 指南建议复用上述宿主、组件和真实模型配置。`native` 使用已发布合成检验目录与合成模型，验证后台准备、折叠来源、处方缺项、医生直接确认与开具，以及报告发布后既有记录不被改写；`live` 在该旅程之后对新的合成病例读取诊断、处方和检验建议，不提交真实模型结果，也不创建临床事实。可执行建议的引用必须属于实际提供的指南与病例资料；只读思路引用本轮病例，明确待核实，不进入正式操作。没有可发布条目是合法结果，界面分别说明指南覆盖、院内目录、核验和系统处理限制。报告只保留该模式的状态、建议及来源数量，不能将少量样本视为临床语义质量评估。
 

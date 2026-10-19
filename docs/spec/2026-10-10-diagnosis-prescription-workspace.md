@@ -8,7 +8,7 @@ Status: implemented
 
 诊断与处方页目前通过独立目录弹窗添加条目，再在整组表格中填写信息；正式记录也集中显示在表格中。条目增加后，目录选择、编辑和记录阅读的上下文分散，窄分栏中的表单不易操作。
 
-目标是将已确认的 [V1 交互预览](../../previews/diagnosis-prescription-v1.html) 落地为真实页面：首次填写直接提供目录与选中条目的编辑区，正式确认后提供可搜索的列表与选中详情。诊断确认、处方开具及逆向动作继续使用已有业务合同。
+目标是将已确认的 本机 V1 交互预览（`previews/diagnosis-prescription-v1.html`，不随 Git 同步） 落地为真实页面：首次填写直接提供目录与选中条目的编辑区，正式确认后提供可搜索的列表与选中详情。诊断确认、处方开具及逆向动作继续使用已有业务合同。
 
 ## 范围
 
@@ -42,7 +42,7 @@ Status: implemented
 
 阶段从真实诊断 confirmation 与处方事实派生，不增加服务端阶段或缓存。诊断已确认后形成的新草稿不让页面回到首次填写；处方撤回保留原正式记录。筛选结果不决定阶段。
 
-阶段、目录布局与状态归属的替代方案见[两阶段视图决定](../../.agents/notes/implemented/architecture/2026-10-10-diagnosis-prescription-workspace.md)。
+阶段、目录布局与状态归属的替代方案见[两阶段视图决定](../decisions/implemented/architecture/2026-10-10-diagnosis-prescription-workspace.md)。
 
 诊断与药品保持各自独立模型，目录搜索与包装分组复用现有选择器。页面拥有未提交输入，TanStack Query 继续拥有服务端事实；布局不复制 Command、持久化和 Agent action 逻辑。只使用 React 18.3.1 与 19.2 共有 API，并保持 PortalContainerProvider 的 ShadowRoot 边界。
 

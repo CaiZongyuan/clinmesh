@@ -2,14 +2,14 @@
 
 ## 范围与结论
 
-- 状态：参考研究，不拥有 ClinMesh 当前行为；实现合同见[系统架构](../architecture.md#7-agent-cli-与-skills)。
+- 状态：参考研究，不拥有 ClinMesh 当前行为；实现合同见[系统架构](../architecture/agent-integration.md#77-agent-cli-与-operation-catalog)。
 - 核验日期：2026 年 8 月 30 日。
 - 核验对象：CLI-Anything commit [`810c18b0d1ab9b234bc996c9fd999318523a3ef0`][cli-anything-tree]、lark-cli commit [`4e0a6a988cf32b26219b3425f6dbb7ce8332b292`][lark-tree]、Multica commit [`722bde9d1818dbe5c49e60a8c57a283712646457`][multica-tree]。
 - 证据边界：只使用三个仓库的源码、测试和官方仓库文档；CLI-Anything 除生成规范外还核验 Blender、ChromaDB 和 JumpServer harness，避免把方法论要求误写成所有生成物都已满足的事实。
 
 一个后端业务成为 Agent 容易理解且可靠调用的 CLI，不是把 HTTP endpoint 逐个改成子命令。有效的 CLI 需要同时提供三层信息：用业务意图命名的窄操作、可机器读取的精确合同，以及解释“何时用、前置条件、状态副作用和失败后如何恢复”的 affordance。三个参考分别在这三层表现出不同优势：CLI-Anything 擅长从真实后端和数据模型建立操作面与端到端验证，lark-cli 提供最完整的机器合同与统一执行管线，Multica 则把复杂业务副作用和受信 Agent 上下文写进平台 skill 与服务端授权边界。
 
-ClinMesh 已将 `hisOperationCatalog`、`clinmesh` CLI、Agent Capability Grant 和七个领域 Skills 落地；当前字段、授权、恢复和边界由[系统架构](../architecture.md#7-agent-cli-与-skills)拥有。未来嵌入式助手或 Cordis adapter 可以投影同一 Catalog，但不改变 CLI 已经是任务 Agent 正式操作面的事实。本文只解释参考机制与 ClinMesh 取舍。
+ClinMesh 已将 `hisOperationCatalog`、`clinmesh` CLI、Agent Capability Grant 和七个领域 Skills 落地；当前字段、授权、恢复和边界由[系统架构](../architecture/agent-integration.md#77-agent-cli-与-operation-catalog)拥有。未来嵌入式助手或 Cordis adapter 可以投影同一 Catalog，但不改变 CLI 已经是任务 Agent 正式操作面的事实。本文只解释参考机制与 ClinMesh 取舍。
 
 ## 对照结论
 
