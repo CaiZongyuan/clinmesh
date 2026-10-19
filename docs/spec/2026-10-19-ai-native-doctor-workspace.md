@@ -1,6 +1,6 @@
 # AI 原生医生工作台改版
 
-Status: approved
+Status: draft
 
 本文定义医生岗工作台从"左队列 + 右病例"到 AI 原生三栏布局的正式需求与验收条件，覆盖独立 Web 与 DSH Surface 两个面。方向选型与队列安放的本机设计参考为 `docs/ui/references/2026-10-19-ui-direction-comparison.html`（不随 Git 同步）；已确认结论、验收条件与回落边界由本文拥有。视觉 token 合同由 [ClinMesh UI 设计合同](../ui/design.md) 拥有，本改版实施时同步更新该合同；DSH Surface 挂载合同见 [Surface 与 Host 边界](../architecture/agent-integration.md#71-surface-与-host-边界)。镜像布局预设相对会话嵌入路线（B）的取舍在实施时以 Agent Note 记录理由。
 
@@ -56,4 +56,4 @@ Status: approved
 
 ## 依赖与风险
 
-`dsh-react-surface` 布局引擎需支持会话列换位；若几何模型不支持，回落为"助手留在宿主右列 + 内容区两栏"，本规格回到 draft 重新确认。队列卡片钉顶依赖宿主会话内卡片能力，回落方案已在 A3 定义。DSH Surface 宽度为宿主扣除侧栏、会话与右栏后的剩余空间，三栏在窄屏会频繁触发回落，须以容器查询与折叠设计兜底。`dsh-upstreams.lock` 推进须走既有升级验收，期间 DSH 面新布局不得先行合入 main 宣称验收。
+在上游原型与锁定升级验证通过前，本规格保持 `draft`。`dsh-react-surface` 布局引擎需支持会话列换位；若几何模型不支持，回落为"助手留在宿主右列 + 内容区两栏"，重新确认布局决定。队列卡片钉顶依赖宿主会话内卡片能力，回落方案已在 A3 定义。DSH Surface 宽度为宿主扣除侧栏、会话与右栏后的剩余空间，三栏在窄屏会频繁触发回落，须以容器查询与折叠设计兜底。`dsh-upstreams.lock` 推进须走既有升级验收，期间 DSH 面新布局不得先行合入 main 宣称验收。
