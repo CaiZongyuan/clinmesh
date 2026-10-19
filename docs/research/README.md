@@ -12,8 +12,12 @@
 - [参考数据映射与场景编译系统研究](reference-data-mapping-and-scenario-compilation-systems.md)
 - [紫荆 AI 医院线上虚拟诊室实机分析](tairex-virtual-clinic-analysis.md)
 - [HIS UI/UX 一手参考与 ClinMesh 原型建议](his-ui-ux-references.md)
+- [独立 Web 工作台 UI 评审观察](2026-10-19-workspace-ui-review.md)
+- [现代专业 UI 与临床可视化设计参考](modern-ui-design-references.md)
 - [医生 Agent 质控能力研究](2026-10-08-clinical-quality-control.md)
 - [医生诊疗建议的权威指南库与证据接入](2026-10-13-clinical-recommendation-guidelines.md)
+- [冠心病单病例 DRG 质控功能方案](2026-10-15-coronary-drg-quality-control-plan.md)
+- [冠心病单病例 DRG 质控：官方规则依据](2026-10-15-drg-official-evidence.md)
 - [通用门诊病历缺项的官方依据与适用边界](2026-10-15-outpatient-record-quality-rules.md)
 
 ## Agent 接入与协议
@@ -25,9 +29,11 @@
 - [DeepSeek Harness × AG-UI Plugin 设计报告](deepseek-harness-agui-plugin-design.md)
 - [医生助手只读绑定与安全恢复](2026-10-08-doctor-agent-binding-execution.md)
 - [医生 Agent 当前病例与历史资料读取研究](2026-10-08-doctor-agent-case-read.md)
+- [智能体平台的 Harness 边界](2026-10-18-agent-harness-boundaries.md)
 
 ## 工程与运行环境
 
 - [参考项目评估与采用边界](architecture-reference-decisions.md)
 - [ClinMesh 项目初始化参考分析](project-bootstrap-reference-analysis.md)
 - [Synthea 患者生成的 macOS 兼容性核验](2026-10-13-synthea-macos-compatibility.md)
+- [Matt skills 更新前版本核查](2026-10-16-matt-skills-version-audit.md)
