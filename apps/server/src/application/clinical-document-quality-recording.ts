@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { clinicalDocumentDraftContentSchema, consultationHistoryFactSchema, consultationHistoryFieldSchema,
   consultationHistorySummarySchema, type ClinicalDocumentQualityEvidence } from '@clinmesh/contracts/his'
-import { findCompleteStatementQuote } from '@clinmesh/core/document-text'
+import { findCompleteStatementQuote, trackDocumentFragment } from '@clinmesh/core/document-text'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext } from './command-executor.ts'
 import { recordingBatchSchema } from './consultation-recording-batch.ts'
@@ -29,6 +29,7 @@ const rowsSchema = z.array(z.object({ addition_id: z.string(), field: consultati
   source_turn_id: z.string(), quote: z.string(), relation: consultationHistorySummarySchema.shape.relation,
   status: z.enum(['applied', 'pending']), target_addition_id: z.string().nullable(),
   ownership: z.enum(['automatic', 'manual']), current_text: z.string(), facts_json: z.string().nullable(),
+  start_offset: z.number().int().nonnegative().nullable(), end_offset: z.number().int().nonnegative().nullable(),
   rejected: z.number().int().min(0).max(1), undone: z.number().int().min(0).max(1),
   review_state: z.enum(['superseded', 'ignored']).nullable(), batch_id: z.string().nullable(), snapshot_json: z.string().nullable(),
 }))
@@ -37,11 +38,13 @@ type RecordingContext = z.infer<typeof recordingQualityContextSchema>
 // The caller first authorizes the case through readCase. Every persisted join is
 // still bound to its Workspace, Epoch and case; snapshots are never client input.
 export function readRecordingQualityContext(database: ClinMeshDatabase, context: ActorContext, caseId: string,
-  document: z.infer<typeof clinicalDocumentDraftContentSchema>, evidence: ClinicalDocumentQualityEvidence[]): RecordingContext {
+  savedDocument: z.infer<typeof clinicalDocumentDraftContentSchema>, document: z.infer<typeof clinicalDocumentDraftContentSchema>,
+  evidence: ClinicalDocumentQualityEvidence[]): { recordingContext: RecordingContext; manualAdditionIds: string[] } {
   const result: RecordingContext = { changes: [], rejectedFacts: [], missing: [] }
+  const manualAdditionIds: string[] = []
   const rows = rowsSchema.parse(database.driver.prepare(`SELECT a.addition_id, a.field, a.source_turn_id, a.quote,
-    a.relation, a.status, a.target_addition_id, a.ownership, a.current_text, a.facts_json, a.rejected, a.undone,
-    a.review_state, m.batch_id, b.snapshot_json FROM consultation_history_addition a
+    a.relation, a.status, a.target_addition_id, a.ownership, a.current_text, a.facts_json, a.start_offset, a.end_offset,
+    a.rejected, a.undone, a.review_state, m.batch_id, b.snapshot_json FROM consultation_history_addition a
     LEFT JOIN consultation_history_addition_batch m ON m.workspace_id = a.workspace_id AND m.epoch = a.epoch
       AND m.case_id = a.case_id AND m.addition_id = a.addition_id
     LEFT JOIN consultation_recording_batch b ON b.workspace_id = m.workspace_id AND b.epoch = m.epoch
@@ -58,9 +61,17 @@ export function readRecordingQualityContext(database: ClinMeshDatabase, context:
   const selected = new Set<string>(), active = new Set<string>()
   for (const row of rows) {
     if (row.status !== 'applied' || row.rejected === 1 || row.undone === 1 || row.review_state !== null) continue
-    if (row.ownership !== 'automatic' || !row.current_text || !(document[row.field] ?? '').includes(row.current_text)) {
-      if (row.batch_id !== null) result.missing.push(`modified:${row.addition_id}`)
+    if (row.ownership === 'manual') { manualAdditionIds.push(row.addition_id); continue }
+    const saved = savedDocument[row.field] ?? ''
+    const start = row.start_offset ?? saved.indexOf(row.current_text)
+    const end = row.end_offset ?? start + row.current_text.length
+    if (!row.current_text || start < 0 || saved.slice(start, end) !== row.current_text) {
+      result.missing.push(`modified:${row.addition_id}`)
       continue
+    }
+    if (saved !== (document[row.field] ?? '')) {
+      const tracked = trackDocumentFragment(saved, document[row.field] ?? '', start, end)
+      if (tracked.modified || tracked.text !== row.current_text) { manualAdditionIds.push(row.addition_id); continue }
     }
     selected.add(row.addition_id)
     active.add(row.addition_id)
@@ -115,7 +126,7 @@ export function readRecordingQualityContext(database: ClinMeshDatabase, context:
       result.missing.push(`quote:${reference.sourceTurnId}`)
     }
   }
-  return result
+  return { recordingContext: result, manualAdditionIds }
 }
 
 export function recordingQualityEvidence(context: RecordingContext): ClinicalDocumentQualityEvidence[] {

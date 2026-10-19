@@ -201,12 +201,16 @@ const recordingQualityPayloadSchema = qualityPayloadSchema.extend({ recordingCon
 // quality endpoint and the external model boundary, never private quality methods.
 async function seedRecordingChange(f: Awaited<ReturnType<typeof setup>>, options: {
   relation?: 'update' | 'correction' | 'conflict'; after?: string; before?: string; rejected?: string;
+  field?: 'historyOfPresentIllness' | 'chiefComplaint';
 } = {}) {
   expect((await f.ask()).status).toBe(200)
   await f.runtime.dispatchPending()
   const before = options.before ?? '头晕一周；无胸痛'
   const after = options.after ?? '站起时头晕加重'
-  expect((await f.save({ historyOfPresentIllness: after })).status).toBe(200)
+  const field = options.field ?? 'historyOfPresentIllness'
+  const { version: _version, updatedAt: _updatedAt, ...saved } = (await f.readCase()).clinicalDocument?.draft ?? { version: 0, updatedAt: '' }
+  expect((await f.save({ ...saved, [field]: after })).status).toBe(200)
+  await f.runtime.dispatchPending()
   const detail = await f.readCase()
   const sources = detail.consultationRecording!.sources!
   const prior = sources[0]!, latest = sources.at(-1)!
@@ -217,24 +221,59 @@ async function seedRecordingChange(f: Awaited<ReturnType<typeof setup>>, options
   const newFacts = [source(after, latest.id, latest.messageText)]
   const batchId = randomUUID(), additionId = randomUUID(), targetId = randomUUID()
   const batch = { members: [{ id: latest.id, generation: 1 }], sources,
-    baseline: { version: 1, content: { assessment: '', chiefComplaint: '', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: before } },
-    history: [{ id: targetId, field: 'historyOfPresentIllness', text: before, facts: oldFacts, quote: prior.messageText, sourceTurnId: prior.id }],
-    manualHistory: [], rejectedFacts: options.rejected === undefined ? [] : [{ ...source(options.rejected), field: 'historyOfPresentIllness' }] }
+    baseline: { version: 1, content: { assessment: '', chiefComplaint: '', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '', [field]: before } },
+    history: [{ id: targetId, field, text: before, facts: oldFacts, quote: prior.messageText, sourceTurnId: prior.id }],
+    manualHistory: [], rejectedFacts: options.rejected === undefined ? [] : [{ ...source(options.rejected), field }] }
   f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_batch
     (workspace_id, epoch, case_id, batch_id, snapshot_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, batchId, JSON.stringify(batch), '2026-10-19T00:00:00Z', '2026-10-19T00:00:01Z')
   f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
     (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
-      current_text, facts_json, review_state) VALUES (?, ?, ?, ?, ?, 'historyOfPresentIllness', ?, 'addition', 'applied', ?, ?, 'superseded')`)
-    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, targetId, prior.id, prior.messageText, before, JSON.stringify(oldFacts))
+      current_text, facts_json, review_state) VALUES (?, ?, ?, ?, ?, ?, ?, 'addition', 'applied', ?, ?, 'superseded')`)
+    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, targetId, prior.id, field, prior.messageText, before, JSON.stringify(oldFacts))
   f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
     (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
-      target_addition_id, start_offset, end_offset, current_text, facts_json, batch_id)
-    VALUES (?, ?, ?, ?, ?, 'historyOfPresentIllness', ?, ?, 'applied', ?, 0, ?, ?, ?, ?)`)
-    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, additionId, latest.id, latest.messageText,
-      options.relation ?? 'update', targetId, after.length, after, JSON.stringify(newFacts), batchId)
+      target_addition_id, start_offset, end_offset, current_text, facts_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'applied', ?, 0, ?, ?, ?)`)
+    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, additionId, latest.id, field, latest.messageText,
+      options.relation ?? 'update', targetId, after.length, after, JSON.stringify(newFacts))
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition_batch
+    (workspace_id, epoch, case_id, addition_id, batch_id) VALUES (?, ?, ?, ?, ?)`)
+    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, additionId, batchId)
   return { additionId, batchId, before, after, prior, latest, scope }
 }
+
+it.each(['saved', 'candidate'] as const)('continues the original quality requests for other automatic fragments after a %s manual rewrite', async mode => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = recordingQualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: payload.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: true, relationValid: true, rejectionValid: true })) }
+  })
+  const edited = await seedRecordingChange(f)
+  const retained = await seedRecordingChange(f, { field: 'chiefComplaint', after: '头晕一周' })
+  const { version, updatedAt: _updatedAt, ...saved } = (await f.readCase()).clinicalDocument!.draft!
+  const document = { ...saved, historyOfPresentIllness: '医生复核：头晕与起立有关，尚待查明。' }
+  calls.length = 0
+  if (mode === 'saved') expect((await f.save(document)).status).toBe(200)
+  expect((await f.mutate('check', { expectedDraftVersion: mode === 'saved'
+    ? (await f.readCase()).clinicalDocument!.draft!.version : version,
+  ...(mode === 'candidate' ? { document, clientId: 'manual-recording-editor', clientRevision: 1 } : {}) })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read(mode === 'candidate' ? 'manual-recording-editor' : undefined)).toMatchObject({ status: 'ready', stale: false })
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  for (const call of calls) {
+    const payload = recordingQualityPayloadSchema.parse(call.userPayload)
+    expect(payload.document.historyOfPresentIllness).toBe(document.historyOfPresentIllness)
+    expect(payload.recordingContext.changes.map(change => change.id)).toEqual([retained.additionId])
+    expect(payload.agentFacts.some(fact => fact.id.startsWith(`${edited.additionId}:`))).toBe(false)
+    expect(payload.agentFacts.some(fact => fact.id.startsWith(`${retained.additionId}:`))).toBe(true)
+  }
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness)
+    .toBe(mode === 'saved' ? document.historyOfPresentIllness : edited.after)
+})
 
 it('checks preservation of old valid recording facts in the existing quality requests and reuses the complete input', async () => {
   const calls: ModelInput[] = []
@@ -441,6 +480,7 @@ it('keeps a still-valid fact lost before a second replacement in current quality
   const first = await seedRecordingChange(f)
   const current = `${first.after}；伴恶心`
   expect((await f.save({ historyOfPresentIllness: current })).status).toBe(200)
+  await f.runtime.dispatchPending()
   const detail = await f.readCase(), batchId = randomUUID(), additionId = randomUUID()
   const fact = (text: string) => ({ text, sources: [{ sourceTurnId: first.latest.id, quote: first.latest.messageText }] })
   const batch = { members: [{ id: first.latest.id, generation: 2 }], sources: detail.consultationRecording!.sources!,
@@ -454,10 +494,13 @@ it('keeps a still-valid fact lost before a second replacement in current quality
     .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, batchId, JSON.stringify(batch), '2026-10-19T00:00:02Z', '2026-10-19T00:00:03Z')
   f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
     (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
-      target_addition_id, start_offset, end_offset, current_text, facts_json, batch_id)
-    VALUES (?, ?, ?, ?, ?, 'historyOfPresentIllness', ?, 'update', 'applied', ?, 0, ?, ?, ?, ?)`)
+      target_addition_id, start_offset, end_offset, current_text, facts_json)
+    VALUES (?, ?, ?, ?, ?, 'historyOfPresentIllness', ?, 'update', 'applied', ?, 0, ?, ?, ?)`)
     .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, additionId, first.latest.id, first.latest.messageText,
-      first.additionId, current.length, current, JSON.stringify([fact(current)]), batchId)
+      first.additionId, current.length, current, JSON.stringify([fact(current)]))
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition_batch
+    (workspace_id, epoch, case_id, addition_id, batch_id) VALUES (?, ?, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, additionId, batchId)
   calls.length = 0
   expect((await f.mutate('check', { expectedDraftVersion: detail.clinicalDocument!.draft!.version })).status).toBe(200)
   await f.runtime.dispatchPending()

@@ -43,7 +43,7 @@ const emptyFieldExplanations: Record<(typeof requiredFields)[number], NonNullabl
   disposition: { impact: '当前正文未说明本次已经决定的处理。', suggestion: '记录实际决定的治疗、观察或转诊安排；未决定可注明待评估，不为补齐字段新增医嘱。' },
   followUp: { impact: '当前正文未说明实际交代的观察或复诊安排。', suggestion: '核对并记录已交代的随访安排；尚未交代可如实注明，不编造已告知内容。' },
 }
-const policyRevision = '2026-10-19-recording-quality-v4'
+const policyRevision = '2026-10-19-recording-quality-v5'
 interface Snapshot { caseId: string; encounterId: string; draftVersion: number; signed: boolean; document: Document; evidence: Evidence[]; agentFacts: QualityAgentFact[]; recordingContext?: z.infer<typeof recordingQualityContextSchema> | undefined; contextKey: string; policyRevision?: string | undefined; task?: { scopeKey: string; generation: number } | undefined }
 const snapshotSchema = z.object({ caseId: z.string(), encounterId: z.string(), draftVersion: z.number().int().nonnegative(), signed: z.boolean(),
   document: clinicalDocumentDraftContentSchema, evidence: z.array(z.object({ id: z.string(), kind: z.enum(['document', 'patient', 'doctor', 'report', 'clinical']),
@@ -141,7 +141,8 @@ export class ClinicalDocumentQualityControl {
     const detail = this.options.readCase(context, caseId)
     const persisted = detail.clinicalDocument?.draft
     const saved = persisted === undefined ? emptyDocument : Object.fromEntries(clinicalDocumentFieldSchema.options.flatMap(field => persisted[field] === undefined ? [] : [[field, persisted[field]]]))
-    const content = document ?? clinicalDocumentDraftContentSchema.parse(saved)
+    const savedDocument = clinicalDocumentDraftContentSchema.parse(saved)
+    const content = document ?? savedDocument
     const evidence: Evidence[] = (detail.consultationRecording?.sources ?? []).map(source => ({ id: source.id, kind: source.kind,
       label: { patient: '患者问诊', doctor: '医生补充', report: '已发布报告' }[source.kind], text: source.messageText,
       recordedAt: source.recordedAt, ...(source.reportReference === undefined ? {} : { reference: source.reportReference }) }))
@@ -152,7 +153,9 @@ export class ClinicalDocumentQualityControl {
       diagnoses: detail.diagnosis?.confirmation })) {
       if (value !== undefined && value !== null && JSON.stringify(value) !== '[]') evidence.push({ id: `clinical:${id}`, kind: 'clinical', label: id, text: JSON.stringify(value) })
     }
-    const automatic = this.options.automaticFacts(context, caseId).filter(fact => (content[fact.field] ?? '').includes(fact.text))
+    const { recordingContext, manualAdditionIds } = readRecordingQualityContext(this.options.database, context, caseId, savedDocument, content, evidence)
+    const automatic = this.options.automaticFacts(context, caseId).filter(fact => (content[fact.field] ?? '').includes(fact.text)
+      && !manualAdditionIds.some(id => fact.id.startsWith(`${id}:`)))
     const direct = this.#fragments(context, caseId).flatMap(fragment => {
       const tracked = trackDocumentFragment(persisted?.[fragment.field] ?? '', content[fragment.field] ?? '', fragment.start, fragment.end)
       return tracked.modified || tracked.text !== fragment.text ? []
@@ -161,7 +164,7 @@ export class ClinicalDocumentQualityControl {
     return { caseId, encounterId: detail.encounter.id, draftVersion: persisted?.version ?? 0,
       signed: (detail.clinicalDocument?.signed.length ?? 0) > 0 || detail.encounter.status !== 'in-progress',
       document: content, evidence, agentFacts: [...automatic, ...direct],
-      recordingContext: readRecordingQualityContext(this.options.database, context, caseId, content, evidence), contextKey: hash(context), policyRevision }
+      recordingContext, contextKey: hash(context), policyRevision }
   }
 
   #issue(context: ActorContext, snapshot: Snapshot, kind: Issue['kind'], field: Field, message: string, evidence: Evidence[], basis: Issue['basis'],
