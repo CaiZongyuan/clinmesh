@@ -80,11 +80,14 @@ export function readRecordingQualityContext(database: ClinMeshDatabase, context:
     while (descendant.target_addition_id !== null && !descendant.target_addition_id.startsWith('manual:')) {
       const target = byId.get(descendant.target_addition_id)
       if (target === undefined || target.field !== row.field || target.status !== 'applied'
-        || target.rejected === 1 || target.undone === 1 || target.ownership !== 'automatic'
+        || target.rejected === 1 || target.undone === 1
         || target.review_state === 'ignored' || visited.has(target.addition_id)) {
         result.missing.push(`chain:${row.addition_id}`); break
       }
       visited.add(target.addition_id)
+      // Human ownership ends automatic ancestry. Its current before text is in
+      // the descendant's manual snapshot, without the former automatic facts.
+      if (target.ownership === 'manual') break
       // A legacy original addition has no replacement before it. Its complete
       // facts are already retained in the descendant's immutable target snapshot.
       if (target.batch_id === null && target.relation === 'addition') break
@@ -99,7 +102,9 @@ export function readRecordingQualityContext(database: ClinMeshDatabase, context:
     let batch: z.infer<typeof recordingBatchSchema> | undefined
     try { batch = row.snapshot_json === null ? undefined : recordingBatchSchema.parse(JSON.parse(row.snapshot_json)) } catch { /* Historical input cannot establish complete coverage. */ }
     if (batch === undefined) { result.missing.push(`batch:${row.addition_id}`); continue }
-    const target = [...batch.history, ...batch.manualHistory].find(target => target.id === row.target_addition_id)
+    const manualTarget = batch.manualHistory.find(target => target.id === row.target_addition_id)
+    const target = manualTarget ?? (row.target_addition_id !== null && byId.get(row.target_addition_id)?.ownership === 'manual'
+      ? undefined : batch.history.find(target => target.id === row.target_addition_id))
     if (row.relation !== 'addition' && (target === undefined || target.field !== row.field)) {
       result.missing.push(`target:${row.addition_id}`); continue
     }
