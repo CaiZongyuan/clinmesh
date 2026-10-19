@@ -7,7 +7,7 @@ import { z } from 'zod'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
-import { clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { clinicalDocumentDraftContentSchema, clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
@@ -69,7 +69,7 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
     return runtime.app.request(`${path}/actions/${action}`, { method: 'POST', headers: headers(key),
       body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId }, input }) })
   }
-  const save = async (document: Record<string, string>, extra: object = {}) => {
+  const save = async (document: Partial<z.infer<typeof clinicalDocumentDraftContentSchema>>, extra: object = {}) => {
     const detail = await readCase()
     return runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`, {
       method: 'PUT', headers: headers(), body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId },

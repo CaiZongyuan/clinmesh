@@ -926,6 +926,7 @@ it.each(['automatic', 'manual'] as const)('preserves %s unrelated sentences when
   await fixture.save('患者自述：头晕一周了。夜间也会头晕。')
   // Seed the original single-row representation before ownership/statement ranges existed.
   fixture.runtime.database.driver.prepare('DELETE FROM consultation_recording_verification').run()
+  fixture.runtime.database.driver.prepare('DELETE FROM consultation_history_addition_batch').run()
   fixture.runtime.database.driver.prepare('DELETE FROM consultation_history_addition WHERE case_id = ? AND addition_id != ?')
     .run(fixture.started.outpatientCaseId, originalId)
   fixture.runtime.database.driver.prepare(`UPDATE consultation_history_addition SET quote = ?, facts_json = NULL, ownership = 'automatic',
@@ -1632,6 +1633,7 @@ it('requeues old pending suggestions on upgrade and records them without writing
   const row = (await fixture.read()).consultationRecording!.additions[0]!
   await fixture.save('医生记录：睡眠正常。')
   fixture.runtime.database.driver.prepare('DELETE FROM consultation_recording_verification').run()
+  fixture.runtime.database.driver.prepare('DELETE FROM consultation_history_addition_batch').run()
   fixture.runtime.database.driver.prepare("UPDATE consultation_history_addition SET addition_id = 'legacy:' || addition_id, status = 'pending', ownership = 'automatic', start_offset = NULL, end_offset = NULL, current_text = '' WHERE addition_id = ?").run(row.id)
   fixture.runtime.database.driver.prepare('DELETE FROM schema_migration WHERE migration_id = ?').run('0062_consultation-direct-recording.sql')
   await fixture.restart()
