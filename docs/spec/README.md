@@ -36,7 +36,6 @@
 | --- | --- |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `draft` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
-| [自动记录语义检查统一归病历质控](2026-10-19-recording-quality-consolidation.md) | `approved` |
 
 ### 已验收与已取代
 
@@ -44,6 +43,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [自动记录语义检查统一归病历质控](2026-10-19-recording-quality-consolidation.md) | `implemented` |
 | [DSH 默认窄栏与工作区会话历史](2026-10-06-dsh-compact-sidebar-workspace-history.md) | `implemented` |
 | [在 DSH 设置中选择 ClinMesh 使用的模型](2026-10-07-clinmesh-dsh-model-settings.md) | `implemented` |
 | [门诊诊疗页头部紧凑化](2026-10-07-consultation-header-compact-density.md) | `implemented` |
