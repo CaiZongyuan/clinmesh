@@ -57,8 +57,18 @@ export function readRecordingQualityContext(database: ClinMeshDatabase, context:
       : factsSchema.parse(JSON.parse(row.facts_json))
     } catch { result.missing.push(`facts:${row.addition_id}`); return [] }
   }
+  const batches = new Map<string, z.infer<typeof recordingBatchSchema> | undefined>()
+  const batchFor = (row: typeof rows[number]) => {
+    if (batches.has(row.addition_id)) return batches.get(row.addition_id)
+    let batch: z.infer<typeof recordingBatchSchema> | undefined
+    try { batch = row.snapshot_json === null ? undefined : recordingBatchSchema.parse(JSON.parse(row.snapshot_json)) } catch { /* Historical input cannot establish complete coverage. */ }
+    batches.set(row.addition_id, batch)
+    if (batch === undefined) result.missing.push(`batch:${row.addition_id}`)
+    return batch
+  }
   const byId = new Map(rows.map(row => [row.addition_id, row]))
   const selected = new Set<string>(), active = new Set<string>()
+  const historicalAfter = new Map<string, z.infer<typeof fragmentSchema>>()
   for (const row of rows) {
     if (row.status !== 'applied' || row.rejected === 1 || row.undone === 1 || row.review_state !== null) continue
     if (row.ownership === 'manual') { manualAdditionIds.push(row.addition_id); continue }
@@ -85,9 +95,17 @@ export function readRecordingQualityContext(database: ClinMeshDatabase, context:
         result.missing.push(`chain:${row.addition_id}`); break
       }
       visited.add(target.addition_id)
-      // Human ownership ends automatic ancestry. Its current before text is in
-      // the descendant's manual snapshot, without the former automatic facts.
-      if (target.ownership === 'manual') break
+      const batch = batchFor(descendant)
+      if (batch === undefined) break
+      // Ownership belongs to the immutable edge. A later human edit cannot
+      // erase earlier automatic ancestry or turn its old text into manual facts.
+      const manualTarget = batch.manualHistory.find(item => item.id === target.addition_id)
+      const targetSnapshot = manualTarget ?? batch.history.find(item => item.id === target.addition_id)
+      if (targetSnapshot === undefined || targetSnapshot.field !== row.field) {
+        result.missing.push(`target:${descendant.addition_id}`); break
+      }
+      if (manualTarget !== undefined) break
+      if ('facts' in targetSnapshot) historicalAfter.set(target.addition_id, { text: targetSnapshot.text, facts: targetSnapshot.facts })
       // A legacy original addition has no replacement before it. Its complete
       // facts are already retained in the descendant's immutable target snapshot.
       if (target.batch_id === null && target.relation === 'addition') break
@@ -99,17 +117,16 @@ export function readRecordingQualityContext(database: ClinMeshDatabase, context:
   for (const row of rows) {
     if (row.rejected === 1) result.rejectedFacts.push(...facts(row).map(fact => ({ ...fact, field: row.field })))
     if (!selected.has(row.addition_id)) continue
-    let batch: z.infer<typeof recordingBatchSchema> | undefined
-    try { batch = row.snapshot_json === null ? undefined : recordingBatchSchema.parse(JSON.parse(row.snapshot_json)) } catch { /* Historical input cannot establish complete coverage. */ }
-    if (batch === undefined) { result.missing.push(`batch:${row.addition_id}`); continue }
+    const batch = batchFor(row)
+    if (batch === undefined) continue
     const manualTarget = batch.manualHistory.find(target => target.id === row.target_addition_id)
-    const target = manualTarget ?? (row.target_addition_id !== null && byId.get(row.target_addition_id)?.ownership === 'manual'
-      ? undefined : batch.history.find(target => target.id === row.target_addition_id))
+    const target = manualTarget ?? batch.history.find(target => target.id === row.target_addition_id)
     if (row.relation !== 'addition' && (target === undefined || target.field !== row.field)) {
       result.missing.push(`target:${row.addition_id}`); continue
     }
     const before = target === undefined ? undefined : { text: target.text, facts: 'facts' in target ? target.facts : [] }
-    const after = { text: row.current_text, facts: facts(row) }
+    const historical = active.has(row.addition_id) ? undefined : historicalAfter.get(row.addition_id)
+    const after = historical ?? { text: row.current_text, facts: facts(row) }
     const references = [...before?.facts ?? [], ...after.facts, ...batch.rejectedFacts].flatMap(fact => fact.sources)
     const requiredIds = new Set([...batch.members.map(member => member.id), ...references.map(source => source.sourceTurnId)])
     if ([...requiredIds].some(id => {

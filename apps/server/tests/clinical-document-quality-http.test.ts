@@ -334,6 +334,62 @@ it.each(['correction', 'conflict'] as const)('checks a new %s of a manually owne
   expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(after)
 })
 
+it('keeps immutable automatic ancestry after a doctor later edits the still-visible target of a conflict', async () => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = recordingQualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: payload.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: change.before?.text !== '头晕一周；无胸痛', relationValid: true, rejectionValid: true })) }
+  })
+  const first = await seedRecordingChange(f)
+  expect((await f.ask()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const latest = (await f.readCase()).consultationRecording!.sources!.at(-1)!
+  const conflict = '患者本次自述头晕两周，与原记时长存在矛盾，待核实。'
+  const current = `${first.after}。\n${conflict}`
+  expect((await f.save({ historyOfPresentIllness: current })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const detail = await f.readCase(), batchId = randomUUID(), additionId = randomUUID()
+  const fact = (text: string, source = latest) => ({ text, sources: [{ sourceTurnId: source.id, quote: source.messageText }] })
+  const batch = { members: [{ id: latest.id, generation: 1 }], sources: detail.consultationRecording!.sources!,
+    baseline: { version: detail.clinicalDocument!.draft!.version - 1, content: { assessment: '', chiefComplaint: '', disposition: '',
+      followUp: '', physicalExamination: '', historyOfPresentIllness: first.after } },
+    history: [{ id: first.additionId, field: 'historyOfPresentIllness', text: first.after, facts: [fact(first.after, first.latest)],
+      sourceTurnId: first.latest.id, quote: first.latest.messageText }], manualHistory: [], rejectedFacts: [] }
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_batch
+    (workspace_id, epoch, case_id, batch_id, snapshot_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, batchId, JSON.stringify(batch), '2026-10-19T00:00:02Z', '2026-10-19T00:00:03Z')
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
+    (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
+      target_addition_id, start_offset, end_offset, current_text, facts_json)
+    VALUES (?, ?, ?, ?, ?, 'historyOfPresentIllness', ?, 'conflict', 'applied', ?, ?, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, additionId, latest.id, latest.messageText,
+      first.additionId, first.after.length + 2, current.length, conflict, JSON.stringify([fact(conflict)]))
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition_batch
+    (workspace_id, epoch, case_id, addition_id, batch_id) VALUES (?, ?, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, additionId, batchId)
+  const manual = '医生复核原片段：头晕与体位有关，时长待核实。'
+  calls.length = 0
+  expect((await f.save({ historyOfPresentIllness: `${manual}\n${conflict}` })).status).toBe(200)
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', stale: false, issues: expect.arrayContaining([
+    expect.objectContaining({ kind: 'agent-source', message: '现病史中的自动记录变更尚未确认保留全部仍有效的旧事实。' }),
+  ]) })
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  for (const call of calls) {
+    const payload = z.object({ recordingContext: z.object({ changes: z.array(z.object({ id: z.string(), historical: z.boolean(),
+      before: z.object({ text: z.string() }), after: z.object({ text: z.string() }) })) }) }).parse(call.userPayload)
+    expect(payload.recordingContext.changes).toEqual([
+      { id: first.additionId, historical: true, before: { text: first.before }, after: { text: first.after } },
+      { id: additionId, historical: false, before: { text: first.after }, after: { text: conflict } },
+    ])
+  }
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(`${manual}\n${conflict}`)
+})
+
 it('checks preservation of old valid recording facts in the existing quality requests and reuses the complete input', async () => {
   const calls: ModelInput[] = []
   const f = await setup(input => {
