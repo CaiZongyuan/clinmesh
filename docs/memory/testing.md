@@ -48,6 +48,8 @@
 
 - JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
 
+- 真实 WebApp 的 Surface Tool 测试先等待当前病例的可观察就绪状态，再断言 Tool 注册；冷启动导入时直接等待注册可能先耗尽 RTL 默认等待时间。使用业务控件的就绪信号同步，不扩大 timeout 掩盖初始化时序。
+
 - 工作台可以同时包含问诊输入状态和病历更新状态。测试具体状态时用 `within` 限定所属区域，不使用全页面的单数 `getByRole('status')`；保留各区域的可访问性提示及原有业务断言。
 
 - Zod 4 的 `z.ZodError` 子类可能不满足 `instanceof Error`；诊断先识别 `z.ZodError` 并读取安全的 `issues`，否则完整校验信息也可能被误记为 `unknown`。不输出原始模型响应或凭证。

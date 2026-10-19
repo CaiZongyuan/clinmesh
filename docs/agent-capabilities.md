@@ -102,7 +102,7 @@
 | `outpatient.prescription.issue.propose` | 已有可开立处方草稿 | 人工审阅开立处方 |
 | `outpatient.prescription.withdraw.propose` | 当前处方可撤回 | 人工审阅撤回处方 |
 | `outpatient.medication.none.propose` | 尚无正式用药结论 | 人工审阅无需用药结论 |
-| `outpatient.record.sign.propose` | 已有可签署草稿 | 生成预览，展示来源核对与独立质控摘要并人工审阅签署；新增质控提示不阻断签署 |
+| `outpatient.record.sign.propose` | 已有可签署草稿 | 生成预览，展示病历质控摘要并人工审阅签署；新增质控提示不阻断签署 |
 | `outpatient.record.revise.propose` | 存在已签署文书 | 人工审阅文书更正 |
 | `outpatient.encounter.complete.propose` | 就诊进行中；提交时重验完成条件 | 人工审阅完成就诊 |
 | `billing.item.select` | 费用在当前收费队列页中 | 选择目标费用记录 |

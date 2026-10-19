@@ -39,10 +39,10 @@ function isVerificationCall(options: GenerateOptions): boolean {
 function qualityAnswer(options: GenerateOptions) {
   const quality = z.object({ document: z.record(z.string(), z.string()), evidence: z.array(z.unknown()),
     agentFacts: z.array(z.object({ id: z.string() })), issues: z.array(z.unknown()).optional(),
-    recordingChanges: z.array(z.object({ id: z.string() })).optional() }).safeParse(modelPayload(options))
+    recordingContext: z.object({ changes: z.array(z.object({ id: z.string() })) }).optional() }).safeParse(modelPayload(options))
   return quality.success ? { issues: quality.data.issues?.map((_, index) => ({ index, supported: true })) ?? [],
     agentFactChecks: quality.data.agentFacts.map(fact => ({ id: fact.id, supported: true })),
-    ...(quality.data.recordingChanges === undefined ? {} : { recordingChecks: quality.data.recordingChanges.map(change => ({
+    ...(quality.data.recordingContext === undefined ? {} : { recordingChecks: quality.data.recordingContext.changes.map(change => ({
       id: change.id, preserved: true, relationValid: true, rejectionValid: true,
     })) }),
   } : undefined

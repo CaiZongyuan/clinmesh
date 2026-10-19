@@ -8,6 +8,8 @@ Status: implemented
 
 ## Decision
 
+自动记录的来源语义、旧事实保留、关系及拒绝事实重现检查由[统一质控决策](2026-10-19-recording-quality-consolidation.md)补充；沿用本决策的生成、独立复核、同输入复用和签署汇总。
+
 字段与签署汇总的待补充提示、依据入口展示范围由[安静质控提示决策](2026-10-18-quiet-document-quality-hints.md)取代。
 
 实时质控读取全量既往资料的范围由[本次就诊输入与安静记录决策](2026-10-18-current-encounter-quality-and-quiet-recording.md)取代；历史批量读取仍用于诊疗建议。界面的人工核实入口由[仅提示与直接编辑决策](2026-10-18-advisory-quality-without-confirmation.md)取代；本文继续拥有质控输入、授权、已有处理数据与公开协议的兼容边界。

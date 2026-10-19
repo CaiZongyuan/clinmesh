@@ -75,10 +75,10 @@ export function recordingFixtureProvider(provider: JsonChatCompletionsProvider,
       if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
         if (quality !== undefined) return quality(input)
         const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })),
-          recordingChanges: z.array(z.object({ id: z.string() })).optional() }).parse(input.userPayload)
+          recordingContext: z.object({ changes: z.array(z.object({ id: z.string() })) }).optional() }).parse(input.userPayload)
         return { model: 'synthetic', content: JSON.stringify({ issues: [],
           agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
-          ...(payload.recordingChanges === undefined ? {} : { recordingChecks: payload.recordingChanges.map(change => ({
+          ...(payload.recordingContext === undefined ? {} : { recordingChecks: payload.recordingContext.changes.map(change => ({
             id: change.id, preserved: true, relationValid: true, rejectionValid: true,
           })) }),
         }) }

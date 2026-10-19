@@ -17,7 +17,7 @@ import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatche
 import { WorkflowError } from './workflow-error.ts'
 import type { QualityAgentFact } from './clinical-document-quality.ts'
 import { RecordingSourceError, recordingSourceDiagnosticSchema,
-  summaryText, verifyHistorySummaries, type HistoryFact, type HistorySummary, type RejectedHistoryFact } from './consultation-history-summary.ts'
+  summaryText, type HistoryFact, type HistorySummary, type RejectedHistoryFact } from './consultation-history-summary.ts'
 import { decodeRecordingCandidates, partitionRecordingCandidates, recordingBatchSchema, recordingContentHash, recordingModelRequest, recordingModelResponseSchema, recordingTurns,
   type RecordingBatch } from './consultation-recording-batch.ts'
 
@@ -58,7 +58,8 @@ const recordingReceiptSchema = consultationRecordingSchema.extend({
   }).transform(({ reviewStatus: _reviewStatus, reviewable: _reviewable, ...addition }) => ({
     ...addition, status: addition.status === 'pending' ? 'superseded' as const : addition.status,
   }))),
-}).transform(recording => ({ ...recording, status: recording.status === 'pending' ? 'processing' as const : recording.status }))
+}).transform(recording => ({ ...recording, status: recording.status === 'pending' ? 'processing' as const : recording.status,
+  verification: { pendingCount: 0, flaggedCount: 0, failedCount: 0, issues: [] } }))
 const additionRowsSchema = z.array(z.object({
   addition_id: z.string(), field: consultationHistoryAdditionSchema.shape.field,
   source_turn_id: z.string(), quote: z.string(), relation: consultationHistoryAdditionSchema.shape.relation,
@@ -426,8 +427,6 @@ export class ConsultationRecordingService {
     }, transaction => {
       const access = this.#assertAccess(context, encounterId)
       const state = this.#state(context, access.caseId)
-      const retryableChecks = this.#verification(context, access.caseId).issues
-        .filter(issue => issue.reason === 'verification-unavailable')
       if (!access.editable || this.isSigning(context, access.caseId)
         || input.expectedVersions[`Encounter/${encounterId}`] === undefined
         || (state?.version ?? 0) !== input.expectedRecordingVersion
@@ -435,8 +434,7 @@ export class ConsultationRecordingService {
         || (action === 'backfill' && !this.#hasConsultation(context, access.caseId))
         || (action === 'resume' && state?.paused !== 1)
         || (action === 'pause' && state?.paused !== 0)
-        || (action === 'retry' && (state?.paused !== 0 || (!this.#jobs(context, access.caseId).some(job => job.status === 'failed')
-          && retryableChecks.length === 0)))) {
+        || (action === 'retry' && (state?.paused !== 0 || !this.#jobs(context, access.caseId).some(job => job.status === 'failed')))) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'Refresh the consultation recording state before controlling it')
       }
       if (action !== 'pause' && !this.#enabled) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recording model is unavailable')
@@ -451,20 +449,6 @@ export class ConsultationRecordingService {
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status != 'completed'
       `).run(JSON.stringify(context), context.workspaceId, context.epoch, access.caseId)
       if (action !== 'pause') {
-        if (action === 'retry') for (const issue of retryableChecks) {
-          const check = z.object({ batch_id: z.string(), snapshot_json: z.string() }).parse(this.#database.driver.prepare(`
-            SELECT v.batch_id, b.snapshot_json FROM consultation_recording_verification v JOIN consultation_recording_batch b
-              ON b.workspace_id = v.workspace_id AND b.epoch = v.epoch AND b.batch_id = v.batch_id
-            WHERE v.workspace_id = ? AND v.epoch = ? AND v.case_id = ? AND v.addition_id = ? AND v.status = 'failed'
-          `).get(context.workspaceId, context.epoch, access.caseId, issue.additionId))
-          const batch = recordingBatchSchema.parse(JSON.parse(check.snapshot_json))
-          this.#database.driver.prepare(`UPDATE consultation_recording_verification
-            SET status = 'pending', reason = NULL, actor_context_json = ?
-            WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ? AND status = 'failed'
-          `).run(JSON.stringify(context), context.workspaceId, context.epoch, access.caseId, issue.additionId)
-          transaction.enqueue({ kind: 'consultation.verify-history', dedupKey: `verify-history:${issue.additionId}:${version}`,
-            payload: { batchId: check.batch_id, additionId: issue.additionId, turnId: batch.members[0]!.id } })
-        }
         this.#syncPatientSources(context, access.caseId)
         const turn = z.object({ turn_id: z.string() }).optional().parse(this.#database.driver.prepare(`SELECT t.source_id AS turn_id
           FROM consultation_recording_source t WHERE t.workspace_id = ? AND t.epoch = ? AND t.case_id = ?
@@ -519,7 +503,7 @@ export class ConsultationRecordingService {
       `).get(context.workspaceId, context.epoch, `ClinicalDocumentDraft/${caseId}`) !== undefined,
       version: state?.version ?? 0, paused: state?.paused === 1,
       sourceResults: jobs.filter(job => job.result !== null).map(job => ({ sourceId: job.turn_id, result: job.result! })),
-      verification: this.#verification(context, caseId),
+      verification: { pendingCount: 0, flaggedCount: 0, failedCount: 0, issues: [] },
       processedCount, remainingCount: total - processedCount, failedCount,
       status: state === undefined ? 'backfill' : state.paused === 1 ? 'paused' : failedCount > 0 ? 'failed' : requiresContextBinding ? 'idle'
         : jobs.some(job => job.status === 'queued') ? 'processing'
@@ -549,112 +533,16 @@ export class ConsultationRecordingService {
       .parse(this.#database.driver.prepare(`SELECT status, generation, result, error_code, count(*) AS count
         FROM consultation_recording_job WHERE workspace_id = ? AND epoch = ? AND case_id = ?
         GROUP BY status, generation, result, error_code ORDER BY status, generation, result, error_code`).all(...key))
-    const checks = z.array(z.object({ status: z.enum(['pending', 'verified', 'flagged', 'failed', 'stale']),
-      count: z.number().int().nonnegative() })).parse(this.#database.driver.prepare(`SELECT status, count(*) AS count
-        FROM consultation_recording_verification WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        GROUP BY status ORDER BY status`).all(...key))
-    return recordingContentHash({ state: this.#state(context, caseId), document, sources, jobs, checks,
+    return recordingContentHash({ state: this.#state(context, caseId), document, sources, jobs,
       signing: this.signingPreparation(context, caseId) })
   }
 
-  #verification(context: Pick<ActorContext, 'workspaceId' | 'epoch'>, caseId: string) {
-    const rows = this.#rows(context, caseId)
-    const checks = z.array(z.object({ addition_id: z.string(), content_hash: z.string(),
-      status: z.enum(['pending', 'verified', 'flagged', 'failed', 'stale']),
-      reason: z.enum(['verification-rejected', 'verification-unavailable']).nullable(),
-    })).parse(this.#database.driver.prepare(`SELECT addition_id, content_hash, status, reason FROM consultation_recording_verification
-      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-    `).all(context.workspaceId, context.epoch, caseId))
-    const current = checks.flatMap(check => {
-      const row = rows.find(row => row.addition_id === check.addition_id && row.status === 'applied'
-        && row.undone === 0 && row.review_state === null)
-      return row === undefined || check.content_hash !== recordingContentHash({ text: row.current_text, facts: rowFacts(row) })
-        ? [] : [{ ...check, row }]
-    })
-    return { pendingCount: current.filter(check => check.status === 'pending').length,
-      flaggedCount: current.filter(check => check.status === 'flagged').length,
-      failedCount: current.filter(check => check.status === 'failed').length,
-      issues: current.filter(check => check.reason !== null).map(check => ({ additionId: check.addition_id, field: check.row.field,
-        text: check.row.current_text, sourceIds: [...new Set(historyFacts(check.row).flatMap(fact => fact.sources.map(source => source.sourceTurnId)))],
-        reason: check.reason! })) }
-  }
-
-  async verify(event: OutboxHandlerInput, model: {
-    models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider; signal: AbortSignal; shutdownSignal?: AbortSignal
-  }): Promise<OutboxHandlerResult> {
-    const { batchId, additionId, turnId } = z.object({ batchId: z.string(), additionId: z.string(), turnId: z.string() }).strict().parse(event.payload)
-    const check = z.object({ case_id: z.string(), encounter_id: z.string(), content_hash: z.string(), snapshot_json: z.string(), actor_context_json: z.string() }).optional()
-      .parse(this.#database.driver.prepare(`SELECT v.case_id, j.encounter_id, v.content_hash, b.snapshot_json, v.actor_context_json
-        FROM consultation_recording_verification v JOIN consultation_recording_batch b
-          ON b.workspace_id = v.workspace_id AND b.epoch = v.epoch AND b.batch_id = v.batch_id
-        JOIN consultation_recording_job j ON j.workspace_id = v.workspace_id AND j.epoch = v.epoch AND j.turn_id = ?
-        WHERE v.workspace_id = ? AND v.epoch = ? AND v.addition_id = ? AND v.batch_id = ? AND v.status = 'pending'
-      `).get(turnId, event.workspaceId, event.epoch, additionId, batchId))
-    if (check === undefined) return { status: 'completed' }
-    const context = contextSchema.parse(JSON.parse(check.actor_context_json))
-    if (context.workspaceId !== event.workspaceId || context.epoch !== event.epoch
-      || context.scenarioRunId !== event.scenarioRunId) throw new Error('Verification context mismatch')
-    if (this.#contextStatus(context) === 'superseded') return { status: 'completed' }
-    const batch = recordingBatchSchema.parse(JSON.parse(check.snapshot_json))
-    const recordingVersion = this.#state(context, check.case_id)?.version
-    const current = () => this.#rows(context, check.case_id).find(row => row.addition_id === additionId
-      && row.status === 'applied' && row.undone === 0 && row.review_state === null
-      && check.content_hash === recordingContentHash({ text: row.current_text, facts: rowFacts(row) }))
-    const obsolete = new AbortController()
-    const signal = AbortSignal.any([model.signal, obsolete.signal])
-    const unsubscribe = this.#commands.subscribe(source => {
-      if (source.workspaceId !== context.workspaceId || obsolete.signal.aborted) return
-      try {
-        if (current() === undefined || this.#contextStatus(context) !== 'active'
-          || !this.#assertAccess(context, check.encounter_id).editable
-          || this.#state(context, check.case_id)?.version !== recordingVersion
-          || this.#state(context, check.case_id)?.paused === 1 || this.isSigning(context, check.case_id)) {
-          obsolete.abort(new Error('Verification context changed'))
-        }
-      } catch { obsolete.abort(new Error('Verification context unavailable')) }
-    })
-    const started = performance.now()
-    let status: 'verified' | 'flagged' | 'failed' | 'stale' = 'stale'
-    let reason: 'verification-rejected' | 'verification-unavailable' | null = null
-    try {
-      const row = current()
-      if (row !== undefined) {
-        if (this.#contextStatus(context) !== 'active' || !this.#assertAccess(context, check.encounter_id).editable
-          || this.#state(context, check.case_id)?.paused === 1 || this.isSigning(context, check.case_id)
-          || model.provider === undefined || model.model === undefined) throw new Error('Verification unavailable')
-        const pinned = await model.models.bind(context.workspaceId, `verify-history:${event.eventId}`, model.model, signal)
-        await verifyHistorySummaries(model.provider, pinned, signal, [{ field: row.field, facts: rowFacts(row), relation: row.relation,
-          ...(row.target_addition_id === null ? {} : { targetAdditionId: row.target_addition_id }) }], recordingTurns(batch),
-          batch.history, batch.manualHistory, batch.rejectedFacts, batch.members.map(member => member.id))
-        status = 'verified'
-      }
-    } catch (error) {
-      if (model.shutdownSignal?.aborted && event.attempt < 3) return { status: 'retryable-failed' }
-      status = error instanceof RecordingSourceError && error.diagnostic.reason === 'verification-rejected' ? 'flagged' : 'failed'
-      reason = status === 'flagged' ? 'verification-rejected' : 'verification-unavailable'
-    } finally {
-      unsubscribe()
-    }
-    if (obsolete.signal.aborted) { status = 'failed'; reason = 'verification-unavailable' }
-    if (this.#contextStatus(context) === 'superseded') return { status: 'completed' }
-    if (this.#contextStatus(context) !== 'active') { status = 'failed'; reason = 'verification-unavailable' }
-    try {
-      if (!this.#assertAccess(context, check.encounter_id).editable) {
-        status = 'failed'; reason = 'verification-unavailable'
-      }
-    } catch { status = 'failed'; reason = 'verification-unavailable' }
-    if (this.#state(context, check.case_id)?.version !== recordingVersion || this.#state(context, check.case_id)?.paused === 1
-      || this.isSigning(context, check.case_id)) { status = 'failed'; reason = 'verification-unavailable' }
-    if (current() === undefined) { status = 'stale'; reason = null }
-    this.#commands.execute({ context, contextRequirement: 'current', operation: 'consultation.history.verify', expectedVersions: {},
-      idempotencyKey: `verify-history:${event.eventId}`, input: { additionId, contentHash: check.content_hash, status, reason },
-      dataSchema: z.object({ status: z.string() }),
-    }, () => {
-      this.#database.driver.prepare(`UPDATE consultation_recording_verification SET status = ?, reason = ?, elapsed_ms = ?
-        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND addition_id = ? AND content_hash = ? AND status = 'pending'
-      `).run(status, reason, Math.round(performance.now() - started), context.workspaceId, context.epoch, check.case_id, additionId, check.content_hash)
-      return { data: { status }, effects: [{ kind: 'updated', reference: `ConsultationRecording/${check.case_id}`, versionId: additionId }] }
-    })
+  // Compatibility consumption only: legacy events cannot bind or call a model.
+  async retireVerification(event: OutboxHandlerInput): Promise<OutboxHandlerResult> {
+    this.#database.driver.prepare(`UPDATE consultation_recording_verification
+      SET retired_status = COALESCE(retired_status, status), status = 'stale'
+      WHERE workspace_id = ? AND epoch = ? AND status = 'pending'
+    `).run(event.workspaceId, event.epoch)
     return { status: 'completed' }
   }
 
@@ -1086,8 +974,8 @@ export class ConsultationRecordingService {
           && isHistoryRange(target, fieldText, target.start_offset, target.end_offset)
           && fieldText.slice(target.start_offset, target.end_offset) === target.current_text
         if (addition.relation === 'update' && anchored && summary === target.current_text) continue
-        // The independent verifier evaluates the relation against every fact's
-        // sources; the legacy representative quote cannot decide it.
+        // Source meaning and fact preservation are checked by document quality
+        // control against this immutable batch and the saved facts.
         const replace = anchored && (addition.relation === 'update' || addition.relation === 'correction')
           && target.ownership === 'automatic'
         const text = addition.relation === 'conflict' ? `${sourceLabel}存在矛盾，待核实：${summary}`
@@ -1107,19 +995,14 @@ export class ConsultationRecordingService {
             replace ? start : fieldText.length, replace ? target.end_offset! : fieldText.length)
         this.#database.driver.prepare(`INSERT INTO consultation_history_addition
           (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
-            target_addition_id, start_offset, end_offset, current_text, inverse_text, facts_json)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            target_addition_id, start_offset, end_offset, current_text, inverse_text, facts_json, batch_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(context.workspaceId, context.epoch, job.case_id, id, addition.sourceTurnId, addition.field,
           addition.quote, addition.relation, 'applied', addition.targetAdditionId ?? null,
           start,
           start + text.length,
           text,
-          replace ? target.current_text : null, JSON.stringify(addition.facts))
-        this.#database.driver.prepare(`INSERT INTO consultation_recording_verification
-          (workspace_id, epoch, case_id, addition_id, batch_id, content_hash, status, actor_context_json) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-        `).run(context.workspaceId, context.epoch, job.case_id, id, event.eventId, recordingContentHash({ text, facts: addition.facts }), JSON.stringify(context))
-        transaction.enqueue({ kind: 'consultation.verify-history', dedupKey: `verify-history:${event.eventId}:${id}`,
-          payload: { batchId: event.eventId, additionId: id, turnId } })
+          replace ? target.current_text : null, JSON.stringify(addition.facts), event.eventId)
         for (const fact of addition.facts) for (const source of fact.sources) recordedSources.add(source.sourceTurnId)
         document[addition.field] = next
         changed = true

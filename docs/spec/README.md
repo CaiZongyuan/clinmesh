@@ -36,6 +36,7 @@
 | --- | --- |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `draft` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
+| [自动记录语义检查统一归病历质控](2026-10-19-recording-quality-consolidation.md) | `approved` |
 
 ### 已验收与已取代
 

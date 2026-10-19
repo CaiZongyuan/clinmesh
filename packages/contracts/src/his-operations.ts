@@ -1362,8 +1362,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures and asynchronous verification (pending, flagged, failed with exact fragments and sourceIds), fragment ownership and fact-level sources; source validation precedes persistence, semantic verification follows it; presentation is null when no triage record exists; qualityControl binds current ten-field content and saved evidence to nonblocking completion and verification prompts',
-    version: 10,
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; qualityControl binds current ten-field content and saved evidence to nonblocking completion and verification prompts',
+    version: 11,
   },
   {
     cliPath: ['doctor', 'document-quality', 'get'],
@@ -1627,8 +1627,8 @@ const operationDefinitions = [
     mode: 'command', output: controlConsultationRecordingResponseSchema,
     requirements: { expectedVersions: true, idempotency: 'required' },
     risk: 'write', roles: ['outpatient-doctor'],
-    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording and unavailable semantic verification; negative verdicts are never reasked; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed sources and manual edits',
-    version: 4,
+    summary: 'Pause, resume, explicitly backfill a historical consultation or retry failed recording; retired semantic checks cannot be retried; backfill requires an existing Consultation, otherwise returns WORKFLOW_CONFLICT; requires the current recording version and preserves completed sources and manual edits',
+    version: 5,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'draft', 'set'],
