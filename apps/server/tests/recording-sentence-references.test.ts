@@ -53,6 +53,41 @@ it('decodes multi-sentence, multi-turn evidence and retains unchanged facts with
   expect(decodeRecordingCandidates({ additions: [] }, batch)).toEqual({ additions: [], failures: [] })
 })
 
+it('records equivalent updates once when they cite repeated sentences within the same source', () => {
+  const snapshot = recordingBatchSchema.parse({ ...batch,
+    sources: batch.sources.map(source => source.id === 'new-source' ? { ...source, messageText: '没有胸痛。没有胸痛。' } : source),
+  })
+  const repeated = recordingSentenceReferences(snapshot).filter(sentence => sentence.sourceTurnId === 'new-source')
+  const decoded = decodeRecordingCandidates({ additions: repeated.map(sentence => ({ ...addition,
+    relation: 'update', targetAdditionId: 'h0', retainedFactIndexes: [0],
+    facts: [{ text: '否认胸痛', sourceIds: [sentence.id] }],
+  })) }, snapshot)
+  expect(decoded).toMatchObject({ failures: [], additions: [{ targetAdditionId: 'old-addition',
+    facts: [batch.history[0]!.facts[0], { text: '否认胸痛', sources: [{ sourceTurnId: 'new-source', quote: '没有胸痛。' }] }],
+  }] })
+  expect(decoded.additions).toHaveLength(1)
+  expect(partitionRecordingCandidates(decoded.additions, snapshot)).toMatchObject({ failures: [], valid: decoded.additions })
+})
+
+it('keeps replacements citing identical text from different sources distinct', () => {
+  const decoded = decodeRecordingCandidates({ additions: [references[1]!, references[2]!].map(sentence => ({ ...addition,
+    relation: 'update', targetAdditionId: 'h0', retainedFactIndexes: [0],
+    facts: [{ text: '否认胸痛', sourceIds: [sentence.id] }],
+  })) }, batch)
+  expect(decoded.additions).toEqual([])
+  expect(decoded.failures.map(item => item.reason)).toEqual(['target', 'target'])
+})
+
+it('keeps different invalid references attributable after decoding and accepts an independent candidate', () => {
+  const decoded = decodeRecordingCandidates({ additions: [addition, ...['unknown-a', 'unknown-b'].map(id => ({ ...addition,
+    facts: [{ text: '错误引用', sourceIds: [id] }],
+  }))] }, batch)
+  expect(decoded.failures).toMatchObject([
+    { reason: 'citation', sourceIds: ['new-source'] }, { reason: 'citation', sourceIds: ['new-source'] },
+  ])
+  expect(partitionRecordingCandidates(decoded.additions, batch)).toMatchObject({ failures: [], valid: [{ field: 'historyOfPresentIllness' }] })
+})
+
 it.each(['unknown', 'duplicate', 'different-generation', 'different-source', 'raw-source-id'])(
   'isolates a %s reference without accepting guessed evidence', invalid => {
     const changed = recordingBatchSchema.parse({ ...batch, members: [{ id: 'new-source', generation: 2 }],

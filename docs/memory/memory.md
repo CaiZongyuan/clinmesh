@@ -426,3 +426,5 @@
 - 当前自动记录性能由用户自行试用认可，交付不再追加真实模型性能验收；沿用[规格中的验收约定](../spec/2026-10-15-low-latency-document-recording.md#验收条件)，不将体验确认写成量化延迟达标，也不重复将固定负载压测作为该交付的前置条件。
 
 - 按内容哈希去重前，先用完整业务 schema 规范化有效候选；首尾空格和 JSON 字段顺序不能制造竞争替换。不合格候选仍参与共享目标冲突判断，不能为去重先过滤掉坏候选而破坏原子拒绝；自动记录的归属与回归由[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-15-low-latency-document-recording.md)拥有。
+
+- 模型传输引用的编号差异不能直接当作业务内容差异；回归同时覆盖同来源重复原句、不同来源同文和多个无效编号，验证解码后的等价去重、来源独立性及失败归属。句子引用的当前规则由[句子引用决策](../../.agents/notes/implemented/architecture/2026-10-19-recording-sentence-references.md)拥有。

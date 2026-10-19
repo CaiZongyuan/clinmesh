@@ -100,8 +100,9 @@ function decodeSentenceCandidates(value: unknown, batch: RecordingBatch) {
     else if (normalized.facts.some(fact => new Set(fact.sourceIds).size !== fact.sourceIds.length
       || fact.sourceIds.some(id => !sentences.has(id)))) referenceError = 'citation'
     return { candidate: { ...normalized, facts }, referenceError,
-      // Include raw ids so different invalid references never deduplicate.
-      identity: recordingContentHash(normalized) }
+      // Valid references deduplicate by decoded content; keep raw ids only for
+      // invalid candidates so distinct citation failures never collapse.
+      identity: referenceError === undefined ? undefined : recordingContentHash(normalized) }
   })
 }
 

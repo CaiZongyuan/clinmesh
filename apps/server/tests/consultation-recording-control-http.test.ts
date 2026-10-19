@@ -15,13 +15,13 @@ it('activates a new case without consultation and signs doctor-only recording wi
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', trustedOrigins: ['http://localhost'],
     dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
     chatCompletionsProvider: { async completeJson(input) {
-      const payload = input.userPayload as { turns: Array<{ id: string; messageText: string }>; additions?: unknown[] }
+      const payload = input.userPayload as { turns: Array<{ sentences: Array<{ id: string }> }>; additions?: unknown[] }
       if (input.schemaName === 'consultation_history_verification') return { model: 'synthetic', content: JSON.stringify({
         additions: payload.additions!.map((_, index) => ({ index, faithful: true, complete: true, relationValid: true })),
       }) }
       const source = payload.turns.at(-1)!
       return { model: 'synthetic', content: JSON.stringify({ additions: [{ field: 'assessment', relation: 'addition',
-        facts: [{ text: '医生考虑急性上呼吸道感染', sources: [{ sourceTurnId: source.id, quote: source.messageText }] }],
+        facts: [{ text: '医生考虑急性上呼吸道感染', sourceIds: [source.sentences[0]!.id] }],
       }] }) }
     } },
   })
