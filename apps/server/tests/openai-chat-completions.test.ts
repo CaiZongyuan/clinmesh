@@ -19,6 +19,32 @@ const completionInput = {
 }
 
 describe('OpenAI-compatible Chat Completions client', () => {
+  it('counts the schema and prompt in a task input limit before sending a request', async () => {
+    const fetch = vi.fn(async () => Response.json({ choices: [{ message: { content: '{}' } }] }))
+    const client = new OpenAIChatCompletionsClient({ apiKey: secret, baseUrl: 'https://openrouter.example/api/v1', fetch })
+    await expect(client.completeJson({ ...completionInput, maxInputBytes: 200,
+      jsonSchema: { description: '合'.repeat(100) } })).rejects.toMatchObject({ code: 'AI_REQUEST_TOO_LARGE' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('rechecks the serialized task budget before a larger format fallback', async () => {
+    const bodies: string[] = []
+    const client = new OpenAIChatCompletionsClient({ apiKey: secret, baseUrl: 'https://openrouter.example/api/v1',
+      fetch: async (_url, init) => {
+        bodies.push(String(init?.body))
+        return Response.json({ choices: [{ message: { content: '{invalid' } }] })
+      },
+    })
+    const bytes = Buffer.byteLength(JSON.stringify({
+      messages: [{ role: 'system', content: completionInput.systemPrompt }, { role: 'user', content: JSON.stringify(completionInput.userPayload) }],
+      model: completionInput.model, temperature: 0, response_format: { type: 'json_schema',
+        json_schema: { name: completionInput.schemaName, schema: completionInput.jsonSchema, strict: true } },
+    }))
+    await expect(client.completeJson({ ...completionInput, maxInputBytes: bytes })).rejects.toMatchObject({ code: 'AI_REQUEST_TOO_LARGE' })
+    expect(bodies).toHaveLength(1)
+    expect(Buffer.byteLength(bodies[0]!)).toBe(bytes)
+  })
+
   it('limits realtime structured output to the initial request and one format repair', async () => {
     const signals: Array<AbortSignal | null | undefined> = []
     const client = new OpenAIChatCompletionsClient({ apiKey: secret, baseUrl: 'https://openrouter.example/api/v1',

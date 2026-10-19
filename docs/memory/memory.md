@@ -90,6 +90,8 @@
 
 - 新增辅助模型的 `schemaName` 时同步 `packages/contracts/src/model-bridge.ts` 的窄白名单，并通过真实 `DshModelProvider` 与宿主 handler 的集成测试。直接 Provider 替身会绕过这条边界，JSON 和应用测试通过仍可能在宿主报 `AI_REQUEST_FAILED`。
 
+- 修改模型传输格式时，同步原生 smoke 中合成 `LlmAdapter` 的响应与证据指纹文件清单。旧状态机 fixture 可在测试边界转换，但新协议必须经真实 Provider 与宿主 handler 直接返回新格式，避免转换适配掩盖线上 schema 漂移。
+
 - 模型返回合法空结果时，先检查该模式的必需输出是否仍被 schema 声明为可选，再判断是否过度保守。模式专用请求可强制显式数组，并将来源编号枚举限定为本轮实际输入；新增 schema 字节仍计入预算，运行时来源与语义核验继续保留。诊疗建议的当前合同见[临床说明决策](../../.agents/notes/implemented/architecture/2026-10-16-clinical-explanations.md)。
 
 - 来源许可核验不能替代部署用途核验；非商业等受限全文默认关闭，显式用途声明必须贯通实际读取、幂等回执重放、同步统计与缓存失效。只修改许可说明而不约束模型输入，会让其他部署越过原本已确认的使用边界；指南的当前取舍见[全文用途决策](../../.agents/notes/implemented/architecture/2026-10-16-free-guideline-corpus.md)。

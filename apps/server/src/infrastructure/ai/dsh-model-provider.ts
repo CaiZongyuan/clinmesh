@@ -31,7 +31,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         operation: 'complete', model, schemaName: input.schemaName, jsonSchema: input.jsonSchema,
         systemPrompt: attempt === 0 ? input.systemPrompt : `${input.systemPrompt}\nThe previous response failed validation: ${JSON.stringify(issues)}. Generate a corrected JSON object using the original data and schema. Do not include $schema or other schema metadata.`,
         userPayload: input.userPayload,
-      }, input.signal, rateLimitRetry, deadline, input.onResponse)
+      }, input.signal, rateLimitRetry, deadline, input.onResponse, input.maxInputBytes)
       if (result.firstTextMs !== undefined) input.onFirstText?.(result.firstTextMs)
       if (result.model !== model) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the pinned route')
       try {
@@ -58,7 +58,8 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
   }
 
   async #request(payload: Record<string, unknown> & { operation: 'resolve' | 'complete' }, callerSignal?: AbortSignal,
-    rateLimitRetry?: { available: boolean }, deadline = performance.now() + this.options.timeoutMs, onResponse?: () => void) {
+    rateLimitRetry?: { available: boolean }, deadline = performance.now() + this.options.timeoutMs, onResponse?: () => void,
+    maxInputBytes = 256 * 1024) {
     const timeoutMs = Math.ceil(deadline - performance.now())
     if (timeoutMs < 100) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request timed out')
     // Allow the host deadline to return its safe timeout code before the transport is cancelled.
@@ -72,7 +73,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         const remainingMs = Math.ceil(deadline - performance.now())
         if (remainingMs < 100) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request timed out')
         const body = JSON.stringify(payload.operation === 'resolve' ? payload : { ...payload, timeoutMs: remainingMs })
-        if (Buffer.byteLength(body) > 256 * 1024) throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'The model request exceeds the size limit')
+        if (Buffer.byteLength(body) > Math.min(256 * 1024, maxInputBytes)) throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'The model request exceeds the size limit')
         const response = await (this.options.fetch ?? fetch)(this.#endpoint, {
           method: 'POST', redirect: 'error', signal,
           headers: { 'content-type': 'application/json', authorization: `Bearer ${this.options.secret}` }, body,
