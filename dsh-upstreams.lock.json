@@ -27,7 +27,7 @@
       "source": "https://github.com/keaideppk/dsh-ag-ui.git",
       "owner": "https://github.com/CaiZongyuan/dsh-ag-ui",
       "role": "原生 browser Tool broker；不另建 Gateway 模型会话",
-      "commit": "a22b9e3c6a6d7837f2aaec328462309f6bc1989a",
+      "commit": "e3a290687c974811154d5a9e6d7235111a6a0620",
       "requires": [
         "@deepseek-ai/dsh"
       ],
@@ -38,7 +38,7 @@
       "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
       "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
       "role": "React runtime、Surface 生命周期、布局和构建工具",
-      "commit": "ded886c1fca70f0f5d194e66f9c9b3dc4ea27893",
+      "commit": "ab6092e6c063b653a0c78630ae31c584c21e4b00",
       "requires": [
         "@deepseek-ai/dsh",
         "dsh-ag-ui"
