@@ -113,7 +113,6 @@ import {
   getWorkspaceErrorTitle,
 } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
-import { ConsultationVerificationStatus } from './consultation-recording-controls.tsx'
 import { WorkspaceSelect } from '../workspace-select.tsx'
 import { EncounterCompletionChecklist } from './completion-checklist.tsx'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
@@ -2403,7 +2402,6 @@ function DoctorCaseController({
                 content: locale => {
                   const reviewMessages = getWorkspaceMessages(locale)
                   return <div className="flex flex-col gap-3">
-                    <ConsultationVerificationStatus recording={current.consultationRecording} messages={reviewMessages} />
                     <DocumentQualitySignSummary detail={current} state={preview.data.qualityControl} scope={proposalScope} locale={locale} />
                     <ClinicalDocumentContentView content={preview.data.document.content} messages={reviewMessages} />
                   </div>
