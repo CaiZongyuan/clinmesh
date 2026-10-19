@@ -44,6 +44,8 @@
 
 ## 运行与验证边界
 
+- 勾选聊天风格、结果顺序或按需教学等模型行为前，核对部署 preset/persona，并以新建 Session 的实际模型请求证明规则已装配。规格描述、普通工具测试和脚本化替身的回答不能证明真实模型持续遵守这些要求；接线证据与实模体验分别记录。
+
 - 独立 worktree 借用已有依赖进行检查时，pnpm 11 的依赖状态检查可能自动尝试安装。明确使用 `--config.verify-deps-before-run=false` 或现有锁定 runner，不能让它清理、安装或重写其他任务共用的 `node_modules`；构建与测试产物仍按任务隔离。
 
 - CI 中容器健康接口持续拒绝连接时，先核对启动进程是否已因依赖未就绪而退出；重试端口不能重新启动进程。容器依赖顺序与清理前保留日志见[Synthea 运行时决策](../../.agents/notes/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。

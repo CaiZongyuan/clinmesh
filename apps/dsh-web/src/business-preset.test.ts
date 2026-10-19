@@ -1,11 +1,13 @@
 import { fileURLToPath } from 'node:url'
 import { Context } from '@deepseek-ai/cordis'
 import Loader, { Group } from '@deepseek-ai/cordis-plugin-loader'
+import Agents from '@deepseek-ai/dsh-agent'
+import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import '@deepseek-ai/dsh-agent-preset-registry'
 import { composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-boot'
-import Llm from '@deepseek-ai/dsh-llm'
+import Llm, { createUserMessage, LlmAdapter, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
 import { createScope } from '@deepseek-ai/dsh-scope'
-import Sessions from '@deepseek-ai/dsh-session'
+import Sessions, { SessionId } from '@deepseek-ai/dsh-session'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import TokenMeter from '@deepseek-ai/dsh-token-meter'
@@ -13,7 +15,7 @@ import Tools, { defineTool } from '@deepseek-ai/dsh-tools'
 import UserQuestions from '@deepseek-ai/dsh-user-questions'
 import { expect, it } from 'vitest'
 
-it('mounts the deployment business preset with scoped hospital tools and no development tools', async () => {
+it('mounts the deployment business preset and sends doctor reply rules through fresh sessions', async () => {
   const ctx = new Context()
   ctx.baseUrl = new URL('../', import.meta.url).href
   try {
@@ -29,6 +31,8 @@ it('mounts the deployment business preset with scoped hospital tools and no deve
     await ctx.plugin(TokenMeter)
     await ctx.plugin(Tools)
     await ctx.plugin(UserQuestions)
+    await ctx.plugin(Agents)
+    await ctx.plugin(AgentLoop, { agents: [] })
 
     const patches = loadOverlayPatches('ClinMesh preset test',
       fileURLToPath(new URL('../cordis.patch.yml', import.meta.url)))
@@ -76,6 +80,61 @@ it('mounts the deployment business preset with scoped hospital tools and no deve
     expect(persona).not.toContain('You are a coding agent')
     expect(persona).not.toContain('Your working directory')
     expect((await ctx.systemPrompt.assemble()).tools).toEqual([])
+
+    const responses = new Map<string, string[]>()
+    ctx.on('session/event', (session, event) => {
+      if (event.type === 'assistant/message') {
+        responses.set(String(session.id), event.data.message.content
+          .filter(block => block.type === 'text').map(block => block.text))
+      }
+    })
+    class ScriptedModel extends LlmAdapter {
+      readonly requests: GenerateOptions[] = []
+      override async resolveModel(provider: string, model: string) {
+        return { provider, id: model, name: model }
+      }
+      override async *stream(request: GenerateOptions): AsyncIterable<StreamChunk> {
+        this.requests.push(request)
+        yield { type: 'block-start', index: 0, blockType: 'text' }
+        yield { type: 'text-delta', index: 0, text: '合成会话回复。' }
+        yield { type: 'block-end', index: 0, block: { type: 'text', text: '合成会话回复。' } }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
+    }
+    const model = new ScriptedModel()
+    ctx.llm.registerAdapter(['scripted'], model)
+    for (const { sessionId, text } of [
+      { sessionId: 'doctor-brief-reply', text: '请简要说明你能提供哪些帮助。' },
+      { sessionId: 'doctor-explanation-reply', text: '请解释你能如何辅助医生，并说明适用边界。' },
+      { sessionId: 'doctor-teaching-reply', text: '请给我讲解如何核对诊疗建议的依据。' },
+    ]) {
+      const { agent } = await ctx.agents.create({
+        sessionId: SessionId(sessionId),
+        agentOptions: { provider: 'scripted', model: 'reply-contract' },
+        setup: async agentCtx => { await ctx.agentPresets.mount(agentCtx) },
+      })
+      agent.followup(createUserMessage({ content: [{ type: 'text', text }],
+        source: { kind: 'user', rpcId: sessionId } }))
+      await agent.whenIdle()
+      const request = model.requests.at(-1)
+      expect(request?.messages).toContainEqual(expect.objectContaining({
+        role: 'user', content: [{ type: 'text', text }],
+      }))
+      expect(responses.get(sessionId)).toEqual(['合成会话回复。'])
+      const systemPrompt = request?.messages.filter(message => message.role === 'system')
+        .flatMap(message => message.content).filter(block => block.type === 'text')
+        .map(block => block.text).join('\n')
+      expect(systemPrompt).toContain('简洁、专业')
+      expect(systemPrompt).toContain('先说明结果或当前状态')
+      expect(systemPrompt).toContain('原因解释和教学仅在医生明确请求时展开')
+      expect(systemPrompt).toContain('首轮请求和后续追问均适用')
+      expect(systemPrompt).toContain('常规后台整理、建议刷新和质控提示通过业务页面体现')
+      expect(systemPrompt).toContain('需要医生决定或核实')
+      expect(systemPrompt).toContain('无法安全恢复')
+      expect(systemPrompt).toContain('正式业务提交通过工作台的人工审阅完成')
+      expect(systemPrompt).not.toContain('You are a coding agent')
+    }
+    expect(model.requests).toHaveLength(3)
   } finally {
     await ctx.fiber.dispose()
   }
