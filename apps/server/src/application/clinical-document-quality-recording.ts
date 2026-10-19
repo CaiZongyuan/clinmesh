@@ -41,9 +41,11 @@ export function readRecordingQualityContext(database: ClinMeshDatabase, context:
   const result: RecordingContext = { changes: [], rejectedFacts: [], missing: [] }
   const rows = rowsSchema.parse(database.driver.prepare(`SELECT a.addition_id, a.field, a.source_turn_id, a.quote,
     a.relation, a.status, a.target_addition_id, a.ownership, a.current_text, a.facts_json, a.rejected, a.undone,
-    a.review_state, a.batch_id, b.snapshot_json FROM consultation_history_addition a
-    LEFT JOIN consultation_recording_batch b ON b.workspace_id = a.workspace_id AND b.epoch = a.epoch
-      AND b.case_id = a.case_id AND b.batch_id = a.batch_id
+    a.review_state, m.batch_id, b.snapshot_json FROM consultation_history_addition a
+    LEFT JOIN consultation_history_addition_batch m ON m.workspace_id = a.workspace_id AND m.epoch = a.epoch
+      AND m.case_id = a.case_id AND m.addition_id = a.addition_id
+    LEFT JOIN consultation_recording_batch b ON b.workspace_id = m.workspace_id AND b.epoch = m.epoch
+      AND b.case_id = m.case_id AND b.batch_id = m.batch_id
     WHERE a.workspace_id = ? AND a.epoch = ? AND a.case_id = ? ORDER BY a.rowid
   `).all(context.workspaceId, context.epoch, caseId))
   const facts = (row: typeof rows[number]) => {

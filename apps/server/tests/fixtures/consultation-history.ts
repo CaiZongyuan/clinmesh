@@ -32,7 +32,7 @@ export async function replaceWithPreConsolidationDatabase(databasePath: string):
     })()
     legacy.driver.exec('DETACH DATABASE captured')
     legacy.driver.pragma('foreign_keys = ON')
-    if (legacy.driver.pragma('foreign_key_check').length !== 0) throw new Error('Invalid pre-consolidation database fixture')
+    if (z.array(z.unknown()).parse(legacy.driver.pragma('foreign_key_check')).length !== 0) throw new Error('Invalid pre-consolidation database fixture')
   } finally { legacy.close() }
   await copyFile(legacyPath, databasePath)
 }

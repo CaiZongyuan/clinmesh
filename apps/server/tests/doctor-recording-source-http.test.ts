@@ -291,9 +291,11 @@ it.each(['pending', 'failed', 'flagged'] as const)('ignores a legacy %s check in
   const before = await f.read()
   f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_verification
     (workspace_id, epoch, case_id, addition_id, batch_id, content_hash, actor_context_json, status, reason)
-    SELECT a.workspace_id, a.epoch, a.case_id, a.addition_id, a.batch_id, 'legacy-content-hash', j.actor_context_json, ?, ?
+    SELECT a.workspace_id, a.epoch, a.case_id, a.addition_id, m.batch_id, 'legacy-content-hash', j.actor_context_json, ?, ?
     FROM consultation_history_addition a JOIN consultation_recording_job j
       ON j.workspace_id = a.workspace_id AND j.epoch = a.epoch AND j.turn_id = a.source_turn_id
+    JOIN consultation_history_addition_batch m ON m.workspace_id = a.workspace_id AND m.epoch = a.epoch
+      AND m.case_id = a.case_id AND m.addition_id = a.addition_id
   `).run(status, status === 'flagged' ? 'verification-rejected' : status === 'failed' ? 'verification-unavailable' : null)
   const after = await f.read()
   expect(after.consultationRecording?.verification).toEqual({ pendingCount: 0, flaggedCount: 0, failedCount: 0, issues: [] })

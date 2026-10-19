@@ -408,7 +408,7 @@ it('retires legacy verdicts and duplicate outbox deliveries on a populated datab
   expect(fixture.requests.filter(input => input.schemaName === 'consultation_history_verification')).toHaveLength(0)
   const database = fixture.runtime.database.driver
   const additions = z.array(z.object({ addition_id: z.string(), batch_id: z.string() })).parse(database.prepare(
-    'SELECT addition_id, batch_id FROM consultation_history_addition ORDER BY rowid',
+    'SELECT addition_id, batch_id FROM consultation_history_addition_batch ORDER BY rowid',
   ).all())
   const event = z.record(z.string(), z.unknown()).parse(database.prepare(
     "SELECT * FROM outbox_event WHERE kind = 'consultation.record-history' ORDER BY rowid LIMIT 1",
@@ -420,7 +420,7 @@ it('retires legacy verdicts and duplicate outbox deliveries on a populated datab
   const insertVerdict = database.prepare(`INSERT INTO consultation_recording_verification
     (workspace_id, epoch, case_id, addition_id, batch_id, content_hash, actor_context_json, status, reason, elapsed_ms)
     SELECT workspace_id, epoch, case_id, addition_id, batch_id, 'synthetic-legacy-content-hash', ?, ?, ?, ?
-    FROM consultation_history_addition WHERE addition_id = ?`)
+    FROM consultation_history_addition_batch WHERE addition_id = ?`)
   for (const [index, state] of states.entries()) insertVerdict.run(actor.actor_context_json, state,
     state === 'failed' ? 'verification-unavailable' : state === 'flagged' ? 'verification-rejected' : null,
     state === 'pending' ? null : 12, additions[index]!.addition_id)
@@ -443,7 +443,10 @@ it('retires legacy verdicts and duplicate outbox deliveries on a populated datab
   const verdicts = () => fixture.runtime.database.driver.prepare(`SELECT status, retired_status
     FROM consultation_recording_verification ORDER BY rowid`).all()
   expect(verdicts()).toEqual(states.map(state => ({ status: state === 'pending' ? 'stale' : state, retired_status: state })))
-  expect(fixture.runtime.database.driver.prepare('SELECT addition_id, batch_id FROM consultation_history_addition ORDER BY rowid').all()).toEqual(additions)
+  expect(fixture.runtime.database.driver.prepare('SELECT addition_id, batch_id FROM consultation_history_addition_batch ORDER BY rowid').all()).toEqual(additions)
+  expect(() => fixture.runtime.database.driver.prepare('UPDATE consultation_history_addition_batch SET batch_id = ? WHERE addition_id = ?')
+    .run('missing-batch', additions[0]!.addition_id)).toThrow('FOREIGN KEY constraint failed')
+  expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   await fixture.runtime.dispatchPending()
   const after = await fixture.read()
   expect(after.clinicalDocument).toEqual(before.clinicalDocument)

@@ -18,7 +18,7 @@ import { WorkflowError } from './workflow-error.ts'
 import type { QualityAgentFact } from './clinical-document-quality.ts'
 import { RecordingSourceError, recordingSourceDiagnosticSchema,
   summaryText, type HistoryFact, type HistorySummary, type RejectedHistoryFact } from './consultation-history-summary.ts'
-import { decodeRecordingCandidates, partitionRecordingCandidates, recordingBatchSchema, recordingContentHash, recordingModelRequest, recordingModelResponseSchema, recordingTurns,
+import { decodeRecordingCandidates, partitionRecordingCandidates, recordingBatchSchema, recordingContentHash, recordingModelRequest, recordingModelResponseSchema,
   type RecordingBatch } from './consultation-recording-batch.ts'
 
 const contextSchema = z.object({
@@ -995,14 +995,17 @@ export class ConsultationRecordingService {
             replace ? start : fieldText.length, replace ? target.end_offset! : fieldText.length)
         this.#database.driver.prepare(`INSERT INTO consultation_history_addition
           (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
-            target_addition_id, start_offset, end_offset, current_text, inverse_text, facts_json, batch_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            target_addition_id, start_offset, end_offset, current_text, inverse_text, facts_json)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(context.workspaceId, context.epoch, job.case_id, id, addition.sourceTurnId, addition.field,
           addition.quote, addition.relation, 'applied', addition.targetAdditionId ?? null,
           start,
           start + text.length,
           text,
-          replace ? target.current_text : null, JSON.stringify(addition.facts), event.eventId)
+          replace ? target.current_text : null, JSON.stringify(addition.facts))
+        this.#database.driver.prepare(`INSERT INTO consultation_history_addition_batch
+          (workspace_id, epoch, case_id, addition_id, batch_id) VALUES (?, ?, ?, ?, ?)
+        `).run(context.workspaceId, context.epoch, job.case_id, id, event.eventId)
         for (const fact of addition.facts) for (const source of fact.sources) recordedSources.add(source.sourceTurnId)
         document[addition.field] = next
         changed = true
