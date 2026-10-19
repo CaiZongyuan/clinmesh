@@ -11,6 +11,7 @@ import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './f
 import type { JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { z } from 'zod'
+import { sentenceReferenceFixtureResponse } from './fixtures/consultation-history.ts'
 
 const secret = 'synthetic-doctor-recording-secret-at-least-32-characters'
 const disposals: Array<() => Promise<void>> = []
@@ -37,7 +38,9 @@ async function fixture(provider?: JsonChatCompletionsProvider, modelTimeoutMs?: 
         return { model: 'synthetic', content: JSON.stringify({ issues: [],
           agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }) }
       }
-      return provider.completeJson(input)
+      const result = await provider.completeJson(input)
+      return input.schemaName === 'consultation_history_summary'
+        ? { ...result, content: JSON.stringify(sentenceReferenceFixtureResponse(JSON.parse(result.content), input.userPayload)) } : result
     } }, syntheaProvider: new StubSyntheaProvider(),
       consultationModel: 'synthetic', patientPersonaModel: 'synthetic', investigationModel: 'synthetic' }),
   })
@@ -189,7 +192,7 @@ it.each(['overlong-fact', 'dangling-index'])('records an independent source and 
           facts: [{ text: first.messageText.slice(0, -1), sources: [{ sourceTurnId: first.id, quote: first.messageText }] }] },
         { field: 'followUp', relation: 'addition', facts: [{ text: current[1]!.messageText.slice(0, -1),
           sources: [{ sourceTurnId: current[1]!.id, quote: current[1]!.messageText }] }] }]
-      return response({ additions })
+      return response(sentenceReferenceFixtureResponse({ additions }, input.userPayload))
     },
   })
   const f = await fixture(provider)
@@ -239,12 +242,12 @@ it('saves equivalent formatted updates once and keeps their source recorded', as
       const source = payload.turns.at(-1)!
       const fact = { text: source.messageText.slice(0, -1), sources: [{ sourceTurnId: source.id, quote: source.messageText }] }
       const target = payload.history[0]
-      if (target === undefined) return response({ additions: [{ field: 'physicalExamination', relation: 'addition', facts: [fact] }] })
+      if (target === undefined) return response(sentenceReferenceFixtureResponse({ additions: [{ field: 'physicalExamination', relation: 'addition', facts: [fact] }] }, input.userPayload))
       const update = { field: 'physicalExamination', relation: 'update', targetAdditionId: target.id,
         retainedFactIndexes: [0], facts: [fact] }
-      return response({ additions: [update, { ...update, facts: [{ ...fact, text: ` ${fact.text} ` }] },
+      return response(sentenceReferenceFixtureResponse({ additions: [update, { ...update, facts: [{ ...fact, text: ` ${fact.text} ` }] },
         { relation: update.relation, facts: [{ sources: [{ quote: source.messageText, sourceTurnId: source.id }], text: fact.text }],
-          field: update.field, retainedFactIndexes: [0], targetAdditionId: target.id }] })
+          field: update.field, retainedFactIndexes: [0], targetAdditionId: target.id }] }, input.userPayload))
     },
   })
   const f = await fixture(provider)
@@ -355,6 +358,37 @@ it('notifies authorized case readers after commit and cleans up cancelled subscr
   const response = await waiting
   expect(response.status).toBe(200)
   expect(revisionSchema.parse(await response.json()).revision).not.toBe(initial.revision)
+})
+
+it('retains complete sources and the saved draft when sentence mappings exceed the model input budget', async () => {
+  let summaries = 0
+  const f = await fixture({ async completeJson() { summaries++; return { model: 'synthetic', content: '{"additions":[]}' } } })
+  const detail = await f.read()
+  const document = Object.fromEntries(consultationHistoryFieldSchema.options.map(field => [field, '合'.repeat(field === 'chiefComplaint' ? 1000 : 3000)]))
+  const saved = await f.runtime.app.request(`/api/his/v1/encounters/${f.encounterId}/clinical-document/draft`, {
+    method: 'PUT', headers: headers(f.doctor), body: JSON.stringify({
+      expectedVersions: { [`Encounter/${f.encounterId}`]: detail.encounter.versionId }, input: { expectedDraftVersion: 0, document },
+    }),
+  })
+  expect(saved.status).toBe(200)
+  const binding = await f.context()
+  const content = '无。'.repeat(1000)
+  const response = await f.record(binding, await f.source(binding, content))
+  expect(response.status).toBe(200)
+  const sourceId = doctorRecordingSourceResponseSchema.parse(await response.json()).data.sourceId
+  await f.runtime.dispatchPending()
+  expect(summaries).toBe(0)
+  const after = await f.read()
+  expect(after.clinicalDocument?.draft).toMatchObject(document)
+  expect(after.consultationRecording).toMatchObject({ processedCount: 0, remainingCount: 1,
+    failures: [{ sourceTurnId: sourceId, code: 'AI_REQUEST_TOO_LARGE', retrying: false }],
+    sources: [{ id: sourceId, messageText: content }] })
+  const snapshot = z.object({ snapshot_json: z.string() }).parse(f.runtime.database.driver.prepare('SELECT snapshot_json FROM consultation_recording_batch').get())
+  expect(Buffer.byteLength(snapshot.snapshot_json)).toBeLessThan(256 * 1024)
+  expect(JSON.parse(snapshot.snapshot_json).sources[0].messageText).toBe(content)
+  await f.runtime.dispatchPending()
+  expect(summaries).toBe(0)
+  expect((await f.read()).consultationRecording?.failures).toEqual(after.consultationRecording?.failures)
 })
 
 it('discards a semantic verdict for a fragment the doctor has edited while verification was running', async () => {

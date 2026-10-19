@@ -28,7 +28,7 @@
 
 ## Windows、WSL 与跨平台文件
 
-- Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。
+- Windows PowerShell 向 Node 等原生进程通过 stdin 传入中文脚本前，显式将 `$OutputEncoding` 设为 UTF-8；默认管道编码可能替换中文，使字符串替换无匹配却仍以零退出码结束。中文文件编辑优先使用直接文件补丁，并检查实际 diff。Windows PowerShell 5 的 `Set-Content -Encoding utf8` 会写入 BOM；Git 消息文件使用 `UTF8Encoding(false)` 写入，并核对最终提交主题，避免不可见字符进入标题。
 
 - Windows 上 `verify:agent-notes` 若大批报告空白行和 `Status` 行错误，先检查原始文件是否为 CRLF；当前校验器按 `\n` 分割并精确比较行内容，残留的 `\r` 会导致这些误报。若 `verify:docs` 报 `CLAUDE.md` 缺少末尾换行，再核对 Git 是否以 `120000` 跟踪它：Windows 可能把符号链接检出为仅含目标路径的普通文件。可在独立副本中统一换行并还原链接目标内容后验证，保留子模块以供相对链接检查；不为局部文档任务批量重写历史 Note 或修改共享 Git 配置。
 

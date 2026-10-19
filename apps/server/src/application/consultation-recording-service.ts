@@ -16,9 +16,9 @@ import type { GenerationModelBinding } from './generation-model-binding.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 import { WorkflowError } from './workflow-error.ts'
 import type { QualityAgentFact } from './clinical-document-quality.ts'
-import { historySummaryPrompt, RecordingSourceError, recordingSourceDiagnosticSchema,
+import { RecordingSourceError, recordingSourceDiagnosticSchema,
   summaryText, verifyHistorySummaries, type HistoryFact, type HistorySummary, type RejectedHistoryFact } from './consultation-history-summary.ts'
-import { decodeRecordingCandidates, partitionRecordingCandidates, recordingBatchSchema, recordingContentHash, recordingModelPayload, recordingOutputSchema, recordingResponseSchema, recordingTurns,
+import { decodeRecordingCandidates, partitionRecordingCandidates, recordingBatchSchema, recordingContentHash, recordingModelRequest, recordingModelResponseSchema, recordingTurns,
   type RecordingBatch } from './consultation-recording-batch.ts'
 
 const contextSchema = z.object({
@@ -838,7 +838,7 @@ export class ConsultationRecordingService {
       for (const fact of row.facts) for (const source of fact.sources) ids.add(source.sourceTurnId)
     }
     for (const fact of rejectedFacts) for (const source of fact.sources) ids.add(source.sourceTurnId)
-    const batch = recordingBatchSchema.parse({ members, baseline, history, rejectedFacts,
+    const batch = recordingBatchSchema.parse({ citationProtocol: 'sentence-references-v1', members, baseline, history, rejectedFacts,
       sources: sources.filter(source => ids.has(source.id)), manualHistory: this.#manualHistory(context, job.case_id, baseline.content) })
     this.#commands.execute({ context, operation: 'consultation.recording.batch', expectedVersions: {},
       idempotencyKey: `history:${event.eventId}:batch`, input: { sourceIds: members.map(member => member.id) },
@@ -910,22 +910,21 @@ export class ConsultationRecordingService {
         })
       }
       const batch = this.#batch(context, event, turnId, job)
-      const payload = recordingModelPayload(batch)
-      if (Buffer.byteLength(JSON.stringify(batch)) > 256 * 1024 || Buffer.byteLength(JSON.stringify(payload)) > 128 * 1024) {
+      const request = recordingModelRequest(batch)
+      if (Buffer.byteLength(JSON.stringify(batch)) > 256 * 1024 || Buffer.byteLength(JSON.stringify(request)) > 128 * 1024) {
         throw new ChatCompletionsError('AI_REQUEST_TOO_LARGE', 'Recording context exceeds its bounded input budget; retained for explicit recovery')
       }
       if (model.provider === undefined || model.model === undefined) throw new Error('Recording model unavailable')
       const pinned = await model.models.bind(context.workspaceId, `recording:${event.eventId}`, model.model, signal)
       const evidence = historyEvidence(this.#rows(context, job.case_id))
       const result = await model.provider.completeJson({
+        ...request,
         maxAttempts: 2,
+        maxInputBytes: 128 * 1024,
         onResponse: () => { firstResponseMs ??= performance.now() - started },
         onFirstText: elapsedMs => { firstTextMs ??= elapsedMs },
-        model: pinned, signal, schemaName: 'consultation_history_summary',
-        jsonSchema: z.toJSONSchema(recordingOutputSchema) as Record<string, unknown>,
-        systemPrompt: `${historySummaryPrompt}\n只处理 currentSourceIds 的新来源，其余 turns 是相邻上下文和原始证据。语义核对在保存后独立执行。\nupdate/correction/conflict 中保持不变的目标事实使用 retainedFactIndexes（目标 facts 的从零开始的下标）原样保留，不在 facts 重述；facts 只输出新增或更正的事实。保留事实在前、新事实在后，总数最多12；目标已满时将独立新事实写为 addition。旧事实来源通过 sources 的 sourceTurnId 从 turns 恢复，不能凭空添加或遗漏有效事实。`,
-        userPayload: payload,
-        validate: value => { recordingResponseSchema.parse(value); return true },
+        model: pinned, signal,
+        validate: value => { recordingModelResponseSchema(batch).parse(value); return true },
       })
       modelCompleted = performance.now()
       signal.throwIfAborted()

@@ -12,6 +12,8 @@
 
 - 新增辅助模型的 `schemaName` 时同步 `packages/contracts/src/model-bridge.ts` 的窄白名单，并通过真实 `DshModelProvider` 与宿主 handler 的集成测试。直接 Provider 替身会绕过这条边界，JSON 和应用测试通过仍可能在宿主报 `AI_REQUEST_FAILED`。
 
+- 修改模型传输格式时，同步原生 smoke 中合成 `LlmAdapter` 的响应与证据指纹文件清单。旧状态机 fixture 可在测试边界转换，但新协议必须经真实 Provider 与宿主 handler 直接返回新格式，避免转换适配掩盖线上 schema 漂移。
+
 - Surface 集成测试在 Tool 切换页面或打开影像后，须等新的受信 Tool 绑定发布再执行下一动作；控件已启用不证明已发布 action 快照同步。提案工具先返回 `awaiting-human-review`，测试在 `act` 内等待准备结果，人工点击后另行观察正式写入和 Tool result，不能用准备 Promise 代表 Command 已完成。
 
 - 页面 Tool 读取表单时应复用控件实际使用的解析后值，并同步缓存依赖；原始输入状态可能为空，而控件已从持久化草稿或目录默认值补齐。回归同时比较人工选择后与重新打开草稿后的可见内容和 Tool 返回值。

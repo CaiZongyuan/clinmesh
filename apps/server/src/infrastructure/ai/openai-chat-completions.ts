@@ -56,6 +56,8 @@ export class StructuredOutputValidationError extends Error {
 
 export interface JsonChatCompletionInput {
   maxAttempts?: 1 | 2
+  /** Serialized request limit, including schema and every format-repair prompt. */
+  maxInputBytes?: number
   onResponse?: () => void
   /** Provider-observed first text, excluding transport; absent when unavailable. */
   onFirstText?: (elapsedMs: number) => void
@@ -183,7 +185,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
       }
       attempts += 1
       const body = JSON.stringify(payload)
-      if (Buffer.byteLength(body) > this.#maxRequestBytes) {
+      if (Buffer.byteLength(body) > Math.min(this.#maxRequestBytes, input.maxInputBytes ?? Infinity)) {
         throw new ChatCompletionsError(
           'AI_REQUEST_TOO_LARGE',
           'The AI request exceeds the configured size limit',

@@ -57,6 +57,7 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'scripts/smoke-dsh-consultation.ts', 'scripts/dsh-model-output-metadata.ts', 'apps/web/e2e/consultation-recording-journey.ts', 'apps/web/e2e/consultation-recording-journey.spec.ts',
   'package.json', 'pnpm-lock.yaml', 'tsconfig.browser.json',
   'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
+  'apps/server/src/application/consultation-recording-batch.ts', 'apps/server/src/application/consultation-recording-sentences.ts',
   'apps/server/src/application/clinical-document-quality.ts',
   'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0062_consultation-direct-recording.sql', 'packages/contracts/src/his.ts',
   'apps/server/drizzle/0060_z-recording-branch-staging.sql', 'apps/server/drizzle/0061_clinical-document-history-fields.sql',
@@ -218,12 +219,12 @@ class Adapter extends LlmAdapter {
       if(state.stage==='doctor-supplement') {
         result={additions:[['physicalExamination','神志清楚，四肢活动正常'],['assessment','头晕待查'],
           ['disposition','先完善检查'],['followUp','三日后复诊']].map(([field,text])=>({field,
-          facts:[{text,sources:[{sourceTurnId:turn.id,quote:turn.messageText}]}],relation:'addition'}))};
+          facts:[{text,sourceIds:turn.sentences.map(sentence=>sentence.id)}],relation:'addition'}))};
       } else if(turn.kind==='doctor') {
         result={additions:[]};
       } else {
         const quotes=state.stage==='initial'?['头晕一周了。','站起来时更明显。']:[turn.messageText];
-        result={additions:quotes.map(quote=>({field:'historyOfPresentIllness',facts:[{text:'患者自述：'+quote,sources:[{sourceTurnId:turn.id,quote}]}],
+        result={additions:quotes.map(quote=>({field:'historyOfPresentIllness',facts:[{text:'患者自述：'+quote,sourceIds:turn.sentences.filter(sentence=>quote.includes(sentence.text)).map(sentence=>sentence.id)}],
           relation:state.stage==='correction'?'correction':'addition',...(state.stage==='correction'?{targetAdditionId:payload.manualHistory.find(item=>item.field==='historyOfPresentIllness'&&item.text.includes('头晕五天')).id}:{})}))};
       }
     } else if(options.system.includes('患者档案')) result=${JSON.stringify(persona)};

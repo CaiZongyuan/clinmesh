@@ -1271,7 +1271,7 @@ it.each([false, true])('repairs malformed output once within each recording atte
     clinicalDocument: { draft: { historyOfPresentIllness: `患者自述：${confirmed}` } },
   })
   expect(prompts).toHaveLength(manualRetry ? 4 : 2)
-  expect(prompts.at(-1)).toContain('additions.0.facts.0.sources.0.sourceTurnId')
+  expect(prompts.at(-1)).toContain('additions.0.facts.0.sourceIds')
 })
 
 it.each([

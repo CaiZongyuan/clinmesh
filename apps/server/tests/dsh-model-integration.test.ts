@@ -16,6 +16,8 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import type { HistoryTurn } from '../src/application/consultation-history-summary.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
+import { sentenceReferenceFixtureResponse } from './fixtures/consultation-history.ts'
+import { recordingBatchSchema } from '../src/application/consultation-recording-batch.ts'
 
 type HostContext = Parameters<typeof createModelBridgeHandler>[0]
 type GenerateOptions = Parameters<HostContext['llm']['stream']>[0]
@@ -604,7 +606,7 @@ async function hospital(dsh: Awaited<ReturnType<typeof host>>, outboxRetryDelayM
   return { get runtime() { return runtime }, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
 }
 
-async function recordingCase(summarize: (turns: HistoryTurn[], currentSourceIds: string[]) => unknown, faithful = true,
+async function recordingCase(summarize: (turns: HistoryTurn[], currentSourceIds: string[], payload: unknown) => unknown, faithful = true,
   verify?: (additions: unknown[]) => unknown) {
   const dsh = await host()
   // Keep the pure diabetes question visible to the history path; hidden-diagnosis
@@ -624,7 +626,7 @@ async function recordingCase(summarize: (turns: HistoryTurn[], currentSourceIds:
     if (isSummaryCall(options)) {
       const { turns, currentSourceIds } = z.object({ turns: z.array(z.object({ id: z.string(), speaker: z.string(), messageText: z.string() })),
         currentSourceIds: z.array(z.string()) }).parse(payload)
-      return summarize(turns, currentSourceIds)
+      return sentenceReferenceFixtureResponse(summarize(turns, currentSourceIds, payload), payload)
     }
     return { reply }
   })
@@ -666,6 +668,90 @@ function candidate(turn: HistoryTurn, text: string) {
   return { additions: [{ field: 'historyOfPresentIllness', relation: 'addition',
     facts: [{ text, sources: [{ sourceTurnId: turn.id, quote: turn.messageText }] }] }] }
 }
+
+it('carries sentence references through the real DSH handler, bounded repair and independent negative verification', async () => {
+  let summaries = 0
+  const reply = '没有胸痛。\r\n我可能昨晚发烧了，需要检查吗？'
+  const text = '否认胸痛，自述可能昨晚发热'
+  const fixture = await recordingCase((_turns, currentSourceIds, raw) => {
+    const payload = z.object({ turns: z.array(z.object({ id: z.string(), sentences: z.array(z.object({ id: z.string(), text: z.string() })) })) }).parse(raw)
+    const turn = payload.turns.find(turn => currentSourceIds.includes(turn.id))!
+    expect(turn.sentences.map(sentence => sentence.text)).toEqual(['没有胸痛。', '我可能昨晚发烧了，需要检查吗？'])
+    const facts = [{ text, sourceIds: turn.sentences.map(sentence => sentence.id) }]
+    // The first malformed envelope requires exactly one format repair. Neither
+    // the valid ids nor the negative semantic verdict adds another request.
+    return ++summaries === 1 ? { wrong: facts } : { additions: [{ field: 'historyOfPresentIllness', relation: 'addition', facts }] }
+  }, false)
+  const savedTurn = await fixture.ask(reply)
+  await fixture.instance.runtime.dispatchPending()
+  const detail = await fixture.read()
+  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
+  expect(detail.consultationRecording).toMatchObject({ processedCount: 1, failedCount: 0, verification: { flaggedCount: 1 } })
+  expect(detail.consultationRecording!.additions[0]!.facts).toEqual([{ text, sources: [
+    { sourceTurnId: savedTurn.id, quote: '没有胸痛。' }, { sourceTurnId: savedTurn.id, quote: '我可能昨晚发烧了，需要检查吗？' },
+  ] }])
+  const calls = fixture.dsh.calls.filter(isSummaryCall)
+  expect(calls).toHaveLength(2)
+  expect(calls[1]!.system).toContain('previous response failed validation')
+  const schema = JSON.parse(calls[0]!.system!.split('without Markdown or $schema metadata:\n')[1]!)
+  expect(schema.properties.additions.items.properties.facts.items.required).toEqual(['text', 'sourceIds'])
+  expect(JSON.stringify(schema)).not.toContain('quote')
+  expect(fixture.dsh.calls.filter(isVerificationCall)).toHaveLength(1)
+  const snapshots = fixture.instance.runtime.database.driver.prepare('SELECT snapshot_json FROM consultation_recording_batch').all()
+  expect(snapshots).toEqual([{ snapshot_json: expect.stringContaining('"citationProtocol":"sentence-references-v1"') }])
+  const count = fixture.dsh.calls.length
+  await fixture.instance.restart()
+  await fixture.instance.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument).toEqual(detail.clinicalDocument)
+  expect(fixture.dsh.calls).toHaveLength(count)
+})
+
+it('restores an in-flight legacy SQLite snapshot using its quote protocol and preserves the completed receipt', async () => {
+  const fixture = await recordingCase(turns => candidate(turns.at(-1)!, '患者自述头晕一周'))
+  const turn = await fixture.ask('头晕一周了。')
+  const database = fixture.instance.runtime.database.driver
+  const event = z.object({ event_id: z.string(), workspace_id: z.string(), epoch: z.string(), payload_json: z.string() }).parse(database.prepare(
+    "SELECT event_id, workspace_id, epoch, payload_json FROM outbox_event WHERE kind = 'consultation.record-history' AND status = 'queued'",
+  ).get())
+  const member = z.object({ turnId: z.string(), generation: z.number() }).parse(JSON.parse(event.payload_json))
+  const detail = await fixture.read()
+  const legacy = recordingBatchSchema.parse({ members: [{ id: member.turnId, generation: member.generation }],
+    sources: detail.consultationRecording!.sources, history: [], manualHistory: [], rejectedFacts: [],
+    baseline: { version: 0, content: { chiefComplaint: '', historyOfPresentIllness: '', assessment: '', disposition: '', followUp: '', physicalExamination: '' } } })
+  database.prepare(`INSERT INTO consultation_recording_batch (workspace_id, epoch, case_id, batch_id, snapshot_json, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(event.workspace_id, event.epoch, detail.caseId, event.event_id, JSON.stringify(legacy), '2026-10-16T00:00:00.000Z')
+  await fixture.instance.restart()
+  await fixture.instance.runtime.dispatchPending()
+  const recorded = await fixture.read()
+  expect(recorded.clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述头晕一周')
+  expect(recorded.consultationRecording!.additions[0]!.facts).toEqual([{ text: '患者自述头晕一周', sources: [{ sourceTurnId: turn.id, quote: turn.messageText }] }])
+  const call = fixture.dsh.calls.filter(isSummaryCall)[0]!
+  expect(call.system).toContain('逐字完整句子 quote')
+  expect(call.system).not.toContain('"sourceIds"')
+  const receipts = fixture.instance.runtime.database.driver.prepare("SELECT response_json FROM command_receipt WHERE operation = 'consultation.history.apply'").all()
+  expect(receipts).toHaveLength(1)
+  const count = fixture.dsh.calls.length
+  await fixture.instance.restart()
+  await fixture.instance.runtime.dispatchPending()
+  expect((await fixture.read()).clinicalDocument).toEqual(recorded.clinicalDocument)
+  expect(fixture.instance.runtime.database.driver.prepare("SELECT response_json FROM command_receipt WHERE operation = 'consultation.history.apply'").all()).toEqual(receipts)
+  expect(fixture.dsh.calls).toHaveLength(count)
+})
+
+it.each(['schema', 'format-repair'])('counts the serialized %s in the DSH input limit before another host stream', async stage => {
+  const dsh = await host()
+  dsh.answer(stage === 'schema' ? { additions: [] } : { invalid: true })
+  const route = encodeModelRoute({ provider: 'synthetic-provider-a', model: 'same-model' })
+  const input = { model: route, schemaName: 'consultation_history_summary', systemPrompt: 'synthetic',
+    jsonSchema: stage === 'schema' ? { description: '合'.repeat(500) } : {}, userPayload: {},
+    validate: (value: unknown) => { z.object({ additions: z.array(z.unknown()) }).strict().parse(value); return true } }
+  const bytes = Buffer.byteLength(JSON.stringify({ operation: 'complete', model: route, schemaName: input.schemaName,
+    jsonSchema: input.jsonSchema, systemPrompt: input.systemPrompt, userPayload: input.userPayload, timeoutMs: 2000 }))
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 2048 })
+  await expect(provider.completeJson({ ...input, maxInputBytes: stage === 'schema' ? bytes - 1 : bytes + 10 }))
+    .rejects.toMatchObject({ code: 'AI_REQUEST_TOO_LARGE' })
+  expect(dsh.calls).toHaveLength(stage === 'schema' ? 0 : 1)
+})
 
 it.each(['citation', 'target', 'field-limit'] as const)(
   'preserves the DSH %s candidate failure across explicit recovery without repeating extraction automatically', async reason => {
@@ -794,7 +880,7 @@ it.each([
   expect(pending.clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
   expect(pending.consultationRecording).toMatchObject({ status: 'updated', additions: [{ status: 'applied' }] })
   expect(pending.consultationRecording!.additions[0]!.facts).toMatchObject([
-    { text, sources: [{ quote: reply }] },
+    { text, sources: (reply.match(/[^。！？!?；;]+[。！？!?；;]?/gu) ?? []).map(quote => ({ quote })) },
   ])
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
 })
@@ -896,7 +982,8 @@ it.each([false, true].flatMap(metadata => [
     additions: isVerificationCall(options)
       ? [{ index: 0, faithful: true, complete: true, relationValid: true }]
       : [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{ text: summary,
-        sources: [{ sourceTurnId: answered.data.patientTurn.id, quote: reply }] }] }],
+        sourceIds: z.object({ turns: z.array(z.object({ messageText: z.string(), sentences: z.array(z.object({ id: z.string() })) })) })
+          .parse(modelPayload(options)).turns.find(turn => turn.messageText === reply)!.sentences.map(sentence => sentence.id) }] }],
   }))
   await instance.runtime.dispatchPending()
   const detail = doctorCaseDetailSchema.parse(await (await instance.runtime.app.request(
