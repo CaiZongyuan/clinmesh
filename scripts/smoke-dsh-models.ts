@@ -94,7 +94,7 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-a','synthetic-b'
 `)
   const port = await freePort()
   const origin = `http://127.0.0.1:${port}`
-  const page = await browser.newPage({ viewport: { width: 1100, height: 800 } })
+  const page = await browser.newPage({ viewport: { width: 1100, height: 800 }, locale: 'zh-CN' })
   const pageErrors: string[] = []
   page.on('pageerror', error => pageErrors.push(error.message))
   await page.goto(await launch(port))
@@ -113,10 +113,13 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-a','synthetic-b'
   }
   await expect(page.getByRole('dialog')).toHaveCount(0)
   // Open the real host's settings menu without opening a ClinMesh Surface or Session.
-  const launcher = page.getByRole('button', { name: /^(设置|Settings)$/ })
-  await expect(launcher).toBeVisible({ timeout: 30_000 })
-  await launcher.click()
   const selected = page.getByLabel(/^(ClinMesh 模型|ClinMesh model)$/)
+  const openSettings = async () => {
+    await page.getByRole('button', { name: /^(账号菜单|Account menu)$/ }).click()
+    await page.getByRole('menuitem', { name: /^(设置|Settings)$/ }).click()
+    await page.getByRole('button', { name: /^(通用设置|General)$/ }).click()
+  }
+  await openSettings()
   await expect(selected).toBeEnabled({ timeout: 30_000 })
   await expect(selected).toHaveValue('default')
   const routeB = 'dsh:' + JSON.stringify({ provider: 'synthetic-b', model: 'same-model' })
@@ -133,15 +136,11 @@ export function apply(ctx) {ctx.llm.registerAdapter(['synthetic-a','synthetic-b'
   expect(await page.evaluate(async () => (await fetch('/clinmesh-model-bridge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{"operation":"resolve"}' })).status)).toBe(403)
   console.log('DSH 原生设置入口、候选和保存通过')
   await page.reload()
-  await expect(launcher).toBeVisible({ timeout: 30_000 })
-  await page.waitForTimeout(1000)
-  if (await launcher.getAttribute('aria-expanded') !== 'true') await launcher.click()
+  await openSettings()
   await expect(selected).toHaveValue(routeB, { timeout: 30_000 })
   await managed!.stop()
   await page.goto(await launch(port))
-  await expect(launcher).toBeVisible({ timeout: 30_000 })
-  await page.waitForTimeout(1000)
-  if (await launcher.getAttribute('aria-expanded') !== 'true') await launcher.click()
+  await openSettings()
   await expect(selected).toHaveValue(routeB, { timeout: 30_000 })
   console.log('Profile 刷新与宿主重启持久化通过')
   hospital = await createClinMeshRuntime({

@@ -63,12 +63,20 @@ const upstreamLock = parseLock(
 )
 
 describe('extractRuntimeVersions', () => {
-  it('reads DSH, dshvm and ag-ui inputs from the upstream lock', () => {
-    expect(extractRuntimeVersions(upstreamLock)).toEqual({
-      dshVersion: '0.2.0-rc.2',
-      dshvmVersion: '0.2.0',
-      agUiCommit: 'd8fe2ad4de4b5cd4441a0a88d92513170ecd03c0',
-      agUiSource: 'https://github.com/keaideppk/dsh-ag-ui.git',
+  it('reads DSH, dshvm and ag-ui inputs without assuming the current release', () => {
+    const lock = structuredClone(upstreamLock)
+    lock.components.find(component => component.name === '@deepseek-ai/dsh')!.version = '1.2.3-rc.4'
+    lock.components.find(component => component.name === '@dsh-so/dshvm')!.version = '5.6.7'
+    Object.assign(lock.components.find(component => component.name === 'dsh-ag-ui')!, {
+      commit: 'a'.repeat(40),
+      source: 'https://github.com/example/dsh-ag-ui.git',
+    })
+
+    expect(extractRuntimeVersions(lock)).toEqual({
+      dshVersion: '1.2.3-rc.4',
+      dshvmVersion: '5.6.7',
+      agUiCommit: 'a'.repeat(40),
+      agUiSource: 'https://github.com/example/dsh-ag-ui.git',
     })
   })
 

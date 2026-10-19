@@ -268,15 +268,15 @@ export DSHVM_HOME="$CLINMESH_DSH_SANDBOX/versions"
 export DSHVM_BIN_DIR="$CLINMESH_DSH_SANDBOX/bin"
 npm install --prefix "$CLINMESH_DSH_SANDBOX/tooling" @dsh-so/dshvm@0.2.0
 DSHVM_CLI="$CLINMESH_DSH_SANDBOX/tooling/node_modules/@dsh-so/dshvm/bin/dshvm.js"
-node "$DSHVM_CLI" install 0.2.0-rc.2
-cp deployment/dsh/host/package*.json "$DSHVM_HOME/dsh-0.2.0-rc.2/"
-npm ci --prefix "$DSHVM_HOME/dsh-0.2.0-rc.2"
-node "$DSHVM_CLI" isolate 0.2.0-rc.2
-node "$DSHVM_CLI" use 0.2.0-rc.2
-node "$DSHVM_CLI" which 0.2.0-rc.2
+node "$DSHVM_CLI" install 0.2.1-rc.2
+cp deployment/dsh/host/package*.json "$DSHVM_HOME/dsh-0.2.1-rc.2/"
+npm ci --prefix "$DSHVM_HOME/dsh-0.2.1-rc.2"
+node "$DSHVM_CLI" isolate 0.2.1-rc.2
+node "$DSHVM_CLI" use 0.2.1-rc.2
+node "$DSHVM_CLI" which 0.2.1-rc.2
 node "$DSHVM_CLI" exec --version
-export DSH_HOME="$DSHVM_HOME/isolate/0.2.0-rc.2"
-DSH_CLI="$DSHVM_HOME/dsh-0.2.0-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
+export DSH_HOME="$DSHVM_HOME/isolate/0.2.1-rc.2"
+DSH_CLI="$DSHVM_HOME/dsh-0.2.1-rc.2/node_modules/@deepseek-ai/dsh/lib/bin.js"
 ```
 
 `which` 应指向该隔离槽位，`exec --version` 应返回锁定版本。宿主安装 manifest 的 `allowScripts` 明确审批 subprocess helper、koffi、node-pty 和 protobufjs，避免 npm 的默认脚本拦截遗漏原生运行支持。宿主安装必须在停止状态下使用 [`deployment/dsh/host/package-lock.json`](../deployment/dsh/host/package-lock.json) 执行 `npm ci`；dshvm 的初始安装用于建立槽位登记，不能代替锁文件恢复，因为 DSH 顶层版本的内部依赖仍使用版本范围。不要对已有共享槽位使用 `setup` 或 `isolate --copy` 来建立干净验收环境。Windows PowerShell 使用 `$env:DSHVM_HOME`、`$env:DSHVM_BIN_DIR` 和 `$env:DSH_HOME` 设置相同目录，普通路径变量使用 `$变量名`；Node CLI 的参数相同。新终端需要重新提供这些变量。DSH Provider 在隔离宿主设置页单独配置，密钥不写入 Profile 仓库或公开记录。
@@ -288,7 +288,7 @@ bun install --cwd vendor/dsh-react-surface --frozen-lockfile
 bun run --cwd vendor/dsh-react-surface build:runtime
 pnpm --filter @clinmesh/dsh-web build
 git clone https://github.com/keaideppk/dsh-ag-ui.git "$CLINMESH_DSH_SANDBOX/ag-ui"
-git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout d8fe2ad4de4b5cd4441a0a88d92513170ecd03c0
+git -C "$CLINMESH_DSH_SANDBOX/ag-ui" checkout a22b9e3c6a6d7837f2aaec328462309f6bc1989a
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" install --frozen-lockfile
 pnpm --dir "$CLINMESH_DSH_SANDBOX/ag-ui" build
 DSH_PROFILE="$DSH_HOME/profiles/web"
@@ -322,7 +322,7 @@ set +a
 node "$DSHVM_CLI" exec web --port 3080 --no-open
 ```
 
-模型桥接地址只接受 HTTP loopback origin；DSH 使用非默认端口时同步修改 `CLINMESH_DSH_MODEL_ORIGIN`。同一 Server 的全部入口共用启动时选定的模型来源，打开或关闭 Surface 不切换来源。宿主设置权限允许的用户可以修改 ClinMesh 模型，修改对该 Profile 的新任务生效，刷新和重启后仍保留；没有候选时先在 DSH 模型设置中配置 Provider。
+模型桥接地址只接受 HTTP loopback origin；DSH 使用非默认端口时同步修改 `CLINMESH_DSH_MODEL_ORIGIN`。同一 Server 的全部入口共用启动时选定的模型来源，打开或关闭 Surface 不切换来源。宿主设置权限允许的用户从侧栏底部“账号菜单 → 设置 → 通用设置”修改“ClinMesh 模型”，修改对该 Profile 的新任务生效，刷新和重启后仍保留；没有候选时先在 DSH 模型设置中配置 Provider。
 
 DSH 一次结构化生成默认允许 120 秒；`CLINMESH_AI_TIMEOUT_MS` 可在 100 毫秒至十分钟之间覆盖。路由解析、初次生成、最多一次格式修复及有限限流恢复共用原始截止时间，每次调用只向宿主传递剩余预算；持久任务和 lease 仍覆盖路由与模型处理。病历页显示自动记录失败的具体原因，超时或修复失败后转为待更新，患者回答保留供人工核对。共享时限见[有限恢复决策](../.agents/notes/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)，任务预算和失败分类见[自动病史调用决策](../.agents/notes/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
 
