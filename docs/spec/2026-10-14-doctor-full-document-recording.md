@@ -56,7 +56,7 @@ ClinMesh 继续拥有来源验证、病历整理、共享 Command、持久任务
 
 自动整理保留原始时间、否定、程度和不确定性，患者自述不能转换为本院客观检查。已有自动片段的明确更新可以定向替换并保留逆操作；人工片段受到保护，更正与矛盾另行追加待核实内容。更新草稿不自动采纳新的诊疗建议。
 
-来源归属和输入证明见[统一来源决策](../../.agents/notes/implemented/architecture/2026-10-14-doctor-full-document-recording.md)；十字段、直接记录和迁移兼容取舍见[整合决策](../../.agents/notes/implemented/architecture/2026-10-15-unified-direct-document-recording.md)。
+来源归属和输入证明见[统一来源决策](../decisions/implemented/architecture/2026-10-14-doctor-full-document-recording.md)；十字段、直接记录和迁移兼容取舍见[整合决策](../decisions/implemented/architecture/2026-10-15-unified-direct-document-recording.md)。
 
 ## 测试策略
 

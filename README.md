@@ -53,7 +53,7 @@ docs/           架构、测试、Agent 工程规范和研究记录
 scripts/        文档投影、依赖边界和质量检查
 skills/         项目启动后供运行时 Agent 使用的 ClinMesh CLI skills
 vendor/         固定 commit 的外部源码 submodule
-.agents/        开发 Agent 的工程 skills 与 Agent Notes
+docs/decisions/ 共享 Agent Notes（架构、流程与测试决策）
 ```
 
 `packages/ui` 是 Web 与 Desktop 当前共同依赖的视觉层；`packages/views` 当前只承载 Desktop 工程壳。Web 工作台保留在 `apps/web`，只有出现第二个实际消费者后才提取共享业务视图。Mobile 只可复用 `contracts` 和 `core` 中的协议、类型、schema 与纯函数，独立管理 React Native UI、导航、安全存储、QueryClient 和发布周期。
@@ -140,21 +140,17 @@ pnpm --filter @clinmesh/dsh-web build
 
 ## 文档与决策
 
-- [部署指南](docs/deployment.md)：从 clone 到完整运行的顺序步骤。
-- [影像检查使用指南](docs/imaging.md)：胸片与胸部 CT 阅片闭环的用法与状态说明。
-- [系统架构](docs/architecture.md)
-- [跨端前端架构](docs/frontend-architecture.md)
-- [Web Demo 运行与部署架构](docs/demo-architecture.md)
-- [Agent 工程开发](docs/agent-development.md)
-- [测试策略](docs/testing.md)
-- [领域词汇](CONTEXT.md)
-- [项目初始化参考分析](docs/research/project-bootstrap-reference-analysis.md)
+- [文档入口](docs/index.md)：按运行使用、当前合同、工程协作和研究导航。
+- [部署指南](docs/deployment.md)、[Agent 操作与反馈](docs/agent-capabilities.md)、[影像检查](docs/imaging.md)与[病理切片会诊](docs/pathology.md)：真实运行与岗位操作。
+- [系统架构](docs/architecture.md)、[跨端前端架构](docs/frontend-architecture.md)、[临床 UI 合同](docs/ui/design.md)与[领域词汇](CONTEXT.md)：当前边界与统一语言。
+- [Agent 工程开发](docs/agent-development.md)、[测试策略](docs/testing.md)与[文档规则](docs/AGENTS.md)：协作与验证。
+- [正式需求](docs/spec/README.md)、[Agent Notes](docs/decisions/README.md)、[工程记忆](docs/memory/memory.md)与[研究索引](docs/research/README.md)：验收、决策、操作经验和外部证据。
 
 仓库 Markdown 是唯一可编辑文档来源。`apps/docs/docs.ts` 是公开页面 allowlist，`scripts/project-doc-site.ts` 将文档投影到不会提交的 `apps/docs/.generated`，VitePress 从该目录构建站点。
 
 `.github/workflows/docs.yml` 在默认分支更新后构建并发布 GitHub Pages。仓库需要在 Settings → Pages 中将发布来源设置为 GitHub Actions。
 
-影响架构、协议、持久化、工程流程或测试策略的非平凡决策使用 `.agents/notes/` 记录，格式见 [Agent Notes](.agents/notes/README.md)。
+影响架构、协议、持久化、工程流程或测试策略的非平凡决策使用 `docs/decisions/` 记录，格式见 [Agent Notes](docs/decisions/README.md)。
 
 ## 数据与安全约束
 

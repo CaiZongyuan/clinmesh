@@ -35,7 +35,7 @@ Status: implemented
 
 `pageRevision` 仍是 `agentPageBindingRevision` 输出的序列化字符串，模型必须原样使用当前 schema 的固定值。失配诊断只公开字段名与受当前调用 Agent 限定的只读恢复调用，不放宽写入、导航或选择的比较。
 
-恢复参数取决于实际只读 schema；无参数医生读取不以缺少写绑定字段判定目录缺失。读取定义无效时不通过宽松空对象恢复。沿用当前错误码、Host pre-execute hook、Tool registry、execution proof 与原任务核对；不新增操作、依赖、HTTP 路由或持久化字段。决定与替代方案记录在[医生 Agent 纯查询绑定](../../.agents/notes/implemented/architecture/2026-10-08-doctor-agent-query-binding.md)。
+恢复参数取决于实际只读 schema；无参数医生读取不以缺少写绑定字段判定目录缺失。读取定义无效时不通过宽松空对象恢复。沿用当前错误码、Host pre-execute hook、Tool registry、execution proof 与原任务核对；不新增操作、依赖、HTTP 路由或持久化字段。决定与替代方案记录在[医生 Agent 纯查询绑定](../decisions/implemented/architecture/2026-10-08-doctor-agent-query-binding.md)。
 
 ## 测试策略
 

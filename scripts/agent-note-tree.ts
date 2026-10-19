@@ -1,7 +1,7 @@
 import { globSync, readdirSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 
-export const agentNoteRoot = resolve(import.meta.dirname, '../.agents/notes')
+export const agentNoteRoot = resolve(import.meta.dirname, '../docs/decisions')
 
 const AGENT_NOTE_LIFECYCLES = ['proposed', 'implemented', 'rejected'] as const
 export const AGENT_NOTE_CLASSES = ['feature', 'bug-fix', 'simplification', 'architecture', 'process', 'testing'] as const

@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { rewriteMarkdown } from './project-doc-site.ts'
+import { resolveRepositoryRef, resolveRepositoryUrl, rewriteMarkdown } from './project-doc-site.ts'
 
 function fixture(): string {
   const root = mkdtempSync(join(tmpdir(), 'clinmesh-docs-'))
@@ -53,5 +53,18 @@ describe('rewriteMarkdown', () => {
       repositoryRef: 'main',
       repositoryUrl: 'https://github.com/clinmesh/clinmesh',
     })).toThrow('links to missing path')
+  })
+})
+
+describe('documentation repository', () => {
+  it('links local previews to the current repository and default branch', () => {
+    expect(resolveRepositoryRef({})).toBe('main')
+    expect(resolveRepositoryUrl({})).toBe('https://github.com/CaiZongyuan/clinmesh')
+  })
+
+  it('preserves an explicitly bound repository and revision', () => {
+    expect(resolveRepositoryRef({ DOCS_REPOSITORY_REF: 'release-sha' })).toBe('release-sha')
+    expect(resolveRepositoryUrl({ DOCS_REPOSITORY_URL: 'https://github.com/example/fork/' }))
+      .toBe('https://github.com/example/fork')
   })
 })

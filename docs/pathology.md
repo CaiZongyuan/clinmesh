@@ -1,6 +1,6 @@
 # 病理切片会诊使用指南
 
-本文面向第一次接触病理切片会诊的管理员、医生和开发者，说明乳腺切片病理会诊从安装切片、准备病例到开单、阅片和已阅的完整用法，以及界面上每种状态的含义。设计边界见 [系统架构](architecture.md) 的 8.7 与 10.7 节，切片来源与许可见 [病理切片素材清单](../pathology-assets/README.md)；放射检查见 [影像检查使用指南](imaging.md)。
+本文面向第一次接触病理切片会诊的管理员、医生和开发者，说明乳腺切片病理会诊从安装切片、准备病例到开单、阅片和已阅的完整用法，以及界面上每种状态的含义。设计边界见 [申请与报告合同](architecture/clinical-workflows.md#87-检验检查与报告修订)及[素材与病例准备合同](architecture/simulation.md#107-影像素材与病例影像准备)，切片来源与许可见 [病理切片素材清单](../pathology-assets/README.md)；放射检查见 [影像检查使用指南](imaging.md)。
 
 ## 功能概览
 
@@ -142,5 +142,5 @@ clinmesh pathology-report correct --input @pathology-correction.json --idempoten
 ## 延伸阅读
 
 - [病理切片素材清单](../pathology-assets/README.md)：来源、许可与署名、摄取规则、逐张切片的记录和适配条目。
-- [系统架构](architecture.md)：8.7 节的申请生命周期，10.7 节的素材、病例准备和读取边界。
-- [Agent Note：乳腺切片病理会诊闭环](../.agents/notes/implemented/architecture/2026-10-03-breast-slide-consultation-loop.md)：会诊入口与本院活检的取舍。
+- [申请生命周期](architecture/clinical-workflows.md#87-检验检查与报告修订)及[素材、病例准备与读取边界](architecture/simulation.md#107-影像素材与病例影像准备)。
+- [Agent Note：乳腺切片病理会诊闭环](decisions/implemented/architecture/2026-10-03-breast-slide-consultation-loop.md)：会诊入口与本院活检的取舍。

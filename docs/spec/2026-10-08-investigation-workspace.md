@@ -52,7 +52,7 @@ Status: implemented
 
 ## 设计决定
 
-阶段由当前病例、当前分类的已签发申请记录派生，不增加服务端阶段字段。状态归属和替代方案见[Agent Note](../../.agents/notes/implemented/architecture/2026-10-10-investigation-workspace-view-state.md)。已保存的草稿仍属于目录与申请编辑阶段；已签发的申请包含执行中、已报告、已阅、失败和已取消记录，筛选为空不代表回到未开立阶段。
+阶段由当前病例、当前分类的已签发申请记录派生，不增加服务端阶段字段。状态归属和替代方案见[Agent Note](../decisions/implemented/architecture/2026-10-10-investigation-workspace-view-state.md)。已保存的草稿仍属于目录与申请编辑阶段；已签发的申请包含执行中、已报告、已阅、失败和已取消记录，筛选为空不代表回到未开立阶段。
 
 | 当前分类的状态 | 默认工作区 | 主要动作 |
 | --- | --- | --- |

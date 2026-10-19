@@ -56,7 +56,7 @@ Status: implemented
 
 ## 设计决定
 
-ClinMesh 拥有自动编排、病史提取规则、增量合并与共享 Command；DSH 提供辅助模型能力。设计理由见 [自动记录决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-auto-record.md)。
+ClinMesh 拥有自动编排、病史提取规则、增量合并与共享 Command；DSH 提供辅助模型能力。设计理由见 [自动记录决策](../decisions/implemented/architecture/2026-10-08-consultation-auto-record.md)。
 
 自动记录消费已保存的 Consultation Record，不复制或监听整个 DSH Session。来源和人工修改归属保存在服务端；增量合并不能依靠整篇模型重生成或仅在浏览器维护编辑保护。复用现有模型桥接、Query/Command 和持久任务机制，不新增任意 HTTP、SQL、FHIR write 或宿主源码补丁。自动记录的新 schema、HTTP 或 CLI 合同变化须同步 owning Operation Catalog、运行时 Skill 和命令示例漂移测试。
 
@@ -78,4 +78,4 @@ Playwright 覆盖直接记录、无来源入口及去重，以及暂停、补录
 
 依赖已配置的 DSH 辅助模型桥接。模型输出必须校验并关联公开问诊原文；不可把未验证输出或整篇重生成结果直接覆盖草稿。
 
-自动记录、局部人工编辑保护、暂停补录、失败恢复、来源追溯与签署冻结均已实现。当前写入边界由[直接记录决策](../../.agents/notes/implemented/architecture/2026-10-14-consultation-direct-recording.md)拥有；[片段归属决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-history-ownership.md)和[记录恢复决策](../../.agents/notes/implemented/architecture/2026-10-08-consultation-recording-recovery.md)保留仍有效的理由。分层证据边界见[组合验收决策](../../.agents/notes/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。真实模型验收需要有效模型能力；确定性替身证明合同，真实模型成功样本不代表医学语义质量保证。
+自动记录、局部人工编辑保护、暂停补录、失败恢复、来源追溯与签署冻结均已实现。当前写入边界由[直接记录决策](../decisions/implemented/architecture/2026-10-14-consultation-direct-recording.md)拥有；[片段归属决策](../decisions/implemented/architecture/2026-10-08-consultation-history-ownership.md)和[记录恢复决策](../decisions/implemented/architecture/2026-10-08-consultation-recording-recovery.md)保留仍有效的理由。分层证据边界见[组合验收决策](../decisions/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。真实模型验收需要有效模型能力；确定性替身证明合同，真实模型成功样本不代表医学语义质量保证。

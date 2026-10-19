@@ -1,6 +1,6 @@
 # 影像检查使用指南
 
-本文面向第一次接触放射检查功能的管理员、医生和开发者，说明胸片与胸部 CT 平扫从准备到阅片的完整用法，以及界面上每种状态的含义。设计边界见 [系统架构](architecture.md) 的 8.7 与 10.7 节，素材来源与许可见 [影像素材清单](../imaging-assets/README.md)。
+本文面向第一次接触放射检查功能的管理员、医生和开发者，说明胸片与胸部 CT 平扫从准备到阅片的完整用法，以及界面上每种状态的含义。设计边界见 [申请与报告合同](architecture/clinical-workflows.md#87-检验检查与报告修订)及[素材与病例准备合同](architecture/simulation.md#107-影像素材与病例影像准备)，素材来源与许可见 [影像素材清单](../imaging-assets/README.md)。
 
 ## 功能概览
 
@@ -183,7 +183,7 @@ clinmesh imaging-report correct --input @imaging-correction.json --idempotency-k
 ## 延伸阅读
 
 - [影像素材清单](../imaging-assets/README.md)：素材来源、许可与署名、逐素材核对记录、覆盖矩阵、新增素材的步骤。
-- [系统架构](architecture.md)：8.7 节放射申请与报告，9.8 节像素存放边界，10.7 节素材、病例影像准备与读取边界。
+- [申请与报告](architecture/clinical-workflows.md#87-检验检查与报告修订)、[像素存放边界](architecture/storage.md#98-文书与附件边界)与[素材、病例准备及读取边界](architecture/simulation.md#107-影像素材与病例影像准备)。
 - [前端架构的阅片器](frontend-architecture.md#阅片器)：外壳与渲染引擎。
 - [领域词汇](../CONTEXT.md)：Imaging Asset、Imaging Preparation、Imaging Binding、Imaging Study 等术语。
 - [测试策略的影像合同](testing.md#影像合同)。

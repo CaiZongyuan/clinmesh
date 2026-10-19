@@ -2,7 +2,7 @@
 
 Status: approved
 
-本文定义实时记录的性能目标及已批准的异步写入规则，其余记录行为由[全病历整理规格](2026-10-14-doctor-full-document-recording.md)与[问诊自动记录规格](2026-10-08-consultation-auto-record.md)拥有；未来语音方向沿用[医生 Agent 临床助手](2026-10-08-doctor-agent-assistant.md)。增量写入与调度取舍见[增量记录决策](../../.agents/notes/implemented/architecture/2026-10-15-low-latency-document-recording.md)，常规模型等待规则见[移除短截止决策](../../.agents/notes/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
+本文定义实时记录的性能目标及已批准的异步写入规则，其余记录行为由[全病历整理规格](2026-10-14-doctor-full-document-recording.md)与[问诊自动记录规格](2026-10-08-consultation-auto-record.md)拥有；未来语音方向沿用[医生 Agent 临床助手](2026-10-08-doctor-agent-assistant.md)。增量写入与调度取舍见[增量记录决策](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)，常规模型等待规则见[移除短截止决策](../decisions/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
 
 ## 问题与目标
 

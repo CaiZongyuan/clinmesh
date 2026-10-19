@@ -1,4 +1,8 @@
 /references/
+/.agent/
+/.agents/
+/.claude/
+/previews/
 node_modules/
 .turbo/
 .wrangler/
