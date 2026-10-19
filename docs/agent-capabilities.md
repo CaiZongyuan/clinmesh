@@ -4,7 +4,7 @@
 
 ## 业务会话
 
-新建医院业务会话使用“ClinMesh 医院助手”（`clinmesh-assistant`）；若已保存其他默认 preset，在 DSH 设置中选择该 preset 后新建会话。既有会话保留其已挂载的 Agent 组合，开发排障使用 `standard`。装配与授权边界见 [系统架构](architecture.md#7-agent-适配器与能力边界)。
+新建医院业务会话使用“ClinMesh 医院助手”（`clinmesh-assistant`）；若已保存其他默认 preset，在 DSH 设置中选择该 preset 后新建会话。既有会话保留其已挂载的 Agent 组合，开发排障使用 `standard`。装配与授权边界见 [系统架构](architecture/agent-integration.md#7-agent-适配器与能力边界)。
 
 医院助手先读取当前授权页面，确认岗位、患者和目标资源，再调用当前发布的 `clinmesh_*` Tools，并通过重新读取业务状态核对结果。真实身份或任务意图冲突、缺少无法通过工具取得的必要信息时使用 `ask_user_question` 向工作台用户澄清。向虚拟患者问诊使用 `clinmesh_ask_virtual_patient`；不在问诊栏目时先用 `clinmesh_select_doctor_section` 切到 `consultation`，再读取实际工具目录继续。正式业务动作通过工作台人工审阅，人工拒绝后不重复提交。
 
@@ -14,7 +14,7 @@
 
 ## Tool 绑定与恢复
 
-医生已选病例时，`clinmesh_read_current_context`、`clinmesh_read_doctor_context` 和授权历史纯查询只提交业务参数，由系统核对原任务与当前病例。其余页面 Tool 在 JSON 中显式传入当前工具 schema 的 `scopeKey`、`pageRevision` 的 `const` 值；`const` 只限制取值，不会自动填入。短期 `contextId` 由执行桥接管理，读取不消耗 Page Context，无须让写入成为新回合的第一次调用。只续签或改变加载状态不会改变模型绑定值；同病例栏目、问诊与草稿更新可继续纯查询；换岗位、会话或病例后旧任务暂停，切回也不会自行恢复。精确操作按最新工具定义绑定，不从历史对话复制绑定。具体绑定合同见 [系统架构](architecture.md#72-page-context)。
+医生已选病例时，`clinmesh_read_current_context`、`clinmesh_read_doctor_context` 和授权历史纯查询只提交业务参数，由系统核对原任务与当前病例。其余页面 Tool 在 JSON 中显式传入当前工具 schema 的 `scopeKey`、`pageRevision` 的 `const` 值；`const` 只限制取值，不会自动填入。短期 `contextId` 由执行桥接管理，读取不消耗 Page Context，无须让写入成为新回合的第一次调用。只续签或改变加载状态不会改变模型绑定值；同病例栏目、问诊与草稿更新可继续纯查询；换岗位、会话或病例后旧任务暂停，切回也不会自行恢复。精确操作按最新工具定义绑定，不从历史对话复制绑定。具体绑定合同见 [系统架构](architecture/agent-integration.md#72-page-context)。
 
 绑定诊断发生在页面业务动作执行前，不代替业务结果核对：
 
@@ -144,4 +144,4 @@ DSH browser Tool broker 每次注册最多接受 32 个 Tool。医生“接诊�
 
 [React Surface](../vendor/dsh-react-surface/docs/ag-ui.md) 提供 Session-scoped capability lease、原生 Tool 注册和会话集成；ClinMesh 使用该 lease 与 browser-tools 的授权链路，不把 capability active 当成执行事件。上游 AG-UI 还支持 Gateway 与模型事件流，但当前 ClinMesh 未接入 Gateway，也不从模型 thinking、token 流或 transcript 推断字段动画。反馈只覆盖本表实际接入的页面动作，不是任意网页自动化或桌面控制。
 
-standalone Web 保留相同人工编辑与业务 Command 流程，不发布 DSH Session Tools。反馈状态仅存在于当前客户端，不保存为医院事实、字段来源标记或可回放的编辑差异。编辑与事件边界见 [Agent 操作反馈与编辑控制边界](../.agents/notes/implemented/architecture/2026-09-20-agent-action-feedback.md)，当前视觉决策见 [Agent 环绕柔光与静态人工审阅](../.agents/notes/implemented/architecture/2026-10-07-agent-workspace-glow.md)。
+standalone Web 保留相同人工编辑与业务 Command 流程，不发布 DSH Session Tools。反馈状态仅存在于当前客户端，不保存为医院事实、字段来源标记或可回放的编辑差异。编辑与事件边界见 [Agent 操作反馈与编辑控制边界](decisions/implemented/architecture/2026-09-20-agent-action-feedback.md)，当前视觉决策见 [Agent 环绕柔光与静态人工审阅](decisions/implemented/architecture/2026-10-07-agent-workspace-glow.md)。

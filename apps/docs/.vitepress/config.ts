@@ -39,10 +39,12 @@ export default defineConfig({
   themeConfig: {
     logo: '/clinmesh-mark.webp',
     nav: [
+      { text: '指南', link: '/guide/deployment' },
       { text: '架构', link: '/architecture/system' },
       { text: '工程', link: '/engineering/agent-development' },
     ],
     sidebar: {
+      '/guide/': sidebar('guide'),
       '/architecture/': sidebar('architecture'),
       '/engineering/': sidebar('engineering'),
     },

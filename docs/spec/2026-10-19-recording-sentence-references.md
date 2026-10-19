@@ -39,7 +39,7 @@ Status: implemented
 
 新协议可以用 `sourceIds: ["s0", "s3"]` 表达一条事实的多句来源；服务端恢复为现有 `sources: [{ sourceTurnId, quote }]` 后复用业务校验。具体命名属于实现选择，但不允许模型自行生成引文、位置或来源身份。既有每条事实最多 12 条来源的限制本次保留，句子划分须验证与旧引用表达的兼容；无法完整表达的输入明确失败，不删减证据凑入上限。
 
-取舍及替代方案由[句子引用决策](../../.agents/notes/implemented/architecture/2026-10-19-recording-sentence-references.md)拥有。现有异步写入、调用预算和调度边界由[低延迟记录规格](2026-10-15-low-latency-document-recording.md)拥有，前端隐藏来源的决定继续适用。
+取舍及替代方案由[句子引用决策](../decisions/implemented/architecture/2026-10-19-recording-sentence-references.md)拥有。现有异步写入、调用预算和调度边界由[低延迟记录规格](2026-10-15-low-latency-document-recording.md)拥有，前端隐藏来源的决定继续适用。
 
 ## 测试策略
 

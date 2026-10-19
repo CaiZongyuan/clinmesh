@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "baselineDigest": "ecb29b032df7da2225b0e8a041c97a1ec99531701c9b2bd1172a3f8b2e45f3f5",
+  "baselineDigest": "d4b153e0936bcede38aa960c95c79a44eff2596d617f94b1f211c6278fc33dbc",
   "target": {
     "schemaVersion": 1,
     "hostDependencyLock": "deployment/dsh/host/package-lock.json",
@@ -30,23 +30,24 @@
         "source": "https://github.com/keaideppk/dsh-ag-ui.git",
         "owner": "https://github.com/CaiZongyuan/dsh-ag-ui",
         "role": "原生 browser Tool broker；不另建 Gateway 模型会话",
-        "commit": "d8fe2ad4de4b5cd4441a0a88d92513170ecd03c0",
+        "commit": "e3a290687c974811154d5a9e6d7235111a6a0620",
         "requires": [
           "@deepseek-ai/dsh"
         ],
-        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/65"
+        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-ag-ui/pull/66"
       },
       {
         "name": "dsh-react-surface",
         "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
         "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
         "role": "React runtime、Surface 生命周期、布局和构建工具",
-        "commit": "2e83e877b9a88e861fdb6cb7f36f0b7b5e2c27cc",
+        "commit": "ab6092e6c063b653a0c78630ae31c584c21e4b00",
         "requires": [
           "@deepseek-ai/dsh",
           "dsh-ag-ui"
         ],
-        "checkout": "vendor/dsh-react-surface"
+        "checkout": "vendor/dsh-react-surface",
+        "supportPullRequest": "https://github.com/CaiZongyuan/dsh-react-surface/pull/15"
       },
       {
         "name": "@clinmesh/dsh-web",
@@ -63,9 +64,14 @@
   },
   "changes": [
     {
-      "name": "@deepseek-ai/dsh",
-      "from": "0.2.0-rc.2",
-      "to": "0.2.1-rc.2"
+      "name": "dsh-ag-ui",
+      "from": "a22b9e3c6a6d7837f2aaec328462309f6bc1989a",
+      "to": "e3a290687c974811154d5a9e6d7235111a6a0620"
+    },
+    {
+      "name": "dsh-react-surface",
+      "from": "ded886c1fca70f0f5d194e66f9c9b3dc4ea27893",
+      "to": "ab6092e6c063b653a0c78630ae31c584c21e4b00"
     }
   ]
 }

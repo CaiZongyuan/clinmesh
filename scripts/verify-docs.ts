@@ -12,11 +12,9 @@ const files = globSync([
   'apps/**/AGENTS.md',
   'packages/**/AGENTS.md',
   'skills/**/*.md',
-  '.agents/notes/**/*.md',
-  '.agents/skills/reduce-complexity/**/*.md',
 ], {
   cwd: root,
-  exclude: ['references/**', 'node_modules/**', '.agents/notes/archived/**'],
+  exclude: ['references/**', 'node_modules/**', 'docs/decisions/archived/**'],
 }).map(path => path.split(sep).join('/')).sort()
 const errors: string[] = []
 

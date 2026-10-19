@@ -31,9 +31,9 @@ Status: implemented
 
 ## 设计决定
 
-字段可缺失或为空，不回填旧件。当前自动记录取舍由[直接记录决策](../../.agents/notes/implemented/architecture/2026-10-14-consultation-direct-recording.md)拥有；独立字段与旧文书兼容见[病历字段决策](../../.agents/notes/implemented/architecture/2026-10-14-clinical-document-fields.md)。
+字段可缺失或为空，不回填旧件。当前自动记录取舍由[直接记录决策](../decisions/implemented/architecture/2026-10-14-consultation-direct-recording.md)拥有；独立字段与旧文书兼容见[病历字段决策](../decisions/implemented/architecture/2026-10-14-clinical-document-fields.md)。
 
-字段提醒是当前工作台的客户端查看状态，首次读取不标记存量内容，刷新重新建立基线；不持久化为医生核对事实。取舍见[病历变动提醒决策](../../.agents/notes/implemented/feature/2026-10-14-clinical-document-change-highlights.md)。
+字段提醒是当前工作台的客户端查看状态，首次读取不标记存量内容，刷新重新建立基线；不持久化为医生核对事实。取舍见[病历变动提醒决策](../decisions/implemented/feature/2026-10-14-clinical-document-change-highlights.md)。
 
 ## 测试策略
 

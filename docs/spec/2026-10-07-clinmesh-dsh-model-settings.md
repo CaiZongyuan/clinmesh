@@ -48,7 +48,7 @@ Status: implemented
 - DSH 插件拥有宿主模型配置和调用适配，ClinMesh 的业务服务继续拥有输入构造、结果验证、任务状态、幂等、预期版本与审计。业务层不直接依赖 DSH SDK。
 - 使用 DSH 公开扩展能力，不修改官方源码，不维护宿主补丁或 fork。使用 `ctx.llm.stream()` 与 `ctx.agentDefaultModel.currentSelection()`，采用原生通用设置 slot 与 volatile Profile 字段，通过受限 HTTP loopback 桥接连接 Server。
 - 已核对的 DSH 公共调用合同没有 ClinMesh 当前使用的 `response_format: json_schema`。适配层需要提供可验证的结构化结果，保留现有 schema 与诊断泄漏检查，不因 Provider 能返回文本就放宽业务校验。
-- 模型来源、持久路由、宿主桥接和上下文隔离的取舍见 [Agent Note](../../.agents/notes/implemented/architecture/2026-10-07-clinmesh-dsh-model-binding.md)。
+- 模型来源、持久路由、宿主桥接和上下文隔离的取舍见 [Agent Note](../decisions/implemented/architecture/2026-10-07-clinmesh-dsh-model-binding.md)。
 
 ## 测试策略
 
@@ -69,6 +69,6 @@ DSH adapter 合同测试覆盖目录读取、选择与恢复默认、持久化�
 
 宿主基线由 [DSH 上游锁](../../dsh-upstreams.lock.json) 拥有，当前为 DSH `0.2.0-rc.2`。现有 ClinMesh DSH adapter 仅提供应用代理和 Tool execution proof，需要新增受限的服务端模型桥接与相应生命周期处理。任务恢复还依赖持久的 Provider／模型路由表示，不能只保存可能重名的 model 字符串。
 
-设置沿用 DSH 的 Profile 设置管理权限，不增加 HIS 管理员授权；界面说明同一 Profile 下所有 ClinMesh 模型任务共用此选择。人工重试、自动重试与传输重发的模型绑定规则见[系统架构](../architecture.md#103-场景定义)。Server 来源由 `CLINMESH_AI_SOURCE=openai|dsh` 在启动时固定，`pnpm dev:dsh` 自动选择 `dsh`。
+设置沿用 DSH 的 Profile 设置管理权限，不增加 HIS 管理员授权；界面说明同一 Profile 下所有 ClinMesh 模型任务共用此选择。人工重试、自动重试与传输重发的模型绑定规则见[系统架构](../architecture/simulation.md#103-场景定义)。Server 来源由 `CLINMESH_AI_SOURCE=openai|dsh` 在启动时固定，`pnpm dev:dsh` 自动选择 `dsh`。
 
 Server 与 DSH 位于不同进程，宿主不可用、插件热重载或已选 Provider 被移除时必须可控失败，并保留任务恢复依据。桥接不能依赖某个浏览器标签页存活，也不能使普通岗位获得隐藏病例事实；辅助调用的宿主日志与可见性边界需在接入时核验。
