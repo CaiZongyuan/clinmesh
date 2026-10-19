@@ -105,7 +105,8 @@ it('mounts the deployment business preset and sends doctor reply rules through f
     ctx.llm.registerAdapter(['scripted'], model)
     for (const { sessionId, text } of [
       { sessionId: 'doctor-brief-reply', text: '请简要说明你能提供哪些帮助。' },
-      { sessionId: 'doctor-teaching-reply', text: '请解释你能如何辅助医生，并说明适用边界。' },
+      { sessionId: 'doctor-explanation-reply', text: '请解释你能如何辅助医生，并说明适用边界。' },
+      { sessionId: 'doctor-teaching-reply', text: '请给我讲解如何核对诊疗建议的依据。' },
     ]) {
       const { agent } = await ctx.agents.create({
         sessionId: SessionId(sessionId),
@@ -125,14 +126,15 @@ it('mounts the deployment business preset and sends doctor reply rules through f
         .map(block => block.text).join('\n')
       expect(systemPrompt).toContain('简洁、专业')
       expect(systemPrompt).toContain('先说明结果或当前状态')
-      expect(systemPrompt).toContain('仅在医生明确追问或提出教学请求时展开')
+      expect(systemPrompt).toContain('原因解释和教学仅在医生明确请求时展开')
+      expect(systemPrompt).toContain('首轮请求和后续追问均适用')
       expect(systemPrompt).toContain('常规后台整理、建议刷新和质控提示通过业务页面体现')
       expect(systemPrompt).toContain('需要医生决定或核实')
       expect(systemPrompt).toContain('无法安全恢复')
       expect(systemPrompt).toContain('正式业务提交通过工作台的人工审阅完成')
       expect(systemPrompt).not.toContain('You are a coding agent')
     }
-    expect(model.requests).toHaveLength(2)
+    expect(model.requests).toHaveLength(3)
   } finally {
     await ctx.fiber.dispose()
   }
