@@ -2613,9 +2613,14 @@ export class WorkflowService {
     `).get(...bindings) as { count: number }
     const rows = this.#database.driver.prepare(`
       SELECT outpatient_case.*, patient.content_json AS patient_json,
+        registration.registration_number,
         triage.acuity_code, triage.chief_complaint, triage.vital_json,
         encounter.version_id AS encounter_version, task.version_id AS task_version
       FROM outpatient_case
+      LEFT JOIN registration
+        ON registration.workspace_id = outpatient_case.workspace_id
+       AND registration.epoch = outpatient_case.epoch
+       AND registration.registration_id = outpatient_case.registration_id
       LEFT JOIN triage_record AS triage
         ON triage.workspace_id = outpatient_case.workspace_id
        AND triage.epoch = outpatient_case.epoch
@@ -2649,6 +2654,7 @@ export class WorkflowService {
       encounter_id: string
       encounter_version: number
       patient_json: string
+      registration_number: string | null
       status: string
       task_version: number
       vital_json: string | null
@@ -2664,6 +2670,7 @@ export class WorkflowService {
           encounterId: row.encounter_id,
           encounterVersion: String(row.encounter_version),
           patient: patientSummary(parseStoredFhirResource(row.patient_json)),
+          registrationNumber: row.registration_number,
           presentation: casePresentation(triage),
           status: row.status,
           taskId: row.doctor_task_id,
@@ -3009,12 +3016,16 @@ export class WorkflowService {
     this.#assertRole(context, ['outpatient-doctor'])
     const row = this.#database.driver.prepare(`
       SELECT outpatient_case.case_id, outpatient_case.status, outpatient_case.diagnostic_report_id,
-        outpatient_case.doctor_task_id,
+        outpatient_case.doctor_task_id, registration.registration_number,
         patient.content_json AS patient_json,
         encounter.content_json AS encounter_json,
         task.version_id AS task_version,
         triage.acuity_code, triage.chief_complaint, triage.vital_json
       FROM outpatient_case
+      LEFT JOIN registration
+        ON registration.workspace_id = outpatient_case.workspace_id
+       AND registration.epoch = outpatient_case.epoch
+       AND registration.registration_id = outpatient_case.registration_id
       LEFT JOIN triage_record AS triage
         ON triage.workspace_id = outpatient_case.workspace_id
        AND triage.epoch = outpatient_case.epoch
@@ -3044,6 +3055,7 @@ export class WorkflowService {
       doctor_task_id: string
       encounter_json: string
       patient_json: string
+      registration_number: string | null
       status: string
       task_version: number
       vital_json: string | null
@@ -3223,6 +3235,7 @@ export class WorkflowService {
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
+      registrationNumber: row.registration_number,
       ...(clinicalDocumentDraft === undefined && signedClinicalDocuments.length === 0 ? {} : {
         clinicalDocument: {
           ...(clinicalDocumentDraft === undefined ? {} : {

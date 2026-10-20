@@ -61,6 +61,7 @@ function Harness(): React.JSX.Element {
       revise: { error: null, onSubmit: () => {}, pending: false, success: false },
       sign: { error: null, onSubmit: () => {}, pending: false, success: false },
     }} allowRevision={false} detail={{
+      registrationNumber: null,
       allergies: [], caseId: 'case-1', encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
       patient: { id: 'patient-1', identifier: 'SYNTHETIC-1', name: 'Synthetic patient', gender: 'female', birthDate: '1990-01-01', synthetic: true, versionId: '1' },
       presentation: null, priorFacts: [], status: 'first-visit', taskId: 'task-1', taskVersion: '1',

@@ -1404,6 +1404,25 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const testCase = await createTriagedCase(runtime, password)
+    const registrations = registrationQueueSchema.parse(await (await runtime.app.request('/api/his/v1/registrations', {
+      headers: { cookie: testCase.registrarCookie },
+    })).json())
+    const registrationNumber = registrations.items.find(item => item.caseId === testCase.caseId)!.registrationNumber
+    const triageQueue = triageQueueSchema.parse(await (await runtime.app.request('/api/his/v1/triage/queue?status=completed', {
+      headers: { cookie: await signIn(runtime, 'triage@demo.clinmesh.local', password) },
+    })).json())
+    expect(triageQueue.items.find(item => item.caseId === testCase.caseId)?.registrationNumber).toBe(registrationNumber)
+    for (const number of [registrationNumber, 'CM-OP-20260824-0042']) {
+      // Install a historical-format search fixture without exercising issuance.
+      runtime.database.driver.prepare('UPDATE registration SET registration_number = ? WHERE registration_id = ?')
+        .run(number, testCase.registration.registrationId)
+      const found = patientSearchSchema.parse(await (await runtime.app.request(`/api/his/v1/patients?query=${encodeURIComponent(number)}`, {
+        headers: { cookie: testCase.registrarCookie },
+      })).json())
+      expect(found.items.map(item => item.id)).toEqual([testCase.patient.id])
+    }
+    runtime.database.driver.prepare('UPDATE registration SET registration_number = ? WHERE registration_id = ?')
+      .run(registrationNumber, testCase.registration.registrationId)
     const readQueue = async (query: string) => doctorQueueSchema.parse(await (
       await runtime.app.request(`/api/his/v1/doctor/queue?${query}`, {
         headers: { cookie: testCase.doctorCookie },
@@ -1429,7 +1448,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(waitingQueue).toMatchObject({ total: 0, items: [] })
     const activeQueue = await readQueue('view=active')
     expect(activeQueue).toMatchObject({
-      total: 1, items: [{ caseId: testCase.caseId, status: 'first-visit' }],
+      total: 1, items: [{ caseId: testCase.caseId, registrationNumber, status: 'first-visit' }],
     })
     const defaultQueue = await readQueue('')
     expect(defaultQueue.total).toBe(waitingQueue.total + activeQueue.total)
@@ -1457,8 +1476,17 @@ describe('outpatient workflow HTTP contract', () => {
     })
     expect(detailResponse.status).toBe(200)
     const detail = doctorCaseDetailSchema.parse(await detailResponse.json())
+    expect(detail.registrationNumber).toBe(registrationNumber)
+    expect(detail.registrationNumber).not.toBe(detail.patient.identifier)
     expect(detail.presentation).toBeNull()
     expect(detail.triage).toBeUndefined()
+    // Some historical active cases have no corresponding Registration fact.
+    runtime.database.driver.prepare('DELETE FROM registration WHERE registration_id = ?').run(testCase.registration.registrationId)
+    expect((await readQueue('view=active')).items.find(item => item.caseId === testCase.caseId)?.registrationNumber).toBeNull()
+    const legacyResponse = await runtime.app.request(`/api/his/v1/doctor/cases/${testCase.caseId}`, {
+      headers: { cookie: testCase.doctorCookie },
+    })
+    expect(doctorCaseDetailSchema.parse(await legacyResponse.json()).registrationNumber).toBeNull()
   })
 
   afterEach(async () => {

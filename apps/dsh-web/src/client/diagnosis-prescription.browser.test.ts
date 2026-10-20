@@ -104,6 +104,30 @@ async function forEachAppearance(page: Page, verify: (locale: 'zh-CN' | 'en-US',
 }
 const diagnosisName = '合成诊断与需要完整显示的复杂中文名称'
 const medicationName = '合成药品与需要完整显示的复杂中文通用名称'
+
+for (const version of ['18', '19']) test.describe(`visit number on React ${version}`, () => {
+  test.beforeAll(async () => { await buildFixture(version) })
+  test(`reads and copies the complete visit number in the narrow shared Surface on React ${version}`, async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'])
+    await mount(page, version, 'empty')
+    const banner = page.getByRole('region', { name: '当前患者', exact: true })
+    const value = banner.locator('[data-registration-number-value]')
+    await expect(value).toHaveText('CM-OP-20261020-1234567')
+    await expect(banner).not.toContainText('SYNTHETIC-1')
+    for (const locale of ['zh-CN', 'en-US'] as const) for (const fontSize of ['standard', 'large'] as const) {
+      await appearance(page, locale, 'light', fontSize, 390)
+      const current = page.getByRole('region', { name: locale === 'zh-CN' ? '当前患者' : 'Current patient', exact: true })
+      await expectTextFits(current.locator('[data-registration-number-value]'))
+      await expect(current).toContainText(locale === 'zh-CN' ? '主诉：合成主诉' : 'Chief complaint：合成主诉')
+      const bounds = await current.evaluate(element => ({ width: element.clientWidth, scrollWidth: element.scrollWidth }))
+      expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1)
+      await current.getByRole('button', { name: `${locale === 'zh-CN' ? '复制门诊号' : 'Copy visit number'} CM-OP-20261020-1234567`, exact: true }).click()
+      expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('CM-OP-20261020-1234567')
+    }
+    await expectNoFixtureErrors(page)
+  })
+})
+
 async function readCase(page: Page) {
   return doctorCaseDetailSchema.parse(await page.evaluate(async () =>
     await (await fetch('/api/his/v1/doctor/cases/synthetic-case')).json(),

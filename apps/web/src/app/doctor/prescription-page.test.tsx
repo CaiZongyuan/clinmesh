@@ -47,6 +47,7 @@ const referenceProduct: ReferenceMedicationProduct = {
 }
 
 const detail: DoctorCaseDetail = {
+  registrationNumber: null,
   allergies: [],
   caseId: 'case-prescription',
   encounter: { id: 'encounter-prescription', versionId: '1' },

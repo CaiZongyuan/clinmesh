@@ -5,6 +5,7 @@ import { createAvatar } from '@dicebear/core'
 import * as lorelei from '@dicebear/lorelei'
 import { LockKeyholeIcon } from 'lucide-react'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
+import { RegistrationNumber } from '../registration-number.tsx'
 
 type WorkspaceMessages = ReturnType<typeof getWorkspaceMessages>
 const avatarCache = new Map<string, string>()
@@ -102,9 +103,9 @@ export function PatientBanner({
             <Badge variant="warning">{triageAcuityLabel(detail.triage.acuityCode, messages)}</Badge>
           )}
         </div>
-        <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden text-xs text-muted-foreground">
-          <span className="truncate">{messages.registrationNumber}：{detail.patient.identifier}</span>
-          <span className="truncate">{messages.chiefComplaint}：{presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
+        <div className="flex min-w-0 flex-1 basis-72 flex-wrap items-start gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <RegistrationNumber key={detail.caseId} messages={messages} registrationNumber={detail.registrationNumber} />
+          <span className="min-w-0 flex-1 basis-40 [overflow-wrap:anywhere]"><span className="font-medium">{messages.chiefComplaint}：</span>{presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <Badge variant="secondary">{statusText}</Badge>

@@ -69,7 +69,7 @@ it('keeps consultation recovery examples aligned with durable attempt semantics'
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic', arbitraryPayload: {} }).success).toBe(false)
   }
-  expect(getHisOperation('doctor.case.get').version).toBe(13)
+  expect(getHisOperation('doctor.case.get').version).toBe(14)
   expect(getHisOperation('doctor.case.get').summary).toContain('consultation.replyAttempt')
   expect(skill).toContain('consultation.replyAttempt')
   expect(skill).toContain('same ask/retry key')
@@ -251,7 +251,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.summary).toContain('WORKFLOW_CONFLICT')
     expect(operation.summary).toContain('retired semantic checks cannot be retried')
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(13)
+    expect(read.version).toBe(14)
     expect(read.summary).toContain('sourceResults')
     expect(read.summary).toContain('legacy verification counts are zero and issues empty')
     expect(skill).toContain('Retry actual recording failures')
@@ -287,14 +287,22 @@ describe('ClinMesh CLI Agent Skills', () => {
     })
     expect(parsed).toMatchObject({ document: { chiefComplaint: ' 头晕一周 ' } })
   })
-  it('documents absent triage in the versioned doctor read contracts', async () => {
+  it('documents missing visit numbers and triage in the versioned doctor read contracts', async () => {
     const doctorSkill = await readFile(resolve(
       import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md',
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 13 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 14 : 3)
       expect(operation.summary).toContain('presentation')
+      expect(operation.summary).toContain('registrationNumber')
+      const line = commandLines(doctorSkill).find(line => line.startsWith(id === 'doctor.case.get' ? 'clinmesh doctor case get ' : 'clinmesh doctor queue list'))!
+      expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(id)
+      for (const registrationNumber of ['CM-OP-20261020-1234567', 'CM-OP-20260824-0042', null]) {
+        const parsed = operation.output.safeParse(id === 'doctor.queue.list' ? { items: [{ registrationNumber }] } : { registrationNumber })
+        expect(parsed.success).toBe(false)
+        if (!parsed.success) expect(parsed.error.issues.some(issue => issue.path.includes('registrationNumber'))).toBe(false)
+      }
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }
         : { presentation: null })
@@ -311,6 +319,8 @@ describe('ClinMesh CLI Agent Skills', () => {
       }
     }
     expect(doctorSkill).toContain('presentation: null')
+    expect(doctorSkill).toContain('`registrationNumber`')
+    expect(doctorSkill).toContain('`patient.identifier`')
   })
 
   it('keeps correlation recovery guidance aligned with the Catalog error schema', async () => {
