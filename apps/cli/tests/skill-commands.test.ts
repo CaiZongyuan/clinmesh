@@ -17,6 +17,22 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('keeps inpatient pharmacy and charge reads and receipts aligned with role-specific contracts', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id, role] of [['pharmacy-list', 'inpatient.pharmacy.list', 'pharmacist'], ['pharmacy-read', 'inpatient.pharmacy.read', 'pharmacist'], ['charges', 'inpatient.charges.read', 'cashier']] as const) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path}`))!
+    expect(inspectExample(program, line).operation?.id).toBe(id)
+    expect(getHisOperation(id).roles).toEqual([role])
+  }
+  for (const id of ['inpatient.catalog', 'inpatient.admission.list', 'inpatient.admission.read', 'inpatient.clinical.catalog', 'inpatient.clinical.read']) {
+    expect(getHisOperation(id).roles).not.toContain('pharmacist')
+  }
+  expect(skill).toContain('inpatient.execution.dispense')
+  expect(skill).toContain('inpatient.charge.reverse')
+  expect(getHisOperation('inpatient.clinical.read').roles).not.toContain('cashier')
+})
+
 it('keeps laboratory failure recovery instructions aligned with the command catalog', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')

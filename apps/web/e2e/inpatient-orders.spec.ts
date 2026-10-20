@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
+import { inpatientPharmacyResponseSchema, inpatientChargesResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { createPatientResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
@@ -29,8 +30,41 @@ test('住院医生确认诊断和临时药嘱，护士校对、药师发药后�
   await page.getByRole('option', { name: /2型糖尿病伴高血糖/ }).click()
   await page.getByLabel('主诊断入院病情',{exact:true}).click()
   await page.getByRole('option',{name:'1 · 有',exact:true}).click()
+  await page.getByRole('button', { name: '添加次诊断', exact: true }).click()
+  await page.getByLabel('次诊断 1', { exact: true }).click()
+  await page.getByRole('option', { name: '高血压', exact: true }).click()
+  await page.getByLabel('次诊断 1 入院病情', { exact: true }).click()
+  await page.getByRole('option', { name: '2 · 临床未确定', exact: true }).click()
+  await page.getByLabel('次诊断 1 备注', { exact: true }).fill('合成入院待确认备注')
+  await page.getByRole('button', { name: '添加次诊断', exact: true }).click()
+  await page.getByLabel('次诊断 2', { exact: true }).click()
+  await page.getByRole('option', { name: '发热，未特指', exact: true }).click()
+  await page.getByLabel('次诊断 2 入院病情', { exact: true }).click()
+  await page.getByRole('option', { name: '3 · 情况不明', exact: true }).click()
+  await page.getByRole('button', { name: '上移次诊断 2', exact: true }).click()
+  // Only the external reference page is synthetic; confirmation and the clinical journey use the real server.
+  await page.route('**/api/his/v1/reference-catalogs/diagnoses?**', async route => {
+    const pageNumber = Number(new URL(route.request().url()).searchParams.get('page'))
+    await route.fulfill({ json: { items: [], page: pageNumber, pageSize: 20, total: 40, releaseId: 'synthetic-ui-paging' } })
+  })
+  await page.getByLabel('诊断目录检索', { exact: true }).fill('糖尿病')
+  await page.getByRole('button', { name: '查询诊断', exact: true }).click()
+  await page.getByRole('button', { name: '下一页', exact: true }).click()
+  await expect(page.getByText('2 / 2', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('次诊断 1', { exact: true })).toContainText('发热')
+  await expect(page.getByLabel('次诊断 2', { exact: true })).toContainText('高血压')
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
   await expect(page.getByText('主诊断：2型糖尿病伴高血糖', { exact: true })).toBeVisible()
+  await expect(page.getByText('次诊断：发热，未特指', { exact: true })).toBeVisible()
+  await expect(page.getByText('次诊断：高血压', { exact: true })).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: '查看合成住院用药患者', exact: true }).click()
+  await expect(page.getByLabel('次诊断 2 备注', { exact: true })).toHaveValue('合成入院待确认备注')
+  await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('操作成功')
+  await expect(page.getByText('次诊断：发热，未特指', { exact: true })).toBeVisible()
+  await expect(page.getByText('次诊断：高血压', { exact: true })).toBeVisible()
+
   await page.getByLabel('医嘱项目', { exact: true }).click()
   await page.getByRole('option', { name: '盐酸二甲双胍片', exact: true }).click()
   await page.getByLabel('医嘱时效', { exact: true }).click()
@@ -48,7 +82,7 @@ test('住院医生确认诊断和临时药嘱，护士校对、药师发药后�
   let originalKey:string|undefined
   await page.route(`**/api/his/v1/inpatient/admissions/${admission.id}/executions/dispense`,async route=>{
     dispensePosts+=1;originalKey=route.request().headers()['idempotency-key']
-    const response=await route.fetch();expect(response.status()).toBe(200);await route.abort('failed')
+    const response=await route.fetch();expect(response.status()).toBe(200);inpatientPharmacyResponseSchema.parse(await response.json());await route.abort('failed')
   })
   await page.getByRole('button', { name: '发药', exact: true }).click()
   await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
@@ -69,4 +103,28 @@ test('住院医生确认诊断和临时药嘱，护士校对、药师发药后�
   const administrations = fhirBundleSchema.parse(await (await page.request.get(`${browserApp.origin}/fhir/R5/MedicationAdministration?encounter=Encounter/${admission.id}&_total=accurate`)).json())
   expect(administrations.total).toBe(1)
   expect(administrations.entry![0]!.resource).toMatchObject({ status: 'completed', medication: { reference: { reference: 'Medication/medication-metformin' } } })
+  await login('cashier')
+  await page.getByRole('tab', { name: '住院费用', exact: true }).click()
+  await page.getByRole('button', { name: '查看合成住院用药患者', exact: true }).click()
+  await expect(page.getByLabel('住院费用明细')).toContainText('盐酸二甲双胍片 1片')
+  await expect(page.getByLabel('住院诊疗', { exact: true })).toHaveCount(0)
+  await page.getByLabel('冲正理由', { exact: true }).fill('合成费用纠错')
+  let reversalPosts = 0
+  let reversalKey: string | undefined
+  await page.route(`**/api/his/v1/inpatient/admissions/${admission.id}/charges/reverse`, async route => {
+    reversalPosts += 1; reversalKey = route.request().headers()['idempotency-key']
+    const response = await route.fetch(); expect(response.status()).toBe(200); inpatientChargesResponseSchema.parse(await response.json()); await route.abort('failed')
+  })
+  await page.getByRole('button', { name: '冲正', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
+  await page.reload()
+  await page.getByRole('tab', { name: '住院费用', exact: true }).click()
+  await page.getByRole('button', { name: '查看合成住院用药患者', exact: true }).click()
+  const reversalReceipt = page.waitForRequest(request => request.url().includes('/command-receipts?'))
+  await page.getByRole('button', { name: '恢复原住院操作', exact: true }).click()
+  expect(new URL((await reversalReceipt).url()).searchParams.get('idempotencyKey')).toBe(reversalKey)
+  await expect(page.getByRole('status')).toContainText('操作成功')
+  await expect(page.getByLabel('住院费用明细')).toContainText('关联冲正')
+  expect(reversalPosts).toBe(1)
+
 })

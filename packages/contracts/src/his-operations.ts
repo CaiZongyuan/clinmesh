@@ -1,4 +1,4 @@
-import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from './inpatient-clinical.ts'
+import { inpatientPharmacyListSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from './inpatient-clinical.ts'
 import {
   inpatientCatalogSchema, inpatientListSchema, inpatientDetailSchema, inpatientCommandResponseSchema,
   inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, inpatientSwapResponseSchema,
@@ -2430,14 +2430,29 @@ const operationDefinitions = [
     version: 1,
   },
   {
+    cliPath: ['inpatient', 'pharmacy-list'], id: 'inpatient.pharmacy.list',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/pharmacy/admissions' }, input: emptyInputSchema, output: inpatientPharmacyListSchema,
+    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['pharmacist'], summary: '读取有药品医嘱的住院药房清单，不含费用与诊断', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'pharmacy-read'], id: 'inpatient.pharmacy.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/pharmacy' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientPharmacySchema,
+    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['pharmacist'], summary: '读取本次住院药嘱、发药任务、批次与有效药物过敏风险', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'charges'], id: 'inpatient.charges.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/charges' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientChargesSchema,
+    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['cashier'], summary: '读取逐项住院账目、净额与财务状态', version: 1,
+  },
+  {
     cliPath: ['inpatient', 'clinical-catalog'], id: 'inpatient.clinical.catalog',
     http: { method: 'GET', path: '/api/his/v1/inpatient/clinical-catalog' }, input: emptyInputSchema, output: inpatientFullCatalogSchema, mode: 'query',
-    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','pharmacist'], summary: '读取住院实际可用临床目录', version: 1,
+    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse'], summary: '读取住院实际可用临床目录', version: 1,
   },
   {
     cliPath: ['inpatient', 'clinical'], id: 'inpatient.clinical.read',
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/clinical' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientFullClinicalSchema, mode: 'query',
-    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','pharmacist','medical-records','cashier'], summary: '读取本次住院诊断医嘱执行及费用', version: 1,
+    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '读取本次住院诊断医嘱执行及费用', version: 1,
   },
   {
     cliPath: ['inpatient', 'confirm-diagnosis'], id: 'inpatient.diagnosis.confirm',
@@ -2465,13 +2480,13 @@ const operationDefinitions = [
     input: inpatientOrderActionInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['ward-nurse'], summary: '住院医嘱verify-stop；校验当前责任与版本', version: 1,
   },
   { cliPath:['inpatient','dispense'],id:'inpatient.execution.dispense',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/dispense',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientDispenseInputSchema.parse(raw);return {input}}},
-    input:inpatientDispenseInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['pharmacist'],summary:'住院实际dispense；按执行单校验版本与责任',version:1 },
+    input:inpatientDispenseInputSchema,output:inpatientPharmacyResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['pharmacist'],summary:'住院实际dispense；按执行单校验版本与责任',version:1 },
   { cliPath:['inpatient','administer'],id:'inpatient.execution.administer',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/administer',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientExecutionActionInputSchema.parse(raw);return {input}}},
     input:inpatientExecutionActionInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'住院实际administer；按执行单校验版本与责任',version:1 },
   { cliPath:['inpatient','complete-service'],id:'inpatient.execution.complete',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/complete',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientExecutionActionInputSchema.parse(raw);return {input}}},
     input:inpatientExecutionActionInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'完成已校对的健康教育服务执行并按声明计费；不执行检查检验',version:1 },
   { cliPath:['inpatient','reverse-charge'],id:'inpatient.charge.reverse',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/charges/reverse',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientChargeReverseInputSchema.parse(raw);return {input}}},
-    input:inpatientChargeReverseInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['cashier'],summary:'关联原费用全额冲正；原账保留，不接受任意金额',version:1 },
+    input:inpatientChargeReverseInputSchema,output:inpatientChargesResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['cashier'],summary:'关联原费用全额冲正；原账保留，不接受任意金额',version:1 },
   { cliPath:['inpatient','request-prn'],id:'inpatient.execution.request-prn',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/executions/request-prn',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientOrderReasonInputSchema.parse(raw);return {input}}},
     input:inpatientOrderReasonInputSchema,output:inpatientFullClinicalResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'护士按已校对PRN医嘱和显式理由请求本次执行任务',version:1 },
   {
@@ -2479,21 +2494,21 @@ const operationDefinitions = [
     http: { method: 'GET', path: '/api/his/v1/inpatient/catalog' },
     input: emptyInputSchema, output: inpatientCatalogSchema, mode: 'query',
     requirements: { expectedVersions: false, idempotency: 'none' },
-    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'pharmacist', 'outpatient-doctor'], summary: '读取岗位可用病区与床位及当前占用', version: 1,
+    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'outpatient-doctor'], summary: '读取岗位可用病区与床位及当前占用', version: 2,
   },
   {
     cliPath: ['inpatient', 'list'], id: 'inpatient.admission.list',
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions' },
     input: emptyInputSchema, output: inpatientListSchema, mode: 'query',
     requirements: { expectedVersions: false, idempotency: 'none' },
-    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'pharmacist'], summary: '读取岗位负责的住院清单', version: 1,
+    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取岗位负责的住院清单', version: 2,
   },
   {
     cliPath: ['inpatient', 'read'], id: 'inpatient.admission.read',
     http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId' },
     input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDetailSchema, mode: 'query',
     requirements: { expectedVersions: false, idempotency: 'none' },
-    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'pharmacist'], summary: '读取本次住院状态、床位与费用账户', version: 1,
+    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier'], summary: '读取本次住院状态、床位与费用账户', version: 2,
   },
   {
     cliPath: ['inpatient', 'register'], id: 'inpatient.admission.register',

@@ -2,7 +2,7 @@ import { serviceCatalogSearchSchema } from '@clinmesh/contracts/his'
 import { applyMigrations, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { dispenseResponseSchema, prescriptionReviewResponseSchema, pharmacyQueueSchema, registrationResponseSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
-import { inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientPharmacySchema, inpatientPharmacyListSchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { sessionContextSchema } from '@clinmesh/contracts/his'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
@@ -51,6 +51,11 @@ async function setup(withReference = false) {
       const value=await response.clone().json()
       if(path.endsWith('/clinical-catalog')) inpatientFullCatalogSchema.parse(value)
       else if(path.endsWith('/clinical')) inpatientFullClinicalSchema.parse(value)
+      else if(path.endsWith('/pharmacy/admissions')) inpatientPharmacyListSchema.parse(value)
+      else if(path.endsWith('/pharmacy')) inpatientPharmacySchema.parse(value)
+      else if(path.endsWith('/charges')) inpatientChargesSchema.parse(value)
+      else if(path.endsWith('/executions/dispense')) inpatientPharmacyResponseSchema.parse(value)
+      else if(path.endsWith('/charges/reverse')) inpatientChargesResponseSchema.parse(value)
       else if(/\/(orders|executions|diagnoses|charges)\//.test(path)) inpatientFullClinicalResponseSchema.parse(value)
     }
     return response
@@ -86,6 +91,39 @@ async function paidOutpatient(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
+  it('药房与收费使用独立窄响应，旧住院通用及临床入口拒绝越权读取', async () => {
+    const s = await setup()
+    for (const role of [s.pharmacist, s.cashier]) expect((await s.request(role, `${s.path}/clinical`)).status).toBe(403)
+    for (const path of ['/api/his/v1/inpatient/admissions', s.path, '/api/his/v1/inpatient/catalog', '/api/his/v1/inpatient/clinical-catalog']) {
+      expect((await s.request(s.pharmacist, path)).status).toBe(403)
+    }
+    expect((await s.request(s.cashier, `${s.path}/pharmacy`)).status).toBe(403)
+    expect((await s.request(s.pharmacist, `${s.path}/charges`)).status).toBe(403)
+    const diagnosis = await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, { encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '2', note: '不属于收费或药房响应的合成诊断备注' }] })).json()
+    const input = { encounterVersion: diagnosis.data.encounterVersion, duration: 'temporary' }
+    await s.request(s.doctor, `${s.path}/orders/issue`, { ...input, selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 } })
+    await s.request(s.doctor, `${s.path}/orders/issue`, { ...input, selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })
+    const pharmacy = await s.request(s.pharmacist, `${s.path}/pharmacy`)
+    expect(pharmacy.status).toBe(200)
+    const body = await pharmacy.json()
+    expect(body.orders).toHaveLength(1)
+    expect(body.orders[0].kind).toBe('medication')
+    expect(body.admission).toMatchObject({ admissionId: s.admission.id, patientName: '合成医嘱患者' })
+    for (const key of ['diagnosis', 'charges', 'chargesFen', 'financialStatus', 'services']) expect(body).not.toHaveProperty(key)
+    for (const key of ['depositFen', 'chargesFen', 'financialStatus', 'recordStatus']) expect(body.admission).not.toHaveProperty(key)
+    expect(JSON.stringify(body)).not.toContain('不属于收费或药房响应')
+    expect(body).toHaveProperty('medicationAllergies')
+    const queue = await s.request(s.pharmacist, '/api/his/v1/inpatient/pharmacy/admissions')
+    expect(queue.status).toBe(200)
+    expect((await queue.json()).items).toEqual([body.admission])
+    const charges = await s.request(s.cashier, `${s.path}/charges`)
+    expect(charges.status).toBe(200)
+    const ledger = await charges.json()
+    for (const key of ['diagnosis', 'orders', 'executions', 'dispenses', 'encounterVersion']) expect(ledger).not.toHaveProperty(key)
+    expect(ledger).toMatchObject({ admissionId: s.admission.id, financialStatus: 'open', charges: [], chargesFen: 0 })
+  })
+
   it('住院医生确认真实目录诊断形成本次Condition及Encounter诊断，拒绝非医生和无效目录', async () => {
     const s = await setup()
     const input = { encounterVersion: s.admission.versionId, expectedRevision: 0,
@@ -164,7 +202,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const verified = await (await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).json()
     const execution = verified.data.executions[0]
     expect((await s.request(s.nurse, `${s.path}/executions/administer`, { executionId: execution.id, expectedExecutionVersion: execution.version })).status).toBe(409)
-    const catalog = await (await s.request(s.pharmacist, '/api/his/v1/inpatient/clinical-catalog')).json()
+    const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json()
     const medication = catalog.medications.find((m: { id: string }) => m.id === 'medication-amlodipine')
     const lot = medication.lots[0]
     const input = { executionId: execution.id, expectedExecutionVersion: execution.version, lotSelections: [{ lotId: lot.id, expectedVersion: 999, quantity: 1 }] }
@@ -184,7 +222,12 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const dispensed = await supplied.json()
     expect(await (await s.request(s.pharmacist, `${s.path}/executions/dispense`, input, key)).json()).toEqual(dispensed)
     expect(dispensed.data.dispenses).toHaveLength(1)
-    expect(dispensed.data.charges).toMatchObject([{ kind: 'medication', amountFen: medication.priceFen }])
+    expect(dispensed.data).not.toHaveProperty('charges')
+    expect(dispensed.data).not.toHaveProperty('diagnosis')
+    expect((await (await s.request(s.cashier, `${s.path}/charges`)).json()).charges).toMatchObject([{ kind: 'medication', label: '苯磺酸氨氯地平片 1片', amountFen: medication.priceFen }])
+    const receipt = await (await s.request(s.pharmacist, `/api/his/v1/command-receipts?operationId=inpatient.execution.dispense&idempotencyKey=${key}`)).json()
+    expect(inpatientPharmacyResponseSchema.parse(receipt.response)).toEqual(dispensed)
+    expect((await s.request(s.cashier, `/api/his/v1/command-receipts?operationId=inpatient.execution.dispense&idempotencyKey=${key}`)).status).toBe(404)
     const inventory = fhirResourceSchema.parse(await (await s.request(s.pharmacist, `/fhir/R5/InventoryItem/${lot.id}`)).json())
     expect(inventory).toMatchObject({ meta: { versionId: String(lot.version + 1) }, netContent: { value: lot.quantityOnHand - 1 } })
     expect((await s.request(s.pharmacist, `${s.path}/executions/dispense`, input)).status).toBe(409)
@@ -227,7 +270,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const s = await setup()
     const clock = await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()
     expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: clock.virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z' })).status).toBe(200)
-    const ledger = await (await s.request(s.cashier, `${s.path}/clinical`)).json()
+    const ledger = await (await s.request(s.cashier, `${s.path}/charges`)).json()
     const charge = ledger.charges[0]
     const input = { chargeId: charge.id, expectedChargeVersion: charge.version, reason: '合成费用纠错' }
     expect((await s.request(s.nurse, `${s.path}/charges/reverse`, input)).status).toBe(403)
@@ -236,6 +279,11 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const response = await s.request(s.cashier, `${s.path}/charges/reverse`, input, key)
     expect(response.status).toBe(200)
     const result = await response.json()
+    expect(result.data).not.toHaveProperty('diagnosis')
+    expect(result.data).not.toHaveProperty('orders')
+    const receipt = await (await s.request(s.cashier, `/api/his/v1/command-receipts?operationId=inpatient.charge.reverse&idempotencyKey=${key}`)).json()
+    expect(inpatientChargesResponseSchema.parse(receipt.response)).toEqual(result)
+    expect((await s.request(s.pharmacist, `/api/his/v1/command-receipts?operationId=inpatient.charge.reverse&idempotencyKey=${key}`)).status).toBe(404)
     expect(result.data.chargesFen).toBe(0)
     expect(result.data.charges).toHaveLength(2)
     expect(result.data.charges.find((c: { id: string }) => c.id === charge.id)).toEqual(charge)
@@ -244,7 +292,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     expect((await s.request(s.cashier, `${s.path}/charges/reverse`, input)).status).toBe(409)
     const inverse = result.data.charges.find((c: { reversalOf?: string }) => c.reversalOf === charge.id)
     expect((await s.request(s.cashier, `${s.path}/charges/reverse`, { ...input, chargeId: inverse.id })).status).toBe(409)
-    expect((await (await s.request(s.cashier, `${s.path}/clinical`)).json()).chargesFen).toBe(0)
+    expect((await (await s.request(s.cashier, `${s.path}/charges`)).json()).chargesFen).toBe(0)
   })
 
   it('PRN只由护士按已校对医嘱和理由显式创建，午夜不自动展开且停嘱立即拒绝新任务', async () => {
@@ -283,7 +331,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const s = await setup()
     expect((await s.request(s.registrar, `${s.path}/clinical`)).status).toBe(403)
     expect((await s.request(s.admin, `${s.path}/clinical`)).status).toBe(403)
-    for (const cookie of [s.doctor,s.nurse,s.pharmacist,s.cashier]) expect((await s.request(cookie, `${s.path}/clinical`)).status).toBe(200)
+    for (const cookie of [s.doctor,s.nurse]) expect((await s.request(cookie, `${s.path}/clinical`)).status).toBe(200)
   })
 
   it('住院医生可选择非legacy参考诊断，冻结真实版本来源与Release并按声明适应症开药', async () => {
@@ -326,15 +374,15 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     const issued=await(await s.request(s.doctor,`${s.path}/orders/issue`,{encounterVersion:diagnosed.data.encounterVersion,duration:'temporary',selection:{kind:'medication',catalogItemId:'medication-amlodipine',catalogVersion:1,doseText:'5 mg',doseQuantity:1,frequencyCode:'QD'}})).json()
     const order=issued.data.orders[0]
     const checked=await(await s.request(s.nurse,`${s.path}/orders/verify`,{orderId:order.id,expectedOrderVersion:order.version})).json()
-    const execution=checked.data.executions[0],catalog=inpatientFullCatalogSchema.parse(await(await s.request(s.pharmacist,'/api/his/v1/inpatient/clinical-catalog')).json())
+    const execution=checked.data.executions[0],catalog=inpatientFullCatalogSchema.parse(await(await s.request(s.doctor,'/api/his/v1/inpatient/clinical-catalog')).json())
     const lot=catalog.medications.find(item=>item.id==='medication-amlodipine')!.lots[0]!
     const input={executionId:execution.id,expectedExecutionVersion:execution.version,lotSelections:[{lotId:lot.id,expectedVersion:lot.version,quantity:1}]},key=randomUUID()
     s.runtime.database.driver.exec(`CREATE TRIGGER reject_inpatient_inventory BEFORE UPDATE ON fhir_resource WHEN NEW.resource_type='InventoryItem' BEGIN SELECT RAISE(ABORT,'synthetic inventory projection failure'); END`)
     try {
       expect((await s.request(s.pharmacist,`${s.path}/executions/dispense`,input,key)).status).toBe(500)
-      const after=inpatientFullClinicalSchema.parse(await(await s.request(s.pharmacist,`${s.path}/clinical`)).json())
+      const after=inpatientFullClinicalSchema.parse(await(await s.request(s.doctor,`${s.path}/clinical`)).json())
       expect(after.dispenses).toEqual([]);expect(after.charges).toEqual([]);expect(after.executions[0]).toMatchObject({status:'pending',version:1})
-      const current=inpatientFullCatalogSchema.parse(await(await s.request(s.pharmacist,'/api/his/v1/inpatient/clinical-catalog')).json())
+      const current=inpatientFullCatalogSchema.parse(await(await s.request(s.doctor,'/api/his/v1/inpatient/clinical-catalog')).json())
       expect(current.medications.find(item=>item.id==='medication-amlodipine')!.lots[0]).toEqual(lot)
       expect(fhirResourceSchema.parse(await(await s.request(s.pharmacist,`/fhir/R5/InventoryItem/${lot.id}`)).json())).toMatchObject({netContent:{value:lot.quantityOnHand},meta:{versionId:String(lot.version)}})
     } finally {s.runtime.database.driver.exec('DROP TRIGGER reject_inpatient_inventory')}
@@ -376,7 +424,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       targets.push({path,execution:verified.executions[0]!})
     }
     await paidOutpatient(s)
-    const catalog=inpatientFullCatalogSchema.parse(await(await s.request(s.pharmacist,'/api/his/v1/inpatient/clinical-catalog')).json()),lot=catalog.medications.find(item=>item.id==='medication-amlodipine')!.lots[0]!
+    const catalog=inpatientFullCatalogSchema.parse(await(await s.request(s.doctor,'/api/his/v1/inpatient/clinical-catalog')).json()),lot=catalog.medications.find(item=>item.id==='medication-amlodipine')!.lots[0]!
     const results=await Promise.all(targets.map(target=>s.request(s.pharmacist,`${target.path}/executions/dispense`,{executionId:target.execution.id,expectedExecutionVersion:target.execution.version,lotSelections:[{lotId:lot.id,expectedVersion:lot.version,quantity:1}]})))
     expect(results.map(response=>response.status).sort()).toEqual([200,409])
     const queue=pharmacyQueueSchema.parse(await(await s.request(s.pharmacist,'/api/his/v1/pharmacy/queue')).json())

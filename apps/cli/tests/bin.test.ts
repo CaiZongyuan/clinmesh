@@ -43,14 +43,14 @@ describe('clinmesh process entrypoint', () => {
     expect(result.stderr).toBe('')
     const envelope = JSON.parse(result.stdout)
     expect(envelope).toMatchObject({ ok: true, schemaVersion: 1 })
-    expect(envelope.data.operations).toHaveLength(100)
+    expect(envelope.data.operations).toHaveLength(103)
     expect(envelope.data.operations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'doctor.document-quality.get' }),
       expect.objectContaining({ id: 'doctor.document-quality.check' }),
       expect.objectContaining({ id: 'doctor.document-quality.retain' }),
-      expect.objectContaining({ id: 'inpatient.catalog', version: 1 }),
-      expect.objectContaining({ id: 'inpatient.admission.list', version: 1 }),
-      expect.objectContaining({ id: 'inpatient.admission.read', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.catalog', version: 2 }),
+      expect.objectContaining({ id: 'inpatient.admission.list', version: 2 }),
+      expect.objectContaining({ id: 'inpatient.admission.read', version: 2 }),
       expect.objectContaining({ id: 'inpatient.admission.register', version: 2 }),
       expect.objectContaining({ id: 'inpatient.admission.receive', version: 1 }),
       expect.objectContaining({ id: 'inpatient.admission.move-bed', version: 1 }),

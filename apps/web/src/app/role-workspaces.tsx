@@ -1,3 +1,4 @@
+import { InpatientPharmacy } from './inpatient-pharmacy.tsx'
 import { InpatientWorkspace } from './inpatient-workspace.tsx'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -56,7 +57,7 @@ export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceP
     session.actor.roleCode === 'pharmacist'
     && activeSection === 'pharmacy'
   ) {
-    return <Tabs defaultValue="outpatient" className="flex min-h-0 flex-1 flex-col"><TabsList className="m-4 mb-0"><TabsTrigger value="outpatient">{locale==='zh-CN'?'门诊药房':'Outpatient pharmacy'}</TabsTrigger><TabsTrigger value="inpatient">{locale==='zh-CN'?'住院药房':'Inpatient pharmacy'}</TabsTrigger></TabsList><TabsContent value="outpatient" className="flex min-h-0 flex-1"><PharmacyWorkspace locale={locale} session={session} /></TabsContent><TabsContent value="inpatient" className="flex min-h-0 flex-1"><InpatientWorkspace locale={locale} session={session} /></TabsContent></Tabs>
+    return <Tabs defaultValue="outpatient" className="flex min-h-0 flex-1 flex-col"><TabsList className="m-4 mb-0"><TabsTrigger value="outpatient">{locale==='zh-CN'?'门诊药房':'Outpatient pharmacy'}</TabsTrigger><TabsTrigger value="inpatient">{locale==='zh-CN'?'住院药房':'Inpatient pharmacy'}</TabsTrigger></TabsList><TabsContent value="outpatient" className="flex min-h-0 flex-1"><PharmacyWorkspace locale={locale} session={session} /></TabsContent><TabsContent value="inpatient" className="flex min-h-0 flex-1"><InpatientPharmacy locale={locale} session={session} /></TabsContent></Tabs>
   }
   return <div />
 }
