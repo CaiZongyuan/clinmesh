@@ -427,6 +427,72 @@ it('maps a laboratory suggestion to the full current hospital catalog beyond its
   expect(await fixture.readCase()).toEqual(before)
 })
 
+it('keeps a fabricated catalog id an unmatched candidate instead of exhausting the request budget', async () => {
+  const requests: string[] = []
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    if (input.schemaName === 'doctor_recommendation_verification') {
+      return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    }
+    if (input.schemaName === 'doctor_recommendation_catalog_selection') {
+      const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() })) }) }) }).parse(input.userPayload)
+      return { content: JSON.stringify({ complete: true, selectedCatalogItemIds: payload.catalogs.laboratory.items
+        .filter(item => item.id === 'lab-00').map(item => item.id) }), model: input.model }
+    }
+    const output = diagnosisOutput(input)
+    // 模型虚构目录中不存在的项目 id：按未匹配候选丢弃并展示，不得触发协议失败重试。
+    return { content: JSON.stringify({ ...output, items: [{ ...output.items[0], kind: 'laboratory',
+      catalogItemId: 'fabricated-synthetic-lab', indicationCode: 'clinical-evaluation' }] }), model: input.model }
+  })
+  for (const id of ['lab-00', 'lab-01']) {
+    const service = syntheticLaboratory(id)
+    fixture.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog
+      (workspace_id, epoch, service_id, code, name_zh, name_en, version, active, config_json)
+      VALUES ('workspace-demo', 'epoch-1', ?, ?, ?, ?, 1, 1, ?)
+    `).run(service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service }))
+  }
+  const before = await fixture.readCase()
+  expect((await fixture.generate('laboratory')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const state = await fixture.read('laboratory')
+  expect(state.items).toEqual([])
+  expect(state.notices).toEqual([expect.objectContaining({ category: 'catalog', message: expect.stringContaining('未匹配当前可执行的本院目录') })])
+  expect(requests.filter(name => name === 'doctor_recommendations')).toHaveLength(1)
+  expect(await fixture.readCase()).toEqual(before)
+})
+
+it('rejects generation that uses a real laboratory catalog item outside the selected view', async () => {
+  const requests: string[] = []
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    if (input.schemaName === 'doctor_recommendation_verification') {
+      return { content: JSON.stringify(verificationOutput(input)), model: input.model }
+    }
+    if (input.schemaName === 'doctor_recommendation_catalog_selection') {
+      const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() })) }) }) }).parse(input.userPayload)
+      return { content: JSON.stringify({ complete: true, selectedCatalogItemIds: payload.catalogs.laboratory.items
+        .filter(item => item.id === 'lab-00').map(item => item.id) }), model: input.model }
+    }
+    const output = diagnosisOutput(input)
+    // 真实存在但未入选的目录项绕过筛选审计：维持协议拒绝，由执行账本按恢复额度重试。
+    return { content: JSON.stringify({ ...output, items: [{ ...output.items[0], kind: 'laboratory',
+      catalogItemId: 'lab-01', indicationCode: 'clinical-evaluation' }] }), model: input.model }
+  })
+  for (const id of ['lab-00', 'lab-01']) {
+    const service = syntheticLaboratory(id)
+    fixture.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog
+      (workspace_id, epoch, service_id, code, name_zh, name_en, version, active, config_json)
+      VALUES ('workspace-demo', 'epoch-1', ?, ?, ?, ?, 1, 1, ?)
+    `).run(service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service }))
+  }
+  expect((await fixture.generate('laboratory')).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const state = await fixture.read('laboratory')
+  expect(state.status).toBe('failed')
+  expect((state.notices ?? []).map(notice => notice.message).join()).toContain('请求次数已用完')
+  expect(requests.filter(name => name === 'doctor_recommendations')).toHaveLength(3)
+})
+
 it('generates from a lightweight complete laboratory catalog while preserving specimen, panel and clinical applicability', async () => {
   const requests: string[] = []
   let generationBytes = 0

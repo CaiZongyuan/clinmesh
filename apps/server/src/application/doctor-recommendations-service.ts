@@ -849,14 +849,17 @@ export class DoctorRecommendationsService {
       const parseGeneration = (value: unknown) => {
         const output = (considerationsOnly ? considerationsGenerationSchema : doctorRecommendationGenerationSchema).parse(value)
         const selectedIds = catalogSelection?.selectedCatalogItemIds
+        // 目录筛选在场时，生成不得引用真实存在但未入选的目录项（绕过筛选审计）；
+        // 目录中不存在的虚构 id 沿用未匹配候选路径展示，不作为协议失败重试。
         if (selectedIds !== undefined && output.items.some(item => item.kind === 'laboratory'
-          && !selectedIds.includes(item.catalogItemId))) {
+          && laboratoryCatalogItemIds.has(item.catalogItemId) && !selectedIds.includes(item.catalogItemId))) {
           throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'Generated suggestions must use the selected catalog items')
         }
         doctorRecommendationStateSchema.parse({ ...base, ...output, status: 'ready' })
         return output
       }
       let catalogs = projectRecommendationCatalogs(snapshot.catalogs)
+      const laboratoryCatalogItemIds = new Set(catalogs.laboratory?.items.map(item => item.id) ?? [])
       const requestFor = (caseEvidence: DoctorCaseEvidence[], selectedCatalogs = catalogs): JsonChatCompletionInput => {
         const schema = considerationsOnly ? considerationsGenerationSchema.safeExtend({
           considerations: z.array(considerationsGenerationSchema.shape.considerations.element.extend({
