@@ -446,13 +446,17 @@ export function DiagnosisCatalogPicker({
                     : item
                   const inactive = 'status' in item && item.status !== 'active'
                   const excluded = excludedIds.has(selection.catalogItemId)
-                  return <li className="flex min-w-0 flex-col gap-2 rounded-lg border p-3" key={selection.catalogItemId}>
-                    <div className="flex flex-wrap items-start justify-between gap-2"><strong className="break-words text-sm">{selection.display}</strong><Badge variant="outline">{selection.code}</Badge></div>
-                    <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-muted-foreground">{useLocal ? messages.localCatalog : ('system' in item ? item.system : '')}</span>
-                      <Button aria-label={`${messages.choose} ${selection.display} ${selection.code}`} disabled={disabled || results.isFetching || inactive || excluded} onClick={() => select(selection)} size="sm" type="button" variant="outline">
-                        {excluded ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : inactive ? (locale === 'zh-CN' ? '停用' : 'Inactive') : messages.chooseDiagnosis}
-                      </Button>
-                    </div>
+                  // 行内目录与弹窗表格同一密度合同：名称与编码同卡单行排布，目录体系只保留在编码的提示里。
+                  return <li className="flex min-w-0 items-center justify-between gap-2 rounded-lg border px-3 py-2" key={selection.catalogItemId}>
+                    <span className="flex min-w-0 flex-col">
+                      <strong className="break-words text-sm">{selection.display}</strong>
+                      <span className="break-all font-mono text-xs text-muted-foreground" title={useLocal ? undefined : ('system' in item ? item.system : undefined)}>
+                        {useLocal ? `${messages.localCatalog} · ` : ''}{selection.code}
+                      </span>
+                    </span>
+                    <Button aria-label={`${messages.choose} ${selection.display} ${selection.code}`} disabled={disabled || results.isFetching || inactive || excluded} onClick={() => select(selection)} size="sm" type="button" variant="outline">
+                      {excluded ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excluded ? (locale === 'zh-CN' ? '已添加' : 'Added') : inactive ? (locale === 'zh-CN' ? '停用' : 'Inactive') : messages.chooseDiagnosis}
+                    </Button>
                   </li>
                 })}
               </ul> : <Table>
