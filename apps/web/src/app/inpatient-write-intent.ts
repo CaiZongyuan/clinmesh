@@ -1,3 +1,5 @@
+import { inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema,inpatientInvestigationAcknowledgeInputSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { z } from 'zod'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
@@ -24,6 +26,15 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.execution.administer'), input: inpatientExecutionActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.execution.complete'), input: inpatientExecutionActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.charge.reverse'), input: inpatientChargeReverseInputSchema }).strict(),
+  z.object({operation:z.literal('inpatient.investigation.issue'),input:inpatientInvestigationIssueInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.investigation.send'),input:inpatientInvestigationActionInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.investigation.cancel'),input:inpatientInvestigationActionInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.investigation.retry'),input:inpatientInvestigationActionInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.investigation.acknowledge'),input:inpatientInvestigationAcknowledgeInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.transfer.request'),input:inpatientTransferRequestInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.transfer.handover'),input:inpatientTransferActionInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.transfer.receive'),input:inpatientTransferReceiveInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.transfer.cancel'),input:inpatientTransferActionInputSchema}).strict(),
   z.object({ operation: z.literal('scenario.advance-time'), input: advanceVirtualTimeInputSchema }).strict(),
 ])
 const bindingSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict() }).strict()

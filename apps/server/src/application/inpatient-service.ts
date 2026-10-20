@@ -1,3 +1,6 @@
+import { InpatientTransfers } from './inpatient-transfers.ts'
+import type { WorkflowService } from './workflow-service.ts'
+import { InpatientInvestigations } from './inpatient-investigations.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
@@ -31,11 +34,15 @@ const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records
 export class InpatientService {
   readonly billing: InpatientBilling
   readonly orders: InpatientOrders
+  readonly investigations: InpatientInvestigations
+  readonly transfers: InpatientTransfers
   readonly #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService) {
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, workflow: WorkflowService) {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.orders = new InpatientOrders(this)
+    this.investigations = new InpatientInvestigations(this,workflow)
+    this.transfers = new InpatientTransfers(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
@@ -183,6 +190,8 @@ export class InpatientService {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'registered', ?)`)
         .run(context.workspaceId, context.epoch, id, input.patientId, `ZY-${id}`, input.admissionRoute,
           input.referralId ?? null, sources[0]?.case_id ?? null, input.wardId, ward.organization_id, time)
+      this.database.driver.prepare(`INSERT INTO clinical_request_context(workspace_id,epoch,case_id,admission_id,patient_id,encounter_id)
+        VALUES(?,?,?,?,?,?)`).run(context.workspaceId,context.epoch,id,id,input.patientId,id)
       const encounter = this.fhir.create(context, { resourceType: 'Encounter', id, status: 'planned',
         class: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode', code: 'IMP' }] }],
         identifier: [{ system: 'https://caizongyuan.github.io/clinmesh/identifier/inpatient-number', value: `ZY-${id}` }],
@@ -302,6 +311,14 @@ export class InpatientService {
     if (this.database.driver.prepare(`SELECT 1 FROM inpatient_bed_occupancy WHERE workspace_id=? AND epoch=? AND bed_id=? AND ended_at IS NULL`)
       .get(context.workspaceId, context.epoch, bedId) !== undefined) throw new InpatientError('INPATIENT_BED_OCCUPIED', '床位已被占用')
   }
+  applyTransfer(context: ActorContext, admissionId: string, target: {wardId:string;organizationId:string;bedId:string}, expectedVersion:string, time:string) {
+    this.#endOccupancy(context,admissionId,time)
+    this.#startOccupancy(context,admissionId,target.bedId,time)
+    this.database.driver.prepare('UPDATE inpatient_admission SET ward_id=?,organization_id=? WHERE workspace_id=? AND epoch=? AND admission_id=?')
+      .run(target.wardId,target.organizationId,context.workspaceId,context.epoch,admissionId)
+    const encounter=this.#updateBedProjection(context,admissionId,target.bedId,expectedVersion,time,target.organizationId)
+    return encounter
+  }
   #endOccupancy(context: ActorContext, admissionId: string, time: string) {
     this.database.driver.prepare(`UPDATE inpatient_bed_occupancy SET ended_at=?
       WHERE workspace_id=? AND epoch=? AND admission_id=? AND ended_at IS NULL`)
@@ -311,11 +328,12 @@ export class InpatientService {
     this.database.driver.prepare('INSERT INTO inpatient_bed_occupancy VALUES (?, ?, ?, ?, ?, ?, NULL)')
       .run(context.workspaceId, context.epoch, uuidv7(), bedId, admissionId, time)
   }
-  #updateBedProjection(context: ActorContext, admissionId: string, bedId: string, version: string, time: string) {
+  #updateBedProjection(context: ActorContext, admissionId: string, bedId: string, version: string, time: string, organizationId?: string) {
     const existing = this.fhir.read(context, 'Encounter', admissionId)
     const locations = z.array(z.object({ location: z.object({ reference: z.string() }),
       status: z.string(), period: z.object({ start: z.string(), end: z.string().optional() }) })).optional().parse(existing.location) ?? []
     return this.fhir.update(context, { ...existing, status: 'in-progress',
+      ...(organizationId===undefined?{}:{serviceProvider:{reference:`Organization/${organizationId}`}}),
       actualPeriod: existing.actualPeriod ?? { start: time },
       extension: [{ url: 'https://caizongyuan.github.io/clinmesh/fhir/StructureDefinition/inpatient-administrative-status', valueCode: 'admitted' }],
       location: [...locations.map(location => location.status === 'active'

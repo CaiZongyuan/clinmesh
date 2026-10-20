@@ -12,6 +12,8 @@
     "./his": "./src/his.ts",
     "./inpatient": "./src/inpatient.ts",
     "./inpatient-clinical": "./src/inpatient-clinical.ts",
+    "./inpatient-investigations": "./src/inpatient-investigations.ts",
+    "./inpatient-transfer": "./src/inpatient-transfer.ts",
     "./his-operations": "./src/his-operations.ts",
     "./imaging": "./src/imaging.ts",
     "./pathology": "./src/pathology.ts",

@@ -139,7 +139,7 @@ Report Acknowledgement 是按报告版本独立保存的领域事实，只能由
 
 ### 8.2 住院闭环（后续）
 
-当前已实现建档与入科：负责门诊医生开住院证，登记员通过直接入院、门诊转收或转院途径办理登记并收取预交金，病区护士接诊分床、同病区转床和互换床位。诊断确认、长期和临时医嘱、校对、实际发药与给药、健康教育执行和逐项费用及关联冲正已实现；转科、手术、出院、结算与病案归档按[住院规格](../spec/2026-10-20-inpatient-closed-loop.md)继续交付。
+当前已实现建档与入科：负责门诊医生开住院证，登记员通过直接入院、门诊转收或转院途径办理登记并收取预交金，病区护士接诊分床、同病区转床和互换床位。诊断确认、长期和临时医嘱、校对、实际发药与给药、健康教育执行和逐项费用及关联冲正已实现；检查检验送检、报告和三方转科已实现；手术、出院、结算与病案归档按[住院规格](../spec/2026-10-20-inpatient-closed-loop.md)继续交付。
 
 住院由独立 `InpatientService` 通过共享 CommandExecutor 执行，不借用 `outpatient_case`、门诊 Registration 或门诊支付外键。登记输入固定当次受信 context 的 `expectedEpoch`，仅作为事务前置断言，不能选择活动 Epoch。每次登记创建独立住院号、`Encounter.class=IMP` 和 Account；`registered` 对应标准 `planned`，接诊后为 `admitted` / `in-progress`。行政、财务及病案状态分别保存，不把它们合并为 Encounter.status。住院证以 ServiceRequest 记录，转收后完成，不能重复使用；零预交金不创建资金交易，正数以安全整数分形成独立交易。重试由 Command receipt 去重。
 
@@ -181,6 +181,12 @@ Admission request
 - 医嘱执行必须引用已签发、有效且完成校对的请求。
 - 出院、财务结算、清床和病案归档是不同动作。
 - 召回只在规定状态窗口内允许，并生成完整审计和逆向事件。
+
+住院检查检验由 InpatientInvestigations 适配原 ClinicalRequestKernel、Workflow 检验和 ImagingRequestService，不建立第二套报告状态机。开立以本次 admission 固定的 source_case_id 定位同 Epoch 的真实 Synthetic Case；结果解析读取其 Case Truth，正式 ServiceRequest、Specimen、Observation、ImagingStudy 和 DiagnosticReport 归当前 IMP Encounter。无来源患者明确不支持，不使用 Scenario 正常结果兜底。医生开立仅产生待送检申请，护士校对送检后才排入原 accept outbox；晚到受理仍重验送检及取消状态。读、取消、重试、已阅和阅片元数据均校当前科室与病区，转科后新科接管报告；住院报告发布不触发门诊对话、自动记录或完诊。
+
+住院检查目录区分可开展、尚未开展和未计价。正数且已声明住院适用范围的医院价沿用原定义；基础 WBC（WS/T 886-2026 `0100101A`）、HGB（`0100501A`）与院内 CBC（`CN-LAB-CBC`）另声明800、800、2500分的合成本院住院价，匹配完整编码身份，不为其他单项或组合推测价格。胸片和胸部 CT 平扫分别声明8000与30000分的合成本院价。申请冻结定义、目录版本、价格和 `execution-completed` 触发；首次执行完成及报告发布在同一事务只计一次费，报告修订不重收。未计价不等于免费，未声明价格的项目不可开立。报告收费事务重读当前科室、住院及财务状态，已出区或结算后拒绝追加；出院门禁复用在途申请检查。
+
+转科以独立 Task 保存 requested、handed-over、completed、cancelled，依次由当前医生申请、原护士交接、目标护士接收；目标 incoming 清单仅授权目标病区并提供接收必要字段，普通详情仍由当前责任科室拥有。原科医嘱须停嘱并核停，未执行计划须明确取消，未送检申请须送检或取消；已送检的在途检查继续完成，由新科接管。接收在同一 Command 事务再次核验 Task 与 Encounter 版本、全部阻塞和目标空床，结束原占用、创建新占用并切换 Admission 与 FHIR 科室/位置历史。既往发药、库存与费用保留，新执行及床日费使用当前科室。设计取舍见[Agent Note](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 
 ### 8.3 医嘱生命周期
 

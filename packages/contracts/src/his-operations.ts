@@ -1,3 +1,5 @@
+import { inpatientInvestigationCatalogSchema,inpatientInvestigationsSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema,inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationResponseSchema } from './inpatient-investigations.ts'
+import { inpatientTransferCatalogSchema,inpatientIncomingTransfersSchema,inpatientTransfersSchema,inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema,inpatientTransferResponseSchema } from './inpatient-transfer.ts'
 import { inpatientPharmacyListSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from './inpatient-clinical.ts'
 import {
   inpatientCatalogSchema, inpatientListSchema, inpatientDetailSchema, inpatientCommandResponseSchema,
@@ -2428,6 +2430,62 @@ const operationDefinitions = [
     roles: roleCodeSchema.options,
     summary: 'Search one supported FHIR R5 resource type with declared parameters',
     version: 1,
+  },
+  {
+    cliPath:['inpatient','investigation-catalog'],id:'inpatient.investigation.catalog',http:{method:'GET',path:'/api/his/v1/inpatient/investigation-catalog'},input:emptyInputSchema,output:inpatientInvestigationCatalogSchema,mode:'query',
+    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取本院已声明住院价格与执行触发的检查目录',version:1,
+  },
+  {
+    cliPath:['inpatient','investigations'],id:'inpatient.investigation.read',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations'},input:z.object({admissionId:z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)}).strict(),output:inpatientInvestigationsSchema,mode:'query',
+    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取当前责任科室的住院检查与报告',version:1,
+  },
+  {
+    cliPath:['inpatient','transfer-catalog'],id:'inpatient.transfer.catalog',http:{method:'GET',path:'/api/his/v1/inpatient/transfer-catalog'},input:emptyInputSchema,output:inpatientTransferCatalogSchema,mode:'query',
+    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取转科目标病区与床位可用性，不含其他患者',version:1,
+  },
+  {
+    cliPath:['inpatient','transfers'],id:'inpatient.transfer.read',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/transfers'},input:z.object({admissionId:z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)}).strict(),output:inpatientTransfersSchema,mode:'query',
+    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor', 'ward-nurse'],summary:'读取本次住院转科历史',version:1,
+  },
+  {
+    cliPath:['inpatient','incoming-transfers'],id:'inpatient.transfer.incoming',http:{method:'GET',path:'/api/his/v1/inpatient/transfers/incoming'},input:emptyInputSchema,output:inpatientIncomingTransfersSchema,mode:'query',
+    requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['ward-nurse'],summary:'读取当前目标病区待接收转科，不放宽普通住院详情',version:1,
+  },
+  {
+    cliPath:['inpatient','issue-investigation'],id:'inpatient.investigation.issue',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/issue',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationIssueInputSchema.parse(raw);return {input}}},
+    input:inpatientInvestigationIssueInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'开立住院检验或影像，固定来源与价目，等待护士送检',version:1,
+  },
+  {
+    cliPath:['inpatient','send-investigation'],id:'inpatient.investigation.send',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/send',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationActionInputSchema.parse(raw);return {input}}},
+    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'护士校对送检后进入原LIS/RIS执行',version:1,
+  },
+  {
+    cliPath:['inpatient','cancel-investigation'],id:'inpatient.investigation.cancel',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/cancel',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationActionInputSchema.parse(raw);return {input}}},
+    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'取消未送检或明确失败的住院检查',version:1,
+  },
+  {
+    cliPath:['inpatient','retry-investigation'],id:'inpatient.investigation.retry',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/retry',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationActionInputSchema.parse(raw);return {input}}},
+    input:inpatientInvestigationActionInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生重试可恢复的失败检查',version:1,
+  },
+  {
+    cliPath:['inpatient','acknowledge-investigation'],id:'inpatient.investigation.acknowledge',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/investigations/acknowledge',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientInvestigationAcknowledgeInputSchema.parse(raw);return {input}}},
+    input:inpatientInvestigationAcknowledgeInputSchema,output:inpatientInvestigationResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'当前责任医生确认当前正式报告，影像须当前可读',version:1,
+  },
+  {
+    cliPath:['inpatient','request-transfer'],id:'inpatient.transfer.request',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/transfers/request',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientTransferRequestInputSchema.parse(raw);return {input}}},
+    input:inpatientTransferRequestInputSchema,output:inpatientTransferResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'医生申请转往另一病区',version:1,
+  },
+  {
+    cliPath:['inpatient','handover-transfer'],id:'inpatient.transfer.handover',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/transfers/handover',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientTransferActionInputSchema.parse(raw);return {input}}},
+    input:inpatientTransferActionInputSchema,output:inpatientTransferResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'原病区护士核验停嘱、任务及送检后交接',version:1,
+  },
+  {
+    cliPath:['inpatient','receive-transfer'],id:'inpatient.transfer.receive',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/transfers/receive',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientTransferReceiveInputSchema.parse(raw);return {input}}},
+    input:inpatientTransferReceiveInputSchema,output:inpatientTransferResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['ward-nurse'],summary:'目标护士接收转科，原子切换床位与责任科室',version:1,
+  },
+  {
+    cliPath:['inpatient','cancel-transfer'],id:'inpatient.transfer.cancel',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/transfers/cancel',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientTransferActionInputSchema.parse(raw);return {input}}},
+    input:inpatientTransferActionInputSchema,output:inpatientTransferResponseSchema,mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'原责任医生取消尚未接收的转科任务',version:1,
   },
   {
     cliPath: ['inpatient', 'pharmacy-list'], id: 'inpatient.pharmacy.list',

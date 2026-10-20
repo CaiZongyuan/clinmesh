@@ -425,9 +425,8 @@ export class InvestigationService {
   ): InvestigationGenerationCapability {
     const materialization = caseMaterializationRowSchema.optional().parse(
       this.#database.driver.prepare(`
-        SELECT case_id AS synthetic_case_id
-        FROM synthetic_case_materialization
-        WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
+        SELECT synthetic_case_id FROM clinical_request_source
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND synthetic_case_id IS NOT NULL
       `).get(workspaceId, epoch, outpatientCaseId),
     )
     if (materialization === undefined) {
@@ -465,19 +464,11 @@ export class InvestigationService {
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
-        outpatient_case.encounter_id, outpatient_case.patient_id,
-        materialization.case_id AS synthetic_case_id,
-        materialization.case_revision AS synthetic_case_revision,
-        materialization.profile_id, materialization.profile_revision
+        source.encounter_id, source.patient_id, source.synthetic_case_id,
+        source.synthetic_case_revision, source.profile_id, source.profile_revision
       FROM laboratory_request AS request
-      LEFT JOIN synthetic_case_materialization AS materialization
-        ON materialization.workspace_id = request.workspace_id
-       AND materialization.epoch = request.epoch
-       AND materialization.outpatient_case_id = request.case_id
-      JOIN outpatient_case
-        ON outpatient_case.workspace_id = request.workspace_id
-       AND outpatient_case.epoch = request.epoch
-       AND outpatient_case.case_id = request.case_id
+      JOIN clinical_request_source source ON source.workspace_id=request.workspace_id
+        AND source.epoch=request.epoch AND source.case_id=request.case_id
       WHERE request.workspace_id = ? AND request.epoch = ? AND request.request_id = ?
         AND request.request_kind = 'laboratory'
     `).get(workspaceId, epoch, requestId))
