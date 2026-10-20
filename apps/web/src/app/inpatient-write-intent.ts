@@ -1,3 +1,4 @@
+import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema,inpatientInvestigationAcknowledgeInputSchema } from '@clinmesh/contracts/inpatient-investigations'
@@ -13,6 +14,9 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
+  z.object({operation:z.literal('inpatient.record.submit'),input:inpatientRecordSubmitInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.record.review'),input:inpatientRecordReviewInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.record.archive'),input:inpatientRecordArchiveInputSchema}).strict(),
   z.object({ operation: z.literal('inpatient.admission.register'), input: inpatientRegistrationInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.admission.receive'), input: inpatientBedInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.admission.move-bed'), input: inpatientBedInputSchema }).strict(),

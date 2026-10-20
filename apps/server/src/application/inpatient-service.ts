@@ -1,3 +1,5 @@
+import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
+import { InpatientRecords } from './inpatient-records.ts'
 import { InpatientDischarge } from './inpatient-discharge.ts'
 import { InpatientSurgery } from './inpatient-surgery.ts'
 import { InpatientTransfers } from './inpatient-transfers.ts'
@@ -37,6 +39,7 @@ export class InpatientService {
   readonly billing: InpatientBilling
   readonly orders: InpatientOrders
   readonly surgery: InpatientSurgery
+  readonly records: InpatientRecords
   readonly discharge: InpatientDischarge
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
@@ -46,6 +49,7 @@ export class InpatientService {
     this.billing = new InpatientBilling(database, fhir)
     this.orders = new InpatientOrders(this)
     this.surgery = new InpatientSurgery(this)
+    this.records = new InpatientRecords(this)
     this.discharge = new InpatientDischarge(this)
     this.investigations = new InpatientInvestigations(this,workflow)
     this.transfers = new InpatientTransfers(this)
@@ -54,6 +58,18 @@ export class InpatientService {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
     this.#workspaces.assertActive(context, context.scenarioRunId)
   }
+  assertNotArchived(context: ActorContext, admissionId: string) {
+    assertInpatientRecordWritable(this.database,context,admissionId)
+  }
+  assertReadRole(context:ActorContext,roles:readonly string[]) {
+    if(!roles.includes(context.roleCode))throw new InpatientError('INPATIENT_ROLE_FORBIDDEN','当前岗位不能读取该住院业务',403)
+    this.#workspaces.assertCurrent(context,context.scenarioRunId)
+  }
+  readAdmissionBinding(context:ActorContext,admissionId:string) {
+    this.assertReadRole(context,[...readers,'pharmacist'])
+    return this.#admissionScope(context,admissionId)
+  }
+
   virtualTime(context: ActorContext): string {
     return z.object({ virtual_time: z.iso.datetime({ offset: true }) }).parse(this.database.driver.prepare(
       'SELECT virtual_time FROM scenario_epoch_state WHERE workspace_id=? AND epoch=?')
@@ -61,6 +77,9 @@ export class InpatientService {
   }
   admissionBinding(context: ActorContext, admissionId: string) {
     this.assertRole(context, [...readers, 'pharmacist'])
+    return this.#admissionScope(context,admissionId)
+  }
+  #admissionScope(context:ActorContext,admissionId:string) {
     const row = rowSchema.optional().parse(this.database.driver.prepare(
       'SELECT * FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?')
       .get(context.workspaceId, context.epoch, admissionId))
@@ -72,8 +91,8 @@ export class InpatientService {
       financialStatus: row.financial_status, row }
   }
   detail(context: ActorContext, admissionId: string) {
-    this.assertRole(context, readers)
-    const { row } = this.admissionBinding(context, admissionId)
+    this.assertReadRole(context, readers)
+    const { row } = this.readAdmissionBinding(context, admissionId)
     const patient = this.fhir.read(context, 'Patient', row.patient_id)
     const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
     const occupancy = z.object({ bed_id: z.string() }).optional().parse(this.database.driver.prepare(
@@ -94,7 +113,7 @@ export class InpatientService {
     } })
   }
   list(context: ActorContext) {
-    this.assertRole(context, readers)
+    this.assertReadRole(context, readers)
     const scoped = clinicalRoles.includes(context.roleCode)
     const rows = z.array(z.object({ admission_id: z.string() })).parse(this.database.driver.prepare(`
       SELECT admission_id FROM inpatient_admission WHERE workspace_id=? AND epoch=?
@@ -103,7 +122,7 @@ export class InpatientService {
     return inpatientListSchema.parse({ items: rows.map(row => this.detail(context, row.admission_id).admission) })
   }
   catalog(context: ActorContext) {
-    this.assertRole(context, [...readers, 'outpatient-doctor'])
+    this.assertReadRole(context, [...readers, 'outpatient-doctor'])
     const scoped = clinicalRoles.includes(context.roleCode)
     const wards = z.array(z.object({ ward_id: z.string(), organization_id: z.string(), name: z.string() })).parse(this.database.driver.prepare(`
       SELECT ward_id, organization_id, name FROM inpatient_ward WHERE workspace_id=? AND epoch=?
@@ -190,6 +209,7 @@ export class InpatientService {
       if (input.sourceEncounterId !== undefined && sources.length === 0) throw new InpatientError('INPATIENT_SOURCE_INVALID', '未找到患者的指定合成病例来源')
       const id = uuidv7()
       const time = this.virtualTime(context)
+      this.database.driver.prepare('INSERT INTO inpatient_record_number VALUES(?,?,?,?) ON CONFLICT(workspace_id,epoch,patient_id) DO NOTHING').run(context.workspaceId,context.epoch,input.patientId,`MR-${uuidv7()}`)
       this.database.driver.prepare(`INSERT INTO inpatient_admission
         (workspace_id, epoch, admission_id, patient_id, inpatient_number, admission_route, referral_id, source_case_id,
          ward_id, organization_id, status, registered_at)
@@ -228,6 +248,7 @@ export class InpatientService {
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion },
       dataSchema: inpatientDetailSchema, authorize: () => this.assertRole(context, ['ward-nurse']) }, () => {
       const admission = this.detail(context, input.admissionId).admission
+      this.assertNotArchived(context,input.admissionId)
       if (action === 'receive' ? admission.status !== 'registered' : admission.status !== 'admitted') {
         throw new InpatientError('INPATIENT_STATE_CONFLICT', '当前住院状态不允许接诊或转床')
       }
@@ -251,6 +272,7 @@ export class InpatientService {
       dataSchema: inpatientSwapResponseSchema.shape.data, authorize: () => this.assertRole(context, ['ward-nurse']) }, () => {
       const a = this.detail(context, input.admissionId).admission
       const b = this.detail(context, input.otherAdmissionId).admission
+      this.assertNotArchived(context,input.admissionId);this.assertNotArchived(context,input.otherAdmissionId)
       if (a.status !== 'admitted' || b.status !== 'admitted' || a.bedId === undefined || b.bedId === undefined || a.wardId !== b.wardId) {
         throw new InpatientError('INPATIENT_SWAP_INVALID', '换床仅限同病区两名已入科且占床的患者')
       }
@@ -293,7 +315,7 @@ export class InpatientService {
           FROM inpatient_bed_occupancy o JOIN inpatient_admission a
             ON a.workspace_id=o.workspace_id AND a.epoch=o.epoch AND a.admission_id=o.admission_id
           JOIN inpatient_bed b ON b.workspace_id=o.workspace_id AND b.epoch=o.epoch AND b.bed_id=o.bed_id
-          WHERE o.workspace_id=? AND o.epoch=? AND julianday(o.started_at)<julianday(?) AND o.ended_at IS NULL AND a.status IN ('admitted','discharge-pending')`)
+          WHERE o.workspace_id=? AND o.epoch=? AND julianday(o.started_at)<julianday(?) AND o.ended_at IS NULL AND a.status IN ('admitted','discharge-pending') AND a.record_status<>'archived'`)
           .all(context.workspaceId, context.epoch, time))
         for (const bed of beds) {
           if (this.billing.record(context, { admissionId: bed.admission_id, organizationId: bed.organization_id, kind: 'bed', sourceId: bed.admission_id,
@@ -318,6 +340,7 @@ export class InpatientService {
       .get(context.workspaceId, context.epoch, bedId) !== undefined) throw new InpatientError('INPATIENT_BED_OCCUPIED', '床位已被占用')
   }
   applyTransfer(context: ActorContext, admissionId: string, target: {wardId:string;organizationId:string;bedId:string}, expectedVersion:string, time:string) {
+    this.assertNotArchived(context,admissionId)
     this.#endOccupancy(context,admissionId,time)
     this.#startOccupancy(context,admissionId,target.bedId,time)
     this.database.driver.prepare('UPDATE inpatient_admission SET ward_id=?,organization_id=? WHERE workspace_id=? AND epoch=? AND admission_id=?')

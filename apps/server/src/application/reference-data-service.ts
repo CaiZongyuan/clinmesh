@@ -287,6 +287,11 @@ export class ReferenceDataService {
     return concept?.status === 'active' ? concept : undefined
   }
 
+  /** 病案审核按确认时冻结的 Release 核验，不随当前启用目录切换。 */
+  diagnosisInRelease(releaseId:string, conceptId:string): ReferenceConcept | undefined {
+    return this.#reader?.conceptById?.(releaseId,'diagnosis',conceptId)
+  }
+
   laboratoryById(context: ActorContext, conceptId: string): ReferenceConcept | undefined {
     this.#assertCatalogReader(context)
     const release = this.#catalogRelease()

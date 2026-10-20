@@ -4,6 +4,8 @@
 
 临床申请使用 `clinical_request_context` 绑定门诊 case XOR 住院 admission，Workspace/Epoch 复合外键保证唯一真实 owner；旧申请的 `case_id` wire 字段与原 ID 保持不变。新门诊登记和住院登记在各自原 Command 事务创建 context，不由查询补写。`clinical_request_source` 只读投影门诊 materialization 或住院固定来源，正式资源仍使用 context 的本次 patient/encounter。0071迁移保真重建申请、检验/影像草稿与影像 study 的 owner 外键，保留请求、各专用明细、快照、报告修订/确认、回执和outbox；外键开关只在迁移事务外切换，失败回滚并恢复保护，提交前执行完整 foreign_key_check。动机见[住院检查与转科决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
 
+住院病案号按 Workspace/Epoch/Patient 持久分配，住院首页、编码审核与归档分别保存为 `inpatient_record_revision`、`inpatient_record_review`、`inpatient_record_archive` 的 append-only事实。复合外键绑定本次住院及明确修订，归档还绑定同住院审核；归档快照独立于当前Patient和活动目录。来源快照与canonical JSON hash随首页修订冻结，审核和归档在Command事务重新采集并比较，完整行为见[病案首页与归档](clinical-workflows.md#病案首页与归档)。
+
 ## 9. 数据架构
 
 ### 9.1 FHIR Resource Store

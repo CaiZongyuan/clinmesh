@@ -286,10 +286,10 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 
 ### 15.2 协议与业务
 
-- Better Auth 禁止公开注册，并幂等 seed 六个合成账户；Human 请求重新解析 Membership、Practitioner Role 和 active Workspace/Epoch。Agent 请求从短期 Capability Grant 重新解析同一 Actor context，原 token 不持久化。
+- Better Auth 禁止公开注册，并幂等 seed 九个合成账户；Human 请求重新解析 Membership、Practitioner Role 和 active Workspace/Epoch。Agent 请求从短期 Capability Grant 重新解析同一 Actor context，原 token 不持久化。
 - FHIR 固定 R5 `5.0.0`，当前资源只声明 read、vread、instance history 和 search-type；Search 白名单与负面保证见 [5.2 节](fhir-and-commands.md#52-只声明真实能力)。
 - `clinmesh` CLI 从 Catalog 生成全部 canonical HIS 命令和五个只读 FHIR 操作，提供离线 list/schema、JSON/table 输出、human profile、Agent Grant、结构化错误和 Command receipt 恢复；七个领域 Skills 与真实命令路径共同受测。
-- 五个岗位通过真实 API 推进同一个 Encounter。医生完成 Encounter 与药师完成 Scenario Run 是独立状态变化。
+- 门诊五个岗位通过真实 API 推进同一个 Encounter。医生完成 Encounter 与药师完成 Scenario Run 是独立状态变化。
 - 支付支持 success、declined 和 ambiguous；LIS 通过持久 outbox 推进独立检查申请的受理、执行和结构化报告签发，兼容收费检验仍只在支付成功后生成报告；药房只处理已签且成功支付的处方。
 - 结构化病历草稿使用 CAS 版本并可在 Web 恢复；独立签署不完成 Encounter。签署件不可普通覆盖，修订只能从最新版本创建新的 Composition、document Bundle、Provenance 和 Clinical Document Revision。
 - 诊断草稿使用受控目录和独立 CAS 版本；确认时恰有一个主诊断，并原子创建 Condition、更新 Encounter.diagnosis 和记录 Provenance。确认后仍可重新进入草稿，再次确认创建线性 revision 并保留旧 Condition 历史；既往 Condition 不进入本次诊断编辑状态。
@@ -305,6 +305,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 - DSH Web 可从统一 launcher 打开同一完整工作台，使用 Memory Router、ShadowRoot 和动态岗位 Tools；Agent 可执行读取、导航、选择、草稿和 preview，正式动作只进入 detached 人工审阅。
 - `clinmesh` CLI 通过 Operation Catalog、单岗位 Capability Grant 和领域 Skills 开放当前 Query、Command 与只读 FHIR 能力。
 - 首期不包含 Desktop/Mobile 产品行为、模型 runner、AG-UI Gateway/MCP、自治 Agent、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。
+- 住院提供登记入科、床位、医嘱校对与执行、药房发药与给药、检查检验送检报告、转科、手术实际事实、逐项费用、出区结算清床与召回、病案首页核心字段编码审核归档；范围及固定编码来源限制见[住院闭环](clinical-workflows.md#82-住院闭环)。
 - 当前没有 FHIR generic write、自定义 FHIR Operation、正式 Profile/IG、官方 Validator、标准 compartment、metrics exporter 或公开在线 SLA。
 
 ## 16. 关键风险与缓解
@@ -356,7 +357,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 - 一个 Encounter 贯穿首期门诊；独立结构化病历签署与 Encounter 完成是不同事实，首期复诊兼容流仍可组合处理，发药只完成 Scenario Run。
 - 挂号原子创建 Registration、Encounter、Queue Task、Account 和挂号 Charge Item；Prescription 稳定关联 MedicationRequest、费用、支付和发药。
 - 医生接诊统一使用具有固定患者档案的 Synthetic Case；挂号与分诊提供接诊上下文。
-- 五个人类岗位可以通过 Web/API、单岗位任务 Agent 可以通过 CLI 完成由 Synthetic Case 直接开始的 Scenario；生成库、来源历史和全局目录查询满足分页与交互基线。
+- 门诊五岗及住院医生、病区护士、病案人员可以通过 Web/API、单岗位任务 Agent 可以通过 CLI 完成由 Synthetic Case 直接开始的 Scenario；生成库、来源历史和全局目录查询满足分页与交互基线。
 - standalone Web 与 DSH React Surface 复用同一 Web application；DSH 原生 Session 只能获得当前岗位/view 的窄 Tools，正式业务 Effect 需要人类审阅并可关联 Tool、proposal、review、Command、Audit 与 Trace。
 - `clinmesh` CLI 由同一 Operation Catalog 生成命令树，Capability Grant 绑定单一 Practitioner Role、Workspace/Epoch、Scenario Run、policy version 和真实过期时间。
 - Node.js 服务重启后从同一 SQLite 文件恢复；备份/恢复验证 schema、integrity 与 canonical state hash。

@@ -113,7 +113,8 @@ export class InpatientOrders {
     const input = inpatientOrderIssueInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.order.issue',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => this.owner.assertRole(context, ['inpatient-doctor']) }, () => {
+      authorize: () => { this.owner.assertRole(context, ['inpatient-doctor']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.assertAdmitted(context, input.admissionId)
       if (input.surgeryExecutionId !== undefined) this.owner.surgery.assertExecution(context, admission.id, input.surgeryExecutionId)
       const selection = input.selection, catalog = this.catalog(context)
@@ -174,7 +175,8 @@ export class InpatientOrders {
   action(context: ActorContext, raw: unknown, idempotencyKey: string, action: 'verify' | 'request-stop' | 'verify-stop') {
     const input = (action === 'request-stop' ? inpatientOrderReasonInputSchema : inpatientOrderActionInputSchema).parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: `inpatient.order.${action}`, expectedVersions: {},
-      dataSchema: inpatientFullClinicalResponseSchema.shape.data, authorize: () => this.owner.assertRole(context, action === 'request-stop' ? ['inpatient-doctor'] : ['ward-nurse']) }, () => {
+      dataSchema: inpatientFullClinicalResponseSchema.shape.data, authorize: () => { this.owner.assertRole(context, action === 'request-stop' ? ['inpatient-doctor'] : ['ward-nurse']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       if (action === 'verify') this.assertAdmitted(context, input.admissionId)
       else {
         const admission = this.owner.admissionBinding(context, input.admissionId)
@@ -209,6 +211,7 @@ export class InpatientOrders {
     })
   }
   createExecution(context: ActorContext, order: OrderRow, time: string, reason: string | undefined, effects: Effects) {
+    this.owner.assertNotArchived(context,order.admission_id)
     if (this.owner.database.driver.prepare('SELECT 1 FROM inpatient_execution WHERE workspace_id=? AND epoch=? AND order_id=? AND scheduled_for=?').get(context.workspaceId, context.epoch, order.order_id, time)) return
     const id = uuidv7()
     this.owner.database.driver.prepare("INSERT INTO inpatient_execution(workspace_id,epoch,execution_id,order_id,scheduled_for,status,reason) VALUES(?,?,?,?,?,'pending',?)").run(context.workspaceId, context.epoch, id, order.order_id, time, reason ?? null)
@@ -243,7 +246,8 @@ export class InpatientOrders {
   dispense(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientDispenseInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.execution.dispense', expectedVersions: {}, dataSchema: inpatientPharmacyResponseSchema.shape.data,
-      authorize: () => this.owner.assertRole(context, ['pharmacist']) }, transaction => {
+      authorize: () => { this.owner.assertRole(context, ['pharmacist']); this.owner.admissionBinding(context,input.admissionId) } }, transaction => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.assertAdmitted(context, input.admissionId), execution = this.execution(context, admission.id, input.executionId), order = this.order(context, admission.id, execution.order_id)
       if (order.kind !== 'medication' || order.state !== 'verified' || execution.status !== 'pending' || execution.version !== input.expectedExecutionVersion) throw new InpatientError('INPATIENT_EXECUTION_CONFLICT', '医嘱未校对、已停嘱或执行单版本已变化')
       if (!context.locationId || new Set(input.lotSelections.map(lot => lot.lotId)).size !== input.lotSelections.length || input.lotSelections.reduce((sum,lot) => sum + lot.quantity, 0) !== order.dose_quantity) throw new InpatientError('INPATIENT_DISPENSE_CONFLICT', '发药批次不能重复，合计必须等于本次所需片数')
@@ -274,7 +278,8 @@ export class InpatientOrders {
   administer(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientExecutionActionInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.execution.administer', expectedVersions: {}, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => this.owner.assertRole(context, ['ward-nurse']) }, () => {
+      authorize: () => { this.owner.assertRole(context, ['ward-nurse']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.assertAdmitted(context, input.admissionId), execution = this.execution(context, admission.id, input.executionId), order = this.order(context, admission.id, execution.order_id), now = this.owner.virtualTime(context)
       if (order.kind !== 'medication' || order.state !== 'verified' || execution.status !== 'dispensed' || execution.version !== input.expectedExecutionVersion || Date.parse(execution.scheduled_for) > Date.parse(now)) throw new InpatientError('INPATIENT_EXECUTION_CONFLICT', '给药须引用已校对、已发药且到期的有效执行单')
       const supplies = this.facts(context, admission.id).dispenses.filter(item => item.executionId === execution.execution_id)
@@ -293,7 +298,8 @@ export class InpatientOrders {
   completeService(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientExecutionActionInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.execution.complete', expectedVersions: {}, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => this.owner.assertRole(context, ['ward-nurse']) }, () => {
+      authorize: () => { this.owner.assertRole(context, ['ward-nurse']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.assertAdmitted(context, input.admissionId), execution = this.execution(context, admission.id, input.executionId), order = this.order(context, admission.id, execution.order_id), now = this.owner.virtualTime(context)
       if (order.kind !== 'service' || order.state !== 'verified' || execution.status !== 'pending' || execution.version !== input.expectedExecutionVersion || Date.parse(execution.scheduled_for) > Date.parse(now)) throw new InpatientError('INPATIENT_EXECUTION_CONFLICT', '服务须引用已校对且到期的有效执行单')
       const effects: Effects = []
@@ -306,7 +312,8 @@ export class InpatientOrders {
   reverseCharge(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientChargeReverseInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.charge.reverse', expectedVersions: {}, dataSchema: inpatientChargesResponseSchema.shape.data,
-      authorize: () => this.owner.assertRole(context, ['cashier']) }, () => {
+      authorize: () => { this.owner.assertRole(context, ['cashier']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.owner.detail(context, input.admissionId).admission
       const charge = this.chargeFacts(context, admission.id).charges.find(item => item.id === input.chargeId)
       if (admission.financialStatus !== 'open' || !charge || charge.version !== input.expectedChargeVersion || charge.reversalOf !== undefined
@@ -323,7 +330,8 @@ export class InpatientOrders {
   requestPrn(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientOrderReasonInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.execution.request-prn', expectedVersions: {}, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => this.owner.assertRole(context, ['ward-nurse']) }, () => {
+      authorize: () => { this.owner.assertRole(context, ['ward-nurse']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       this.assertAdmitted(context, input.admissionId)
       const order = this.order(context, input.admissionId, input.orderId), now = this.owner.virtualTime(context)
       if (order.state !== 'verified' || order.frequency_code !== 'PRN' || order.version !== input.expectedOrderVersion) throw new InpatientError('INPATIENT_ORDER_CONFLICT', 'PRN任务须引用已校对的有效医嘱')
@@ -343,7 +351,7 @@ export class InpatientOrders {
   }
   applyDueExecutions(context: ActorContext, from: string, through: string, effects: Effects) {
     const orders = z.array(orderRowSchema).parse(this.owner.database.driver.prepare(`SELECT o.* FROM inpatient_order o JOIN inpatient_admission a
-      ON a.workspace_id=o.workspace_id AND a.epoch=o.epoch AND a.admission_id=o.admission_id WHERE o.workspace_id=? AND o.epoch=? AND o.state='verified' AND a.status='admitted'`).all(context.workspaceId, context.epoch))
+      ON a.workspace_id=o.workspace_id AND a.epoch=o.epoch AND a.admission_id=o.admission_id WHERE o.workspace_id=? AND o.epoch=? AND o.state='verified' AND a.status='admitted' AND a.record_status<>'archived'`).all(context.workspaceId, context.epoch))
     for (const order of orders) this.expandOrder(context, order, from, through, effects)
   }
   diagnosis(context: ActorContext, admissionId: string) {
@@ -364,9 +372,10 @@ export class InpatientOrders {
     const input = inpatientDiagnosisConfirmInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.diagnosis.confirm',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
-      authorize: () => this.owner.assertRole(context, ['inpatient-doctor']) }, () => {
+      authorize: () => { this.owner.assertRole(context, ['inpatient-doctor']); this.owner.admissionBinding(context,input.admissionId) } }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.owner.detail(context, input.admissionId).admission
-      if (admission.status !== 'admitted') throw new InpatientError('INPATIENT_STATE_CONFLICT', '仅在院患者可以确认诊断')
+      if (!['admitted','discharge-pending','departed','cleared'].includes(admission.status)) throw new InpatientError('INPATIENT_STATE_CONFLICT', '尚未入科，不能确认诊断')
       const previous = this.diagnosis(context, input.admissionId)
       if (previous.revision !== input.expectedRevision) throw new InpatientError('INPATIENT_DIAGNOSIS_CONFLICT', '诊断确认版本已变化')
       const catalog = this.catalog(context).diagnoses

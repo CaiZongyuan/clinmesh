@@ -64,6 +64,7 @@ export class InpatientSurgery {
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.request',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientSurgerySchema,
       authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.owner.orders.assertAdmitted(context, input.admissionId), now = this.owner.virtualTime(context)
       if (Date.parse(input.plannedFor) < Date.parse(now)) throw new InpatientError('INPATIENT_SURGERY_TIME_CONFLICT', '计划手术时间不能早于当前虚拟时间')
       const item = this.procedure(context, input.procedureId, input.catalogVersion), id = uuidv7()
@@ -79,6 +80,7 @@ export class InpatientSurgery {
     const input = inpatientSurgeryActionInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: `inpatient.surgery.${action}`, expectedVersions: {}, dataSchema: inpatientSurgerySchema,
       authorize: () => this.authorize(context, input.admissionId, action === 'check-preop' ? ['ward-nurse'] : ['inpatient-doctor']) }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       this.owner.orders.assertAdmitted(context, input.admissionId)
       const row = this.currentRequest(context, input)
       const column = action === 'check-preop' ? 'preop_check_json' : action === 'confirm-consent' ? 'consent_confirmation_json' : 'cancellation_json'
@@ -96,6 +98,7 @@ export class InpatientSurgery {
     const input = inpatientSurgeryExecuteInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.surgery.execute', expectedVersions: {}, dataSchema: inpatientSurgerySchema,
       authorize: () => this.authorize(context, input.admissionId, ['inpatient-doctor']) }, () => {
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.owner.orders.assertAdmitted(context, input.admissionId), row = this.currentRequest(context, input)
       if (row.status !== 'ready' || row.preop_check_json === null || row.consent_confirmation_json === null) throw new InpatientError('INPATIENT_SURGERY_NOT_READY', '术前检查核对与已签署知情同意确认均须完成')
       const actual = this.procedure(context, input.procedureId, input.catalogVersion), catalog = this.catalog(context)
