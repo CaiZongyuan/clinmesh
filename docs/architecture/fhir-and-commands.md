@@ -44,7 +44,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 - `GET /fhir/R5/{ResourceType}/{id}/_history`
 - `GET /fhir/R5/{ResourceType}?search-params`
 
-资源能力注册表中的每种资源只声明 `read`、`vread`、`history-instance` 和 `search-type`。当前注册 Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense、Composition、Bundle、Provenance、InventoryItem、AuditEvent 和 ImagingStudy。
+资源能力注册表中的每种资源只声明 `read`、`vread`、`history-instance` 和 `search-type`。当前注册 Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense、MedicationAdministration、Composition、Bundle、Provenance、InventoryItem、AuditEvent 和 ImagingStudy。
 
 逐资源 SearchParameter 白名单见 [5.5 节](fhir-and-commands.md#55-fhir-search-最小实现)。所有资源共享 `_count`、`_cursor` 和 `_total=none|accurate` 三个结果控制参数。
 
@@ -214,10 +214,11 @@ Simulator 对每个冻结报告叶子先复用编码、值类型和单位兼容�
 
 - Patient `name`：NFKC 归一化、小写化后的前缀匹配。
 - Patient `identifier`：归一化后的精确匹配。
-- `patient` 精确引用匹配：AllergyIntolerance、Condition、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、MedicationRequest、MedicationDispense、Composition 和 ImagingStudy。
-- `encounter` 精确引用匹配：Condition、ChargeItem、Observation、ServiceRequest、DiagnosticReport、MedicationRequest、MedicationDispense、Composition 和 ImagingStudy。
-- Task `focus`：接受 Encounter 或 ServiceRequest 引用。
+- `patient` 精确引用匹配：AllergyIntolerance、Condition、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、MedicationRequest、MedicationDispense、MedicationAdministration、Composition 和 ImagingStudy。
+- `encounter` 精确引用匹配：Condition、ChargeItem、Observation、ServiceRequest、DiagnosticReport、MedicationRequest、MedicationDispense、MedicationAdministration、Composition 和 ImagingStudy。
+- Task `focus`：接受 Encounter、ServiceRequest 或 MedicationRequest 引用。
 - MedicationDispense `prescription`：只接受 MedicationRequest 引用。
+- MedicationAdministration `request`：只接受 MedicationRequest 引用；`patient` 与 `encounter` 分别索引 subject、encounter。R5 5.0.0 正式字段为 `occurenceDateTime`，medication 与 performer.actor 使用 CodeableReference；partOf 引用本次实际 MedicationDispense。
 - Provenance `target`：接受 Bundle、Composition、Condition、DiagnosticReport、Encounter、Observation、ServiceRequest、Specimen 或 Task 引用。
 
 reference 参数只索引本地相对引用。资源写入时 Repository 按 registry 中的路径和 target 校验引用格式、目标资源类型以及当前 Workspace/Epoch 中的目标存在性；任一引用失败会使包含它的 Command 整体回滚。

@@ -50,13 +50,13 @@ export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceP
     session.actor.roleCode === 'cashier'
     && activeSection === 'billing'
   ) {
-    return <BillingWorkspace locale={locale} session={session} />
+    return <Tabs defaultValue="outpatient" className="flex min-h-0 flex-1 flex-col"><TabsList className="m-4 mb-0"><TabsTrigger value="outpatient">{locale==='zh-CN'?'门诊收费':'Outpatient billing'}</TabsTrigger><TabsTrigger value="inpatient">{locale==='zh-CN'?'住院费用':'Inpatient charges'}</TabsTrigger></TabsList><TabsContent value="outpatient" className="flex min-h-0 flex-1"><BillingWorkspace locale={locale} session={session} /></TabsContent><TabsContent value="inpatient" className="flex min-h-0 flex-1"><InpatientWorkspace locale={locale} session={session} /></TabsContent></Tabs>
   }
   if (
     session.actor.roleCode === 'pharmacist'
     && activeSection === 'pharmacy'
   ) {
-    return <PharmacyWorkspace locale={locale} session={session} />
+    return <Tabs defaultValue="outpatient" className="flex min-h-0 flex-1 flex-col"><TabsList className="m-4 mb-0"><TabsTrigger value="outpatient">{locale==='zh-CN'?'门诊药房':'Outpatient pharmacy'}</TabsTrigger><TabsTrigger value="inpatient">{locale==='zh-CN'?'住院药房':'Inpatient pharmacy'}</TabsTrigger></TabsList><TabsContent value="outpatient" className="flex min-h-0 flex-1"><PharmacyWorkspace locale={locale} session={session} /></TabsContent><TabsContent value="inpatient" className="flex min-h-0 flex-1"><InpatientWorkspace locale={locale} session={session} /></TabsContent></Tabs>
   }
   return <div />
 }

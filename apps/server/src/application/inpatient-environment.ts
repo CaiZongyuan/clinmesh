@@ -1,8 +1,25 @@
+import type { createHospitalBaseline } from './scenario-data/hospital-baseline.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 import { syntheticAccounts } from './identity-service.ts'
 
-export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirRepository, context: RepositoryContext) {
+export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirRepository, context: RepositoryContext, medications: ReturnType<typeof createHospitalBaseline>['catalog']['medications']) {
+  for (const medication of medications) {
+    database.driver.prepare(`UPDATE outpatient_catalog SET config_json=json_set(config_json,
+      '$.availableScopes',json('["outpatient","inpatient"]'),'$.unit',?,'$.inpatientDoses',json(?),'$.inpatientBillingTrigger','dispense')
+      WHERE workspace_id=? AND epoch=? AND item_id=? AND json_type(config_json,'$.inpatientDoses') IS NULL`)
+      .run(medication.unit, JSON.stringify([{ doseText: medication.defaultDose, quantity: 1 }]), context.workspaceId, context.epoch, medication.id)
+  }
+  // 合成本院有界规则；编码身份取自锁定临床版，不据此宣称通用临床适应症。
+  for (const [medicationId, code, row] of [['medication-amlodipine','I10.x09',12457],['medication-metformin','E11.900',7261],['medication-acetaminophen','R50.900',27266]] as const) {
+    database.driver.prepare(`UPDATE outpatient_catalog SET config_json=json_set(config_json,'$.inpatientIndications',json(?))
+      WHERE workspace_id=? AND epoch=? AND item_id=? AND json_type(config_json,'$.inpatientIndications') IS NULL`).run(JSON.stringify([{ id: `nhsa-diagnosis:nhc-icd10-clinical@2022.r4:${code}`,
+        system: 'urn:clinmesh:reference:nhsa-diagnosis', version: '2022', code, sourceLocator: `cn-health:nhc-icd10-clinical@2022.r4:diagnosis:${row}` }]), context.workspaceId, context.epoch, medicationId)
+  }
+  database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_set(config_json,
+    '$.availableScopes',json('["outpatient","inpatient"]'),'$.inpatientBillingTrigger','execution')
+    WHERE workspace_id=? AND epoch=? AND service_id='hospital-service-diabetes-education' AND json_type(config_json,'$.inpatientBillingTrigger') IS NULL`)
+    .run(context.workspaceId, context.epoch)
   const exists = (type: string, id: string) => database.driver.prepare(`
     SELECT 1 FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=? AND deleted=0`)
     .get(context.workspaceId, context.epoch, type, id) !== undefined

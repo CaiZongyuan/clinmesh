@@ -11,6 +11,7 @@
     "./doctor-recommendations": "./src/doctor-recommendations.ts",
     "./his": "./src/his.ts",
     "./inpatient": "./src/inpatient.ts",
+    "./inpatient-clinical": "./src/inpatient-clinical.ts",
     "./his-operations": "./src/his-operations.ts",
     "./imaging": "./src/imaging.ts",
     "./pathology": "./src/pathology.ts",

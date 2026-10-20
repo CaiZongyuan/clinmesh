@@ -1,3 +1,6 @@
+import type { ReferenceDataService } from './reference-data-service.ts'
+import { InpatientBilling } from './inpatient-billing.ts'
+import { InpatientOrders } from './inpatient-orders.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import {
@@ -26,9 +29,13 @@ const clinicalRoles = ['inpatient-doctor', 'ward-nurse']
 const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'pharmacist']
 
 export class InpatientService {
+  readonly billing: InpatientBilling
+  readonly orders: InpatientOrders
   readonly #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor) {
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService) {
     this.#workspaces = new WorkspaceRepository(database)
+    this.billing = new InpatientBilling(database, fhir)
+    this.orders = new InpatientOrders(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
@@ -268,21 +275,11 @@ export class InpatientService {
           WHERE o.workspace_id=? AND o.epoch=? AND julianday(o.started_at)<julianday(?) AND o.ended_at IS NULL AND a.status='admitted'`)
           .all(context.workspaceId, context.epoch, time))
         for (const bed of beds) {
-          const id = uuidv7()
-          const inserted = this.database.driver.prepare(`INSERT INTO inpatient_charge
-            (workspace_id,epoch,charge_id,admission_id,organization_id,kind,source_id,service_date,amount_fen,virtual_time)
-            VALUES (?, ?, ?, ?, ?, 'bed', ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
-            .run(context.workspaceId, context.epoch, id, bed.admission_id, bed.organization_id, bed.admission_id, date, bed.daily_price_fen, time)
-          if (inserted.changes === 0) continue
-          const charge = this.fhir.create(context, { resourceType: 'ChargeItem', id, status: 'billable',
-            code: { text: '住院床位费', coding: [{ system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/inpatient-charge', code: 'bed-day' }] },
-            subject: { reference: `Patient/${bed.patient_id}` }, encounter: { reference: `Encounter/${bed.admission_id}` },
-            account: [{ reference: `Account/${bed.admission_id}` }], occurrenceDateTime: time,
-            totalPriceComponent: { amount: { value: bed.daily_price_fen / 100, currency: 'CNY' } } })
-          effects.push({ kind: 'created', reference: `ChargeItem/${charge.id}`, versionId: charge.meta!.versionId! })
-          count += 1
+          if (this.billing.record(context, { admissionId: bed.admission_id, organizationId: bed.organization_id, kind: 'bed', sourceId: bed.admission_id,
+            serviceDate: date, amountFen: bed.daily_price_fen, virtualTime: time, label: '住院床位费' }, effects)) count += 1
         }
       }
+      this.orders.applyDueExecutions(context, current, new Date(targetMs).toISOString(), effects)
       const clock = z.object({ clock_revision: z.number().int().positive() }).parse(
         this.database.driver.prepare(`UPDATE scenario_epoch_state
           SET virtual_time=?, clock_revision=clock_revision+? WHERE workspace_id=? AND epoch=? RETURNING clock_revision`)
