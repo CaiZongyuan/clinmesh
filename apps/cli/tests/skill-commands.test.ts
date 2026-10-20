@@ -420,3 +420,24 @@ describe('ClinMesh CLI Agent Skills', () => {
     )).toThrow('Operation does not create a Command receipt: patient.search')
   })
 })
+
+it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id, role] of [
+    ['request-surgery','request','inpatient-doctor'], ['check-surgery-preop','check-preop','ward-nurse'],
+    ['confirm-surgery-consent','confirm-consent','inpatient-doctor'], ['execute-surgery','execute','inpatient-doctor'], ['cancel-surgery','cancel','inpatient-doctor'],
+  ] as const) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!
+    const operation = inspectExample(program, line).operation!
+    expect(operation.id).toBe(`inpatient.surgery.${id}`)
+    expect(operation.roles).toEqual([role])
+    expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+  }
+  const executionExample = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][2]
+  expect(executionExample).toBeDefined()
+  expect(getHisOperation('inpatient.surgery.execute').input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
+  expect(getHisOperation('inpatient.order.issue').version).toBe(2)
+  expect(skill).toContain('surgeryExecutionId')
+  expect(skill).toContain('inpatient.surgery.execute')
+})

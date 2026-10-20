@@ -1,3 +1,4 @@
+import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientDiagnosisConfirmInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientChargeReverseInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { z } from 'zod'
 import { sessionContextSchema, type SessionContext } from '@clinmesh/contracts/his'
@@ -24,6 +25,11 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.execution.administer'), input: inpatientExecutionActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.execution.complete'), input: inpatientExecutionActionInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.charge.reverse'), input: inpatientChargeReverseInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.surgery.request'), input: inpatientSurgeryRequestInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.surgery.check-preop'), input: inpatientSurgeryActionInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.surgery.confirm-consent'), input: inpatientSurgeryActionInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.surgery.cancel'), input: inpatientSurgeryActionInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.surgery.execute'), input: inpatientSurgeryExecuteInputSchema }).strict(),
   z.object({ operation: z.literal('scenario.advance-time'), input: advanceVirtualTimeInputSchema }).strict(),
 ])
 const bindingSchema = z.object({ accountId: z.string().min(1), actor: sessionContextSchema.shape.actor.strict() }).strict()

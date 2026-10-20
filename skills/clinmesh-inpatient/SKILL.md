@@ -1,6 +1,6 @@
 ---
 name: clinmesh-inpatient
-description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药和费用冲正 CLI 工作流。用于登记员、负责门诊医生、住院医生、病区护士及病案、药师与收费岗位的住院事实读取与已授权操作。
+description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药、手术最小闭环和费用冲正 CLI 工作流。用于登记员、负责门诊医生、住院医生、病区护士及病案、药师与收费岗位的住院事实读取与已授权操作。
 ---
 
 # ClinMesh 住院
@@ -99,3 +99,42 @@ clinmesh command receipt get --operation-id inpatient.charge.reverse --idempoten
 药师按实际执行单发药，传 `executionId`、`expectedExecutionVersion` 和各 `lotId/expectedVersion/quantity`；合计必须等于一次执行所需数量。server 原子扣共享库存并形成 MedicationDispense；护士给药仍要单独提交执行单 ID与版本，形成引用医嘱和实际发药的 MedicationAdministration。未校对、未发药或尚未到期不能给药。通用服务完成只覆盖目录声明的健康教育，不替代检验或影像执行。
 
 停嘱申请立即冻结新的任务、发药与给药；护士核停将尚未执行及已发未给的任务明确取消，保留历史发药、给药、费用与库存，不自动退药。收费员冲正传原 `chargeId`、`expectedChargeVersion` 与理由；反向账项关联原费用，不能传任意金额，已结算、已冲正或对冲正再冲正均拒绝。结果未知时先查询原 operation 的 receipt，保持原完整输入及原幂等键，不因刷新得到新版本而重写旧意图。
+
+## 手术计划、准备与实际实施
+
+```bash
+clinmesh inpatient surgery-catalog
+clinmesh inpatient surgeries --admission-id <admission-id>
+clinmesh inpatient request-surgery --input @surgery-request.json --idempotency-key <key>
+clinmesh inpatient check-surgery-preop --input @surgery-preparation.json --idempotency-key <key>
+clinmesh inpatient confirm-surgery-consent --input @surgery-preparation.json --idempotency-key <key>
+clinmesh inpatient execute-surgery --input @surgery-execution.json --idempotency-key <key>
+clinmesh inpatient cancel-surgery --input @surgery-preparation.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.surgery.execute --idempotency-key <key>
+```
+
+住院医生申请传本次 `admissionId/encounterVersion`、目录 `procedureId/catalogVersion`、不早于当前虚拟时间的 `plannedFor` 和 `reason`。计划只创建 ServiceRequest，不产生已实施事实或费用，场景推进也不自动执行。目录是临床版 ICD-9-CM-3 工作表3.0的固定八条来源摘录，保留前导零、点和扩展后缀、类别、项目摘录Release与来源定位；不是全量、最新版或医保版目录。院内收费ID与临床分类码分开，价格明确为合成演示价，不得将分类编码当成收费项目ID提交。
+
+护士以 `check-surgery-preop` 记录术前检查核对，医生以 `confirm-surgery-consent` 记录对已签署知情同意书的确认；这是可审计的确认事实，不提供真实电子签名。两个动作与取消均传 `requestId/expectedRequestVersion/note`，两项准备均完成才能执行。准备和执行按当前住院科室及病区责任授权，原申请作者身份不会阻止合法接管。
+
+执行传 `admissionId/requestId/expectedRequestVersion`、实际 `procedureId/catalogVersion`、`note` 和 `materials`；耗材每项为 `materialId/catalogVersion/quantity`，未使用时显式空数组。实际术式可以不同于申请，server 按实际目录冻结手术及耗材价格，原子保存唯一 Procedure、用料、逐项账项与审计。不得传任意收费金额，不推断未记录耗材或手术；已实施不能取消删除，账项更正走收费员原费用关联冲正。未实施未取消申请阻断出院。
+
+术后医嘱仍使用 `issue-order`（operation v2），附可选 `surgeryExecutionId`；只能引用 `surgeries.executions` 中本次住院实际完成的 ID，申请ID、已取消计划、既往史及其他住院实施ID均拒绝。医嘱继续原护士校对、药师发药和护士给药流程，不因术后关联而自动执行。结果未知时保持原输入、原版本和同一key，先查 `inpatient.surgery.execute` 原receipt，不能刷新版本换key重复实施或计费。
+
+`surgery-execution.json` 合成示例；首次提交前以本次读取的申请、版本、实际术式及实际用量替换，恢复时保持原文件不变：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "requestId": "synthetic-surgery-request",
+  "expectedRequestVersion": 3,
+  "procedureId": "hospital-surgery-5",
+  "catalogVersion": 1,
+  "note": "合成示教实际实施记录",
+  "materials": [{
+    "materialId": "hospital-material-suture",
+    "catalogVersion": 1,
+    "quantity": 2
+  }]
+}
+```

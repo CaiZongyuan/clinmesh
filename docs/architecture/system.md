@@ -11,7 +11,7 @@
 
 ## 0. 执行摘要
 
-本系统不是生产医院信息平台，也不是完整 FHIR Server 产品。它用可重复、可审计的合成医院场景，让人类岗位通过 standalone Web 或 DSH React Surface、交互式 Agent 通过 DSH 页面 Tools、任务 Agent 通过 CLI 完成同一业务交接。当前发布证明多岗位普通门诊发热闭环、住院建档与入科、DSH Surface adapter、Agent CLI 和支撑这些能力的基础设施；Agent adapter 只开放已经实现的业务能力。
+本系统不是生产医院信息平台，也不是完整 FHIR Server 产品。它用可重复、可审计的合成医院场景，让人类岗位通过 standalone Web 或 DSH React Surface、交互式 Agent 通过 DSH 页面 Tools、任务 Agent 通过 CLI 完成同一业务交接。当前发布证明多岗位普通门诊发热闭环、住院建档、医嘱执行与手术最小闭环、DSH Surface adapter、Agent CLI 和支撑这些能力的基础设施；Agent adapter 只开放已经实现的业务能力。
 
 首期是一个运行于 Node.js 的 TypeScript 模块化单体：
 
@@ -245,7 +245,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 └── .agents/                 # skills 与 Agent Notes
 ```
 
-跨端包职责和未来 Mobile 共享限制见[跨端前端架构](../frontend-architecture.md)。当前 Server 以少量深模块组织：`IdentityService` 解析受信 Actor context，`ScenarioService` 拥有 Epoch 转换，`WorkflowService` 拥有首期门诊状态流，`CommandExecutor` 统一事务/幂等/审计，`AgentIntegrationService` 拥有 Page Context 与 Tool/proposal/review 关联，FHIR/Workspace/Outbox Repository 封装 SQLite 读写。Insurance、住院、完整库存、IG 和外部 Scenario package 在进入实际范围时再增加。
+跨端包职责和未来 Mobile 共享限制见[跨端前端架构](../frontend-architecture.md)。当前 Server 以少量深模块组织：`IdentityService` 解析受信 Actor context，`ScenarioService` 拥有 Epoch 转换，`WorkflowService` 拥有首期门诊状态流，`InpatientService` 拥有已交付的住院事实，`CommandExecutor` 统一事务/幂等/审计，`AgentIntegrationService` 拥有 Page Context 与 Tool/proposal/review 关联，FHIR/Workspace/Outbox Repository 封装 SQLite 读写。Insurance、完整库存、IG 和外部 Scenario package 在进入实际范围时再增加。
 
 依赖规则：
 
@@ -300,7 +300,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 
 ### 15.3 Web 与明确边界
 
-- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员以模拟数据为唯一岗位首页，可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、查看本次病例真值、直接开始病例，并在确认影响范围后重置。检验目录默认自动启用 laboratory-cn，Web 不提供手动选择发布或标准/密集数据载入入口；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
+- Web 提供挂号员、分诊护士、门诊医生、住院医生、病区护士、病案人员、收费员、药师和管理员入口；管理员以模拟数据为唯一岗位首页，可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、查看本次病例真值、直接开始病例，并在确认影响范围后重置。检验目录默认自动启用 laboratory-cn，Web 不提供手动选择发布或标准/密集数据载入入口；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
 - 可见字符串具有中文和英文 catalog；独立 Web 主题支持 system、light 与 dark，DSH Surface 始终跟随宿主主题。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - DSH Web 可从统一 launcher 打开同一完整工作台，使用 Memory Router、ShadowRoot 和动态岗位 Tools；Agent 可执行读取、导航、选择、草稿和 preview，正式动作只进入 detached 人工审阅。
 - `clinmesh` CLI 通过 Operation Catalog、单岗位 Capability Grant 和领域 Skills 开放当前 Query、Command 与只读 FHIR 能力。
@@ -331,7 +331,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 
 以下边界已经确认，需求变化必须重新经过 design gate 并更新 canonical spec：
 
-1. 产品界面交付 Web 普通门诊发热闭环与住院建档入科，同时提供 Agent CLI；不开发 Desktop 或 React Native Mobile 产品行为。
+1. 产品界面交付 Web 普通门诊发热闭环及住院建档、医嘱执行与手术最小闭环，同时提供 Agent CLI；不开发 Desktop 或 React Native Mobile 产品行为。
 2. 人类岗位为挂号员、分诊护士、门诊医生、收费员和药师；LIS 是系统 Actor，只有管理员能 reset Scenario。
 3. 一个 Encounter 贯穿挂号、分诊、首诊、检验和复诊；独立结构化病历签署不改变 Encounter，带 Consultation 的病例通过正式临床事实门禁完诊，首期复诊兼容流只在没有结构化签署根文书时组合签署与完诊；发药完成 Scenario Run。
 4. 首期使用单 Node.js 进程和 file-backed SQLite；D1、PostgreSQL 与 Supabase 只保留未来 adapter 迁移方向。

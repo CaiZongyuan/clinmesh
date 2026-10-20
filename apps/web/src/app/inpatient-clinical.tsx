@@ -1,3 +1,5 @@
+import { InpatientSurgery } from './inpatient-surgery.tsx'
+import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { InpatientChargeList } from './inpatient-charges.tsx'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -24,14 +26,15 @@ export function InpatientClinical({ admission, session, locale, write }: { admis
   const catalog = useQuery({ queryKey: [...scope,'clinical-catalog'], enabled: doctor || nurse, queryFn: ({signal}) => apiGet('/api/his/v1/inpatient/clinical-catalog',inpatientFullCatalogSchema,signal) })
   const [itemId,setItemId] = useState<string|null>(null), [duration,setDuration] = useState<'long'|'temporary'>('long')
   const [frequency,setFrequency] = useState<'QD'|'BID'|'PRN'|null>(null), [dose,setDose] = useState<string|null>(null)
-  const [reason,setReason] = useState('')
+  const [reason,setReason] = useState(''), [surgeryId,setSurgeryId] = useState<string|null>(null)
+  const surgery = useQuery({ queryKey: [...scope,admission.id,'surgeries'], enabled: doctor, queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`,inpatientSurgerySchema,signal) })
   const medication = catalog.data?.medications.find(item => item.id === itemId), service = catalog.data?.services.find(item => item.id === itemId)
   const selectedDose = medication?.doses.find(item => item.doseText === dose) ?? medication?.doses[0]
   const selectedFrequency = frequency !== null && medication?.frequencyCodes.includes(frequency) ? frequency : medication?.frequencyCodes[0]
   const data = clinical.data, blocked = write.blocked || admission.status !== 'admitted'
   const issue = () => {
     if (!data) return
-    const common={admissionId:admission.id,encounterVersion:data.encounterVersion,duration}
+    const common={admissionId:admission.id,encounterVersion:data.encounterVersion,duration,...(surgeryId ? {surgeryExecutionId:surgeryId} : {})}
     if (medication && selectedDose && selectedFrequency) write.mutation.mutate({operation:'inpatient.order.issue',input:{...common,selection:{kind:'medication',catalogItemId:medication.id,catalogVersion:medication.version,doseText:selectedDose.doseText,doseQuantity:selectedDose.quantity,frequencyCode:selectedFrequency}}})
     else if(service) write.mutation.mutate({operation:'inpatient.order.issue',input:{...common,selection:{kind:'service',serviceId:service.id,serviceVersion:service.version,quantity:1}}})
   }
@@ -47,11 +50,13 @@ export function InpatientClinical({ admission, session, locale, write }: { admis
       <Field><FieldLabel htmlFor="inpatient-order-duration">{t('医嘱时效','Order duration')}</FieldLabel><WorkspaceSelect id="inpatient-order-duration" value={duration} items={[{value:'long',label:t('长期','Long')},{value:'temporary',label:t('临时','Temporary')}]} onValueChange={value=>{if(value)setDuration(value)}} /></Field>
       {medication ? <><Field><FieldLabel htmlFor="inpatient-order-dose">{t('每次剂量','Dose per execution')}</FieldLabel><WorkspaceSelect id="inpatient-order-dose" value={selectedDose?.doseText??null} items={medication.doses.map(item=>({value:item.doseText,label:`${item.doseText} · ${item.quantity}${medication.unit}`}))} onValueChange={setDose} /></Field>
       <Field><FieldLabel htmlFor="inpatient-order-frequency">{t('医嘱频次','Order frequency')}</FieldLabel><WorkspaceSelect id="inpatient-order-frequency" value={selectedFrequency??null} items={medication.frequencyCodes.map(code=>({value:code,label:code==='QD'?'QD · 08:00':code==='BID'?'BID · 08:00 / 20:00':t('PRN · 按需','PRN · as needed')}))} onValueChange={setFrequency} /></Field></> : null}
+      <Field><FieldLabel htmlFor="inpatient-postoperative">{t('术后关联手术','Postoperative procedure')}</FieldLabel><WorkspaceSelect id="inpatient-postoperative" value={surgeryId ?? ''} items={[{value:'',label:t('普通医嘱','Regular order')},...(surgery.data?.executions ?? []).map(item=>({value:item.id,label:`${item.actualProcedure.coding.code} · ${item.actualProcedure.coding.display}`}))]} onValueChange={setSurgeryId} /></Field>
       <Button type="submit" disabled={blocked || !data || (!medication && !service)}>{t('签发医嘱','Issue order')}</Button>
     </FieldGroup></FieldSet></form> : null}
     {doctor || nurse ? <Field><FieldLabel htmlFor="inpatient-order-reason">{t('停嘱或按需执行理由','Reason for stop or PRN execution')}</FieldLabel><Input id="inpatient-order-reason" value={reason} onChange={event=>setReason(event.currentTarget.value)} /></Field> : null}
     {data?.orders.map(order=><article key={order.id} className="flex flex-col gap-2 rounded-md border p-3">
       <p>{order.display} · {{signed:t('待校对','Awaiting verification'),verified:t('已校对','Verified'),'stop-requested':t('待核停','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</p>
+      {order.surgeryExecutionId ? <p>{t('术后医嘱 · ','Postoperative order · ')}{surgery.data?.executions.find(item=>item.id===order.surgeryExecutionId)?.actualProcedure.coding.display ?? order.surgeryExecutionId}</p> : null}
       <p>{order.duration==='long'?t('长期','Long'):t('临时','Temporary')} · {order.doseText} · {t('每次','Per execution ')}{order.doseQuantity}{order.unit} · {order.frequencyCode}</p>
       <div className="flex flex-wrap gap-2">
         {nurse && order.state==='signed' ? <Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('校对医嘱','Verify order')}</Button>:null}
@@ -71,6 +76,7 @@ export function InpatientClinical({ admission, session, locale, write }: { admis
       </article>
     })}
     {data?.orders.length===0 ? <p>{t('暂无医嘱','No orders')}</p>:null}
+    <InpatientSurgery admission={admission} session={session} locale={locale} write={write} />
     {data ? <InpatientChargeList data={{ admissionId: admission.id, financialStatus: admission.financialStatus, charges: data.charges, chargesFen: data.chargesFen }} locale={locale} /> : null}
   </section>
 }

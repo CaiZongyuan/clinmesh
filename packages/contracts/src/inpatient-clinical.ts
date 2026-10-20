@@ -18,7 +18,7 @@ export const inpatientDiagnosisSchema = z.object({ revision: z.number().int().no
 const inpatientClinicalCatalogSchema = z.object({ diagnoses: z.array(coding) }).strict()
 const inpatientClinicalSchema = z.object({ admissionId: id, encounterVersion: version, diagnosis: inpatientDiagnosisSchema }).strict()
 
-export const inpatientOrderIssueInputSchema = z.object({ admissionId: id, encounterVersion: version,
+export const inpatientOrderIssueInputSchema = z.object({ admissionId: id, encounterVersion: version, surgeryExecutionId: id.optional(),
   duration: z.enum(['long','temporary']), selection: z.discriminatedUnion('kind', [
     z.object({ kind: z.literal('medication'), catalogItemId: id, catalogVersion: z.number().int().positive(), doseText: z.string().trim().min(1).max(120),
       frequencyCode: z.enum(['QD','BID','PRN']), doseQuantity: z.number().int().positive().max(100) }).strict(),
@@ -32,7 +32,7 @@ export const inpatientDispenseInputSchema = inpatientExecutionActionInputSchema.
   lotId: id, expectedVersion: z.number().int().positive(), quantity: z.number().int().positive().max(100),
 }).strict()).min(1).max(20) })
 export const inpatientChargeReverseInputSchema = z.object({ admissionId: id, chargeId: id, expectedChargeVersion: z.number().int().positive(), reason: z.string().trim().min(1).max(2000) }).strict()
-export const inpatientOrderSchema = z.object({ id, admissionId: id, kind: z.enum(['medication','service']), duration: z.enum(['long','temporary']),
+export const inpatientOrderSchema = z.object({ id, admissionId: id, surgeryExecutionId: id.optional(), kind: z.enum(['medication','service']), duration: z.enum(['long','temporary']),
   catalogItemId: id, catalogVersion: z.number().int().positive(), display: z.string(), doseText: z.string(), doseQuantity: z.number().int().positive(),
   unit: z.string(), frequencyCode: z.enum(['QD','BID','PRN']), state: z.enum(['signed','verified','stop-requested','stopped','completed']),
   version: z.number().int().positive(), requestVersion: version, signedAt: z.iso.datetime({ offset: true }), signedBy: z.string(),
