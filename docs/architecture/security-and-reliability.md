@@ -6,7 +6,7 @@
 
 ### 11.1 认证
 
-首期使用 Better Auth 管理合成 User Account、登录凭证、浏览器 cookie session 和会话撤销，禁用公开注册。运行时为挂号员、分诊护士、门诊医生、收费员、药师和管理员幂等创建预置合成账户。Better Auth 不拥有 Workspace Membership、Practitioner Role、地点或 Scenario 权限。
+首期使用 Better Auth 管理合成 User Account、登录凭证、浏览器 cookie session 和会话撤销，禁用公开注册。运行时为已实现的医院岗位及管理员幂等创建预置合成账户，入口见[部署账号](../deployment.md)。Better Auth 不拥有 Workspace Membership、Practitioner Role、地点或 Scenario 权限。
 
 每个受保护请求先验证浏览器会话，再由 ClinMesh Identity & Access 模块重新解析 active Workspace Membership、选择的 Practitioner Role、active Epoch、组织和地点，形成受信 Actor context。岗位切换通过服务端动作保存当前 session 的角色选择；后续业务 Command 以该 Actor context 写入审计。cookie 或请求体中的角色、Workspace 和 Epoch 不能替代数据库事实。
 
@@ -21,10 +21,13 @@
   valid browser session + active membership + selected Practitioner Role
   OR valid Agent Capability Grant + bound single Practitioner Role + operation allowlist
 )
-AND active Workspace/Epoch/Scenario Run
+AND active Workspace/Epoch
+AND Scenario Run lifecycle permits the operation
 AND route/command role allowlist
 AND workflow state and target references
 ```
+
+住院新增业务写入要求 active Scenario Run。当前 Epoch 的人类会话可在 Run 完成后读取住院清单、详情、目录和归档，保留原岗位、科室和病区授权，具体只读入口见[病案归档合同](clinical-workflows.md#病案首页与归档)。Agent Capability Grant 仍要求 active Run，不因这项人类只读例外放宽。既有 Command receipt 依照[幂等合同](fhir-and-commands.md#65-idempotency)无写重放，不重新执行业务状态变更。
 
 当前没有 SMART/resource scope、标准 Patient compartment 或通用字段策略引擎。Agent Capability Grant 是 ClinMesh task authority，不等同于通用 delegation grant；未来引入标准 scope 或字段策略时只能继续收窄以上权限。
 
@@ -46,10 +49,13 @@ AND field policy
 - triage-nurse
 - pharmacist
 - cashier
+- inpatient-doctor
+- ward-nurse
+- medical-records
 - administrator
 - lis-system
 
-只有 `administrator` 能 reset Scenario 或管理 Agent Client/Grant。`lis-system` 不具有交互式登录或任意患者搜索能力；允许的检验结果 Command 只能由受控 outbox context 调用，报告更正还可由窄 HTTP adapter 在验证 administrator 后由服务端绑定同一系统 context。请求正文不能声明系统角色或提交任意 FHIR 内容。DSH Agent 代表当前已登录人类岗位，任务 Agent 通过一个 Grant 承担现有单一 Practitioner Role；两者都不新增医院岗位代码。住院、医保、完整库存、病案和审计员角色在相应能力实施前不进入 seed、导航或授权矩阵。
+只有 `administrator` 能 reset Scenario 或管理 Agent Client/Grant。`lis-system` 不具有交互式登录或任意患者搜索能力；允许的检验结果 Command 只能由受控 outbox context 调用，报告更正还可由窄 HTTP adapter 在验证 administrator 后由服务端绑定同一系统 context。请求正文不能声明系统角色或提交任意 FHIR 内容。DSH Agent 代表当前已登录人类岗位，任务 Agent 通过一个 Grant 承担现有单一 Practitioner Role；两者都不新增医院岗位代码。住院医生、病区护士和病案人员按[住院合同](clinical-workflows.md#82-住院闭环)参与当前闭环；医保、完整库存和审计员等尚未实现的岗位不进入 seed、导航或授权矩阵。
 
 查询授权必须下推 SQL。不能先查 100 个患者，再在 JavaScript 中删掉 90 个；否则 total、排序、include 和时间差都可能泄漏信息。
 
