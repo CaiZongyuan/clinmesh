@@ -35,6 +35,18 @@
 
 当前 [cn-health candidate importer](../../apps/server/src/infrastructure/reference-data/cn-health-candidate-importer.ts) 的 `diagnosisArtifact` 仍将这一候选输出为 `urn:clinmesh:reference:nhsa-diagnosis` 及 `nhsa-diagnosis` ID。这是现存代码命名事实，不能用它证明数据属于医保版本。首页及后续 DRG 输入必须按实际来源身份判断；已有短诊断代码或显示名称也不能未经审核就替代临床版完整编码。是否调整历史命名及迁移旧数据，应按对当前切片的实际影响单独决定，不以本研究扩大修复范围。
 
+固定目录中以下三个条目已通过缓存的原始 SQLite 与已安装 Reference SQLite 逐条核对。它们的 `source_version` 均为 `2022`，`source_sha256` 均为 `e927d8ec0d25a64125e24b26dcc3987b0021b5d8b94c0f4d7ae7e05f1592af52`，对应 Manifest 记录的原始工作簿及工作表；本次未取得或直接读取该工作簿。
+
+| 完整代码 | 名称 | 原始 `source_row` | 安装后的 `sourceLocator` |
+| --- | --- | --- | --- |
+| `I10.x09` | 原发性高血压 | `12457` | `cn-health:nhc-icd10-clinical@2022.r4:diagnosis:12457` |
+| `E11.900` | 2型糖尿病 | `7261` | `cn-health:nhc-icd10-clinical@2022.r4:diagnosis:7261` |
+| `R50.900` | 发热 | `27266` | `cn-health:nhc-icd10-clinical@2022.r4:diagnosis:27266` |
+
+三条安装后的 `system` 为 `urn:clinmesh:reference:nhsa-diagnosis`、`version` 为 `2022`，Concept ID 由 `nhsa-diagnosis:nhc-icd10-clinical@2022.r4:` 与完整代码组成，安装 Release 为 `clinmesh-cn-health-2026-09-02.r1`。条目身份不能通过 `I10`、`E11.65`、`R50.9` 或显示名称猜测转换。分类条目只证明编码身份，不构成药品适应症指南；药品与诊断的有限关联属于另行声明的合成场景规则。
+
+本次缓存 Manifest 字节哈希与锁文件一致；解压 SQLite 字节 SHA-256 为 `713fb5e88a4874c09181547545439620254fbc811d05f892bba49762123a83fb`，匹配 Manifest。压缩 [SQLite artifact][S5] 的声明哈希为 `66bfb585921587baecf9119020c719e901b58be6792dfdb3813d24483f2c5ffa`，本次未重新下载压缩文件。上述核验不改变 `experimental`、`authorityVerified: false`、`sourceReacquirable: false` 及原始 `sourceUrl: null` 的限制。
+
 本次直接读取的 cn-health Registry 也没有手术操作 Dataset。[S2] 因此新增手术演示子集不应虚构一个 cn-health Release，也不需要为八条固定条目新增全量下载、编译或 Registry 管线。
 
 ## 手术操作固定子集的来源
@@ -80,9 +92,9 @@
 
 召回必须绑定当前 Workspace/Epoch、本次住院、预期版本和幂等键，并在同一原子命令中重新检查床位占用及结算状态。召回与结算并发时只有一个前置状态合法的命令能成功；不能先成功结算再接受旧版本召回。既往已执行的给药、手术和已入账费用保留，已经停止或取消的医嘱不因召回自动恢复。真正开始另一次住院时仍创建独立住院事实，不能使用召回来合并两次就诊。这些是候选窗口的实施约束，最终选择应写入正式需求或相应决策及当前 owner。
 
-## 仍需收敛的产品决定与验证边界
+## 采纳状态与验证边界
 
-需要决定的是召回开放范围，以及是否采用上述首页核心字段集和固定操作子集；具体属性名、模块文件拆分及存储表名属于实现细节，不需要为其另开需求分支。规格已经把首页字段集及目录版本交由实施设计核定，采纳后应在唯一正式规格或其引用的当前合同中写清楚，避免把本研究作为第二份产品规格。
+召回窗口、首页核心字段集和固定操作子集已由 [住院闭环规格](../spec/2026-10-20-inpatient-closed-loop.md)采纳。本文保留来源与核验范围，实际范围和验收以该正式规格及其引用的合同为准；属性名、模块文件拆分和存储表名由实现决定。
 
 建议用现有测试验证：实际入病房时间与登记时间有区别；首页不能把申请显示为已实施；未知或其他版本编码被拒绝；主要诊断唯一；审核通过后修改使审核失效；无实施记录能以明确空操作集归档；归档后各真实写入口拒绝病案变更；允许窗口内召回成功，结算、清床或归档后失败；召回与结算竞争不会同时成功。涉及真实账目和执行事实的断言应通过共享业务入口，不能只对 UI 按钮是否禁用作断言。
 
@@ -99,3 +111,4 @@
 [S2]: https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/registry.json
 [S3]: https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/releases/nhc-icd10-clinical/2022.r4/manifest.json
 [S4]: https://wst.hainan.gov.cn/swjw/xxgk/0200/0202/202006/P020200617426075784563.xlsx
+[S5]: https://raw.githubusercontent.com/CaiZongyuan/cn-health-data/main/distribution/releases/nhc-icd10-clinical/2022.r4/data.sqlite.zst
