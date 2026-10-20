@@ -34,7 +34,6 @@
 
 | 规格 | 状态 |
 | --- | --- |
-| [住院闭环](2026-10-20-inpatient-closed-loop.md) | `approved` |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `draft` |
 | [模型调用停用、预算与用量监控](2026-10-19-model-usage-control.md) | `draft` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
@@ -45,6 +44,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [住院闭环](2026-10-20-inpatient-closed-loop.md) | `implemented` |
 | [医生主诉展示同步与分诊差异质控优化](2026-10-20-current-chief-complaint.md) | `implemented` |
 | [同输入建议复用、患者回答去重与模型任务阶段恢复](2026-10-19-model-request-reuse-recovery.md) | `implemented` |
 | [自动记录语义检查统一归病历质控](2026-10-19-recording-quality-consolidation.md) | `implemented` |
