@@ -33,7 +33,7 @@ export class InpatientDischarge {
       if (admission.status !== from || admission.financialStatus !== (action === 'clear' ? 'settled' : 'open') || admission.bedId === undefined) {
         throw new InpatientError('INPATIENT_STATE_CONFLICT', '当前住院、财务或床位状态不允许此出院动作')
       }
-      this.owner.surgery.assertNoPending(context, input.admissionId)
+      this.#assertNoPending(context, input.admissionId)
       const departure = action === 'recall' ? this.events(context, input.admissionId).filter(event => event.kind === 'depart').at(-1) : undefined
       if (action === 'recall' && (departure === undefined || departure.bedId !== admission.bedId)) throw new InpatientError('INPATIENT_RECALL_WINDOW_CLOSED', '原床未保留，不能召回')
       if (action === 'depart') this.assertOrdersFinished(context, input.admissionId)
@@ -60,6 +60,11 @@ export class InpatientDischarge {
         { kind: 'created' as const, reference: `InpatientDischargeEvent/${id}`, versionId: '1' },
       ] }
     })
+  }
+  #assertNoPending(context: ActorContext, admissionId: string) {
+    this.owner.surgery.assertNoPending(context, admissionId)
+    this.owner.investigations.assertNoPending(context, admissionId)
+    this.owner.transfers.assertNoPending(context, admissionId)
   }
   assertOrdersFinished(context: ActorContext, admissionId: string) {
     if (this.owner.database.driver.prepare(`SELECT 1 FROM inpatient_order o WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=?
@@ -105,7 +110,7 @@ export class InpatientDischarge {
       authorize: () => this.owner.assertRole(context, ['cashier']) }, () => {
       const preview = this.snapshot(context, input.admissionId)
       if (preview.status !== 'departed' || preview.financialStatus !== 'open') throw new InpatientError('INPATIENT_STATE_CONFLICT', '仅已出区且未结算住院可结算')
-      this.owner.surgery.assertNoPending(context, input.admissionId)
+      this.#assertNoPending(context, input.admissionId)
       this.assertOrdersFinished(context, input.admissionId)
       if (preview.fingerprint !== input.fingerprint || preview.chargesFen !== input.expectedChargesFen || preview.balanceFen !== input.expectedBalanceFen) {
         throw new InpatientError('INPATIENT_SETTLEMENT_PREVIEW_STALE', '账目或资金已变化，请明确重新预览后结算')

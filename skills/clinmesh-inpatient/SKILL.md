@@ -199,7 +199,7 @@ clinmesh inpatient recall --input @discharge.json --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.discharge.settle --idempotency-key <key>
 ```
 
-医生开出院医嘱只进入 `discharge-pending`，不出区、不结算、不释放床位。`discharge.json` 传 `admissionId/encounterVersion/reason`；护士出区使用相同字段，并显式选择 `departureMethod`：`home`医嘱离院、`transfer`医嘱转院、`against-advice`非医嘱离院、`death`死亡、`other`其他。这是本院仿真字段，不宣称国家上报编码。出区前医嘱须全部 stopped/completed，任务全部 completed/cancelled；待出院仍允许医生申请停嘱和护士核停，禁止新增、校对和执行医嘱。已发未给任务可核停取消，保留发药、库存和费用，不强迫补给药或自动退库存。尚未出区期间继续产生声明的床日费，实际出区后停止。
+医生开出院医嘱只进入 `discharge-pending`，不出区、不结算、不释放床位。`discharge.json` 传 `admissionId/encounterVersion/reason`；护士出区使用相同字段，并显式选择 `departureMethod`：`home`医嘱离院、`transfer`医嘱转院、`against-advice`非医嘱离院、`death`死亡、`other`其他。这是本院仿真字段，不宣称国家上报编码。出院医嘱、出区及结算都重查未收口手术、检查检验和转科；检查已reported但未阅可放行，不套用门诊全已阅门禁。出区前医嘱须全部 stopped/completed，任务全部 completed/cancelled；待出院仍允许医生申请停嘱和护士核停，禁止新增、校对和执行医嘱。已发未给任务可核停取消，保留发药、库存和费用，不强迫补给药或自动退库存。尚未出区期间继续产生声明的床日费，实际出区后停止。
 
 收费员只能读取窄财务预览和结算回执，不能读取出院临床说明或离院方式。首次结算前读取 `settlement-preview`，保留其完整 `encounterVersion/fingerprint/chargesFen/balanceFen`；正 balanceFen 为补缴，负数为退款，零元不产生补退款交易。退款关联原预交金交易，原入金不改写。使用 `settlement.json` 提交：
 

@@ -202,7 +202,7 @@ Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价�
 
 InpatientDischarge在共享Command事务中执行五个分立动作：医生issue进入discharge-pending，护士depart记录实际出区及明确离院方式，收费员settle结清，护士clear释放床位，符合窗口时医生recall召回。离院方式是本院仿真枚举home/transfer/against-advice/death/other，不宣称国家上报代码；病案读取原出区事件，不重新填报覆盖。医生和护士均按当前科室、病区授权，administrator不办理业务。
 
-出院申请、出区及结算必须收口在途手术；出区和结算还须医嘱全部stopped/completed、执行单全部completed/cancelled。discharge-pending仍允许申请停嘱、护士核停，禁止新医嘱、校对、发药或执行。已发未给核停后取消任务，保留历史发药、库存与费用，不自动退库存。床日费在admitted及discharge-pending的实际在院午夜计费，departed虽保留原床也不再计床费。
+出院申请、出区及结算在各自事务重验在途手术、检查检验及转科门禁。检查的issued/accepted/in-progress/generation-failed须完成或取消，reported/acknowledged/cancelled可放行，未阅报告不等于未完成检查；转科requested/handed-over须接收或取消。出区和结算还须医嘱全部stopped/completed、执行单全部completed/cancelled。discharge-pending仍允许申请停嘱、护士核停，禁止新医嘱、校对、发药或执行。已发未给核停后取消任务，保留历史发药、库存与费用，不自动退库存。床日费在admitted及discharge-pending的实际在院午夜计费，departed虽保留原床也不再计床费。
 
 depart结束Encounter的实际床位period并设置discharged，保留领域床位占用。未出区不能结算，未结算不能清床；clear将Encounter完成并结束占用，床位才能重用。召回仅departed+open、未清床且原床保留时可用，与结算在同一Admission状态CAS竞争，仅一个成功。召回保留原出区及离院方式，追加关联原事件的逆向事件与新床位period，恢复行政在院状态而不恢复任何旧医嘱。结算后再次收治创建独立新住院。
 
