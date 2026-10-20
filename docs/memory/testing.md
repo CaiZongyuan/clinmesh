@@ -12,7 +12,7 @@
 
 - 已经通过且没有被后续变更失效的证据不因 commit、push、review、Ready 或 merge 再次运行。
 
-- 资源竞争使既有测试超时时，可在验证进程用 `VITEST_MAX_WORKERS=1` 收窄单元测试并发，不扩大超时或削弱断言。Turbo strict 环境会过滤此变量，通过 Turbo 的验证同时使用 `TURBO_ENV_MODE=loose` 才能把 worker 设置传给 Vitest；仅设置前者不证明实际并发已经收窄。不同包仍可并行，需要进一步隔离时用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行完成包级测试，再由 `pnpm check` 复用有效缓存并继续其他阶段。
+- 资源竞争使既有测试超时时，可在验证进程用 `VITEST_MAX_WORKERS=1` 收窄单元测试并发，不扩大超时或削弱断言。Turbo strict 环境会过滤此变量，通过 Turbo 的验证同时使用 `TURBO_ENV_MODE=loose` 才能把 worker 设置传给 Vitest；仅设置前者不证明实际并发已经收窄。不同包仍可并行，需要进一步隔离时用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行完成包级测试，再由 `pnpm check` 复用有效缓存并继续其他阶段。预验证与后续检查须保持相同的 Turbo 环境模式；strict 与 loose 使用不同任务缓存，切回默认模式可能让包级测试再次并行运行。
 
 - 定向 Vitest 回归使用 `pnpm --filter <package> exec vitest run <file> -t <pattern>`，并核对实际文件和用例计数。当前 pnpm/Vitest 组合中，`pnpm --filter <package> test -- <file>` 把额外 `--` 传给 Vitest 后仍运行完整包，不能仅凭命令文本认定已限制范围。
 
@@ -51,6 +51,8 @@
 - 勾选聊天风格、结果顺序或按需教学等模型行为前，核对部署 preset/persona，并以新建 Session 的实际模型请求证明规则已装配。规格描述、普通工具测试和脚本化替身的回答不能证明真实模型持续遵守这些要求；接线证据与实模体验分别记录。
 
 - 检查后台回填不会触发额外自动保存时，在触发回填前控制 Timeout，完成回填与渲染后推进整个保存窗口，并在 finally 恢复真实时钟；不能等定时器已排定才启用假时钟。用额外保存的故障校准保留否定断言的有效性，避免用固定墙钟等待挤占 CI 用例预算。
+
+- 浏览器回归在建议清单里调整项目后，先核对 owning UI 的草稿保存合同，再断言草稿是否存在；不要依赖一串操作恰好在 autosave 窗口内完成。需要验证草稿内容时，通过权威读模型等待完整值，并单独断言尚无正式事实，参见[处方调整合同](../../apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts)与 [UI 自动保存合同](../ui/design.md)。
 
 - jsdom 在 ShadowRoot 内切换原生 `hidden` 后可能保留旧的 computed style 缓存，造成已显示控件被无障碍查询误判隐藏。先用最小 DOM 复现确认；测试宿主属性更新可以刷新缓存，保留真实可访问性断言，不用修改生产显示逻辑或忽略隐藏状态规避。
 
