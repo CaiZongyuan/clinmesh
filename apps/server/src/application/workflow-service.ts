@@ -97,6 +97,7 @@ import {
 } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import { allocateRegistrationNumber } from '../infrastructure/sqlite/registration-numbering.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import { doctorHistoryEntryAllowed, doctorVisibleHistory, doctorVisibleHistoryDetail, doctorVisibleHistoryDetails } from './doctor-case-history.ts'
@@ -2182,11 +2183,7 @@ export class WorkflowService {
     const chargeItemId = uuidv7()
     const chargeId = uuidv7()
     const now = this.#virtualTime(context)
-    const count = (this.#database.driver.prepare(`
-      SELECT COUNT(*) AS count FROM registration
-      WHERE workspace_id = ? AND epoch = ?
-    `).get(context.workspaceId, context.epoch) as { count: number }).count + 1
-    const registrationNumber = `CM-OP-${registration.visitDate.replaceAll('-', '')}-${String(count).padStart(4, '0')}`
+    const registrationNumber = allocateRegistrationNumber(this.#database, registration.visitDate)
     const encounter = transaction.fhir.create(context, {
       resourceType: 'Encounter',
       id: encounterId,

@@ -1210,8 +1210,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['registrar'],
-    summary: 'Register a patient for an outpatient visit',
-    version: 1,
+    summary: 'Register a patient with a durable dated outpatient number; REGISTRATION_NUMBER_STATE_INVALID, REGISTRATION_NUMBER_EXHAUSTED, or REGISTRATION_NUMBER_AUTHORITY_RETIRED requires administrator recovery, not a new intent or a guessed number',
+    version: 2,
   },
   {
     cliPath: ['registration', 'synthetic-case', 'list'],
@@ -1248,8 +1248,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['administrator', 'registrar'],
-    summary: 'Start an outpatient visit from a ready Synthetic Case Instance',
-    version: 1,
+    summary: 'Start an outpatient visit from a ready Synthetic Case Instance using the shared durable number allocator; REGISTRATION_NUMBER_STATE_INVALID, REGISTRATION_NUMBER_EXHAUSTED, or REGISTRATION_NUMBER_AUTHORITY_RETIRED requires administrator recovery, not a new intent or a guessed number',
+    version: 2,
   },
   {
     cliPath: ['triage', 'queue', 'list'],

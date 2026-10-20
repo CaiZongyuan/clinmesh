@@ -16,6 +16,27 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('keeps registration examples and numbering recovery aligned with the command catalog', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-registration/SKILL.md'), 'utf8')
+  for (const [prefix, id] of [
+    ['clinmesh registration create ', 'registration.create'],
+    ['clinmesh registration synthetic-case start ', 'registration.synthetic-case.start'],
+  ]) {
+    const line = commandLines(skill).find(line => line.startsWith(prefix))!
+    const operation = getHisOperation(id!)
+    expect(inspectExample(program, line).operation?.id).toBe(id)
+    expect(operation.version).toBe(2)
+    for (const code of ['REGISTRATION_NUMBER_STATE_INVALID', 'REGISTRATION_NUMBER_EXHAUSTED', 'REGISTRATION_NUMBER_AUTHORITY_RETIRED']) {
+      expect(operation.summary).toContain(code)
+      expect(skill).toContain(code)
+    }
+    expect(operation.summary).toContain('administrator recovery')
+  }
+  expect(skill).toContain('original intent and key')
+  expect(skill).toContain('`registrationNumber`')
+})
+
 it('keeps laboratory failure recovery instructions aligned with the command catalog', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
