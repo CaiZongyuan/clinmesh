@@ -114,6 +114,11 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByRole('alert')).toHaveCount(0)
   await expect(page.getByRole('button', { name: '归档病案', exact: true })).toHaveCount(0)
   expect(inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).archive).toEqual(archived)
+  await login('ward-nurse')
+  await select()
+  await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
+  await expect(page.getByRole('region', { name: '待接收转科', exact: true }).getByText('暂无待接收转科', { exact: true })).toBeVisible()
+  await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
 test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不能被静默改成新意图', async ({ page, browserApp }) => {
