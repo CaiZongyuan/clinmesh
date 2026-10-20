@@ -356,7 +356,8 @@ Object.defineProperty(window, 'fetch', { configurable: true, value: fixtureFetch
 
 const host = document.createElement('div')
 host.id = 'investigation-host'
-host.style.cssText = 'width:1280px;height:900px;container-type:inline-size;container-name:dsh-react-surface-content'
+// 医生工作台新增 280px 建议栈列后，1280 宿主下开单/检查容器跌破 800px 堆叠断点；用 1440 宿主保持双栏合同。
+host.style.cssText = 'width:1440px;height:900px;container-type:inline-size;container-name:dsh-react-surface-content'
 document.body.append(host)
 const shadow = host.attachShadow({ mode: 'open' })
 const styles = document.createElement('style')

@@ -2,6 +2,8 @@
 
 Status: approved
 
+写入后独立核对、对应调度及单独提示的要求由[统一质控规格](2026-10-19-recording-quality-consolidation.md)部分替代，涉及 A6、A7、A11、A12 的核对部分；增量保存、来源、预算、恢复及独有性能验收继续有效。本规格仍保留原性能证据与验收边界，不因本次调用链调整升级状态。
+
 本文定义实时记录的性能目标及已批准的异步写入规则，其余记录行为由[全病历整理规格](2026-10-14-doctor-full-document-recording.md)与[问诊自动记录规格](2026-10-08-consultation-auto-record.md)拥有；未来语音方向沿用[医生 Agent 临床助手](2026-10-08-doctor-agent-assistant.md)。增量写入与调度取舍见[增量记录决策](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)，常规模型等待规则见[移除短截止决策](../decisions/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
 
 ## 问题与目标

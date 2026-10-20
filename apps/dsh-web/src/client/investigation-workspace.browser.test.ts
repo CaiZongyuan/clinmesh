@@ -41,7 +41,8 @@ async function buildFixture(version: string) {
 
 async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations' | 'failed', multiple = false) {
   const { script, styles } = await buildFixture(version)
-  await page.setViewportSize({ width: 1280, height: 900 })
+  // 宿主为 1440（容纳三栏建议栈后保持开单/检查双栏合同），视口需一致，否则文档出现横向滚动。
+  await page.setViewportSize({ width: 1440, height: 900 })
   await page.route('http://localhost/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
   await page.goto('http://localhost/')
   expect(z.object({ ready: z.literal(true) }).parse(await readJsonFromBrowser(page,
@@ -279,9 +280,10 @@ for (const version of ['18', '19']) {
         expect(metrics.left).toBeGreaterThanOrEqual(0)
         expect(metrics.right).toBeLessThanOrEqual(width + 1)
       })
-      await page.setViewportSize({ width: 1280, height: 900 })
+      // 三栏建议栈占位后，双栏检查合同需 ≥1312 宿主宽度。
+      await page.setViewportSize({ width: 1440, height: 900 })
       await page.evaluate(() => {
-        document.getElementById('investigation-host')!.style.width = '1280px'
+        document.getElementById('investigation-host')!.style.width = '1440px'
         window.dispatchEvent(new CustomEvent('investigation-appearance', { detail: { locale: 'zh-CN', theme: 'light', fontSize: 'standard' } }))
       })
       const dialog = page.locator('[data-order-entry]:visible')

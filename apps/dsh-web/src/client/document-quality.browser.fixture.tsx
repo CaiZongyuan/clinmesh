@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { ClinicalDocumentPage, type ClinicalDocumentSignPreview } from '../../../web/src/app/doctor/clinical-document-page.tsx'
+import { PatientBanner } from '../../../web/src/app/doctor/patient-summary.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../../../web/src/app/workspace-i18n.ts'
 
 const content: ClinicalDocumentContent = {
@@ -45,7 +46,8 @@ function Fixture(): React.JSX.Element {
   return <div className="clinmesh-web-root h-full overflow-y-auto" data-clinmesh-app="web" data-font-size={fontSize} data-theme="light" lang={locale}>
     <output aria-label="签署结果">{result}</output>
     <button onClick={() => setVisible(value => !value)} type="button">{visible ? '查看合成病例B' : '返回合成病例A'}</button>
-    {!visible ? <p>合成病例B</p> : <ClinicalDocumentPage allowRevision={false} detail={detail} elementId="quality-record" locale={locale}
+    {!visible ? <p>合成病例B</p> : <><PatientBanner detail={detail} messages={getWorkspaceMessages(locale)} statusText="首诊中" workingDocument={document} />
+      <ClinicalDocumentPage allowRevision={false} detail={detail} elementId="quality-record" locale={locale}
       messages={getWorkspaceMessages(locale)} workingDocument={document} onDocumentChange={setDocument}
       actions={{
         cancelSign: { error: null, pending: false, onSubmit: () => setPreview(undefined) },
@@ -53,7 +55,7 @@ function Fixture(): React.JSX.Element {
           onSubmit: () => setPreview({ previewId: 'quality-preview', commitToken: 'synthetic-commit-token', document: { content: document } }) },
         revise: { error: null, pending: false, success: false, onSubmit: () => {} },
         sign: { error: null, pending: false, success: false, onSubmit: () => { setResult('signed'); setPreview(undefined) } },
-      }} />}
+      }} /></>}
   </div>
 }
 createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>

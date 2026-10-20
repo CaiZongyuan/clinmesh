@@ -22,12 +22,13 @@ function currentGeneration(previous: ClinicalDocumentQualityControlState | undef
   return incoming
 }
 
-export function useDocumentQualityControl({ detail, document, scope, initialState, enabled = true }: {
+export function useDocumentQualityControl({ detail, document, scope, initialState, enabled = true, view = 'document' }: {
   detail: DoctorCaseDetail
   document?: ClinicalDocumentContent
   scope?: string | undefined
   initialState?: ClinicalDocumentQualityControlState | undefined
   enabled?: boolean
+  view?: 'document' | 'sign-preview'
 }) {
   const client = useQueryClient()
   const saved = detail.clinicalDocument?.draft
@@ -45,7 +46,7 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
   ])
   let ledger = requestIdentities.get(client)
   if (ledger === undefined) { ledger = new Map(); requestIdentities.set(client, ledger) }
-  const ledgerKey = JSON.stringify([scope, detail.caseId, candidate !== undefined])
+  const ledgerKey = JSON.stringify([scope, detail.caseId, view, candidate !== undefined])
   const previousRequest = ledger.get(ledgerKey)
   const request = previousRequest?.identity === identity ? previousRequest : {
     identity, revision: (previousRequest?.revision ?? 0) + 1, clientId: previousRequest?.clientId ?? newIdempotencyKey(), refresh: false,
@@ -58,7 +59,7 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
     return () => clearTimeout(timer)
   }, [identity, enabled, candidate === undefined])
   const draftVersion = detail.clinicalDocument?.draft?.version ?? 0
-  const queryKey = ['document-quality', scope, detail.caseId, candidate === undefined ? 'saved' : request.clientId, request.revision] as const
+  const queryKey = ['document-quality', scope, detail.caseId, view, candidate === undefined ? 'saved' : request.clientId, request.revision] as const
   const matches = (incoming: ClinicalDocumentQualityControlState) => incoming.caseId === detail.caseId
     && incoming.encounterId === detail.encounter.id && incoming.draftVersion === draftVersion
     && (candidate === undefined ? incoming.clientId === undefined
@@ -106,11 +107,11 @@ export function locateDocumentQualityIssue(root: ParentNode, issue: QualityIssue
   return true
 }
 
-function openIssues(quality: DocumentQualityControl) {
+export function openIssues(quality: DocumentQualityControl) {
   return quality.stale || quality.error !== null ? [] : quality.state?.issues.filter(issue => issue.status === 'open' && issue.classification !== 'needs-completion') ?? []
 }
 
-function shortIssue(issue: QualityIssue, messages: Messages, locale: WorkspaceLocale) {
+export function shortIssue(issue: QualityIssue, messages: Messages, locale: WorkspaceLocale) {
   const field = messages[issue.field]
   if (locale === 'zh-CN') {
     switch (issue.kind) {
@@ -213,7 +214,7 @@ function Issue({ issue, messages, locale, onLocateIssue }: {
   return <li className="flex min-w-0 flex-col gap-2 text-sm" data-document-quality-issue={issue.id} data-document-quality-issue-status={issue.status}>
     <p className="whitespace-pre-wrap break-words">
       <Badge variant={issue.status === 'retained' ? 'outline' : 'secondary'}>{issue.status === 'retained' ? messages.documentQualityRetained
-        : messages.documentQualityVerification}</Badge>{' '}{issue.message}
+        : issue.classification === 'needs-completion' ? messages.documentQualityCompletion : messages.documentQualityVerification}</Badge>{' '}{issue.message}
     </p>
     {issue.explanation === undefined ? null : <dl className="grid min-w-0 gap-1 whitespace-pre-wrap break-words">
       <dt className="text-xs font-medium text-muted-foreground">{messages.documentQualityImpact}</dt>
@@ -235,7 +236,7 @@ export function DocumentQualityFieldIssues({ field, quality, messages, locale, o
   field: keyof ClinicalDocumentContent; quality: DocumentQualityControl; messages: Messages; locale: WorkspaceLocale
   onLocateIssue?: ((issue: QualityIssue) => void) | undefined
 }) {
-  const issues = quality.stale || quality.error !== null ? [] : quality.state?.issues.filter(issue => issue.field === field && issue.classification !== 'needs-completion') ?? []
+  const issues = quality.stale || quality.error !== null ? [] : quality.state?.issues.filter(issue => issue.field === field) ?? []
   if (issues.length === 0) return null
   const retained = issues.filter(issue => issue.status === 'retained')
   return <section aria-label={`${messages[field]}${messages.documentQualityFieldSuffix}`} className="flex min-w-0 flex-col gap-2" data-document-quality-field={field}>
@@ -251,7 +252,7 @@ export function DocumentQualityFieldIssues({ field, quality, messages, locale, o
 export function DocumentQualitySignSummary({ detail, state, scope, locale }: {
   detail: DoctorCaseDetail; state: ClinicalDocumentQualityControlState | undefined; scope?: string | undefined; locale: WorkspaceLocale
 }) {
-  const quality = useDocumentQualityControl({ detail, initialState: state, scope })
+  const quality = useDocumentQualityControl({ detail, initialState: state, scope, view: 'sign-preview' })
   const messages = getWorkspaceMessages(locale)
   const [detailsOpen, setDetailsOpen] = useState(false)
   return <section aria-label={messages.documentQualitySignSummary} className="flex min-w-0 flex-col gap-3" data-document-quality-sign-summary>

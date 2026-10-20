@@ -84,6 +84,18 @@ export const doctorRecommendationGenerationSchema = z.object({
   'Suggestions and considerations together must not exceed eight')
 export type DoctorRecommendationGeneration = z.infer<typeof doctorRecommendationGenerationSchema>
 
+export const doctorRecommendationRecoverySchema = z.object({
+  status: z.enum(['pending', 'running', 'failed', 'unknown', 'exhausted', 'completed']),
+  requestCount: z.number().int().nonnegative(), extraRequestCount: z.number().int().min(0).max(4),
+  maxRequestsPerUnit: z.literal(3), maxExtraRequests: z.literal(4), canContinue: z.boolean(),
+  units: z.array(z.object({
+    stage: z.enum(['history-selection', 'catalog-selection', 'generation', 'verification']),
+    batchId: z.string().min(1).max(256),
+    status: z.enum(['pending', 'dispatching', 'succeeded', 'failed', 'unknown']),
+    requestCount: z.number().int().min(0).max(3), errorCode: z.string().min(1).max(64).optional(),
+  }).strict()).max(25),
+}).strict()
+
 export const doctorRecommendationStateSchema = z.object({
   caseId: identity,
   kind: doctorRecommendationKindSchema,
@@ -100,7 +112,9 @@ export const doctorRecommendationStateSchema = z.object({
   guidelines: z.array(guidelineEvidenceSchema).max(64),
   caseEvidence: z.array(doctorCaseEvidenceSchema).max(100),
   missingInformation: z.array(doctorRecommendationNoticeSchema.shape.message).max(12),
-  errorCode: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT', 'AI_RESPONSE_INVALID', 'WORKFLOW_CONFLICT']).optional(),
+  errorCode: z.enum(['MODEL_UNAVAILABLE', 'MODEL_AUTH_FAILED', 'MODEL_TIMEOUT', 'AI_RESPONSE_INVALID', 'WORKFLOW_CONFLICT',
+    'MODEL_OUTCOME_UNKNOWN', 'MODEL_REQUEST_LIMIT']).optional(),
+  recovery: doctorRecommendationRecoverySchema.optional(),
 }).strict().superRefine((state, context) => {
   const itemIds = new Set<string>()
   const guidelineIds = new Set(state.guidelines.map(item => item.id))
@@ -130,7 +144,9 @@ export const generateDoctorRecommendationsRequestSchema = z.object({
   input: z.object({
     expectedInputFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
     refresh: z.boolean(),
-  }).strict(),
+    continueGeneration: z.number().int().positive().optional(),
+  }).strict().refine(input => !input.refresh || input.continueGeneration === undefined,
+    'Choose either continuing the original generation or starting a new generation'),
 }).strict()
 export type GenerateDoctorRecommendationsRequest = z.infer<typeof generateDoctorRecommendationsRequestSchema>
 

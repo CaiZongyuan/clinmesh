@@ -7,16 +7,17 @@ import { z } from 'zod'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
-import { clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { clinicalDocumentDraftContentSchema, clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import type { SqlitePerformanceObserver } from '../src/infrastructure/sqlite/performance-observer.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
+import { recordingBatchSchema } from '../src/application/consultation-recording-batch.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
-type ModelInput = { schemaName: string; userPayload: unknown }
+type ModelInput = { schemaName: string; userPayload: unknown; systemPrompt: string; jsonSchema: Record<string, unknown> }
 async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown>, syntheaProvider = new StubSyntheaProvider(),
   reply = '我头晕一周，没有胸痛。', now?: () => Date, performanceObserver?: SqlitePerformanceObserver) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-quality-'))
@@ -69,7 +70,7 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
     return runtime.app.request(`${path}/actions/${action}`, { method: 'POST', headers: headers(key),
       body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId }, input }) })
   }
-  const save = async (document: Record<string, string>, extra: object = {}) => {
+  const save = async (document: Partial<z.infer<typeof clinicalDocumentDraftContentSchema>>, extra: object = {}) => {
     const detail = await readCase()
     return runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`, {
       method: 'PUT', headers: headers(), body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId },
@@ -189,6 +190,566 @@ const qualityPayloadSchema = z.object({ document: z.record(z.string(), z.string(
   evidence: z.array(z.object({ id: z.string(), kind: z.string(), text: z.string() })),
   agentFacts: z.array(z.object({ id: z.string() })),
   issues: z.array(z.unknown()).optional() })
+
+const recordingQualityPayloadSchema = qualityPayloadSchema.extend({ recordingContext: z.object({
+  changes: z.array(z.object({ id: z.string(), field: z.string(), relation: z.string(),
+    before: z.object({ text: z.string() }).optional(), after: z.object({ text: z.string() }), newSourceIds: z.array(z.string()),
+    rejectedFacts: z.array(z.object({ text: z.string(), sources: z.array(z.object({ sourceTurnId: z.string(), quote: z.string() })) })) })),
+  rejectedFacts: z.array(z.object({ text: z.string() })),
+}) })
+
+// Historical data is seeded at the durable boundary; assertions use the public
+// quality endpoint and the external model boundary, never private quality methods.
+async function seedRecordingChange(f: Awaited<ReturnType<typeof setup>>, options: {
+  relation?: 'update' | 'correction' | 'conflict'; after?: string; before?: string; rejected?: string;
+  field?: 'historyOfPresentIllness' | 'chiefComplaint';
+} = {}) {
+  expect((await f.ask()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const before = options.before ?? '头晕一周；无胸痛'
+  const after = options.after ?? '站起时头晕加重'
+  const field = options.field ?? 'historyOfPresentIllness'
+  const { version: _version, updatedAt: _updatedAt, ...saved } = (await f.readCase()).clinicalDocument?.draft ?? { version: 0, updatedAt: '' }
+  expect((await f.save({ ...saved, [field]: after })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const detail = await f.readCase()
+  const sources = detail.consultationRecording!.sources!
+  const prior = sources[0]!, latest = sources.at(-1)!
+  const scope = z.object({ workspace_id: z.string(), epoch: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT workspace_id, epoch FROM outpatient_case WHERE case_id = ?').get(f.started.outpatientCaseId))
+  const source = (text: string, id = prior.id, quote = prior.messageText) => ({ text, sources: [{ sourceTurnId: id, quote }] })
+  const oldFacts = before.split('；').map(text => source(text))
+  const newFacts = [source(after, latest.id, latest.messageText)]
+  const batchId = randomUUID(), additionId = randomUUID(), targetId = randomUUID()
+  const batch = { members: [{ id: latest.id, generation: 1 }], sources,
+    baseline: { version: 1, content: { assessment: '', chiefComplaint: '', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '', [field]: before } },
+    history: [{ id: targetId, field, text: before, facts: oldFacts, quote: prior.messageText, sourceTurnId: prior.id }],
+    manualHistory: [], rejectedFacts: options.rejected === undefined ? [] : [{ ...source(options.rejected), field }] }
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_batch
+    (workspace_id, epoch, case_id, batch_id, snapshot_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, batchId, JSON.stringify(batch), '2026-10-19T00:00:00Z', '2026-10-19T00:00:01Z')
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
+    (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
+      current_text, facts_json, review_state) VALUES (?, ?, ?, ?, ?, ?, ?, 'addition', 'applied', ?, ?, 'superseded')`)
+    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, targetId, prior.id, field, prior.messageText, before, JSON.stringify(oldFacts))
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
+    (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
+      target_addition_id, start_offset, end_offset, current_text, facts_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'applied', ?, 0, ?, ?, ?)`)
+    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, additionId, latest.id, field, latest.messageText,
+      options.relation ?? 'update', targetId, after.length, after, JSON.stringify(newFacts))
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition_batch
+    (workspace_id, epoch, case_id, addition_id, batch_id) VALUES (?, ?, ?, ?, ?)`)
+    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, additionId, batchId)
+  return { additionId, batchId, before, after, prior, latest, scope }
+}
+
+it.each(['saved', 'candidate'] as const)('continues the original quality requests for other automatic fragments after a %s manual rewrite', async mode => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = recordingQualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: payload.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: true, relationValid: true, rejectionValid: true })) }
+  })
+  const edited = await seedRecordingChange(f)
+  const retained = await seedRecordingChange(f, { field: 'chiefComplaint', after: '头晕一周' })
+  const { version, updatedAt: _updatedAt, ...saved } = (await f.readCase()).clinicalDocument!.draft!
+  const document = { ...saved, historyOfPresentIllness: '医生复核：头晕与起立有关，尚待查明。' }
+  calls.length = 0
+  if (mode === 'saved') expect((await f.save(document)).status).toBe(200)
+  expect((await f.mutate('check', { expectedDraftVersion: mode === 'saved'
+    ? (await f.readCase()).clinicalDocument!.draft!.version : version,
+  ...(mode === 'candidate' ? { document, clientId: 'manual-recording-editor', clientRevision: 1 } : {}) })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read(mode === 'candidate' ? 'manual-recording-editor' : undefined)).toMatchObject({ status: 'ready', stale: false })
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  for (const call of calls) {
+    const payload = recordingQualityPayloadSchema.parse(call.userPayload)
+    expect(payload.document.historyOfPresentIllness).toBe(document.historyOfPresentIllness)
+    expect(payload.recordingContext.changes.map(change => change.id)).toEqual([retained.additionId])
+    expect(payload.agentFacts.some(fact => fact.id.startsWith(`${edited.additionId}:`))).toBe(false)
+    expect(payload.agentFacts.some(fact => fact.id.startsWith(`${retained.additionId}:`))).toBe(true)
+  }
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness)
+    .toBe(mode === 'saved' ? document.historyOfPresentIllness : edited.after)
+})
+
+it.each(['correction', 'conflict'] as const)('checks a new %s of a manually owned former automatic target without reviving its old facts', async relation => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = recordingQualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: payload.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: true, relationValid: true, rejectionValid: true })) }
+  }, undefined, '刚才时间说错了，我头晕三周，站起来会加重。')
+  const former = await seedRecordingChange(f)
+  const retained = await seedRecordingChange(f, { field: 'chiefComplaint', after: '头晕一周' })
+  const { version: _version, updatedAt: _updatedAt, ...saved } = (await f.readCase()).clinicalDocument!.draft!
+  const manual = '医生核实：头晕两周，起立时加重。'
+  expect((await f.save({ ...saved, historyOfPresentIllness: manual })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.ask()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const sources = (await f.readCase()).consultationRecording!.sources!, latest = sources.at(-1)!
+  expect(latest.id).not.toBe(former.latest.id)
+  const after = relation === 'correction' ? '患者更正为头晕三周，起立时加重。' : '原记头晕两周；患者现自述三周，时长待核实。'
+  expect((await f.save({ ...saved, historyOfPresentIllness: after })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const detail = await f.readCase(), batchId = randomUUID(), additionId = randomUUID()
+  const fact = { text: after, sources: [{ sourceTurnId: latest.id, quote: latest.messageText }] }
+  const batch = { members: [{ id: latest.id, generation: 1 }], sources,
+    baseline: { version: detail.clinicalDocument!.draft!.version - 1, content: { ...saved, historyOfPresentIllness: manual } },
+    history: [{ id: former.additionId, field: 'historyOfPresentIllness', text: former.after,
+      facts: [{ text: former.after, sources: [{ sourceTurnId: former.latest.id, quote: former.latest.messageText }] }],
+      sourceTurnId: former.latest.id, quote: former.latest.messageText }],
+    manualHistory: [{ id: former.additionId, field: 'historyOfPresentIllness', text: manual, start: 0, end: manual.length }], rejectedFacts: [] }
+  f.runtime.database.driver.prepare("UPDATE consultation_history_addition SET review_state = 'superseded' WHERE addition_id = ?").run(former.additionId)
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_batch
+    (workspace_id, epoch, case_id, batch_id, snapshot_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(former.scope.workspace_id, former.scope.epoch, f.started.outpatientCaseId, batchId, JSON.stringify(batch), '2026-10-19T00:00:02Z', '2026-10-19T00:00:03Z')
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
+    (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
+      target_addition_id, start_offset, end_offset, current_text, facts_json)
+    VALUES (?, ?, ?, ?, ?, 'historyOfPresentIllness', ?, ?, 'applied', ?, 0, ?, ?, ?)`)
+    .run(former.scope.workspace_id, former.scope.epoch, f.started.outpatientCaseId, additionId, latest.id, latest.messageText,
+      relation, former.additionId, after.length, after, JSON.stringify([fact]))
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition_batch
+    (workspace_id, epoch, case_id, addition_id, batch_id) VALUES (?, ?, ?, ?, ?)`)
+    .run(former.scope.workspace_id, former.scope.epoch, f.started.outpatientCaseId, additionId, batchId)
+  calls.length = 0
+  expect((await f.mutate('check', { expectedDraftVersion: detail.clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', stale: false })
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  for (const call of calls) {
+    const payload = z.object({ recordingContext: z.object({ changes: z.array(z.object({ id: z.string(),
+      targetId: z.string().optional(), before: z.object({ text: z.string(), facts: z.array(z.unknown()) }), newSourceIds: z.array(z.string()) })) }) }).parse(call.userPayload)
+    expect(payload.recordingContext.changes.map(change => change.id)).toEqual([retained.additionId, additionId])
+    expect(payload.recordingContext.changes.find(change => change.id === additionId)).toMatchObject({
+      targetId: former.additionId, before: { text: manual, facts: [] }, newSourceIds: [latest.id],
+    })
+  }
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(after)
+})
+
+it('keeps immutable automatic ancestry after a doctor later edits the still-visible target of a conflict', async () => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = recordingQualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: payload.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: change.before?.text !== '头晕一周；无胸痛', relationValid: true, rejectionValid: true })) }
+  })
+  const first = await seedRecordingChange(f)
+  expect((await f.ask()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const latest = (await f.readCase()).consultationRecording!.sources!.at(-1)!
+  const conflict = '患者本次自述头晕两周，与原记时长存在矛盾，待核实。'
+  const current = `${first.after}。\n${conflict}`
+  expect((await f.save({ historyOfPresentIllness: current })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const detail = await f.readCase(), batchId = randomUUID(), additionId = randomUUID()
+  const fact = (text: string, source = latest) => ({ text, sources: [{ sourceTurnId: source.id, quote: source.messageText }] })
+  const batch = { members: [{ id: latest.id, generation: 1 }], sources: detail.consultationRecording!.sources!,
+    baseline: { version: detail.clinicalDocument!.draft!.version - 1, content: { assessment: '', chiefComplaint: '', disposition: '',
+      followUp: '', physicalExamination: '', historyOfPresentIllness: first.after } },
+    history: [{ id: first.additionId, field: 'historyOfPresentIllness', text: first.after, facts: [fact(first.after, first.latest)],
+      sourceTurnId: first.latest.id, quote: first.latest.messageText }], manualHistory: [], rejectedFacts: [] }
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_batch
+    (workspace_id, epoch, case_id, batch_id, snapshot_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, batchId, JSON.stringify(batch), '2026-10-19T00:00:02Z', '2026-10-19T00:00:03Z')
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
+    (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
+      target_addition_id, start_offset, end_offset, current_text, facts_json)
+    VALUES (?, ?, ?, ?, ?, 'historyOfPresentIllness', ?, 'conflict', 'applied', ?, ?, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, additionId, latest.id, latest.messageText,
+      first.additionId, first.after.length + 2, current.length, conflict, JSON.stringify([fact(conflict)]))
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition_batch
+    (workspace_id, epoch, case_id, addition_id, batch_id) VALUES (?, ?, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, additionId, batchId)
+  const manual = '医生复核原片段：头晕与体位有关，时长待核实。'
+  calls.length = 0
+  expect((await f.save({ historyOfPresentIllness: `${manual}\n${conflict}` })).status).toBe(200)
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', stale: false, issues: expect.arrayContaining([
+    expect.objectContaining({ kind: 'agent-source', message: '现病史中的自动记录变更尚未确认保留全部仍有效的旧事实。' }),
+  ]) })
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  for (const call of calls) {
+    const payload = z.object({ recordingContext: z.object({ changes: z.array(z.object({ id: z.string(), historical: z.boolean(),
+      before: z.object({ text: z.string() }), after: z.object({ text: z.string() }) })) }) }).parse(call.userPayload)
+    expect(payload.recordingContext.changes).toEqual([
+      { id: first.additionId, historical: true, before: { text: first.before }, after: { text: first.after } },
+      { id: additionId, historical: false, before: { text: first.after }, after: { text: conflict } },
+    ])
+  }
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(`${manual}\n${conflict}`)
+})
+
+it('checks preservation of old valid recording facts in the existing quality requests and reuses the complete input', async () => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    const recording = recordingQualityPayloadSchema.safeParse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      ...(recording.success ? { recordingChecks: recording.data.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: input.schemaName !== 'clinical_document_quality_verification', relationValid: true, rejectionValid: true })) } : {}) }
+  })
+  const seeded = await seedRecordingChange(f)
+  calls.length = 0
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const state = await f.read()
+  expect(state).toMatchObject({ status: 'ready', stale: false, issues: expect.arrayContaining([
+    expect.objectContaining({ kind: 'agent-source', field: 'historyOfPresentIllness', classification: 'needs-verification',
+      message: '现病史中的自动记录变更尚未确认保留全部仍有效的旧事实。' }),
+  ]) })
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  const input = recordingQualityPayloadSchema.parse(calls[0]!.userPayload)
+  expect(input.recordingContext.changes).toEqual([expect.objectContaining({ id: seeded.additionId, relation: 'update',
+    before: expect.objectContaining({ text: '头晕一周；无胸痛' }), after: expect.objectContaining({ text: '站起时头晕加重' }),
+    newSourceIds: [seeded.latest.id] })])
+  expect(state.issues.find(issue => issue.kind === 'agent-source')?.explanation?.impact).toContain('不能确认')
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(seeded.after)
+  await f.restart()
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(calls).toHaveLength(2)
+})
+
+it('does not declare recording protections complete when a rejected fact has no recoverable saved source', async () => {
+  let calls = 0
+  const f = await setup(input => {
+    calls += 1
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: recordingQualityPayloadSchema.safeParse(input.userPayload).data?.recordingContext.changes.map(change => ({
+        id: change.id, preserved: true, relationValid: true, rejectionValid: true,
+      })) ?? [] }
+  })
+  const seeded = await seedRecordingChange(f)
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
+    (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
+      current_text, facts_json, rejected, undone) VALUES (?, ?, ?, ?, ?, 'historyOfPresentIllness', ?, 'addition', 'applied', ?, ?, 1, 1)`)
+    .run(seeded.scope.workspace_id, seeded.scope.epoch, f.started.outpatientCaseId, randomUUID(), seeded.prior.id,
+      seeded.prior.messageText, '既往拒绝事实', JSON.stringify([{ text: '既往拒绝事实', sources: [{ sourceTurnId: 'unavailable-source', quote: '原始来源不可恢复。' }] }]))
+  calls = 0
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'incomplete', stale: false })
+  expect((await f.read()).notices.join('')).toContain('拒绝事实或来源上下文不足')
+  expect(calls).toBe(0)
+})
+
+it('keeps both old-fact preservation and relation findings when the same recording change fails both checks', async () => {
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    const recording = recordingQualityPayloadSchema.safeParse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: recording.data?.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: false, relationValid: false, rejectionValid: true })) ?? [] }
+  })
+  await seedRecordingChange(f, { relation: 'correction' })
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const issues = (await f.read()).issues.filter(issue => issue.kind === 'agent-source')
+  expect(issues.map(issue => issue.message)).toEqual([
+    '现病史中的自动记录变更尚未确认保留全部仍有效的旧事实。',
+    '现病史中的自动记录的更正或冲突关系尚未通过来源语义核验。',
+  ])
+  expect(new Set(issues.map(issue => issue.id)).size).toBe(2)
+})
+
+it.each([22, 23])('publishes a negative recording finding with all %s sources within the issue evidence limit', async sourceCount => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = recordingQualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: payload.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: input.schemaName !== 'clinical_document_quality_verification', relationValid: true, rejectionValid: true })) }
+  })
+  const seeded = await seedRecordingChange(f)
+  const sources = Array.from({ length: sourceCount }, (_, index) => ({ id: `synthetic-quality-source-${index}`,
+    kind: 'patient' as const, messageText: `第${index + 1}次合成自述：头晕仍在持续。`, recordedAt: '2026-10-19T00:00:00Z' }))
+  for (const [index, source] of sources.entries()) f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_source
+    (workspace_id, epoch, case_id, source_id, source_kind, message_text, sequence, recorded_at, metadata_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, '{}')`).run(seeded.scope.workspace_id, seeded.scope.epoch,
+      f.started.outpatientCaseId, source.id, source.kind, source.messageText, index + 100, source.recordedAt)
+  const ref = (source: typeof sources[number]) => ({ sourceTurnId: source.id, quote: source.messageText })
+  const row = z.object({ snapshot_json: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT snapshot_json FROM consultation_recording_batch WHERE batch_id = ?').get(seeded.batchId))
+  const batch = recordingBatchSchema.parse(JSON.parse(row.snapshot_json))
+  batch.sources.push(...sources)
+  batch.members = [{ id: sources.at(-1)!.id, generation: 1 }]
+  batch.history[0]!.facts = [{ text: '头晕一周', sources: sources.slice(0, 12).map(ref) },
+    { text: '无胸痛', sources: sources.slice(12, -1).map(ref) }]
+  f.runtime.database.driver.prepare('UPDATE consultation_history_addition SET facts_json = ? WHERE addition_id = ?')
+    .run(JSON.stringify([{ text: seeded.after, sources: [ref(sources.at(-1)!)] }]), seeded.additionId)
+  f.runtime.database.driver.prepare('UPDATE consultation_recording_batch SET snapshot_json = ? WHERE batch_id = ?')
+    .run(JSON.stringify(batch), seeded.batchId)
+  calls.length = 0
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const state = await f.read()
+  expect(state).toMatchObject({ status: 'ready', stale: false })
+  const findings = state.issues.filter(issue => issue.kind === 'agent-source')
+  expect(findings).not.toHaveLength(0)
+  expect(findings.every(issue => issue.classification === 'needs-verification' && issue.message.includes('旧事实'))).toBe(true)
+  expect(findings.flatMap(issue => issue.evidence).filter(item => item.kind !== 'document'))
+    .toEqual(expect.arrayContaining(sources.map(source => expect.objectContaining({ id: source.id, text: source.messageText }))))
+  expect(new Set(findings.map(issue => issue.id)).size).toBe(findings.length)
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  for (const call of calls) expect(recordingQualityPayloadSchema.parse(call.userPayload).evidence)
+    .toEqual(expect.arrayContaining(sources.map(source => expect.objectContaining({ id: source.id, text: source.messageText }))))
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(seeded.after)
+  await f.restart()
+  expect((await f.read()).issues).toEqual(state.issues)
+})
+
+it('publishes a negative recording finding using exact quotes from a long source while checking its complete text', async () => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = recordingQualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: payload.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: input.schemaName !== 'clinical_document_quality_verification', relationValid: true, rejectionValid: true })) }
+  })
+  const seeded = await seedRecordingChange(f, { after: '站起时头晕加重；无胸痛' })
+  const quote = '患者自述站起时头晕加重，没有胸痛。'
+  const source = { id: 'synthetic-quality-long-report', kind: 'report' as const,
+    messageText: quote + '合成报告的其他记录内容。'.repeat(2000), recordedAt: '2026-10-19T00:00:00Z' }
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_source
+    (workspace_id, epoch, case_id, source_id, source_kind, message_text, sequence, recorded_at, metadata_json)
+    VALUES (?, ?, ?, ?, ?, ?, 100, ?, '{}')`).run(seeded.scope.workspace_id, seeded.scope.epoch,
+      f.started.outpatientCaseId, source.id, source.kind, source.messageText, source.recordedAt)
+  const row = z.object({ snapshot_json: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT snapshot_json FROM consultation_recording_batch WHERE batch_id = ?').get(seeded.batchId))
+  const batch = recordingBatchSchema.parse(JSON.parse(row.snapshot_json))
+  batch.sources.push(source)
+  batch.members = [{ id: source.id, generation: 1 }]
+  f.runtime.database.driver.prepare('UPDATE consultation_history_addition SET facts_json = ? WHERE addition_id = ?')
+    .run(JSON.stringify(seeded.after.split('；').map(text => ({ text, sources: [{ sourceTurnId: source.id, quote }] }))), seeded.additionId)
+  f.runtime.database.driver.prepare('UPDATE consultation_recording_batch SET snapshot_json = ? WHERE batch_id = ?')
+    .run(JSON.stringify(batch), seeded.batchId)
+  calls.length = 0
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const state = await f.read()
+  expect(state).toMatchObject({ status: 'ready', stale: false })
+  const findings = state.issues.filter(issue => issue.kind === 'agent-source')
+  expect(findings).toHaveLength(1)
+  expect(findings[0]).toMatchObject({ classification: 'needs-verification', message: expect.stringContaining('旧事实') })
+  expect(findings[0]!.evidence.filter(item => item.id === source.id))
+    .toEqual([expect.objectContaining({ kind: 'report', text: quote, recordedAt: source.recordedAt })])
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  for (const call of calls) expect(recordingQualityPayloadSchema.parse(call.userPayload).evidence)
+    .toContainEqual(expect.objectContaining({ id: source.id, text: source.messageText }))
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(seeded.after)
+})
+
+it.each(['update', 'correction', 'conflict'] as const)('accepts a supported %s with its old/new context in both quality requests', async relation => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    const recording = recordingQualityPayloadSchema.safeParse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: recording.data?.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: true, relationValid: true, rejectionValid: true })) ?? [] }
+  })
+  const seeded = await seedRecordingChange(f, { relation, after: relation === 'conflict' ? '无胸痛；患者另述胸痛，双方说法待核实' : '头晕一周；无胸痛；站起时加重' })
+  calls.length = 0
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', stale: false })
+  expect((await f.read()).issues.filter(issue => issue.kind === 'agent-source')).toEqual([])
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  for (const call of calls) expect(recordingQualityPayloadSchema.parse(call.userPayload).recordingContext.changes)
+    .toEqual([expect.objectContaining({ id: seeded.additionId, relation,
+      before: expect.objectContaining({ text: seeded.before }), after: expect.objectContaining({ text: seeded.after }) })])
+})
+
+it.each([false, true])('checks rejected fact recurrence against new batch sources (new support: %s)', async newSupport => {
+  const calls: ModelInput[] = []
+  const reply = newSupport ? '我现在出现胸痛。' : '我现在只是头晕加重。'
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    const recording = recordingQualityPayloadSchema.safeParse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: recording.data?.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: true, relationValid: true, rejectionValid: newSupport })) ?? [] }
+  }, undefined, reply)
+  const seeded = await seedRecordingChange(f, { rejected: '胸痛', after: '胸痛；头晕加重' })
+  calls.length = 0
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).status).toBe('ready')
+  expect((await f.read()).issues.filter(issue => issue.kind === 'agent-source')).toHaveLength(newSupport ? 0 : 1)
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  const input = recordingQualityPayloadSchema.parse(calls[0]!.userPayload)
+  expect(input.evidence).toContainEqual(expect.objectContaining({ id: seeded.latest.id, text: reply }))
+  expect(input.recordingContext.changes).toEqual([expect.objectContaining({ newSourceIds: [seeded.latest.id],
+    rejectedFacts: [expect.objectContaining({ text: '胸痛', sources: [{ sourceTurnId: seeded.prior.id, quote: seeded.prior.messageText }] })] })])
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe('胸痛；头晕加重')
+})
+
+it.each(['bytes', 'facts'] as const)('charges complete recording context to the existing %s budget instead of truncating it or calling a model', async budget => {
+  let calls = 0
+  const f = await setup(() => { calls += 1; return { issues: [], agentFactChecks: [] } })
+  const seeded = await seedRecordingChange(f)
+  const batch = z.object({ snapshot_json: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT snapshot_json FROM consultation_recording_batch WHERE batch_id = ?').get(seeded.batchId))
+  const input = z.record(z.string(), z.unknown()).parse(JSON.parse(batch.snapshot_json))
+  input.rejectedFacts = Array.from({ length: budget === 'bytes' ? 120 : 201 }, (_, index) => ({
+    text: `${index}${'合成旧事实'.repeat(budget === 'bytes' ? 100 : 1)}`,
+    field: 'historyOfPresentIllness', sources: [{ sourceTurnId: seeded.prior.id, quote: seeded.prior.messageText }] }))
+  f.runtime.database.driver.prepare('UPDATE consultation_recording_batch SET snapshot_json = ? WHERE batch_id = ?')
+    .run(JSON.stringify(input), seeded.batchId)
+  calls = 0
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'incomplete', errorCode: 'INPUT_TOO_LARGE' })
+  expect((await f.read()).notices.join('')).toContain('未截断资料')
+  expect(calls).toBe(0)
+})
+
+it('retains original source limitations for unsupported Agent statements and accepts the negative independent verdict without repair', async () => {
+  const examples = [
+    { quote: '我早上吃过饭，也喝过水。', statement: '已空腹至少八小时。' },
+    { quote: '我早上吃过饭，也喝过水。', statement: '符合采血条件。' },
+    { quote: '我早上吃过饭，也喝过水。', statement: '已完成采血。' },
+    { quote: '我会不会得了糖尿病？', statement: '已确诊糖尿病。' },
+    { quote: '如果胸痛三天是不是要检查？', statement: '胸痛三天。' },
+    { quote: '假如一直没有进食会不会头晕？', statement: '一直未进食。' },
+    { quote: '我没有胸痛。', statement: '存在胸痛。' },
+    { quote: '我可能昨晚发热，记不清。', statement: '昨晚明确发热。' },
+    { quote: '我自己量过体温37.2度。', statement: '本院测得体温38.2度。' },
+    { quote: '我猜医生可能会给我开降压药。', statement: '医生已决定开降压药。' },
+  ]
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id,
+      supported: input.schemaName !== 'clinical_document_quality_verification' })) }
+  })
+  const scope = z.object({ workspace_id: z.string(), epoch: z.string() }).parse(f.runtime.database.driver.prepare(
+    'SELECT workspace_id, epoch FROM outpatient_case WHERE case_id = ?').get(f.started.outpatientCaseId))
+  // Seed persisted source history without invoking the patient simulator's
+  // independent hidden-diagnosis guard; only the quality seam is under test.
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_source
+    (workspace_id, epoch, case_id, source_id, source_kind, message_text, sequence, recorded_at, metadata_json)
+    VALUES (?, ?, ?, ?, 'patient', ?, 2, '2026-10-19T00:00:00Z', '{}')`)
+    .run(scope.workspace_id, scope.epoch, f.started.outpatientCaseId, randomUUID(), [...new Set(examples.map(example => example.quote))].join(''))
+  const source = (await f.readCase()).consultationRecording!.sources!.at(-1)!
+  calls.length = 0
+  const document = examples.map(example => example.statement).join('')
+  expect((await f.save({ historyOfPresentIllness: document }, { agentGenerated: true, agentFacts: examples.map(example => ({
+    field: 'historyOfPresentIllness', text: example.statement, sources: [{ sourceTurnId: source.id, quote: example.quote }],
+  })) })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).status).toBe('ready')
+  expect((await f.read()).issues.filter(issue => issue.kind === 'agent-source')).toHaveLength(examples.length)
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  const payload = z.object({ agentFacts: z.array(z.object({ text: z.string(), sources: z.array(z.object({ quote: z.string() })) })) })
+  for (const call of calls) {
+    const facts = payload.parse(call.userPayload).agentFacts
+    for (const example of examples) expect(facts).toContainEqual(expect.objectContaining({ text: example.statement,
+      sources: [expect.objectContaining({ quote: example.quote })] }))
+    expect(call.systemPrompt).toContain('进食或饮水不能推断空腹时长')
+    expect(call.systemPrompt).toContain('完整自述旁含问号')
+    expect(call.systemPrompt).toContain('医生明确表达或明确采纳的决定')
+  }
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(document)
+})
+
+it('keeps a still-valid fact lost before a second replacement in current quality context', async () => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    const recording = recordingQualityPayloadSchema.safeParse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+      recordingChecks: recording.data?.recordingContext.changes.map(change => ({ id: change.id,
+        preserved: change.before?.text !== '头晕一周；无胸痛', relationValid: true, rejectionValid: true })) ?? [] }
+  })
+  const first = await seedRecordingChange(f)
+  const current = `${first.after}；伴恶心`
+  expect((await f.save({ historyOfPresentIllness: current })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const detail = await f.readCase(), batchId = randomUUID(), additionId = randomUUID()
+  const fact = (text: string) => ({ text, sources: [{ sourceTurnId: first.latest.id, quote: first.latest.messageText }] })
+  const batch = { members: [{ id: first.latest.id, generation: 2 }], sources: detail.consultationRecording!.sources!,
+    baseline: { version: detail.clinicalDocument!.draft!.version - 1, content: { assessment: '', chiefComplaint: '', disposition: '',
+      followUp: '', physicalExamination: '', historyOfPresentIllness: first.after } },
+    history: [{ id: first.additionId, field: 'historyOfPresentIllness', text: first.after, facts: [fact(first.after)],
+      sourceTurnId: first.latest.id, quote: first.latest.messageText }], manualHistory: [], rejectedFacts: [] }
+  f.runtime.database.driver.prepare("UPDATE consultation_history_addition SET review_state = 'superseded' WHERE addition_id = ?").run(first.additionId)
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_recording_batch
+    (workspace_id, epoch, case_id, batch_id, snapshot_json, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, batchId, JSON.stringify(batch), '2026-10-19T00:00:02Z', '2026-10-19T00:00:03Z')
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition
+    (workspace_id, epoch, case_id, addition_id, source_turn_id, field, quote, relation, status,
+      target_addition_id, start_offset, end_offset, current_text, facts_json)
+    VALUES (?, ?, ?, ?, ?, 'historyOfPresentIllness', ?, 'update', 'applied', ?, 0, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, additionId, first.latest.id, first.latest.messageText,
+      first.additionId, current.length, current, JSON.stringify([fact(current)]))
+  f.runtime.database.driver.prepare(`INSERT INTO consultation_history_addition_batch
+    (workspace_id, epoch, case_id, addition_id, batch_id) VALUES (?, ?, ?, ?, ?)`)
+    .run(first.scope.workspace_id, first.scope.epoch, f.started.outpatientCaseId, additionId, batchId)
+  calls.length = 0
+  expect((await f.mutate('check', { expectedDraftVersion: detail.clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).issues).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'agent-source',
+    message: '现病史中的自动记录变更尚未确认保留全部仍有效的旧事实。' })]))
+  const context = recordingQualityPayloadSchema.parse(calls[0]!.userPayload).recordingContext
+  expect(context.changes).toHaveLength(2)
+  expect(context.changes).toContainEqual(expect.objectContaining({ id: first.additionId, before: { text: first.before } }))
+  expect((await f.readCase()).clinicalDocument!.draft!.historyOfPresentIllness).toBe(current)
+})
+
+it.each(['missing', 'cycle'] as const)('does not claim a complete recording check when the replacement chain is %s', async kind => {
+  let calls = 0
+  const f = await setup(() => { calls += 1; return { issues: [], agentFactChecks: [] } })
+  const seeded = await seedRecordingChange(f)
+  f.runtime.database.driver.prepare('UPDATE consultation_history_addition SET target_addition_id = ? WHERE addition_id = ?')
+    .run(kind === 'cycle' ? seeded.additionId : 'missing-ancestor', seeded.additionId)
+  calls = 0
+  expect((await f.mutate('check', { expectedDraftVersion: (await f.readCase()).clinicalDocument!.draft!.version })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).status).toBe('incomplete')
+  expect((await f.read()).notices.join('')).toContain('语义检查未完成')
+  expect(calls).toBe(0)
+})
+
+it('can verify the explicit self-report beside a question while keeping the complete original sentence', async () => {
+  const calls: ModelInput[] = []
+  const f = await setup(input => {
+    calls.push(input)
+    const payload = qualityPayloadSchema.parse(input.userPayload)
+    return { issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }
+  }, undefined, '我头晕一周，会不会很严重？')
+  expect((await f.ask()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const source = (await f.readCase()).consultationRecording!.sources!.at(-1)!
+  calls.length = 0
+  expect((await f.save({ historyOfPresentIllness: '患者自述头晕一周。' }, { agentGenerated: true,
+    agentFacts: [{ field: 'historyOfPresentIllness', text: '患者自述头晕一周。', sources: [{ sourceTurnId: source.id, quote: source.messageText }] }] })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect((await f.read()).issues.filter(issue => issue.kind === 'agent-source')).toEqual([])
+  expect(calls.map(call => call.schemaName)).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+  for (const call of calls) expect(qualityPayloadSchema.parse(call.userPayload).evidence)
+    .toContainEqual(expect.objectContaining({ id: source.id, text: '我头晕一周，会不会很严重？' }))
+})
 
 it.each(['saved', 'candidate'] as const)('reuses a failed %s task until an explicit retry without new outbox work or model calls', async mode => {
   let calls = 0
@@ -374,6 +935,67 @@ it.each(['auxiliaryExamination', 'familyHistory', 'physicalExamination'] as cons
   },
 )
 
+it.each(['', '头晕。'])('advertises only applicable missing-field combinations for chief complaint %j', async chiefComplaint => {
+  let advertised: z.ZodType | undefined
+  const f = await setup(input => {
+    advertised = z.fromJSONSchema(input.jsonSchema)
+    return { issues: [], agentFactChecks: [] }
+  })
+  expect((await f.save({ chiefComplaint, physicalExamination: '一般情况可。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready' })
+  const issue = { kind: 'missing-field', message: '核对当前记录。', sourceQuotes: [],
+    explanation: { impact: '当前记录需要补充。', suggestion: '核对已有信息后如实记录。' } }
+  const accepts = (candidate: object) => advertised!.safeParse({ issues: [candidate], agentFactChecks: [] }).success
+  for (const field of ['historyOfPresentIllness', 'assessment', 'disposition', 'followUp']) {
+    expect(accepts({ ...issue, field })).toBe(true)
+  }
+  for (const field of ['priorMedicalHistory', 'familyHistory', 'allergyHistory', 'auxiliaryExamination', 'physicalExamination']) {
+    expect(accepts({ ...issue, field })).toBe(false)
+  }
+  expect(accepts({ ...issue, field: 'chiefComplaint' })).toBe(!chiefComplaint)
+  if (chiefComplaint) expect(accepts({ ...issue, field: 'chiefComplaint', documentQuote: chiefComplaint })).toBe(true)
+  expect(accepts({ ...issue, kind: 'omission', field: 'familyHistory', sourceQuotes: [{ evidenceId: 'synthetic-source', quote: '合成家族史。' }] })).toBe(true)
+})
+
+it('corrects an out-of-scope missing-field with the precise candidate path within the existing attempt limit', async () => {
+  const generationPrompts: string[] = []
+  const valid = { kind: 'missing-field', field: 'chiefComplaint', message: '主诉未说明持续时间。', documentQuote: '头晕。', sourceQuotes: [],
+    explanation: { impact: '主诉未说明症状持续多久。', suggestion: '核对已有病史后如实记录，未知时注明不详。' } }
+  const f = await setup(input => {
+    if (input.schemaName === 'clinical_document_quality_verification') return { issues: [{ index: 0, supported: true }], agentFactChecks: [] }
+    generationPrompts.push(input.systemPrompt)
+    return { issues: generationPrompts.length === 1 ? [valid, { ...valid, field: 'familyHistory', documentQuote: '家族史不详。' }] : [valid], agentFactChecks: [] }
+  })
+  expect((await f.save({ chiefComplaint: '头晕。', familyHistory: '家族史不详。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', issues: expect.arrayContaining([expect.objectContaining({ field: 'chiefComplaint', message: valid.message })]) })
+  expect(generationPrompts).toHaveLength(2)
+  expect(generationPrompts[1]).toContain('{"code":"quality_scope","path":"issues.1.field"}')
+  expect((await f.read()).issues.some(issue => issue.field === 'familyHistory')).toBe(false)
+  expect((await f.readCase()).clinicalDocument?.draft).toMatchObject({ chiefComplaint: '头晕。', familyHistory: '家族史不详。' })
+})
+
+it('corrects an incomplete source quotation with its precise path and full-statement instructions', async () => {
+  const generationPrompts: string[] = []
+  const f = await setup(input => {
+    if (input.schemaName === 'clinical_document_quality_verification') return { issues: [{ index: 0, supported: true }], agentFactChecks: [] }
+    generationPrompts.push(input.systemPrompt)
+    const source = qualityPayloadSchema.parse(input.userPayload).evidence.find(item => item.kind === 'patient')!
+    return { issues: [{ kind: 'omission', field: 'historyOfPresentIllness', message: '现病史遗漏已知病程。', documentQuote: '头晕。',
+      explanation: { impact: '正文未记录患者已说明的持续时间。', suggestion: '核对原话后记录已知病程。' },
+      sourceQuotes: [{ evidenceId: source.id, quote: generationPrompts.length === 1 ? '最近一周总是头晕' : source.text }],
+    }], agentFactChecks: [] }
+  })
+  expect((await f.save({ historyOfPresentIllness: '头晕。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', issues: expect.arrayContaining([expect.objectContaining({ kind: 'omission', field: 'historyOfPresentIllness' })]) })
+  expect(generationPrompts).toHaveLength(2)
+  expect(generationPrompts[1]).toContain('{"code":"quality_source","path":"issues.0.sourceQuotes.0"}')
+  expect(generationPrompts[1]).toContain('完整原句')
+  expect((await f.readCase()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('头晕。')
+})
+
 it('reads legacy persisted checks as stale and refreshes them without reusing an old semantic explanation', async () => {
   const f = await setup(input => {
     const payload = qualityPayloadSchema.parse(input.userPayload)
@@ -439,6 +1061,97 @@ it('does not publish a newly generated finding that omits its impact and suggest
   await f.runtime.dispatchPending()
   expect(await f.read()).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID' })
   expect((await f.read()).issues.some(issue => issue.field === 'chiefComplaint')).toBe(false)
+})
+
+it('deduplicates the triage projection while preserving its identity, time and unique vital signs', async () => {
+  let checked = false
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.extend({ evidence: z.array(z.object({ id: z.string(), text: z.string(),
+      label: z.string(), recordedAt: z.string().optional(), reference: z.string().optional() })), sourceContext: z.object({
+      triage: z.object({ evidenceId: z.string(), derivedProjection: z.string(), recordId: z.string(), version: z.number() }),
+    }) }).parse(input.userPayload)
+    expect(payload.evidence.filter(item => ['clinical:triage', 'clinical:presentation'].includes(item.id)))
+      .toEqual([expect.objectContaining({ id: 'clinical:triage', label: '分诊初记',
+        recordedAt: expect.any(String), reference: expect.stringMatching(/^triage:.+:1$/) })])
+    expect(JSON.parse(payload.evidence.find(item => item.id === 'clinical:triage')!.text))
+      .toMatchObject({ chiefComplaint: '反复头晕一周', temperatureC: 36.5, pulseBpm: 82 })
+    expect(payload.sourceContext.triage).toMatchObject({ evidenceId: 'clinical:triage', derivedProjection: 'clinical:presentation', version: 1 })
+    checked = true
+    return { issues: [], agentFactChecks: [] }
+  })
+  const original = (await f.readCase()).triage
+  expect((await f.save({ chiefComplaint: '反复头晕一周，近两日加重。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready' })
+  expect(checked).toBe(true)
+  expect((await f.readCase()).triage).toEqual(original)
+})
+
+it.each([
+  { name: 'synonym', reply: '我头晕一周，没有胸痛。', chiefComplaint: '眩晕一周。', conflict: false },
+  { name: 'summary', reply: '我头晕一周，起立时明显，没有胸痛。', chiefComplaint: '体位相关头晕一周。', conflict: false },
+  { name: 'addition', reply: '我头晕一周，近两天加重，没有胸痛。', chiefComplaint: '反复头晕一周，近两日加重。', conflict: false },
+  { name: 'time change', reply: '早上头晕，现在已经缓解，没有胸痛。', chiefComplaint: '头晕一周，目前已缓解。', conflict: false },
+  { name: 'explicit correction', reply: '刚才说错了，不是一周，我头晕三周，没有胸痛。', chiefComplaint: '头晕三周。', conflict: false },
+  { name: 'unexplained contradiction', reply: '本次一直没有胸痛，我明确否认胸痛。', chiefComplaint: '头晕伴胸痛一周。', conflict: true },
+])('checks chief complaint $name with source context in both model stages', async sample => {
+  const stages: string[] = []
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.extend({
+      sourceContext: z.object({ availability: z.array(z.object({ evidenceId: z.string(), availableAt: z.string() })),
+        triage: z.object({ recordId: z.string() }) }),
+      documentContext: z.object({ savedVersion: z.number(), savedAt: z.string(), savedBy: z.string(), changedFields: z.array(z.string()) }),
+    }).parse(input.userPayload)
+    const patient = payload.evidence.find(item => item.kind === 'patient' && item.text === sample.reply)!
+    expect(patient).toBeDefined()
+    expect(payload.sourceContext.availability).toContainEqual({ evidenceId: patient.id, availableAt: expect.any(String) })
+    expect(payload.documentContext).toMatchObject({ savedVersion: 1, changedFields: [] })
+    expect(payload.evidence.filter(item => item.kind === 'doctor').some(item => item.text === sample.chiefComplaint)).toBe(false)
+    expect(input.systemPrompt).toContain('同义改写、合理概括')
+    expect(input.systemPrompt).toContain('不是独立临床事实')
+    expect(input.systemPrompt).toContain('明确更正必须由实际患者问诊')
+    stages.push(input.schemaName)
+    if (input.schemaName === 'clinical_document_quality_verification') return {
+      issues: payload.issues!.map((_, index) => ({ index, supported: sample.conflict })), agentFactChecks: [],
+    }
+    return { issues: [{ kind: 'inconsistency', field: 'chiefComplaint',
+      message: sample.conflict ? '主诉记录胸痛，但患者明确否认本次胸痛。' : '候选把主诉整理误判为与分诊不一致。',
+      documentQuote: sample.chiefComplaint, sourceQuotes: [{ evidenceId: patient.id, quote: sample.reply }],
+      explanation: { impact: '本次胸痛的肯定与否定会造成记录歧义。', suggestion: '核对本次是否胸痛并如实修订措辞。' },
+    }], agentFactChecks: [] }
+  }, undefined, sample.reply)
+  expect((await f.ask()).status).toBe(200)
+  expect((await f.save({ chiefComplaint: sample.chiefComplaint })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready' })
+  const issues = (await f.read()).issues.filter(issue => issue.kind === 'inconsistency')
+  expect(issues).toHaveLength(sample.conflict ? 1 : 0)
+  if (sample.conflict) expect(issues[0]).toMatchObject({ field: 'chiefComplaint', message: '主诉记录胸痛，但患者明确否认本次胸痛。' })
+  expect(stages).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+})
+
+it('keeps missing historical availability unknown and reuses quality across same-content saves', async () => {
+  let calls = 0
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.extend({ sourceContext: z.object({
+      availability: z.array(z.object({ evidenceId: z.string(), availableAt: z.string() })),
+    }) }).parse(input.userPayload)
+    const patient = payload.evidence.find(item => item.kind === 'patient')!
+    expect(payload.sourceContext.availability.some(item => item.evidenceId === patient.id)).toBe(false)
+    calls += 1
+    return { issues: [], agentFactChecks: [] }
+  })
+  expect((await f.ask()).status).toBe(200)
+  f.runtime.database.driver.prepare(`UPDATE consultation_recording_source SET saved_at = NULL
+    WHERE case_id = ? AND source_kind = 'patient'`).run(f.started.outpatientCaseId)
+  expect((await f.save({ chiefComplaint: '头晕一周。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const first = await f.read()
+  expect(first.status).toBe('ready')
+  expect((await f.save({ chiefComplaint: '头晕一周。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', inputFingerprint: first.inputFingerprint })
+  expect(calls).toBe(1)
 })
 
 it('keeps subjective fever and a triage measurement as separate evidence and honors rejection of a false contradiction', async () => {

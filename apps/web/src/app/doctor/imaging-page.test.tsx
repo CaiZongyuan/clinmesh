@@ -354,7 +354,7 @@ describe('doctor imaging page', () => {
     await user.click(await screen.findByRole('button', { name: /胸部 CT 平扫.*平扫/ }))
     await user.type(screen.getByLabelText('检查指征'), '咳嗽两周')
     await user.click(screen.getByRole('button', { name: /^开具选中项目/ }))
-    expect(await screen.findByText('更新或提交未完成，草稿已保留，可重试。')).toBeTruthy()
+    expect(await screen.findByText('更新或提交未完成，草稿已保留。')).toBeTruthy()
     expect((screen.getByLabelText('检查指征') as HTMLTextAreaElement).value).toBe('咳嗽两周')
     expect(screen.getByRole('button', { name: /胸部 CT 平扫.*平扫/ }).getAttribute('aria-pressed')).toBe('true')
   })

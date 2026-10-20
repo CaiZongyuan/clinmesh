@@ -23,6 +23,7 @@
 
 ## Agent 接入与协议
 
+- [Agent 模型调用链路、触发与停止条件审计](2026-10-19-agent-model-call-lifecycle.md)
 - [面向 Agent 的业务 CLI 参考研究](agent-friendly-cli-reference-analysis.md)
 - [Agent 运行时与评测融合研究](agent-runtime-and-evaluation-integration.md)
 - [DSH 插件能力与 ClinMesh 界面融合路线](dsh-plugin-integration-options.md)

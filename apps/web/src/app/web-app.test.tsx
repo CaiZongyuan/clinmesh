@@ -1227,6 +1227,9 @@ describe('Web application shell', () => {
     await user.click(darkTheme)
     expect(document.documentElement.classList.contains('dark')).toBe(true)
     expect(document.documentElement.dataset.theme).toBe('dark')
+    const applicationRoot = document.querySelector('.clinmesh-web-root')
+    expect(applicationRoot?.classList.contains('dark')).toBe(true)
+    expect(applicationRoot?.getAttribute('data-theme')).toBe('dark')
     expect(darkTheme.getAttribute('aria-pressed')).toBe('true')
     expect(JSON.parse(localStorage.getItem('clinmesh.preferences:v1') ?? '')).toEqual({
       fontSize: 'standard',
@@ -1237,10 +1240,13 @@ describe('Web application shell', () => {
     await user.click(darkTheme)
     expect(darkTheme.getAttribute('aria-pressed')).toBe('true')
     expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(applicationRoot?.getAttribute('data-theme')).toBe('dark')
 
     await user.click(screen.getByRole('button', { name: '亮色主题' }))
     expect(document.documentElement.classList.contains('dark')).toBe(false)
     expect(document.documentElement.dataset.theme).toBe('light')
+    expect(applicationRoot?.classList.contains('dark')).toBe(false)
+    expect(applicationRoot?.getAttribute('data-theme')).toBe('light')
   })
 
   it('navigates between role workspaces without reloading the application shell', async () => {

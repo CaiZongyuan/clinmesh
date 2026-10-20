@@ -1279,12 +1279,13 @@ export function getDoctorRecommendations(caseId: string, kind: DoctorRecommendat
   return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/recommendations/${kind}`, doctorRecommendationStateSchema, signal)
 }
 
-export async function generateDoctorRecommendations(state: DoctorRecommendationState, refresh: boolean) {
+export async function generateDoctorRecommendations(state: DoctorRecommendationState, refresh: boolean, continueOriginal = false) {
   const response = await apiMutation(
     `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/actions/generate`,
     generateDoctorRecommendationsResponseSchema,
     { expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
-      input: { expectedInputFingerprint: state.inputFingerprint, refresh } },
+      input: { expectedInputFingerprint: state.inputFingerprint, refresh,
+        ...(continueOriginal ? { continueGeneration: state.generation } : {}) } },
     { idempotencyKey: newIdempotencyKey() },
   )
   return response.data

@@ -363,6 +363,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workflow,
     })
     const consultationDialogue = new ConsultationDialogueService({
+      database,
       models,
       cases: syntheticCases,
       commands,
@@ -447,13 +448,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]), generationAbort.signal),
         'consultation.record-history': event => recordHistory(event, aiTimeoutMs),
         'consultation.record-history-backfill': event => recordHistory(event, aiTimeoutMs),
-        'consultation.verify-history': event => workflow.consultationRecording.verify(event, {
-          models,
-          shutdownSignal: generationAbort.signal,
-          ...(consultationModel === undefined ? {} : { model: consultationModel }),
-          ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
-          signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(aiTimeoutMs)]),
-        }),
+        'consultation.verify-history': event => workflow.consultationRecording.retireVerification(event),
         'laboratory.accept-request': async event => {
           const payload = laboratoryRequestPayloadSchema.parse(event.payload)
           workflow.acceptLaboratoryRequest({
@@ -624,10 +619,9 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const generationAbort = new AbortController()
     const lanes = [
       { id: 'recording', concurrency: 10, filter: { kinds: ['consultation.record-history'] } },
-      { id: 'verification', concurrency: 4, filter: { kinds: ['consultation.verify-history'] } },
       { id: 'backfill', concurrency: 1, filter: { kinds: ['consultation.record-history-backfill'] } },
       { id: 'recommendations', concurrency: 1, filter: { kinds: ['doctor.generate-recommendations'] } },
-      { id: 'business', concurrency: 2, filter: { excludedKinds: ['consultation.record-history', 'consultation.verify-history',
+      { id: 'business', concurrency: 2, filter: { excludedKinds: ['consultation.record-history',
         'consultation.record-history-backfill', 'doctor.generate-recommendations'] } },
     ]
     const pumpSlot = (lane: typeof lanes[number], slot: number): Promise<number> => {
@@ -766,8 +760,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           clearInterval(laboratoryServicePublicationTimer)
         }
         generationAbort.abort()
+        doctorRecommendations.close()
         closePromise = (async () => {
           await Promise.all([
+            consultationDialogue.close(),
             ...dispatchCycles.values(),
             generationCycle,
             laboratoryServicePublicationCycle,

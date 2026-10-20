@@ -43,6 +43,7 @@ import {
   applyResolvedWebTheme,
   readWebPreferences,
   writeWebPreferences,
+  type ResolvedWebTheme,
 } from './preferences.ts'
 import { useWebPreferences, WebPreferencesProvider } from './preferences-context.tsx'
 import {
@@ -445,26 +446,35 @@ function WebApplication({
       ? runtime.appearanceRoot.current
       : document.documentElement
     if (root === null) return
+    // Standalone keeps the shell-level class on <html> for the no-flash boot script, but the
+    // application root re-declares every theme token, so it must carry the theme itself or its
+    // light declarations shadow the dark tokens for the whole subtree.
+    const applyTheme = (theme: ResolvedWebTheme): void => {
+      applyResolvedWebTheme(theme, root)
+      if (runtime.mode === 'standalone') {
+        const appRoot = applicationRoot.current
+        if (appRoot !== null) applyResolvedWebTheme(theme, appRoot)
+      }
+    }
     if (runtime.mode === 'surface' && runtime.surfaceColorScheme !== undefined) {
-      applyResolvedWebTheme(runtime.surfaceColorScheme, root)
+      applyTheme(runtime.surfaceColorScheme)
       return
     }
     if (runtime.mode === 'standalone' && preferences.theme !== 'system') {
-      applyResolvedWebTheme(preferences.theme, root)
+      applyTheme(preferences.theme)
       return
     }
 
     const mediaQuery = window.matchMedia(DARK_MODE_QUERY)
-    const applySystemTheme = (): void => applyResolvedWebTheme(
+    const applySystemTheme = (): void => applyTheme(
       mediaQuery.matches ? 'dark' : 'light',
-      root,
     )
 
     applySystemTheme()
     mediaQuery.addEventListener('change', applySystemTheme)
 
     return () => mediaQuery.removeEventListener('change', applySystemTheme)
-  }, [preferences.theme, runtime.appearanceRoot, runtime.mode, runtime.surfaceColorScheme])
+  }, [applicationRoot, preferences.theme, runtime.appearanceRoot, runtime.mode, runtime.surfaceColorScheme])
 
   return (
     <WebPreferencesProvider value={preferencesContext}>
