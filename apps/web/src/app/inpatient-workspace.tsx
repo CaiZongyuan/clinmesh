@@ -1,3 +1,4 @@
+import { InpatientCharges } from './inpatient-charges.tsx'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import type { PatientSummary, SessionContext } from '@clinmesh/contracts/his'
 import { inpatientCatalogSchema, inpatientListSchema, inpatientCommandResponseSchema,
@@ -132,7 +133,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
           <Button disabled={write.blocked || swapId === null} onClick={() => assignBed('swap-bed')}>{zh ? '互换床位' : 'Swap beds'}</Button>
         </> : null}
       </FieldGroup></FieldSet> : null}
-      {!registrar ? <InpatientClinical key={selected.id} admission={selected} session={session} locale={locale} write={write} /> : null}
+      {session.actor.roleCode === 'cashier' ? <InpatientCharges key={selected.id} admissionId={selected.id} session={session} locale={locale} write={write} /> : !registrar ? <InpatientClinical key={selected.id} admission={selected} session={session} locale={locale} write={write} /> : null}
     </section> : null}
   </section>
 }

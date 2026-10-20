@@ -26,7 +26,7 @@ const rowSchema = z.object({ admission_id: z.string(), patient_id: z.string(), i
   registered_at: z.string(), admitted_at: z.string().nullable() })
 const sumSchema = z.object({ amount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) })
 const clinicalRoles = ['inpatient-doctor', 'ward-nurse']
-const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'pharmacist']
+const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier']
 
 export class InpatientService {
   readonly billing: InpatientBilling
@@ -46,8 +46,8 @@ export class InpatientService {
       'SELECT virtual_time FROM scenario_epoch_state WHERE workspace_id=? AND epoch=?')
       .get(context.workspaceId, context.epoch)).virtual_time
   }
-  detail(context: ActorContext, admissionId: string) {
-    this.assertRole(context, readers)
+  admissionBinding(context: ActorContext, admissionId: string) {
+    this.assertRole(context, [...readers, 'pharmacist'])
     const row = rowSchema.optional().parse(this.database.driver.prepare(
       'SELECT * FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?')
       .get(context.workspaceId, context.epoch, admissionId))
@@ -55,6 +55,12 @@ export class InpatientService {
     if (clinicalRoles.includes(context.roleCode) && (context.organizationId !== row.organization_id || context.locationId !== row.ward_id)) {
       throw new InpatientError('INPATIENT_SCOPE_FORBIDDEN', '当前科室或病区不负责本次住院', 403)
     }
+    return { id: row.admission_id, patientId: row.patient_id, organizationId: row.organization_id, status: row.status,
+      financialStatus: row.financial_status, row }
+  }
+  detail(context: ActorContext, admissionId: string) {
+    this.assertRole(context, readers)
+    const { row } = this.admissionBinding(context, admissionId)
     const patient = this.fhir.read(context, 'Patient', row.patient_id)
     const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
     const occupancy = z.object({ bed_id: z.string() }).optional().parse(this.database.driver.prepare(

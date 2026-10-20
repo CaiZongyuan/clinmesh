@@ -1199,6 +1199,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const identity = options.identity
     const inpatient = options.inpatient
     const actor = (context: Context) => identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+    app.get('/api/his/v1/inpatient/pharmacy/admissions', async context => {
+      try { return context.json(inpatient.orders.pharmacyList(await actor(context))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/pharmacy', async context => {
+      try { return context.json(inpatient.orders.pharmacy(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/charges', async context => {
+      try { return context.json(inpatient.orders.charges(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/inpatient/clinical-catalog', async context => {
       try { return context.json(inpatient.orders.catalog(await actor(context))) } catch (error) { return apiErrorResponse(context, error) }
     })

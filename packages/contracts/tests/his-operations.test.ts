@@ -70,8 +70,8 @@ describe('HIS operation catalog', () => {
       },
       id: 'reference.diagnoses.search',
       mode: 'query',
-      roles: ['administrator', 'outpatient-doctor'],
-      version: 1,
+      roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
+      version: 2,
     })
     expect(operation.input.parse({ page: 1, pageSize: 20, query: '糖尿病' })).toEqual({
       page: 1,
@@ -94,7 +94,7 @@ describe('HIS operation catalog', () => {
       {
         cliPath: 'reference diagnoses search',
         id: 'reference.diagnoses.search',
-        roles: ['administrator', 'outpatient-doctor'],
+        roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
       },
       {
         cliPath: 'reference medications search',
@@ -650,7 +650,7 @@ describe('HIS operation catalog', () => {
       'clinmesh-billing': 3,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 9,
+      'clinmesh-inpatient': 24,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,
       'clinmesh-shared': 1,

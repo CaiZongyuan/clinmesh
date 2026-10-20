@@ -1,6 +1,7 @@
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
+import { inpatientAdmissionSchema } from './inpatient.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const version = z.string().regex(/^\d+$/)
@@ -42,7 +43,7 @@ export const inpatientExecutionSchema = z.object({ id, orderId: id, scheduledFor
   reason: z.string().optional(),
 }).strict()
 export const inpatientDispenseSchema = z.object({ id, executionId: id, lotId: id, quantity: z.number().int().positive(), dispensedAt: z.iso.datetime({ offset: true }), dispensedBy: z.string() }).strict()
-export const inpatientChargeSchema = z.object({ id, kind: z.string(), sourceId: id, organizationId: id, serviceDate: z.string(), amountFen: z.number().int().safe(),
+export const inpatientChargeSchema = z.object({ id, label: z.string().min(1), kind: z.string(), sourceId: id, organizationId: id, serviceDate: z.string(), amountFen: z.number().int().safe(),
   virtualTime: z.iso.datetime({ offset: true }), version: z.number().int().positive(), reversalOf: id.optional(), reason: z.string().optional() }).strict()
 export const inpatientMedicationSchema = z.object({ id, display: z.string(), version: z.number().int().positive(), priceFen: z.number().int().nonnegative(), unit: z.string(),
   doses: z.array(z.object({ doseText: z.string(), quantity: z.number().int().positive() }).strict()), frequencyCodes: z.array(z.enum(['QD','BID','PRN'])),
@@ -54,3 +55,17 @@ export const inpatientFullClinicalSchema = inpatientClinicalSchema.extend({ orde
   dispenses: z.array(inpatientDispenseSchema), charges: z.array(inpatientChargeSchema), chargesFen: z.number().int().nonnegative().safe() })
 export const inpatientFullClinicalResponseSchema = commandResponseSchema(inpatientFullClinicalSchema)
 export type InpatientOrder = z.infer<typeof inpatientOrderSchema>
+
+export const inpatientPharmacyAdmissionSchema = z.object({ admissionId: id, patientId: id, patientName: z.string(), inpatientNumber: z.string(), wardId: id,
+  status: inpatientAdmissionSchema.shape.status }).strict()
+export const inpatientPharmacyListSchema = z.object({ items: z.array(inpatientPharmacyAdmissionSchema) }).strict()
+export const inpatientPharmacySchema = z.object({ admission: inpatientPharmacyAdmissionSchema,
+  orders: z.array(inpatientOrderSchema.extend({ kind: z.literal('medication') })),
+  executions: z.array(inpatientExecutionSchema.omit({ administrationId: true })), dispenses: z.array(inpatientDispenseSchema),
+  medications: z.array(inpatientMedicationSchema.pick({ id: true, display: true, unit: true, lots: true })),
+  medicationAllergies: z.array(z.object({ id, display: z.string() }).strict()),
+}).strict()
+export const inpatientPharmacyResponseSchema = commandResponseSchema(inpatientPharmacySchema)
+export const inpatientChargesSchema = z.object({ admissionId: id, financialStatus: inpatientAdmissionSchema.shape.financialStatus,
+  charges: z.array(inpatientChargeSchema), chargesFen: z.number().int().nonnegative().safe() }).strict()
+export const inpatientChargesResponseSchema = commandResponseSchema(inpatientChargesSchema)

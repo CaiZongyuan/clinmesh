@@ -14,6 +14,8 @@ InpatientService 继续是公开业务入口，InpatientOrders 在既有 Command
 
 InpatientBilling 由实际床日与发药/服务执行消费者共用。收费员冲正新增关联的反向条目，原费用保留；公开接口只接受原账项与版本及理由，不接受任意记账金额。当前费用净额及后续结算共享这一本账。
 
+药房与收费使用独立 query 和 command response schema，直接按药嘱或账项查询，避免统一临床 DTO 将诊断备注、无关服务或财务信息交付给其他岗位。原住院通用读取同时收紧药师权限，内部发药仍引用受信 admission binding 和共享 Command，不复制状态机。具体可见字段由[临床流程](../../../architecture/clinical-workflows.md#83-医嘱生命周期)拥有。
+
 正式住院诊断优先解析 ReferenceDataService 的真实条目，冻结编码、来源定位与当时 Release；院内 fallback 显式标识。药品适应症是合成本院已声明的有界映射，按完整真实 coding 与固定 Dataset Release/来源定位匹配，不从诊断文字或码前缀猜测；来源及限制见[研究](../../../research/2026-10-20-inpatient-record-coding-and-recall.md)。
 
 ## Alternatives considered
