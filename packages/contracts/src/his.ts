@@ -954,6 +954,7 @@ export const consultationTurnSchema = z.object({
 export const consultationReplyErrorCodeSchema = z.enum([
   'AI_AUTH_FAILED', 'AI_REQUEST_FAILED', 'AI_REQUEST_TOO_LARGE', 'AI_RESPONSE_INVALID',
   'AI_RESPONSE_TOO_LARGE', 'AI_TIMEOUT', 'CONSULTATION_REPLY_UNAVAILABLE', 'CONSULTATION_REPLY_UNKNOWN',
+  'CONSULTATION_CASE_NOT_FOUND', 'CONSULTATION_PERSONA_OUTDATED',
 ])
 
 export const consultationReplyAttemptSchema = z.object({

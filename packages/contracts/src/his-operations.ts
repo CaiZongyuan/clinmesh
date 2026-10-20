@@ -1362,8 +1362,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, succeeded, failed or unknown with the original deadline and safe error code; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; qualityControl binds current ten-field content and saved evidence to nonblocking completion and verification prompts',
-    version: 12,
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, succeeded, failed or unknown with the original deadline and safe error code, including CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; qualityControl binds current ten-field content and saved evidence to nonblocking completion and verification prompts',
+    version: 13,
   },
   {
     cliPath: ['doctor', 'document-quality', 'get'],
@@ -1425,8 +1425,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Send one free-text consultation message; overlapping ask and retry intents share the pending doctor turn execution; the same idempotency key waits for its original deadline or replays its saved reply, failed or unknown outcome without new inference',
-    version: 3,
+    summary: 'Send one free-text consultation message; overlapping ask and retry intents share the pending doctor turn execution; the same idempotency key waits for its original deadline or replays its saved reply, failed or unknown outcome without new inference, preserving the original CONSULTATION_CASE_NOT_FOUND or CONSULTATION_PERSONA_OUTDATED classification',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'consultation', 'retry-reply'],
@@ -1444,8 +1444,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Explicitly retry the last unanswered patient reply; an executing attempt is joined with its original model and deadline; only a new manual intent after termination starts with current model settings; the same key replays failed or unknown outcomes without new inference',
-    version: 3,
+    summary: 'Explicitly retry the last unanswered patient reply; an executing attempt is joined with its original model and deadline; only a new manual intent after termination starts with current model settings; the same key replays failed or unknown outcomes without new inference, preserving the original CONSULTATION_CASE_NOT_FOUND or CONSULTATION_PERSONA_OUTDATED classification',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'completion', 'preview'],

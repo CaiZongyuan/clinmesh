@@ -166,6 +166,44 @@ describe('Consultation free dialogue HTTP contract', () => {
     expect(replyRequests).toBe(1)
   })
 
+  it.each([
+    { binding: 'missing', status: 404, code: 'CONSULTATION_CASE_NOT_FOUND' },
+    { binding: 'legacy', status: 409, code: 'CONSULTATION_PERSONA_OUTDATED' },
+  ] as const)('replays the original $status error for a $binding persona binding', async ({ binding, status, code }) => {
+    const provider = new ScriptedDialogueProvider([persona, new ChatCompletionsError('AI_AUTH_FAILED', 'synthetic failure')])
+    const runtime = await createRuntimeWithProvider(provider)
+    const started = await startConsultationCase(runtime)
+    const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const headers = { cookie, origin, 'content-type': 'application/json', 'idempotency-key': 'persona-error-intent' }
+    const askPath = `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`
+    const askRequest = { method: 'POST', headers, body: JSON.stringify({
+      expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
+      input: { expectedConsultationVersion: 2, message: '什么时候最晕？' },
+    }) }
+    if (binding === 'missing') {
+      runtime.database.driver.prepare('DELETE FROM synthetic_case_materialization WHERE outpatient_case_id = ?').run(started.outpatientCaseId)
+    } else {
+      expect((await runtime.app.request(askPath, askRequest)).status).toBe(503)
+      runtime.database.driver.prepare('UPDATE patient_persona_revision SET content_json = ? WHERE case_id = ? AND revision = 1')
+        .run(JSON.stringify({ chiefComplaint: '反复头晕一周', knownHistorySummary: '既往有高血压病史。',
+          openingStatement: '医生您好，我最近一周经常头晕。', symptomTopics: [{ answerPoints: ['一周前开始。'], id: 'dizziness-onset', name: '头晕经过' }] }), started.caseId)
+    }
+    const path = binding === 'missing' ? askPath : `/api/his/v1/encounters/${started.encounterId}/actions/retry-consultation-reply`
+    const request = binding === 'missing' ? askRequest : { method: 'POST', headers,
+      body: JSON.stringify({ expectedVersions: {}, input: { expectedConsultationVersion: 3 } }) }
+    const first = await runtime.app.request(path, request)
+    expect(first.status).toBe(status)
+    expect(await first.json()).toMatchObject({ error: { code } })
+    const repeated = await runtime.app.request(path, request)
+    expect(repeated.status).toBe(status)
+    expect(await repeated.json()).toMatchObject({ error: { code } })
+    const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers },
+    )).json())
+    expect(detail.consultation?.replyAttempt).toMatchObject({ status: 'failed', errorCode: code })
+    expect(provider.requests.filter(request => request.schemaName === 'patient_dialogue_reply')).toHaveLength(binding === 'missing' ? 0 : 1)
+  })
+
   it('replays a failed intention without inference and only a new retry may answer', async () => {
     const provider = new ScriptedDialogueProvider([
       persona, new ChatCompletionsError('AI_AUTH_FAILED', 'private error'),

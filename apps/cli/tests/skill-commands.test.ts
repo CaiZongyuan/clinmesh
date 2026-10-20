@@ -38,13 +38,17 @@ it('keeps consultation recovery examples aligned with durable attempt semantics'
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh encounter consultation ${path} `))!
     const operation = getHisOperation(id)
     expect(inspectExample(program, line).operation?.id).toBe(id)
-    expect(operation.version).toBe(3)
+    expect(operation.version).toBe(4)
     expect(operation.summary).toContain('deadline')
     expect(operation.summary).toContain('failed or unknown')
     expect(operation.summary).toContain('without new inference')
+    for (const code of ['CONSULTATION_CASE_NOT_FOUND', 'CONSULTATION_PERSONA_OUTDATED']) {
+      expect(operation.summary).toContain(code)
+      expect(skill).toContain(code)
+    }
     expect(operation.input.safeParse({ encounterId: 'synthetic', arbitraryPayload: {} }).success).toBe(false)
   }
-  expect(getHisOperation('doctor.case.get').version).toBe(12)
+  expect(getHisOperation('doctor.case.get').version).toBe(13)
   expect(getHisOperation('doctor.case.get').summary).toContain('consultation.replyAttempt')
   expect(skill).toContain('consultation.replyAttempt')
   expect(skill).toContain('same ask/retry key')
@@ -226,7 +230,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.summary).toContain('WORKFLOW_CONFLICT')
     expect(operation.summary).toContain('retired semantic checks cannot be retried')
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(12)
+    expect(read.version).toBe(13)
     expect(read.summary).toContain('sourceResults')
     expect(read.summary).toContain('legacy verification counts are zero and issues empty')
     expect(skill).toContain('Retry actual recording failures')
@@ -268,7 +272,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 12 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 13 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }
