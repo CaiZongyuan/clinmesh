@@ -1,6 +1,6 @@
 # 住院闭环
 
-Status: draft
+Status: approved
 
 ## 问题与目标
 

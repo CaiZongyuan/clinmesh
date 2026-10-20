@@ -34,7 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
-| [住院闭环](2026-10-20-inpatient-closed-loop.md) | `draft` |
+| [住院闭环](2026-10-20-inpatient-closed-loop.md) | `approved` |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `draft` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
 
