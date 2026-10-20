@@ -28,7 +28,7 @@ import {
   agentToolsForContext,
   type AgentPageContextClaim,
 } from '@clinmesh/contracts/agent'
-import { cancelClinicalDocumentSignRequestSchema, checkClinicalDocumentQualityRequestSchema, clinicalDocumentQualityControlStateSchema, controlConsultationRecordingRequestSchema, saveClinicalDocumentDraftRequestSchema, type ClinicalDocumentQualityControlState } from '@clinmesh/contracts/his'
+import { cancelClinicalDocumentSignRequestSchema, checkClinicalDocumentQualityRequestSchema, clinicalDocumentQualityControlStateSchema, controlConsultationRecordingRequestSchema, encounterCompletionItemCodeSchema, saveClinicalDocumentDraftRequestSchema, type ClinicalDocumentQualityControlState } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -304,6 +304,19 @@ function commandResponse<Data>(data: Data) {
   }
 }
 
+/** 合法完诊预览：schema 要求恰好七项；completeCodes 命中的项记为已完成。 */
+function completionPreview(encounterId: string, completeCodes: string[] = []) {
+  return {
+    canComplete: false, encounterId, encounterVersion: '1',
+    items: encounterCompletionItemCodeSchema.options.map(code => ({
+      code,
+      status: completeCodes.includes(code) ? 'complete' as const : 'incomplete' as const,
+      statusText: completeCodes.includes(code) ? '已完成' : '待完成',
+      target: 'clinical-document' as const,
+    })),
+  }
+}
+
 function pagination(total: number) {
   return { page: 1, pageSize: 20, total }
 }
@@ -329,7 +342,12 @@ function documentQualityFetch(implementation: typeof fetch) {
       return Response.json(commandResponse(state))
     }
     const state = states.get(`${caseId}:${url.searchParams.get('clientId') ?? ''}`)
-    if (state === undefined) throw new Error(`A quality check has not been declared for ${caseId}`)
+    if (state === undefined) {
+      // 建议栈挂载后，未编辑的病例也会发起质控查询；返回干净的默认状态而不是报错。
+      return Response.json(clinicalDocumentQualityControlStateSchema.parse({ caseId,
+        encounterId: `encounter-${caseId.replace(/^case-/, '')}`, draftVersion: 0, documentFingerprint: 'a'.repeat(64),
+        inputFingerprint: 'b'.repeat(64), generation: 1, stale: false, status: 'ready', issues: [], notices: [] }))
+    }
     return Response.json(state)
   })
 }
@@ -1180,8 +1198,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
       patient: { ...patient, id: 'patient-other', name: '合成其他患者' },
       encounter: { id: 'encounter-other', status: 'in-progress', versionId: '1' }, consultationRecording: undefined,
       taskId: 'task-other' })
-    if (path === '/api/his/v1/encounters/encounter-other/completion') return Response.json({
-      canComplete: false, encounterId: 'encounter-other', encounterVersion: '1', items: [] })
+    if (path === '/api/his/v1/encounters/encounter-other/completion') return Response.json(completionPreview('encounter-other'))
     if (path === '/api/his/v1/doctor/cases/case-recording') {
       if (readInterceptor !== undefined) {
         const intercept = readInterceptor
@@ -1207,7 +1224,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
       return Response.json(commandResponse({ caseId: 'case-recording', draftVersion }))
     }
     if (path === '/api/his/v1/encounters/encounter-recording/completion') {
-      return Response.json({ canComplete: false, encounterId: 'encounter-recording', encounterVersion: '1', items: [] })
+      return Response.json(completionPreview('encounter-recording'))
     }
     if (path === '/api/his/v1/encounters/encounter-recording/actions/start-first-visit') {
       caseStatus = 'first-visit'
@@ -3169,6 +3186,9 @@ describe('role workspaces', () => {
           },
         }, { status: 503 })
       }
+      if (url.pathname === '/api/his/v1/encounters/encounter-direct/completion') {
+        return Response.json(completionPreview('encounter-direct'))
+      }
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
@@ -3832,10 +3852,12 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<QueryClientProvider client={client}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
     await screen.findByRole('button', { name: '暂停自动整理' })
-    await waitFor(() => expect(screen.getAllByRole('region', { name: '病历质控' })).toHaveLength(1))
+    // 病历质控分区双挂载（病例面板 + 建议栈）；“每个业务分区至多一个提示”只约束病例区内部。
+    const caseDetailRegion = document.querySelector<HTMLElement>('[data-doctor-region="detail"]')!
+    await waitFor(() => expect(within(caseDetailRegion).getAllByRole('region', { name: '病历质控' })).toHaveLength(1))
     expect(screen.queryByRole('button', { name: '主诉有内容待补充，请核对。' })).toBeNull()
     await user.click(screen.getByRole('tab', { name: '诊断' }))
-    const hint = await screen.findByRole('region', { name: '病历质控' })
+    const hint = await within(caseDetailRegion).findByRole('region', { name: '病历质控' })
     await user.click(within(hint).getByRole('button', { name: '主诉的记录不一致，请核对。' }))
     await waitFor(() => expect(screen.getByRole('tab', { name: '病历记录' }).getAttribute('aria-selected')).toBe('true'))
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '主诉' })))
@@ -4175,6 +4197,9 @@ describe('role workspaces', () => {
         data: { proposalId: 'doctor-proposal-1', status: 'awaiting-human-review' },
       })
       const review = await screen.findByRole('alertdialog', { name: '确认已阅放射报告' })
+      // A9：既有反馈语言在三栏布局下保持可见——反馈条、工作区光晕容器与评审弹层同屏。
+      expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('待人工确认')
+      expect(document.querySelector('.clinmesh-agent-workspace-glow')).not.toBeNull()
       expect(requests.some(request => request.path.endsWith('/actions/acknowledge'))).toBe(false)
       await userEvent.setup().click(within(review).getByRole('button', { name: '确认已阅' }))
       await waitFor(() => expect(requests.find(request => request.path.endsWith('/actions/acknowledge'))).toEqual({
@@ -4239,7 +4264,7 @@ describe('role workspaces', () => {
         })
       }
       if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
-      if (path.endsWith('/completion')) return Response.json({ items: [], ready: false })
+      if (path.endsWith('/completion')) return Response.json(completionPreview('encounter-1'))
       throw new Error(`Unexpected request: ${path}`)
     }))
     const user = userEvent.setup()
@@ -4359,7 +4384,7 @@ describe('role workspaces', () => {
       if (path.endsWith('/reference-catalogs/laboratory')) return Response.json({ items: [], ...pagination(0) })
       if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService }] })
       if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures: [sourceProcedure] }] })
-      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: queueItem.encounterId, encounterVersion: '1', items: [] })
+      if (path.endsWith('/completion')) return Response.json(completionPreview(queueItem.encounterId))
       if (path.endsWith(`/recommendations/${category}/actions/confirm`)) {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
@@ -4435,7 +4460,7 @@ describe('role workspaces', () => {
       }
       if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
       if (path.endsWith('/pathology-services')) return Response.json({ items: [] })
-      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: 'encounter-investigation', encounterVersion: '1', items: [] })
+      if (path.endsWith('/completion')) return Response.json(completionPreview('encounter-investigation'))
       throw new Error(`Unexpected request: ${path}`)
     }))
     const user = userEvent.setup()
@@ -5000,7 +5025,7 @@ describe('role workspaces', () => {
       if (path.endsWith('/reference-catalogs/laboratory')) return Response.json({ items: [laboratory], ...pagination(1) })
       if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imaging }] })
       if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathology, sourceProcedures: procedures }] })
-      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: path.split('/')[5], encounterVersion: '1', items: [] })
+      if (path.endsWith('/completion')) return Response.json(completionPreview(path.split('/')[5]!))
       if (path.endsWith(`/${kind}-request/draft`)) {
         writes.push(path)
         expect(init?.method).toBe('PUT')
@@ -5101,7 +5126,7 @@ describe('role workspaces', () => {
           draftVersion: deleted ? 2 : 1, reportingSupported: true, requests: [],
         },
       })
-      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: path.split('/')[5], encounterVersion: '1', items: [] })
+      if (path.endsWith('/completion')) return Response.json(completionPreview(path.split('/')[5]!))
       if (path.endsWith('/laboratory-request/draft') && init?.method === 'DELETE') return new Promise<Response>(resolve => {
         releaseDeletion = () => {
           deleted = true
@@ -6701,9 +6726,10 @@ describe('role workspaces', () => {
     expect(within(patientBanner).getByRole('img', { name: '王晓明 患者' })).toBeTruthy()
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
     expect(screen.queryByRole('button', { name: '收起右侧边栏' })).toBeNull()
-    const checklist = await screen.findByRole('region', { name: '完诊清单' })
-    expect(within(checklist).getByLabelText('已满足 2 / 7')).toBeTruthy()
-    expect(within(checklist).getAllByRole('listitem')).toHaveLength(7)
+    expect(await screen.findByLabelText('已满足 2 / 7')).toBeTruthy()
+    expect(screen.getByText('完诊检查未完 5 项')).toBeTruthy()
+    const stackCompletion = screen.getByRole('region', { name: '完诊清单' })
+    expect(within(stackCompletion).getAllByRole('listitem')).toHaveLength(5)
     await user.click(screen.getByRole('tab', { name: '问诊记录' }))
     await user.type(screen.getByRole('textbox', { name: '向患者提问' }), questionText)
     await user.click(screen.getByRole('button', { name: '向患者提问' }))

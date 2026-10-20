@@ -32,9 +32,13 @@
 
 - `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，不能只凭包级 `tsc` 通过判断完整类型检查通过。修改 `apps/web/e2e/` 后运行 `pnpm exec tsc --noEmit -p tsconfig.browser.json`；Playwright 会转译 TypeScript，但不做类型检查，E2E 通过不能替代这项检查。
 
+- 医生工作台 e2e 的布局断点全部是容器查询：Playwright 默认视口 1280px 扣除应用侧栏后建议栈列不满足 1080px 容器宽度而隐藏，进入 `/consultation` 前先 `page.setViewportSize` 设定目标宽度，不以默认视口断言三栏元素。登录提交是异步请求：点击"登录"后先等待"候诊队列"可见再 `goto` 其他路由，否则跳转会中断登录请求，应用回到登录页并让后续定位超时。
+
 - 全仓测试因并发争用触发既有交互超时时，先用原断言及原超时串行复现；本机需要限制 Vitest worker 时可使用 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1 pnpm check`。Turbo 严格环境模式会过滤未声明的 `VITEST_MAX_WORKERS`，单独设置该变量不影响其子任务；可用 dry-run 的 envMode 确认实际传递，不通过扩大超时或跳过用例制造通过。
 
 ## 替身、异步屏障与断言
+
+- 医生工作台测试替身合同由建议栈决定：完诊预览 stub 必须恰好覆盖全部 7 个条目编码（schema superRefine 拒绝缺项，`items: []` 无效）；质控 GET 需为未声明病例返回干净的 ready 默认态而不是抛错。建议栈把查询失败显式渲染为"加载失败 + 重试" alert，旧替身里原本静默的坏 stub 会以可见失败暴露；替身报错时先核对 schema 完整性再怀疑组件。
 
 - 恢复操作保留任务代次时，回归须覆盖“服务端已受理但回执丢失”、另一入口继续后的重新读取，以及完成后迟到的受理回执；只验证本地 mutation 成功会漏掉缓存停留失败和旧传输错误阻止确认。用受控请求屏障观察持续轮询与最终可确认状态，复用[建议恢复回归](../../apps/web/src/app/doctor/doctor-preparation-state.test.tsx)和[真实 Web 恢复入口](../../apps/web/e2e/doctor-recommendation-recovery.spec.ts)，业务合同见[临床流程](../architecture/clinical-workflows.md#81-门诊闭环)。
 
@@ -81,6 +85,8 @@
 - Better Auth 在 `NODE_ENV=test` 下默认跳过 origin 校验；ClinMesh Auth 必须显式保持 origin check 开启，相关 HTTP 测试同时携带会话 Cookie 和 `Origin`，否则无法捕获开发 Web origin 的 CSRF 配置回归。
 
 - `vendor/dsh-react-surface` 的 `lib/` 是未跟踪的生成目录。ClinMesh 的 Vitest 若直接导入由 DSH 注入的 `dsh-react-surface/client` external，必须通过显式测试 alias 解析到本地 stub；测试不能依赖开发机曾构建 submodule 后遗留的 `lib/client.js`。
+
+- 在独立 worktree 或干净克隆运行 DSH 浏览器合同前，先执行 `pnpm --filter ./apps/dsh-web build:styles` 生成 gitignored 的 `apps/dsh-web/src/client/styles.generated.ts`；缺失时相关 fixture 在 Vite 构建阶段报 `Could not resolve "./styles.generated.ts"`，表象是成批 dsh-web 合同失败而非单条断言失败。该文件不进入提交。
 
 - 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 

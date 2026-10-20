@@ -106,11 +106,11 @@ export function locateDocumentQualityIssue(root: ParentNode, issue: QualityIssue
   return true
 }
 
-function openIssues(quality: DocumentQualityControl) {
+export function openIssues(quality: DocumentQualityControl) {
   return quality.stale || quality.error !== null ? [] : quality.state?.issues.filter(issue => issue.status === 'open' && issue.classification !== 'needs-completion') ?? []
 }
 
-function shortIssue(issue: QualityIssue, messages: Messages, locale: WorkspaceLocale) {
+export function shortIssue(issue: QualityIssue, messages: Messages, locale: WorkspaceLocale) {
   const field = messages[issue.field]
   if (locale === 'zh-CN') {
     switch (issue.kind) {
