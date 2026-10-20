@@ -86,7 +86,7 @@
 
 - Base UI 弹框关闭依赖动画帧完成卸载；Chrome `--virtual-time-budget` 下即使轮询定时器已结束，渲染帧仍可能未执行。验证关闭卸载的浏览器合同使用真实时钟并限时等待 DOM 消失，不缩减关闭断言。
 
-- Better Auth 在 `NODE_ENV=test` 下默认跳过 origin 校验；ClinMesh Auth 必须显式保持 origin check 开启，相关 HTTP 测试同时携带会话 Cookie 和 `Origin`，否则无法捕获开发 Web origin 的 CSRF 配置回归。
+- Better Auth 在 `NODE_ENV=test` 下默认跳过 origin 校验；ClinMesh Auth 必须显式保持 origin check 开启。新增 HIS 写接口仍须调用 `identity.assertTrustedMutation`，`resolveRequestActor` 只解析身份，不能替代 Origin 校验。真实 HTTP 回归覆盖 Cookie 请求缺失或不受信 Origin 时拒绝且无业务写入、受信 Origin 正常，以及无 Cookie 的纯 Agent Bearer 例外，见[手术写入口回归](../../apps/server/tests/inpatient-surgery-http.test.ts)。
 
 - `vendor/dsh-react-surface` 的 `lib/` 是未跟踪的生成目录。ClinMesh 的 Vitest 若直接导入由 DSH 注入的 `dsh-react-surface/client` external，必须通过显式测试 alias 解析到本地 stub；测试不能依赖开发机曾构建 submodule 后遗留的 `lib/client.js`。
 
