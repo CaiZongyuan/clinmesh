@@ -6672,6 +6672,7 @@ export class WorkflowService {
         indicationCode: input.indicationCode,
       },
       operation: 'laboratory-request.save-draft',
+      authorize: () => this.#assertRole(input.context, ['outpatient-doctor']),
     }, transaction => this.applySaveLaboratoryRequestDraft(transaction, input))
   }
 
@@ -6921,6 +6922,7 @@ export class WorkflowService {
         expectedDraftVersion: input.expectedDraftVersion,
       },
       operation: 'laboratory-request.issue',
+      authorize: () => this.#assertRole(input.context, ['outpatient-doctor']),
     }, transaction => this.applyIssueLaboratoryRequest(transaction, input))
   }
 

@@ -182,7 +182,7 @@ Admission request
 - 出院、财务结算、清床和病案归档是不同动作。
 - 召回只在规定状态窗口内允许，并生成完整审计和逆向事件。
 
-住院检查检验由 InpatientInvestigations 适配原 ClinicalRequestKernel、Workflow 检验和 ImagingRequestService，不建立第二套报告状态机。开立以本次 admission 固定的 source_case_id 定位同 Epoch 的真实 Synthetic Case；结果解析读取其 Case Truth，正式 ServiceRequest、Specimen、Observation、ImagingStudy 和 DiagnosticReport 归当前 IMP Encounter。无来源患者明确不支持，不使用 Scenario 正常结果兜底。医生开立仅产生待送检申请，护士校对送检后才排入原 accept outbox；晚到受理仍重验送检及取消状态。读、取消、重试、已阅和阅片元数据均校当前科室与病区，转科后新科接管报告；住院报告发布不触发门诊对话、自动记录或完诊。
+住院检查检验由 InpatientInvestigations 适配原 ClinicalRequestKernel、Workflow 检验和 ImagingRequestService，不建立第二套报告状态机。开立以本次 admission 固定的 source_case_id 定位同 Epoch 的真实 Synthetic Case；结果解析读取其 Case Truth，正式 ServiceRequest、Specimen、Observation、ImagingStudy 和 DiagnosticReport 归当前 IMP Encounter。无来源患者明确不支持，不使用 Scenario 正常结果兜底。旧门诊检验与影像的公开草稿、开立 Command 仅允许 outpatient-doctor；住院专用 Command 在同一事务组合共享 apply、冻结价目和送检关联，不能从旧公开入口绕过这些住院事实。医生开立仅产生待送检申请，护士校对送检后才排入原 accept outbox；晚到受理重验取消状态，并按真实 clinical_request_context 要求存在同一住院的已送检关联，缺失关联也拒绝。旧已完成回执仍先无写重放。读、取消、重试、已阅和阅片元数据均校当前科室与病区，转科后新科接管报告；住院报告发布不触发门诊对话、自动记录或完诊。
 
 住院检查目录区分可开展、尚未开展和未计价。正数且已声明住院适用范围的医院价沿用原定义；基础 WBC（WS/T 886-2026 `0100101A`）、HGB（`0100501A`）与院内 CBC（`CN-LAB-CBC`）另声明800、800、2500分的合成本院住院价，匹配完整编码身份，不为其他单项或组合推测价格。胸片和胸部 CT 平扫分别声明8000与30000分的合成本院价。申请冻结定义、目录版本、价格和 `execution-completed` 触发；首次执行完成及报告发布在同一事务只计一次费，报告修订不重收。未计价不等于免费，未声明价格的项目不可开立。报告收费事务重读当前科室、住院及财务状态，已出区或结算后拒绝追加；出院门禁复用在途申请检查。
 
