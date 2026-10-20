@@ -745,12 +745,14 @@ interface MedicationProductGroup {
   variants: ReferenceMedicationProduct[]
 }
 
-/** 包装主行只保留最小可选事实（包装量等末段），工艺细节留在悬停提示与完整字段里。 */
+const PACKAGE_SUMMARY_MAX_CHARS = 24
+
+/** 包装主行只保留最小可选事实（包装量等末段），工艺细节留在悬停提示与完整字段里；参考目录该字段全量为「工艺；包装量」分段，末段即包装量。 */
 export function medicationPackageSummary(packageDescription: string): string {
   const segments = packageDescription.split(/[;；]/).map(segment => segment.trim()).filter(Boolean)
   const last = segments[segments.length - 1]
-  if (segments.length > 1 && last !== undefined && last.length <= 24) return last
-  return packageDescription.length <= 24 ? packageDescription : `${packageDescription.slice(0, 24)}…`
+  if (segments.length > 1 && last !== undefined && last.length <= PACKAGE_SUMMARY_MAX_CHARS) return last
+  return packageDescription.length <= PACKAGE_SUMMARY_MAX_CHARS ? packageDescription : `${packageDescription.slice(0, PACKAGE_SUMMARY_MAX_CHARS)}…`
 }
 
 function medicationProductGroupKey(product: ReferenceMedicationProduct): string {

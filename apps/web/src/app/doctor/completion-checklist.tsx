@@ -36,10 +36,18 @@ export function encounterCompletionTargetSectionLabel(target: EncounterCompletio
   return messages.laboratoryAndExamination
 }
 
+function completionGoToLabels(item: EncounterCompletionItem, locale: WorkspaceLocale, messages: WorkspaceMessages): { visible: string; aria: string } {
+  const section = encounterCompletionTargetSectionLabel(item.target, messages)
+  return {
+    visible: messages.encounterCompletionGoTo.replace('{section}', section),
+    aria: messages.encounterCompletionGoToAria
+      .replace('{section}', section)
+      .replace('{item}', encounterCompletionItemLabel(item.code, locale)),
+  }
+}
+
 export function completionGoToLabel(item: EncounterCompletionItem, locale: WorkspaceLocale, messages: WorkspaceMessages): string {
-  return messages.encounterCompletionGoToAria
-    .replace('{section}', encounterCompletionTargetSectionLabel(item.target, messages))
-    .replace('{item}', encounterCompletionItemLabel(item.code, locale))
+  return completionGoToLabels(item, locale, messages).aria
 }
 
 /** 患者横幅内的完诊进度摘要：计数加未完项数量，逐项明细见建议栈。 */
@@ -80,22 +88,22 @@ export function EncounterCompletionChecklist({ completion, locale, messages, onN
     <div className="flex min-w-0 flex-col gap-2">
       {outstanding.length === 0 ? null : (
         <ul className="grid gap-2">
-          {outstanding.map(item => (
-            <li className="flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2" key={item.code}>
+          {outstanding.map(item => {
+            const goTo = completionGoToLabels(item, locale, messages)
+            return <li className="flex min-w-0 items-center justify-between gap-3 rounded-md border px-3 py-2" key={item.code}>
               <span className="flex min-w-0 flex-col">
                 <span className="text-sm font-medium">{encounterCompletionItemLabel(item.code, locale)}</span>
                 <span className="truncate text-xs text-muted-foreground">{item.statusText}</span>
               </span>
               {onNavigate === undefined ? null : (
-                <Button aria-label={completionGoToLabel(item, locale, messages)} className="shrink-0"
+                <Button aria-label={goTo.aria} className="shrink-0"
                   onClick={() => { onNavigate(item.target) }} size="sm" type="button" variant="outline">
-                  {messages.encounterCompletionGoTo
-                    .replace('{section}', encounterCompletionTargetSectionLabel(item.target, messages))}
+                  {goTo.visible}
                   <ArrowRightIcon aria-hidden="true" data-icon="inline-end" />
                 </Button>
               )}
             </li>
-          ))}
+          })}
         </ul>
       )}
       {completed.length === 0 ? null : (
