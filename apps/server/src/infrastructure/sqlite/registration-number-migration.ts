@@ -14,6 +14,8 @@ const auditSchema = scopeSchema.extend({
 const resourceRowSchema = scopeSchema.extend({ resource_id: z.string(), content_json: z.string(), content_hash: z.string() })
 const resourceSchema = z.object({
   resourceType: z.string(), id: z.string(),
+  code: z.object({ text: z.string().optional() }).optional(),
+  outcome: z.object({ code: z.object({ code: z.string() }) }).optional(),
   identifier: z.array(z.object({ system: z.string().optional(), value: z.string().optional() })).optional(),
   actualPeriod: z.object({ start: z.string().optional() }).optional(),
   entity: z.array(z.object({
@@ -78,6 +80,7 @@ function verifyAuditHistory(database: ClinMeshDatabase) {
 }
 
 function verifiedLegacyCounters(database: ClinMeshDatabase): RegistrationNumberCounter[] {
+  requireEvidence(z.array(z.unknown()).parse(database.driver.pragma('foreign_key_check')).length === 0)
   const audits = verifyAuditHistory(database)
   // Historical reset replay discarded its created Encounter effects. Its issuance
   // upper bound cannot be recovered merely by counting the surviving resources.
@@ -89,17 +92,21 @@ function verifiedLegacyCounters(database: ClinMeshDatabase): RegistrationNumberC
     WHERE workspace_id = ? AND epoch = ? AND resource_type = ? AND resource_id = ? AND version_id = 1
   `)
   for (const audit of audits) {
-    if (audit.outcome !== 'success'
-      || !['registration.register', 'synthetic-case.start-outpatient-visit'].includes(audit.operation)) continue
     const projection = parseResource(resourceRowSchema.parse(history.get(audit.workspace_id, audit.epoch, 'AuditEvent', audit.audit_id)))
     requireEvidence(projection.resourceType === 'AuditEvent')
+    requireEvidence(projection.code?.text === audit.operation)
+    requireEvidence(projection.outcome?.code.code === (audit.outcome === 'success' ? '0' : '8'))
+    const knownIssuance = ['registration.register', 'synthetic-case.start-outpatient-visit'].includes(audit.operation)
     const encounters = projection.entity?.filter(entity => entity.role?.text === 'created' && entity.what?.reference?.startsWith('Encounter/')) ?? []
+    if (audit.outcome !== 'success' || (!knownIssuance && encounters.length === 0)) continue
     requireEvidence(encounters.length === 1)
     const encounterId = encounters[0]!.what!.reference!.slice('Encounter/'.length)
     const row = resourceRowSchema.parse(history.get(audit.workspace_id, audit.epoch, 'Encounter', encounterId))
     const encounter = parseResource(row)
     requireEvidence(encounter.resourceType === 'Encounter')
     const identifiers = encounter.identifier?.filter(identifier => identifier.system === numberSystem) ?? []
+    if (!knownIssuance && identifiers.length === 0) continue
+    requireEvidence(knownIssuance)
     requireEvidence(identifiers.length === 1)
     const value = identifiers[0]!.value
     const match = /^CM-OP-(\d{4})(\d{2})(\d{2})-(\d+)$/.exec(value ?? '')

@@ -7,15 +7,14 @@ import {
 } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import {
-  copyFile,
-  rename,
+  link,
   rm,
 } from 'node:fs/promises'
 import Database from 'better-sqlite3'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { matchesMigrationChecksum, migrationChecksum } from './migration-checksum.ts'
 import { initializeRegistrationNumbering } from './registration-number-migration.ts'
-import { readRegistrationNumberState } from './registration-numbering.ts'
+import { readRegistrationNumberState, registrationCountersHash } from './registration-numbering.ts'
 import {
   matchesEarlyIncrementalRecordingMigration,
   prepareIncrementalRecordingContextMigration,
@@ -58,10 +57,20 @@ export interface DatabaseSnapshotVerification {
 }
 
 export interface RestoreDatabaseOptions {
+  authorityDatabasePath?: string
   backupPath: string
   busyTimeoutMs: number
   destinationPath: string
   expectedSchemaVersion: number
+}
+
+export class RegistrationNumberRecoveryError extends Error {
+  readonly code = 'REGISTRATION_NUMBER_RECOVERY_UNVERIFIED'
+
+  constructor(message: string) {
+    super(`REGISTRATION_NUMBER_RECOVERY_UNVERIFIED: ${message}`)
+    this.name = 'RegistrationNumberRecoveryError'
+  }
 }
 
 export class ClinMeshDatabase {
@@ -406,6 +415,12 @@ export async function backupDatabase(
 export async function restoreDatabase(
   options: RestoreDatabaseOptions,
 ): Promise<DatabaseSnapshotVerification> {
+  if (options.authorityDatabasePath === undefined || !existsSync(options.authorityDatabasePath)) {
+    throw new RegistrationNumberRecoveryError('A trusted current issuance authority database is required')
+  }
+  if (resolve(options.authorityDatabasePath) === resolve(options.backupPath)) {
+    throw new RegistrationNumberRecoveryError('The backup and current issuance authority must be separate files')
+  }
   if (!existsSync(options.backupPath)) throw new Error(`Backup does not exist: ${options.backupPath}`)
   if (existsSync(options.destinationPath)) {
     throw new Error(`Restore destination already exists: ${options.destinationPath}`)
@@ -414,6 +429,8 @@ export async function restoreDatabase(
   const candidatePath = `${options.destinationPath}.restore-${randomUUID()}`
   let candidate: ClinMeshDatabase | undefined
   let source: ClinMeshDatabase | undefined
+  let authority: ClinMeshDatabase | undefined
+  let retired = false
   try {
     source = openClinMeshDatabase({
       busyTimeoutMs: options.busyTimeoutMs,
@@ -428,10 +445,10 @@ export async function restoreDatabase(
         `Restore source schema version ${sourceVerification.schemaVersion} does not match ${options.expectedSchemaVersion}`,
       )
     }
-    verifyMigrations(source)
+    verifyMigrations(source, undefined, { allowRetiredRegistrationAuthority: true })
+    await source.driver.backup(candidatePath)
     source.close()
     source = undefined
-    await copyFile(options.backupPath, candidatePath)
     candidate = openClinMeshDatabase({
       busyTimeoutMs: options.busyTimeoutMs,
       databasePath: candidatePath,
@@ -445,18 +462,61 @@ export async function restoreDatabase(
         `Restore candidate schema version ${verification.schemaVersion} does not match ${options.expectedSchemaVersion}`,
       )
     }
-    verifyMigrations(candidate)
+    verifyMigrations(candidate, undefined, { allowRetiredRegistrationAuthority: true })
     if (verification.canonicalStateHash !== sourceVerification.canonicalStateHash) {
       throw new Error('Restore candidate does not match the backup source')
     }
+    // Prepare and verify the candidate before taking the current writer offline.
+    // The committed retirement is deliberately never undone on later failure:
+    // a second restore must not activate another candidate from the same source.
+    authority = openClinMeshDatabase({ databasePath: options.authorityDatabasePath, busyTimeoutMs: options.busyTimeoutMs })
+    authority.driver.exec('BEGIN IMMEDIATE')
+    verifyMigrations(authority)
+    if (authority.diagnostics().integrity !== 'ok') {
+      throw new RegistrationNumberRecoveryError('The current issuance authority failed integrity verification')
+    }
+    const currentState = readRegistrationNumberState(authority)
+    const backupState = readRegistrationNumberState(candidate, { allowRetired: true })
+    if (currentState.authorityId !== backupState.authorityId) {
+      throw new RegistrationNumberRecoveryError('The backup does not belong to the trusted issuance authority')
+    }
+    const counters = new Map(backupState.counters.map(counter => [counter.visitDate, counter.highWater]))
+    for (const counter of currentState.counters) {
+      counters.set(counter.visitDate, Math.max(counter.highWater, counters.get(counter.visitDate) ?? 0))
+    }
+    authority.driver.prepare("UPDATE registration_number_authority SET status = 'retired' WHERE singleton = 1").run()
+    authority.driver.exec('COMMIT')
+    retired = true
+    authority.close()
+    authority = undefined
+
+    candidate.driver.exec('BEGIN IMMEDIATE')
+    const merged = [...counters].map(([visitDate, highWater]) => ({ visitDate, highWater }))
+    const save = candidate.driver.prepare(`
+      INSERT INTO registration_number_counter (visit_date, high_water) VALUES (?, ?)
+      ON CONFLICT (visit_date) DO UPDATE SET high_water = excluded.high_water
+    `)
+    for (const counter of merged) save.run(counter.visitDate, counter.highWater)
+    candidate.driver.prepare("UPDATE registration_number_authority SET status = 'active', counters_hash = ? WHERE singleton = 1")
+      .run(registrationCountersHash(merged))
+    candidate.driver.exec('COMMIT')
+    const restoredVerification = verifySnapshot(candidate)
     candidate.close()
     candidate = undefined
-    await rename(candidatePath, options.destinationPath)
-    return verification
+    // An exclusive hard link publishes on the same filesystem without the
+    // overwrite race of rename when another file appears after the first check.
+    await link(candidatePath, options.destinationPath)
+    await removeDatabaseArtifacts(candidatePath)
+    return restoredVerification
   } catch (error) {
+    if (authority?.driver.inTransaction) authority.driver.exec('ROLLBACK')
+    authority?.close()
     candidate?.close()
     source?.close()
     await removeDatabaseArtifacts(candidatePath)
+    if (retired) {
+      throw new RegistrationNumberRecoveryError('The previous writer remains retired after restore failed; preserve its database and do not restart an old snapshot')
+    }
     throw error
   }
 }

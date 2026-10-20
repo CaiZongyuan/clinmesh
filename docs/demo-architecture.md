@@ -83,6 +83,8 @@ CommandExecutor 在一个 SQLite 事务中提交幂等 receipt、FHIR current/hi
 
 最小 outbox 由同一 Node.js 进程中的 dispatcher 消费。claim、完成和失败状态持久化，进程重启后可以继续处理；重复投递由事件 ID、correlation ID 和消费者幂等约束吸收。LIS 与支付模拟器不得把请求内存状态当成恢复依据。
 
+<a id="database-operations"></a>
+
 ## 7. 迁移、备份与重置
 
 Server 进程以 `migrationMode=verify` 打开数据库，发现未应用 migration 时拒绝启动。开发、裸机发布和容器入口在启动应用进程前单独执行 migration；应用运行期间不修改 schema。
@@ -92,10 +94,10 @@ Operational 与 Reference SQLite 的迁移校验统一将 CRLF 转为 LF，新�
 数据库 CLI 处理以下动作：
 
 - `migrate`：已有数据库落后于目标 schema 时，先在数据库同目录创建并验证带原版本和时间戳的升级前备份，再按文件名顺序应用 `apps/server/drizzle/` 中尚未执行的 migration，并验证 schema version 和完整性；空库不创建无意义备份。
-- `verify`：只验证 migration、foreign keys、journal mode 与 integrity，不修改数据库。
+- `verify`：只验证 migration、foreign keys、journal mode、integrity 和门诊发行状态完整性；已退休的发行权威拒绝正常启动。
 - `reindex`：重建当前岗位队列索引并再次执行完整性检查。
-- `backup`：先验证源数据库完整性，再通过 SQLite backup API 创建候选文件；候选的 schema version、integrity 和 canonical state hash 必须与源一致，否则删除候选并失败。
-- `restore`：先验证备份源的 schema、migration、integrity 和 canonical state hash，再复制到临时候选路径并逐项比较；全部一致后才原子创建指定的新目标文件，目标已存在或候选验证失败时不覆盖。
+- `backup`：先验证源数据库及门诊发行状态完整性，再通过 SQLite backup API 创建候选文件；候选的 schema version、integrity 和 canonical state hash 必须与源一致，否则删除候选并失败。已退休权威仍允许备份保全。
+- `restore`：必须显式提供可信最新发行权威库 `--authority-database`。先验证备份的 schema、migration、integrity、发行状态和候选内容一致性，再在最新权威的写锁内核对同一权威身份、保全全部按日高水位并退休旧权威；候选合并两侧逐日高水位后才启用并创建新的目标文件。目标已存在或校验失败时不覆盖，缺少可信权威或身份不一致返回 `REGISTRATION_NUMBER_RECOVERY_UNVERIFIED`。
 
 本地开发从仓库根 `.env` 读取 Server 和数据库 CLI 配置，显式 shell 环境变量优先于文件值；`.env` 中的相对数据库路径相对该文件解析。首次复制 `.env.example` 后，`pnpm dev:server` 会先迁移 operational SQLite 和已配置的 Reference SQLite，再启动只验证 schema 的 Server。可单独执行同一开发准备入口，或对 operational SQLite 执行细分命令：
 
@@ -106,11 +108,16 @@ pnpm --filter @clinmesh/server db:verify
 pnpm --filter @clinmesh/server db:reindex
 pnpm --filter @clinmesh/server db:backup --output .data/clinmesh-backup.sqlite
 pnpm --filter @clinmesh/server db:restore \
+  --authority-database .data/clinmesh.sqlite \
   --backup .data/clinmesh-backup.sqlite \
   --destination .data/clinmesh-restored.sqlite
 ```
 
-`backup` 和 `restore` 拒绝覆盖已有目标。`migrate` 自动保留并验证升级前备份，操作者仍可在发布窗口前另做命名备份；恢复始终写入新路径，完成验证后由操作者切换 `CLINMESH_DATABASE_PATH`。
+`backup` 和 `restore` 拒绝覆盖已有目标。`migrate` 自动保留并验证升级前备份，操作者仍可在发布窗口前另做命名备份。旧数据必须满足[门诊号历史证明条件](architecture/storage.md#门诊号发行状态)；证据不足时保留原库和升级前备份，不能删除审计、清空发号表或按现存最大号补值绕过迁移。
+
+恢复前停止旧 Server，确认 `--authority-database` 指向当前唯一写入库，而非另一份旧备份或克隆；保留该文件直到恢复目标完成验证。恢复始终写入新路径，成功后切换 `CLINMESH_DATABASE_PATH`，只启动新目标。旧库的领域事实保持原样，但发行权威永久退休，后续挂号与启动验证都会拒绝。候选发行状态包含较新高水位，恢复结果的 canonical state hash 因此可能与旧备份不同。
+
+如果旧权威退休后候选持久化或目标创建失败，错误明确报告旧权威仍退休；保留旧库及可信备份，不重新启用旧快照，不以同一退休源再次创建恢复目标。当前没有自动重启发行的修复入口，需要先补充可验证的单权威恢复方案；缺少最新可信发行状态时保持停止发号。应用不自动检测任意文件复制，也不承诺两个独立克隆并行写入后的历史号码唯一。
 
 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表。JSON 列按解析后的值规范化，FHIR `lastUpdated` 和存放 hash 自身的列不参与计算；该 hash 只证明同一 schema 下的快照内容等价，不是跨版本 replay 协议。
 

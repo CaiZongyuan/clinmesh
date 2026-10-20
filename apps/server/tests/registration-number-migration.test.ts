@@ -33,11 +33,11 @@ function context(database: ClinMeshDatabase, workspaceId: string): ActorContext 
   return { ...scope, actorId: 'registrar', roleCode: 'registrar' }
 }
 
-function issue(database: ClinMeshDatabase, actor: ActorContext, suffix: string, visitDate = '2026-10-20') {
+function issue(database: ClinMeshDatabase, actor: ActorContext, suffix: string, visitDate = '2026-10-20', operation = 'registration.register') {
   const fhir = new FhirRepository(database)
   return new CommandExecutor(database, fhir).execute({
     context: actor, dataSchema: z.object({ encounterId: z.string() }), expectedVersions: {},
-    idempotencyKey: suffix, input: {}, operation: 'registration.register',
+    idempotencyKey: suffix, input: {}, operation,
   }, transaction => {
     const encounter = transaction.fhir.create(actor, {
       resourceType: 'Encounter', id: `encounter-${suffix}`, status: 'planned',
@@ -59,13 +59,22 @@ describe('registration numbering history migration', () => {
     const first = context(database, 'workspace-1')
     const second = context(database, 'workspace-2')
     issue(database, first, '0007')
-    issue(database, second, '0007')
+    issue(database, second, '0007', '2026-10-20', 'synthetic-case.start-outpatient-visit')
     issue(database, first, '0013', '2026-10-21')
+    database.driver.prepare(`INSERT INTO workspace_epoch (workspace_id, epoch, state, scenario_id, created_at)
+      VALUES (?, 'epoch-2', 'active', 'number-migration', ?)`)
+      .run(first.workspaceId, new Date().toISOString())
+    database.driver.prepare(`INSERT INTO scenario_run (workspace_id, epoch, scenario_run_id, scenario_id, status, started_at)
+      VALUES (?, 'epoch-2', 'run-2', 'number-migration', 'active', ?)`)
+      .run(first.workspaceId, new Date().toISOString())
+    database.driver.prepare("INSERT INTO audit_head VALUES (?, 'epoch-2', 0, ?)").run(first.workspaceId, '0'.repeat(64))
+    database.driver.prepare("UPDATE workspace SET active_epoch = 'epoch-2' WHERE workspace_id = ?").run(first.workspaceId)
+    issue(database, { ...first, epoch: 'epoch-2', scenarioRunId: 'run-2' }, '0011')
     const original = database.driver.prepare("SELECT content_json FROM fhir_history WHERE resource_type = 'Encounter' ORDER BY workspace_id, epoch, resource_id").all()
 
     expect(applyMigrations(database).applied).toEqual([migration])
     expect(readRegistrationNumberState(database).counters).toEqual([
-      { visitDate: '2026-10-20', highWater: 7 }, { visitDate: '2026-10-21', highWater: 13 },
+      { visitDate: '2026-10-20', highWater: 11 }, { visitDate: '2026-10-21', highWater: 13 },
     ])
     expect(database.driver.prepare("SELECT content_json FROM fhir_history WHERE resource_type = 'Encounter' ORDER BY workspace_id, epoch, resource_id").all()).toEqual(original)
     expect(applyMigrations(database).applied).toEqual([])
@@ -81,13 +90,16 @@ describe('registration numbering history migration', () => {
     expect(readRegistrationNumberState(database).counters).toEqual([{ visitDate: '2026-10-20', highWater: 19 }])
   })
 
-  it.each(['missing-encounter', 'missing-audit', 'unknown-encounter', 'reset'] as const)(
+  it.each(['missing-encounter', 'missing-audit', 'missing-projection', 'altered-outcome', 'unknown-encounter', 'unsafe-sequence', 'reset'] as const)(
     'rejects unproven %s history atomically without modifying existing facts', async (failure) => {
       const database = await legacyDatabase()
       const actor = context(database, 'workspace-1')
       issue(database, actor, '0023')
       if (failure === 'missing-encounter') database.driver.prepare("DELETE FROM fhir_history WHERE resource_type = 'Encounter'").run()
       if (failure === 'missing-audit') database.driver.prepare('DELETE FROM audit_log').run()
+      if (failure === 'missing-projection') database.driver.prepare("DELETE FROM fhir_history WHERE resource_type = 'AuditEvent'").run()
+      if (failure === 'altered-outcome') database.driver.prepare("UPDATE audit_log SET outcome = 'failed'").run()
+      if (failure === 'unsafe-sequence') issue(database, actor, '9007199254740992')
       if (failure === 'unknown-encounter') new FhirRepository(database).create(actor, {
         resourceType: 'Encounter', id: 'unknown-encounter', status: 'planned',
         identifier: [{ system: numberSystem, value: 'CM-OP-20261020-9999' }],
