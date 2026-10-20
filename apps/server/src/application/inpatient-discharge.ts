@@ -76,13 +76,13 @@ export class InpatientDischarge {
     }
   }
   preview(context: ActorContext, admissionId: string) {
-    this.owner.assertRole(context, ['cashier'])
+    this.owner.assertReadRole(context, ['cashier'])
     this.owner.database.driver.exec('BEGIN')
     try { const result = this.snapshot(context, admissionId); this.owner.database.driver.exec('COMMIT'); return result }
     catch (error) { if (this.owner.database.driver.inTransaction) this.owner.database.driver.exec('ROLLBACK'); throw error }
   }
   snapshot(context: ActorContext, admissionId: string) {
-    const admission = this.owner.admissionBinding(context, admissionId)
+    const admission = this.owner.readAdmissionBinding(context, admissionId)
     const encounterVersion = this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId!
     const facts = this.owner.orders.chargeFacts(context, admissionId)
     const deposits = z.array(z.object({ transaction_id: z.string(), amount_fen: z.number().int().positive().safe(), virtual_time: z.string() })).parse(

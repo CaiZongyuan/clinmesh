@@ -119,6 +119,35 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
   await expect(page.getByRole('region', { name: '待接收转科', exact: true }).getByText('暂无待接收转科', { exact: true })).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
+  await login('registrar')
+  const referralsRead = page.waitForResponse(response => response.url().endsWith('/inpatient/referrals') && response.request().method() === 'GET')
+  await page.getByRole('tab', { name: '住院登记', exact: true }).click()
+  const referralsResponse = await referralsRead
+  expect.soft(referralsResponse.status()).toBe(200)
+  await select()
+  if (referralsResponse.ok()) await expect(page.getByRole('alert')).toHaveCount(0)
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)
+  await login('cashier')
+  const chargesRead = page.waitForResponse(response => response.url().endsWith(`${path}/charges`) && response.request().method() === 'GET')
+  await select()
+  const chargesResponse = await chargesRead
+  expect.soft(chargesResponse.status()).toBe(200)
+  if (chargesResponse.ok()) {
+    await expect(page.getByText('已结算并清床', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '费用明细', exact: true })).toBeVisible()
+    await expect(page.getByRole('alert')).toHaveCount(0)
+  }
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)
+  await login('pharmacist')
+  const pharmacyRead = page.waitForResponse(response => response.url().endsWith('/inpatient/pharmacy/admissions') && response.request().method() === 'GET')
+  await page.getByRole('tab', { name: '住院药房', exact: true }).click()
+  const pharmacyResponse = await pharmacyRead
+  expect.soft(pharmacyResponse.status()).toBe(200)
+  if (pharmacyResponse.ok()) {
+    await expect(page.getByText('暂无住院药品医嘱', { exact: true })).toBeVisible()
+    await expect(page.getByRole('alert')).toHaveCount(0)
+  }
+  await expect(page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })).toHaveCount(0)
 })
 
 test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不能被静默改成新意图', async ({ page, browserApp }) => {

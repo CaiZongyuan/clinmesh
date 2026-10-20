@@ -1,3 +1,5 @@
+import { inpatientChargesSchema, inpatientPharmacyListSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientReferralListSchema } from '@clinmesh/contracts/inpatient'
 import { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
@@ -105,7 +107,7 @@ describe('住院病案首页公共 HTTP', () => {
     expect((await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: (await changed.json()).data.encounterVersion, duration: 'temporary', selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 } })).status).toBe(409)
   })
   it('归档冻结完整快照、新key禁止更正、原receipt仍重放；共享Patient升级和Scenario完成后归档仍可查', async () => {
-    const s = await setup(100000, true), coder = await s.login('medical-records')
+    const s = await setup(100000, true), coder = await s.login('medical-records'), pharmacist = await s.login('pharmacist')
     await finish(s)
     const clinical = await (await s.request(s.doctor, `${s.path}/clinical`)).json()
     const diagnosisInput = { encounterVersion: clinical.encounterVersion, expectedRevision: 0, entries: [{ catalogItemId: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', role: 'primary', admissionCondition: '1', note: '归档前确认' }] }, diagnosisKey = randomUUID()
@@ -143,6 +145,37 @@ describe('住院病案首页公共 HTTP', () => {
     expect((await s.request(s.nurse, `${s.path}/record`)).status).toBe(200)
     expect((await s.request(s.nurse, '/api/his/v1/inpatient/transfers/incoming')).status).toBe(200)
     expect((await s.request(s.nurse, '/api/his/v1/inpatient/transfer-catalog')).status).toBe(200)
+    const charges = await s.request(s.cashier, `${s.path}/charges`)
+    expect.soft(charges.status).toBe(200)
+    if (charges.ok) expect(inpatientChargesSchema.parse(await charges.json())).toMatchObject({ admissionId: s.admission.id, financialStatus: 'settled', charges: [], chargesFen: 0 })
+    const preview = await s.request(s.cashier, `${s.path}/discharge/preview`)
+    expect.soft(preview.status).toBe(200)
+    if (preview.ok) expect(inpatientSettlementPreviewSchema.parse(await preview.json())).toMatchObject({ status: 'cleared', financialStatus: 'settled', chargesFen: 0, depositFen: 100000 })
+    const referrals = await s.request(s.registrar, '/api/his/v1/inpatient/referrals')
+    expect.soft(referrals.status).toBe(200)
+    if (referrals.ok) expect(inpatientReferralListSchema.parse(await referrals.json())).toEqual({ items: [] })
+    const pharmacyList = await s.request(pharmacist, '/api/his/v1/inpatient/pharmacy/admissions')
+    expect.soft(pharmacyList.status).toBe(200)
+    if (pharmacyList.ok) expect(inpatientPharmacyListSchema.parse(await pharmacyList.json())).toEqual({ items: [] })
+    const pharmacy = await s.request(pharmacist, `${s.path}/pharmacy`)
+    expect.soft(pharmacy.status).toBe(200)
+    if (pharmacy.ok) {
+      const data = inpatientPharmacySchema.parse(await pharmacy.json())
+      expect(data).toMatchObject({ admission: { admissionId: s.admission.id, status: 'cleared' }, orders: [], executions: [], dispenses: [], medications: [], medicationAllergies: [] })
+      expect(JSON.stringify(data)).not.toMatch(/diagnosis|admissionCondition|chargesFen|departureMethod|surgery/)
+    }
+    for (const [cookie, path] of [[s.nurse, `${s.path}/charges`], [s.registrar, `${s.path}/discharge/preview`], [s.cashier, '/api/his/v1/inpatient/referrals'], [s.cashier, '/api/his/v1/inpatient/pharmacy/admissions'], [s.registrar, `${s.path}/pharmacy`]] as const) expect((await s.request(cookie, path)).status).toBe(403)
+    for (const cookie of [s.registrar, s.cashier, pharmacist]) for (const path of [`${s.path}/record`, `${s.path}/clinical`]) expect((await s.request(cookie, path)).status).toBe(403)
+    const currentPatient = repository.read(context, 'Patient', s.patient.id)
+    for (const [cookie, path, input] of [
+      [s.registrar, '/api/his/v1/inpatient/admissions', { expectedEpoch: context.epoch, patientId: s.patient.id, patientVersion: currentPatient.meta!.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 }],
+      [s.cashier, `${s.path}/discharge/settle`, { encounterVersion: archived.data.snapshot.fees.encounterVersion, fingerprint: archived.data.snapshot.fees.fingerprint, expectedChargesFen: 0, expectedBalanceFen: -100000 }],
+      [pharmacist, `${s.path}/executions/dispense`, { executionId: 'synthetic-execution', expectedExecutionVersion: 1, lotSelections: [{ lotId: 'synthetic-lot', expectedVersion: 1, quantity: 1 }] }],
+    ] as const) {
+      const response = await s.request(cookie, path, input)
+      expect(response.status).toBe(409)
+      expect((await response.json()).error.code).toBe('CONTEXT_INACTIVE')
+    }
     // 只读入口使用current不恢复completed Run的写权限。
     const inactiveWrite = await s.request(s.nurse, `${s.path}/transfers/receive`, { encounterVersion: archived.data.snapshot.fees.encounterVersion, transferId: 'synthetic-transfer', expectedTransferVersion: 1, bedId: 'bed-general-1' })
     expect(inactiveWrite.status).toBe(409)
