@@ -10,7 +10,7 @@ Status: implemented
 
 临床申请以真实 OP/IP XOR context 统一持久 owner。门诊保留原 case ID 与 wire 合同，住院 context 指向本次 admission；来源只用于结果解析，正式资源归本次 IMP Encounter。新 context 随原登记 Command 创建，查询不补写。迁移保留全部 Epoch 的旧行、引用、报告、确认、快照、回执和 outbox，并在提交前完整检查外键。
 
-InpatientService 下的 InpatientInvestigations 负责住院开立、护士送检和责任校验，执行与报告仍交给既有申请内核和 LIS/RIS 适配器。护士送检事实是 accept 的事务前置条件；住院报告不进入门诊对话和自动记录。当前科室与病区在每次读取和写入时重新核验，转科后当前责任医生可以处理原科在途报告，不按历史 authored_by 锁死。
+InpatientService 下的 InpatientInvestigations 负责住院开立、护士送检和责任校验，执行与报告仍交给既有申请内核和 LIS/RIS 适配器。共享 apply 的住院能力不扩展旧门诊公开 Command 的岗位权限；只有住院专用 Command 能将申请、冻结价目和送检关联作为完整事实提交，否则会留下无法送检和计费的孤立申请。accept 从真实 OP/IP context 校验同一住院的送检关联，缺失关联同样拒绝，避免晚到事件绕过业务入口。原已完成回执保留无写重放。公开入口与事务前置条件由[当前临床合同](../../../architecture/clinical-workflows.md#82-住院闭环后续)拥有。住院报告不进入门诊对话和自动记录。当前科室与病区在每次读取和写入时重新核验，转科后当前责任医生可以处理原科在途报告，不按历史 authored_by 锁死。
 
 本院只对确知基础项目声明额外的有界合成价格，不推断全目录单项或组合价。未计价服务保持不可开展，申请冻结医院声明的价格、版本、来源和执行完成触发点。首次报告完成事务写同一本住院账，修订不重复收费；回调重读当前住院与财务状态，防止结算后追加应付。具体项目及金额由[当前临床合同](../../../architecture/clinical-workflows.md#82-住院闭环后续)拥有，不代表国家价格。
 

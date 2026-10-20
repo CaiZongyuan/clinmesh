@@ -326,6 +326,7 @@ export class ImagingRequestService {
         serviceId: input.serviceId,
       },
       operation: 'imaging-request.save-draft',
+      authorize: () => assertRole(input.context, ['outpatient-doctor']),
     }, transaction => this.applySaveDraft(transaction, input))
   }
 
@@ -438,6 +439,7 @@ export class ImagingRequestService {
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, expectedDraftVersion: input.expectedDraftVersion },
       operation: 'imaging-request.issue',
+      authorize: () => assertRole(input.context, ['outpatient-doctor']),
     }, transaction => this.applyIssue(transaction, input))
   }
 

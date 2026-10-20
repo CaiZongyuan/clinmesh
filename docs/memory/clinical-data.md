@@ -24,6 +24,8 @@
 
 - Command receipt 是跨版本持久数据。响应 DTO 新增必填字段时提供向后兼容默认值或迁移旧回执；删除 strict DTO 字段时投影旧响应，并覆盖提前委托到其他方法的动作分支。回归用原请求与原幂等键重放升级前响应形状，同时检查原回执和审计不变；只验证新命令成功不能发现这类回归。
 
+- 扩展共享 apply 的业务上下文时，逐一回归其公开 Command 包装的岗位边界；共享实现允许住院，不代表旧门诊入口可放行住院岗位。同时构造缺关联的遗留事实，验证系统事件拒绝而正确入口仍可完成；见[授权边界回归](../../apps/server/tests/inpatient-legacy-request-http.test.ts)与[临床合同](../architecture/clinical-workflows.md#82-住院闭环后续)。
+
 - SQLite perf gate 统计数据库、WAL 和 SHM 总增长；同一 Command completion 更新的多个 nullable 关联列若各建独立索引，会放大短事务 WAL pages。优先按真实验证查询建立一个复合索引，并用 `pnpm perf:ci` 证明增长，而不是放宽预算。
 
 - 跨 CRLF/LF 工作区复用 SQLite 时，先区分 SQL 内容改动与换行字节差异。迁移引擎兼容既有 LF／CRLF checksum，新迁移统一记录 LF checksum，不重写已应用记录；仍报 `Applied migration checksum changed` 时须追查真实内容或其他字节差异，不能跳过校验或手工重算原库记录。当前合同见[迁移换行校验决策](../decisions/implemented/bug-fix/2026-10-15-portable-migration-checksums.md)。

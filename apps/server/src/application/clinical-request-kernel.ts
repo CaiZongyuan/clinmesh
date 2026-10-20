@@ -194,8 +194,16 @@ export class ClinicalRequestKernel {
     now: string,
   ): { status: 'accepted'; task: FhirResource } | { status: 'cancelled' } {
     if (request.status === 'cancelled') return { status: 'cancelled' }
-    const sent = this.#database.driver.prepare('SELECT sent_at FROM inpatient_investigation WHERE workspace_id=? AND epoch=? AND request_id=?').get(context.workspaceId,context.epoch,request.request_id) as { sent_at: string | null } | undefined
-    if (sent?.sent_at === null) throw new WorkflowError('WORKFLOW_CONFLICT', '住院检查须由护士校对送检后受理')
+    const dispatch = z.object({ admission_id: z.string().nullable(), sent_at: z.string().datetime({ offset: true }).nullable() }).parse(
+      this.#database.driver.prepare(`
+        SELECT c.admission_id, i.sent_at FROM clinical_request_context c
+        LEFT JOIN inpatient_investigation i
+          ON i.workspace_id = c.workspace_id AND i.epoch = c.epoch
+          AND i.admission_id = c.admission_id AND i.request_id = ?
+        WHERE c.workspace_id = ? AND c.epoch = ? AND c.case_id = ?
+      `).get(request.request_id, context.workspaceId, context.epoch, request.case_id),
+    )
+    if (dispatch.admission_id !== null && dispatch.sent_at === null) throw new WorkflowError('WORKFLOW_CONFLICT', '住院检查须由护士校对送检后受理')
     if (request.status !== 'issued') {
       throw new WorkflowError('WORKFLOW_CONFLICT', `The ${policy.label} request cannot be accepted`)
     }
