@@ -8,9 +8,11 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AgentPageRegistryProvider, useAgentPageRegistration, useRegisterAgentPage } from '../agent-page-context.tsx'
+import { ApiClientError } from '../api-client.ts'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
+import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
-import { PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
+import { getPrescriptionIssueErrorMessage, PrescriptionPage, type PrescriptionPageActions } from './prescription-page.tsx'
 
 type Medication = Extract<ClinicalCatalog, { prescriptionConclusionSupported: true }>['medications'][number]
 
@@ -175,6 +177,38 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async () => Response.json(recommendationState())))
 })
 
+describe('开具拦截文案', () => {
+  const messages = getWorkspaceMessages('zh-CN')
+  const errorWith = (code: string, reason?: string) => new ApiClientError(409, code, 'synthetic conflict', undefined, undefined, reason)
+
+  it('按服务端 reason 给出可操作文案而不是笼统拒绝', () => {
+    const expectations: Array<[string, string]> = [
+      ['PRESCRIPTION_ENCOUNTER_NOT_ACTIVE', '请回到候诊队列确认患者状态'],
+      ['PRESCRIPTION_NO_MEDICATION_RECORDED', '已记录"无需用药"'],
+      ['PRESCRIPTION_DRAFT_STALE', '请刷新处方页签后重试'],
+      ['PRESCRIPTION_ALREADY_ISSUED', '已有正式处方'],
+      ['PRESCRIPTION_ALLERGY_CONFLICT', '与患者活动过敏冲突'],
+      ['PRESCRIPTION_DIAGNOSIS_UNCONFIRMED', '请先在诊断页签确认主诊断'],
+      ['PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED', '不在该药品允许的目录范围'],
+      ['PRESCRIPTION_DOSAGE_NOT_ALLOWED', '疗程或数量不在该药品目录允许的范围'],
+    ]
+    for (const [reason, fragment] of expectations) {
+      expect(getPrescriptionIssueErrorMessage(errorWith('WORKFLOW_CONFLICT', reason), messages)).toContain(fragment)
+      expect(getPrescriptionIssueErrorMessage(errorWith('WORKFLOW_CONFLICT', reason), messages))
+        .not.toBe(messages.prescriptionIssueConflictDescription)
+    }
+  })
+
+  it('未知 reason 与缺失 reason 回落到通用冲突文案', () => {
+    expect(getPrescriptionIssueErrorMessage(errorWith('WORKFLOW_CONFLICT', 'FUTURE_REASON'), messages))
+      .toBe(messages.prescriptionIssueConflictDescription)
+    expect(getPrescriptionIssueErrorMessage(errorWith('WORKFLOW_CONFLICT'), messages))
+      .toBe(messages.prescriptionIssueConflictDescription)
+    expect(getPrescriptionIssueErrorMessage(new Error('synthetic failure'), messages))
+      .toBe(getWorkspaceErrorMessage(new Error('synthetic failure'), messages))
+  })
+})
+
 afterEach(() => {
   cleanup()
   queryClients.splice(0).forEach(client => client.clear())
@@ -187,6 +221,23 @@ function medicationForm(): ReturnType<typeof within> {
 }
 
 describe('PrescriptionPage', () => {
+  it('keeps the actionable rejection visible when a concurrent no-medication record removes editing access', () => {
+    const mounted = renderPage()
+    mounted.rerender(<PrescriptionPage {...mounted.props} actions={{
+      ...mounted.props.actions, issue: {
+        error: new ApiClientError(409, 'WORKFLOW_CONFLICT', 'synthetic conflict', undefined, undefined, 'PRESCRIPTION_NO_MEDICATION_RECORDED'),
+        onSubmit: vi.fn(), pending: false,
+      },
+    }} detail={{ ...detail, medicationConclusion: {
+      draftVersion: 1,
+      noMedication: {
+        authoredAt: '2026-10-20T10:00:00+08:00', authoredByActorId: 'actor-synthetic',
+        authoredByPractitionerRoleId: 'role-doctor', id: 'no-medication-synthetic', version: 1,
+      },
+    } }} />)
+    expect(screen.getByText(/已记录"无需用药"，不能再开具处方/)).toBeTruthy()
+  })
+
   it('keeps the medication catalog and directions inline beside the prepared prescription', async () => {
     renderPage()
     expect(screen.getByRole('textbox', { name: '搜索药品目录' })).toBeTruthy()

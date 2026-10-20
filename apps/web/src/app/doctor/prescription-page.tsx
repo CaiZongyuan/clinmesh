@@ -879,15 +879,18 @@ export function PrescriptionPage({
                   title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)}
                 />
               )}
-              {actions.issue.error === null ? null : (
-                <ErrorAlert
-                  message={getPrescriptionIssueErrorMessage(actions.issue.error, messages)}
-                  title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)}
-                />
-              )}
             </FieldGroup>
           </div>
         ) : null}
+
+      {/* 开具拒绝独立于编辑权限渲染：并发无药结论或既有处方会让刷新后的 canEditDraft 翻 false，
+          若留在编辑块内，竞态场景下医生只看到状态变化而丢失新承诺的可操作拦截文案。 */}
+      {actions.issue.error === null ? null : (
+        <ErrorAlert
+          message={getPrescriptionIssueErrorMessage(actions.issue.error, messages)}
+          title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)}
+        />
+      )}
 
       {!readOnly
         && noMedicationConclusion === undefined
@@ -964,10 +967,15 @@ function prescriptionStatusLabel(
   return messages.prescriptionStatus_withdrawn
 }
 
-function getPrescriptionIssueErrorMessage(
+/** 开具拦截按成因给可操作文案：告诉医生哪一步未满足、去哪里处理，而不是笼统拒绝。 */
+export function getPrescriptionIssueErrorMessage(
   error: Error,
   messages: ReturnType<typeof getWorkspaceMessages>,
 ): string {
+  if (error instanceof ApiClientError && error.reason !== undefined) {
+    const byReason = prescriptionIssueReasonMessage(error.reason, messages)
+    if (byReason !== null) return byReason
+  }
   if (
     error instanceof ApiClientError
     && (error.code === 'CATALOG_CONFLICT' || error.code === 'WORKFLOW_CONFLICT')
@@ -975,4 +983,24 @@ function getPrescriptionIssueErrorMessage(
     return messages.prescriptionIssueConflictDescription
   }
   return getWorkspaceErrorMessage(error, messages)
+}
+
+function prescriptionIssueReasonMessage(
+  reason: string,
+  messages: ReturnType<typeof getWorkspaceMessages>,
+): string | null {
+  const mapping: Record<string, keyof ReturnType<typeof getWorkspaceMessages>> = {
+    PRESCRIPTION_ENCOUNTER_NOT_ACTIVE: 'prescriptionIssueReason_encounterNotActive',
+    PRESCRIPTION_NO_MEDICATION_RECORDED: 'prescriptionIssueReason_noMedicationRecorded',
+    PRESCRIPTION_DRAFT_STALE: 'prescriptionIssueReason_draftStale',
+    PRESCRIPTION_ALREADY_ISSUED: 'prescriptionIssueReason_alreadyIssued',
+    PRESCRIPTION_ALLERGY_CONFLICT: 'prescriptionIssueReason_allergyConflict',
+    PRESCRIPTION_DIAGNOSIS_UNCONFIRMED: 'prescriptionIssueReason_diagnosisUnconfirmed',
+    PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED: 'prescriptionIssueReason_diagnosisNotAllowed',
+    PRESCRIPTION_DOSAGE_NOT_ALLOWED: 'prescriptionIssueReason_dosageNotAllowed',
+  }
+  const key = mapping[reason]
+  if (key === undefined) return null
+  const text = messages[key]
+  return typeof text === 'string' ? text : null
 }
