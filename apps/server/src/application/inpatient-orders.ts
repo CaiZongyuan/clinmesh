@@ -56,21 +56,21 @@ export class InpatientOrders {
     return { ...this.orderFacts(context, admissionId), ...this.chargeFacts(context, admissionId) }
   }
   pharmacyAdmission(context: ActorContext, admissionId: string) {
-    const { row } = this.owner.admissionBinding(context, admissionId)
+    const { row } = this.owner.readAdmissionBinding(context, admissionId)
     const patient = this.owner.fhir.read(context, 'Patient', row.patient_id)
     const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
     return { admissionId, patientId: row.patient_id, patientName: names?.[0]?.text ?? row.patient_id,
       inpatientNumber: row.inpatient_number, wardId: row.ward_id, status: row.status }
   }
   pharmacyList(context: ActorContext) {
-    this.owner.assertRole(context, ['pharmacist'])
+    this.owner.assertReadRole(context, ['pharmacist'])
     const rows = z.array(z.object({ admission_id: z.string() })).parse(this.owner.database.driver.prepare(`SELECT a.admission_id FROM inpatient_admission a
       WHERE a.workspace_id=? AND a.epoch=? AND EXISTS (SELECT 1 FROM inpatient_order o WHERE o.workspace_id=a.workspace_id AND o.epoch=a.epoch AND o.admission_id=a.admission_id AND o.kind='medication')
       ORDER BY julianday(a.registered_at),a.admission_id`).all(context.workspaceId, context.epoch))
     return inpatientPharmacyListSchema.parse({ items: rows.map(row => this.pharmacyAdmission(context, row.admission_id)) })
   }
   pharmacy(context: ActorContext, admissionId: string) {
-    this.owner.assertRole(context, ['pharmacist'])
+    this.owner.assertReadRole(context, ['pharmacist'])
     const admission = this.pharmacyAdmission(context, admissionId), facts = this.orderFacts(context, admissionId, true)
     const allergies = this.owner.fhir.search(context, 'AllergyIntolerance', new URLSearchParams({ patient: `Patient/${admission.patientId}`, _count: '100' })).resources
     const medicationAllergies = allergies.filter(resource => { const allergy = allergySchema.parse(resource)
@@ -84,8 +84,8 @@ export class InpatientOrders {
       medications: this.medications(context, [...new Set(facts.orders.map(order => order.catalogItemId))]).map(({ id, display, unit, lots }) => ({ id, display, unit, lots })), medicationAllergies })
   }
   charges(context: ActorContext, admissionId: string) {
-    this.owner.assertRole(context, ['cashier'])
-    const admission = this.owner.admissionBinding(context, admissionId)
+    this.owner.assertReadRole(context, ['cashier'])
+    const admission = this.owner.readAdmissionBinding(context, admissionId)
     return inpatientChargesSchema.parse({ admissionId, financialStatus: admission.financialStatus, ...this.chargeFacts(context, admissionId) })
   }
   orderDto(context: ActorContext, row: OrderRow): InpatientOrder {

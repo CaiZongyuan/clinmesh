@@ -138,7 +138,7 @@ export class InpatientService {
     return inpatientCatalogSchema.parse({ wards: wards.map(ward => ({ id: ward.ward_id, name: ward.name, organizationId: ward.organization_id })), beds })
   }
   referrals(context: ActorContext) {
-    this.assertRole(context, ['registrar', 'outpatient-doctor'])
+    this.assertReadRole(context, ['registrar', 'outpatient-doctor'])
     const rows = z.array(z.object({ referral_id: z.string(), patient_id: z.string(), encounter_id: z.string(), ward_id: z.string(),
       reason: z.string(), status: inpatientReferralSchema.shape.status, issued_at: z.string() })).parse(this.database.driver.prepare(`
       SELECT r.* FROM inpatient_referral r WHERE r.workspace_id=? AND r.epoch=?

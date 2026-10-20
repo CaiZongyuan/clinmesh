@@ -220,7 +220,7 @@ depart结束Encounter的实际床位period并设置discharged，保留领域床�
 
 提交、审核和归档分别追加独立事实。每次提交保存四组快照与来源指纹；编码人员只能对当前首页修订及相同来源批准或附原因退回。指纹包含实际采用Patient、诊断和Condition/Encounter版本、操作材料与Procedure版本、床位及有效转出区经过、全部费用正反行与ChargeItem版本、结算资金，以及临床申请/Task/报告/Observation/ImagingStudy版本和完整报告修订确认链。排序稳定，首页状态、审核归档自身、查询时虚拟时间与当前启用Reference Release不属于来源；首页工作流不更新Encounter。来源变化即使净额或Encounter版本相同，也须医生重新提交后审核。当前审核可用性以首页查询的 `reviewCurrent` 及原修订/hash为准，Admission的 `record_status` 不代替来源校验。
 
-归档在同一Command事务重读来源，核原修订/hash、当前审核通过、已清床且结算、核心完整、唯一主诊断、有效实际操作、费用与结算资金一致及无在途任务。归档保存不可变完整快照，读取不拼接当前共享Patient；不全局冻结跨就诊Patient。病案已归档时，ADL、诊断医嘱、手术、检查转科、出院财务和系统报告更正等真实写点共同拒绝写入，既有原receipt仍可无写重放。报告确认先校当前临床责任再守归档锁，无责任的旧门诊入口保持权限拒绝，不因归档暴露不同状态。当前Epoch内的人类会话在Scenario完成后仍可读取住院清单、详情、目录和归档；护士工作台常驻的待接收转科及其目标床位目录同样使用保留岗位与病区筛选的current只读授权，转科写入仍要求active Run；Agent Grant继续遵守原有效期与active Run边界。Web归档详情只展示存储首页，不发起已结束诊疗的active查询。决策理由见[病案快照与审核](../decisions/implemented/architecture/2026-10-21-inpatient-record-snapshot.md)。
+归档在同一Command事务重读来源，核原修订/hash、当前审核通过、已清床且结算、核心完整、唯一主诊断、有效实际操作、费用与结算资金一致及无在途任务。归档保存不可变完整快照，读取不拼接当前共享Patient；不全局冻结跨就诊Patient。病案已归档时，ADL、诊断医嘱、手术、检查转科、出院财务和系统报告更正等真实写点共同拒绝写入，既有原receipt仍可无写重放。报告确认先校当前临床责任再守归档锁，无责任的旧门诊入口保持权限拒绝，不因归档暴露不同状态。当前Epoch内的人类会话在Scenario完成后仍可读取住院清单、详情、目录和归档；护士工作台常驻的待接收转科及其目标床位目录、登记员住院证清单、收费员逐项费用与资金预览、药师独立药房清单及窄详情，同样使用保留原岗位与责任筛选的current只读授权；后三岗不因此取得首页或完整诊疗读取权限，各自Command仍要求active Run；Agent Grant继续遵守原有效期与active Run边界。Web归档详情只展示存储首页，不发起已结束诊疗的active查询。决策理由见[病案快照与审核](../decisions/implemented/architecture/2026-10-21-inpatient-record-snapshot.md)。
 
 ### 8.3 医嘱生命周期
 
