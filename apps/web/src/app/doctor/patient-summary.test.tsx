@@ -160,6 +160,31 @@ describe('PatientBanner 紧凑布局', () => {
     expect(screen.getByText('首诊中')).toBeTruthy()
   })
 
+  it('完诊后横幅合并为只读徽章：隐藏过程状态与完诊进度，生命体征保留', () => {
+    const detail = bannerDetail()
+    detail.encounter = { id: 'encounter-compact-1', status: 'completed', versionId: '2' }
+    render(
+      <PatientBanner
+        completionChecklist={<section aria-label="完诊清单">5 / 7</section>}
+        detail={detail}
+        messages={messages}
+        statusText={messages.status_firstVisit}
+      />,
+    )
+    expect(screen.getByText(messages.encounterReadOnly)).toBeTruthy()
+    expect(screen.queryByText(messages.status_firstVisit)).toBeNull()
+    expect(screen.queryByText('完诊清单')).toBeNull()
+    expect(screen.getByText('体温（°C）', { exact: false })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '完诊' })).toBeNull()
+  })
+
+  it('就诊进行中时状态徽章与完诊动作保持现状', () => {
+    renderBanner()
+    expect(screen.getByText(messages.status_firstVisit)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '完诊' })).toBeTruthy()
+    expect(screen.queryByText(messages.encounterReadOnly)).toBeNull()
+  })
+
   it('完诊进度与生命体征合并为同一次级行，不再单独占一行', () => {
     renderBanner()
     const banner = screen.getByRole('region', { name: '当前患者' })
