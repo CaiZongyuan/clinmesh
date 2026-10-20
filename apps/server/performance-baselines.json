@@ -72,14 +72,14 @@
       "maximumBusyCount": 0,
       "maximumDatabaseGrowthBytes": 4194304,
       "maximumErrorCount": 0,
-      "maximumQueriesPerIteration": 136,
+      "maximumQueriesPerIteration": 137,
       "maximumRetryCount": 0,
-      "maximumRowsWrittenPerIteration": 170,
-      "maximumStatementsPerIteration": 360,
+      "maximumRowsWrittenPerIteration": 180,
+      "maximumStatementsPerIteration": 371,
       "maximumTraceBytesPerIteration": 256,
       "maximumTraceRowsPerIteration": 1,
       "maximumWritesPerIteration": 266,
-      "minimumRowsWrittenPerIteration": 170
+      "minimumRowsWrittenPerIteration": 180
     },
     "trace-control-sqlite": {
       "maximumBusyCount": 0,

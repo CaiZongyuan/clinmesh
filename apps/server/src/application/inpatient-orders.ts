@@ -89,9 +89,12 @@ export class InpatientOrders {
     return inpatientChargesSchema.parse({ admissionId, financialStatus: admission.financialStatus, ...this.chargeFacts(context, admissionId) })
   }
   orderDto(context: ActorContext, row: OrderRow): InpatientOrder {
+    const postoperative = z.object({ surgery_execution_id: z.string() }).optional().parse(this.owner.database.driver.prepare(
+      'SELECT surgery_execution_id FROM inpatient_postoperative_order WHERE workspace_id=? AND epoch=? AND order_id=?').get(context.workspaceId, context.epoch, row.order_id))
     return inpatientOrderSchema.parse({ id: row.order_id, admissionId: row.admission_id, kind: row.kind, duration: row.duration, catalogItemId: row.catalog_item_id,
       catalogVersion: row.catalog_version, display: row.display, doseText: row.dose_text, doseQuantity: row.dose_quantity, unit: row.unit, frequencyCode: row.frequency_code,
       state: row.state, version: row.version, requestVersion: this.owner.fhir.read(context, row.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', row.order_id).meta!.versionId,
+      ...(postoperative === undefined ? {} : { surgeryExecutionId: postoperative.surgery_execution_id }),
       signedAt: row.signed_at, signedBy: row.signed_by, organizationId: row.organization_id,
       ...(row.verified_at === null ? {} : { verifiedAt: row.verified_at }), ...(row.stopped_at === null ? {} : { stoppedAt: row.stopped_at }) })
   }
@@ -112,6 +115,7 @@ export class InpatientOrders {
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientFullClinicalResponseSchema.shape.data,
       authorize: () => this.owner.assertRole(context, ['inpatient-doctor']) }, () => {
       const admission = this.assertAdmitted(context, input.admissionId)
+      if (input.surgeryExecutionId !== undefined) this.owner.surgery.assertExecution(context, admission.id, input.surgeryExecutionId)
       const selection = input.selection, catalog = this.catalog(context)
       let itemId: string, display: string, catalogVersion: number, unit: string, price: number, doseText = '', frequency: 'QD' | 'BID' | 'PRN' = 'QD', quantity: number
       if (selection.kind === 'medication') {
@@ -155,9 +159,14 @@ export class InpatientOrders {
       const id = uuidv7(), now = this.owner.virtualTime(context)
       this.owner.database.driver.prepare(`INSERT INTO inpatient_order(workspace_id,epoch,order_id,admission_id,kind,duration,catalog_item_id,catalog_version,display,dose_text,dose_quantity,unit,frequency_code,price_fen,state,organization_id,signed_at,signed_by)
         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'signed',?,?,?)`).run(context.workspaceId, context.epoch, id, admission.id, selection.kind, input.duration, itemId, catalogVersion, display, doseText, quantity, unit, frequency, price, admission.organizationId, now, context.actorId)
+      if (input.surgeryExecutionId !== undefined) this.owner.database.driver.prepare('INSERT INTO inpatient_postoperative_order VALUES(?,?,?,?,?)')
+        .run(context.workspaceId, context.epoch, admission.id, id, input.surgeryExecutionId)
       const request = this.owner.fhir.create(context, { resourceType: selection.kind === 'medication' ? 'MedicationRequest' : 'ServiceRequest', id, status: 'active', intent: 'order',
         ...(selection.kind === 'medication' ? { medication: { reference: { reference: `Medication/${itemId}`, display } }, dosageInstruction: [{ text: `${doseText} ${frequency}；每次${quantity}${unit}` }] }
           : { code: { concept: { text: display } }, quantityQuantity: { value: quantity, unit } }),
+        ...(input.surgeryExecutionId === undefined ? {} : selection.kind === 'medication'
+          ? { supportingInformation: [{ reference: `Procedure/${input.surgeryExecutionId}` }] }
+          : { supportingInfo: [{ reference: { reference: `Procedure/${input.surgeryExecutionId}` } }] }),
         subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, authoredOn: now, requester: { reference: `PractitionerRole/${context.practitionerRoleId}` } })
       return { data: this.read(context, admission.id), effects: [{ kind: 'created' as const, reference: `${request.resourceType}/${id}`, versionId: '1' }] }
     })

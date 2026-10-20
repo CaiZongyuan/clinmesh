@@ -1,9 +1,17 @@
+import { z } from 'zod'
+import { syntheticInpatientSurgeryCatalog } from './scenario-data/inpatient-surgery-catalog.ts'
 import type { createHospitalBaseline } from './scenario-data/hospital-baseline.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 import { syntheticAccounts } from './identity-service.ts'
 
 export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirRepository, context: RepositoryContext, medications: ReturnType<typeof createHospitalBaseline>['catalog']['medications']) {
+  const existingSurgeryItems = new Set(z.array(z.object({ item_id: z.string() })).parse(database.driver.prepare(
+    'SELECT item_id FROM inpatient_surgery_catalog WHERE workspace_id=? AND epoch=?').all(context.workspaceId, context.epoch)).map(row => row.item_id))
+  for (const [kind, items] of [['procedure', syntheticInpatientSurgeryCatalog.procedures], ['material', syntheticInpatientSurgeryCatalog.materials]] as const) {
+    for (const item of items) if (!existingSurgeryItems.has(item.id)) database.driver.prepare(`INSERT INTO inpatient_surgery_catalog VALUES(?,?,?,?,?,?)
+      ON CONFLICT(workspace_id,epoch,item_id) DO NOTHING`).run(context.workspaceId, context.epoch, item.id, kind, item.version, JSON.stringify(item))
+  }
   for (const medication of medications) {
     database.driver.prepare(`UPDATE outpatient_catalog SET config_json=json_set(config_json,
       '$.availableScopes',json('["outpatient","inpatient"]'),'$.unit',?,'$.inpatientDoses',json(?),'$.inpatientBillingTrigger','dispense')

@@ -1,3 +1,4 @@
+import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from './inpatient-surgery.ts'
 import { inpatientPharmacyListSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from './inpatient-clinical.ts'
 import {
   inpatientCatalogSchema, inpatientListSchema, inpatientDetailSchema, inpatientCommandResponseSchema,
@@ -2429,6 +2430,20 @@ const operationDefinitions = [
     summary: 'Search one supported FHIR R5 resource type with declared parameters',
     version: 1,
   },
+  { cliPath: ['inpatient','surgery-catalog'], id: 'inpatient.surgery.catalog', http: { method: 'GET', path: '/api/his/v1/inpatient/surgery-catalog' }, input: emptyInputSchema, output: inpatientSurgeryCatalogSchema,
+    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse'], summary: '读取固定有界手术分类摘录及合成本院收费目录', version: 1 },
+  { cliPath: ['inpatient','surgeries'], id: 'inpatient.surgery.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientSurgerySchema,
+    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '分别读取计划、术前确认与本次实际实施事实', version: 1 },
+  { cliPath: ['inpatient','request-surgery'], id: 'inpatient.surgery.request', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/request', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSurgeryRequestInputSchema.parse(raw); return { input } } },
+    input: inpatientSurgeryRequestInputSchema, output: inpatientSurgeryResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '申请手术；保存计划，不代表实际实施', version: 1 },
+  { cliPath: ['inpatient','check-surgery-preop'], id: 'inpatient.surgery.check-preop', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/check-preop', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSurgeryActionInputSchema.parse(raw); return { input } } },
+    input: inpatientSurgeryActionInputSchema, output: inpatientSurgeryResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['ward-nurse'], summary: '护士记录术前检查核对事实', version: 1 },
+  { cliPath: ['inpatient','confirm-surgery-consent'], id: 'inpatient.surgery.confirm-consent', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/confirm-consent', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSurgeryActionInputSchema.parse(raw); return { input } } },
+    input: inpatientSurgeryActionInputSchema, output: inpatientSurgeryResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '医生确认已签署知情同意书；不代替电子签名', version: 1 },
+  { cliPath: ['inpatient','cancel-surgery'], id: 'inpatient.surgery.cancel', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/cancel', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSurgeryActionInputSchema.parse(raw); return { input } } },
+    input: inpatientSurgeryActionInputSchema, output: inpatientSurgeryResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '取消未实施手术；保留申请与准备事实', version: 1 },
+  { cliPath: ['inpatient','execute-surgery'], id: 'inpatient.surgery.execute', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/execute', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSurgeryExecuteInputSchema.parse(raw); return { input } } },
+    input: inpatientSurgeryExecuteInputSchema, output: inpatientSurgeryResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '按双准备门禁记录实际手术和耗材并原子计费', version: 1 },
   {
     cliPath: ['inpatient', 'pharmacy-list'], id: 'inpatient.pharmacy.list',
     http: { method: 'GET', path: '/api/his/v1/inpatient/pharmacy/admissions' }, input: emptyInputSchema, output: inpatientPharmacyListSchema,
@@ -2462,7 +2477,7 @@ const operationDefinitions = [
   {
     cliPath: ['inpatient', 'issue-order'], id: 'inpatient.order.issue',
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/issue', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderIssueInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderIssueInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '住院医嘱issue；校验当前责任与版本', version: 1,
+    input: inpatientOrderIssueInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '住院医嘱issue；校验当前责任与版本', version: 2,
   },
   {
     cliPath: ['inpatient', 'verify-order'], id: 'inpatient.order.verify',

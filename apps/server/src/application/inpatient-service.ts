@@ -1,3 +1,4 @@
+import { InpatientSurgery } from './inpatient-surgery.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
@@ -31,11 +32,13 @@ const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records
 export class InpatientService {
   readonly billing: InpatientBilling
   readonly orders: InpatientOrders
+  readonly surgery: InpatientSurgery
   readonly #workspaces: WorkspaceRepository
   constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService) {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.orders = new InpatientOrders(this)
+    this.surgery = new InpatientSurgery(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
