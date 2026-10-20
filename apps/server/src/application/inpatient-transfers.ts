@@ -11,7 +11,7 @@ type TransferRow=z.infer<typeof rowSchema>
 export class InpatientTransfers {
   constructor(readonly owner:InpatientService) {}
   catalog(context:ActorContext) {
-    this.owner.assertRole(context,['inpatient-doctor','ward-nurse'])
+    this.owner.assertReadRole(context,['inpatient-doctor','ward-nurse'])
     const wards=z.array(z.object({ward_id:z.string(),organization_id:z.string(),name:z.string()})).parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_ward WHERE workspace_id=? AND epoch=? ORDER BY ward_id').all(context.workspaceId,context.epoch))
     const beds=z.array(z.object({bed_id:z.string(),ward_id:z.string(),name:z.string(),occupied:z.number()})).parse(this.owner.database.driver.prepare(`SELECT b.*,EXISTS(SELECT 1 FROM inpatient_bed_occupancy o WHERE o.workspace_id=b.workspace_id AND o.epoch=b.epoch AND o.bed_id=b.bed_id AND o.ended_at IS NULL) occupied
       FROM inpatient_bed b WHERE workspace_id=? AND epoch=? ORDER BY bed_id`).all(context.workspaceId,context.epoch))
@@ -34,7 +34,7 @@ export class InpatientTransfers {
     return inpatientTransfersSchema.parse({admissionId,transfers:rows.map(row=>this.dto(context,row))})
   }
   incoming(context:ActorContext) {
-    this.owner.assertRole(context,['ward-nurse'])
+    this.owner.assertReadRole(context,['ward-nurse'])
     const rows=z.array(rowSchema).parse(this.owner.database.driver.prepare("SELECT * FROM inpatient_transfer WHERE workspace_id=? AND epoch=? AND target_ward_id=? AND target_organization_id=? AND status IN ('requested','handed-over') ORDER BY julianday(requested_at),transfer_id").all(context.workspaceId,context.epoch,context.locationId??'',context.organizationId??''))
     return inpatientIncomingTransfersSchema.parse({items:rows.map(row=>{
       const admission=z.object({patient_id:z.string(),inpatient_number:z.string()}).parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId,context.epoch,row.admission_id))

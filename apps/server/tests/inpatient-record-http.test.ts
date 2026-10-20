@@ -140,6 +140,13 @@ describe('住院病案首页公共 HTTP', () => {
     expect((await s.request(coder, '/api/his/v1/inpatient/admissions')).status).toBe(200)
     expect((await s.request(coder, s.path)).status).toBe(200)
     expect((await s.request(coder, '/api/his/v1/inpatient/catalog')).status).toBe(200)
+    expect((await s.request(s.nurse, `${s.path}/record`)).status).toBe(200)
+    expect((await s.request(s.nurse, '/api/his/v1/inpatient/transfers/incoming')).status).toBe(200)
+    expect((await s.request(s.nurse, '/api/his/v1/inpatient/transfer-catalog')).status).toBe(200)
+    // 只读入口使用current不恢复completed Run的写权限。
+    const inactiveWrite = await s.request(s.nurse, `${s.path}/transfers/receive`, { encounterVersion: archived.data.snapshot.fees.encounterVersion, transferId: 'synthetic-transfer', expectedTransferVersion: 1, bedId: 'bed-general-1' })
+    expect(inactiveWrite.status).toBe(409)
+    expect((await inactiveWrite.json()).error.code).toBe('CONTEXT_INACTIVE')
   })
   it('同净额的零元冲正仍使审核失效，分类净额归原费用类别', async () => {
     const s = await setup(100000, true), coder = await s.login('medical-records'), admin = await s.login('admin')

@@ -70,6 +70,32 @@ async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRunti
 }
 
 describe('住院检查检验 HTTP 合同', () => {
+  it.each(['laboratory','imaging'] as const)('归档%s报告保持旧门诊入口责任403，正常住院确认原receipt仍无写重放',async kind=>{
+    const s=await setup(),opDoctor=await signIn(s.runtime,'doctor@demo.clinmesh.local')
+    const selection=kind==='laboratory'?{kind,catalogItemId:'synthetic-inpatient-wbc',indicationCode:'clinical-assessment'}:{kind,serviceId:'imaging-chest-radiograph',indication:'合成归档权限回归'}
+    const issued=await s.request(s.doctor,`${s.path}/investigations/issue`,{encounterVersion:s.admission.versionId,catalogVersion:1,selection})
+    expect(issued.status).toBe(200)
+    const request=(await issued.json()).data[kind==='laboratory'?'laboratoryRequests':'imagingRequests'][0]
+    expect((await s.request(s.nurse,`${s.path}/investigations/send`,{requestId:request.id,expectedRequestVersion:request.version,serviceRequestVersion:request.serviceRequestVersion,taskVersion:request.taskVersion})).status).toBe(200)
+    await dispatchAll(s.runtime)
+    const current=(await(await s.request(s.doctor,`${s.path}/investigations`)).json())[kind==='laboratory'?'laboratoryRequests':'imagingRequests'][0]
+    const oldWrapper=()=>s.runtime.app.request(`/api/his/v1/${kind==='laboratory'?'laboratory':'imaging'}-requests/${current.id}/reports/${current.report.diagnosticReportId}/actions/acknowledge`,mutation(opDoctor,{expectedVersions:{[`DiagnosticReport/${current.report.diagnosticReportId}`]:current.report.diagnosticReportVersion},input:{expectedRequestVersion:current.version}}))
+    const openDenied=await oldWrapper()
+    expect(openDenied.status).toBe(403);expect((await openDenied.json()).error.code).toBe('ROLE_NOT_ALLOWED')
+    const input={requestId:current.id,expectedRequestVersion:current.version,serviceRequestVersion:current.serviceRequestVersion,taskVersion:current.taskVersion,diagnosticReportId:current.report.diagnosticReportId,diagnosticReportVersion:current.report.diagnosticReportVersion},key=randomUUID()
+    const acknowledged=await s.request(s.doctor,`${s.path}/investigations/acknowledge`,input,key)
+    expect(acknowledged.status).toBe(200)
+    const receipt=await acknowledged.json()
+    // 等价归档状态专测遗留公开入口；首页HTTP另行覆盖真实归档全过程。
+    s.runtime.database.driver.prepare("UPDATE inpatient_admission SET record_status='archived' WHERE admission_id=?").run(s.admission.id)
+    const archivedDenied=await oldWrapper()
+    expect(archivedDenied.status).toBe(403);expect((await archivedDenied.json()).error.code).toBe('ROLE_NOT_ALLOWED')
+    expect(await(await s.request(s.doctor,`${s.path}/investigations/acknowledge`,input,key)).json()).toEqual(receipt)
+    const newIntent=await s.request(s.doctor,`${s.path}/investigations/acknowledge`,input)
+    expect(newIntent.status).toBe(409);expect((await newIntent.json()).error.code).toBe('INPATIENT_RECORD_ARCHIVED')
+    expect((await(await s.request(s.doctor,`${s.path}/investigations`)).json())[kind==='laboratory'?'laboratoryRequests':'imagingRequests'][0].version).toBe(current.version+1)
+  })
+
   it('病案来源指纹绑定完整报告修订链；无新增费用的管理员更正也受归档只读门禁', async () => {
     const s=await setup(),admin=await signIn(s.runtime)
     const issued=await s.request(s.doctor,`${s.path}/investigations/issue`,{encounterVersion:s.admission.versionId,catalogVersion:1,selection:{kind:'laboratory',catalogItemId:'synthetic-inpatient-wbc',indicationCode:'clinical-assessment'}})

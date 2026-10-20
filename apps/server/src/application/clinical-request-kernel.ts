@@ -430,7 +430,6 @@ export class ClinicalRequestKernel {
       now: string
     },
   ): ReportAcknowledgement {
-    assertInpatientRecordWritable(this.#database,context,request.case_id)
     const practitionerId = context.practitionerId
     if (practitionerId === undefined || !this.#canManage(context, request)) {
       throw new WorkflowError(
@@ -438,6 +437,7 @@ export class ClinicalRequestKernel {
         `Only the doctor responsible for the ${policy.label} request can acknowledge its report`,
       )
     }
+    assertInpatientRecordWritable(this.#database,context,request.case_id)
     const existing = reportAcknowledgementRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT acknowledgement_id, acknowledged_at, acknowledged_by,
