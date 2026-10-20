@@ -5,6 +5,7 @@ import { createAvatar } from '@dicebear/core'
 import * as lorelei from '@dicebear/lorelei'
 import { LockKeyholeIcon } from 'lucide-react'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
+import { createWorkingClinicalDocument } from './clinical-document-content.ts'
 
 type WorkspaceMessages = ReturnType<typeof getWorkspaceMessages>
 const avatarCache = new Map<string, string>()
@@ -86,10 +87,10 @@ export function PatientBanner({
   const presentation = detail.presentation
   const signed = detail.clinicalDocument?.signed
     .toSorted((left, right) => right.revisionNumber - left.revisionNumber)[0]
-  const savedChiefComplaint = detail.clinicalDocument?.draft?.chiefComplaint ?? presentation?.chiefComplaint
+  const savedChiefComplaint = createWorkingClinicalDocument(detail).chiefComplaint
   const chiefComplaint = signed?.content.chiefComplaint ?? workingDocument?.chiefComplaint ?? savedChiefComplaint
   const unsavedChiefComplaint = signed === undefined && workingDocument !== undefined
-    && workingDocument.chiefComplaint !== (savedChiefComplaint ?? '')
+    && workingDocument.chiefComplaint !== savedChiefComplaint
   const readOnly = detail.encounter.status !== 'in-progress'
   const age = patientAge(detail.patient.birthDate)
   const genderLabel = messages[`gender_${detail.patient.gender}` as 'gender_male']

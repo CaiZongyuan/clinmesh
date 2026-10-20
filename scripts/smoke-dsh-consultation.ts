@@ -61,6 +61,7 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'apps/server/src/application/consultation-recording-batch.ts', 'apps/server/src/application/consultation-recording-sentences.ts',
   'apps/server/src/application/clinical-document-quality.ts',
   'apps/server/src/application/clinical-document-quality-context.ts',
+  'apps/web/src/app/doctor/clinical-document-content.ts',
   'apps/web/src/app/doctor/patient-summary.tsx', 'apps/web/src/app/workspace-i18n.ts',
   'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0062_consultation-direct-recording.sql', 'packages/contracts/src/his.ts',
   'apps/server/drizzle/0060_z-recording-branch-staging.sql', 'apps/server/drizzle/0061_clinical-document-history-fields.sql',
@@ -513,6 +514,10 @@ export function apply(ctx) {
       progress: message => console.log(message),
     }).catch(async error => {
       report.qualityCompactOnFailure = await page.locator('[data-document-quality-compact]').getByRole('button').allTextContents()
+      report.qualityStatusOnFailure = await page.locator('[data-document-quality-status]').evaluateAll(elements => elements.map(element => ({
+        status: element.getAttribute('data-document-quality-status'),
+        message: element.querySelector('[role="status"]')?.textContent,
+      })))
       const response = await hospital!.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}/document-quality-control${lastQualityClientId === undefined ? '' : `?clientId=${encodeURIComponent(lastQualityClientId)}`}`, { headers: { cookie } })
       if (response.ok) {
         const state = clinicalDocumentQualityControlStateSchema.parse(await response.json())

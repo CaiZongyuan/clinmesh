@@ -25,9 +25,10 @@ export async function runDocumentQualityJourney(input: {
     }
   }
   page.on('request', observe)
-  const current = async () => {
-    const state = await input.quality(candidate?.clientId)
-    return state.clientRevision === candidate?.clientRevision && state.status === 'ready' && !state.stale ? state : undefined
+  const current = async (scope: 'candidate' | 'saved' = 'candidate') => {
+    const request = scope === 'saved' ? undefined : candidate
+    const state = await input.quality(request?.clientId)
+    return state.clientRevision === request?.clientRevision && state.status === 'ready' && !state.stale ? state : undefined
   }
   try {
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
@@ -37,7 +38,9 @@ export async function runDocumentQualityJourney(input: {
     const banner = page.getByRole('region', { name: '当前患者', exact: true })
     await expect(banner).toContainText('主诉：未记录')
     if (saved?.chiefComplaint !== '') await expect(banner).toContainText('未保存')
-    await expect.poll(async () => (await current())?.issues.some(issue => issue.field === 'chiefComplaint' && issue.classification === 'needs-completion')).toBe(true)
+    // Returning to the saved document reuses its result without a new candidate POST.
+    const clearedScope = saved?.chiefComplaint === '' ? 'saved' : 'candidate'
+    await expect.poll(async () => (await current(clearedScope))?.issues.some(issue => issue.field === 'chiefComplaint' && issue.classification === 'needs-completion')).toBe(true)
     await expect(page.getByRole('region', { name: '主诉质控提示', exact: true })).toHaveCount(0)
     await expect(chiefComplaint).toBeFocused()
     expect((await read()).clinicalDocument?.draft).toEqual(saved)

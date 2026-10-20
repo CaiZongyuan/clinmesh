@@ -1272,6 +1272,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     interceptSigning: (intercept: NonNullable<typeof signingInterceptor>) => { signingInterceptor = intercept },
     interceptControl: (intercept: NonNullable<typeof controlInterceptor>) => { controlInterceptor = intercept },
     updateRecording: (facts: Partial<NonNullable<DoctorCaseDetail['consultationRecording']>>) => { recording = { ...recording, ...facts } },
+    updateDraft: (content: ClinicalDocumentContent) => { document = content; draftVersion += 1 },
     addHistoricalTurn: () => { turns = [{ id: 'legacy-patient-turn', kind: 'text', messageText: '头晕三天。',
       actorId: null, practitionerId: null, personaRevision: 1, recordedAt: '2026-10-08T09:00:00+08:00',
       reportReference: null, sequence: 1, source: 'patient-agent', speaker: 'patient' }] },
@@ -3496,6 +3497,35 @@ describe('role workspaces', () => {
     fixture.finish()
     await screen.findByText('问诊自动记录 · 已整理', {}, { timeout: 4_000 })
     expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 2 }])
+  })
+
+  it('keeps prefilled chief complaint saved after recording other fields and marks only local edits unsaved', async () => {
+    const fixture = stubRecordingWorkspace('pause')
+    fixture.updateDraft({
+      assessment: '', chiefComplaint: '', disposition: '', followUp: '', historyOfPresentIllness: '',
+      physicalExamination: '神志清楚。',
+    })
+    fixture.updateRecording({ hasSavedDraft: false, additions: [{
+      id: 'recorded-examination', field: 'physicalExamination', sourceTurnId: 'doctor-examination',
+      quote: '神志清楚。', relation: 'addition', status: 'applied', ownership: 'automatic', currentText: '神志清楚。',
+    }] })
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    const chiefComplaint = await screen.findByLabelText('主诉', { exact: true })
+    const banner = screen.getByRole('region', { name: '当前患者' })
+    expect(chiefComplaint).toHaveProperty('value', '发热伴咽痛两天')
+    expect(within(banner).getByText('主诉：发热伴咽痛两天')).toBeTruthy()
+    expect(within(banner).queryByText('未保存', { exact: true })).toBeNull()
+    expect(screen.queryByText('有未保存修改，请保存草稿。')).toBeNull()
+
+    fireEvent.change(chiefComplaint, { target: { value: '' } })
+    expect(within(banner).getByText('主诉：未记录')).toBeTruthy()
+    expect(within(banner).getByText('未保存', { exact: true })).toBeTruthy()
+    expect(screen.getByText('有未保存修改，请保存草稿。')).toBeTruthy()
+
+    fireEvent.change(chiefComplaint, { target: { value: '发热伴咽痛两天' } })
+    expect(within(banner).queryByText('未保存', { exact: true })).toBeNull()
+    expect(screen.queryByText('有未保存修改，请保存草稿。')).toBeNull()
+    expect(fixture.savedDocuments).toEqual([])
   })
 
   it('preserves newer recording facts and saved empty fields when a same-version control receipt arrives late', async () => {
