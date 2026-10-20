@@ -18,6 +18,8 @@
 
 - 新增 SQLite migration 后，先核对 `database.ts` 的文件名筛选与 `schema_migration` 中的实际应用记录；文件存在不代表启动时会被发现。描述部分误用下划线会被当前筛选忽略，表现为新接口缺少列的 500；修正文件名并通过公开 HTTP 验证，不以启动成功代替迁移证据。
 
+- 新增默认 SQLite 迁移后，同步默认完整升级入口的版本断言，但保留显式历史 migrationDirectory 的固定版本。用当前 runtime 构造旧库时，仅复制旧版能表达的岗位、成员及会话关联，并同时排除后来新增的环境 FHIR current/history/Search 投影；否则会先触发旧 CHECK、外键或重复 seed 冲突，无法验证真正的业务记录升级。回归见[开发库准备](../../apps/server/tests/development-database-prepare.test.ts)与[存量记录升级](../../apps/server/tests/consultation-auto-record-http.test.ts)。
+
 - SQLite 的 `length`／`instr` 按 Unicode 码点计数，JavaScript 文本范围按 UTF-16 code unit 计数；emoji 等非 BMP 字符会使两者偏移分叉。恢复浏览器编辑范围时使用 owning Command 中的 JavaScript 字符串计算，并要求原片段完整且唯一；当前病史范围恢复由[片段归属决策](../decisions/implemented/architecture/2026-10-08-consultation-history-ownership.md)拥有。
 
 - 带不同时区偏移的 ISO 时间不能直接按 SQLite TEXT 比较先后。按时间点比较前先统一为时间戳或规范 UTC，医院日界线另按业务时区计算；回归包含上海 `23:30+08:00` 至次日午夜，见[住院时钟测试](../../apps/server/tests/inpatient-http.test.ts)与[虚拟时钟合同](../architecture/simulation.md#102-虚拟时钟)。
