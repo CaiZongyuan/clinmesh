@@ -2983,7 +2983,7 @@ describe('role workspaces', () => {
 
     const banner = await screen.findByRole('region', { name: '当前患者' })
     expect(within(banner).queryByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeNull()
-    if (!hasTriage) expect(within(banner).getByText(/未记录分诊信息/)).toBeTruthy()
+    if (!hasTriage) expect(within(banner).getByText('主诉：未记录', { exact: true })).toBeTruthy()
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
     const consultationRegion = screen.getByRole('region', { name: '问诊记录' })
     expect(within(consultationRegion).getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
