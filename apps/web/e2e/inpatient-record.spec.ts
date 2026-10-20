@@ -115,3 +115,71 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await expect(page.getByRole('button', { name: '归档病案', exact: true })).toHaveCount(0)
   expect(inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json()).archive).toEqual(archived)
 })
+
+test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不能被静默改成新意图', async ({ page, browserApp }) => {
+  let first = true
+  const login = async (name: string) => {
+    if (!first) { await page.getByRole('button', { name: '用户菜单' }).click(); await page.getByRole('menuitem', { name: '退出登录' }).click() }
+    first = false
+    await page.getByLabel('账户邮箱').fill(`${name}@demo.clinmesh.local`)
+    await page.getByLabel('账户密码').fill(browserApp.password)
+    await page.getByRole('button', { name: '登录', exact: true }).click()
+    await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
+  }
+  const post = (path: string, input: unknown) => page.request.post(`${browserApp.origin}${path}`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { input } })
+  await page.goto(`${browserApp.origin}/registration`)
+  await login('registrar')
+  const patient = (await (await page.request.post(`${browserApp.origin}/api/his/v1/patients`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { expectedVersions: {}, input: { name: '合成主操作草稿患者', gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } } })).json()).data.patient
+  const admission = (await (await post('/api/his/v1/inpatient/admissions', { expectedEpoch: 'epoch-1', patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000 })).json()).data.admission
+  const path = `/api/his/v1/inpatient/admissions/${admission.id}`
+  await login('ward-nurse')
+  expect((await post(`${path}/receive`, { encounterVersion: admission.versionId, bedId: 'bed-general-1' })).status()).toBe(200)
+  await login('inpatient-doctor')
+  const version = (await (await page.request.get(`${browserApp.origin}${path}`)).json()).admission.versionId
+  const catalog = (await (await page.request.get(`${browserApp.origin}/api/his/v1/inpatient/surgery-catalog`)).json())
+  const requests: Array<{ id: string; version: number; procedureId: string }> = []
+  for (const procedure of catalog.procedures.slice(0, 2)) {
+    const requested = await post(`${path}/surgeries/request`, { encounterVersion: version, procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T09:00:00+08:00', reason: '合成主操作选择示教' })
+    expect(requested.status()).toBe(200)
+    const current = (await requested.json()).data.requests.find((request: { status: string; plannedProcedure: { id: string } }) => request.status === 'requested' && request.plannedProcedure.id === procedure.id)
+    const consented = await post(`${path}/surgeries/confirm-consent`, { requestId: current.id, expectedRequestVersion: current.version, note: '已核签署同意' })
+    expect(consented.status()).toBe(200)
+    const consent = (await consented.json()).data.requests.find((request: { id: string }) => request.id === current.id)
+    requests.push({ id: consent.id, version: consent.version, procedureId: procedure.id })
+  }
+  await login('ward-nurse')
+  for (const request of requests) {
+    const prepared = await post(`${path}/surgeries/check-preop`, { requestId: request.id, expectedRequestVersion: request.version, note: '术前核对完成' })
+    expect(prepared.status()).toBe(200)
+    request.version = (await prepared.json()).data.requests.find((item: { id: string }) => item.id === request.id).version
+  }
+  await login('inpatient-doctor')
+  for (const request of requests) expect((await post(`${path}/surgeries/execute`, { requestId: request.id, expectedRequestVersion: request.version, procedureId: request.procedureId, catalogVersion: 1, note: '实际完成合成操作', materials: [] })).status()).toBe(200)
+  await page.getByRole('button', { name: '查看合成主操作草稿患者', exact: true }).click()
+  const record = page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })
+  const before = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json())
+  const [a, b] = before.snapshot.clinical.operations
+  expect(a).toBeDefined(); expect(b).toBeDefined()
+  const label = (operation: NonNullable<typeof a>) => `${operation.actualProcedure.coding.code} · ${operation.actualProcedure.coding.display}`
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  const sent: Array<{ expectedRevision: number; expectedSourcesHash: string; mainProcedureExecutionId: string }> = []
+  await page.route(`**${path}/record/submit`, async route => {
+    sent.push(route.request().postDataJSON().input)
+    if (sent.length === 1) { const response = await route.fetch(); expect(response.status()).toBe(200); await held; await route.fulfill({ response }) }
+    else await route.continue()
+  })
+  await record.getByLabel('确认本次主操作', { exact: true }).click()
+  await page.getByRole('option', { name: label(a!), exact: true }).click()
+  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
+  await expect.poll(() => sent.length).toBe(1)
+  await record.getByLabel('确认本次主操作', { exact: true }).click()
+  await page.getByRole('option', { name: label(b!), exact: true }).click()
+  release()
+  await expect(record.getByText(/等待提交或编码审核 · 修订 1/)).toBeVisible()
+  await expect(record.getByLabel('确认本次主操作', { exact: true })).toContainText(label(b!))
+  await record.getByRole('button', { name: '提交首页修订', exact: true }).click()
+  await expect.poll(() => sent.length).toBe(2)
+  expect(sent[1]).toEqual({ expectedRevision: 0, expectedSourcesHash: before.sourcesHash, mainProcedureExecutionId: b!.id })
+  await expect(page.getByRole('alert')).toContainText('首页来源或修订已变化')
+})
