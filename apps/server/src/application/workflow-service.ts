@@ -4233,7 +4233,7 @@ export class WorkflowService {
     const outpatientCase = this.#caseByEncounter(input.context, input.encounterId)
     const encounter = transaction.fhir.read(input.context, 'Encounter', input.encounterId)
     if (encounter.status !== 'in-progress' || outpatientCase.status === 'completed') {
-      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for prescription issuing')
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter is not available for prescription issuing', undefined, 'PRESCRIPTION_ENCOUNTER_NOT_ACTIVE')
     }
     this.#assertExpectedVersions(input.expectedVersions, [`Encounter/${input.encounterId}`])
     this.#assertNoLegacyPrescriptionOwner(input.context, outpatientCase.case_id)
@@ -4245,6 +4245,8 @@ export class WorkflowService {
       throw new WorkflowError(
         'WORKFLOW_CONFLICT',
         'The Encounter already has a no-medication conclusion',
+        undefined,
+        'PRESCRIPTION_NO_MEDICATION_RECORDED',
       )
     }
     const state = prescriptionDraftStateRowSchema.optional().parse(
@@ -4258,14 +4260,14 @@ export class WorkflowService {
       || state.draft_json === null
       || state.version !== input.expectedDraftVersion
     ) {
-      throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed')
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The prescription draft version has changed', undefined, 'PRESCRIPTION_DRAFT_STALE')
     }
     const existingPrescription = this.#database.driver.prepare(`
       SELECT 1 AS present FROM prescription
       WHERE workspace_id = ? AND epoch = ? AND case_id = ?
     `).get(input.context.workspaceId, input.context.epoch, outpatientCase.case_id)
     if (existingPrescription !== undefined) {
-      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription')
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription', undefined, 'PRESCRIPTION_ALREADY_ISSUED')
     }
     const draft = prescriptionDraftContentSchema.parse(JSON.parse(state.draft_json))
     const medications = this.#validatedPrescriptionDraftMedications(
@@ -4277,6 +4279,7 @@ export class WorkflowService {
       input.context,
       outpatientCase.patient_id,
       medications.filter(medication => !medication.external).map(medication => medication.catalog),
+      'PRESCRIPTION_ALLERGY_CONFLICT',
     )
     const confirmedDiagnosisIds = new Set(
       z.array(confirmedDiagnosisCatalogItemRowSchema).parse(
@@ -4304,7 +4307,7 @@ export class WorkflowService {
       ).map(row => row.catalog_item_id),
     )
     if (confirmedDiagnosisIds.size === 0) {
-      throw new WorkflowError('WORKFLOW_CONFLICT', 'A confirmed diagnosis is required to issue a prescription')
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'A confirmed diagnosis is required to issue a prescription', undefined, 'PRESCRIPTION_DIAGNOSIS_UNCONFIRMED')
     }
     for (const medication of medications) {
       if (medication.external) continue
@@ -4315,6 +4318,8 @@ export class WorkflowService {
         throw new WorkflowError(
           'CATALOG_CONFLICT',
           `The confirmed diagnosis does not allow ${medication.catalogItemId}`,
+          undefined,
+          'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED',
         )
       }
     }
@@ -4502,7 +4507,7 @@ export class WorkflowService {
       outpatientCase.case_id,
     )
     if (updateCase.changes !== 1) {
-      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription')
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The Encounter already has a prescription', undefined, 'PRESCRIPTION_ALREADY_ISSUED')
     }
     const draftVersion = state.version + 1
     const updateDraft = this.#database.driver.prepare(`
@@ -11691,6 +11696,8 @@ export class WorkflowService {
         throw new WorkflowError(
           'CATALOG_CONFLICT',
           `The course or quantity is not allowed for ${medication.catalogItemId}`,
+          undefined,
+          'PRESCRIPTION_DOSAGE_NOT_ALLOWED',
         )
       }
     }
@@ -11701,6 +11708,7 @@ export class WorkflowService {
     context: ActorContext,
     patientId: string,
     medications: Array<{ code: string; name_en?: string; name_zh?: string }>,
+    reason?: string,
   ): void {
     const allergyCodes = this.#patientAllergyCodes(context, patientId)
     const contraindicated = medications.find(medication => allergyCodes.has(medication.code))
@@ -11708,6 +11716,8 @@ export class WorkflowService {
       throw new WorkflowError(
         'WORKFLOW_CONFLICT',
         `Medication ${contraindicated.name_en ?? contraindicated.name_zh ?? contraindicated.code} conflicts with an active allergy`,
+        undefined,
+        reason,
       )
     }
   }
