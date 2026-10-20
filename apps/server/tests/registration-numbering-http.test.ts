@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
 import {
   apiErrorSchema,
   createPatientResponseSchema,
@@ -176,9 +177,16 @@ describe('durable registration numbers through HIS HTTP', () => {
     const { runtime, cookie } = await openRuntime()
     const patient = await createPatient(runtime, cookie)
     const key = randomUUID()
+    const encounterIds = async () => {
+      const response = await runtime.app.request('/fhir/R5/Encounter?_count=100', { headers: { cookie } })
+      expect(response.status).toBe(200)
+      return fhirBundleSchema.parse(await response.json()).entry?.map(entry => entry.resource?.id)
+    }
+    const before = await encounterIds()
     runtime.database.driver.exec("CREATE TRIGGER fail_registration BEFORE INSERT ON registration BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END")
     expect((await register(runtime, cookie, patient.id, key)).status).toBe(500)
     expect(await registrationNumbers(runtime, cookie)).toEqual([])
+    expect(await encounterIds()).toEqual(before)
     runtime.database.driver.exec('DROP TRIGGER fail_registration')
     expect((await register(runtime, cookie, patient.id, key)).status).toBe(200)
     expect(await registrationNumbers(runtime, cookie)).toEqual(['CM-OP-20260824-000001'])
@@ -200,6 +208,8 @@ describe('durable registration numbers through HIS HTTP', () => {
     // Reset replays the Synthetic Case with the same patient identity and a new visit number.
     expect(await registrationNumbers(runtime, cookie)).toEqual(['CM-OP-20260824-000003'])
     expect((await runtime.app.request(`/fhir/R5/Encounter/${started.encounterId}`, { headers: { cookie } })).status).toBe(404)
+    const oldNumber = await runtime.app.request('/api/his/v1/patients?query=CM-OP-20260824-000002', { headers: { cookie } })
+    expect(patientSearchSchema.parse(await oldNumber.json())).toMatchObject({ items: [], total: 0 })
     const nextPatient = await createPatient(runtime, cookie)
     expect((await register(runtime, cookie, nextPatient.id)).status).toBe(200)
     expect(await registrationNumbers(runtime, cookie)).toContain('CM-OP-20260824-000004')

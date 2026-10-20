@@ -26,7 +26,9 @@ export class RegistrationNumberError extends Error {
 }
 
 export function registrationCountersHash(counters: RegistrationNumberCounter[]): string {
-  return createHash('sha256').update(JSON.stringify(counters.toSorted((a, b) => a.visitDate.localeCompare(b.visitDate)))).digest('hex')
+  const canonical = counters.toSorted((a, b) => a.visitDate.localeCompare(b.visitDate))
+    .map(({ visitDate, highWater }) => ({ visitDate, highWater }))
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex')
 }
 
 export function readRegistrationNumberState(database: ClinMeshDatabase, options: { allowRetired?: boolean } = {}) {

@@ -10,6 +10,8 @@ Status: implemented
 
 使用按业务日期、跨 Workspace/Epoch 的独立持久高水位，以及含发行权威身份、active/retired 状态和完整日期计数器摘要的单例。共享挂号 Command 在原写事务内验证完整状态、分配、投影 Encounter 并保存 Registration、业务关联和回执；失败一起回滚。摘要以日期排序的规范化计数器计算，既检测数值损坏，也使已建立日期的缺行与新日期首次使用可区分。业务删除、产品内 reset 和虚拟日期变化不清理发行事实。
 
+医生队列与病例详情通过包含 Workspace/Epoch 的 Registration 关联投影 `registrationNumber`，历史病例没有该事实时返回 `null`。挂号、分诊与共享医生横幅使用同一个号码字段，并完整展示和复制原值；患者级标识不能补作门诊号。展示合同由 [UI 设计](../../../ui/design.md)拥有。
+
 存量初始化通过[专用迁移边界](../../../../apps/server/src/infrastructure/sqlite/registration-number-migration.ts)验证全部 Epoch 的审计序列、哈希链及持久头，并核对每条初始 AuditEvent 的内容哈希、操作和结果。审计链原格式未把 outcome 纳入链哈希，因此单独核对投影结果，防止把原成功发行误分类为失败。正常挂号与合成病例开始必须由审计中的 created Encounter 关联到初始 FHIR 历史及完整号码；全部现存 Registration 和有号 Encounter 历史反向匹配这些证据。已删除当前业务行但初始历史和审计仍完整时，可以恢复已证实的发行上界；任一必要证据缺失、损坏或来自未知发行路径都拒绝迁移。
 
 旧版 reset 的重放调用共享挂号函数，但没有将重放产生的 Encounter effects 保存在 reset 回执和审计清单中。现存重放业务行只能提供下界，无法证明已删除重放号的上界，因此任何旧版成功 reset 均拒绝自动初始化。失败回滚当前迁移，保留旧号、内部 ID、原库和既有升级前备份；不将局部扫描结果标成可信历史。跨作用域既有重复号保持原值，新发行从跨作用域已确认的按日上界继续。
