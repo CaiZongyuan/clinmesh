@@ -1,3 +1,4 @@
+import { medicationDoseAndFrequencyAllowed } from './medication-rules.ts'
 import { CommandReceiptNotFoundError } from './command-executor.ts'
 import {
   doctorCaseHistorySchema,
@@ -11696,8 +11697,7 @@ export class WorkflowService {
         JSON.parse(medication.configJson ?? '{}') as unknown,
       )
       if (
-        !config.allowedDoseTexts.includes(medication.doseText)
-        || !config.allowedFrequencyCodes.includes(medication.frequencyCode)
+        !medicationDoseAndFrequencyAllowed(config, medication.doseText, medication.frequencyCode)
       ) {
         throw new WorkflowError(
           'CATALOG_CONFLICT',

@@ -1,8 +1,21 @@
+import { syntheticNhsaMedicationProductSnapshot } from './scenario-data/medication-product-snapshot.ts'
+import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from './scenario-data/medical-service-snapshot.ts'
+import { createHospitalBaseline } from './scenario-data/hospital-baseline.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
 import { syntheticAccounts } from './identity-service.ts'
 
 export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirRepository, context: RepositoryContext) {
+  for (const medication of createHospitalBaseline(syntheticNhsaMedicationProductSnapshot, syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot).catalog.medications) {
+    database.driver.prepare(`UPDATE outpatient_catalog SET config_json=json_set(config_json,
+      '$.availableScopes',json('["outpatient","inpatient"]'),'$.unit',?,'$.inpatientDoses',json(?),'$.billingTrigger','dispense')
+      WHERE workspace_id=? AND epoch=? AND item_id=? AND json_type(config_json,'$.inpatientDoses') IS NULL`)
+      .run(medication.unit, JSON.stringify([{ doseText: medication.defaultDose, quantity: 1 }]), context.workspaceId, context.epoch, medication.id)
+  }
+  database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_set(config_json,
+    '$.availableScopes',json('["outpatient","inpatient"]'),'$.billingTrigger','execution')
+    WHERE workspace_id=? AND epoch=? AND service_id='hospital-service-diabetes-education'`)
+    .run(context.workspaceId, context.epoch)
   const exists = (type: string, id: string) => database.driver.prepare(`
     SELECT 1 FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=? AND deleted=0`)
     .get(context.workspaceId, context.epoch, type, id) !== undefined
