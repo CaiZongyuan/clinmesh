@@ -1,3 +1,4 @@
+import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
 import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema, inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema, inpatientDischargeEventsSchema } from './inpatient-discharge.ts'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from './inpatient-surgery.ts'
 import { inpatientInvestigationCatalogSchema,inpatientInvestigationsSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema,inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationResponseSchema } from './inpatient-investigations.ts'
@@ -2433,6 +2434,14 @@ const operationDefinitions = [
     summary: 'Search one supported FHIR R5 resource type with declared parameters',
     version: 1,
   },
+  { cliPath:['inpatient','record'],id:'inpatient.record.read',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/record'},input:z.object({admissionId:z.string().min(1)}).strict(),output:inpatientRecordSchema,
+    mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','ward-nurse','medical-records'],summary:'读取首页核心字段、当前来源指纹、修订审核或不可变归档',version:1 },
+  { cliPath:['inpatient','submit-record'],id:'inpatient.record.submit',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/record/submit',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientRecordSubmitInputSchema.parse(raw);return {input}}},input:inpatientRecordSubmitInputSchema,output:inpatientRecordResponseSchema,
+    mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'主管医生显式确认本次实际主操作并提交首页修订',version:1 },
+  { cliPath:['inpatient','review-record'],id:'inpatient.record.review',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/record/review',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientRecordReviewInputSchema.parse(raw);return {input}}},input:inpatientRecordReviewInputSchema,output:inpatientRecordResponseSchema,
+    mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'编码人员核验固定临床编码与当前来源，审核通过或退回',version:1 },
+  { cliPath:['inpatient','archive-record'],id:'inpatient.record.archive',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/record/archive',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientRecordArchiveInputSchema.parse(raw);return {input}}},input:inpatientRecordArchiveInputSchema,output:inpatientRecordResponseSchema,
+    mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'核当前审核、清床结算及完整来源后冻结归档',version:1 },
   { cliPath: ['inpatient','discharge-events'], id: 'inpatient.discharge.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/discharge' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDischargeEventsSchema,
     mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '读取出院、实际出区、召回及清床事件', version: 1 },
   { cliPath: ['inpatient','settlement-preview'], id: 'inpatient.discharge.preview', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/discharge/preview' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientSettlementPreviewSchema,

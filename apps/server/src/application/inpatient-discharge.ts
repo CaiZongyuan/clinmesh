@@ -28,6 +28,7 @@ export class InpatientDischarge {
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientDischargeResponseSchema.shape.data,
       authorize: () => this.owner.assertRole(context, ['depart','clear'].includes(action) ? ['ward-nurse'] : ['inpatient-doctor']) }, () => {
       const admission = this.owner.detail(context, input.admissionId).admission
+      this.owner.assertNotArchived(context,input.admissionId)
       const from = action === 'issue' ? 'admitted' : action === 'depart' ? 'discharge-pending' : 'departed'
       const to = action === 'issue' ? 'discharge-pending' : action === 'depart' ? 'departed' : action === 'clear' ? 'cleared' : 'admitted'
       if (admission.status !== from || admission.financialStatus !== (action === 'clear' ? 'settled' : 'open') || admission.bedId === undefined) {
@@ -109,6 +110,7 @@ export class InpatientDischarge {
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientSettlementResponseSchema.shape.data,
       authorize: () => this.owner.assertRole(context, ['cashier']) }, () => {
       const preview = this.snapshot(context, input.admissionId)
+      this.owner.assertNotArchived(context,input.admissionId)
       if (preview.status !== 'departed' || preview.financialStatus !== 'open') throw new InpatientError('INPATIENT_STATE_CONFLICT', '仅已出区且未结算住院可结算')
       this.#assertNoPending(context, input.admissionId)
       this.assertOrdersFinished(context, input.admissionId)

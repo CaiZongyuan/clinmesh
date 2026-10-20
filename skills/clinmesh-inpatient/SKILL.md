@@ -1,6 +1,6 @@
 ---
 name: clinmesh-inpatient
-description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药、检查检验、转科交接、手术最小闭环和费用冲正 CLI 工作流。用于登记员、负责门诊医生、住院医生、病区护士及病案、药师与收费岗位的住院事实读取与已授权操作。
+description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药、检查检验、转科交接、手术、出院结算和病案审核归档 CLI 工作流。用于登记员、负责门诊医生、住院医生、病区护士及病案、药师与收费岗位的住院事实读取与已授权操作。
 ---
 
 # ClinMesh 住院
@@ -216,3 +216,51 @@ clinmesh command receipt get --operation-id inpatient.discharge.settle --idempot
 示例指纹不可用于真实提交；首次提交前用实际预览替换，重试保持原文件不变。server 在 Command 事务重读逐项费用、冲正、资金与状态，校验原指纹及金额；Encounter版本不变或费用净额相同也不证明明细未变。`INPATIENT_SETTLEMENT_PREVIEW_STALE` 表示原预览失效，须重新审阅新明细并显式取得新预览后开始新意图，不能自动刷新金额后盲重做。结果未知先查原 `inpatient.discharge.settle` receipt，继续原完整输入与原幂等键，不重复补缴或退款。已结算封账，禁止新增或冲正费用；只有护士清床才释放床位。
 
 召回只允许当前负责住院医生在已出区、未结算、未清床且原床仍由本次住院保留时办理；与结算竞争仅一个成功。召回追加关联原出区的逆向事件与床位 period，保留原出区时间、离院方式和审计，不恢复旧医嘱。结算后再次收治通过新的 register 创建独立住院。
+
+## 病案首页、编码审核与归档
+
+1. 用 `record` 读取四组核心字段、当前 `sourcesHash` 与首页 `revision`。诊断来自正式诊断确认，操作只来自本次实际执行；有实际操作时主管医生显式选 `mainProcedureExecutionId`，无操作时明确 `null`。需要补充出区后诊断时仍用 `confirm-diagnosis`，可在清床后未归档窗口纠正，其他医嘱、库存和资金动作不因此恢复。
+2. 主管医生提交首页修订；病案人员核编码来源，针对同一修订与来源审核通过或附原因退回。临床版2022诊断保留完整编码、固定Release和来源定位；院内备用编码可提交待审稿，但须通过正式诊断入口更正后才可批准。临床版来源不证明医保等价或原始工作簿权威身份独立核验，操作3.0为有界摘录。
+3. 归档要求已结算、已清床、核心字段完整、唯一主诊断、本次有效实际主操作、当前审核通过、无在途事项且账目资金一致。归档读取固定快照；归档后普通写入及报告更正拒绝，既有原receipt无写重放仍可用。当前Epoch内Scenario完成后人类会话仍可读归档；已失效Agent Grant不因此恢复。
+
+```bash
+clinmesh inpatient record --admission-id <admission-id>
+clinmesh inpatient submit-record --input @record-submit.json --idempotency-key <key>
+clinmesh inpatient review-record --input @record-review.json --idempotency-key <key>
+clinmesh inpatient archive-record --input @record-archive.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.record.archive --idempotency-key <key>
+```
+
+`record-submit.json`（示例hash必须换成实际审阅后的来源指纹）：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "expectedRevision": 0,
+  "expectedSourcesHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "mainProcedureExecutionId": null
+}
+```
+
+`record-review.json`：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "expectedRevision": 1,
+  "expectedSourcesHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "outcome": "approved"
+}
+```
+
+`record-archive.json`：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "expectedRevision": 1,
+  "expectedSourcesHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+```
+
+`INPATIENT_RECORD_STALE` 表示来源或修订变化，旧审核已失效；重新审阅事实，由医生提交新首页再审核。`INPATIENT_RECORD_CODING_UNSUPPORTED` 要求使用正式诊断确认更正固定编码。`INPATIENT_RECORD_ARCHIVED` 表示当前病案只读。结果未知先查同operation原receipt，保留原输入、修订/hash和幂等键；不能自动刷新hash或换key重做。

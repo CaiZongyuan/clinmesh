@@ -1,3 +1,4 @@
+import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
 import { InpatientError } from './inpatient-service.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
@@ -11,6 +12,7 @@ export class InpatientBilling {
   constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository) {}
   record(context: ActorContext, input: { admissionId: string; organizationId: string; kind: 'bed' | 'medication' | 'service' | 'surgery' | 'material' | 'laboratory' | 'imaging'; sourceId: string;
     serviceDate: string; amountFen: number; virtualTime: string; label: string }, effects: InpatientEffects): boolean {
+    assertInpatientRecordWritable(this.database,context,input.admissionId)
     const amount = z.number().int().nonnegative().safe().parse(input.amountFen)
     const patient = z.object({ patient_id: z.string(), financial_status: z.enum(['open','settled']) }).parse(this.database.driver.prepare(
       'SELECT patient_id, financial_status FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId, context.epoch, input.admissionId))

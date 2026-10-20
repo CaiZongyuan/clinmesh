@@ -43,7 +43,7 @@ describe('clinmesh process entrypoint', () => {
     expect(result.stderr).toBe('')
     const envelope = JSON.parse(result.stdout)
     expect(envelope).toMatchObject({ ok: true, schemaVersion: 1 })
-    expect(envelope.data.operations).toHaveLength(131)
+    expect(envelope.data.operations).toHaveLength(135)
     expect(envelope.data.operations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'doctor.document-quality.get' }),
       expect.objectContaining({ id: 'doctor.document-quality.check' }),

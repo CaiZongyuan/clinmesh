@@ -432,6 +432,8 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 临床文书签署和门诊支付使用带时效 token 的预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；门诊支付预览绑定 Charge Item。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
 
-提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、门诊退费、医保、库存调拨和病案归档不属于当前能力，也不宣称已有预览协议。
+提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、门诊退费、医保和库存调拨不属于当前能力，也不宣称已有预览协议。
 
 住院结算使用独立的逐项账目指纹预览：提交校验原预览指纹、Encounter 版本与预期金额，不使用上述五分钟 `commitToken`。住院结算包含补缴或关联原入金的退款，与医生出院医嘱、护士出区和清床分别执行；状态门禁及原意图恢复合同见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
+
+病案首页通过 `inpatient.record.read/submit/review/archive` 共享 Query/Command 暴露四组核心字段及独立修订、审核和不可变快照，不新增未实现的通用FHIR病历写能力。提交显式携带本次实际主操作选择或空值，提交、审核与归档均绑定 `expectedRevision` 与 `expectedSourcesHash`；`INPATIENT_RECORD_STALE` 要求重新审阅来源并由医生重新提交，不能静默刷新hash后重做。归档新写返回 `INPATIENT_RECORD_ARCHIVED`，旧receipt优先重放；岗位和门禁见[病案首页与归档](clinical-workflows.md#病案首页与归档)。

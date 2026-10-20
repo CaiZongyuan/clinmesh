@@ -658,7 +658,7 @@ describe('HIS operation catalog', () => {
       'clinmesh-billing': 3,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 52,
+      'clinmesh-inpatient': 56,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,
       'clinmesh-shared': 1,

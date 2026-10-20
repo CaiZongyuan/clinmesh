@@ -1,3 +1,4 @@
+import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
 import { assertInpatientRequestScope, inpatientRequestOwner, recordInpatientInvestigationCharge } from './clinical-request-context.ts'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import type { ApiConflict } from '@clinmesh/contracts/his'
@@ -123,6 +124,7 @@ export class ClinicalRequestKernel {
     request: ClinicalRequestRow,
     input: { expectedRequestVersion: number; now: string; reasonCode: string },
   ): { serviceRequest: FhirResource; task: FhirResource; version: number } {
+    assertInpatientRecordWritable(this.#database,context,request.case_id)
     if (request.version !== input.expectedRequestVersion) {
       throw new WorkflowError(
         policy.versionConflictCode,
@@ -193,6 +195,7 @@ export class ClinicalRequestKernel {
     request: ClinicalRequestRow,
     now: string,
   ): { status: 'accepted'; task: FhirResource } | { status: 'cancelled' } {
+    assertInpatientRecordWritable(this.#database,context,request.case_id)
     if (request.status === 'cancelled') return { status: 'cancelled' }
     const dispatch = z.object({ admission_id: z.string().nullable(), sent_at: z.string().datetime({ offset: true }).nullable() }).parse(
       this.#database.driver.prepare(`
@@ -235,6 +238,7 @@ export class ClinicalRequestKernel {
     request: ClinicalRequestRow,
     input: { enqueueReport: boolean; now: string },
   ): FhirResource {
+    assertInpatientRecordWritable(this.#database,context,request.case_id)
     if (request.status !== 'accepted') {
       throw new WorkflowError('WORKFLOW_CONFLICT', `The ${policy.label} request cannot start execution`)
     }
@@ -281,6 +285,7 @@ export class ClinicalRequestKernel {
       task: FhirResource
     },
   ): { serviceRequest: FhirResource; task: FhirResource; chargeEffects: ReturnType<typeof recordInpatientInvestigationCharge> } {
+    assertInpatientRecordWritable(this.#database,context,request.case_id)
     const completedServiceRequest = transaction.fhir.update(context, {
       ...input.serviceRequest,
       status: 'completed',
@@ -323,6 +328,7 @@ export class ClinicalRequestKernel {
     request: ClinicalRequestRow,
     input: { error: { code: string; message: string }; now: string },
   ): FhirResource | undefined {
+    assertInpatientRecordWritable(this.#database,context,request.case_id)
     if (request.status === 'generation-failed') return undefined
     if (request.status !== 'in-progress') {
       throw new WorkflowError(
@@ -380,6 +386,7 @@ export class ClinicalRequestKernel {
     request: ClinicalRequestRow,
     now: string,
   ): FhirResource {
+    assertInpatientRecordWritable(this.#database,context,request.case_id)
     const task = transaction.fhir.read(context, 'Task', request.execution_task_id)
     const retryTask = { ...task }
     Reflect.deleteProperty(retryTask, 'statusReason')
@@ -423,6 +430,7 @@ export class ClinicalRequestKernel {
       now: string
     },
   ): ReportAcknowledgement {
+    assertInpatientRecordWritable(this.#database,context,request.case_id)
     const practitionerId = context.practitionerId
     if (practitionerId === undefined || !this.#canManage(context, request)) {
       throw new WorkflowError(
@@ -526,6 +534,7 @@ export class ClinicalRequestKernel {
       revisionOfDiagnosticReportId: string
     },
   ): void {
+    assertInpatientRecordWritable(this.#database,context,request.case_id)
     this.#database.driver.prepare(`
       INSERT INTO laboratory_report_revision (
         workspace_id, epoch, revision_id, request_id, diagnostic_report_id,

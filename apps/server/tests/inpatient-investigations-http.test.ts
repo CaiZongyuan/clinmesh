@@ -70,6 +70,37 @@ async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRunti
 }
 
 describe('住院检查检验 HTTP 合同', () => {
+  it('病案来源指纹绑定完整报告修订链；无新增费用的管理员更正也受归档只读门禁', async () => {
+    const s=await setup(),admin=await signIn(s.runtime)
+    const issued=await s.request(s.doctor,`${s.path}/investigations/issue`,{encounterVersion:s.admission.versionId,catalogVersion:1,selection:{kind:'laboratory',catalogItemId:'synthetic-inpatient-wbc',indicationCode:'clinical-assessment'}})
+    const request=(await issued.json()).data.laboratoryRequests[0]
+    expect((await s.request(s.nurse,`${s.path}/investigations/send`,{requestId:request.id,expectedRequestVersion:request.version,serviceRequestVersion:request.serviceRequestVersion,taskVersion:request.taskVersion})).status).toBe(200)
+    await dispatchAll(s.runtime)
+    const before=await (await s.request(s.doctor,`${s.path}/record`)).json()
+    expect((await s.request(s.doctor,`${s.path}/record/submit`,{expectedRevision:0,expectedSourcesHash:before.sourcesHash,mainProcedureExecutionId:null})).status).toBe(200)
+    const reported=(await (await s.request(s.doctor,`${s.path}/investigations`)).json()).laboratoryRequests[0]
+    const correct=async(current:typeof reported,key=randomUUID())=>s.runtime.app.request(`/api/his/v1/laboratory-requests/${current.id}/reports/${current.report.diagnosticReportId}/actions/correct`,{
+      ...mutation(admin,{expectedVersions:{[`DiagnosticReport/${current.report.diagnosticReportId}`]:current.report.diagnosticReportVersion},input:{expectedRequestVersion:current.version,conclusion:'复核后白细胞计数在参考范围内',reason:'核对合成仪器结果',results:[{code:'6690-2',value:9.4}]}}),
+      headers:{...mutation(admin,{}).headers,'idempotency-key':key},
+    })
+    expect((await correct(reported)).status).toBe(200)
+    const after=await (await s.request(s.doctor,`${s.path}/record`)).json()
+    expect(after.sourcesHash).not.toBe(before.sourcesHash)
+    expect(after.snapshot.fees.chargesFen).toBe(before.snapshot.fees.chargesFen)
+    expect(after.revision.sourcesHash).toBe(before.sourcesHash)
+    const coder=await signIn(s.runtime,'medical-records@demo.clinmesh.local')
+    expect((await s.request(coder,`${s.path}/record/review`,{expectedRevision:1,expectedSourcesHash:before.sourcesHash,outcome:'returned',reason:'旧来源不可继续审核'})).status).toBe(409)
+    const current=(await (await s.request(s.doctor,`${s.path}/investigations`)).json()).laboratoryRequests[0]
+    // 等价归档状态fixture专测已存在报告的非计费真实写入口；完整归档流程由record HTTP测试覆盖。
+    s.runtime.database.driver.prepare("UPDATE inpatient_admission SET record_status='archived' WHERE admission_id=?").run(s.admission.id)
+    const rejected=await correct(current)
+    expect(rejected.status).toBe(409)
+    expect((await rejected.json()).error.code).toBe('INPATIENT_RECORD_ARCHIVED')
+    const final=(await (await s.request(s.doctor,`${s.path}/investigations`)).json()).laboratoryRequests[0]
+    expect(final).toEqual(current)
+    expect((await s.request(s.doctor,`${s.path}/investigations/acknowledge`,{requestId:current.id,expectedRequestVersion:current.version,serviceRequestVersion:current.serviceRequestVersion,taskVersion:current.taskVersion,diagnosticReportId:current.report.diagnosticReportId,diagnosticReportVersion:current.report.diagnosticReportVersion})).status).toBe(409)
+  })
+
   it('混合时区Virtual Time的多次住院检验与影像申请由复用owner按真实时点排序', async () => {
     const s = await setup(), admin = await signIn(s.runtime)
     const clock = await (await s.request(admin, '/api/sim/v1/scenario-runs/current')).json()
@@ -421,5 +452,6 @@ describe('住院检查检验 HTTP 合同', () => {
       diagnosticReportId: currentRequest.report.diagnosticReportId, diagnosticReportVersion: currentRequest.report.diagnosticReportVersion })
     expect(acknowledged.status).toBe(200)
     expect((await acknowledged.json()).data.imagingRequests[0].status).toBe('acknowledged')
+    expect((await s.request(s.doctor,`${s.path}/record`)).status).toBe(200)
   })
 })

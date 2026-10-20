@@ -58,6 +58,7 @@ export class InpatientTransfers {
     const input=inpatientTransferRequestInputSchema.parse(raw)
     return this.owner.commands.execute({context,input,idempotencyKey,operation:'inpatient.transfer.request',expectedVersions:{[`Encounter/${input.admissionId}`]:input.encounterVersion},dataSchema:inpatientTransfersSchema,
       authorize:()=>{this.owner.assertRole(context,['inpatient-doctor']);this.owner.orders.assertAdmitted(context,input.admissionId)}},transaction=>{
+      this.owner.assertNotArchived(context,input.admissionId)
       const admission=this.owner.admissionBinding(context,input.admissionId)
       this.assertNoPending(context,input.admissionId)
       const ward=this.catalog(context).wards.find(ward=>ward.id===input.targetWardId && ward.id!==admission.row.ward_id)
@@ -81,6 +82,7 @@ export class InpatientTransfers {
       } else this.owner.orders.assertAdmitted(context,input.admissionId)
     }
     return this.owner.commands.execute({context,input,idempotencyKey,operation:`inpatient.transfer.${action}`,expectedVersions:{[`Encounter/${input.admissionId}`]:input.encounterVersion},dataSchema:inpatientTransfersSchema,authorize},transaction=>{
+      this.owner.assertNotArchived(context,input.admissionId)
       const row=this.row(context,input.admissionId,input.transferId),task=transaction.fhir.read(context,'Task',row.transfer_id)
       if(row.version!==input.expectedTransferVersion || task.meta!.versionId!==String(row.version)) throw new InpatientError('INPATIENT_TRANSFER_VERSION_CONFLICT','转科任务版本已变化')
       const admission=z.object({status:z.string(),financial_status:z.string(),ward_id:z.string(),organization_id:z.string()}).parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId,context.epoch,input.admissionId))

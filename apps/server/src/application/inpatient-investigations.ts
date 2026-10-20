@@ -60,6 +60,7 @@ export class InpatientInvestigations {
     const input=inpatientInvestigationIssueInputSchema.parse(raw)
     return this.owner.commands.execute({context,input,idempotencyKey,operation:'inpatient.investigation.issue',expectedVersions:{[`Encounter/${input.admissionId}`]:input.encounterVersion},
       dataSchema:inpatientInvestigationsSchema,authorize:()=>{this.owner.assertRole(context,['inpatient-doctor']);this.owner.orders.assertAdmitted(context,input.admissionId)}},transaction=>{
+      this.owner.assertNotArchived(context,input.admissionId)
       const available=this.catalog(context,ready).items.find(item=>item.id===(input.selection.kind==='imaging'?input.selection.serviceId:input.selection.catalogItemId) && item.kind===input.selection.kind)
       if(available===undefined || !available.available || available.priceFen===undefined) throw new InpatientError('INPATIENT_INVESTIGATION_UNAVAILABLE','该检查尚未开展或没有声明住院价目')
       if(available.version!==input.catalogVersion) throw new InpatientError('INPATIENT_INVESTIGATION_CATALOG_CONFLICT','检查目录或价目版本已变化，请重新选择')
@@ -92,6 +93,7 @@ export class InpatientInvestigations {
     const input=inpatientInvestigationActionInputSchema.parse(raw)
     return this.owner.commands.execute({context,input,idempotencyKey,operation:`inpatient.investigation.${action}`,expectedVersions:{},dataSchema:inpatientInvestigationResponseSchema.shape.data,
       authorize:()=>{this.owner.assertRole(context,action==='send'?['ward-nurse']:['inpatient-doctor']);this.owner.orders.assertAdmitted(context,input.admissionId)}},transaction=>{
+      this.owner.assertNotArchived(context,input.admissionId)
       const request=this.request(context,input.admissionId,input.requestId)
       const service=transaction.fhir.read(context,'ServiceRequest',request.service_request_id),task=transaction.fhir.read(context,'Task',request.execution_task_id)
       if(request.version!==input.expectedRequestVersion || service.meta!.versionId!==input.serviceRequestVersion || task.meta!.versionId!==input.taskVersion) throw new InpatientError('INPATIENT_INVESTIGATION_VERSION_CONFLICT','检查申请或执行任务版本已变化')
@@ -124,6 +126,7 @@ export class InpatientInvestigations {
     const input=inpatientInvestigationAcknowledgeInputSchema.parse(raw)
     return this.owner.commands.execute({context,input,idempotencyKey,operation:'inpatient.investigation.acknowledge',expectedVersions:{[`DiagnosticReport/${input.diagnosticReportId}`]:input.diagnosticReportVersion},dataSchema:inpatientInvestigationsSchema,
       authorize:()=>{this.owner.assertRole(context,['inpatient-doctor']);this.owner.admissionBinding(context,input.admissionId)}},transaction=>{
+      this.owner.assertNotArchived(context,input.admissionId)
       const request=this.request(context,input.admissionId,input.requestId)
       const service=transaction.fhir.read(context,'ServiceRequest',request.service_request_id),task=transaction.fhir.read(context,'Task',request.execution_task_id)
       if(service.meta!.versionId!==input.serviceRequestVersion || task.meta!.versionId!==input.taskVersion) throw new InpatientError('INPATIENT_INVESTIGATION_VERSION_CONFLICT','检查申请或执行任务版本已变化')
