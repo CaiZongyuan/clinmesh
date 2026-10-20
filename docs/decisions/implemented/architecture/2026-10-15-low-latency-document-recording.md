@@ -10,6 +10,8 @@ Status: implemented
 
 ## Decision
 
+写入后逐片段核对、对应并发通道与独立提示由[统一质控决策](2026-10-19-recording-quality-consolidation.md)部分替代；本文保留增量保存、来源保护和恢复的决策理由，当前行为由[临床业务流程](../../../architecture/clinical-workflows.md)拥有。
+
 实时整理专用的短截止由[沿用常规模型预算决定](2026-10-18-recording-normal-model-budget.md)取代；本文继续拥有增量写入、异步核对、调度和来源保护。
 
 新快照的句子编号、引文恢复和包含格式修复的完整输入计数由[句子编号决策](2026-10-19-recording-sentence-references.md)补充；旧快照继续按固定协议消费。

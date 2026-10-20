@@ -118,6 +118,8 @@
 
 - 实模返回 `AI_RESPONSE_INVALID` 时先保存安全的形状、未知编号、重复编号和完整读取标志计数，区分 JSON 形状失败与来源成员校验失败；不记录模型正文、凭据或完整医疗内容，不通过放宽引用校验让失败变为成功。记录级选择的运行合同由[对应决策](../decisions/implemented/bug-fix/2026-10-16-recommendation-record-selection.md)拥有。
 
+- 病历质控提示“超出检查范围”时先核对持久状态的 `failure.stage/reason` 与策略版本；`invalid-scope` 指候选检查项目越界，不等于输入太长。对照实际发送的 schema、运行时条件和有界纠正路径，检查是否缺少候选或引文索引、完整句界说明；同输入失败会复用，须区分普通刷新与显式重试。合同由[病历质控决策](../decisions/implemented/architecture/2026-10-15-doctor-document-quality-control.md)拥有。
+
 - 按内容哈希去重前，先用完整业务 schema 规范化有效候选；首尾空格和 JSON 字段顺序不能制造竞争替换。不合格候选仍参与共享目标冲突判断，不能为去重先过滤掉坏候选而破坏原子拒绝；自动记录的归属与回归由[增量记录决策](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)拥有。
 
 - 模型传输引用的编号差异不能直接当作业务内容差异；回归同时覆盖同来源重复原句、不同来源同文和多个无效编号，验证解码后的等价去重、来源独立性及失败归属。句子引用的当前规则由[句子引用决策](../decisions/implemented/architecture/2026-10-19-recording-sentence-references.md)拥有。

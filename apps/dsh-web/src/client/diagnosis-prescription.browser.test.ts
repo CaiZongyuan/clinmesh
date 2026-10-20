@@ -445,11 +445,13 @@ for (const version of ['18', '19']) {
     let dialog = page.getByRole('region', { name: '填写诊断', exact: true })
     await dialog.getByRole('button', { name: `选择 ${diagnosisName} SYN-D1`, exact: true }).click()
     await dialog.getByRole('textbox', { name: '诊断备注', exact: true }).fill('长中文合成备注，验证字号与容器缩放时编辑内容不会丢失。'.repeat(10))
+    await expect(page.locator('[data-agent-section="diagnosis"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
     await page.getByRole('tab', { name: '处方', exact: true }).click()
     dialog = page.getByRole('region', { name: '填写处方', exact: true })
     await dialog.locator('[data-agent-catalog="medication"]').getByRole('button', { name: new RegExp(`^选择 ${medicationName} 10 mg 10片/盒`) }).click()
     await dialog.getByRole('textbox', { name: '剂量', exact: true }).fill('每次一片')
     await dialog.getByRole('textbox', { name: '频次', exact: true }).fill('每日两次')
+    await expect(page.locator('[data-agent-section="prescription"]').getByText('草稿已自动保存', { exact: true })).toBeVisible()
     await forEachAppearance(page, async (locale, width) => {
       const zh = locale === 'zh-CN'
       for (const section of ['diagnosis', 'prescription'] as const) {

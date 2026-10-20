@@ -3712,7 +3712,11 @@ describe('role workspaces', () => {
 
   it('translates an open Agent signing review when the host language changes', async () => {
     window.history.replaceState(null, '', '/consultation')
-    stubRecordingWorkspace('resume')
+    const fixture = stubRecordingWorkspace('resume')
+    fixture.updateRecording({ verification: { pendingCount: 1, flaggedCount: 1, failedCount: 1, issues: [{
+      additionId: 'legacy-addition', field: 'historyOfPresentIllness', text: '历史独立核对疑点。',
+      sourceIds: ['legacy-source'], reason: 'verification-rejected',
+    }] } })
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     const surfaceAgent: WebSurfaceAgentController = { register(value) {
       registration = value
@@ -3720,6 +3724,7 @@ describe('role workspaces', () => {
     } }
     const runtime = { mode: 'surface' as const, surfaceAgent, surfaceAgentStatus: 'active' as const, surfaceSessionId: 'dsh-session-1' }
     const view = render(<WebApp runtime={{ ...runtime, surfaceLocale: 'zh-CN' }} />)
+    await screen.findByRole('button', { name: '恢复并补录' })
     const tool = await waitFor(() => {
       const current = registration?.tools.find(tool => tool.name === 'clinmesh_prepare_sign_document')
       expect(current).toBeDefined()
@@ -3727,10 +3732,12 @@ describe('role workspaces', () => {
     })
     await act(async () => { await tool.execute(boundAgentToolInput(tool, {}), new AbortController().signal) })
     const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
+    expect(within(dialog).queryByText(/尚未核对|发现疑点|语义核对暂未完成|历史独立核对疑点/)).toBeNull()
     expect(within(dialog).queryByRole('checkbox')).toBeNull()
     expect(within(dialog).getByRole('region', { name: '签署前质控汇总' })).toBeTruthy()
     view.rerender(<WebApp runtime={{ ...runtime, surfaceLocale: 'en-US' }} />)
     const changed = await screen.findByRole('alertdialog', { name: 'Confirm medical record signature' })
+    expect(within(changed).queryByText(/Not yet checked|Review the flagged document fragments|Semantic checking is incomplete|历史独立核对疑点/)).toBeNull()
     expect(within(changed).getByRole('region', { name: 'Quality summary before signing' })).toBeTruthy()
     expect(within(changed).getByText('Chief complaint')).toBeTruthy()
     expect(within(changed).queryByRole('checkbox')).toBeNull()

@@ -1068,6 +1068,7 @@ export const consultationRecordingSchema = z.object({
     sourceId: z.string().min(1),
     result: z.enum(['recorded', 'no-new-facts', 'needs-verification', 'failed']),
   }).strict()).optional(),
+  // Historical wire compatibility; current queries and receipts return zero counts.
   verification: z.object({
     pendingCount: z.number().int().nonnegative(),
     flaggedCount: z.number().int().nonnegative(),
