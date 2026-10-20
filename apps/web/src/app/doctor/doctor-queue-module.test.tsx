@@ -82,14 +82,16 @@ describe('DoctorQueueModule 紧凑布局', () => {
     expect(screen.getByRole('button', { name: '选择病例 孙兵' })).toBeTruthy()
   })
 
-  it('桌面布局中队列列宽为 200px', () => {
+  it('桌面布局通过容器查询声明队列列宽 200px', () => {
     render(
       <DoctorWorkspaceLayout detailLabel="病例详情" queue={() => <div />} queueLabel="候诊队列" selectedCaseId={undefined}>
         <div />
       </DoctorWorkspaceLayout>,
     )
-    const grid = document.querySelector('div[style*="grid-template-columns"]')
+    const workspace = document.querySelector('[class*="@container/doctor-workspace"]')
+    expect(workspace).not.toBeNull()
+    const grid = workspace!.querySelector(':scope > div.grid')
     expect(grid).not.toBeNull()
-    expect(grid!.getAttribute('style')).toContain('200px')
+    expect(grid!.className).toContain('@min-[720px]/doctor-workspace:grid-cols-[200px_minmax(0,1fr)]')
   })
 })

@@ -44,7 +44,9 @@ function App() {
               pending: false, onAsk: () => { manualQuestions++ }, onRetry: () => { retryClicks++ } }}
               consultation={retryLocale === undefined ? consultation : { ...consultation, turns: [...consultation.turns.slice(0, -1), {
                 ...consultation.turns.at(-1)!, speaker: 'doctor', source: 'doctor-typed', personaRevision: null,
-              }] }} locale={retryLocale ?? 'en-US'} messages={getWorkspaceMessages(retryLocale ?? 'en-US')}
+              }], replyAttempt: { doctorTurnId: consultation.turns.at(-1)!.id, status: 'failed',
+                startedAt: '2026-09-21T01:00:00.000Z', deadlineAt: '2026-09-21T01:00:30.000Z', errorCode: 'AI_AUTH_FAILED' },
+              }} locale={retryLocale ?? 'en-US'} messages={getWorkspaceMessages(retryLocale ?? 'en-US')}
               patientName="Synthetic patient" readOnly={false} />
           </div>
         </div>

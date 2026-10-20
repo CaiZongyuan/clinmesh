@@ -12,7 +12,7 @@ import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-compl
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider, useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
-import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
+import { recordingFixtureProvider, replaceWithPreConsolidationDatabase } from './fixtures/consultation-history.ts'
 import { replaceWithPreSourceDatabase, replaceWithRecordingBranchDatabase } from './fixtures/legacy-recording-database.ts'
 
 const disposals: Array<() => Promise<void>> = []
@@ -23,7 +23,7 @@ it.each(['incremental', 'quality'] as const)('upgrades a populated %s release wh
   await fixture.runtime.dispatchPending()
   const before = await fixture.read()
   const snapshot = () => ({
-    additions: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_history_addition ORDER BY rowid').all(),
+    additions: fixture.runtime.database.driver.prepare('SELECT workspace_id, epoch, case_id, addition_id, field, source_turn_id, quote, relation, status, target_addition_id, ownership, start_offset, end_offset, current_text, review_state, review_status, rejected, undone, inverse_text, facts_json FROM consultation_history_addition ORDER BY rowid').all(),
     receipts: fixture.runtime.database.driver.prepare('SELECT * FROM command_receipt ORDER BY rowid').all(),
     branchRows: branch === 'incremental'
       ? fixture.runtime.database.driver.prepare('SELECT * FROM consultation_recording_batch ORDER BY batch_id').all()
@@ -34,7 +34,7 @@ it.each(['incremental', 'quality'] as const)('upgrades a populated %s release wh
   expect(stored.branchRows.length).toBeGreaterThan(0)
   expect(stored.receipts.length).toBeGreaterThan(0)
   await fixture.restart(path => replaceWithRecordingBranchDatabase(path, branch))
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 73, integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 77, integrity: 'ok', foreignKeys: true })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()
@@ -68,13 +68,13 @@ it.each(['main', 'fields'] as const)('integrates a populated %s branch database 
   const before = await fixture.read()
   expect(before.clinicalDocument!.draft![field]).toBe(text)
   const snapshot = () => ({
-    rows: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_history_addition ORDER BY rowid').all(),
+    rows: fixture.runtime.database.driver.prepare('SELECT workspace_id, epoch, case_id, addition_id, field, source_turn_id, quote, relation, status, target_addition_id, ownership, start_offset, end_offset, current_text, review_state, review_status, rejected, undone, inverse_text, facts_json FROM consultation_history_addition ORDER BY rowid').all(),
     jobs: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_recording_job ORDER BY turn_id').all(),
     receipts: fixture.runtime.database.driver.prepare('SELECT * FROM command_receipt ORDER BY rowid').all(),
   })
   const stored = snapshot()
   await fixture.restart(path => replaceWithRecordingBranchDatabase(path, branch))
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 73, integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 77, integrity: 'ok', foreignKeys: true })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()
@@ -107,18 +107,12 @@ function feverSummaries(input: JsonChatCompletionInput) {
   }] }
 }
 
-const faithfulSummaryVerification = (input: JsonChatCompletionInput) => ({ additions:
-  z.object({ additions: z.array(z.unknown()) }).parse(input.userPayload).additions.map((_, index) => ({
-    index, faithful: true, complete: true, relationValid: true,
-  })) })
-
 async function setup(options: {
   recording?: boolean
   now?: () => Date
   failFirstReply?: boolean
   reply?: string | (() => string)
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
-  verify?: (input: JsonChatCompletionInput) => unknown
   resolveModel?: JsonChatCompletionsProvider['resolveModel']
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auto-record-'))
@@ -147,7 +141,7 @@ async function setup(options: {
     ...(options.now === undefined ? {} : { now: options.now }),
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters',
-    chatCompletionsProvider: recordingFixtureProvider(provider, options.verify), databasePath: join(directory, 'clinmesh.sqlite'),
+    chatCompletionsProvider: recordingFixtureProvider(provider), databasePath: join(directory, 'clinmesh.sqlite'),
     consultationModel: 'synthetic', patientPersonaModel: 'synthetic', investigationModel: 'synthetic',
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', outboxRetryDelayMs: 0,
     ...(options.recording === false ? {} : { dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 } }),
@@ -335,7 +329,7 @@ it('saves, restarts, signs and revises family and allergy history while preservi
 
 it.each(['\n', '\r\n'])('accepts separately cited patient statements delimited by %j', async newline => {
   const reply = `发热三天${newline}最高量到38.5度`
-  const fixture = await setup({ reply, verify: faithfulSummaryVerification, extract: input => {
+  const fixture = await setup({ reply, extract: input => {
     const turn = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!
     return { additions: [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [
       { text: '发热三天', sources: [{ sourceTurnId: turn.id, quote: '发热三天' }] },
@@ -353,7 +347,7 @@ it.each(['\n', '\r\n'])('accepts separately cited patient statements delimited b
 
 it('ignores an old-only summary rewrite after a reply with no new history', async () => {
   let reply = firstFeverReply
-  const fixture = await setup({ reply: () => reply, verify: faithfulSummaryVerification, extract: input => {
+  const fixture = await setup({ reply: () => reply, extract: input => {
     if (reply === firstFeverReply) return feverSummaries(input)
     const { turns, history } = summaryPayloadSchema.parse(input.userPayload)
     const first = turns.find(turn => turn.messageText === firstFeverReply)!
@@ -376,7 +370,7 @@ it('ignores an old-only summary rewrite after a reply with no new history', asyn
 it('retains patient uncertainty, home measurements, external diagnoses, medication and allergy attribution', async () => {
   const reply = '我记不清了，可能三天前开始头晕。家里量的血压是150/90。外院说我有高血压。以前吃过氨氯地平，我不确定青霉素是不是过敏。'
   const texts = ['自述头晕可能始于三天前，具体时间记不清', '自述居家血压150/90，外院曾告知高血压', '自述既往服用氨氯地平，青霉素过敏情况不确定']
-  const fixture = await setup({ reply, verify: faithfulSummaryVerification, extract: input => {
+  const fixture = await setup({ reply, extract: input => {
     const source = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!
     return { additions: texts.map((text, index) => ({ field: index === 2 ? 'priorMedicalHistory' : 'historyOfPresentIllness',
       relation: 'addition', facts: [{ text, sources: [{ sourceTurnId: source.id, quote: reply }] }] })) }
@@ -389,98 +383,99 @@ it('retains patient uncertainty, home measurements, external diagnoses, medicati
   expect(detail.consultationRecording!.additions.flatMap(addition => addition.facts!)).toHaveLength(3)
 })
 
-it.each([
-  ['unsupported diagnosis', '考虑肺炎'], ['wrong citation', '否认胸痛'],
-  ['dropped negation', '发热伴咳嗽、咳痰'], ['changed number', '自述最高体温38.8℃'],
-])('flags the persisted draft without rewriting it when asynchronous verification rejects %s', async (_reason, text) => {
-    const fixture = await setup({ reply: firstFeverReply, extract: input => {
-      const source = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!
-      return { additions: [{ field: 'historyOfPresentIllness', relation: 'addition',
-        facts: [{ text, sources: [{ sourceTurnId: source.id, quote: firstFeverReply }] }] }] }
-    }, verify: input => {
-      const verdict = { additions: faithfulSummaryVerification(input).additions.map(item => ({ ...item, faithful: false })) }
-      // A valid negative verdict must not trigger structured-output repair.
-      expect(input.validate!(verdict)).toBe(true)
-      return verdict
-    } })
-    await fixture.ask()
-    await fixture.runtime.dispatchPending()
-    expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
-    expect((await fixture.read()).consultation!.turns.at(-1)!.messageText).toBe(firstFeverReply)
-    expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated',
-      verification: { flaggedCount: 1, pendingCount: 0 }, failures: [] })
-  })
-
-it.each(['faithful', 'complete', 'relationValid'] as const)('retains a negative %s verdict across restart without asking for a different answer', async rejectedCheck => {
-  let checks = 0
-  const fixture = await setup({ reply: firstFeverReply, extract: feverSummaries,
-    verify: input => { checks += 1; return { additions: faithfulSummaryVerification(input).additions.map(item => ({
-      ...item, [rejectedCheck]: false,
-    })) } },
-  })
-  const manual = '医生记录：等待复查。'
-  expect((await fixture.save(manual)).status).toBe(200)
-  expect((await fixture.ask()).status).toBe(200)
-  await fixture.runtime.dispatchPending()
-  const before = await fixture.read()
-  expect(before.clinicalDocument?.draft?.historyOfPresentIllness).toBe(`${manual}\n${feverSummary}`)
-  expect(before.consultationRecording?.verification).toMatchObject({ flaggedCount: 1, pendingCount: 0 })
-  const receipts = fixture.runtime.database.driver.prepare(
-    "SELECT response_json FROM command_receipt WHERE operation = 'consultation.history.verify' ORDER BY rowid").all()
-  expect(receipts).toHaveLength(1)
-  expect(JSON.stringify(receipts)).not.toContain(firstFeverReply)
-  expect(JSON.stringify(receipts)).not.toContain(manual)
-  await fixture.restart()
-  expect((await fixture.control('retry')).status).toBe(409)
-  await fixture.runtime.dispatchPending()
-  expect((await fixture.read()).clinicalDocument).toEqual(before.clinicalDocument)
-  expect((await fixture.read()).consultationRecording?.verification).toEqual(before.consultationRecording?.verification)
-  expect(checks).toBe(1)
-})
-
-it.each(['lost prior fact', 'unresolved contradiction'])('flags an already persisted update with %s without claiming it passed verification', async reason => {
-  let reply = firstFeverReply
-  let update = false
-  const fixture = await setup({ reply: () => reply, extract: input => {
-    if (!update) return feverSummaries(input)
-    const payload = summaryPayloadSchema.parse(input.userPayload)
-    const source = payload.turns.at(-1)!
-    return { additions: [{ field: 'historyOfPresentIllness', relation: 'update', targetAdditionId: payload.history[0]!.id,
-      facts: [{ text: reason === 'lost prior fact' ? '否认胸痛、气促' : '自述最高体温37.5℃',
-        sources: [{ sourceTurnId: source.id, quote: reply }] }] }] }
-  }, verify: input => ({ additions: faithfulSummaryVerification(input).additions.map(item => ({ ...item,
-    complete: !update || reason !== 'lost prior fact', relationValid: !update || reason !== 'unresolved contradiction',
-  })) }) })
-  await fixture.ask()
-  await fixture.runtime.dispatchPending()
-  update = true
-  reply = reason === 'lost prior fact' ? secondFeverReply : '最高量到37.5度。'
-  await fixture.askMore()
-  await fixture.runtime.dispatchPending()
-  expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe(reason === 'lost prior fact' ? '否认胸痛、气促' : '自述最高体温37.5℃')
-  expect((await fixture.read()).consultationRecording!.additions).toHaveLength(2)
-  expect((await fixture.read()).consultationRecording!.verification).toMatchObject({ flaggedCount: 1 })
-})
-
-it('keeps malformed semantic verdicts unverified instead of claiming success', async () => {
-  const fixture = await setup({ reply: firstFeverReply, extract: feverSummaries, verify: () => ({ additions: [] }) })
-  await fixture.ask()
-  await fixture.runtime.dispatchPending()
-  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated',
-    verification: { failedCount: 1, flaggedCount: 0, pendingCount: 0 } })
-})
-
-it('rejects a source from another case before semantic verification', async () => {
-  let verificationCalls = 0
+it('rejects a source from another case without a standalone verification request', async () => {
   const fixture = await setup({ reply: firstFeverReply,
-    verify: input => { verificationCalls += 1; return faithfulSummaryVerification(input) },
     extract: () => ({ additions: [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{
       text: feverSummary, sources: [{ sourceTurnId: 'other-case-patient-turn', quote: firstFeverReply }],
     }] }] }) })
   await fixture.ask()
   await fixture.runtime.dispatchPending()
-  expect(verificationCalls).toBe(0)
+  expect(fixture.requests.filter(input => input.schemaName === 'consultation_history_verification')).toHaveLength(0)
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
+})
+
+it('retires legacy verdicts and duplicate outbox deliveries on a populated database without regenerating saved evidence', async () => {
+  const texts = ['患者自述发热', '患者自述干咳', '患者自述无痰', '自述最高体温38.5℃', '患者自述昨晚起病']
+  const fixture = await setup({ reply: firstFeverReply, extract: input => {
+    const source = summaryPayloadSchema.parse(input.userPayload).turns.at(-1)!
+    return { additions: texts.map(text => ({ field: 'historyOfPresentIllness', relation: 'addition',
+      facts: [{ text, sources: [{ sourceTurnId: source.id, quote: firstFeverReply }] }] })) }
+  } })
+  expect((await fixture.ask()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const before = await fixture.read()
+  expect(before.consultationRecording!.additions).toHaveLength(5)
+  expect(fixture.requests.filter(input => input.schemaName === 'consultation_history_verification')).toHaveLength(0)
+  const database = fixture.runtime.database.driver
+  const additions = z.array(z.object({ addition_id: z.string(), batch_id: z.string() })).parse(database.prepare(
+    'SELECT addition_id, batch_id FROM consultation_history_addition_batch ORDER BY rowid',
+  ).all())
+  const event = z.record(z.string(), z.unknown()).parse(database.prepare(
+    "SELECT * FROM outbox_event WHERE kind = 'consultation.record-history' ORDER BY rowid LIMIT 1",
+  ).get())
+  const actor = z.object({ actor_context_json: z.string() }).parse(database.prepare(
+    'SELECT actor_context_json FROM consultation_recording',
+  ).get())
+  const states = ['pending', 'failed', 'flagged', 'stale', 'verified'] as const
+  const insertVerdict = database.prepare(`INSERT INTO consultation_recording_verification
+    (workspace_id, epoch, case_id, addition_id, batch_id, content_hash, actor_context_json, status, reason, elapsed_ms)
+    SELECT workspace_id, epoch, case_id, addition_id, batch_id, 'synthetic-legacy-content-hash', ?, ?, ?, ?
+    FROM consultation_history_addition_batch WHERE addition_id = ?`)
+  for (const [index, state] of states.entries()) insertVerdict.run(actor.actor_context_json, state,
+    state === 'failed' ? 'verification-unavailable' : state === 'flagged' ? 'verification-rejected' : null,
+    state === 'pending' ? null : 12, additions[index]!.addition_id)
+  const legacyEvent = { ...event, event_id: 'legacy-verification-event', kind: 'consultation.verify-history',
+    dedup_key: 'synthetic-legacy-verification', status: 'queued', attempt: 0, lease_owner: null, leased_until: null,
+    next_attempt_at: '2026-01-01T00:00:00.000Z',
+    payload_json: JSON.stringify({ batchId: additions[0]!.batch_id, additionId: additions[0]!.addition_id,
+      turnId: before.consultation!.turns.at(-1)!.id }) }
+  const columns = Object.keys(legacyEvent)
+  database.prepare(`INSERT INTO outbox_event (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`)
+    .run(...columns.map(column => legacyEvent[column as keyof typeof legacyEvent]))
+  const audit = database.prepare('SELECT * FROM audit_log ORDER BY rowid').all()
+  const receipts = database.prepare('SELECT * FROM command_receipt ORDER BY rowid').all()
+  const historicalVerdicts = database.prepare(`SELECT workspace_id, epoch, case_id, addition_id, batch_id,
+    content_hash, actor_context_json, reason, elapsed_ms FROM consultation_recording_verification ORDER BY rowid`).all()
+  const requests = fixture.requests.length
+  await fixture.restart(replaceWithPreConsolidationDatabase)
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 77, integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
+  const verdicts = () => fixture.runtime.database.driver.prepare(`SELECT status, retired_status
+    FROM consultation_recording_verification ORDER BY rowid`).all()
+  expect(verdicts()).toEqual(states.map(state => ({ status: state === 'pending' ? 'stale' : state, retired_status: state })))
+  expect(fixture.runtime.database.driver.prepare('SELECT addition_id, batch_id FROM consultation_history_addition_batch ORDER BY rowid').all()).toEqual(additions)
+  expect(() => fixture.runtime.database.driver.prepare('UPDATE consultation_history_addition_batch SET batch_id = ? WHERE addition_id = ?')
+    .run('missing-batch', additions[0]!.addition_id)).toThrow('FOREIGN KEY constraint failed')
+  expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
+  await fixture.runtime.dispatchPending()
+  const after = await fixture.read()
+  expect(after.clinicalDocument).toEqual(before.clinicalDocument)
+  expect(after.consultationRecording!.sources).toEqual(before.consultationRecording!.sources)
+  expect(after.consultationRecording!.additions).toEqual(before.consultationRecording!.additions)
+  expect(after.consultationRecording!.verification).toEqual({ pendingCount: 0, flaggedCount: 0, failedCount: 0, issues: [] })
+  const retiredEvent = () => fixture.runtime.database.driver.prepare(`SELECT status, attempt FROM outbox_event
+    WHERE event_id = 'legacy-verification-event'`).get()
+  expect(retiredEvent()).toEqual({ status: 'completed', attempt: 1 })
+  // Redelivery must finish once, then remain inert across polls and restart.
+  fixture.runtime.database.driver.prepare(`UPDATE outbox_event SET status = 'queued', attempt = 0,
+    next_attempt_at = '2026-01-01T00:00:00.000Z'
+    WHERE event_id = 'legacy-verification-event'`).run()
+  await fixture.runtime.dispatchPending()
+  await fixture.runtime.dispatchPending()
+  await fixture.restart()
+  await fixture.runtime.dispatchPending()
+  expect(retiredEvent()).toEqual({ status: 'completed', attempt: 1 })
+  expect(fixture.requests).toHaveLength(requests)
+  expect(fixture.runtime.database.driver.prepare('SELECT * FROM audit_log ORDER BY rowid').all()).toEqual(audit)
+  expect(fixture.runtime.database.driver.prepare('SELECT * FROM command_receipt ORDER BY rowid').all()).toEqual(receipts)
+  expect(fixture.runtime.database.driver.prepare(`SELECT workspace_id, epoch, case_id, addition_id, batch_id,
+    content_hash, actor_context_json, reason, elapsed_ms FROM consultation_recording_verification ORDER BY rowid`).all()).toEqual(historicalVerdicts)
+  expect(verdicts()).toEqual(states.map(state => ({ status: state === 'pending' ? 'stale' : state, retired_status: state })))
+  expect((await fixture.control('retry')).status).toBe(409)
+  expect((await fixture.askMore()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toMatchObject({ processedCount: 2, failedCount: 0, remainingCount: 0 })
+  expect(fixture.requests.filter(input => input.schemaName === 'consultation_history_verification')).toHaveLength(0)
 })
 
 it('rejects a changed consultation snapshot and signs a fresh preview without an acknowledgement when recording is unavailable', async () => {
@@ -931,6 +926,7 @@ it.each(['automatic', 'manual'] as const)('preserves %s unrelated sentences when
   await fixture.save('患者自述：头晕一周了。夜间也会头晕。')
   // Seed the original single-row representation before ownership/statement ranges existed.
   fixture.runtime.database.driver.prepare('DELETE FROM consultation_recording_verification').run()
+  fixture.runtime.database.driver.prepare('DELETE FROM consultation_history_addition_batch').run()
   fixture.runtime.database.driver.prepare('DELETE FROM consultation_history_addition WHERE case_id = ? AND addition_id != ?')
     .run(fixture.started.outpatientCaseId, originalId)
   fixture.runtime.database.driver.prepare(`UPDATE consultation_history_addition SET quote = ?, facts_json = NULL, ownership = 'automatic',
@@ -1382,7 +1378,7 @@ it.each([
   await runtime.dispatchPending()
   if (name === 'unknown answer') {
     expect((await read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：我不知道。')
-    expect((await read()).consultationRecording?.verification).toMatchObject({ flaggedCount: 1 })
+    expect((await read()).consultationRecording?.verification).toMatchObject({ pendingCount: 0, flaggedCount: 0, failedCount: 0 })
   } else {
     expect((await read()).clinicalDocument?.draft).toBeUndefined()
     expect((await read()).consultationRecording).toMatchObject({ status: 'failed', additions: [] })
@@ -1637,6 +1633,7 @@ it('requeues old pending suggestions on upgrade and records them without writing
   const row = (await fixture.read()).consultationRecording!.additions[0]!
   await fixture.save('医生记录：睡眠正常。')
   fixture.runtime.database.driver.prepare('DELETE FROM consultation_recording_verification').run()
+  fixture.runtime.database.driver.prepare('DELETE FROM consultation_history_addition_batch').run()
   fixture.runtime.database.driver.prepare("UPDATE consultation_history_addition SET addition_id = 'legacy:' || addition_id, status = 'pending', ownership = 'automatic', start_offset = NULL, end_offset = NULL, current_text = '' WHERE addition_id = ?").run(row.id)
   fixture.runtime.database.driver.prepare('DELETE FROM schema_migration WHERE migration_id = ?').run('0062_consultation-direct-recording.sql')
   await fixture.restart()
@@ -1714,7 +1711,7 @@ it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0
     recording: fixture.runtime.database.driver.prepare('SELECT workspace_id, epoch, case_id, version, paused, start_sequence FROM consultation_recording ORDER BY case_id').all(),
     jobs: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_recording_job ORDER BY turn_id').all(),
     models: fixture.runtime.database.driver.prepare('SELECT * FROM ai_model_binding ORDER BY task_id').all(),
-    additions: fixture.runtime.database.driver.prepare('SELECT * FROM consultation_history_addition ORDER BY addition_id').all(),
+    additions: fixture.runtime.database.driver.prepare('SELECT workspace_id, epoch, case_id, addition_id, field, source_turn_id, quote, relation, status, target_addition_id, ownership, start_offset, end_offset, current_text, review_state, review_status, rejected, undone, inverse_text, facts_json FROM consultation_history_addition ORDER BY addition_id').all(),
     receipts: fixture.runtime.database.driver.prepare('SELECT * FROM command_receipt ORDER BY operation, idempotency_key').all(),
   })
   const stored = snapshot()
@@ -1729,7 +1726,7 @@ it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0
       expect.objectContaining({ ownership: 'manual' }), expect.objectContaining({ rejected: 1, undone: 1 })]))
   }
   await fixture.restart(replaceWithPreSourceDatabase)
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 73, foreignKeys: true, integrity: 'ok' })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 77, foreignKeys: true, integrity: 'ok' })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()

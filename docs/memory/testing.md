@@ -26,7 +26,7 @@
 
 - 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。
 
-- 长时间运行 `vitest run` 或 `pnpm check` 时固定被测快照。执行期间修改源码和回归可能让转换缓存与新读取的测试混用不同版本；这类结果不能作为最终提交证据，应固定代码后重跑受影响集合，只复用未被修改影响的成功检查。
+- 长时间运行 `vitest run` 或 `pnpm check` 时固定被测快照。执行期间修改源码和回归可能让转换缓存与新读取的测试混用不同版本；这类结果不能作为最终提交证据，应固定代码后重跑受影响集合，只复用未被修改影响的成功检查。跨平台副本在启动最终检查前，核对任务的全部 tracked diff、新增文件清单及统一换行后的内容；只按增量复制不能证明快照完整。
 
 - 精确运行 Vitest 文件时使用 `pnpm --filter <package> exec vitest run <file>`。脚本经 `pnpm --filter <package> test -- <file>` 转发时会保留 `--`，当前 Vitest 可能运行整个包而未应用文件筛选；以实际 Test Files 数量确认范围。
 
@@ -34,11 +34,25 @@
 
 - `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，不能只凭包级 `tsc` 通过判断完整类型检查通过。修改 `apps/web/e2e/` 后运行 `pnpm exec tsc --noEmit -p tsconfig.browser.json`；Playwright 会转译 TypeScript，但不做类型检查，E2E 通过不能替代这项检查。
 
+- 医生工作台 e2e 的布局断点全部是容器查询：Playwright 默认视口 1280px 扣除应用侧栏后建议栈列不满足 1080px 容器宽度而隐藏，进入 `/consultation` 前先 `page.setViewportSize` 设定目标宽度，不以默认视口断言三栏元素。登录提交是异步请求：点击"登录"后先等待"候诊队列"可见再 `goto` 其他路由，否则跳转会中断登录请求，应用回到登录页并让后续定位超时。
+
 - 全仓测试因并发争用触发既有交互超时时，先用原断言及原超时串行复现；本机需要限制 Vitest worker 时可使用 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1 pnpm check`。Turbo 严格环境模式会过滤未声明的 `VITEST_MAX_WORKERS`，单独设置该变量不影响其子任务；可用 dry-run 的 envMode 确认实际传递，不通过扩大超时或跳过用例制造通过。
 
 ## 替身、异步屏障与断言
 
-- 诊断、处方浏览器合同填写有效草稿后，先等待对应 `[data-agent-section]` 内的“草稿已自动保存”，再切换外观或检查焦点。保存期间编辑区会暂时禁用并清除焦点；`focus()` 只执行一次，后续 `toBeFocused()` 重试不会重新聚焦。沿用 [Web E2E](../../apps/web/e2e/diagnosis-prescription.spec.ts) 的保存完成条件，保留原断言与超时，避免用固定等待或重复聚焦掩盖竞态。同一屏障也约束“调整项目”等对话框路径：`保留本次调整` 后立即读取病例，可能观察到去抖自动保存刚写入的 `medicationConclusion.draft`，使 `toBeUndefined()` 断言在整组运行中间歇失败而单文件通过；等待同一保存回执后再读取。
+- 医生工作台测试替身合同由建议栈决定：完诊预览 stub 必须恰好覆盖全部 7 个条目编码（schema superRefine 拒绝缺项，`items: []` 无效）；质控 GET 需为未声明病例返回干净的 ready 默认态而不是抛错。建议栈把查询失败显式渲染为"加载失败 + 重试" alert，旧替身里原本静默的坏 stub 会以可见失败暴露；替身报错时先核对 schema 完整性再怀疑组件。
+
+- 质控替身必须同时拦截 GET 轮询与 POST check 并在同一份 `qualityRevisions` 里回显 `clientId`/`clientRevision`：只拦 POST 时，1.5s `refetchInterval` 的 GET 因缺 clientId 触发 `DOCUMENT_QUALITY_INPUT_CHANGED` 错误路径，目标断言经由无关的 stale alert 变绿（假阳性，组件不改动测试也过）。新测试先跑一次确认无实现时确实为红，再实现转绿；`console.log` 在该 vitest 配置下不输出，取证用 `writeFileSync` 落盘 DOM 文本。
+
+- 恢复操作保留任务代次时，回归须覆盖“服务端已受理但回执丢失”、另一入口继续后的重新读取，以及完成后迟到的受理回执；只验证本地 mutation 成功会漏掉缓存停留失败和旧传输错误阻止确认。用受控请求屏障观察持续轮询与最终可确认状态，复用[建议恢复回归](../../apps/web/src/app/doctor/doctor-preparation-state.test.tsx)和[真实 Web 恢复入口](../../apps/web/e2e/doctor-recommendation-recovery.spec.ts)，业务合同见[临床流程](../architecture/clinical-workflows.md#81-门诊闭环)。
+
+- 验证重叠请求共享一次模型执行时，先等待第二个请求的公开受理回执，再释放首个模型请求；`setImmediate` 或固定等待不能证明第二个请求已通过授权并加入执行，可能只验证到完成后的串行回放。共享执行和完成后回放分别保留断言。
+
+- 质控问题的 Badge 与正文共享一个段落时，`getByText(message, { exact: true })` 无法单独匹配正文；将定位限定到对应字段 region，再用 `toContainText(message)` 核对，保留标签的独立断言。综合浏览器回归将生产 fixture 构建放在 `beforeAll`，分别保留构建和交互原有时限，避免编译挤占交互预算；不能增加时限掩盖真实断言失败。
+
+- 质控旅程把未保存正文恢复成已保存稿时，界面可能直接复用保存稿的检查结果，不再发送 candidate POST；测试须按当前保存稿或候选稿选择结果，不能始终沿用最后一次 POST 的 `clientId/clientRevision`。复用[病历质控旅程](../../apps/web/e2e/doctor-document-quality-journey.ts)中的保存稿分支，避免迟到请求让验收检查旧内容。
+
+- 排查签署质控持续“检查中”时，同时挂载正文与冻结的签署汇总，再让正文收到新医生来源；只测单个 hook 会漏掉两处请求身份互相推进的路径。复用[质控组件回归](../../apps/web/src/app/doctor/document-quality-control.test.tsx)，客户端视图隔离与服务端同输入复用的取舍见[质控输入决策](../decisions/implemented/architecture/2026-10-15-doctor-document-quality-control.md)。
 
 - 勾选聊天风格、结果顺序或按需教学等模型行为前，核对部署 preset/persona，并以新建 Session 的实际模型请求证明规则已装配。规格描述、普通工具测试和脚本化替身的回答不能证明真实模型持续遵守这些要求；接线证据与实模体验分别记录。
 
@@ -51,6 +65,8 @@
 - 多病例测试不能在同一 runtime 中反复使用完全相同的 Synthea 来源：生成按来源去重，会返回已经接诊的病例，后续 Persona 因病例状态不允许而失败。替身须返回身份或其他来源事实不同、hash 与内容一致的合成病例，并断言病例 ID 不同。
 
 - JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
+
+- 真实 WebApp 的 Surface Tool 测试先等待当前病例的可观察就绪状态，再断言 Tool 注册；冷启动导入时直接等待注册可能先耗尽 RTL 默认等待时间。使用业务控件的就绪信号同步，不扩大 timeout 掩盖初始化时序。
 
 - 工作台可以同时包含问诊输入状态和病历更新状态。测试具体状态时用 `within` 限定所属区域，不使用全页面的单数 `getByRole('status')`；保留各区域的可访问性提示及原有业务断言。
 
@@ -76,6 +92,8 @@
 
 - `vendor/dsh-react-surface` 的 `lib/` 是未跟踪的生成目录。ClinMesh 的 Vitest 若直接导入由 DSH 注入的 `dsh-react-surface/client` external，必须通过显式测试 alias 解析到本地 stub；测试不能依赖开发机曾构建 submodule 后遗留的 `lib/client.js`。
 
+- 在独立 worktree 或干净克隆运行 DSH 浏览器合同前，先执行 `pnpm --filter ./apps/dsh-web build:styles` 生成 gitignored 的 `apps/dsh-web/src/client/styles.generated.ts`；缺失时相关 fixture 在 Vite 构建阶段报 `Could not resolve "./styles.generated.ts"`，表象是成批 dsh-web 合同失败而非单条断言失败。该文件不进入提交。
+
 - 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 
 - 首诊浏览器旅程在点击“开始首诊”后，先等待“在诊”队列已选中，再切换问诊页签。Command 回执后的队列刷新可能重建详情；只等待点击完成会把旧详情上的页签选择丢失，最终超时在“向患者提问”输入框。
@@ -85,3 +103,5 @@
 - 更新增量病史输入后，同时运行 `pnpm smoke:consultation:native`：共享 Web 旅程通过不证明原生合成 Adapter 匹配。Fixture 需沿用[增量记录合同](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)的短引用与取消信号，不能依赖自动片段必有重复正文，也不能等待已取消请求正常返回。
 
 - HTTP 上传取消回归须等原生存储实际读取第一个数据块后再断开，并等清理完成后验证重试；固定短延迟可能在路由安装取消监听器前结束请求，使测试通过却没有验证取消路径。
+
+- 病历“未保存”提示回归须包含首次自动记录只写其他字段、`hasSavedDraft=false` 且持久主诉仍为空的场景；页面预填可能与数据库空值不同，保存基准应与编辑器采用同一份预填规则。通过[医生工作台组件](../../apps/web/src/app/role-workspaces.test.tsx)和[真实病历入口](../../apps/web/e2e/doctor-document-quality.spec.ts)同时核对页头与编辑器状态，并保留手工清空、恢复原文和清空保存刷新后的断言；只有完整人工保存稿的 fixture 无法捕获该差异。

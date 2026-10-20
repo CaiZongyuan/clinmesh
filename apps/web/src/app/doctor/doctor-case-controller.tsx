@@ -2,6 +2,7 @@ import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-prepar
 import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
 import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
+import { DoctorSuggestionStack } from './doctor-suggestion-stack.tsx'
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { mergeDocumentText } from '@clinmesh/core/document-text'
 import {
@@ -113,9 +114,8 @@ import {
   getWorkspaceErrorTitle,
 } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
-import { ConsultationVerificationStatus } from './consultation-recording-controls.tsx'
 import { WorkspaceSelect } from '../workspace-select.tsx'
-import { EncounterCompletionChecklist } from './completion-checklist.tsx'
+import { EncounterCompletionProgress } from './completion-checklist.tsx'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import {
   ClinicalDocumentPage,
@@ -133,7 +133,8 @@ import { DiagnosisPage, type DiagnosisPageActions } from './diagnosis-page.tsx'
 import { doctorCaseStatusLabel } from './doctor-case-status.ts'
 import { DoctorQueueModule } from './doctor-queue-module.tsx'
 import { ImagingPage, useImagingViewState, type ImagingPageActions } from './imaging-page.tsx'
-import { emptyAuxiliaryExamination, insertImagingReportSummary } from './imaging-report-summary.ts'
+import { insertImagingReportSummary } from './imaging-report-summary.ts'
+import { createWorkingClinicalDocument } from './clinical-document-content.ts'
 import { PathologyPage, type PathologyPageActions } from './pathology-page.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import {
@@ -276,51 +277,6 @@ function isAwaitingResult(request: { status: LaboratoryRequest['status'] }): boo
 function usesStructuredClinicalDocument(detail: DoctorCaseDetail | undefined): boolean {
   return detail !== undefined && (detail.consultation !== undefined || detail.consultationRecording !== undefined
     || detail.clinicalDocument?.draft !== undefined || (detail.clinicalDocument?.signed.length ?? 0) > 0)
-}
-
-function createWorkingClinicalDocument(detail: DoctorCaseDetail): ClinicalDocumentContent {
-  const vitals = detail.presentation?.vitalSigns
-  const prefill: ClinicalDocumentContent = {
-    allergyHistory: '',
-    assessment: '',
-    auxiliaryExamination: detail.report === undefined
-      ? emptyAuxiliaryExamination
-      : detail.report.results.map(result => `${result.code} ${String(result.value)}`).join('；'),
-    chiefComplaint: detail.presentation?.chiefComplaint ?? '',
-    disposition: '',
-    followUp: '',
-    familyHistory: '',
-    historyOfPresentIllness: detail.presentation?.summary ?? '',
-    physicalExamination: vitals === undefined ? '' : `T ${vitals.temperatureC} °C，P ${vitals.pulseBpm} 次/分，R ${vitals.respirationBpm} 次/分，BP ${vitals.bloodPressure.systolicMmHg}/${vitals.bloodPressure.diastolicMmHg} mmHg，SpO₂ ${vitals.oxygenSaturationPct}%。`,
-    priorMedicalHistory: detail.priorFacts.length === 0
-      ? '系统未记录既往病史。'
-      : detail.priorFacts.map(fact => fact.display || fact.code).join('；'),
-  }
-  const persisted = detail.clinicalDocument?.draft
-    ?? detail.clinicalDocument?.signed.at(-1)?.content
-  if (persisted !== undefined) {
-    const document: ClinicalDocumentContent = {
-      allergyHistory: persisted.allergyHistory,
-      assessment: persisted.assessment,
-      auxiliaryExamination: persisted.auxiliaryExamination,
-      chiefComplaint: persisted.chiefComplaint,
-      disposition: persisted.disposition,
-      followUp: persisted.followUp,
-      familyHistory: persisted.familyHistory,
-      historyOfPresentIllness: persisted.historyOfPresentIllness,
-      physicalExamination: persisted.physicalExamination,
-      priorMedicalHistory: persisted.priorMedicalHistory,
-    }
-    if (detail.clinicalDocument?.draft !== undefined && detail.consultationRecording?.hasSavedDraft === false) {
-      const automaticFields = new Set<keyof ClinicalDocumentContent>(detail.consultationRecording.additions
-        .filter(addition => addition.status === 'applied').map(addition => addition.field))
-      for (const field of Object.keys(document) as Array<keyof ClinicalDocumentContent>) {
-        if (!automaticFields.has(field) && !document[field]) document[field] = prefill[field] ?? ''
-      }
-    }
-    return document
-  }
-  return prefill
 }
 
 export function DoctorWorkspace({ locale, session }: DoctorWorkspaceProps): React.JSX.Element {
@@ -527,6 +483,7 @@ function DoctorCaseController({
       )
       || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
       || query.state.data?.pathologyRequests?.requests.some(isAwaitingResult) === true
+      || query.state.data?.consultation?.replyAttempt?.status === 'executing'
       || (query.state.data?.consultationRecording !== undefined && query.state.data.encounter.status === 'in-progress'
         && (recordingNotificationCase !== activeCaseId || query.state.status === 'error'))
       ? 1_500
@@ -2403,7 +2360,6 @@ function DoctorCaseController({
                 content: locale => {
                   const reviewMessages = getWorkspaceMessages(locale)
                   return <div className="flex flex-col gap-3">
-                    <ConsultationVerificationStatus recording={current.consultationRecording} messages={reviewMessages} />
                     <DocumentQualitySignSummary detail={current} state={preview.data.qualityControl} scope={proposalScope} locale={locale} />
                     <ClinicalDocumentContentView content={preview.data.document.content} messages={reviewMessages} />
                   </div>
@@ -2661,7 +2617,13 @@ function DoctorCaseController({
       inputRevision={recommendationRevision}
       formRevisions={activeCaseId === undefined ? undefined : agentDraftHydrationRevisions[activeCaseId]}
       enabled={!detailUnavailable && detail.data?.consultation !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'}>
-    <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail} queue={showDetail => (
+    <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail}
+      suggestions={{
+        label: messages.suggestionStackTitle,
+        node: <DoctorSuggestionStack completion={completion} detail={detailUnavailable ? undefined : detail.data}
+          clinicalDocument={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope} />,
+      }}
+      queue={showDetail => (
       <DoctorQueueModule
         navigation={navigation}
         queueView={queueView}
@@ -3532,6 +3494,7 @@ function CaseDetail({
           <DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} />
         </DoctorPreparationDetailsDialog>}
         <PatientBanner
+          workingDocument={workingClinicalDocument}
           {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
             : {
@@ -3548,7 +3511,7 @@ function CaseDetail({
           messages={messages}
           statusText={doctorCaseStatusLabel(detail.status, messages)}
           completionChecklist={completion.data === undefined ? null : (
-            <EncounterCompletionChecklist completion={completion.data} locale={locale} />
+            <EncounterCompletionProgress completion={completion.data} locale={locale} />
           )}
         />
 

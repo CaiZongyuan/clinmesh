@@ -38,9 +38,14 @@ function isVerificationCall(options: GenerateOptions): boolean {
 
 function qualityAnswer(options: GenerateOptions) {
   const quality = z.object({ document: z.record(z.string(), z.string()), evidence: z.array(z.unknown()),
-    agentFacts: z.array(z.object({ id: z.string() })), issues: z.array(z.unknown()).optional() }).safeParse(modelPayload(options))
+    agentFacts: z.array(z.object({ id: z.string() })), issues: z.array(z.unknown()).optional(),
+    recordingContext: z.object({ changes: z.array(z.object({ id: z.string() })) }).optional() }).safeParse(modelPayload(options))
   return quality.success ? { issues: quality.data.issues?.map((_, index) => ({ index, supported: true })) ?? [],
-    agentFactChecks: quality.data.agentFacts.map(fact => ({ id: fact.id, supported: true })) } : undefined
+    agentFactChecks: quality.data.agentFacts.map(fact => ({ id: fact.id, supported: true })),
+    ...(quality.data.recordingContext === undefined ? {} : { recordingChecks: quality.data.recordingContext.changes.map(change => ({
+      id: change.id, preserved: true, relationValid: true, rejectionValid: true,
+    })) }),
+  } : undefined
 }
 
 const secret = 'synthetic-model-bridge-secret-at-least-32-characters'
@@ -606,8 +611,7 @@ async function hospital(dsh: Awaited<ReturnType<typeof host>>, outboxRetryDelayM
   return { get runtime() { return runtime }, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
 }
 
-async function recordingCase(summarize: (turns: HistoryTurn[], currentSourceIds: string[], payload: unknown) => unknown, faithful = true,
-  verify?: (additions: unknown[]) => unknown) {
+async function recordingCase(summarize: (turns: HistoryTurn[], currentSourceIds: string[], payload: unknown) => unknown) {
   const dsh = await host()
   // Keep the pure diabetes question visible to the history path; hidden-diagnosis
   // leakage protection is covered separately by dialogue regressions.
@@ -619,10 +623,6 @@ async function recordingCase(summarize: (turns: HistoryTurn[], currentSourceIds:
     const payload = modelPayload(options)
     const quality = qualityAnswer(options)
     if (quality !== undefined) return quality
-    if (isVerificationCall(options)) {
-      const { additions } = z.object({ additions: z.array(z.unknown()) }).parse(payload)
-      return verify?.(additions) ?? { additions: additions.map((_, index) => ({ index, faithful, complete: true, relationValid: true })) }
-    }
     if (isSummaryCall(options)) {
       const { turns, currentSourceIds } = z.object({ turns: z.array(z.object({ id: z.string(), speaker: z.string(), messageText: z.string() })),
         currentSourceIds: z.array(z.string()) }).parse(payload)
@@ -669,7 +669,7 @@ function candidate(turn: HistoryTurn, text: string) {
     facts: [{ text, sources: [{ sourceTurnId: turn.id, quote: turn.messageText }] }] }] }
 }
 
-it('carries sentence references through the real DSH handler, bounded repair and independent negative verification', async () => {
+it('carries sentence references through the real DSH handler, bounded repair without standalone semantic verification', async () => {
   let summaries = 0
   const reply = '没有胸痛。\r\n我可能昨晚发烧了，需要检查吗？'
   const text = '否认胸痛，自述可能昨晚发热'
@@ -678,15 +678,14 @@ it('carries sentence references through the real DSH handler, bounded repair and
     const turn = payload.turns.find(turn => currentSourceIds.includes(turn.id))!
     expect(turn.sentences.map(sentence => sentence.text)).toEqual(['没有胸痛。', '我可能昨晚发烧了，需要检查吗？'])
     const facts = [{ text, sourceIds: turn.sentences.map(sentence => sentence.id) }]
-    // The first malformed envelope requires exactly one format repair. Neither
-    // the valid ids nor the negative semantic verdict adds another request.
+    // The first malformed envelope requires exactly one format repair.
     return ++summaries === 1 ? { wrong: facts } : { additions: [{ field: 'historyOfPresentIllness', relation: 'addition', facts }] }
-  }, false)
+  })
   const savedTurn = await fixture.ask(reply)
   await fixture.instance.runtime.dispatchPending()
   const detail = await fixture.read()
   expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
-  expect(detail.consultationRecording).toMatchObject({ processedCount: 1, failedCount: 0, verification: { flaggedCount: 1 } })
+  expect(detail.consultationRecording).toMatchObject({ processedCount: 1, failedCount: 0, verification: { pendingCount: 0, flaggedCount: 0, failedCount: 0 } })
   expect(detail.consultationRecording!.additions[0]!.facts).toEqual([{ text, sources: [
     { sourceTurnId: savedTurn.id, quote: '没有胸痛。' }, { sourceTurnId: savedTurn.id, quote: '我可能昨晚发烧了，需要检查吗？' },
   ] }])
@@ -696,7 +695,7 @@ it('carries sentence references through the real DSH handler, bounded repair and
   const schema = JSON.parse(calls[0]!.system!.split('without Markdown or $schema metadata:\n')[1]!)
   expect(schema.properties.additions.items.properties.facts.items.required).toEqual(['text', 'sourceIds'])
   expect(JSON.stringify(schema)).not.toContain('quote')
-  expect(fixture.dsh.calls.filter(isVerificationCall)).toHaveLength(1)
+  expect(fixture.dsh.calls.filter(isVerificationCall)).toHaveLength(0)
   const snapshots = fixture.instance.runtime.database.driver.prepare('SELECT snapshot_json FROM consultation_recording_batch').all()
   expect(snapshots).toEqual([{ snapshot_json: expect.stringContaining('"citationProtocol":"sentence-references-v1"') }])
   const count = fixture.dsh.calls.length
@@ -798,64 +797,6 @@ it.each(['citation', 'target', 'field-limit'] as const)(
   },
 )
 
-it('retries malformed DSH semantic verdicts explicitly while preserving the exact saved draft and old receipt', async () => {
-  let invalid = true
-  const fixture = await recordingCase(turns => candidate(turns.at(-1)!, mixedQuestionSummary), true,
-    additions => ({ additions: invalid ? [] : additions.map((_, index) => ({ index, faithful: true, complete: true, relationValid: true })) }))
-  await fixture.ask(mixedQuestionReply)
-  await fixture.instance.runtime.dispatchPending()
-  const before = await fixture.read()
-  expect(before.clinicalDocument?.draft?.historyOfPresentIllness).toBe(mixedQuestionSummary)
-  expect(before.consultationRecording).toMatchObject({ status: 'updated', failures: [], verification: { failedCount: 1, pendingCount: 0 } })
-  const receipts = () => fixture.instance.runtime.database.driver.prepare(
-    "SELECT response_json FROM command_receipt WHERE operation = 'consultation.history.verify' ORDER BY rowid").all()
-  const failed = receipts()
-  expect(failed).toHaveLength(1)
-  expect(JSON.stringify(failed)).not.toMatch(new RegExp(`${mixedQuestionReply}|${secret}`))
-  expect(fixture.dsh.calls.filter(isSummaryCall)).toHaveLength(1)
-  expect(fixture.dsh.calls.filter(isVerificationCall)).toHaveLength(2)
-  await fixture.instance.restart()
-  invalid = false
-  await fixture.control('retry')
-  await fixture.instance.runtime.dispatchPending()
-  const after = await fixture.read()
-  expect(after.clinicalDocument?.draft).toEqual(before.clinicalDocument?.draft)
-  expect(after.consultationRecording?.verification).toMatchObject({ pendingCount: 0, failedCount: 0, flaggedCount: 0 })
-  expect(receipts().slice(0, 1)).toEqual(failed)
-  expect(receipts()).toHaveLength(2)
-  expect(fixture.dsh.calls.filter(isSummaryCall)).toHaveLength(1)
-  expect(fixture.dsh.calls.filter(isVerificationCall)).toHaveLength(3)
-})
-
-it.each([
-  [mixedQuestionReply, '患者已空腹至少8小时'],
-  [mixedQuestionReply, '患者符合空腹采血条件'],
-  [mixedQuestionReply, '患者已经完成采血'],
-  ['我是不是糖尿病？', '患者确诊糖尿病'],
-  ['胸痛已经三天了吗？', '患者胸痛三天'],
-  ['如果我三天没吃饭，会不会头晕？', '患者三天未进食'],
-  ['我没有胸痛，是不是就不用检查了？', '患者胸痛'],
-  ['我可能昨晚发烧了，需要检查吗？', '患者昨晚发热'],
-])('flags persisted unsupported facts from a complete question through independent DSH verification: %s → %s', async (reply, text) => {
-  const fixture = await recordingCase(turns => candidate(turns.at(-1)!, text), false)
-  await fixture.ask(reply)
-  await fixture.instance.runtime.dispatchPending()
-  const detail = await fixture.read()
-  expect(detail.clinicalDocument?.draft?.historyOfPresentIllness).toBe(text)
-  expect(detail.consultationRecording).toMatchObject({ status: 'updated',
-    verification: { pendingCount: 0, flaggedCount: 1, failedCount: 0 }, failures: [] })
-  expect(detail.consultation!.turns.at(-1)!.messageText).toBe(reply)
-  const summaries = fixture.dsh.calls.filter(isSummaryCall)
-  const verifications = fixture.dsh.calls.filter(isVerificationCall)
-  expect(verifications.length).toBeGreaterThan(0)
-  expect(verifications).toHaveLength(summaries.length)
-  expect(verifications.every(call => !call.system?.includes('previous response failed validation'))).toBe(true)
-  await fixture.instance.restart()
-  await fixture.instance.runtime.dispatchPending()
-  expect(fixture.dsh.calls.filter(isVerificationCall)).toHaveLength(verifications.length)
-  expect((await fixture.read()).clinicalDocument?.draft).toEqual(detail.clinicalDocument?.draft)
-})
-
 it.each(['我是不是糖尿病？', '胸痛已经三天了吗？', '如果三天不吃东西，会不会头晕？'])(
   'completes a pure question without history through DSH: %s', async reply => {
     const fixture = await recordingCase(() => ({ additions: [] }))
@@ -948,10 +889,10 @@ it('explicitly recovers five completed, one failed and one queued DSH recording 
   )
   expect(jobs().slice(0, 5)).toEqual(completedJobs)
   const recordingCalls = fixture.dsh.calls.slice(callsBeforeRestart).filter(call => isSummaryCall(call) || isVerificationCall(call))
-  expect(recordingCalls).toHaveLength(2)
+  expect(recordingCalls).toHaveLength(1)
   expect(recordingCalls.map(call => JSON.parse(z.object({ text: z.string() }).parse(call.messages[0]!.content[0]).text))
     .map(payload => payload.turns.find((turn: HistoryTurn) => turn.id === (payload.currentTurnId ?? payload.currentSourceIds[0])).messageText))
-    .toEqual([mixedQuestionReply, mixedQuestionReply])
+    .toEqual([mixedQuestionReply])
   const callsAfterRecovery = fixture.dsh.calls.length
   await fixture.instance.restart()
   await fixture.instance.runtime.dispatchPending()
@@ -979,9 +920,7 @@ it.each([false, true].flatMap(metadata => [
   await instance.restart()
   const beforeRecording = dsh.calls.length
   dsh.respond(async options => qualityAnswer(options) ?? ({ ...(metadata ? { $schema: 'https://json-schema.org/draft/2020-12/schema' } : {}),
-    additions: isVerificationCall(options)
-      ? [{ index: 0, faithful: true, complete: true, relationValid: true }]
-      : [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{ text: summary,
+    additions: [{ field: 'historyOfPresentIllness', relation: 'addition', facts: [{ text: summary,
         sourceIds: z.object({ turns: z.array(z.object({ messageText: z.string(), sentences: z.array(z.object({ id: z.string() })) })) })
           .parse(modelPayload(options)).turns.find(turn => turn.messageText === reply)!.sentences.map(sentence => sentence.id) }] }],
   }))
@@ -995,13 +934,13 @@ it.each([false, true].flatMap(metadata => [
   ])
   expect(detail.consultationRecording).toMatchObject({ status: 'updated', additions: [{ status: 'applied' }] })
   const recordingCalls = dsh.calls.slice(beforeRecording).filter(call => isSummaryCall(call) || isVerificationCall(call))
-  expect(recordingCalls).toHaveLength(2)
+  expect(recordingCalls).toHaveLength(1)
   expect(recordingCalls[0]?.system).toContain('跨轮归并')
-  expect(recordingCalls[1]?.system).toContain('独立病史核对者')
-  const call = recordingCalls[1]!
+  expect(dsh.calls.filter(isVerificationCall)).toHaveLength(0)
+  const call = recordingCalls[0]!
   expect(detail.qualityControl).toMatchObject({ status: 'ready', stale: false, draftVersion: detail.clinicalDocument!.draft!.version })
   expect(call.provider).toBe('synthetic-provider-a')
-  expect(JSON.stringify(call)).toContain('sourceTurnId')
+  expect(JSON.stringify(call)).toContain('sentences')
   expect(JSON.stringify(call)).not.toMatch(/hiddenResources|Case Truth|private-session-transcript|reasoning/)
   const applied = doctorCaseDetailSchema.parse(await (await instance.runtime.app.request(
     `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } },

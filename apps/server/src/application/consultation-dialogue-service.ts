@@ -1,5 +1,6 @@
 import {
   consultationTurnSchema,
+  consultationReplyErrorCodeSchema,
   retryConsultationReplyResponseSchema,
   sendConsultationMessageResponseSchema,
 } from '@clinmesh/contracts/his'
@@ -8,7 +9,9 @@ import { z } from 'zod'
 import { ChatCompletionsError, type ChatCompletionsErrorCode, type JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
-import type { ActorContext, CommandExecutor } from './command-executor.ts'
+import { CommandReceiptNotFoundError, type ActorContext, type CommandExecutor } from './command-executor.ts'
+import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import { ConsultationReplyAttempts, type ConsultationReplyAttempt } from './consultation-reply-attempts.ts'
 import { hasHiddenDiagnosisLeak, type PersonaResource } from './patient-persona-service.ts'
 import type { WorkflowService } from './workflow-service.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
@@ -42,16 +45,20 @@ type ConsultationDialogueErrorCode =
   | 'CONSULTATION_PERSONA_OUTDATED'
   | 'CONSULTATION_REPLY_PENDING'
   | 'CONSULTATION_REPLY_UNAVAILABLE'
+  | 'CONSULTATION_REPLY_UNKNOWN'
 
 export class ConsultationDialogueError extends Error {
   readonly code: ConsultationDialogueErrorCode
   readonly status: 404 | 409 | 503
+  readonly replyOutcome: 'failed' | 'unknown'
 
-  constructor(code: ConsultationDialogueErrorCode, message: string) {
+  constructor(code: ConsultationDialogueErrorCode, message: string,
+    replyOutcome: 'failed' | 'unknown' = code === 'AI_TIMEOUT' || code === 'CONSULTATION_REPLY_UNKNOWN' ? 'unknown' : 'failed') {
     super(message)
     this.name = 'ConsultationDialogueError'
     this.code = code
-    this.status = code === 'CONSULTATION_REPLY_UNAVAILABLE' || code.startsWith('AI_') ? 503
+    this.replyOutcome = replyOutcome
+    this.status = code === 'CONSULTATION_REPLY_UNAVAILABLE' || code === 'CONSULTATION_REPLY_UNKNOWN' || code.startsWith('AI_') ? 503
       : code === 'CONSULTATION_CASE_NOT_FOUND' ? 404
         : 409
   }
@@ -65,8 +72,12 @@ export class ConsultationDialogueService {
   readonly #models: GenerationModelBinding | undefined
   readonly #provider: JsonChatCompletionsProvider | undefined
   readonly #workflow: WorkflowService
+  readonly #inflight = new Map<string, Promise<ReturnType<WorkflowService['appendPatientConsultationTurn']>['data']>>()
+  readonly #attempts: ConsultationReplyAttempts
+  readonly #shutdown = new AbortController()
 
   constructor(input: {
+    database: ClinMeshDatabase
     cases: SyntheticCaseRepository
     commands: CommandExecutor
     fhir: FhirRepository
@@ -82,10 +93,26 @@ export class ConsultationDialogueService {
     this.#models = input.models
     this.#provider = input.provider
     this.#workflow = input.workflow
+    this.#attempts = new ConsultationReplyAttempts(input.database)
   }
 
   get configured(): boolean {
     return this.#provider !== undefined && this.#model !== undefined
+  }
+
+  async close(): Promise<void> {
+    this.#shutdown.abort()
+    await Promise.allSettled(this.#inflight.values())
+  }
+
+  #previouslyAccepted(context: ActorContext, operation: string, key: string): boolean {
+    try {
+      this.#commands.readReceipt(context, operation, key)
+      return true
+    } catch (error) {
+      if (error instanceof CommandReceiptNotFoundError) return false
+      throw error
+    }
   }
 
   async ask(input: {
@@ -96,11 +123,13 @@ export class ConsultationDialogueService {
     idempotencyKey: string
     message: string
   }): Promise<z.infer<typeof sendConsultationMessageResponseSchema>> {
-    const caseId = this.#workflow.caseIdByEncounter(input.context, input.encounterId)
+    if (this.#shutdown.signal.aborted) throw this.#attemptError('CONSULTATION_REPLY_UNKNOWN')
+    const caseId = this.#workflow.authorizeConsultation(input.context, input.encounterId)
     const binding = this.#workflow.casePersonaBinding(input.context, caseId)
     if (binding !== undefined && isLegacyPatientPersonaContent(binding.content)) {
       throw new ConsultationDialogueError('CONSULTATION_PERSONA_OUTDATED', 'Regenerate the legacy persona before starting a free dialogue consultation')
     }
+    const previouslyAccepted = this.#previouslyAccepted(input.context, 'consultation.doctor-turn.append', `${input.idempotencyKey}:doctor-turn`)
     const doctorTurn = this.#workflow.appendDoctorConsultationTurn({
       context: input.context,
       encounterId: input.encounterId,
@@ -114,8 +143,13 @@ export class ConsultationDialogueService {
         context: input.context,
         encounterId: input.encounterId,
         doctorSequence: doctorTurn.data.turn.sequence,
+        doctorTurnId: doctorTurn.data.turn.id,
+        intentKey: input.idempotencyKey,
+        operation: 'ask',
+        previouslyAccepted,
         idempotencyKey: `reply:${doctorTurn.data.turn.id}`,
-      })).data
+      }))
+    this.#workflow.authorizeConsultation(input.context, input.encounterId)
     return this.#commands.execute({
       context: input.context,
       dataSchema: sendConsultationMessageResponseSchema.shape.data,
@@ -139,6 +173,9 @@ export class ConsultationDialogueService {
     expectedConsultationVersion: number
     idempotencyKey: string
   }): Promise<z.infer<typeof retryConsultationReplyResponseSchema>> {
+    if (this.#shutdown.signal.aborted) throw this.#attemptError('CONSULTATION_REPLY_UNKNOWN')
+    this.#workflow.authorizeConsultation(input.context, input.encounterId)
+    const previouslyAccepted = this.#previouslyAccepted(input.context, 'consultation.reply.accept', input.idempotencyKey)
     const accepted = this.#commands.execute({
       context: input.context,
       dataSchema: z.object({ caseId: z.string(), turn: consultationTurnSchema }),
@@ -157,8 +194,9 @@ export class ConsultationDialogueService {
       ?? (await this.#generatePatientTurn({
         context: input.context, encounterId: input.encounterId,
         doctorSequence: accepted.data.turn.sequence, idempotencyKey: `reply:${accepted.data.turn.id}`,
-        retryIntent: JSON.stringify([input.context.actorId, input.idempotencyKey]),
-      })).data
+        doctorTurnId: accepted.data.turn.id, intentKey: input.idempotencyKey, operation: 'retry', previouslyAccepted,
+      }))
+    this.#workflow.authorizeConsultation(input.context, input.encounterId)
     return this.#commands.execute({
       context: input.context,
       dataSchema: retryConsultationReplyResponseSchema.shape.data,
@@ -176,9 +214,52 @@ export class ConsultationDialogueService {
     encounterId: string
     doctorSequence: number
     idempotencyKey: string
-    retryIntent?: string
+    doctorTurnId: string
+    intentKey: string
+    operation: 'ask' | 'retry'
+    previouslyAccepted: boolean
   }) {
-    const caseId = this.#workflow.caseIdByEncounter(input.context, input.encounterId)
+    const { attempt, start } = this.#attempts.accept({
+      context: input.context, operation: input.operation, idempotencyKey: input.intentKey,
+      encounterId: input.encounterId, doctorTurnId: input.doctorTurnId, previouslyAccepted: input.previouslyAccepted,
+    })
+    const running = this.#inflight.get(attempt.attempt_id)
+    if (running !== undefined) return running
+    if (!start) {
+      throw this.#attemptError(attempt.error_code ?? 'CONSULTATION_REPLY_UNKNOWN')
+    }
+    const signal = AbortSignal.any([
+      this.#shutdown.signal, AbortSignal.timeout(Math.max(0, Date.parse(attempt.deadline_at) - Date.now())),
+    ])
+    const execution = this.#executePatientTurn(input, attempt, signal)
+      .then(result => {
+        this.#attempts.finish(input.context, attempt.attempt_id, 'succeeded', null)
+        return result
+      }, error => {
+        const code = error instanceof ConsultationDialogueError
+          ? consultationReplyErrorCodeSchema.safeParse(error.code) : undefined
+        const safeCode = code?.success === true ? code.data : 'CONSULTATION_REPLY_UNAVAILABLE'
+        const unknown = signal.aborted || !(error instanceof ConsultationDialogueError) || error.replyOutcome === 'unknown'
+        this.#attempts.finish(input.context, attempt.attempt_id, unknown ? 'unknown' : 'failed', safeCode)
+        throw error instanceof ConsultationDialogueError ? error : this.#attemptError(safeCode)
+      }).finally(() => this.#inflight.delete(attempt.attempt_id))
+    this.#inflight.set(attempt.attempt_id, execution)
+    return execution
+  }
+
+  #attemptError(code: z.infer<typeof consultationReplyErrorCodeSchema>) {
+    return new ConsultationDialogueError(code, code === 'CONSULTATION_REPLY_UNKNOWN'
+      ? 'The patient reply outcome is unknown; explicitly retry to start a new reply'
+      : 'Patient reply generation failed; explicitly retry to start a new reply')
+  }
+
+  async #executePatientTurn(input: {
+    context: ActorContext
+    encounterId: string
+    doctorSequence: number
+    idempotencyKey: string
+  }, attempt: ConsultationReplyAttempt, signal: AbortSignal) {
+    const caseId = this.#workflow.authorizeConsultation(input.context, input.encounterId, input.doctorSequence)
     const binding = this.#workflow.casePersonaBinding(input.context, caseId)
     if (binding === undefined) {
       throw new ConsultationDialogueError(
@@ -199,22 +280,31 @@ export class ConsultationDialogueService {
       )
     }
     let reply: string
+    const persona = binding.content
+    const defaultModel = this.#model
     try {
-      const signal = AbortSignal.timeout(30_000)
-      const taskId = `dialogue:${input.context.epoch}:${input.encounterId}:${input.doctorSequence}`
-        + (input.retryIntent === undefined ? '' : `:retry:${input.retryIntent}`)
-      const model = await this.#models?.bind(input.context.workspaceId, taskId, this.#model, signal) ?? this.#model
-      reply = await this.#composeReply(input.context, caseId, binding.syntheticCaseId, binding.content, model, signal)
+      const taskId = `dialogue:${input.context.epoch}:${input.encounterId}:${input.doctorSequence}:${attempt.attempt_id}`
+      const model = await this.#untilAborted(signal, () => this.#models?.bind(input.context.workspaceId, taskId, defaultModel, signal)
+        ?? Promise.resolve(defaultModel))
+      signal.throwIfAborted()
+      reply = await this.#composeReply(input.context, caseId, binding.syntheticCaseId, persona, model, signal, input.doctorSequence)
     } catch (error) {
       if (error instanceof ConsultationDialogueError) throw error
       if (error instanceof ChatCompletionsError) {
-        throw new ConsultationDialogueError(error.code, 'Patient reply generation failed; check the ClinMesh model settings and retry')
+        const unknown = error.code === 'AI_TIMEOUT' || (error.code === 'AI_REQUEST_FAILED' && error.httpStatus === undefined)
+        throw new ConsultationDialogueError(error.code, 'Patient reply generation failed; check the ClinMesh model settings and retry',
+          unknown ? 'unknown' : 'failed')
+      }
+      if (error instanceof SyntaxError || error instanceof z.ZodError) {
+        throw new ConsultationDialogueError('AI_RESPONSE_INVALID', 'The patient reply did not match the required response format')
       }
       throw new ConsultationDialogueError(
-        'CONSULTATION_REPLY_UNAVAILABLE',
-        'The patient could not answer this message; retry the reply',
+        'CONSULTATION_REPLY_UNKNOWN',
+        'The patient reply outcome is unknown; explicitly retry to start a new reply',
       )
     }
+    signal.throwIfAborted()
+    this.#workflow.authorizeConsultation(input.context, input.encounterId, input.doctorSequence)
     return this.#workflow.appendPatientConsultationTurn({
       context: input.context,
       encounterId: input.encounterId,
@@ -222,6 +312,15 @@ export class ConsultationDialogueService {
       idempotencyKey: input.idempotencyKey,
       message: reply,
       personaRevision: binding.revision,
+    }).data
+  }
+
+  async #untilAborted<T>(signal: AbortSignal, run: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => reject(this.#attemptError(this.#shutdown.signal.aborted ? 'CONSULTATION_REPLY_UNKNOWN' : 'AI_TIMEOUT'))
+      if (signal.aborted) return abort()
+      signal.addEventListener('abort', abort, { once: true })
+      void run().then(resolve, reject).finally(() => signal.removeEventListener('abort', abort))
     })
   }
 
@@ -232,6 +331,7 @@ export class ConsultationDialogueService {
     persona: PatientPersonaContent,
     model: string,
     signal: AbortSignal,
+    doctorSequence: number,
   ): Promise<string> {
     const detail = this.#workflow.doctorCaseDetail(context, caseId)
     const turns = (detail.consultation?.turns ?? []).slice(-dialogueContextTurnLimit)
@@ -294,17 +394,15 @@ export class ConsultationDialogueService {
         },
       },
     }
-    const generate = (systemPrompt: string) => new Promise<string>((resolve, reject) => {
-      const abort = () => reject(new ChatCompletionsError('AI_TIMEOUT', 'Patient reply deadline elapsed'))
-      if (signal.aborted) return abort()
-      signal.addEventListener('abort', abort, { once: true })
-      void this.#provider!.completeJson({
+    const generate = async (systemPrompt: string) => {
+      this.#workflow.authorizeConsultation(context, detail.encounter.id, doctorSequence)
+      const result = await this.#untilAborted(signal, () => this.#provider!.completeJson({
         signal, jsonSchema: z.toJSONSchema(replyOutputSchema) as Record<string, unknown>,
         model, schemaName: 'patient_dialogue_reply', systemPrompt, userPayload: payload,
         validate: value => replyOutputSchema.safeParse(value).success,
-      }).then(result => resolve(replyOutputSchema.parse(JSON.parse(result.content)).reply), reject)
-        .catch(reject).finally(() => signal.removeEventListener('abort', abort))
-    })
+      }))
+      return replyOutputSchema.parse(JSON.parse(result.content)).reply
+    }
     const reply = await generate(dialogueSystemPrompt)
     if (!this.#leaksHiddenDiagnosis(context, syntheticCaseId, reply)) return reply
     const retried = await generate(`${dialogueSystemPrompt}\n不要使用任何疾病名称或医学术语描述自己的病情。`)

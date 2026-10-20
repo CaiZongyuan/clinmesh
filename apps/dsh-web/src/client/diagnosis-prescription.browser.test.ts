@@ -36,9 +36,10 @@ async function buildFixture(version: string) {
   artifacts.set(version, artifact)
   return artifact
 }
-async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations' | 'failed', multiple = false) {
+async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery', multiple = false) {
   const { script, styles } = await buildFixture(version)
-  await page.setViewportSize({ width: 1280, height: 900 })
+  // 宿主为 1440（容纳三栏建议栈后保持开单/检查双栏合同），视口需一致，否则文档出现横向滚动。
+  await page.setViewportSize({ width: 1440, height: 900 })
   await page.route('http://localhost/', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
   await page.goto('http://localhost/')
   expect(z.object({ ready: z.literal(true) }).parse(await readJsonFromBrowser(page,
@@ -130,6 +131,24 @@ async function expectWorkspaceColumns(page: Page, hasRecords: boolean) {
 }
 
 for (const version of ['18', '19']) {
+  test(`continues the original task and regenerates after exhaustion on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'recovery')
+    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    const panel = page.getByRole('region', { name: '待确认诊断', exact: true })
+    await expect(panel.getByText(/上次请求结果未知/)).toBeVisible()
+    await panel.getByRole('button', { name: '依据与说明', exact: true }).click()
+    const details = page.getByRole('dialog', { name: '依据与说明', exact: true })
+    await expect(details.getByText(/上次请求结果未知/)).toBeVisible()
+    await details.getByRole('button', { name: 'Close', exact: true }).click()
+    await panel.getByRole('button', { name: '继续原任务', exact: true }).click()
+    await expect(panel.getByText(/本次任务的请求次数已用完/)).toBeVisible()
+    expect(await readRecommendations(page, 'diagnosis')).toMatchObject({ generation: 1, recovery: { status: 'exhausted' } })
+    await expect(panel.getByRole('button', { name: '继续原任务', exact: true })).toHaveCount(0)
+    await panel.getByRole('button', { name: '重新生成', exact: true }).click()
+    await expect(panel.getByRole('button', { name: '刷新', exact: true })).toBeEnabled()
+    expect(await readRecommendations(page, 'diagnosis')).toMatchObject({ generation: 2, recovery: { status: 'completed' } })
+    await expectNoFixtureErrors(page)
+  })
   test(`shows both AI medications as issued records and selects the second detail on React ${version}`, async ({ page }) => {
     await mount(page, version, 'recommendations', true)
     await page.getByRole('tab', { name: '处方', exact: true }).click()
@@ -224,7 +243,8 @@ for (const version of ['18', '19']) {
     await expect(remaining).not.toBeChecked()
     await remaining.click()
     await expect(remaining).toBeChecked()
-    await appearance(page, 'zh-CN', 'light', 'standard', 1280)
+    // 三栏建议栈占位后，双栏开单合同需 ≥1312 宿主宽度。
+    await appearance(page, 'zh-CN', 'light', 'standard', 1440)
     await expectWorkspaceColumns(page, true)
     await expectNoFixtureErrors(page)
   })
@@ -396,7 +416,7 @@ for (const version of ['18', '19']) {
     await expect.poll(async () => (await readCase(page)).diagnosis?.confirmation?.revisionNumber).toBe(2)
     await page.getByRole('tab', { name: '处方', exact: true }).click()
     expect((await readRecommendations(page, 'prescription')).status).toBe('failed')
-    await expect(page.getByRole('region', { name: '待开具处方', exact: true }).getByRole('status')).toHaveText('更新或提交未完成，草稿已保留，可重试。')
+    await expect(page.getByRole('region', { name: '待开具处方', exact: true }).getByRole('status')).toHaveText('更新或提交未完成，草稿已保留。')
     const addMedication = page.getByRole('textbox', { name: '搜索药品目录', exact: true })
     await addMedication.click()
     const medicationDialog = page.getByRole('region', { name: '填写处方', exact: true })

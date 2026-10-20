@@ -198,6 +198,7 @@ function apiErrorBody(
   code: string,
   message: string,
   conflict?: unknown,
+  reason?: string,
 ) {
   return {
     error: {
@@ -205,6 +206,7 @@ function apiErrorBody(
       ...(conflict === undefined ? {} : { conflict }),
       correlationId: requestCorrelationId(context),
       message,
+      ...(reason === undefined ? {} : { reason }),
     },
   }
 }
@@ -242,6 +244,7 @@ function apiErrorResponse(
       error.code,
       error.message,
       error instanceof WorkflowError ? error.conflict : undefined,
+      error instanceof WorkflowError ? error.reason : undefined,
     ), error.status)
   }
   if (

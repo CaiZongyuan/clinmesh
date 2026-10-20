@@ -51,6 +51,7 @@ const medication: ReferenceMedicationProduct = {
 const products = [medication, { ...medication, id: 'synthetic-product-2', code: 'SYN-M2', packageDescription: '20片/盒' },
   { ...medication, id: 'synthetic-product-3', code: 'SYN-M3', genericName: '合成第二药品', packageDescription: '30片/盒' }]
 const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
+const recoveryMode = document.documentElement.dataset.fixtureMode === 'recovery'
 const multipleRecommendations = document.documentElement.dataset.fixtureMultiple === 'true'
 const failedRecommendations = document.documentElement.dataset.fixtureMode === 'failed'
 const recommendationGuidelines: GuidelineEvidence[] = [
@@ -251,11 +252,25 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
           { id: 'synthetic-case-evidence-2', kind: 'presentation', label: '合成病例来源二', text: '合成病例第二条依据：需要医生继续核实。' },
         ], missingInformation: [],
       })
+      if (recoveryMode && kind === 'diagnosis') state = { ...state, status: 'failed', errorCode: 'MODEL_OUTCOME_UNKNOWN',
+        recovery: { status: 'unknown', requestCount: 2, extraRequestCount: 0, maxRequestsPerUnit: 3,
+          maxExtraRequests: 4, canContinue: true, units: [] } }
       recommendationStates.set(kind, state)
     }
     if (recommendation[2] !== undefined) {
-      generateDoctorRecommendationsRequestSchema.parse(JSON.parse(String(init?.body)))
-      state = { ...state, generation: state.generation + 1 }
+      const request = generateDoctorRecommendationsRequestSchema.parse(JSON.parse(String(init?.body)))
+      if (recoveryMode && kind === 'diagnosis') {
+        if (request.input.continueGeneration !== undefined) {
+          if (request.input.continueGeneration !== state.generation || request.input.refresh) throw new Error('Unexpected continuation identity')
+          state = { ...state, status: 'failed', errorCode: 'MODEL_REQUEST_LIMIT', recovery: { ...state.recovery!,
+            status: 'exhausted', requestCount: 4, extraRequestCount: 2, canContinue: false } }
+        } else {
+          if (!request.input.refresh) throw new Error('Failed tasks require an explicit manual action')
+          const { errorCode: _error, ...original } = state
+          state = { ...original, status: 'missing-evidence', generation: state.generation + 1, recovery: { ...state.recovery!,
+            status: 'completed', requestCount: 1, extraRequestCount: 0, canContinue: false } }
+        }
+      } else state = { ...state, generation: state.generation + 1 }
       if (kind === 'diagnosis' && updateRecommendationEvidence) {
         updateRecommendationEvidence = false
         state = { ...state, inputFingerprint: 'c'.repeat(64), caseEvidence: state.caseEvidence.map(source => source.id === 'synthetic-case-evidence-2'
@@ -311,7 +326,8 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
 Object.defineProperty(window, 'fetch', { configurable: true, value: fixtureFetch })
 const host = document.createElement('div')
 host.id = 'diagnosis-prescription-host'
-host.style.cssText = 'width:1280px;height:900px;container-type:inline-size;container-name:dsh-react-surface-content;contain:strict'
+// 医生工作台新增 280px 建议栈列后，1280 宿主下开单/检查容器跌破 800px 堆叠断点；用 1440 宿主保持双栏合同。
+host.style.cssText = 'width:1440px;height:900px;container-type:inline-size;container-name:dsh-react-surface-content;contain:strict'
 document.body.append(host)
 const shadow = host.attachShadow({ mode: 'open' })
 const styles = document.createElement('style')

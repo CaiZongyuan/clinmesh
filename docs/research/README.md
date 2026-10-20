@@ -22,9 +22,11 @@
 
 ## Agent 接入与协议
 
+- [Agent 模型调用链路、触发与停止条件审计](2026-10-19-agent-model-call-lifecycle.md)
 - [面向 Agent 的业务 CLI 参考研究](agent-friendly-cli-reference-analysis.md)
 - [Agent 运行时与评测融合研究](agent-runtime-and-evaluation-integration.md)
 - [DSH 插件能力与 ClinMesh 界面融合路线](dsh-plugin-integration-options.md)
+- [DSH 镜像 workspace 预设可行性研究](2026-10-20-dsh-mirror-preset-feasibility.md)
 - [嵌入式 HIS 助手与 DeepSeek Harness 融合研究](embedded-his-assistant-integration.md)
 - [DeepSeek Harness × AG-UI Plugin 设计报告](deepseek-harness-agui-plugin-design.md)
 - [医生助手只读绑定与安全恢复](2026-10-08-doctor-agent-binding-execution.md)

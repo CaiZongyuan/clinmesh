@@ -28,7 +28,7 @@ import {
   agentToolsForContext,
   type AgentPageContextClaim,
 } from '@clinmesh/contracts/agent'
-import { cancelClinicalDocumentSignRequestSchema, checkClinicalDocumentQualityRequestSchema, clinicalDocumentQualityControlStateSchema, controlConsultationRecordingRequestSchema, saveClinicalDocumentDraftRequestSchema, type ClinicalDocumentQualityControlState } from '@clinmesh/contracts/his'
+import { cancelClinicalDocumentSignRequestSchema, checkClinicalDocumentQualityRequestSchema, clinicalDocumentQualityControlStateSchema, controlConsultationRecordingRequestSchema, encounterCompletionItemCodeSchema, saveClinicalDocumentDraftRequestSchema, type ClinicalDocumentQualityControlState } from '@clinmesh/contracts/his'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -304,6 +304,19 @@ function commandResponse<Data>(data: Data) {
   }
 }
 
+/** 合法完诊预览：schema 要求恰好七项；completeCodes 命中的项记为已完成。 */
+function completionPreview(encounterId: string, completeCodes: string[] = []) {
+  return {
+    canComplete: false, encounterId, encounterVersion: '1',
+    items: encounterCompletionItemCodeSchema.options.map(code => ({
+      code,
+      status: completeCodes.includes(code) ? 'complete' as const : 'incomplete' as const,
+      statusText: completeCodes.includes(code) ? '已完成' : '待完成',
+      target: 'clinical-document' as const,
+    })),
+  }
+}
+
 function pagination(total: number) {
   return { page: 1, pageSize: 20, total }
 }
@@ -329,7 +342,12 @@ function documentQualityFetch(implementation: typeof fetch) {
       return Response.json(commandResponse(state))
     }
     const state = states.get(`${caseId}:${url.searchParams.get('clientId') ?? ''}`)
-    if (state === undefined) throw new Error(`A quality check has not been declared for ${caseId}`)
+    if (state === undefined) {
+      // 建议栈挂载后，未编辑的病例也会发起质控查询；返回干净的默认状态而不是报错。
+      return Response.json(clinicalDocumentQualityControlStateSchema.parse({ caseId,
+        encounterId: `encounter-${caseId.replace(/^case-/, '')}`, draftVersion: 0, documentFingerprint: 'a'.repeat(64),
+        inputFingerprint: 'b'.repeat(64), generation: 1, stale: false, status: 'ready', issues: [], notices: [] }))
+    }
     return Response.json(state)
   })
 }
@@ -1180,8 +1198,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
       patient: { ...patient, id: 'patient-other', name: '合成其他患者' },
       encounter: { id: 'encounter-other', status: 'in-progress', versionId: '1' }, consultationRecording: undefined,
       taskId: 'task-other' })
-    if (path === '/api/his/v1/encounters/encounter-other/completion') return Response.json({
-      canComplete: false, encounterId: 'encounter-other', encounterVersion: '1', items: [] })
+    if (path === '/api/his/v1/encounters/encounter-other/completion') return Response.json(completionPreview('encounter-other'))
     if (path === '/api/his/v1/doctor/cases/case-recording') {
       if (readInterceptor !== undefined) {
         const intercept = readInterceptor
@@ -1207,7 +1224,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
       return Response.json(commandResponse({ caseId: 'case-recording', draftVersion }))
     }
     if (path === '/api/his/v1/encounters/encounter-recording/completion') {
-      return Response.json({ canComplete: false, encounterId: 'encounter-recording', encounterVersion: '1', items: [] })
+      return Response.json(completionPreview('encounter-recording'))
     }
     if (path === '/api/his/v1/encounters/encounter-recording/actions/start-first-visit') {
       caseStatus = 'first-visit'
@@ -1272,6 +1289,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     interceptSigning: (intercept: NonNullable<typeof signingInterceptor>) => { signingInterceptor = intercept },
     interceptControl: (intercept: NonNullable<typeof controlInterceptor>) => { controlInterceptor = intercept },
     updateRecording: (facts: Partial<NonNullable<DoctorCaseDetail['consultationRecording']>>) => { recording = { ...recording, ...facts } },
+    updateDraft: (content: ClinicalDocumentContent) => { document = content; draftVersion += 1 },
     addHistoricalTurn: () => { turns = [{ id: 'legacy-patient-turn', kind: 'text', messageText: '头晕三天。',
       actorId: null, practitionerId: null, personaRevision: 1, recordedAt: '2026-10-08T09:00:00+08:00',
       reportReference: null, sequence: 1, source: 'patient-agent', speaker: 'patient' }] },
@@ -2983,7 +3001,7 @@ describe('role workspaces', () => {
 
     const banner = await screen.findByRole('region', { name: '当前患者' })
     expect(within(banner).queryByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeNull()
-    if (!hasTriage) expect(within(banner).getByText(/未记录分诊信息/)).toBeTruthy()
+    if (!hasTriage) expect(within(banner).getByText('主诉：未记录', { exact: true })).toBeTruthy()
     await user.click(await screen.findByRole('tab', { name: '问诊记录' }))
     const consultationRegion = screen.getByRole('region', { name: '问诊记录' })
     expect(within(consultationRegion).getByText('昨天傍晚开始发热，最高量到 38.7 °C。')).toBeTruthy()
@@ -3142,7 +3160,10 @@ describe('role workspaces', () => {
             draft: { ...structuredClinicalDocument, updatedAt: '2026-09-20T08:00:00Z', version: 1 },
             signed: [],
           },
-          consultation: { turns: recovered ? [doctorTurn, patientTurn] : failed ? [doctorTurn] : [], version: recovered ? 3 : failed ? 2 : 1 },
+          consultation: { turns: recovered ? [doctorTurn, patientTurn] : failed ? [doctorTurn] : [], version: recovered ? 3 : failed ? 2 : 1,
+            ...(failed && !recovered ? { replyAttempt: { doctorTurnId: doctorTurn.id, status: 'failed',
+              startedAt: '2026-09-16T09:00:00.000Z', deadlineAt: '2026-09-16T09:00:30.000Z', errorCode: 'AI_AUTH_FAILED' } } : {}),
+          },
           consultationRecording: { hasSavedDraft: true, version: 1, status: 'idle', additions: [] },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
@@ -3166,6 +3187,9 @@ describe('role workspaces', () => {
           },
         }, { status: 503 })
       }
+      if (url.pathname === '/api/his/v1/encounters/encounter-direct/completion') {
+        return Response.json(completionPreview('encounter-direct'))
+      }
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
@@ -3177,7 +3201,7 @@ describe('role workspaces', () => {
     if (sender === 'human') {
       await user.type(await screen.findByRole('textbox', { name: '向患者提问' }), question.text)
       await user.click(screen.getByRole('button', { name: '向患者提问' }))
-      expect(await screen.findByText('重试将使用当前 ClinMesh 模型设置。')).toBeTruthy()
+      expect(await screen.findByText('患者回答失败。重试将使用当前 ClinMesh 模型设置。')).toBeTruthy()
       expect(await screen.findByText(/模型认证或访问被拒绝/)).toBeTruthy()
       expect(screen.queryByText('private-provider-credential')).toBeNull()
       await user.click(await screen.findByRole('button', { name: '重试患者回答' }))
@@ -3495,6 +3519,35 @@ describe('role workspaces', () => {
     expect(fixture.controls).toEqual([{ action: 'activate', expectedRecordingVersion: 2 }])
   })
 
+  it('keeps prefilled chief complaint saved after recording other fields and marks only local edits unsaved', async () => {
+    const fixture = stubRecordingWorkspace('pause')
+    fixture.updateDraft({
+      assessment: '', chiefComplaint: '', disposition: '', followUp: '', historyOfPresentIllness: '',
+      physicalExamination: '神志清楚。',
+    })
+    fixture.updateRecording({ hasSavedDraft: false, additions: [{
+      id: 'recorded-examination', field: 'physicalExamination', sourceTurnId: 'doctor-examination',
+      quote: '神志清楚。', relation: 'addition', status: 'applied', ownership: 'automatic', currentText: '神志清楚。',
+    }] })
+    render(<QueryClientProvider client={createWebQueryClient()}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
+    const chiefComplaint = await screen.findByLabelText('主诉', { exact: true })
+    const banner = screen.getByRole('region', { name: '当前患者' })
+    expect(chiefComplaint).toHaveProperty('value', '发热伴咽痛两天')
+    expect(within(banner).getByText('主诉：发热伴咽痛两天')).toBeTruthy()
+    expect(within(banner).queryByText('未保存', { exact: true })).toBeNull()
+    expect(screen.queryByText('有未保存修改，请保存草稿。')).toBeNull()
+
+    fireEvent.change(chiefComplaint, { target: { value: '' } })
+    expect(within(banner).getByText('主诉：未记录')).toBeTruthy()
+    expect(within(banner).getByText('未保存', { exact: true })).toBeTruthy()
+    expect(screen.getByText('有未保存修改，请保存草稿。')).toBeTruthy()
+
+    fireEvent.change(chiefComplaint, { target: { value: '发热伴咽痛两天' } })
+    expect(within(banner).queryByText('未保存', { exact: true })).toBeNull()
+    expect(screen.queryByText('有未保存修改，请保存草稿。')).toBeNull()
+    expect(fixture.savedDocuments).toEqual([])
+  })
+
   it('preserves newer recording facts and saved empty fields when a same-version control receipt arrives late', async () => {
     const fixture = stubRecordingWorkspace('resume', true)
     const automaticAddition = { id: 'recorded-original', field: 'historyOfPresentIllness' as const,
@@ -3692,7 +3745,11 @@ describe('role workspaces', () => {
 
   it('translates an open Agent signing review when the host language changes', async () => {
     window.history.replaceState(null, '', '/consultation')
-    stubRecordingWorkspace('resume')
+    const fixture = stubRecordingWorkspace('resume')
+    fixture.updateRecording({ verification: { pendingCount: 1, flaggedCount: 1, failedCount: 1, issues: [{
+      additionId: 'legacy-addition', field: 'historyOfPresentIllness', text: '历史独立核对疑点。',
+      sourceIds: ['legacy-source'], reason: 'verification-rejected',
+    }] } })
     let registration: Parameters<WebSurfaceAgentController['register']>[0] | undefined
     const surfaceAgent: WebSurfaceAgentController = { register(value) {
       registration = value
@@ -3700,6 +3757,7 @@ describe('role workspaces', () => {
     } }
     const runtime = { mode: 'surface' as const, surfaceAgent, surfaceAgentStatus: 'active' as const, surfaceSessionId: 'dsh-session-1' }
     const view = render(<WebApp runtime={{ ...runtime, surfaceLocale: 'zh-CN' }} />)
+    await screen.findByRole('button', { name: '恢复并补录' })
     const tool = await waitFor(() => {
       const current = registration?.tools.find(tool => tool.name === 'clinmesh_prepare_sign_document')
       expect(current).toBeDefined()
@@ -3707,10 +3765,12 @@ describe('role workspaces', () => {
     })
     await act(async () => { await tool.execute(boundAgentToolInput(tool, {}), new AbortController().signal) })
     const dialog = await screen.findByRole('alertdialog', { name: '确认签署病历' })
+    expect(within(dialog).queryByText(/尚未核对|发现疑点|语义核对暂未完成|历史独立核对疑点/)).toBeNull()
     expect(within(dialog).queryByRole('checkbox')).toBeNull()
     expect(within(dialog).getByRole('region', { name: '签署前质控汇总' })).toBeTruthy()
     view.rerender(<WebApp runtime={{ ...runtime, surfaceLocale: 'en-US' }} />)
     const changed = await screen.findByRole('alertdialog', { name: 'Confirm medical record signature' })
+    expect(within(changed).queryByText(/Not yet checked|Review the flagged document fragments|Semantic checking is incomplete|历史独立核对疑点/)).toBeNull()
     expect(within(changed).getByRole('region', { name: 'Quality summary before signing' })).toBeTruthy()
     expect(within(changed).getByText('Chief complaint')).toBeTruthy()
     expect(within(changed).queryByRole('checkbox')).toBeNull()
@@ -3822,10 +3882,12 @@ describe('role workspaces', () => {
     const user = userEvent.setup()
     render(<QueryClientProvider client={client}><DoctorWorkspace locale="zh-CN" session={doctorSession} /></QueryClientProvider>)
     await screen.findByRole('button', { name: '暂停自动整理' })
-    await waitFor(() => expect(screen.getAllByRole('region', { name: '病历质控' })).toHaveLength(1))
+    // 病历质控分区双挂载（病例面板 + 建议栈）；“每个业务分区至多一个提示”只约束病例区内部。
+    const caseDetailRegion = document.querySelector<HTMLElement>('[data-doctor-region="detail"]')!
+    await waitFor(() => expect(within(caseDetailRegion).getAllByRole('region', { name: '病历质控' })).toHaveLength(1))
     expect(screen.queryByRole('button', { name: '主诉有内容待补充，请核对。' })).toBeNull()
     await user.click(screen.getByRole('tab', { name: '诊断' }))
-    const hint = await screen.findByRole('region', { name: '病历质控' })
+    const hint = await within(caseDetailRegion).findByRole('region', { name: '病历质控' })
     await user.click(within(hint).getByRole('button', { name: '主诉的记录不一致，请核对。' }))
     await waitFor(() => expect(screen.getByRole('tab', { name: '病历记录' }).getAttribute('aria-selected')).toBe('true'))
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: '主诉' })))
@@ -4165,6 +4227,9 @@ describe('role workspaces', () => {
         data: { proposalId: 'doctor-proposal-1', status: 'awaiting-human-review' },
       })
       const review = await screen.findByRole('alertdialog', { name: '确认已阅放射报告' })
+      // A9：既有反馈语言在三栏布局下保持可见——反馈条、工作区光晕容器与评审弹层同屏。
+      expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('待人工确认')
+      expect(document.querySelector('.clinmesh-agent-workspace-glow')).not.toBeNull()
       expect(requests.some(request => request.path.endsWith('/actions/acknowledge'))).toBe(false)
       await userEvent.setup().click(within(review).getByRole('button', { name: '确认已阅' }))
       await waitFor(() => expect(requests.find(request => request.path.endsWith('/actions/acknowledge'))).toEqual({
@@ -4229,7 +4294,7 @@ describe('role workspaces', () => {
         })
       }
       if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
-      if (path.endsWith('/completion')) return Response.json({ items: [], ready: false })
+      if (path.endsWith('/completion')) return Response.json(completionPreview('encounter-1'))
       throw new Error(`Unexpected request: ${path}`)
     }))
     const user = userEvent.setup()
@@ -4349,7 +4414,7 @@ describe('role workspaces', () => {
       if (path.endsWith('/reference-catalogs/laboratory')) return Response.json({ items: [], ...pagination(0) })
       if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService }] })
       if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures: [sourceProcedure] }] })
-      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: queueItem.encounterId, encounterVersion: '1', items: [] })
+      if (path.endsWith('/completion')) return Response.json(completionPreview(queueItem.encounterId))
       if (path.endsWith(`/recommendations/${category}/actions/confirm`)) {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
@@ -4425,7 +4490,7 @@ describe('role workspaces', () => {
       }
       if (path.endsWith('/imaging-services')) return Response.json({ items: [] })
       if (path.endsWith('/pathology-services')) return Response.json({ items: [] })
-      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: 'encounter-investigation', encounterVersion: '1', items: [] })
+      if (path.endsWith('/completion')) return Response.json(completionPreview('encounter-investigation'))
       throw new Error(`Unexpected request: ${path}`)
     }))
     const user = userEvent.setup()
@@ -4990,7 +5055,7 @@ describe('role workspaces', () => {
       if (path.endsWith('/reference-catalogs/laboratory')) return Response.json({ items: [laboratory], ...pagination(1) })
       if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imaging }] })
       if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathology, sourceProcedures: procedures }] })
-      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: path.split('/')[5], encounterVersion: '1', items: [] })
+      if (path.endsWith('/completion')) return Response.json(completionPreview(path.split('/')[5]!))
       if (path.endsWith(`/${kind}-request/draft`)) {
         writes.push(path)
         expect(init?.method).toBe('PUT')
@@ -5091,7 +5156,7 @@ describe('role workspaces', () => {
           draftVersion: deleted ? 2 : 1, reportingSupported: true, requests: [],
         },
       })
-      if (path.endsWith('/completion')) return Response.json({ canComplete: false, encounterId: path.split('/')[5], encounterVersion: '1', items: [] })
+      if (path.endsWith('/completion')) return Response.json(completionPreview(path.split('/')[5]!))
       if (path.endsWith('/laboratory-request/draft') && init?.method === 'DELETE') return new Promise<Response>(resolve => {
         releaseDeletion = () => {
           deleted = true
@@ -6691,9 +6756,10 @@ describe('role workspaces', () => {
     expect(within(patientBanner).getByRole('img', { name: '王晓明 患者' })).toBeTruthy()
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
     expect(screen.queryByRole('button', { name: '收起右侧边栏' })).toBeNull()
-    const checklist = await screen.findByRole('region', { name: '完诊清单' })
-    expect(within(checklist).getByLabelText('已满足 2 / 7')).toBeTruthy()
-    expect(within(checklist).getAllByRole('listitem')).toHaveLength(7)
+    expect(await screen.findByLabelText('已满足 2 / 7')).toBeTruthy()
+    expect(screen.getByText('完诊检查未完 5 项')).toBeTruthy()
+    const stackCompletion = screen.getByRole('region', { name: '完诊清单' })
+    expect(within(stackCompletion).getAllByRole('listitem')).toHaveLength(5)
     await user.click(screen.getByRole('tab', { name: '问诊记录' }))
     await user.type(screen.getByRole('textbox', { name: '向患者提问' }), questionText)
     await user.click(screen.getByRole('button', { name: '向患者提问' }))

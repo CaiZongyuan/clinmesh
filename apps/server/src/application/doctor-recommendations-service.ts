@@ -11,6 +11,9 @@ import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
 import type { WorkflowService } from './workflow-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import { legacyRecommendationInput, recommendationInputFingerprint } from './doctor-recommendation-input.ts'
+import { DoctorRecommendationExecution, DoctorRecommendationExecutionError, readDoctorRecommendationExecution,
+  recommendationRequestHash } from './doctor-recommendation-execution.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { ChatCompletionsError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
@@ -26,7 +29,7 @@ import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.
 
 const stateRowSchema = z.object({
   generation: z.number().int().positive(), input_fingerprint: z.string(),
-  state_json: z.string(), status: z.string(),
+  state_json: z.string(), status: z.string(), input_json: z.string(), actor_context_json: z.string(),
 })
 const actorContextSchema = z.object({
   workspaceId: z.string(), epoch: z.string(), actorId: z.string(), scenarioRunId: z.string(), roleCode: z.string(),
@@ -137,15 +140,27 @@ function assertRecommendationRequestBudget(input: JsonChatCompletionInput) {
 }
 
 export class DoctorRecommendationsService {
-  readonly #historySelections = new Map<string, string[]>()
-  readonly #catalogSelections = new Map<string, string[]>()
+  readonly #active = new Map<string, { controller: AbortController; check: () => void }>()
+  readonly #unsubscribe: () => void
   constructor(private readonly options: {
     database: ClinMeshDatabase; workflow: WorkflowService; commands: CommandExecutor; referenceData: ReferenceDataService
     models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider
     guidelines?: GuidelineCorpus
     contextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
     investigationCatalogs: (context: ActorContext, caseId: string, kind: DoctorRecommendationKind) => Promise<DoctorInvestigationRecommendationCatalogs>
-  }) {}
+  }) {
+    this.#unsubscribe = options.commands.subscribe((_context, effects) => {
+      if (effects.length === 0) return
+      for (const task of this.#active.values()) {
+        try { task.check() } catch (error) { task.controller.abort(error) }
+      }
+    })
+  }
+
+  close() {
+    this.#unsubscribe()
+    for (const task of this.#active.values()) task.controller.abort()
+  }
 
   #authorize(context: ActorContext, caseId: string) {
     if (this.options.contextStatus(context) !== 'active') {
@@ -186,9 +201,9 @@ export class DoctorRecommendationsService {
         { speaker: turn.speaker, text: turn.messageText, kind: turn.kind, recordedAt: turn.recordedAt, reportReference: turn.reportReference })
     }
     if (detail.clinicalDocument?.draft !== undefined) {
-      const { version, updatedAt, ...fields } = detail.clinicalDocument.draft
+      const { version: _version, updatedAt: _updatedAt, ...fields } = detail.clinicalDocument.draft
       for (const [field, text] of Object.entries(fields)) add(`clinical-document:draft:${field}`, 'draft',
-        `当前病历草稿 v${version} / ${documentFieldLabels[field] ?? field} / ${updatedAt}`, text, `Encounter/${detail.encounter.id}`)
+        `当前病历草稿 / ${documentFieldLabels[field] ?? field}`, text, `Encounter/${detail.encounter.id}`)
     }
     for (const signed of detail.clinicalDocument?.signed ?? []) add(`clinical-document:signed:${signed.compositionId}`, 'draft', '已签病历', signed, `Composition/${signed.compositionId}`)
     for (const [field, draft] of Object.entries(detail.drafts ?? {})) add(`legacy-draft:${field}`, 'draft', `当前诊疗草稿 / ${field}`, draft)
@@ -250,12 +265,15 @@ export class DoctorRecommendationsService {
     this.#authorize(context, caseId)
     const offerings = kind === 'imaging' || kind === 'pathology' ? await this.options.investigationCatalogs(context, caseId, kind) : {}
     const snapshot = this.#snapshot(context, caseId, kind, offerings)
-    return { snapshot, inputFingerprint: canonicalJsonHash(snapshot) }
+    const task = this.#active.get(JSON.stringify(this.#key(context, caseId, kind)))
+    try { task?.check() } catch (error) { task?.controller.abort(error) }
+    return { snapshot, inputFingerprint: recommendationInputFingerprint(snapshot) }
   }
 
   async #selectCaseEvidence(snapshot: { context: ActorContext; caseEvidence: DoctorCaseEvidence[];
-    requiredCaseEvidenceIds: string[]; historyEvidenceIds: string[]; contextPolicyVersion: string; guidelines: GuidelineEvidence[] }, caseId: string, model: string, signal: AbortSignal,
-    fits: (evidence: DoctorCaseEvidence[]) => boolean, assertCurrent: () => void): Promise<
+    sourceHashes: string[]; requiredCaseEvidenceIds: string[]; historyEvidenceIds: string[]; contextPolicyVersion: string; guidelines: GuidelineEvidence[] }, caseId: string, model: string, signal: AbortSignal,
+    fits: (evidence: DoctorCaseEvidence[]) => boolean, assertCurrent: () => void,
+    execution: DoctorRecommendationExecution): Promise<
     { evidence: DoctorCaseEvidence[]; selection?: HistorySelection; droppedHistoryRecords?: number }> {
     assertCurrent()
     if (fits(snapshot.caseEvidence)) return { evidence: snapshot.caseEvidence }
@@ -274,16 +292,16 @@ export class DoctorRecommendationsService {
       detail, originalEvidenceId: evidence.id, evidence: { ...evidence, id: `history-${index + 1}` },
     }))
     const recordBySelectionId = new Map(records.map(record => [record.evidence.id, record]))
-    const key = canonicalJsonHash({ context: snapshot.context, model, evidence: snapshot.caseEvidence,
+    const selected: string[] = []
+    const selectionContextHash = canonicalJsonHash({ sourceHashes: snapshot.sourceHashes, evidence: snapshot.caseEvidence,
       guidelines: snapshot.guidelines, policy: snapshot.contextPolicyVersion })
-    let selected = this.#historySelections.get(key)
-    if (selected === undefined) {
+    {
       const requestFor = (batch: DoctorCaseEvidence[]): JsonChatCompletionInput => {
         const batchSchema = historySelectionSchema.extend({ selectedEvidenceIds: z.array(z.enum(batch.map(item => item.id))).max(100) })
         return {
           model, signal, schemaName: 'doctor_recommendation_history_selection', systemPrompt: historySelectionPrompt,
           jsonSchema: z.toJSONSchema(batchSchema) as Record<string, unknown>,
-          userPayload: { guidelines: snapshot.guidelines, requiredEvidence: compactEvidenceIndex(requiredEvidence), historyEvidence: batch },
+          userPayload: { selectionContextHash, guidelines: snapshot.guidelines, requiredEvidence: compactEvidenceIndex(requiredEvidence), historyEvidence: batch },
           validate: value => {
             const output = batchSchema.parse(value)
             if (new Set(output.selectedEvidenceIds).size !== output.selectedEvidenceIds.length) {
@@ -305,18 +323,18 @@ export class DoctorRecommendationsService {
       }
       if (batch.length > 0) batches.push(batch)
       if (batches.length > 8) throw new IncompleteRecommendationSelectionError('历史资料超过本轮自动读取总预算，系统未完成全部读取；现有草稿已保留。')
-      selected = []
+      execution.plan('history-selection', batches.map((group, index) => ({ batchId: String(index + 1), inputHash: recommendationRequestHash(requestFor(group)) })))
       for (let index = 0; index < batches.length; index += 2) {
         assertCurrent()
         this.#authorize(snapshot.context, caseId)
         signal.throwIfAborted()
-        const results = await Promise.allSettled(batches.slice(index, index + 2).map(async group => {
+        const results = await Promise.allSettled(batches.slice(index, index + 2).map(async (group, offset) => {
           const request = requestFor(group)
           assertRecommendationRequestBudget(request)
-          const result = await this.options.provider!.completeJson(request)
-          const value: unknown = JSON.parse(result.content)
-          request.validate!(value)
-          return historySelectionSchema.parse(value)
+          return execution.run({ stage: 'history-selection', batchId: String(index + offset + 1), request }, value => {
+            request.validate!(value)
+            return historySelectionSchema.parse(value)
+          })
         }))
         assertCurrent()
         for (const result of results) {
@@ -327,8 +345,6 @@ export class DoctorRecommendationsService {
       }
       signal.throwIfAborted()
       this.#authorize(snapshot.context, caseId)
-      if (this.#historySelections.size >= 8) this.#historySelections.delete(this.#historySelections.keys().next().value!)
-      this.#historySelections.set(key, selected)
     }
     const selectedRecords = records.filter(record => selected.includes(record.originalEvidenceId))
     const packSelection = (list: typeof selectedRecords) => packDoctorRecommendationHistory(caseId, list.map(record => record.detail)).optional
@@ -367,11 +383,13 @@ export class DoctorRecommendationsService {
           assertCurrent()
           this.#authorize(snapshot.context, caseId)
           signal.throwIfAborted()
-          const result = await this.options.provider!.completeJson(request)
-          signal.throwIfAborted()
-          const value: unknown = JSON.parse(result.content)
-          request.validate!(value)
-          const kept = new Set(consolidationSchema.parse(value).selectedEvidenceIds)
+          execution.plan('history-consolidation', [{ batchId: '1', inputHash: recommendationRequestHash(request),
+            dependencies: execution.status().units.filter(unit => unit.stage === 'history-selection').map(({ stage, batchId }) => ({ stage, batchId })) }])
+          const value = await execution.run({ stage: 'history-consolidation', batchId: '1', request }, value => {
+            request.validate!(value)
+            return consolidationSchema.parse(value)
+          })
+          const kept = new Set(value.selectedEvidenceIds)
           finalRecords = selectedRecords.filter(record => kept.has(record.evidence.id))
         }
       }
@@ -385,21 +403,21 @@ export class DoctorRecommendationsService {
   }
 
   async #selectLaboratoryCatalog(snapshot: { context: ActorContext; caseEvidence: DoctorCaseEvidence[];
-    guidelines: GuidelineEvidence[]; catalogs: DoctorRecommendationCatalogs }, caseId: string, model: string,
-    signal: AbortSignal, caseEvidence: DoctorCaseEvidence[], assertCurrent: () => void) {
+    sourceHashes: string[]; guidelines: GuidelineEvidence[]; catalogs: DoctorRecommendationCatalogs }, caseId: string, model: string,
+    signal: AbortSignal, caseEvidence: DoctorCaseEvidence[], assertCurrent: () => void, execution: DoctorRecommendationExecution) {
     assertCurrent()
     const catalogs = projectRecommendationCatalogs(snapshot.catalogs)
     const laboratory = catalogs.laboratory!
-    const key = canonicalJsonHash({ context: snapshot.context, model, evidence: snapshot.caseEvidence,
+    const selected: string[] = []
+    const selectionContextHash = canonicalJsonHash({ sourceHashes: snapshot.sourceHashes, evidence: snapshot.caseEvidence,
       selectedEvidence: caseEvidence, guidelines: snapshot.guidelines, catalogs: snapshot.catalogs })
-    let selected = this.#catalogSelections.get(key)
-    if (selected === undefined) {
+    {
       const requestFor = (items: typeof laboratory.items): JsonChatCompletionInput => {
         const batchSchema = catalogSelectionSchema.extend({ selectedCatalogItemIds: z.array(z.enum(items.map(item => item.id))).max(8) })
         return {
           model, signal, schemaName: 'doctor_recommendation_catalog_selection', systemPrompt: catalogSelectionPrompt,
           jsonSchema: z.toJSONSchema(batchSchema) as Record<string, unknown>,
-          userPayload: { guidelines: snapshot.guidelines, caseEvidence: compactEvidenceIndex(caseEvidence), catalogs: { laboratory: { ...laboratory, items } } },
+          userPayload: { selectionContextHash, guidelines: snapshot.guidelines, caseEvidence: compactEvidenceIndex(caseEvidence), catalogs: { laboratory: { ...laboratory, items } } },
           validate: value => {
             const output = batchSchema.parse(value)
             if (new Set(output.selectedCatalogItemIds).size !== output.selectedCatalogItemIds.length) {
@@ -421,19 +439,21 @@ export class DoctorRecommendationsService {
       }
       if (batch.length > 0) batches.push(batch)
       if (batches.length > 8) throw new IncompleteRecommendationSelectionError('检验目录超过本轮自动读取总预算，系统未完成全部读取；现有草稿已保留。')
-      selected = []
+      execution.plan('catalog-selection', batches.map((items, index) => ({ batchId: String(index + 1), inputHash: recommendationRequestHash(requestFor(items)),
+        dependencies: execution.status().units.filter(unit => unit.stage === 'history-selection').map(({ stage, batchId }) => ({ stage, batchId })) })))
       for (let index = 0; index < batches.length; index += 2) {
         assertCurrent()
-        const results = await Promise.allSettled(batches.slice(index, index + 2).map(async items => {
+        const results = await Promise.allSettled(batches.slice(index, index + 2).map(async (items, offset) => {
           signal.throwIfAborted()
           this.#authorize(snapshot.context, caseId)
           const request = requestFor(items)
-          const result = await this.options.provider!.completeJson(request)
+          const result = await execution.run({ stage: 'catalog-selection', batchId: String(index + offset + 1), request }, value => {
+            request.validate!(value)
+            return catalogSelectionSchema.parse(value)
+          })
           signal.throwIfAborted()
           this.#authorize(snapshot.context, caseId)
-          const value: unknown = JSON.parse(result.content)
-          request.validate!(value)
-          return catalogSelectionSchema.parse(value)
+          return result
         }))
         assertCurrent()
         for (const result of results) {
@@ -444,8 +464,6 @@ export class DoctorRecommendationsService {
       }
       signal.throwIfAborted()
       this.#authorize(snapshot.context, caseId)
-      if (this.#catalogSelections.size >= 8) this.#catalogSelections.delete(this.#catalogSelections.keys().next().value!)
-      this.#catalogSelections.set(key, selected)
     }
     return { catalogs: { ...catalogs, laboratory: { ...laboratory, items: laboratory.items.filter(item => selected.includes(item.id)) } },
       selection: { reviewedCatalogItemIds: laboratory.items.map(item => item.id), selectedCatalogItemIds: selected } }
@@ -455,11 +473,31 @@ export class DoctorRecommendationsService {
     return [context.workspaceId, context.epoch, context.actorId, canonicalJsonHash(context), caseId, kind] as const
   }
 
+  #executionIdentity(context: ActorContext, caseId: string, kind: DoctorRecommendationKind, generation: number) {
+    return { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId,
+      contextKey: canonicalJsonHash(context), caseId, kind, generation }
+  }
+
   #row(context: ActorContext, caseId: string, kind: DoctorRecommendationKind) {
-    return stateRowSchema.optional().parse(this.options.database.driver.prepare(`
-      SELECT generation, input_fingerprint, state_json, status FROM doctor_recommendation_state
+    const row = stateRowSchema.optional().parse(this.options.database.driver.prepare(`
+      SELECT generation, input_fingerprint, state_json, status, input_json, actor_context_json FROM doctor_recommendation_state
       WHERE workspace_id = ? AND epoch = ? AND actor_id = ? AND context_key = ? AND case_id = ? AND kind = ?
     `).get(...this.#key(context, caseId, kind)))
+    if (row === undefined) return undefined
+    const state = doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
+    const untrackedOutcome = state.errorCode === 'MODEL_OUTCOME_UNKNOWN' && state.recovery === undefined
+    const legacy = legacyRecommendationInput(row.input_json, row.input_fingerprint)
+    if (legacy === undefined || legacy.fingerprint === row.input_fingerprint) return { ...row, untrackedOutcome }
+    if (state.generation !== row.generation || state.inputFingerprint !== row.input_fingerprint
+      || state.caseId !== caseId || state.kind !== kind || state.encounterId !== legacy.input.encounter.id
+      || legacy.input.kind !== kind || canonicalJsonHash(legacy.input.context) !== canonicalJsonHash(context)) return { ...row, untrackedOutcome }
+    // Old pending tasks cannot prove which external requests already ran.
+    const compatible = { ...state, inputFingerprint: legacy.fingerprint,
+      ...(row.status === 'pending' ? { status: 'failed' as const, errorCode: 'MODEL_OUTCOME_UNKNOWN' as const,
+        missingInformation: ['升级前任务没有完整执行记录，结果未知；请明确重新生成。'] } : {}),
+    }
+    return { ...row, untrackedOutcome: untrackedOutcome || row.status === 'pending',
+      input_fingerprint: legacy.fingerprint, status: compatible.status, state_json: JSON.stringify(compatible) }
   }
 
   #withAvailableGuidelines(state: DoctorRecommendationState, guidelines: GuidelineEvidence[]): DoctorRecommendationState {
@@ -475,7 +513,9 @@ export class DoctorRecommendationsService {
     const row = this.#row(context, caseId, kind)
     if (row !== undefined) {
       const state = doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
+      const execution = readDoctorRecommendationExecution(this.options.database, this.#executionIdentity(context, caseId, kind, row.generation))
       return this.#withAvailableGuidelines({ ...state, inputFingerprint, encounterVersion: snapshot.encounter.versionId,
+        ...(execution === undefined ? {} : { recovery: { ...execution.status, canContinue: execution.status.canContinue && row.input_fingerprint === inputFingerprint } }),
         stale: row.input_fingerprint !== inputFingerprint }, snapshot.guidelines)
     }
     return doctorRecommendationStateSchema.parse({
@@ -500,11 +540,45 @@ export class DoctorRecommendationsService {
       if (request.input.expectedInputFingerprint !== inputFingerprint) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed; read the current state')
       }
-      if (canonicalJsonHash(this.#snapshot(context, caseId, kind, snapshot.catalogs)) !== inputFingerprint) {
+      if (recommendationInputFingerprint(this.#snapshot(context, caseId, kind, snapshot.catalogs)) !== inputFingerprint) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed before queuing')
       }
       const previous = this.#row(context, caseId, kind)
-      if (!request.input.refresh && previous?.input_fingerprint === inputFingerprint && previous.status !== 'failed') {
+      if (!request.input.refresh && request.input.continueGeneration === undefined && previous?.untrackedOutcome) {
+        return { data: { ...doctorRecommendationStateSchema.parse(JSON.parse(previous.state_json)), inputFingerprint,
+          encounterVersion: snapshot.encounter.versionId, stale: previous.input_fingerprint !== inputFingerprint }, effects: [] }
+      }
+      if (request.input.continueGeneration !== undefined) {
+        if (previous === undefined || previous.generation !== request.input.continueGeneration || previous.input_fingerprint !== inputFingerprint
+          || this.options.provider === undefined || this.options.model === undefined) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The original recommendation task is no longer available')
+        }
+        const identity = this.#executionIdentity(context, caseId, kind, previous.generation)
+        const stored = readDoctorRecommendationExecution(this.options.database, identity)
+        if (stored === undefined || stored.inputFingerprint !== inputFingerprint || !stored.status.canContinue) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The original recommendation task cannot continue')
+        }
+        const execution = new DoctorRecommendationExecution({ database: this.options.database, identity,
+          inputFingerprint, model: stored.model, policyVersion: stored.policyVersion, provider: this.options.provider,
+          assertCurrent: () => {
+            this.#authorize(context, caseId)
+            if (this.#row(context, caseId, kind)?.generation !== previous.generation
+              || recommendationInputFingerprint(this.#snapshot(context, caseId, kind, snapshot.catalogs)) !== inputFingerprint) {
+              throw new WorkflowError('WORKFLOW_CONFLICT', 'The original recommendation task changed')
+            }
+          },
+        })
+        execution.continue(canonicalJsonHash({ actorId: context.actorId, idempotencyKey }))
+        const { errorCode: _errorCode, ...original } = doctorRecommendationStateSchema.parse(JSON.parse(previous.state_json))
+        const state: DoctorRecommendationState = { ...original, status: 'pending', missingInformation: [], notices: [], recovery: execution.status() }
+        this.options.database.driver.prepare(`UPDATE doctor_recommendation_state SET state_json = ?, status = 'pending', updated_at = ?
+          WHERE workspace_id = ? AND epoch = ? AND actor_id = ? AND context_key = ? AND case_id = ? AND kind = ? AND generation = ?
+        `).run(JSON.stringify(state), new Date().toISOString(), ...this.#key(context, caseId, kind), previous.generation)
+        transaction.enqueue({ kind: 'doctor.generate-recommendations', dedupKey: `doctor-recommendations:continue:${canonicalJsonHash({ identity, idempotencyKey })}`,
+          payload: { actorId: context.actorId, contextKey: identity.contextKey, caseId, kind, generation: previous.generation } })
+        return { data: state, effects: [{ kind: 'updated', reference: `DoctorRecommendations/${caseId}:${kind}`, versionId: String(previous.generation) }] }
+      }
+      if (!request.input.refresh && previous?.input_fingerprint === inputFingerprint) {
         return { data: doctorRecommendationStateSchema.parse(JSON.parse(previous.state_json)), effects: [] }
       }
       const generation = (previous?.generation ?? 0) + 1
@@ -554,7 +628,7 @@ export class DoctorRecommendationsService {
         state = row === undefined ? undefined : doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
         if (state?.status !== 'ready' || state.generation !== request.input.generation
           || row?.input_fingerprint !== request.input.inputFingerprint
-          || canonicalJsonHash(this.#snapshot(context, caseId, kind, offerings)) !== request.input.inputFingerprint) {
+          || recommendationInputFingerprint(this.#snapshot(context, caseId, kind, offerings)) !== request.input.inputFingerprint) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The prepared items no longer match current clinical information; update them before confirming')
         }
       }
@@ -675,34 +749,41 @@ export class DoctorRecommendationsService {
     })
   }
 
-  async process(event: OutboxHandlerInput, signal: AbortSignal, shutdownSignal: AbortSignal): Promise<OutboxHandlerResult> {
+  async process(event: OutboxHandlerInput, callerSignal: AbortSignal, shutdownSignal: AbortSignal): Promise<OutboxHandlerResult> {
     const payload = z.object({ actorId: z.string(), contextKey: z.string(), caseId: z.string(),
       kind: doctorRecommendationKindSchema, generation: z.number().int().positive() }).strict().parse(event.payload)
-    const row = stateRowSchema.extend({ actor_context_json: z.string() }).optional().parse(
-      this.options.database.driver.prepare(`SELECT generation, input_fingerprint, state_json, status, actor_context_json
-        FROM doctor_recommendation_state WHERE workspace_id = ? AND epoch = ? AND actor_id = ?
-        AND context_key = ? AND case_id = ? AND kind = ?
-      `).get(event.workspaceId, event.epoch, payload.actorId, payload.contextKey, payload.caseId, payload.kind),
-    )
+    const raw = z.object({ actor_context_json: z.string() }).optional().parse(this.options.database.driver.prepare(`
+      SELECT actor_context_json FROM doctor_recommendation_state WHERE workspace_id = ? AND epoch = ?
+      AND actor_id = ? AND context_key = ? AND case_id = ? AND kind = ?
+    `).get(event.workspaceId, event.epoch, payload.actorId, payload.contextKey, payload.caseId, payload.kind))
+    if (raw === undefined) return { status: 'completed' }
+    const context = actorContextSchema.parse(JSON.parse(raw.actor_context_json))
+    const row = this.#row(context, payload.caseId, payload.kind)
     if (row === undefined || row.generation !== payload.generation || row.status !== 'pending') return { status: 'completed' }
-    const context = actorContextSchema.parse(JSON.parse(row.actor_context_json))
     if (context.workspaceId !== event.workspaceId || context.epoch !== event.epoch || context.actorId !== payload.actorId
       || context.scenarioRunId !== event.scenarioRunId || canonicalJsonHash(context) !== payload.contextKey) {
       throw new Error('Recommendation context does not match the durable event')
     }
     const pending = doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
+    const controller = new AbortController()
+    const signal = AbortSignal.any([callerSignal, controller.signal])
+    const activeKey = JSON.stringify(this.#key(context, payload.caseId, payload.kind))
+    let checkInput = () => { this.#authorize(context, payload.caseId) }
     let base = pending
     const notices: DoctorRecommendationNotice[] = []
     let phase: 'selection' | 'generation' | 'verification' = 'generation'
     let historySelection: HistorySelection | undefined
     let catalogSelection: CatalogSelection | undefined
+    let execution: DoctorRecommendationExecution | undefined
     const current = () => this.#row(context, payload.caseId, payload.kind)?.generation === payload.generation
     const assertCurrent = () => {
       signal.throwIfAborted()
       if (!current()) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation generation changed during selection')
+      checkInput()
     }
+    this.#active.set(activeKey, { controller, check: assertCurrent })
     const finish = (result: DoctorRecommendationState, offerings?: DoctorInvestigationRecommendationCatalogs) => {
-      const state = { ...result, notices: result.notices ?? [...notices,
+      const state = { ...result, ...(execution === undefined ? {} : { recovery: execution.status() }), notices: result.notices ?? [...notices,
         ...result.missingInformation.filter(message => !notices.some(notice => notice.message === message))
           .map(message => ({ category: 'processing' as const, message })),
       ].slice(0, 12) }
@@ -712,7 +793,7 @@ export class DoctorRecommendationsService {
         dataSchema: doctorRecommendationStateSchema,
       }, () => {
         if (!current()) return { data: state, effects: [] }
-        if (offerings !== undefined && canonicalJsonHash(this.#snapshot(context, payload.caseId, payload.kind, offerings)) !== row.input_fingerprint) {
+        if (offerings !== undefined && recommendationInputFingerprint(this.#snapshot(context, payload.caseId, payload.kind, offerings)) !== row.input_fingerprint) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed before completion')
         }
         const selections = { ...(historySelection === undefined ? {} : { historySelection }),
@@ -729,6 +810,12 @@ export class DoctorRecommendationsService {
     try {
       const { snapshot, inputFingerprint } = await this.#input(context, payload.caseId, payload.kind)
       if (row.input_fingerprint !== inputFingerprint) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed')
+      checkInput = () => {
+        this.#authorize(context, payload.caseId)
+        if (recommendationInputFingerprint(this.#snapshot(context, payload.caseId, payload.kind, snapshot.catalogs)) !== row.input_fingerprint) {
+          throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation clinical input changed')
+        }
+      }
       base = { ...pending, guidelines: snapshot.guidelines, caseEvidence: snapshot.caseEvidence.length <= 100 ? snapshot.caseEvidence : [] }
       const available = snapshot.catalogs.diagnoses === undefined ? snapshot.catalogs.medications?.length
         ?? snapshot.catalogs.laboratory?.items.length ?? snapshot.catalogs.imaging?.items.filter(item => item.available).length
@@ -750,9 +837,13 @@ export class DoctorRecommendationsService {
         finish({ ...base, status: 'failed', errorCode: 'MODEL_UNAVAILABLE' })
         return { status: 'completed' }
       }
-      const model = await this.options.models.bind(context.workspaceId,
+      const identity = this.#executionIdentity(context, payload.caseId, payload.kind, payload.generation)
+      const stored = readDoctorRecommendationExecution(this.options.database, identity)
+      const model = stored?.model ?? await this.options.models.bind(context.workspaceId,
         `recommendations:${context.epoch}:${payload.contextKey}:${payload.caseId}:${payload.kind}:${payload.generation}`, this.options.model, signal)
-      if (canonicalJsonHash(this.#snapshot(context, payload.caseId, payload.kind, snapshot.catalogs)) !== row.input_fingerprint) {
+      execution = new DoctorRecommendationExecution({ database: this.options.database, identity,
+        inputFingerprint, model, policyVersion: 'recommendation-stages-v1', provider: this.options.provider, assertCurrent })
+      if (recommendationInputFingerprint(this.#snapshot(context, payload.caseId, payload.kind, snapshot.catalogs)) !== row.input_fingerprint) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed during model selection')
       }
       const parseGeneration = (value: unknown) => {
@@ -794,7 +885,7 @@ export class DoctorRecommendationsService {
         }
       }
       phase = 'selection'
-      const assembled = await this.#selectCaseEvidence(snapshot, payload.caseId, model, signal, historyFits, assertCurrent)
+      const assembled = await this.#selectCaseEvidence(snapshot, payload.caseId, model, signal, historyFits, assertCurrent, execution)
       historySelection = assembled.selection
       if (assembled.droppedHistoryRecords !== undefined) {
         notices.push({ category: 'processing', message: `已选既往记录超过本轮生成请求容量，${assembled.droppedHistoryRecords} 条未纳入本次建议；完整记录仍保留在病例资料中。` })
@@ -804,7 +895,7 @@ export class DoctorRecommendationsService {
       // 目录筛选始终执行：瘦身后全量目录虽能装进生成请求，但 reviewed/selected 审计与
       // “生成只能使用已筛选目录项”的限制仍由筛选阶段提供；瘦身的收益是批次数量受控。
       if (payload.kind === 'laboratory' && catalogs.laboratory !== undefined && catalogs.laboratory.items.length > 0) {
-        const selected = await this.#selectLaboratoryCatalog(snapshot, payload.caseId, model, signal, assembled.evidence, assertCurrent)
+        const selected = await this.#selectLaboratoryCatalog(snapshot, payload.caseId, model, signal, assembled.evidence, assertCurrent, execution)
         catalogs = selected.catalogs
         catalogSelection = selected.selection
         if (catalogSelection.selectedCatalogItemIds.length === 0) {
@@ -816,14 +907,16 @@ export class DoctorRecommendationsService {
       phase = 'generation'
       assertCurrent()
       this.#authorize(context, payload.caseId)
-      if (canonicalJsonHash(this.#snapshot(context, payload.caseId, payload.kind, snapshot.catalogs)) !== row.input_fingerprint) {
+      if (recommendationInputFingerprint(this.#snapshot(context, payload.caseId, payload.kind, snapshot.catalogs)) !== row.input_fingerprint) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed before generation')
       }
       const generationRequest = requestFor(assembled.evidence)
       assertRecommendationRequestBudget(generationRequest)
-      const result = await this.options.provider.completeJson(generationRequest)
+      execution.plan('generation', [{ batchId: '1', inputHash: recommendationRequestHash(generationRequest),
+        dependencies: execution.status().units.filter(unit => unit.stage === 'history-selection' || unit.stage === 'catalog-selection')
+          .map(({ stage, batchId }) => ({ stage, batchId })) }])
+      const output = await execution.run({ stage: 'generation', batchId: '1', request: generationRequest }, parseGeneration)
       signal.throwIfAborted()
-      const output = parseGeneration(JSON.parse(result.content))
       if (!current() || this.options.contextStatus(context) === 'superseded') return { status: 'completed' }
       this.#authorize(context, payload.caseId)
       const candidates = output.items.flatMap<DoctorRecommendationSuggestion>(item => {
@@ -894,16 +987,18 @@ export class DoctorRecommendationsService {
           batch.push(candidate)
         }
         if (batch.length > 0) batches.push(batch)
+        execution.plan('verification', batches.map((group, index) => ({ batchId: String(index + 1), inputHash: recommendationRequestHash(requestForVerification(group)),
+          dependencies: [{ stage: 'generation', batchId: '1' }] })))
         for (let index = 0; index < batches.length; index += 2) {
-          const results = await Promise.allSettled(batches.slice(index, index + 2).map(async group => {
+          const results = await Promise.allSettled(batches.slice(index, index + 2).map(async (group, offset) => {
             signal.throwIfAborted()
             this.#authorize(context, payload.caseId)
             if (!current()) throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation generation changed before verification')
             const request = requestForVerification(group)
-            const result = await this.options.provider!.completeJson(request)
+            const result = await execution!.run({ stage: 'verification', batchId: String(index + offset + 1), request }, value => parseVerification(value, group))
             signal.throwIfAborted()
             this.#authorize(context, payload.caseId)
-            return parseVerification(JSON.parse(result.content), group)
+            return result
           }))
           for (const result of results) {
             if (result.status === 'rejected') throw result.reason
@@ -963,9 +1058,29 @@ export class DoctorRecommendationsService {
       finish({ ...base, items, considerations, notices, status: items.length + considerations.length === 0 ? 'missing-evidence' : 'ready',
         missingInformation: notices.map(notice => notice.message).slice(0, 12) }, latest.snapshot.catalogs)
       return { status: 'completed' }
-    } catch (error) {
+    } catch (caught) {
       if (!current() || this.options.contextStatus(context) === 'superseded') return { status: 'completed' }
-      if (shutdownSignal.aborted && event.attempt < 3) return { status: 'retryable-failed' }
+      let error: unknown = controller.signal.reason instanceof WorkflowError ? controller.signal.reason : caught
+      if (!(error instanceof WorkflowError) && execution?.status().status === 'exhausted') {
+        error = new DoctorRecommendationExecutionError('exhausted', { cause: error })
+      }
+      if (error instanceof DoctorRecommendationExecutionError && error.kind === 'failed'
+        && error.cause instanceof ChatCompletionsError) error = error.cause
+      if (error instanceof DoctorRecommendationExecutionError) {
+        const unknown = error.kind === 'unknown', exhausted = error.kind === 'exhausted'
+        finish({ ...pending, status: 'failed', items: [],
+          errorCode: unknown ? 'MODEL_OUTCOME_UNKNOWN' : exhausted ? 'MODEL_REQUEST_LIMIT' : 'MODEL_UNAVAILABLE',
+          missingInformation: [unknown ? '上次模型请求结果未知，自动处理已停止；已成功步骤保留，可明确继续原任务。'
+            : exhausted ? '本次任务的模型请求次数已用完，已成功步骤保留；需要重新生成才能建立新任务。'
+              : '本次模型请求未完成，已成功步骤保留；可检查模型设置后继续原任务。'],
+        })
+        return { status: 'completed' }
+      }
+      if (shutdownSignal.aborted) {
+        finish({ ...pending, status: 'failed', errorCode: 'MODEL_OUTCOME_UNKNOWN',
+          missingInformation: ['任务在服务关闭时中断，结果未知；自动处理已停止。'] })
+        return { status: 'completed' }
+      }
       if (error instanceof IncompleteRecommendationSelectionError) {
         finish({ ...base, status: 'missing-evidence', items: [], missingInformation: [error.message] })
         return { status: 'completed' }
@@ -978,14 +1093,14 @@ export class DoctorRecommendationsService {
         return { status: 'completed' }
       }
       const rateLimited = error instanceof ChatCompletionsError && error.code === 'AI_REQUEST_FAILED' && error.httpStatus === 429
-      const retrying = error instanceof ChatCompletionsError && error.code === 'AI_REQUEST_FAILED' && !rateLimited
-        && event.attempt < 3 && this.options.contextStatus(context) === 'active'
-      if (!retrying) finish({ ...pending, status: 'failed',
+      finish({ ...pending, status: 'failed',
         ...(rateLimited ? { missingInformation: ['当前模型服务限流，有限重试后仍未恢复；现有草稿已保留，请稍后刷新建议。'] } : {}), errorCode:
         error instanceof WorkflowError ? 'WORKFLOW_CONFLICT' : signal.aborted || (error instanceof ChatCompletionsError && error.code === 'AI_TIMEOUT') ? 'MODEL_TIMEOUT'
         : error instanceof ChatCompletionsError && error.code === 'AI_AUTH_FAILED' ? 'MODEL_AUTH_FAILED'
         : error instanceof z.ZodError || error instanceof SyntaxError || (error instanceof ChatCompletionsError && error.code === 'AI_RESPONSE_INVALID') ? 'AI_RESPONSE_INVALID' : 'MODEL_UNAVAILABLE' })
-      return { status: retrying ? 'retryable-failed' : 'completed' }
+      return { status: 'completed' }
+    } finally {
+      if (this.#active.get(activeKey)?.controller === controller) this.#active.delete(activeKey)
     }
   }
 }

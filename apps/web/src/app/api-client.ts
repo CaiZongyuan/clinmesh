@@ -213,6 +213,8 @@ export class ApiClientError extends Error {
   readonly code: string
   readonly conflict: ApiConflict | undefined
   readonly correlationId: string | undefined
+  /** 服务端机器可读的拒绝成因（如处方开具拦截的具体原因）；多数错误不携带。 */
+  readonly reason: string | undefined
   readonly status: number
 
   constructor(
@@ -221,12 +223,14 @@ export class ApiClientError extends Error {
     message: string,
     conflict?: ApiConflict,
     correlationId?: string,
+    reason?: string,
   ) {
     super(message)
     this.name = 'ApiClientError'
     this.code = code
     this.conflict = conflict
     this.correlationId = correlationId
+    this.reason = reason
     this.status = status
   }
 }
@@ -308,6 +312,7 @@ async function parseResponse<Schema extends z.ZodType>(
       parsed.success ? parsed.data.error.message : `Request failed with status ${response.status}`,
       parsed.success ? parsed.data.error.conflict : undefined,
       parsed.success ? parsed.data.error.correlationId ?? correlationId : correlationId,
+      parsed.success ? parsed.data.error.reason : undefined,
     )
   }
   const parsed = schema.safeParse(body)
@@ -1279,12 +1284,13 @@ export function getDoctorRecommendations(caseId: string, kind: DoctorRecommendat
   return apiGet(`/api/his/v1/doctor/cases/${encodeURIComponent(caseId)}/recommendations/${kind}`, doctorRecommendationStateSchema, signal)
 }
 
-export async function generateDoctorRecommendations(state: DoctorRecommendationState, refresh: boolean) {
+export async function generateDoctorRecommendations(state: DoctorRecommendationState, refresh: boolean, continueOriginal = false) {
   const response = await apiMutation(
     `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/actions/generate`,
     generateDoctorRecommendationsResponseSchema,
     { expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
-      input: { expectedInputFingerprint: state.inputFingerprint, refresh } },
+      input: { expectedInputFingerprint: state.inputFingerprint, refresh,
+        ...(continueOriginal ? { continueGeneration: state.generation } : {}) } },
     { idempotencyKey: newIdempotencyKey() },
   )
   return response.data

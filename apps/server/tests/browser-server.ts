@@ -37,7 +37,7 @@ export async function startBrowserServer(webRoot: string, options: Partial<Pick<
     const password = `Synthetic-${randomUUID()}-Aa1!`
     runtime = await createClinMeshRuntime({
       ...options,
-      ...(options.chatCompletionsProvider === undefined ? {} : { chatCompletionsProvider: recordingFixtureProvider(options.chatCompletionsProvider, undefined, options.qualityCompletions) }),
+      ...(options.chatCompletionsProvider === undefined ? {} : { chatCompletionsProvider: recordingFixtureProvider(options.chatCompletionsProvider, options.qualityCompletions) }),
       authBaseUrl: origin,
       authSecret: randomUUID() + randomUUID(),
       cursorSecret: randomUUID() + randomUUID(),

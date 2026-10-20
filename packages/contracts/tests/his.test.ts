@@ -66,8 +66,11 @@ describe('HIS contracts', () => {
     const legacy = { assessment: '继续评估。', chiefComplaint: '头晕一周。', disposition: '门诊随访。',
       followUp: '加重时就诊。', historyOfPresentIllness: '站立时头晕。', physicalExamination: '神志清楚。' }
     expect(clinicalDocumentContentSchema.parse(legacy)).toEqual(legacy)
+    expect(clinicalDocumentContentSchema.parse({ ...legacy, familyHistory: '  ', allergyHistory: '' }))
+      .toEqual({ ...legacy, familyHistory: '', allergyHistory: '' })
+    expect(clinicalDocumentDraftContentSchema.parse({ ...legacy, familyHistory: '  ', allergyHistory: '' }))
+      .toEqual({ ...legacy, familyHistory: '  ', allergyHistory: '' })
     for (const schema of [clinicalDocumentContentSchema, clinicalDocumentDraftContentSchema]) {
-      expect(schema.parse({ ...legacy, familyHistory: '  ', allergyHistory: '' })).toEqual({ ...legacy, familyHistory: '', allergyHistory: '' })
       expect(schema.parse({ ...legacy, familyHistory: '父亲患高血压。', allergyHistory: '青霉素过敏。' })).toMatchObject({
         familyHistory: '父亲患高血压。', allergyHistory: '青霉素过敏。',
       })
