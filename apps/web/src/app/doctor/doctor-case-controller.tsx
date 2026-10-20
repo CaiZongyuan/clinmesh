@@ -527,6 +527,7 @@ function DoctorCaseController({
       )
       || query.state.data?.imagingRequests?.requests.some(isAwaitingResult) === true
       || query.state.data?.pathologyRequests?.requests.some(isAwaitingResult) === true
+      || query.state.data?.consultation?.replyAttempt?.status === 'executing'
       || (query.state.data?.consultationRecording !== undefined && query.state.data.encounter.status === 'in-progress'
         && (recordingNotificationCase !== activeCaseId || query.state.status === 'error'))
       ? 1_500

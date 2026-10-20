@@ -319,7 +319,7 @@ describe('doctor pathology consultation page', () => {
       draft: { purpose: '保存的会诊目的', service, sourceProcedure: lumpectomy }, draftVersion: 2, requests: [],
     }} />)
     await user.click(await screen.findByRole('button', { name: /^开具选中项目/ }))
-    expect(await screen.findByText('更新或提交未完成，草稿已保留，可重试。')).toBeTruthy()
+    expect(await screen.findByText('更新或提交未完成，草稿已保留。')).toBeTruthy()
     expect((await screen.findByLabelText('会诊目的') as HTMLTextAreaElement).value).toBe('保存的会诊目的')
     expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('乳房肿块切除术 · 2022-04-01')
     expect(screen.getByRole('searchbox', { name: '搜索病理目录' })).toBeTruthy()

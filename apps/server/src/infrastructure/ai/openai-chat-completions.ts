@@ -54,7 +54,23 @@ export class StructuredOutputValidationError extends Error {
   }
 }
 
+/** Control failures must never become provider retry or format-repair failures. */
+export class ChatCompletionRequestControlError extends Error {
+  constructor(cause: unknown) {
+    super('The model request was stopped by its execution control', { cause })
+    this.name = 'ChatCompletionRequestControlError'
+  }
+}
+
+export function invokeChatCompletionRequestControl(hook: (() => void) | undefined): void {
+  try { hook?.() } catch (cause) { throw new ChatCompletionRequestControlError(cause) }
+}
+
 export interface JsonChatCompletionInput {
+  /** Synchronous, atomic reservation immediately before each actual completion fetch. */
+  onBeforeRequest?: () => void
+  /** A complete transport outcome arrived; headers alone do not establish this. */
+  onRequestComplete?: () => void
   maxAttempts?: 1 | 2
   /** Serialized request limit, including schema and every format-repair prompt. */
   maxInputBytes?: number
@@ -76,6 +92,8 @@ export interface JsonChatCompletionResult {
 }
 
 export interface JsonChatCompletionsProvider {
+  /** True only when every real completion fetch invokes the request lifecycle hooks. */
+  readonly supportsRequestControl?: boolean
   resolveModel?(model: string, signal?: AbortSignal): Promise<string>
   completeJson(input: JsonChatCompletionInput): Promise<JsonChatCompletionResult>
 }
@@ -123,6 +141,7 @@ function singleJsonCodeBlock(value: string): string | undefined {
 }
 
 export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider {
+  readonly supportsRequestControl = true
   readonly #apiKey: string
   readonly #endpoint: URL
   readonly #fetch: typeof fetch
@@ -191,6 +210,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           'The AI request exceeds the configured size limit',
         )
       }
+      invokeChatCompletionRequestControl(input.onBeforeRequest)
       try {
         const response = await this.#fetch(this.#endpoint, {
           body,
@@ -220,15 +240,16 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
     try {
       const parseResponse = async (value: Response) => {
         if (!value.ok) {
+          invokeChatCompletionRequestControl(input.onRequestComplete)
           throw new ChatCompletionsError(
             'AI_REQUEST_FAILED',
             `The AI provider returned HTTP ${value.status}`,
             { httpStatus: value.status },
           )
         }
-        return providerResponseSchema.parse(JSON.parse(
-          await readBoundedResponse(value, this.#maxResponseBytes),
-        ))
+        const content = await readBoundedResponse(value, this.#maxResponseBytes)
+        invokeChatCompletionRequestControl(input.onRequestComplete)
+        return providerResponseSchema.parse(JSON.parse(content))
       }
       const structuredJsonContent = (path: string, parsed: z.infer<typeof providerResponseSchema>) => {
         const message = parsed.choices[0]!.message
@@ -271,6 +292,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           this.#jsonSchemaRejectedModels.add(input.model)
           console.warn(`[ai-chat-completions] model ${input.model} rejected the JSON-schema request with HTTP 400; skipping it for future calls`)
           await response.body?.cancel()
+          invokeChatCompletionRequestControl(input.onRequestComplete)
         } else {
           parsed = await parseResponse(response)
           contentPath = 'JSON-schema request'
@@ -322,6 +344,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
         model: parsed.model ?? input.model,
       }
     } catch (error) {
+      if (error instanceof ChatCompletionRequestControlError) throw error
       if (error instanceof ChatCompletionsError) throw error
       throw new ChatCompletionsError(
         'AI_RESPONSE_INVALID',

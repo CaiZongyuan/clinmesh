@@ -30,6 +30,34 @@ it('keeps laboratory failure recovery instructions aligned with the command cata
   expect(getHisOperation('laboratory-request.cancel').summary).toContain('generation-failed')
 })
 
+it('keeps consultation recovery examples aligned with durable attempt semantics', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  const reference = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8')
+  for (const [path, id] of [['ask', 'encounter.consultation.ask'], ['retry-reply', 'encounter.consultation.reply.retry']] as const) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh encounter consultation ${path} `))!
+    const operation = getHisOperation(id)
+    expect(inspectExample(program, line).operation?.id).toBe(id)
+    expect(operation.version).toBe(4)
+    expect(operation.summary).toContain('deadline')
+    expect(operation.summary).toContain('failed or unknown')
+    expect(operation.summary).toContain('without new inference')
+    for (const code of ['CONSULTATION_CASE_NOT_FOUND', 'CONSULTATION_PERSONA_OUTDATED']) {
+      expect(operation.summary).toContain(code)
+      expect(skill).toContain(code)
+    }
+    expect(operation.input.safeParse({ encounterId: 'synthetic', arbitraryPayload: {} }).success).toBe(false)
+  }
+  expect(getHisOperation('doctor.case.get').version).toBe(13)
+  expect(getHisOperation('doctor.case.get').summary).toContain('consultation.replyAttempt')
+  expect(skill).toContain('consultation.replyAttempt')
+  expect(skill).toContain('same ask/retry key')
+  expect(reference).toContain('original `deadlineAt` and model')
+  expect(reference).toContain('restart does not automatically answer')
+  expect(reference).toContain('Never resend the doctor message as a new intent')
+  expect(reference).toContain('no published recommendation CLI command')
+})
+
 it('keeps signing review and cancellation examples aligned with the narrow operation contracts', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
@@ -171,7 +199,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     const document = { assessment: '继续评估。', chiefComplaint: '头晕一周。', disposition: '门诊随访。',
       followUp: '加重时就诊。', historyOfPresentIllness: '站立时头晕。', physicalExamination: '神志清楚。' }
     for (const [prefix, version, input] of [
-      ['clinmesh encounter clinical-document draft set', 4, { encounterId: 'synthetic', encounterVersion: '1', expectedDraftVersion: 0 }],
+      ['clinmesh encounter clinical-document draft set', 5, { encounterId: 'synthetic', encounterVersion: '1', expectedDraftVersion: 0 }],
       ['clinmesh clinical-document revise', 2, { compositionId: 'synthetic', compositionVersion: '1', encounterId: 'synthetic', encounterVersion: '1', reason: '补充病史。' }],
     ] as const) {
       const line = commandLines(skill).find(line => line.startsWith(prefix))!
@@ -202,7 +230,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.summary).toContain('WORKFLOW_CONFLICT')
     expect(operation.summary).toContain('retired semantic checks cannot be retried')
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(11)
+    expect(read.version).toBe(13)
     expect(read.summary).toContain('sourceResults')
     expect(read.summary).toContain('legacy verification counts are zero and issues empty')
     expect(skill).toContain('Retry actual recording failures')
@@ -221,8 +249,10 @@ describe('ClinMesh CLI Agent Skills', () => {
   it('keeps the doctor draft example compatible with incomplete content and the versioned Catalog', async () => {
     const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
     const operation = getHisOperation('encounter.clinical-document.draft.set')
-    expect(operation.version).toBe(4)
+    expect(operation.version).toBe(5)
     expect(skill).toContain('empty fields')
+    expect(skill).toContain('including whitespace and punctuation')
+    expect(operation.summary).toContain('whitespace is preserved exactly')
     expect(skill).toContain('consultationRecording')
     expect(skill).toContain('hasSavedDraft')
     expect(getHisOperation('doctor.case.get').summary).toContain('hasSavedDraft')
@@ -230,10 +260,11 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(getHisOperation('doctor.case.get').summary).toContain('failures')
     const line = commandLines(skill).find(line => line.startsWith('clinmesh encounter clinical-document draft set'))!
     expect(inspectExample(createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } }), line).operation?.id).toBe(operation.id)
-    expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 0,
-      document: { chiefComplaint: '头晕一周', historyOfPresentIllness: '', physicalExamination: '',
+    const parsed = operation.input.parse({ encounterId: 'synthetic-encounter', encounterVersion: '3', expectedDraftVersion: 0,
+      document: { chiefComplaint: ' 头晕一周 ', historyOfPresentIllness: '', physicalExamination: '',
         assessment: '', disposition: '', followUp: '' },
-    }).success).toBe(true)
+    })
+    expect(parsed).toMatchObject({ document: { chiefComplaint: ' 头晕一周 ' } })
   })
   it('documents absent triage in the versioned doctor read contracts', async () => {
     const doctorSkill = await readFile(resolve(
@@ -241,7 +272,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 11 : 2)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 13 : 2)
       expect(operation.summary).toContain('presentation')
       const result = operation.output.safeParse(id === 'doctor.queue.list'
         ? { items: [{ presentation: null }] }

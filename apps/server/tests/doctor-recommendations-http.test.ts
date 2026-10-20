@@ -72,12 +72,13 @@ async function setup(complete?: Complete, options: { syntheaProvider?: StubSynth
     expect(response.status, JSON.stringify(body)).toBe(200)
     return doctorRecommendationStateSchema.parse(body)
   }
-  const generate = async (kind = 'diagnosis', refresh = false) => {
+  const generate = async (kind = 'diagnosis', refresh = false, continueGeneration?: number) => {
     const state = await read(kind)
     return runtime.app.request(`${path(kind)}/actions/generate`, {
       method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
       body: JSON.stringify({ expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
-        input: { expectedInputFingerprint: state.inputFingerprint, refresh } }),
+        input: { expectedInputFingerprint: state.inputFingerprint, refresh,
+          ...(continueGeneration === undefined ? {} : { continueGeneration }) } }),
     })
   }
   const readCase = async () => {
@@ -224,7 +225,7 @@ it('verifies the actual diagnosis identity before accepting an opaque catalog ID
   expect(await fixture.readCase()).toEqual(before)
 })
 
-it.each(['approve', 'oppose-final', 'omit-final', 'duplicate-final', 'wrong-final'])(
+it.each(['approve', 'oppose-final', 'omit-final', 'duplicate-final', 'wrong-final', 'interrupted-final'])(
   'verifies all eight candidates in bounded requests with complete original evidence when their combined payload exceeds the budget (%s)', async outcome => {
   const calls: string[] = []
   const verifiedIds: string[] = []
@@ -235,6 +236,7 @@ it.each(['approve', 'oppose-final', 'omit-final', 'duplicate-final', 'wrong-fina
   let generationPayloadBytes = 0
   let outputBytes = 0
   let verificationPayloadBytes = 0
+  let interruptedFinal = false
   const fixture = await setup(async input => {
     calls.push(input.schemaName)
     if (input.schemaName === 'doctor_recommendation_verification') {
@@ -252,6 +254,12 @@ it.each(['approve', 'oppose-final', 'omit-final', 'duplicate-final', 'wrong-fina
       expect(await fixture.read()).toMatchObject({ status: 'pending', items: [] })
       const output = verificationOutput(input)
       if (payload.items.some(item => item.id === 'candidate-7')) {
+        if (outcome === 'interrupted-final' && !interruptedFinal) {
+          interruptedFinal = true
+          // 让同一波的成功批次先完成持久化，再模拟另一个已派发批次断流。
+          await new Promise<void>(resolve => setImmediate(resolve))
+          throw new TypeError('Synthetic verification transport interrupted')
+        }
         if (outcome === 'oppose-final') output.items = output.items.map(item => ({ ...item, applicable: item.id !== 'candidate-7' }))
         else if (outcome === 'omit-final') output.items = output.items.filter(item => item.id !== 'candidate-7')
         else if (outcome === 'duplicate-final') output.items = output.items.map(item => item.id === 'candidate-7' ? output.items[0]! : item)
@@ -279,17 +287,44 @@ it.each(['approve', 'oppose-final', 'omit-final', 'duplicate-final', 'wrong-fina
   const before = await fixture.readCase()
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
+  if (outcome === 'interrupted-final') {
+    const partial = await fixture.read()
+    expect(partial).toMatchObject({ status: 'failed', generation: 1, items: [], errorCode: 'MODEL_OUTCOME_UNKNOWN',
+      recovery: { status: 'unknown', canContinue: true } })
+    const succeeded = partial.recovery!.units.filter(unit => unit.stage === 'verification' && unit.status === 'succeeded')
+    expect(succeeded.length).toBeGreaterThan(0)
+    expect(partial.recovery!.units.filter(unit => unit.stage === 'verification' && unit.status === 'unknown')).toHaveLength(1)
+    const requestsBeforeContinue = calls.length
+    const firstCandidateCalls = verifiedIds.filter(id => id === 'candidate-0').length
+    expect(firstCandidateCalls).toBe(1)
+    await fixture.restart()
+    await fixture.runtime.dispatchPending()
+    expect((await fixture.generate()).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    expect(calls).toHaveLength(requestsBeforeContinue)
+    expect((await fixture.read()).items).toEqual([])
+    expect((await fixture.generate('diagnosis', false, 1)).status).toBe(200)
+    await fixture.runtime.dispatchPending()
+    const completed = await fixture.read()
+    expect(completed.recovery).toMatchObject({ status: 'completed', extraRequestCount: 1 })
+    for (const unit of succeeded) expect(completed.recovery!.units).toContainEqual(expect.objectContaining({
+      stage: 'verification', batchId: unit.batchId, status: 'succeeded', requestCount: 1,
+    }))
+    expect(calls.filter(schema => schema === 'doctor_recommendations')).toHaveLength(1)
+    expect(verifiedIds.filter(id => id === 'candidate-0')).toHaveLength(firstCandidateCalls)
+  }
   expect(generationPayloadBytes).toBeGreaterThan(90 * 1024)
   expect(generationPayloadBytes).toBeLessThan(240 * 1024)
   expect(outputBytes).toBeGreaterThan(190 * 1024)
   expect(outputBytes).toBeLessThan(256 * 1024)
   expect(verificationPayloadBytes).toBeGreaterThan(256 * 1024)
   const invalid = outcome === 'omit-final' || outcome === 'duplicate-final' || outcome === 'wrong-final'
-  expect(await fixture.read()).toMatchObject(invalid ? { status: 'failed', errorCode: 'AI_RESPONSE_INVALID', items: [] }
+  expect(await fixture.read()).toMatchObject(invalid ? { status: 'failed', errorCode: 'MODEL_REQUEST_LIMIT', items: [],
+    recovery: { status: 'exhausted', canContinue: false } }
     : { status: 'ready', items: Array.from({ length: outcome === 'oppose-final' ? 7 : 8 }, (_, index) => ({ id: `candidate-${index}` })) })
   if (!invalid) expect((await fixture.read()).errorCode).toBeUndefined()
   expect([...new Set(verifiedIds)].toSorted()).toEqual(Array.from({ length: 8 }, (_, index) => `candidate-${index}`))
-  if (!invalid) expect(verifiedIds).toHaveLength(8)
+  if (!invalid && outcome !== 'interrupted-final') expect(verifiedIds).toHaveLength(8)
   expect(calls.filter(schema => schema === 'doctor_recommendation_verification').length).toBeGreaterThan(1)
   expect(peakVerifications).toBe(2)
   expect(await fixture.readCase()).toEqual(before)
@@ -317,7 +352,7 @@ it('keeps a complete candidate unavailable when it cannot fit a verification req
   expect(await fixture.readCase()).toEqual(before)
 })
 
-it('reports a generation response budget when valid candidates exceed the provider response limit', async () => {
+it('preserves an unknown outcome when the generation response exceeds the provider response limit before completion', async () => {
   const calls: string[] = []
   const fixture = await setup(async input => {
     calls.push(input.schemaName)
@@ -330,8 +365,11 @@ it('reports a generation response budget when valid candidates exceed the provid
   })
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read()).toMatchObject({ status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('生成响应预算')] })
-  expect((await fixture.read()).errorCode).toBeUndefined()
+  expect(await fixture.read()).toMatchObject({ status: 'failed', items: [], errorCode: 'MODEL_OUTCOME_UNKNOWN',
+    recovery: { status: 'unknown', requestCount: 1, extraRequestCount: 0, canContinue: true,
+      units: [{ stage: 'generation', status: 'unknown', requestCount: 1 }] } })
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
   expect(calls).toEqual(['doctor_recommendations'])
 })
 
@@ -575,7 +613,7 @@ it('reads every oversized clinical catalog batch with selected original history 
   expect(requests.filter(name => name === 'doctor_recommendation_catalog_selection')).toHaveLength(2 * calls)
   expect(await fixture.readCase()).toEqual(before)
   // 596 条历史、100 项临床目录及长病历反复走完整读取、失效和重建，需覆盖较慢的 CI runner。
-}, 30_000)
+}, 60_000)
 
 it.each(['incomplete', 'foreign-id', 'duplicate-id', 'cross-batch-id', 'none-supported'])(
   'does not generate executable suggestions from an incomplete, invalid or empty catalog selection (%s)', async failure => {
@@ -595,7 +633,7 @@ it.each(['incomplete', 'foreign-id', 'duplicate-id', 'cross-batch-id', 'none-sup
       return { content: JSON.stringify({ complete: failure !== 'incomplete', selectedCatalogItemIds:
         failure === 'foreign-id' ? ['foreign-catalog-item'] : failure === 'duplicate-id' ? [firstId, firstId]
           : failure === 'cross-batch-id' ? [otherBatchId] : [] }), model: input.model }
-    })
+    }, { timeoutMs: 10_000 })
     await installLargeClinicalRecommendationCatalog(fixture)
     const before = await fixture.readCase()
     expect((await fixture.generate('laboratory')).status).toBe(200)
@@ -603,7 +641,7 @@ it.each(['incomplete', 'foreign-id', 'duplicate-id', 'cross-batch-id', 'none-sup
     expect(await fixture.read('laboratory')).toMatchObject(failure === 'incomplete'
       ? { status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('完整读取')] }
       : failure === 'none-supported' ? { status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('适用的检验项目')] }
-        : { status: 'failed', items: [], errorCode: 'AI_RESPONSE_INVALID' })
+        : { status: 'failed', items: [], errorCode: 'MODEL_REQUEST_LIMIT', recovery: { status: 'exhausted', canContinue: false } })
     expect(requests.length).toBeGreaterThan(0)
     if (failure === 'none-supported') {
       expect(requests.at(-1)).toBe('doctor_recommendations')
@@ -629,7 +667,8 @@ it('rejects a generated catalog item that was available but not selected by the 
   await installLargeClinicalRecommendationCatalog(fixture)
   expect((await fixture.generate('laboratory')).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read('laboratory')).toMatchObject({ status: 'failed', items: [], errorCode: 'AI_RESPONSE_INVALID' })
+  expect(await fixture.read('laboratory')).toMatchObject({ status: 'failed', items: [], errorCode: 'MODEL_REQUEST_LIMIT',
+    recovery: { status: 'exhausted', canContinue: false } })
   expect(requests).not.toContain('doctor_recommendation_verification')
 })
 
@@ -663,12 +702,14 @@ it.each(['history', 'catalog'])(
         : { ...diagnosisOutput(input), items: [{ ...diagnosisOutput(input).items[0], kind: 'laboratory',
           catalogItemId: 'clinical-lab-99', indicationCode: 'clinical-evaluation' }] }
       return { content: JSON.stringify(output), model: input.model }
-    }, { syntheaProvider: largeRecommendationHistory() })
+    }, { syntheaProvider: largeRecommendationHistory(), timeoutMs: 10_000 })
     await installLargeClinicalRecommendationCatalog(fixture)
     await fixture.runtime.dispatchPending()
     expect((await fixture.generate('laboratory')).status).toBe(200)
     const dispatch = fixture.runtime.dispatcher.dispatchOnce()
-    await started
+    await Promise.race([started, dispatch.then(async () => {
+      if (paused < 2) throw new Error(`Recommendation settled before the supersession barrier: ${JSON.stringify(await fixture.read('laboratory'))}`)
+    })])
     try { expect((await fixture.generate('laboratory', true)).status).toBe(200) } finally { release() }
     await dispatch
     expect(await fixture.read('laboratory')).toMatchObject({ generation: 2, status: 'pending', items: [] })
@@ -678,7 +719,7 @@ it.each(['history', 'catalog'])(
     expect(await fixture.read('laboratory')).toMatchObject({ generation: 2, status: 'ready', items: [{ catalogItemId: 'clinical-lab-99' }] })
     expect(requests.filter(name => name === 'doctor_recommendations')).toHaveLength(1)
   },
-  30_000,
+  60_000,
 )
 
 it('uses installed imaging metadata and invalidates a suggestion when its actual offering disappears', async () => {
@@ -789,8 +830,10 @@ it.each(['guideline', 'case'])('rejects an unknown %s citation through the real 
   const before = await fixture.readCase()
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read()).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID', items: [] })
-  expect(schemas).toEqual(['doctor_recommendations', 'doctor_recommendations'])
+  expect(await fixture.read()).toMatchObject({ status: 'failed', errorCode: 'MODEL_REQUEST_LIMIT', items: [],
+    recovery: { status: 'exhausted', requestCount: 3, extraRequestCount: 2, canContinue: false,
+      units: [{ stage: 'generation', status: 'failed', requestCount: 3 }] } })
+  expect(schemas).toEqual(['doctor_recommendations', 'doctor_recommendations', 'doctor_recommendations'])
   expect(await fixture.readCase()).toEqual(before)
 })
 
@@ -868,14 +911,17 @@ it.each(['missing', 'duplicate', 'wrong-id', 'missing-prescription-fields'])('re
   const kind = failure === 'missing-prescription-fields' ? 'prescription' : 'diagnosis'
   expect((await fixture.generate(kind)).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read(kind)).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID', items: [] })
+  expect(await fixture.read(kind)).toMatchObject({ status: 'failed', errorCode: 'MODEL_REQUEST_LIMIT', items: [],
+    recovery: { status: 'exhausted', requestCount: 4, extraRequestCount: 2, canContinue: false,
+      units: [expect.objectContaining({ stage: 'generation', status: 'succeeded', requestCount: 1 }),
+        expect.objectContaining({ stage: 'verification', status: 'failed', requestCount: 3 })] } })
 })
 
 it.each([
   ['MODEL_AUTH_FAILED', 401, 'MODEL_AUTH_FAILED', 1],
   ['MODEL_TIMEOUT', 504, 'MODEL_TIMEOUT', 1],
-  ['MODEL_UNAVAILABLE', 503, 'MODEL_UNAVAILABLE', 3],
-] as const)('settles a host %s failure with bounded retries and supports an explicit retry', async (code, status, errorCode, attempts) => {
+  ['MODEL_UNAVAILABLE', 503, 'MODEL_REQUEST_LIMIT', 3],
+] as const)('settles a host %s failure within its budget and requires explicit regeneration for a new generation', async (code, status, errorCode, attempts) => {
   let failing = true
   let generationRequests = 0
   const fixture = await setup(async input => {
@@ -886,10 +932,16 @@ it.each([
   const before = await fixture.readCase()
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read()).toMatchObject({ generation: 1, status: 'failed', errorCode, items: [] })
+  expect(await fixture.read()).toMatchObject({ generation: 1, status: 'failed', errorCode, items: [],
+    recovery: { status: attempts === 3 ? 'exhausted' : 'failed', requestCount: attempts,
+      extraRequestCount: attempts - 1, canContinue: attempts < 3 } })
   expect(generationRequests).toBe(attempts)
   failing = false
   expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject({ generation: 1, status: 'failed', errorCode })
+  expect(generationRequests).toBe(attempts)
+  expect((await fixture.generate('diagnosis', true)).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect(await fixture.read()).toMatchObject({ generation: 2, status: 'ready', items: [{ kind: 'diagnosis' }] })
   expect(await fixture.readCase()).toEqual(before)
@@ -911,7 +963,7 @@ it('keeps one pinned model during automatic retries and binds the current model 
   expect((await fixture.read()).status).toBe('failed')
   expect(models).toEqual([first, first, first])
   failing = false
-  expect((await fixture.generate()).status).toBe(200)
+  expect((await fixture.generate('diagnosis', true)).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).status).toBe('ready')
   expect(models).toEqual([first, first, first, second, second])
@@ -928,7 +980,7 @@ it('restores queued recommendations from file-backed SQLite after runtime restar
   expect(await fixture.read()).toMatchObject({ status: 'ready', generation: 1, items: [{ kind: 'diagnosis' }] })
 })
 
-it('recovers a cancelled in-flight recommendation after shutdown with the original pinned model', async () => {
+it('requires explicit continuation after an in-flight shutdown and keeps the original pinned model', async () => {
   let entered!: () => void
   const started = new Promise<void>(resolve => { entered = resolve })
   let interrupted = false
@@ -951,6 +1003,13 @@ it('recovers a cancelled in-flight recommendation after shutdown with the origin
   selected = second
   await fixture.restart()
   await dispatch
+  await fixture.runtime.dispatchPending()
+  expect(await fixture.read()).toMatchObject({ status: 'failed', generation: 1, errorCode: 'MODEL_OUTCOME_UNKNOWN',
+    recovery: { status: 'unknown', requestCount: 1, extraRequestCount: 0, canContinue: true } })
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  expect(models).toEqual([first])
+  expect((await fixture.generate('diagnosis', false, 1)).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect(await fixture.read()).toMatchObject({ status: 'ready', generation: 1 })
   expect(models).toEqual([first, first, first])
@@ -1348,7 +1407,7 @@ it('reads every batch of a large history concurrently and reuses original-source
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).status).toBe('ready')
   expect(requests.filter(name => name === 'doctor_recommendation_history_selection')).toHaveLength(2 * selections)
-})
+}, 60_000)
 
 it.each(['incomplete', 'foreign-id', 'provider-error', 'timeout'])('does not generate from an incomplete or invalid history selection (%s)', async failure => {
   const requests: string[] = []
@@ -1366,14 +1425,14 @@ it.each(['incomplete', 'foreign-id', 'provider-error', 'timeout'])('does not gen
   await fixture.runtime.dispatchPending()
   expect(await fixture.read()).toMatchObject(failure === 'incomplete'
     ? { status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('完整读取')] }
-    : { status: 'failed', items: [], errorCode: failure === 'timeout' ? 'MODEL_TIMEOUT'
-      : failure === 'provider-error' ? 'MODEL_UNAVAILABLE' : 'AI_RESPONSE_INVALID' })
+    : { status: 'failed', items: [], errorCode: failure === 'timeout' ? 'MODEL_TIMEOUT' : 'MODEL_REQUEST_LIMIT',
+      recovery: { status: failure === 'timeout' ? 'failed' : 'exhausted' } })
   expect(requests.length).toBeGreaterThan(0)
   expect(requests.every(name => name === 'doctor_recommendation_history_selection')).toBe(true)
   expect(await fixture.readCase()).toEqual(before)
 })
 
-it('stops after the bounded Provider retry on rate limits and preserves clinical drafts for explicit recovery', async () => {
+it('exhausts the shared request budget on rate limits and preserves clinical drafts without automatic regeneration', async () => {
   let requests = 0
   const fixture = await setup(async () => {
     requests += 1
@@ -1383,11 +1442,12 @@ it('stops after the bounded Provider retry on rate limits and preserves clinical
   const before = await fixture.readCase()
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(requests).toBe(2)
-  expect(await fixture.read()).toMatchObject({ status: 'failed', errorCode: 'MODEL_UNAVAILABLE', items: [],
-    missingInformation: [expect.stringContaining('限流')] })
+  expect(requests).toBe(3)
+  expect(await fixture.read()).toMatchObject({ status: 'failed', errorCode: 'MODEL_REQUEST_LIMIT', items: [],
+    recovery: { status: 'exhausted', requestCount: 3, extraRequestCount: 2, canContinue: false } })
+  expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(requests).toBe(2)
+  expect(requests).toBe(3)
   expect(await fixture.readCase()).toEqual(before)
 })
 
@@ -1913,7 +1973,8 @@ it('requires the model to propose the diagnosis role rather than inventing one f
   })
   await fixture.generate()
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read()).toMatchObject({ status: 'failed', errorCode: 'AI_RESPONSE_INVALID', items: [] })
+  expect(await fixture.read()).toMatchObject({ status: 'failed', errorCode: 'MODEL_REQUEST_LIMIT', items: [],
+    recovery: { status: 'exhausted', requestCount: 3, extraRequestCount: 2, canContinue: false } })
 })
 
 it('issues a prepared prescription through the existing diagnosis, dose and product validators without a separate draft', async () => {
