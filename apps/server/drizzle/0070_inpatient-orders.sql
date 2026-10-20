@@ -8,7 +8,8 @@ CREATE TABLE inpatient_diagnosis_entry (
   workspace_id TEXT NOT NULL, epoch TEXT NOT NULL, admission_id TEXT NOT NULL, revision INTEGER NOT NULL,
   condition_id TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('primary','secondary')),
   coding_json TEXT NOT NULL CHECK(json_valid(coding_json)), note TEXT,
-  PRIMARY KEY(workspace_id,epoch,admission_id,revision,condition_id),
+  admission_condition TEXT NOT NULL CHECK(admission_condition IN ('1','2','3','4')), ordinal INTEGER NOT NULL CHECK(ordinal>0),
+  PRIMARY KEY(workspace_id,epoch,admission_id,revision,condition_id), UNIQUE(workspace_id,epoch,admission_id,revision,ordinal),
   FOREIGN KEY(workspace_id,epoch,admission_id,revision) REFERENCES inpatient_diagnosis_confirmation(workspace_id,epoch,admission_id,revision) ON DELETE RESTRICT
 ) STRICT;
 CREATE UNIQUE INDEX inpatient_diagnosis_primary ON inpatient_diagnosis_entry(workspace_id,epoch,admission_id,revision) WHERE role='primary';

@@ -1046,9 +1046,9 @@ const operationDefinitions = [
       idempotency: 'none',
     },
     risk: 'read',
-    roles: ['administrator', 'outpatient-doctor'],
+    roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
     summary: 'Search the active diagnosis reference catalog',
-    version: 1,
+    version: 2,
   },
   {
     cliPath: ['reference', 'medications', 'search'],

@@ -1,3 +1,4 @@
+import { InpatientClinical } from './inpatient-clinical.tsx'
 import type { PatientSummary, SessionContext } from '@clinmesh/contracts/his'
 import { inpatientCatalogSchema, inpatientListSchema, inpatientCommandResponseSchema,
   inpatientReferralListSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -79,7 +80,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
   return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 flex-1 flex-col gap-4 overflow-auto p-4">
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, messages)}</AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />
-    {write.mutation.isSuccess ? <p role="status">{zh ? '操作成功' : 'Operation completed'}</p> : null}
+    {write.mutation.isSuccess && (!write.mutation.data?.command || !('admissionId' in write.mutation.data.command.input) || write.mutation.data.command.input.admissionId === selectedId) ? <p role="status">{zh ? '操作成功' : 'Operation completed'}</p> : null}
     {registrar ? <form onSubmit={event => { event.preventDefault(); register() }}>
       <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
         <Field><FieldLabel htmlFor="inpatient-route">{zh ? '入院途径' : 'Admission route'}</FieldLabel>
@@ -131,6 +132,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
           <Button disabled={write.blocked || swapId === null} onClick={() => assignBed('swap-bed')}>{zh ? '互换床位' : 'Swap beds'}</Button>
         </> : null}
       </FieldGroup></FieldSet> : null}
+      {!registrar ? <InpatientClinical key={selected.id} admission={selected} session={session} locale={locale} write={write} /> : null}
     </section> : null}
   </section>
 }

@@ -18,7 +18,7 @@ export class InpatientBilling {
       VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,epoch,admission_id,kind,source_id,service_date) DO NOTHING`)
       .run(context.workspaceId, context.epoch, id, input.admissionId, input.organizationId, input.kind, input.sourceId, input.serviceDate, amount, input.virtualTime)
     if (result.changes === 0) return false
-    this.fhir.create(context, { resourceType: 'ChargeItem', id, status: 'billable', code: { text: input.label },
+    this.fhir.create(context, { resourceType: 'ChargeItem', id, status: 'billable', code: { text: input.label, ...(input.kind === 'bed' ? { coding: [{ system: 'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/inpatient-charge', code: 'bed-day' }] } : {}) },
       subject: { reference: `Patient/${patient.patient_id}` }, encounter: { reference: `Encounter/${input.admissionId}` }, account: [{ reference: `Account/${input.admissionId}` }],
       occurrenceDateTime: input.virtualTime, performingOrganization: { reference: `Organization/${input.organizationId}` }, totalPriceComponent: { amount: { value: amount / 100, currency: 'CNY' } } })
     effects.push({ kind: 'created', reference: `ChargeItem/${id}`, versionId: '1' })

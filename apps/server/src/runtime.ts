@@ -247,7 +247,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
       results: investigationResults,
     })
-    const inpatient = new InpatientService(database, fhir, commands)
+    const inpatient = new InpatientService(database, fhir, commands, referenceData)
     const workflow = new WorkflowService(database, fhir, commands, {
       consultationRecordingEnabled: options.dshModelBridge !== undefined,
       qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,

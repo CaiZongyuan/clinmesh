@@ -24,6 +24,14 @@ Read `consultation.replyAttempt` and the original Command receipt after an inter
 
 队列和病例详情中的 `presentation: null` 表示没有分诊来源的临床表现，不能推断无症状或生命体征正常。保留病例并读取已有病历、问诊记录等可见证据；不得从 Case Truth 补造主诉、体征或分诊记录。缺失时结构化病历的主诉、现病史和体格检查初始为空，已有持久草稿不受影响。
 
+
+`reference.diagnoses.search` version 2 也允许受信 `inpatient-doctor` 检索同一已安装诊断 Reference Catalog。住院诊断确认和医嘱执行遵循 [clinmesh-inpatient](../clinmesh-inpatient/SKILL.md)，不复用门诊病例与支付门禁。
+
+```bash
+clinmesh reference diagnoses search --query 高血压 --page 1 --page-size 20
+```
+
+
 ## Clinical conclusions
 
 Diagnosis and medication conclusions are independent. Save a controlled diagnosis draft and confirm it only when exactly one entry is primary. When a diagnosis is already confirmed, saving and confirming a new draft creates a new revision; re-read the case before downstream medication or completion decisions. Then either issue a valid prescription or explicitly confirm no medication. A signed, undispensed prescription may be withdrawn through its own command.

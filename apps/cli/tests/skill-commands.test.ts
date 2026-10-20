@@ -174,6 +174,11 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   expect(admissionExample).not.toBeNull()
   expect(getHisOperation('inpatient.admission.register').input.parse(JSON.parse(admissionExample![1]!)))
     .toMatchObject({ expectedEpoch: 'epoch-1', depositFen: 100000 })
+  const diagnosisExample=[...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][1]
+  expect(diagnosisExample).toBeDefined()
+  expect(getHisOperation('inpatient.diagnosis.confirm').input.parse(JSON.parse(diagnosisExample![1]!))).toMatchObject({entries:[{role:'primary',admissionCondition:'1'}]})
+  expect(getHisOperation('reference.diagnoses.search').roles).toContain('inpatient-doctor')
+  expect(getHisOperation('reference.diagnoses.search').version).toBe(2)
   for (const operation of listHisOperations().filter(operation => operation.id.startsWith('inpatient.'))) {
     const prefix = `clinmesh ${operation.cliPath.join(' ')}`
     const line = examples.find(line => line === prefix || line.startsWith(`${prefix} `))!

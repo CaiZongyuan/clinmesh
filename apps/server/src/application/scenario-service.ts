@@ -332,7 +332,7 @@ export class ScenarioService {
     if (existing !== undefined) {
       this.#database.driver.exec('BEGIN IMMEDIATE')
       try {
-        seedInpatientEnvironment(this.#database, this.#fhir, { workspaceId: input.workspaceId, epoch: existing.epoch })
+        seedInpatientEnvironment(this.#database, this.#fhir, { workspaceId: input.workspaceId, epoch: existing.epoch }, this.#hospitalBaseline.catalog.medications)
         this.#database.driver.exec('COMMIT')
       } catch (error) {
         this.#database.driver.exec('ROLLBACK')
@@ -806,7 +806,7 @@ export class ScenarioService {
       )
     }
     this.#seedFhirResources(input)
-    seedInpatientEnvironment(this.#database, this.#fhir, input)
+    seedInpatientEnvironment(this.#database, this.#fhir, input, this.#hospitalBaseline.catalog.medications)
   }
 
   #seedFhirResources(input: {

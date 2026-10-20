@@ -1434,7 +1434,7 @@ export class WorkflowService {
     }>
     return serviceCatalogSearchSchema.parse({
       items: rows.map(row => ({
-        ...serviceCatalogConfigSchema.parse(JSON.parse(row.config_json) as unknown),
+        ...serviceCatalogConfigSchema.strip().parse(JSON.parse(row.config_json) as unknown),
         code: row.code,
         id: row.service_id,
         nameEn: row.name_en,
@@ -8917,7 +8917,11 @@ export class WorkflowService {
         input.context.epoch,
         prescription.scenario_run_id,
       ) as { count: number }
-      const scenarioStatus = remaining.count === 0 ? 'completed' as const : 'active' as const
+      const inpatientWork = countRowSchema.parse(this.#database.driver.prepare(`
+        SELECT EXISTS(SELECT 1 FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND record_status!='archived')
+          OR EXISTS(SELECT 1 FROM inpatient_referral WHERE workspace_id=? AND epoch=? AND status='issued') AS count
+      `).get(input.context.workspaceId,input.context.epoch,input.context.workspaceId,input.context.epoch))
+      const scenarioStatus = remaining.count === 0 && inpatientWork.count === 0 ? 'completed' as const : 'active' as const
       if (scenarioStatus === 'completed') {
         this.#database.driver.prepare(`
           UPDATE scenario_run SET status = 'completed', completed_at = ?

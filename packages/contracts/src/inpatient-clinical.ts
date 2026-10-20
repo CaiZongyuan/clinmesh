@@ -1,20 +1,21 @@
+import { referenceConceptSnapshotSchema } from './reference-data.ts'
 import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const version = z.string().regex(/^\d+$/)
-const coding = z.object({ id: z.string().min(1), system: z.string().min(1), version: z.string().min(1), code: z.string().min(1), display: z.string().min(1) }).strict()
+const coding = referenceConceptSnapshotSchema.extend({ releaseId: z.string().min(1).optional() })
+export const inpatientAdmissionConditionSchema = z.enum(['1','2','3','4'])
 export const inpatientDiagnosisConfirmInputSchema = z.object({ admissionId: id, encounterVersion: version,
   expectedRevision: z.number().int().nonnegative(), entries: z.array(z.object({ catalogItemId: z.string().min(1).max(256),
-    role: z.enum(['primary', 'secondary']), note: z.string().trim().min(1).max(2000).optional() }).strict()).min(1).max(20),
+    role: z.enum(['primary', 'secondary']), admissionCondition: inpatientAdmissionConditionSchema, note: z.string().trim().min(1).max(2000).optional() }).strict()).min(1).max(20),
 }).strict().refine(value => value.entries.filter(entry => entry.role === 'primary').length === 1 && new Set(value.entries.map(entry => entry.catalogItemId)).size === value.entries.length,
   '住院诊断须包含一个主诊断且不能重复')
 export const inpatientDiagnosisSchema = z.object({ revision: z.number().int().nonnegative(), entries: z.array(z.object({
-  conditionId: id, role: z.enum(['primary', 'secondary']), coding, note: z.string().optional(),
+  conditionId: id, role: z.enum(['primary', 'secondary']), admissionCondition: inpatientAdmissionConditionSchema, ordinal: z.number().int().positive(), coding, note: z.string().optional(),
 }).strict()) }).strict()
-export const inpatientClinicalCatalogSchema = z.object({ diagnoses: z.array(coding) }).strict()
-export const inpatientClinicalSchema = z.object({ admissionId: id, encounterVersion: version, diagnosis: inpatientDiagnosisSchema }).strict()
-export const inpatientClinicalResponseSchema = commandResponseSchema(inpatientClinicalSchema)
+const inpatientClinicalCatalogSchema = z.object({ diagnoses: z.array(coding) }).strict()
+const inpatientClinicalSchema = z.object({ admissionId: id, encounterVersion: version, diagnosis: inpatientDiagnosisSchema }).strict()
 
 export const inpatientOrderIssueInputSchema = z.object({ admissionId: id, encounterVersion: version,
   duration: z.enum(['long','temporary']), selection: z.discriminatedUnion('kind', [
