@@ -22,7 +22,7 @@ export class InpatientSurgery {
     this.owner.assertRole(context, ['inpatient-doctor','ward-nurse','medical-records'])
     this.owner.admissionBinding(context, admissionId)
     const rows = z.array(requestRowSchema).parse(this.owner.database.driver.prepare(
-      'SELECT * FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY requested_at,request_id').all(context.workspaceId, context.epoch, admissionId))
+      'SELECT * FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY julianday(requested_at),request_id').all(context.workspaceId, context.epoch, admissionId))
     return inpatientSurgerySchema.parse({ admissionId, encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
       virtualTime: this.owner.virtualTime(context), requests: rows.map(row => inpatientSurgeryRequestSchema.parse({ id: row.request_id, admissionId, version: row.version, status: row.status,
         plannedProcedure: JSON.parse(row.planned_procedure_json), plannedFor: row.planned_for, reason: row.reason, requestedAt: row.requested_at,
@@ -37,7 +37,7 @@ export class InpatientSurgery {
     this.owner.assertRole(context, ['inpatient-doctor','ward-nurse','medical-records'])
     this.owner.admissionBinding(context, admissionId)
     const rows = z.array(executionRowSchema).parse(this.owner.database.driver.prepare(
-      'SELECT * FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY performed_at,execution_id').all(context.workspaceId, context.epoch, admissionId))
+      'SELECT * FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY julianday(performed_at),execution_id').all(context.workspaceId, context.epoch, admissionId))
     return rows.map(row => inpatientSurgeryExecutionSchema.parse({ id: row.execution_id, admissionId, requestId: row.request_id,
       actualProcedure: JSON.parse(row.actual_procedure_json), performedAt: row.performed_at, performedBy: row.performed_by,
       practitionerRoleId: row.practitioner_role_id, organizationId: row.organization_id, note: row.note,
@@ -88,7 +88,7 @@ export class InpatientSurgery {
       const ready = action === 'check-preop' ? row.consent_confirmation_json !== null : row.preop_check_json !== null
       this.owner.database.driver.prepare(`UPDATE inpatient_surgery_request SET ${column}=?,version=version+1,status=? WHERE workspace_id=? AND epoch=? AND request_id=? AND version=?`)
         .run(fact, action === 'cancel' ? 'cancelled' : ready ? 'ready' : 'requested', context.workspaceId, context.epoch, row.request_id, row.version)
-      const effects: InpatientEffects = []
+      const effects: InpatientEffects = [{ kind: 'updated', reference: `InpatientSurgeryRequest/${row.request_id}`, versionId: String(row.version + 1) }]
       if (action === 'cancel') this.updateRequestProjection(context, row.request_id, 'revoked', effects)
       return { data: this.read(context, input.admissionId), effects }
     })

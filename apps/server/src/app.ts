@@ -1208,18 +1208,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/request', async context => {
       try {
+        identity.assertTrustedMutation(context.req.raw.headers)
         const body = z.object({ input: inpatientSurgeryRequestInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
         return context.json(inpatient.surgery.request(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
     })
     for (const action of ['check-preop', 'confirm-consent', 'cancel'] as const) app.post(`/api/his/v1/inpatient/admissions/:admissionId/surgeries/${action}`, async context => {
       try {
+        identity.assertTrustedMutation(context.req.raw.headers)
         const body = z.object({ input: inpatientSurgeryActionInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
         return context.json(inpatient.surgery.prepare(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key')), action))
       } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/execute', async context => {
       try {
+        identity.assertTrustedMutation(context.req.raw.headers)
         const body = z.object({ input: inpatientSurgeryExecuteInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
         return context.json(inpatient.surgery.execute(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch (error) { return apiErrorResponse(context, error) }
