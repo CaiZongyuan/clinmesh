@@ -106,6 +106,7 @@ import { WorkflowError } from './workflow-error.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { PathologyRequestService } from './pathology-request-service.ts'
 import { ConsultationRecordingService } from './consultation-recording-service.ts'
+import { consultationReplyProjection } from './consultation-reply-attempts.ts'
 import { ClinicalDocumentQualityControl } from './clinical-document-quality.ts'
 import {
   ClinicalRequestKernel,
@@ -9720,9 +9721,13 @@ export class WorkflowService {
     const state = this.#consultationState(context, caseId)
     if (state === undefined) return undefined
     const turns = this.#consultationTurnRows(context, caseId).map(row => this.#consultationTurnDto(row))
+    const lastDoctorTurn = turns.findLast(turn => turn.kind === 'text' && turn.speaker === 'doctor')
+    const replyAttempt = lastDoctorTurn === undefined ? undefined
+      : consultationReplyProjection(this.#database, context, lastDoctorTurn.id)
     return {
       turns,
       version: state.version,
+      ...(replyAttempt === undefined ? {} : { replyAttempt }),
     }
   }
 
@@ -10078,6 +10083,18 @@ export class WorkflowService {
   caseIdByEncounter(context: ActorContext, encounterId: string): string {
     this.#assertRole(context, ['outpatient-doctor'])
     return this.#caseByEncounter(context, encounterId).case_id
+  }
+
+  authorizeConsultation(context: ActorContext, encounterId: string, doctorSequence?: number): string {
+    this.#assertRole(context, ['outpatient-doctor'])
+    new WorkspaceRepository(this.#database).assertActive(context, context.scenarioRunId)
+    const outpatientCase = this.#caseByEncounter(context, encounterId)
+    if (outpatientCase.status !== 'awaiting-doctor') this.#assertCaseResponsibility(context, outpatientCase.case_id)
+    if (doctorSequence !== undefined && (this.#fhir.read(context, 'Encounter', encounterId).status !== 'in-progress'
+      || this.lastUnansweredDoctorTurn(context, encounterId)?.turn.sequence !== doctorSequence)) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The doctor message is no longer awaiting a reply')
+    }
+    return outpatientCase.case_id
   }
 
   casePersonaBinding(

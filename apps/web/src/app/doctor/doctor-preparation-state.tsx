@@ -56,10 +56,11 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
     refetchInterval: query => query.state.data?.status === 'pending' ? 1_000 : false,
   })
   const generation = useMutation({
-    mutationFn: ({ state, refresh }: { state: DoctorRecommendationState; refresh: boolean; identity: string; viewRevision: number }) => generateDoctorRecommendations(state, refresh),
+    mutationFn: ({ state, refresh, continueOriginal }: { state: DoctorRecommendationState; refresh: boolean; continueOriginal?: boolean; identity: string; viewRevision: number }) => continueOriginal
+      ? generateDoctorRecommendations(state, false, true) : generateDoctorRecommendations(state, refresh),
     onSuccess: (state, request) => {
       if (mounted.current && current.current.identity === request.identity && current.current.revision === request.viewRevision) {
-        client.setQueryData<DoctorRecommendationState>(queryKey, receive(state))
+        client.setQueryData<DoctorRecommendationState>(queryKey, request.continueOriginal && state.status === 'pending' ? state : receive(state))
       }
     },
     onSettled: (_result, _error, request) => {
@@ -70,7 +71,8 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
   const generating = generation.isPending && generation.variables?.identity === identity && generation.variables.viewRevision === viewRevision
   const mutate = generation.mutate
   useEffect(() => {
-    if (!enabled || settling || paused || state === undefined || generating || query.isError || !(state.status === 'idle' || state.stale)) return
+    if (!enabled || settling || paused || state === undefined || generating || query.isError
+      || state.errorCode === 'MODEL_OUTCOME_UNKNOWN' && state.recovery === undefined || !(state.status === 'idle' || state.stale)) return
     const request = `${identity}:${viewRevision}:${state.inputFingerprint}`
     if (lastAutomatic.current === request) return
     lastAutomatic.current = request
@@ -85,6 +87,7 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
   return { state, previous, pending, error, paused,
     ready: enabled && !paused && !pending && !query.isFetching && error === null && state?.status === 'ready' && !state.stale,
     refresh: () => { if (!paused && !settling && state !== undefined) generation.mutate({ state, refresh: true, identity, viewRevision }) },
+    continueOriginal: () => { if (!paused && !settling && state?.recovery?.canContinue && !state.stale) generation.mutate({ state, refresh: false, continueOriginal: true, identity, viewRevision }) },
     invalidate: () => client.invalidateQueries({ queryKey: prefix }),
   }
 }

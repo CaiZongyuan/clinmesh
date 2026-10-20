@@ -951,6 +951,19 @@ export const consultationTurnSchema = z.object({
   speaker: z.enum(['doctor', 'patient']),
 }).strict()
 
+export const consultationReplyErrorCodeSchema = z.enum([
+  'AI_AUTH_FAILED', 'AI_REQUEST_FAILED', 'AI_REQUEST_TOO_LARGE', 'AI_RESPONSE_INVALID',
+  'AI_RESPONSE_TOO_LARGE', 'AI_TIMEOUT', 'CONSULTATION_REPLY_UNAVAILABLE', 'CONSULTATION_REPLY_UNKNOWN',
+])
+
+export const consultationReplyAttemptSchema = z.object({
+  doctorTurnId: z.string().min(1),
+  status: z.enum(['executing', 'succeeded', 'failed', 'unknown']),
+  startedAt: z.iso.datetime(),
+  deadlineAt: z.iso.datetime(),
+  errorCode: consultationReplyErrorCodeSchema.optional(),
+}).strict()
+
 export const sendConsultationMessageResponseSchema = commandResponseSchema(z.object({
   caseId: z.string().min(1),
   consultationVersion: z.number().int().positive(),
@@ -979,14 +992,16 @@ export const clinicalDocumentContentSchema = z.object({
 
 // 草稿与签署分别校验：草稿可不完整，正式文书保持原有必填合同。
 export const clinicalDocumentDraftContentSchema = clinicalDocumentContentSchema.extend({
-  assessment: z.string().trim().max(4_000),
-  auxiliaryExamination: z.string().trim().max(4_000).optional(),
-  chiefComplaint: z.string().trim().max(1_000),
-  disposition: z.string().trim().max(4_000),
-  followUp: z.string().trim().max(4_000),
-  historyOfPresentIllness: z.string().trim().max(5_000),
-  physicalExamination: z.string().trim().max(4_000),
-  priorMedicalHistory: z.string().trim().max(4_000).optional(),
+  allergyHistory: z.string().max(4_000).optional(),
+  assessment: z.string().max(4_000),
+  auxiliaryExamination: z.string().max(4_000).optional(),
+  chiefComplaint: z.string().max(1_000),
+  disposition: z.string().max(4_000),
+  familyHistory: z.string().max(4_000).optional(),
+  followUp: z.string().max(4_000),
+  historyOfPresentIllness: z.string().max(5_000),
+  physicalExamination: z.string().max(4_000),
+  priorMedicalHistory: z.string().max(4_000).optional(),
 })
 
 export const consultationHistorySourceSchema = z.object({
@@ -2000,6 +2015,7 @@ export const doctorCaseDetailSchema = z.object({
   consultation: z.object({
     turns: z.array(consultationTurnSchema),
     version: z.number().int().positive(),
+    replyAttempt: consultationReplyAttemptSchema.optional(),
   }).strict().optional(),
   diagnosis: diagnosisStateSchema.optional(),
   drafts: z.object({

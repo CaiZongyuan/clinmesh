@@ -26,7 +26,7 @@ function Job({ revision = '1' }: { revision?: string }) {
   return <><p role="status">{job.pending ? '更新中' : '已结束'}</p>
     <p>当前：{job.state?.items.map(item => item.label).join('、') || '无'}</p>
     <p>保留：{job.previous?.items.map(item => item.label).join('、') || '无'}</p>
-    <button onClick={job.refresh}>刷新</button></>
+    <button onClick={job.refresh}>刷新</button><button onClick={job.continueOriginal}>继续原任务</button></>
 }
 function SubmissionControls() {
   const preparation = useDoctorPreparation()!
@@ -52,6 +52,35 @@ function deferred() {
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('background clinical preparation', () => {
+  it('polls a manually continued generation until completion without automatically retrying its unknown state', async () => {
+    const held = deferred()
+    let current = state({ status: 'failed', items: [], recovery: { status: 'unknown', requestCount: 2, extraRequestCount: 0,
+      maxRequestsPerUnit: 3, maxExtraRequests: 4, canContinue: true, units: [] } })
+    const posts: unknown[] = []
+    let resumedReads = 0
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        posts.push(JSON.parse(String(init.body)))
+        current = state({ status: 'pending', items: [], recovery: { ...current.recovery!, status: 'pending', canContinue: false } })
+        return Response.json({ data: current, auditId: 'continue-audit', effects: [], requestId: 'continue-request', warnings: [] })
+      }
+      if (posts.length && ++resumedReads > 1) return held.promise
+      return Response.json(current)
+    }))
+    mount()
+    await screen.findByText('已结束')
+    expect(posts).toEqual([])
+    await userEvent.setup().click(screen.getByRole('button', { name: '继续原任务' }))
+    await screen.findByText('更新中')
+    expect(posts).toEqual([expect.objectContaining({ input: { expectedInputFingerprint: current.inputFingerprint, refresh: false, continueGeneration: 2 } })])
+    // The continued task retains generation 2, so completion depends on polling that same generation.
+    await waitFor(() => expect(resumedReads).toBeGreaterThan(1), { timeout: 2500 })
+    await act(async () => { held.resolve(Response.json(state())) })
+    await screen.findByText('当前：合成发热候选')
+    await screen.findByText('已结束')
+    expect(posts).toHaveLength(1)
+  })
+
   it('coalesces consecutive source updates and blocks cached automatic items immediately', async () => {
     let reads = 0
     vi.stubGlobal('fetch', vi.fn(async () => { reads += 1; return Response.json(state()) }))
