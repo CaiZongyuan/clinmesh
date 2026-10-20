@@ -67,7 +67,7 @@ Web“设置 → 外观”的字号偏好提供“标准 / 较大 / 大”三档
 | --- | --- |
 | `background` / `foreground` | 主画布与默认文字 |
 | `card` / `popover` | 独立业务项与临时覆盖层 |
-| `primary` | 近黑主操作，避免整页被单一彩色支配 |
+| `primary` | 主操作与品牌强调；独立 Web 为靛紫，桌面与 DSH 基线另有主色 |
 | `info` / `ring` | ClinMesh 品牌标识、信息和键盘焦点 |
 | `success` | 正常、通过和已完成 |
 | `warning` | 待复核、偏高和需要注意 |
@@ -75,7 +75,7 @@ Web“设置 → 外观”的字号偏好提供“标准 / 较大 / 大”三档
 | `secondary` / `muted` | 中性状态、辅助表面和弱化文字 |
 | `border` / `input` | 分隔线和控件边界 |
 
-亮色主题使用白色主画布和冷灰辅助面。暗色主题独立映射画布、文字、边线和语义色，不直接反相亮色值。独立 Web 的主题选择写入 `clinmesh.preferences:v1`，公共组件目录和登录后工作区使用同一机制。DSH 模式的主题选择与作用域见[Surface 与 Host 边界](../architecture/agent-integration.md#71-surface-与-host-边界)。
+独立 Web 采用“AI 原生工作台”视觉语言（[规格](../spec/2026-10-19-ai-native-doctor-workspace.md) 方向四）：浅色画布配靛紫点缀，深色主题为紫调中性画布与亮靛紫点缀，两主题同等成立；AI 参与面的进行中状态使用 `--clinmesh-glow` 环绕柔光作为辅助反馈。暗色主题独立映射画布、文字、边线和语义色，不直接反相亮色值。桌面与 DSH 消费 `:root` / `.dark` 基线，视觉基线在 DSH 集成步骤对齐。独立 Web 的主题选择写入 `clinmesh.preferences:v1`，公共组件目录和登录后工作区使用同一机制。DSH 模式的主题选择与作用域见[Surface 与 Host 边界](../architecture/agent-integration.md#71-surface-与-host-边界)。
 
 ## 门诊医生工作台
 

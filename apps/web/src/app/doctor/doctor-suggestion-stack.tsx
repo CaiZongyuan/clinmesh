@@ -2,6 +2,7 @@ import type { ClinicalDocumentContent, DoctorCaseDetail, EncounterCompletionPrev
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { cn } from '@clinmesh/ui/lib/utils'
 import { CheckCircleIcon, SparklesIcon } from 'lucide-react'
 import type { WorkspaceLocale, WorkspaceMessages } from '../workspace-i18n.ts'
 import { encounterCompletionItemLabel } from './completion-checklist.tsx'
@@ -128,7 +129,8 @@ function ActiveSuggestionStack({ completion, detail, document, locale, messages,
           <ul className="flex min-w-0 flex-col gap-1">
             {jobs.map(({ kind, job }) => (
               <li key={kind}>
-                <Button aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]} className="h-auto w-full justify-between px-2 py-1.5"
+                <Button aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]}
+                  className={cn('h-auto w-full justify-between px-2 py-1.5', job.pending || job.state?.status === 'pending' ? 'clinmesh-glow' : null)}
                   onClick={() => preparation.openDetails(kind)} size="sm" type="button" variant="ghost">
                   <span className="min-w-0 truncate">{doctorRecommendationKindTitles[kind][zh ? 0 : 1]}</span>
                   <span className="shrink-0 text-xs font-normal text-muted-foreground">{recommendationStatusText(job, messages)}</span>
