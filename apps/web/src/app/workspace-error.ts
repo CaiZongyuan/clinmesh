@@ -114,6 +114,21 @@ export function getWorkspaceErrorMessage(
     return messages.permissionDeniedDescription
   }
   const inpatientMessages: Record<string, string> = {
+    INPATIENT_INVESTIGATION_NOT_FOUND: messages.inpatientInvestigationConflictDescription,
+    INPATIENT_INVESTIGATION_VERSION_CONFLICT: messages.inpatientInvestigationConflictDescription,
+    INPATIENT_INVESTIGATION_STATE_CONFLICT: messages.inpatientInvestigationConflictDescription,
+    INPATIENT_INVESTIGATION_UNAVAILABLE: messages.catalogConflictDescription,
+    INPATIENT_INVESTIGATION_CATALOG_CONFLICT: messages.catalogConflictDescription,
+    INPATIENT_INVESTIGATION_PENDING: messages.inpatientInvestigationPendingDescription,
+    INPATIENT_TRANSFER_NOT_FOUND: messages.inpatientTransferConflictDescription,
+    INPATIENT_TRANSFER_VERSION_CONFLICT: messages.inpatientTransferConflictDescription,
+    INPATIENT_TRANSFER_STATE_CONFLICT: messages.inpatientTransferConflictDescription,
+    INPATIENT_TRANSFER_TARGET_INVALID: messages.inpatientTransferConflictDescription,
+    INPATIENT_TRANSFER_PENDING: messages.inpatientTransferConflictDescription,
+    INPATIENT_TRANSFER_ORDERS_PENDING: messages.inpatientTransferPendingDescription,
+    INPATIENT_TRANSFER_EXECUTIONS_PENDING: messages.inpatientTransferPendingDescription,
+    INPATIENT_TRANSFER_INVESTIGATIONS_PENDING: messages.inpatientTransferPendingDescription,
+    INPATIENT_BED_UNAVAILABLE: messages.inpatientBedOccupiedDescription,
     INPATIENT_BED_OCCUPIED: messages.inpatientBedOccupiedDescription,
     INPATIENT_BED_INVALID: messages.inpatientBedInvalidDescription,
     INPATIENT_WARD_NOT_FOUND: messages.inpatientWardUnavailableDescription,

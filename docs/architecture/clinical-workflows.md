@@ -139,7 +139,7 @@ Report Acknowledgement 是按报告版本独立保存的领域事实，只能由
 
 ### 8.2 住院闭环（后续）
 
-当前已实现建档与入科：负责门诊医生开住院证，登记员通过直接入院、门诊转收或转院途径办理登记并收取预交金，病区护士接诊分床、同病区转床和互换床位。诊断确认、长期和临时医嘱、校对、实际发药与给药、健康教育执行和逐项费用及关联冲正已实现；手术最小闭环已实现；转科、出院、结算与病案归档按[住院规格](../spec/2026-10-20-inpatient-closed-loop.md)继续交付。
+当前已实现建档与入科：负责门诊医生开住院证，登记员通过直接入院、门诊转收或转院途径办理登记并收取预交金，病区护士接诊分床、同病区转床和互换床位。诊断确认、长期和临时医嘱、校对、实际发药与给药、健康教育执行和逐项费用及关联冲正已实现；检查检验送检、报告、三方转科与手术最小闭环已实现；出院、结算与病案归档按[住院规格](../spec/2026-10-20-inpatient-closed-loop.md)继续交付。
 
 住院由独立 `InpatientService` 通过共享 CommandExecutor 执行，不借用 `outpatient_case`、门诊 Registration 或门诊支付外键。登记输入固定当次受信 context 的 `expectedEpoch`，仅作为事务前置断言，不能选择活动 Epoch。每次登记创建独立住院号、`Encounter.class=IMP` 和 Account；`registered` 对应标准 `planned`，接诊后为 `admitted` / `in-progress`。行政、财务及病案状态分别保存，不把它们合并为 Encounter.status。住院证以 ServiceRequest 记录，转收后完成，不能重复使用；零预交金不创建资金交易，正数以安全整数分形成独立交易。重试由 Command receipt 去重。
 
@@ -182,13 +182,19 @@ Admission request
 - 出院、财务结算、清床和病案归档是不同动作。
 - 召回只在规定状态窗口内允许，并生成完整审计和逆向事件。
 
+住院检查检验由 InpatientInvestigations 适配原 ClinicalRequestKernel、Workflow 检验和 ImagingRequestService，不建立第二套报告状态机。开立以本次 admission 固定的 source_case_id 定位同 Epoch 的真实 Synthetic Case；结果解析读取其 Case Truth，正式 ServiceRequest、Specimen、Observation、ImagingStudy 和 DiagnosticReport 归当前 IMP Encounter。无来源患者明确不支持，不使用 Scenario 正常结果兜底。医生开立仅产生待送检申请，护士校对送检后才排入原 accept outbox；晚到受理仍重验送检及取消状态。读、取消、重试、已阅和阅片元数据均校当前科室与病区，转科后新科接管报告；住院报告发布不触发门诊对话、自动记录或完诊。
+
+住院检查目录区分可开展、尚未开展和未计价。正数且已声明住院适用范围的医院价沿用原定义；基础 WBC（WS/T 886-2026 `0100101A`）、HGB（`0100501A`）与院内 CBC（`CN-LAB-CBC`）另声明800、800、2500分的合成本院住院价，匹配完整编码身份，不为其他单项或组合推测价格。胸片和胸部 CT 平扫分别声明8000与30000分的合成本院价。申请冻结定义、目录版本、价格和 `execution-completed` 触发；首次执行完成及报告发布在同一事务只计一次费，报告修订不重收。未计价不等于免费，未声明价格的项目不可开立。报告收费事务重读当前科室、住院及财务状态，已出区或结算后拒绝追加；出院门禁复用在途申请检查。
+
+转科以独立 Task 保存 requested、handed-over、completed、cancelled，依次由当前医生申请、原护士交接、目标护士接收；目标 incoming 清单仅授权目标病区并提供接收必要字段，普通详情仍由当前责任科室拥有。原科医嘱须停嘱并核停，未执行计划须明确取消，未送检申请须送检或取消，未实施手术须完成或取消；已送检的在途检查继续完成，由新科接管。接收在同一 Command 事务再次核验 Task 与 Encounter 版本、全部阻塞和目标空床，结束原占用、创建新占用并切换 Admission 与 FHIR 科室/位置历史。既往发药、库存与费用保留，新执行及床日费使用当前科室。设计取舍见[Agent Note](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。
+
 #### 住院手术最小闭环
 
 InpatientService.surgery 拥有申请、准备、取消及实际实施事实。申请生成 ServiceRequest，保存计划术式及虚拟时间；requested/ready 可以取消，completed 保留实际事实，不以计划到时自动执行。护士记录术前检查核对，医生确认知情同意书已签署，两项分别保存责任人、时间、说明与审计；均完成后为 ready，执行前在同一 Command 事务重新检查岗位、当前住院责任、在院状态与申请版本。这是对已签署同意的确认，不是电子签名系统。
 
 Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价目，启动只补缺失项。临床编码保留完整代码、类别、3.0来源版本、项目摘录Release、来源URL/哈希/单元格；来源与限制见[编码依据](../research/2026-10-20-inpatient-record-coding-and-recall.md#手术操作固定子集的来源)。分类编码、院内手术ID与ChargeDefinition分开，价格标为合成演示价；耗材只记录实际使用与收费，不包含库存、采购或批号供应链。
 
-实际实施可选择与计划不同的术式，server 按实际目录及版本冻结术式、实施岗位、虚拟时间、说明、耗材数量和安全整数分价格。同一事务保存唯一 Procedure、耗材、手术与耗材逐项费用、申请完成和审计；投影或费用失败则全部回滚。账目归属实施时当前科室，申请原作者保留。首页只从 executedForAdmission 读取实际事实；出院 Command 在自身事务调用 assertNoPending，未实施且未取消申请阻断出院。
+实际实施可选择与计划不同的术式，server 按实际目录及版本冻结术式、实施岗位、虚拟时间、说明、耗材数量和安全整数分价格。同一事务保存唯一 Procedure、耗材、手术与耗材逐项费用、申请完成和审计；投影或费用失败则全部回滚。账目归属实施时当前科室，申请原作者保留。首页只从 executedForAdmission 读取实际事实；出院与转科 Command 在自身事务调用 assertNoPending，未实施且未取消申请阻断出院、交接及接收。该内部门禁由调用方先校验当前业务权限；目标病区接收前尚未拥有原科普通详情权限。
 
 术后医嘱沿普通签发流程附本次 surgeryExecutionId，在原医嘱 Command 内验证它属于当前 Workspace/Epoch/Admission 且已完成；保存引用并分别投影 MedicationRequest.supportingInformation 或 ServiceRequest.supportingInfo。申请、已取消计划、其他住院和既往来源 Procedure 均不能代替本次实施。关联后仍需护士校对，药品仍需实际发药后才能给药。Web 与 CLI 共用原预期版本、完整输入、幂等键及 receipt 恢复合同。
 

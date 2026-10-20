@@ -247,7 +247,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
       results: investigationResults,
     })
-    const inpatient = new InpatientService(database, fhir, commands, referenceData)
     const workflow = new WorkflowService(database, fhir, commands, {
       consultationRecordingEnabled: options.dshModelBridge !== undefined,
       qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
@@ -258,6 +257,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       referenceData,
       tokenSecret: options.cursorSecret,
     })
+    const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
       models,
       commands,
@@ -380,6 +380,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workspaceId: 'workspace-demo',
     })
     laboratoryServicePublisher.ensureDefaultServices()
+    laboratoryServicePublisher.ensureInpatientPrices()
     workflow.imaging.ensureServices()
     workflow.pathology.ensureServices()
     const identity = new IdentityService(database, {

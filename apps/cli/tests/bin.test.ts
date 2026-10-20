@@ -43,7 +43,7 @@ describe('clinmesh process entrypoint', () => {
     expect(result.stderr).toBe('')
     const envelope = JSON.parse(result.stdout)
     expect(envelope).toMatchObject({ ok: true, schemaVersion: 1 })
-    expect(envelope.data.operations).toHaveLength(110)
+    expect(envelope.data.operations).toHaveLength(124)
     expect(envelope.data.operations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'doctor.document-quality.get' }),
       expect.objectContaining({ id: 'doctor.document-quality.check' }),
@@ -56,6 +56,20 @@ describe('clinmesh process entrypoint', () => {
       expect.objectContaining({ id: 'inpatient.surgery.cancel', version: 1 }),
       expect.objectContaining({ id: 'inpatient.surgery.execute', version: 1 }),
       expect.objectContaining({ id: 'inpatient.order.issue', version: 2 }),
+      expect.objectContaining({id:'inpatient.investigation.catalog',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.read',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.catalog',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.read',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.incoming',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.issue',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.send',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.cancel',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.retry',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.acknowledge',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.request',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.handover',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.receive',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.cancel',version:1}),
       expect.objectContaining({ id: 'inpatient.catalog', version: 2 }),
       expect.objectContaining({ id: 'inpatient.admission.list', version: 2 }),
       expect.objectContaining({ id: 'inpatient.admission.read', version: 2 }),

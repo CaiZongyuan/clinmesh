@@ -1,3 +1,4 @@
+import { assertInpatientRequestScope, inpatientRequestOwner, recordInpatientInvestigationCharge } from './clinical-request-context.ts'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import type { ApiConflict } from '@clinmesh/contracts/his'
 import { v7 as uuidv7 } from 'uuid'
@@ -47,6 +48,7 @@ export const laboratoryRequestPolicy: ClinicalRequestPolicy = {
 /** 生命周期只依赖的申请行字段；各类申请适配器读取的行都满足该形状。 */
 export interface ClinicalRequestRow {
   readonly authored_by: string
+  readonly case_id: string
   readonly diagnostic_report_id: string | null
   readonly execution_task_id: string
   readonly request_id: string
@@ -192,6 +194,8 @@ export class ClinicalRequestKernel {
     now: string,
   ): { status: 'accepted'; task: FhirResource } | { status: 'cancelled' } {
     if (request.status === 'cancelled') return { status: 'cancelled' }
+    const sent = this.#database.driver.prepare('SELECT sent_at FROM inpatient_investigation WHERE workspace_id=? AND epoch=? AND request_id=?').get(context.workspaceId,context.epoch,request.request_id) as { sent_at: string | null } | undefined
+    if (sent?.sent_at === null) throw new WorkflowError('WORKFLOW_CONFLICT', '住院检查须由护士校对送检后受理')
     if (request.status !== 'issued') {
       throw new WorkflowError('WORKFLOW_CONFLICT', `The ${policy.label} request cannot be accepted`)
     }
@@ -268,7 +272,7 @@ export class ClinicalRequestKernel {
       serviceRequest: FhirResource
       task: FhirResource
     },
-  ): { serviceRequest: FhirResource; task: FhirResource } {
+  ): { serviceRequest: FhirResource; task: FhirResource; chargeEffects: ReturnType<typeof recordInpatientInvestigationCharge> } {
     const completedServiceRequest = transaction.fhir.update(context, {
       ...input.serviceRequest,
       status: 'completed',
@@ -300,7 +304,7 @@ export class ClinicalRequestKernel {
       request.version,
     )
     if (update.changes !== 1) throw this.#versionChanged(policy)
-    return { serviceRequest: completedServiceRequest, task: completedTask }
+    return { serviceRequest: completedServiceRequest, task: completedTask, chargeEffects: recordInpatientInvestigationCharge(this.#database, transaction, context, request.request_id, input.now) }
   }
 
   /** 执行失败落为 generation-failed；重复失败事件无副作用完成。 */
@@ -344,7 +348,7 @@ export class ClinicalRequestKernel {
     return failedTask
   }
 
-  /** 只有原开具医生能以当前版本重试失败申请。 */
+  /** 门诊原开具医生或住院当前责任医生以当前版本重试失败申请。 */
   assertRetryable(
     policy: ClinicalRequestPolicy,
     context: ActorContext,
@@ -352,7 +356,7 @@ export class ClinicalRequestKernel {
     expectedRequestVersion: number,
   ): void {
     if (
-      request.authored_by !== (context.practitionerId ?? context.actorId)
+      !this.#canManage(context, request)
       || request.status !== 'generation-failed'
       || request.version !== expectedRequestVersion
     ) {
@@ -396,7 +400,7 @@ export class ClinicalRequestKernel {
   }
 
   /**
-   * 原开具医生确认当前已签发报告。每个报告版本只保存一条确认事实，
+   * 门诊原开具医生或住院当前责任医生确认当前报告；每个报告版本只保存一条确认事实，
    * 重复确认返回第一次确认；报告内容结构由调用方的 `assertReportContent` 校验。
    */
   acknowledge(
@@ -412,7 +416,7 @@ export class ClinicalRequestKernel {
     },
   ): ReportAcknowledgement {
     const practitionerId = context.practitionerId
-    if (practitionerId === undefined || request.authored_by !== practitionerId) {
+    if (practitionerId === undefined || !this.#canManage(context, request)) {
       throw new WorkflowError(
         'ROLE_NOT_ALLOWED',
         `Only the doctor responsible for the ${policy.label} request can acknowledge its report`,
@@ -427,7 +431,7 @@ export class ClinicalRequestKernel {
       `).get(context.workspaceId, context.epoch, input.diagnosticReportId),
     )
     if (existing !== undefined) {
-      if (existing.request_id !== request.request_id || existing.acknowledged_by !== practitionerId) {
+      if (existing.request_id !== request.request_id || (inpatientRequestOwner(this.#database,context,request.case_id) === undefined && existing.acknowledged_by !== practitionerId)) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
           `The ${policy.label} report acknowledgement is invalid`,
@@ -556,4 +560,13 @@ export class ClinicalRequestKernel {
       `The ${policy.label} request version has changed`,
     )
   }
+  #canManage(context: ActorContext, request: ClinicalRequestRow): boolean {
+    const caseId=request.case_id
+    if (inpatientRequestOwner(this.#database,context,caseId) !== undefined) {
+      assertInpatientRequestScope(this.#database,context,caseId,['inpatient-doctor'])
+      return true
+    }
+    return request.authored_by === (context.practitionerId ?? context.actorId)
+  }
+
 }

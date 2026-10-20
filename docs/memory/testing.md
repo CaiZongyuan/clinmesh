@@ -103,3 +103,5 @@
 - HTTP 上传取消回归须等原生存储实际读取第一个数据块后再断开，并等清理完成后验证重试；固定短延迟可能在路由安装取消监听器前结束请求，使测试通过却没有验证取消路径。
 
 - 病历“未保存”提示回归须包含首次自动记录只写其他字段、`hasSavedDraft=false` 且持久主诉仍为空的场景；页面预填可能与数据库空值不同，保存基准应与编辑器采用同一份预填规则。通过[医生工作台组件](../../apps/web/src/app/role-workspaces.test.tsx)和[真实病历入口](../../apps/web/e2e/doctor-document-quality.spec.ts)同时核对页头与编辑器状态，并保留手工清空、恢复原文和清空保存刷新后的断言；只有完整人工保存稿的 fixture 无法捕获该差异。
+
+- Node 环境的纯函数回归若在导入工作台时出现 `document is not defined`，先检查新增阅片器是否把 OpenSeadragon 等 DOM 依赖提前带入模块。仅在用户展开影像时以 React.lazy/Suspense 加载既有 viewer，保持 React 18/19 共有 API，不给纯函数测试全局注入 DOM；住院入口的回归见 `inpatient-workspace.test.ts` 与[申请及责任决策](../decisions/implemented/architecture/2026-10-21-inpatient-investigations-and-transfer.md)。

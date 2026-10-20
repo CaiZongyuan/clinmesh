@@ -1,6 +1,6 @@
 ---
 name: clinmesh-inpatient
-description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药、手术最小闭环和费用冲正 CLI 工作流。用于登记员、负责门诊医生、住院医生、病区护士及病案、药师与收费岗位的住院事实读取与已授权操作。
+description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药、检查检验、转科交接、手术最小闭环和费用冲正 CLI 工作流。用于登记员、负责门诊医生、住院医生、病区护士及病案、药师与收费岗位的住院事实读取与已授权操作。
 ---
 
 # ClinMesh 住院
@@ -138,3 +138,50 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
   }]
 }
 ```
+
+## 检查检验与转科
+
+```bash
+clinmesh inpatient investigation-catalog
+clinmesh inpatient investigations --admission-id <admission-id>
+clinmesh inpatient issue-investigation --input @investigation.json --idempotency-key <key>
+clinmesh inpatient send-investigation --input @investigation-action.json --idempotency-key <key>
+clinmesh inpatient cancel-investigation --input @investigation-action.json --idempotency-key <key>
+clinmesh inpatient retry-investigation --input @investigation-action.json --idempotency-key <key>
+clinmesh inpatient acknowledge-investigation --input @report-acknowledgement.json --idempotency-key <key>
+```
+
+住院医生只从 `investigation-catalog` 选择 `available=true` 且有明确 `priceFen` 的项目。`unavailableReason=unpriced` 表示尚未声明住院价格，不表示免费；基础 WBC/HGB/CBC 的本院合成价分别为800/800/2500分，其他已声明的正数住院价按原目录执行，不宣称国家收费标准。开立固定目录版本、收费定义、执行完成触发点和本次住院的合成病例来源；无来源患者不支持生成报告，不使用其他病例或 Scenario 的正常结果代替。
+
+`investigation.json` 合成示例；用当前受信读取的住院版本和可开展目录版本替换示例值：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "2",
+  "catalogVersion": 1,
+  "selection": {
+    "kind": "imaging",
+    "serviceId": "imaging-chest-radiograph",
+    "indication": "咳嗽两周，评估肺部情况"
+  }
+}
+```
+
+检验选择为 `kind=laboratory`、`catalogItemId` 和目录允许的 `indicationCode`。医生开立后保持待送检，病区护士校对并送检才进入原 LIS/RIS 申请内核。操作文件传 `admissionId/requestId/expectedRequestVersion/serviceRequestVersion/taskVersion`；已阅另传当前 `diagnosticReportId/diagnosticReportVersion`，影像须当前可读取。仅未送检或明确生成失败的申请可取消；已送检在途申请继续完成。来源不相容或不支持的检验不可重试，须取消。报告更正保留原报告和已阅事实，不再次收执行费。
+
+```bash
+clinmesh inpatient transfer-catalog
+clinmesh inpatient transfers --admission-id <admission-id>
+clinmesh inpatient incoming-transfers
+clinmesh inpatient request-transfer --input @transfer.json --idempotency-key <key>
+clinmesh inpatient handover-transfer --input @transfer-action.json --idempotency-key <key>
+clinmesh inpatient receive-transfer --input @transfer-receive.json --idempotency-key <key>
+clinmesh inpatient cancel-transfer --input @transfer-action.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.investigation.issue --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.transfer.receive --idempotency-key <key>
+```
+
+转科依次由医生申请、原病区护士交接、目标病区护士接收。目标护士从 `incoming-transfers` 读取接收所需身份、原因和任务版本；普通住院详情仍按当前科室限制，不借转科任务读取未接收患者的诊断或账目。交接及接收前原科医嘱须停嘱并核停，未执行任务明确取消，未送检申请须送检或取消，未实施手术须完成或取消。已发未给的取消保留实际发药、库存和费用；已送检的检查在途报告继续归本次住院，由新科责任医生处理。
+
+转科申请传 `admissionId/encounterVersion/targetWardId/reason`；交接和取消传 `admissionId/encounterVersion/transferId/expectedTransferVersion`，接收另传目标病区空床 `bedId`。接收事务再次核验全部前置条件，并一起切换床位占用、科室、病区和 Encounter；旧科随后无权读写，新执行与床费归新科，既往费用不改。重复与结果不明继续保留完整原输入和同一幂等键，先查原 receipt，不换版本盲重发。

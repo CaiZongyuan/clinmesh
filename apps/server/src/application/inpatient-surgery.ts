@@ -46,9 +46,8 @@ export class InpatientSurgery {
         .map(item => ({ id: item.material_use_id, item: JSON.parse(item.item_json), quantity: item.quantity, amountFen: item.amount_fen })),
     }))
   }
-  /** 出院 Command 的同事务门禁，不另开 Command。 */
+  /** 调用者先授权；目标护士在接收事务内检查时尚未接管住院。 */
   assertNoPending(context: ActorContext, admissionId: string) {
-    this.owner.admissionBinding(context, admissionId)
     if (this.owner.database.driver.prepare("SELECT 1 FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND status IN ('requested','ready') LIMIT 1")
       .get(context.workspaceId, context.epoch, admissionId)) throw new InpatientError('INPATIENT_SURGERY_PENDING', '尚有未实施或未取消的手术申请')
   }
