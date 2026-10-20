@@ -29,8 +29,14 @@ export function InpatientRecord({ admission, session, locale, write }: {
   const data = record.data, snapshot = data?.snapshot, archived = data?.archive !== undefined, doctor = session.actor.roleCode === 'inpatient-doctor', coder = session.actor.roleCode === 'medical-records'
   const expected = data ? { admissionId: admission.id, expectedRevision: data.revision?.revision ?? 0, expectedSourcesHash: data.sourcesHash } : null
   const result = write.mutation.data
-  useEffect(() => { if (draft && result?.command?.operation === 'inpatient.record.submit' && result.command.input.admissionId === admission.id && result.command.input.expectedRevision === draft.revision && (data?.revision?.revision ?? 0) > draft.revision)
-    setDraft(null); }, [admission.id, data?.revision?.revision, draft, result])
+  useEffect(() => {
+    if (draft && result?.command?.operation === 'inpatient.record.submit'
+      && result.command.input.admissionId === admission.id
+      && result.command.input.expectedRevision === draft.revision
+      && result.command.input.expectedSourcesHash === draft.hash
+      && result.command.input.mainProcedureExecutionId === draft.main
+      && (data?.revision?.revision ?? 0) > draft.revision) setDraft(null)
+  }, [admission.id, data?.revision?.revision, draft, result])
   const blocked = write.blocked || record.isFetching || archived
   const submit = () => { if (expected)
     write.mutation.mutate({ operation: 'inpatient.record.submit', input: { ...expected, expectedRevision: draft?.revision ?? expected.expectedRevision, expectedSourcesHash: draft?.hash ?? expected.expectedSourcesHash, mainProcedureExecutionId: draft?.main ?? null } }); }
