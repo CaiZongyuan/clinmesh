@@ -879,15 +879,18 @@ export function PrescriptionPage({
                   title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)}
                 />
               )}
-              {actions.issue.error === null ? null : (
-                <ErrorAlert
-                  message={getPrescriptionIssueErrorMessage(actions.issue.error, messages)}
-                  title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)}
-                />
-              )}
             </FieldGroup>
           </div>
         ) : null}
+
+      {/* 开具拒绝独立于编辑权限渲染：并发无药结论或既有处方会让刷新后的 canEditDraft 翻 false，
+          若留在编辑块内，竞态场景下医生只看到状态变化而丢失新承诺的可操作拦截文案。 */}
+      {actions.issue.error === null ? null : (
+        <ErrorAlert
+          message={getPrescriptionIssueErrorMessage(actions.issue.error, messages)}
+          title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)}
+        />
+      )}
 
       {!readOnly
         && noMedicationConclusion === undefined

@@ -221,6 +221,23 @@ function medicationForm(): ReturnType<typeof within> {
 }
 
 describe('PrescriptionPage', () => {
+  it('keeps the actionable rejection visible when a concurrent no-medication record removes editing access', () => {
+    const mounted = renderPage()
+    mounted.rerender(<PrescriptionPage {...mounted.props} actions={{
+      ...mounted.props.actions, issue: {
+        error: new ApiClientError(409, 'WORKFLOW_CONFLICT', 'synthetic conflict', undefined, undefined, 'PRESCRIPTION_NO_MEDICATION_RECORDED'),
+        onSubmit: vi.fn(), pending: false,
+      },
+    }} detail={{ ...detail, medicationConclusion: {
+      draftVersion: 1,
+      noMedication: {
+        authoredAt: '2026-10-20T10:00:00+08:00', authoredByActorId: 'actor-synthetic',
+        authoredByPractitionerRoleId: 'role-doctor', id: 'no-medication-synthetic', version: 1,
+      },
+    } }} />)
+    expect(screen.getByText(/已记录"无需用药"，不能再开具处方/)).toBeTruthy()
+  })
+
   it('keeps the medication catalog and directions inline beside the prepared prescription', async () => {
     renderPage()
     expect(screen.getByRole('textbox', { name: '搜索药品目录' })).toBeTruthy()
