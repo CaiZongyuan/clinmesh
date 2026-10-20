@@ -90,11 +90,20 @@ function reasoning(item: DoctorRecommendationConsideration, zh: boolean) {
   ]
   return <><p>{item.rationale}</p>{sections.map(({ label, values }) => values.length === 0 ? null : <div key={label}><p className="font-medium">{label}</p><ul className="list-inside list-disc">{values.map(value => <li key={value}>{value}</li>)}</ul></div>)}</>
 }
+function recoveryMessage(state: DoctorRecommendationState | undefined, zh: boolean) {
+  if (state?.errorCode === 'MODEL_OUTCOME_UNKNOWN' || state?.recovery?.status === 'unknown') return zh
+    ? state.recovery?.canContinue ? '上次请求结果未知，自动处理已停止。可继续原任务或重新生成。' : '上次请求结果未知，自动处理已停止。请明确重新生成。'
+    : state.recovery?.canContinue ? 'The last request has an unknown outcome. Continue the original task or regenerate.' : 'The last request has an unknown outcome. Regenerate to start a new task.'
+  if (state?.recovery?.status === 'exhausted') return zh ? '本次任务的请求次数已用完，自动处理已停止。' : 'This task reached its request limit. Automatic processing stopped.'
+  return undefined
+}
 export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: DoctorPreparationJob; locale?: WorkspaceLocale }) {
   const zh = locale === 'zh-CN', state = job.state ?? job.previous
+  const recovery = recoveryMessage(state, zh)
   return <div className="flex min-w-0 flex-col gap-4 text-sm">
     <p role="status">{job.paused ? zh ? '自动准备已暂停；已启动的核对仍可完成。' : 'Automatic preparation is paused; work already started may finish.'
-      : job.error !== null || state?.status === 'failed' ? zh ? '更新失败，医生草稿已保留，可重试。' : 'Update failed. Your draft is preserved; retry when ready.'
+      : recovery !== undefined ? recovery
+      : job.error !== null || state?.status === 'failed' ? zh ? '更新失败，医生草稿已保留。' : 'Update failed. Your draft is preserved.'
       : job.pending ? zh ? '正在按最新资料核对。' : 'Checking the latest information.'
       : state?.stale ? zh ? '资料有变化，旧自动项目等待重新核对。' : 'Information changed; previous automatic items need another check.'
       : zh ? '仅使用当前医生可见资料，正式提交由医生确认。' : 'Uses information visible to this doctor. The doctor confirms all formal actions.'}</p>
@@ -410,17 +419,19 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     <Card aria-label={titles[kind][zh ? 0 : 1]} role="region" size="sm" className="min-w-0" data-agent-phase={job.pending ? 'working' : 'ready'}>
       <CardHeader className="flex flex-col gap-2"><CardTitle>{titles[kind][zh ? 0 : 1]}</CardTitle><CardAction className="self-stretch"><div className="flex flex-wrap gap-1">
         {manualControls}
+        {state?.recovery?.canContinue ? <Button disabled={pending || job.paused || state.stale} onClick={job.continueOriginal} size="sm" type="button" variant="outline">{zh ? '继续原任务' : 'Continue original task'}</Button> : null}
         <Button disabled={refreshRecords ? false : pending || job.paused || state === undefined} onClick={() => {
           if (refreshRecords) { void synchronize(submission.data, submission.variables);return }
           if (!succeeded) submission.reset()
           job.refresh()
-        }} size="sm" type="button" variant="ghost"><RefreshCwIcon data-icon="inline-start" />{refreshRecords ? zh ? '刷新记录' : 'Refresh records' : zh ? '刷新' : 'Refresh'}</Button>
+        }} size="sm" type="button" variant="ghost"><RefreshCwIcon data-icon="inline-start" />{refreshRecords ? zh ? '刷新记录' : 'Refresh records' : state?.status === 'failed' ? zh ? '重新生成' : 'Regenerate' : zh ? '刷新' : 'Refresh'}</Button>
         {preparation === undefined ? null : <Button onClick={preparation.togglePaused} size="sm" type="button" variant="ghost">{job.paused ? zh ? '恢复自动准备' : 'Resume' : zh ? '暂停自动准备' : 'Pause'}</Button>}
         <Button onClick={() => preparation === undefined ? setLocalDetails(true) : preparation.openDetails(kind)} size="sm" type="button" variant="outline"><BookOpenIcon data-icon="inline-start" />{zh ? '依据与说明' : 'Evidence and details'}</Button>
       </div></CardAction></CardHeader>
       <CardContent className="flex min-w-0 flex-col gap-3">
         <p className="text-xs text-muted-foreground" role="status">{completedIntent ? zh ? `已完成${kind === 'diagnosis' ? '确认' : '开具'}，${recordsUpdated ? '记录已更新。' : '记录暂未刷新，请刷新查看。'}` : recordsUpdated ? 'Confirmed; records are up to date.' : 'Confirmed; refresh the records to see the result.' : job.paused ? zh ? '自动准备已暂停' : 'Preparation paused' : pending ? zh ? '正在按最新资料更新，旧自动项目暂不可开具。' : 'Updating; previous automatic items cannot be submitted yet.'
-          : failed ? zh ? '更新或提交未完成，草稿已保留，可重试。' : 'Update or submission failed. Your draft is preserved.'
+          : recoveryMessage(state, zh) !== undefined ? recoveryMessage(state, zh)
+          : failed ? zh ? '更新或提交未完成，草稿已保留。' : 'Update or submission failed. Your draft is preserved.'
           : state?.stale ? zh ? '资料有变化，等待重新核对。' : 'Information changed; another check is needed.'
           : state?.status === 'ready' && job.ready ? rows.length === 0
             ? state.considerations?.length ? zh ? '本轮仅有待核实思路，见“依据与说明”。' : 'Only considerations are available; see the details.'

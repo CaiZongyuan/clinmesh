@@ -3142,7 +3142,10 @@ describe('role workspaces', () => {
             draft: { ...structuredClinicalDocument, updatedAt: '2026-09-20T08:00:00Z', version: 1 },
             signed: [],
           },
-          consultation: { turns: recovered ? [doctorTurn, patientTurn] : failed ? [doctorTurn] : [], version: recovered ? 3 : failed ? 2 : 1 },
+          consultation: { turns: recovered ? [doctorTurn, patientTurn] : failed ? [doctorTurn] : [], version: recovered ? 3 : failed ? 2 : 1,
+            ...(failed && !recovered ? { replyAttempt: { doctorTurnId: doctorTurn.id, status: 'failed',
+              startedAt: '2026-09-16T09:00:00.000Z', deadlineAt: '2026-09-16T09:00:30.000Z', errorCode: 'AI_AUTH_FAILED' } } : {}),
+          },
           consultationRecording: { hasSavedDraft: true, version: 1, status: 'idle', additions: [] },
           encounter: { id: 'encounter-direct', status: 'in-progress', versionId: '1' },
           patient,
@@ -3177,7 +3180,7 @@ describe('role workspaces', () => {
     if (sender === 'human') {
       await user.type(await screen.findByRole('textbox', { name: '向患者提问' }), question.text)
       await user.click(screen.getByRole('button', { name: '向患者提问' }))
-      expect(await screen.findByText('重试将使用当前 ClinMesh 模型设置。')).toBeTruthy()
+      expect(await screen.findByText('患者回答失败。重试将使用当前 ClinMesh 模型设置。')).toBeTruthy()
       expect(await screen.findByText(/模型认证或访问被拒绝/)).toBeTruthy()
       expect(screen.queryByText('private-provider-credential')).toBeNull()
       await user.click(await screen.findByRole('button', { name: '重试患者回答' }))

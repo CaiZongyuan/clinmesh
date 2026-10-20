@@ -45,6 +45,9 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
   const [message, setMessage] = useState('')
   const lastTextTurn = consultation.turns.findLast(turn => turn.kind === 'text')
   const unanswered = lastTextTurn?.speaker === 'doctor'
+  const replyStatus = consultation.replyAttempt?.doctorTurnId === lastTextTurn?.id
+    ? consultation.replyAttempt?.status : undefined
+  const replyExecuting = unanswered && replyStatus === 'executing'
   const optimisticMessage = action.pending && action.pendingMessage !== undefined
     && !(unanswered && lastTextTurn.messageText === action.pendingMessage)
     ? action.pendingMessage : undefined
@@ -99,7 +102,7 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   </MessageContent></Message>
                 </MessageScrollerItem>
               )}
-              {action.pending ? (
+              {action.pending || replyExecuting ? (
                 <MessageScrollerItem messageId="patient-typing">
                   <Message><MessageContent><Bubble data-agent-consultation-pending="" variant="muted"><BubbleContent>
                     <span role="status">{locale === 'zh-CN' ? '患者正在输入…' : 'The patient is typing…'}</span>
@@ -140,7 +143,9 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                   {unanswered && !action.pending ? (
                     <InputGroupButton className="ml-auto" onClick={action.onRetry} size="sm" type="button" variant="outline">
                       <RefreshCwIcon aria-hidden="true" data-icon="inline-start" />
-                      {locale === 'zh-CN' ? '重试患者回答' : 'Retry patient reply'}
+                      {replyExecuting
+                        ? (locale === 'zh-CN' ? '等待当前回答' : 'Wait for current reply')
+                        : (locale === 'zh-CN' ? '重试患者回答' : 'Retry patient reply')}
                     </InputGroupButton>
                   ) : (
                     <InputGroupButton
@@ -161,7 +166,11 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
               </InputGroup>
               {unanswered && !action.pending ? (
                 <p className="text-muted-foreground text-sm">
-                  {locale === 'zh-CN' ? '重试将使用当前 ClinMesh 模型设置。' : 'Retry uses the current ClinMesh model settings.'}
+                  {replyExecuting
+                    ? (locale === 'zh-CN' ? '患者回答仍在生成，等待将复用本次回答。' : 'The patient is still answering. Waiting reuses this reply.')
+                    : replyStatus === 'failed'
+                      ? (locale === 'zh-CN' ? '患者回答失败。重试将使用当前 ClinMesh 模型设置。' : 'The patient reply failed. Retry uses the current ClinMesh model settings.')
+                      : (locale === 'zh-CN' ? '上次回答结果未知，未自动补答。明确重试将使用当前 ClinMesh 模型设置。' : 'The previous reply outcome is unknown. No reply was started automatically. An explicit retry uses the current ClinMesh model settings.')}
                 </p>
               ) : null}
             </Field>

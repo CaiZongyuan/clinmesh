@@ -1362,8 +1362,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; qualityControl binds current ten-field content and saved evidence to nonblocking completion and verification prompts',
-    version: 11,
+    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, succeeded, failed or unknown with the original deadline and safe error code, including CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; qualityControl binds current ten-field content and saved evidence to nonblocking completion and verification prompts',
+    version: 13,
   },
   {
     cliPath: ['doctor', 'document-quality', 'get'],
@@ -1425,8 +1425,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Send one free-text consultation message and append the patient reply',
-    version: 2,
+    summary: 'Send one free-text consultation message; overlapping ask and retry intents share the pending doctor turn execution; the same idempotency key waits for its original deadline or replays its saved reply, failed or unknown outcome without new inference, preserving the original CONSULTATION_CASE_NOT_FOUND or CONSULTATION_PERSONA_OUTDATED classification',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'consultation', 'retry-reply'],
@@ -1444,8 +1444,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Retry the last unanswered patient reply with current model settings; replaying the same intent keeps its model',
-    version: 2,
+    summary: 'Explicitly retry the last unanswered patient reply; an executing attempt is joined with its original model and deadline; only a new manual intent after termination starts with current model settings; the same key replays failed or unknown outcomes without new inference, preserving the original CONSULTATION_CASE_NOT_FOUND or CONSULTATION_PERSONA_OUTDATED classification',
+    version: 4,
   },
   {
     cliPath: ['encounter', 'completion', 'preview'],
@@ -1646,8 +1646,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['outpatient-doctor'],
-    summary: 'Save a version-protected clinical document draft; empty fields are allowed. Optional familyHistory and allergyHistory allow empty or missing values meaning not recorded; allergy text does not create AllergyIntolerance. Signing still requires the existing core content. Agent writes declare agentGenerated and optional agentFacts with saved sources; unsupported facts remain writable and get quality prompts',
-    version: 4,
+    summary: 'Save a version-protected clinical document draft; empty fields are allowed and field text including whitespace is preserved exactly. Identical saves advance the draft version while retaining valid recommendations. Optional familyHistory and allergyHistory allow empty or missing values meaning not recorded; allergy text does not create AllergyIntolerance. Signing still requires the existing core content. Agent writes declare agentGenerated and optional agentFacts with saved sources; unsupported facts remain writable and get quality prompts',
+    version: 5,
   },
   {
     cliPath: ['encounter', 'clinical-document', 'sign', 'preview'],

@@ -363,6 +363,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workflow,
     })
     const consultationDialogue = new ConsultationDialogueService({
+      database,
       models,
       cases: syntheticCases,
       commands,
@@ -759,8 +760,10 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           clearInterval(laboratoryServicePublicationTimer)
         }
         generationAbort.abort()
+        doctorRecommendations.close()
         closePromise = (async () => {
           await Promise.all([
+            consultationDialogue.close(),
             ...dispatchCycles.values(),
             generationCycle,
             laboratoryServicePublicationCycle,

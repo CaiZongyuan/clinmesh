@@ -8,12 +8,13 @@ export const preparationKinds = ['diagnosis', 'laboratory', 'imaging', 'patholog
 
 type JobInput = { caseId: string; kind: DoctorRecommendationKind; enabled: boolean; paused: boolean; scope?: string | undefined; inputRevision?: string | undefined }
 
-function newer(current: DoctorRecommendationState | undefined, incoming: DoctorRecommendationState) {
+function newer(current: DoctorRecommendationState | undefined, incoming: DoctorRecommendationState, source: 'read' | 'command') {
   if (incoming.hidePreviousResults) return incoming
   if (current?.hidePreviousResults && current.generation >= incoming.generation) return current
   if (current !== undefined && current.generation > incoming.generation) return current
   if (current?.generation === incoming.generation && current.inputFingerprint === incoming.inputFingerprint
-    && ['ready', 'missing-evidence', 'failed'].includes(current.status) && incoming.status === 'pending' && !incoming.stale) return current
+    && (['ready', 'missing-evidence'].includes(current.status) || current.status === 'failed' && source === 'command')
+    && incoming.status === 'pending' && !incoming.stale) return current
   return incoming
 }
 
@@ -36,7 +37,7 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
   const lastAutomatic = useRef<string | undefined>(undefined)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
-  const receive = (incoming: DoctorRecommendationState) => {
+  const receive = (incoming: DoctorRecommendationState, source: 'read' | 'command') => {
     const previous = client.getQueryData<DoctorRecommendationState>(queryKey)
     if (incoming.hidePreviousResults) {
       for (const [key, cached] of client.getQueriesData<DoctorRecommendationState>({ queryKey: prefix })) {
@@ -46,20 +47,21 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
     } else if (previous?.status === 'ready' && !previous.stale && !previous.hidePreviousResults) {
       client.setQueryData([...prefix, 'completed', previous.generation, previous.inputFingerprint], previous)
     }
-    return newer(previous, incoming)
+    return newer(previous, incoming, source)
   }
   const query = useQuery({
     queryKey, enabled: enabled && !settling, retry: false, refetchOnWindowFocus: false,
     queryFn: async ({ signal }) => {
-      return receive(await getDoctorRecommendations(caseId, kind, signal))
+      return receive(await getDoctorRecommendations(caseId, kind, signal), 'read')
     },
     refetchInterval: query => query.state.data?.status === 'pending' ? 1_000 : false,
   })
   const generation = useMutation({
-    mutationFn: ({ state, refresh }: { state: DoctorRecommendationState; refresh: boolean; identity: string; viewRevision: number }) => generateDoctorRecommendations(state, refresh),
+    mutationFn: ({ state, refresh, continueOriginal }: { state: DoctorRecommendationState; refresh: boolean; continueOriginal?: boolean; identity: string; viewRevision: number }) => continueOriginal
+      ? generateDoctorRecommendations(state, false, true) : generateDoctorRecommendations(state, refresh),
     onSuccess: (state, request) => {
       if (mounted.current && current.current.identity === request.identity && current.current.revision === request.viewRevision) {
-        client.setQueryData<DoctorRecommendationState>(queryKey, receive(state))
+        client.setQueryData<DoctorRecommendationState>(queryKey, receive(state, 'command'))
       }
     },
     onSettled: (_result, _error, request) => {
@@ -70,7 +72,8 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
   const generating = generation.isPending && generation.variables?.identity === identity && generation.variables.viewRevision === viewRevision
   const mutate = generation.mutate
   useEffect(() => {
-    if (!enabled || settling || paused || state === undefined || generating || query.isError || !(state.status === 'idle' || state.stale)) return
+    if (!enabled || settling || paused || state === undefined || generating || query.isError
+      || state.errorCode === 'MODEL_OUTCOME_UNKNOWN' && state.recovery === undefined || !(state.status === 'idle' || state.stale)) return
     const request = `${identity}:${viewRevision}:${state.inputFingerprint}`
     if (lastAutomatic.current === request) return
     lastAutomatic.current = request
@@ -80,11 +83,16 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
     .flatMap(([key, candidate]) => candidate?.caseId === caseId && candidate.kind === kind && candidate.status === 'ready' && !candidate.stale
       ? [{ state: candidate, updatedAt: client.getQueryState(key)?.dataUpdatedAt ?? 0 }] : [])
     .toSorted((left, right) => right.updatedAt - left.updatedAt)[0]?.state
-  const error = query.error ?? (generation.variables?.identity === identity && generation.variables.viewRevision === viewRevision ? generation.error : null)
+  const continuationObserved = generation.variables?.continueOriginal && state !== undefined && !state.stale
+    && state.generation === generation.variables.state.generation && state.inputFingerprint === generation.variables.state.inputFingerprint
+    && ['pending', 'ready', 'missing-evidence'].includes(state.status)
+  const error = query.error ?? (generation.variables?.identity === identity && generation.variables.viewRevision === viewRevision
+    && !continuationObserved ? generation.error : null)
   const pending = enabled && (settling || query.isPending || query.isFetching || generating || state?.status === 'pending')
   return { state, previous, pending, error, paused,
     ready: enabled && !paused && !pending && !query.isFetching && error === null && state?.status === 'ready' && !state.stale,
     refresh: () => { if (!paused && !settling && state !== undefined) generation.mutate({ state, refresh: true, identity, viewRevision }) },
+    continueOriginal: () => { if (!paused && !settling && state?.recovery?.canContinue && !state.stale) generation.mutate({ state, refresh: false, continueOriginal: true, identity, viewRevision }) },
     invalidate: () => client.invalidateQueries({ queryKey: prefix }),
   }
 }
