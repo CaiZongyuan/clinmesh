@@ -9,16 +9,15 @@ import { signIn } from './fixtures/consultation.ts'
 
 it('activates a new case without consultation and signs doctor-only recording without source acknowledgement', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-recording-control-'))
+  const modelSchemas: string[] = []
   const runtime = await createClinMeshRuntime({
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', trustedOrigins: ['http://localhost'],
     dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
     chatCompletionsProvider: { async completeJson(input) {
-      const payload = input.userPayload as { turns: Array<{ sentences: Array<{ id: string }> }>; additions?: unknown[] }
-      if (input.schemaName === 'consultation_history_verification') return { model: 'synthetic', content: JSON.stringify({
-        additions: payload.additions!.map((_, index) => ({ index, faithful: true, complete: true, relationValid: true })),
-      }) }
+      modelSchemas.push(input.schemaName)
+      const payload = input.userPayload as { turns: Array<{ sentences: Array<{ id: string }> }> }
       const source = payload.turns.at(-1)!
       return { model: 'synthetic', content: JSON.stringify({ additions: [{ field: 'assessment', relation: 'addition',
         facts: [{ text: '医生考虑急性上呼吸道感染', sourceIds: [source.sentences[0]!.id] }],
@@ -92,6 +91,8 @@ it('activates a new case without consultation and signs doctor-only recording wi
     expect(recorded.consultation).toBeUndefined()
     expect(recorded.clinicalDocument!.draft).toMatchObject({ assessment: '医生考虑急性上呼吸道感染' })
     expect(recorded.consultationRecording!.sources).toMatchObject([{ kind: 'doctor', id: 'doctor-only-source' }])
+    expect(modelSchemas.filter(schema => schema === 'consultation_history_summary')).toHaveLength(1)
+    expect(modelSchemas.filter(schema => schema === 'consultation_history_verification')).toHaveLength(0)
     const document = { chiefComplaint: '发热伴咽痛两天。', historyOfPresentIllness: '合成患者自诉发热咽痛。',
       physicalExamination: '医生查体咽部充血。', assessment: recorded.clinicalDocument!.draft!.assessment,
       disposition: '医生决定门诊观察。', followUp: '医生安排三日后复诊。' }

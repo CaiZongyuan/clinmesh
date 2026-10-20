@@ -213,7 +213,7 @@ function Issue({ issue, messages, locale, onLocateIssue }: {
   return <li className="flex min-w-0 flex-col gap-2 text-sm" data-document-quality-issue={issue.id} data-document-quality-issue-status={issue.status}>
     <p className="whitespace-pre-wrap break-words">
       <Badge variant={issue.status === 'retained' ? 'outline' : 'secondary'}>{issue.status === 'retained' ? messages.documentQualityRetained
-        : messages.documentQualityVerification}</Badge>{' '}{issue.message}
+        : issue.classification === 'needs-completion' ? messages.documentQualityCompletion : messages.documentQualityVerification}</Badge>{' '}{issue.message}
     </p>
     {issue.explanation === undefined ? null : <dl className="grid min-w-0 gap-1 whitespace-pre-wrap break-words">
       <dt className="text-xs font-medium text-muted-foreground">{messages.documentQualityImpact}</dt>
@@ -235,7 +235,7 @@ export function DocumentQualityFieldIssues({ field, quality, messages, locale, o
   field: keyof ClinicalDocumentContent; quality: DocumentQualityControl; messages: Messages; locale: WorkspaceLocale
   onLocateIssue?: ((issue: QualityIssue) => void) | undefined
 }) {
-  const issues = quality.stale || quality.error !== null ? [] : quality.state?.issues.filter(issue => issue.field === field && issue.classification !== 'needs-completion') ?? []
+  const issues = quality.stale || quality.error !== null ? [] : quality.state?.issues.filter(issue => issue.field === field) ?? []
   if (issues.length === 0) return null
   const retained = issues.filter(issue => issue.status === 'retained')
   return <section aria-label={`${messages[field]}${messages.documentQualityFieldSuffix}`} className="flex min-w-0 flex-col gap-2" data-document-quality-field={field}>

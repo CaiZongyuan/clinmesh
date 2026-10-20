@@ -24,21 +24,22 @@ describe('Node.js runtime', () => {
     })
     let checks = 0
     const dispatch = vi.spyOn(runtime.dispatcher, 'dispatchOnce').mockImplementation(async filter => {
-      if (filter?.kinds?.includes('consultation.verify-history') && checks++ < 4) {
+      if (filter?.kinds?.includes('doctor.generate-recommendations') && checks++ < 1) {
         await held
         return { attempt: 1, correlationId: 'synthetic-correlation', dedupKey: randomUUID(), epoch: 'synthetic-epoch', eventId: randomUUID(),
-          kind: 'consultation.verify-history', payload: {}, scenarioRunId: 'synthetic-run', workspaceId: 'synthetic-workspace',
+          kind: 'doctor.generate-recommendations', payload: {}, scenarioRunId: 'synthetic-run', workspaceId: 'synthetic-workspace',
           status: 'completed' }
       }
       return undefined
     })
     try {
       await vi.advanceTimersByTimeAsync(500)
+      expect(checks).toBe(1)
       expect(dispatch.mock.calls.filter(([filter]) => filter?.kinds?.includes('consultation.record-history')).length).toBeGreaterThan(10)
       const before = dispatch.mock.calls.length
       release()
       await vi.advanceTimersByTimeAsync(0)
-      expect(dispatch.mock.calls.length - before).toBeLessThanOrEqual(4)
+      expect(dispatch.mock.calls.length - before).toBeLessThanOrEqual(1)
     } finally {
       release()
       await runtime.close()

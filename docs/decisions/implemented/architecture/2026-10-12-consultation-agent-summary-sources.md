@@ -4,6 +4,8 @@ Status: implemented
 
 同步语义核对、整轮自动重试和质量提示的当前边界由[增量记录决策](2026-10-15-low-latency-document-recording.md)补充或取代；本记录的其他来源与编辑保护理由继续适用。
 
+独立忠实性核对的模型调用与展示已由[统一病历质控决策](2026-10-19-recording-quality-consolidation.md)取代；来源语义、旧事实及拒绝事实保护归现有质控生成与独立复核，DSH 不再允许旧核对任务。本记录保留原取舍理由，当前运行合同以接替决策及临床业务流程为准。
+
 新任务的模型传输由[句子编号决策](2026-10-19-recording-sentence-references.md)取代逐字引文输出；本记录继续拥有恢复后的完整证据语义。
 
 当前十字段、统一来源与直接记录合同由[全病历自动整理规格](../../../../docs/spec/2026-10-14-doctor-full-document-recording.md)拥有，整合取舍见[十字段直接记录决策](2026-10-15-unified-direct-document-recording.md)。本记录的来源、片段保护、持久任务与逆操作理由继续适用。

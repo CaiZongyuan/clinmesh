@@ -36,6 +36,8 @@
 
 ## 替身、异步屏障与断言
 
+- 质控问题的 Badge 与正文共享一个段落时，`getByText(message, { exact: true })` 无法单独匹配正文；将定位限定到对应字段 region，再用 `toContainText(message)` 核对，保留标签的独立断言。综合浏览器回归将生产 fixture 构建放在 `beforeAll`，分别保留构建和交互原有时限，避免编译挤占交互预算；不能增加时限掩盖真实断言失败。
+
 - 诊断、处方浏览器合同填写有效草稿后，先等待对应 `[data-agent-section]` 内的“草稿已自动保存”，再切换外观或检查焦点。保存期间编辑区会暂时禁用并清除焦点；`focus()` 只执行一次，后续 `toBeFocused()` 重试不会重新聚焦。沿用 [Web E2E](../../apps/web/e2e/diagnosis-prescription.spec.ts) 的保存完成条件，保留原断言与超时，避免用固定等待或重复聚焦掩盖竞态。
 
 - 勾选聊天风格、结果顺序或按需教学等模型行为前，核对部署 preset/persona，并以新建 Session 的实际模型请求证明规则已装配。规格描述、普通工具测试和脚本化替身的回答不能证明真实模型持续遵守这些要求；接线证据与实模体验分别记录。
@@ -49,6 +51,8 @@
 - 多病例测试不能在同一 runtime 中反复使用完全相同的 Synthea 来源：生成按来源去重，会返回已经接诊的病例，后续 Persona 因病例状态不允许而失败。替身须返回身份或其他来源事实不同、hash 与内容一致的合成病例，并断言病例 ID 不同。
 
 - JSDOM 中测试 Base UI Select 时，优先在 `act` 中聚焦 Trigger、通过 `user.keyboard('{Enter}')` 展开，再用 `findByRole('option')` 等待选项；单次 `user.click` 后立即 `getByRole` 在 CI 可能遇到控件仍关闭的时序。保留选中后的业务断言，不靠扩大超时或跳过校验处理。真实指针、弹层布局与 Portal 行为仍由 Playwright 合同验证。
+
+- 真实 WebApp 的 Surface Tool 测试先等待当前病例的可观察就绪状态，再断言 Tool 注册；冷启动导入时直接等待注册可能先耗尽 RTL 默认等待时间。使用业务控件的就绪信号同步，不扩大 timeout 掩盖初始化时序。
 
 - 工作台可以同时包含问诊输入状态和病历更新状态。测试具体状态时用 `within` 限定所属区域，不使用全页面的单数 `getByRole('status')`；保留各区域的可访问性提示及原有业务断言。
 
