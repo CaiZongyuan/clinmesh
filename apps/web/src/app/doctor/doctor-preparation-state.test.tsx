@@ -26,6 +26,8 @@ function Job({ revision = '1' }: { revision?: string }) {
   return <><p role="status">{job.pending ? '更新中' : '已结束'}</p>
     <p>当前：{job.state?.items.map(item => item.label).join('、') || '无'}</p>
     <p>保留：{job.previous?.items.map(item => item.label).join('、') || '无'}</p>
+    {job.error === null ? null : <p role="alert">{job.error.message}</p>}
+    <button disabled={!job.ready}>确认建议</button>
     <button onClick={job.refresh}>刷新</button><button onClick={job.continueOriginal}>继续原任务</button></>
 }
 function SubmissionControls() {
@@ -52,6 +54,28 @@ function deferred() {
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); vi.unstubAllGlobals() })
 
 describe('background clinical preparation', () => {
+  it('polls the same generation continued from another entry after reading its pending state', async () => {
+    const held = deferred()
+    let current = state({ status: 'failed', items: [], recovery: { status: 'unknown', requestCount: 2, extraRequestCount: 0,
+      maxRequestsPerUnit: 3, maxExtraRequests: 4, canContinue: true, units: [] } })
+    let resumedReads = 0
+    const fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).not.toBe('POST')
+      if (current.status === 'pending' && ++resumedReads > 1) return held.promise
+      return Response.json(current)
+    })
+    vi.stubGlobal('fetch', fetch)
+    const { client } = mount()
+    await screen.findByText('已结束')
+    current = state({ status: 'pending', items: [], recovery: { ...current.recovery!, status: 'pending', canContinue: false } })
+    await act(async () => { await client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+    await screen.findByText('更新中')
+    await waitFor(() => expect(resumedReads).toBeGreaterThan(1), { timeout: 2500 })
+    await act(async () => { held.resolve(Response.json(state())) })
+    await screen.findByText('当前：合成发热候选')
+    await screen.findByText('已结束')
+  })
+
   it('polls a manually continued generation until completion without automatically retrying its unknown state', async () => {
     const held = deferred()
     let current = state({ status: 'failed', items: [], recovery: { status: 'unknown', requestCount: 2, extraRequestCount: 0,
@@ -79,6 +103,90 @@ describe('background clinical preparation', () => {
     await screen.findByText('当前：合成发热候选')
     await screen.findByText('已结束')
     expect(posts).toHaveLength(1)
+  })
+
+  it('recovers a committed continuation after losing its response and allows confirming the completed result', async () => {
+    const held = deferred()
+    let current = state({ status: 'failed', items: [], recovery: { status: 'unknown', requestCount: 2, extraRequestCount: 0,
+      maxRequestsPerUnit: 3, maxExtraRequests: 4, canContinue: true, units: [] } })
+    const posts: unknown[] = []
+    let resumedReads = 0
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        posts.push(JSON.parse(String(init.body)))
+        current = state({ status: 'pending', items: [], recovery: { ...current.recovery!, status: 'pending', canContinue: false } })
+        throw new TypeError('Synthetic response lost after server acceptance')
+      }
+      if (posts.length && ++resumedReads > 1) return held.promise
+      return Response.json(current)
+    }))
+    mount()
+    await screen.findByText('已结束')
+    await userEvent.setup().click(screen.getByRole('button', { name: '继续原任务' }))
+    await waitFor(() => expect(resumedReads).toBeGreaterThan(1), { timeout: 2500 })
+    await act(async () => { held.resolve(Response.json(state())) })
+    await screen.findByText('当前：合成发热候选')
+    await waitFor(() => expect(screen.getByRole('button', { name: '确认建议' }).hasAttribute('disabled')).toBe(false))
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(posts).toEqual([expect.objectContaining({ input: {
+      expectedInputFingerprint: current.inputFingerprint, refresh: false, continueGeneration: 2,
+    } })])
+  })
+
+  it('keeps a continuation error visible when reading the server still confirms failure', async () => {
+    const current = state({ status: 'failed', items: [], recovery: { status: 'unknown', requestCount: 2, extraRequestCount: 0,
+      maxRequestsPerUnit: 3, maxExtraRequests: 4, canContinue: true, units: [] } })
+    let reads = 0
+    let posts = 0
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        posts += 1
+        throw new TypeError('Synthetic request did not reach the server')
+      }
+      reads += 1
+      return Response.json(current)
+    }))
+    mount()
+    await screen.findByText('已结束')
+    await userEvent.setup().click(screen.getByRole('button', { name: '继续原任务' }))
+    await waitFor(() => expect(reads).toBe(2))
+    await screen.findByText('已结束')
+    expect(screen.getByRole('alert').textContent).toBe('ClinMesh could not be reached')
+    expect(screen.getByRole('button', { name: '确认建议' }).hasAttribute('disabled')).toBe(true)
+    expect(posts).toBe(1)
+  })
+
+  it('keeps a completed result when the continuation acknowledgement arrives late', async () => {
+    const acknowledgement = deferred()
+    const reread = deferred()
+    let current = state({ status: 'failed', items: [], recovery: { status: 'unknown', requestCount: 2, extraRequestCount: 0,
+      maxRequestsPerUnit: 3, maxExtraRequests: 4, canContinue: true, units: [] } })
+    let accepted: DoctorRecommendationState | undefined
+    let completedRead = false
+    let rereading = false
+    vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      if (init?.method === 'POST') {
+        accepted = state({ status: 'pending', items: [], recovery: { ...current.recovery!, status: 'pending', canContinue: false } })
+        current = state()
+        return acknowledgement.promise
+      }
+      if (completedRead) { rereading = true; return reread.promise }
+      if (current.status === 'ready') completedRead = true
+      return Response.json(current)
+    }))
+    const { client } = mount()
+    await screen.findByText('已结束')
+    await userEvent.setup().click(screen.getByRole('button', { name: '继续原任务' }))
+    await waitFor(() => expect(accepted).toBeDefined())
+    await act(async () => { await client.invalidateQueries({ queryKey: ['doctor-recommendations'] }) })
+    await screen.findByText('当前：合成发热候选')
+    await act(async () => { acknowledgement.resolve(Response.json({ data: accepted,
+      auditId: 'late-audit', effects: [], requestId: 'late-request', warnings: [] })) })
+    await waitFor(() => expect(rereading).toBe(true))
+    expect(screen.getByText('当前：合成发热候选')).toBeTruthy()
+    await act(async () => { reread.resolve(Response.json(current)) })
+    await screen.findByText('已结束')
+    expect(screen.getByRole('button', { name: '确认建议' }).hasAttribute('disabled')).toBe(false)
   })
 
   it('coalesces consecutive source updates and blocks cached automatic items immediately', async () => {

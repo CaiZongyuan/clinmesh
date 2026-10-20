@@ -9,6 +9,7 @@ import { expect, test } from './fixtures.ts'
 
 async function startApp(webRoot: string, initialMode: 'empty' | 'unknown') {
   let mode: 'empty' | 'unknown' | 'exhausted' | 'success' = initialMode
+  let verificationGate: Promise<void> | undefined
   const calls: Array<{ stage: string; kind: string }> = []
   const app = await startBrowserServer(webRoot, {
     patientPersonaModel: 'synthetic-persona', syntheaProvider: new StubSyntheaProvider(), autoDispatchIntervalMs: 30,
@@ -17,6 +18,7 @@ async function startApp(webRoot: string, initialMode: 'empty' | 'unknown') {
       const { kind } = z.object({ kind: doctorRecommendationKindSchema }).parse(input.userPayload)
       calls.push({ stage: input.schemaName, kind })
       if (kind === 'diagnosis' && input.schemaName === 'doctor_recommendation_verification') {
+        await verificationGate
         if (mode === 'unknown') throw new ChatCompletionsError('AI_TIMEOUT', 'Synthetic unknown response')
         if (mode === 'exhausted') throw new ChatCompletionsError('AI_REQUEST_FAILED', 'Synthetic complete technical failure', { httpStatus: 503 })
       }
@@ -25,7 +27,8 @@ async function startApp(webRoot: string, initialMode: 'empty' | 'unknown') {
       return { model: input.model, content: JSON.stringify(result) }
     } },
   })
-  return { ...app, calls, setMode: (next: typeof mode) => { mode = next } }
+  return { ...app, calls, setMode: (next: typeof mode) => { mode = next },
+    setVerificationGate: (gate: Promise<void>) => { verificationGate = gate } }
 }
 
 test('saving identical text preserves all five automatic preparations and their generations', async ({ page, webRoot }) => {
@@ -70,8 +73,10 @@ test('saving identical text preserves all five automatic preparations and their 
   } finally { await app.close() }
 })
 
-test('continues only unknown verification, exposes exhaustion, and explicitly regenerates with new quota', async ({ page, webRoot }) => {
+test('recovers a lost continuation response, exposes exhaustion, and explicitly regenerates with new quota', async ({ page, webRoot }) => {
   const app = await startApp(webRoot, 'unknown')
+  let releaseVerification = () => {}
+  const verificationGate = new Promise<void>(resolve => { releaseVerification = resolve })
   try {
     const started = await startConsultationCase(app.runtime, app.password, app.origin)
     await page.goto(`${app.origin}/consultation`)
@@ -90,7 +95,28 @@ test('continues only unknown verification, exposes exhaustion, and explicitly re
     expect((await read()).items).toEqual([])
     expect(diagnosisCalls()).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
     app.setMode('success')
+    app.setVerificationGate(verificationGate)
+    let lostResponse = false
+    await page.route('**/recommendations/diagnosis/actions/generate', async route => {
+      if (route.request().postDataJSON().input.continueGeneration === undefined) return route.continue()
+      const response = await route.fetch()
+      expect(response.ok()).toBe(true)
+      expect(doctorRecommendationStateSchema.parse((await response.json()).data)).toMatchObject({ generation: 1, status: 'pending' })
+      lostResponse = true
+      await route.abort('failed')
+    })
+    let pendingReads = 0
+    const polling = page.waitForResponse(async response => {
+      if (response.request().method() !== 'GET' || !new URL(response.url()).pathname.endsWith('/recommendations/diagnosis')) return false
+      const state = doctorRecommendationStateSchema.parse(await response.json())
+      return state.status === 'pending' && ++pendingReads >= 2
+    })
     await panel.getByRole('button', { name: '继续原任务', exact: true }).click()
+    await polling
+    expect(lostResponse).toBe(true)
+    await expect(panel.getByText('正在按最新资料更新，旧自动项目暂不可开具。', { exact: true })).toBeVisible()
+    expect(await read()).toMatchObject({ generation: 1, status: 'pending', recovery: { requestCount: 3 } })
+    releaseVerification()
     await expect(panel.getByRole('button', { name: /^确认选中诊断/ })).toBeEnabled()
     expect(await read()).toMatchObject({ generation: 1, status: 'ready', recovery: { requestCount: 3 } })
     expect(diagnosisCalls()).toEqual(['doctor_recommendations', 'doctor_recommendation_verification', 'doctor_recommendation_verification'])
@@ -106,5 +132,5 @@ test('continues only unknown verification, exposes exhaustion, and explicitly re
     expect(await read()).toMatchObject({ generation: 3, status: 'ready', recovery: { requestCount: 2, extraRequestCount: 0 } })
     const detail = doctorCaseDetailSchema.parse(await (await page.request.get(`${app.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
     expect(detail.diagnosis?.confirmation).toBeUndefined()
-  } finally { await app.close() }
+  } finally { releaseVerification(); await app.close() }
 })
