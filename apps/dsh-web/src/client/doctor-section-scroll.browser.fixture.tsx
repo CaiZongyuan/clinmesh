@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom'
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { DoctorCaseDetailRegion, DoctorCaseLayout, DoctorCasePanel, DoctorWorkspaceLayout } from '../../../web/src/app/doctor/responsive-layout.tsx'
 
-import { EncounterCompletionChecklist } from '../../../web/src/app/doctor/completion-checklist.tsx'
+import { EncounterCompletionProgress } from '../../../web/src/app/doctor/completion-checklist.tsx'
 import { PatientBanner } from '../../../web/src/app/doctor/patient-summary.tsx'
 import { getWorkspaceMessages } from '../../../web/src/app/workspace-i18n.ts'
 import { Button } from '@clinmesh/ui/components/button'
@@ -51,7 +51,7 @@ function App({ locale = 'zh-CN' }: { locale?: 'zh-CN' | 'en-US' }) {
       <DoctorCaseDetailRegion><div role="status" className="shrink-0">Synthetic success notification</div><DoctorCaseLayout>
         <div className="flex min-h-0 flex-1 flex-col">
           <PatientBanner detail={detail} messages={messages} statusText="接诊中" completionAction={<Button>完诊</Button>}
-            completionChecklist={<EncounterCompletionChecklist completion={completion} locale={locale} />} />
+            completionChecklist={<EncounterCompletionProgress completion={completion} locale={locale} />} />
           <Tabs defaultValue="record" className="min-h-0 flex-1 gap-0">
             <div className="shrink-0 overflow-x-auto"><TabsList>{sections.map(section => <TabsTrigger key={section} value={section}>{section}</TabsTrigger>)}</TabsList></div>
             {sections.map(section => <DoctorCasePanel key={section} value={section}>
@@ -78,10 +78,10 @@ async function run() {
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const panel = root.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
       const header = root.querySelector(`[aria-label="${messages.selectedPatient}"]`)!
-      const checklist = root.querySelector('[aria-labelledby="completion-heading-encounter-synthetic"]')!
-      const list = checklist.querySelector('ul')!
-      const items = [...list.querySelectorAll('li')]
-      const checklistBounds = checklist.getBoundingClientRect()
+      const progressLabel = messages.encounterCompletionSatisfied.replace('{complete}', '2').replace('{total}', '7')
+      const progress = root.querySelector(`[aria-label="${progressLabel}"]`)!
+      const progressBounds = progress.getBoundingClientRect()
+      const headerBounds = header.getBoundingClientRect()
       const tabs = root.querySelector('[role="tablist"]')!
       const headerTop = header.getBoundingClientRect().top
       const tabsTop = tabs.getBoundingClientRect().top
@@ -89,16 +89,10 @@ async function run() {
       await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
       const end = panel.querySelector('button')!.getBoundingClientRect()
       steps.push({ width, height, section,
-        checklistBetweenPatientAndVitals: checklistBounds.top >= header.querySelector('h2')!.getBoundingClientRect().bottom
-          && checklistBounds.bottom <= header.querySelector('dl')!.getBoundingClientRect().top,
-        checklistBounded: list.getBoundingClientRect().right <= checklistBounds.right && list.getBoundingClientRect().left >= checklistBounds.left,
-        checklistHorizontal: width < 1000 || items[0]!.getBoundingClientRect().top === items[1]!.getBoundingClientRect().top,
-        checklistEqualWidths: items.every(item => item.getBoundingClientRect().width === items[0]!.getBoundingClientRect().width),
-        checklistFullyVisible: list.scrollWidth <= list.clientWidth && items.every(item => {
-          const bounds = item.getBoundingClientRect()
-          return bounds.left >= checklistBounds.left && bounds.right <= checklistBounds.right
-            && bounds.top >= checklistBounds.top && bounds.bottom <= checklistBounds.bottom
-        }),
+        progressBelowIdentity: progressBounds.top >= header.querySelector('h2')!.getBoundingClientRect().bottom,
+        progressBounded: progressBounds.left >= headerBounds.left && progressBounds.right <= headerBounds.right
+          && progressBounds.top - headerBounds.top + header.scrollTop >= 0
+          && progressBounds.bottom - headerBounds.top + header.scrollTop <= header.scrollHeight,
         panelScrolled: panel.scrollTop > 0,
         endVisible: end.bottom <= host.getBoundingClientRect().bottom && end.top >= tabs.getBoundingClientRect().bottom,
         headerStable: header.getBoundingClientRect().top === headerTop && tabs.getBoundingClientRect().top === tabsTop,
@@ -109,30 +103,29 @@ async function run() {
   const typography = []
   for (const locale of ['en-US', 'zh-CN'] as const) {
     flushSync(() => appRoot.render(<App locale={locale} />))
+    const localeMessages = getWorkspaceMessages(locale)
+    const progressLabel = localeMessages.encounterCompletionSatisfied.replace('{complete}', '2').replace('{total}', '7')
     for (const fontSize of ['standard', 'larger', 'large']) {
       root.dataset.fontSize = fontSize
       for (const [width, height] of [[1000, 700], [600, 700], [320, 520]] as const) {
         host.style.width = `${width}px`
         host.style.height = `${height}px`
         await new Promise(resolve => setTimeout(resolve, 150))
-        const checklist = root.querySelector('[aria-labelledby="completion-heading-encounter-synthetic"]')!
-        const badges = [...checklist.querySelectorAll<HTMLElement>('[data-slot="badge"]')]
+        const progress = root.querySelector(`[aria-label="${progressLabel}"]`)!
+        const progressBounds = progress.getBoundingClientRect()
+        const row = progress.closest('div')!.parentElement!
         const panel = root.querySelector<HTMLElement>('[role="tabpanel"]:not([hidden])')!
         panel.scrollTop = panel.scrollHeight
         await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
         const end = panel.querySelector('button')!.getBoundingClientRect()
         const panelBounds = panel.getBoundingClientRect()
+        const range = document.createRange()
+        range.selectNodeContents(progress)
         typography.push({ locale, fontSize, width,
-          badgeFontSize: Number.parseFloat(getComputedStyle(badges[0]!).fontSize),
-          textVisible: badges.every(badge => {
-            const bounds = badge.getBoundingClientRect()
-            const range = document.createRange()
-            range.selectNodeContents(badge)
-            return [...range.getClientRects()].every(text => text.left >= bounds.left - 0.5
-              && text.right <= bounds.right + 0.5 && text.top >= bounds.top - 0.5 && text.bottom <= bounds.bottom + 0.5)
-          }),
-          equalWidths: badges.every(badge => badge.getBoundingClientRect().width === badges[0]!.getBoundingClientRect().width),
-          noHorizontalOverflow: checklist.scrollWidth <= checklist.clientWidth,
+          progressFontSize: Number.parseFloat(getComputedStyle(progress).fontSize),
+          textVisible: [...range.getClientRects()].every(text => text.left >= progressBounds.left - 0.5
+            && text.right <= progressBounds.right + 0.5 && text.top >= progressBounds.top - 0.5 && text.bottom <= progressBounds.bottom + 0.5),
+          noHorizontalOverflow: row.scrollWidth <= row.clientWidth,
           endVisible: panelBounds.height > 0 && end.top >= panelBounds.top - 0.5 && end.bottom <= panelBounds.bottom + 0.5
             && end.top >= host.getBoundingClientRect().top && end.bottom <= host.getBoundingClientRect().bottom,
         })

@@ -19,10 +19,12 @@
 - [冠心病单病例 DRG 质控功能方案](2026-10-15-coronary-drg-quality-control-plan.md)
 - [冠心病单病例 DRG 质控：官方规则依据](2026-10-15-drg-official-evidence.md)
 - [DRG 运营分析前置条件与建设路径](2026-10-20-drg-operations-prerequisites.md)
+- [住院病案首页、编码目录与召回边界](2026-10-20-inpatient-record-coding-and-recall.md)
 - [通用门诊病历缺项的官方依据与适用边界](2026-10-15-outpatient-record-quality-rules.md)
 
 ## Agent 接入与协议
 
+- [Agent 模型调用链路、触发与停止条件审计](2026-10-19-agent-model-call-lifecycle.md)
 - [面向 Agent 的业务 CLI 参考研究](agent-friendly-cli-reference-analysis.md)
 - [Agent 运行时与评测融合研究](agent-runtime-and-evaluation-integration.md)
 - [DSH 插件能力与 ClinMesh 界面融合路线](dsh-plugin-integration-options.md)

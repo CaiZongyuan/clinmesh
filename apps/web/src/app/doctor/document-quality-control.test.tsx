@@ -11,6 +11,7 @@ import { useState, type ComponentProps } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { ClinicalDocumentPage } from './clinical-document-page.tsx'
+import { DocumentQualitySignSummary, useDocumentQualityControl } from './document-quality-control.tsx'
 
 const baseDocument: ClinicalDocumentContent = {
   chiefComplaint: '发热三天。', historyOfPresentIllness: '三天前发热，最高体温 38.5℃。',
@@ -134,6 +135,33 @@ it('does not create a check revision for unrelated case workflow state changes',
   mounted.rerenderPage({ ...detail, taskVersion: '2', consultationRecording: { ...detail.consultationRecording!, version: 9, status: 'paused' } })
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)) })
   expect(server.requests).toHaveLength(1)
+})
+
+it('settles the workspace and frozen signing summary when a new doctor source arrives', async () => {
+  stubQuality()
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  clients.push(client)
+  function Workspace({ currentDetail }: { currentDetail: typeof detail }) {
+    const quality = useDocumentQualityControl({ detail: currentDetail, scope: 'doctor-workspace' })
+    return <>
+      <p aria-label="正文质控状态" role="status">{quality.pending ? 'pending' : quality.state?.status}</p>
+      <DocumentQualitySignSummary detail={detail} state={undefined} scope="doctor-workspace" locale="zh-CN" />
+    </>
+  }
+  const view = render(<QueryClientProvider client={client}><Workspace currentDetail={detail} /></QueryClientProvider>)
+  const summary = screen.getByRole('region', { name: '签署前质控汇总' })
+  await userEvent.setup().click(within(summary).getByText('依据与说明', { selector: 'summary' }))
+  await within(summary).findByText('本次检查已更新，请核对各字段提示。')
+  const withDoctorSource = { ...detail, consultationRecording: { ...detail.consultationRecording!, sources: [{
+    id: 'doctor-sign-request', kind: 'doctor' as const, messageText: '请准备签署病历。', recordedAt: '2026-10-15T10:00:00+08:00',
+  }] } }
+  view.rerender(<QueryClientProvider client={client}><Workspace currentDetail={withDoctorSource} /></QueryClientProvider>)
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)) })
+  await waitFor(() => {
+    expect(screen.getByRole('status', { name: '正文质控状态' }).textContent).toBe('ready')
+    expect(within(summary).getByText('本次检查已更新，请核对各字段提示。')).toBeTruthy()
+  })
+  expect(within(summary).getByRole('region', { name: '既往史质控提示' })).toBeTruthy()
 })
 
 it('uses the saved check for identical working text and keeps a genuinely unsaved candidate separate', async () => {
@@ -424,7 +452,7 @@ it('rechecks on a new authorization scope without reusing the previous client id
   expect(server.requests.at(-1)?.input.clientId).not.toBe(previousClientId)
 })
 
-it.each(['open', 'retained'] as const)('hides completion hints in all ten fields, including %s history', async status => {
+it.each(['open', 'retained'] as const)('shows completion hints only in details for all ten fields, including %s history', async status => {
   const server = stubQuality()
   server.interceptNextCheck(async response => {
     const body = await response.json()
@@ -435,11 +463,16 @@ it.each(['open', 'retained'] as const)('hides completion hints in all ten fields
     return Response.json(body)
   })
   const mounted = mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  await waitFor(() => expect(mounted.client.isFetching()).toBe(0))
+  expect(mounted.container.querySelector('[data-document-quality-compact]')).toBeNull()
+  expect(screen.queryByText('待补充')).toBeNull()
   await openDetails()
   await screen.findByText('本次检查已更新，请核对各字段提示。')
-  expect(mounted.container.querySelectorAll('[data-document-quality-field]')).toHaveLength(0)
-  expect(screen.queryByText(/尚未记录，请按本次门诊实际情况补充。/)).toBeNull()
-  expect(screen.queryByText('待补充')).toBeNull()
+  expect(screen.getAllByRole('region', { name: /质控提示$/ })).toHaveLength(10)
+  if (status === 'retained') for (const history of screen.getAllByText('历史处理记录 (1)')) await userEvent.setup().click(history)
+  expect(screen.getAllByText(/尚未记录，请按本次门诊实际情况补充。/)).toHaveLength(10)
+  expect(screen.queryAllByText('待补充')).toHaveLength(status === 'open' ? 10 : 0)
   expect(screen.queryByRole('button', { name: '查看依据' })).toBeNull()
 })
 
@@ -464,8 +497,8 @@ it.each([
   const summary = within(dialog).getByRole('region', { name: '签署前质控汇总' })
   await userEvent.setup().click(within(summary).getByText('依据与说明', { selector: 'summary' }))
   await within(summary).findByText(label)
-  expect(within(summary).queryByText('请核实主诉持续时间。')).toBeNull()
-  expect(within(summary).queryByText('待补充')).toBeNull()
+  expect(within(summary).getByText('请核实主诉持续时间。')).toBeTruthy()
+  expect(within(summary).getByText('待补充')).toBeTruthy()
   expect(within(summary).queryByRole('button', { name: '查看依据' })).toBeNull()
   expect(within(dialog).queryAllByRole('checkbox')).toHaveLength(0)
   const confirm = within(dialog).getByRole('button', { name: '确认签署病历' })

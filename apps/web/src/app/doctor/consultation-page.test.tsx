@@ -7,6 +7,30 @@ import { ConsultationPage } from './consultation-page.tsx'
 
 afterEach(cleanup)
 
+it.each(['executing', 'failed', 'unknown'] as const)('shows a persisted %s patient reply after returning to the page', status => {
+  render(<ConsultationPage action={{ error: null, pending: false, onAsk: vi.fn(), onRetry: vi.fn() }}
+    consultation={{ turns: [{
+      actorId: 'synthetic-doctor', practitionerId: 'synthetic-practitioner', id: 'synthetic-doctor-turn',
+      kind: 'text', speaker: 'doctor', source: 'doctor-typed', messageText: '什么时候晕？', sequence: 2,
+      personaRevision: null, reportReference: null, recordedAt: '2026-10-20T00:00:00.000Z',
+    }], version: 3, replyAttempt: {
+      doctorTurnId: 'synthetic-doctor-turn', status,
+      startedAt: '2026-10-20T00:00:00.000Z', deadlineAt: '2026-10-20T00:00:30.000Z',
+      ...(status === 'executing' ? {} : { errorCode: status === 'unknown' ? 'CONSULTATION_REPLY_UNKNOWN' : 'AI_AUTH_FAILED' }),
+    } }} locale="zh-CN" messages={getWorkspaceMessages('zh-CN')} patientName="合成患者" readOnly={false} />)
+  if (status === 'executing') {
+    expect(screen.getByRole('status').textContent).toBe('患者正在输入…')
+    expect(screen.getByRole('button', { name: '等待当前回答' })).toBeDefined()
+    expect(screen.getByText('患者回答仍在生成，等待将复用本次回答。')).toBeDefined()
+  } else {
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('button', { name: '重试患者回答' })).toBeDefined()
+    expect(screen.getByText(status === 'unknown'
+      ? '上次回答结果未知，未自动补答。明确重试将使用当前 ClinMesh 模型设置。'
+      : '患者回答失败。重试将使用当前 ClinMesh 模型设置。')).toBeDefined()
+  }
+})
+
 it('sends the consultation input only to the patient and clears the submitted question', async () => {
   const onAsk = vi.fn()
   render(<ConsultationPage action={{ error: null, pending: false, onAsk, onRetry: vi.fn() }}

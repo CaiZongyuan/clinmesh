@@ -478,7 +478,7 @@ describe('prepared clinical confirmation', () => {
     }))
     mount(props({ encounter: { id: 'encounter-fever', versionId: '4' },
       manualItems: [{ label: '医生填写诊断', value: { source: 'manual', kind: 'diagnosis', catalogItemId: 'manual-diagnosis', role: 'primary' } }] }))
-    await screen.findByText('更新或提交未完成，草稿已保留，可重试。')
+    await screen.findByText('更新或提交未完成，草稿已保留。')
     expect(confirmButton()).toHaveProperty('disabled', false)
     await userEvent.setup().click(confirmButton())
     await waitFor(() => expect(calls).toHaveLength(1))
@@ -799,7 +799,7 @@ it('keeps physician edits and retries the same confirmation intent with the same
   const mounted = mount(props({ kind: 'prescription' })); const user = userEvent.setup()
   await screen.findByText('合成药品'); await edit(); fireEvent.change(screen.getByLabelText('每次剂量'), { target: { value: '10 mg' } })
   await user.click(screen.getByRole('button', { name: '保留本次调整' })); await user.click(confirmButton())
-  await screen.findByText('更新或提交未完成，草稿已保留，可重试。')
+  await screen.findByText('更新或提交未完成，草稿已保留。')
   expect(screen.getByText(/10 mg/)).toBeTruthy()
   fail = false; await user.click(confirmButton()); await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
   const submitted = calls.filter(call => call.path.endsWith('/actions/confirm'))
@@ -874,7 +874,7 @@ it.each(['identity', 'source', 'enabled', 'case'] as const)('hides a late confir
   mounted.rerenderPanel(original); await screen.findByText('发热，未特指')
   await act(async () => { delayed.complete(Response.json({ error: { code: 'DIAGNOSIS_PRIMARY_REQUIRED', message: '合成旧确认失败。' } }, { status: 409 })) })
   await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
-  expect(screen.queryByText('更新或提交未完成，草稿已保留，可重试。')).toBeNull()
+  expect(screen.queryByText('更新或提交未完成，草稿已保留。')).toBeNull()
   expect(screen.queryByText('必须且只能选择一个主诊断。')).toBeNull()
 })
 it.each(['ready', 'missing-evidence', 'failed'] as const)('retains a completed %s read when its delayed generation receipt still says pending', async status => {
