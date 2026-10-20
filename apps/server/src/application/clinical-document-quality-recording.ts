@@ -159,3 +159,21 @@ export function recordingQualityEvidence(context: RecordingContext): ClinicalDoc
       label: change.historical ? '历史自动记录变更后片段（非当前事实或独立来源）' : '自动记录变更后片段（非独立事实来源）', text: change.after.text },
   ])
 }
+
+export function recordingQualityIssueEvidence(change: RecordingContext['changes'][number], evidence: ClinicalDocumentQualityEvidence[]): ClinicalDocumentQualityEvidence[][] {
+  const documents = recordingQualityEvidence({ changes: [change], rejectedFacts: [], missing: [] })
+  const sources = new Map<string, ClinicalDocumentQualityEvidence>()
+  for (const reference of [...change.before?.facts ?? [], ...change.after.facts, ...change.rejectedFacts].flatMap(fact => fact.sources)) {
+    const source = evidence.find(item => item.kind !== 'document' && item.id === reference.sourceTurnId)!
+    sources.set(JSON.stringify([source.id, reference.quote]), { ...source, text: reference.quote })
+  }
+  // The complete sources stay in both model inputs. Issue display uses validated
+  // quotes and bounded groups, preserving every citation without enlarging the wire budget.
+  const groups = [[...documents]]
+  let group = groups[0]!
+  for (const source of sources.values()) {
+    if (group.length === 24) { group = [...documents]; groups.push(group) }
+    group.push(source)
+  }
+  return groups
+}

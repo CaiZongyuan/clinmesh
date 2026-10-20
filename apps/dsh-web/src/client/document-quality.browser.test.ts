@@ -33,23 +33,34 @@ const state = (): ClinicalDocumentQualityControlState => ({
   })),
 })
 
-for (const version of ['18', '19']) test(`shows verification hints without completion or evidence controls in a narrow bilingual ShadowRoot on React ${version}`, async ({ page }) => {
-  const react = version === '18' ? 'react18' : 'react'
-  const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
-  const result = await build({
-    configFile: false, logLevel: 'silent', esbuild: { jsx: 'automatic', jsxDev: false },
-    define: { 'process.env.NODE_ENV': JSON.stringify('production') },
-    resolve: { alias: [
-      { find: /^react$/, replacement: require.resolve(react) },
-      { find: 'react/jsx-runtime', replacement: require.resolve(`${react}/jsx-runtime`) },
-      { find: 'react-dom/client', replacement: require.resolve(`${reactDom}/client`) },
-      { find: /^react-dom$/, replacement: require.resolve(reactDom) },
-    ] },
-    build: { write: false, lib: { entry: fileURLToPath(new URL('./document-quality.browser.fixture.tsx', import.meta.url)), formats: ['iife'], name: 'DocumentQuality' } },
-  })
-  const outputs = (Array.isArray(result) ? result : [result]).flatMap(output => 'output' in output ? output.output : [])
-  const script = outputs.find(output => output.type === 'chunk')
-  if (script?.type !== 'chunk') throw new Error('Missing document quality fixture')
+const fixtureScripts = new Map<string, string>()
+let styles: string
+test.beforeAll(async () => {
+  for (const version of ['18', '19']) {
+    const react = version === '18' ? 'react18' : 'react'
+    const reactDom = version === '18' ? 'react-dom18' : 'react-dom'
+    const result = await build({
+      configFile: false, logLevel: 'silent', esbuild: { jsx: 'automatic', jsxDev: false },
+      define: { 'process.env.NODE_ENV': JSON.stringify('production') },
+      resolve: { alias: [
+        { find: /^react$/, replacement: require.resolve(react) },
+        { find: 'react/jsx-runtime', replacement: require.resolve(`${react}/jsx-runtime`) },
+        { find: 'react-dom/client', replacement: require.resolve(`${reactDom}/client`) },
+        { find: /^react-dom$/, replacement: require.resolve(reactDom) },
+      ] },
+      build: { write: false, lib: { entry: fileURLToPath(new URL('./document-quality.browser.fixture.tsx', import.meta.url)), formats: ['iife'], name: 'DocumentQuality' } },
+    })
+    const outputs = (Array.isArray(result) ? result : [result]).flatMap(output => 'output' in output ? output.output : [])
+    const script = outputs.find(output => output.type === 'chunk')
+    if (script?.type !== 'chunk') throw new Error('Missing document quality fixture')
+    fixtureScripts.set(version, script.code)
+  }
+  styles = await buildSurfaceStyles()
+})
+
+for (const version of ['18', '19']) test(`shows completion only in details and verification hints in a narrow bilingual ShadowRoot on React ${version}`, async ({ page }) => {
+  const scriptCode = fixtureScripts.get(version)
+  if (scriptCode === undefined) throw new Error(`Missing React ${version} fixture`)
   const states = new Map<string, ClinicalDocumentQualityControlState>()
   let releaseOld!: () => void
   const held = new Promise<void>(resolve => { releaseOld = resolve })
@@ -92,7 +103,7 @@ for (const version of ['18', '19']) test(`shows verification hints without compl
     if (delay) oldSettled = true
   })
   await page.goto('http://localhost/')
-  await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${await buildSurfaceStyles()}</style></head><body><script>${script.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+  await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${styles}</style></head><body><script>${scriptCode.replaceAll('</script', '<\\/script')}</script></body></html>`)
   const compact = page.locator('[data-document-quality-compact]')
   await expect(compact.getByRole('button', { name: '体格检查的记录不一致，请核对。', exact: true })).toBeVisible()
   await expect(compact.getByRole('button', { name: '另有 1 处', exact: true })).toBeVisible()
@@ -118,8 +129,8 @@ for (const version of ['18', '19']) test(`shows verification hints without compl
   await expect(detailsDialog).toBeVisible()
   expect(await detailsDialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
   const prior = detailsDialog.locator('[data-document-quality-field="allergyHistory"]')
-  await expect(prior).toHaveCount(0)
-  await expect(page.getByText('待补充', { exact: true })).toHaveCount(0)
+  await expect(prior).toContainText('待补充')
+  await expect(detailsDialog.getByText('待补充', { exact: true })).toHaveCount(2)
   await expect(page.getByRole('button', { name: '查看依据', exact: true })).toHaveCount(0)
   await expect(page.locator('blockquote')).toHaveCount(0)
   const verification = detailsDialog.locator('[data-document-quality-field="physicalExamination"]')
@@ -136,8 +147,9 @@ for (const version of ['18', '19']) test(`shows verification hints without compl
     await expect(page.locator('[data-clinmesh-app="web"]')).toHaveAttribute('lang', locale)
     await expect(verification.getByText(locale === 'zh-CN' ? '影响' : 'Impact', { exact: true })).toBeVisible()
     await expect(verification.getByText(locale === 'zh-CN' ? '处理建议' : 'Suggested action', { exact: true })).toBeVisible()
+    await expect(prior.getByText(locale === 'zh-CN' ? '待补充' : 'Needs completion', { exact: true })).toBeVisible()
     const fields = page.locator('[data-document-quality-field]')
-    await expect(fields).toHaveCount(2)
+    await expect(fields).toHaveCount(4)
     for (const field of await fields.all()) expect(await field.evaluate(element => {
       if (element.scrollWidth > element.clientWidth) return false
       const box = element.getBoundingClientRect()
@@ -195,9 +207,9 @@ for (const version of ['18', '19']) test(`shows verification hints without compl
   const currentDetails = page.getByRole('dialog', { name: 'Basis and details', exact: true })
   await expect(currentDetails.locator('[data-document-quality-field="chiefComplaint"]')).toContainText('当前草稿的质控提示。')
   await expect(currentDetails.getByText('过时质控提示不应显示。', { exact: true })).toHaveCount(0)
-  await currentDetails.locator('[data-document-quality-field="physicalExamination"]').getByRole('button', { name: 'Go to field', exact: true }).click()
+  await currentDetails.locator('[data-document-quality-field="allergyHistory"]').getByRole('button', { name: 'Go to field', exact: true }).click()
   await expect(currentDetails).toHaveCount(0)
-  await expect(page.getByLabel('Physical examination', { exact: true })).toBeFocused()
+  await expect(page.getByLabel('Allergy history', { exact: true })).toBeFocused()
   await page.getByRole('button', { name: 'Sign medical record', exact: true }).click()
   const dialog = page.getByRole('alertdialog', { name: 'Confirm medical record signature', exact: true })
   const summary = dialog.getByRole('region', { name: 'Quality summary before signing', exact: true })
@@ -205,8 +217,8 @@ for (const version of ['18', '19']) test(`shows verification hints without compl
   await expect(summary.getByText('Impact', { exact: true })).toHaveCount(0)
   await summary.locator('summary').filter({ hasText: 'Basis and details' }).click()
   await expect(summary).toContainText('Needs verification')
-  await expect(dialog.getByText('Needs completion', { exact: true })).toHaveCount(0)
-  await expect(dialog.getByText('过敏史遗漏患者已经陈述的药物过敏信息。', { exact: true })).toHaveCount(0)
+  await expect(dialog.getByText('Needs completion', { exact: true })).toHaveCount(2)
+  await expect(summary.getByRole('region', { name: 'Allergy history quality issues', exact: true })).toContainText('过敏史遗漏患者已经陈述的药物过敏信息。')
   await expect(dialog.getByRole('button', { name: 'View evidence', exact: true })).toHaveCount(0)
   await expect(dialog.getByRole('checkbox')).toHaveCount(0)
   await expect(dialog.getByRole('button', { name: 'Verified, keep text', exact: true })).toHaveCount(0)

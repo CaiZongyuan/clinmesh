@@ -424,7 +424,7 @@ it('rechecks on a new authorization scope without reusing the previous client id
   expect(server.requests.at(-1)?.input.clientId).not.toBe(previousClientId)
 })
 
-it.each(['open', 'retained'] as const)('hides completion hints in all ten fields, including %s history', async status => {
+it.each(['open', 'retained'] as const)('shows completion hints only in details for all ten fields, including %s history', async status => {
   const server = stubQuality()
   server.interceptNextCheck(async response => {
     const body = await response.json()
@@ -435,11 +435,16 @@ it.each(['open', 'retained'] as const)('hides completion hints in all ten fields
     return Response.json(body)
   })
   const mounted = mount()
+  await waitFor(() => expect(server.requests).toHaveLength(1))
+  await waitFor(() => expect(mounted.client.isFetching()).toBe(0))
+  expect(mounted.container.querySelector('[data-document-quality-compact]')).toBeNull()
+  expect(screen.queryByText('待补充')).toBeNull()
   await openDetails()
   await screen.findByText('本次检查已更新，请核对各字段提示。')
-  expect(mounted.container.querySelectorAll('[data-document-quality-field]')).toHaveLength(0)
-  expect(screen.queryByText(/尚未记录，请按本次门诊实际情况补充。/)).toBeNull()
-  expect(screen.queryByText('待补充')).toBeNull()
+  expect(screen.getAllByRole('region', { name: /质控提示$/ })).toHaveLength(10)
+  if (status === 'retained') for (const history of screen.getAllByText('历史处理记录 (1)')) await userEvent.setup().click(history)
+  expect(screen.getAllByText(/尚未记录，请按本次门诊实际情况补充。/)).toHaveLength(10)
+  expect(screen.queryAllByText('待补充')).toHaveLength(status === 'open' ? 10 : 0)
   expect(screen.queryByRole('button', { name: '查看依据' })).toBeNull()
 })
 
@@ -464,8 +469,8 @@ it.each([
   const summary = within(dialog).getByRole('region', { name: '签署前质控汇总' })
   await userEvent.setup().click(within(summary).getByText('依据与说明', { selector: 'summary' }))
   await within(summary).findByText(label)
-  expect(within(summary).queryByText('请核实主诉持续时间。')).toBeNull()
-  expect(within(summary).queryByText('待补充')).toBeNull()
+  expect(within(summary).getByText('请核实主诉持续时间。')).toBeTruthy()
+  expect(within(summary).getByText('待补充')).toBeTruthy()
   expect(within(summary).queryByRole('button', { name: '查看依据' })).toBeNull()
   expect(within(dialog).queryAllByRole('checkbox')).toHaveLength(0)
   const confirm = within(dialog).getByRole('button', { name: '确认签署病历' })
