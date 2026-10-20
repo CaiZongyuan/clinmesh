@@ -195,6 +195,26 @@ it('质控开放疑点以短句展示', async () => {
   }, { timeout: 4000 })
 })
 
+it('质控疑点按相同短句分组计数，不逐条重复同字段文案', async () => {
+  stubStackServices()
+  const agentSourceIssue = (id: string, field: 'physicalExamination' | 'assessment') => ({
+    id, kind: 'agent-source', field, classification: 'needs-verification',
+    message: `${field} 片段待核实`, basis: { label: '来源语义核验', kind: 'project' }, evidence: [],
+    relatedFingerprint: 'd'.repeat(64), status: 'open',
+  }) satisfies ClinicalDocumentQualityControlState['issues'][number]
+  qualityIssues = [
+    agentSourceIssue('exam-1', 'physicalExamination'),
+    agentSourceIssue('exam-2', 'physicalExamination'),
+    agentSourceIssue('assess-1', 'assessment'),
+  ]
+  mountStack({ completion: completionView({ data: completionPreview() }) })
+  await waitFor(() => {
+    expect(screen.getByText(`${messages.physicalExamination}中有内容需要核实。（2 处）`)).toBeTruthy()
+  }, { timeout: 4000 })
+  expect(screen.getByText(`${messages.assessment}中有内容需要核实。`)).toBeTruthy()
+  expect(screen.queryByText(`${messages.physicalExamination}中有内容需要核实。`)).toBeNull()
+})
+
 it('质控无开放疑点时显示清空态', async () => {
   stubStackServices()
   mountStack({ completion: completionView({ data: completionPreview() }) })

@@ -6,7 +6,7 @@ import { cn } from '@clinmesh/ui/lib/utils'
 import { CheckCircleIcon, SparklesIcon } from 'lucide-react'
 import type { WorkspaceLocale, WorkspaceMessages } from '../workspace-i18n.ts'
 import { encounterCompletionItemLabel } from './completion-checklist.tsx'
-import { openIssues, shortIssue, useDocumentQualityControl } from './document-quality-control.tsx'
+import { openIssues, shortIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { doctorRecommendationKindTitles } from './doctor-recommendations.tsx'
 import { preparationKinds, useDoctorPreparation, type DoctorPreparationJob } from './doctor-preparation-state.tsx'
 
@@ -15,6 +15,18 @@ export type SuggestionCompletionView = {
   isLoading: boolean
   error: Error | null
   refetch: () => void
+}
+
+/** 质控疑点服务端按片段逐条产生，同字段的短句完全相同；栈内按短句聚合计数，避免同文案逐行刷屏。 */
+function groupIssueLines(issues: QualityIssue[], messages: WorkspaceMessages, locale: WorkspaceLocale) {
+  const groups = new Map<string, { text: string, count: number }>()
+  for (const issue of issues) {
+    const text = shortIssue(issue, messages, locale)
+    const group = groups.get(text)
+    if (group === undefined) groups.set(text, { text, count: 1 })
+    else group.count += 1
+  }
+  return [...groups.values()]
 }
 
 /** 建议栈：完诊清单未完项、质控疑点与医生推荐的聚合摘要。同一描述会同时挂载在右栏与抽屉中，禁止声明 DOM id。 */
@@ -98,8 +110,10 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
             pending={quality.pending}
           >
             <ul className="flex min-w-0 flex-col gap-1">
-              {issues.map(issue => (
-                <li className="min-w-0 text-sm" key={issue.id}>{shortIssue(issue, messages, locale)}</li>
+              {groupIssueLines(issues, messages, locale).map(({ text, count }) => (
+                <li className="min-w-0 text-sm" key={text}>
+                  {count === 1 ? text : zh ? `${text}（${count} 处）` : `${text} (${count})`}
+                </li>
               ))}
             </ul>
           </StackSectionState>
