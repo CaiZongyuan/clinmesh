@@ -123,3 +123,51 @@ it('同岗位的两个挂载同时提交时只有一个完整意图能发出业�
   expect(posts).toBe(1)
   expect(first.result.current.pending?.idempotencyKey).toBe(second.result.current.pending?.idempotencyKey)
 })
+
+it('首个挂载写入成功后，同scope后来挂载同步清除pending并解锁', async () => {
+  let finish!: () => void
+  const held = new Promise<void>(resolve => { finish = resolve })
+  let posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    posts += 1
+    await held
+    return Response.json(response)
+  }))
+  const first = createHook()
+  let submitting: Promise<unknown> | undefined
+  await act(async () => {
+    submitting = first.result.current.mutation.mutateAsync(command)
+    await vi.waitFor(() => expect(posts).toBe(1))
+  })
+  const second = createHook()
+  expect(second.result.current.blocked).toBe(true)
+  await act(async () => { finish(); await submitting })
+  expect(first.result.current.pending).toBeNull()
+  expect(second.result.current.pending).toBeNull()
+  expect(second.result.current.blocked).toBe(false)
+})
+
+it('病例切换卸载原挂载后，旧请求成功仍能解锁接收原意图的新挂载', async () => {
+  let finish!: () => void
+  const held = new Promise<void>(resolve => { finish = resolve })
+  let posts = 0
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path === '/api/auth/context') return Response.json(session)
+    posts += 1
+    await held
+    return Response.json(response)
+  }))
+  const previous = createHook()
+  let submitting: Promise<unknown> | undefined
+  await act(async () => {
+    submitting = previous.result.current.mutation.mutateAsync(command)
+    await vi.waitFor(() => expect(posts).toBe(1))
+  })
+  previous.unmount()
+  const current = createHook()
+  expect(current.result.current.pending?.command).toEqual(command)
+  await act(async () => { finish(); await submitting })
+  expect(current.result.current.pending).toBeNull()
+  expect(current.result.current.blocked).toBe(false)
+})

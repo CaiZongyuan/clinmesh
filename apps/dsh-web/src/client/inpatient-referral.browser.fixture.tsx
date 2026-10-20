@@ -15,8 +15,15 @@ for (const style of document.querySelectorAll('style')) shadow.append(style.clon
 const root = document.createElement('div')
 root.className = 'clinmesh-web-root'
 shadow.append(root)
+function Fixture(): React.JSX.Element {
+  const [encounterId, setEncounterId] = React.useState('synthetic-encounter')
+  return <>
+    <button type="button" onClick={() => setEncounterId('synthetic-encounter-b')}>切换病例B</button>
+    <InpatientReferral key={encounterId} encounterId={encounterId} encounterVersion="3" locale="zh-CN" session={session} />
+  </>
+}
 createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
   <PortalContainerProvider container={root}>
-    <InpatientReferral encounterId="synthetic-encounter" encounterVersion="3" locale="zh-CN" session={session} />
+    <Fixture />
   </PortalContainerProvider>
 </QueryClientProvider>)

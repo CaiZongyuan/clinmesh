@@ -21,6 +21,7 @@ const intentSchema = z.object({ version: z.literal(1), binding: bindingSchema,
   intent.command.operation !== 'inpatient.admission.register' || intent.command.input.expectedEpoch === intent.binding.actor.epoch)
 type InpatientWriteCommand = z.infer<typeof commandSchema>
 type InpatientWriteIntent = z.infer<typeof intentSchema>
+const intentChangedEvent = 'clinmesh.inpatient-intent.changed'
 
 function binding(session: SessionContext) { return bindingSchema.parse({ accountId: session.user.id, actor: session.actor }) }
 function storageError() { return new ApiClientError(0, 'INPATIENT_INTENT_STORAGE_UNAVAILABLE', 'Inpatient intent storage unavailable') }
@@ -46,7 +47,13 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
   const inFlight = useRef(false)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
   const [stored, setStored] = useState(() => load(key, expectedBinding))
-  useEffect(() => { setStored(load(key, bindingSchema.parse(JSON.parse(scope)))) }, [key, scope])
+  useEffect(() => {
+    const refresh = () => setStored(load(key, bindingSchema.parse(JSON.parse(scope))))
+    const changed = (event: Event) => { if (event instanceof CustomEvent && event.detail === key) refresh() }
+    refresh()
+    window.addEventListener(intentChangedEvent, changed)
+    return () => window.removeEventListener(intentChangedEvent, changed)
+  }, [key, scope])
   const pending = stored.key === key ? stored.intent : null
   const storageFailure = stored.key === key ? stored.error : null
   const mutation = useMutation({ mutationFn: async (raw?: InpatientWriteCommand) => {
@@ -74,7 +81,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         throw new ApiClientError(409, 'INPATIENT_INTENT_PENDING', 'Resolve the existing inpatient intent')
       }
       try { sessionStorage.setItem(key, JSON.stringify(intent)) } catch { throw storageError() }
-      setStored({ key, intent, error: null })
+      window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       const clear = () => {
         const latest = load(key, expectedBinding)
         if (latest.error !== null) throw latest.error
@@ -83,7 +90,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
           return
         }
         try { sessionStorage.removeItem(key) } catch { throw storageError() }
-        setStored({ key, intent: null, error: null })
+        window.dispatchEvent(new CustomEvent(intentChangedEvent, { detail: key }))
       }
       const operation = intent.command.operation === 'scenario.advance-time' ? undefined : getHisOperation(intent.command.operation)
       let sent = false

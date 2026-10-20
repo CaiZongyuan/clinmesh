@@ -25,6 +25,8 @@ export function InpatientReferral({ encounterId, encounterVersion, locale, sessi
   const write = useInpatientWriteIntent(session, () => undefined)
   const messages = getWorkspaceMessages(locale)
   const error = catalog.error ?? write.storageFailure ?? write.mutation.error
+  const completed = write.mutation.data?.command
+  const issued = write.mutation.isSuccess && completed?.operation === 'inpatient.referral.issue' && completed.input.encounterId === encounterId
   return <Dialog open={open} onOpenChange={setOpen}>
     <DialogTrigger render={<Button className="self-end" size="sm" variant="outline" />}>{zh ? '开具住院证' : 'Issue admission referral'}</DialogTrigger>
     <DialogContent><DialogHeader><DialogTitle>{zh ? '开具住院证' : 'Admission referral'}</DialogTitle>
@@ -37,8 +39,8 @@ export function InpatientReferral({ encounterId, encounterVersion, locale, sessi
         <Field><FieldLabel htmlFor="referral-reason">{zh ? '住院原因' : 'Admission reason'}</FieldLabel>
           <Textarea id="referral-reason" maxLength={2000} required value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field>
         {error ? <p role="alert">{getWorkspaceErrorMessage(error, messages)}</p> : null}
-        {write.mutation.isSuccess ? <p role="status">{zh ? '住院证已开具，请到登记处办理住院' : 'Referral issued. Continue at registration.'}</p> : null}
-        <Button disabled={wardId === null || !reason.trim() || write.blocked || write.mutation.isSuccess} type="submit">{zh ? '确认开具住院证' : 'Issue referral'}</Button>
+        {issued ? <p role="status">{zh ? '住院证已开具，请到登记处办理住院' : 'Referral issued. Continue at registration.'}</p> : null}
+        <Button disabled={wardId === null || !reason.trim() || write.blocked || issued} type="submit">{zh ? '确认开具住院证' : 'Issue referral'}</Button>
       </FieldGroup></FieldSet></form>
     </DialogContent>
   </Dialog>
