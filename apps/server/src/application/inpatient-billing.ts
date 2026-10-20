@@ -1,3 +1,4 @@
+import { InpatientError } from './inpatient-service.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import type { ActorContext } from './command-executor.ts'
@@ -11,8 +12,9 @@ export class InpatientBilling {
   record(context: ActorContext, input: { admissionId: string; organizationId: string; kind: 'bed' | 'medication' | 'service' | 'surgery' | 'material'; sourceId: string;
     serviceDate: string; amountFen: number; virtualTime: string; label: string }, effects: InpatientEffects): boolean {
     const amount = z.number().int().nonnegative().safe().parse(input.amountFen)
-    const patient = z.object({ patient_id: z.string() }).parse(this.database.driver.prepare(
-      'SELECT patient_id FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId, context.epoch, input.admissionId))
+    const patient = z.object({ patient_id: z.string(), financial_status: z.enum(['open','settled']) }).parse(this.database.driver.prepare(
+      'SELECT patient_id, financial_status FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId, context.epoch, input.admissionId))
+    if (patient.financial_status !== 'open') throw new InpatientError('INPATIENT_ACCOUNT_SETTLED', '已结算住院账户不能新增费用')
     const id = uuidv7()
     const result = this.database.driver.prepare(`INSERT INTO inpatient_charge(workspace_id,epoch,charge_id,admission_id,organization_id,kind,source_id,service_date,amount_fen,virtual_time)
       VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(workspace_id,epoch,admission_id,kind,source_id,service_date) DO NOTHING`)

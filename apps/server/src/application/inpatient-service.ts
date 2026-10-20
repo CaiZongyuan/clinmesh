@@ -1,3 +1,4 @@
+import { InpatientDischarge } from './inpatient-discharge.ts'
 import { InpatientSurgery } from './inpatient-surgery.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
@@ -33,12 +34,14 @@ export class InpatientService {
   readonly billing: InpatientBilling
   readonly orders: InpatientOrders
   readonly surgery: InpatientSurgery
+  readonly discharge: InpatientDischarge
   readonly #workspaces: WorkspaceRepository
   constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService) {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.orders = new InpatientOrders(this)
     this.surgery = new InpatientSurgery(this)
+    this.discharge = new InpatientDischarge(this)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)
@@ -281,7 +284,7 @@ export class InpatientService {
           FROM inpatient_bed_occupancy o JOIN inpatient_admission a
             ON a.workspace_id=o.workspace_id AND a.epoch=o.epoch AND a.admission_id=o.admission_id
           JOIN inpatient_bed b ON b.workspace_id=o.workspace_id AND b.epoch=o.epoch AND b.bed_id=o.bed_id
-          WHERE o.workspace_id=? AND o.epoch=? AND julianday(o.started_at)<julianday(?) AND o.ended_at IS NULL AND a.status='admitted'`)
+          WHERE o.workspace_id=? AND o.epoch=? AND julianday(o.started_at)<julianday(?) AND o.ended_at IS NULL AND a.status IN ('admitted','discharge-pending')`)
           .all(context.workspaceId, context.epoch, time))
         for (const bed of beds) {
           if (this.billing.record(context, { admissionId: bed.admission_id, organizationId: bed.organization_id, kind: 'bed', sourceId: bed.admission_id,

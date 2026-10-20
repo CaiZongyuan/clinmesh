@@ -441,3 +441,22 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
 })
+
+
+it('住院出院与结算示例使用冻结指纹、原输入与窄岗位合同', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id, role] of [['issue-discharge','issue','inpatient-doctor'],['depart','depart','ward-nurse'],['recall','recall','inpatient-doctor'],['clear-bed','clear','ward-nurse'],['settle','settle','cashier']] as const) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!
+    expect(inspectExample(program,line).operation?.id).toBe(`inpatient.discharge.${id}`)
+    expect(getHisOperation(`inpatient.discharge.${id}`).roles).toEqual([role])
+  }
+  const example = skill.match(/`settlement.json`[^]*?```json\n([^]*?)\n```/)
+  expect(example).not.toBeNull()
+  expect(getHisOperation('inpatient.discharge.settle').input.parse(JSON.parse(example![1]!))).toMatchObject({ expectedChargesFen:5000, expectedBalanceFen:-95000 })
+  expect(getHisOperation('inpatient.discharge.preview').roles).toEqual(['cashier'])
+  expect(getHisOperation('inpatient.discharge.read').roles).not.toContain('cashier')
+  expect(getHisOperation('inpatient.discharge.settle').input.safeParse({ admissionId:'synthetic',encounterVersion:'4',expectedChargesFen:5000,expectedBalanceFen:-95000 }).success).toBe(false)
+  expect(skill).toContain('INPATIENT_SETTLEMENT_PREVIEW_STALE')
+  expect(skill).toContain('inpatient.discharge.settle')
+})
