@@ -1,4 +1,4 @@
-import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
+import type { ClinicalDocumentContent, DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Avatar, AvatarFallback, AvatarImage } from '@clinmesh/ui/components/avatar'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { createAvatar } from '@dicebear/core'
@@ -74,14 +74,22 @@ export function PatientBanner({
   detail,
   messages,
   statusText,
+  workingDocument,
 }: {
   completionAction?: React.ReactNode
   completionChecklist?: React.ReactNode
   detail: DoctorCaseDetail
   messages: WorkspaceMessages
   statusText: string
+  workingDocument?: ClinicalDocumentContent | undefined
 }): React.JSX.Element {
   const presentation = detail.presentation
+  const signed = detail.clinicalDocument?.signed
+    .toSorted((left, right) => right.revisionNumber - left.revisionNumber)[0]
+  const savedChiefComplaint = detail.clinicalDocument?.draft?.chiefComplaint ?? presentation?.chiefComplaint
+  const chiefComplaint = signed?.content.chiefComplaint ?? workingDocument?.chiefComplaint ?? savedChiefComplaint
+  const unsavedChiefComplaint = signed === undefined && workingDocument !== undefined
+    && workingDocument.chiefComplaint !== (savedChiefComplaint ?? '')
   const readOnly = detail.encounter.status !== 'in-progress'
   const age = patientAge(detail.patient.birthDate)
   const genderLabel = messages[`gender_${detail.patient.gender}` as 'gender_male']
@@ -104,7 +112,8 @@ export function PatientBanner({
         </div>
         <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden text-xs text-muted-foreground">
           <span className="truncate">{messages.registrationNumber}：{detail.patient.identifier}</span>
-          <span className="truncate">{messages.chiefComplaint}：{presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
+          <span className="truncate">{messages.chiefComplaint}：{chiefComplaint?.trim() ? chiefComplaint : messages.clinicalHistoryNotRecorded}</span>
+          {unsavedChiefComplaint ? <Badge title={messages.clinicalDocumentDraftUnsaved} variant="outline">{messages.clinicalDocumentDraftUnsavedShort}</Badge> : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
           <Badge variant="secondary">{statusText}</Badge>

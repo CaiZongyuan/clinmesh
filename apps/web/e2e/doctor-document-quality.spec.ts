@@ -33,6 +33,31 @@ test('edits document quality issues directly and signs without individual review
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    const banner = page.getByRole('region', { name: '当前患者', exact: true })
+    const chiefComplaint = page.getByLabel('主诉', { exact: true })
+    await chiefComplaint.fill('头晕三周，医生重新问诊后记录。')
+    const draftUrl = `${server.origin}/api/his/v1/encounters/${started.encounterId}/clinical-document/draft`
+    await page.route(draftUrl, route => {
+      const body = route.request().postDataJSON()
+      return route.continue({ postData: JSON.stringify({ ...body, input: { ...body.input, expectedDraftVersion: 999 } }) })
+    })
+    const failedSave = page.waitForResponse(response => response.url() === draftUrl && response.request().method() === 'PUT')
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    expect((await failedSave).status()).toBe(409)
+    await expect(chiefComplaint).toHaveValue('头晕三周，医生重新问诊后记录。')
+    await expect(banner).toContainText('主诉：头晕三周，医生重新问诊后记录。')
+    await expect(banner).toContainText('未保存')
+    await page.unroute(draftUrl)
+    await chiefComplaint.fill('')
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    await expect.poll(async () => (await read()).clinicalDocument?.draft?.chiefComplaint).toBe('')
+    await page.reload()
+    await page.getByRole('tab', { name: '在诊', exact: true }).click()
+    await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(chiefComplaint).toHaveValue('')
+    await expect(banner).toContainText('主诉：未记录')
     expect(await runDocumentQualityJourney({ page, read,
       quality: async clientId => {
         const response = await page.request.get(`${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}/document-quality-control${clientId === undefined ? '' : `?clientId=${encodeURIComponent(clientId)}`}`)

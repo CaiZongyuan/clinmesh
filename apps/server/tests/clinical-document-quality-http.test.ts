@@ -1063,6 +1063,97 @@ it('does not publish a newly generated finding that omits its impact and suggest
   expect((await f.read()).issues.some(issue => issue.field === 'chiefComplaint')).toBe(false)
 })
 
+it('deduplicates the triage projection while preserving its identity, time and unique vital signs', async () => {
+  let checked = false
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.extend({ evidence: z.array(z.object({ id: z.string(), text: z.string(),
+      label: z.string(), recordedAt: z.string().optional(), reference: z.string().optional() })), sourceContext: z.object({
+      triage: z.object({ evidenceId: z.string(), derivedProjection: z.string(), recordId: z.string(), version: z.number() }),
+    }) }).parse(input.userPayload)
+    expect(payload.evidence.filter(item => ['clinical:triage', 'clinical:presentation'].includes(item.id)))
+      .toEqual([expect.objectContaining({ id: 'clinical:triage', label: '分诊初记',
+        recordedAt: expect.any(String), reference: expect.stringMatching(/^triage:.+:1$/) })])
+    expect(JSON.parse(payload.evidence.find(item => item.id === 'clinical:triage')!.text))
+      .toMatchObject({ chiefComplaint: '反复头晕一周', temperatureC: 36.5, pulseBpm: 82 })
+    expect(payload.sourceContext.triage).toMatchObject({ evidenceId: 'clinical:triage', derivedProjection: 'clinical:presentation', version: 1 })
+    checked = true
+    return { issues: [], agentFactChecks: [] }
+  })
+  const original = (await f.readCase()).triage
+  expect((await f.save({ chiefComplaint: '反复头晕一周，近两日加重。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready' })
+  expect(checked).toBe(true)
+  expect((await f.readCase()).triage).toEqual(original)
+})
+
+it.each([
+  { name: 'synonym', reply: '我头晕一周，没有胸痛。', chiefComplaint: '眩晕一周。', conflict: false },
+  { name: 'summary', reply: '我头晕一周，起立时明显，没有胸痛。', chiefComplaint: '体位相关头晕一周。', conflict: false },
+  { name: 'addition', reply: '我头晕一周，近两天加重，没有胸痛。', chiefComplaint: '反复头晕一周，近两日加重。', conflict: false },
+  { name: 'time change', reply: '早上头晕，现在已经缓解，没有胸痛。', chiefComplaint: '头晕一周，目前已缓解。', conflict: false },
+  { name: 'explicit correction', reply: '刚才说错了，不是一周，我头晕三周，没有胸痛。', chiefComplaint: '头晕三周。', conflict: false },
+  { name: 'unexplained contradiction', reply: '本次一直没有胸痛，我明确否认胸痛。', chiefComplaint: '头晕伴胸痛一周。', conflict: true },
+])('checks chief complaint $name with source context in both model stages', async sample => {
+  const stages: string[] = []
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.extend({
+      sourceContext: z.object({ availability: z.array(z.object({ evidenceId: z.string(), availableAt: z.string() })),
+        triage: z.object({ recordId: z.string() }) }),
+      documentContext: z.object({ savedVersion: z.number(), savedAt: z.string(), savedBy: z.string(), changedFields: z.array(z.string()) }),
+    }).parse(input.userPayload)
+    const patient = payload.evidence.find(item => item.kind === 'patient' && item.text === sample.reply)!
+    expect(patient).toBeDefined()
+    expect(payload.sourceContext.availability).toContainEqual({ evidenceId: patient.id, availableAt: expect.any(String) })
+    expect(payload.documentContext).toMatchObject({ savedVersion: 1, changedFields: [] })
+    expect(payload.evidence.filter(item => item.kind === 'doctor').some(item => item.text === sample.chiefComplaint)).toBe(false)
+    expect(input.systemPrompt).toContain('同义改写、合理概括')
+    expect(input.systemPrompt).toContain('不是独立临床事实')
+    expect(input.systemPrompt).toContain('明确更正必须由实际患者问诊')
+    stages.push(input.schemaName)
+    if (input.schemaName === 'clinical_document_quality_verification') return {
+      issues: payload.issues!.map((_, index) => ({ index, supported: sample.conflict })), agentFactChecks: [],
+    }
+    return { issues: [{ kind: 'inconsistency', field: 'chiefComplaint',
+      message: sample.conflict ? '主诉记录胸痛，但患者明确否认本次胸痛。' : '候选把主诉整理误判为与分诊不一致。',
+      documentQuote: sample.chiefComplaint, sourceQuotes: [{ evidenceId: patient.id, quote: sample.reply }],
+      explanation: { impact: '本次胸痛的肯定与否定会造成记录歧义。', suggestion: '核对本次是否胸痛并如实修订措辞。' },
+    }], agentFactChecks: [] }
+  }, undefined, sample.reply)
+  expect((await f.ask()).status).toBe(200)
+  expect((await f.save({ chiefComplaint: sample.chiefComplaint })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready' })
+  const issues = (await f.read()).issues.filter(issue => issue.kind === 'inconsistency')
+  expect(issues).toHaveLength(sample.conflict ? 1 : 0)
+  if (sample.conflict) expect(issues[0]).toMatchObject({ field: 'chiefComplaint', message: '主诉记录胸痛，但患者明确否认本次胸痛。' })
+  expect(stages).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+})
+
+it('keeps missing historical availability unknown and reuses quality across same-content saves', async () => {
+  let calls = 0
+  const f = await setup(input => {
+    const payload = qualityPayloadSchema.extend({ sourceContext: z.object({
+      availability: z.array(z.object({ evidenceId: z.string(), availableAt: z.string() })),
+    }) }).parse(input.userPayload)
+    const patient = payload.evidence.find(item => item.kind === 'patient')!
+    expect(payload.sourceContext.availability.some(item => item.evidenceId === patient.id)).toBe(false)
+    calls += 1
+    return { issues: [], agentFactChecks: [] }
+  })
+  expect((await f.ask()).status).toBe(200)
+  f.runtime.database.driver.prepare(`UPDATE consultation_recording_source SET saved_at = NULL
+    WHERE case_id = ? AND source_kind = 'patient'`).run(f.started.outpatientCaseId)
+  expect((await f.save({ chiefComplaint: '头晕一周。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const first = await f.read()
+  expect(first.status).toBe('ready')
+  expect((await f.save({ chiefComplaint: '头晕一周。' })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', inputFingerprint: first.inputFingerprint })
+  expect(calls).toBe(1)
+})
+
 it('keeps subjective fever and a triage measurement as separate evidence and honors rejection of a false contradiction', async () => {
   const reply = '我觉得发热，但没量过体温。'
   let verified = false

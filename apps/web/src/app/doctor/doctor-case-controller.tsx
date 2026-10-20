@@ -3531,6 +3531,7 @@ function CaseDetail({
           <DocumentQualityDetails quality={quality} messages={messages} locale={locale} onLocateIssue={navigateToQualityIssue} />
         </DoctorPreparationDetailsDialog>}
         <PatientBanner
+          workingDocument={workingClinicalDocument}
           {...(clinicalReadOnly || detail.consultation === undefined
             ? {}
             : {

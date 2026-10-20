@@ -34,6 +34,8 @@ Mobile 只共享产品语义，不共享 DOM 测试。移动测试覆盖 Expo Ro
 
 ### End-to-end
 
+当前主诉的输入与语义回归由 `clinical-document-quality-http.test.ts` 验证分诊原文和派生摘要去重、来源身份与时间、缺失保存时间、文书版本上下文、同文保存复用，以及正常整理和真实胸痛冲突的成对候选及独立复核。页头组件覆盖工作稿、清空和最新签署修订；`doctor-document-quality.spec.ts` 覆盖真实保存冲突不丢稿、空主诉保存刷新与共享签署旅程，`doctor-document-quality-reuse.spec.ts` 验证真实病例切换时工作稿隔离与恢复；`document-quality.browser.test.ts` 覆盖 React 18/19 ShadowRoot 中的即时主诉投影。原生 `smoke-dsh-consultation.ts --quality-only` 验证主诉清空保存、宿主刷新后重开 Surface、真实病例切换及未保存工作稿恢复，再执行编辑与签署的共享旅程。合成模型仅证明来源及双阶段接线，真实模型偶发误报的完整根因与临床准确率不由此推断。
+
 E2E 从真实入口执行，并从外部观察结果：重新读取资源、数据库投影、页面或审计事件，不以 Agent 自己声称成功作为断言。DSH Web 验收从统一 launcher 打开 Surface，要求原生 Session 实际调用 browser Tool，并覆盖一个草稿 action 和一个 proposal → 人工批准 → Command Effect；Tool call、proposal、review、request、audit 和 trace 必须可关联。
 
 `pnpm test:e2e` 使用 Playwright 从 standalone Web 的生产构建运行登录、岗位切换、窄屏外观设置和问诊自动记录旅程。每个测试使用独立的真实 Hono listener、临时 file-backed SQLite 和浏览器 context；Web 构建由同一 worker 复用。端口由系统分配，账户、密码、Auth secret 与数据库均由 fixture 创建并清理，不读取开发 `.env`、已有会话、真实影像或模型配置。页面断言与受 schema 验证的 HTTP 会话查询共同证明保存和刷新后的状态；此集合不替代原生 DSH Session 验收。

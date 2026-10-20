@@ -105,6 +105,7 @@ for (const version of ['18', '19']) test(`shows completion only in details and v
   await page.goto('http://localhost/')
   await page.setContent(`<!doctype html><html><head><meta charset="utf-8"><style>${styles}</style></head><body><script>${scriptCode.replaceAll('</script', '<\\/script')}</script></body></html>`)
   const compact = page.locator('[data-document-quality-compact]')
+  await expect(page.getByText('主诉：头晕。', { exact: true })).toBeVisible()
   await expect(compact.getByRole('button', { name: '体格检查的记录不一致，请核对。', exact: true })).toBeVisible()
   await expect(compact.getByRole('button', { name: '另有 1 处', exact: true })).toBeVisible()
   await expect(page.getByText('影响', { exact: true })).toHaveCount(0)
@@ -176,6 +177,7 @@ for (const version of ['18', '19']) test(`shows completion only in details and v
   await expect.poll(() => oldSettled).toBe(true)
   await expect(page.getByText('过时质控提示不应显示。', { exact: true })).toHaveCount(0)
   await expect(chiefComplaint).toHaveValue('头晕三天。')
+  await expect(page.getByText('Chief complaint：头晕三天。', { exact: true })).toBeVisible()
   await expect(chiefComplaint).toBeFocused()
   for (const [text, status] of emptyChecks) {
     await chiefComplaint.fill(text)
