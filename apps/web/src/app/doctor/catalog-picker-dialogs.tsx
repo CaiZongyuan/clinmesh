@@ -741,6 +741,14 @@ interface MedicationProductGroup {
   variants: ReferenceMedicationProduct[]
 }
 
+/** 包装主行只保留最小可选事实（包装量等末段），工艺细节留在悬停提示与完整字段里。 */
+export function medicationPackageSummary(packageDescription: string): string {
+  const segments = packageDescription.split(/[;；]/).map(segment => segment.trim()).filter(Boolean)
+  const last = segments[segments.length - 1]
+  if (segments.length > 1 && last !== undefined && last.length <= 24) return last
+  return packageDescription.length <= 24 ? packageDescription : `${packageDescription.slice(0, 24)}…`
+}
+
 function medicationProductGroupKey(product: ReferenceMedicationProduct): string {
   return JSON.stringify([
     product.genericName,
@@ -790,8 +798,8 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
           setPackageId(next.id)
           if (selected) onSelect({ kind: 'reference', product: next })
         }}>
-          <SelectTrigger data-agent-medication-package="" className="w-full min-w-0" aria-label={`${locale === 'zh-CN' ? '包装' : 'Package'} ${item.genericName} ${item.manufacturer}`}>
-            <SelectValue className="min-w-0"><span className="truncate" title={item.packageDescription}>{item.packageDescription}</span></SelectValue>
+          <SelectTrigger data-agent-medication-package="" className="w-full min-w-0" aria-label={`${locale === 'zh-CN' ? '包装' : 'Package'} ${item.genericName} ${item.manufacturer}`} title={item.packageDescription}>
+            <SelectValue className="min-w-0"><span className="truncate" title={item.packageDescription}>{medicationPackageSummary(item.packageDescription)}</span></SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectGroup>
@@ -806,13 +814,15 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
           </SelectContent>
         </Select>
   )
-  if (onConfirm === undefined) return <li className="flex min-w-0 flex-col gap-2 rounded-lg border p-3">
+  if (onConfirm === undefined) return <li className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-2.5">
     <div className="flex flex-wrap items-start justify-between gap-2"><strong data-agent-medication-name="" className="break-words text-sm">{item.genericName}</strong><Badge variant="outline">{item.strength}</Badge></div>
-    <p className="break-words text-xs text-muted-foreground">{[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}</p>
-    {packageSelector}
-    <Button aria-label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`} disabled={unavailable} onClick={() => onSelect(selection)} size="sm" type="button" variant="outline">
-      {excludedIds.has(item.id) ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : item.status !== 'active' ? (locale === 'zh-CN' ? '停用' : 'Inactive') : (locale === 'zh-CN' ? '选择包装' : 'Select package')}
-    </Button>
+    <p className="truncate text-xs text-muted-foreground" title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}>{[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}</p>
+    <div className="flex min-w-0 items-center gap-1.5">
+      <div className="min-w-0 flex-1">{packageSelector}</div>
+      <Button aria-label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`} className="shrink-0" disabled={unavailable} onClick={() => onSelect(selection)} size="sm" type="button" variant="outline">
+        {excludedIds.has(item.id) ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : item.status !== 'active' ? (locale === 'zh-CN' ? '停用' : 'Inactive') : (locale === 'zh-CN' ? '选择包装' : 'Select package')}
+      </Button>
+    </div>
   </li>
   return (
     <TableRow className={cn(unavailable && 'opacity-50', selected && 'bg-muted/70')}
@@ -909,7 +919,8 @@ export function MedicationCatalogPicker({
         />
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="mx-4 min-h-0 flex-1"><Skeleton className="h-full min-h-24" /></div> : (
-          <div className="mx-4 min-h-0 flex-1 overflow-auto border">
+          // 内联目录限高内部滚动，避免选药空态把左栏拉出大段空白；对话框内已有自身高度约束，不受影响。
+          <div className="mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border">
             {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
                 <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
@@ -918,10 +929,10 @@ export function MedicationCatalogPicker({
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              onConfirm === undefined ? <ul className="flex flex-col gap-2 p-2">
-                {useLocal ? localResults.map(item => <li className="flex min-w-0 flex-col gap-2 rounded-lg border p-3" key={item.id}>
+              onConfirm === undefined ? <ul className="flex flex-col gap-1.5 p-2">
+                {useLocal ? localResults.map(item => <li className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-2.5" key={item.id}>
                   <strong data-agent-medication-name="" className="break-words text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong><span className="text-xs text-muted-foreground">{messages.localCatalog}</span>
-                  <Button aria-label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} disabled={disabled || results.isFetching || excludedIds.has(item.id)} onClick={() => select({ kind: 'local', medication: item })} size="sm" type="button" variant="outline">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : messages.chooseMedication}</Button>
+                  <Button aria-label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} className="self-start" disabled={disabled || results.isFetching || excludedIds.has(item.id)} onClick={() => select({ kind: 'local', medication: item })} size="sm" type="button" variant="outline">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : messages.chooseMedication}</Button>
                 </li>) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale} onSelect={select} />)}
               </ul> : <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">

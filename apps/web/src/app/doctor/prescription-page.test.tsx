@@ -896,3 +896,124 @@ describe('PrescriptionPage', () => {
     }
   })
 })
+
+describe('处方页签布局整理', () => {
+  it('将「用药结论方式」放进待办侧栏顶部，与待开具清单同一上下文', () => {
+    renderPage()
+    const aside = screen.getByRole('region', { name: '待开具处方' }).closest('[data-conclusion-aside]')
+    expect(aside).not.toBeNull()
+    const mode = within(aside as HTMLElement).getByRole('group', { name: '用药结论方式' })
+    expect(mode.compareDocumentPosition(screen.getByRole('region', { name: '待开具处方' }))
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getAllByRole('group', { name: '用药结论方式' })).toHaveLength(1)
+  })
+
+  it('药品目录空态用左对齐紧凑引导替代居中悬空提示', () => {
+    renderPage()
+    const details = screen.getByRole('region', { name: '药品详情' })
+    expect(details.querySelector('[data-slot="empty"]')).toBeNull()
+    expect(details.querySelector('[data-medication-details-hint]')).not.toBeNull()
+    expect(within(details).getByText('选择药品，填写用法')).toBeTruthy()
+    expect(within(details).getByText('从药品目录选择具体产品与包装，加入同一张处方草稿。')).toBeTruthy()
+  })
+
+  it('有草稿时把自动保存状态与删除入口放进待办侧栏，而不是独立页脚', () => {
+    renderPage({ detail: { ...detail, medicationConclusion: {
+      draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+    } } })
+    const aside = screen.getByRole('region', { name: '待开具处方' }).closest('[data-conclusion-aside]') as HTMLElement
+    expect(within(aside).getByRole('button', { name: '删除处方草稿' })).toBeTruthy()
+    expect(within(aside).getByText('草稿已自动保存')).toBeTruthy()
+  })
+
+  it('无草稿时不渲染空草稿工具块', () => {
+    renderPage()
+    expect(screen.queryByRole('button', { name: '删除处方草稿' })).toBeNull()
+    expect(screen.queryByText('草稿已自动保存')).toBeNull()
+  })
+
+  it('目录条目的包装信息只保留最小事实，工艺细节进入悬停提示', () => {
+    const craft = { ...referenceProduct, packageDescription: '本品采用五层共挤输液用三室袋、氧指示剂和高阻隔外包装袋。；14袋/盒' }
+    renderPage({ referenceSearch: {
+      data: { items: [craft], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+      error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
+    } })
+    const combo = screen.getByRole('combobox', { name: /^包装 / })
+    const shown = within(combo).getByText('14袋/盒')
+    expect(within(combo).queryByText(/五层共挤/)).toBeNull()
+    expect(shown.getAttribute('title')).toContain('五层共挤')
+  })
+
+  it('开具记录行的包装摘要同样降噪并保留悬停全文', () => {
+    const craft = { ...referenceProduct, id: 'reference-craft', packageDescription: '本品采用五层共挤输液用三室袋、氧指示剂和高阻隔外包装袋。；14袋/盒' }
+    renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: {
+      ...issuedPrescription,
+      items: [{ catalogItemId: craft.id, courseDays: 3, display: craft.genericName, doseText: '75 mg', frequencyCode: 'BID',
+        medicationRequestId: 'request-craft', medicationRequestVersion: '1', quantity: 10, referenceProduct: craft }],
+    } } } })
+    const record = screen.getByRole('button', { name: '查看药品 合成参考药品' })
+    expect(within(record).getByText('75 mg · 14袋/盒')).toBeTruthy()
+    expect(within(record).queryByText(/五层共挤/)).toBeNull()
+    expect(record.querySelector('span[title*="五层共挤"]')).not.toBeNull()
+  })
+
+  it('待开具卡片状态为主行，工具按钮收纳为紧凑图标动作', () => {
+    renderPage()
+    const panel = screen.getByRole('region', { name: '待开具处方' })
+    expect(within(panel).getByRole('status').className).toContain('font-medium')
+    for (const name of ['刷新', '依据与说明']) {
+      const button = within(panel).getByRole('button', { name })
+      expect(button.getAttribute('title')).toBe(name)
+    }
+  })
+
+  it('开具后状态收敛为单行徽章与元信息，不再重复两处状态文案', () => {
+    const { container } = renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: issuedPrescription } } })
+    const statusRow = container.querySelector('[data-prescription-status]')
+    expect(statusRow).not.toBeNull()
+    expect(within(statusRow as HTMLElement).getByText('已支付')).toBeTruthy()
+    expect(screen.getAllByText('已支付')).toHaveLength(1)
+    expect(within(statusRow as HTMLElement).getByText(/处方号 RX-SYNTHETIC-1 ·/)).toBeTruthy()
+    expect(within(statusRow as HTMLElement).getByText(/已开具处方不可直接编辑/)).toBeTruthy()
+    expect(within(statusRow as HTMLElement).getByRole('button', { name: '撤回处方' })).toBeTruthy()
+    expect(screen.getByRole('list', { name: '处方进度' })).toBeTruthy()
+  })
+
+  it('撤回终态在一个分组里保留明细与退款说明', () => {
+    renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: {
+      ...issuedPrescription, status: 'withdrawn', withdrawal: {
+        id: 'withdrawal-1', prescriptionId: issuedPrescription.id, version: 2,
+        withdrawnAt: '2026-10-11T08:00:00+08:00', withdrawnByActorId: 'actor-synthetic', withdrawnByPractitionerRoleId: 'role-doctor',
+      },
+    } } } })
+    expect(screen.getAllByText('已撤回')).toHaveLength(1)
+    expect(screen.getByText(/原处方明细保留，已支付记录不会自动退款/)).toBeTruthy()
+  })
+
+  it('目录卡片与结果列表按密度合同收紧', () => {
+    const { container } = renderPage({ referenceSearch: {
+      data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+      error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
+    } })
+    const card = screen.getByRole('button', { name: /^选择 合成参考药品/ }).closest('li')
+    expect(card?.className).toContain('p-2.5')
+    expect(card?.className).toContain('gap-1.5')
+    expect(container.querySelector('[data-agent-catalog="medication"] div[class*="max-h-"]')).not.toBeNull()
+  })
+
+  it('新增呈现提供英文文案（草稿态与开具态）', () => {
+    renderPage({ locale: 'en-US', messages: getWorkspaceMessages('en-US') })
+    expect(screen.getByText('Select medication and enter directions')).toBeTruthy()
+    expect(screen.getByRole('group', { name: 'Medication conclusion mode' })).toBeTruthy()
+
+    renderPage({
+      detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: issuedPrescription } },
+      locale: 'en-US',
+      messages: getWorkspaceMessages('en-US'),
+    })
+    const statusRow = document.querySelector('[data-prescription-status]')
+    expect(statusRow).not.toBeNull()
+    expect(within(statusRow as HTMLElement).getByText('Paid')).toBeTruthy()
+    expect(within(statusRow as HTMLElement).getByRole('button', { name: 'Withdraw prescription' })).toBeTruthy()
+  })
+})

@@ -43,6 +43,7 @@ import { WorkspaceSelect } from '../workspace-select.tsx'
 import {
   MedicationCatalogDialog,
   MedicationCatalogPicker,
+  medicationPackageSummary,
   type MedicationCatalogSelection,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
@@ -344,7 +345,7 @@ export function PrescriptionPage({
     revision: `${state?.draftVersion ?? 0}:${currentRevision}`,
   })
   const draftSaveFeedback = (
-    <div className="mr-auto flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <p aria-live="polite" className="text-xs text-muted-foreground">
         {actions.saveDraft.error !== null
           ? messages.autosaveFailed
@@ -361,6 +362,98 @@ export function PrescriptionPage({
       )}
     </div>
   )
+
+  // 结论方式与草稿工具归属待办侧栏：方式控制贴住结论上下文，工具块只在有内容可显示时出现，
+  // 连同待开具卡片一起把右栏从"空腔"变成有真实内容的紧凑待办列。
+  const deletionReceiptVisible = actions.deleteDraft.data !== undefined
+    && actions.deleteDraft.data.caseId === detail.caseId
+    && state?.draft === undefined
+    && state?.draftVersion === actions.deleteDraft.data.draftVersion
+  const conclusionModeControl = readOnly || noMedicationConclusion !== undefined || hasActivePrescription ? null : (
+    <Field className="min-w-0 flex-wrap items-center justify-between gap-2 rounded-lg border p-2.5" orientation="horizontal">
+      <FieldLabel className="shrink-0 text-xs text-muted-foreground" id="medication-conclusion-mode-label">{messages.medicationConclusionMode}</FieldLabel>
+      <ToggleGroup
+        disabled={pending}
+        aria-labelledby="medication-conclusion-mode-label"
+        onValueChange={value => {
+          const selectedMode = value[0]
+          if (selectedMode === 'prescription' || selectedMode === 'no-medication') {
+            setMode(selectedMode)
+          }
+        }}
+        size="sm"
+        spacing={2}
+        value={[mode]}
+        variant="outline"
+      >
+        <ToggleGroupItem value="prescription">{messages.prescriptionMode}</ToggleGroupItem>
+        <ToggleGroupItem value="no-medication">{messages.noMedicationMode}</ToggleGroupItem>
+      </ToggleGroup>
+    </Field>
+  )
+  const draftTools = canEditDraft
+    && (dirty || state?.draft !== undefined || actions.saveDraft.error !== null || deletionReceiptVisible) ? (
+      <div className="flex min-w-0 flex-col gap-2 rounded-lg border p-2.5" data-draft-tools="">
+        {draftSaveFeedback}
+        {state?.draft === undefined ? null : (
+          <AlertDialog onOpenChange={setDeleteDraftOpen} open={deleteDraftOpen}>
+            <AlertDialogTrigger
+              render={(
+                <Button
+                  disabled={dirty || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending}
+                  type="button"
+                  variant="ghost"
+                />
+              )}
+            >
+              <Trash2Icon data-icon="inline-start" />{messages.deletePrescriptionDraft}
+            </AlertDialogTrigger>
+            <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
+              <AlertDialogHeader>
+                <AlertDialogTitle>{messages.deletePrescriptionDraftTitle}</AlertDialogTitle>
+                <AlertDialogDescription>{messages.deletePrescriptionDraftDescription}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <ul className="flex flex-col gap-1.5 text-sm">
+                {state.draft.items.map((item) => {
+                  const medication = catalogById.get(item.catalogItemId)
+                  return (
+                    <li className="flex flex-wrap justify-between gap-2" key={item.catalogItemId}>
+                      <span className="font-medium">
+                        {(locale === 'zh-CN' ? medication?.nameZh : medication?.nameEn)
+                          ?? item.referenceProduct?.genericName
+                          ?? item.catalogItemId}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {messages.quantity} {item.quantity}
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+                <AlertDialogCancel
+                  disabled={dirty || actions.deleteDraft.pending || actions.saveDraft.pending}
+                  onClick={() => {
+                    setDeleteDraftOpen(false)
+                    queueMicrotask(actions.deleteDraft.onSubmit)
+                  }}
+                  variant="destructive"
+                >
+                  <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
+                </AlertDialogCancel>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        )}
+        {deletionReceiptVisible ? (
+          <Alert>
+            <CheckIcon aria-hidden="true" />
+            <AlertTitle>{messages.prescriptionDraftDeleted}</AlertTitle>
+          </Alert>
+        ) : null}
+      </div>
+    ) : null
 
   const draftEditor = (
     <FieldSet disabled={!canEditDraft || pending}>
@@ -382,12 +475,11 @@ export function PrescriptionPage({
         </div>
         <section aria-label={locale === 'zh-CN' ? prescription === undefined ? '药品详情' : '填写药品' : prescription === undefined ? 'Medication details' : 'Enter medication'} className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
           {items.length === 0 ? (
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>{locale === 'zh-CN' ? '选择药品，填写用法' : 'Select medication and enter directions'}</EmptyTitle>
-                <EmptyDescription>{locale === 'zh-CN' ? '从药品目录选择具体产品与包装，加入同一张处方草稿。' : 'Choose a product and package from the catalog to add it to this prescription draft.'}</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
+            // 空态引导左对齐贴住目录入口，不再用居中 Empty 在详情框里悬空。
+            <div className="flex flex-col gap-1 py-1" data-medication-details-hint="">
+              <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择药品，填写用法' : 'Select medication and enter directions'}</p>
+              <p className="text-xs text-muted-foreground">{locale === 'zh-CN' ? '从药品目录选择具体产品与包装，加入同一张处方草稿。' : 'Choose a product and package from the catalog to add it to this prescription draft.'}</p>
+            </div>
           ) : (
             <ToggleGroup
               aria-label={locale === 'zh-CN' ? '已选药品' : 'Selected medications'}
@@ -540,26 +632,18 @@ export function PrescriptionPage({
           setRecordSearch(''); setSelectedRecordId(prescription.items[0]?.medicationRequestId)
           requestAnimationFrame(() => { recordHeadingRef.current?.scrollIntoView({ block: 'nearest' }); recordHeadingRef.current?.focus() })
         }} />}
-      <Alert>
-        {prescription.status === 'withdrawn'
-          ? <RotateCcwIcon aria-hidden="true" />
-          : <PillIcon aria-hidden="true" />}
-        <AlertTitle>
-          {prescription.status === 'signed'
-            ? messages.prescriptionIssued
-            : prescription.status === 'withdrawn'
-              ? messages.prescriptionWithdrawn
-              : prescriptionStatusLabel(prescription.status, messages)}
-        </AlertTitle>
-        <AlertDescription>
+      {/* 终态收敛为一行：状态徽章为主行，编号、时间与条目说明为辅，撤回动作就近；进度条继续承载发放链路。 */}
+      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2" data-prescription-status="">
+        <Badge className="shrink-0 gap-1" variant={prescription.status === 'withdrawn' ? 'outline' : 'secondary'}>
+          {prescription.status === 'withdrawn' ? <RotateCcwIcon aria-hidden="true" className="size-3" /> : <PillIcon aria-hidden="true" className="size-3" />}
+          {prescriptionStatusLabel(prescription.status, messages)}
+        </Badge>
+        <p className="min-w-0 flex-1 text-xs text-muted-foreground">
           {messages.prescriptionNumber} {prescription.number} · {formatClinicalDateTime(prescription.authoredAt, locale)}
-        </AlertDescription>
-      </Alert>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-muted-foreground">{messages.prescriptionStatus}</span>
-          <Badge variant="secondary">{prescriptionStatusLabel(prescription.status, messages)}</Badge>
-        </div>
+          {prescription.status === 'withdrawn'
+            ? prescription.withdrawal === undefined ? null : ` · ${formatClinicalDateTime(prescription.withdrawal.withdrawnAt, locale)}`
+            : ` · ${locale === 'zh-CN' ? `${prescription.items.length} 条药品医嘱 · 已开具处方不可直接编辑` : `${prescription.items.length} medication orders · Issued prescriptions are read only`}`}
+        </p>
         {allowWithdrawal
           && (prescription.status === 'signed' || prescription.status === 'paid') ? (
           <AlertDialog>
@@ -599,7 +683,6 @@ export function PrescriptionPage({
       {prescription.status === 'withdrawn' ? (
         <p className="text-xs text-muted-foreground">
           {locale === 'zh-CN' ? '原处方明细保留，已支付记录不会自动退款。' : 'Original prescription details are retained. Payments are not automatically refunded.'}
-          {prescription.withdrawal === undefined ? null : ` · ${formatClinicalDateTime(prescription.withdrawal.withdrawnAt, locale)}`}
         </p>
       ) : (
         <ol aria-label={locale === 'zh-CN' ? '处方进度' : 'Prescription progress'} className="grid min-w-0 grid-cols-3 gap-3 text-xs">
@@ -622,9 +705,6 @@ export function PrescriptionPage({
           })}
         </ol>
       )}
-      <p className="text-xs text-muted-foreground">
-        {locale === 'zh-CN' ? `${prescription.items.length} 条药品医嘱 · 已开具处方不可直接编辑` : `${prescription.items.length} medication orders · Issued prescriptions are read only`}
-      </p>
       {!allowWithdrawal || actions.withdraw.error === null ? null : (
         <ErrorAlert
           message={getWorkspaceErrorMessage(actions.withdraw.error, messages)}
@@ -656,8 +736,10 @@ export function PrescriptionPage({
           {draftEditor}
         </section>}
         pending={
-          <DoctorRecommendationsPanel
-            caseId={detail.caseId}
+          <div className="flex min-w-0 flex-col gap-3 @min-[800px]/order-workspace:sticky @min-[800px]/order-workspace:top-2" data-conclusion-aside="">
+            {conclusionModeControl}
+            <DoctorRecommendationsPanel
+              caseId={detail.caseId}
             enabled={!readOnly && noMedicationConclusion === undefined && mode === 'prescription'}
             disabled={!canEditDraft || actions.saveDraft.pending || actions.issue.pending || actions.deleteDraft.pending || actions.confirmNoMedication.pending}
             inputRevision={recommendationRevision}
@@ -681,6 +763,8 @@ export function PrescriptionPage({
             unavailableReason={suggestion => isRecommendationAvailable(suggestion) ? undefined : messages.recommendationRequestTargetUnavailable}
             scope={recommendationScope}
           />
+            {draftTools}
+          </div>
         }
         records={prescription === undefined ? null : (
             <section aria-label={locale === 'zh-CN' ? '药品列表' : 'Medication list'} className={cn('min-w-0 flex-col gap-3 @min-[640px]/case-content:flex', selectedRecord === undefined ? 'flex' : 'hidden')}>
@@ -705,7 +789,7 @@ export function PrescriptionPage({
                 <Button
                   aria-label={`${locale === 'zh-CN' ? '查看药品' : 'View medication'} ${item.display}`}
                   aria-pressed={selectedRecord?.medicationRequestId === item.medicationRequestId}
-                  className="h-auto w-full min-w-0 flex-col items-start gap-2 whitespace-normal p-3 text-left"
+                  className="h-auto w-full min-w-0 flex-col items-start gap-1.5 whitespace-normal p-2.5 text-left"
                   key={item.medicationRequestId}
                   onClick={() => {
                     setSelectedRecordId(item.medicationRequestId)
@@ -715,7 +799,11 @@ export function PrescriptionPage({
                   variant={selectedRecord?.medicationRequestId === item.medicationRequestId ? 'secondary' : 'outline'}
                 >
                   <span className="break-words" data-agent-medication-name="">{item.display}</span>
-                  {item.referenceProduct === undefined ? null : <span className="break-words text-xs text-muted-foreground">{item.referenceProduct.strength} · {item.referenceProduct.packageDescription}</span>}
+                  {item.referenceProduct === undefined ? null : (
+                    <span className="break-words text-xs text-muted-foreground" title={item.referenceProduct.packageDescription}>
+                      {item.referenceProduct.strength} · {medicationPackageSummary(item.referenceProduct.packageDescription)}
+                    </span>
+                  )}
                   <span className="break-words text-xs text-muted-foreground">{item.doseText} · {item.frequencyCode} · {item.courseDays} {messages.days} · {messages.quantity} {item.quantity}</span>
                 </Button>
               ))}
@@ -775,113 +863,19 @@ export function PrescriptionPage({
         </Alert>
       )}
 
-      {readOnly || noMedicationConclusion !== undefined || hasActivePrescription ? null : (
-        <Field>
-          <FieldLabel id="medication-conclusion-mode-label">{messages.medicationConclusionMode}</FieldLabel>
-          <ToggleGroup
-            disabled={pending}
-            aria-labelledby="medication-conclusion-mode-label"
-            onValueChange={value => {
-              const selectedMode = value[0]
-              if (selectedMode === 'prescription' || selectedMode === 'no-medication') {
-                setMode(selectedMode)
-              }
-            }}
-            size="sm"
-            spacing={2}
-            value={[mode]}
-            variant="outline"
-          >
-            <ToggleGroupItem value="prescription">{messages.prescriptionMode}</ToggleGroupItem>
-            <ToggleGroupItem value="no-medication">{messages.noMedicationMode}</ToggleGroupItem>
-          </ToggleGroup>
-        </Field>
+      {/* 结论方式控制已并入待办侧栏（见 conclusionModeControl）；页脚只保留需要整页可见的错误提示。 */}
+      {actions.saveDraft.error === null ? null : (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(actions.saveDraft.error, messages)}
+          title={getWorkspaceErrorTitle(actions.saveDraft.error, messages, messages.operationFailed)}
+        />
       )}
-
-      {canEditDraft ? (
-          <div>
-            <FieldGroup>
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                {draftSaveFeedback}
-                {state?.draft === undefined ? null : (
-                  <>
-                    <AlertDialog onOpenChange={setDeleteDraftOpen} open={deleteDraftOpen}>
-                      <AlertDialogTrigger
-                        render={(
-                          <Button
-                            disabled={dirty || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending}
-                            type="button"
-                            variant="ghost"
-                          />
-                        )}
-                      >
-                        <Trash2Icon data-icon="inline-start" />{messages.deletePrescriptionDraft}
-                      </AlertDialogTrigger>
-                      <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>{messages.deletePrescriptionDraftTitle}</AlertDialogTitle>
-                          <AlertDialogDescription>{messages.deletePrescriptionDraftDescription}</AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <ul className="flex flex-col gap-1.5 text-sm">
-                          {state.draft.items.map((item) => {
-                            const medication = catalogById.get(item.catalogItemId)
-                            return (
-                              <li className="flex flex-wrap justify-between gap-2" key={item.catalogItemId}>
-                                <span className="font-medium">
-                                  {(locale === 'zh-CN' ? medication?.nameZh : medication?.nameEn)
-                                    ?? item.referenceProduct?.genericName
-                                    ?? item.catalogItemId}
-                                </span>
-                                <span className="text-muted-foreground">
-                                  {messages.quantity} {item.quantity}
-                                </span>
-                              </li>
-                            )
-                          })}
-                        </ul>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                          <AlertDialogCancel
-                            disabled={dirty || actions.deleteDraft.pending || actions.saveDraft.pending}
-                            onClick={() => {
-                              setDeleteDraftOpen(false)
-                              queueMicrotask(actions.deleteDraft.onSubmit)
-                            }}
-                            variant="destructive"
-                          >
-                            <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
-                          </AlertDialogCancel>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-
-                  </>
-                )}
-              </div>
-              {actions.deleteDraft.data !== undefined
-                && actions.deleteDraft.data.caseId === detail.caseId
-                && state?.draft === undefined
-                && state?.draftVersion === actions.deleteDraft.data.draftVersion ? (
-                <Alert>
-                  <CheckIcon aria-hidden="true" />
-                  <AlertTitle>{messages.prescriptionDraftDeleted}</AlertTitle>
-                </Alert>
-              ) : null}
-              {actions.saveDraft.error === null ? null : (
-                <ErrorAlert
-                  message={getWorkspaceErrorMessage(actions.saveDraft.error, messages)}
-                  title={getWorkspaceErrorTitle(actions.saveDraft.error, messages, messages.operationFailed)}
-                />
-              )}
-              {actions.deleteDraft.error === null ? null : (
-                <ErrorAlert
-                  message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)}
-                  title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)}
-                />
-              )}
-            </FieldGroup>
-          </div>
-        ) : null}
+      {actions.deleteDraft.error === null ? null : (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)}
+          title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)}
+        />
+      )}
 
       {/* 开具拒绝独立于编辑权限渲染：并发无药结论或既有处方会让刷新后的 canEditDraft 翻 false，
           若留在编辑块内，竞态场景下医生只看到状态变化而丢失新承诺的可操作拦截文案。 */}

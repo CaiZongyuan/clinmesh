@@ -7387,7 +7387,7 @@ describe('role workspaces', () => {
     await waitFor(() => expect(medicationConclusion?.draftVersion).toBe(3), { timeout: 3_000 })
     await waitFor(() => expect((screen.getByRole('button', { name: /^开具处方（/ }) as HTMLButtonElement).disabled).toBe(false))
     await user.click(screen.getByRole('button', { name: /^开具处方（/ }))
-    expect(await screen.findByText('处方已正式开具')).toBeTruthy()
+    expect(await screen.findByText('已开具')).toBeTruthy()
     expect(screen.getByText(/CM-RX-20260824-0001/)).toBeTruthy()
     expect(screen.queryByRole('combobox', { name: '药品' })).toBeNull()
 
@@ -7396,7 +7396,7 @@ describe('role workspaces', () => {
     expect(within(dialog).getByText('CM-RX-20260824-0001')).toBeTruthy()
     expect(within(dialog).getByText('已开具')).toBeTruthy()
     await user.click(within(dialog).getByRole('button', { name: '确认撤回' }))
-    expect(await screen.findByText(/处方已撤回/)).toBeTruthy()
+    expect(await screen.findByText('已撤回')).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: '无需用药' }))
     await user.click(screen.getByRole('button', { name: '确认无需用药' }))
@@ -8446,7 +8446,7 @@ describe('role workspaces', () => {
     expect(within(dialog).getByText(prescription.number)).toBeTruthy()
     await user.click(within(dialog).getByRole('button', { name: '确认撤回' }))
 
-    expect(await screen.findByText('处方已撤回')).toBeTruthy()
+    expect(await screen.findByText('已撤回')).toBeTruthy()
     expect(withdrawalRequest).toEqual({
       expectedVersions: {
         [`MedicationRequest/${prescription.items[0]?.medicationRequestId}`]: '2',
@@ -9195,7 +9195,7 @@ describe('role workspaces', () => {
     }), { timeout: 3_000 })
     await waitFor(() => expect((screen.getByRole('button', { name: /^开具处方（/ }) as HTMLButtonElement).disabled).toBe(false))
     await user.click(screen.getByRole('button', { name: /^开具处方（/ }))
-    expect(await screen.findByText('处方已正式开具')).toBeTruthy()
+    expect(await screen.findByText('已开具')).toBeTruthy()
     expect(prescriptionIssueRequest).toEqual({
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
       input: { expectedDraftVersion: 3, resolveExistingDraft: true, selections: [{ source: 'manual', kind: 'prescription', ...prescriptionDraftItem }] },
@@ -9207,7 +9207,7 @@ describe('role workspaces', () => {
     })
     expect(within(prescriptionWithdrawalDialog).getByText(issuedPrescription.number)).toBeTruthy()
     await user.click(within(prescriptionWithdrawalDialog).getByRole('button', { name: '确认撤回' }))
-    expect(await screen.findByText('处方已撤回')).toBeTruthy()
+    expect(await screen.findByText('已撤回')).toBeTruthy()
     expect(prescriptionWithdrawalRequest).toEqual({
       expectedVersions: {
         'MedicationRequest/medication-request-correction-replacement-1': '1',
