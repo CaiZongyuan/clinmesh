@@ -33,21 +33,21 @@ export class InpatientOrders {
       return { id: row.service_id, display: row.name_zh, version: row.version, priceFen: config.chargeDefinition.priceFen, unit: config.billingUnit.display } }) }
   }
   orderFacts(context: ActorContext, admissionId: string, medicationOnly = false) {
-    const rows = z.array(orderRowSchema).parse(this.owner.database.driver.prepare(`SELECT * FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=? ${medicationOnly ? "AND kind='medication'" : ''} ORDER BY signed_at,order_id`)
+    const rows = z.array(orderRowSchema).parse(this.owner.database.driver.prepare(`SELECT * FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=? ${medicationOnly ? "AND kind='medication'" : ''} ORDER BY julianday(signed_at),order_id`)
       .all(context.workspaceId, context.epoch, admissionId))
     const orders = rows.map(row => this.orderDto(context, row))
     const executions = z.array(executionRowSchema).parse(this.owner.database.driver.prepare(`SELECT e.* FROM inpatient_execution e JOIN inpatient_order o
-      ON o.workspace_id=e.workspace_id AND o.epoch=e.epoch AND o.order_id=e.order_id WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? ${medicationOnly ? "AND o.kind='medication'" : ''} ORDER BY e.scheduled_for,e.execution_id`)
+      ON o.workspace_id=e.workspace_id AND o.epoch=e.epoch AND o.order_id=e.order_id WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? ${medicationOnly ? "AND o.kind='medication'" : ''} ORDER BY julianday(e.scheduled_for),e.execution_id`)
       .all(context.workspaceId, context.epoch, admissionId)).map(row => inpatientExecutionSchema.parse({ id: row.execution_id, orderId: row.order_id,
         scheduledFor: row.scheduled_for, status: row.status, version: row.version, ...(row.administration_id === null ? {} : { administrationId: row.administration_id }), ...(row.reason === null ? {} : { reason: row.reason }) }))
     const dispenses = z.array(z.object({ dispense_id: z.string(), execution_id: z.string(), lot_id: z.string(), quantity: z.number(), dispensed_at: z.string(), dispensed_by: z.string() })).parse(this.owner.database.driver.prepare(`SELECT d.* FROM inpatient_dispense d JOIN inpatient_execution e ON e.workspace_id=d.workspace_id AND e.epoch=d.epoch AND e.execution_id=d.execution_id
-      JOIN inpatient_order o ON o.workspace_id=e.workspace_id AND o.epoch=e.epoch AND o.order_id=e.order_id WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? ${medicationOnly ? "AND o.kind='medication'" : ''} ORDER BY d.dispensed_at,d.dispense_id`)
+      JOIN inpatient_order o ON o.workspace_id=e.workspace_id AND o.epoch=e.epoch AND o.order_id=e.order_id WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? ${medicationOnly ? "AND o.kind='medication'" : ''} ORDER BY julianday(d.dispensed_at),d.dispense_id`)
       .all(context.workspaceId, context.epoch, admissionId)).map(row => inpatientDispenseSchema.parse({ id: row.dispense_id, executionId: row.execution_id, lotId: row.lot_id, quantity: row.quantity, dispensedAt: row.dispensed_at, dispensedBy: row.dispensed_by }))
     return { orders, executions, dispenses }
   }
   chargeFacts(context: ActorContext, admissionId: string) {
     const charges = z.array(z.object({ charge_id: z.string(), kind: z.string(), source_id: z.string(), organization_id: z.string(), service_date: z.string(), amount_fen: z.number(), virtual_time: z.string(), version: z.number(), reversal_of: z.string().nullable(), reason: z.string().nullable() })).parse(this.owner.database.driver.prepare(
-      'SELECT * FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY virtual_time,charge_id').all(context.workspaceId, context.epoch, admissionId))
+      'SELECT * FROM inpatient_charge WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY julianday(virtual_time),charge_id').all(context.workspaceId, context.epoch, admissionId))
       .map(row => inpatientChargeSchema.parse({ id: row.charge_id, label: z.object({ text: z.string().min(1) }).parse(this.owner.fhir.read(context, 'ChargeItem', row.charge_id).code).text, kind: row.kind, sourceId: row.source_id, organizationId: row.organization_id, serviceDate: row.service_date, amountFen: row.amount_fen,
         virtualTime: row.virtual_time, version: row.version, ...(row.reversal_of === null ? {} : { reversalOf: row.reversal_of }), ...(row.reason === null ? {} : { reason: row.reason }) }))
     return { charges, chargesFen: charges.reduce((sum, charge) => sum + charge.amountFen, 0) }
@@ -66,7 +66,7 @@ export class InpatientOrders {
     this.owner.assertRole(context, ['pharmacist'])
     const rows = z.array(z.object({ admission_id: z.string() })).parse(this.owner.database.driver.prepare(`SELECT a.admission_id FROM inpatient_admission a
       WHERE a.workspace_id=? AND a.epoch=? AND EXISTS (SELECT 1 FROM inpatient_order o WHERE o.workspace_id=a.workspace_id AND o.epoch=a.epoch AND o.admission_id=a.admission_id AND o.kind='medication')
-      ORDER BY a.registered_at,a.admission_id`).all(context.workspaceId, context.epoch))
+      ORDER BY julianday(a.registered_at),a.admission_id`).all(context.workspaceId, context.epoch))
     return inpatientPharmacyListSchema.parse({ items: rows.map(row => this.pharmacyAdmission(context, row.admission_id)) })
   }
   pharmacy(context: ActorContext, admissionId: string) {

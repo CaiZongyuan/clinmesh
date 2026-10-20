@@ -36,7 +36,7 @@ export class InpatientInvestigations {
     this.owner.assertRole(context,['inpatient-doctor','ward-nurse'])
     this.owner.admissionBinding(context,admissionId)
     const sent = z.array(z.object({request_id:z.string(),sent_at:z.string(),sent_by:z.string()})).parse(this.owner.database.driver.prepare(
-      'SELECT request_id,sent_at,sent_by FROM inpatient_investigation WHERE workspace_id=? AND epoch=? AND admission_id=? AND sent_at IS NOT NULL ORDER BY sent_at,request_id').all(context.workspaceId,context.epoch,admissionId))
+      'SELECT request_id,sent_at,sent_by FROM inpatient_investigation WHERE workspace_id=? AND epoch=? AND admission_id=? AND sent_at IS NOT NULL ORDER BY julianday(sent_at),request_id').all(context.workspaceId,context.epoch,admissionId))
     return inpatientInvestigationsSchema.parse({admissionId,laboratoryRequests:this.workflow.inpatientLaboratoryRequests(context,admissionId),imagingRequests:this.workflow.imaging.state(context,admissionId).requests,
       sent:sent.map(row=>({requestId:row.request_id,sentAt:row.sent_at,sentBy:row.sent_by}))})
   }

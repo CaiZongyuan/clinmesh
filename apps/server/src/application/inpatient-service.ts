@@ -95,7 +95,7 @@ export class InpatientService {
     const scoped = clinicalRoles.includes(context.roleCode)
     const rows = z.array(z.object({ admission_id: z.string() })).parse(this.database.driver.prepare(`
       SELECT admission_id FROM inpatient_admission WHERE workspace_id=? AND epoch=?
-      ${scoped ? 'AND organization_id=? AND ward_id=?' : ''} ORDER BY registered_at, admission_id`)
+      ${scoped ? 'AND organization_id=? AND ward_id=?' : ''} ORDER BY julianday(registered_at), admission_id`)
       .all(context.workspaceId, context.epoch, ...(scoped ? [context.organizationId ?? '', context.locationId ?? ''] : [])))
     return inpatientListSchema.parse({ items: rows.map(row => this.detail(context, row.admission_id).admission) })
   }
@@ -123,7 +123,7 @@ export class InpatientService {
       ${context.roleCode === 'outpatient-doctor' ? `AND EXISTS (SELECT 1 FROM outpatient_case c JOIN outpatient_case_responsibility p
         ON p.workspace_id=c.workspace_id AND p.epoch=c.epoch AND p.case_id=c.case_id
         WHERE c.workspace_id=r.workspace_id AND c.epoch=r.epoch AND c.encounter_id=r.encounter_id AND p.practitioner_role_id=?)` : ''}
-      ORDER BY r.issued_at, r.referral_id`).all(context.workspaceId, context.epoch,
+      ORDER BY julianday(r.issued_at), r.referral_id`).all(context.workspaceId, context.epoch,
       ...(context.roleCode === 'outpatient-doctor' ? [context.practitionerRoleId ?? ''] : [])))
     return inpatientReferralListSchema.parse({ items: rows.map(row => {
       const patient = this.fhir.read(context, 'Patient', row.patient_id)

@@ -30,12 +30,12 @@ export class InpatientTransfers {
   read(context:ActorContext,admissionId:string) {
     this.owner.assertRole(context,['inpatient-doctor','ward-nurse'])
     this.owner.admissionBinding(context,admissionId)
-    const rows=z.array(rowSchema).parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_transfer WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY requested_at,transfer_id').all(context.workspaceId,context.epoch,admissionId))
+    const rows=z.array(rowSchema).parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_transfer WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY julianday(requested_at),transfer_id').all(context.workspaceId,context.epoch,admissionId))
     return inpatientTransfersSchema.parse({admissionId,transfers:rows.map(row=>this.dto(context,row))})
   }
   incoming(context:ActorContext) {
     this.owner.assertRole(context,['ward-nurse'])
-    const rows=z.array(rowSchema).parse(this.owner.database.driver.prepare("SELECT * FROM inpatient_transfer WHERE workspace_id=? AND epoch=? AND target_ward_id=? AND target_organization_id=? AND status IN ('requested','handed-over') ORDER BY requested_at,transfer_id").all(context.workspaceId,context.epoch,context.locationId??'',context.organizationId??''))
+    const rows=z.array(rowSchema).parse(this.owner.database.driver.prepare("SELECT * FROM inpatient_transfer WHERE workspace_id=? AND epoch=? AND target_ward_id=? AND target_organization_id=? AND status IN ('requested','handed-over') ORDER BY julianday(requested_at),transfer_id").all(context.workspaceId,context.epoch,context.locationId??'',context.organizationId??''))
     return inpatientIncomingTransfersSchema.parse({items:rows.map(row=>{
       const admission=z.object({patient_id:z.string(),inpatient_number:z.string()}).parse(this.owner.database.driver.prepare('SELECT * FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId,context.epoch,row.admission_id))
       const patient=this.owner.fhir.read(context,'Patient',admission.patient_id)

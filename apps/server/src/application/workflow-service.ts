@@ -10366,7 +10366,7 @@ export class WorkflowService {
           status, version
         FROM laboratory_request
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND request_kind = 'laboratory'
-        ORDER BY authored_at, request_id
+        ORDER BY julianday(authored_at), request_id
       `).all(context.workspaceId, context.epoch, caseId),
     ).map((request) => {
       const serviceRequest = this.#fhir.read(

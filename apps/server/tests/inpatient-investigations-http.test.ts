@@ -5,11 +5,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransferCatalogSchema, inpatientTransferResponseSchema } from '@clinmesh/contracts/inpatient-transfer'
+import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { laboratoryServiceSnapshotSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
 import { acuteBronchitis, caseBundle, createImagingRuntime, generateCase, mutation, prepareImaging, signIn, snomed, startConsultation } from './fixtures/imaging-scenario.ts'
-import { applyMigrations, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
+import { applyMigrations, canonicalStateHash, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { z } from 'zod'
 import { repairImagingAssets } from '../src/infrastructure/imaging-assets/imaging-asset-store.ts'
 
@@ -69,6 +70,85 @@ async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRunti
 }
 
 describe('住院检查检验 HTTP 合同', () => {
+  it('混合时区Virtual Time的多次住院检验与影像申请由复用owner按真实时点排序', async () => {
+    const s = await setup(), admin = await signIn(s.runtime)
+    const clock = await (await s.request(admin, '/api/sim/v1/scenario-runs/current')).json()
+    const issue = async (kind: 'laboratory' | 'imaging') => {
+      const selection = kind === 'laboratory' ? { kind, catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } : { kind, serviceId: 'imaging-chest-radiograph', indication: '合成申请时序评估' }
+      const response = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1, selection })
+      expect(response.status).toBe(200)
+      const facts = inpatientInvestigationsSchema.parse((await response.json()).data)
+      return (kind === 'laboratory' ? facts.laboratoryRequests : facts.imagingRequests).find(request => request.status === 'issued')!
+    }
+    const firstLab = await issue('laboratory'), firstImage = await issue('imaging')
+    for (const request of [firstLab, firstImage]) expect((await s.request(s.doctor, `${s.path}/investigations/cancel`, { requestId: request.id, expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion })).status).toBe(200)
+    const laterTime = new Date(Date.parse(clock.virtualTime) + 1).toISOString()
+    expect((await s.request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: clock.virtualTime, targetVirtualTime: laterTime })).status).toBe(200)
+    const laterLab = await issue('laboratory'), laterImage = await issue('imaging')
+    const before = canonicalStateHash(s.runtime.database)
+    const facts = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    expect.soft(facts.laboratoryRequests.map(request => request.id)).toEqual([firstLab.id, laterLab.id])
+    expect.soft(facts.imagingRequests.map(request => request.id)).toEqual([firstImage.id, laterImage.id])
+    for (const requests of [facts.laboratoryRequests, facts.imagingRequests]) {
+      expect(requests.find(request => request.status === 'cancelled')?.authoredAt).toBe(clock.virtualTime)
+      expect(requests.find(request => request.status === 'issued')?.authoredAt).toBe(laterTime)
+    }
+    expect(canonicalStateHash(s.runtime.database)).toBe(before)
+  })
+
+  it('混合时区Virtual Time的转科历史与目标incoming按真实时点排序且读取不改事实', async () => {
+    const s = await setup(), admin = await signIn(s.runtime)
+    const clock = await (await s.request(admin, '/api/sim/v1/scenario-runs/current')).json()
+    expect(clock.virtualTime).toMatch(/\+08:00$/)
+    const second = inpatientCommandResponseSchema.parse(await (await s.request(s.registrar, '/api/his/v1/inpatient/admissions', {
+      expectedEpoch: 'epoch-1', patientId: s.visit.patientId, patientVersion: '1', admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0,
+    })).json()).data.admission
+    const requested = async (admissionId: string, encounterVersion: string) => {
+      const response = await s.request(s.doctor, `/api/his/v1/inpatient/admissions/${admissionId}/transfers/request`, { encounterVersion, targetWardId: 'ward-surgery', reason: '合成时序转科' })
+      expect(response.status).toBe(200)
+      return inpatientTransferResponseSchema.parse(await response.json()).data.transfers.find(transfer => transfer.status === 'requested')!
+    }
+    const first = await requested(s.admission.id, s.admission.versionId)
+    expect((await s.request(s.doctor, `${s.path}/transfers/cancel`, { encounterVersion: s.admission.versionId, transferId: first.id, expectedTransferVersion: first.version })).status).toBe(200)
+    const tied = await requested(s.admission.id, s.admission.versionId)
+    expect((await s.request(s.doctor, `${s.path}/transfers/cancel`, { encounterVersion: s.admission.versionId, transferId: tied.id, expectedTransferVersion: tied.version })).status).toBe(200)
+    expect((await s.request(s.nurse, `/api/his/v1/inpatient/admissions/${second.id}/receive`, { encounterVersion: second.versionId, bedId: 'bed-general-2' })).status).toBe(200)
+    const secondIncoming = await requested(second.id, '2')
+    const laterTime = new Date(Date.parse(clock.virtualTime) + 1).toISOString()
+    expect((await s.request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: clock.virtualTime, targetVirtualTime: laterTime })).status).toBe(200)
+    const later = await requested(s.admission.id, s.admission.versionId)
+    const targetNurse = await signIn(s.runtime, 'ward-nurse@demo.clinmesh.local')
+    expect((await s.runtime.app.request('/api/auth/role', mutation(targetNurse, { practitionerRoleId: 'practitioner-role-ward-nurse-surgery' }))).status).toBe(200)
+    const before = canonicalStateHash(s.runtime.database)
+    const history = inpatientTransferResponseSchema.shape.data.parse(await (await s.request(s.doctor, `${s.path}/transfers`)).json()).transfers
+    const incoming = await (await s.request(targetNurse, '/api/his/v1/inpatient/transfers/incoming')).json()
+    expect.soft(history.map(transfer => transfer.id)).toEqual([...[first.id, tied.id].sort(), later.id])
+    expect.soft(incoming.items.map((item: { transfer: { id: string } }) => item.transfer.id)).toEqual([secondIncoming.id, later.id])
+    expect(history.find(transfer => transfer.id === first.id)?.requestedAt).toBe(clock.virtualTime)
+    expect(history.find(transfer => transfer.id === later.id)?.requestedAt).toBe(laterTime)
+    expect(canonicalStateHash(s.runtime.database)).toBe(before)
+  })
+
+  it('混合时区Virtual Time的送检事实按真实时点排序并保留原始毫秒时间', async () => {
+    const s = await setup(), admin = await signIn(s.runtime)
+    const clock = await (await s.request(admin, '/api/sim/v1/scenario-runs/current')).json()
+    const issueAndSend = async (selection: { kind: 'laboratory'; catalogItemId: string; indicationCode: string } | { kind: 'imaging'; serviceId: string; indication: string }) => {
+      const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1, selection })
+      expect(issued.status).toBe(200)
+      const body = (await issued.json()).data, request = selection.kind === 'laboratory' ? body.laboratoryRequests[0] : body.imagingRequests[0]
+      expect((await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: request.id, expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion })).status).toBe(200)
+      return request.id
+    }
+    const first = await issueAndSend({ kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' })
+    const laterTime = new Date(Date.parse(clock.virtualTime) + 1).toISOString()
+    expect((await s.request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: clock.virtualTime, targetVirtualTime: laterTime })).status).toBe(200)
+    const later = await issueAndSend({ kind: 'imaging', serviceId: 'imaging-chest-radiograph', indication: '合成时序检查' })
+    const before = canonicalStateHash(s.runtime.database)
+    const facts = await (await s.request(s.nurse, `${s.path}/investigations`)).json()
+    expect(facts.sent).toMatchObject([{ requestId: first, sentAt: clock.virtualTime }, { requestId: later, sentAt: laterTime }])
+    expect(canonicalStateHash(s.runtime.database)).toBe(before)
+  })
+
   it('未收口手术阻止转科交接，接收事务重查中途新申请并保留原床', async () => {
     const s = await setup()
     const catalog = inpatientSurgeryCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())

@@ -1,5 +1,5 @@
 import { serviceCatalogSearchSchema } from '@clinmesh/contracts/his'
-import { applyMigrations, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
+import { applyMigrations, canonicalStateHash, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { dispenseResponseSchema, prescriptionReviewResponseSchema, pharmacyQueueSchema, registrationResponseSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { inpatientPharmacySchema, inpatientPharmacyListSchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -91,6 +91,57 @@ async function paidOutpatient(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
+  it('混合时区Virtual Time的临床医嘱执行发药账目及药房清单按真实时点排序', async () => {
+    const s = await setup()
+    const clock = await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()
+    const diagnosis = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, { encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '1' }] })).json()).data
+    const dose = async () => {
+      const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: diagnosis.encounterVersion, duration: 'temporary', selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })
+      expect(issued.status).toBe(200)
+      const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders.find(item => item.state === 'signed')!
+      const verified = await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })
+      expect(verified.status).toBe(200)
+      const execution = inpatientFullClinicalResponseSchema.parse(await verified.json()).data.executions.find(item => item.orderId === order.id)!
+      const pharmacy = inpatientPharmacySchema.parse(await (await s.request(s.pharmacist, `${s.path}/pharmacy`)).json())
+      const lot = pharmacy.medications.find(item => item.id === 'medication-amlodipine')!.lots[0]!
+      const supplied = await s.request(s.pharmacist, `${s.path}/executions/dispense`, { executionId: execution.id, expectedExecutionVersion: execution.version, lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: 1 }] })
+      expect(supplied.status).toBe(200)
+      const dispensed = inpatientPharmacyResponseSchema.parse(await supplied.json()).data
+      const dispense = dispensed.dispenses.find(item => item.executionId === execution.id)!
+      const administered = await s.request(s.nurse, `${s.path}/executions/administer`, { executionId: execution.id, expectedExecutionVersion: dispensed.executions.find(item => item.id === execution.id)!.version })
+      expect(administered.status).toBe(200)
+      const charge = inpatientFullClinicalResponseSchema.parse(await administered.json()).data.charges.find(item => item.sourceId === dispense.id)!
+      return { order, execution, dispense, charge }
+    }
+    const first = await dose(), laterTime = new Date(Date.parse(clock.virtualTime) + 1).toISOString()
+    expect((await s.request(s.admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: clock.virtualTime, targetVirtualTime: laterTime })).status).toBe(200)
+    const later = await dose()
+    const registered = inpatientCommandResponseSchema.parse(await (await s.request(s.registrar, '/api/his/v1/inpatient/admissions', { expectedEpoch: 'epoch-1', patientId: s.patient.id, patientVersion: s.patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 })).json()).data.admission
+    const received = inpatientCommandResponseSchema.parse(await (await s.request(s.nurse, `/api/his/v1/inpatient/admissions/${registered.id}/receive`, { encounterVersion: registered.versionId, bedId: 'bed-general-2' })).json()).data.admission
+    const secondDiagnosis = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `/api/his/v1/inpatient/admissions/${received.id}/diagnoses/confirm`, { encounterVersion: received.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '1' }] })).json()).data
+    expect((await s.request(s.doctor, `/api/his/v1/inpatient/admissions/${received.id}/orders/issue`, { encounterVersion: secondDiagnosis.encounterVersion, duration: 'temporary', selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' } })).status).toBe(200)
+    const before = canonicalStateHash(s.runtime.database)
+    const clinical = inpatientFullClinicalSchema.parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
+    const pharmacy = inpatientPharmacySchema.parse(await (await s.request(s.pharmacist, `${s.path}/pharmacy`)).json())
+    const ledger = inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json())
+    const queue = inpatientPharmacyListSchema.parse(await (await s.request(s.pharmacist, '/api/his/v1/inpatient/pharmacy/admissions')).json())
+    for (const facts of [clinical, pharmacy]) {
+      expect.soft(facts.orders.map(item => item.id)).toEqual([first.order.id, later.order.id])
+      expect.soft(facts.executions.map(item => item.id)).toEqual([first.execution.id, later.execution.id])
+      expect.soft(facts.dispenses.map(item => item.id)).toEqual([first.dispense.id, later.dispense.id])
+    }
+    expect.soft(clinical.charges.map(item => item.id)).toEqual([first.charge.id, later.charge.id])
+    expect.soft(ledger.charges.map(item => item.id)).toEqual([first.charge.id, later.charge.id])
+    expect.soft(queue.items.map(item => item.admissionId)).toEqual([s.admission.id, received.id])
+    expect(clinical.executions.find(item => item.id === first.execution.id)?.scheduledFor).toBe(clock.virtualTime)
+    expect(clinical.executions.find(item => item.id === later.execution.id)?.scheduledFor).toBe(laterTime)
+    expect(clinical.dispenses.find(item => item.id === later.dispense.id)?.dispensedAt).toBe(laterTime)
+    expect(ledger.charges.find(item => item.id === later.charge.id)?.virtualTime).toBe(laterTime)
+    expect(canonicalStateHash(s.runtime.database)).toBe(before)
+  })
+
   it('药房与收费使用独立窄响应，旧住院通用及临床入口拒绝越权读取', async () => {
     const s = await setup()
     for (const role of [s.pharmacist, s.cashier]) expect((await s.request(role, `${s.path}/clinical`)).status).toBe(403)

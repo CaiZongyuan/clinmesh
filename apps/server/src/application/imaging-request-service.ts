@@ -1145,7 +1145,7 @@ export class ImagingRequestService {
     return z.array(requestRowSchema).parse(this.#database.driver.prepare(`${this.#requestSelect}
       WHERE request.workspace_id = ? AND request.epoch = ? AND request.case_id = ?
         AND request.request_kind = 'imaging'
-      ORDER BY request.authored_at, request.request_id
+      ORDER BY julianday(request.authored_at), request.request_id
     `).all(context.workspaceId, context.epoch, caseId)).map(request => this.#project(context, request))
   }
 

@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { inpatientCommandResponseSchema, inpatientListSchema, advanceVirtualTimeResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { registrationResponseSchema, triageResponseSchema, startVisitResponseSchema } from '@clinmesh/contracts/his'
-import { openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
+import { canonicalStateHash, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { agentClientSchema, agentCapabilityGrantSchema } from '@clinmesh/contracts/agent'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
 
@@ -47,6 +47,45 @@ describe('住院建档与入科 HTTP 合同', () => {
   afterEach(async () => {
     await Promise.all(runtimes.splice(0).map(runtime => runtime.close()))
     await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true })))
+  })
+
+  it('混合时区Virtual Time的住院清单和住院证按真实时点排序且读不改事实', async () => {
+    const { runtime, request, login, registrar, patient } = await setup()
+    const admin = await login('admin'), doctor = await login('doctor'), triageNurse = await login('triage')
+    const clock = await (await request(admin, '/api/sim/v1/scenario-runs/current')).json()
+    const register = async () => {
+      const response = await request(registrar, '/api/his/v1/inpatient/admissions', { input: { expectedEpoch: 'epoch-1', patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 } })
+      expect(response.status).toBe(200)
+      return inpatientCommandResponseSchema.parse(await response.json()).data.admission
+    }
+    const refer = async (target = patient) => {
+      const registration = registrationResponseSchema.parse(await (await request(registrar, '/api/his/v1/registrations/actions/register', { expectedVersions: { [`Patient/${target.id}`]: target.versionId }, input: {
+        patientId: target.id, departmentId: 'department-general-medicine', locationId: 'location-outpatient', visitDate: '2026-08-24', visitTypeId: 'visit-general',
+      } })).json()).data
+      const triage = triageResponseSchema.parse(await (await request(triageNurse, `/api/his/v1/encounters/${registration.encounterId}/actions/record-triage`, {
+        expectedVersions: { [`Encounter/${registration.encounterId}`]: '1', [`Task/${registration.queueTaskId}`]: '1' }, input: { acuityCode: 'level-3', bloodPressure: { diastolicMmHg: 76, systolicMmHg: 118 }, chiefComplaint: '合成时序入院评估', oxygenSaturationPct: 98, pulseBpm: 90, respirationBpm: 20, temperatureC: 37 },
+      })).json()).data
+      const visit = startVisitResponseSchema.parse(await (await request(doctor, `/api/his/v1/encounters/${registration.encounterId}/actions/start-first-visit`, { expectedVersions: { [`Encounter/${registration.encounterId}`]: triage.encounterVersion, [`Task/${triage.doctorTaskId}`]: '1' }, input: {} })).json()).data
+      const response = await request(doctor, '/api/his/v1/inpatient/referrals', { input: { encounterId: registration.encounterId, encounterVersion: visit.encounterVersion, wardId: 'ward-general', reason: '合成时序住院证' } })
+      expect(response.status).toBe(200)
+      return (await response.json()).data.referral
+    }
+    const first = await register(), firstReferral = await refer()
+    const laterTime = new Date(Date.parse(clock.virtualTime) + 1).toISOString()
+    expect((await request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { input: { expectedVirtualTime: clock.virtualTime, targetVirtualTime: laterTime } })).status).toBe(200)
+    const later = await register()
+    const secondPatientResponse = await request(registrar, '/api/his/v1/patients', { expectedVersions: {}, input: { name: '合成第二住院证患者', gender: 'male', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } })
+    expect(secondPatientResponse.status).toBe(200)
+    const laterReferral = await refer((await secondPatientResponse.json()).data.patient)
+    const before = canonicalStateHash(runtime.database)
+    const admissions = inpatientListSchema.parse(await (await request(registrar, '/api/his/v1/inpatient/admissions')).json()).items
+    const referrals = (await (await request(registrar, '/api/his/v1/inpatient/referrals')).json()).items
+    expect.soft(admissions.map(item => item.id)).toEqual([first.id, later.id])
+    expect.soft(referrals.map((item: { id: string }) => item.id)).toEqual([firstReferral.id, laterReferral.id])
+    expect(admissions.find(item => item.id === first.id)?.registeredAt).toBe(clock.virtualTime)
+    expect(admissions.find(item => item.id === later.id)?.registeredAt).toBe(laterTime)
+    expect(referrals.find((item: { id: string }) => item.id === laterReferral.id)?.issuedAt).toBe(laterTime)
+    expect(canonicalStateHash(runtime.database)).toBe(before)
   })
 
   it('登记员直接入院形成独立住院号，预交金重试只收取一次，管理员不能代办', async () => {
