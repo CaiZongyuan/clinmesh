@@ -113,14 +113,18 @@ export function PatientBanner({
           ) : completionAction}
         </div>
       </div>
-      {completionChecklist}
-      {presentation === null ? null : <dl className="flex flex-wrap gap-x-5 gap-y-1 border-t px-4 py-1.5">
-        <VitalSummary label={messages.temperatureC} value={presentation.vitalSigns.temperatureC} />
-        <VitalSummary label={messages.pulseBpm} value={presentation.vitalSigns.pulseBpm} />
-        <VitalSummary label={messages.respirationBpm} value={presentation.vitalSigns.respirationBpm} />
-        <VitalSummary label={messages.bloodPressure} value={`${presentation.vitalSigns.bloodPressure.systolicMmHg}/${presentation.vitalSigns.bloodPressure.diastolicMmHg}`} />
-        <VitalSummary label={messages.oxygenSaturationPct} value={presentation.vitalSigns.oxygenSaturationPct} />
-      </dl>}
+      {completionChecklist == null && presentation === null ? null : (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 border-t px-4 py-1.5">
+          {presentation === null ? null : <dl className="flex flex-wrap gap-x-5 gap-y-1">
+            <VitalSummary label={messages.temperatureC} value={presentation.vitalSigns.temperatureC} />
+            <VitalSummary label={messages.pulseBpm} value={presentation.vitalSigns.pulseBpm} />
+            <VitalSummary label={messages.respirationBpm} value={presentation.vitalSigns.respirationBpm} />
+            <VitalSummary label={messages.bloodPressure} value={`${presentation.vitalSigns.bloodPressure.systolicMmHg}/${presentation.vitalSigns.bloodPressure.diastolicMmHg}`} />
+            <VitalSummary label={messages.oxygenSaturationPct} value={presentation.vitalSigns.oxygenSaturationPct} />
+          </dl>}
+          {completionChecklist == null ? null : <div className="ml-auto flex min-w-0 items-center">{completionChecklist}</div>}
+        </div>
+      )}
     </section>
   )
 }

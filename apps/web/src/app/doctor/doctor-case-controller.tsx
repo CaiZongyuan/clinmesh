@@ -116,7 +116,7 @@ import {
 import { formatFen } from '../workspace-format.ts'
 import { ConsultationVerificationStatus } from './consultation-recording-controls.tsx'
 import { WorkspaceSelect } from '../workspace-select.tsx'
-import { EncounterCompletionChecklist } from './completion-checklist.tsx'
+import { EncounterCompletionProgress } from './completion-checklist.tsx'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import {
   ClinicalDocumentPage,
@@ -3555,7 +3555,7 @@ function CaseDetail({
           messages={messages}
           statusText={doctorCaseStatusLabel(detail.status, messages)}
           completionChecklist={completion.data === undefined ? null : (
-            <EncounterCompletionChecklist completion={completion.data} locale={locale} />
+            <EncounterCompletionProgress completion={completion.data} locale={locale} />
           )}
         />
 

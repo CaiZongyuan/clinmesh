@@ -77,7 +77,7 @@ export function DoctorWorkspaceLayout({
             <Button
               aria-expanded={suggestionsOpen}
               aria-haspopup="dialog"
-              className="@min-[1080px]/doctor-workspace:hidden absolute top-3 right-3 z-10"
+              className="@min-[1080px]/doctor-workspace:hidden absolute right-4 bottom-4 z-10 shadow-md"
               onClick={() => setSuggestionsOpen(true)}
               size="icon-sm"
               variant="secondary"

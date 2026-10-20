@@ -1,5 +1,5 @@
 import type { EncounterCompletionItem, EncounterCompletionPreview } from '@clinmesh/contracts/his'
-import { Badge } from '@clinmesh/ui/components/badge'
+import { CheckCircleIcon, ListChecksIcon } from 'lucide-react'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 
 const checklistLabels: Record<WorkspaceLocale, Record<EncounterCompletionItem['code'], string>> = {
@@ -27,37 +27,24 @@ export function encounterCompletionItemLabel(code: EncounterCompletionItem['code
   return checklistLabels[locale][code]
 }
 
-export function EncounterCompletionChecklist({ completion, locale }: {
+/** 患者横幅内的完诊进度摘要：计数加未完项数量，逐项明细见建议栈。 */
+export function EncounterCompletionProgress({ completion, locale }: {
   completion: EncounterCompletionPreview
   locale: WorkspaceLocale
 }): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
   const completed = completion.items.filter(item => item.status === 'complete').length
-  const headingId = `completion-heading-${completion.encounterId}`
+  const outstanding = completion.items.length - completed
   return (
-    <section aria-labelledby={headingId} className="flex min-w-0 shrink-0 flex-wrap items-center gap-x-4 gap-y-1 border-t bg-muted/15 px-4 py-1.5">
-      <div className="flex shrink-0 items-center gap-3">
-        <h3 className="sr-only text-sm font-semibold @min-[400px]/case-content:not-sr-only" id={headingId}>{messages.encounterCompletionChecklist}</h3>
-        <span className="text-xs text-muted-foreground" aria-label={messages.encounterCompletionSatisfied
-            .replace('{complete}', String(completed))
-            .replace('{total}', String(completion.items.length))}>
-          {completed} / {completion.items.length}
-        </span>
-      </div>
-      <ul className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-        {completion.items.map(item => (
-          <li className="flex w-28" key={item.code}>
-            <Badge
-              className="h-auto min-h-5 w-full whitespace-normal text-center"
-              aria-label={`${checklistLabels[locale][item.code]}：${item.statusText}`}
-              title={item.statusText}
-              variant={item.status === 'complete' ? 'success' : 'secondary'}
-            >
-              {checklistLabels[locale][item.code]}
-            </Badge>
-          </li>
-        ))}
-      </ul>
-    </section>
+    <span aria-label={messages.encounterCompletionSatisfied
+        .replace('{complete}', String(completed))
+        .replace('{total}', String(completion.items.length))}
+      className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+      <ListChecksIcon aria-hidden="true" className="size-3.5 shrink-0" />
+      <span className="font-medium tabular-nums">{completed} / {completion.items.length}</span>
+      {outstanding > 0 ? <span>{messages.encounterCompletionOutstanding.replace('{count}', String(outstanding))}</span> : (
+        <CheckCircleIcon aria-hidden="true" className="size-3.5 shrink-0" />
+      )}
+    </span>
   )
 }

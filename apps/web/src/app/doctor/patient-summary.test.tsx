@@ -105,4 +105,14 @@ describe('PatientBanner 紧凑布局', () => {
     expect(screen.getByRole('button', { name: '完诊' })).toBeTruthy()
     expect(screen.getByText('首诊中')).toBeTruthy()
   })
+
+  it('完诊进度与生命体征合并为同一次级行，不再单独占一行', () => {
+    renderBanner()
+    const banner = screen.getByRole('region', { name: '当前患者' })
+    const progress = within(banner).getByText('完诊清单', { exact: false })
+    const vital = within(banner).getByText('体温（°C）', { exact: false })
+    const shared = commonAncestor(progress, vital)
+    expect(shared).not.toBeNull()
+    expect(shared).not.toBe(banner)
+  })
 })
