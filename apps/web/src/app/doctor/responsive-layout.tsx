@@ -26,6 +26,9 @@ export function DoctorWorkspaceLayout({
   const [suggestionsOpen, setSuggestionsOpen] = useState(false)
   useEffect(() => setShowQueue(selectedCaseId === undefined), [selectedCaseId])
   const compactHidden = '@max-[720px]/doctor-workspace:hidden'
+  // 抽屉浮动按钮悬浮在容器右下角；按钮可见的容器宽度下为滚动内容预留底部净空，避免遮挡固定的可交互控件。
+  const detailClearance = suggestions !== undefined ? '@max-[1080px]/doctor-workspace:pb-14' : undefined
+  const queueClearance = suggestions !== undefined ? '@max-[720px]/doctor-workspace:pb-14' : undefined
   return (
     <div className="@container/doctor-workspace relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
       <div className="@min-[720px]/doctor-workspace:hidden flex gap-2 border-b p-2" role="group" aria-label={queueLabel}>
@@ -55,13 +58,13 @@ export function DoctorWorkspaceLayout({
       >
         <div
           data-doctor-region="queue"
-          className={cn('min-h-0 min-w-0 overflow-y-auto border-r', !showQueue && compactHidden)}
+          className={cn('min-h-0 min-w-0 overflow-y-auto border-r', !showQueue && compactHidden, queueClearance)}
         >
           {queue(() => setShowQueue(false))}
         </div>
         <div
           data-doctor-region="detail"
-          className={cn('@container/case-detail min-h-0 min-w-0 overflow-hidden', showQueue && compactHidden)}
+          className={cn('@container/case-detail min-h-0 min-w-0 overflow-hidden', showQueue && compactHidden, detailClearance)}
         >
           {children}
         </div>

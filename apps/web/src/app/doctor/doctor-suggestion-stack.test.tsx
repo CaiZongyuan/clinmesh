@@ -57,7 +57,7 @@ function completionPreview(overrides: Partial<Record<EncounterCompletionItem['co
 
 type CompletionView = ComponentProps<typeof DoctorSuggestionStack>['completion']
 function completionView(overrides: Partial<CompletionView> = {}): CompletionView {
-  return { data: undefined, isPending: true, isLoading: false, error: null, refetch: vi.fn(), ...overrides }
+  return { data: undefined, isLoading: false, error: null, refetch: vi.fn(), ...overrides }
 }
 
 function recommendationState(kind: DoctorRecommendationKind, overrides: Partial<DoctorRecommendationState> = {}): DoctorRecommendationState {
@@ -82,6 +82,7 @@ function readyDiagnosisState(): DoctorRecommendationState {
 }
 
 let qualityIssues: ClinicalDocumentQualityControlState['issues'] = []
+let failQualityCheck = false
 let recommendationResponder: (kind: DoctorRecommendationKind, method: string) => DoctorRecommendationState = kind => recommendationState(kind)
 
 function stubStackServices(): void {
@@ -95,6 +96,7 @@ function stubStackServices(): void {
         : Response.json(state)
     }
     if (url.pathname.endsWith('/document-quality-control/actions/check')) {
+      if (failQualityCheck) throw new Error('合成质控服务错误')
       const request = checkClinicalDocumentQualityRequestSchema.parse(JSON.parse(String(init?.body)))
       const state = clinicalDocumentQualityControlStateSchema.parse({
         caseId: detail.caseId, encounterId: detail.encounter.id, draftVersion: request.input.expectedDraftVersion,
@@ -116,7 +118,7 @@ const clients: QueryClient[] = []
 function mountStack(props: Partial<ComponentProps<typeof DoctorSuggestionStack>> = {}, options: { provider?: boolean } = {}): ReturnType<typeof render> {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   clients.push(client)
-  let tree: ReactNode = <DoctorSuggestionStack completion={completionView()} detail={detail} document={baseDocument}
+  let tree: ReactNode = <DoctorSuggestionStack completion={completionView()} detail={detail} clinicalDocument={baseDocument}
     locale="zh-CN" messages={messages} scope="workspace:epoch:doctor" {...props} />
   if (options.provider !== false) {
     tree = <DoctorPreparationProvider detail={props.detail ?? detail} enabled scope="workspace:epoch:doctor"
@@ -130,6 +132,7 @@ afterEach(() => {
   clients.splice(0).forEach(client => client.clear())
   vi.unstubAllGlobals()
   qualityIssues = []
+  failQualityCheck = false
   recommendationResponder = kind => recommendationState(kind)
 })
 
@@ -155,7 +158,7 @@ it('完诊清单全部完成时显示完成态而不再列出条目', () => {
 
 it('完诊清单加载中显示骨架占位', () => {
   stubStackServices()
-  const view = mountStack({ completion: completionView({ isPending: true, isLoading: true }) })
+  const view = mountStack({ completion: completionView({ isLoading: true }) })
   expect(view.container.querySelector('[data-slot="skeleton"]')).not.toBeNull()
   expect(screen.queryByText(messages.suggestionCompletionClear)).toBeNull()
 })
@@ -197,6 +200,23 @@ it('质控无开放疑点时显示清空态', async () => {
   mountStack({ completion: completionView({ data: completionPreview() }) })
   await waitFor(() => {
     expect(screen.getByText(messages.suggestionQualityClear)).toBeTruthy()
+  }, { timeout: 4000 })
+})
+
+it('质控检查失败时不落入整体空态并给出重试入口', async () => {
+  stubStackServices()
+  failQualityCheck = true
+  mountStack({ completion: completionView({ data: completionPreview({
+    'primary-diagnosis-confirmed': 'complete', 'clinical-document-signed': 'complete',
+  }) }) })
+  await waitFor(() => {
+    expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
+  }, { timeout: 4000 })
+  expect(screen.queryByText(messages.suggestionStackEmpty)).toBeNull()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: messages.suggestionRetry }))
+  await waitFor(() => {
+    expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
   }, { timeout: 4000 })
 })
 

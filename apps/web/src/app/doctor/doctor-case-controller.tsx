@@ -2666,7 +2666,7 @@ function DoctorCaseController({
       suggestions={{
         label: messages.suggestionStackTitle,
         node: <DoctorSuggestionStack completion={completion} detail={detailUnavailable ? undefined : detail.data}
-          document={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope} />,
+          clinicalDocument={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope} />,
       }}
       queue={showDetail => (
       <DoctorQueueModule

@@ -4187,6 +4187,9 @@ describe('role workspaces', () => {
         data: { proposalId: 'doctor-proposal-1', status: 'awaiting-human-review' },
       })
       const review = await screen.findByRole('alertdialog', { name: '确认已阅放射报告' })
+      // A9：既有反馈语言在三栏布局下保持可见——反馈条、工作区光晕容器与评审弹层同屏。
+      expect(document.querySelector('.clinmesh-agent-feedback')?.textContent).toContain('待人工确认')
+      expect(document.querySelector('.clinmesh-agent-workspace-glow')).not.toBeNull()
       expect(requests.some(request => request.path.endsWith('/actions/acknowledge'))).toBe(false)
       await userEvent.setup().click(within(review).getByRole('button', { name: '确认已阅' }))
       await waitFor(() => expect(requests.find(request => request.path.endsWith('/actions/acknowledge'))).toEqual({

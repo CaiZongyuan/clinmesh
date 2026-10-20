@@ -12,17 +12,16 @@ import { preparationKinds, useDoctorPreparation, type DoctorPreparationJob } fro
 
 export type SuggestionCompletionView = {
   data: EncounterCompletionPreview | undefined
-  isPending: boolean
   isLoading: boolean
   error: Error | null
   refetch: () => void
 }
 
 /** 建议栈：完诊清单未完项、质控疑点与医生推荐的聚合摘要。同一描述会同时挂载在右栏与抽屉中，禁止声明 DOM id。 */
-export function DoctorSuggestionStack({ completion, detail, document, scope, locale, messages }: {
+export function DoctorSuggestionStack({ completion, detail, clinicalDocument, scope, locale, messages }: {
   completion: SuggestionCompletionView
   detail: DoctorCaseDetail | undefined
-  document: ClinicalDocumentContent | undefined
+  clinicalDocument: ClinicalDocumentContent | undefined
   scope: string
   locale: WorkspaceLocale
   messages: WorkspaceMessages
@@ -30,13 +29,13 @@ export function DoctorSuggestionStack({ completion, detail, document, scope, loc
   if (detail === undefined) {
     return <p className="p-3 text-sm text-muted-foreground">{messages.suggestionNoCase}</p>
   }
-  return <ActiveSuggestionStack completion={completion} detail={detail} document={document} locale={locale} messages={messages} scope={scope} />
+  return <ActiveSuggestionStack completion={completion} detail={detail} clinicalDocument={clinicalDocument} locale={locale} messages={messages} scope={scope} />
 }
 
-function ActiveSuggestionStack({ completion, detail, document, locale, messages, scope }: {
+function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, messages, scope }: {
   completion: SuggestionCompletionView
   detail: DoctorCaseDetail
-  document: ClinicalDocumentContent | undefined
+  clinicalDocument: ClinicalDocumentContent | undefined
   scope: string
   locale: WorkspaceLocale
   messages: WorkspaceMessages
@@ -45,13 +44,13 @@ function ActiveSuggestionStack({ completion, detail, document, locale, messages,
   const readOnly = detail.encounter.status !== 'in-progress' || detail.status === 'awaiting-doctor'
   const qualityEnabled = !readOnly && (detail.clinicalDocument?.signed.length ?? 0) === 0
   const quality = useDocumentQualityControl({ detail, scope, enabled: qualityEnabled,
-    ...(document === undefined ? {} : { document }) })
+    ...(clinicalDocument === undefined ? {} : { document: clinicalDocument }) })
   const incompleteItems = completion.data?.items.filter(item => item.status === 'incomplete') ?? []
   const issues = openIssues(quality)
   const jobs = preparation === undefined ? [] : preparationKinds.map(kind => ({ kind, job: preparation.jobs[kind] }))
-  const jobAttention = jobs.some(({ job }) => job.error !== null || job.pending
-    || job.state?.status === 'failed' || job.state?.status === 'missing-evidence' || (job.state?.status === 'ready' && job.state.items.length > 0))
-  const attention = completion.error !== null || incompleteItems.length > 0 || issues.length > 0 || jobAttention
+  const jobAttention = jobs.some(({ job }) => jobNeedsAttention(job))
+  const attention = completion.error !== null || quality.error !== null || incompleteItems.length > 0
+    || issues.length > 0 || jobAttention
   if (!attention && !completion.isLoading && !quality.pending) {
     return (
       <div className="flex min-h-0 flex-col gap-3 p-3">
@@ -63,64 +62,47 @@ function ActiveSuggestionStack({ completion, detail, document, locale, messages,
     )
   }
   const zh = locale === 'zh-CN'
+  const completionClear = completion.data === undefined || incompleteItems.length > 0 ? null : messages.suggestionCompletionClear
   return (
     <div className="flex min-h-0 flex-col gap-4 p-3">
       <section aria-label={messages.encounterCompletionChecklist} className="flex min-w-0 flex-col gap-1.5">
         <h3 className="text-xs font-medium text-muted-foreground">{messages.encounterCompletionChecklist}</h3>
-        {completion.error !== null ? (
-          <Alert>
-            <AlertTitle>{messages.suggestionLoadFailed}</AlertTitle>
-            <AlertDescription className="flex items-center gap-2">
-              <Button onClick={completion.refetch} size="sm" type="button" variant="outline">{messages.suggestionRetry}</Button>
-            </AlertDescription>
-          </Alert>
-        ) : completion.isLoading ? (
-          <Skeleton className="h-16 w-full" />
-        ) : completion.data === undefined ? null : incompleteItems.length === 0 ? (
-          <p className="flex items-center gap-1.5 text-sm">
-            <CheckCircleIcon aria-hidden="true" className="size-4 shrink-0" />
-            {messages.suggestionCompletionClear}
-          </p>
-        ) : (
-          <ul className="flex min-w-0 flex-col gap-1">
-            {incompleteItems.map(item => (
-              <li className="flex min-w-0 items-baseline justify-between gap-2 text-sm" key={item.code}>
-                <span className="shrink-0">{encounterCompletionItemLabel(item.code, locale)}</span>
-                <span className="min-w-0 truncate text-xs text-muted-foreground">{item.statusText}</span>
-              </li>
-            ))}
-          </ul>
-        )}
+        <StackSectionState
+          clearText={completionClear}
+          error={completion.error}
+          messages={messages}
+          onRetry={completion.refetch}
+          pending={completion.isLoading}
+        >
+          {completion.data === undefined ? null : (
+            <ul className="flex min-w-0 flex-col gap-1">
+              {incompleteItems.map(item => (
+                <li className="flex min-w-0 items-baseline justify-between gap-2 text-sm" key={item.code}>
+                  <span className="shrink-0">{encounterCompletionItemLabel(item.code, locale)}</span>
+                  <span className="min-w-0 truncate text-xs text-muted-foreground">{item.statusText}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </StackSectionState>
       </section>
       {qualityEnabled ? (
         <section aria-label={messages.documentQualityTitle} className="flex min-w-0 flex-col gap-1.5">
           <h3 className="text-xs font-medium text-muted-foreground">{messages.documentQualityTitle}</h3>
-          {quality.error !== null ? (
-            <Alert>
-              <AlertTitle>{messages.suggestionLoadFailed}</AlertTitle>
-              <AlertDescription className="flex items-center gap-2">
-                <Button onClick={quality.retry} size="sm" type="button" variant="outline">{messages.suggestionRetry}</Button>
-              </AlertDescription>
-            </Alert>
-          ) : quality.pending ? (
-            <Skeleton className="h-16 w-full" />
-          ) : (
-            <>
-              {quality.stale ? <p className="text-xs text-muted-foreground">{messages.documentQualityStale}</p> : null}
-              {issues.length === 0 ? (
-                <p className="flex items-center gap-1.5 text-sm">
-                  <CheckCircleIcon aria-hidden="true" className="size-4 shrink-0" />
-                  {messages.suggestionQualityClear}
-                </p>
-              ) : (
-                <ul className="flex min-w-0 flex-col gap-1">
-                  {issues.map(issue => (
-                    <li className="min-w-0 text-sm" key={issue.id}>{shortIssue(issue, messages, locale)}</li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
+          {quality.stale ? <p className="text-xs text-muted-foreground">{messages.documentQualityStale}</p> : null}
+          <StackSectionState
+            clearText={issues.length === 0 ? messages.suggestionQualityClear : null}
+            error={quality.error}
+            messages={messages}
+            onRetry={quality.retry}
+            pending={quality.pending}
+          >
+            <ul className="flex min-w-0 flex-col gap-1">
+              {issues.map(issue => (
+                <li className="min-w-0 text-sm" key={issue.id}>{shortIssue(issue, messages, locale)}</li>
+              ))}
+            </ul>
+          </StackSectionState>
         </section>
       ) : null}
       {preparation !== undefined ? (
@@ -130,7 +112,7 @@ function ActiveSuggestionStack({ completion, detail, document, locale, messages,
             {jobs.map(({ kind, job }) => (
               <li key={kind}>
                 <Button aria-label={doctorRecommendationKindTitles[kind][zh ? 0 : 1]}
-                  className={cn('h-auto w-full justify-between px-2 py-1.5', job.pending || job.state?.status === 'pending' ? 'clinmesh-glow' : null)}
+                  className={cn('h-auto w-full justify-between px-2 py-1.5', jobInProgress(job) ? 'clinmesh-glow' : null)}
                   onClick={() => preparation.openDetails(kind)} size="sm" type="button" variant="ghost">
                   <span className="min-w-0 truncate">{doctorRecommendationKindTitles[kind][zh ? 0 : 1]}</span>
                   <span className="shrink-0 text-xs font-normal text-muted-foreground">{recommendationStatusText(job, messages)}</span>
@@ -144,9 +126,52 @@ function ActiveSuggestionStack({ completion, detail, document, locale, messages,
   )
 }
 
+/** 分区状态体：失败给 Alert 与重试，加载给骨架，无内容给清空态，否则渲染内容。 */
+function StackSectionState({ error, pending, clearText, onRetry, messages, children }: {
+  error: Error | null
+  pending: boolean
+  clearText: string | null
+  onRetry: () => void
+  messages: WorkspaceMessages
+  children: React.ReactNode
+}): React.JSX.Element {
+  if (error !== null) {
+    return (
+      <Alert>
+        <AlertTitle>{messages.suggestionLoadFailed}</AlertTitle>
+        <AlertDescription className="flex items-center gap-2">
+          <Button onClick={onRetry} size="sm" type="button" variant="outline">{messages.suggestionRetry}</Button>
+        </AlertDescription>
+      </Alert>
+    )
+  }
+  if (pending) return <Skeleton className="h-16 w-full" />
+  if (clearText !== null) {
+    return (
+      <p className="flex items-center gap-1.5 text-sm">
+        <CheckCircleIcon aria-hidden="true" className="size-4 shrink-0" />
+        {clearText}
+      </p>
+    )
+  }
+  return <>{children}</>
+}
+
+/** 推荐条目需要医生关注：失败、进行中、缺证据或有待确认候选。 */
+function jobNeedsAttention(job: DoctorPreparationJob): boolean {
+  return job.error !== null || jobInProgress(job)
+    || job.state?.status === 'failed' || job.state?.status === 'missing-evidence'
+    || (job.state?.status === 'ready' && job.state.items.length > 0)
+}
+
+/** 推荐生成进行中：环绕柔光只标记这一状态，不扩大到失败或就绪。 */
+function jobInProgress(job: DoctorPreparationJob): boolean {
+  return job.pending || job.state?.status === 'pending'
+}
+
 function recommendationStatusText(job: DoctorPreparationJob, messages: WorkspaceMessages): string {
   if (job.error !== null || job.state?.status === 'failed') return messages.suggestionRecommendationFailed
-  if (job.pending || job.state?.status === 'pending') return messages.suggestionRecommendationPending
+  if (jobInProgress(job)) return messages.suggestionRecommendationPending
   const state = job.state
   if (state?.status === 'missing-evidence') return messages.suggestionRecommendationMissingEvidence
   if (state?.status === 'ready') return messages.suggestionRecommendationReadyCount.replace('{count}', String(state.items.length))

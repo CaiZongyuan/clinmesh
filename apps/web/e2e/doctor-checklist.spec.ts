@@ -187,6 +187,33 @@ test('doctor banner merges vitals with completion progress and moves per-item de
   await expect(banner.getByText('血氧饱和度（%）', { exact: true })).toBeInViewport()
 })
 
+test('doctor workspace applies every font tier without horizontal scroll', async ({ page, browserApp }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto(`${browserApp.origin}/consultation`)
+  await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+  await page.getByLabel('账户密码').fill(browserApp.password)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page.getByRole('complementary', { name: '候诊队列' })).toBeVisible()
+  const root = page.locator('.clinmesh-web-root')
+  for (const tier of [
+    { label: '标准', attribute: 'standard', font: '13px' },
+    { label: '较大', attribute: 'larger', font: '14.625px' },
+    { label: '大', attribute: 'large', font: '16.25px' },
+  ]) {
+    await page.goto(`${browserApp.origin}/settings`)
+    await page.getByRole('button', { name: tier.label, exact: true }).click()
+    await page.goto(`${browserApp.origin}/consultation`)
+    await expect(root).toHaveAttribute('data-font-size', tier.attribute)
+    expect(await root.evaluate(element => getComputedStyle(element).fontSize)).toBe(tier.font)
+    // 三档字号在宽三栏、中两栏与窄切换布局下都不产生横向滚动。
+    for (const width of [1440, 1024, 390]) {
+      await page.setViewportSize({ width, height: 900 })
+      await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth))
+        .toBeLessThanOrEqual(1)
+    }
+  }
+})
+
 test('queue tabs adapt to the 200px sidebar with full-width English labels', async ({ page, browserApp }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto(`${browserApp.origin}/consultation`)
