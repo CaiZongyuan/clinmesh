@@ -27,7 +27,7 @@ AND route/command role allowlist
 AND workflow state and target references
 ```
 
-住院新增业务写入要求 active Scenario Run。当前 Epoch 的人类会话可在 Run 完成后读取住院清单、详情、目录和归档，保留原岗位、科室和病区授权，具体只读入口见[病案归档合同](clinical-workflows.md#病案首页与归档)。Agent Capability Grant 仍要求 active Run，不因这项人类只读例外放宽。既有 Command receipt 依照[幂等合同](fhir-and-commands.md#65-idempotency)无写重放，不重新执行业务状态变更。
+住院新增业务写入要求 active Scenario Run。当前 Epoch 的人类会话可在 Run 完成后读取住院归档及其工作台依赖查询，保留原岗位、科室、病区授权和各岗位字段隔离，具体只读入口见[病案归档合同](clinical-workflows.md#病案首页与归档)。Agent Capability Grant 仍要求 active Run，不因这项人类只读例外放宽。既有 Command receipt 依照[幂等合同](fhir-and-commands.md#65-idempotency)无写重放，不重新执行业务状态变更。
 
 当前没有 SMART/resource scope、标准 Patient compartment 或通用字段策略引擎。Agent Capability Grant 是 ClinMesh task authority，不等同于通用 delegation grant；未来引入标准 scope 或字段策略时只能继续收窄以上权限。
 

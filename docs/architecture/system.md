@@ -160,8 +160,8 @@ standalone Web、DSH Surface 和 CLI 最终调用相同的 Query 与 Command han
 | --- | --- | --- |
 | `fhir-native` | Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense、MedicationAdministration | 只由 Case 开始或业务 Command 创建和更新；FHIR API 只读 |
 | `fhir-native-immutable` | 已签署的 Composition、document Bundle、Provenance | 业务 Command 只创建新资源；更正创建显式修订关系，不覆盖已签实例 |
-| `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile 与 Profile Revision、Synthetic Case Instance、Patient Persona Revision、Investigation Result Snapshot、Consultation 与 Consultation Record、Registration、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
-| `domain-projection` | AuditEvent、InventoryItem、ImagingStudy | 从领域事实同事务生成；FHIR API 只读 |
+| `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile 与 Profile Revision、Synthetic Case Instance、Patient Persona Revision、Investigation Result Snapshot、Consultation 与 Consultation Record、Registration、[住院事实](clinical-workflows.md#82-住院闭环)、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
+| `domain-projection` | AuditEvent、InventoryItem、ImagingStudy、Procedure | 从领域事实同事务生成；FHIR API 只读 |
 | `simulation-private` | Index Encounter、Case Truth、隐藏来源资源和生成模型输入 | Simulator 内部解析器可访问；管理员病例核对仅可读 Case Truth，生成模型输入仍不公开；普通 HIS、FHIR、来源历史详情和角色 Agent 均不可读取 |
 
 账务边界特别约定：Account、ChargeItem、Invoice 是标准交换事实并保存在 FHIR Resource Store；实际收款、退款、医保基金分配和收费员交账由领域账务表负责。两者通过明确引用关联，不把“账单”和“支付流水”混成一个资源。
