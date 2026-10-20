@@ -14,6 +14,8 @@ import {
 import Database from 'better-sqlite3'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { matchesMigrationChecksum, migrationChecksum } from './migration-checksum.ts'
+import { initializeRegistrationNumbering } from './registration-number-migration.ts'
+import { readRegistrationNumberState } from './registration-numbering.ts'
 import {
   matchesEarlyIncrementalRecordingMigration,
   prepareIncrementalRecordingContextMigration,
@@ -262,6 +264,7 @@ export function applyMigrations(
     try {
       prepareIncrementalRecordingContextMigration(database.driver, migrationFile)
       database.driver.exec(sql)
+      if (migrationFile === '0069_registration-numbering.sql') initializeRegistrationNumbering(database)
       record.run(migrationFile, checksum, new Date().toISOString())
       database.driver.exec('COMMIT')
       applied.push(migrationFile)
@@ -280,6 +283,7 @@ export function applyMigrations(
 export function verifyMigrations(
   database: ClinMeshDatabase,
   migrationDirectory = defaultMigrationDirectory(),
+  options: { allowRetiredRegistrationAuthority?: boolean } = {},
 ): MigrationResult {
   const migrationFiles = readdirSync(migrationDirectory)
     .filter(file => MIGRATION_FILE_PATTERN.test(file))
@@ -312,6 +316,9 @@ export function verifyMigrations(
   const pending = migrationFiles.filter(migrationFile => !appliedIds.has(migrationFile))
   if (pending.length > 0) {
     throw new Error(`Pending database migrations: ${pending.join(', ')}`)
+  }
+  if (rows.some(row => row.migration_id === '0069_registration-numbering.sql')) {
+    readRegistrationNumberState(database, options.allowRetiredRegistrationAuthority === true ? { allowRetired: true } : {})
   }
   return { applied: [], schemaVersion: rows.length }
 }
@@ -348,6 +355,9 @@ export function canonicalStateHash(database: ClinMeshDatabase): string {
 
 function verifySnapshot(database: ClinMeshDatabase): DatabaseSnapshotVerification {
   const diagnostics = database.diagnostics()
+  if (database.driver.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'registration_number_authority'").get() !== undefined) {
+    readRegistrationNumberState(database, { allowRetired: true })
+  }
   return {
     canonicalStateHash: canonicalStateHash(database),
     integrity: diagnostics.integrity,
