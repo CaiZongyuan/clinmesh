@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { doctorCaseDetailSchema, type ClinicalDocumentContent } from '@clinmesh/contracts/his'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
@@ -8,6 +8,10 @@ import { PatientBanner } from './patient-summary.tsx'
 afterEach(() => { cleanup() })
 
 const messages = getWorkspaceMessages('zh-CN')
+const document: ClinicalDocumentContent = {
+  chiefComplaint: '反复头晕一周，近两日加重', historyOfPresentIllness: '反复头晕一周。',
+  assessment: '头晕原因待查。', disposition: '进一步问诊。', followUp: '不适随诊。', physicalExamination: '神志清楚。',
+}
 
 function birthDateForAge(age: number): string {
   return `${new Date().getUTCFullYear() - age}-01-01`
@@ -67,6 +71,56 @@ function commonAncestor(a: Element, b: Element): Element | null {
 }
 
 describe('PatientBanner 紧凑布局', () => {
+  it('签署后按最新修订展示主诉，忽略残留工作稿和签署数组顺序', () => {
+    const detail = bannerDetail()
+    const signed = (revisionNumber: number) => ({
+      bundleId: `bundle-${revisionNumber}`, compositionId: `composition-${revisionNumber}`, compositionVersion: '1',
+      documentId: `document-${revisionNumber}`, provenanceId: `provenance-${revisionNumber}`,
+      revisionNumber, signedAt: '2026-10-20T09:00:00+08:00',
+      content: { ...document, chiefComplaint: `头晕${revisionNumber}周` },
+    })
+    detail.clinicalDocument = { signed: [signed(3), signed(1), signed(2)] }
+    render(<PatientBanner detail={detail} messages={messages} statusText={messages.status_firstVisit}
+      workingDocument={{ ...document, chiefComplaint: '旧工作稿' }} />)
+    expect(screen.getByText('主诉：头晕3周')).toBeTruthy()
+    expect(screen.queryByText(messages.clinicalDocumentDraftUnsavedShort)).toBeNull()
+  })
+
+  it('工作稿立即同步并标记未保存，清空与保存后不回退分诊，切换病例不串稿', () => {
+    const detail = bannerDetail()
+    detail.clinicalDocument = { draft: { ...document, version: 1, updatedAt: '2026-10-20T09:00:00+08:00' }, signed: [] }
+    const props = { detail, messages, statusText: messages.status_firstVisit }
+    const workingDocument = { ...document, chiefComplaint: '头晕两周' }
+    const view = render(<PatientBanner {...props} workingDocument={workingDocument} />)
+    expect(screen.getByText('主诉：头晕两周')).toBeTruthy()
+    expect(screen.getByText(messages.clinicalDocumentDraftUnsavedShort)).toBeTruthy()
+    view.rerender(<PatientBanner {...props} workingDocument={{ ...document, chiefComplaint: '' }} />)
+    expect(screen.getByText(`主诉：${messages.clinicalHistoryNotRecorded}`)).toBeTruthy()
+    view.rerender(<PatientBanner {...props} detail={{ ...detail, clinicalDocument: {
+      draft: { ...detail.clinicalDocument.draft!, chiefComplaint: '' }, signed: [],
+    } }} />)
+    expect(screen.getByText(`主诉：${messages.clinicalHistoryNotRecorded}`)).toBeTruthy()
+    expect(screen.queryByText(messages.clinicalDocumentDraftUnsavedShort)).toBeNull()
+    view.rerender(<PatientBanner {...props} detail={bannerDetail()} />)
+    expect(screen.getByText('主诉：发热伴咽痛两天')).toBeTruthy()
+  })
+
+  it('页头显示已保存病历主诉，保留分诊初记', () => {
+    const detail = bannerDetail()
+    detail.clinicalDocument = {
+      draft: {
+        chiefComplaint: '反复头晕一周，近两日加重', historyOfPresentIllness: '',
+        assessment: '', disposition: '', followUp: '', physicalExamination: '',
+        version: 1, updatedAt: '2026-10-20T09:00:00+08:00',
+      },
+      signed: [],
+    }
+    render(<PatientBanner detail={detail} messages={messages} statusText={messages.status_firstVisit} />)
+    expect(screen.getByText('主诉：反复头晕一周，近两日加重')).toBeTruthy()
+    expect(screen.queryByText('主诉：发热伴咽痛两天')).toBeNull()
+    expect(detail.triage?.chiefComplaint).toBe('发热伴咽痛两天')
+  })
+
   it('分诊分级与过敏徽章与患者标题同处身份行，不再有独立徽章行', () => {
     renderBanner()
     const banner = screen.getByRole('region', { name: '当前患者' })

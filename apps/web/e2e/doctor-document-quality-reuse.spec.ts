@@ -80,5 +80,20 @@ for (const status of ['ready', 'pending', 'failed'] as const) test(`reuses one $
       await expect.poll(async () => (await read()).status).toBe('ready')
       expect(calls).toBe(1)
     }
+    if (status === 'ready') {
+      await page.keyboard.press('Escape')
+      const chiefComplaint = page.getByLabel('主诉', { exact: true })
+      const banner = page.getByRole('region', { name: '当前患者', exact: true })
+      await chiefComplaint.fill('当前病例手改主诉，尚未保存。')
+      await expect(banner).toContainText('主诉：当前病例手改主诉，尚未保存。')
+      await page.getByRole('tab', { name: '待诊', exact: true }).click()
+      await select(second.outpatientCaseId)
+      await expect(banner).not.toContainText('当前病例手改主诉')
+      await page.getByRole('tab', { name: '在诊', exact: true }).click()
+      await select(first.outpatientCaseId)
+      await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+      await expect(chiefComplaint).toHaveValue('当前病例手改主诉，尚未保存。')
+      await expect(banner).toContainText('主诉：当前病例手改主诉，尚未保存。')
+    }
   } finally { release(); await server.close() }
 })

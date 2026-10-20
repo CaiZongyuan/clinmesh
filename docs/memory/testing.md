@@ -46,6 +46,10 @@
 
 - 质控问题的 Badge 与正文共享一个段落时，`getByText(message, { exact: true })` 无法单独匹配正文；将定位限定到对应字段 region，再用 `toContainText(message)` 核对，保留标签的独立断言。综合浏览器回归将生产 fixture 构建放在 `beforeAll`，分别保留构建和交互原有时限，避免编译挤占交互预算；不能增加时限掩盖真实断言失败。
 
+- 质控旅程把未保存正文恢复成已保存稿时，界面可能直接复用保存稿的检查结果，不再发送 candidate POST；测试须按当前保存稿或候选稿选择结果，不能始终沿用最后一次 POST 的 `clientId/clientRevision`。复用[病历质控旅程](../../apps/web/e2e/doctor-document-quality-journey.ts)中的保存稿分支，避免迟到请求让验收检查旧内容。
+
+- 排查签署质控持续“检查中”时，同时挂载正文与冻结的签署汇总，再让正文收到新医生来源；只测单个 hook 会漏掉两处请求身份互相推进的路径。复用[质控组件回归](../../apps/web/src/app/doctor/document-quality-control.test.tsx)，客户端视图隔离与服务端同输入复用的取舍见[质控输入决策](../decisions/implemented/architecture/2026-10-15-doctor-document-quality-control.md)。
+
 - 诊断、处方浏览器合同填写有效草稿后，先等待对应 `[data-agent-section]` 内的“草稿已自动保存”，再切换外观或检查焦点。保存期间编辑区会暂时禁用并清除焦点；`focus()` 只执行一次，后续 `toBeFocused()` 重试不会重新聚焦。沿用 [Web E2E](../../apps/web/e2e/diagnosis-prescription.spec.ts) 的保存完成条件，保留原断言与超时，避免用固定等待或重复聚焦掩盖竞态。
 
 - 勾选聊天风格、结果顺序或按需教学等模型行为前，核对部署 preset/persona，并以新建 Session 的实际模型请求证明规则已装配。规格描述、普通工具测试和脚本化替身的回答不能证明真实模型持续遵守这些要求；接线证据与实模体验分别记录。
@@ -97,3 +101,5 @@
 - 更新增量病史输入后，同时运行 `pnpm smoke:consultation:native`：共享 Web 旅程通过不证明原生合成 Adapter 匹配。Fixture 需沿用[增量记录合同](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)的短引用与取消信号，不能依赖自动片段必有重复正文，也不能等待已取消请求正常返回。
 
 - HTTP 上传取消回归须等原生存储实际读取第一个数据块后再断开，并等清理完成后验证重试；固定短延迟可能在路由安装取消监听器前结束请求，使测试通过却没有验证取消路径。
+
+- 病历“未保存”提示回归须包含首次自动记录只写其他字段、`hasSavedDraft=false` 且持久主诉仍为空的场景；页面预填可能与数据库空值不同，保存基准应与编辑器采用同一份预填规则。通过[医生工作台组件](../../apps/web/src/app/role-workspaces.test.tsx)和[真实病历入口](../../apps/web/e2e/doctor-document-quality.spec.ts)同时核对页头与编辑器状态，并保留手工清空、恢复原文和清空保存刷新后的断言；只有完整人工保存稿的 fixture 无法捕获该差异。

@@ -22,12 +22,13 @@ function currentGeneration(previous: ClinicalDocumentQualityControlState | undef
   return incoming
 }
 
-export function useDocumentQualityControl({ detail, document, scope, initialState, enabled = true }: {
+export function useDocumentQualityControl({ detail, document, scope, initialState, enabled = true, view = 'document' }: {
   detail: DoctorCaseDetail
   document?: ClinicalDocumentContent
   scope?: string | undefined
   initialState?: ClinicalDocumentQualityControlState | undefined
   enabled?: boolean
+  view?: 'document' | 'sign-preview'
 }) {
   const client = useQueryClient()
   const saved = detail.clinicalDocument?.draft
@@ -45,7 +46,7 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
   ])
   let ledger = requestIdentities.get(client)
   if (ledger === undefined) { ledger = new Map(); requestIdentities.set(client, ledger) }
-  const ledgerKey = JSON.stringify([scope, detail.caseId, candidate !== undefined])
+  const ledgerKey = JSON.stringify([scope, detail.caseId, view, candidate !== undefined])
   const previousRequest = ledger.get(ledgerKey)
   const request = previousRequest?.identity === identity ? previousRequest : {
     identity, revision: (previousRequest?.revision ?? 0) + 1, clientId: previousRequest?.clientId ?? newIdempotencyKey(), refresh: false,
@@ -58,7 +59,7 @@ export function useDocumentQualityControl({ detail, document, scope, initialStat
     return () => clearTimeout(timer)
   }, [identity, enabled, candidate === undefined])
   const draftVersion = detail.clinicalDocument?.draft?.version ?? 0
-  const queryKey = ['document-quality', scope, detail.caseId, candidate === undefined ? 'saved' : request.clientId, request.revision] as const
+  const queryKey = ['document-quality', scope, detail.caseId, view, candidate === undefined ? 'saved' : request.clientId, request.revision] as const
   const matches = (incoming: ClinicalDocumentQualityControlState) => incoming.caseId === detail.caseId
     && incoming.encounterId === detail.encounter.id && incoming.draftVersion === draftVersion
     && (candidate === undefined ? incoming.clientId === undefined
@@ -251,7 +252,7 @@ export function DocumentQualityFieldIssues({ field, quality, messages, locale, o
 export function DocumentQualitySignSummary({ detail, state, scope, locale }: {
   detail: DoctorCaseDetail; state: ClinicalDocumentQualityControlState | undefined; scope?: string | undefined; locale: WorkspaceLocale
 }) {
-  const quality = useDocumentQualityControl({ detail, initialState: state, scope })
+  const quality = useDocumentQualityControl({ detail, initialState: state, scope, view: 'sign-preview' })
   const messages = getWorkspaceMessages(locale)
   const [detailsOpen, setDetailsOpen] = useState(false)
   return <section aria-label={messages.documentQualitySignSummary} className="flex min-w-0 flex-col gap-3" data-document-quality-sign-summary>
