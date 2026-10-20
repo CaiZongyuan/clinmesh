@@ -1,4 +1,5 @@
 import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.tsx'
+import { InpatientIncomingTransfers } from './inpatient-transfers.tsx'
 import { InpatientCharges } from './inpatient-charges.tsx'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import type { PatientSummary, SessionContext } from '@clinmesh/contracts/his'
@@ -108,6 +109,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
         <Button disabled={write.blocked || wardId === null || (route === 'outpatient' ? referral === undefined : patient === undefined) || yuanToFen(deposit) === undefined} type="submit">{zh ? '办理住院' : 'Register admission'}</Button>
       </FieldGroup></FieldSet>
     </form> : null}
+    {nurse?<InpatientIncomingTransfers session={session} locale={locale} write={write}/>:null}
     {admissions.isPending ? <p>{zh ? '正在加载住院患者' : 'Loading admissions'}</p> : null}
     <Table><TableHeader><TableRow><TableHead>{zh ? '患者' : 'Patient'}</TableHead><TableHead>{zh ? '住院号' : 'Inpatient number'}</TableHead>
       <TableHead>{zh ? '病区 / 状态' : 'Ward / status'}</TableHead><TableHead>{zh ? '预交金 / 费用' : 'Deposit / charges'}</TableHead><TableHead>{zh ? '操作' : 'Actions'}</TableHead></TableRow></TableHeader>

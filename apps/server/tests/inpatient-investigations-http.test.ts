@@ -1,0 +1,345 @@
+import { randomUUID } from 'node:crypto'
+import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientTransferCatalogSchema, inpatientTransferResponseSchema } from '@clinmesh/contracts/inpatient-transfer'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import { laboratoryServiceSnapshotSchema, sessionContextSchema } from '@clinmesh/contracts/his'
+import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
+import { acuteBronchitis, caseBundle, createImagingRuntime, generateCase, mutation, prepareImaging, signIn, snomed, startConsultation } from './fixtures/imaging-scenario.ts'
+import { applyMigrations, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
+import { z } from 'zod'
+import { repairImagingAssets } from '../src/infrastructure/imaging-assets/imaging-asset-store.ts'
+
+const cleanups: Array<() => Promise<void>> = []
+afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
+
+async function setup() {
+  const base = caseBundle({ gender: 'male', index: [{ ...acuteBronchitis, resourceType: 'Condition' }], name: '合成住院检查患者' })
+  const created = await createImagingRuntime([{ ...base, entry: [...base.entry, { fullUrl: 'urn:uuid:inpatient-wbc-source', resource: {
+    resourceType: 'Observation', id: 'inpatient-wbc-source', status: 'final', code: { coding: [{ system: 'http://loinc.org', code: '6690-2', display: '白细胞计数' }] },
+    subject: { reference: 'urn:uuid:patient' }, encounter: { reference: 'urn:uuid:index-encounter' }, effectiveDateTime: '2026-06-01T10:10:00+08:00',
+    valueQuantity: { value: 7.2, unit: '10^9/L', system: 'http://unitsofmeasure.org', code: '10*9/L' },
+  } }] }], { persona: true })
+  const { runtime } = created
+  cleanups.push(async () => { await runtime.close(); await rm(created.directory, { recursive: true, force: true }) })
+  await installSyntheticImagingAssets({ assetDirectory: created.assetDirectory, catalogDirectory: created.catalogDirectory,
+    assets: [{ assetId: 'synthetic-inpatient-radiograph', examCode: 'chest-radiograph' }],
+    matching: { schemaVersion: 1, ruleVersion: 1, codeSystem: snomed, sourceExamCodes: {}, uncoveredConditions: [], profiles: [{
+      id: 'inpatient-negative', label: '合成住院胸片', finding: 'negative', ageRange: [18, 89], indexConditionCodes: [acuteBronchitis.code], assets: { 'chest-radiograph': 'synthetic-inpatient-radiograph' },
+    }] } })
+  const admin = await signIn(runtime)
+  const context = sessionContextSchema.parse(await (await runtime.app.request('/api/auth/context', { headers: { cookie: admin } })).json()).actor
+  const concept = { id: 'loinc:synthetic:6690-2', system: 'http://loinc.org', code: '6690-2', display: '白细胞计数', version: '2.83', sourceLocator: 'synthetic:loinc:6690-2' }
+  const service = laboratoryServiceSnapshotSchema.parse({ id: 'synthetic-inpatient-wbc', version: 1, serviceKind: 'laboratory', doctorOrderable: true,
+    localCode: 'SYN-IP-WBC', nameZh: '合成白细胞计数', referenceConcept: concept, referenceReleaseId: 'synthetic-laboratory-release', componentServiceIds: [], executingDepartmentId: 'department-laboratory',
+    allowedIndicationCodes: ['clinical-assessment'], specimen: { code: '119297000', display: '血液标本' }, tatMinutes: 20, priceFen: 800,
+    reportDefinition: { conclusionTemplate: '白细胞计数结果已完成。', results: [{ referenceConcept: concept, valueType: 'quantity', referenceRange: { low: 4, high: 10, text: '4.0-10.0 x10^9/L' }, unit: { system: 'http://unitsofmeasure.org', code: '10*9/L', display: '10^9/L' } }] } })
+  runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
+    .run(context.workspaceId, context.epoch, service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service, availableScopes: ['outpatient','inpatient'], chargeDefinition: { id: 'synthetic-wbc-charge-definition', currency: 'CNY', priceFen: 800 } }))
+  const unpriced = { ...service, id: 'synthetic-unpriced-wbc', localCode: 'SYN-UNPRICED-WBC', nameZh: '合成未计价白细胞', priceFen: 0 }
+  runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
+    .run(context.workspaceId, context.epoch, unpriced.id, unpriced.localCode, unpriced.nameZh, unpriced.nameZh, JSON.stringify({ laboratoryService: unpriced, availableScopes: ['outpatient','inpatient'], chargeDefinition: { currency: 'CNY', priceFen: 0 } }))
+  const sourceCase = await generateCase(runtime, admin)
+  await prepareImaging(runtime, admin, [sourceCase])
+  const visit = await startConsultation(runtime, admin, sourceCase)
+  const registrar = await signIn(runtime, 'registrar@demo.clinmesh.local')
+  const doctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local')
+  const nurse = await signIn(runtime, 'ward-nurse@demo.clinmesh.local')
+  async function request(cookie: string, path: string, input?: unknown, key = randomUUID()) {
+    return runtime.app.request(path, input === undefined ? { headers: { cookie } } : {
+      ...mutation(cookie, { input }), headers: { ...mutation(cookie, {}).headers, 'idempotency-key': key },
+    })
+  }
+  const patient = fhirResourceSchema.parse(await (await request(registrar, `/fhir/R5/Patient/${visit.patientId}`)).json())
+  const registration = await request(registrar, '/api/his/v1/inpatient/admissions', { expectedEpoch: 'epoch-1', patientId: patient.id,
+    patientVersion: patient.meta!.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000 })
+  expect(registration.status).toBe(200)
+  const registered = inpatientCommandResponseSchema.parse(await registration.json()).data.admission
+  const path = `/api/his/v1/inpatient/admissions/${registered.id}`
+  const admission = inpatientCommandResponseSchema.parse(await (await request(nurse, `${path}/receive`, { encounterVersion: registered.versionId, bedId: 'bed-general-1' })).json()).data.admission
+  return { ...created, request, doctor, nurse, registrar, admission, path, visit }
+}
+
+async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRuntime>>['runtime']) {
+  const kinds: string[] = []
+  for (;;) { const event = await runtime.dispatcher.dispatchOnce(); if (event === undefined) return kinds; kinds.push(event.kind) }
+}
+
+describe('住院检查检验 HTTP 合同', () => {
+  it('未收口手术阻止转科交接，接收事务重查中途新申请并保留原床', async () => {
+    const s = await setup()
+    const catalog = inpatientSurgeryCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
+    const procedure = catalog.procedures[0]!
+    const requestSurgery = async () => {
+      const response = await s.request(s.doctor, `${s.path}/surgeries/request`, {
+        encounterVersion: s.admission.versionId, procedureId: procedure.id, catalogVersion: procedure.version,
+        plannedFor: s.admission.admittedAt!, reason: '合成转科前待收口手术',
+      })
+      expect(response.status).toBe(200)
+      return inpatientSurgeryResponseSchema.parse(await response.json()).data.requests.find(row => row.status === 'requested')!
+    }
+    const cancelSurgery = async (request: Awaited<ReturnType<typeof requestSurgery>>) => {
+      expect((await s.request(s.doctor, `${s.path}/surgeries/cancel`, {
+        requestId: request.id, expectedRequestVersion: request.version, note: '转科前明确取消待实施计划',
+      })).status).toBe(200)
+    }
+    const firstSurgery = await requestSurgery()
+    const requested = await s.request(s.doctor, `${s.path}/transfers/request`, {
+      encounterVersion: s.admission.versionId, targetWardId: 'ward-surgery', reason: '合成外科评估',
+    })
+    expect(requested.status).toBe(200)
+    const transfer = inpatientTransferResponseSchema.parse(await requested.json()).data.transfers[0]!
+    const handover = { encounterVersion: s.admission.versionId, transferId: transfer.id, expectedTransferVersion: transfer.version }
+    const blockedHandover = await s.request(s.nurse, `${s.path}/transfers/handover`, handover)
+    expect(blockedHandover.status).toBe(409)
+    expect(await blockedHandover.json()).toMatchObject({ error: { code: 'INPATIENT_SURGERY_PENDING' } })
+    await cancelSurgery(firstSurgery)
+    expect((await s.request(s.nurse, `${s.path}/transfers/handover`, handover)).status).toBe(200)
+
+    const laterSurgery = await requestSurgery()
+    const targetNurse = await signIn(s.runtime, 'ward-nurse@demo.clinmesh.local')
+    expect((await s.runtime.app.request('/api/auth/role', mutation(targetNurse, { practitionerRoleId: 'practitioner-role-ward-nurse-surgery' }))).status).toBe(200)
+    const receive = { ...handover, expectedTransferVersion: transfer.version + 1, bedId: 'bed-surgery-1' }
+    const blockedReceive = await s.request(targetNurse, `${s.path}/transfers/receive`, receive)
+    expect(blockedReceive.status).toBe(409)
+    expect(await blockedReceive.json()).toMatchObject({ error: { code: 'INPATIENT_SURGERY_PENDING' } })
+    expect(inpatientDetailSchema.parse(await (await s.request(s.doctor, s.path)).json()).admission).toMatchObject({
+      wardId: 'ward-general', organizationId: s.admission.organizationId, bedId: 'bed-general-1', versionId: s.admission.versionId,
+    })
+    const targetBeds = inpatientTransferCatalogSchema.parse(await (await s.request(targetNurse, '/api/his/v1/inpatient/transfer-catalog')).json()).beds
+    expect(targetBeds.find(bed => bed.id === 'bed-surgery-1')?.available).toBe(true)
+    await cancelSurgery(laterSurgery)
+    expect((await s.request(targetNurse, `${s.path}/transfers/receive`, receive)).status).toBe(200)
+    expect(inpatientDetailSchema.parse(await (await s.request(targetNurse, s.path)).json()).admission).toMatchObject({
+      wardId: 'ward-surgery', organizationId: 'organization-inpatient-surgery', bedId: 'bed-surgery-1',
+    })
+    expect((await s.request(s.doctor, s.path)).status).toBe(403)
+  })
+
+  it('已送检影像缺失素材时不造报告，修复后按原申请重试且只收一次执行费', async () => {
+    const s = await setup()
+    const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'imaging', serviceId: 'imaging-chest-radiograph', indication: '合成住院影像复查' } })
+    const request = (await issued.json()).data.imagingRequests[0]
+    const action = { requestId: request.id, expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion }
+    expect((await s.request(s.nurse, `${s.path}/investigations/send`, action)).status).toBe(200)
+    expect((await s.request(s.doctor, `${s.path}/investigations/cancel`, action)).status).toBe(409)
+    await rm(join(s.assetDirectory, 'installed', 'synthetic-inpatient-radiograph'), { recursive: true })
+    await dispatchAll(s.runtime)
+    const failed = (await (await s.request(s.doctor, `${s.path}/investigations`)).json()).imagingRequests[0]
+    expect(failed.status).toBe('generation-failed')
+    expect(failed).not.toHaveProperty('report')
+    await repairImagingAssets({ assetDirectory: s.assetDirectory, catalogDirectory: s.catalogDirectory, assetIds: ['synthetic-inpatient-radiograph'] })
+    expect((await s.request(s.doctor, `${s.path}/investigations/retry`, { requestId: failed.id, expectedRequestVersion: failed.version, serviceRequestVersion: failed.serviceRequestVersion, taskVersion: failed.taskVersion })).status).toBe(200)
+    await dispatchAll(s.runtime)
+    const reported = (await (await s.request(s.doctor, `${s.path}/investigations`)).json()).imagingRequests[0]
+    expect(reported).toMatchObject({ id: request.id, status: 'reported' })
+    const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    expect((await (await s.request(cashier, `${s.path}/charges`)).json()).charges).toMatchObject([{ kind: 'imaging', amountFen: 8000, sourceId: request.id }])
+  })
+
+  it('无合成来源的手工患者不能开立住院检查，不使用Scenario正常结果兜底', async () => {
+    const s = await setup()
+    const created = await s.runtime.app.request('/api/his/v1/patients', mutation(s.registrar, { expectedVersions: {}, input: { name: '合成无来源住院患者', gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } }))
+    expect(created.status).toBe(200)
+    const patient = (await created.json()).data.patient
+    const registered = inpatientCommandResponseSchema.parse(await (await s.request(s.registrar, '/api/his/v1/inpatient/admissions', { expectedEpoch: 'epoch-1', patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 })).json()).data.admission
+    const path = `/api/his/v1/inpatient/admissions/${registered.id}`
+    const admitted = inpatientCommandResponseSchema.parse(await (await s.request(s.nurse, `${path}/receive`, { encounterVersion: registered.versionId, bedId: 'bed-general-2' })).json()).data.admission
+    for (const selection of [{ kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' }, { kind: 'imaging', serviceId: 'imaging-chest-radiograph', indication: '合成住院评估' }]) {
+      expect((await s.request(s.doctor, `${path}/investigations/issue`, { encounterVersion: admitted.versionId, catalogVersion: 1, selection })).status).toBe(409)
+    }
+    await dispatchAll(s.runtime)
+    expect(await (await s.request(s.doctor, `${path}/investigations`)).json()).toMatchObject({ laboratoryRequests: [], imagingRequests: [] })
+  })
+
+  it('全部住院检查与转科Cookie写入口拒绝缺失或恶意Origin且不产生事实', async () => {
+    const s = await setup()
+    for (const action of ['investigations/issue','investigations/send','investigations/cancel','investigations/retry','investigations/acknowledge','transfers/request','transfers/handover','transfers/receive','transfers/cancel']) {
+      for (const origin of [undefined, 'https://evil.example']) {
+        const response = await s.runtime.app.request(`${s.path}/${action}`, { method: 'POST', headers: { cookie: s.doctor,
+          'content-type': 'application/json', 'idempotency-key': randomUUID(), ...(origin === undefined ? {} : { origin }) }, body: JSON.stringify({ input: {} }) })
+        expect(response.status, action).toBe(403)
+      }
+    }
+    expect(await (await s.request(s.doctor, `${s.path}/investigations`)).json()).toMatchObject({ laboratoryRequests: [], imagingRequests: [], sent: [] })
+    expect(await (await s.request(s.doctor, `${s.path}/transfers`)).json()).toMatchObject({ transfers: [] })
+  })
+
+  it('未计价不等于免费：未声明住院价格的零价服务不可开立', async () => {
+    const s = await setup()
+    const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/investigation-catalog')).json()
+    expect(catalog.items.find((item: { id: string }) => item.id === 'synthetic-unpriced-wbc')).toMatchObject({ available: false, unavailableReason: 'unpriced' })
+    expect((await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'laboratory', catalogItemId: 'synthetic-unpriced-wbc', indicationCode: 'clinical-assessment' } })).status).toBe(409)
+  })
+
+  it('未送检申请与未核停医嘱阻断交接，显式取消和核停后可交接，接收再次核对阻塞和床位', async () => {
+    const s = await setup()
+    const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } })
+    const investigation = (await issued.json()).data.laboratoryRequests[0]
+    const orderResponse = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: s.admission.versionId, duration: 'temporary', selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 } })
+    const order = (await orderResponse.json()).data.orders[0]
+    const requested = await s.request(s.doctor, `${s.path}/transfers/request`, { encounterVersion: s.admission.versionId, targetWardId: 'ward-surgery', reason: '转外科评估' })
+    const transfer = (await requested.json()).data.transfers[0]
+    const handover = { encounterVersion: s.admission.versionId, transferId: transfer.id, expectedTransferVersion: transfer.version }
+    expect((await s.request(s.nurse, `${s.path}/transfers/handover`, handover)).status).toBe(409)
+    expect((await s.request(s.doctor, `${s.path}/orders/request-stop`, { orderId: order.id, expectedOrderVersion: order.version, reason: '转科前停止' })).status).toBe(200)
+    expect((await s.request(s.nurse, `${s.path}/transfers/handover`, handover)).status).toBe(409)
+    expect((await s.request(s.nurse, `${s.path}/orders/verify-stop`, { orderId: order.id, expectedOrderVersion: order.version + 1 })).status).toBe(200)
+    expect((await s.request(s.nurse, `${s.path}/transfers/handover`, handover)).status).toBe(409)
+    expect((await s.request(s.doctor, `${s.path}/investigations/cancel`, { requestId: investigation.id, expectedRequestVersion: investigation.version,
+      serviceRequestVersion: investigation.serviceRequestVersion, taskVersion: investigation.taskVersion })).status).toBe(200)
+    expect((await s.request(s.nurse, `${s.path}/transfers/handover`, handover)).status).toBe(200)
+    const targetNurse = await signIn(s.runtime, 'ward-nurse@demo.clinmesh.local')
+    await s.runtime.app.request('/api/auth/role', mutation(targetNurse, { practitionerRoleId: 'practitioner-role-ward-nurse-surgery' }))
+    const receive = { ...handover, expectedTransferVersion: transfer.version + 1, bedId: 'bed-general-2' }
+    expect((await s.request(targetNurse, `${s.path}/transfers/receive`, receive)).status).toBe(409)
+    const later = await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: s.admission.versionId, duration: 'temporary', selection: { kind: 'service', serviceId: 'hospital-service-diabetes-education', serviceVersion: 1, quantity: 1 } })
+    expect(later.status).toBe(200)
+    expect((await s.request(targetNurse, `${s.path}/transfers/receive`, { ...receive, bedId: 'bed-surgery-1' })).status).toBe(409)
+    expect((await (await s.request(s.doctor, s.path)).json()).admission.bedId).toBe('bed-general-1')
+  })
+
+  it('78旧库非空申请、草稿、报告确认、快照、回执与outbox保真迁移，失败回滚并恢复外键', async () => {
+    const s = await setup(), opDoctor = s.visit.doctor
+    const save = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/imaging-request/draft`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 0, serviceId: 'imaging-chest-radiograph', indication: '合成门诊存量检查' } }, 'PUT'))
+    expect(save.status).toBe(200)
+    const issue = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/imaging-request/actions/issue`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 1 } }))
+    expect(issue.status).toBe(200)
+    await dispatchAll(s.runtime)
+    const detail = await (await s.request(opDoctor, `/api/his/v1/doctor/cases/${s.visit.outpatientCaseId}`)).json()
+    const request = detail.imagingRequests.requests[0]
+    expect((await s.runtime.app.request(`/api/his/v1/imaging-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`, mutation(opDoctor, { expectedVersions: { [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1' }, input: { expectedRequestVersion: request.version } }))).status).toBe(200)
+    const labDraft = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/laboratory-request/draft`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 0, catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } }, 'PUT'))
+    expect(labDraft.status).toBe(200)
+    expect((await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/laboratory-request/actions/issue`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 1 } }))).status).toBe(200)
+    await dispatchAll(s.runtime)
+    expect(await (await s.request(opDoctor, `/api/his/v1/doctor/cases/${s.visit.outpatientCaseId}`)).json()).toMatchObject({ laboratoryRequests: { requests: [{ status: 'reported', report: { results: [{ value: 7.2 }] } }] } })
+    await s.runtime.close()
+    const directory = join(s.directory, 'migration-copy'); await mkdir(directory)
+    for (const file of (await readdir('drizzle')).filter(file => /^\d{4}_.+\.sql$/.test(file) && file < '0071_')) await copyFile(join('drizzle', file), join(directory, file))
+    const database = openClinMeshDatabase({ databasePath: join(s.directory, 'old.sqlite'), busyTimeoutMs: 5000 })
+    try {
+      expect(applyMigrations(database, directory).schemaVersion).toBe(78)
+      database.driver.pragma('foreign_keys=OFF'); database.driver.prepare('ATTACH DATABASE ? AS captured').run(join(s.directory, 'clinmesh.sqlite'))
+      const tables = z.array(z.object({ name: z.string() })).parse(database.driver.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name<>'schema_migration' ORDER BY name").all())
+      database.driver.exec('BEGIN')
+      for (const { name } of tables) database.driver.exec(`INSERT OR REPLACE INTO "${name}" SELECT * FROM captured."${name}"`)
+      database.driver.exec('COMMIT'); database.driver.exec('DETACH DATABASE captured'); database.driver.pragma('foreign_keys=ON')
+      const before = tables.map(({ name }) => ({ name, rows: database.driver.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all() }))
+      const file = '0071_inpatient-investigations-transfer.sql', sql = await readFile(join('drizzle', file), 'utf8')
+      await writeFile(join(directory, file), `${sql}\nSELECT * FROM missing_inpatient_migration_table;\n`)
+      expect(() => applyMigrations(database, directory)).toThrow('missing_inpatient_migration_table')
+      expect(database.diagnostics().foreignKeys).toBe(true)
+      expect(database.driver.prepare('SELECT 1 FROM sqlite_schema WHERE name=?').get('clinical_request_context')).toBeUndefined()
+      await writeFile(join(directory, file), sql)
+      expect(applyMigrations(database, directory)).toEqual({ applied: [file], schemaVersion: 79 })
+      for (const { name, rows } of before) expect(database.driver.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()).toEqual(rows)
+      expect(database.driver.pragma('foreign_key_check')).toEqual([])
+      expect(database.driver.prepare('SELECT outpatient_case_id,admission_id FROM clinical_request_context WHERE case_id=?').get(s.visit.outpatientCaseId)).toEqual({ outpatient_case_id: s.visit.outpatientCaseId, admission_id: null })
+      expect(() => database.driver.prepare('DELETE FROM clinical_request_context WHERE case_id=?').run(s.visit.outpatientCaseId)).toThrow(/FOREIGN KEY/)
+    } finally { database.close() }
+  })
+
+  it('检验只读取固定来源事实，报告与标本归本次住院，目录价格在申请时冻结', async () => {
+    const s = await setup()
+    const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } })
+    expect(issued.status).toBe(200)
+    const request = (await issued.json()).data.laboratoryRequests[0]
+    expect((await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: s.admission.versionId, duration: 'temporary', selection: { kind: 'service', serviceId: 'synthetic-inpatient-wbc', serviceVersion: 1, quantity: 1 } })).status).toBe(409)
+    expect((await s.request(s.nurse, `${s.path}/executions/complete`, { executionId: request.taskId, expectedExecutionVersion: 1 })).status).toBe(404)
+    expect((await dispatchAll(s.runtime)).filter(kind => kind.startsWith('laboratory.'))).toEqual([])
+    expect((await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: request.id, expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion })).status).toBe(200)
+    await dispatchAll(s.runtime)
+    const after = await (await s.request(s.doctor, `${s.path}/investigations`)).json()
+    expect(after.laboratoryRequests[0]).toMatchObject({ status: 'reported', report: { results: [{ value: 7.2 }] } })
+    const report = await (await s.request(s.doctor, `/fhir/R5/DiagnosticReport/${after.laboratoryRequests[0].report.diagnosticReportId}`)).json()
+    expect(report.encounter.reference).toBe(`Encounter/${s.admission.id}`)
+    const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const ledger = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(ledger.charges).toMatchObject([{ kind: 'laboratory', sourceId: request.id, amountFen: 800 }])
+  })
+
+  it('转科经过原护士交接和目标护士接收，在途报告跟随住院，当前责任与费用归属一起切换', async () => {
+    const s = await setup()
+    const targetNurse = await signIn(s.runtime, 'ward-nurse@demo.clinmesh.local')
+    const targetDoctor = await signIn(s.runtime, 'inpatient-doctor@demo.clinmesh.local')
+    for (const [cookie, role] of [[targetNurse, 'ward-nurse'], [targetDoctor, 'inpatient-doctor']]) expect((await s.runtime.app.request('/api/auth/role', mutation(cookie!, { practitionerRoleId: `practitioner-role-${role}-surgery` }))).status).toBe(200)
+    expect((await s.request(targetNurse, s.path)).status).toBe(403)
+    const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'imaging', serviceId: 'imaging-chest-radiograph', indication: '咳嗽两周，评估肺部情况' } })
+    const investigation = (await issued.json()).data.imagingRequests[0]
+    await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: investigation.id, expectedRequestVersion: investigation.version, serviceRequestVersion: investigation.serviceRequestVersion, taskVersion: investigation.taskVersion })
+    const requested = await s.request(s.doctor, `${s.path}/transfers/request`, { encounterVersion: s.admission.versionId, targetWardId: 'ward-surgery', reason: '转外科进一步评估' })
+    expect(requested.status).toBe(200)
+    const transfer = (await requested.json()).data.transfers[0]
+    const receive = { transferId: transfer.id, expectedTransferVersion: transfer.version, encounterVersion: s.admission.versionId, bedId: 'bed-surgery-1' }
+    expect((await s.request(targetNurse, `${s.path}/transfers/receive`, receive)).status).toBe(409)
+    const incoming = await (await s.request(targetNurse, '/api/his/v1/inpatient/transfers/incoming')).json()
+    expect(incoming.items).toHaveLength(1)
+    expect(incoming.items[0]).not.toHaveProperty('chargesFen')
+    expect((await s.request(s.nurse, `${s.path}/transfers/handover`, { transferId: transfer.id, expectedTransferVersion: transfer.version, encounterVersion: s.admission.versionId })).status).toBe(200)
+    expect((await s.request(s.nurse, `${s.path}/transfers/receive`, { ...receive, expectedTransferVersion: transfer.version + 1 })).status).toBe(403)
+    const received = await s.request(targetNurse, `${s.path}/transfers/receive`, { ...receive, expectedTransferVersion: transfer.version + 1 })
+    expect(received.status).toBe(200)
+    expect((await s.request(s.doctor, s.path)).status).toBe(403)
+    expect((await s.request(s.nurse, `${s.path}/investigations`)).status).toBe(403)
+    const current = await (await s.request(targetDoctor, s.path)).json()
+    expect(current.admission).toMatchObject({ id: s.admission.id, wardId: 'ward-surgery', organizationId: 'organization-inpatient-surgery', bedId: 'bed-surgery-1' })
+    await dispatchAll(s.runtime)
+    const after = await (await s.request(targetDoctor, `${s.path}/investigations`)).json()
+    expect(after.imagingRequests[0].status).toBe('reported')
+    const studyId = after.imagingRequests[0].report.studyId
+    expect((await s.request(s.doctor, `/api/his/v1/imaging-studies/${studyId}`)).status).toBe(403)
+    expect((await s.request(targetDoctor, `/api/his/v1/imaging-studies/${studyId}`)).status).toBe(200)
+    const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const charges = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(charges.charges.filter((charge: { kind: string }) => charge.kind === 'imaging')).toMatchObject([{ organizationId: 'organization-inpatient-surgery' }])
+    const encounter = await (await s.request(targetDoctor, `/fhir/R5/Encounter/${s.admission.id}`)).json()
+    expect(encounter.serviceProvider.reference).toBe('Organization/organization-inpatient-surgery')
+    expect(encounter.location).toMatchObject([{ status: 'completed', location: { reference: 'Location/bed-general-1' } }, { status: 'active', location: { reference: 'Location/bed-surgery-1' } }])
+  })
+
+  it('医生开立后等待护士送检，复用 RIS 发布本次 IMP 报告并只计一次执行费', async () => {
+    const s = await setup()
+    expect((await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 999,
+      selection: { kind: 'imaging', serviceId: 'imaging-chest-radiograph', indication: '咳嗽两周，评估肺部情况' } })).status).toBe(409)
+    const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'imaging', serviceId: 'imaging-chest-radiograph', indication: '咳嗽两周，评估肺部情况' } })
+    expect(issued.status).toBe(200)
+    const request = (await issued.json()).data.imagingRequests[0]
+    expect(request.status).toBe('issued')
+    expect((await dispatchAll(s.runtime)).filter(kind => kind.startsWith('imaging.'))).toEqual([])
+    const before = await (await s.request(s.doctor, `${s.path}/investigations`)).json()
+    expect(before.imagingRequests[0]).not.toHaveProperty('report')
+    const send = { requestId: request.id, expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion }
+    expect((await s.request(s.doctor, `${s.path}/investigations/send`, send)).status).toBe(403)
+    const key = randomUUID()
+    const sent = await s.request(s.nurse, `${s.path}/investigations/send`, send, key)
+    expect(sent.status).toBe(200)
+    await dispatchAll(s.runtime)
+    const after = await (await s.request(s.doctor, `${s.path}/investigations`)).json()
+    expect(after.imagingRequests[0].status).toBe('reported')
+    const reportId = after.imagingRequests[0].report.diagnosticReportId
+    const report = await (await s.request(s.doctor, `/fhir/R5/DiagnosticReport/${reportId}`)).json()
+    expect(report.encounter.reference).toBe(`Encounter/${s.admission.id}`)
+    expect(report.encounter.reference).not.toBe(`Encounter/${s.visit.encounterId}`)
+    expect((await s.request(s.nurse, `${s.path}/investigations/send`, send, key)).status).toBe(200)
+    const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const charges = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(charges.charges.filter((charge: { kind: string }) => charge.kind === 'imaging')).toMatchObject([{ amountFen: 8000, sourceId: request.id }])
+    expect((await s.request(cashier, `${s.path}/investigations`)).status).toBe(403)
+    const currentRequest = after.imagingRequests[0]
+    const acknowledged = await s.request(s.doctor, `${s.path}/investigations/acknowledge`, { requestId: currentRequest.id, expectedRequestVersion: currentRequest.version,
+      serviceRequestVersion: currentRequest.serviceRequestVersion, taskVersion: currentRequest.taskVersion,
+      diagnosticReportId: currentRequest.report.diagnosticReportId, diagnosticReportVersion: currentRequest.report.diagnosticReportVersion })
+    expect(acknowledged.status).toBe(200)
+    expect((await acknowledged.json()).data.imagingRequests[0].status).toBe('acknowledged')
+  })
+})

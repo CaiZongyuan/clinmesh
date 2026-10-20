@@ -442,6 +442,17 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   expect(skill).toContain('inpatient.surgery.execute')
 })
 
+it('keeps inpatient investigation and transfer examples bound to narrow versioned commands', async () => {
+  const skill=await readFile(resolve(import.meta.dirname,'../../../skills/clinmesh-inpatient/SKILL.md'),'utf8')
+  const examples=[...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match=>JSON.parse(match[1]!))
+  const investigation=examples.find(input=>input.selection?.kind==='imaging')
+  expect(getHisOperation('inpatient.investigation.issue').input.parse(investigation)).toMatchObject({catalogVersion:1,selection:{kind:'imaging'}})
+  expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,amountFen:1}).success).toBe(false)
+  expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,url:'https://example.invalid'}).success).toBe(false)
+  expect(getHisOperation('inpatient.transfer.receive').roles).toEqual(['ward-nurse'])
+  expect(getHisOperation('inpatient.transfer.receive').input.safeParse({admissionId:'synthetic-admission',encounterVersion:'2',transferId:'synthetic-transfer',expectedTransferVersion:2,bedId:'bed-surgery-1',organizationId:'untrusted'}).success).toBe(false)
+  expect(skill).toContain('unavailableReason=unpriced')
+})
 
 it('住院出院与结算示例使用冻结指纹、原输入与窄岗位合同', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })

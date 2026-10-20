@@ -1,5 +1,7 @@
 import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
+import { InpatientInvestigations } from './inpatient-investigations.tsx'
+import { InpatientTransfers } from './inpatient-transfers.tsx'
 import { InpatientChargeList } from './inpatient-charges.tsx'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -78,6 +80,7 @@ export function InpatientClinical({ admission, session, locale, write }: { admis
     })}
     {data?.orders.length===0 ? <p>{t('暂无医嘱','No orders')}</p>:null}
     <InpatientSurgery admission={admission} session={session} locale={locale} write={write} />
+    {doctor||nurse?<><InpatientInvestigations admission={admission} session={session} locale={locale} write={write}/><InpatientTransfers admission={admission} session={session} locale={locale} write={write}/></>:null}
     {data ? <InpatientChargeList data={{ admissionId: admission.id, financialStatus: admission.financialStatus, charges: data.charges, chargesFen: data.chargesFen }} locale={locale} /> : null}
   </section>
 }
