@@ -83,9 +83,11 @@ function readyDiagnosisState(): DoctorRecommendationState {
 
 let qualityIssues: ClinicalDocumentQualityControlState['issues'] = []
 let failQualityCheck = false
+let qualityStatus: 'ready' | 'failed' = 'ready'
 let recommendationResponder: (kind: DoctorRecommendationKind, method: string) => DoctorRecommendationState = kind => recommendationState(kind)
 
 function stubStackServices(): void {
+  const qualityRevisions = new Map<string, number>()
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
     if (url.pathname.includes('/recommendations/')) {
@@ -95,16 +97,22 @@ function stubStackServices(): void {
         ? Response.json({ data: state, auditId: `audit-${kind}`, effects: [], requestId: `request-${kind}`, warnings: [] })
         : Response.json(state)
     }
-    if (url.pathname.endsWith('/document-quality-control/actions/check')) {
+    if (url.pathname.includes('/document-quality-control')) {
       if (failQualityCheck) throw new Error('合成质控服务错误')
-      const request = checkClinicalDocumentQualityRequestSchema.parse(JSON.parse(String(init?.body)))
+      const isCheck = url.pathname.endsWith('/actions/check')
+      const request = isCheck ? checkClinicalDocumentQualityRequestSchema.parse(JSON.parse(String(init?.body))) : undefined
+      const clientId = request?.input.clientId ?? url.searchParams.get('clientId') ?? undefined
+      if (clientId !== undefined && request?.input.clientRevision !== undefined) qualityRevisions.set(clientId, request.input.clientRevision)
       const state = clinicalDocumentQualityControlStateSchema.parse({
-        caseId: detail.caseId, encounterId: detail.encounter.id, draftVersion: request.input.expectedDraftVersion,
+        caseId: detail.caseId, encounterId: detail.encounter.id,
+        draftVersion: request?.input.expectedDraftVersion ?? (detail.clinicalDocument?.draft?.version ?? 0),
         documentFingerprint: 'a'.repeat(64), inputFingerprint: 'b'.repeat(64),
-        ...(request.input.clientId === undefined ? {} : { clientId: request.input.clientId, clientRevision: request.input.clientRevision }),
-        generation: 1, stale: false, status: 'ready', issues: qualityIssues, notices: [],
+        ...(clientId === undefined ? {} : { clientId, clientRevision: qualityRevisions.get(clientId) ?? 1 }),
+        generation: 1, stale: false, status: qualityStatus, issues: qualityIssues, notices: [],
       })
-      return Response.json({ data: state, auditId: 'audit-quality', effects: [], requestId: 'request-quality', warnings: [] })
+      return isCheck
+        ? Response.json({ data: state, auditId: 'audit-quality', effects: [], requestId: 'request-quality', warnings: [] })
+        : Response.json(state)
     }
     throw new Error(`unexpected fetch: ${String(init?.method ?? 'GET')} ${url.pathname}`)
   }))
@@ -133,6 +141,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
   qualityIssues = []
   failQualityCheck = false
+  qualityStatus = 'ready'
   recommendationResponder = kind => recommendationState(kind)
 })
 
@@ -220,6 +229,24 @@ it('质控无开放疑点时显示清空态', async () => {
   mountStack({ completion: completionView({ data: completionPreview() }) })
   await waitFor(() => {
     expect(screen.getByText(messages.suggestionQualityClear)).toBeTruthy()
+  }, { timeout: 4000 })
+})
+
+it('质控返回未完成终态时显示失败与重试，不冒充清空或整体空态', async () => {
+  stubStackServices()
+  qualityStatus = 'failed'
+  mountStack({ completion: completionView({ data: completionPreview({
+    'primary-diagnosis-confirmed': 'complete', 'clinical-document-signed': 'complete',
+  }) }) })
+  await waitFor(() => {
+    expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
+  }, { timeout: 4000 })
+  expect(screen.queryByText(messages.suggestionQualityClear)).toBeNull()
+  expect(screen.queryByText(messages.suggestionStackEmpty)).toBeNull()
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: messages.suggestionRetry }))
+  await waitFor(() => {
+    expect(screen.getByText(messages.suggestionLoadFailed)).toBeTruthy()
   }, { timeout: 4000 })
 })
 

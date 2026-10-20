@@ -59,9 +59,13 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
     ...(clinicalDocument === undefined ? {} : { document: clinicalDocument }) })
   const incompleteItems = completion.data?.items.filter(item => item.status === 'incomplete') ?? []
   const issues = openIssues(quality)
+  const qualityStatus = quality.state?.status
+  // 质控返回未完成终态时，空疑点列表不代表检查通过；按失败态呈现并计入需要关注，避免冒充清空或整体空态。
+  const qualityIncomplete = !quality.stale && quality.error === null && !quality.pending
+    && (qualityStatus === 'failed' || qualityStatus === 'incomplete' || qualityStatus === 'unavailable')
   const jobs = preparation === undefined ? [] : preparationKinds.map(kind => ({ kind, job: preparation.jobs[kind] }))
   const jobAttention = jobs.some(({ job }) => jobNeedsAttention(job))
-  const attention = completion.error !== null || quality.error !== null || incompleteItems.length > 0
+  const attention = completion.error !== null || quality.error !== null || qualityIncomplete || incompleteItems.length > 0
     || issues.length > 0 || jobAttention
   if (!attention && !completion.isLoading && !quality.pending) {
     return (
@@ -104,7 +108,7 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
           {quality.stale ? <p className="text-xs text-muted-foreground">{messages.documentQualityStale}</p> : null}
           <StackSectionState
             clearText={issues.length === 0 ? messages.suggestionQualityClear : null}
-            error={quality.error}
+            error={quality.error ?? (qualityIncomplete ? new Error(quality.state?.errorCode ?? 'QUALITY_CHECK_INCOMPLETE') : null)}
             messages={messages}
             onRetry={quality.retry}
             pending={quality.pending}
