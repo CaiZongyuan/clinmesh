@@ -21,7 +21,7 @@ async function setup() {
     expect(response.status).toBe(200)
     return response.headers.get('set-cookie')!.split(';', 1)[0]!
   }
-  async function request(cookie: string, path: string, input?: unknown, key = randomUUID()) {
+  async function request(cookie: string, path: string, input?: unknown, key: string = randomUUID()) {
     return runtime.app.request(path, { method: input === undefined ? 'GET' : 'POST', headers: { cookie, origin: 'http://localhost',
       'content-type': 'application/json', 'idempotency-key': key }, ...(input === undefined ? {} : { body: JSON.stringify({ input }) }) })
   }
@@ -38,6 +38,106 @@ async function setup() {
 }
 
 describe('住院手术公共 HTTP 与真实 SQLite', () => {
+  it.each(['request','check-preop','confirm-consent','cancel','execute'])('手术%s拒绝缺失或恶意Origin且不写入，可信Origin正常', async action => {
+    const s = await setup(), cookie = action === 'check-preop' ? s.nurse : s.doctor
+    let input: Record<string,unknown> = { encounterVersion:s.admission.versionId,procedureId:'hospital-surgery-4',catalogVersion:1,
+      plannedFor:'2026-08-25T01:00:00.000Z',reason:'合成Origin门禁验证' }
+    if (action === 'execute') {
+      const state = await readySurgery(s, false), row = state.requests[0]
+      input = { requestId:row.id,expectedRequestVersion:row.version,procedureId:'hospital-surgery-4',catalogVersion:1,materials:[],note:'合成实际实施' }
+    } else if (action !== 'request') {
+      const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, input)
+      expect(requested.status).toBe(200)
+      const row = (await requested.json()).data.requests[0]
+      input = { requestId:row.id,expectedRequestVersion:row.version,note:'合成准备或取消' }
+    }
+    const before = await (await s.request(s.doctor, `${s.path}/surgeries`)).json()
+    for (const origin of [undefined,'https://untrusted.example']) {
+      const rejected = await s.runtime.app.request(`${s.path}/surgeries/${action}`, { method:'POST',headers:{cookie,
+        'content-type':'application/json','idempotency-key':randomUUID(),...(origin === undefined ? {} : {origin})},body:JSON.stringify({input}) })
+      expect(rejected.status).toBe(403)
+      expect((await rejected.json()).error.code).toBe('CSRF_REJECTED')
+    }
+    expect(await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).toEqual(before)
+    expect((await s.request(cookie, `${s.path}/surgeries/${action}`, input)).status).toBe(200)
+  })
+
+  it('纯Agent Bearer的手术写入沿用现有无Origin例外', async () => {
+    const s = await setup(), admin = await s.login('admin')
+    const control = (path:string,input:unknown) => s.runtime.app.request(path,{method:'POST',headers:{cookie:admin,origin:'http://localhost',
+      'content-type':'application/json','idempotency-key':randomUUID()},body:JSON.stringify(input)})
+    const clientResponse = await control('/api/agent/v1/clients',{name:'合成手术Agent'})
+    expect(clientResponse.status).toBe(200)
+    const client = await clientResponse.json()
+    const grantResponse = await control('/api/agent/v1/grants',{agentClientId:client.agentClientId,operationIds:['inpatient.surgery.request'],
+      practitionerRoleId:'practitioner-role-inpatient-doctor',ttlSeconds:3600})
+    expect(grantResponse.status).toBe(200)
+    const grant = await grantResponse.json()
+    const requested = await s.runtime.app.request(`${s.path}/surgeries/request`, { method:'POST',headers:{authorization:`Bearer ${grant.token}`,
+      'content-type':'application/json','idempotency-key':randomUUID()},body:JSON.stringify({input:{encounterVersion:s.admission.versionId,
+        procedureId:'hospital-surgery-4',catalogVersion:1,plannedFor:'2026-08-25T01:00:00.000Z',reason:'合成Bearer手术申请'}}) })
+    expect(requested.status).toBe(200)
+    expect((await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests).toHaveLength(1)
+  })
+
+  it('混合时区的申请及实际执行按时间点排序，保留毫秒与稳定顺序', async () => {
+    const s = await setup(), admin = await s.login('admin')
+    const first = await readySurgery(s)
+    const firstRequest = first.requests[0], firstExecution = first.executions[0]
+    expect(first.virtualTime).toBe('2026-08-24T09:00:00+08:00')
+    const requestIds = [firstRequest.id], executionIds = [firstExecution.id]
+    let current = first.virtualTime
+    for (const target of ['2026-08-24T01:00:00.001Z','2026-08-24T01:00:00.002Z']) {
+      const advanced = await s.request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { expectedVirtualTime: current, targetVirtualTime: target })
+      expect(advanced.status).toBe(200)
+      const next = await readySurgery(s)
+      requestIds.push(next.requests.find((row: { id: string }) => !requestIds.includes(row.id)).id)
+      executionIds.push(next.executions.find((row: { id: string }) => !executionIds.includes(row.id)).id)
+      current = target
+    }
+    const actual = await (await s.request(s.doctor, `${s.path}/surgeries`)).json()
+    expect.soft(actual.requests.map((row: { id: string }) => row.id)).toEqual(requestIds)
+    expect.soft(actual.executions.map((row: { id: string }) => row.id)).toEqual(executionIds)
+    expect.soft(actual.requests.map((row: { requestedAt: string }) => row.requestedAt)).toEqual([
+      '2026-08-24T09:00:00+08:00','2026-08-24T01:00:00.001Z','2026-08-24T01:00:00.002Z',
+    ])
+    expect(actual.executions.map((row: { performedAt: string }) => row.performedAt)).toEqual([
+      '2026-08-24T09:00:00+08:00','2026-08-24T01:00:00.001Z','2026-08-24T01:00:00.002Z',
+    ])
+  })
+
+  it('两个准备回执与公开审计关联真实申请版本，旧key重放不增加事件', async () => {
+    const s = await setup()
+    const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: s.admission.versionId,
+      procedureId:'hospital-surgery-4',catalogVersion:1,plannedFor:'2026-08-25T01:00:00.000Z',reason:'合成准备审计验证' })
+    expect(requested.status).toBe(200)
+    const id = (await requested.json()).data.requests[0].id
+    const auditCount = async () => (await (await s.request(s.doctor, '/fhir/R5/AuditEvent?_total=accurate&_count=100')).json()).total
+    const initialCount = await auditCount()
+    const replays: Array<{ cookie:string; action:string; input:{requestId:string;expectedRequestVersion:number;note:string}; key:string; response:unknown }> = []
+    for (const [cookie,action,version] of [[s.nurse,'check-preop',2],[s.doctor,'confirm-consent',3]] as const) {
+      const input = { requestId:id,expectedRequestVersion:version-1,note:'合成准备责任确认' }, key = randomUUID()
+      const prepared = await s.request(cookie, `${s.path}/surgeries/${action}`, input, key)
+      expect(prepared.status).toBe(200)
+      const response = await prepared.json(), reference = `InpatientSurgeryRequest/${id}`
+      const effects = [{ kind:'updated',reference,versionId:String(version) }]
+      expect.soft(response.effects).toEqual(effects)
+      expect(response.data.requests[0].version).toBe(version)
+      const receipt = await (await s.request(cookie, `/api/his/v1/command-receipts?operationId=inpatient.surgery.${action}&idempotencyKey=${key}`)).json()
+      expect.soft(receipt.response.effects).toEqual(effects)
+      const audit = await (await s.request(cookie, `/fhir/R5/AuditEvent/${response.auditId}`)).json()
+      expect.soft(audit.entity).toEqual([{ role:{text:'updated'},what:{identifier:{
+        system:'https://caizongyuan.github.io/clinmesh/identifier/command-effect-reference',value:reference,
+      }} }])
+      replays.push({cookie,action,input,key,response})
+    }
+    const requestResource = await (await s.request(s.doctor, `/fhir/R5/ServiceRequest/${id}`)).json()
+    expect(requestResource.meta.versionId).toBe('1')
+    expect(await auditCount()).toBe(initialCount + 2)
+    for (const replay of replays) expect(await (await s.request(replay.cookie, `${s.path}/surgeries/${replay.action}`, replay.input, replay.key)).json()).toEqual(replay.response)
+    expect(await auditCount()).toBe(initialCount + 2)
+  })
+
   it('双准备门禁，计划与实际独立，执行和费用原子且原键重放', async () => {
     const s = await setup()
     const catalogResponse = await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')
@@ -117,6 +217,11 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     const cancelInput = { requestId: row.id, expectedRequestVersion: 2, note: '取消合成未实施计划' }
     const race = await Promise.all([s.request(s.doctor, `${s.path}/surgeries/cancel`, cancelInput), s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, cancelInput)])
     expect(race.map(result => result.status).sort()).toEqual([200,409])
+    const cancelled = await race.find(result => result.status === 200)!.json()
+    expect(cancelled.effects).toEqual([
+      {kind:'updated',reference:`InpatientSurgeryRequest/${row.id}`,versionId:'3'},
+      {kind:'updated',reference:`ServiceRequest/${row.id}`,versionId:'2'},
+    ])
     expect((await s.request(s.doctor, `${s.path}/surgeries/execute`, { ...execution, expectedRequestVersion: 3 })).status).toBe(409)
     const final = await (await s.request(s.doctor, `${s.path}/surgeries`)).json()
     expect(final.executions).toEqual([])
@@ -234,8 +339,9 @@ async function readySurgery(s: Awaited<ReturnType<typeof setup>>, complete = tru
   const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: s.admission.versionId,
     procedureId: 'hospital-surgery-4', catalogVersion: 1, plannedFor: '2026-08-25T01:00:00.000Z', reason: '合成手术测试' })
   expect(requested.status).toBe(200)
-  let state = (await requested.json()).data
-  const id = state.requests.at(-1).id
+  const requestedBody = await requested.json()
+  let state = requestedBody.data
+  const id = requestedBody.effects[0].reference.split('/')[1]
   const checked = await s.request(s.nurse, `${s.path}/surgeries/check-preop`, { requestId: id, expectedRequestVersion: 1, note: '已核对检查' })
   expect(checked.status).toBe(200)
   const consent = await s.request(s.doctor, `${s.path}/surgeries/confirm-consent`, { requestId: id, expectedRequestVersion: 2, note: '确认同意已签署' })
