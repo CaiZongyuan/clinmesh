@@ -175,7 +175,11 @@ export class InpatientOrders {
     const input = (action === 'request-stop' ? inpatientOrderReasonInputSchema : inpatientOrderActionInputSchema).parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: `inpatient.order.${action}`, expectedVersions: {},
       dataSchema: inpatientFullClinicalResponseSchema.shape.data, authorize: () => this.owner.assertRole(context, action === 'request-stop' ? ['inpatient-doctor'] : ['ward-nurse']) }, () => {
-      this.assertAdmitted(context, input.admissionId)
+      if (action === 'verify') this.assertAdmitted(context, input.admissionId)
+      else {
+        const admission = this.owner.admissionBinding(context, input.admissionId)
+        if (!['admitted','discharge-pending'].includes(admission.status) || admission.financialStatus !== 'open') throw new InpatientError('INPATIENT_STATE_CONFLICT', '当前状态不能办理停嘱')
+      }
       const row = this.order(context, input.admissionId, input.orderId)
       const stateAllowsAction = action === 'verify' ? row.state === 'signed'
         : action === 'request-stop' ? ['signed','verified'].includes(row.state) : row.state === 'stop-requested'

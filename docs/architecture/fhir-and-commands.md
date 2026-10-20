@@ -430,6 +430,8 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 ### 6.6 预览与提交
 
-当前临床文书签署和支付使用预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；支付预览绑定 Charge Item。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
+临床文书签署和门诊支付使用带时效 token 的预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；门诊支付预览绑定 Charge Item。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
 
-提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、退款、医保、库存调拨、出院和病案归档不属于当前能力，也不宣称已有预览协议。
+提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、门诊退费、医保、库存调拨和病案归档不属于当前能力，也不宣称已有预览协议。
+
+住院结算使用独立的逐项账目指纹预览：提交校验原预览指纹、Encounter 版本与预期金额，不使用上述五分钟 `commitToken`。住院结算包含补缴或关联原入金的退款，与医生出院医嘱、护士出区和清床分别执行；状态门禁及原意图恢复合同见[住院出院与结算](clinical-workflows.md#住院出院与结算)。

@@ -1,3 +1,4 @@
+import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.tsx'
 import { InpatientIncomingTransfers } from './inpatient-transfers.tsx'
 import { InpatientCharges } from './inpatient-charges.tsx'
 import { InpatientClinical } from './inpatient-clinical.tsx'
@@ -135,6 +136,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
           <Button disabled={write.blocked || swapId === null} onClick={() => assignBed('swap-bed')}>{zh ? '互换床位' : 'Swap beds'}</Button>
         </> : null}
       </FieldGroup></FieldSet> : null}
+      {session.actor.roleCode === 'cashier' ? <InpatientSettlement key={`settlement-${selected.id}`} admission={selected} session={session} locale={locale} write={write} /> : !registrar ? <InpatientDischarge key={`discharge-${selected.id}`} admission={selected} session={session} locale={locale} write={write} /> : null}
       {session.actor.roleCode === 'cashier' ? <InpatientCharges key={selected.id} admissionId={selected.id} session={session} locale={locale} write={write} /> : !registrar ? <InpatientClinical key={selected.id} admission={selected} session={session} locale={locale} write={write} /> : null}
     </section> : null}
   </section>

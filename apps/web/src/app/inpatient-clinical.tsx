@@ -34,6 +34,7 @@ export function InpatientClinical({ admission, session, locale, write }: { admis
   const selectedDose = medication?.doses.find(item => item.doseText === dose) ?? medication?.doses[0]
   const selectedFrequency = frequency !== null && medication?.frequencyCodes.includes(frequency) ? frequency : medication?.frequencyCodes[0]
   const data = clinical.data, blocked = write.blocked || admission.status !== 'admitted'
+  const stopBlocked = write.blocked || !['admitted','discharge-pending'].includes(admission.status)
   const issue = () => {
     if (!data) return
     const common={admissionId:admission.id,encounterVersion:data.encounterVersion,duration,...(surgeryId ? {surgeryExecutionId:surgeryId} : {})}
@@ -62,8 +63,8 @@ export function InpatientClinical({ admission, session, locale, write }: { admis
       <p>{order.duration==='long'?t('长期','Long'):t('临时','Temporary')} · {order.doseText} · {t('每次','Per execution ')}{order.doseQuantity}{order.unit} · {order.frequencyCode}</p>
       <div className="flex flex-wrap gap-2">
         {nurse && order.state==='signed' ? <Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('校对医嘱','Verify order')}</Button>:null}
-        {doctor && ['signed','verified'].includes(order.state) ? <Button variant="outline" disabled={blocked || !reason.trim()} onClick={()=>write.mutation.mutate({operation:'inpatient.order.request-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version,reason}})}>{t('申请停嘱','Request stop')}</Button>:null}
-        {nurse && order.state==='stop-requested' ? <Button disabled={blocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('核对停嘱','Verify stop')}</Button>:null}
+        {doctor && ['signed','verified'].includes(order.state) ? <Button variant="outline" disabled={stopBlocked || !reason.trim()} onClick={()=>write.mutation.mutate({operation:'inpatient.order.request-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version,reason}})}>{t('申请停嘱','Request stop')}</Button>:null}
+        {nurse && order.state==='stop-requested' ? <Button disabled={stopBlocked} onClick={()=>write.mutation.mutate({operation:'inpatient.order.verify-stop',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version}})}>{t('核对停嘱','Verify stop')}</Button>:null}
         {nurse && order.state==='verified' && order.frequencyCode==='PRN' ? <Button disabled={blocked || !reason.trim()} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.request-prn',input:{admissionId:admission.id,orderId:order.id,expectedOrderVersion:order.version,reason}})}>{t('请求按需执行','Request PRN execution')}</Button>:null}
       </div>
     </article>)}

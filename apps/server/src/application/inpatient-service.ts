@@ -1,3 +1,4 @@
+import { InpatientDischarge } from './inpatient-discharge.ts'
 import { InpatientSurgery } from './inpatient-surgery.ts'
 import { InpatientTransfers } from './inpatient-transfers.ts'
 import type { WorkflowService } from './workflow-service.ts'
@@ -36,6 +37,7 @@ export class InpatientService {
   readonly billing: InpatientBilling
   readonly orders: InpatientOrders
   readonly surgery: InpatientSurgery
+  readonly discharge: InpatientDischarge
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
   readonly #workspaces: WorkspaceRepository
@@ -44,6 +46,7 @@ export class InpatientService {
     this.billing = new InpatientBilling(database, fhir)
     this.orders = new InpatientOrders(this)
     this.surgery = new InpatientSurgery(this)
+    this.discharge = new InpatientDischarge(this)
     this.investigations = new InpatientInvestigations(this,workflow)
     this.transfers = new InpatientTransfers(this)
   }
@@ -290,7 +293,7 @@ export class InpatientService {
           FROM inpatient_bed_occupancy o JOIN inpatient_admission a
             ON a.workspace_id=o.workspace_id AND a.epoch=o.epoch AND a.admission_id=o.admission_id
           JOIN inpatient_bed b ON b.workspace_id=o.workspace_id AND b.epoch=o.epoch AND b.bed_id=o.bed_id
-          WHERE o.workspace_id=? AND o.epoch=? AND julianday(o.started_at)<julianday(?) AND o.ended_at IS NULL AND a.status='admitted'`)
+          WHERE o.workspace_id=? AND o.epoch=? AND julianday(o.started_at)<julianday(?) AND o.ended_at IS NULL AND a.status IN ('admitted','discharge-pending')`)
           .all(context.workspaceId, context.epoch, time))
         for (const bed of beds) {
           if (this.billing.record(context, { admissionId: bed.admission_id, organizationId: bed.organization_id, kind: 'bed', sourceId: bed.admission_id,
