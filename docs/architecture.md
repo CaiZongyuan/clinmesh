@@ -1,6 +1,6 @@
 # 系统架构
 
-ClinMesh 是面向 Agent 的中国公立医院仿真 HIS，当前交付 standalone Web、DSH React Surface 与 Agent CLI。人类岗位、页面 Tools 和受限任务 Agent 复用同一业务内核，以合成数据验证多岗位普通门诊闭环。当前范围与后续边界见[系统范围与拓扑](architecture/system.md#1-背景与目标)及[实现状态](architecture/system.md#15-首期实现状态)。
+ClinMesh 是面向 Agent 的中国公立医院仿真 HIS，当前交付 standalone Web、DSH React Surface 与 Agent CLI。人类岗位、页面 Tools 和受限任务 Agent 复用同一业务内核，以合成数据验证多岗位普通门诊及住院流程。当前范围与后续边界见[系统范围与拓扑](architecture/system.md#1-背景与目标)及[实现状态](architecture/system.md#15-首期实现状态)。
 
 ## 按任务查找合同
 

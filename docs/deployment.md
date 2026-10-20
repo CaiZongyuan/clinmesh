@@ -120,7 +120,12 @@ pnpm dev:server
 | 门诊医生 | `doctor@demo.clinmesh.local` |
 | 收费员 | `cashier@demo.clinmesh.local` |
 | 药师 | `pharmacist@demo.clinmesh.local` |
+| 住院医生 | `inpatient-doctor@demo.clinmesh.local` |
+| 病区护士 | `ward-nurse@demo.clinmesh.local` |
+| 病案人员 | `medical-records@demo.clinmesh.local` |
 | 管理员 | `admin@demo.clinmesh.local` |
+
+住院医生、病区护士与病案人员登录后进入住院工作台；挂号员、收费员与药师在各自工作台切换住院页签。住院医生与病区护士的当前岗位绑定具体科室和病区，转科时使用目标科室岗位接管，业务门禁见[临床业务流程](architecture/clinical-workflows.md#82-住院闭环后续)。
 
 完成步骤 3 后，以门诊医生登录并打开诊断选择器应能搜索到 ICD-10 条目，即参考目录生效。
 
