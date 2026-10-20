@@ -1,3 +1,4 @@
+import { seedInpatientEnvironment } from './inpatient-environment.ts'
 import { createHash } from 'node:crypto'
 import { scenarioStateSchema } from '@clinmesh/contracts/his'
 import type {
@@ -328,7 +329,17 @@ export class ScenarioService {
       FROM scenario_epoch_state
       WHERE workspace_id = ? AND epoch = ?
     `).get(input.workspaceId, input.epoch)
-    if (existing !== undefined) return
+    if (existing !== undefined) {
+      this.#database.driver.exec('BEGIN IMMEDIATE')
+      try {
+        seedInpatientEnvironment(this.#database, this.#fhir, input)
+        this.#database.driver.exec('COMMIT')
+      } catch (error) {
+        this.#database.driver.exec('ROLLBACK')
+        throw error
+      }
+      return
+    }
     this.#database.driver.exec('BEGIN IMMEDIATE')
     try {
       this.#seedEpoch({
@@ -795,6 +806,7 @@ export class ScenarioService {
       )
     }
     this.#seedFhirResources(input)
+    seedInpatientEnvironment(this.#database, this.#fhir, input)
   }
 
   #seedFhirResources(input: {

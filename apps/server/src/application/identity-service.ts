@@ -63,6 +63,11 @@ export const syntheticAccounts = [
     practitionerId: 'practitioner-pharmacist',
     roleCode: 'pharmacist',
   },
+  ...(['inpatient-doctor', 'ward-nurse', 'medical-records'] as const).map(roleCode => ({
+    actorId: `actor-${roleCode}`, email: `${roleCode}@demo.clinmesh.local`,
+    name: ({ 'inpatient-doctor': '合成住院医生', 'ward-nurse': '合成病区护士', 'medical-records': '合成病案人员' })[roleCode],
+    practitionerId: `practitioner-${roleCode}`, roleCode,
+  })),
   {
     actorId: 'actor-administrator',
     email: 'admin@demo.clinmesh.local',
@@ -787,6 +792,18 @@ export class IdentityService {
           membership_id, workspace_id, practitioner_role_id
         ) VALUES (?, ?, ?)
       `).run(membershipId, input.workspaceId, roleId)
+    }
+    for (const roleCode of ['inpatient-doctor', 'ward-nurse'] as const) {
+      for (const [ward, organizationId] of [['general', 'organization-inpatient-medicine'], ['surgery', 'organization-inpatient-surgery']] as const) {
+        const roleId = `practitioner-role-${roleCode}${ward === 'general' ? '' : '-surgery'}`
+        this.#database.driver.prepare(`
+          INSERT INTO practitioner_role_binding (workspace_id, practitioner_role_id, practitioner_id, role_code, organization_id, location_id, active)
+          VALUES (?, ?, ?, ?, ?, ?, 1)
+          ON CONFLICT(workspace_id, practitioner_role_id) DO UPDATE SET organization_id=excluded.organization_id, location_id=excluded.location_id
+        `).run(input.workspaceId, roleId, `practitioner-${roleCode}`, roleCode, organizationId, `ward-${ward}`)
+        this.#database.driver.prepare(`INSERT OR IGNORE INTO membership_practitioner_role (membership_id, workspace_id, practitioner_role_id) VALUES (?, ?, ?)`)
+          .run(`membership-${roleCode}`, input.workspaceId, roleId)
+      }
     }
     this.#database.driver.prepare(`
       INSERT OR IGNORE INTO membership_practitioner_role (

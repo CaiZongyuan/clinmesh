@@ -1,3 +1,4 @@
+import { InpatientService } from './application/inpatient-service.ts'
 import { createApp } from './app.ts'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
@@ -246,6 +247,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
       results: investigationResults,
     })
+    const inpatient = new InpatientService(database, fhir, commands)
     const workflow = new WorkflowService(database, fhir, commands, {
       consultationRecordingEnabled: options.dshModelBridge !== undefined,
       qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
@@ -713,6 +715,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({
+      inpatient,
       commandEvents: commands,
       recordingUpdatesSignal: generationAbort.signal,
       doctorRecommendations,

@@ -258,16 +258,23 @@ export function applyMigrations(
       continue
     }
 
-    database.driver.exec('BEGIN IMMEDIATE')
+    const rebuildRoles = migrationFile === '0066_inpatient-admission.sql'
+    if (rebuildRoles) database.driver.pragma('foreign_keys = OFF')
     try {
+      database.driver.exec('BEGIN IMMEDIATE')
       prepareIncrementalRecordingContextMigration(database.driver, migrationFile)
       database.driver.exec(sql)
+      if (rebuildRoles && (database.driver.pragma('foreign_key_check') as unknown[]).length > 0) {
+        throw new Error('Practitioner Role migration violated foreign keys')
+      }
       record.run(migrationFile, checksum, new Date().toISOString())
       database.driver.exec('COMMIT')
       applied.push(migrationFile)
     } catch (error) {
-      database.driver.exec('ROLLBACK')
+      if (database.driver.inTransaction) database.driver.exec('ROLLBACK')
       throw error
+    } finally {
+      if (rebuildRoles) database.driver.pragma('foreign_keys = ON')
     }
   }
 

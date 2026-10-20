@@ -83,6 +83,7 @@ export interface ResolvedAgentPageContext {
 
 const selectionKindsByView = {
   billing: ['billing-item'],
+  inpatient: ['encounter'],
   consultation: ['case', 'encounter'],
   overview: ['scenario-run'],
   pharmacy: ['prescription'],
