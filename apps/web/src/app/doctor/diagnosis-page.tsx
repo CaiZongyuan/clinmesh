@@ -11,7 +11,7 @@ import { Separator } from '@clinmesh/ui/components/separator'
 import { cn } from '@clinmesh/ui/lib/utils'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { ArrowLeftIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, Trash2Icon } from 'lucide-react'
+import { ArrowLeftIcon, CheckCircleIcon, CircleAlertIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
@@ -298,15 +298,17 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   const renderEditor = (showChips = true) => {
     const entry = showChips ? entries.find(entry => entry.key === selectedKey) ?? entries[0] : visibleEntries.find(candidate => candidate.key === activeKey)
     const index = entries.findIndex(candidate => candidate.key === entry?.key)
-    if (entry === undefined) return (
+    if (entry === undefined) return showChips ? (
+      <div className="rounded-lg border border-dashed p-3">
+        <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择一个诊断开始填写' : 'Select a diagnosis to start'}</p>
+        <p className="mt-1 text-xs text-muted-foreground">{
+          locale === 'zh-CN' ? '检索疾病名称或 ICD 编码，明确选择后编辑诊断信息。' : 'Search a disease name or ICD code, then select a diagnosis to edit its details.'}</p>
+      </div>
+    ) : (
       <Empty>
         <EmptyHeader>
-          <EmptyTitle>{showChips
-            ? locale === 'zh-CN' ? '选择一个诊断开始填写' : 'Select a diagnosis to start'
-            : locale === 'zh-CN' ? '选择一条诊断查看详情' : 'Select a diagnosis to view details'}</EmptyTitle>
-          <EmptyDescription>{showChips
-            ? locale === 'zh-CN' ? '在左侧检索疾病名称或 ICD 编码，明确选择后编辑诊断信息。' : 'Search a disease name or ICD code, then select a diagnosis to edit its details.'
-            : locale === 'zh-CN' ? '从左侧列表选择，或调整搜索与筛选。' : 'Select from the list, or adjust the search and filters.'}</EmptyDescription>
+          <EmptyTitle>{locale === 'zh-CN' ? '选择一条诊断查看详情' : 'Select a diagnosis to view details'}</EmptyTitle>
+          <EmptyDescription>{locale === 'zh-CN' ? '从列表选择，或调整搜索与筛选。' : 'Select from the list, or adjust the search and filters.'}</EmptyDescription>
         </EmptyHeader>
       </Empty>
     )
@@ -314,7 +316,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     const suffix = index === 0 ? '' : ` ${index + 1}`
     return (
       <section aria-label={locale === 'zh-CN' ? showChips && state?.confirmation !== undefined ? '填写诊断详情' : '诊断详情' : showChips && state?.confirmation !== undefined ? 'Enter diagnosis details' : 'Diagnosis details'} data-agent-diagnosis-entry=""
-        className={cn('flex min-w-0 flex-col gap-4 p-4', !showChips && !showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
+        className={cn('flex min-w-0 flex-col gap-4 rounded-lg border p-4', !showChips && !showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
         {showChips ? null : (
           <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
             setMobileDetailOpen(false)
@@ -381,9 +383,12 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   }
   const catalogEditor = (
     <div className="flex min-w-0 flex-col gap-4">
-      <DiagnosisCatalogPicker active={!replacementOpen && !readOnly} collapsible={state?.confirmation !== undefined} disabled={pending || entries.length >= 8} excludedIds={usedCatalogItemIds}
-        localCatalog={catalog} locale={locale} onSelect={selection => { if (selection !== undefined) addEntry(selection) }}
-        search={referenceSearch} />
+      {/* 目录列表限制高度内部滚动：编辑区与待办不因长目录被推到首屏之外，检索行保持可见。 */}
+      <div className="flex max-h-72 min-w-0 flex-col">
+        <DiagnosisCatalogPicker active={!replacementOpen && !readOnly} collapsible={state?.confirmation !== undefined} disabled={pending || entries.length >= 8} excludedIds={usedCatalogItemIds}
+          localCatalog={catalog} locale={locale} onSelect={selection => { if (selection !== undefined) addEntry(selection) }}
+          search={referenceSearch} />
+      </div>
       {renderEditor()}
     </div>
   )
@@ -412,10 +417,12 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         hasRecords={state?.confirmation !== undefined}
         entry={readOnly ? null : <section aria-label={locale === 'zh-CN' ? '填写诊断' : 'Enter diagnosis'} className="flex min-w-0 flex-col gap-3">
           {catalogEditor}
-          {state?.confirmation === undefined ? null : <Button disabled={pending} onClick={editConfirmedEntries}
-            className="self-start" size="sm" type="button" variant="outline">
-            {locale === 'zh-CN' ? '修改已确认诊断' : 'Edit confirmed diagnoses'}
-          </Button>}
+          {!readOnly && entries.length > 0 && primaryCount !== 1 ? (
+            <Alert variant="destructive">
+              <CircleAlertIcon />
+              <AlertTitle>{messages.diagnosisPrimaryRequiredDescription}</AlertTitle>
+            </Alert>
+          ) : null}
         </section>}
         pending={
           <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
@@ -431,6 +438,28 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         records={state?.confirmation === undefined ? null : (
           <section aria-label={locale === 'zh-CN' ? '诊断列表' : 'Diagnosis list'}
             className={cn('flex min-w-0 flex-col gap-3 border p-3', showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
+            {/* 确认状态与编辑入口归位于正式记录所在的列表头部，不再以独立告警块堆叠在页签底部。 */}
+            <div className="flex min-w-0 flex-col gap-1">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                  <CheckCircleIcon aria-hidden="true" className="size-4 shrink-0 text-success" />
+                  <span className="min-w-0">{messages.diagnosisConfirmed} · {locale === 'zh-CN'
+                    ? `第 ${state.confirmation.revisionNumber} 版`
+                    : `Revision ${state.confirmation.revisionNumber}`}</span>
+                </p>
+                {readOnly ? null : <Button disabled={pending} onClick={editConfirmedEntries}
+                  size="sm" type="button" variant="outline">
+                  {locale === 'zh-CN' ? '修改已确认诊断' : 'Edit confirmed diagnoses'}
+                </Button>}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {readOnly ? `${messages.diagnosisConfirmedAt} · ${state.confirmation.confirmedAt}` : locale === 'zh-CN'
+                  ? '本次就诊结束前仍可继续修改；再次确认会保留上一版本。'
+                  : 'You can keep editing until the encounter ends; reconfirming preserves the previous revision.'}
+              </p>
+            </div>
+            {readOnly ? null : <DoctorRecordReviewNotice caseId={caseId}
+              authoredAt={state.confirmation.confirmedAt} locale={locale} onReview={editConfirmedEntries} />}
             <Input aria-label={locale === 'zh-CN' ? '搜索本次诊断' : 'Search encounter diagnoses'}
               onChange={event => setRecordQuery(event.currentTarget.value)} placeholder={locale === 'zh-CN' ? '疾病名称或编码' : 'Disease name or code'}
               ref={listSearchRef} value={recordQuery} />
@@ -454,7 +483,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
             ) : visibleEntries.map(entry => {
               const diagnosis = entryDisplay(entry)
               return (
-                <Button aria-pressed={entry.key === activeKey} className="h-auto min-w-0 justify-start whitespace-normal py-3"
+                <Button aria-pressed={entry.key === activeKey} className="h-auto min-w-0 justify-start whitespace-normal py-2"
                   data-agent-diagnosis-entry="" key={entry.key} onClick={() => { setSelectedRecordCatalogItemId(entry.catalogItemId); setMobileDetailOpen(true); queueMicrotask(() => detailsHeadingRef.current?.focus()) }}
                   type="button" variant={entry.key === activeKey ? 'secondary' : 'outline'}>
                   <span className="flex min-w-0 flex-1 flex-col items-start gap-1">
@@ -471,36 +500,10 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
         )}
         details={state?.confirmation === undefined ? null : renderEditor(false)}
       />
-      {state?.confirmation === undefined ? null : (
-        <Alert>
-          <CheckCircleIcon aria-hidden="true" />
-          <AlertTitle>
-            {messages.diagnosisConfirmed} · {locale === 'zh-CN'
-              ? `第 ${state.confirmation.revisionNumber} 版`
-              : `Revision ${state.confirmation.revisionNumber}`}
-          </AlertTitle>
-          <AlertDescription>
-            {readOnly ? `${messages.diagnosisConfirmedAt} · ${state.confirmation.confirmedAt}` : locale === 'zh-CN'
-              ? '本次就诊结束前仍可继续修改；再次确认会保留上一版本。'
-              : 'You can keep editing until the encounter ends; reconfirming preserves the previous revision.'}
-          </AlertDescription>
-        </Alert>
-      )}
-      {readOnly || state?.confirmation === undefined ? null : <DoctorRecordReviewNotice caseId={caseId}
-        authoredAt={state.confirmation.confirmedAt} locale={locale} onReview={editConfirmedEntries} />}
-      {!readOnly && entries.length > 0 && primaryCount !== 1 ? (
-        <Alert variant="destructive">
-          <CircleAlertIcon />
-          <AlertTitle>{messages.diagnosisPrimaryRequiredDescription}</AlertTitle>
-        </Alert>
-      ) : null}
       {readOnly ? null : <div className="flex flex-wrap items-center justify-between gap-2">
         <p aria-live="polite" className="text-xs text-muted-foreground">{saveStatus}</p>
         {retrySave}
       </div>}
-      {!readOnly && actions.save.success && !dirty ? (
-        <Alert><CheckIcon /><AlertTitle>{messages.diagnosisDraftSaved}</AlertTitle></Alert>
-      ) : null}
       {readOnly ? null : saveError}
       {readOnly || actions.confirm.error === null ? null : (
         <Alert variant="destructive">
