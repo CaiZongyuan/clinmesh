@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { expect, test } from './fixtures.ts'
-import { inpatientPharmacyResponseSchema, inpatientChargesResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientFullClinicalSchema, inpatientPharmacyResponseSchema, inpatientChargesResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { createPatientResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
 
-test('住院医生确认诊断和临时药嘱，护士校对、药师发药后护士真实给药', async ({ page, browserApp }) => {
+test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后保留事实', async ({ page, browserApp }) => {
   const login = async (name: string, first = false) => {
     if (!first) { await page.getByRole('button', { name: '用户菜单' }).click(); await page.getByRole('menuitem', { name: '退出登录' }).click() }
     await page.getByLabel('账户邮箱').fill(`${name}@demo.clinmesh.local`)
@@ -60,11 +60,31 @@ test('住院医生确认诊断和临时药嘱，护士校对、药师发药后�
   await page.reload()
   await page.getByRole('button', { name: '查看合成住院用药患者', exact: true }).click()
   await expect(page.getByLabel('次诊断 2 备注', { exact: true })).toHaveValue('合成入院待确认备注')
+  await expect(page.getByLabel('次诊断 1 入院病情', { exact: true })).toContainText('3 · 情况不明')
+  await expect(page.getByLabel('次诊断 2 入院病情', { exact: true })).toContainText('2 · 临床未确定')
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('操作成功')
   await expect(page.getByText('次诊断：发热，未特指', { exact: true })).toBeVisible()
   await expect(page.getByText('次诊断：高血压', { exact: true })).toBeVisible()
 
+  const beforeConcurrentEdit = inpatientFullClinicalSchema.parse(await (await page.request.get(`${browserApp.origin}/api/his/v1/inpatient/admissions/${admission.id}/clinical`)).json())
+  expect(beforeConcurrentEdit.diagnosis.entries.map(entry => entry.coding.id)).toEqual(['diagnosis-type-2-diabetes-hyperglycemia', 'diagnosis-fever', 'diagnosis-hypertension'])
+  await page.getByLabel('次诊断 2 备注', { exact: true }).fill('合成未保存备注')
+  expect((await request(`/api/his/v1/inpatient/admissions/${admission.id}/diagnoses/confirm`, {
+    encounterVersion: beforeConcurrentEdit.encounterVersion, expectedRevision: beforeConcurrentEdit.diagnosis.revision,
+    entries: beforeConcurrentEdit.diagnosis.entries.map(entry => ({ catalogItemId: entry.coding.id, role: entry.role, admissionCondition: entry.admissionCondition,
+      ...(entry.role === 'primary' ? {} : { note: '合成外部新备注' }) })),
+  })).status()).toBe(200)
+  const refreshed = page.waitForResponse(response => response.url().endsWith(`/inpatient/admissions/${admission.id}/clinical`))
+  await page.getByRole('button', { name: '刷新诊疗记录', exact: true }).click()
+  await refreshed
+  await expect(page.getByLabel('次诊断 2 备注', { exact: true })).toHaveValue('合成未保存备注')
+  const conflict = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith(`/inpatient/admissions/${admission.id}/diagnoses/confirm`))
+  await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
+  expect((await conflict).status()).toBe(409)
+  await expect(page.getByLabel('次诊断 2 备注', { exact: true })).toHaveValue('合成未保存备注')
+  await page.getByRole('button', { name: '放弃编辑，载入已确认诊断', exact: true }).click()
+  await expect(page.getByLabel('次诊断 2 备注', { exact: true })).toHaveValue('合成外部新备注')
   await page.getByLabel('医嘱项目', { exact: true }).click()
   await page.getByRole('option', { name: '盐酸二甲双胍片', exact: true }).click()
   await page.getByLabel('医嘱时效', { exact: true }).click()

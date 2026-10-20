@@ -1739,7 +1739,7 @@ describe('SQLite lifecycle', () => {
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 77,
+      expectedSchemaVersion: 78,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
