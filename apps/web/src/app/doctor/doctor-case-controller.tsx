@@ -2,6 +2,7 @@ import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-prepar
 import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
 import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
+import { DoctorSuggestionStack } from './doctor-suggestion-stack.tsx'
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { mergeDocumentText } from '@clinmesh/core/document-text'
 import {
@@ -2661,7 +2662,13 @@ function DoctorCaseController({
       inputRevision={recommendationRevision}
       formRevisions={activeCaseId === undefined ? undefined : agentDraftHydrationRevisions[activeCaseId]}
       enabled={!detailUnavailable && detail.data?.consultation !== undefined && detail.data.encounter.status === 'in-progress' && detail.data.status !== 'awaiting-doctor'}>
-    <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail} queue={showDetail => (
+    <DoctorWorkspaceLayout selectedCaseId={activeCaseId} queueLabel={messages.waitingPatients} detailLabel={messages.caseDetail}
+      suggestions={{
+        label: messages.suggestionStackTitle,
+        node: <DoctorSuggestionStack completion={completion} detail={detailUnavailable ? undefined : detail.data}
+          document={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope} />,
+      }}
+      queue={showDetail => (
       <DoctorQueueModule
         navigation={navigation}
         queueView={queueView}

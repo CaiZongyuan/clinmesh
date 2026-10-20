@@ -23,6 +23,10 @@ const checklistLabels: Record<WorkspaceLocale, Record<EncounterCompletionItem['c
   },
 }
 
+export function encounterCompletionItemLabel(code: EncounterCompletionItem['code'], locale: WorkspaceLocale): string {
+  return checklistLabels[locale][code]
+}
+
 export function EncounterCompletionChecklist({ completion, locale }: {
   completion: EncounterCompletionPreview
   locale: WorkspaceLocale

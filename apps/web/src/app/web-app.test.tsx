@@ -1240,7 +1240,7 @@ describe('Web application shell', () => {
     await user.click(darkTheme)
     expect(darkTheme.getAttribute('aria-pressed')).toBe('true')
     expect(document.documentElement.dataset.theme).toBe('dark')
-    expect(applicationRoot?.dataset.theme).toBe('dark')
+    expect(applicationRoot?.getAttribute('data-theme')).toBe('dark')
 
     await user.click(screen.getByRole('button', { name: '亮色主题' }))
     expect(document.documentElement.classList.contains('dark')).toBe(false)

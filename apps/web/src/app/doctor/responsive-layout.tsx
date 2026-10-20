@@ -20,7 +20,7 @@ export function DoctorWorkspaceLayout({
   queueLabel: string
   detailLabel: string
   /** 右侧建议栈：宽容器显示为第三栏，窄容器折叠为抽屉。断点全部由容器查询驱动。 */
-  suggestions?: { label: string; node: ReactNode }
+  suggestions?: { label: string; node: ReactNode } | undefined
 }) {
   const [showQueue, setShowQueue] = useState(selectedCaseId === undefined)
   const [suggestionsOpen, setSuggestionsOpen] = useState(false)
