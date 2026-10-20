@@ -145,6 +145,27 @@ afterEach(() => {
   recommendationResponder = kind => recommendationState(kind)
 })
 
+it('完诊未完项整行提供前往动作并导航到对应页签，且不声明 DOM id', async () => {
+  stubStackServices()
+  const onNavigateToCompletionTarget = vi.fn()
+  const view = mountStack({ completion: completionView({ data: completionPreview() }), onNavigateToCompletionTarget })
+  const user = userEvent.setup()
+  await user.click(screen.getByRole('button', { name: '前往诊断完成主诊断确认' }))
+  expect(onNavigateToCompletionTarget).toHaveBeenCalledTimes(1)
+  expect(onNavigateToCompletionTarget).toHaveBeenCalledWith('diagnosis')
+  await user.click(screen.getByRole('button', { name: '前往病历记录完成门诊病历签署' }))
+  expect(onNavigateToCompletionTarget).toHaveBeenLastCalledWith('clinical-document')
+  expect(view.container.querySelectorAll('[id]')).toHaveLength(0)
+})
+
+it('未提供前往回调时完诊未完项保持纯文本列表', () => {
+  stubStackServices()
+  mountStack({ completion: completionView({ data: completionPreview() }) })
+  expect(screen.getByText('主诊断确认')).toBeTruthy()
+  expect(screen.getByText('尚未确认主诊断')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: /主诊断确认/ })).toBeNull()
+})
+
 it('完诊清单显示未完项及状态文字，且不声明 DOM id 以支持双挂载', () => {
   stubStackServices()
   const view = mountStack({ completion: completionView({ data: completionPreview() }) })
@@ -154,6 +175,14 @@ it('完诊清单显示未完项及状态文字，且不声明 DOM id 以支持�
   expect(screen.getByText('尚未签署病历')).toBeTruthy()
   expect(screen.queryByText(messages.suggestionCompletionClear)).toBeNull()
   expect(view.container.querySelectorAll('[id]')).toHaveLength(0)
+})
+
+it('完诊后建议栈不再呈现完诊清单分区与前往动作', () => {
+  stubStackServices()
+  const completedDetail = { ...detail, encounter: { ...detail.encounter, status: 'completed' } }
+  mountStack({ completion: completionView({ data: completionPreview() }), detail: completedDetail })
+  expect(screen.queryByRole('region', { name: messages.encounterCompletionChecklist })).toBeNull()
+  expect(screen.queryByRole('button', { name: /主诊断确认/ })).toBeNull()
 })
 
 it('完诊清单全部完成时显示完成态而不再列出条目', () => {

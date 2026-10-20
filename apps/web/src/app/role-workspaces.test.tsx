@@ -6974,7 +6974,7 @@ describe('role workspaces', () => {
     expect(screen.getByRole('heading', { name: '确认完诊' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '确认完诊' }))
 
-    expect(await screen.findByText('Encounter 已完成，当前病例为只读。')).toBeTruthy()
+    expect(await screen.findByText('已完诊 · 病例只读')).toBeTruthy()
     expect(within(screen.getByRole('complementary', { name: '候诊队列' })).queryByRole('button', { name: /^选择病例 / })).toBeNull()
     expect(within(screen.getByRole('complementary', { name: '候诊队列' })).getByText('0')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '向患者提问' })).toBeNull()

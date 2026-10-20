@@ -95,6 +95,8 @@ export function PatientBanner({
   const age = patientAge(detail.patient.birthDate)
   const genderLabel = messages[`gender_${detail.patient.gender}` as 'gender_male']
   const ageLabel = age === undefined ? undefined : messages.patientAge.replace('{age}', String(age))
+  // 完诊进度摘要只在就诊进行中呈现；完诊后检查单已定稿，保留旧计数会与只读状态矛盾。
+  const showCompletionChecklist = !readOnly && completionChecklist != null
   return (
     <section aria-label={messages.selectedPatient} className="max-h-[50%] min-h-0 min-w-0 shrink-0 overflow-y-auto overscroll-contain border-b bg-background [overflow-wrap:anywhere]">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5">
@@ -117,13 +119,17 @@ export function PatientBanner({
           {unsavedChiefComplaint ? <Badge title={messages.clinicalDocumentDraftUnsaved} variant="outline">{messages.clinicalDocumentDraftUnsavedShort}</Badge> : null}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <Badge variant="secondary">{statusText}</Badge>
           {readOnly ? (
             <Badge variant="outline"><LockKeyholeIcon aria-hidden="true" />{messages.encounterReadOnly}</Badge>
-          ) : completionAction}
+          ) : (
+            <>
+              <Badge variant="secondary">{statusText}</Badge>
+              {completionAction}
+            </>
+          )}
         </div>
       </div>
-      {completionChecklist == null && presentation === null ? null : (
+      {!showCompletionChecklist && presentation === null ? null : (
         <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 border-t px-4 py-1.5">
           {presentation === null ? null : <dl className="flex flex-wrap gap-x-5 gap-y-1">
             <VitalSummary label={messages.temperatureC} value={presentation.vitalSigns.temperatureC} />
@@ -132,7 +138,7 @@ export function PatientBanner({
             <VitalSummary label={messages.bloodPressure} value={`${presentation.vitalSigns.bloodPressure.systolicMmHg}/${presentation.vitalSigns.bloodPressure.diastolicMmHg}`} />
             <VitalSummary label={messages.oxygenSaturationPct} value={presentation.vitalSigns.oxygenSaturationPct} />
           </dl>}
-          {completionChecklist == null ? null : <div className="ml-auto flex min-w-0 items-center">{completionChecklist}</div>}
+          {showCompletionChecklist ? <div className="ml-auto flex min-w-0 items-center">{completionChecklist}</div> : null}
         </div>
       )}
     </section>
