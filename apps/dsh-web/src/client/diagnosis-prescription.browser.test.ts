@@ -309,7 +309,10 @@ for (const version of ['18', '19']) {
     await expect(course).toHaveValue('7')
     await expect(quantity).toHaveValue('2')
     await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
-    expect((await readCase(page)).medicationConclusion?.draft).toBeUndefined()
+    await expect.poll(async () => (await readCase(page)).medicationConclusion?.draft).toEqual({
+      items: [{ catalogItemId: 'synthetic-product-1', doseText: '10 mg', frequencyCode: 'QD', courseDays: 7, quantity: 2 }],
+    })
+    expect((await readCase(page)).medicationConclusion?.prescription).toBeUndefined()
     await page.evaluate(() => window.dispatchEvent(new Event('diagnosis-prescription-fail-confirmation')))
     await issue.click()
     await expect(panel.getByText(/更新或提交未完成/)).toBeVisible()
