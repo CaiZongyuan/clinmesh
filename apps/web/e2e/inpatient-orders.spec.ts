@@ -148,3 +148,71 @@ test('住院有序诊断、医嘱执行与冲正在版本冲突及丢回执后�
   expect(reversalPosts).toBe(1)
 
 })
+
+test('诊断提交成功但回读失败后，新编辑不会被旧成功状态清除', async ({ page, browserApp }) => {
+  const origin = browserApp.origin
+  const login = async (actor: string) => expect((await page.request.post(`${origin}/api/auth/sign-in/email`, {
+    headers: { origin }, data: { email: `${actor}@demo.clinmesh.local`, password: browserApp.password },
+  })).status()).toBe(200)
+  const post = async (path: string, input: unknown) => page.request.post(`${origin}${path}`, {
+    headers: { origin, 'idempotency-key': randomUUID() }, data: { input },
+  })
+  await login('registrar')
+  const patient = createPatientResponseSchema.parse(await (await page.request.post(`${origin}/api/his/v1/patients`, {
+    headers: { origin, 'idempotency-key': randomUUID() }, data: { expectedVersions: {}, input: { name: '合成诊断回读故障患者', gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` } },
+  })).json()).data.patient
+  const session = sessionContextSchema.parse(await (await page.request.get(`${origin}/api/auth/context`)).json())
+  const admission = inpatientCommandResponseSchema.parse(await (await post('/api/his/v1/inpatient/admissions', {
+    expectedEpoch: session.actor.epoch, patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0,
+  })).json()).data.admission
+  await login('ward-nurse')
+  expect((await post(`/api/his/v1/inpatient/admissions/${admission.id}/receive`, { encounterVersion: admission.versionId, bedId: 'bed-general-1' })).status()).toBe(200)
+  await login('inpatient-doctor')
+  await page.goto(`${origin}/inpatient`)
+  await page.getByRole('button', { name: '查看合成诊断回读故障患者', exact: true }).click()
+  await page.getByLabel('住院诊断', { exact: true }).click()
+  await page.getByRole('option', { name: '高血压', exact: true }).click()
+  await page.getByLabel('主诊断入院病情', { exact: true }).click()
+  await page.getByRole('option', { name: '1 · 有', exact: true }).click()
+  await page.getByLabel('主诊断备注', { exact: true }).fill('合成提交A')
+  const clinicalPath = `/api/his/v1/inpatient/admissions/${admission.id}/clinical`
+  let failClinical = false, failedReads = 0, committedRevision = 0
+  await page.route(`**${clinicalPath}`, async route => {
+    if (failClinical) { failedReads += 1; await route.abort('failed') }
+    else await route.continue()
+  })
+  await page.route(`**/api/his/v1/inpatient/admissions/${admission.id}/diagnoses/confirm`, async route => {
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    committedRevision = inpatientFullClinicalSchema.parse((await response.json()).data).diagnosis.revision
+    failClinical = true
+    await route.fulfill({ response })
+  })
+  await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('操作成功')
+  expect(committedRevision).toBe(1)
+  expect(failedReads).toBeGreaterThan(0)
+  await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
+  await page.getByLabel('主诊断备注', { exact: true }).fill('合成新编辑B')
+  failClinical = false
+  const refreshed = page.waitForResponse(response => response.url().endsWith(clinicalPath) && response.status() === 200)
+  await page.getByRole('button', { name: '刷新诊疗记录', exact: true }).click()
+  const refreshedClinical = inpatientFullClinicalSchema.parse(await (await refreshed).json())
+  expect(refreshedClinical.diagnosis.revision).toBe(1)
+  expect(refreshedClinical.diagnosis.entries[0]?.note).toBe('合成提交A')
+  await expect(page.getByLabel('主诊断备注', { exact: true })).toHaveValue('合成新编辑B')
+  await page.unroute(`**/api/his/v1/inpatient/admissions/${admission.id}/diagnoses/confirm`)
+  const conflict = page.waitForResponse(response => response.request().method() === 'POST' && response.url().endsWith('/diagnoses/confirm'))
+  await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
+  const staleSubmit = await conflict
+  expect(staleSubmit.status()).toBe(409)
+  expect(staleSubmit.request().postDataJSON().input.expectedRevision).toBe(0)
+  await expect(page.getByLabel('主诊断备注', { exact: true })).toHaveValue('合成新编辑B')
+  await page.getByRole('button', { name: '放弃编辑，载入已确认诊断', exact: true }).click()
+  await expect(page.getByLabel('主诊断备注', { exact: true })).toHaveValue('合成提交A')
+  await page.getByLabel('主诊断备注', { exact: true }).fill('合成新提交C')
+  await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('操作成功')
+  await expect(page.getByRole('button', { name: '放弃编辑，载入已确认诊断', exact: true })).toHaveCount(0)
+  await expect(page.getByLabel('主诊断备注', { exact: true })).toHaveValue('合成新提交C')
+})

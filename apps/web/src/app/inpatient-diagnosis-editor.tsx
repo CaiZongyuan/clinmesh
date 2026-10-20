@@ -5,7 +5,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet, FieldLegend } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { searchReferenceDiagnoses } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { PaginationControls } from './pagination-controls.tsx'
@@ -23,6 +23,7 @@ export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blo
 }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const [draft, setDraft] = useState<Draft | null>(null)
+  const submittedDraft = useRef<Draft | null>(null)
   const [query, setQuery] = useState(''), [search, setSearch] = useState(''), [page, setPage] = useState(1)
   const references = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, 'diagnosis-reference', search, page],
     enabled: search.length > 0, queryFn: ({ signal }) => searchReferenceDiagnoses(search, page, signal) })
@@ -33,9 +34,9 @@ export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blo
   const edit = (change: (entries: Entry[]) => Entry[]) => setDraft({ ...current, entries: change(current.entries) })
   const result = write.mutation.data
   useEffect(() => {
-    if (draft && result?.command?.operation === 'inpatient.diagnosis.confirm'
+    if (draft && draft === submittedDraft.current && result?.command?.operation === 'inpatient.diagnosis.confirm'
       && result.command.input.admissionId === data.admissionId && result.command.input.expectedRevision === draft.expectedRevision
-      && data.diagnosis.revision > draft.expectedRevision) setDraft(null)
+      && data.diagnosis.revision > draft.expectedRevision) setDraft(currentDraft => currentDraft === draft ? null : currentDraft)
   }, [data.admissionId, data.diagnosis.revision, draft, result])
   const candidates = new Map((search ? references.data?.items ?? [] : diagnoses).map(item => [item.id, { value: item.id, label: item.display }]))
   for (const entry of current.entries) if (entry.catalogItemId && !candidates.has(entry.catalogItemId)) candidates.set(entry.catalogItemId, { value: entry.catalogItemId, label: entry.display })
@@ -45,6 +46,7 @@ export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blo
   const move = (index: number, delta: number) => edit(entries => { const next = [...entries]; [next[index], next[index + delta]] = [next[index + delta]!, next[index]!]; return next })
   const submit = () => {
     if (!valid) return
+    submittedDraft.current = current
     write.mutation.mutate({ operation: 'inpatient.diagnosis.confirm', input: { admissionId: data.admissionId, encounterVersion: current.encounterVersion, expectedRevision: current.expectedRevision,
       entries: current.entries.map(entry => ({ catalogItemId: entry.catalogItemId!, role: entry.role, admissionCondition: entry.admissionCondition!, ...(entry.note.trim() ? { note: entry.note } : {}) })) } })
   }
