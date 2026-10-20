@@ -52,6 +52,12 @@ export function recommendationFixture(input: Pick<JsonChatCompletionInput, 'sche
     const payload = z.object({ historyEvidence: z.array(doctorCaseEvidenceSchema) }).parse(input.userPayload)
     return { complete: true, selectedEvidenceIds: payload.historyEvidence.map(item => item.id) }
   }
+  if (input.schemaName === 'doctor_recommendation_history_consolidation') {
+    const payload = z.object({ capacity: z.number().int().positive(),
+      selectedRecords: z.array(z.object({ selectionId: z.string(), text: z.string() })) }).parse(input.userPayload)
+    return { complete: true, selectedEvidenceIds: payload.selectedRecords
+      .slice(0, payload.capacity).map(item => item.selectionId) }
+  }
   if (input.schemaName === 'doctor_recommendation_verification') {
     const payload = z.object({ items: z.array(doctorRecommendationSuggestionSchema),
       considerations: z.array(doctorRecommendationConsiderationSchema).optional(),

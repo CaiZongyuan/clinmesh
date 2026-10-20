@@ -356,8 +356,16 @@ it('maps a laboratory suggestion to the full current hospital catalog beyond its
       verificationPayload = input.userPayload
       return { content: JSON.stringify(verificationOutput(input)), model: input.model }
     }
+    if (input.schemaName === 'doctor_recommendation_catalog_selection') {
+      const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() })) }) }) }).parse(input.userPayload)
+      // 筛选视图覆盖公开分页之外的全部目录项。
+      expect(payload.catalogs.laboratory.items).toHaveLength(60)
+      return { content: JSON.stringify({ complete: true, selectedCatalogItemIds: payload.catalogs.laboratory.items
+        .filter(item => item.id === 'lab-59').map(item => item.id) }), model: input.model }
+    }
     const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() })) }) }).strict() }).parse(input.userPayload)
-    expect(payload.catalogs.laboratory.items).toHaveLength(60)
+    // 生成只携带已选项目的筛选视图；完整定义由独立核验经 selectedCatalogItems 提供。
+    expect(payload.catalogs.laboratory.items).toEqual([expect.objectContaining({ id: 'lab-59' })])
     const output = diagnosisOutput(input)
     return { content: JSON.stringify({ ...output, items: [{ ...output.items[0], kind: 'laboratory',
       catalogItemId: 'lab-59', indicationCode: 'clinical-evaluation' }] }), model: input.model }
@@ -391,28 +399,27 @@ it('generates from a lightweight complete laboratory catalog while preserving sp
       verificationPayload = input.userPayload
       return { content: JSON.stringify(verificationOutput(input)), model: input.model }
     }
+    if (input.schemaName === 'doctor_recommendation_catalog_selection') {
+      const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() }).passthrough()) }) }) }).parse(input.userPayload)
+      expect(payload.catalogs.laboratory.items).toHaveLength(100)
+      expect(payload.catalogs.laboratory.items.find(item => item.id === 'lab-00')).not.toHaveProperty('minimumAgeYears')
+      // 筛选视图保留项目身份、标本、组合成员、允许适应证与适用条件，不含报告定义与参考范围。
+      expect(payload.catalogs.laboratory.items).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'lab-98', nameZh: '同名合成组合', specimen: { code: 'blood', display: '静脉血' } }),
+        expect.objectContaining({ id: 'lab-99', nameZh: '同名合成组合', specimen: { code: 'urine', display: '尿液' },
+          referenceConcept: { id: 'reference:lab-99', code: 'SYN-LAB', display: '合成生化指标', system: 'urn:synthetic:laboratory', version: '1' },
+          allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: ['leaf-quantity', 'leaf-qualitative'], minimumAgeYears: 18,
+          sourceDataset: { datasetId: 'laboratory-cn' }, standardStatus: { mode: 'future-standard-preview', standard: 'WS/T 886-2026', effectiveOn: '2026-11-01' } }),
+      ]))
+      expect(payload.catalogs.laboratory.items.find(item => item.id === 'lab-99')).not.toHaveProperty('reportDefinition')
+      expect(JSON.stringify(payload.catalogs)).not.toMatch(/conclusionTemplate|priceFen|executingDepartmentId|tatMinutes|healthyStrategy|precision|simulationLow|simulationHigh|sourceLocator|sourceLocation|sourceStandard|referenceReleaseId/)
+      return { content: JSON.stringify({ complete: true, selectedCatalogItemIds: ['lab-99'] }), model: input.model }
+    }
     generationBytes = Buffer.byteLength(JSON.stringify(input.userPayload))
     const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() }).passthrough()) }) }) }).parse(input.userPayload)
-    expect(payload.catalogs.laboratory.items).toHaveLength(100)
-    expect(payload.catalogs.laboratory.items.find(item => item.id === 'lab-00')).not.toHaveProperty('minimumAgeYears')
-    expect(payload.catalogs.laboratory.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: 'lab-98', nameZh: '同名合成组合', specimen: { code: 'blood', display: '静脉血' } }),
-      expect.objectContaining({ id: 'lab-99', nameZh: '同名合成组合', specimen: { code: 'urine', display: '尿液' },
-        referenceConcept: { id: 'reference:lab-99', code: 'SYN-LAB', display: '合成生化指标', system: 'urn:synthetic:laboratory', version: '1' },
-        allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: ['leaf-quantity', 'leaf-qualitative'], minimumAgeYears: 18,
-        sourceDataset: { datasetId: 'laboratory-cn' }, standardStatus: { mode: 'future-standard-preview', standard: 'WS/T 886-2026', effectiveOn: '2026-11-01' },
-        reportDefinition: { results: [
-          expect.objectContaining({ referenceConcept: expect.objectContaining({ code: 'SYN-PANEL-QUANTITY' }),
-            alternateCodings: [{ code: 'synthetic-loinc', system: 'http://loinc.org', version: 'synthetic-1' }],
-            valueType: 'quantity', unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' },
-            referenceRange: { low: 0, high: 10, text: '0–10' },
-            adultReferenceRules: [{ low: 0, high: 10, notes: '限成年男性', referenceKind: 'range', sex: 'male' }] }),
-          expect.objectContaining({ referenceConcept: expect.objectContaining({ code: 'SYN-PANEL-QUALITATIVE' }), valueType: 'string',
-            allowedValues: ['阴性', '阳性'], adultReferenceRules: [{ normalValue: '阴性', notes: '限成年女性', referenceKind: 'coded', sex: 'female' }] }),
-        ] },
-      }),
-    ]))
-    expect(JSON.stringify(payload.catalogs)).not.toMatch(/conclusionTemplate|priceFen|executingDepartmentId|tatMinutes|healthyStrategy|precision|simulationLow|simulationHigh|sourceLocator|sourceLocation|sourceStandard|referenceReleaseId/)
+    // 生成只携带已选项目的筛选视图；完整报告定义由独立核验经 selectedCatalogItems 提供。
+    expect(payload.catalogs.laboratory.items).toEqual([expect.objectContaining({ id: 'lab-99' })])
+    expect(payload.catalogs.laboratory.items[0]).not.toHaveProperty('reportDefinition')
     const output = diagnosisOutput(input)
     return { content: JSON.stringify({ ...output, items: [{ ...output.items[0], kind: 'laboratory',
       catalogItemId: 'lab-99', indicationCode: 'clinical-evaluation' }] }), model: input.model }
@@ -452,7 +459,7 @@ it('generates from a lightweight complete laboratory catalog while preserving sp
     kind: 'laboratory', catalogItemId: 'lab-99', label: '同名合成组合', indicationCode: 'clinical-evaluation',
   }] })
   expect(generationBytes).toBeLessThan(150 * 1024)
-  expect(requests).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+  expect(requests).toEqual(['doctor_recommendation_catalog_selection', 'doctor_recommendations', 'doctor_recommendation_verification'])
   expect(verificationPayload).toMatchObject({ selectedCatalogItems: { laboratory: [{ id: 'lab-99',
     specimen: { code: 'urine', display: '尿液' }, sourceDataset: { datasetId: 'laboratory-cn', releaseId: 'synthetic-clinical-release' },
     referenceConcept: { sourceLocator: 'synthetic:test:recommendations' },
@@ -491,7 +498,7 @@ it('reads every oversized clinical catalog batch with selected original history 
   const reviewed: string[] = []
   const batchSchemas: Array<{ ids: string[]; schema: Record<string, unknown> }> = []
   const requests: string[] = []
-  let selectedEvidence: unknown[] = []
+  let selectedEvidence: Array<{ text: string }> = []
   let projectedCatalogBytes = 0
   let verificationPayload: unknown
   let active = 0
@@ -507,14 +514,15 @@ it('reads every oversized clinical catalog batch with selected original history 
     expect(text).toContain('旧的抗凝药记录，停药情况尚不明确。')
     expect(text).toContain('未标注异常的旧肝功能结果，尚不能排除异常，需复查。')
     if (input.schemaName === 'doctor_recommendation_catalog_selection') {
-      const payload = z.object({ caseEvidence: z.array(z.unknown()), catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({
-        id: z.string(), minimumAgeYears: z.literal(18), reportDefinition: z.object({ results: z.array(z.object({
-          unit: z.object({ code: z.literal('mg/L') }), adultReferenceRules: z.array(z.object({ sex: z.literal('all'), notes: z.string().min(1) })),
-        })) }),
-      })) }) }) }).parse(input.userPayload)
+      const payload = z.object({ caseEvidence: z.array(z.object({ id: z.string(), text: z.string() })), catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({
+        id: z.string(), minimumAgeYears: z.literal(18),
+      }).passthrough()) }) }) }).parse(input.userPayload)
       if (selectedEvidence.length === 0) selectedEvidence = payload.caseEvidence
       expect(payload.caseEvidence).toEqual(selectedEvidence)
-      for (const item of payload.catalogs.laboratory.items) expect(item.reportDefinition.results).toHaveLength(4)
+      for (const item of payload.catalogs.laboratory.items) {
+        expect(item).not.toHaveProperty('reportDefinition')
+        expect(item).not.toHaveProperty('adultReferenceRules')
+      }
       projectedCatalogBytes += Buffer.byteLength(JSON.stringify(z.object({ catalogs: z.object({ laboratory: z.object({
         items: z.array(z.unknown()),
       }) }) }).parse(input.userPayload).catalogs.laboratory.items))
@@ -531,8 +539,13 @@ it('reads every oversized clinical catalog batch with selected original history 
       verificationPayload = input.userPayload
       return { content: JSON.stringify(verificationOutput(input)), model: input.model }
     }
-    expect(input.userPayload).toMatchObject({ caseEvidence: selectedEvidence,
-      catalogs: { laboratory: { items: [{ id: 'clinical-lab-99' }] } } })
+    expect(input.userPayload).toMatchObject({ catalogs: { laboratory: { items: [{ id: 'clinical-lab-99' }] } } })
+    const generatedPayload = z.object({ caseEvidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(input.userPayload)
+    // 筛选阶段只携带索引摘要，生成阶段仍携带完整必读与已选原文。
+    for (const item of selectedEvidence) expect(Buffer.byteLength(item.text)).toBeLessThanOrEqual(2 * 1024)
+    const generatedLongest = Math.max(...generatedPayload.caseEvidence.map(item => Buffer.byteLength(item.text)))
+    expect(generatedLongest).toBeGreaterThan(2 * 1024)
+    expect(JSON.stringify(generatedPayload.caseEvidence)).toContain('未标注异常的旧肝功能结果，尚不能排除异常，需复查。')
     const output = diagnosisOutput(input)
     return { content: JSON.stringify({ ...output, items: [{ ...output.items[0], kind: 'laboratory',
       catalogItemId: 'clinical-lab-99', indicationCode: 'clinical-evaluation' }] }), model: input.model }
@@ -541,15 +554,17 @@ it('reads every oversized clinical catalog batch with selected original history 
   const before = await fixture.readCase()
   expect((await fixture.generate('laboratory')).status).toBe(200)
   await fixture.runtime.dispatchPending()
-  expect(await fixture.read('laboratory')).toMatchObject({ status: 'ready', items: [{ kind: 'laboratory', catalogItemId: 'clinical-lab-99' }] })
+  expect(await fixture.read('laboratory'), JSON.stringify({ ...await fixture.read('laboratory'), requests }))
+    .toMatchObject({ status: 'ready', items: [{ kind: 'laboratory', catalogItemId: 'clinical-lab-99' }] })
   expect(reviewed.toSorted()).toEqual(Array.from({ length: 100 }, (_, index) => `clinical-lab-${String(index).padStart(2, '0')}`))
   for (const batch of batchSchemas) expect(batch.schema).toMatchObject({ properties: {
     selectedCatalogItemIds: { items: { enum: batch.ids } },
   } })
-  expect(projectedCatalogBytes).toBeGreaterThan(240 * 1024)
-  expect(peak).toBe(2)
+  expect(projectedCatalogBytes).toBeGreaterThan(20 * 1024)
+  expect(projectedCatalogBytes).toBeLessThan(120 * 1024)
+  expect(peak).toBe(1)
   const calls = requests.filter(name => name === 'doctor_recommendation_catalog_selection').length
-  expect(calls).toBe(3)
+  expect(calls).toBe(1)
   expect(verificationPayload).toMatchObject({ selectedCatalogItems: { laboratory: [{ id: 'clinical-lab-99',
     specimen: { code: 'blood' }, reportDefinition: { results: expect.arrayContaining([
       expect.objectContaining({ referenceConcept: expect.objectContaining({ sourceLocator: 'synthetic:test:recommendations' }),
@@ -644,9 +659,9 @@ it.each(['history', 'catalog'])(
     const held = new Promise<void>(resolve => { release = resolve })
     const fixture = await setup(async input => {
       requests.push(input.schemaName)
-      if (input.schemaName === pausedSchema && paused < 2) {
+      if (input.schemaName === pausedSchema && paused < 1) {
         paused += 1
-        if (paused === 2) entered()
+        entered()
         await held
       }
       if (input.schemaName === 'doctor_recommendation_history_selection') {
@@ -672,7 +687,8 @@ it.each(['history', 'catalog'])(
     try { expect((await fixture.generate('laboratory', true)).status).toBe(200) } finally { release() }
     await dispatch
     expect(await fixture.read('laboratory')).toMatchObject({ generation: 2, status: 'pending', items: [] })
-    expect(requests.filter(name => name === pausedSchema)).toHaveLength(2)
+    // 目录瘦身后 100 项通常单批完成筛选，替换发生在首个筛选请求进行中即可验证中断；历史仍按两批并发读取。
+    expect(requests.filter(name => name === pausedSchema)).toHaveLength(stage === 'history' ? 2 : 1)
     expect(requests).not.toContain('doctor_recommendations')
     await fixture.runtime.dispatchPending()
     expect(await fixture.read('laboratory')).toMatchObject({ generation: 2, status: 'ready', items: [{ catalogItemId: 'clinical-lab-99' }] })
@@ -1244,6 +1260,25 @@ function largeRecommendationHistory(noteForIndex = (index: number) => index === 
   }()
 }
 
+function heavyRequiredHistory({ procedures = 44, observations = 12, keepRepeat = 1150 }: { procedures?: number; observations?: number; keepRepeat?: number } = {}) {
+  return new class extends StubSyntheaProvider {
+    override async generate() {
+      const corpus = await super.generate()
+      const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(corpus.sources[0]!.raw)
+      raw.entry.push(...Array.from({ length: procedures }, (_, index) => ({ fullUrl: `urn:uuid:historical-procedure-${index}`,
+        resource: { resourceType: 'Procedure', id: `historical-procedure-${index}`, subject: { reference: 'urn:uuid:patient' },
+          encounter: { reference: 'urn:uuid:prior-encounter' }, status: 'completed', performedDateTime: '2024-01-05T09:05:00+08:00',
+          code: { text: `既往手术记录编号${index}。` }, note: [{ text: 'x'.repeat(3800) }] },
+      })), ...Array.from({ length: observations }, (_, index) => ({ fullUrl: `urn:uuid:large-related-${index}`,
+        resource: { resourceType: 'Observation', id: `large-related-${index}`, subject: { reference: 'urn:uuid:patient' },
+          encounter: { reference: 'urn:uuid:prior-encounter' }, status: 'final', effectiveDateTime: '2024-02-10T09:05:00+08:00',
+          code: { text: `相关大记录编号${index}。` }, note: [{ text: 'KEEP.'.repeat(keepRepeat) }] },
+      })))
+      return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
+    }
+  }()
+}
+
 it('generates from individually selected complete history records without retaining unrelated neighbours in their original packs', async () => {
   const selectedNote = '本次需复核的完整观察记录，尚不能排除肝功能异常，不能改为正常。' + '原始测量条件和备注必须完整保留。'.repeat(18)
   const unrelatedNote = 'UNRELATED_ONLY_SENTINEL：这条完整记录已明确核对为与本次无关。'.repeat(18)
@@ -1348,6 +1383,103 @@ it('reads every batch of a large history concurrently and reuses original-source
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).status).toBe('ready')
   expect(requests.filter(name => name === 'doctor_recommendation_history_selection')).toHaveLength(2 * selections)
+})
+
+it('consolidates selected history into the generation budget instead of failing when the combined evidence overflows', async () => {
+  const requests: string[] = []
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    if (input.schemaName === 'doctor_recommendation_history_selection') {
+      const payload = z.object({ requiredEvidence: z.array(z.object({ id: z.string(), text: z.string() })),
+        historyEvidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(input.userPayload)
+      // 筛选请求只携带必读资料的索引摘要，不再携带全文。
+      for (const item of payload.requiredEvidence) expect(Buffer.byteLength(item.text)).toBeLessThanOrEqual(2 * 1024)
+      return { content: JSON.stringify({ complete: true, selectedEvidenceIds: payload.historyEvidence
+        .filter(item => item.text.includes('相关大记录编号')).map(item => item.id) }), model: input.model }
+    }
+    if (input.schemaName === 'doctor_recommendation_history_consolidation') {
+      const payload = z.object({ capacity: z.number().int().positive(),
+        selectedRecords: z.array(z.object({ selectionId: z.string(), text: z.string() })) }).parse(input.userPayload)
+      expect(payload.selectedRecords.length).toBeGreaterThan(payload.capacity)
+      expect(payload.selectedRecords.every(item => item.text.includes('相关大记录编号'))).toBe(true)
+      return { content: JSON.stringify({ complete: true, selectedEvidenceIds: payload.selectedRecords
+        .filter(item => item.text.includes('相关大记录编号0。')).map(item => item.selectionId) }), model: input.model }
+    }
+    const text = JSON.stringify(input.userPayload)
+    expect(text).toContain('既往手术记录编号0。')
+    expect(text).toContain('相关大记录编号0。')
+    expect(text).not.toContain('相关大记录编号1。')
+    return { content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+      ? diagnosisOutput(input) : verificationOutput(input)), model: input.model }
+  }, { syntheaProvider: heavyRequiredHistory() })
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const state = await fixture.read()
+  expect(state.status, JSON.stringify({ errorCode: state.errorCode, missingInformation: state.missingInformation, requests })).toBe('ready')
+  expect(state.items).toMatchObject([{ kind: 'diagnosis' }])
+  expect(requests.filter(name => name === 'doctor_recommendation_history_consolidation')).toHaveLength(1)
+  expect(requests.at(-1)).toBe('doctor_recommendation_verification')
+  expect(await fixture.readCase()).toEqual(before)
+})
+
+it('notifies the doctor when even the largest selected record cannot join the generation request', async () => {
+  const requests: string[] = []
+  const sizes: number[] = []
+  const capacities: number[] = []
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    if (input.schemaName === 'doctor_recommendation_history_selection') {
+      const payload = z.object({ historyEvidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(input.userPayload)
+      return { content: JSON.stringify({ complete: true, selectedEvidenceIds: payload.historyEvidence
+        .filter(item => item.text.includes('相关大记录编号')).map(item => item.id) }), model: input.model }
+    }
+    if (input.schemaName === 'doctor_recommendation_history_consolidation') {
+      const payload = z.object({ capacity: z.number().int().positive(),
+        selectedRecords: z.array(z.object({ selectionId: z.string(), text: z.string() })) }).parse(input.userPayload)
+      capacities.push(payload.capacity)
+      return { content: JSON.stringify({ complete: true, selectedEvidenceIds: payload.selectedRecords
+        .slice(0, payload.capacity).map(item => item.selectionId) }), model: input.model }
+    }
+    sizes.push(Buffer.byteLength(JSON.stringify(input.userPayload)))
+    const text = JSON.stringify(input.userPayload)
+    expect(text).toContain('既往手术记录编号0。')
+    expect(text).not.toContain('相关大记录编号0。')
+    return { content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+      ? diagnosisOutput(input) : verificationOutput(input)), model: input.model }
+  }, { syntheaProvider: heavyRequiredHistory({ procedures: 55 }) })
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const state = await fixture.read()
+  expect(state.status, JSON.stringify({ errorCode: state.errorCode, sizes, capacities, requests })).toBe('ready')
+  expect(state.notices?.map(notice => notice.message).join('\n'), JSON.stringify({ sizes, capacities, requests })).toContain('未纳入本次建议')
+  expect(requests.filter(name => name === 'doctor_recommendation_history_consolidation')).toHaveLength(0)
+  expect(await fixture.readCase()).toEqual(before)
+})
+
+it('keeps the explicit budget failure when the consolidation request itself exceeds the envelope', async () => {
+  const requests: string[] = []
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    if (input.schemaName === 'doctor_recommendation_history_selection') {
+      const payload = z.object({ historyEvidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(input.userPayload)
+      return { content: JSON.stringify({ complete: true, selectedEvidenceIds: payload.historyEvidence
+        .filter(item => item.text.includes('相关大记录编号')).map(item => item.id) }), model: input.model }
+    }
+    return { content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+      ? diagnosisOutput(input) : verificationOutput(input)), model: input.model }
+  }, { syntheaProvider: heavyRequiredHistory({ observations: 24, keepRepeat: 2200 }) })
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const state = await fixture.read()
+  expect(state.status, JSON.stringify({ errorCode: state.errorCode, requests })).toBe('missing-evidence')
+  expect(state.missingInformation).toContain('当前完整资料或候选结果超过自动资料读取请求预算，无法形成可采纳建议。')
+  expect(requests.filter(name => name === 'doctor_recommendation_history_selection').length).toBeGreaterThanOrEqual(1)
+  expect(requests).not.toContain('doctor_recommendation_history_consolidation')
+  expect(requests).not.toContain('doctor_recommendations')
+  expect(await fixture.readCase()).toEqual(before)
 })
 
 it.each(['incomplete', 'foreign-id', 'provider-error', 'timeout'])('does not generate from an incomplete or invalid history selection (%s)', async failure => {
@@ -1767,6 +1899,11 @@ it.each(['generation', 'clinical-identity', 'directory', 'doctor-scope', 'draft-
 it('issues selected prepared laboratory items atomically and preserves an existing manual draft', async () => {
   const fixture = await setup(async input => {
     if (input.schemaName === 'doctor_recommendation_verification') return { model: input.model, content: JSON.stringify(verificationOutput(input)) }
+    if (input.schemaName === 'doctor_recommendation_catalog_selection') {
+      const payload = z.object({ catalogs: z.object({ laboratory: z.object({ items: z.array(z.object({ id: z.string() })) }) }) }).parse(input.userPayload)
+      return { model: input.model, content: JSON.stringify({ complete: true, selectedCatalogItemIds: payload.catalogs.laboratory.items
+        .filter(item => item.id === 'lab-preparation-a' || item.id === 'lab-preparation-b').map(item => item.id) }) }
+    }
     const base = diagnosisOutput(input).items[0]!
     return { model: input.model, content: JSON.stringify({ items: ['lab-preparation-a', 'lab-preparation-b'].map((id, index) => ({
       ...base, id: `lab-candidate-${index}`, kind: 'laboratory', catalogItemId: id, indicationCode: 'clinical-evaluation',

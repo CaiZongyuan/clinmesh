@@ -22,6 +22,8 @@
 
 - 包级串行仍可能因包内测试文件并行，让 CLI 子进程启动触发原有超时。先测真实启动耗时并单独运行失败文件；若单项通过，可将上述包级集合绑定到一个空闲 CPU，让 Vitest 按 `os.availableParallelism()` 串行测试文件。也可用 `VITEST_MAX_WORKERS=2 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1 --env-mode=loose` 显式限制文件并发；Turbo 默认 strict 环境会过滤该变量，仅在父进程设置它并不会约束包内 Vitest。选择 CPU 时避开其他正在验证的任务；不增加超时或缩减测试集合。
 
+- 资源争用也可能是内存超卖而非 CPU：小内存宿主（如 6.8 GB 的 WSL2）上 `@clinmesh/web` 的 jsdom 套件按 `os.availableParallelism()`（16）开满 worker 时会进入 swap 抖动，失败集合每次运行都不同且与 diff 无关。先看 `free -h` 的 swap 占用区分于 CPU 争用；单项复跑通过后，对同一套件用 `pnpm --filter @clinmesh/web exec vitest run --maxWorkers=4` 重取证据（已实际验证 624/624 通过），并照上一条的规则在验证记录中注明受限并发。
+
 - 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。
 
 - 长时间运行 `vitest run` 或 `pnpm check` 时固定被测快照。执行期间修改源码和回归可能让转换缓存与新读取的测试混用不同版本；这类结果不能作为最终提交证据，应固定代码后重跑受影响集合，只复用未被修改影响的成功检查。
@@ -36,7 +38,7 @@
 
 ## 替身、异步屏障与断言
 
-- 诊断、处方浏览器合同填写有效草稿后，先等待对应 `[data-agent-section]` 内的“草稿已自动保存”，再切换外观或检查焦点。保存期间编辑区会暂时禁用并清除焦点；`focus()` 只执行一次，后续 `toBeFocused()` 重试不会重新聚焦。沿用 [Web E2E](../../apps/web/e2e/diagnosis-prescription.spec.ts) 的保存完成条件，保留原断言与超时，避免用固定等待或重复聚焦掩盖竞态。
+- 诊断、处方浏览器合同填写有效草稿后，先等待对应 `[data-agent-section]` 内的“草稿已自动保存”，再切换外观或检查焦点。保存期间编辑区会暂时禁用并清除焦点；`focus()` 只执行一次，后续 `toBeFocused()` 重试不会重新聚焦。沿用 [Web E2E](../../apps/web/e2e/diagnosis-prescription.spec.ts) 的保存完成条件，保留原断言与超时，避免用固定等待或重复聚焦掩盖竞态。同一屏障也约束“调整项目”等对话框路径：`保留本次调整` 后立即读取病例，可能观察到去抖自动保存刚写入的 `medicationConclusion.draft`，使 `toBeUndefined()` 断言在整组运行中间歇失败而单文件通过；等待同一保存回执后再读取。
 
 - 勾选聊天风格、结果顺序或按需教学等模型行为前，核对部署 preset/persona，并以新建 Session 的实际模型请求证明规则已装配。规格描述、普通工具测试和脚本化替身的回答不能证明真实模型持续遵守这些要求；接线证据与实模体验分别记录。
 
