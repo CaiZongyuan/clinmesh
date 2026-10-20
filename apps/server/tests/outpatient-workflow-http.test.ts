@@ -1480,6 +1480,13 @@ describe('outpatient workflow HTTP contract', () => {
     expect(detail.registrationNumber).not.toBe(detail.patient.identifier)
     expect(detail.presentation).toBeNull()
     expect(detail.triage).toBeUndefined()
+    runtime.database.driver.prepare('UPDATE registration SET registration_number = ? WHERE registration_id = ?')
+      .run('', testCase.registration.registrationId)
+    for (const path of ['/api/his/v1/doctor/queue?view=active', `/api/his/v1/doctor/cases/${testCase.caseId}`]) {
+      const corruptResponse = await runtime.app.request(path, { headers: { cookie: testCase.doctorCookie } })
+      expect(corruptResponse.ok).toBe(false)
+      apiErrorSchema.parse(await corruptResponse.json())
+    }
     // Some historical active cases have no corresponding Registration fact.
     runtime.database.driver.prepare('DELETE FROM registration WHERE registration_id = ?').run(testCase.registration.registrationId)
     expect((await readQueue('view=active')).items.find(item => item.caseId === testCase.caseId)?.registrationNumber).toBeNull()

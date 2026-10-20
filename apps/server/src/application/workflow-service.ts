@@ -60,6 +60,7 @@ import {
   doctorCompletedCaseDetailSchema,
   doctorCompletedCaseListSchema,
   doctorCompletedCaseTimelineEventSchema,
+  doctorQueueItemSchema,
   type DoctorQueueView,
   doctorQueueViewStatusGroups,
   encounterCompletionPreviewSchema,
@@ -2670,7 +2671,7 @@ export class WorkflowService {
           encounterId: row.encounter_id,
           encounterVersion: String(row.encounter_version),
           patient: patientSummary(parseStoredFhirResource(row.patient_json)),
-          registrationNumber: row.registration_number,
+          registrationNumber: doctorQueueItemSchema.shape.registrationNumber.parse(row.registration_number),
           presentation: casePresentation(triage),
           status: row.status,
           taskId: row.doctor_task_id,
@@ -3235,7 +3236,7 @@ export class WorkflowService {
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
-      registrationNumber: row.registration_number,
+      registrationNumber: doctorCaseDetailSchema.shape.registrationNumber.parse(row.registration_number),
       ...(clinicalDocumentDraft === undefined && signedClinicalDocuments.length === 0 ? {} : {
         clinicalDocument: {
           ...(clinicalDocumentDraft === undefined ? {} : {
