@@ -54,13 +54,16 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 - 身份与岗位：Better Auth 的 user/session/account，加 Workspace Actor、Human Membership、Agent Client/Capability Grant、Practitioner Role binding 和当前 session context。
 - 门诊：Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、诊断草稿状态与确认分组、检查申请草稿状态、正式检查申请、处方草稿状态、Prescription 与处方项目、无需用药结论和处方撤回事实。
+- 住院：独立 Admission、住院证、病区与床位目录、带时间段的床位占用、预交金交易及逐项住院费用；运行事实均绑定 Workspace/Epoch，住院合成来源以可空复合外键固定。
 - 账务：Charge Record、Payment Preview 和 Payment Transaction。金额以整数分保存；当前没有退款、医保或收费员交账表。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。当前不实现预占、追溯码、盘点或调拨。
 - 文书：结构化 Clinical Document Draft、结构化与兼容 Clinical Sign Preview、Signed Clinical Document 关联和修订父链；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
 - 模型执行：患者回答尝试及请求意图关联、建议稳定阶段计划、单元成功步骤与累计请求计数；这些是私有执行状态，不是临床结论。
 - 平台与仿真：Workspace/Epoch、Scenario Run/State、Synthetic Profile/Case、Patient Persona、Investigation Result Snapshot、私有 Case Truth、Command Receipt/Effect、Audit、Action Trace、Outbox、Agent Page Context、Tool call、proposal 和 review decision。
 
-所有适用表、主键、唯一键、外键和岗位队列索引包含 `workspace_id + epoch`。新增 FHIR-native 辅助索引时必须可由权威资源重建；新增无法重建的事实时必须明确成为 domain aggregate，不能同时由 FHIR JSON 和领域表双向拥有。
+所有适用表、主键、唯一键、外键和岗位队列索引包含 `workspace_id + epoch`。岗位枚举扩展使用前向迁移保真重建 SQLite CHECK 约束；关闭外键的表重建仅在该迁移事务周边执行，提交前检查全部外键，失败恢复保护并保留原岗位、Membership 和 Session 引用。启动时在当前活动 Epoch 幂等补齐住院环境，不要求清空或 reset。
+
+新增 FHIR-native 辅助索引时必须可由权威资源重建；新增无法重建的事实时必须明确成为 domain aggregate，不能同时由 FHIR JSON 和领域表双向拥有。
 
 #### 模型执行恢复
 

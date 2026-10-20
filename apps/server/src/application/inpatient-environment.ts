@@ -1,0 +1,56 @@
+import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
+import { syntheticAccounts } from './identity-service.ts'
+
+export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirRepository, context: RepositoryContext) {
+  const exists = (type: string, id: string) => database.driver.prepare(`
+    SELECT 1 FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=? AND deleted=0`)
+    .get(context.workspaceId, context.epoch, type, id) !== undefined
+  for (const account of syntheticAccounts.filter(account => ['inpatient-doctor', 'ward-nurse', 'medical-records'].includes(account.roleCode))) {
+    if (!exists('Practitioner', account.practitionerId)) fhir.create(context, {
+      resourceType: 'Practitioner', id: account.practitionerId, active: true, name: [{ text: account.name }],
+    })
+    if (account.roleCode === 'medical-records' && !exists('Location', `location-${account.roleCode}`)) fhir.create(context, {
+      resourceType: 'Location', id: `location-${account.roleCode}`, status: 'active', name: `${account.name}工作区`,
+      managingOrganization: { reference: 'Organization/organization-clinmesh' },
+    })
+    if (account.roleCode === 'medical-records' && !exists('PractitionerRole', 'practitioner-role-medical-records')) fhir.create(context, {
+      resourceType: 'PractitionerRole', id: 'practitioner-role-medical-records', active: true,
+      practitioner: { reference: `Practitioner/${account.practitionerId}` }, organization: { reference: 'Organization/organization-clinmesh' },
+      code: [{ text: 'medical-records' }], location: [{ reference: 'Location/location-medical-records' }],
+    })
+  }
+  for (const [suffix, name, department] of [['general', '内科病区', 'medicine'], ['surgery', '外科病区', 'surgery']] as const) {
+    const wardId = `ward-${suffix}`
+    if (database.driver.prepare('SELECT 1 FROM inpatient_ward WHERE workspace_id=? AND epoch=? AND ward_id=?')
+      .get(context.workspaceId, context.epoch, wardId) !== undefined) continue
+    const organizationId = `organization-inpatient-${department}`
+    fhir.create(context, { resourceType: 'Organization', id: organizationId, active: true,
+      name: suffix === 'general' ? '合成住院内科' : '合成住院外科', partOf: { reference: 'Organization/organization-clinmesh' } })
+    fhir.create(context, { resourceType: 'Location', id: wardId, status: 'active', name,
+      managingOrganization: { reference: `Organization/${organizationId}` },
+      form: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/location-physical-type', code: 'wa' }] } })
+    database.driver.prepare('INSERT INTO inpatient_ward VALUES (?, ?, ?, ?, ?)')
+      .run(context.workspaceId, context.epoch, wardId, organizationId, name)
+    const roomId = `room-${suffix}-101`
+    fhir.create(context, { resourceType: 'Location', id: roomId, status: 'active', name: `${name}101室`,
+      partOf: { reference: `Location/${wardId}` }, managingOrganization: { reference: `Organization/${organizationId}` },
+      form: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/location-physical-type', code: 'ro' }] } })
+    for (const number of [1, 2, 3]) {
+      const bedId = `bed-${suffix}-${number}`
+      fhir.create(context, { resourceType: 'Location', id: bedId, status: 'active', name: `${name}${number}床`,
+        partOf: { reference: `Location/${roomId}` }, managingOrganization: { reference: `Organization/${organizationId}` },
+        form: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/location-physical-type', code: 'bd' }] } })
+      database.driver.prepare('INSERT INTO inpatient_bed VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(context.workspaceId, context.epoch, bedId, wardId, roomId, `${number}床`, 5000)
+    }
+    for (const roleCode of ['inpatient-doctor', 'ward-nurse']) {
+      const roleId = `practitioner-role-${roleCode}${suffix === 'general' ? '' : '-surgery'}`
+      const resource = { resourceType: 'PractitionerRole', id: roleId, active: true,
+        practitioner: { reference: `Practitioner/practitioner-${roleCode}` },
+        organization: { reference: `Organization/${organizationId}` }, code: [{ text: roleCode }],
+        location: [{ reference: `Location/${wardId}` }] }
+      fhir.create(context, resource)
+    }
+  }
+}

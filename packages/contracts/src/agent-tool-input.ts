@@ -21,6 +21,7 @@ export const agentViewIdSchema = z.enum([
   'consultation',
   'billing',
   'pharmacy',
+  'inpatient',
   'settingsGeneral',
   'uiComponents',
 ])

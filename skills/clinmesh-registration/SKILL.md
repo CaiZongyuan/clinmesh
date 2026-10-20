@@ -25,3 +25,5 @@ clinmesh registration synthetic-case start --input @case-start.json --idempotenc
 ```
 
 The ordinary and Synthetic Case paths converge on the same Registration, Encounter, and triage Queue Task. After a conflict, refresh the Synthetic Case queue before forming a new intent. Registration work is complete only when `registration list` returns those references; hand them to a triage-nurse Grant and stop acting as registrar.
+
+住院登记与预交金使用 [住院工作流](../clinmesh-inpatient/SKILL.md)，与门诊登记相互独立。

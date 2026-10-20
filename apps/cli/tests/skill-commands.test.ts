@@ -10,6 +10,7 @@ const expectedSkills = [
   'clinmesh-billing',
   'clinmesh-doctor',
   'clinmesh-fhir',
+  'clinmesh-inpatient',
   'clinmesh-pharmacy',
   'clinmesh-registration',
   'clinmesh-shared',
@@ -161,6 +162,21 @@ function inspectExample(program: Command, line: string) {
     operation: listHisOperations().find(operation => operation.cliPath.join(' ') === path.join(' ')),
   }
 }
+
+it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const examples = commandLines(skill)
+  for (const operation of listHisOperations().filter(operation => operation.id.startsWith('inpatient.'))) {
+    const prefix = `clinmesh ${operation.cliPath.join(' ')}`
+    const line = examples.find(line => line === prefix || line.startsWith(`${prefix} `))!
+    expect(line).toBeDefined()
+    expect(inspectExample(program, line).operation?.id).toBe(operation.id)
+    expect(operation.handlerOwner).toBe('InpatientService')
+    expect(operation.skill).toBe('clinmesh-inpatient')
+    if (operation.mode === 'command') expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+  }
+})
 
 describe('ClinMesh CLI Agent Skills', () => {
   it('keeps document quality examples narrow and separate from clinical draft writes', async () => {

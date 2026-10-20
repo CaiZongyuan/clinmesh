@@ -67,6 +67,7 @@ export const workspaceRoutes = [
   { key: 'consultation', path: '/consultation', icon: StethoscopeIcon },
   { key: 'billing', path: '/billing', icon: ReceiptTextIcon },
   { key: 'pharmacy', path: '/pharmacy', icon: PillIcon },
+  { key: 'inpatient', path: '/inpatient', icon: HeartPulseIcon },
 ] as const
 
 export type WorkspaceSection = (typeof workspaceRoutes)[number]['key']
@@ -110,6 +111,9 @@ export const roleSections: Record<SessionContext['actor']['roleCode'], Workspace
   administrator: 'scenarioData',
   cashier: 'billing',
   'outpatient-doctor': 'consultation',
+  'inpatient-doctor': 'inpatient',
+  'ward-nurse': 'inpatient',
+  'medical-records': 'inpatient',
   pharmacist: 'pharmacy',
   registrar: 'registration',
   'triage-nurse': 'triage',
@@ -137,6 +141,9 @@ const roleMessageKeys: Record<SessionContext['actor']['roleCode'], WorkspaceMess
   administrator: 'role_administrator',
   cashier: 'role_cashier',
   'outpatient-doctor': 'role_outpatientDoctor',
+  'inpatient-doctor': 'role_inpatientDoctor',
+  'ward-nurse': 'role_wardNurse',
+  'medical-records': 'role_medicalRecords',
   pharmacist: 'role_pharmacist',
   registrar: 'role_registrar',
   'triage-nurse': 'role_triageNurse',

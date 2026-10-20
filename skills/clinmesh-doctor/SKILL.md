@@ -136,3 +136,5 @@ clinmesh doctor completed-cases get --case-id <case-id>
 ```
 
 `consultationRecording.sourceResults` reports each settled source as `recorded`, `no-new-facts`, `needs-verification` or `failed`; `needs-verification` means a recording candidate failed programmatic validation, not a separate model check. Source meaning, preservation of previous facts, correction/conflict relations and rejected facts returning without new support are checked by existing `qualityControl`. Its generation and independent review keep their normal triggers and input reuse. Legacy `consultationRecording.verification` counts are zero and `issues` empty; they do not certify semantic correctness or permit retrying retired checks. Retry only actual recording failures. Review quality status, notices and issues before describing coverage; missing context or a failed check is not a pass. Existing signing completeness, permissions, snapshots and version checks still apply without per-fragment acknowledgement.
+
+负责门诊医生可按 [住院工作流](../clinmesh-inpatient/SKILL.md)开住院证，交登记员转收。

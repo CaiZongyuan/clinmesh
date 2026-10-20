@@ -151,3 +151,5 @@
 - Synthea keep module（`-k`）的内部重试只重跑临床模拟，患者的年龄、性别等人口属性在第一次抽取后固定；抽到无法满足条件的年龄时会耗尽 `generate.max_attempts_to_keep_patient`（默认 1000，约 100 秒）后放弃；放弃时进程仍以 0 退出，只是导出的患者少于请求数（全部落空时连 `fhir` 目录都没有），判断依据只能是导出数量。定向生成必须由外层换 seed 重试，并用较窄的年龄范围提高命中率；不要只靠调大内部尝试次数。
 
 - Synthea GMF 的 `Observation` 条件在患者没有该 Observation 时做值比较会抛出 `NullPointerException` 并中止整次运行（只有 `is nil` / `is not nil` 不抛）；`And` 按书写顺序短路。写进 keep module 的 Observation 取值条件必须先放同一编码的 `is not nil`，再放 `==` 比较；编码值比较要求 `value_code` 的 system 与模块中一致（SNOMED 为 `SNOMED-CT`），类型不符的比较同样抛出异常。
+
+- 给既有 Scenario 增加环境或岗位时，验证已经 reset 到后续 Epoch 的旧库重启；装配入口必须补当前 active Epoch，且认证 binding 与 FHIR Practitioner/Role 均存在。新库 seed 通过不能代替旧库升级证明，见[住院建档决策](../decisions/implemented/architecture/2026-10-20-inpatient-admission-owner.md)。

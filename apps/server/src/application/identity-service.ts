@@ -63,6 +63,11 @@ export const syntheticAccounts = [
     practitionerId: 'practitioner-pharmacist',
     roleCode: 'pharmacist',
   },
+  ...(['inpatient-doctor', 'ward-nurse', 'medical-records'] as const).map(roleCode => ({
+    actorId: `actor-${roleCode}`, email: `${roleCode}@demo.clinmesh.local`,
+    name: ({ 'inpatient-doctor': '合成住院医生', 'ward-nurse': '合成病区护士', 'medical-records': '合成病案人员' })[roleCode],
+    practitionerId: `practitioner-${roleCode}`, roleCode,
+  })),
   {
     actorId: 'actor-administrator',
     email: 'admin@demo.clinmesh.local',
@@ -775,8 +780,10 @@ export class IdentityService {
         INSERT OR IGNORE INTO practitioner_role_binding (
           workspace_id, practitioner_role_id, practitioner_id, role_code,
           organization_id, location_id, active
-        ) VALUES (?, ?, ?, ?, 'organization-clinmesh', ?, 1)
-      `).run(input.workspaceId, roleId, account.practitionerId, account.roleCode, `location-${account.roleCode}`)
+        ) VALUES (?, ?, ?, ?, ?, ?, 1)
+      `).run(input.workspaceId, roleId, account.practitionerId, account.roleCode,
+        ['inpatient-doctor', 'ward-nurse'].includes(account.roleCode) ? 'organization-inpatient-medicine' : 'organization-clinmesh',
+        ['inpatient-doctor', 'ward-nurse'].includes(account.roleCode) ? 'ward-general' : `location-${account.roleCode}`)
       this.#database.driver.prepare(`
         INSERT OR IGNORE INTO workspace_membership (
           membership_id, workspace_id, user_id, actor_id, status, created_at
@@ -787,6 +794,16 @@ export class IdentityService {
           membership_id, workspace_id, practitioner_role_id
         ) VALUES (?, ?, ?)
       `).run(membershipId, input.workspaceId, roleId)
+    }
+    for (const roleCode of ['inpatient-doctor', 'ward-nurse'] as const) {
+      const roleId = `practitioner-role-${roleCode}-surgery`
+      this.#database.driver.prepare(`
+        INSERT OR IGNORE INTO practitioner_role_binding
+          (workspace_id, practitioner_role_id, practitioner_id, role_code, organization_id, location_id, active)
+        VALUES (?, ?, ?, ?, 'organization-inpatient-surgery', 'ward-surgery', 1)
+      `).run(input.workspaceId, roleId, `practitioner-${roleCode}`, roleCode)
+      this.#database.driver.prepare(`INSERT OR IGNORE INTO membership_practitioner_role (membership_id, workspace_id, practitioner_role_id) VALUES (?, ?, ?)`)
+        .run(`membership-${roleCode}`, input.workspaceId, roleId)
     }
     this.#database.driver.prepare(`
       INSERT OR IGNORE INTO membership_practitioner_role (
