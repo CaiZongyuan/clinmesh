@@ -22,9 +22,9 @@ it('keeps registration examples and numbering recovery aligned with the command 
   for (const [prefix, id] of [
     ['clinmesh registration create ', 'registration.create'],
     ['clinmesh registration synthetic-case start ', 'registration.synthetic-case.start'],
-  ]) {
+  ] as const) {
     const line = commandLines(skill).find(line => line.startsWith(prefix))!
-    const operation = getHisOperation(id!)
+    const operation = getHisOperation(id)
     expect(inspectExample(program, line).operation?.id).toBe(id)
     expect(operation.version).toBe(2)
     for (const code of ['REGISTRATION_NUMBER_STATE_INVALID', 'REGISTRATION_NUMBER_EXHAUSTED', 'REGISTRATION_NUMBER_AUTHORITY_RETIRED']) {
