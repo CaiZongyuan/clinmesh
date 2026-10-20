@@ -621,7 +621,7 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
           placeholder={messages.laboratoryPlaceholder}
         />
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col gap-3', resultsVisible ? 'flex' : 'hidden')}>
-        {results.isPending ? <Skeleton aria-label={locale === 'zh-CN' ? '正在加载检验目录' : 'Loading laboratory catalog'} role="status" className="mx-4 min-h-48 flex-1" /> : results.isError ? (
+        {results.isPending ? <Skeleton aria-label={locale === 'zh-CN' ? '正在加载检验目录' : 'Loading laboratory catalog'} role="status" className="mx-4 min-h-24 flex-1" /> : results.isError ? (
           <Alert className="mx-4" variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '无法加载本院检验目录' : 'Unable to load the hospital laboratory catalog'}</AlertTitle><Button onClick={() => search.onSearch(query, page)} type="button" variant="outline">{locale === 'zh-CN' ? '重试' : 'Retry'}</Button></Alert>
         ) : (
           <div className="mx-4 min-h-0 flex-1 overflow-auto border">

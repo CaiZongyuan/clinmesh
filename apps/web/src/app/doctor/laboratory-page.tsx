@@ -18,6 +18,7 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
@@ -422,7 +423,7 @@ function LaboratoryRequestEditor({
   }, [actions.issue.successRequestId, requests, onSelectRequest])
   const requestHeadingId = `laboratory-request-heading-${caseId}`
   const editor = (
-    <div className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
+    <div className="flex min-w-0 flex-col gap-4">
       <LaboratoryCatalogPicker active={active} collapsible={requests.length > 0} locale={locale} search={referenceSearch} selectedId={laboratoryItemId}
         onSelect={selection => {
           if (state?.draft !== undefined && selection?.catalogItemId !== state.draft.catalogItemId) {
@@ -433,26 +434,29 @@ function LaboratoryRequestEditor({
           setSelectedReference(selection)
           onLaboratoryItemChange(selection?.catalogItemId ?? '')
         }} />
-        <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-3">
+        <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-3 rounded-lg border p-4">
           <h3 className="text-sm font-semibold" id={requestHeadingId}>{messages.laboratoryOrder}</h3>
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor="laboratory-item">{messages.laboratoryItem}</FieldLabel>
-              <div className="flex min-h-16 items-center justify-between gap-3 border px-3 py-2" id="laboratory-item">
-                <span className="min-w-0">
-                  {selectedDisplay === undefined ? (
-                    <span className="text-sm text-muted-foreground">
-                      {locale === 'zh-CN' ? '尚未选择检验项目' : 'No laboratory item selected'}
-                    </span>
-                  ) : (
-                    <>
+              <div id="laboratory-item">
+                {selectedDisplay === undefined ? (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyTitle>{messages.laboratoryItemEmpty}</EmptyTitle>
+                      <EmptyDescription>{messages.laboratoryItemEmptyDescription}</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : (
+                  <div className="flex min-h-16 items-center justify-between gap-3 border px-3 py-2">
+                    <span className="min-w-0">
                       <strong className="block truncate text-sm">{selectedDisplay}</strong>
                       <span className="mt-1 block break-all font-mono text-xs text-muted-foreground">
                         {selectedCode}
                       </span>
-                    </>
-                  )}
-                </span>
+                    </span>
+                  </div>
+                )}
               </div>
             </Field>
             {selectedService === undefined ? null : (
@@ -479,6 +483,8 @@ function LaboratoryRequestEditor({
                   ? messages.autosaveFailed
                   : actions.save.pending
                   ? messages.autosaveSaving
+                  : state?.draft === undefined && laboratoryItemId === ''
+                  ? ''
                   : !draftMatchesSelection
                     ? messages.autosavePending
                     : state?.draft === undefined ? '' : messages.autosaveSaved}
