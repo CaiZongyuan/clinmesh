@@ -2454,7 +2454,7 @@ const operationDefinitions = [
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions', encodeBody: raw => ({ input: inpatientRegistrationInputSchema.parse(raw) }) },
     input: inpatientRegistrationInputSchema, output: inpatientCommandResponseSchema, mode: 'command',
     requirements: { expectedVersions: true, idempotency: 'required' },
-    risk: 'write', roles: ['registrar'], summary: '登记独立住院并按整数分收取预交金；重试沿用同一幂等键', version: 1,
+    risk: 'write', roles: ['registrar'], summary: '登记独立住院并按整数分收取预交金；重试沿用同一幂等键', version: 2,
   },
   {
     cliPath: ['inpatient', 'receive'], id: 'inpatient.admission.receive',

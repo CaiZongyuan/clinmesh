@@ -21,7 +21,7 @@ export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceP
     return <InpatientWorkspace session={session} locale={locale} />
   }
   if (session.actor.roleCode === 'administrator' && activeSection === 'scenarioData') {
-    return <ScenarioDataWorkspace locale={locale} />
+    return <ScenarioDataWorkspace locale={locale} session={session} />
   }
   if (
     session.actor.roleCode === 'registrar'

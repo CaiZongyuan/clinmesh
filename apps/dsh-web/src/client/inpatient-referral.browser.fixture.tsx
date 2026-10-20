@@ -4,6 +4,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { InpatientReferral } from '../../../web/src/app/inpatient-referral.tsx'
 
+const session = { actor: { actorId: 'synthetic-actor', epoch: 'epoch-1', workspaceId: 'workspace-demo', scenarioRunId: 'scenario-run-1',
+  roleCode: 'outpatient-doctor' as const, practitionerRoleId: 'practitioner-role-outpatient-doctor' },
+  user: { id: 'synthetic-user', name: '合成门诊医生', email: 'doctor@demo.clinmesh.local' }, availableRoles: [] }
+
 const host = document.createElement('div')
 document.body.append(host)
 const shadow = host.attachShadow({ mode: 'open' })
@@ -13,6 +17,6 @@ root.className = 'clinmesh-web-root'
 shadow.append(root)
 createRoot(root).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
   <PortalContainerProvider container={root}>
-    <InpatientReferral encounterId="synthetic-encounter" encounterVersion="3" locale="zh-CN" />
+    <InpatientReferral encounterId="synthetic-encounter" encounterVersion="3" locale="zh-CN" session={session} />
   </PortalContainerProvider>
 </QueryClientProvider>)

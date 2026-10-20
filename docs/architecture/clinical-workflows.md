@@ -141,7 +141,7 @@ Report Acknowledgement 是按报告版本独立保存的领域事实，只能由
 
 当前已实现建档与入科：负责门诊医生开住院证，登记员通过直接入院、门诊转收或转院途径办理登记并收取预交金，病区护士接诊分床、同病区转床和互换床位。长期医嘱、转科、手术、出院、结算与病案归档按[住院规格](../spec/2026-10-20-inpatient-closed-loop.md)继续交付。
 
-住院由独立 `InpatientService` 通过共享 CommandExecutor 执行，不借用 `outpatient_case`、门诊 Registration 或门诊支付外键。每次登记创建独立住院号、`Encounter.class=IMP` 和 Account；`registered` 对应标准 `planned`，接诊后为 `admitted` / `in-progress`。行政、财务及病案状态分别保存，不把它们合并为 Encounter.status。住院证以 ServiceRequest 记录，转收后完成，不能重复使用；零预交金不创建资金交易，正数以安全整数分形成独立交易。重试由 Command receipt 去重。
+住院由独立 `InpatientService` 通过共享 CommandExecutor 执行，不借用 `outpatient_case`、门诊 Registration 或门诊支付外键。登记输入固定当次受信 context 的 `expectedEpoch`，仅作为事务前置断言，不能选择活动 Epoch。每次登记创建独立住院号、`Encounter.class=IMP` 和 Account；`registered` 对应标准 `planned`，接诊后为 `admitted` / `in-progress`。行政、财务及病案状态分别保存，不把它们合并为 Encounter.status。住院证以 ServiceRequest 记录，转收后完成，不能重复使用；零预交金不创建资金交易，正数以安全整数分形成独立交易。重试由 Command receipt 去重。
 
 Scenario 提供内科和外科两个独立 Organization、病区、病房与各三张床位。住院医生与病区护士有分别绑定两科的 Practitioner Role，服务端按受信 Organization 和病区 Location 限定读写；管理员岗位只控制场景。床位占用保存起止时间，活动床位与活动住院各有唯一约束。接诊、转床与互换床位同时更新占用事实及 Encounter.location 历史；任一侧版本、投影或审计失败则整体回滚。跨科转移属于独立转科流程。
 

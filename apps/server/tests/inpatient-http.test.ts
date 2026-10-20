@@ -52,7 +52,7 @@ describe('住院建档与入科 HTTP 合同', () => {
   it('登记员直接入院形成独立住院号，预交金重试只收取一次，管理员不能代办', async () => {
     const { request, login, registrar, patient } = await setup()
     const input = { input: { patientId: patient.id, patientVersion: patient.versionId,
-      admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100_000 } }
+      expectedEpoch: 'epoch-1', admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100_000 } }
     const key = randomUUID()
     const first = await request(registrar, '/api/his/v1/inpatient/admissions', input, key)
     expect(first.status).toBe(200)
@@ -80,7 +80,7 @@ describe('住院建档与入科 HTTP 合同', () => {
     const nurse = await login('ward-nurse')
     async function register() {
       const response = await request(registrar, '/api/his/v1/inpatient/admissions', { input: {
-        patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct',
+        patientId: patient.id, patientVersion: patient.versionId, expectedEpoch: 'epoch-1', admissionRoute: 'direct',
         wardId: 'ward-general', depositFen: 0 } })
       return inpatientCommandResponseSchema.parse(await response.json()).data.admission
     }
@@ -128,7 +128,7 @@ describe('住院建档与入科 HTTP 合同', () => {
     const nurse = await login('ward-nurse')
     const admin = await login('admin')
     const registered = await request(registrar, '/api/his/v1/inpatient/admissions', { input: {
-      patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 } })
+      patientId: patient.id, patientVersion: patient.versionId, expectedEpoch: 'epoch-1', admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 } })
     const a = inpatientCommandResponseSchema.parse(await registered.json()).data.admission
     expect((await request(nurse, `/api/his/v1/inpatient/admissions/${a.id}/receive`, {
       input: { encounterVersion: a.versionId, bedId: 'bed-general-1' } })).status).toBe(200)
@@ -175,7 +175,7 @@ describe('住院建档与入科 HTTP 合同', () => {
       encounterVersion: visit.encounterVersion, wardId: 'ward-general', reason: '持续发热需住院观察' } })
     expect(referred.status).toBe(200)
     const referral = (await referred.json()).data.referral
-    const input = { input: { patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'outpatient',
+    const input = { input: { patientId: patient.id, patientVersion: patient.versionId, expectedEpoch: 'epoch-1', admissionRoute: 'outpatient',
       wardId: 'ward-general', referralId: referral.id, depositFen: 200_000 } }
     expect((await request(registrar, '/api/his/v1/inpatient/admissions', input)).status).toBe(200)
     expect((await request(registrar, '/api/his/v1/inpatient/admissions', input)).status).toBe(409)
@@ -191,7 +191,7 @@ describe('住院建档与入科 HTTP 合同', () => {
       database.driver.prepare('UPDATE scenario_epoch_state SET virtual_time=?').run('2026-08-24T23:30:00+08:00')
     } finally { database.close() }
     const admission = inpatientCommandResponseSchema.parse(await (await request(registrar, '/api/his/v1/inpatient/admissions', { input: {
-      patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 } })).json()).data.admission
+      patientId: patient.id, patientVersion: patient.versionId, expectedEpoch: 'epoch-1', admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 } })).json()).data.admission
     expect((await request(nurse, `/api/his/v1/inpatient/admissions/${admission.id}/receive`, {
       input: { encounterVersion: admission.versionId, bedId: 'bed-general-1' } })).status).toBe(200)
     const advanced = await request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', { input: {
@@ -205,7 +205,7 @@ describe('住院建档与入科 HTTP 合同', () => {
     const nurse = await login('ward-nurse')
     const admin = await login('admin')
     const admission = inpatientCommandResponseSchema.parse(await (await request(registrar, '/api/his/v1/inpatient/admissions', { input: {
-      patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100 } })).json()).data.admission
+      patientId: patient.id, patientVersion: patient.versionId, expectedEpoch: 'epoch-1', admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100 } })).json()).data.admission
     expect((await request(nurse, '/api/auth/role', { practitionerRoleId: 'practitioner-role-ward-nurse-surgery' })).status).toBe(200)
     expect((await request(nurse, `/api/his/v1/inpatient/admissions/${admission.id}`)).status).toBe(403)
     expect(inpatientListSchema.parse(await (await request(nurse, '/api/his/v1/inpatient/admissions')).json()).items).toEqual([])
@@ -221,7 +221,7 @@ describe('住院建档与入科 HTTP 合同', () => {
     expect((await agentList()).status).toBe(200)
     expect((await runtime.app.request('/api/his/v1/inpatient/admissions', { method: 'POST',
       headers: { authorization: `Bearer ${grant.token}`, 'content-type': 'application/json', 'idempotency-key': randomUUID() },
-      body: JSON.stringify({ input: { patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 } }),
+      body: JSON.stringify({ input: { patientId: patient.id, patientVersion: patient.versionId, expectedEpoch: 'epoch-1', admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 } }),
     })).status).toBe(403)
     expect((await request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', {})).status).toBe(200)
     expect((await agentList()).status).toBe(401)
@@ -259,5 +259,30 @@ describe('住院建档与入科 HTTP 合同', () => {
     }
     const catalog = await reopened.app.request('/api/his/v1/inpatient/catalog', { headers: { cookie: registrar } })
     expect((await catalog.json()).wards).toHaveLength(2)
+  })
+
+  it('人类Cookie延迟提交旧Epoch登记即使Patient标识和版本重用也不能在新Epoch收款', async () => {
+    const { request, runtime, login, registrar } = await setup()
+    const admin = await login('admin')
+    const install = async () => {
+      const response = await request(admin, '/api/sim/v1/scenarios/actions/install', { kind: 'density' })
+      expect(response.status).toBe(200)
+      return (await response.json()).data
+    }
+    const before = await install()
+    const patient = await (await request(registrar, '/fhir/R5/Patient/density-patient-001')).json()
+    const frozen = { input: { expectedEpoch: before.epoch, patientId: patient.id, patientVersion: patient.meta.versionId,
+      admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000 } }
+    const key = randomUUID()
+    const after = await install()
+    const repeated = await (await request(registrar, '/fhir/R5/Patient/density-patient-001')).json()
+    expect(repeated.meta.versionId).toBe(patient.meta.versionId)
+    expect(after.epoch).not.toBe(before.epoch)
+    const response = await request(registrar, '/api/his/v1/inpatient/admissions', frozen, key)
+    expect(response.status).toBe(409)
+    expect((await response.json()).error.code).toBe('INPATIENT_EPOCH_CONFLICT')
+    expect(inpatientListSchema.parse(await (await request(registrar, '/api/his/v1/inpatient/admissions')).json()).items).toEqual([])
+    expect(runtime.database.driver.prepare('SELECT COUNT(*) count FROM inpatient_deposit WHERE workspace_id=? AND epoch=?')
+      .get('workspace-demo', after.epoch)).toEqual({ count: 0 })
   })
 })

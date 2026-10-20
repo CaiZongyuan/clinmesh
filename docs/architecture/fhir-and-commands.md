@@ -423,6 +423,8 @@ Web mutation、outbox dispatcher 和模拟器处理都可能重试。CommandExec
 
 Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIATE` 事务，成功时在提交前变为 `completed`。相同 key 和相同 hash 读取并返回第一次完整响应；相同 key 和不同 hash 返回稳定冲突。事务失败时业务事实、FHIR、receipt、审计、Action Trace 和 outbox 一起回滚，失败尝试另写不包含请求正文的审计记录。
 
+住院登记额外要求原意图的 `expectedEpoch`：它是 Command 事务中对受信 Epoch 的乐观前置断言，不参与 Workspace/Epoch 选择或授权。Scenario 重放可能复用 Patient logical id 与版本，单独的 Patient expected version 不能阻止旧人类 Cookie 请求在新 Epoch 登记收款；不匹配返回 `INPATIENT_EPOCH_CONFLICT` 且不创建住院和资金事实。登记 Catalog version 2 与运行时 Skill 同步声明该字段。
+
 外部模拟工作不复用 Command receipt 状态机。持久 outbox 独立使用 `queued`、`claimed`、`completed`、`failed`、`ambiguous` 和 `abandoned`；claim 带 owner、lease version、过期时间、attempt 和 correlation ID。可重试失败在达到最大尝试前按 `next_attempt_at` 重新领取，结果未知保持 `ambiguous`，Epoch 关闭变为 `abandoned`。结果未知不得当作普通失败盲目重做。
 
 ### 6.6 预览与提交

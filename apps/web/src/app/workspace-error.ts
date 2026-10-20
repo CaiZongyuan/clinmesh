@@ -113,6 +113,26 @@ export function getWorkspaceErrorMessage(
   if (error.status === 403 || ['CSRF_FAILED', 'ROLE_NOT_ALLOWED'].includes(error.code)) {
     return messages.permissionDeniedDescription
   }
+  const inpatientMessages: Record<string, string> = {
+    INPATIENT_BED_OCCUPIED: messages.inpatientBedOccupiedDescription,
+    INPATIENT_BED_INVALID: messages.inpatientBedInvalidDescription,
+    INPATIENT_WARD_NOT_FOUND: messages.inpatientWardUnavailableDescription,
+    INPATIENT_NOT_FOUND: messages.inpatientNotFoundDescription,
+    INPATIENT_STATE_CONFLICT: messages.inpatientStateConflictDescription,
+    INPATIENT_SWAP_INVALID: messages.inpatientStateConflictDescription,
+    INPATIENT_REFERRAL_INVALID: messages.inpatientReferralInvalidDescription,
+    INPATIENT_SOURCE_INVALID: messages.inpatientSourceInvalidDescription,
+    INPATIENT_SOURCE_AMBIGUOUS: messages.inpatientSourceInvalidDescription,
+    INPATIENT_INTENT_PENDING: messages.inpatientIntentPendingDescription,
+    INPATIENT_INTENT_CONTEXT_CHANGED: messages.inpatientContextChangedDescription,
+    INPATIENT_EPOCH_CONFLICT: messages.inpatientContextChangedDescription,
+    SCENARIO_RUN_MISMATCH: messages.inpatientContextChangedDescription,
+    INPATIENT_INTENT_STORAGE_UNAVAILABLE: messages.inpatientIntentStorageDescription,
+    VIRTUAL_TIME_CONFLICT: messages.virtualTimeConflictDescription,
+    VIRTUAL_TIME_ADVANCE_LIMIT: messages.virtualTimeLimitDescription,
+  }
+  const inpatientMessage = inpatientMessages[error.code]
+  if (inpatientMessage !== undefined) return inpatientMessage
   if (error.code === 'SCENARIO_GENERATION_RUNNING') return messages.scenarioGenerationRunningDescription
   if (error.code === 'INVALID_INPUT') return messages.invalidInputDescription
   if (error.code === 'NETWORK_ERROR') return messages.networkErrorDescription

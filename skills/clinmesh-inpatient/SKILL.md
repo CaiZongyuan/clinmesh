@@ -14,7 +14,20 @@ clinmesh inpatient read --admission-id <admission-id>
 clinmesh operations schema inpatient.admission.register
 ```
 
-登记员先搜索合成患者，直接入院或转院时填写 `patientId`、`patientVersion`、`admissionRoute`、`wardId`、整数分 `depositFen`。门诊转收使用负责门诊医生已开出的住院证，`admissionRoute=outpatient` 并传 `referralId`；住院证不可重复转收。每次住院分配独立住院号。零预交金不形成资金交易；正数预交金随登记原子入账。同一意图重试沿用同一幂等键。
+登记员先搜索合成患者，直接入院或转院时填写原受信 context 的 `expectedEpoch`、`patientId`、`patientVersion`、`admissionRoute`、`wardId`、整数分 `depositFen`。门诊转收使用负责门诊医生已开出的住院证，`admissionRoute=outpatient` 并传 `referralId`；住院证不可重复转收。每次住院分配独立住院号。零预交金不形成资金交易；正数预交金随登记原子入账。同一意图重试保留完整原输入（包括 `expectedEpoch`、患者和原预期版本）与同一幂等键，先查询原 Command receipt。`expectedEpoch` 仅为事务前置断言，不能选择 Workspace 或 Epoch；场景已变化时原意图返回 `INPATIENT_EPOCH_CONFLICT`，核对原住院与费用事实后才能开始新意图。
+
+`admission.json` 的直接入院示例；首次提交前用受信 context、患者及病区读取结果替换示例值，恢复原意图时保持原文件不变：
+
+```json
+{
+  "expectedEpoch": "epoch-1",
+  "patientId": "synthetic-patient",
+  "patientVersion": "1",
+  "admissionRoute": "direct",
+  "wardId": "ward-general",
+  "depositFen": 100000
+}
+```
 
 ```bash
 clinmesh inpatient referrals

@@ -19,6 +19,7 @@ export const inpatientListSchema = z.object({ items: z.array(inpatientAdmissionS
 export const inpatientDetailSchema = z.object({ admission: inpatientAdmissionSchema }).strict()
 export const inpatientCommandResponseSchema = commandResponseSchema(inpatientDetailSchema)
 export const inpatientRegistrationInputSchema = z.object({
+  expectedEpoch: z.string().min(1).max(128),
   patientId: id, patientVersion: version, admissionRoute: inpatientAdmissionRouteSchema,
   wardId: id, depositFen: fen, referralId: id.optional(), sourceEncounterId: id.optional(),
 }).strict().refine(input => input.admissionRoute === 'outpatient' ? input.referralId !== undefined : input.referralId === undefined,

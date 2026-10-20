@@ -137,7 +137,10 @@ export class InpatientService {
     const input = inpatientRegistrationInputSchema.parse(raw)
     return this.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.admission.register',
       expectedVersions: { [`Patient/${input.patientId}`]: input.patientVersion },
-      dataSchema: inpatientCommandResponseSchema.shape.data, authorize: () => this.assertRole(context, ['registrar']) }, () => {
+      dataSchema: inpatientCommandResponseSchema.shape.data, authorize: () => {
+        this.assertRole(context, ['registrar'])
+        if (input.expectedEpoch !== context.epoch) throw new InpatientError('INPATIENT_EPOCH_CONFLICT', '登记意图所属数据世代已变化，请核对当前住院与费用记录')
+      } }, () => {
       const ward = z.object({ organization_id: z.string() }).optional().parse(this.database.driver.prepare(
         'SELECT organization_id FROM inpatient_ward WHERE workspace_id=? AND epoch=? AND ward_id=?')
         .get(context.workspaceId, context.epoch, input.wardId))
