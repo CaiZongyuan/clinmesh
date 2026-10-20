@@ -11,7 +11,7 @@
 
 ## 0. 执行摘要
 
-本系统不是生产医院信息平台，也不是完整 FHIR Server 产品。它用可重复、可审计的合成医院场景，让人类岗位通过 standalone Web 或 DSH React Surface、交互式 Agent 通过 DSH 页面 Tools、任务 Agent 通过 CLI 完成同一业务交接。当前发布证明多岗位普通门诊发热闭环、DSH Surface adapter、Agent CLI 和支撑这些能力的基础设施；Agent adapter 只开放已经实现的业务能力。
+本系统不是生产医院信息平台，也不是完整 FHIR Server 产品。它用可重复、可审计的合成医院场景，让人类岗位通过 standalone Web 或 DSH React Surface、交互式 Agent 通过 DSH 页面 Tools、任务 Agent 通过 CLI 完成同一业务交接。当前发布证明多岗位普通门诊发热闭环、住院建档与入科、DSH Surface adapter、Agent CLI 和支撑这些能力的基础设施；Agent adapter 只开放已经实现的业务能力。
 
 首期是一个运行于 Node.js 的 TypeScript 模块化单体：
 
@@ -331,7 +331,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 
 以下边界已经确认，需求变化必须重新经过 design gate 并更新 canonical spec：
 
-1. 产品界面是 Web-only 的普通门诊发热闭环，同时提供 Agent CLI；不开发 Desktop 或 React Native Mobile 产品行为。
+1. 产品界面交付 Web 普通门诊发热闭环与住院建档入科，同时提供 Agent CLI；不开发 Desktop 或 React Native Mobile 产品行为。
 2. 人类岗位为挂号员、分诊护士、门诊医生、收费员和药师；LIS 是系统 Actor，只有管理员能 reset Scenario。
 3. 一个 Encounter 贯穿挂号、分诊、首诊、检验和复诊；独立结构化病历签署不改变 Encounter，带 Consultation 的病例通过正式临床事实门禁完诊，首期复诊兼容流只在没有结构化签署根文书时组合签署与完诊；发药完成 Scenario Run。
 4. 首期使用单 Node.js 进程和 file-backed SQLite；D1、PostgreSQL 与 Supabase 只保留未来 adapter 迁移方向。

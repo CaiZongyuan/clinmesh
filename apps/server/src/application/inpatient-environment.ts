@@ -1,7 +1,25 @@
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite/fhir-repository.ts'
+import { syntheticAccounts } from './identity-service.ts'
 
 export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirRepository, context: RepositoryContext) {
+  const exists = (type: string, id: string) => database.driver.prepare(`
+    SELECT 1 FROM fhir_resource WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=? AND deleted=0`)
+    .get(context.workspaceId, context.epoch, type, id) !== undefined
+  for (const account of syntheticAccounts.filter(account => ['inpatient-doctor', 'ward-nurse', 'medical-records'].includes(account.roleCode))) {
+    if (!exists('Practitioner', account.practitionerId)) fhir.create(context, {
+      resourceType: 'Practitioner', id: account.practitionerId, active: true, name: [{ text: account.name }],
+    })
+    if (account.roleCode === 'medical-records' && !exists('Location', `location-${account.roleCode}`)) fhir.create(context, {
+      resourceType: 'Location', id: `location-${account.roleCode}`, status: 'active', name: `${account.name}工作区`,
+      managingOrganization: { reference: 'Organization/organization-clinmesh' },
+    })
+    if (account.roleCode === 'medical-records' && !exists('PractitionerRole', 'practitioner-role-medical-records')) fhir.create(context, {
+      resourceType: 'PractitionerRole', id: 'practitioner-role-medical-records', active: true,
+      practitioner: { reference: `Practitioner/${account.practitionerId}` }, organization: { reference: 'Organization/organization-clinmesh' },
+      code: [{ text: 'medical-records' }], location: [{ reference: 'Location/location-medical-records' }],
+    })
+  }
   for (const [suffix, name, department] of [['general', '内科病区', 'medicine'], ['surgery', '外科病区', 'surgery']] as const) {
     const wardId = `ward-${suffix}`
     if (database.driver.prepare('SELECT 1 FROM inpatient_ward WHERE workspace_id=? AND epoch=? AND ward_id=?')
@@ -32,10 +50,7 @@ export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirR
         practitioner: { reference: `Practitioner/practitioner-${roleCode}` },
         organization: { reference: `Organization/${organizationId}` }, code: [{ text: roleCode }],
         location: [{ reference: `Location/${wardId}` }] }
-      if (suffix === 'general') {
-        const existing = fhir.read(context, 'PractitionerRole', roleId)
-        fhir.update(context, resource, existing.meta!.versionId!)
-      } else fhir.create(context, resource)
+      fhir.create(context, resource)
     }
   }
 }

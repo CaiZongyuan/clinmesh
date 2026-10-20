@@ -5,6 +5,8 @@ import {
   inpatientListSchema, inpatientRegistrationInputSchema,
   inpatientBedInputSchema, inpatientSwapInputSchema, inpatientSwapResponseSchema,
   advanceVirtualTimeInputSchema, advanceVirtualTimeResponseSchema,
+  inpatientCatalogSchema, inpatientReferralSchema, inpatientReferralInputSchema,
+  inpatientReferralListSchema, inpatientReferralResponseSchema,
 } from '@clinmesh/contracts/inpatient'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
@@ -74,6 +76,63 @@ export class InpatientService {
       .all(context.workspaceId, context.epoch, ...(scoped ? [context.organizationId ?? '', context.locationId ?? ''] : [])))
     return inpatientListSchema.parse({ items: rows.map(row => this.detail(context, row.admission_id).admission) })
   }
+  catalog(context: ActorContext) {
+    this.assertRole(context, [...readers, 'outpatient-doctor'])
+    const scoped = clinicalRoles.includes(context.roleCode)
+    const wards = z.array(z.object({ ward_id: z.string(), organization_id: z.string(), name: z.string() })).parse(this.database.driver.prepare(`
+      SELECT ward_id, organization_id, name FROM inpatient_ward WHERE workspace_id=? AND epoch=?
+      ${scoped ? 'AND organization_id=? AND ward_id=?' : ''} ORDER BY ward_id`)
+      .all(context.workspaceId, context.epoch, ...(scoped ? [context.organizationId ?? '', context.locationId ?? ''] : [])))
+    const beds = wards.flatMap(ward => z.array(z.object({ bed_id: z.string(), room_id: z.string(), name: z.string(),
+      daily_price_fen: z.number(), admission_id: z.string().nullable() })).parse(this.database.driver.prepare(`
+      SELECT b.bed_id, b.room_id, b.name, b.daily_price_fen, o.admission_id FROM inpatient_bed b
+      LEFT JOIN inpatient_bed_occupancy o ON o.workspace_id=b.workspace_id AND o.epoch=b.epoch AND o.bed_id=b.bed_id AND o.ended_at IS NULL
+      WHERE b.workspace_id=? AND b.epoch=? AND b.ward_id=? ORDER BY b.bed_id`).all(context.workspaceId, context.epoch, ward.ward_id))
+      .map(bed => ({ id: bed.bed_id, wardId: ward.ward_id, roomId: bed.room_id, name: bed.name, dailyPriceFen: bed.daily_price_fen,
+        ...(bed.admission_id === null ? {} : { admissionId: bed.admission_id }) })))
+    return inpatientCatalogSchema.parse({ wards: wards.map(ward => ({ id: ward.ward_id, name: ward.name, organizationId: ward.organization_id })), beds })
+  }
+  referrals(context: ActorContext) {
+    this.assertRole(context, ['registrar', 'outpatient-doctor'])
+    const rows = z.array(z.object({ referral_id: z.string(), patient_id: z.string(), encounter_id: z.string(), ward_id: z.string(),
+      reason: z.string(), status: inpatientReferralSchema.shape.status, issued_at: z.string() })).parse(this.database.driver.prepare(`
+      SELECT r.* FROM inpatient_referral r WHERE r.workspace_id=? AND r.epoch=?
+      ${context.roleCode === 'outpatient-doctor' ? `AND EXISTS (SELECT 1 FROM outpatient_case c JOIN outpatient_case_responsibility p
+        ON p.workspace_id=c.workspace_id AND p.epoch=c.epoch AND p.case_id=c.case_id
+        WHERE c.workspace_id=r.workspace_id AND c.epoch=r.epoch AND c.encounter_id=r.encounter_id AND p.practitioner_role_id=?)` : ''}
+      ORDER BY r.issued_at, r.referral_id`).all(context.workspaceId, context.epoch,
+      ...(context.roleCode === 'outpatient-doctor' ? [context.practitionerRoleId ?? ''] : [])))
+    return inpatientReferralListSchema.parse({ items: rows.map(row => {
+      const patient = this.fhir.read(context, 'Patient', row.patient_id)
+      const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
+      return { id: row.referral_id, patientId: row.patient_id, patientName: names?.[0]?.text ?? row.patient_id,
+        patientVersion: patient.meta!.versionId!, encounterId: row.encounter_id, wardId: row.ward_id,
+        reason: row.reason, status: row.status, issuedAt: row.issued_at }
+    }) })
+  }
+  issueReferral(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientReferralInputSchema.parse(raw)
+    return this.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.referral.issue',
+      expectedVersions: { [`Encounter/${input.encounterId}`]: input.encounterVersion },
+      dataSchema: inpatientReferralResponseSchema.shape.data, authorize: () => this.assertRole(context, ['outpatient-doctor']) }, () => {
+      const row = z.object({ patient_id: z.string() }).optional().parse(this.database.driver.prepare(`
+        SELECT c.patient_id FROM outpatient_case c JOIN outpatient_case_responsibility p
+          ON p.workspace_id=c.workspace_id AND p.epoch=c.epoch AND p.case_id=c.case_id
+        WHERE c.workspace_id=? AND c.epoch=? AND c.encounter_id=? AND p.practitioner_role_id=?`)
+        .get(context.workspaceId, context.epoch, input.encounterId, context.practitionerRoleId ?? ''))
+      if (row === undefined) throw new InpatientError('INPATIENT_REFERRAL_FORBIDDEN', '仅负责门诊医生可开具住院证', 403)
+      if (!this.catalog(context).wards.some(ward => ward.id === input.wardId)) throw new InpatientError('INPATIENT_WARD_NOT_FOUND', '住院病区不存在', 404)
+      const id = uuidv7()
+      this.database.driver.prepare(`INSERT INTO inpatient_referral VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?)`)
+        .run(context.workspaceId, context.epoch, id, row.patient_id, input.encounterId, input.wardId, input.reason, this.virtualTime(context))
+      const resource = this.fhir.create(context, { resourceType: 'ServiceRequest', id, status: 'active', intent: 'order',
+        code: { concept: { text: '住院证' } }, subject: { reference: `Patient/${row.patient_id}` },
+        encounter: { reference: `Encounter/${input.encounterId}` }, requester: { reference: `PractitionerRole/${context.practitionerRoleId}` },
+        authoredOn: this.virtualTime(context), note: [{ text: input.reason }] })
+      return { data: { referral: this.referrals(context).items.find(referral => referral.id === id)! },
+        effects: [{ kind: 'created' as const, reference: `ServiceRequest/${id}`, versionId: resource.meta!.versionId! }] }
+    })
+  }
   register(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientRegistrationInputSchema.parse(raw)
     return this.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.admission.register',
@@ -114,7 +173,7 @@ export class InpatientService {
         subject: { reference: `Patient/${input.patientId}` }, serviceProvider: { reference: `Organization/${ward.organization_id}` } })
       const account = this.fhir.create(context, { resourceType: 'Account', id, status: 'active',
         subject: [{ reference: `Patient/${input.patientId}` }], name: `住院费用账户 ${id}` })
-      const effects = [encounter, account].map(resource => ({ kind: 'created' as const,
+      const effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = [encounter, account].map(resource => ({ kind: 'created' as const,
         reference: `${resource.resourceType}/${resource.id}`, versionId: resource.meta!.versionId! }))
       if (input.depositFen > 0) {
         const transactionId = uuidv7()
@@ -122,9 +181,13 @@ export class InpatientService {
           .run(context.workspaceId, context.epoch, transactionId, id, input.depositFen, time)
         effects.push({ kind: 'created', reference: `InpatientDeposit/${transactionId}`, versionId: '1' })
       }
-      if (input.referralId !== undefined) this.database.driver.prepare(`
-        UPDATE inpatient_referral SET status='received' WHERE workspace_id=? AND epoch=? AND referral_id=?`)
-        .run(context.workspaceId, context.epoch, input.referralId)
+      if (input.referralId !== undefined) {
+        this.database.driver.prepare(`UPDATE inpatient_referral SET status='received' WHERE workspace_id=? AND epoch=? AND referral_id=?`)
+          .run(context.workspaceId, context.epoch, input.referralId)
+        const referral = this.fhir.read(context, 'ServiceRequest', input.referralId)
+        const updated = this.fhir.update(context, { ...referral, status: 'completed' }, referral.meta!.versionId!)
+        effects.push({ kind: 'updated', reference: `ServiceRequest/${input.referralId}`, versionId: updated.meta!.versionId! })
+      }
       return { data: this.detail(context, id), effects }
     })
   }
@@ -181,6 +244,9 @@ export class InpatientService {
       if (Date.parse(input.expectedVirtualTime) !== Date.parse(current) || targetMs < Date.parse(current)) {
         throw new InpatientError('VIRTUAL_TIME_CONFLICT', '虚拟时间已变化或目标时间早于当前时间')
       }
+      if (targetMs - Date.parse(current) > 366 * 86_400_000) {
+        throw new InpatientError('VIRTUAL_TIME_ADVANCE_LIMIT', '单次虚拟时间最多推进366天，请分段推进', 400)
+      }
       let count = 0
       const effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = []
       // Shanghai has no daylight-saving transitions; business days turn at UTC 16:00.
@@ -196,7 +262,7 @@ export class InpatientService {
           FROM inpatient_bed_occupancy o JOIN inpatient_admission a
             ON a.workspace_id=o.workspace_id AND a.epoch=o.epoch AND a.admission_id=o.admission_id
           JOIN inpatient_bed b ON b.workspace_id=o.workspace_id AND b.epoch=o.epoch AND b.bed_id=o.bed_id
-          WHERE o.workspace_id=? AND o.epoch=? AND o.started_at<? AND o.ended_at IS NULL AND a.status='admitted'`)
+          WHERE o.workspace_id=? AND o.epoch=? AND julianday(o.started_at)<julianday(?) AND o.ended_at IS NULL AND a.status='admitted'`)
           .all(context.workspaceId, context.epoch, time))
         for (const bed of beds) {
           const id = uuidv7()
@@ -214,10 +280,12 @@ export class InpatientService {
           count += 1
         }
       }
-      this.database.driver.prepare('UPDATE scenario_epoch_state SET virtual_time=? WHERE workspace_id=? AND epoch=?')
-        .run(new Date(targetMs).toISOString(), context.workspaceId, context.epoch)
-      effects.push({ kind: 'updated', reference: `ScenarioClock/${context.scenarioRunId}`, versionId: String(targetMs) })
-      return { data: { virtualTime: new Date(targetMs).toISOString(), bedChargesCreated: count }, effects }
+      const clock = z.object({ clock_revision: z.number().int().positive() }).parse(
+        this.database.driver.prepare(`UPDATE scenario_epoch_state
+          SET virtual_time=?, clock_revision=clock_revision+? WHERE workspace_id=? AND epoch=? RETURNING clock_revision`)
+          .get(new Date(targetMs).toISOString(), targetMs === Date.parse(current) ? 0 : 1, context.workspaceId, context.epoch))
+      if (targetMs !== Date.parse(current)) effects.push({ kind: 'updated', reference: `ScenarioClock/${context.scenarioRunId}`, versionId: String(clock.clock_revision) })
+      return { data: { virtualTime: new Date(targetMs).toISOString(), clockRevision: clock.clock_revision, bedChargesCreated: count }, effects }
     })
   }
   #assertBed(context: ActorContext, bedId: string, wardId: string) {

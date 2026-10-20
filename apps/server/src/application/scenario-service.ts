@@ -324,15 +324,15 @@ export class ScenarioService {
     workspaceId: string
   }): void {
     this.#installDefinitions()
-    const existing = this.#database.driver.prepare(`
-      SELECT 1 AS present
-      FROM scenario_epoch_state
-      WHERE workspace_id = ? AND epoch = ?
-    `).get(input.workspaceId, input.epoch)
+    const existing = z.object({ epoch: z.string() }).optional().parse(this.#database.driver.prepare(`
+      SELECT state.epoch FROM scenario_epoch_state state JOIN workspace w
+        ON w.workspace_id=state.workspace_id AND w.active_epoch=state.epoch
+      WHERE state.workspace_id = ?
+    `).get(input.workspaceId))
     if (existing !== undefined) {
       this.#database.driver.exec('BEGIN IMMEDIATE')
       try {
-        seedInpatientEnvironment(this.#database, this.#fhir, input)
+        seedInpatientEnvironment(this.#database, this.#fhir, { workspaceId: input.workspaceId, epoch: existing.epoch })
         this.#database.driver.exec('COMMIT')
       } catch (error) {
         this.#database.driver.exec('ROLLBACK')
@@ -830,7 +830,7 @@ export class ScenarioService {
     const locations: Array<readonly [string, string, string]> = [
       ['location-outpatient', '门诊诊疗区', 'Outpatient clinic'] as const,
       ['location-laboratory', '合成检验科', 'Synthetic laboratory'] as const,
-      ...syntheticAccounts.map(account => [
+      ...syntheticAccounts.filter(account => !['inpatient-doctor', 'ward-nurse'].includes(account.roleCode)).map(account => [
         `location-${account.roleCode}`,
         `${account.name}工作区`,
         `${account.roleCode} workspace`,
@@ -867,6 +867,7 @@ export class ScenarioService {
         }],
         name: [{ text: account.name }],
       })
+      if (['inpatient-doctor', 'ward-nurse'].includes(account.roleCode)) continue
       this.#fhir.create(context, {
         resourceType: 'PractitionerRole',
         id: `practitioner-role-${account.roleCode}`,

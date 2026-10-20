@@ -23,7 +23,7 @@ export const inpatientRegistrationInputSchema = z.object({
   wardId: id, depositFen: fen, referralId: id.optional(), sourceEncounterId: id.optional(),
 }).strict().refine(input => input.admissionRoute === 'outpatient' ? input.referralId !== undefined : input.referralId === undefined,
   '门诊转收必须引用住院证，其他入院途径不得引用住院证')
-export const inpatientReferralSchema = z.object({ id, patientId: id, encounterId: id,
+export const inpatientReferralSchema = z.object({ id, patientId: id, patientName: z.string(), patientVersion: version, encounterId: id,
   wardId: id, reason: z.string().min(1), status: z.enum(['issued', 'received']),
   issuedAt: z.iso.datetime({ offset: true }),
 }).strict()
@@ -46,5 +46,5 @@ export const advanceVirtualTimeInputSchema = z.object({
   expectedVirtualTime: z.iso.datetime({ offset: true }), targetVirtualTime: z.iso.datetime({ offset: true }),
 }).strict()
 export const advanceVirtualTimeResponseSchema = commandResponseSchema(z.object({
-  virtualTime: z.iso.datetime({ offset: true }), bedChargesCreated: z.number().int().nonnegative(),
+  virtualTime: z.iso.datetime({ offset: true }), clockRevision: z.number().int().positive(), bedChargesCreated: z.number().int().nonnegative(),
 }).strict())

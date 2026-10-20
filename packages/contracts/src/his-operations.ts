@@ -1,3 +1,8 @@
+import {
+  inpatientCatalogSchema, inpatientListSchema, inpatientDetailSchema, inpatientCommandResponseSchema,
+  inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, inpatientSwapResponseSchema,
+  inpatientReferralListSchema, inpatientReferralInputSchema, inpatientReferralResponseSchema,
+} from './inpatient.ts'
 import { z } from 'zod'
 import {
   capabilityStatementSchema,
@@ -130,6 +135,7 @@ export const hisOperationHandlerOwnerSchema = z.enum([
   'ReferenceDataService',
   'SyntheticCaseVisitService',
   'WorkflowService',
+  'InpatientService',
 ])
 export const hisOperationSkillSchema = z.enum([
   'clinmesh-administrator',
@@ -139,6 +145,7 @@ export const hisOperationSkillSchema = z.enum([
   'clinmesh-pharmacy',
   'clinmesh-registration',
   'clinmesh-shared',
+  'clinmesh-inpatient',
   'clinmesh-triage',
 ])
 
@@ -2421,6 +2428,69 @@ const operationDefinitions = [
     summary: 'Search one supported FHIR R5 resource type with declared parameters',
     version: 1,
   },
+  {
+    cliPath: ['inpatient', 'catalog'], id: 'inpatient.catalog',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/catalog' },
+    input: emptyInputSchema, output: inpatientCatalogSchema, mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'pharmacist', 'outpatient-doctor'], summary: '读取岗位可用病区与床位及当前占用', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'list'], id: 'inpatient.admission.list',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions' },
+    input: emptyInputSchema, output: inpatientListSchema, mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'pharmacist'], summary: '读取岗位负责的住院清单', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'read'], id: 'inpatient.admission.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId' },
+    input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDetailSchema, mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'pharmacist'], summary: '读取本次住院状态、床位与费用账户', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'register'], id: 'inpatient.admission.register',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions', encodeBody: raw => ({ input: inpatientRegistrationInputSchema.parse(raw) }) },
+    input: inpatientRegistrationInputSchema, output: inpatientCommandResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['registrar'], summary: '登记独立住院并按整数分收取预交金；重试沿用同一幂等键', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'receive'], id: 'inpatient.admission.receive',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/receive', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientBedInputSchema.parse(raw); return { input } } },
+    input: inpatientBedInputSchema, output: inpatientCommandResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['ward-nurse'], summary: '病区护士接诊并分配空床；版本或床位冲突时先刷新', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'move-bed'], id: 'inpatient.admission.move-bed',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/move-bed', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientBedInputSchema.parse(raw); return { input } } },
+    input: inpatientBedInputSchema, output: inpatientCommandResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['ward-nurse'], summary: '病区护士在同病区转至空床；保留原占用历史', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'swap-bed'], id: 'inpatient.admission.swap-bed',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/swap-bed', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSwapInputSchema.parse(raw); return { input } } },
+    input: inpatientSwapInputSchema, output: inpatientSwapResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['ward-nurse'], summary: '病区护士互换同病区两次住院的床位；同时校验两侧版本', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'referrals'], id: 'inpatient.referral.list',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/referrals' },
+    input: emptyInputSchema, output: inpatientReferralListSchema, mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read', roles: ['registrar', 'outpatient-doctor'], summary: '登记员或负责门诊医生读取住院证', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'refer'], id: 'inpatient.referral.issue',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/referrals', encodeBody: raw => ({ input: inpatientReferralInputSchema.parse(raw) }) },
+    input: inpatientReferralInputSchema, output: inpatientReferralResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' },
+    risk: 'write', roles: ['outpatient-doctor'], summary: '负责门诊医生开住院证；住院登记转收一次', version: 1,
+  },
 ] as const satisfies readonly HisOperationDeclaration[]
 
 const commandOperationAliases: Readonly<Record<string, string>> = {
@@ -2540,6 +2610,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
 function handlerOwnerFor(
   operation: HisOperationDeclaration,
 ): z.infer<typeof hisOperationHandlerOwnerSchema> {
+  if (operation.id.startsWith('inpatient.')) return 'InpatientService'
   if (operation.http.path === '/fhir/R5/metadata') return 'FhirCapabilities'
   if (operation.http.path.startsWith('/fhir/R5/')) return 'FhirRepository'
   if (operation.http.path.startsWith('/api/his/v1/reference-catalogs/')) {
@@ -2556,7 +2627,7 @@ export const hisOperationCatalog: readonly HisOperationDefinition[] = operationD
   const commandOperation = operation.requirements.idempotency === 'required'
     ? commandOperationAliases[operation.id] ?? operation.id
     : undefined
-  const skill = operationSkills[operation.id]
+  const skill = operation.id.startsWith('inpatient.') ? 'clinmesh-inpatient' : operationSkills[operation.id]
   if (skill === undefined) throw new Error(`HIS operation has no Agent Skill: ${operation.id}`)
   const metadata = {
     error: hisOperationErrorSchema,

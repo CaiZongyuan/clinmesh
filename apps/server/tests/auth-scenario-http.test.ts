@@ -317,6 +317,15 @@ describe('trusted session and Scenario HTTP contract', () => {
       practitionerId: 'practitioner-cashier',
       practitionerName: '合成收费员',
     }, {
+      code: 'inpatient-doctor', id: 'practitioner-role-inpatient-doctor', locationId: 'ward-general',
+      organizationId: 'organization-inpatient-medicine', practitionerId: 'practitioner-inpatient-doctor', practitionerName: '合成住院医生',
+    }, {
+      code: 'inpatient-doctor', id: 'practitioner-role-inpatient-doctor-surgery', locationId: 'ward-surgery',
+      organizationId: 'organization-inpatient-surgery', practitionerId: 'practitioner-inpatient-doctor', practitionerName: '合成住院医生',
+    }, {
+      code: 'medical-records', id: 'practitioner-role-medical-records', locationId: 'location-medical-records',
+      organizationId: 'organization-clinmesh', practitionerId: 'practitioner-medical-records', practitionerName: '合成病案人员',
+    }, {
       code: 'outpatient-doctor',
       id: 'practitioner-role-outpatient-doctor',
       locationId: 'location-outpatient-doctor',
@@ -344,6 +353,12 @@ describe('trusted session and Scenario HTTP contract', () => {
       organizationId: 'organization-clinmesh',
       practitionerId: 'practitioner-triage-nurse',
       practitionerName: '合成分诊护士',
+    }, {
+      code: 'ward-nurse', id: 'practitioner-role-ward-nurse', locationId: 'ward-general',
+      organizationId: 'organization-inpatient-medicine', practitionerId: 'practitioner-ward-nurse', practitionerName: '合成病区护士',
+    }, {
+      code: 'ward-nurse', id: 'practitioner-role-ward-nurse-surgery', locationId: 'ward-surgery',
+      organizationId: 'organization-inpatient-surgery', practitionerId: 'practitioner-ward-nurse', practitionerName: '合成病区护士',
     }] as const
 
     const initialContextResponse = await runtime.app.request('/api/auth/context', {
@@ -796,10 +811,10 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(invalidPatientPage.status).toBe(400)
 
     for (const [resourceType, total] of [
-      ['Organization', 1],
-      ['Location', 8],
-      ['Practitioner', 6],
-      ['PractitionerRole', 6],
+      ['Organization', 3],
+      ['Location', 19],
+      ['Practitioner', 9],
+      ['PractitionerRole', 11],
       ['Medication', 4],
     ] as const) {
       const response = await runtime.app.request(

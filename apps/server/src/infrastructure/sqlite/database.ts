@@ -227,6 +227,7 @@ export function applyMigrations(
   database: ClinMeshDatabase,
   migrationDirectory = defaultMigrationDirectory(),
 ): MigrationResult {
+  if (database.driver.inTransaction) throw new Error('Migrations require a connection without an active transaction')
   database.driver.exec(`
     CREATE TABLE IF NOT EXISTS schema_migration (
       migration_id TEXT PRIMARY KEY,
@@ -258,7 +259,7 @@ export function applyMigrations(
       continue
     }
 
-    const rebuildRoles = migrationFile === '0066_inpatient-admission.sql'
+    const rebuildRoles = migrationFile === '0069_inpatient-admission.sql'
     if (rebuildRoles) database.driver.pragma('foreign_keys = OFF')
     try {
       database.driver.exec('BEGIN IMMEDIATE')

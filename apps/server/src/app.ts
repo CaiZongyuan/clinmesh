@@ -1,5 +1,5 @@
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
-import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
@@ -1198,6 +1198,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const identity = options.identity
     const inpatient = options.inpatient
     const actor = (context: Context) => identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+    app.get('/api/his/v1/inpatient/catalog', async context => {
+      try { return context.json(inpatient.catalog(await actor(context))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/referrals', async context => {
+      try { return context.json(inpatient.referrals(await actor(context))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/referrals', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientReferralInputSchema }).strict().parse(await context.req.json())
+        return context.json(inpatient.issueReferral(await actor(context), body.input, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/inpatient/admissions', async context => {
       try { return context.json(inpatient.list(await actor(context))) }
       catch (error) { return apiErrorResponse(context, error) }
