@@ -63,7 +63,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
 
   async #request(payload: Record<string, unknown> & { operation: 'resolve' | 'complete' }, callerSignal?: AbortSignal,
     rateLimitRetry?: { available: boolean }, deadline = performance.now() + this.options.timeoutMs, onResponse?: () => void,
-    maxInputBytes = 256 * 1024, control?: JsonChatCompletionInput, requestKind: 'initial' | 'format-repair' = 'initial') {
+    maxInputBytes = 256 * 1024, control?: JsonChatCompletionInput, requestKind: NonNullable<JsonChatCompletionInput['usageKind']> = 'initial') {
     const timeoutMs = Math.ceil(deadline - performance.now())
     if (timeoutMs < 100) throw new ChatCompletionsError('AI_TIMEOUT', 'The DSH model request timed out')
     // Allow the host deadline to return its safe timeout code before the transport is cancelled.
@@ -112,7 +112,11 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
             if (terminal !== undefined) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge sent data after its terminal frame')
             const parsed = modelBridgeFrameSchema.parse(JSON.parse(line))
             if (attemptId === undefined || parsed.attemptId !== attemptId) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the attempt identity')
-            if (parsed.type === 'usage') { knownUsage = mergeModelTokenUsage(knownUsage, parsed.usage); observation.dispatch = 'dispatched' }
+            if (parsed.type === 'usage') {
+              knownUsage = mergeModelTokenUsage(knownUsage, parsed.usage)
+              observation.dispatch = 'dispatched'
+              invokeChatCompletionRequestControl(() => control?.usageRecorder?.checkpoint(parsed.attemptId, knownUsage))
+            }
             else terminal = parsed.type === 'result' ? { value: parsed.result, status: 200 }
               : { value: parsed.error, status: parsed.httpStatus }
           }

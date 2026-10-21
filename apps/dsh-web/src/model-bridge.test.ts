@@ -78,7 +78,7 @@ it.each(['none', 'gzip'] as const)('preserves usage before a cancelled stream th
   })
   const execution = provider.completeJson({ ...input, model: encodeModelRoute({ provider: 'synthetic-provider', model: 'synthetic-model' }), signal: cancel.signal,
     usageContext: { workspaceId: 'synthetic', epoch: 'synthetic', taskId: 'synthetic', stage: 'generation', trigger: 'manual', sources: [] },
-    usageRecorder: { begin(_input, reserve) { reserve?.(); return randomUUID() }, settle(_id, outcome) { outcomes.push(outcome) } },
+    usageRecorder: { begin(_input, reserve) { reserve?.(); return randomUUID() }, checkpoint() {}, settle(_id, outcome) { outcomes.push(outcome) } },
   })
   const result = expect(execution).rejects.toMatchObject({ code: 'AI_TIMEOUT' })
   try {

@@ -58,7 +58,7 @@ export function mergeModelTokenUsage(known: ModelTokenUsage, next: ModelTokenUsa
       reasoningCompletionTokens: next.raw.reasoningCompletionTokens ?? known.raw.reasoningCompletionTokens,
       totalTokens: next.raw.totalTokens ?? known.raw.totalTokens }
   }
-  return {
+  const merged: ModelTokenUsage = {
     inputTokens: next.inputTokens ?? known.inputTokens,
     outputTokens: next.outputTokens ?? known.outputTokens,
     cachedInputTokens: next.cachedInputTokens ?? known.cachedInputTokens,
@@ -67,6 +67,38 @@ export function mergeModelTokenUsage(known: ModelTokenUsage, next: ModelTokenUsa
     mapping: next.mapping === 'unknown' ? known.mapping : next.mapping,
     ...(raw === undefined ? {} : { raw }),
   }
+  if (raw?.format === 'dsh' && next.raw?.format === 'dsh') {
+    const knownDsh = known.raw?.format === 'dsh' ? known.raw : undefined
+    const nextDsh = next.raw?.format === 'dsh' ? next.raw : undefined
+    const cacheChanged = knownDsh !== undefined && nextDsh !== undefined
+      && (['cacheReadTokens', 'cacheWriteTokens'] as const)
+        .some(counter => nextDsh[counter] !== null && nextDsh[counter] !== knownDsh[counter])
+    const inputChanged = cacheChanged || knownDsh !== undefined && nextDsh !== undefined
+      && nextDsh.uncachedInputTokens !== null && nextDsh.uncachedInputTokens !== knownDsh.uncachedInputTokens
+    // Aggregate counters depend on the merged disjoint counters, not an older snapshot's totals.
+    if (raw.uncachedInputTokens !== null && raw.cacheReadTokens !== null && raw.cacheWriteTokens !== null) {
+      const cached = raw.cacheReadTokens + raw.cacheWriteTokens
+      if (cacheChanged || merged.cachedInputTokens === null) {
+        merged.cachedInputTokens = next.cachedInputTokens ?? (Number.isSafeInteger(cached) ? cached : null)
+      }
+      const input = merged.cachedInputTokens === null ? null : raw.uncachedInputTokens + merged.cachedInputTokens
+      if (inputChanged || merged.inputTokens === null) {
+        merged.inputTokens = next.inputTokens ?? (Number.isSafeInteger(input) ? input : null)
+      }
+    } else if (inputChanged && next.inputTokens === null) {
+      merged.inputTokens = null
+      if (cacheChanged) merged.cachedInputTokens = next.cachedInputTokens
+    }
+  }
+  const changed = merged.inputTokens !== known.inputTokens || merged.outputTokens !== known.outputTokens
+  if (merged.mapping === 'dsh-v1' && (next.raw?.format === 'dsh' || changed)) {
+    const total = merged.inputTokens === null || merged.outputTokens === null ? null : merged.inputTokens + merged.outputTokens
+    const inconsistent = next.totalTokens === null && next.raw?.totalTokens != null
+    if (inconsistent) merged.totalTokens = null
+    else if (total !== null) merged.totalTokens = Number.isSafeInteger(total) ? total : null
+    else if (changed) merged.totalTokens = next.totalTokens
+  }
+  return merged
 }
 export const modelUsageOutcomeSchema = z.object({
   status: z.enum(['succeeded', 'failed', 'cancelled', 'unknown']),

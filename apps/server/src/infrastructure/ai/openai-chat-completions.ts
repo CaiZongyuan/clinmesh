@@ -118,7 +118,7 @@ function openAIOutcome(response: Response, value: unknown): ModelUsageOutcome {
 export interface JsonChatCompletionInput {
   usageContext?: ModelUsageContext
   usageRecorder?: ModelUsageRecorder
-  usageKind?: 'initial' | 'format-repair'
+  usageKind?: Parameters<ModelUsageRecorder['begin']>[0]['kind']
   /** Synchronous, atomic reservation immediately before each actual completion fetch. */
   onBeforeRequest?: () => void
   /** A complete transport outcome arrived; headers alone do not establish this. */

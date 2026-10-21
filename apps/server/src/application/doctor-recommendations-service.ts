@@ -568,14 +568,15 @@ export class DoctorRecommendationsService {
             }
           },
         })
-        execution.continue(canonicalJsonHash({ actorId: context.actorId, idempotencyKey }))
+        const manualIntentKey = canonicalJsonHash({ actorId: context.actorId, idempotencyKey })
+        execution.continue(manualIntentKey)
         const { errorCode: _errorCode, ...original } = doctorRecommendationStateSchema.parse(JSON.parse(previous.state_json))
         const state: DoctorRecommendationState = { ...original, status: 'pending', missingInformation: [], notices: [], recovery: execution.status() }
         this.options.database.driver.prepare(`UPDATE doctor_recommendation_state SET state_json = ?, status = 'pending', updated_at = ?
           WHERE workspace_id = ? AND epoch = ? AND actor_id = ? AND context_key = ? AND case_id = ? AND kind = ? AND generation = ?
         `).run(JSON.stringify(state), new Date().toISOString(), ...this.#key(context, caseId, kind), previous.generation)
         transaction.enqueue({ kind: 'doctor.generate-recommendations', dedupKey: `doctor-recommendations:continue:${canonicalJsonHash({ identity, idempotencyKey })}`,
-          payload: { actorId: context.actorId, contextKey: identity.contextKey, caseId, kind, generation: previous.generation } })
+          payload: { actorId: context.actorId, contextKey: identity.contextKey, caseId, kind, generation: previous.generation, manualIntentKey } })
         return { data: state, effects: [{ kind: 'updated', reference: `DoctorRecommendations/${caseId}:${kind}`, versionId: String(previous.generation) }] }
       }
       if (!request.input.refresh && previous?.input_fingerprint === inputFingerprint) {
@@ -598,7 +599,8 @@ export class DoctorRecommendationsService {
       `).run(...key, generation, inputFingerprint, JSON.stringify(context), JSON.stringify(snapshot), JSON.stringify(state), new Date().toISOString())
       transaction.enqueue({ kind: 'doctor.generate-recommendations',
         dedupKey: `doctor-recommendations:${key[3]}:${caseId}:${kind}:${generation}`,
-        payload: { actorId: context.actorId, contextKey: key[3], caseId, kind, generation },
+        payload: { actorId: context.actorId, contextKey: key[3], caseId, kind, generation,
+          ...(request.input.refresh ? { manualIntentKey: canonicalJsonHash({ actorId: context.actorId, idempotencyKey }) } : {}) },
       })
       return { data: state, effects: [{ kind: 'updated', reference: `DoctorRecommendations/${caseId}:${kind}`, versionId: String(generation) }] }
     })
@@ -751,7 +753,8 @@ export class DoctorRecommendationsService {
 
   async process(event: OutboxHandlerInput, callerSignal: AbortSignal, shutdownSignal: AbortSignal): Promise<OutboxHandlerResult> {
     const payload = z.object({ actorId: z.string(), contextKey: z.string(), caseId: z.string(),
-      kind: doctorRecommendationKindSchema, generation: z.number().int().positive() }).strict().parse(event.payload)
+      kind: doctorRecommendationKindSchema, generation: z.number().int().positive(),
+      manualIntentKey: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().parse(event.payload)
     const raw = z.object({ actor_context_json: z.string() }).optional().parse(this.options.database.driver.prepare(`
       SELECT actor_context_json FROM doctor_recommendation_state WHERE workspace_id = ? AND epoch = ?
       AND actor_id = ? AND context_key = ? AND case_id = ? AND kind = ?
@@ -842,7 +845,9 @@ export class DoctorRecommendationsService {
       const model = stored?.model ?? await this.options.models.bind(context.workspaceId,
         `recommendations:${context.epoch}:${payload.contextKey}:${payload.caseId}:${payload.kind}:${payload.generation}`, this.options.model, signal)
       execution = new DoctorRecommendationExecution({ database: this.options.database, identity,
-        inputFingerprint, model, policyVersion: 'recommendation-stages-v1', provider: this.options.provider, assertCurrent })
+        inputFingerprint, model, policyVersion: 'recommendation-stages-v1', provider: this.options.provider, assertCurrent,
+        usageContext: { trigger: payload.manualIntentKey === undefined ? 'automatic' : 'manual',
+          sources: [{ kind: 'job', id: event.eventId, relationship: 'trigger' }] } })
       if (recommendationInputFingerprint(this.#snapshot(context, payload.caseId, payload.kind, snapshot.catalogs)) !== row.input_fingerprint) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed during model selection')
       }

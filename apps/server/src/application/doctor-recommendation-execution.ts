@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { doctorRecommendationKindSchema } from '@clinmesh/contracts/doctor-recommendations'
+import type { ModelUsageContext } from '@clinmesh/contracts/model-usage'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import {
   ChatCompletionRequestControlError, ChatCompletionsError,
@@ -107,6 +108,7 @@ export class DoctorRecommendationExecution {
     policyVersion: string
     provider: JsonChatCompletionsProvider
     assertCurrent: () => void
+    usageContext?: Pick<ModelUsageContext, 'trigger' | 'sources'>
   }) {
     const binding = bindingSchema.parse({ identity: options.identity, inputFingerprint: options.inputFingerprint,
       model: options.model, policyVersion: options.policyVersion })
@@ -252,6 +254,7 @@ export class DoctorRecommendationExecution {
     const activeKey = `${this.#key}:${input.stage}:${input.batchId}`
     if (active.has(activeKey)) throw new DoctorRecommendationExecutionError('running')
     active.add(activeKey)
+    let usageKind = input.request.usageKind
     try {
       while (true) {
         let outstanding = false
@@ -262,10 +265,12 @@ export class DoctorRecommendationExecution {
         }
         try {
           const controlledRequest: JsonChatCompletionInput = { ...input.request,
+            ...(usageKind === undefined ? {} : { usageKind }),
             usageContext: { workspaceId: this.options.identity.workspaceId, epoch: this.options.identity.epoch,
               actorId: this.options.identity.actorId, taskId: this.#key, caseId: this.options.identity.caseId,
-              stage: `${this.options.identity.kind}:${this.options.identity.generation}:${input.stage}`, trigger: 'automatic',
-              sources: [{ kind: 'batch', id: input.batchId, relationship: 'trigger' }] },
+              stage: `${this.options.identity.kind}:${this.options.identity.generation}:${input.stage}`,
+              trigger: this.options.usageContext?.trigger ?? 'automatic',
+              sources: [...this.options.usageContext?.sources ?? [], { kind: 'batch', id: input.batchId, relationship: 'trigger' }] },
             validate: value => { if (input.request.validate?.(value) === false) return false; parse(value); return true },
             onBeforeRequest: () => this.options.database.driver.transaction(() => {
               assertCurrent()
@@ -314,6 +319,9 @@ export class DoctorRecommendationExecution {
               || (error.code === 'AI_REQUEST_FAILED' && (error.httpStatus === 429 || (error.httpStatus ?? 0) >= 500)))
           if (this.status().status === 'exhausted') throw new DoctorRecommendationExecutionError('exhausted', { cause: error })
           if (!recoverable || requests === 0) throw new DoctorRecommendationExecutionError('failed', { cause: error })
+          if (error instanceof SyntaxError || error instanceof z.ZodError
+            || error instanceof ChatCompletionsError && error.code === 'AI_RESPONSE_INVALID') usageKind = 'format-repair'
+          else if (error instanceof ChatCompletionsError && error.httpStatus === 429) usageKind = 'rate-limit-retry'
         }
       }
     } finally { active.delete(activeKey) }

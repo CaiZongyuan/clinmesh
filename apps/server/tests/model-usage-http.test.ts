@@ -4,13 +4,13 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { afterEach, expect, it } from 'vitest'
-import { modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageListSchema, modelUsageOverviewSchema, unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { WorkspaceRepository } from '../src/infrastructure/sqlite/workspace-repository.ts'
 import { createModelBridgeHandler } from '../../dsh-web/src/model-bridge.ts'
-import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
+import { encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 
 const dispose: Array<() => Promise<void>> = []
@@ -28,7 +28,9 @@ async function setup(extra: Partial<Parameters<typeof createClinMeshRuntime>[0]>
   }
   let runtime = await createClinMeshRuntime(options)
   dispose.push(() => runtime.close())
-  return { get runtime() { return runtime }, restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
+  return { directory, get runtime() { return runtime }, restart: async (databasePath = options.databasePath) => {
+    await runtime.close(); runtime = await createClinMeshRuntime({ ...options, databasePath })
+  } }
 }
 
 type HostContext = Parameters<typeof createModelBridgeHandler>[0]
@@ -251,6 +253,63 @@ it('retains partial DSH input evidence and includes its known lower bound withou
   expect(modelUsageListSchema.parse(await (await read('/api/model-usage/requests')).json())).toEqual(records)
 })
 
+it.each([
+  { label: 'output', next: { inputTokens: 12, outputTokens: 3 }, input: 15, output: 3, cached: 3, total: 18 },
+  { label: 'uncached input', next: { inputTokens: 20, outputTokens: 0 }, input: 23, output: 0, cached: 3, total: 23 },
+  { label: 'cache read', next: { inputTokens: 12, outputTokens: 0, cacheReadTokens: 5 }, input: 18, output: 0, cached: 6, total: 18 },
+])('recomputes DSH totals when a later snapshot changes $label and omits aggregate counters', async sample => {
+  const bridge = await host(async function *(): AsyncGenerator<StreamChunk> {
+    yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 0, cacheReadTokens: 2, cacheWriteTokens: 1, totalTokens: 15 } }
+    yield { type: 'usage', usage: sample.next }
+    yield { type: 'text-delta', index: 0, text: JSON.stringify(persona) }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  })
+  const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(), dshModelBridge: bridge })
+  await startConsultationCase(fixture.runtime)
+  const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
+  const read = async (path: string) => fixture.runtime.app.request(path, { headers: { cookie } })
+  const records = modelUsageListSchema.parse(await (await read('/api/model-usage/requests')).json())
+  expect(records.items[0]?.usage).toMatchObject({ inputTokens: sample.input, outputTokens: sample.output,
+    cachedInputTokens: sample.cached, totalTokens: sample.total,
+    raw: { format: 'dsh', uncachedInputTokens: sample.next.inputTokens, outputTokens: sample.output, totalTokens: 15 } })
+  const overview = modelUsageOverviewSchema.parse(await (await read('/api/model-usage/overview')).json())
+  expect(overview.totals).toMatchObject({ knownTokens: sample.total, unknownTokenRequests: 0 })
+  await fixture.restart()
+  expect(modelUsageListSchema.parse(await (await read('/api/model-usage/requests')).json())).toEqual(records)
+})
+
+it.each(['normalized-only', 'unknown'] as const)('preserves trusted DSH counters through a later %s frame and repeated ledger merges', async mode => {
+  const model = encodeModelRoute(bridgeRoute)
+  const first: ModelTokenUsage = { inputTokens: 15, outputTokens: 3, cachedInputTokens: 3,
+    reasoningOutputTokens: null, totalTokens: mode === 'unknown' ? null : 18, mapping: 'dsh-v1',
+    raw: { format: 'dsh', uncachedInputTokens: 12, outputTokens: 3, cacheReadTokens: 2,
+      cacheWriteTokens: 1, reasoningTokens: null, totalTokens: mode === 'unknown' ? 999 : 18 } }
+  const next: ModelTokenUsage = mode === 'unknown' ? unknownModelTokenUsage : {
+    inputTokens: 25, outputTokens: 5, cachedInputTokens: 5, reasoningOutputTokens: null, totalTokens: 30, mapping: 'dsh-v1',
+  }
+  const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: model,
+    chatCompletionsProvider: new DshModelProvider({ origin: 'http://127.0.0.1:1', secret: bridgeSecret, timeoutMs: 2000, maxResponseBytes: 65536,
+      fetch: async (_url, init) => {
+        const request = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
+        if (request.operation !== 'complete' || request.attemptId === undefined) throw new Error('Expected an accounted synthetic completion')
+        const { attemptId } = request
+        return new Response([
+          { type: 'usage', attemptId, usage: first }, { type: 'usage', attemptId, usage: next },
+          { type: 'result', attemptId, result: { model, content: JSON.stringify(persona), accounting: {
+            attemptId, status: 'succeeded', dispatch: 'dispatched', usage: next,
+          } } },
+        ].map(frame => JSON.stringify(frame)).join('\n'), { headers: { 'content-type': modelBridgeAccountingMediaType } })
+      },
+    }),
+  })
+  await startConsultationCase(fixture.runtime)
+  const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
+  const records = modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
+  expect(records.items[0]?.usage).toMatchObject(mode === 'unknown' ? first : next)
+  const overview = modelUsageOverviewSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/overview', { headers: { cookie } })).json())
+  expect(overview.totals).toMatchObject({ knownTokens: mode === 'unknown' ? 18 : 30, unknownTokenRequests: mode === 'unknown' ? 1 : 0 })
+})
+
 it('keeps Host preflight rejection queryable without presenting it as an actual model request', async () => {
   let dispatched = 0
   const bridge = await host(async function *(): AsyncGenerator<StreamChunk> { dispatched++; yield { type: 'finish', reason: { kind: 'stop' } } }, false)
@@ -295,4 +354,46 @@ it('preserves known DSH usage after a severed transport and recovers abandoned a
   expect(recovered.items[0]).toMatchObject({ id: records.items[0]!.id, status: 'unknown', usage: { totalTokens: 15 } })
   expect(recovered.items[0]?.endedAt).not.toBeNull()
   expect(dispatched).toBe(1)
+})
+
+it('recovers a crash snapshot taken after a usage frame but before terminal settlement', async () => {
+  let release!: () => void
+  const finish = new Promise<void>(resolve => { release = resolve })
+  let received!: () => void
+  const firstUsage = new Promise<void>(resolve => { received = resolve })
+  let dispatched = 0
+  const bridge = await host(async function *(): AsyncGenerator<StreamChunk> {
+    dispatched++
+    yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 } }
+    await finish
+    yield { type: 'text-delta', index: 0, text: JSON.stringify(persona) }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  })
+  const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: encodeModelRoute(bridgeRoute),
+    chatCompletionsProvider: new DshModelProvider({ ...bridge, fetch: async (url, init) => {
+      const response = await fetch(url, init)
+      return new Response(response.body!.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) { controller.enqueue(chunk); setImmediate(received) },
+      })), { status: response.status, headers: response.headers })
+    } }),
+  })
+  const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
+  const running = startConsultationCase(fixture.runtime)
+  void running.catch(() => {})
+  try {
+    await firstUsage
+    const read = async () => modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
+    const inFlight = await read()
+    expect(inFlight.items[0]).toMatchObject({ status: 'in-flight', endedAt: null })
+    // Restore only bytes durable while the stream is still open; no terminal/catch can populate this snapshot.
+    const snapshot = join(fixture.directory, 'crash-snapshot.sqlite')
+    await fixture.runtime.database.driver.backup(snapshot)
+    release()
+    await running
+    await fixture.restart(snapshot)
+    const recovered = await read()
+    expect(recovered.items[0]).toMatchObject({ id: inFlight.items[0]!.id, status: 'unknown', dispatch: 'dispatched',
+      usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 } })
+    expect(dispatched).toBe(1)
+  } finally { release(); await running.catch(() => {}) }
 })

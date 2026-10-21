@@ -19,6 +19,7 @@ function recorder() {
   const attempts: Array<{ id: string; metadata: Parameters<ModelUsageRecorder['begin']>[0]; outcome?: ModelUsageOutcome }> = []
   const service: ModelUsageRecorder = {
     begin(metadata, reserve) { reserve?.(); const id = randomUUID(); attempts.push({ id, metadata }); return id },
+    checkpoint() {},
     settle(id, outcome) { attempts.find(attempt => attempt.id === id)!.outcome = outcome },
   }
   return { attempts, service }

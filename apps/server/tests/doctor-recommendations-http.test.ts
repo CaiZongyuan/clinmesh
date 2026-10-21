@@ -18,6 +18,7 @@ import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
 import { installSyntheticPathologySlides } from './fixtures/pathology-catalog.ts'
 import { breastCaseBundle } from './fixtures/pathology-scenario.ts'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
+import { modelUsageListSchema } from '@clinmesh/contracts/model-usage'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -997,6 +998,11 @@ it.each(['missing', 'duplicate', 'wrong-id', 'missing-prescription-fields'])('re
     recovery: { status: 'exhausted', requestCount: 4, extraRequestCount: 2, canContinue: false,
       units: [expect.objectContaining({ stage: 'generation', status: 'succeeded', requestCount: 1 }),
         expect.objectContaining({ stage: 'verification', status: 'failed', requestCount: 3 })] } })
+  const usage = modelUsageListSchema.parse(await (await fixture.runtime.app.request(
+    '/api/model-usage/requests?feature=doctor_recommendation_verification', { headers: { cookie: fixture.cookie } },
+  )).json()).items.toReversed()
+  expect(usage.map(attempt => attempt.kind)).toEqual(['initial', 'format-repair', 'format-repair'])
+  expect(new Set(usage.map(attempt => attempt.context.taskId)).size).toBe(1)
 })
 
 it.each([
@@ -1049,6 +1055,11 @@ it('keeps one pinned model during automatic retries and binds the current model 
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).status).toBe('ready')
   expect(models).toEqual([first, first, first, second, second])
+  const usage = modelUsageListSchema.parse(await (await fixture.runtime.app.request(
+    '/api/model-usage/requests?limit=100', { headers: { cookie: fixture.cookie } },
+  )).json()).items.filter(attempt => attempt.feature === 'doctor_recommendations' || attempt.feature === 'doctor_recommendation_verification')
+  expect(usage.filter(attempt => attempt.requestedModel === first).map(attempt => attempt.context.trigger)).toEqual(['automatic', 'automatic', 'automatic'])
+  expect(usage.filter(attempt => attempt.requestedModel === second).map(attempt => attempt.context.trigger)).toEqual(['manual', 'manual'])
 })
 
 it('restores queued recommendations from file-backed SQLite after runtime restart', async () => {
@@ -1092,9 +1103,22 @@ it('requires explicit continuation after an in-flight shutdown and keeps the ori
   await fixture.runtime.dispatchPending()
   expect(models).toEqual([first])
   expect((await fixture.generate('diagnosis', false, 1)).status).toBe(200)
+  await fixture.restart()
   await fixture.runtime.dispatchPending()
   expect(await fixture.read()).toMatchObject({ status: 'ready', generation: 1 })
   expect(models).toEqual([first, first, first])
+  const usageResponse = await fixture.runtime.app.request('/api/model-usage/requests?limit=100', { headers: { cookie: fixture.cookie } })
+  expect(usageResponse.status).toBe(200)
+  const attempts = modelUsageListSchema.parse(await usageResponse.json()).items
+    .filter(attempt => attempt.feature === 'doctor_recommendations' || attempt.feature === 'doctor_recommendation_verification')
+  expect(attempts).toHaveLength(3)
+  expect(attempts.filter(attempt => attempt.context.trigger === 'automatic')).toHaveLength(1)
+  const continued = attempts.filter(attempt => attempt.context.trigger === 'manual')
+  expect(continued).toHaveLength(2)
+  expect(new Set(attempts.map(attempt => attempt.context.taskId)).size).toBe(1)
+  const jobs = continued.map(attempt => attempt.context.sources.find(source => source.kind === 'job' && source.relationship === 'trigger')?.id)
+  expect(jobs[0]).toBeTypeOf('string')
+  expect(jobs[1]).toBe(jobs[0])
 })
 
 it('marks old suggestions stale when the actual diagnosis catalog changes and rejects the previous fingerprint', async () => {
@@ -1672,6 +1696,10 @@ it('exhausts the shared request budget on rate limits and preserves clinical dra
   await fixture.runtime.dispatchPending()
   expect(requests).toBe(3)
   expect(await fixture.readCase()).toEqual(before)
+  const usage = modelUsageListSchema.parse(await (await fixture.runtime.app.request(
+    '/api/model-usage/requests?feature=doctor_recommendations', { headers: { cookie: fixture.cookie } },
+  )).json()).items.toReversed()
+  expect(usage.map(attempt => attempt.kind)).toEqual(['initial', 'rate-limit-retry', 'rate-limit-retry'])
 })
 
 it.each(['legacy-format', 'foreign-case-reference'] as const)('independently checks read-only case reasoning with the supplied reference schema when no guideline is acquired (%s)', async failure => {

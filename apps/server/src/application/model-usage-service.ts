@@ -2,9 +2,9 @@ import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import {
   modelUsageAttemptSchema, modelUsageContextSchema, modelUsageFeatureSchema,
-  modelUsageOutcomeSchema, modelUsageOverviewSchema, modelUsageListSchema,
+  modelUsageOutcomeSchema, modelUsageOverviewSchema, modelUsageListSchema, modelTokenUsageSchema,
   hostDoctorRecognitionTimeoutMs, mergeModelTokenUsage, unknownModelTokenUsage,
-  type ModelUsageAttempt, type ModelUsageFilter, type ModelUsageOutcome,
+  type ModelTokenUsage, type ModelUsageAttempt, type ModelUsageFilter, type ModelUsageOutcome,
 } from '@clinmesh/contracts/model-usage'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext } from './command-executor.ts'
@@ -60,12 +60,15 @@ export class ModelUsageService implements ModelUsageRecorder {
     })()
   }
 
-  settle(attemptId: string, input: ModelUsageOutcome): void {
-    this.#recordOutcome(attemptId, input, false)
+  checkpoint(attemptId: string, usage: ModelTokenUsage): void {
+    this.#update(attemptId, { dispatch: 'dispatched', usage: modelTokenUsageSchema.parse(usage) })
   }
 
-  #recordOutcome(attemptId: string, input: ModelUsageOutcome, progress: boolean): void {
-    const outcome = modelUsageOutcomeSchema.parse(input)
+  settle(attemptId: string, input: ModelUsageOutcome): void {
+    this.#update(attemptId, modelUsageOutcomeSchema.parse(input))
+  }
+
+  #update(attemptId: string, outcome: Pick<ModelUsageOutcome, 'usage'> & Partial<ModelUsageOutcome>): void {
     this.database.driver.transaction(() => {
       const row = rowSchema.parse(this.database.driver.prepare('SELECT record_json FROM model_usage_attempt WHERE attempt_id = ?').get(attemptId))
       const previous = modelUsageAttemptSchema.parse(JSON.parse(row.record_json))
@@ -73,10 +76,11 @@ export class ModelUsageService implements ModelUsageRecorder {
       if (previous.status !== 'in-flight' && previous.status !== 'unknown') return
       const usage = mergeModelTokenUsage(previous.usage, outcome.usage)
       const record = modelUsageAttemptSchema.parse({ ...previous, ...outcome, usage,
-        status: progress ? previous.status : outcome.status,
+        dispatch: previous.dispatch === 'dispatched' ? 'dispatched' : outcome.dispatch ?? previous.dispatch,
         actualModel: outcome.actualModel ?? previous.actualModel,
         providerRequestId: outcome.providerRequestId ?? previous.providerRequestId,
-        httpStatus: outcome.httpStatus ?? previous.httpStatus, endedAt: progress ? previous.endedAt : new Date().toISOString(),
+        httpStatus: outcome.httpStatus ?? previous.httpStatus,
+        endedAt: outcome.status === undefined ? previous.endedAt : new Date().toISOString(),
       })
       this.database.driver.prepare(`UPDATE model_usage_attempt SET actual_model = ?, status = ?, record_json = ? WHERE attempt_id = ?`)
         .run(record.actualModel, record.status, JSON.stringify(record), attemptId)
@@ -130,7 +134,9 @@ export class ModelUsageService implements ModelUsageRecorder {
     this.#expireHostAttempts()
     const row = this.database.driver.prepare(`SELECT 1 FROM model_usage_attempt WHERE attempt_id = ? AND feature = 'doctor_delegation'`).get(attemptId)
     if (row === undefined) throw new Error('Host attempt unavailable')
-    this.#recordOutcome(attemptId, outcome, progress)
+    const parsed = modelUsageOutcomeSchema.parse(outcome)
+    const { status: _status, ...observation } = parsed
+    this.#update(attemptId, progress ? observation : parsed)
   }
 
   #expireHostAttempts(): void {
