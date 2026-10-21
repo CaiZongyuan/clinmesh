@@ -313,7 +313,7 @@ describe('Web application shell', () => {
       '/scenario-data', '/settings/developer/components',
     ])
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 挂号员' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员' }))
     await screen.findByRole('heading', { name: '门诊挂号', level: 1 })
     expect(register.mock.lastCall?.[0].items.map(item => item.path)).toEqual([
       '/registration', '/settings/developer/components',

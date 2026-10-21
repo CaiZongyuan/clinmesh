@@ -26,7 +26,7 @@ import type {
   JsonChatCompletionsProvider,
 } from '../../src/infrastructure/ai/openai-chat-completions.ts'
 import type { SqlitePerformanceObserver } from '../../src/infrastructure/sqlite/performance-observer.ts'
-import { createClinMeshRuntime } from '../../src/runtime.ts'
+import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../../src/runtime.ts'
 
 export type Runtime = Awaited<ReturnType<typeof createClinMeshRuntime>>
 
@@ -260,7 +260,7 @@ export async function createImagingRuntime(bundles: unknown[], options: {
       }
     },
   }
-  const runtime = await createClinMeshRuntime({
+  const runtimeOptions: CreateClinMeshRuntimeOptions = {
     authBaseUrl: 'http://localhost',
     authSecret: 'test-auth-secret-with-at-least-32-characters',
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
@@ -286,7 +286,8 @@ export async function createImagingRuntime(bundles: unknown[], options: {
       : {}),
     syntheaProvider,
     trustedOrigins: ['http://localhost'],
-  })
+  }
+  const runtime = await createClinMeshRuntime(runtimeOptions)
   return {
     assetDirectory,
     catalogDirectory,
@@ -295,6 +296,7 @@ export async function createImagingRuntime(bundles: unknown[], options: {
     pathologyAssetDirectory,
     pathologyCatalogDirectory,
     runtime,
+    runtimeOptions,
     syntheaProvider,
   }
 }

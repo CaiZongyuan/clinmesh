@@ -1,3 +1,11 @@
+import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
+import { inpatientDischargeInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
+import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
+import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
@@ -138,6 +146,7 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  inpatient?: InpatientService
   commandEvents?: Pick<CommandExecutor, 'subscribe'>
   recordingUpdatesSignal?: AbortSignal
   doctorRecommendations?: DoctorRecommendationsService
@@ -225,7 +234,8 @@ function apiErrorResponse(
     return invalidInputResponse(context, invalidInputMessage)
   }
     if (
-      error instanceof IdentityError
+      error instanceof InpatientError
+      || error instanceof IdentityError
       || error instanceof AgentIntegrationError
       || error instanceof ConsultationDialogueError
       || error instanceof LaboratoryServicePublisherError
@@ -1192,6 +1202,284 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch (error) {
         return apiErrorResponse(context, error, 'The Synthetic Case visit request is invalid')
       }
+    })
+  }
+
+  if (options.identity !== undefined && options.inpatient !== undefined) {
+    const identity = options.identity
+    const inpatient = options.inpatient
+    const actor = (context: Context) => identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/record', async context => {
+      try { return context.json(inpatient.records.read(await actor(context), context.req.param('admissionId'))) } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/record/submit', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientRecordSubmitInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.records.submit(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/record/review', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:z.object(inpatientRecordReviewInputSchema.shape).omit({admissionId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.records.review(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/record/archive', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientRecordArchiveInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.records.archive(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/discharge', async context => {
+      try { return context.json(inpatient.discharge.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    const dischargeAction = (action: 'issue' | 'depart' | 'recall' | 'clear') => async (context: Context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const schema = action === 'depart' ? inpatientDepartInputSchema : inpatientDischargeInputSchema
+        const body = z.object({ input: schema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.discharge.action(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key')), action))
+      } catch (error) { return apiErrorResponse(context, error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/discharge/issue', dischargeAction('issue'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/discharge/depart', dischargeAction('depart'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/discharge/recall', dischargeAction('recall'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/discharge/clear', dischargeAction('clear'))
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/discharge/preview', async context => {
+      try { return context.json(inpatient.discharge.preview(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/discharge/settle', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientSettleInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.discharge.settle(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/surgery-catalog', async context => {
+      try { return context.json(inpatient.surgery.catalog(await actor(context))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/surgeries', async context => {
+      try { return context.json(inpatient.surgery.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/request', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientSurgeryRequestInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.surgery.request(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    const surgeryPreparation = (action: 'check-preop' | 'confirm-consent' | 'cancel') => async (context: Context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientSurgeryActionInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.surgery.prepare(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key')), action))
+      } catch (error) { return apiErrorResponse(context, error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/check-preop', surgeryPreparation('check-preop'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/confirm-consent', surgeryPreparation('confirm-consent'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/cancel', surgeryPreparation('cancel'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/surgeries/execute', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientSurgeryExecuteInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.surgery.execute(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/transfer-catalog', async context=>{
+      try { return context.json(inpatient.transfers.catalog(await actor(context))) } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.get('/api/his/v1/inpatient/transfers/incoming', async context=>{
+      try { return context.json(inpatient.transfers.incoming(await actor(context))) } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/transfers', async context=>{
+      try { return context.json(inpatient.transfers.read(await actor(context),context.req.param('admissionId'))) } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/transfers/request', async context=>{
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body=z.object({input:inpatientTransferRequestInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.transfers.request(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    const transferAction=(action:'handover'|'receive'|'cancel')=>async(context:Context)=>{
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const schema=action==='receive'?inpatientTransferReceiveInputSchema:inpatientTransferActionInputSchema
+        const body=z.object({input:schema.omit({admissionId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.transfers.action(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key')),action))
+      } catch(error) { return apiErrorResponse(context,error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/transfers/handover',transferAction('handover'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/transfers/receive',transferAction('receive'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/transfers/cancel',transferAction('cancel'))
+    app.get('/api/his/v1/inpatient/investigation-catalog', async context => {
+      try { return context.json(inpatient.investigations.catalog(await actor(context),await options.imaging?.library.readyExamCodes() ?? new Set())) } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/investigations', async context => {
+      try { return context.json(inpatient.investigations.read(await actor(context),context.req.param('admissionId'))) } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/investigations/issue', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body=z.object({input:inpatientInvestigationIssueInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.investigations.issue(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key')),await options.imaging?.library.readyExamCodes() ?? new Set()))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/investigations/acknowledge',async context=>{
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body=z.object({input:inpatientInvestigationAcknowledgeInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
+        const bound=await actor(context),input={...body.input,admissionId:context.req.param('admissionId')}
+        inpatient.admissionBinding(bound,input.admissionId)
+        const request=inpatient.investigations.request(bound,input.admissionId,input.requestId)
+        const available=request.request_kind!=='imaging' || await options.imaging?.results.studyAvailable(bound.workspaceId,bound.epoch,input.requestId)===true
+        return context.json(inpatient.investigations.acknowledge(bound,input,z.string().min(8).max(128).parse(context.req.header('idempotency-key')),available))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    const investigationAction=(action:'send'|'cancel'|'retry')=>async(context:Context)=>{
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body=z.object({input:inpatientInvestigationActionInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.investigations.action(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key')),action))
+      } catch(error) { return apiErrorResponse(context,error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/investigations/send',investigationAction('send'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/investigations/cancel',investigationAction('cancel'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/investigations/retry',investigationAction('retry'))
+    app.get('/api/his/v1/inpatient/pharmacy/admissions', async context => {
+      try { return context.json(inpatient.orders.pharmacyList(await actor(context))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/pharmacy', async context => {
+      try { return context.json(inpatient.orders.pharmacy(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/charges', async context => {
+      try { return context.json(inpatient.orders.charges(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/clinical-catalog', async context => {
+      try { return context.json(inpatient.orders.catalog(await actor(context))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/clinical', async context => {
+      try { return context.json(inpatient.orders.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/diagnoses/confirm', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: z.object(inpatientDiagnosisConfirmInputSchema.shape).omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.orders.confirmDiagnosis(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/orders/issue', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientOrderIssueInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }, bound = await actor(context), key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(inpatient.orders.issue(bound,input,key))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/orders/verify', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientOrderActionInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }, bound = await actor(context), key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(inpatient.orders.action(bound,input,key,'verify'))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/orders/request-stop', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientOrderReasonInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }, bound = await actor(context), key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(inpatient.orders.action(bound,input,key,'request-stop'))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/orders/verify-stop', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientOrderActionInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }, bound = await actor(context), key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(inpatient.orders.action(bound,input,key,'verify-stop'))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/executions/dispense', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body=z.object({ input: inpatientDispenseInputSchema.omit({ admissionId:true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.orders.dispense(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/executions/administer', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body=z.object({ input: inpatientExecutionActionInputSchema.omit({ admissionId:true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.orders.administer(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/executions/complete', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body=z.object({ input: inpatientExecutionActionInputSchema.omit({ admissionId:true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.orders.completeService(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/charges/reverse', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body=z.object({ input: inpatientChargeReverseInputSchema.omit({ admissionId:true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.orders.reverseCharge(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/executions/request-prn', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body=z.object({ input: inpatientOrderReasonInputSchema.omit({ admissionId:true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.orders.requestPrn(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.get('/api/his/v1/inpatient/catalog', async context => {
+      try { return context.json(inpatient.catalog(await actor(context))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/referrals', async context => {
+      try { return context.json(inpatient.referrals(await actor(context))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/referrals', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientReferralInputSchema }).strict().parse(await context.req.json())
+        return context.json(inpatient.issueReferral(await actor(context), body.input, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions', async context => {
+      try { return context.json(inpatient.list(await actor(context))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId', async context => {
+      try { return context.json(inpatient.detail(await actor(context), context.req.param('admissionId'))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    const bedAction = (action: 'receive' | 'move-bed' | 'swap-bed') => async (context: Context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const schema = action === 'swap-bed' ? inpatientSwapInputSchema.omit({ admissionId: true }) : inpatientBedInputSchema.omit({ admissionId: true })
+        const body = z.object({ input: schema }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }
+        const bound = await actor(context)
+        const key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(action === 'swap-bed' ? inpatient.swapBeds(bound, input, key) : inpatient.assignBed(bound, input, key, action))
+      } catch (error) { return apiErrorResponse(context, error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/receive', bedAction('receive'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/move-bed', bedAction('move-bed'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/swap-bed', bedAction('swap-bed'))
+    app.post('/api/sim/v1/scenario-runs/:scenarioRunId/actions/advance-time', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const bound = await actor(context)
+        if (bound.scenarioRunId !== context.req.param('scenarioRunId')) throw new InpatientError('SCENARIO_RUN_MISMATCH', '场景轮次已变化')
+        const body = z.object({ input: advanceVirtualTimeInputSchema }).strict().parse(await context.req.json())
+        return context.json(inpatient.advanceTime(bound, body.input, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientRegistrationInputSchema }).strict().parse(await context.req.json())
+        return context.json(inpatient.register(await actor(context), body.input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
   }
 

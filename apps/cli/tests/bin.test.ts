@@ -43,11 +43,42 @@ describe('clinmesh process entrypoint', () => {
     expect(result.stderr).toBe('')
     const envelope = JSON.parse(result.stdout)
     expect(envelope).toMatchObject({ ok: true, schemaVersion: 1 })
-    expect(envelope.data.operations).toHaveLength(79)
+    expect(envelope.data.operations).toHaveLength(135)
     expect(envelope.data.operations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'doctor.document-quality.get' }),
       expect.objectContaining({ id: 'doctor.document-quality.check' }),
       expect.objectContaining({ id: 'doctor.document-quality.retain' }),
+      expect.objectContaining({ id: 'inpatient.surgery.catalog', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.surgery.read', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.surgery.request', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.surgery.check-preop', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.surgery.confirm-consent', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.surgery.cancel', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.surgery.execute', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.order.issue', version: 2 }),
+      expect.objectContaining({id:'inpatient.investigation.catalog',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.read',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.catalog',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.read',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.incoming',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.issue',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.send',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.cancel',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.retry',version:1}),
+      expect.objectContaining({id:'inpatient.investigation.acknowledge',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.request',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.handover',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.receive',version:1}),
+      expect.objectContaining({id:'inpatient.transfer.cancel',version:1}),
+      expect.objectContaining({ id: 'inpatient.catalog', version: 3 }),
+      expect.objectContaining({ id: 'inpatient.admission.list', version: 2 }),
+      expect.objectContaining({ id: 'inpatient.admission.read', version: 2 }),
+      expect.objectContaining({ id: 'inpatient.admission.register', version: 3 }),
+      expect.objectContaining({ id: 'inpatient.admission.receive', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.admission.move-bed', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.admission.swap-bed', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.referral.list', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.referral.issue', version: 2 }),
     ]))
   })
 })

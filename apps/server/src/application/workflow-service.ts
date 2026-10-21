@@ -1,3 +1,5 @@
+import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
+import { medicationDoseAndFrequencyAllowed } from './medication-rules.ts'
 import { CommandReceiptNotFoundError } from './command-executor.ts'
 import {
   doctorCaseHistorySchema,
@@ -1435,7 +1437,7 @@ export class WorkflowService {
     }>
     return serviceCatalogSearchSchema.parse({
       items: rows.map(row => ({
-        ...serviceCatalogConfigSchema.parse(JSON.parse(row.config_json) as unknown),
+        ...serviceCatalogConfigSchema.strip().parse(JSON.parse(row.config_json) as unknown),
         code: row.code,
         id: row.service_id,
         nameEn: row.name_en,
@@ -2252,6 +2254,8 @@ export class WorkflowService {
       now,
       now,
     )
+    this.#database.driver.prepare(`INSERT INTO clinical_request_context(workspace_id,epoch,case_id,outpatient_case_id,patient_id,encounter_id)
+      VALUES(?,?,?,?,?,?)`).run(context.workspaceId,context.epoch,caseId,caseId,patient.id,encounterId)
     if (registration.createConsultation === true) this.#createConsultation(context, caseId)
     this.#database.driver.prepare(`
       INSERT INTO registration (
@@ -6684,6 +6688,7 @@ export class WorkflowService {
         indicationCode: input.indicationCode,
       },
       operation: 'laboratory-request.save-draft',
+      authorize: () => this.#assertRole(input.context, ['outpatient-doctor']),
     }, transaction => this.applySaveLaboratoryRequestDraft(transaction, input))
   }
 
@@ -6933,6 +6938,7 @@ export class WorkflowService {
         expectedDraftVersion: input.expectedDraftVersion,
       },
       operation: 'laboratory-request.issue',
+      authorize: () => this.#assertRole(input.context, ['outpatient-doctor']),
     }, transaction => this.applyIssueLaboratoryRequest(transaction, input))
   }
 
@@ -7107,7 +7113,7 @@ export class WorkflowService {
         'The laboratory request draft version has changed',
       )
     }
-    transaction.enqueue({
+    if (inpatientRequestOwner(this.#database,input.context,outpatientCase.case_id) === undefined) transaction.enqueue({
       dedupKey: `laboratory-request:${requestId}:accept`,
       kind: 'laboratory.accept-request',
       payload: { requestId },
@@ -7360,6 +7366,7 @@ export class WorkflowService {
           'Only an in-progress laboratory request can be reported',
         )
       }
+      if(input.resultSnapshot===undefined && inpatientRequestOwner(this.#database,input.context,request.case_id)!==undefined) throw new WorkflowError('LABORATORY_GENERATION_UNSUPPORTED','住院检验必须从固定合成来源生成结果')
       let laboratoryResultFact = input.resultSnapshot?.content
       if (laboratoryResultFact === undefined) {
         laboratoryResultFact = this.#legacyLaboratoryResultFact(
@@ -7558,6 +7565,7 @@ export class WorkflowService {
       const {
         serviceRequest: completedServiceRequest,
         task: completedTask,
+        chargeEffects,
       } = this.#requests.completeReport(laboratoryRequestPolicy, transaction, input.context, request, {
         diagnosticReportId,
         now,
@@ -7630,7 +7638,7 @@ export class WorkflowService {
           kind: resource.meta?.versionId === '1' ? 'created' as const : 'updated' as const,
           reference: `${resource.resourceType}/${resource.id}`,
           versionId: resource.meta?.versionId ?? '1',
-        })),
+        })).concat(chargeEffects),
       }
     })
   }
@@ -8932,7 +8940,11 @@ export class WorkflowService {
         input.context.epoch,
         prescription.scenario_run_id,
       ) as { count: number }
-      const scenarioStatus = remaining.count === 0 ? 'completed' as const : 'active' as const
+      const inpatientWork = countRowSchema.parse(this.#database.driver.prepare(`
+        SELECT EXISTS(SELECT 1 FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND record_status!='archived')
+          OR EXISTS(SELECT 1 FROM inpatient_referral WHERE workspace_id=? AND epoch=? AND status='issued') AS count
+      `).get(input.context.workspaceId,input.context.epoch,input.context.workspaceId,input.context.epoch))
+      const scenarioStatus = remaining.count === 0 && inpatientWork.count === 0 ? 'completed' as const : 'active' as const
       if (scenarioStatus === 'completed') {
         this.#database.driver.prepare(`
           UPDATE scenario_run SET status = 'completed', completed_at = ?
@@ -9720,6 +9732,11 @@ export class WorkflowService {
     encounterId: string,
     action: 'edit-draft' | 'issue',
   ) {
+    const admission = assertInpatientRequestScope(this.#database,context,encounterId,['inpatient-doctor'])
+    if (admission !== undefined) {
+      if (admission.status !== 'admitted' || admission.source_case_id === null) throw new WorkflowError('LABORATORY_GENERATION_UNSUPPORTED','本次住院缺少可用合成病例来源或不在院')
+      return {case_id:admission.admission_id,patient_id:admission.patient_id,status:'admitted'}
+    }
     this.#assertRole(context, ['outpatient-doctor'])
     const outpatientCase = this.#caseByEncounter(context, encounterId)
     this.#assertCaseResponsibility(context, outpatientCase.case_id)
@@ -10027,6 +10044,7 @@ export class WorkflowService {
     caseId: string,
     input: { reportName: string; reportReference: string },
   ): void {
+    if (inpatientRequestOwner(this.#database,context,caseId) !== undefined) return
     this.#recordPublishedReport(transaction, context, caseId, input.reportReference)
     const state = this.#consultationState(context, caseId)
     if (state === undefined) return
@@ -10041,6 +10059,7 @@ export class WorkflowService {
   }
 
   #recordPublishedReport(transaction: CommandTransaction, context: ActorContext, caseId: string, reportReference: string): void {
+    if (inpatientRequestOwner(this.#database,context,caseId) !== undefined) return
     const parsed = /^DiagnosticReport\/([A-Za-z0-9.-]+)\/_history\/(\d+)$/u.exec(reportReference)
     if (parsed === null) throw new Error('The published report reference must contain a fixed version')
     const report = z.object({ status: z.enum(['final', 'amended', 'corrected']),
@@ -10350,6 +10369,11 @@ export class WorkflowService {
     return request.status
   }
 
+  inpatientLaboratoryRequests(context: ActorContext, admissionId: string) {
+    if (assertInpatientRequestScope(this.#database,context,admissionId) === undefined) throw new WorkflowError('WORKFLOW_CONFLICT','未找到本次住院')
+    return this.#laboratoryRequests(context,admissionId)
+  }
+
   #laboratoryRequests(context: ActorContext, caseId: string) {
     const requests = z.array(laboratoryRequestRowSchema).parse(
       this.#database.driver.prepare(`
@@ -10360,7 +10384,7 @@ export class WorkflowService {
           status, version
         FROM laboratory_request
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND request_kind = 'laboratory'
-        ORDER BY authored_at, request_id
+        ORDER BY julianday(authored_at), request_id
       `).all(context.workspaceId, context.epoch, caseId),
     ).map((request) => {
       const serviceRequest = this.#fhir.read(
@@ -10884,9 +10908,10 @@ export class WorkflowService {
   }
 
   #supportsLaboratoryReports(context: ActorContext, outpatientCaseId: string): boolean {
+    if (inpatientRequestOwner(this.#database,context,outpatientCaseId) !== undefined) return this.#database.driver.prepare('SELECT 1 FROM clinical_request_source WHERE workspace_id=? AND epoch=? AND case_id=? AND synthetic_case_id IS NOT NULL').get(context.workspaceId,context.epoch,outpatientCaseId) !== undefined
     return this.#database.driver.prepare(`
-      SELECT 1 AS present FROM synthetic_case_materialization
-      WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
+      SELECT 1 AS present FROM clinical_request_source
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND synthetic_case_id IS NOT NULL
     `).get(context.workspaceId, context.epoch, outpatientCaseId) !== undefined
       || this.#database.driver.prepare(`
       SELECT 1 AS present FROM scenario_hidden_fact
@@ -10899,8 +10924,8 @@ export class WorkflowService {
     outpatientCaseId: string,
   ): void {
     const materialized = this.#database.driver.prepare(`
-      SELECT 1 AS present FROM synthetic_case_materialization
-      WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
+      SELECT 1 AS present FROM clinical_request_source
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND synthetic_case_id IS NOT NULL
     `).get(context.workspaceId, context.epoch, outpatientCaseId) !== undefined
     if (materialized) return
     throw new WorkflowError(
@@ -10935,8 +10960,8 @@ export class WorkflowService {
     concept: z.infer<typeof referenceConceptSnapshotSchema>,
   ): void {
     const materialized = this.#database.driver.prepare(`
-      SELECT 1 AS present FROM synthetic_case_materialization
-      WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
+      SELECT 1 AS present FROM clinical_request_source
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND synthetic_case_id IS NOT NULL
     `).get(context.workspaceId, context.epoch, outpatientCaseId) !== undefined
     const referenceItem = this.#referenceData?.laboratoryById(context, catalogItemId)
     const supported = !materialized && referenceItem === undefined
@@ -11153,12 +11178,12 @@ export class WorkflowService {
           laboratory_request.service_request_id, laboratory_request.execution_task_id,
           laboratory_request.diagnostic_report_id, laboratory_request.status,
           laboratory_request.version, laboratory_request.authored_by,
-          outpatient_case.patient_id, outpatient_case.encounter_id
+          clinical_request_context.patient_id, clinical_request_context.encounter_id
         FROM laboratory_request
-        JOIN outpatient_case
-          ON outpatient_case.workspace_id = laboratory_request.workspace_id
-         AND outpatient_case.epoch = laboratory_request.epoch
-         AND outpatient_case.case_id = laboratory_request.case_id
+        JOIN clinical_request_context
+          ON clinical_request_context.workspace_id = laboratory_request.workspace_id
+         AND clinical_request_context.epoch = laboratory_request.epoch
+         AND clinical_request_context.case_id = laboratory_request.case_id
         WHERE laboratory_request.workspace_id = ? AND laboratory_request.epoch = ?
           AND laboratory_request.request_id = ? AND laboratory_request.request_kind = 'laboratory'
       `).get(context.workspaceId, context.epoch, requestId),
@@ -11717,8 +11742,7 @@ export class WorkflowService {
         JSON.parse(medication.configJson ?? '{}') as unknown,
       )
       if (
-        !config.allowedDoseTexts.includes(medication.doseText)
-        || !config.allowedFrequencyCodes.includes(medication.frequencyCode)
+        !medicationDoseAndFrequencyAllowed(config, medication.doseText, medication.frequencyCode)
       ) {
         throw new WorkflowError(
           'CATALOG_CONFLICT',
