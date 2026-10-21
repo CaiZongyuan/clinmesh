@@ -110,6 +110,8 @@
 
 ## 模型桥与诊断日志
 
+- 多个 worktree 共用 `CLINMESH_DSH_SANDBOX` 时，Profile 中的 `plugins/clinmesh` 与 `plugins/react-surface` 是可变共享链接；只确认 Server 的 cwd 和健康检查不足以证明 Surface 来自同一分支。切换开发分支时同时核对两个插件的实际目标。需要隔离时，先正常停止宿主，再复制独立 Profile 以保留 Provider 与会话，并使用独立 sandbox；锁定的宿主与工具依赖可以复用，业务数据库仍沿用各 worktree 已确认的数据副本。
+
 - DSH 模型流以 `finish.reason` 携带标准失败码，消费方按 code 分类，不解析原始消息或把所有失败归成网络故障。超时回归同时覆盖宿主返回 `TIMEOUT` 与本地 `AbortSignal` 到期；只验证本地计时器会漏掉宿主超时被误归为调用失败的路径。同一 Provider 下的模型可有不同访问权限；单模型返回 403 不证明整个 Provider 不可用。可用性验证通过真实桥接向其他完整 Provider／model 路由发送最小合成请求，不修改已有任务绑定，也不输出凭据或模型私有输入。
 
 - DSH 桥接在截止时间附近报 `UND_ERR_SOCKET` 时，分别用 gzip 与 identity 协商复现。宿主压缩中间件可能延迟设置 `writableEnded`，超时回调和模型取消后的 catch 会据此重复写响应；仅用原生 `node:http` listener 的测试无法发现。使用实际 DSH WebServer 的压缩路径验证，响应归属规则见[模型调用预算](../decisions/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。
