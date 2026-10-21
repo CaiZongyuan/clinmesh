@@ -144,6 +144,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       if (replaceSelection) {
         await expect(page.locator('[aria-label="本次就诊账单"]')).toContainText('合成费用 B')
         await expect(page.locator('[data-agent-selection="' + server.chargeItemId + '"]')).toHaveCount(0)
+        await expect(page.getByText('支付成功', { exact: true })).toHaveCount(0)
       } else {
         await expect(confirmation).toHaveCount(0)
         await expect(page.getByRole('region', { name: '本次就诊账单', exact: true })).toContainText('¥20.00')
