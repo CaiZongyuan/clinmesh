@@ -2,6 +2,8 @@ import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
 import { SurfaceDisplayButton, SurfaceConversationButton } from './surface-display-control.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Button } from '@clinmesh/ui/components/button'
+import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
+import { WorkspaceSelect } from './workspace-select.tsx'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -281,6 +283,11 @@ function UserMenu({
 }): React.JSX.Element {
   const runtime = useWebRuntime()
   const activeRole = session.availableRoles.find(role => role.id === session.actor.practitionerRoleId)
+  const people = new Map<string, SessionContext['availableRoles'][number]>()
+  for (const role of session.availableRoles) {
+    const key = `${role.practitionerId}/${role.code}`
+    if (!people.has(key) || role.id === session.actor.practitionerRoleId) people.set(key, role)
+  }
   const activeRoleLabel = activeRole === undefined
     ? messages[roleMessageKeys[session.actor.roleCode]]
     : actingPractitionerLabel(activeRole, messages)
@@ -320,7 +327,7 @@ function UserMenu({
             onValueChange={onRoleChange}
             value={session.actor.practitionerRoleId}
           >
-            {session.availableRoles.map(role => (
+            {[...people.values()].map(role => (
               <DropdownMenuRadioItem
                 disabled={roleChangePending}
                 key={role.id}
@@ -413,6 +420,8 @@ export function WorkspaceShell({
     })
   }, [activeSection, locale, messages, navigate, runtime.mode, runtime.surfaceNavigation, visibleRoutes])
   const settingsMode = isSettingsSection(activeSection)
+  const workingRoles = session.availableRoles.filter(role => role.practitionerId === session.actor.practitionerId
+    && role.code === session.actor.roleCode)
   const activeIcon = [...workspaceRoutes, ...settingsRoutes].find(route => route.key === activeSection)?.icon ?? LayoutDashboardIcon
   const navigationLabel = settingsMode ? messages.settingsNavigation : messages.navigationLabel
   const mobileDescription = settingsMode
@@ -445,12 +454,26 @@ export function WorkspaceShell({
         </div>
       </header>
       <div
-        className={activeSection === 'consultation'
+        className={activeSection === 'consultation' || activeSection === 'inpatient'
           ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-background outline-none'
           : 'flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-muted/40 p-4 outline-none sm:p-5'}
         data-clinmesh-workspace-panel=""
         tabIndex={-1}
       >
+        {!settingsMode && workingRoles.length > 1 ? (
+          <FieldSet className="shrink-0 border-b p-3" disabled={roleChangePending}>
+            <FieldGroup className="max-w-sm">
+              <Field>
+                <FieldLabel htmlFor="workspace-working-location">
+                  {activeSection === 'inpatient' ? messages.workingWard : messages.workingLocation}
+                </FieldLabel>
+                <WorkspaceSelect id="workspace-working-location" value={session.actor.practitionerRoleId ?? null}
+                  items={workingRoles.map(role => ({ value: role.id, label: clinicalDisplayName(role.locationName ?? role.locationId) }))}
+                  onValueChange={value => { if (value !== null) onRoleChange(value) }} />
+              </Field>
+            </FieldGroup>
+          </FieldSet>
+        ) : null}
         {children}
       </div>
     </>

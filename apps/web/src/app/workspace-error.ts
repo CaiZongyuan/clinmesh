@@ -132,6 +132,7 @@ export function getWorkspaceErrorMessage(
     INPATIENT_BED_OCCUPIED: messages.inpatientBedOccupiedDescription,
     INPATIENT_BED_INVALID: messages.inpatientBedInvalidDescription,
     INPATIENT_WARD_NOT_FOUND: messages.inpatientWardUnavailableDescription,
+    INPATIENT_WARD_UNAVAILABLE: messages.inpatientWardClosedDescription,
     INPATIENT_NOT_FOUND: messages.inpatientNotFoundDescription,
     INPATIENT_STATE_CONFLICT: messages.inpatientStateConflictDescription,
     INPATIENT_SWAP_INVALID: messages.inpatientStateConflictDescription,

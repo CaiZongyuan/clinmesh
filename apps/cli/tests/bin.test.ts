@@ -70,15 +70,15 @@ describe('clinmesh process entrypoint', () => {
       expect.objectContaining({id:'inpatient.transfer.handover',version:1}),
       expect.objectContaining({id:'inpatient.transfer.receive',version:1}),
       expect.objectContaining({id:'inpatient.transfer.cancel',version:1}),
-      expect.objectContaining({ id: 'inpatient.catalog', version: 2 }),
+      expect.objectContaining({ id: 'inpatient.catalog', version: 3 }),
       expect.objectContaining({ id: 'inpatient.admission.list', version: 2 }),
       expect.objectContaining({ id: 'inpatient.admission.read', version: 2 }),
-      expect.objectContaining({ id: 'inpatient.admission.register', version: 2 }),
+      expect.objectContaining({ id: 'inpatient.admission.register', version: 3 }),
       expect.objectContaining({ id: 'inpatient.admission.receive', version: 1 }),
       expect.objectContaining({ id: 'inpatient.admission.move-bed', version: 1 }),
       expect.objectContaining({ id: 'inpatient.admission.swap-bed', version: 1 }),
       expect.objectContaining({ id: 'inpatient.referral.list', version: 1 }),
-      expect.objectContaining({ id: 'inpatient.referral.issue', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.referral.issue', version: 2 }),
     ]))
   })
 })

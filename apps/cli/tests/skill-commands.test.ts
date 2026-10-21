@@ -183,7 +183,7 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   const examples = commandLines(skill)
-  expect(getHisOperation('inpatient.admission.register').version).toBe(2)
+  expect(getHisOperation('inpatient.admission.register').version).toBe(3)
   expect(getHisOperation('inpatient.admission.register').input.safeParse({ patientId: 'synthetic', patientVersion: '1', admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 }).success).toBe(false)
   expect(skill).toContain('expectedEpoch')
   const admissionExample = /```json\n([\s\S]+?)\n```/.exec(skill)

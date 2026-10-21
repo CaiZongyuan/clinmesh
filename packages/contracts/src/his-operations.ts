@@ -2591,7 +2591,7 @@ const operationDefinitions = [
     http: { method: 'GET', path: '/api/his/v1/inpatient/catalog' },
     input: emptyInputSchema, output: inpatientCatalogSchema, mode: 'query',
     requirements: { expectedVersions: false, idempotency: 'none' },
-    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'outpatient-doctor'], summary: '读取岗位可用病区与床位及当前占用', version: 2,
+    risk: 'read', roles: ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier', 'outpatient-doctor'], summary: '读取病区、床位及当前占用；新入院选择 acceptingAdmissions=true 的默认住院病区', version: 3,
   },
   {
     cliPath: ['inpatient', 'list'], id: 'inpatient.admission.list',
@@ -2612,7 +2612,7 @@ const operationDefinitions = [
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions', encodeBody: raw => ({ input: inpatientRegistrationInputSchema.parse(raw) }) },
     input: inpatientRegistrationInputSchema, output: inpatientCommandResponseSchema, mode: 'command',
     requirements: { expectedVersions: true, idempotency: 'required' },
-    risk: 'write', roles: ['registrar'], summary: '登记独立住院并按整数分收取预交金；重试沿用同一幂等键', version: 2,
+    risk: 'write', roles: ['registrar'], summary: '默认住院病区登记并收取整数分预交金；已签发住院证可按原目标转收，恢复沿用原输入和幂等键', version: 3,
   },
   {
     cliPath: ['inpatient', 'receive'], id: 'inpatient.admission.receive',
@@ -2647,7 +2647,7 @@ const operationDefinitions = [
     http: { method: 'POST', path: '/api/his/v1/inpatient/referrals', encodeBody: raw => ({ input: inpatientReferralInputSchema.parse(raw) }) },
     input: inpatientReferralInputSchema, output: inpatientReferralResponseSchema, mode: 'command',
     requirements: { expectedVersions: true, idempotency: 'required' },
-    risk: 'write', roles: ['outpatient-doctor'], summary: '负责门诊医生开住院证；住院登记转收一次', version: 1,
+    risk: 'write', roles: ['outpatient-doctor'], summary: '负责门诊医生向默认住院病区开住院证；病区不可用时重读目录，原输入与幂等键可恢复已完成操作', version: 2,
   },
 ] as const satisfies readonly HisOperationDeclaration[]
 

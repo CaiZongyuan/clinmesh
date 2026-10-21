@@ -86,6 +86,22 @@ const administratorSession = {
     organizationId: 'organization-clinmesh',
     practitionerId: 'practitioner-triage-nurse',
     practitionerName: '合成分诊护士',
+  }, {
+    code: 'inpatient-doctor', id: 'practitioner-role-inpatient-doctor',
+    locationId: 'ward-general', locationName: '住院病区', organizationId: 'organization-inpatient-medicine',
+    practitionerId: 'practitioner-inpatient-doctor', practitionerName: '合成住院医生',
+  }, {
+    code: 'inpatient-doctor', id: 'practitioner-role-inpatient-doctor-surgery',
+    locationId: 'ward-surgery', locationName: '外科病区', organizationId: 'organization-inpatient-surgery',
+    practitionerId: 'practitioner-inpatient-doctor', practitionerName: '合成住院医生',
+  }, {
+    code: 'ward-nurse', id: 'practitioner-role-ward-nurse',
+    locationId: 'ward-general', locationName: '住院病区', organizationId: 'organization-inpatient-medicine',
+    practitionerId: 'practitioner-ward-nurse', practitionerName: '合成病区护士',
+  }, {
+    code: 'ward-nurse', id: 'practitioner-role-ward-nurse-surgery',
+    locationId: 'ward-surgery', locationName: '外科病区', organizationId: 'organization-inpatient-surgery',
+    practitionerId: 'practitioner-ward-nurse', practitionerName: '合成病区护士',
   }],
   user: {
     email: 'admin@demo.clinmesh.local',
@@ -224,6 +240,8 @@ describe('trusted Web session workflow', () => {
       '药师',
       '挂号员',
       '分诊护士',
+      '住院医生',
+      '病区护士',
     ]) {
       expect(await screen.findByRole('menuitemradio', { name: label })).toBeTruthy()
     }
@@ -242,6 +260,43 @@ describe('trusted Web session workflow', () => {
     expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
     expect(window.location.pathname).toBe('/scenario-data')
     await waitFor(() => expect(scenarioRequests).toBeGreaterThan(requestsBeforeReturning))
+  })
+
+  it('keeps legacy ward assignments reachable through one person option', async () => {
+    window.history.replaceState(null, '', '/inpatient')
+    const role = administratorSession.availableRoles.find(item => item.id === 'practitioner-role-inpatient-doctor')!
+    let session = {
+      ...administratorSession,
+      actor: { ...administratorSession.actor, roleCode: 'inpatient-doctor', practitionerId: role.practitionerId,
+        practitionerRoleId: role.id, organizationId: role.organizationId, locationId: role.locationId },
+    }
+    const selections: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/auth/context') return Response.json(session)
+      if (path === '/api/auth/role') {
+        const body: { practitionerRoleId: string } = JSON.parse(String(init?.body))
+        const selected = session.availableRoles.find(item => item.id === body.practitionerRoleId)!
+        selections.push(selected.id)
+        session = { ...session, actor: { ...session.actor, practitionerRoleId: selected.id,
+          practitionerId: selected.practitionerId, organizationId: selected.organizationId,
+          locationId: selected.locationId, roleCode: selected.code } }
+        return Response.json(session)
+      }
+      if (path === '/api/his/v1/inpatient/catalog') return Response.json({ wards: [], beds: [] })
+      if (path === '/api/his/v1/inpatient/admissions') return Response.json({ items: [] })
+      throw new Error(`Unexpected request: ${path}`)
+    }))
+    const user = userEvent.setup()
+    render(<WebApp />)
+    const ward = await screen.findByRole('combobox', { name: '工作病区' })
+    await user.click(ward)
+    await user.click(await screen.findByRole('option', { name: '外科病区' }))
+    await waitFor(() => expect(selections).toEqual(['practitioner-role-inpatient-doctor-surgery']))
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    const people = await screen.findAllByRole('menuitemradio', { name: '住院医生' })
+    expect(people).toHaveLength(1)
+    expect(people[0]?.getAttribute('aria-checked')).toBe('true')
   })
 
   it('shows a permission state when a stale role grant is rejected', async () => {

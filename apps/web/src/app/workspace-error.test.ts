@@ -101,3 +101,11 @@ it('localizes inpatient conflicts and local validation without exposing raw exce
   expect(getWorkspaceErrorMessage(new ApiClientError(400, 'INVALID_INPUT', 'private local validation'), getWorkspaceMessages('en-US')))
     .toBe(getWorkspaceMessages('en-US').invalidInputDescription)
 })
+
+it.each([
+  ['zh-CN', '当前病区不接收新入院，请选择住院病区。'],
+  ['en-US', 'This ward does not accept new admissions. Select the default inpatient ward.'],
+] as const)('explains the default admission ward in %s', (locale, expected) => {
+  expect(getWorkspaceErrorMessage(new ApiClientError(409, 'INPATIENT_WARD_UNAVAILABLE', 'private ward detail'), getWorkspaceMessages(locale)))
+    .toBe(expected)
+})
