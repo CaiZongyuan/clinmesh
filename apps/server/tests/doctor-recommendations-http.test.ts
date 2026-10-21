@@ -1583,6 +1583,31 @@ it('notifies the doctor when even the largest selected record cannot join the ge
   expect(await fixture.readCase()).toEqual(before)
 })
 
+it('keeps a single oversized selected record from reintroducing the budget failure', async () => {
+  const requests: string[] = []
+  const fixture = await setup(async input => {
+    requests.push(input.schemaName)
+    if (input.schemaName === 'doctor_recommendation_history_selection') {
+      const payload = z.object({ historyEvidence: z.array(z.object({ id: z.string(), text: z.string() })) }).parse(input.userPayload)
+      return { content: JSON.stringify({ complete: true, selectedEvidenceIds: payload.historyEvidence
+        .filter(item => item.text.includes('相关大记录编号')).map(item => item.id) }), model: input.model }
+    }
+    const text = JSON.stringify(input.userPayload)
+    expect(text).toContain('既往手术记录编号0。')
+    expect(text).not.toContain('相关大记录编号0。')
+    return { content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+      ? diagnosisOutput(input) : verificationOutput(input)), model: input.model }
+  }, { syntheaProvider: heavyRequiredHistory({ procedures: 55, observations: 1 }) })
+  const before = await fixture.readCase()
+  expect((await fixture.generate()).status).toBe(200)
+  await fixture.runtime.dispatchPending()
+  const state = await fixture.read()
+  expect(state.status, JSON.stringify({ errorCode: state.errorCode, requests })).toBe('ready')
+  expect(state.notices?.map(notice => notice.message).join('\n'), JSON.stringify({ requests })).toContain('未纳入本次建议')
+  expect(requests.filter(name => name === 'doctor_recommendation_history_consolidation')).toHaveLength(0)
+  expect(await fixture.readCase()).toEqual(before)
+})
+
 it('keeps the explicit budget failure when the consolidation request itself exceeds the envelope', async () => {
   const requests: string[] = []
   const fixture = await setup(async input => {

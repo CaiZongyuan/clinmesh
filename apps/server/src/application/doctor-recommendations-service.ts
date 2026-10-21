@@ -350,7 +350,7 @@ export class DoctorRecommendationsService {
     const packSelection = (list: typeof selectedRecords) => packDoctorRecommendationHistory(caseId, list.map(record => record.detail)).optional
     let finalRecords = selectedRecords
     let droppedHistoryRecords: number | undefined
-    if (selectedRecords.length > 1 && !fits([...requiredEvidence, ...packSelection(selectedRecords)])) {
+    if (selectedRecords.length > 0 && !fits([...requiredEvidence, ...packSelection(selectedRecords)])) {
       // 已选记录合入生成请求超限时，让模型在完整已选记录中保留至多容量条最相关记录。
       const packedSelected = selectedRecords.map(record => ({ record, packed: packSelection([record])[0]! }))
       const largest = packedSelected.reduce((a, b) => Buffer.byteLength(JSON.stringify(b.packed)) > Buffer.byteLength(JSON.stringify(a.packed)) ? b : a)

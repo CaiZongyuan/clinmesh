@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { doctorRecommendationGenerationSchema, doctorRecommendationStateSchema, confirmDoctorPreparationRequestSchema } from '../src/doctor-recommendations.ts'
+import { doctorRecommendationGenerationSchema, doctorRecommendationRecoverySchema, doctorRecommendationStateSchema, confirmDoctorPreparationRequestSchema } from '../src/doctor-recommendations.ts'
 
 const state = {
   caseId: 'synthetic-case', kind: 'diagnosis', encounterId: 'synthetic-encounter', encounterVersion: '1',
@@ -89,4 +89,20 @@ it('preserves the selected Reference medication product for the shared manual ed
       doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30, referenceProduct }],
   } }
   expect(confirmDoctorPreparationRequestSchema.parse(request).input.selections[0]).toHaveProperty('referenceProduct', referenceProduct)
+})
+
+it('accepts a maximal execution recovery covering all five stages at their batch limits', () => {
+  const unit = (stage: string, batchId: string) => ({ stage, batchId, status: 'succeeded', requestCount: 1 })
+  const units = [
+    ...Array.from({ length: 8 }, (_, index) => unit('history-selection', String(index + 1))),
+    unit('history-consolidation', '1'),
+    ...Array.from({ length: 8 }, (_, index) => unit('catalog-selection', String(index + 1))),
+    unit('generation', '1'),
+    ...Array.from({ length: 8 }, (_, index) => unit('verification', String(index + 1))),
+  ]
+  expect(units).toHaveLength(26)
+  expect(doctorRecommendationRecoverySchema.parse({
+    status: 'completed', requestCount: 26, extraRequestCount: 0,
+    maxRequestsPerUnit: 3, maxExtraRequests: 4, canContinue: false, units,
+  })).toMatchObject({ status: 'completed' })
 })

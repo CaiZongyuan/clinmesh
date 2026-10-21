@@ -93,7 +93,7 @@ export const doctorRecommendationRecoverySchema = z.object({
     batchId: z.string().min(1).max(256),
     status: z.enum(['pending', 'dispatching', 'succeeded', 'failed', 'unknown']),
     requestCount: z.number().int().min(0).max(3), errorCode: z.string().min(1).max(64).optional(),
-  }).strict()).max(25),
+  }).strict()).max(26),
 }).strict()
 
 export const doctorRecommendationStateSchema = z.object({
