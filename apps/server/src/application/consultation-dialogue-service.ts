@@ -128,38 +128,47 @@ export class ConsultationDialogueService {
   /** Only proven, pre-dispatch control refusals are candidates for automatic continuation. */
   async resumePending(): Promise<void> {
     if (this.#shutdown.signal.aborted) return
-    const rows = z.array(z.object({ workspace_id: z.string(), epoch: z.string(), attempt_id: z.string(), deadline_at: z.string(), input_json: z.string() }))
-      .parse(this.#database.driver.prepare('SELECT * FROM model_reply_wait LIMIT 100').all())
-    for (const row of rows) {
-      const parsed = resumeInputSchema.parse(JSON.parse(row.input_json))
-      const { agentGrantId, locationId, organizationId, practitionerId, practitionerRoleId, ...required } = parsed.context
-      const context: ActorContext = { ...required, ...(agentGrantId === undefined ? {} : { agentGrantId }),
-        ...(locationId === undefined ? {} : { locationId }), ...(organizationId === undefined ? {} : { organizationId }),
-        ...(practitionerId === undefined ? {} : { practitionerId }), ...(practitionerRoleId === undefined ? {} : { practitionerRoleId }) }
-      const input = { ...parsed, context }
-      if (Date.parse(row.deadline_at) <= Date.now() || this.#contextStatus(context) !== 'active') {
-        this.#attempts.finish(context, row.attempt_id, 'failed', 'AI_TIMEOUT')
-        this.#deleteWait(context, row.attempt_id)
-        continue
-      }
-      try {
-        if (this.#workflow.patientTurnAfter(context, input.encounterId, input.doctorSequence) !== undefined) {
-          this.#attempts.finish(context, row.attempt_id, 'succeeded', null)
+    // Page across the original queue, including refused rows, without chasing new arrivals.
+    const end = z.object({ position: z.number().nullable() }).parse(this.#database.driver.prepare(
+      'SELECT MAX(rowid) AS position FROM model_reply_wait').get()).position ?? 0
+    let position = 0
+    while (position < end && !this.#shutdown.signal.aborted) {
+      const rows = z.array(z.object({ position: z.number(), workspace_id: z.string(), epoch: z.string(), attempt_id: z.string(), deadline_at: z.string(), input_json: z.string() }))
+        .parse(this.#database.driver.prepare('SELECT rowid AS position, * FROM model_reply_wait WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 100')
+          .all(position, end))
+      if (rows.length === 0) break
+      for (const row of rows) {
+        position = row.position
+        const parsed = resumeInputSchema.parse(JSON.parse(row.input_json))
+        const { agentGrantId, locationId, organizationId, practitionerId, practitionerRoleId, ...required } = parsed.context
+        const context: ActorContext = { ...required, ...(agentGrantId === undefined ? {} : { agentGrantId }),
+          ...(locationId === undefined ? {} : { locationId }), ...(organizationId === undefined ? {} : { organizationId }),
+          ...(practitionerId === undefined ? {} : { practitionerId }), ...(practitionerRoleId === undefined ? {} : { practitionerRoleId }) }
+        const input = { ...parsed, context }
+        if (Date.parse(row.deadline_at) <= Date.now() || this.#contextStatus(context) !== 'active') {
+          this.#attempts.finish(context, row.attempt_id, 'failed', 'AI_TIMEOUT')
           this.#deleteWait(context, row.attempt_id)
           continue
         }
-        this.#workflow.authorizeConsultation(context, input.encounterId, input.doctorSequence)
-      } catch (error) {
-        if (!(error instanceof WorkflowError)) throw error
-        this.#attempts.finish(context, row.attempt_id, 'failed', 'CONSULTATION_REPLY_UNAVAILABLE')
-        this.#deleteWait(context, row.attempt_id)
-        continue
+        try {
+          if (this.#workflow.patientTurnAfter(context, input.encounterId, input.doctorSequence) !== undefined) {
+            this.#attempts.finish(context, row.attempt_id, 'succeeded', null)
+            this.#deleteWait(context, row.attempt_id)
+            continue
+          }
+          this.#workflow.authorizeConsultation(context, input.encounterId, input.doctorSequence)
+        } catch (error) {
+          if (!(error instanceof WorkflowError)) throw error
+          this.#attempts.finish(context, row.attempt_id, 'failed', 'CONSULTATION_REPLY_UNAVAILABLE')
+          this.#deleteWait(context, row.attempt_id)
+          continue
+        }
+        if (!this.#canResume(row.workspace_id, row.attempt_id) || this.#inflight.has(row.attempt_id)) continue
+        const attempt: ConsultationReplyAttempt = { attempt_id: row.attempt_id, doctor_turn_id: input.doctorTurnId,
+          encounter_id: input.encounterId, status: 'executing', started_at: new Date().toISOString(), deadline_at: row.deadline_at,
+          error_code: 'MODEL_CONTROL_BLOCKED' }
+        await this.#startPatientTurn(input, attempt).catch(() => undefined)
       }
-      if (!this.#canResume(row.workspace_id, row.attempt_id) || this.#inflight.has(row.attempt_id)) continue
-      const attempt: ConsultationReplyAttempt = { attempt_id: row.attempt_id, doctor_turn_id: input.doctorTurnId,
-        encounter_id: input.encounterId, status: 'executing', started_at: new Date().toISOString(), deadline_at: row.deadline_at,
-        error_code: 'MODEL_CONTROL_BLOCKED' }
-      await this.#startPatientTurn(input, attempt).catch(() => undefined)
     }
   }
 

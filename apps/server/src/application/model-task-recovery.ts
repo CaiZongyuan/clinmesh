@@ -152,20 +152,28 @@ export class ModelTaskRecovery {
   }
 
   wake(): void {
-    const rows = z.array(z.object({ workspace_id: z.string(), epoch: z.string(), event_id: z.string(), reason: z.string() })).parse(
-      this.database.driver.prepare('SELECT * FROM model_task_wait LIMIT 100').all())
-    for (const row of rows) {
-      if (!this.control.canDispatch(row.workspace_id)
-        || row.reason === 'MODEL_RETRY_DISABLED' && !this.control.automaticRetries(row.workspace_id)) continue
-      const changed = this.database.driver.prepare(`UPDATE outbox_event SET next_attempt_at = ?
-        WHERE workspace_id = ? AND epoch = ? AND event_id = ? AND status = 'failed'`)
-        .run(new Date().toISOString(), row.workspace_id, row.epoch, row.event_id)
-      // A policy update can arrive while the refusal's outbox lease is still completing.
-      if (changed.changes === 0 && this.database.driver.prepare(`SELECT 1 FROM outbox_event
-        WHERE workspace_id = ? AND epoch = ? AND event_id = ? AND status = 'claimed'`)
-        .get(row.workspace_id, row.epoch, row.event_id) !== undefined) continue
-      this.database.driver.prepare('DELETE FROM model_task_wait WHERE workspace_id = ? AND epoch = ? AND event_id = ?')
-        .run(row.workspace_id, row.epoch, row.event_id)
+    const end = z.object({ position: z.number().nullable() }).parse(this.database.driver.prepare(
+      'SELECT MAX(rowid) AS position FROM model_task_wait').get()).position ?? 0
+    let position = 0
+    while (position < end) {
+      const rows = z.array(z.object({ position: z.number(), workspace_id: z.string(), epoch: z.string(), event_id: z.string(), reason: z.string() })).parse(
+        this.database.driver.prepare('SELECT rowid AS position, * FROM model_task_wait WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 100')
+          .all(position, end))
+      if (rows.length === 0) break
+      for (const row of rows) {
+        position = row.position
+        if (!this.control.canDispatch(row.workspace_id)
+          || row.reason === 'MODEL_RETRY_DISABLED' && !this.control.automaticRetries(row.workspace_id)) continue
+        const changed = this.database.driver.prepare(`UPDATE outbox_event SET next_attempt_at = ?
+          WHERE workspace_id = ? AND epoch = ? AND event_id = ? AND status = 'failed'`)
+          .run(new Date().toISOString(), row.workspace_id, row.epoch, row.event_id)
+        // A policy update can arrive while the refusal's outbox lease is still completing.
+        if (changed.changes === 0 && this.database.driver.prepare(`SELECT 1 FROM outbox_event
+          WHERE workspace_id = ? AND epoch = ? AND event_id = ? AND status = 'claimed'`)
+          .get(row.workspace_id, row.epoch, row.event_id) !== undefined) continue
+        this.database.driver.prepare('DELETE FROM model_task_wait WHERE workspace_id = ? AND epoch = ? AND event_id = ?')
+          .run(row.workspace_id, row.epoch, row.event_id)
+      }
     }
   }
 }
