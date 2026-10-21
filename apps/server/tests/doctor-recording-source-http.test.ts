@@ -126,7 +126,7 @@ it('retains unchanged facts from the pinned batch without asking the model to re
   } }
   const f = await fixture(provider)
   const binding = await f.context()
-  const saved = []
+  const saved: string[] = []
   for (const [index, text] of ['双肺呼吸音清。', '心律齐。'].entries()) {
     const input = await f.source(binding, text, `retain-rpc-${index}`, `retain-message-${index}`)
     saved.push(doctorRecordingSourceResponseSchema.parse(await (await f.record(binding, input)).json()).data.sourceId)
@@ -607,7 +607,7 @@ it('persists a valid recording returned after six seconds within the normal mode
   expect((await f.read()).consultationRecording).toMatchObject({ processedCount: 1, failedCount: 0 })
 })
 
-it('cancels a timed out recording once and preserves its failure without blocking the next source', async () => {
+it('cancels a timed out recording once and preserves its unknown outcome without blocking the next source', async () => {
   let calls = 0
   let cancelled = false
   const provider: JsonChatCompletionsProvider = { async completeJson(input) {
@@ -624,12 +624,13 @@ it('cancels a timed out recording once and preserves its failure without blockin
   await f.runtime.dispatchPending()
   expect(cancelled).toBe(true)
   expect(calls).toBe(1)
-  expect((await f.read()).consultationRecording).toMatchObject({ failures: [{ code: 'AI_TIMEOUT', retrying: false }] })
+  expect((await f.read()).consultationRecording).toMatchObject({ failures: [{ code: 'MODEL_OUTCOME_UNKNOWN', retrying: false }] })
   const timing = z.object({ timings_json: z.string() }).parse(f.runtime.database.driver.prepare(
     'SELECT timings_json FROM consultation_recording_batch').get())
-  expect(JSON.parse(timing.timings_json)).toMatchObject({ errorCode: 'AI_TIMEOUT', stage: 'summary', sourceCount: 1,
-    aggregationMs: 0, schedulingMs: expect.any(Number), modelMs: expect.any(Number), validationMs: 0,
-    persistenceMs: expect.any(Number), firstResponseMs: null, firstTextMs: null })
+  expect(JSON.parse(timing.timings_json)).toMatchObject({ errorCode: 'MODEL_OUTCOME_UNKNOWN', sourceCount: 1,
+    aggregationMs: 0, persistenceMs: expect.any(Number) })
+  await f.runtime.dispatchPending()
+  expect(calls).toBe(1)
   await f.record(binding, await f.source(binding, '没有新增记录。', 'after-timeout-rpc', 'after-timeout-message'))
   await f.runtime.dispatchPending()
   expect(calls).toBe(2)
