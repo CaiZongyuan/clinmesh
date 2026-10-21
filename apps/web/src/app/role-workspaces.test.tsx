@@ -5872,7 +5872,7 @@ describe('role workspaces', () => {
       mode: 'surface', surfaceAgent, surfaceAgentStatus: 'active', surfaceSessionId: 'dsh-session-1',
     }} />)
 
-    expect(await screen.findByText('门诊医生 · 门诊医生')).toBeTruthy()
+    expect(await screen.findByText('门诊医生')).toBeTruthy()
     expect(await screen.findByRole('button', { name: '选择病例 合成患者周明' })).toBeTruthy()
     const caseDetail = await screen.findByRole('region', { name: '病例详情' })
     expect(within(caseDetail).getByText('脉搏（次/分）')).toBeTruthy()

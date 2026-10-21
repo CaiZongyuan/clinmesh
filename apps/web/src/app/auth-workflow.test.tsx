@@ -64,7 +64,7 @@ const administratorSession = {
     locationId: 'location-outpatient-doctor',
     organizationId: 'organization-clinmesh',
     practitionerId: 'practitioner-outpatient-doctor',
-    practitionerName: '合成门诊医生',
+    practitionerName: '合成周医生',
   }, {
     code: 'pharmacist',
     id: 'practitioner-role-pharmacist',
@@ -218,26 +218,26 @@ describe('trusted Web session workflow', () => {
     expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     for (const label of [
-      '管理员 · 管理员',
-      '收费员 · 收费员',
-      '门诊医生 · 门诊医生',
-      '药师 · 药师',
-      '挂号员 · 挂号员',
-      '分诊护士 · 分诊护士',
+      '管理员',
+      '收费员',
+      '门诊医生 · 周医生',
+      '药师',
+      '挂号员',
+      '分诊护士',
     ]) {
       expect(await screen.findByRole('menuitemradio', { name: label })).toBeTruthy()
     }
-    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 挂号员' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员' }))
 
     expect(await screen.findByRole('heading', { name: '门诊挂号' })).toBeTruthy()
     expect(window.location.pathname).toBe('/registration')
-    expect(screen.getByText('挂号员 · 挂号员')).toBeTruthy()
+    expect(screen.getByText('挂号员')).toBeTruthy()
     expect(screen.getByRole('link', { name: '门诊挂号' })).toBeTruthy()
     expect(screen.queryByRole('link', { name: '门诊收费' })).toBeNull()
     const requestsBeforeReturning = scenarioRequests
 
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(await screen.findByRole('menuitemradio', { name: '管理员 · 管理员' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '管理员' }))
 
     expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
     expect(window.location.pathname).toBe('/scenario-data')
@@ -279,7 +279,7 @@ describe('trusted Web session workflow', () => {
 
     expect(await screen.findByRole('heading', { name: '模拟数据' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
-    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员 · 挂号员' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: '挂号员' }))
 
     expect(await screen.findByText('当前岗位无权执行此操作')).toBeTruthy()
     expect(screen.getByText('请切换到有权限的岗位后重试。')).toBeTruthy()

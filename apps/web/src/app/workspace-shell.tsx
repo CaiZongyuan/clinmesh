@@ -153,7 +153,9 @@ function actingPractitionerLabel(
   role: SessionContext['availableRoles'][number],
   messages: ReturnType<typeof getWorkspaceMessages>,
 ): string {
-  return `${messages[roleMessageKeys[role.code]]} · ${clinicalDisplayName(role.practitionerName)}`
+  const roleLabel = messages[roleMessageKeys[role.code]]
+  const practitionerName = clinicalDisplayName(role.practitionerName)
+  return practitionerName === roleLabel ? roleLabel : `${roleLabel} · ${practitionerName}`
 }
 
 function clinicalDisplayName(value: string): string {
