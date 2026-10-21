@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 const identifier = z.string().min(1).max(256).regex(/^[\p{L}\p{N}_.:/@+{}", -]+$/u)
+const modelName = z.string().min(1).max(1024).regex(/^[\p{L}\p{N}_.:/@+{}", -]+$/u)
 const count = z.number().int().nonnegative().safe().nullable()
 export const modelUsageFeatureSchema = z.enum(['patient_persona', 'patient_dialogue_reply',
   'consultation_history_increment', 'consultation_history_summary', 'investigation_result',
@@ -16,6 +17,7 @@ export const modelUsageSourceSchema = z.object({
 /** Server-created metadata only; never inferred from prompt or model text. */
 export const modelUsageContextSchema = z.object({
   workspaceId: identifier, epoch: identifier, taskId: identifier,
+  actorId: identifier.optional(), practitionerRoleId: identifier.optional(),
   caseId: identifier.optional(), encounterId: identifier.optional(),
   stage: identifier, trigger: z.enum(['automatic', 'manual', 'recovery', 'unknown']),
   sources: z.array(modelUsageSourceSchema).max(256),
@@ -33,19 +35,33 @@ export const unknownModelTokenUsage: ModelTokenUsage = {
   inputTokens: null, outputTokens: null, cachedInputTokens: null,
   reasoningOutputTokens: null, totalTokens: null, mapping: 'unknown',
 }
+
+/** Usage snapshots replace reported counters; omitted counters cannot erase known consumption. */
+export function mergeModelTokenUsage(known: ModelTokenUsage, next: ModelTokenUsage): ModelTokenUsage {
+  return {
+    inputTokens: next.inputTokens ?? known.inputTokens,
+    outputTokens: next.outputTokens ?? known.outputTokens,
+    cachedInputTokens: next.cachedInputTokens ?? known.cachedInputTokens,
+    reasoningOutputTokens: next.reasoningOutputTokens ?? known.reasoningOutputTokens,
+    totalTokens: next.totalTokens ?? known.totalTokens,
+    mapping: next.mapping === 'unknown' ? known.mapping : next.mapping,
+  }
+}
 export const modelUsageOutcomeSchema = z.object({
   status: z.enum(['succeeded', 'failed', 'cancelled', 'unknown']),
+  dispatch: z.enum(['dispatched', 'not-dispatched', 'unknown']).optional(),
   usage: modelTokenUsageSchema,
-  actualModel: identifier.optional(), providerRequestId: identifier.optional(),
+  actualModel: modelName.optional(), providerRequestId: identifier.optional(),
   httpStatus: z.number().int().min(100).max(599).optional(),
 }).strict()
 export type ModelUsageOutcome = z.infer<typeof modelUsageOutcomeSchema>
 export const modelUsageAttemptSchema = z.object({
   id: z.string().uuid(), context: modelUsageContextSchema, feature: modelUsageFeatureSchema,
-  provider: identifier, requestedModel: identifier, actualModel: identifier.nullable(),
+  provider: identifier, requestedModel: modelName, actualModel: modelName.nullable(),
   reasoningEffort: identifier.nullable(), outputLimit: count,
   kind: z.enum(['initial', 'format-repair', 'rate-limit-retry']),
   status: z.enum(['in-flight', 'succeeded', 'failed', 'cancelled', 'unknown']),
+  dispatch: z.enum(['dispatched', 'not-dispatched', 'unknown']).default('unknown'),
   startedAt: z.string().datetime(), endedAt: z.string().datetime().nullable(),
   providerRequestId: identifier.nullable(), httpStatus: z.number().int().nullable(),
   usage: modelTokenUsageSchema,
@@ -54,7 +70,7 @@ export const modelUsageAttemptSchema = z.object({
 export type ModelUsageAttempt = z.infer<typeof modelUsageAttemptSchema>
 export const modelUsageFilterSchema = z.object({
   from: z.string().date().optional(), to: z.string().date().optional(),
-  feature: modelUsageFeatureSchema.optional(), provider: identifier.optional(), model: identifier.optional(),
+  feature: modelUsageFeatureSchema.optional(), provider: identifier.optional(), model: modelName.optional(),
   status: modelUsageAttemptSchema.shape.status.optional(), caseId: identifier.optional(),
   offset: z.coerce.number().int().min(0).max(1_000_000).default(0),
   limit: z.coerce.number().int().min(1).max(100).default(25),

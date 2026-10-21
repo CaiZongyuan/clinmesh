@@ -123,3 +123,9 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 成功 Command 响应返回 `requestId` 和 `auditId`，持久表通过 Workspace/Epoch、Scenario Run、idempotency key、Audit ID、Action Trace ID 和 outbox event ID 建立关联。Agent proposal 再通过 DSH Session/call ID、proposal ID、review decision 和同一 `requestId` 串联 Tool、Command、Audit 与 Trace。CLI 在结构化错误中保留服务端 correlation ID，但该 ID 不表示 Command 已经提交，写操作的恢复仍以 idempotency key、ambiguous outcome 和 receipt 为准。`/api/health` 只报告服务状态与 FHIR 版本。
 
 首期没有生产 metrics exporter、分布式 trace、成功 request log 或管理仪表盘，因此不宣称在线采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。独立 performance runner 可以在临时 sandbox 重复执行固定工作负载并输出分位数、SQL/存储和 Trace 指标，但不改变生产请求或持久化路径。运行诊断仍依赖 database CLI、correlation ID、结构化错误、失败日志和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
+
+### 模型用量查询
+
+ClinMesh 设置中的模型用量页通过已认证 Session 读取 `/api/model-usage/overview`、`/api/model-usage/requests` 与单次请求详情。当前 Workspace 成员可读跨 Epoch 汇总；明细及计数共用服务端 SQL 授权条件，管理员可读本 Workspace 历史记录，普通医生只读活动 Epoch 内有 `outpatient_case_responsibility` 责任关系的临床请求。其他岗位不能借相同 Actor、猜测尝试 ID 或汇总下钻读取医生明细；行政人设和目录补全明细仅管理员可读。查询不接受客户端指定 Workspace、Epoch 或角色；无权和不存在的单次请求都返回 404。
+
+监控覆盖 Server 直接模型调用与经 DSH bridge 的调用；Host 独立代问识别由后续执行票接入，不覆盖整个 DSH 原生聊天或插件。当前设置为启用及三项无限，只读显示；全局停用、有限额度、统一人民币计价与保留策略的实施状态由[正式规格](../spec/2026-10-19-model-usage-control.md)及其执行票拥有，不能据本页推断这些控制已交付。账本的持久化与未知语义见[存储合同](storage.md#910-模型调用账本)。

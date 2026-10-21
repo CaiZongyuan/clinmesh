@@ -287,7 +287,7 @@ export class ConsultationDialogueService {
       const model = await this.#untilAborted(signal, () => this.#models?.bind(input.context.workspaceId, taskId, defaultModel, signal)
         ?? Promise.resolve(defaultModel))
       signal.throwIfAborted()
-      reply = await this.#composeReply(input.context, caseId, binding.syntheticCaseId, persona, model, signal, input.doctorSequence)
+      reply = await this.#composeReply(input.context, caseId, binding.syntheticCaseId, persona, model, signal, input.doctorSequence, attempt.attempt_id)
     } catch (error) {
       if (error instanceof ConsultationDialogueError) throw error
       if (error instanceof ChatCompletionsError) {
@@ -332,6 +332,7 @@ export class ConsultationDialogueService {
     model: string,
     signal: AbortSignal,
     doctorSequence: number,
+    attemptId: string,
   ): Promise<string> {
     const detail = this.#workflow.doctorCaseDetail(context, caseId)
     const turns = (detail.consultation?.turns ?? []).slice(-dialogueContextTurnLimit)
@@ -394,9 +395,13 @@ export class ConsultationDialogueService {
         },
       },
     }
-    const generate = async (systemPrompt: string) => {
+    const generate = async (systemPrompt: string, usageKind: 'initial' | 'format-repair' = 'initial') => {
       this.#workflow.authorizeConsultation(context, detail.encounter.id, doctorSequence)
       const result = await this.#untilAborted(signal, () => this.#provider!.completeJson({
+        usageKind,
+        usageContext: { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId,
+          taskId: attemptId, caseId, encounterId: detail.encounter.id, stage: 'reply', trigger: 'manual',
+          sources: [{ kind: 'turn', id: `${detail.encounter.id}:${doctorSequence}`, relationship: 'trigger' }] },
         signal, jsonSchema: z.toJSONSchema(replyOutputSchema) as Record<string, unknown>,
         model, schemaName: 'patient_dialogue_reply', systemPrompt, userPayload: payload,
         validate: value => replyOutputSchema.safeParse(value).success,
@@ -405,7 +410,7 @@ export class ConsultationDialogueService {
     }
     const reply = await generate(dialogueSystemPrompt)
     if (!this.#leaksHiddenDiagnosis(context, syntheticCaseId, reply)) return reply
-    const retried = await generate(`${dialogueSystemPrompt}\n不要使用任何疾病名称或医学术语描述自己的病情。`)
+    const retried = await generate(`${dialogueSystemPrompt}\n不要使用任何疾病名称或医学术语描述自己的病情。`, 'format-repair')
     return this.#leaksHiddenDiagnosis(context, syntheticCaseId, retried) ? safeFallbackReply : retried
   }
 

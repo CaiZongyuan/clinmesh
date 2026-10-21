@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { modelUsageFilterSchema } from '@clinmesh/contracts/model-usage'
+import type { ModelUsageService } from './application/model-usage-service.ts'
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import { syntheticCaseRegistrationListInputSchema } from '@clinmesh/contracts/his-operations'
@@ -138,6 +140,7 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  modelUsage?: ModelUsageService
   commandEvents?: Pick<CommandExecutor, 'subscribe'>
   recordingUpdatesSignal?: AbortSignal
   doctorRecommendations?: DoctorRecommendationsService
@@ -387,6 +390,28 @@ export function createApp(options: CreateAppOptions = {}): Hono {
 
   if (options.identity !== undefined) {
     const identity = options.identity
+    if (options.modelUsage !== undefined) {
+      const usage = options.modelUsage
+      app.get('/api/model-usage/overview', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.overview(session.actor, modelUsageFilterSchema.parse(context.req.query())))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.get('/api/model-usage/requests', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.list(session.actor, modelUsageFilterSchema.parse(context.req.query())))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.get('/api/model-usage/requests/:attemptId', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          const record = usage.detail(session.actor, z.string().uuid().parse(context.req.param('attemptId')))
+          return record === undefined ? context.json(apiErrorBody(context, 'NOT_FOUND', 'The model request was not found'), 404) : context.json(record)
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+    }
     app.post('/api/auth/sign-up/email', context => context.json(apiErrorBody(
       context,
       'PUBLIC_SIGN_UP_DISABLED',

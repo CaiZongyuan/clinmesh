@@ -1,6 +1,6 @@
-import { dshDefaultModel, decodeModelRoute, mergeModelBridgeUsage, modelBridgeAccountingMediaType, modelBridgeFrameSchema,
+import { dshDefaultModel, decodeModelRoute, modelBridgeAccountingMediaType, modelBridgeFrameSchema,
   modelBridgeErrorSchema, modelBridgeFirstTextHeader, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
-import { unknownModelTokenUsage, type ModelTokenUsage, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
+import { mergeModelTokenUsage, unknownModelTokenUsage, type ModelTokenUsage, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import { beginChatCompletionUsage, settleChatCompletionUsage, ChatCompletionRequestControlError, invokeChatCompletionRequestControl, ChatCompletionsError, StructuredOutputValidationError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
 import { z, ZodError } from 'zod'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -112,7 +112,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
             if (terminal !== undefined) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge sent data after its terminal frame')
             const parsed = modelBridgeFrameSchema.parse(JSON.parse(line))
             if (attemptId === undefined || parsed.attemptId !== attemptId) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the attempt identity')
-            if (parsed.type === 'usage') { knownUsage = mergeModelBridgeUsage(knownUsage, parsed.usage); observation.dispatch = 'dispatched' }
+            if (parsed.type === 'usage') { knownUsage = mergeModelTokenUsage(knownUsage, parsed.usage); observation.dispatch = 'dispatched' }
             else terminal = parsed.type === 'result' ? { value: parsed.result, status: 200 }
               : { value: parsed.error, status: parsed.httpStatus }
           }
@@ -149,7 +149,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
           const completed = modelBridgeResponseSchema.safeParse(parseJson(content))
           const accounting = failure.success ? failure.data.accounting : completed.success ? completed.data.accounting : undefined
           if (accounting !== undefined && accounting.attemptId !== attemptId) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the attempt identity')
-          if (accounting !== undefined) knownUsage = mergeModelBridgeUsage(knownUsage, accounting.usage)
+          if (accounting !== undefined) knownUsage = mergeModelTokenUsage(knownUsage, accounting.usage)
           if (observation.dispatch !== 'dispatched') observation.dispatch = accounting?.dispatch ?? observation.dispatch
           const unknownResult = accounting?.status === 'unknown' || accounting?.status === 'cancelled'
           if (!unknownResult) invokeChatCompletionRequestControl(control?.onRequestComplete)

@@ -476,6 +476,9 @@ export class LaboratoryServicePublisher {
           })),
         }
         const completion = await this.#provider.completeJson({
+          usageContext: { workspaceId: claimed.workspaceId, epoch: claimed.actorContext.epoch,
+            actorId: claimed.actorContext.actorId, taskId: claimed.jobId, stage: 'catalog-enrichment', trigger: 'manual',
+            sources: [{ kind: 'job', id: claimed.jobId, relationship: 'trigger' }] },
           jsonSchema: z.toJSONSchema(enrichmentResultSchema) as Record<string, unknown>,
           model: claimed.model,
           schemaName: 'laboratory_service_enrichment',

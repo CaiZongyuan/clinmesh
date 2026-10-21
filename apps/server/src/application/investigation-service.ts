@@ -87,6 +87,7 @@ const serviceAgentOutputSchema = z.object({
 }).strict()
 
 const requestRowSchema = z.object({
+  outpatient_case_id: z.string().min(1),
   authored_at: z.iso.datetime({ offset: true }),
   catalog_item_id: z.string().min(1),
   encounter_id: z.string().min(1),
@@ -465,7 +466,7 @@ export class InvestigationService {
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
-        outpatient_case.encounter_id, outpatient_case.patient_id,
+        outpatient_case.encounter_id, outpatient_case.patient_id, outpatient_case.case_id AS outpatient_case_id,
         materialization.case_id AS synthetic_case_id,
         materialization.case_revision AS synthetic_case_revision,
         materialization.profile_id, materialization.profile_revision
@@ -502,6 +503,7 @@ export class InvestigationService {
         materializedRow,
         laboratoryServiceSnapshotSchema.parse(JSON.parse(materializedRow.service_snapshot_json)),
         modelTaskId,
+        requestId,
         signal,
       )
     }
@@ -572,6 +574,9 @@ export class InvestigationService {
     }
     const inputHash = canonicalJsonHash(payload)
     const completion = await this.#provider.completeJson({
+      usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: materializedRow.outpatient_case_id,
+        encounterId: materializedRow.encounter_id, stage: 'investigation', trigger: generationAttempt === undefined ? 'automatic' : 'recovery',
+        sources: [{ kind: 'report', id: requestId, relationship: 'trigger' }] },
       jsonSchema: z.toJSONSchema(agentOutputSchema) as Record<string, unknown>,
       model: await this.#models?.bind(workspaceId, modelTaskId, this.#model, signal) ?? this.#model,
       schemaName: 'investigation_result',
@@ -618,6 +623,7 @@ export class InvestigationService {
     row: RequestRow,
     service: LaboratoryServiceSnapshot,
     modelTaskId: string,
+    requestId: string,
     signal?: AbortSignal,
   ): Promise<InvestigationResultSnapshot> {
     const syntheticCase = this.#cases.get(workspaceId, row.synthetic_case_id)
@@ -767,6 +773,9 @@ export class InvestigationService {
     )
     if (existing !== undefined) return existing
     const completion = await this.#provider.completeJson({
+      usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: row.outpatient_case_id,
+        encounterId: row.encounter_id, stage: 'investigation-service', trigger: 'automatic',
+        sources: [{ kind: 'report', id: requestId, relationship: 'trigger' }] },
       jsonSchema: z.toJSONSchema(serviceAgentOutputSchema) as Record<string, unknown>,
       model: await this.#models?.bind(workspaceId, modelTaskId, this.#model, signal) ?? this.#model,
       schemaName: 'investigation_service_result',

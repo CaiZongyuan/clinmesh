@@ -262,6 +262,10 @@ export class DoctorRecommendationExecution {
         }
         try {
           const controlledRequest: JsonChatCompletionInput = { ...input.request,
+            usageContext: { workspaceId: this.options.identity.workspaceId, epoch: this.options.identity.epoch,
+              actorId: this.options.identity.actorId, taskId: this.#key, caseId: this.options.identity.caseId,
+              stage: `${this.options.identity.kind}:${this.options.identity.generation}:${input.stage}`, trigger: 'automatic',
+              sources: [{ kind: 'batch', id: input.batchId, relationship: 'trigger' }] },
             validate: value => { if (input.request.validate?.(value) === false) return false; parse(value); return true },
             onBeforeRequest: () => this.options.database.driver.transaction(() => {
               assertCurrent()

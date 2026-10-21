@@ -1,4 +1,5 @@
 import { createApp } from './app.ts'
+import { ModelUsageService } from './application/model-usage-service.ts'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
 import { ScenarioService } from './application/scenario-service.ts'
@@ -219,7 +220,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const patientPersonas = new PatientPersonaRepository(database, syntheticCases)
     const investigationResults = new InvestigationResultRepository(database)
     const laboratoryServicePublications = new LaboratoryServicePublicationRepository(database)
-    const chatCompletions = options.chatCompletionsProvider
+    const modelUsage = new ModelUsageService(database)
+    const unaccountedChatCompletions: JsonChatCompletionsProvider | undefined = options.chatCompletionsProvider
       ?? (options.dshModelBridge === undefined ? undefined : new DshModelProvider(options.dshModelBridge))
       ?? (options.ai === undefined
         ? undefined
@@ -229,6 +231,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             maxResponseBytes: options.ai.maxResponseBytes,
             timeoutMs: options.ai.timeoutMs,
           }))
+    const chatCompletions: JsonChatCompletionsProvider | undefined = unaccountedChatCompletions === undefined ? undefined : {
+      ...(unaccountedChatCompletions.supportsUsageAccounting === undefined ? {} : { supportsUsageAccounting: unaccountedChatCompletions.supportsUsageAccounting }),
+      ...(unaccountedChatCompletions.supportsRequestControl === undefined ? {} : { supportsRequestControl: unaccountedChatCompletions.supportsRequestControl }),
+      ...(unaccountedChatCompletions.resolveModel === undefined ? {} : { resolveModel: (model, signal) => unaccountedChatCompletions.resolveModel!(model, signal) }),
+      completeJson: input => unaccountedChatCompletions.completeJson({ ...input, usageRecorder: modelUsage }),
+    }
     const hostModel = options.dshModelBridge === undefined ? undefined : dshDefaultModel
     const models = new GenerationModelBinding(database, chatCompletions)
     const patientPersonaModel = hostModel ?? options.patientPersonaModel ?? options.ai?.briefModel
@@ -707,6 +715,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({
+      modelUsage,
       commandEvents: commands,
       recordingUpdatesSignal: generationAbort.signal,
       doctorRecommendations,

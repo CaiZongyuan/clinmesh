@@ -1,13 +1,15 @@
 import { modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
+import { OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { expect, test } from './fixtures.ts'
 
 test('reads persisted synthetic model usage from the real Settings entry and survives reload', async ({ page, webRoot }) => {
   const server = await startBrowserServer(webRoot, {
-    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
     syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'synthetic-model',
-    chatCompletionsProvider: { async completeJson() { return { content: JSON.stringify(persona), model: 'synthetic-model' } } },
+    chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => Response.json({ model: 'synthetic-model', choices: [{ message: { content: JSON.stringify(persona) } }] }),
+    }),
   })
   try {
     await startConsultationCase(server.runtime, server.password, server.origin)

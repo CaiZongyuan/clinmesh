@@ -3,9 +3,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-import { decodeModelRoute, encodeModelRoute, mergeModelBridgeUsage, modelBridgeAccountingMediaType, modelBridgeAccountingSchema,
+import { decodeModelRoute, encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeAccountingSchema,
   modelBridgeFirstTextHeader, modelBridgeRequestSchema, modelRouteSchema } from '@clinmesh/contracts/model-bridge'
-import { modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
+import { mergeModelTokenUsage, modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { z } from 'zod'
 
 class ModelAccessError extends Error {}
@@ -132,7 +132,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
           messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input.userPayload) }] }],
         })) {
           if (chunk.type === 'usage') {
-            usage = mergeModelBridgeUsage(usage, tokenUsage(chunk.usage))
+            usage = mergeModelTokenUsage(usage, tokenUsage(chunk.usage))
             if (incremental && !response.destroyed && !responseStarted) {
               if (!streamStarted) {
                 response.writeHead(200, { 'content-type': modelBridgeAccountingMediaType, 'cache-control': 'no-store, no-transform' })

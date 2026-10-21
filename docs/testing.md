@@ -182,6 +182,8 @@ pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 
 ## 14. 测试策略
 
+模型用量从公开 HTTP、真实临时 SQLite 与受控外部 Provider 边界验证逐次尝试、缺失用量、实际模型、账本故障、病例责任、跨 Epoch 和重启。直接 Provider 与 DSH bridge 分别证明派发前记账；DSH 合成流验证 usage 帧、断流与取消，保留 #235 的请求次数和成功步骤复用回归。Web/DSH 从真实设置导航验证总览、筛选、详情及明确覆盖范围，DSH 使用 React 18/19 合同。常规验证不调用真实模型，也不运行压测；执行许可由[根工程规则](../AGENTS.md)拥有。
+
 ### 14.1 应用与 Web 测试
 
 - Hono 与真实临时 SQLite 的场景测试覆盖认证、角色、Scenario、挂号、分诊、医生首诊/复诊、签署/修订、支付三结局、LIS、发药和 Epoch 隔离。

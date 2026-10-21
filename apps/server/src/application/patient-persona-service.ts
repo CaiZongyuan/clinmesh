@@ -199,6 +199,7 @@ function assertNoDiagnosisLeak(
 }
 
 export async function generatePatientPersona(input: {
+  usageContext?: import('@clinmesh/contracts/model-usage').ModelUsageContext
   hiddenResources: PersonaResource[]
   model: string
   payload: unknown
@@ -207,6 +208,7 @@ export async function generatePatientPersona(input: {
   visibleResources: PersonaResource[]
 }) {
   const completion = await input.provider.completeJson({
+    ...(input.usageContext === undefined ? {} : { usageContext: input.usageContext }),
     jsonSchema: z.toJSONSchema(patientPersonaContentSchema) as Record<string, unknown>,
     model: input.model,
     schemaName: 'patient_persona',
@@ -442,6 +444,9 @@ export class PatientPersonaService {
         workspaceId: claimed.workspaceId,
       })
       const generated = await generatePatientPersona({
+        usageContext: { workspaceId: claimed.workspaceId, epoch: claimed.actorContext.epoch,
+          actorId: claimed.actorContext.actorId, taskId: claimed.jobId, stage: 'persona', trigger: 'manual',
+          sources: [{ kind: 'case', id: claimed.caseId, relationship: 'trigger' }, { kind: 'job', id: claimed.jobId, relationship: 'trigger' }] },
         hiddenResources: generation.hiddenResources,
         model: claimed.model,
         payload: generation.payload,
