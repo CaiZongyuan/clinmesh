@@ -128,8 +128,10 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 ClinMesh 设置中的模型用量页通过已认证 Session 读取 `/api/model-usage/overview`、`/api/model-usage/requests` 与单次请求详情。当前 Workspace 成员可读跨 Epoch 汇总；明细及计数共用服务端 SQL 授权条件，管理员可读本 Workspace 历史记录，普通医生只读活动 Epoch 内有 `outpatient_case_responsibility` 责任关系的临床请求。其他岗位不能借相同 Actor、猜测尝试 ID 或汇总下钻读取医生明细；行政人设和目录补全明细仅管理员可读。查询不接受客户端指定 Workspace、Epoch 或角色；无权和不存在的单次请求都返回 404。
 
-监控覆盖 Server 直接模型调用、经 DSH bridge 的调用和 Host 独立医生代问识别，不覆盖整个 DSH 原生聊天或其他插件。当前设置为启用及三项无限，只读显示；全局停用、有限额度、统一人民币计价与保留策略的实施状态由[正式规格](../spec/2026-10-19-model-usage-control.md)及其执行票拥有，不能据本页推断这些控制已交付。账本的持久化与未知语义见[存储合同](storage.md#910-模型调用账本)。
+监控覆盖 Server 直接模型调用、经 DSH bridge 的调用和 Host 独立医生代问识别，不覆盖整个 DSH 原生聊天或其他插件。部署与 Workspace 默认启用、请求额度无限、保留既有有界自动重试。成员通过 `/api/model-usage/control` 读取双层政策、请求余量、控制拒绝和待办状态；只有当前选中管理员岗位可通过该路径的 `PUT` 修改本 Workspace 的开关、累计请求额度与自动重试。更新要求可信 Origin、幂等键和 `expectedVersion`，通过共享 Command 同事务写入审计和回执；请求不能指定其他 Workspace 或部署政策。部署维护者通过[部署配置](../deployment.md#模型用量)管理总限制，Workspace 无法放宽。Token 与人民币额度仍为无限，计价及保留策略的剩余范围由[正式规格](../spec/2026-10-19-model-usage-control.md)拥有。账本的持久化与未知语义见[存储合同](storage.md#910-模型调用账本)。
 
 Host 自发识别先由 SDK 准备并绑定模型配置，再通过 `/api/model-usage/host/doctor-delegation/admit` 取得一次性准入，最后派发该准备句柄的 stream。接口拒绝浏览器 Origin，要求 Host bridge 凭证和已签发的医生输入来源证明；Workspace、Epoch、Actor、岗位、任务与病例从 Server 持久 Page Context 恢复，重新校验活动成员、岗位、病例权限与任务连续性。先查同 client 的最新绑定，再核对原身份，不能按旧身份过滤并忽略后续身份或岗位切换。同病例内容、栏目更新或续签保留原任务，切走再返回不恢复旧许可。模型路由来自受信 Host 的实际请求配置；请求不能声明功能、身份、病例、输出上限或任意生成正文。同一任务在账本事务中只能准入一次，账本故障或无有效准入响应时 stream 次数为零。
 
-准入响应中的回执仅能向 `/api/model-usage/host/doctor-delegation/observe` 为该尝试上报窄用量和终态，不能授权新生成或修改其他入口的记录。结算不依赖仍有效的临床岗位或输入许可期限，避免任务失权后丢失已发生的消耗；回执与 bridge 凭证不进入账本、日志或监控。Host 的用量帧和终态写入同一 Server 账本，Host 不维护独立余额或持久账本，也不因取消、失联、结算失败或 Server 重启自动重发未知请求。
+准入响应中的回执仅能向 `/api/model-usage/host/doctor-delegation/observe` 为该尝试上报窄用量和终态，或通过 `/api/model-usage/host/doctor-delegation/status` 查询是否应取消原尝试，不能授权新生成或修改其他入口的记录。结算不依赖仍有效的临床岗位或输入许可期限，避免任务失权后丢失已发生的消耗；回执与 bridge 凭证不进入账本、日志或监控。Host 的用量帧和终态写入同一 Server 账本，Host 不维护独立余额或持久账本，也不因取消、失联、结算失败或 Server 重启自动重发未知请求。
+
+明确被控制拒绝的 Host 准入可在原期限内等待；`/api/model-usage/host/doctor-delegation/wait` 使用同样的 Host 凭证和原输入许可，仅维护或结束待办租约，每次维持重新验证上下文。该接口不建立模型尝试或放宽原期限；租约过期不释放任何已派发预占。Host 每 250 毫秒查询原尝试取消状态，查询失败时也尽力取消并保留未知结果。

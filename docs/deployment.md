@@ -418,9 +418,21 @@ pnpm --filter @clinmesh/server db:migrate
 
 该操作删除本地 HIS 运行数据。独立的 `.data/clinmesh-reference.sqlite` 不在删除范围内，不需要重新导入；不要把 `CLINMESH_REFERENCE_DATABASE_PATH` 指向 operational database，也不要删除 Reference SQLite。备份与单实例约束的决策依据见 [Demo 部署架构](demo-architecture.md)。
 
-## 实时病历整理模型
+## 模型用量
 
-Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览展示 Server 直接调用、DSH bridge 调用及 Host 独立医生代问识别的请求、已知 Token、未知量、缺价费用、趋势、功能分布和授权最近请求；功能筛选提供“医生代问识别”，详情保留调用时的模型与阶段来源。额度目前全部无限，计价未配置时显示未知，不能当作服务商实际账单；DSH 原生会话及其他插件仍在监控边界之外。Host 使用已有 `upstreamOrigin` 与 `bridgeSecret` 接入 Server 准入，不新增本地账本；Server 不可用或准入失败时不启动识别流，恢复后也不会自动重发未知请求。权限与统计口径见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。
+Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览展示 Server 直接调用、DSH bridge 调用及 Host 独立医生代问识别的请求、已知 Token、未知量、缺价费用、趋势、功能分布和授权最近请求；功能筛选提供“医生代问识别”，详情保留调用时的模型与阶段来源。计价未配置时显示未知，不能当作服务商实际账单；DSH 原生会话及其他插件仍在监控边界之外。Host 使用已有 `upstreamOrigin` 与 `bridgeSecret` 接入 Server 准入，不新增本地账本。权限与统计口径见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。
+
+“额度与策略”页签中，Workspace 管理员可停用或恢复本工作区的全部 ClinMesh 模型入口，设置累计请求次数上限或无限，并关闭自动重试；普通成员只读。页面显示部署政策、剩余请求、等待恢复的任务和最近拒绝原因。默认启用、请求无限、保留原有有界重试；零上限明确阻止新请求。Token 与人民币费用目前仍为无限。
+
+部署维护者可设置 `CLINMESH_MODEL_CONTROL_PATH=.data/model-control.json`，文件路径相对 `.env` 所在仓库解析；文件由部署方管理，不进入 Git。配置示例如下，`requests: null` 表示无限：
+
+```json
+{ "enabled": true, "requests": 1000, "automaticRetries": true }
+```
+
+重启 Server 后配置生效，缺省文件配置为启用、无限、保留自动重试；文件不存在、JSON 无效或上限不是非负安全整数时启动失败。部署与 Workspace 任一层停用或请求不足都会拒绝新派发；Workspace 设置不能放宽部署政策。每层首次有限配置建立独立累计起点，之后改额、切回无限、重启或 Epoch reset 均不重置，无限期间仍累计。停用尽力取消在途调用，未知派发保留预占。恢复开关、增加额度或账本恢复后仅接续仍有效的待办并复用成功阶段；已派发而结果未知的请求不会自动重做。普通 HIS 读写和确定性检查继续可用。
+
+## 实时病历整理模型
 
 `CLINMESH_AI_RECORDING_MODEL` 可为实时整理固定独立模型；不设置时沿用问诊模型，DSH 使用完整 `dsh:{"provider":"...","model":"..."}` 路由。自动记录、核对和历史补录沿用 `CLINMESH_AI_TIMEOUT_MS` 的常规模型等待配置；DSH 默认每次桥接请求 120 秒，OpenAI 默认 60 秒，不另加 6 秒截止。既有 `CLINMESH_AI_RECORDING_TIMEOUT_MS` 不再读取。任务仍有覆盖模型解析和格式修复的有界总等待，关闭或任务失效继续取消请求；真实模型失败保留来源供恢复。取消短截止不能证明已达到实时性能目标。
 

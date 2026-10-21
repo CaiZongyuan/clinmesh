@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { afterEach, expect, it } from 'vitest'
-import { modelUsageListSchema, modelUsageOverviewSchema, unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
+import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema, unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
@@ -52,6 +52,27 @@ async function host(stream: HostContext['llm']['stream'], catalogAvailable = tru
   })
   return { origin: `http://127.0.0.1:${address.port}`, secret: bridgeSecret, timeoutMs: 2000, maxResponseBytes: 65536 }
 }
+
+it.each(['limit', 'retry'] as const)('applies the %s policy before the real DSH Host rate-limit resend', async reason => {
+  let dispatched = 0
+  const bridge = await host(async function *(): AsyncGenerator<StreamChunk> {
+    dispatched++
+    yield { type: 'finish', reason: { kind: 'error', failure: { code: 'RATE_LIMIT', message: 'synthetic only', providerRetryAfterMs: 1 } } }
+  })
+  const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(), dshModelBridge: bridge })
+  const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
+  const response = await fixture.runtime.app.request('/api/model-usage/control', { method: 'PUT',
+    headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersion: 1, enabled: true, requests: reason === 'limit' ? 1 : null, automaticRetries: reason !== 'retry' }) })
+  expect(response.status).toBe(200)
+  await expect(startConsultationCase(fixture.runtime)).rejects.toThrow('Persona generation failed')
+  expect(dispatched).toBe(1)
+  const policy = modelUsageControlSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/control', { headers: { cookie } })).json())
+  expect(policy.lastRejection).toMatchObject({ code: reason === 'limit' ? 'MODEL_REQUEST_LIMIT' : 'MODEL_RETRY_DISABLED' })
+  const list = modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
+  expect(list.items).toHaveLength(1)
+  expect(list.items[0]).toMatchObject({ kind: 'initial', dispatch: 'dispatched', httpStatus: 429 })
+})
 
 it('opens an empty unlimited overview for members and requires authentication', async () => {
   const { runtime } = await setup()

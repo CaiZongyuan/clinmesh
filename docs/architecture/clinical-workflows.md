@@ -40,7 +40,7 @@ Consultation 是病例级领域聚合，Consultation Record 保存 append-only �
 
 未回答的医生发言阻止追加下一条医生发言。检验报告 final 或更正时，系统追加引用固定 DiagnosticReport 版本的报告卡片；卡片不充当文本回答，不阻断正在生成的回答。回答执行按受信 Workspace/Epoch 与待回答医生轮次协调，ask、同键重发及重叠补答共同等待一次生成，各请求独立执行授权、输入冲突检查与自身回执。持久意图关联原回答尝试；相同 key 的成功回放优先返回已保存回答，失败或未知回放原终态，不重新推理。档案绑定缺失的 `CONSULTATION_CASE_NOT_FOUND`（404）与旧版档案的 `CONSULTATION_PERSONA_OUTDATED`（409）同样保存并保留原分类重放；恢复有效档案绑定后，仍须明确使用新补答意图。公开 Command 回执仍按原 operation 和幂等键查询；已接受而尚未完成的回执为 `executing`，包含已保存发言。
 
-病例 `consultation.replyAttempt` 返回医生轮次、开始与截止时间、`executing`、`succeeded`、`failed` 或 `unknown` 及安全错误码。客户端刷新病例和原回执后，在原尝试仍执行时继续等待；新 retry key 也加入原尝试，不切模型或延长期限。原尝试终止且问题仍待答时，只有医生明确的新补答意图与新 key 才开始采用当前模型的新尝试，不重新提交医生问题。页面或 HTTP 断开不取消已接受的回答；runtime 关闭主动取消并等待执行收束，重启把遗留执行标为未知且不自动补答。`AI_TIMEOUT` 和 `CONSULTATION_REPLY_UNKNOWN` 表示无法确认完整结果；原成功回答及回执继续可重放。持久归属见[模型执行恢复](storage.md#模型执行恢复)，理由见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
+病例 `consultation.replyAttempt` 返回医生轮次、开始与截止时间、`executing`、`blocked`、`succeeded`、`failed` 或 `unknown` 及安全错误码。控制或账本阻塞返回 `MODEL_CONTROL_BLOCKED`（409）并保留已保存问题；恢复后仅在原期限内、授权和病例仍有效时接续。客户端刷新病例和原回执后，在原尝试仍执行或等待控制时继续等待；新 retry key 也加入原尝试，不切模型或延长期限。原尝试终止且问题仍待答时，只有医生明确的新补答意图与新 key 才开始采用当前模型的新尝试，不重新提交医生问题。页面或 HTTP 断开不取消已接受的回答；runtime 关闭主动取消并等待执行收束，重启把已派发而结果不明的遗留执行标为未知且不自动补答，明确未派发的有效待办保留原期限恢复。`AI_TIMEOUT` 和 `CONSULTATION_REPLY_UNKNOWN` 表示无法确认完整结果；原成功回答及回执继续可重放。持久归属见[模型执行恢复](storage.md#模型执行恢复)，理由见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
 
 复诊延续同一条对话；完诊只读。Reset 重放保留病例与档案事实，重新生成的措辞可以不同。Canonical hash 的覆盖范围与限制见[确定性与故障注入](simulation.md#104-确定性与故障注入)。
 

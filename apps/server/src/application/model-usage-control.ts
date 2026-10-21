@@ -26,8 +26,10 @@ export class ModelUsagePolicyError extends Error {
     super(code === 'ROLE_NOT_ALLOWED' ? 'An administrator role is required' : 'The model policy changed; reload before saving')
   }
 }
-const policyRow = z.object({ scope_id: z.string(), enabled: z.number(), request_limit: z.number().nullable(),
-  automatic_retries: z.number(), version: z.number(), requests_started_at: z.string().nullable(), used: z.number(), reserved: z.number() })
+const persistedCount = z.number().int().nonnegative().safe()
+const policyRow = z.object({ scope_id: z.string(), enabled: z.union([z.literal(0), z.literal(1)]), request_limit: persistedCount.nullable(),
+  automatic_retries: z.union([z.literal(0), z.literal(1)]), version: z.number().int().positive().safe(),
+  requests_started_at: z.iso.datetime().nullable(), used: persistedCount, reserved: persistedCount })
 type PolicyRow = z.infer<typeof policyRow>
 
 /** Persistent request budgets have a lifecycle independent of attempt retention and Epochs. */
@@ -127,7 +129,11 @@ export class ModelUsageControl {
       if (!this.#workspace(workspaceId).enabled || !this.#row('deployment').enabled) controller.abort(new ModelUsageControlError('MODEL_DISABLED', 'workspace'))
     }
   }
-  #row(scope: string): PolicyRow { return policyRow.parse(this.database.driver.prepare('SELECT * FROM model_usage_control WHERE scope_id = ?').get(scope)) }
+  #row(scope: string): PolicyRow {
+    const parsed = policyRow.safeParse(this.database.driver.prepare('SELECT * FROM model_usage_control WHERE scope_id = ?').get(scope))
+    if (!parsed.success) throw new ModelUsageControlError('MODEL_LEDGER_UNAVAILABLE', scope === 'deployment' ? 'deployment' : 'workspace')
+    return parsed.data
+  }
   #workspace(workspaceId: string): PolicyRow {
     const scope = `workspace:${workspaceId}`
     this.database.driver.prepare('INSERT OR IGNORE INTO model_usage_control(scope_id) VALUES (?)').run(scope)

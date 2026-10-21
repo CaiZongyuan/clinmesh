@@ -64,11 +64,15 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 #### 模型执行恢复
 
-`consultation_reply_attempt` 保存受信 Workspace/Epoch、Encounter、待回答医生轮次、固定期限和执行终态；局部唯一索引保证每个医生轮次只有一个 `executing` 尝试。`consultation_reply_intent` 按 Actor、operation 与幂等键持久关联该尝试，各调用者仍独立授权和完成原 Command 回执。启动时遗留执行转为 `unknown`；缺少派发证据的旧未答轮次迁移为未知，不自动补答。读取时已保存患者回答优先于尝试状态，响应丢失不触发重复推理。
+`consultation_reply_attempt` 保存受信 Workspace/Epoch、Encounter、待回答医生轮次、固定期限和执行终态；局部唯一索引保证每个医生轮次只有一个 `executing` 尝试。`consultation_reply_intent` 按 Actor、operation 与幂等键持久关联该尝试，各调用者仍独立授权和完成原 Command 回执。控制阻塞在持久执行上保留 `MODEL_CONTROL_BLOCKED` 并投影为 `blocked`，`model_reply_wait` 保存原期限及受信恢复输入；仅明确未派发且仍有效时自动接续。其他遗留执行启动转为 `unknown`；缺少派发证据的旧未答轮次迁移为未知，不自动补答。读取时已保存患者回答优先于尝试状态，响应丢失不触发重复推理。
 
 `doctor_recommendation_execution`、`doctor_recommendation_execution_plan`、`doctor_recommendation_execution_unit` 与 `doctor_recommendation_execution_continue` 分别保存绑定及累计额外次数、稳定阶段计划、批次依赖及成功结果、人工继续意图。四表以 Workspace/Epoch 开头的复合主键、外键隔离，删除使用 `RESTRICT`。执行键由 Workspace/Epoch、Actor/context、病例、建议类型与 generation 身份派生，完整绑定另含输入指纹、模型和策略；持久 JSON、键与完整绑定在运行时验证，计划与单元哈希不允许恢复时改组。筛选成功步骤只有完整来源上下文、请求与受信作用域均相同时可跨任务复用，生成和核验只属于原执行。
 
 每次外部派发前用短事务原子预占单元次数和 generation 额外次数，Provider 内部限流重发和格式修复也经过同一边界；网络请求在事务外。次数与 outbox 调度 attempt 独立持久化，重新领取及重启不清零。预占后未保存完整结果的崩溃窗口保留占用并转为未知；人工继续意图只开放一次未知单元，重放不重复开放。恢复先校验固定依赖及成功步骤，再处理未完成单元；私有候选在全部必要核验结束前不投影为可采纳结果。
+
+其他模型业务的 `model_task_step` 按 Workspace/Epoch、原任务与完整步骤输入指纹保存请求包络、被拒绝的实际请求种类、私有成功结果和未知状态。结果持久成功前仍保留派发中状态，崩溃不推断可重发；这些私有业务结果不进入用量账本。`model_task_wait` 关联控制阻塞的原 outbox 事件，恢复后复用成功步骤并重新验证业务有效性与权限，仍使用原并发通道。建议沿用既有执行单元及 `blocked_kind`，不另建一套成功结果缓存。
+
+`model_host_wait` 仅保存已验证的 Host 任务 claims、原期限与短存活租约，不保存许可签名、医生正文或模型尝试。待办计数重新校验原页面连续性与当前授权，排除已准入、失权、过期、切走或失联的任务；该表只提供可观察状态，不授予或调度派发。Host 保持原 30 秒期限，通过认证心跳维持 1 秒租约，结束或成功准入清除。
 
 上述记录不创建 FHIR 临床资源、不替换 Command Receipt 或审计，也不保存平台密钥。面向合成病例的恢复数据遵循既有数据边界；公开状态只返回安全错误码、阶段和次数。行为与人工恢复条件见[临床业务流程](clinical-workflows.md#81-门诊闭环)，取舍见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
 
@@ -152,6 +156,8 @@ queued/claimed    -> abandoned
 
 每个事件具有 event ID、Workspace/Epoch、Scenario Run、kind、dedup key、correlation ID、attempt、next attempt、`lease_owner/lease_version/leased_until` 和 payload hash。lease 以真实时间通过短事务条件抢占，支持过期回收、固定有界延迟和最大尝试；达到最大尝试后保持 `failed`，当前没有人工 dead-letter 管理 API。
 
+模型控制拒绝使用独立的 `model-blocked` 完成语义，事件持久为等待中的 `failed`，返还本次 claim 的调度 attempt，并关联 `model_task_wait`；它不消耗技术重试机会。控制恢复后只唤醒原事件，业务服务仍负责当前性校验。已派发结果未知使用 `ambiguous`，不会随控制恢复重新领取。
+
 - 服务启动时扫描可恢复事件；Command 提交后只负责唤醒同进程 dispatcher，内存通知丢失不会丢事件。
 - dispatcher 在外部调用前持久化 claim、lease 和 correlation ID，在提交结果前重新验证 Workspace/Epoch 仍 active。
 - LIS consumer 按 event ID 幂等；独立检查申请由开具、受理和开工 Command 依次产生受理、执行和报告 outbox，报告 consumer 对不同 event ID 的重复投递也按申请关联去重。支付 Command 只有成功时才产生兼容检验报告或药房 outbox。支付结果未知保持 `ambiguous`，不直接退回 queued。
@@ -192,3 +198,5 @@ Repository 边界降低业务代码耦合，但不承诺直接复制 `.sqlite` �
 建议任务的手动重新生成或继续意图随受信 outbox 事件持久化，后续请求标记为手动触发并关联该事件；继续保留原任务及批次身份，不能仅因存在旧任务就推断用户发起了继续。外层格式纠错与限流重发分别沿用 `format-repair`、`rate-limit-retry` 分类，不重新标记为首次尝试。权限与查询范围见[模型用量查询](security-and-reliability.md#模型用量查询)；决策见[逐次计量决策](../decisions/implemented/architecture/2026-10-21-server-model-usage-ledger.md)。
 
 Host 独立识别的期限固定为 30 秒，Host 在该期限内停止识别；Server 依据持久化开始时间，在用量读取、Host 准入或上报时将超期在途记录持久转为未知，覆盖 Host 完全失联而无法发送终态的情况。进度上报只更新用量证据，不延长期限或把未知状态改回在途。超期不释放消耗、不删除去重身份，也不授予新派发；迟到的可信终态仍可结算原尝试。
+
+`model_usage_control` 持久保存部署及各 Workspace 的开关、请求上限、自动重试和版本，以及独立的请求累计起点、已派发累计和未决预占；首次有限配置前的明细只进入监控。`model_usage_request_reservation` 将每次尝试绑定到已建立起点的适用层，和尝试创建、建议单元或任务包络检查原子提交。明确未派发才释放；已知派发将预占转为累计，未知派发保留预占。调整上限、切换无限、重启与 Epoch reset 都不清空累计或起点，无限期间仍累计。拒绝原因单独保存，不冒充实际调用或产生 Token 费用。控制待办与未知请求分开恢复，决策见[双层准入与恢复](../decisions/implemented/architecture/2026-10-21-model-request-control-recovery.md)。

@@ -22,4 +22,4 @@ Status: implemented
 
 ## Consequences
 
-记账故障会停止新模型请求。未知量和缺价明确显示，不能作为零费用或服务商实际账单。当前交付 Server 两类入口、全部无限的只读监控；Host 独立识别、有限额度、计价及明细清理仍由后续票实施。当前合同见[模型账本](../../../architecture/storage.md#910-模型调用账本)和[查询权限](../../../architecture/security-and-reliability.md#模型用量查询)，验证见[测试策略](../../../testing.md)。
+记账故障会停止新模型请求。未知量和缺价明确显示，不能作为零费用或服务商实际账单。[Host 独立识别](2026-10-21-host-recognition-usage-admission.md)复用同一账本，[双层请求控制](2026-10-21-model-request-control-recovery.md)复用同一准入事务；Token／金额保护、计价及明细清理仍由后续票实施。当前合同见[模型账本](../../../architecture/storage.md#910-模型调用账本)和[查询权限](../../../architecture/security-and-reliability.md#模型用量查询)，验证见[测试策略](../../../testing.md)。
