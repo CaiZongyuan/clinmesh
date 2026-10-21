@@ -47,7 +47,7 @@ const dimensions = ['tokens', 'cny'] as const
 const maximumCount = BigInt(Number.MAX_SAFE_INTEGER)
 const externalValue = (dimension: Dimension, value: number | null) => value === null ? null : dimension === 'cny' ? value / 1_000_000 : value
 
-/** Persistent request budgets have a lifecycle independent of attempt retention and Epochs. */
+/** Persistent budgets have a lifecycle independent of attempt retention and Epochs. */
 export class ModelUsageControl {
   readonly #active = new Map<AbortController, string>()
   readonly #listeners = new Set<() => void>()
@@ -185,13 +185,15 @@ export class ModelUsageControl {
       .run(workspaceId, error.code, error.scope, new Date().toISOString(), error.dimension, error.remaining, error.required) } catch { /* An unavailable ledger cannot persist its own failure. */ }
   }
 
-  automaticRetries(workspaceId: string): boolean { return !!(this.#workspace(workspaceId).automatic_retries && this.#row('deployment').automatic_retries) }
+  automaticRetries(workspaceId: string): boolean {
+    return this.#atomic('workspace', () => !!(this.#workspace(workspaceId).automatic_retries && this.#row('deployment').automatic_retries))
+  }
   canDispatch(workspaceId: string): boolean {
     try {
       return this.database.driver.transaction(() => {
         this.database.driver.prepare("UPDATE model_usage_control SET version = version WHERE scope_id = 'deployment'").run()
         return [this.#workspace(workspaceId), this.#row('deployment')].every(row => row.enabled
-          && (row.request_limit === null || row.used + row.reserved < row.request_limit))
+          && (row.request_limit === null || this.#sum(row.used, row.reserved) < row.request_limit))
       })()
     } catch { return false }
   }
@@ -251,9 +253,10 @@ export class ModelUsageControl {
         started_at = CASE WHEN started_at IS NULL AND ? IS NOT NULL THEN ? ELSE started_at END WHERE scope_id = ? AND dimension = ?`)
         .run(limit, limit, new Date().toISOString(), scope, dimension.dimension)
     }
-    this.database.driver.prepare(`UPDATE model_usage_control SET enabled = ?, request_limit = ?, automatic_retries = ?, version = version + ?,
+    const nextVersion = this.#sum(current.version, bump || changed ? 1 : 0)
+    this.database.driver.prepare(`UPDATE model_usage_control SET enabled = ?, request_limit = ?, automatic_retries = ?, version = ?,
       requests_started_at = CASE WHEN requests_started_at IS NULL AND ? IS NOT NULL THEN ? ELSE requests_started_at END WHERE scope_id = ?`)
-      .run(input.enabled ? 1 : 0, input.requests, input.automaticRetries ? 1 : 0, bump || changed ? 1 : 0, input.requests, new Date().toISOString(), scope)
+      .run(input.enabled ? 1 : 0, input.requests, input.automaticRetries ? 1 : 0, nextVersion, input.requests, new Date().toISOString(), scope)
   }
 
   #dimensions(scope: string): DimensionRow[] {
@@ -268,7 +271,7 @@ export class ModelUsageControl {
   #dimensionSummary(row: DimensionRow): { reserved: number; unknown: number } {
     const reservations = z.array(dimensionReservation).parse(this.database.driver.prepare(`SELECT * FROM model_usage_dimension_reservation
       WHERE scope_id = ? AND dimension = ? AND state = 'reserved'`).all(row.scope_id, row.dimension))
-    return { reserved: this.#sum(...reservations.map(reservation => reservation.amount ?? 0)),
+    return { reserved: reservations.reduce((reserved, reservation) => this.#sum(reserved, reservation.amount ?? 0), 0),
       unknown: reservations.filter(reservation => reservation.amount === null).length }
   }
 
