@@ -109,3 +109,5 @@
 - HTTP 上传取消回归须等原生存储实际读取第一个数据块后再断开，并等清理完成后验证重试；固定短延迟可能在路由安装取消监听器前结束请求，使测试通过却没有验证取消路径。
 
 - 病历“未保存”提示回归须包含首次自动记录只写其他字段、`hasSavedDraft=false` 且持久主诉仍为空的场景；页面预填可能与数据库空值不同，保存基准应与编辑器采用同一份预填规则。通过[医生工作台组件](../../apps/web/src/app/role-workspaces.test.tsx)和[真实病历入口](../../apps/web/e2e/doctor-document-quality.spec.ts)同时核对页头与编辑器状态，并保留手工清空、恢复原文和清空保存刷新后的断言；只有完整人工保存稿的 fixture 无法捕获该差异。
+
+- 交互合同类重构（如目录+表单改弹窗）会同时波及四层引用同一交互的测试：组件套件、跨页签集成套件（`role-workspaces.test.tsx`）、DSH browser 合同（fixture 渲染 `WebApp`）、`--project=web` 真实入口 e2e。只跑直接修改的套件会连续漏层：本次弹窗迁移先后两次因未跑 role-workspaces 与 web e2e 在 CI 的 `pnpm check` 才暴露。合同迁移完成后先在本机全量复跑这四层（组件 vitest、role-workspaces、`--project=contracts`、`--project=web`），再推送。
