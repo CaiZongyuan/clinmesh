@@ -2,17 +2,19 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { modelUsageControlUpdateSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageControlUpdateSchema, modelUsageRetentionUpdateSchema } from '@clinmesh/contracts/model-usage'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ModelUsageWorkspace } from './model-usage-workspace.tsx'
 import { usageAttempt, usageControl, usageOverview, usagePricing, usageSession } from './model-usage.test-fixture.ts'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | 'conflict' | 'known-usage' = 'normal', administrator = false) {
+function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | 'conflict' | 'known-usage' | 'compacted' = 'normal', administrator = false) {
   const requests: URL[] = []
   const writes: RequestInit[] = []
   let control = structuredClone(usageControl)
+  let retention = { days: 90 as number | null, version: 1, compactedRequests: mode === 'compacted' ? 3 : 0,
+    lastCompactedAt: mode === 'compacted' ? '2026-10-21T01:00:00.000Z' : null }
   let attempt = structuredClone(usageAttempt)
   if (mode === 'known-usage') attempt.usage.totalTokens = 150
   if (!administrator) control.deployment = null
@@ -24,6 +26,15 @@ function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | '
     }
     if (url.pathname === '/api/model-usage/overview') return Response.json(usageOverview)
     if (url.pathname === '/api/model-usage/pricing') return Response.json(usagePricing)
+    if (url.pathname === '/api/model-usage/retention') {
+      if (init?.method === 'PUT') {
+        writes.push(init)
+        if (mode === 'conflict') return Response.json({ error: { code: 'VERSION_CONFLICT', message: 'Synthetic conflict' } }, { status: 409 })
+        const update = modelUsageRetentionUpdateSchema.parse(JSON.parse(String(init.body)))
+        retention = { ...retention, days: update.days, version: update.expectedVersion + 1 }
+      }
+      return Response.json(retention)
+    }
     if (url.pathname === '/api/model-usage/control') {
       if (init?.method === 'PUT') {
         writes.push(init)
@@ -48,7 +59,7 @@ function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | '
           cny: body.cny ?? cost?.cny ?? null, cost, priceSnapshot: snapshot }] }
       return Response.json(attempt)
     }
-    if (url.pathname === '/api/model-usage/requests') return Response.json({ items: mode === 'empty' ? [] : [attempt], total: mode === 'empty' ? 0 : total })
+    if (url.pathname === '/api/model-usage/requests') return Response.json({ items: mode === 'empty' || mode === 'compacted' ? [] : [attempt], total: mode === 'empty' || mode === 'compacted' ? 0 : total })
     if (url.pathname === `/api/model-usage/requests/${usageAttempt.id}`) return Response.json(attempt)
     throw new Error(`Unexpected URL: ${url}`)
   }))
@@ -57,6 +68,59 @@ function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | '
   render(<QueryClientProvider client={client}><ModelUsageWorkspace locale="zh-CN" session={session} /></QueryClientProvider>)
   return { requests, writes, user: userEvent.setup() }
 }
+
+it('validates retention days and saves a custom period or permanent retention with a version and idempotency key', async () => {
+  const { writes, user } = setup(1, 'normal', true)
+  await user.click(screen.getByRole('tab', { name: '额度与策略' }))
+  const retention = await screen.findByRole('region', { name: '明细保留期' })
+  expect((within(retention).getByLabelText('保留天数') as HTMLInputElement).value).toBe('90')
+  for (const invalid of ['', '0', '-1', '1.5', '9007199254740992']) {
+    fireEvent.change(within(retention).getByLabelText('保留天数'), { target: { value: invalid } })
+    await user.click(within(retention).getByRole('button', { name: '保存保留期' }))
+    expect(within(retention).getByRole('alert').textContent).toContain('保留天数必须是有效正整数，或选择永久保留。')
+  }
+  expect(writes).toHaveLength(0)
+  fireEvent.change(within(retention).getByLabelText('保留天数'), { target: { value: '137' } })
+  await user.click(within(retention).getByRole('button', { name: '保存保留期' }))
+  expect(await within(retention).findByText('明细保留期已保存')).toBeTruthy()
+  expect(JSON.parse(String(writes[0]?.body))).toEqual({ days: 137, expectedVersion: 1 })
+  expect(new Headers(writes[0]?.headers).get('idempotency-key')).toMatch(/^[0-9a-f-]{36}$/)
+  await user.click(within(retention).getByRole('checkbox', { name: '永久保留' }))
+  await user.click(within(retention).getByRole('button', { name: '保存保留期' }))
+  await waitFor(() => expect(writes).toHaveLength(2))
+  expect(JSON.parse(String(writes[1]?.body))).toEqual({ days: null, expectedVersion: 2 })
+})
+
+it('keeps a retention draft after a conflict without retrying the write', async () => {
+  const { writes, user } = setup(1, 'conflict', true)
+  await user.click(screen.getByRole('tab', { name: '额度与策略' }))
+  const retention = await screen.findByRole('region', { name: '明细保留期' })
+  fireEvent.change(within(retention).getByLabelText('保留天数'), { target: { value: '137' } })
+  await user.click(within(retention).getByRole('button', { name: '保存保留期' }))
+  expect(await within(retention).findByText('保留期已被其他管理员修改，请刷新用量后重新编辑。')).toBeTruthy()
+  expect((within(retention).getByLabelText('保留天数') as HTMLInputElement).value).toBe('137')
+  expect(within(retention).queryByText('明细保留期已保存')).toBeNull()
+  expect(writes).toHaveLength(1)
+})
+
+it('preserves historical totals with no retained details and keeps retention read-only for members', async () => {
+  const { user } = setup(0, 'compacted')
+  expect((await screen.findByRole('region', { name: '已派发请求' })).textContent).toContain('3')
+  expect(await screen.findByText('当前没有可查看的请求明细')).toBeTruthy()
+  expect(screen.queryByText('暂无模型调用')).toBeNull()
+  const notice = screen.getByText('明细保留与历史汇总').parentElement!
+  expect(notice.textContent).toContain('已清理的明细不能恢复、逐次核对或补算')
+  expect(notice.textContent).toContain('清理不会将用量归零或产生新额度')
+  await user.click(screen.getByRole('tab', { name: '额度与策略' }))
+  const retention = await screen.findByRole('region', { name: '明细保留期' })
+  expect(retention.textContent).toContain('90 天')
+  expect(within(retention).getByText('3')).toBeTruthy()
+  expect(within(retention).getByText('仅管理员可修改明细保留期。')).toBeTruthy()
+  expect(within(retention).queryByRole('checkbox')).toBeNull()
+  expect(within(retention).queryByRole('button', { name: '保存保留期' })).toBeNull()
+  await user.click(screen.getByRole('tab', { name: '计价说明' }))
+  expect(screen.getByText('明细保留与历史汇总')).toBeTruthy()
+})
 
 it('shows known usage separately from unknown values and reads historical request detail', async () => {
   const { requests, user } = setup()
@@ -230,7 +294,7 @@ it('shows an empty state and read failures without inventing totals or unauthori
   expect(screen.queryByText('turn-a')).toBeNull()
   cleanup()
   setup(0, 'empty')
-  expect(await screen.findByText('暂无模型调用')).toBeTruthy()
+  expect(await screen.findByText('当前没有可查看的请求明细')).toBeTruthy()
   cleanup()
   setup(0, 'error')
   expect((await screen.findAllByText('模型用量读取失败')).length).toBeGreaterThan(0)

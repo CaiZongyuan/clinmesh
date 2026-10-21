@@ -1,4 +1,4 @@
-import { modelUsageControlSchema, modelUsageOverviewSchema, modelUsageListSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageControlSchema, modelUsageOverviewSchema, modelUsageListSchema, modelUsageRetentionSchema } from '@clinmesh/contracts/model-usage'
 import { agentPageContextBindingSchema } from '@clinmesh/contracts/agent'
 import { randomUUID } from 'node:crypto'
 import { isDoctorDelegation } from '../../dsh-web/src/doctor-delegation.ts'
@@ -92,13 +92,20 @@ test('reads persisted synthetic model usage from the real Settings entry and sur
   } finally { await server.close() }
 })
 
-test('administrators save model controls through Settings and members can only read the persisted policy', async ({ page, browserApp }) => {
+test('administrators save model controls and retention through Settings and members can only read persisted settings', async ({ page, browserApp }) => {
   await page.goto(`${browserApp.origin}/settings`)
   await page.getByLabel('账户邮箱').fill('admin@demo.clinmesh.local')
   await page.getByLabel('账户密码').fill(browserApp.password)
   await page.getByRole('button', { name: '登录', exact: true }).click()
   await page.getByRole('link', { name: '模型用量', exact: true }).click()
   await page.getByRole('tab', { name: '额度与策略' }).click()
+  const retention = page.getByRole('region', { name: '明细保留期', exact: true })
+  await expect(retention.getByLabel('保留天数', { exact: true })).toHaveValue('90')
+  await retention.getByLabel('保留天数', { exact: true }).fill('137')
+  await retention.getByRole('button', { name: '保存保留期', exact: true }).click()
+  await expect(retention.getByText('明细保留期已保存', { exact: true })).toBeVisible()
+  expect(modelUsageRetentionSchema.parse(await (await page.request.get(`${browserApp.origin}/api/model-usage/retention`)).json()))
+    .toMatchObject({ days: 137, version: 2, compactedRequests: 0, lastCompactedAt: null })
   const workspace = page.getByRole('region', { name: '工作区控制', exact: true })
   await workspace.getByRole('checkbox', { name: '请求次数无限' }).uncheck()
   await workspace.getByLabel('请求次数上限', { exact: true }).fill('0')
@@ -119,6 +126,10 @@ test('administrators save model controls through Settings and members can only r
   expect(control.deployment).toMatchObject({ enabled: true, requests: null, automaticRetries: true })
   await page.reload()
   await page.getByRole('tab', { name: '额度与策略' }).click()
+  await expect(retention.getByLabel('保留天数', { exact: true })).toHaveValue('137')
+  await retention.getByRole('checkbox', { name: '永久保留', exact: true }).check()
+  await retention.getByRole('button', { name: '保存保留期', exact: true }).click()
+  await expect(retention.getByText('明细保留期已保存', { exact: true })).toBeVisible()
   await expect(workspace.getByRole('checkbox', { name: '启用模型生成' })).not.toBeChecked()
   await expect(workspace.getByLabel('请求次数上限', { exact: true })).toHaveValue('0')
   await expect(workspace.getByLabel('Token 上限', { exact: true })).toHaveValue('5000')
@@ -138,6 +149,13 @@ test('administrators save model controls through Settings and members can only r
   await page.goto(`${browserApp.origin}/settings`)
   await page.getByRole('link', { name: '模型用量', exact: true }).click()
   await page.getByRole('tab', { name: '额度与策略' }).click()
+  await expect(retention.getByText('永久保留', { exact: true })).toBeVisible()
+  await expect(retention.getByText('仅管理员可修改明细保留期。', { exact: true })).toBeVisible()
+  await expect(retention.getByRole('checkbox')).toHaveCount(0)
+  await expect(retention.getByRole('button', { name: '保存保留期', exact: true })).toHaveCount(0)
+  expect(modelUsageRetentionSchema.parse(await (await page.request.get(`${browserApp.origin}/api/model-usage/retention`)).json()))
+    .toMatchObject({ days: null, version: 3 })
+  await expect(page.getByText('已清理的明细不能恢复、逐次核对或补算。', { exact: false })).toBeVisible()
   await expect(workspace.getByText('仅管理员可修改工作区控制。', { exact: true })).toBeVisible()
   await expect(workspace.getByRole('checkbox')).toHaveCount(0)
   await expect(workspace.getByRole('button', { name: '保存工作区策略' })).toHaveCount(0)

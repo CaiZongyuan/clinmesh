@@ -2,7 +2,7 @@ import { createRoot } from 'react-dom/client'
 import { createMemoryHistory } from '@tanstack/react-router'
 import { WebApp } from '../../../web/src/app/web-app.tsx'
 import { usageAttempt, usageControl, usageOverview, usagePricing, usageSession } from '../../../web/src/app/model-usage.test-fixture.ts'
-import { modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema, modelUsageRetentionUpdateSchema } from '@clinmesh/contracts/model-usage'
 import { WorkspaceNavigation, createWorkspaceNavigation } from './workspace-navigation.tsx'
 import { createStyledRoot } from './styled-root.ts'
 
@@ -21,6 +21,11 @@ const { root } = createStyledRoot(surface)
 root.style.height = '100%'
 let control = structuredClone(usageControl)
 let attempt = structuredClone(usageAttempt)
+const compacted = document.documentElement.dataset.usageCompacted === 'true'
+let retention = { days: 90 as number | null, version: 1, compactedRequests: compacted ? 3 : 0,
+  lastCompactedAt: compacted ? '2026-10-21T01:00:00.000Z' : null }
+if (compacted) control.workspace = { ...control.workspace, requests: 10, used: 3, remaining: 7,
+  requestsStartedAt: '2026-06-01T00:00:00.000Z', tokensUsed: 120 }
 if (document.documentElement.dataset.usageKnown === 'true') attempt.usage.totalTokens = 150
 async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit) {
   const url = new URL(String(input), 'http://synthetic.test')
@@ -29,6 +34,15 @@ async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit) {
   document.documentElement.dataset.usageCredentials = init?.credentials ?? ''
   if (url.pathname === '/clinmesh/api/model-usage/overview') return Response.json(usageOverview)
   if (url.pathname === '/clinmesh/api/model-usage/pricing') return Response.json(usagePricing)
+  if (url.pathname === '/clinmesh/api/model-usage/retention') {
+    if (init?.method === 'PUT') {
+      const update = modelUsageRetentionUpdateSchema.parse(JSON.parse(String(init.body)))
+      document.documentElement.dataset.usageRetentionWrite = JSON.stringify(update)
+      document.documentElement.dataset.usageIdempotency = new Headers(init.headers).get('idempotency-key') ?? ''
+      retention = { ...retention, days: update.days, version: update.expectedVersion + 1 }
+    }
+    return Response.json(retention)
+  }
   if (url.pathname === '/clinmesh/api/model-usage/control') {
     if (init?.method === 'PUT') {
       const update = modelUsageControlUpdateSchema.parse(JSON.parse(String(init.body)))
@@ -44,7 +58,7 @@ async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit) {
   }
   if (url.pathname === '/clinmesh/api/model-usage/requests') {
     document.documentElement.dataset.usageFilter = url.search
-    return Response.json({ items: [attempt], total: 1 })
+    return Response.json({ items: compacted ? [] : [attempt], total: compacted ? 0 : 1 })
   }
   if (url.pathname.endsWith('/reconcile') || url.pathname.endsWith('/reprice')) {
     const reprice = url.pathname.endsWith('/reprice')

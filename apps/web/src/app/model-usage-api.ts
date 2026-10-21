@@ -1,10 +1,19 @@
-import { modelUsageAttemptSchema, modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema,
-  type ModelUsageControlUpdate, type ModelUsageFilter } from '@clinmesh/contracts/model-usage'
+import { modelUsageAttemptSchema, modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema, modelUsageRetentionSchema,
+  type ModelUsageControlUpdate, type ModelUsageFilter, type ModelUsageRetentionUpdate } from '@clinmesh/contracts/model-usage'
 import { modelPricingConfigSchema } from '@clinmesh/contracts/model-pricing'
 import { apiGet, apiMutation, newIdempotencyKey } from './api-client.ts'
 
 export function getModelUsageControl(signal?: AbortSignal) {
   return apiGet('/api/model-usage/control', modelUsageControlSchema, signal)
+}
+
+export function getModelUsageRetention(signal?: AbortSignal) {
+  return apiGet('/api/model-usage/retention', modelUsageRetentionSchema, signal)
+}
+
+export function updateModelUsageRetention(input: ModelUsageRetentionUpdate) {
+  return apiMutation('/api/model-usage/retention', modelUsageRetentionSchema, input,
+    { method: 'PUT', idempotencyKey: newIdempotencyKey() })
 }
 
 export function getModelUsagePricing(signal?: AbortSignal) {

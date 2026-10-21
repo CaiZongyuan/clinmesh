@@ -13,10 +13,11 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
-import { getModelUsageControl, getModelUsageOverview, getModelUsagePricing, getModelUsageRequest, getModelUsageRequests } from './model-usage-api.ts'
+import { getModelUsageControl, getModelUsageOverview, getModelUsagePricing, getModelUsageRequest, getModelUsageRequests, getModelUsageRetention } from './model-usage-api.ts'
 import { ModelUsagePolicy } from './model-usage-policy.tsx'
 import { ModelUsagePricing } from './model-usage-pricing.tsx'
 import { ModelUsageCorrections } from './model-usage-corrections.tsx'
+import { ModelUsageRetention, retentionPeriod } from './model-usage-retention.tsx'
 import { modelUsageMessages } from './model-usage-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -38,9 +39,9 @@ function ReadError({ title, messages, retry }: { title: string; messages: Messag
   </AlertDescription></Alert>
 }
 
-function NoRequests({ messages }: { messages: Messages }) {
-  return <Empty><EmptyHeader><EmptyTitle>{messages.empty}</EmptyTitle>
-    <EmptyDescription>{messages.emptyDescription}</EmptyDescription></EmptyHeader></Empty>
+function NoRequests({ messages, historical = false }: { messages: Messages; historical?: boolean }) {
+  return <Empty><EmptyHeader><EmptyTitle>{historical ? messages.retainedEmpty : messages.empty}</EmptyTitle>
+    <EmptyDescription>{historical ? messages.retainedEmptyDescription : messages.emptyDescription}</EmptyDescription></EmptyHeader></Empty>
 }
 
 function Summary({ data, locale, messages }: { data: ModelUsageOverview; locale: WorkspaceLocale; messages: Messages }) {
@@ -96,10 +97,10 @@ function UsageCharts({ data, locale, messages }: { data: ModelUsageOverview; loc
   </div>
 }
 
-function RequestTable({ items, locale, messages, select }: {
-  items: ModelUsageAttempt[]; locale: WorkspaceLocale; messages: Messages; select(id: string, trigger: HTMLButtonElement): void
+function RequestTable({ items, locale, messages, historical, select }: {
+  items: ModelUsageAttempt[]; locale: WorkspaceLocale; messages: Messages; historical: boolean; select(id: string, trigger: HTMLButtonElement): void
 }) {
-  if (items.length === 0) return <NoRequests messages={messages} />
+  if (items.length === 0) return <NoRequests messages={messages} historical={historical} />
   return <Table aria-label={messages.requests}><TableHeader><TableRow>
     {[messages.requestTime, messages.feature, messages.provider, messages.actualModel, messages.result, messages.token, messages.cost, messages.detail]
       .map(label => <TableHead key={label}>{label}</TableHead>)}
@@ -186,16 +187,22 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
     queryFn: ({ signal }) => getModelUsageControl(signal), retry: false, enabled: tab === 'policy' })
   const pricing = useQuery({ queryKey: ['model-usage', 'pricing', ...scope],
     queryFn: ({ signal }) => getModelUsagePricing(signal), retry: false, enabled: tab === 'pricing' })
+  const retention = useQuery({ queryKey: ['model-usage', 'retention', ...scope],
+    queryFn: ({ signal }) => getModelUsageRetention(signal), retry: false })
   const requestContent = requests.isPending ? <Loading messages={messages} /> : requests.isError
     ? <ReadError title={messages.loadError} messages={messages} retry={() => { void requests.refetch() }} />
-    : <RequestTable items={requests.data.items} locale={locale} messages={messages} select={(id, trigger) => {
+    : <RequestTable items={requests.data.items} locale={locale} messages={messages} historical={(overview.data?.totals.requests ?? 0) > 0} select={(id, trigger) => {
       detailTrigger.current = trigger; setSelectedId(id)
     }} />
 
   return <section aria-label={locale === 'zh-CN' ? '模型用量' : 'Model usage'} className="flex min-w-0 flex-col gap-4">
     <Alert role="note"><AlertTitle>{messages.coverage}</AlertTitle><AlertDescription>{messages.coverageDescription}</AlertDescription></Alert>
+    <Alert role="note"><AlertTitle>{messages.retentionNotice}</AlertTitle><AlertDescription>
+      <p>{messages.retentionNoticeDescription}</p>
+      {retention.isSuccess ? <p>{messages.currentRetention}: {retentionPeriod(retention.data, messages)} · {messages.compactedRequests}: {new Intl.NumberFormat(locale).format(retention.data.compactedRequests)}</p> : null}
+    </AlertDescription></Alert>
     <div className="flex flex-wrap items-center justify-between gap-2"><p className="min-w-0 flex-1 text-sm text-muted-foreground">{messages.aggregateScope} {messages.memberScope}</p>
-      <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching || control.isFetching || pricing.isFetching}
+      <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching || control.isFetching || pricing.isFetching || retention.isFetching}
         onClick={() => { void queryClient.invalidateQueries({ queryKey: ['model-usage'] }) }}>{messages.refresh}</Button>
     </div>
     <Tabs value={tab} onValueChange={value => { setTab(String(value)); setSelectedId(undefined) }} className="min-w-0 gap-4">
@@ -226,12 +233,19 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
             onClick={() => { setFilters(current => ({ ...current, offset: current.offset + current.limit })); setSelectedId(undefined) }}>{messages.next}</Button></div>
         </div>}
       </TabsContent>
-      <TabsContent value="policy">{control.isPending ? <Loading messages={messages} /> : control.isError
+      <TabsContent value="policy" className="flex min-w-0 flex-col gap-4">{control.isPending ? <Loading messages={messages} /> : control.isError
         ? <ReadError title={messages.loadError} messages={messages} retry={() => { void control.refetch() }} />
         : <ModelUsagePolicy data={control.data} locale={locale} administrator={session.actor.roleCode === 'administrator'} saved={data => {
           queryClient.setQueryData(['model-usage', 'control', ...scope], data)
           void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
-        }} />}</TabsContent>
+        }} />}
+        {retention.isPending ? <Loading messages={messages} /> : retention.isError
+          ? <ReadError title={messages.retentionLoadError} messages={messages} retry={() => { void retention.refetch() }} />
+          : <ModelUsageRetention data={retention.data} locale={locale} administrator={session.actor.roleCode === 'administrator'} saved={data => {
+            queryClient.setQueryData(['model-usage', 'retention', ...scope], data)
+            void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+          }} />}
+      </TabsContent>
       <TabsContent value="pricing">{pricing.isPending ? <Loading messages={messages} /> : pricing.isError
         ? <ReadError title={messages.loadError} messages={messages} retry={() => { void pricing.refetch() }} />
         : <ModelUsagePricing data={pricing.data} locale={locale} />}</TabsContent>

@@ -67,6 +67,17 @@ const zh = {
   reservationBoundary: '派发预占边界', inputBoundary: '输入 Token 上界', outputBoundary: '输出 Token 上界',
   reservationUnbounded: '输出配置不能提供可信预占上界', reservationUnavailable: '适配器缺少可信计量边界',
   rejectionTokens: 'Token 额度不足', rejectionCny: '人民币额度不足', rejectionMetering: '无法可靠核算有限额度',
+  retention: '明细保留期', currentRetention: '当前保留期', retentionDayUnit: '天', retentionPermanent: '永久保留',
+  retentionDays: '保留天数', retentionDaysDescription: '默认 90 天，可填写任意有效正整数天数，或选择永久保留。',
+  retentionDescription: '到期后清理已结算明细；未结算记录保留至结算。延长保留期或改为永久只影响仍保留的明细。',
+  retentionNotice: '明细保留与历史汇总',
+  retentionNoticeDescription: '已清理的明细不能恢复、逐次核对或补算。长期汇总、累计额度及累计起点独立保留，清理不会将用量归零或产生新额度。',
+  compactedRequests: '已清理明细', lastCompactedAt: '最近清理时间', neverCompacted: '尚未清理',
+  readOnlyRetention: '仅管理员可修改明细保留期。', saveRetention: '保存保留期', savedRetention: '明细保留期已保存',
+  retentionInvalid: '保留天数必须是有效正整数，或选择永久保留。', retentionSaveError: '明细保留期保存失败，请检查后重试。',
+  retentionConflict: '保留期已被其他管理员修改，请刷新用量后重新编辑。', retentionDenied: '已无权修改明细保留期，请刷新账户权限。',
+  retentionLoadError: '明细保留期读取失败', retainedEmpty: '当前没有可查看的请求明细',
+  retainedEmptyDescription: '历史汇总仍保留；当前筛选、授权或保留期内没有可查看的明细。',
 }
 
 const en: Record<keyof typeof zh, string> = {
@@ -135,6 +146,17 @@ const en: Record<keyof typeof zh, string> = {
   reservationBoundary: 'Dispatch reservation bounds', inputBoundary: 'Input token upper bound', outputBoundary: 'Output token upper bound',
   reservationUnbounded: 'Output settings cannot provide a trusted reservation upper bound', reservationUnavailable: 'The adapter lacks trusted metering bounds',
   rejectionTokens: 'token quota is exhausted', rejectionCny: 'CNY quota is exhausted', rejectionMetering: 'finite quota cannot be metered reliably',
+  retention: 'Request detail retention', currentRetention: 'Current retention', retentionDayUnit: 'days', retentionPermanent: 'Keep permanently',
+  retentionDays: 'Retention days', retentionDaysDescription: 'Defaults to 90 days. Enter any valid positive integer number of days, or keep permanently.',
+  retentionDescription: 'Expired settled details are cleaned up; unsettled records remain until settlement. Extending retention or keeping permanently only affects details still retained.',
+  retentionNotice: 'Detail retention and historical totals',
+  retentionNoticeDescription: 'Cleaned-up details cannot be restored, reconciled individually or repriced. Historical totals, cumulative quotas and counting start times are retained independently. Cleanup never resets usage or creates new quota.',
+  compactedRequests: 'Cleaned-up details', lastCompactedAt: 'Last cleanup', neverCompacted: 'No cleanup yet',
+  readOnlyRetention: 'Only administrators can change request detail retention.', saveRetention: 'Save retention', savedRetention: 'Request detail retention saved',
+  retentionInvalid: 'Enter a valid positive integer number of days or keep permanently.', retentionSaveError: 'Unable to save request detail retention. Check and retry.',
+  retentionConflict: 'Another administrator changed retention. Refresh usage before editing again.', retentionDenied: 'You no longer have permission to change retention. Refresh account permissions.',
+  retentionLoadError: 'Unable to read request detail retention', retainedEmpty: 'No request details available',
+  retainedEmptyDescription: 'Historical totals remain. No details are available within the current filters, access scope or retention period.',
 }
 
 const features: Record<ModelUsageAttempt['feature'], readonly [string, string]> = {
