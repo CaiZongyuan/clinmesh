@@ -460,13 +460,12 @@ export function WorkspaceShell({
         data-clinmesh-workspace-panel=""
         tabIndex={-1}
       >
-        {!settingsMode && workingRoles.length > 1 ? (
+        {/* 住院工作台先绑定会话的单一病区，不展示工作病区切换；其他岗位保留工作地点选择。 */}
+        {!settingsMode && workingRoles.length > 1 && activeSection !== 'inpatient' ? (
           <FieldSet className="shrink-0 border-b p-3" disabled={roleChangePending}>
             <FieldGroup className="max-w-sm">
               <Field>
-                <FieldLabel htmlFor="workspace-working-location">
-                  {activeSection === 'inpatient' ? messages.workingWard : messages.workingLocation}
-                </FieldLabel>
+                <FieldLabel htmlFor="workspace-working-location">{messages.workingLocation}</FieldLabel>
                 <WorkspaceSelect id="workspace-working-location" value={session.actor.practitionerRoleId ?? null}
                   items={workingRoles.map(role => ({ value: role.id, label: clinicalDisplayName(role.locationName ?? role.locationId) }))}
                   onValueChange={value => { if (value !== null) onRoleChange(value) }} />

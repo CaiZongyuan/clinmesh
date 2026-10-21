@@ -262,7 +262,7 @@ describe('trusted Web session workflow', () => {
     await waitFor(() => expect(scenarioRequests).toBeGreaterThan(requestsBeforeReturning))
   })
 
-  it('keeps legacy ward assignments reachable through one person option', async () => {
+  it('hides legacy ward switching and keeps the inpatient workspace single-ward', async () => {
     window.history.replaceState(null, '', '/inpatient')
     const role = administratorSession.availableRoles.find(item => item.id === 'practitioner-role-inpatient-doctor')!
     let session = {
@@ -270,29 +270,17 @@ describe('trusted Web session workflow', () => {
       actor: { ...administratorSession.actor, roleCode: 'inpatient-doctor', practitionerId: role.practitionerId,
         practitionerRoleId: role.id, organizationId: role.organizationId, locationId: role.locationId },
     }
-    const selections: string[] = []
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = new URL(String(input), 'http://localhost').pathname
       if (path === '/api/auth/context') return Response.json(session)
-      if (path === '/api/auth/role') {
-        const body: { practitionerRoleId: string } = JSON.parse(String(init?.body))
-        const selected = session.availableRoles.find(item => item.id === body.practitionerRoleId)!
-        selections.push(selected.id)
-        session = { ...session, actor: { ...session.actor, practitionerRoleId: selected.id,
-          practitionerId: selected.practitionerId, organizationId: selected.organizationId,
-          locationId: selected.locationId, roleCode: selected.code } }
-        return Response.json(session)
-      }
       if (path === '/api/his/v1/inpatient/catalog') return Response.json({ wards: [], beds: [] })
       if (path === '/api/his/v1/inpatient/admissions') return Response.json({ items: [] })
       throw new Error(`Unexpected request: ${path}`)
     }))
     const user = userEvent.setup()
     render(<WebApp />)
-    const ward = await screen.findByRole('combobox', { name: '工作病区' })
-    await user.click(ward)
-    await user.click(await screen.findByRole('option', { name: '外科病区' }))
-    await waitFor(() => expect(selections).toEqual(['practitioner-role-inpatient-doctor-surgery']))
+    expect(await screen.findByRole('heading', { name: '住院工作台' })).toBeTruthy()
+    expect(screen.queryByRole('combobox', { name: '工作病区' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     const people = await screen.findAllByRole('menuitemradio', { name: '住院医生' })
     expect(people).toHaveLength(1)

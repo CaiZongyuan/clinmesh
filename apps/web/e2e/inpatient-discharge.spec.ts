@@ -86,7 +86,7 @@ test('真实出院结算丢回执后刷新恢复原指纹和幂等键，仅一�
   await s.select()
   await page.getByLabel('出院处理说明', { exact: true }).fill('床单位清洁完成')
   await page.getByRole('button', { name: '清床', exact: true }).click()
-  await expect(page.getByText('当前床位：未分床', { exact: true })).toBeVisible()
+  await expect(page.getByText('未分床', { exact: false })).toBeVisible()
 })
 
 test('收费员看到的结算预览保持冻结，账目冲正后拒绝原预览，显式重新预览后结算', async ({ page, browserApp }) => {

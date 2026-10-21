@@ -78,7 +78,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await select()
   await page.getByLabel('出院处理说明', { exact: true }).fill('床单位清洁')
   await page.getByRole('button', { name: '清床', exact: true }).click()
-  await expect(page.getByText('当前床位：未分床', { exact: true })).toBeVisible()
+  await expect(page.getByText('未分床', { exact: false })).toBeVisible()
   await login('inpatient-doctor')
   await select()
   let submits = 0, key: string | undefined

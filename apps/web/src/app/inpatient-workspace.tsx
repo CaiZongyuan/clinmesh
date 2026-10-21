@@ -10,6 +10,7 @@ import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { ArrowLeftIcon } from 'lucide-react'
 import { useState } from 'react'
 import { apiGet, searchPatients } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -77,7 +78,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     <InpatientWriteRecovery write={write} locale={locale} />
     {write.mutation.isSuccess && (!write.mutation.data?.command || !('admissionId' in write.mutation.data.command.input) || write.mutation.data.command.input.admissionId === selectedId) ? <p role="status">{zh ? '操作成功' : 'Operation completed'}</p> : null}
     </div>
-    {selected ? <><div className="flex shrink-0 flex-wrap items-center gap-3 border-b px-4 py-2"><Button variant="outline" size="sm" onClick={() => setSelectedId(undefined)}>{zh ? '返回住院患者' : 'Back to admissions'}</Button><Field orientation="horizontal" className="w-auto min-w-0 flex-1"><FieldLabel htmlFor="inpatient-switch" className="shrink-0">{zh ? '切换住院患者' : 'Switch patient'}</FieldLabel><WorkspaceSelect id="inpatient-switch" value={selectedId ?? null} items={(admissions.data?.items ?? []).map(item => ({ value: item.id, label: `${item.patientName} · ${item.inpatientNumber}` }))} onValueChange={value => { if (value) setSelectedId(value) }} /></Field></div><InpatientPatientWorkspace key={selected.id} admission={selected} admissions={admissions.data?.items ?? []} catalog={catalog.data} allowTransfers={allowTransfers} session={session} locale={locale} write={write} /></> : <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+    {selected ? <><div className="flex shrink-0 items-center gap-2 border-b px-4 py-2"><Button aria-label={zh ? '返回住院患者' : 'Back to admissions'} size="icon-sm" variant="ghost" onClick={() => { setSelectedId(undefined) }}><ArrowLeftIcon aria-hidden /></Button><Field orientation="horizontal" className="w-auto min-w-0 flex-1"><FieldLabel className="sr-only" htmlFor="inpatient-switch">{zh ? '切换住院患者' : 'Switch patient'}</FieldLabel><WorkspaceSelect id="inpatient-switch" value={selectedId ?? null} items={(admissions.data?.items ?? []).map(item => ({ value: item.id, label: item.patientName }))} onValueChange={value => { if (value) setSelectedId(value) }} /></Field></div><InpatientPatientWorkspace key={selected.id} admission={selected} admissions={admissions.data?.items ?? []} catalog={catalog.data} allowTransfers={allowTransfers} session={session} locale={locale} write={write} /></> : <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
     {registrar ? <form onSubmit={event => { event.preventDefault(); register() }}>
       <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
         <Field><FieldLabel htmlFor="inpatient-route">{zh ? '入院途径' : 'Admission route'}</FieldLabel>

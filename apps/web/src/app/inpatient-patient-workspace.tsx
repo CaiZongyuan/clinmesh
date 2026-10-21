@@ -6,7 +6,7 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@clinmesh/ui/components/tabs'
-import { ArrowRightIcon, CheckIcon, MinusIcon, RefreshCwIcon } from 'lucide-react'
+import { CheckIcon, CopyIcon, MinusIcon, RefreshCwIcon } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useState } from 'react'
 import { InpatientClinical } from './inpatient-clinical.tsx'
@@ -50,6 +50,26 @@ function nextStep(admission: InpatientAdmission, locale: WorkspaceLocale): { sta
   return { stage: 'record', text: zh ? '住院医生 → 病案 → 提交首页；病案人员 → 编码审核与归档' : 'Inpatient doctor → Medical record → Submit; medical records staff → Review and archive' }
 }
 
+// 住院号较长会挤占横幅；展示截断值，复制动作保留完整原值。
+function InpatientNumber({ locale, number }: { locale: WorkspaceLocale; number: string }): React.JSX.Element {
+  // 不同号码各自拥有复制反馈，包括迟到的剪贴板响应。
+  return <InpatientNumberValue key={number} locale={locale} number={number} />
+}
+function InpatientNumberValue({ locale, number }: { locale: WorkspaceLocale; number: string }): React.JSX.Element {
+  const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
+  const [result, setResult] = useState<'copied' | 'failed'>()
+  return <span className="inline-flex items-center gap-1" data-inpatient-number>
+    <span className="font-mono tabular-nums" title={number}>{t('住院号 ', 'Inpatient no. ')}{number.length > 14 ? `${number.slice(0, 10)}…` : number}</span>
+    <Button aria-label={`${t('复制住院号', 'Copy inpatient number')} ${number}`} onClick={async () => {
+      setResult(undefined)
+      try { await navigator.clipboard.writeText(number); setResult('copied') } catch { setResult('failed') }
+    }} size="icon-xs" type="button" variant="ghost"><CopyIcon aria-hidden="true" /></Button>
+    {result === undefined ? null : <span className="text-xs text-muted-foreground" role={result === 'failed' ? 'alert' : 'status'}>
+      {result === 'copied' ? t('已复制', 'Copied') : t('复制失败', 'Copy failed')}
+    </span>}
+  </span>
+}
+
 type Props = { allowTransfers: boolean; admission: InpatientAdmission; admissions: InpatientAdmission[]; catalog: z.infer<typeof inpatientCatalogSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
 const stageGroups: Array<{ zh: string; en: string; ids: Stage[] }> = [
   { zh: '入院', en: 'Admission', ids: ['admission'] },
@@ -79,6 +99,10 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   const active = selectedStage ?? defaultStage
   const client = useQueryClient()
   const ward = catalog?.wards.find(item => item.id === admission.wardId), bed = catalog?.beds.find(item => item.id === admission.bedId)
+  // 病区与床位合成一个事实；已有床位 ID 但目录未取得时显示未知，不宣示未分床。
+  const place = ward === undefined ? '—' : `${ward.name} · ${bed !== undefined ? bed.name : admission.bedId === undefined ? t('未分床', 'Unassigned') : '—'}`
+  // 在院未结算是常态，不显示；出院流程中与结算完成后才有信息量。
+  const settle = admission.financialStatus === 'settled' ? t('已结算', 'Settled') : admission.status === 'discharge-pending' || admission.status === 'departed' ? t('待结算', 'To settle') : null
   const changeStage = (stage: Stage) => { setSelectedStage(stage); setVisited(current => [...new Set([...current, active, stage])]) }
   const visibleStages = stages.filter(stage => stage.id !== 'transfer' || clinical && allowTransfers)
   const mayRead = (stage: Stage) => {
@@ -89,9 +113,8 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   }
   return <section aria-label={t('住院详情', 'Admission details')} className="flex min-h-0 flex-1 flex-col">
     <section aria-label={t('当前住院患者', 'Current inpatient')} className="flex max-h-[40%] shrink-0 flex-col gap-2 overflow-y-auto border-b bg-background px-4 py-3">
-      <div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{admission.patientName}</h2>{careDay !== undefined ? <Badge variant="outline">{t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</Badge> : null}<Badge variant="outline">{t('住院号 ', 'Inpatient number ')}{admission.inpatientNumber}</Badge><Badge variant="secondary">{inpatientStatus(admission, locale)}</Badge>{archived ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted-foreground"><span>{ward?.name ?? '—'}</span><span>{t('当前床位：', 'Current bed: ')}{bed?.name ?? (admission.bedId === undefined ? t('未分床', 'Unassigned') : '—')}</span><span>{t('预交金：', 'Deposit: ')}{formatFen(admission.depositFen, locale)}</span><span>{t('累计费用：', 'Charges: ')}{formatFen(admission.chargesFen, locale)}</span><span>{admission.financialStatus === 'settled' ? t('已结算', 'Settled') : t('未结算', 'Not settled')}</span></div>
-      <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm">{archived ? t('流程状态：', 'Workflow: ') : t('下一步：', 'Next: ')}{next.text}</p><Button size="sm" variant="ghost" onClick={() => changeStage(next.stage)}><ArrowRightIcon data-icon="inline-start" aria-hidden />{archived ? t('查看病案', 'Read record') : t('查看办理环节', 'View next step')}</Button></div>
+      <div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{admission.patientName}</h2>{careDay !== undefined ? <Badge variant="outline">{t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</Badge> : null}<InpatientNumber locale={locale} number={admission.inpatientNumber} /><Badge variant="secondary">{inpatientStatus(admission, locale)}</Badge>{archived ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground"><span>{place}</span><span>{t('预交 ', 'Deposit ')}{formatFen(admission.depositFen, locale)}</span><span>{t('费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>{settle === null ? null : <span>{settle}</span>}</div>
     </section>
     <Tabs value={active} onValueChange={value => { if (visibleStages.some(stage => stage.id === value)) changeStage(value as Stage) }} className="min-h-0 flex-1 gap-0">
       <div className="flex shrink-0 items-center gap-2 border-b px-4"><div className="min-w-0 flex-1 overflow-x-auto"><TabsList aria-label={t('住院阶段', 'Inpatient stages')} variant="line" className="min-w-max gap-2">{stageGroups.map(group => {

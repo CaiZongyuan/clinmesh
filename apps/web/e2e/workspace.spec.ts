@@ -81,24 +81,20 @@ test('新环境每个住院岗位只显示一次且不要求选择病区', async
   await expect(page.getByRole('combobox', { name: '工作病区' })).toHaveCount(0)
 })
 
-test('旧病区职责通过单个人物入口切换并在刷新后保持原授权', async ({ page, browserApp }) => {
+test('旧病区职责保留在会话中，住院工作台不提供病区切换', async ({ page, browserApp }) => {
   await addSecondaryInpatientWard(browserApp.runtime)
   await signIn(page, browserApp.origin, 'admin@demo.clinmesh.local', browserApp.password)
   await page.getByRole('button', { name: '用户菜单' }).click()
   await expect(page.getByRole('menuitemradio', { name: '住院医生', exact: true })).toHaveCount(1)
   await page.getByRole('menuitemradio', { name: '住院医生', exact: true }).click()
   await expect(page).toHaveURL(`${browserApp.origin}/inpatient`)
-  await page.getByRole('combobox', { name: '工作病区' }).click()
-  await page.getByRole('option', { name: '外科病区', exact: true }).click()
-  await expect(page.getByRole('combobox', { name: '工作病区' })).toContainText('外科病区')
-  await page.reload()
-  await expect(page.getByRole('combobox', { name: '工作病区' })).toContainText('外科病区')
+  await expect(page.getByRole('combobox', { name: '工作病区' })).toHaveCount(0)
   const context = sessionContextSchema.parse(await (await page.request.get(`${browserApp.origin}/api/auth/context`)).json())
-  expect(context.actor).toMatchObject({ roleCode: 'inpatient-doctor',
-    practitionerRoleId: 'practitioner-role-inpatient-doctor-surgery',
-    organizationId: 'organization-inpatient-surgery', locationId: 'ward-surgery' })
-  await page.getByRole('button', { name: '用户菜单' }).click()
+  expect(context.actor).toMatchObject({ roleCode: 'inpatient-doctor', locationId: 'ward-general' })
+  await page.reload()
+  await expect(page.getByRole('combobox', { name: '工作病区' })).toHaveCount(0)
   const selected = page.getByRole('menuitemradio', { name: '住院医生', exact: true })
+  await page.getByRole('button', { name: '用户菜单' }).click()
   await expect(selected).toHaveCount(1)
   await expect(selected).toHaveAttribute('aria-checked', 'true')
 })
