@@ -8,6 +8,7 @@ import { decodeModelRoute, encodeModelRoute, modelBridgeAccountingMediaType, mod
 import { mergeModelTokenUsage, modelUsageConfigurationSchema, modelUsageOutcomeSchema, unknownModelTokenUsage,
   type ModelTokenUsage, type ModelUsageConfiguration } from '@clinmesh/contracts/model-usage'
 import { dshTokenUsage } from './dsh-token-usage.ts'
+import { isDefinitiveDshFailure } from './dsh-model-failure.ts'
 
 class ModelAccessError extends Error {}
 class ModelTimeoutError extends Error {}
@@ -150,6 +151,9 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
               const delay = chunk.reason.failure.providerRetryAfterMs
               throw new ModelRateLimitError(typeof delay === 'number' && Number.isFinite(delay) && delay > 0
                 ? Math.min(10 * 60_000, Math.ceil(delay)) : undefined)
+            }
+            if (chunk.reason.kind === 'error' && !isDefinitiveDshFailure(chunk.reason.failure)) {
+              throw new ModelIncompleteError('Model result is unknown')
             }
             if (chunk.reason.kind === 'aborted') throw new ModelIncompleteError('Model result is unknown')
             if (chunk.reason.kind !== 'stop') throw new Error('Model call failed')

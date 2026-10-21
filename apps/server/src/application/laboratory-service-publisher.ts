@@ -118,6 +118,7 @@ export class LaboratoryServicePublisherError extends Error {
 }
 
 export class LaboratoryServicePublisher {
+  readonly #canResume: ((workspaceId: string, taskId: string) => boolean) | undefined
   readonly #contextStatus: (context: ActorContext) => string
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
@@ -128,6 +129,7 @@ export class LaboratoryServicePublisher {
   readonly #referenceData: ReferenceDataService
 
   constructor(input: {
+    canResume?: (workspaceId: string, taskId: string) => boolean
     contextStatus?: (context: ActorContext) => string
     commands: CommandExecutor
     database: ClinMeshDatabase
@@ -137,6 +139,7 @@ export class LaboratoryServicePublisher {
     publications: LaboratoryServicePublicationRepository
     referenceData: ReferenceDataService
   }) {
+    this.#canResume = input.canResume
     this.#contextStatus = input.contextStatus ?? (() => 'active')
     this.#commands = input.commands
     this.#database = input.database
@@ -438,7 +441,7 @@ export class LaboratoryServicePublisher {
   }
 
   async processNext(signal?: AbortSignal): Promise<LaboratoryServicePublicationJob | undefined> {
-    const claimed = this.#publications.claimNext(new Date().toISOString())
+    const claimed = this.#publications.claimNext(new Date().toISOString(), this.#canResume)
     if (claimed === undefined) return undefined
     const assertCurrent = () => {
       if (this.#contextStatus(claimed.actorContext) !== 'active') throw new LaboratoryServicePublisherError('ROLE_NOT_ALLOWED', 'The original task context is no longer active', 403)

@@ -57,6 +57,13 @@ export class ModelTaskRecovery {
       } }
   }
 
+  claimable(workspaceId: string, taskId: string): boolean {
+    const blocked = this.database.driver.prepare(`SELECT 1 FROM model_task_step WHERE workspace_id = ? AND task_id = ?
+      AND status = 'blocked' LIMIT 1`).get(workspaceId, taskId)
+    // Fresh work must reach the normal refusal path so waiting state and rejection remain visible.
+    return blocked === undefined || this.ready(workspaceId, taskId)
+  }
+
   ready(workspaceId: string, taskId: string): boolean {
     if (!this.control.canDispatch(workspaceId)) return false
     const retry = this.database.driver.prepare(`SELECT 1 FROM model_task_step WHERE workspace_id = ? AND task_id = ?

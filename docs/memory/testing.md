@@ -42,6 +42,8 @@
 
 ## 替身、异步屏障与断言
 
+- SQLite 队列扫描中的资格检查若会开启写事务，不要在尚未关闭的 `Statement.iterate()` 期间调用；事务提交可能被活动 reader 阻止，并被资格检查的安全回退表现为“始终不可恢复”。使用已完成读取的游标查询，再判断资格；回归同时验证跳过受限任务和恢复原任务，避免只证明后续任务能运行。
+
 - 医生工作台测试替身合同由建议栈决定：完诊预览 stub 必须恰好覆盖全部 7 个条目编码（schema superRefine 拒绝缺项，`items: []` 无效）；质控 GET 需为未声明病例返回干净的 ready 默认态而不是抛错。建议栈把查询失败显式渲染为"加载失败 + 重试" alert，旧替身里原本静默的坏 stub 会以可见失败暴露；替身报错时先核对 schema 完整性再怀疑组件。
 
 - 质控替身必须同时拦截 GET 轮询与 POST check 并在同一份 `qualityRevisions` 里回显 `clientId`/`clientRevision`：只拦 POST 时，1.5s `refetchInterval` 的 GET 因缺 clientId 触发 `DOCUMENT_QUALITY_INPUT_CHANGED` 错误路径，目标断言经由无关的 stale alert 变绿（假阳性，组件不改动测试也过）。新测试先跑一次确认无实现时确实为红，再实现转绿；`console.log` 在该 vitest 配置下不输出，取证用 `writeFileSync` 落盘 DOM 文本。

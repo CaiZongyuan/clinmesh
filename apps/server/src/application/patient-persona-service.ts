@@ -237,6 +237,7 @@ const manualPromptVersion = 'patient-persona-manual-edit-v1'
 const manualPromptHash = canonicalJsonHash({ promptVersion: manualPromptVersion })
 
 export class PatientPersonaService {
+  readonly #canResume: ((workspaceId: string, taskId: string) => boolean) | undefined
   readonly #contextStatus: (context: ActorContext) => string
   readonly #briefs: PatientPersonaRepository
   readonly #cases: SyntheticCaseRepository
@@ -247,6 +248,7 @@ export class PatientPersonaService {
   readonly #provider: JsonChatCompletionsProvider | undefined
 
   constructor(input: {
+    canResume?: (workspaceId: string, taskId: string) => boolean
     contextStatus?: (context: ActorContext) => string
     briefs: PatientPersonaRepository
     cases: SyntheticCaseRepository
@@ -256,6 +258,7 @@ export class PatientPersonaService {
     profiles: SyntheticPatientProfileRepository
     provider?: JsonChatCompletionsProvider
   }) {
+    this.#canResume = input.canResume
     this.#contextStatus = input.contextStatus ?? (() => 'active')
     this.#briefs = input.briefs
     this.#cases = input.cases
@@ -439,7 +442,7 @@ export class PatientPersonaService {
   }
 
   async processNext(signal?: AbortSignal): Promise<PatientPersonaJob | undefined> {
-    const claimed = this.#briefs.claimNext(new Date().toISOString())
+    const claimed = this.#briefs.claimNext(new Date().toISOString(), this.#canResume)
     if (claimed === undefined) return undefined
     if (this.#provider === undefined) return this.#fail(claimed, {
       code: 'PROVIDER_NOT_AVAILABLE',
