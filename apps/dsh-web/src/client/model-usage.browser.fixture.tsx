@@ -1,8 +1,8 @@
 import { createRoot } from 'react-dom/client'
 import { createMemoryHistory } from '@tanstack/react-router'
 import { WebApp } from '../../../web/src/app/web-app.tsx'
-import { usageAttempt, usageControl, usageOverview, usageSession } from '../../../web/src/app/model-usage.test-fixture.ts'
-import { modelUsageControlUpdateSchema } from '@clinmesh/contracts/model-usage'
+import { usageAttempt, usageControl, usageOverview, usagePricing, usageSession } from '../../../web/src/app/model-usage.test-fixture.ts'
+import { modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema } from '@clinmesh/contracts/model-usage'
 import { WorkspaceNavigation, createWorkspaceNavigation } from './workspace-navigation.tsx'
 import { createStyledRoot } from './styled-root.ts'
 
@@ -20,30 +20,51 @@ document.body.append(launcher, surface)
 const { root } = createStyledRoot(surface)
 root.style.height = '100%'
 let control = structuredClone(usageControl)
+let attempt = structuredClone(usageAttempt)
+if (document.documentElement.dataset.usageKnown === 'true') attempt.usage.totalTokens = 150
 async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit) {
   const url = new URL(String(input), 'http://synthetic.test')
   if (url.pathname === '/clinmesh/api/auth/context') return Response.json(document.documentElement.dataset.usageAdministrator === 'true'
     ? { ...usageSession, actor: { ...usageSession.actor, roleCode: 'administrator' } } : usageSession)
   document.documentElement.dataset.usageCredentials = init?.credentials ?? ''
   if (url.pathname === '/clinmesh/api/model-usage/overview') return Response.json(usageOverview)
+  if (url.pathname === '/clinmesh/api/model-usage/pricing') return Response.json(usagePricing)
   if (url.pathname === '/clinmesh/api/model-usage/control') {
     if (init?.method === 'PUT') {
       const update = modelUsageControlUpdateSchema.parse(JSON.parse(String(init.body)))
       document.documentElement.dataset.usageControlWrite = JSON.stringify(update)
       document.documentElement.dataset.usageIdempotency = new Headers(init.headers).get('idempotency-key') ?? ''
       const { expectedVersion, ...policy } = update
-      control = { ...control, workspace: { ...control.workspace, ...policy, version: expectedVersion + 1,
+      control = { ...control, workspace: { ...control.workspace, ...policy, tokens: policy.tokens ?? null, cny: policy.cny ?? null, version: expectedVersion + 1,
         requestsStartedAt: update.requests === null ? control.workspace.requestsStartedAt : '2026-10-20T00:00:00.000Z',
-        remaining: update.requests }, effective: { enabled: update.enabled && (control.deployment?.enabled ?? true),
+        remaining: update.requests, tokensRemaining: update.tokens ?? null, cnyRemaining: update.cny ?? null }, effective: { enabled: update.enabled && (control.deployment?.enabled ?? true),
         automaticRetries: update.automaticRetries && (control.deployment?.automaticRetries ?? true) } }
     }
     return Response.json({ ...control, deployment: document.documentElement.dataset.usageAdministrator === 'true' ? control.deployment : null })
   }
   if (url.pathname === '/clinmesh/api/model-usage/requests') {
     document.documentElement.dataset.usageFilter = url.search
-    return Response.json({ items: [usageAttempt], total: 1 })
+    return Response.json({ items: [attempt], total: 1 })
   }
-  if (url.pathname === `/clinmesh/api/model-usage/requests/${usageAttempt.id}`) return Response.json(usageAttempt)
+  if (url.pathname.endsWith('/reconcile') || url.pathname.endsWith('/reprice')) {
+    const reprice = url.pathname.endsWith('/reprice')
+    const body = reprice ? modelUsageRepriceSchema.parse(JSON.parse(String(init?.body))) : modelUsageReconcileSchema.parse(JSON.parse(String(init?.body)))
+    document.documentElement.dataset.usageCorrection = JSON.stringify(body)
+    document.documentElement.dataset.usageCorrectionKind = reprice ? 'reprice' : 'reconcile'
+    document.documentElement.dataset.usageIdempotency = new Headers(init?.headers).get('idempotency-key') ?? ''
+    const cost = reprice ? { status: 'priced' as const, currency: 'USD', original: 0.00042, cny: 0.00294, originalMicro: 420, cnyMicro: 2940 } : null
+    const totalTokens = 'totalTokens' in body ? body.totalTokens : undefined
+    const cny = 'cny' in body ? body.cny : undefined
+    attempt = { ...attempt, accounting: { totalTokens: totalTokens ?? attempt.accounting?.totalTokens ?? attempt.usage.totalTokens,
+      cny: cny ?? cost?.cny ?? attempt.accounting?.cny ?? null }, ...(cost === null ? {} : { effectiveCost: cost }),
+      corrections: [...attempt.corrections, { revision: body.expectedRevision + 1, evidence: body.evidence,
+        at: '2026-10-21T01:00:00.000Z', actorId: 'synthetic-admin', kind: reprice ? 'reprice' : 'reconcile',
+        totalTokens: totalTokens ?? null, cny: cny ?? cost?.cny ?? null, cost, priceSnapshot: cost === null ? null : {
+          provider: 'synthetic-provider', model: 'historical-actual-model', price: { version: 'prices-v2', currency: 'USD', rates: usagePricing.prices[0].rates },
+          exchangeRate: { version: 'fx-v2', cnyPerUnit: 7 } } }] }
+    return Response.json(attempt)
+  }
+  if (url.pathname === `/clinmesh/api/model-usage/requests/${usageAttempt.id}`) return Response.json(attempt)
   throw new Error(`Unexpected synthetic request ${url.pathname}`)
 }
 Object.defineProperty(globalThis, 'fetch', { configurable: true, value: fixtureFetch })

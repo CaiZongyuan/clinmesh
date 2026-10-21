@@ -13,8 +13,10 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
-import { getModelUsageControl, getModelUsageOverview, getModelUsageRequest, getModelUsageRequests } from './model-usage-api.ts'
+import { getModelUsageControl, getModelUsageOverview, getModelUsagePricing, getModelUsageRequest, getModelUsageRequests } from './model-usage-api.ts'
 import { ModelUsagePolicy } from './model-usage-policy.tsx'
+import { ModelUsagePricing } from './model-usage-pricing.tsx'
+import { ModelUsageCorrections } from './model-usage-corrections.tsx'
 import { modelUsageMessages } from './model-usage-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -23,7 +25,7 @@ type Messages = ReturnType<typeof modelUsageMessages>
 const initialFilters: ModelUsageFilter = { offset: 0, limit: 25 }
 
 function formatCount(value: number | null, locale: WorkspaceLocale, messages: Messages) {
-  return value === null ? messages.unknown : new Intl.NumberFormat(locale).format(value)
+  return value === null ? messages.unknown : new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(value)
 }
 
 function Loading({ messages }: { messages: Messages }) {
@@ -47,7 +49,7 @@ function Summary({ data, locale, messages }: { data: ModelUsageOverview; locale:
     { label: messages.dispatched, value: formatCount(totals.requests, locale, messages), description: messages.dispatchScope },
     { label: messages.knownTokens, value: formatCount(totals.knownTokens, locale, messages),
       description: `${formatCount(totals.unknownTokenRequests, locale, messages)} ${messages.unknownTokenRequests}` },
-    { label: messages.cost, value: messages.unknown,
+    { label: messages.cost, value: `${messages.knownCost}: ${formatCount(totals.cny, locale, messages)}`,
       description: `${formatCount(totals.unpricedRequests, locale, messages)} ${messages.unpricedRequests}` },
     { label: messages.outstanding, value: `${totals.inFlight} / ${totals.unknownRequests}`,
       description: `${messages.inFlight} / ${messages.unresolved}` },
@@ -58,7 +60,9 @@ function Summary({ data, locale, messages }: { data: ModelUsageOverview; locale:
       <CardContent className="flex flex-col gap-2"><p className="text-2xl font-semibold tabular-nums">{metric.value}</p>
         <p className="text-sm text-muted-foreground">{metric.description}</p></CardContent>
     </Card>)}
-  </div><p className="text-sm text-muted-foreground">{messages.reservations}</p></div>
+  </div><p className="text-sm text-muted-foreground">{messages.tokensReserved}: {formatCount(totals.reservedTokens, locale, messages)}
+    {' · '}{messages.cnyReserved}: {formatCount(totals.reservedCny, locale, messages)}</p>
+    <p className="text-sm text-muted-foreground">{messages.reservations}</p></div>
 }
 
 function UsageCharts({ data, locale, messages }: { data: ModelUsageOverview; locale: WorkspaceLocale; messages: Messages }) {
@@ -104,14 +108,15 @@ function RequestTable({ items, locale, messages, select }: {
     <TableCell>{item.provider}</TableCell>
     <TableCell className="max-w-56 whitespace-normal break-all">{item.actualModel ?? messages.notReturned}</TableCell>
     <TableCell><Badge variant={item.status === 'failed' ? 'destructive' : 'secondary'}>{messages.statusLabel(item.status)}</Badge></TableCell>
-    <TableCell className="tabular-nums">{formatCount(item.usage.totalTokens, locale, messages)}</TableCell>
-    <TableCell>{messages.unpriced}</TableCell>
+    <TableCell className="tabular-nums">{formatCount(item.accounting?.totalTokens ?? item.usage.totalTokens, locale, messages)}</TableCell>
+    <TableCell>{formatCount(item.accounting?.cny ?? item.effectiveCost?.cny ?? item.cost.cny, locale, messages)}
+      <p className="text-xs text-muted-foreground">{messages.costStatusLabel((item.effectiveCost ?? item.cost).status)}</p></TableCell>
     <TableCell><Button onClick={event => select(item.id, event.currentTarget)} size="sm" variant="outline">{messages.viewDetail}</Button></TableCell>
   </TableRow>)}</TableBody></Table>
 }
 
-function RequestDetail({ item, locale, messages, close }: {
-  item: ModelUsageAttempt; locale: WorkspaceLocale; messages: Messages; close(): void
+function RequestDetail({ item, locale, messages, administrator, saved, close }: {
+  item: ModelUsageAttempt; locale: WorkspaceLocale; messages: Messages; administrator: boolean; saved(item: ModelUsageAttempt): void; close(): void
 }) {
   const region = useRef<HTMLElement>(null)
   useEffect(() => { region.current?.focus() }, [item.id])
@@ -132,7 +137,7 @@ function RequestDetail({ item, locale, messages, close }: {
     [messages.outputTokens, formatCount(item.usage.outputTokens, locale, messages)],
     [messages.cachedTokens, formatCount(item.usage.cachedInputTokens, locale, messages)],
     [messages.reasoningTokens, formatCount(item.usage.reasoningOutputTokens, locale, messages)],
-    [messages.totalTokens, formatCount(item.usage.totalTokens, locale, messages)], [messages.cost, messages.unpriced],
+    [messages.totalTokens, formatCount(item.usage.totalTokens, locale, messages)],
   ]
   return <section ref={region} tabIndex={-1} aria-label={messages.detail} className="min-w-0 outline-none"><Card>
     <CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle>{messages.detail}</CardTitle>
@@ -142,6 +147,7 @@ function RequestDetail({ item, locale, messages, close }: {
       {facts.map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-muted-foreground">{label}</dt>
         <dd className="break-all">{value}</dd></div>)}
     </dl>
+      <ModelUsageCorrections item={item} locale={locale} administrator={administrator} saved={saved} />
       {item.usage.raw === undefined ? null : <div><h3 className="mb-3 font-medium">{messages.rawUsage}</h3>
         <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{Object.entries(item.usage.raw).flatMap(([key, value]) =>
           typeof value === 'string' ? [] : [<div key={key}><dt className="text-muted-foreground">{messages.rawCounterLabel(key)}</dt>
@@ -177,6 +183,8 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
     queryFn: ({ signal }) => getModelUsageRequest(selectedId!, signal), retry: false, enabled: selectedId !== undefined })
   const control = useQuery({ queryKey: ['model-usage', 'control', ...scope],
     queryFn: ({ signal }) => getModelUsageControl(signal), retry: false, enabled: tab === 'policy' })
+  const pricing = useQuery({ queryKey: ['model-usage', 'pricing', ...scope],
+    queryFn: ({ signal }) => getModelUsagePricing(signal), retry: false, enabled: tab === 'pricing' })
   const requestContent = requests.isPending ? <Loading messages={messages} /> : requests.isError
     ? <ReadError title={messages.loadError} messages={messages} retry={() => { void requests.refetch() }} />
     : <RequestTable items={requests.data.items} locale={locale} messages={messages} select={(id, trigger) => {
@@ -186,7 +194,7 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
   return <section aria-label={locale === 'zh-CN' ? '模型用量' : 'Model usage'} className="flex min-w-0 flex-col gap-4">
     <Alert role="note"><AlertTitle>{messages.coverage}</AlertTitle><AlertDescription>{messages.coverageDescription}</AlertDescription></Alert>
     <div className="flex flex-wrap items-center justify-between gap-2"><p className="min-w-0 flex-1 text-sm text-muted-foreground">{messages.aggregateScope} {messages.memberScope}</p>
-      <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching || control.isFetching}
+      <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching || control.isFetching || pricing.isFetching}
         onClick={() => { void queryClient.invalidateQueries({ queryKey: ['model-usage'] }) }}>{messages.refresh}</Button>
     </div>
     <Tabs value={tab} onValueChange={value => { setTab(String(value)); setSelectedId(undefined) }} className="min-w-0 gap-4">
@@ -223,12 +231,16 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
           queryClient.setQueryData(['model-usage', 'control', ...scope], data)
           void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
         }} />}</TabsContent>
-      <TabsContent value="pricing"><Card><CardHeader><CardTitle>{messages.pricing}</CardTitle><CardDescription>{messages.priceDescription}</CardDescription></CardHeader>
-        <CardContent><p>{messages.priceDetails}</p></CardContent></Card></TabsContent>
+      <TabsContent value="pricing">{pricing.isPending ? <Loading messages={messages} /> : pricing.isError
+        ? <ReadError title={messages.loadError} messages={messages} retry={() => { void pricing.refetch() }} />
+        : <ModelUsagePricing data={pricing.data} locale={locale} />}</TabsContent>
     </Tabs>
     {selectedId === undefined ? null : detail.isPending ? <Loading messages={messages} /> : detail.isError
       ? <ReadError title={messages.detailError} messages={messages} retry={() => { void detail.refetch() }} />
-      : <RequestDetail item={detail.data} locale={locale} messages={messages} close={() => {
+      : <RequestDetail item={detail.data} locale={locale} messages={messages} administrator={session.actor.roleCode === 'administrator'} saved={item => {
+        queryClient.setQueryData(['model-usage', 'detail', ...scope, item.id], item)
+        void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+      }} close={() => {
         detailTrigger.current?.focus(); setSelectedId(undefined)
       }} />}
   </section>
