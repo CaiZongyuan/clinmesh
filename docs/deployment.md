@@ -420,7 +420,7 @@ pnpm --filter @clinmesh/server db:migrate
 
 ## 实时病历整理模型
 
-Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览展示 Server 两类入口的请求、已知 Token、未知量、缺价费用、趋势、功能分布和授权最近请求；详情保留调用时的模型与阶段来源。额度目前全部无限，计价未配置时显示未知，不能当作服务商实际账单；Host 独立代问及 DSH 原生会话、其他插件的覆盖边界在页面说明。权限与统计口径见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。
+Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览展示 Server 直接调用、DSH bridge 调用及 Host 独立医生代问识别的请求、已知 Token、未知量、缺价费用、趋势、功能分布和授权最近请求；功能筛选提供“医生代问识别”，详情保留调用时的模型与阶段来源。额度目前全部无限，计价未配置时显示未知，不能当作服务商实际账单；DSH 原生会话及其他插件仍在监控边界之外。Host 使用已有 `upstreamOrigin` 与 `bridgeSecret` 接入 Server 准入，不新增本地账本；Server 不可用或准入失败时不启动识别流，恢复后也不会自动重发未知请求。权限与统计口径见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。
 
 `CLINMESH_AI_RECORDING_MODEL` 可为实时整理固定独立模型；不设置时沿用问诊模型，DSH 使用完整 `dsh:{"provider":"...","model":"..."}` 路由。自动记录、核对和历史补录沿用 `CLINMESH_AI_TIMEOUT_MS` 的常规模型等待配置；DSH 默认每次桥接请求 120 秒，OpenAI 默认 60 秒，不另加 6 秒截止。既有 `CLINMESH_AI_RECORDING_TIMEOUT_MS` 不再读取。任务仍有覆盖模型解析和格式修复的有界总等待，关闭或任务失效继续取消请求；真实模型失败保留来源供恢复。取消短截止不能证明已达到实时性能目标。
 

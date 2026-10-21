@@ -110,6 +110,8 @@
 
 ## 模型桥与诊断日志
 
+- 独立 Server 测试导入 Host handler 后，Server 编译不会自动经过插件 `index.ts` 的类型增强入口。Host 模块依赖 `Context.webServer`、会话投影或用户问题服务时，在该模块显式保留相应 `import type {}`，不依赖其他入口的导入顺序；同时运行全仓类型检查和 `tsconfig.browser.json`，仅 Host 包编译通过不足以证明跨入口类型完整。
+
 - DSH 模型流以 `finish.reason` 携带标准失败码，消费方按 code 分类，不解析原始消息或把所有失败归成网络故障。超时回归同时覆盖宿主返回 `TIMEOUT` 与本地 `AbortSignal` 到期；只验证本地计时器会漏掉宿主超时被误归为调用失败的路径。同一 Provider 下的模型可有不同访问权限；单模型返回 403 不证明整个 Provider 不可用。可用性验证通过真实桥接向其他完整 Provider／model 路由发送最小合成请求，不修改已有任务绑定，也不输出凭据或模型私有输入。
 
 - DSH 桥接在截止时间附近报 `UND_ERR_SOCKET` 时，分别用 gzip 与 identity 协商复现。宿主压缩中间件可能延迟设置 `writableEnded`，超时回调和模型取消后的 catch 会据此重复写响应；仅用原生 `node:http` listener 的测试无法发现。使用实际 DSH WebServer 的压缩路径验证，响应归属规则见[模型调用预算](../decisions/implemented/bug-fix/2026-10-08-consultation-model-output-budget.md)。

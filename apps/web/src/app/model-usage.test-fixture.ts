@@ -33,5 +33,5 @@ export const usageOverview: ModelUsageOverview = {
   trend: [{ date: '2026-10-19', requests: 1, knownTokens: 0 }, { date: '2026-10-20', requests: 2, knownTokens: 120 }],
   features: [{ feature: 'patient_dialogue_reply', requests: 1, knownTokens: 0 },
     { feature: 'doctor_recommendation_verification', requests: 2, knownTokens: 120 }],
-  coverage: 'server-direct-and-bridge', policy: { enabled: true, requests: null, tokens: null, cny: null },
+  coverage: 'server-direct-bridge-and-host', policy: { enabled: true, requests: null, tokens: null, cny: null },
 }

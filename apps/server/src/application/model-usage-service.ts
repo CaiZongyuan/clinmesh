@@ -3,7 +3,7 @@ import { z } from 'zod'
 import {
   modelUsageAttemptSchema, modelUsageContextSchema, modelUsageFeatureSchema,
   modelUsageOutcomeSchema, modelUsageOverviewSchema, modelUsageListSchema,
-  mergeModelTokenUsage, unknownModelTokenUsage,
+  hostDoctorRecognitionTimeoutMs, mergeModelTokenUsage, unknownModelTokenUsage,
   type ModelUsageAttempt, type ModelUsageFilter, type ModelUsageOutcome,
 } from '@clinmesh/contracts/model-usage'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -61,6 +61,10 @@ export class ModelUsageService implements ModelUsageRecorder {
   }
 
   settle(attemptId: string, input: ModelUsageOutcome): void {
+    this.#recordOutcome(attemptId, input, false)
+  }
+
+  #recordOutcome(attemptId: string, input: ModelUsageOutcome, progress: boolean): void {
     const outcome = modelUsageOutcomeSchema.parse(input)
     this.database.driver.transaction(() => {
       const row = rowSchema.parse(this.database.driver.prepare('SELECT record_json FROM model_usage_attempt WHERE attempt_id = ?').get(attemptId))
@@ -69,9 +73,10 @@ export class ModelUsageService implements ModelUsageRecorder {
       if (previous.status !== 'in-flight' && previous.status !== 'unknown') return
       const usage = mergeModelTokenUsage(previous.usage, outcome.usage)
       const record = modelUsageAttemptSchema.parse({ ...previous, ...outcome, usage,
+        status: progress ? previous.status : outcome.status,
         actualModel: outcome.actualModel ?? previous.actualModel,
         providerRequestId: outcome.providerRequestId ?? previous.providerRequestId,
-        httpStatus: outcome.httpStatus ?? previous.httpStatus, endedAt: new Date().toISOString(),
+        httpStatus: outcome.httpStatus ?? previous.httpStatus, endedAt: progress ? previous.endedAt : new Date().toISOString(),
       })
       this.database.driver.prepare(`UPDATE model_usage_attempt SET actual_model = ?, status = ?, record_json = ? WHERE attempt_id = ?`)
         .run(record.actualModel, record.status, JSON.stringify(record), attemptId)
@@ -79,6 +84,7 @@ export class ModelUsageService implements ModelUsageRecorder {
   }
 
   overview(context: ActorContext, filter: ModelUsageFilter) {
+    this.#expireHostAttempts()
     const query = this.#where(context, filter, false)
     const totals = summaryRowSchema.parse(this.database.driver.prepare(`SELECT ${totalsSql} FROM model_usage_attempt a WHERE ${query.sql}`).get(...query.args))
     const trend = z.array(z.object({ date: z.string(), requests: z.number(), knownTokens: z.number() })).parse(this.database.driver.prepare(`
@@ -89,10 +95,11 @@ export class ModelUsageService implements ModelUsageRecorder {
       SELECT feature, SUM(${actualRequestSql}) AS requests, COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens
       FROM model_usage_attempt a WHERE ${query.sql} GROUP BY feature ORDER BY requests DESC`).all(...query.args))
     return modelUsageOverviewSchema.parse({ totals: { ...totals, unpricedRequests: totals.requests, cny: null },
-      trend, features, coverage: 'server-direct-and-bridge', policy: { enabled: true, requests: null, tokens: null, cny: null } })
+      trend, features, coverage: 'server-direct-bridge-and-host', policy: { enabled: true, requests: null, tokens: null, cny: null } })
   }
 
   list(context: ActorContext, filter: ModelUsageFilter) {
+    this.#expireHostAttempts()
     const query = this.#where(context, filter, true)
     const total = z.object({ count: z.number() }).parse(this.database.driver.prepare(`SELECT COUNT(*) AS count FROM model_usage_attempt a WHERE ${query.sql}`).get(...query.args)).count
     const rows = z.array(rowSchema).parse(this.database.driver.prepare(`SELECT record_json FROM model_usage_attempt a WHERE ${query.sql}
@@ -101,9 +108,39 @@ export class ModelUsageService implements ModelUsageRecorder {
   }
 
   detail(context: ActorContext, attemptId: string): ModelUsageAttempt | undefined {
+    this.#expireHostAttempts()
     const query = this.#where(context, { offset: 0, limit: 1 }, true)
     const row = rowSchema.optional().parse(this.database.driver.prepare(`SELECT record_json FROM model_usage_attempt a WHERE ${query.sql} AND attempt_id = ?`).get(...query.args, attemptId))
     return row === undefined ? undefined : modelUsageAttemptSchema.parse(JSON.parse(row.record_json))
+  }
+
+  admitHost(input: Parameters<ModelUsageRecorder['begin']>[0]): string | undefined {
+    this.#expireHostAttempts()
+    return this.database.driver.transaction(() => {
+      const existing = this.database.driver.prepare(`SELECT 1 FROM model_usage_attempt
+        WHERE workspace_id = ? AND epoch = ? AND feature = 'doctor_delegation'
+          AND json_extract(record_json, '$.context.taskId') = ?`)
+        .get(input.context.workspaceId, input.context.epoch, input.context.taskId)
+      if (existing !== undefined) return undefined
+      return this.begin(input)
+    })()
+  }
+
+  observeHost(attemptId: string, outcome: ModelUsageOutcome, progress: boolean): void {
+    this.#expireHostAttempts()
+    const row = this.database.driver.prepare(`SELECT 1 FROM model_usage_attempt WHERE attempt_id = ? AND feature = 'doctor_delegation'`).get(attemptId)
+    if (row === undefined) throw new Error('Host attempt unavailable')
+    this.#recordOutcome(attemptId, outcome, progress)
+  }
+
+  #expireHostAttempts(): void {
+    const now = new Date()
+    // Reading or reporting after Host loss converges the durable attempt without
+    // releasing consumption, renewing the deadline, or granting another dispatch.
+    this.database.driver.prepare(`UPDATE model_usage_attempt SET status = 'unknown',
+      record_json = json_set(record_json, '$.status', 'unknown', '$.endedAt', ?)
+      WHERE feature = 'doctor_delegation' AND status = 'in-flight' AND started_at <= ?`)
+      .run(now.toISOString(), new Date(now.getTime() - hostDoctorRecognitionTimeoutMs).toISOString())
   }
 
   #where(context: ActorContext, filter: ModelUsageFilter, details: boolean) {

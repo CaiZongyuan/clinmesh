@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { installHostModelUsageRoutes } from './model-usage-host-routes.ts'
 import { modelUsageFilterSchema } from '@clinmesh/contracts/model-usage'
 import type { ModelUsageService } from './application/model-usage-service.ts'
 import { extname } from 'node:path'
@@ -140,6 +141,7 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  dshBridgeSecret?: string
   modelUsage?: ModelUsageService
   commandEvents?: Pick<CommandExecutor, 'subscribe'>
   recordingUpdatesSignal?: AbortSignal
@@ -387,6 +389,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     }
     return context.json(response)
   })
+
+  if (options.modelUsage !== undefined && options.agentIntegration !== undefined && options.dshBridgeSecret !== undefined) {
+    installHostModelUsageRoutes(app, options.modelUsage, options.agentIntegration, options.dshBridgeSecret)
+  }
 
   if (options.identity !== undefined) {
     const identity = options.identity

@@ -4,7 +4,7 @@ import type { WorkspaceLocale } from './workspace-i18n.ts'
 const zh = {
   overview: '用量总览', requests: '请求明细', policy: '额度与策略', pricing: '计价说明',
   coverage: '监控覆盖范围',
-  coverageDescription: '已覆盖 Server 直接模型调用和经 DSH bridge 发起的调用。Host 独立识别、其他 DSH 原生会话及插件发起的调用尚未覆盖。',
+  coverageDescription: '已覆盖 Server 直接模型调用、经 DSH bridge 发起的调用及 Host 独立医生代问识别。其他 DSH 原生会话及插件发起的调用不在覆盖范围。',
   aggregateScope: '总览汇总当前 Workspace 的全部 Epoch；请求明细仅显示当前业务权限允许的记录。',
   memberScope: '普通成员的明细限于活动 Epoch，历史 Epoch 明细仅管理员可查看。',
   dispatched: '已派发请求', knownTokens: '已知 Token', cost: '人民币费用', outstanding: '在途与未决',
@@ -41,7 +41,7 @@ const zh = {
 const en: Record<keyof typeof zh, string> = {
   overview: 'Usage overview', requests: 'Requests', policy: 'Quotas and policy', pricing: 'Pricing',
   coverage: 'Monitoring coverage',
-  coverageDescription: 'Covers direct Server model calls and calls sent through the DSH bridge. Independent Host recognition, other DSH native sessions and plugin calls are outside this coverage.',
+  coverageDescription: 'Covers direct Server model calls, DSH bridge calls and independent Host doctor delegation recognition. Other DSH native sessions and plugin calls are outside this coverage.',
   aggregateScope: 'Overview totals span all Epochs in this Workspace; request details follow your existing business access.',
   memberScope: 'Members can access authorized details in the active Epoch. Historical Epoch details require an administrator.',
   dispatched: 'Dispatched requests', knownTokens: 'Known tokens', cost: 'CNY cost', outstanding: 'In flight and unresolved',
@@ -76,6 +76,7 @@ const en: Record<keyof typeof zh, string> = {
 }
 
 const features: Record<ModelUsageAttempt['feature'], readonly [string, string]> = {
+  doctor_delegation: ['医生代问识别', 'Doctor delegation recognition'],
   patient_persona: ['患者人设', 'Patient persona'], patient_dialogue_reply: ['患者回答', 'Patient reply'],
   consultation_history_increment: ['问诊自动记录', 'Consultation recording'],
   consultation_history_summary: ['问诊记录整理', 'Consultation summary'],

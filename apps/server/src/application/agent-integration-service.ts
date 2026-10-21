@@ -26,6 +26,7 @@ import {
   type AgentPageContextSnapshot,
 } from '@clinmesh/contracts/agent'
 import { v7 as uuidv7 } from 'uuid'
+import type { ModelUsageContext } from '@clinmesh/contracts/model-usage'
 import { z } from 'zod'
 import type { ActorContext } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -376,6 +377,50 @@ export class AgentIntegrationService {
     return { content, dshSessionId: context.dshSessionId,
       permit: `${encoded}.${this.#signature(encoded).toString('base64url')}`,
       rpcId: request.rpcId, taskId: payload.taskId }
+  }
+
+  doctorRecognitionContext(token: string): ModelUsageContext {
+    const permit = this.#verifySignedToken(token, doctorAgentTaskPermitPayloadSchema)
+    if (Date.parse(permit.expiresAt) <= this.#now().getTime()) throw this.#invalidProof()
+    const row = z.object({ workspace_id: z.string(), epoch: z.string(), user_account_id: z.string(),
+      client_id: z.string() }).optional().parse(
+      this.#database.driver.prepare(`SELECT p.workspace_id, p.epoch, p.user_account_id, p.client_id FROM agent_page_context p
+        JOIN workspace_actor a ON a.workspace_id = p.workspace_id AND a.actor_id = p.actor_id AND a.status = 'active'
+        JOIN practitioner_role_binding r ON r.workspace_id = p.workspace_id AND r.practitioner_role_id = p.practitioner_role_id AND r.active = 1
+        JOIN workspace_membership m ON m.workspace_id = p.workspace_id AND m.actor_id = p.actor_id
+          AND m.user_id = p.user_account_id AND m.status = 'active'
+        JOIN membership_practitioner_role g ON g.workspace_id = m.workspace_id AND g.membership_id = m.membership_id
+          AND g.practitioner_role_id = p.practitioner_role_id
+        JOIN scenario_run s ON s.workspace_id = p.workspace_id AND s.epoch = p.epoch AND s.scenario_run_id = p.scenario_run_id
+        JOIN workspace_epoch e ON e.workspace_id = p.workspace_id AND e.epoch = p.epoch AND e.state = 'active'
+        WHERE p.context_id = ? AND a.kind = 'human' AND r.role_code = 'outpatient-doctor' AND s.status = 'active'`)
+        .get(permit.contextId))
+    if (row === undefined) throw this.#invalidProof()
+    const original = this.#contextById(row.workspace_id, row.epoch, permit.contextId, { requireActive: false, requireCurrentEpoch: true })
+    if (original.dshSessionId !== permit.dshSessionId || original.scopeKey !== permit.scopeKey
+      || agentPageBindingRevision(original.claim) !== permit.pageRevision) throw this.#taskChanged()
+    const latest = z.object({ context_id: z.string() }).optional().parse(this.#database.driver.prepare(`
+      SELECT context_id FROM agent_page_context WHERE client_id = ?
+      ORDER BY client_revision DESC, issued_at DESC LIMIT 1`).get(row.client_id))
+    if (latest === undefined) throw this.#taskChanged()
+    const context = this.#contextById(row.workspace_id, row.epoch, latest.context_id, { requireActive: true, requireCurrentEpoch: true })
+    this.#assertCurrentCaller(context, { ...original.actor, workspaceId: row.workspace_id, epoch: row.epoch,
+      scenarioRunId: original.workspace.scenarioRunId }, row.user_account_id)
+    if (context.actor.roleCode !== 'outpatient-doctor' || context.claim.viewId !== 'consultation'
+      || context.claim.ui.status !== 'ready' || context.claim.selection?.kind !== 'case'
+      || context.dshSessionId !== permit.dshSessionId) throw this.#taskChanged()
+    this.#assertExecutionOrigin({ issuedAt: permit.issuedAt, origin: {
+      request: { scopeKey: permit.scopeKey, pageRevision: permit.pageRevision },
+      task: { contextId: permit.contextId, scopeKey: permit.scopeKey, pageRevision: permit.pageRevision, acceptedAt: permit.issuedAt },
+    } }, context, { ...context.actor, workspaceId: row.workspace_id, epoch: row.epoch,
+      scenarioRunId: context.workspace.scenarioRunId }, row.user_account_id)
+    if (validateAgentToolInputForContext(this.#database, this.#cases, context, row.user_account_id,
+      'outpatient.case.read', {}) === undefined) throw this.#taskChanged()
+    return { workspaceId: row.workspace_id, epoch: row.epoch, actorId: context.actor.actorId,
+      practitionerRoleId: context.actor.practitionerRoleId, taskId: permit.taskId,
+      caseId: context.claim.selection.id, stage: 'doctor_delegation', trigger: 'automatic',
+      sources: [{ kind: 'case', id: context.claim.selection.id, relationship: 'evidence' },
+        { kind: 'job', id: permit.taskId, relationship: 'trigger' }] }
   }
 
   verifyDoctorRecordingSource(input: {

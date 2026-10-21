@@ -6,35 +6,13 @@ import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { decodeModelRoute, encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeAccountingSchema,
   modelBridgeFirstTextHeader, modelBridgeRequestSchema, modelRouteSchema } from '@clinmesh/contracts/model-bridge'
 import { mergeModelTokenUsage, modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
-import { z } from 'zod'
+import { dshTokenUsage } from './dsh-token-usage.ts'
 
 class ModelAccessError extends Error {}
 class ModelTimeoutError extends Error {}
 class ModelIncompleteError extends Error {}
 class ModelRateLimitError extends Error {
   constructor(readonly retryAfterMs: number | undefined) { super('Model rate limit reached') }
-}
-
-const count = z.number().int().nonnegative().safe()
-const dshUsageSchema = z.object({ inputTokens: count, outputTokens: count,
-  cacheReadTokens: count.optional(), cacheWriteTokens: count.optional(), reasoningTokens: count.optional(), totalTokens: count.optional() })
-function tokenUsage(value: unknown): ModelTokenUsage {
-  const parsed = dshUsageSchema.safeParse(value)
-  if (!parsed.success) return unknownModelTokenUsage
-  const usage = parsed.data
-  const cached = usage.cacheReadTokens !== undefined && usage.cacheWriteTokens !== undefined
-    ? usage.cacheReadTokens + usage.cacheWriteTokens : null
-  const input = cached === null ? usage.totalTokens === undefined ? null : usage.totalTokens - usage.outputTokens
-    : usage.inputTokens + cached
-  const total = input === null ? null : input + usage.outputTokens
-  if (input !== null && (input < usage.inputTokens || !Number.isSafeInteger(input))
-    || total !== null && !Number.isSafeInteger(total)) return unknownModelTokenUsage
-  return { inputTokens: input, outputTokens: usage.outputTokens, cachedInputTokens: cached ?? (input === null ? null : input - usage.inputTokens),
-    reasoningOutputTokens: usage.reasoningTokens !== undefined && usage.reasoningTokens <= usage.outputTokens ? usage.reasoningTokens : null,
-    totalTokens: usage.totalTokens === undefined ? total : usage.totalTokens === total ? usage.totalTokens : null, mapping: 'dsh-v1',
-    raw: { format: 'dsh', uncachedInputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
-      cacheReadTokens: usage.cacheReadTokens ?? null, cacheWriteTokens: usage.cacheWriteTokens ?? null,
-      reasoningTokens: usage.reasoningTokens ?? null, totalTokens: usage.totalTokens ?? null } }
 }
 
 export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaultModel'>, secret: string, selection: () => string) {
@@ -135,7 +113,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
           messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input.userPayload) }] }],
         })) {
           if (chunk.type === 'usage') {
-            usage = mergeModelTokenUsage(usage, tokenUsage(chunk.usage))
+            usage = mergeModelTokenUsage(usage, dshTokenUsage(chunk.usage))
             if (incremental && !response.destroyed && !responseStarted) {
               if (!streamStarted) {
                 response.writeHead(200, { 'content-type': modelBridgeAccountingMediaType, 'cache-control': 'no-store, no-transform' })

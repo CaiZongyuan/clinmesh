@@ -8,7 +8,7 @@ export const modelUsageFeatureSchema = z.enum(['patient_persona', 'patient_dialo
   'investigation_service_result', 'laboratory_service_enrichment', 'doctor_recommendations',
   'doctor_recommendation_history_selection', 'doctor_recommendation_history_consolidation',
   'doctor_recommendation_catalog_selection', 'doctor_recommendation_verification',
-  'clinical_document_quality', 'clinical_document_quality_verification'])
+  'clinical_document_quality', 'clinical_document_quality_verification', 'doctor_delegation'])
 export const modelUsageSourceSchema = z.object({
   kind: z.enum(['case', 'turn', 'recording-source', 'batch', 'report', 'job', 'document', 'unknown']),
   id: identifier,
@@ -107,8 +107,20 @@ export const modelUsageOverviewSchema = z.object({
   totals: totalsSchema,
   trend: z.array(z.object({ date: z.string().date(), requests: z.number().int(), knownTokens: z.number() }).strict()),
   features: z.array(z.object({ feature: modelUsageFeatureSchema, requests: z.number().int(), knownTokens: z.number() }).strict()),
-  coverage: z.literal('server-direct-and-bridge'),
+  coverage: z.literal('server-direct-bridge-and-host'),
   policy: z.object({ enabled: z.literal(true), requests: z.null(), tokens: z.null(), cny: z.null() }).strict(),
 }).strict()
 export type ModelUsageOverview = z.infer<typeof modelUsageOverviewSchema>
 export const modelUsageListSchema = z.object({ items: z.array(modelUsageAttemptSchema), total: z.number().int().nonnegative() }).strict()
+
+export const hostDoctorUsageAdmissionSchema = z.object({
+  permit: z.string().min(32).max(8192), provider: identifier, model: modelName,
+  reasoningEffort: identifier.optional(),
+}).strict()
+export const hostDoctorRecognitionTimeoutMs = 30_000
+export const hostDoctorUsagePermitSchema = z.object({
+  attemptId: z.uuid(), receipt: z.string().min(32).max(8192),
+}).strict()
+export const hostDoctorUsageObservationSchema = hostDoctorUsagePermitSchema.extend({
+  phase: z.enum(['progress', 'terminal']).default('terminal'), outcome: modelUsageOutcomeSchema,
+}).strict().refine(input => input.phase !== 'progress' || input.outcome.status === 'unknown', 'Progress cannot claim a terminal outcome')

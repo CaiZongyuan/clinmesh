@@ -59,7 +59,7 @@ it('opens an empty unlimited overview for members and requires authentication', 
   const response = await runtime.app.request('/api/model-usage/overview', { headers: { cookie } })
   expect(response.status).toBe(200)
   expect(modelUsageOverviewSchema.parse(await response.json())).toMatchObject({
-    coverage: 'server-direct-and-bridge', totals: { requests: 0, knownTokens: 0, cny: null },
+    coverage: 'server-direct-bridge-and-host', totals: { requests: 0, knownTokens: 0, cny: null },
     policy: { enabled: true, requests: null, tokens: null, cny: null },
   })
 })

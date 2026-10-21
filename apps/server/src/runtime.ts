@@ -716,6 +716,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         }, options.autoDispatchIntervalMs)
     const app = createApp({
       modelUsage,
+      ...(options.dshBridgeSecret === undefined ? {} : { dshBridgeSecret: options.dshBridgeSecret }),
       commandEvents: commands,
       recordingUpdatesSignal: generationAbort.signal,
       doctorRecommendations,
