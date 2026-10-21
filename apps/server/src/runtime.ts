@@ -798,11 +798,16 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workflow,
       ...(options.webRoot === undefined ? {} : { webRoot: options.webRoot }),
     })
+    const modelUsageRetentionTimer = setInterval(() => {
+      try { modelUsage.compactUsage() } catch (error) { reportRuntimeError({ error, scope: 'model-usage-retention' }) }
+    }, 60 * 60 * 1000)
+    modelUsageRetentionTimer.unref()
     return {
       app,
       close: (): Promise<void> => {
         if (closePromise !== undefined) return closePromise
         closed = true
+        clearInterval(modelUsageRetentionTimer)
         if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
         if (generationTimer !== undefined) clearInterval(generationTimer)
         if (patientPersonaTimer !== undefined) clearInterval(patientPersonaTimer)

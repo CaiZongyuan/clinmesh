@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { installHostModelUsageRoutes } from './model-usage-host-routes.ts'
-import { modelUsageFilterSchema, modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageFilterSchema, modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema, modelUsageRetentionUpdateSchema } from '@clinmesh/contracts/model-usage'
 import { ModelUsagePolicyError } from './application/model-usage-control.ts'
 import type { ModelUsageService } from './application/model-usage-service.ts'
 import { extname } from 'node:path'
@@ -400,6 +400,19 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const identity = options.identity
     if (options.modelUsage !== undefined) {
       const usage = options.modelUsage
+      app.get('/api/model-usage/retention', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.retention(session.actor.workspaceId))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.put('/api/model-usage/retention', async context => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.updateRetention(session.actor, modelUsageRetentionUpdateSchema.parse(await context.req.json()), requestIdempotencyKey(context)))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
       app.get('/api/model-usage/pricing', async context => {
         try {
           await identity.resolveSessionContext(context.req.raw.headers)

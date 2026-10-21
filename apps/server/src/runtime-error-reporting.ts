@@ -1,6 +1,7 @@
 type RuntimeErrorScope =
   | 'http'
   | 'laboratory-service-publication-dispatch'
+  | 'model-usage-retention'
   | 'outbox-dispatch'
   | 'patient-brief-dispatch'
   | 'scenario-generation-dispatch'

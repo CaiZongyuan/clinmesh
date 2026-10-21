@@ -5,7 +5,7 @@ import {
   modelUsageOutcomeSchema, modelUsageOverviewSchema, modelUsageListSchema, modelTokenUsageSchema, modelUsageConfigurationSchema,
   hostDoctorRecognitionTimeoutMs, mergeModelTokenUsage, unknownModelTokenUsage,
   type ModelTokenUsage, type ModelUsageAttempt, type ModelUsageConfiguration, type ModelUsageFilter, type ModelUsageOutcome,
-  type ModelUsagePolicyConfig, type ModelUsageControlUpdate,
+  type ModelUsagePolicyConfig, type ModelUsageControlUpdate, type ModelUsageRetentionUpdate,
   modelUsageReservationBoundarySchema, modelUsageReconcileSchema, modelUsageRepriceSchema,
 } from '@clinmesh/contracts/model-usage'
 import { modelPricingConfigSchema, modelPricingDecimalMicro, type ModelPricingConfig, type ModelUsageCost } from '@clinmesh/contracts/model-pricing'
@@ -14,6 +14,8 @@ import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { ModelUsageRecorder } from './model-usage-lifecycle.ts'
 import { ModelUsageControl, ModelUsageControlError, ModelUsagePolicyError } from './model-usage-control.ts'
+import { ModelUsageRetention } from './model-usage-retention.ts'
+import { combinedModelUsageSql, modelUsageTotalsSql } from './model-usage-summary.ts'
 
 const rowSchema = z.object({ record_json: z.string() })
 function preservesKnownNumbers(previous: object, next: object): boolean {
@@ -25,34 +27,21 @@ const summaryRowSchema = z.object({
   knownTokens: z.number(), unknownTokenRequests: z.number(),
   cnyMicro: z.number().int().nonnegative().safe().nullable(), unpricedRequests: z.number(),
 })
-const knownTokensSql = `COALESCE(json_extract(record_json, '$.accounting.totalTokens'), json_extract(record_json, '$.usage.totalTokens'),
-  COALESCE(json_extract(record_json, '$.usage.inputTokens'),
-    CASE WHEN json_extract(record_json, '$.usage.raw.format') = 'dsh' THEN
-      COALESCE(json_extract(record_json, '$.usage.raw.uncachedInputTokens'), 0)
-      + COALESCE(json_extract(record_json, '$.usage.raw.cacheReadTokens'), 0)
-      + COALESCE(json_extract(record_json, '$.usage.raw.cacheWriteTokens'), 0)
-    ELSE json_extract(record_json, '$.usage.cachedInputTokens') END, 0)
-  + COALESCE(json_extract(record_json, '$.usage.outputTokens'), json_extract(record_json, '$.usage.reasoningOutputTokens'), 0))`
-const actualRequestSql = `COALESCE(json_extract(record_json, '$.dispatch'), 'unknown') != 'not-dispatched'`
-const totalsSql = `COALESCE(SUM(${actualRequestSql}), 0) AS requests,
-  COALESCE(SUM(status = 'in-flight'), 0) AS inFlight,
-  COALESCE(SUM(status = 'unknown'), 0) AS unknownRequests,
-  COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens,
-  COALESCE(SUM((${actualRequestSql}) AND COALESCE(json_extract(record_json, '$.accounting.totalTokens'), json_extract(record_json, '$.usage.totalTokens')) IS NULL), 0) AS unknownTokenRequests,
-  SUM(COALESCE(json_extract(record_json, '$.effectiveCost.cnyMicro'), json_extract(record_json, '$.cost.cnyMicro'))) AS cnyMicro,
-  COALESCE(SUM((${actualRequestSql}) AND COALESCE(json_extract(record_json, '$.effectiveCost.cnyMicro'), json_extract(record_json, '$.cost.cnyMicro')) IS NULL), 0) AS unpricedRequests`
 
 /** One writer owns attempts, task admission and settlement. Queries never expose clinical content. */
 export class ModelUsageService implements ModelUsageRecorder {
   readonly #control: ModelUsageControl
   readonly #pricing: ModelPricingConfig
+  readonly #retention: ModelUsageRetention
   constructor(private readonly database: ClinMeshDatabase, private readonly commands: CommandExecutor, deployment?: ModelUsagePolicyConfig, pricing: ModelPricingConfig = { prices: [], exchangeRates: [] }) {
     this.#pricing = modelPricingConfigSchema.parse(pricing)
     this.#control = new ModelUsageControl(database, commands, deployment)
+    this.#retention = new ModelUsageRetention(database, commands)
     // A previous writer cannot prove whether its in-flight requests reached the Provider.
     this.database.driver.prepare(`UPDATE model_usage_attempt SET status = 'unknown',
       record_json = json_set(record_json, '$.status', 'unknown', '$.endedAt', ?)
       WHERE status = 'in-flight'`).run(new Date().toISOString())
+    this.compactUsage()
   }
 
   control(workspaceId: string) { return this.#control.read(workspaceId) }
@@ -62,6 +51,9 @@ export class ModelUsageService implements ModelUsageRecorder {
   }
   updateControl(context: ActorContext, input: ModelUsageControlUpdate, key: string) { return this.#control.update(context, input, key) }
   pricing() { return this.#pricing }
+  retention(workspaceId: string) { return this.#retention.read(workspaceId) }
+  updateRetention(context: ActorContext, input: ModelUsageRetentionUpdate, key: string) { return this.#retention.update(context, input, key) }
+  compactUsage() { this.#retention.compactAll() }
   canDispatch(workspaceId: string) { return this.#control.canDispatch(workspaceId) }
   automaticRetries(workspaceId: string) { return this.#control.automaticRetries(workspaceId) }
   subscribe(listener: () => void) { return this.#control.subscribe(listener) }
@@ -145,15 +137,15 @@ export class ModelUsageService implements ModelUsageRecorder {
 
   overview(context: ActorContext, filter: ModelUsageFilter) {
     this.#expireHostAttempts()
+    this.#retention.compact(context.workspaceId)
     const query = this.#where(context, filter, false)
-    const totals = summaryRowSchema.parse(this.database.driver.prepare(`SELECT ${totalsSql} FROM model_usage_attempt a WHERE ${query.sql}`).get(...query.args))
+    const totals = summaryRowSchema.parse(this.database.driver.prepare(`${combinedModelUsageSql} SELECT ${modelUsageTotalsSql} FROM usage a WHERE ${query.sql}`).get(...query.args))
     const trend = z.array(z.object({ date: z.string(), requests: z.number(), knownTokens: z.number() })).parse(this.database.driver.prepare(`
-      SELECT date(started_at, '+8 hours') AS date, SUM(${actualRequestSql}) AS requests,
-      COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens
-      FROM model_usage_attempt a WHERE ${query.sql} GROUP BY date(started_at, '+8 hours') ORDER BY date`).all(...query.args))
+      ${combinedModelUsageSql} SELECT date, SUM(requests) AS requests, COALESCE(SUM(knownTokens), 0) AS knownTokens
+      FROM usage a WHERE ${query.sql} GROUP BY date ORDER BY date`).all(...query.args))
     const features = z.array(z.object({ feature: modelUsageFeatureSchema, requests: z.number(), knownTokens: z.number() })).parse(this.database.driver.prepare(`
-      SELECT feature, SUM(${actualRequestSql}) AS requests, COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens
-      FROM model_usage_attempt a WHERE ${query.sql} GROUP BY feature ORDER BY requests DESC`).all(...query.args))
+      ${combinedModelUsageSql} SELECT feature, SUM(requests) AS requests, COALESCE(SUM(knownTokens), 0) AS knownTokens
+      FROM usage a WHERE ${query.sql} GROUP BY feature ORDER BY requests DESC, feature`).all(...query.args))
     const control = this.control(context.workspaceId)
     const { cnyMicro, ...visibleTotals } = totals
     return modelUsageOverviewSchema.parse({ totals: { ...visibleTotals, cny: cnyMicro === null ? null : cnyMicro / 1_000_000,
@@ -165,6 +157,7 @@ export class ModelUsageService implements ModelUsageRecorder {
 
   list(context: ActorContext, filter: ModelUsageFilter) {
     this.#expireHostAttempts()
+    this.#retention.compact(context.workspaceId)
     const query = this.#where(context, filter, true)
     const total = z.object({ count: z.number() }).parse(this.database.driver.prepare(`SELECT COUNT(*) AS count FROM model_usage_attempt a WHERE ${query.sql}`).get(...query.args)).count
     const rows = z.array(rowSchema).parse(this.database.driver.prepare(`SELECT record_json FROM model_usage_attempt a WHERE ${query.sql}
@@ -174,6 +167,7 @@ export class ModelUsageService implements ModelUsageRecorder {
 
   detail(context: ActorContext, attemptId: string): ModelUsageAttempt | undefined {
     this.#expireHostAttempts()
+    this.#retention.compact(context.workspaceId)
     const query = this.#where(context, { offset: 0, limit: 1 }, true)
     const row = rowSchema.optional().parse(this.database.driver.prepare(`SELECT record_json FROM model_usage_attempt a WHERE ${query.sql} AND attempt_id = ?`).get(...query.args, attemptId))
     return row === undefined ? undefined : modelUsageAttemptSchema.parse(JSON.parse(row.record_json))
@@ -224,6 +218,8 @@ export class ModelUsageService implements ModelUsageRecorder {
   #correct(context: ActorContext, attemptId: string,
     input: z.infer<typeof modelUsageReconcileSchema> | z.infer<typeof modelUsageRepriceSchema>, key: string, reprice: boolean) {
     if (context.roleCode !== 'administrator') throw new ModelUsagePolicyError('ROLE_NOT_ALLOWED', 403)
+    // Check before Command replay as its retained receipt no longer contains expired detail.
+    if (this.detail(context, attemptId) === undefined) throw new ModelUsagePolicyError('NOT_FOUND', 404)
     return this.commands.execute({ context, contextRequirement: 'current', idempotencyScope: 'workspace',
       dataSchema: modelUsageAttemptSchema, expectedVersions: {}, idempotencyKey: key, input: { attemptId, ...input },
       operation: reprice ? 'model-usage.reprice' : 'model-usage.reconcile' }, () => {

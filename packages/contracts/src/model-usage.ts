@@ -178,6 +178,19 @@ export const modelUsageOverviewSchema = z.object({
 export type ModelUsageOverview = z.infer<typeof modelUsageOverviewSchema>
 export const modelUsageListSchema = z.object({ items: z.array(modelUsageAttemptSchema), total: z.number().int().nonnegative() }).strict()
 
+export const modelUsageRetentionUpdateSchema = z.object({
+  days: z.number().int().positive().safe().nullable(),
+  expectedVersion: z.number().int().positive().safe(),
+}).strict()
+export const modelUsageRetentionSchema = z.object({
+  days: modelUsageRetentionUpdateSchema.shape.days,
+  version: z.number().int().positive().safe(),
+  compactedRequests: z.number().int().nonnegative().safe(),
+  lastCompactedAt: z.iso.datetime().nullable(),
+}).strict()
+export type ModelUsageRetentionUpdate = z.infer<typeof modelUsageRetentionUpdateSchema>
+export type ModelUsageRetention = z.infer<typeof modelUsageRetentionSchema>
+
 export const modelUsagePolicyConfigSchema = z.object({
   enabled: z.boolean().default(true), requests: count.default(null), automaticRetries: z.boolean().default(true),
   tokens: count.optional(), cny: money.optional(),
