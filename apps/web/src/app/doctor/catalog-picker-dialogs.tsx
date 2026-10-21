@@ -822,7 +822,8 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
   )
   if (onConfirm === undefined) return <li className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-2.5">
     <div className="flex flex-wrap items-start justify-between gap-2"><strong data-agent-medication-name="" className="break-words text-sm">{item.genericName}</strong><Badge variant="outline">{item.strength}</Badge></div>
-    <p className="truncate text-xs text-muted-foreground" title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}>{[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}</p>
+    {/* contain:inline-size 让 truncate 段落不再向 fieldset 上报整行固有宽度（min-w-0 只影响布局期收缩），窄视口不再横向溢出。 */}
+    <p className="truncate [contain:inline-size] text-xs text-muted-foreground" title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}>{[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}</p>
     <div className="flex min-w-0 items-center gap-1.5">
       <div className="min-w-0 flex-1">{packageSelector}</div>
       <Button aria-label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`} className="shrink-0" disabled={unavailable} onClick={() => onSelect(selection)} size="sm" type="button" variant="outline">
