@@ -129,6 +129,7 @@ export const sessionContextSchema = z.object({
     code: roleCodeSchema,
     id: z.string().min(1),
     locationId: z.string().min(1),
+    locationName: z.string().min(1).optional(),
     organizationId: z.string().min(1),
     practitionerId: z.string().min(1),
     practitionerName: z.string().min(1),

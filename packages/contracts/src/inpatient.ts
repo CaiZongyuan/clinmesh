@@ -39,7 +39,7 @@ export const inpatientSwapResponseSchema = commandResponseSchema(z.object({
   admission: inpatientAdmissionSchema, otherAdmission: inpatientAdmissionSchema,
 }).strict())
 export const inpatientCatalogSchema = z.object({
-  wards: z.array(z.object({ id, name: z.string(), organizationId: id }).strict()),
+  wards: z.array(z.object({ id, name: z.string(), organizationId: id, acceptingAdmissions: z.boolean().optional() }).strict()),
   beds: z.array(z.object({ id, wardId: id, roomId: id, name: z.string(), dailyPriceFen: fen,
     admissionId: id.optional() }).strict()),
 }).strict()
