@@ -48,6 +48,8 @@
 
 - 恢复操作保留任务代次时，回归须覆盖“服务端已受理但回执丢失”、另一入口继续后的重新读取，以及完成后迟到的受理回执；只验证本地 mutation 成功会漏掉缓存停留失败和旧传输错误阻止确认。用受控请求屏障观察持续轮询与最终可确认状态，复用[建议恢复回归](../../apps/web/src/app/doctor/doctor-preparation-state.test.tsx)和[真实 Web 恢复入口](../../apps/web/e2e/doctor-recommendation-recovery.spec.ts)，业务合同见[临床流程](../architecture/clinical-workflows.md#81-门诊闭环)。
 
+- TanStack Mutation 的回调按选择归属提前返回，不会清除 `isSuccess`、`isError` 或 `data`。队列刷新自动选中另一患者时，结果提示与预览的渲染也须绑定原费用、作用域和选择代次；回归除核对未跳页外，还须断言新视图没有旧结果提示。复用[收费迟到响应合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)中的真实支付提交与延迟响应屏障。
+
 - 验证重叠请求共享一次模型执行时，先等待第二个请求的公开受理回执，再释放首个模型请求；`setImmediate` 或固定等待不能证明第二个请求已通过授权并加入执行，可能只验证到完成后的串行回放。共享执行和完成后回放分别保留断言。
 
 - 质控问题的 Badge 与正文共享一个段落时，`getByText(message, { exact: true })` 无法单独匹配正文；将定位限定到对应字段 region，再用 `toContainText(message)` 核对，保留标签的独立断言。综合浏览器回归将生产 fixture 构建放在 `beforeAll`，分别保留构建和交互原有时限，避免编译挤占交互预算；不能增加时限掩盖真实断言失败。
