@@ -243,7 +243,6 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     }
     const modelTasks = new ModelTaskRecovery(database, modelUsage, unaccountedChatCompletions instanceof DshModelProvider)
     const recoverableChatCompletions = chatCompletions === undefined ? undefined : modelTasks.provider(chatCompletions)
-    modelUsage.setWaitingCount(workspaceId => modelControlWaitingCount(database, workspaceId))
     const hostModel = options.dshModelBridge === undefined ? undefined : dshDefaultModel
     const models = new GenerationModelBinding(database, chatCompletions)
     const patientPersonaModel = hostModel ?? options.patientPersonaModel ?? options.ai?.briefModel
@@ -417,7 +416,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           ...clockOptions,
           secret: options.dshBridgeSecret,
         })
-    modelUsage.setWaitingCount(workspaceId => agentIntegration?.hostModelWaiting.count(workspaceId) ?? 0)
+    modelUsage.setWaitingCount(workspaceId => modelControlWaitingCount(database, workspaceId)
+      + (agentIntegration?.hostModelWaiting.count(workspaceId) ?? 0))
     const lisPayloadSchema = z.object({
       caseId: z.string().min(1),
       encounterId: z.string().min(1),
