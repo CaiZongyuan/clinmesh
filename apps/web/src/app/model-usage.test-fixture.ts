@@ -1,5 +1,5 @@
 import type { SessionContext } from '@clinmesh/contracts/his'
-import type { ModelUsageAttempt, ModelUsageOverview } from '@clinmesh/contracts/model-usage'
+import type { ModelUsageAttempt, ModelUsageControl, ModelUsageOverview } from '@clinmesh/contracts/model-usage'
 
 export const usageSession: SessionContext = {
   actor: { actorId: 'actor-doctor', workspaceId: 'workspace-synthetic', epoch: 'epoch-current',
@@ -34,4 +34,13 @@ export const usageOverview: ModelUsageOverview = {
   features: [{ feature: 'patient_dialogue_reply', requests: 1, knownTokens: 0 },
     { feature: 'doctor_recommendation_verification', requests: 2, knownTokens: 120 }],
   coverage: 'server-direct-bridge-and-host', policy: { enabled: true, requests: null, tokens: null, cny: null },
+}
+
+export const usageControl: ModelUsageControl = {
+  workspace: { enabled: true, requests: null, automaticRetries: true, version: 1,
+    requestsStartedAt: null, used: 0, reserved: 0, remaining: null },
+  deployment: { enabled: true, requests: 10, automaticRetries: false, version: 1,
+    requestsStartedAt: '2026-10-20T00:00:00.000Z', used: 3, reserved: 1, remaining: 6 },
+  effective: { enabled: true, automaticRetries: false }, waiting: 2, inFlight: 1,
+  lastRejection: { code: 'MODEL_RETRY_DISABLED' as const, scope: 'deployment' as const, at: '2026-10-20T01:02:00.000Z' },
 }

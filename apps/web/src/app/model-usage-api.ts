@@ -1,6 +1,15 @@
-import { modelUsageAttemptSchema, modelUsageListSchema, modelUsageOverviewSchema,
-  type ModelUsageFilter } from '@clinmesh/contracts/model-usage'
-import { apiGet } from './api-client.ts'
+import { modelUsageAttemptSchema, modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema,
+  type ModelUsageControlUpdate, type ModelUsageFilter } from '@clinmesh/contracts/model-usage'
+import { apiGet, apiMutation, newIdempotencyKey } from './api-client.ts'
+
+export function getModelUsageControl(signal?: AbortSignal) {
+  return apiGet('/api/model-usage/control', modelUsageControlSchema, signal)
+}
+
+export function updateModelUsageControl(input: ModelUsageControlUpdate) {
+  return apiMutation('/api/model-usage/control', modelUsageControlSchema, input,
+    { method: 'PUT', idempotencyKey: newIdempotencyKey() })
+}
 
 function query(filters: ModelUsageFilter): string {
   const parameters = new URLSearchParams()

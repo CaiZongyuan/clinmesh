@@ -1,7 +1,8 @@
 import { createRoot } from 'react-dom/client'
 import { createMemoryHistory } from '@tanstack/react-router'
 import { WebApp } from '../../../web/src/app/web-app.tsx'
-import { usageAttempt, usageOverview, usageSession } from '../../../web/src/app/model-usage.test-fixture.ts'
+import { usageAttempt, usageControl, usageOverview, usageSession } from '../../../web/src/app/model-usage.test-fixture.ts'
+import { modelUsageControlUpdateSchema } from '@clinmesh/contracts/model-usage'
 import { WorkspaceNavigation, createWorkspaceNavigation } from './workspace-navigation.tsx'
 import { createStyledRoot } from './styled-root.ts'
 
@@ -18,11 +19,26 @@ surface.hidden = true
 document.body.append(launcher, surface)
 const { root } = createStyledRoot(surface)
 root.style.height = '100%'
+let control = structuredClone(usageControl)
 async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit) {
   const url = new URL(String(input), 'http://synthetic.test')
-  if (url.pathname === '/clinmesh/api/auth/context') return Response.json(usageSession)
+  if (url.pathname === '/clinmesh/api/auth/context') return Response.json(document.documentElement.dataset.usageAdministrator === 'true'
+    ? { ...usageSession, actor: { ...usageSession.actor, roleCode: 'administrator' } } : usageSession)
   document.documentElement.dataset.usageCredentials = init?.credentials ?? ''
   if (url.pathname === '/clinmesh/api/model-usage/overview') return Response.json(usageOverview)
+  if (url.pathname === '/clinmesh/api/model-usage/control') {
+    if (init?.method === 'PUT') {
+      const update = modelUsageControlUpdateSchema.parse(JSON.parse(String(init.body)))
+      document.documentElement.dataset.usageControlWrite = JSON.stringify(update)
+      document.documentElement.dataset.usageIdempotency = new Headers(init.headers).get('idempotency-key') ?? ''
+      const { expectedVersion, ...policy } = update
+      control = { ...control, workspace: { ...control.workspace, ...policy, version: expectedVersion + 1,
+        requestsStartedAt: update.requests === null ? control.workspace.requestsStartedAt : '2026-10-20T00:00:00.000Z',
+        remaining: update.requests }, effective: { enabled: update.enabled && control.deployment.enabled,
+        automaticRetries: update.automaticRetries && control.deployment.automaticRetries } }
+    }
+    return Response.json(control)
+  }
   if (url.pathname === '/clinmesh/api/model-usage/requests') {
     document.documentElement.dataset.usageFilter = url.search
     return Response.json({ items: [usageAttempt], total: 1 })

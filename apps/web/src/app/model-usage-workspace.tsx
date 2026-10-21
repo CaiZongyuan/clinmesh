@@ -13,7 +13,8 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
-import { getModelUsageOverview, getModelUsageRequest, getModelUsageRequests } from './model-usage-api.ts'
+import { getModelUsageControl, getModelUsageOverview, getModelUsageRequest, getModelUsageRequests } from './model-usage-api.ts'
+import { ModelUsagePolicy } from './model-usage-policy.tsx'
 import { modelUsageMessages } from './model-usage-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
@@ -158,15 +159,6 @@ function RequestDetail({ item, locale, messages, close }: {
   </Card></section>
 }
 
-function ReadOnlyPolicy({ data, messages }: { data: ModelUsageOverview; messages: Messages }) {
-  return <Card><CardHeader><CardTitle>{messages.policy}</CardTitle><CardDescription>{messages.policyDescription}</CardDescription></CardHeader>
-    <CardContent className="flex flex-col gap-4"><Badge variant="secondary">{data.policy.enabled ? messages.enabled : ''}</Badge>
-      <dl className="grid gap-4 sm:grid-cols-3">{[messages.requestLimit, messages.tokenLimit, messages.costLimit].map(label => <div key={label}>
-        <dt className="text-muted-foreground">{label}</dt><dd>{messages.unlimited}</dd></div>)}</dl>
-      <p>{messages.reservations}</p><p className="text-muted-foreground">{messages.futurePolicy}</p>
-    </CardContent></Card>
-}
-
 export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }) {
   const messages = modelUsageMessages(locale)
   const queryClient = useQueryClient()
@@ -183,6 +175,8 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
     enabled: tab === 'overview' || tab === 'requests' })
   const detail = useQuery({ queryKey: ['model-usage', 'detail', ...scope, selectedId],
     queryFn: ({ signal }) => getModelUsageRequest(selectedId!, signal), retry: false, enabled: selectedId !== undefined })
+  const control = useQuery({ queryKey: ['model-usage', 'control', ...scope],
+    queryFn: ({ signal }) => getModelUsageControl(signal), retry: false, enabled: tab === 'policy' })
   const requestContent = requests.isPending ? <Loading messages={messages} /> : requests.isError
     ? <ReadError title={messages.loadError} messages={messages} retry={() => { void requests.refetch() }} />
     : <RequestTable items={requests.data.items} locale={locale} messages={messages} select={(id, trigger) => {
@@ -192,7 +186,7 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
   return <section aria-label={locale === 'zh-CN' ? '模型用量' : 'Model usage'} className="flex min-w-0 flex-col gap-4">
     <Alert role="note"><AlertTitle>{messages.coverage}</AlertTitle><AlertDescription>{messages.coverageDescription}</AlertDescription></Alert>
     <div className="flex flex-wrap items-center justify-between gap-2"><p className="min-w-0 flex-1 text-sm text-muted-foreground">{messages.aggregateScope} {messages.memberScope}</p>
-      <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching}
+      <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching || control.isFetching}
         onClick={() => { void queryClient.invalidateQueries({ queryKey: ['model-usage'] }) }}>{messages.refresh}</Button>
     </div>
     <Tabs value={tab} onValueChange={value => { setTab(String(value)); setSelectedId(undefined) }} className="min-w-0 gap-4">
@@ -223,9 +217,12 @@ export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLoca
             onClick={() => { setFilters(current => ({ ...current, offset: current.offset + current.limit })); setSelectedId(undefined) }}>{messages.next}</Button></div>
         </div>}
       </TabsContent>
-      <TabsContent value="policy">{overview.isPending ? <Loading messages={messages} /> : overview.isError
-        ? <ReadError title={messages.loadError} messages={messages} retry={() => { void overview.refetch() }} />
-        : <ReadOnlyPolicy data={overview.data} messages={messages} />}</TabsContent>
+      <TabsContent value="policy">{control.isPending ? <Loading messages={messages} /> : control.isError
+        ? <ReadError title={messages.loadError} messages={messages} retry={() => { void control.refetch() }} />
+        : <ModelUsagePolicy data={control.data} locale={locale} administrator={session.actor.roleCode === 'administrator'} saved={data => {
+          queryClient.setQueryData(['model-usage', 'control', ...scope], data)
+          void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+        }} />}</TabsContent>
       <TabsContent value="pricing"><Card><CardHeader><CardTitle>{messages.pricing}</CardTitle><CardDescription>{messages.priceDescription}</CardDescription></CardHeader>
         <CardContent><p>{messages.priceDetails}</p></CardContent></Card></TabsContent>
     </Tabs>

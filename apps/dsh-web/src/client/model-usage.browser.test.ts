@@ -29,13 +29,17 @@ for (const version of ['18', '19']) {
       if (!chunk || chunk.type !== 'chunk') throw new Error('Missing browser script')
       script = chunk.code.replaceAll('</script', '<\\/script')
     })
-    for (const scenario of [{ locale: 'zh-CN', theme: 'dark', width: 390 }, { locale: 'en-US', theme: 'light', width: 1280 }]) {
-      test(`opens from host Settings at ${scenario.width}px in ${scenario.locale}`, async ({ page }) => {
+    for (const scenario of [{ locale: 'zh-CN', theme: 'dark', width: 390, administrator: true },
+      { locale: 'en-US', theme: 'light', width: 1280, administrator: false },
+      { locale: 'en-US', theme: 'light', width: 1280, administrator: true }]) {
+      test(`opens from host Settings at ${scenario.width}px in ${scenario.locale} as ${scenario.administrator ? 'administrator' : 'member'}`, async ({ page }) => {
         const zh = scenario.locale === 'zh-CN'
         const errors: string[] = []
         page.on('pageerror', error => errors.push(error.message))
         await page.setViewportSize({ width: scenario.width, height: 844 })
-        await page.setContent(`<html lang="${scenario.locale}" data-theme="${scenario.theme}"><body><script>${script}</script></body></html>`)
+        await page.route('https://synthetic.test/**', route => route.fulfill({ contentType: 'text/html', body: '<html></html>' }))
+        await page.goto('https://synthetic.test/model-usage')
+        await page.setContent(`<html lang="${scenario.locale}" data-theme="${scenario.theme}" data-usage-administrator="${scenario.administrator}"><body><script>${script}</script></body></html>`)
         await page.getByRole('button', { name: zh ? '医院工作台' : 'Hospital workspace' }).click()
         await page.getByRole('menuitem', { name: zh ? '模型用量' : 'Model usage', exact: true }).click()
         await expect(page.getByRole('heading', { name: zh ? '模型用量' : 'Model usage', exact: true })).toBeVisible()
@@ -61,8 +65,24 @@ for (const version of ['18', '19']) {
         await expect(detail.getByText('turn-a', { exact: true })).toBeVisible()
         await expect(detail.getByText('document-c', { exact: true })).toBeVisible()
         await page.getByRole('tab', { name: zh ? '额度与策略' : 'Quotas and policy' }).click()
-        await expect(page.getByText(zh ? '无限' : 'Unlimited', { exact: true })).toHaveCount(3)
-        await expect(page.getByRole('switch')).toHaveCount(0)
+        const workspace = page.getByRole('region', { name: zh ? '工作区控制' : 'Workspace controls', exact: true })
+        await expect(workspace.getByText(zh ? '无限' : 'Unlimited', { exact: true })).toHaveCount(4)
+        await expect(page.getByRole('region', { name: zh ? '部署控制（只读）' : 'Deployment controls (read only)', exact: true }).getByText('6', { exact: true })).toBeVisible()
+        if (scenario.administrator) {
+          await workspace.getByRole('checkbox', { name: zh ? '请求次数无限' : 'Unlimited requests' }).uncheck()
+          await workspace.getByLabel(zh ? '请求次数上限' : 'Request limit', { exact: true }).fill('0')
+          await workspace.getByRole('checkbox', { name: zh ? '启用模型生成' : 'Enable model generation' }).uncheck()
+          await workspace.getByRole('button', { name: zh ? '保存工作区策略' : 'Save Workspace policy' }).click()
+          await expect(page.getByText(zh ? '工作区策略已保存' : 'Workspace policy saved', { exact: true })).toBeVisible()
+          expect(JSON.parse(await page.locator('html').getAttribute('data-usage-control-write') ?? '{}')).toEqual({ expectedVersion: 1, enabled: false, requests: 0, automaticRetries: true })
+          await expect(page.locator('html')).toHaveAttribute('data-usage-idempotency', /^[0-9a-f-]{36}$/)
+          await workspace.getByRole('checkbox', { name: zh ? '请求次数无限' : 'Unlimited requests' }).check()
+          await workspace.getByRole('button', { name: zh ? '保存工作区策略' : 'Save Workspace policy' }).click()
+          await expect(page.locator('html')).toHaveAttribute('data-usage-control-write', /"requests":null/)
+        } else {
+          await expect(workspace.getByRole('button', { name: 'Save Workspace policy' })).toHaveCount(0)
+          await expect(workspace.getByText('Only administrators can change Workspace controls.', { exact: true })).toBeVisible()
+        }
         await expect(page.locator('html')).toHaveAttribute('data-usage-credentials', 'same-origin')
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
         expect(errors).toEqual([])

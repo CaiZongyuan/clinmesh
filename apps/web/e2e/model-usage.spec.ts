@@ -1,4 +1,4 @@
-import { modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageControlSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { agentPageContextBindingSchema } from '@clinmesh/contracts/agent'
 import { randomUUID } from 'node:crypto'
 import { isDoctorDelegation } from '../../dsh-web/src/doctor-delegation.ts'
@@ -64,7 +64,50 @@ test('reads persisted synthetic model usage from the real Settings entry and sur
     await expect(page.getByRole('region', { name: '已派发请求' })).toContainText('2')
     await page.setViewportSize({ width: 390, height: 844 })
     await page.getByRole('tab', { name: '额度与策略' }).click()
-    await expect(page.getByText('无限', { exact: true })).toHaveCount(3)
+    await expect(page.getByRole('region', { name: '工作区控制', exact: true }).getByText('无限', { exact: true })).toHaveCount(4)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   } finally { await server.close() }
+})
+
+test('administrators save model controls through Settings and members can only read the persisted policy', async ({ page, browserApp }) => {
+  await page.goto(`${browserApp.origin}/settings`)
+  await page.getByLabel('账户邮箱').fill('admin@demo.clinmesh.local')
+  await page.getByLabel('账户密码').fill(browserApp.password)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await page.getByRole('link', { name: '模型用量', exact: true }).click()
+  await page.getByRole('tab', { name: '额度与策略' }).click()
+  const workspace = page.getByRole('region', { name: '工作区控制', exact: true })
+  await workspace.getByRole('checkbox', { name: '请求次数无限' }).uncheck()
+  await workspace.getByLabel('请求次数上限', { exact: true }).fill('0')
+  await workspace.getByRole('checkbox', { name: '启用模型生成' }).uncheck()
+  await workspace.getByRole('checkbox', { name: '允许自动重试' }).uncheck()
+  await workspace.getByRole('button', { name: '保存工作区策略' }).click()
+  await expect(page.getByText('工作区策略已保存', { exact: true })).toBeVisible()
+  const control = modelUsageControlSchema.parse(await (await page.request.get(`${browserApp.origin}/api/model-usage/control`)).json())
+  expect(control.workspace).toMatchObject({ enabled: false, requests: 0, automaticRetries: false, version: 2, used: 0, remaining: 0 })
+  expect(control.workspace.requestsStartedAt).not.toBeNull()
+  expect(control.deployment).toMatchObject({ enabled: true, requests: null, automaticRetries: true })
+  await page.reload()
+  await page.getByRole('tab', { name: '额度与策略' }).click()
+  await expect(workspace.getByRole('checkbox', { name: '启用模型生成' })).not.toBeChecked()
+  await expect(workspace.getByLabel('请求次数上限', { exact: true })).toHaveValue('0')
+  await workspace.getByRole('checkbox', { name: '请求次数无限' }).check()
+  await workspace.getByRole('checkbox', { name: '启用模型生成' }).check()
+  await workspace.getByRole('button', { name: '保存工作区策略' }).click()
+  await expect(page.getByText('工作区策略已保存', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '用户菜单' }).click()
+  await page.getByRole('menuitem', { name: '退出登录' }).click()
+  await page.getByLabel('账户邮箱').fill('doctor@demo.clinmesh.local')
+  await page.getByLabel('账户密码').fill(browserApp.password)
+  await page.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
+  await page.goto(`${browserApp.origin}/settings`)
+  await page.getByRole('link', { name: '模型用量', exact: true }).click()
+  await page.getByRole('tab', { name: '额度与策略' }).click()
+  await expect(workspace.getByText('仅管理员可修改工作区控制。', { exact: true })).toBeVisible()
+  await expect(workspace.getByRole('checkbox')).toHaveCount(0)
+  await expect(workspace.getByRole('button', { name: '保存工作区策略' })).toHaveCount(0)
+  const persisted = modelUsageControlSchema.parse(await (await page.request.get(`${browserApp.origin}/api/model-usage/control`)).json())
+  expect(persisted.workspace).toMatchObject({ enabled: true, requests: null, automaticRetries: false, version: 3,
+    requestsStartedAt: control.workspace.requestsStartedAt })
 })

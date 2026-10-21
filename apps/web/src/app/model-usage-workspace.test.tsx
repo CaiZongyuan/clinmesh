@@ -2,28 +2,42 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { modelUsageControlUpdateSchema } from '@clinmesh/contracts/model-usage'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ModelUsageWorkspace } from './model-usage-workspace.tsx'
-import { usageAttempt, usageOverview, usageSession } from './model-usage.test-fixture.ts'
+import { usageAttempt, usageControl, usageOverview, usageSession } from './model-usage.test-fixture.ts'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' = 'normal') {
+function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | 'conflict' = 'normal', administrator = false) {
   const requests: URL[] = []
-  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+  const writes: RequestInit[] = []
+  let control = structuredClone(usageControl)
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
     requests.push(url)
     if (mode === 'error' || (mode === 'deny-detail' && url.pathname.includes(usageAttempt.id))) {
       return Response.json({ error: { code: 'ROLE_NOT_ALLOWED', message: 'Synthetic denied read' } }, { status: 403 })
     }
     if (url.pathname === '/api/model-usage/overview') return Response.json(usageOverview)
+    if (url.pathname === '/api/model-usage/control') {
+      if (init?.method === 'PUT') {
+        writes.push(init)
+        if (mode === 'conflict') return Response.json({ error: { code: 'VERSION_CONFLICT', message: 'Synthetic conflict' } }, { status: 409 })
+        const { expectedVersion, ...policy } = modelUsageControlUpdateSchema.parse(JSON.parse(String(init.body)))
+        control = { ...control, workspace: { ...control.workspace, ...policy, version: expectedVersion + 1,
+          remaining: policy.requests }, effective: { enabled: policy.enabled, automaticRetries: false } }
+      }
+      return Response.json(control)
+    }
     if (url.pathname === '/api/model-usage/requests') return Response.json({ items: mode === 'empty' ? [] : [usageAttempt], total: mode === 'empty' ? 0 : total })
     if (url.pathname === `/api/model-usage/requests/${usageAttempt.id}`) return Response.json(usageAttempt)
     throw new Error(`Unexpected URL: ${url}`)
   }))
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } })
-  render(<QueryClientProvider client={client}><ModelUsageWorkspace locale="zh-CN" session={usageSession} /></QueryClientProvider>)
-  return { requests, user: userEvent.setup() }
+  const session = administrator ? { ...usageSession, actor: { ...usageSession.actor, roleCode: 'administrator' as const } } : usageSession
+  render(<QueryClientProvider client={client}><ModelUsageWorkspace locale="zh-CN" session={session} /></QueryClientProvider>)
+  return { requests, writes, user: userEvent.setup() }
 }
 
 it('shows known usage separately from unknown values and reads historical request detail', async () => {
@@ -50,6 +64,40 @@ it('shows known usage separately from unknown values and reads historical reques
   expect(requests.some(url => url.pathname === `/api/model-usage/requests/${usageAttempt.id}`)).toBe(true)
   await user.click(within(detail).getByRole('button', { name: '收起详情' }))
   expect(document.activeElement).toBe(screen.getByRole('button', { name: '查看请求详情' }))
+})
+
+it('lets administrators persist a zero request quota and switch back to unlimited without changing deployment policy', async () => {
+  const { writes, user } = setup(1, 'normal', true)
+  await user.click(screen.getByRole('tab', { name: '额度与策略' }))
+  await user.click(await screen.findByRole('checkbox', { name: '请求次数无限' }))
+  fireEvent.change(screen.getByLabelText('请求次数上限'), { target: { value: '-1' } })
+  await user.click(screen.getByRole('button', { name: '保存工作区策略' }))
+  expect(screen.getByRole('alert').textContent).toContain('请求次数必须是非负整数，或选择无限')
+  expect(writes).toHaveLength(0)
+  fireEvent.change(screen.getByLabelText('请求次数上限'), { target: { value: '0' } })
+  await user.click(screen.getByRole('checkbox', { name: '启用模型生成' }))
+  await user.click(screen.getByRole('checkbox', { name: '允许自动重试' }))
+  await user.click(screen.getByRole('button', { name: '保存工作区策略' }))
+  expect(await screen.findByText('工作区策略已保存')).toBeTruthy()
+  expect(JSON.parse(String(writes[0]?.body))).toEqual({ expectedVersion: 1, enabled: false, requests: 0, automaticRetries: false })
+  expect(new Headers(writes[0]?.headers).get('idempotency-key')).toMatch(/^[0-9a-f-]{36}$/)
+  expect(within(screen.getByRole('region', { name: '部署控制（只读）' })).getByText('6')).toBeTruthy()
+  await user.click(screen.getByRole('checkbox', { name: '请求次数无限' }))
+  await user.click(screen.getByRole('button', { name: '保存工作区策略' }))
+  await waitFor(() => expect(writes).toHaveLength(2))
+  expect(JSON.parse(String(writes[1]?.body))).toEqual({ expectedVersion: 2, enabled: false, requests: null, automaticRetries: false })
+})
+
+it('keeps the administrator draft and reports a version conflict without claiming the policy was saved', async () => {
+  const { writes, user } = setup(1, 'conflict', true)
+  await user.click(screen.getByRole('tab', { name: '额度与策略' }))
+  await user.click(await screen.findByRole('checkbox', { name: '请求次数无限' }))
+  fireEvent.change(screen.getByLabelText('请求次数上限'), { target: { value: '5' } })
+  await user.click(screen.getByRole('button', { name: '保存工作区策略' }))
+  expect(await screen.findByText('策略已被其他管理员修改，请刷新用量后重新编辑。')).toBeTruthy()
+  expect(screen.queryByText('工作区策略已保存')).toBeNull()
+  expect((screen.getByLabelText('请求次数上限') as HTMLInputElement).value).toBe('5')
+  expect(writes).toHaveLength(1)
 })
 
 it('clears unapplied filters and blocks invalid date ranges before reading', async () => {
@@ -107,9 +155,14 @@ it('applies filters to real overview and request queries, paginates, and keeps p
   await waitFor(() => expect(requests.at(-1)?.searchParams.get('offset')).toBe('0'))
   expect(requests.at(-1)?.searchParams.get('limit')).toBe('5')
   await user.click(screen.getByRole('tab', { name: '额度与策略' }))
-  expect(await screen.findAllByText('无限')).toHaveLength(3)
-  expect(screen.queryByRole('switch')).toBeNull()
-  expect(screen.getByText(/额度管理.*后续版本/)).toBeTruthy()
+  const workspace = await screen.findByRole('region', { name: '工作区控制' })
+  expect(within(workspace).getAllByText('无限')).toHaveLength(4)
+  expect(within(workspace).queryByRole('button', { name: '保存工作区策略' })).toBeNull()
+  expect(screen.getByText('仅管理员可修改工作区控制。')).toBeTruthy()
+  const deployment = screen.getByRole('region', { name: '部署控制（只读）' })
+  expect(within(deployment).getByText('6')).toBeTruthy()
+  expect(screen.getByText('部署已关闭自动重试')).toBeTruthy()
+  expect(screen.getByRole('region', { name: '待办与恢复' }).textContent).toContain('2')
   await user.click(screen.getByRole('tab', { name: '计价说明' }))
   expect(screen.getByText(/未知金额不表示免费/)).toBeTruthy()
 })
