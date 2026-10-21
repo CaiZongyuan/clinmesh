@@ -31,6 +31,7 @@ function fixture(fetch: typeof globalThis.fetch, model = request.model) {
   database.driver.exec(readFileSync(new URL('../drizzle/0000_foundation.sql', import.meta.url), 'utf8'))
   database.driver.exec(readFileSync(new URL('../drizzle/0060_doctor-recommendations.sql', import.meta.url), 'utf8'))
   database.driver.exec(readFileSync(new URL('../drizzle/0068_doctor-recommendation-execution.sql', import.meta.url), 'utf8'))
+  database.driver.exec(readFileSync(new URL('../drizzle/0073_model-task-recovery.sql', import.meta.url), 'utf8'))
   seedScope(database, 'workspace', 'epoch')
   const provider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid', fetch })
   const options = { database, identity: { workspaceId: 'workspace', epoch: 'epoch', actorId: 'doctor', contextKey: 'context',

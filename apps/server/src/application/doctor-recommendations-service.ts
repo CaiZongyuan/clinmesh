@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ModelTaskRecovery } from './model-task-recovery.ts'
 import {
   doctorCaseEvidenceSchema, doctorRecommendationGenerationSchema, doctorRecommendationKindSchema,
   doctorRecommendationStateSchema, type DoctorCaseEvidence, type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion,
@@ -145,6 +146,8 @@ export class DoctorRecommendationsService {
   constructor(private readonly options: {
     database: ClinMeshDatabase; workflow: WorkflowService; commands: CommandExecutor; referenceData: ReferenceDataService
     models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider
+    recovery?: ModelTaskRecovery
+    automaticRetries?: (workspaceId: string) => boolean
     guidelines?: GuidelineCorpus
     contextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
     investigationCatalogs: (context: ActorContext, caseId: string, kind: DoctorRecommendationKind) => Promise<DoctorInvestigationRecommendationCatalogs>
@@ -560,6 +563,7 @@ export class DoctorRecommendationsService {
         }
         const execution = new DoctorRecommendationExecution({ database: this.options.database, identity,
           inputFingerprint, model: stored.model, policyVersion: stored.policyVersion, provider: this.options.provider,
+          automaticRetries: () => this.options.automaticRetries?.(context.workspaceId) !== false,
           assertCurrent: () => {
             this.#authorize(context, caseId)
             if (this.#row(context, caseId, kind)?.generation !== previous.generation
@@ -846,6 +850,7 @@ export class DoctorRecommendationsService {
         `recommendations:${context.epoch}:${payload.contextKey}:${payload.caseId}:${payload.kind}:${payload.generation}`, this.options.model, signal)
       execution = new DoctorRecommendationExecution({ database: this.options.database, identity,
         inputFingerprint, model, policyVersion: 'recommendation-stages-v1', provider: this.options.provider, assertCurrent,
+        automaticRetries: () => this.options.automaticRetries?.(context.workspaceId) !== false,
         usageContext: { trigger: payload.manualIntentKey === undefined ? 'automatic' : 'manual',
           sources: [{ kind: 'job', id: event.eventId, relationship: 'trigger' }] } })
       if (recommendationInputFingerprint(this.#snapshot(context, payload.caseId, payload.kind, snapshot.catalogs)) !== row.input_fingerprint) {
@@ -1068,6 +1073,8 @@ export class DoctorRecommendationsService {
       return { status: 'completed' }
     } catch (caught) {
       if (!current() || this.options.contextStatus(context) === 'superseded') return { status: 'completed' }
+      const deferred = this.options.recovery?.defer(event, caught)
+      if (deferred !== undefined) return deferred
       let error: unknown = controller.signal.reason instanceof WorkflowError ? controller.signal.reason : caught
       if (!(error instanceof WorkflowError) && execution?.status().status === 'exhausted') {
         error = new DoctorRecommendationExecutionError('exhausted', { cause: error })

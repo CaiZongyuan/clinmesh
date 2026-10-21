@@ -141,9 +141,9 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
                 <InputGroupAddon align="block-end">
                   {action.pending ? <InputGroupText>{messages.waitingForPatientAnswer}</InputGroupText> : null}
                   {unanswered && !action.pending ? (
-                    <InputGroupButton className="ml-auto" onClick={action.onRetry} size="sm" type="button" variant="outline">
+                    <InputGroupButton className="ml-auto" disabled={replyStatus === 'blocked'} onClick={action.onRetry} size="sm" type="button" variant="outline">
                       <RefreshCwIcon aria-hidden="true" data-icon="inline-start" />
-                      {replyExecuting
+                      {replyStatus === 'blocked' ? (locale === 'zh-CN' ? '等待模型控制恢复' : 'Waiting for model controls') : replyExecuting
                         ? (locale === 'zh-CN' ? '等待当前回答' : 'Wait for current reply')
                         : (locale === 'zh-CN' ? '重试患者回答' : 'Retry patient reply')}
                     </InputGroupButton>
@@ -166,7 +166,8 @@ export function ConsultationPage({ action, consultation, locale, messages, patie
               </InputGroup>
               {unanswered && !action.pending ? (
                 <p className="text-muted-foreground text-sm">
-                  {replyExecuting
+                  {replyStatus === 'blocked'
+                    ? (locale === 'zh-CN' ? '医生问题已保存，模型控制恢复且本次回答期限仍有效时将自动接续。' : 'The doctor question is saved. The reply resumes if model controls recover before its deadline.') : replyExecuting
                     ? (locale === 'zh-CN' ? '患者回答仍在生成，等待将复用本次回答。' : 'The patient is still answering. Waiting reuses this reply.')
                     : replyStatus === 'failed'
                       ? (locale === 'zh-CN' ? '患者回答失败。重试将使用当前 ClinMesh 模型设置。' : 'The patient reply failed. Retry uses the current ClinMesh model settings.')

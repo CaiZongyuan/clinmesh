@@ -19,6 +19,7 @@ import { installSyntheticPathologySlides } from './fixtures/pathology-catalog.ts
 import { breastCaseBundle } from './fixtures/pathology-scenario.ts'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
 import { modelUsageListSchema } from '@clinmesh/contracts/model-usage'
+import { setModelControl } from './fixtures/model-control.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -172,6 +173,58 @@ function verificationOutput(input: Parameters<JsonChatCompletionsProvider['compl
     guidelineSupported: true, caseSupported: true, applicable: true, qualifiersPreserved: true,
   })) }
 }
+
+it('preserves a blocked format-repair kind and its spent request across restart', async () => {
+  let disableRetries = async () => {}
+  let generationRequests = 0
+  let verificationRequests = 0
+  const f = await setup(async input => {
+    if (input.schemaName === 'doctor_recommendations') {
+      if (++generationRequests === 1) {
+        await disableRetries()
+        return { model: input.model, content: '{}' }
+      }
+      return { model: input.model, content: JSON.stringify(diagnosisOutput(input)) }
+    }
+    verificationRequests++
+    return { model: input.model, content: JSON.stringify(verificationOutput(input)) }
+  })
+  await f.runtime.dispatchPending()
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  disableRetries = async () => { await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false }) }
+  expect((await f.generate()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'pending', recovery: { requestCount: 1 } })
+  await f.restart()
+  await f.runtime.dispatchPending()
+  expect({ generationRequests, verificationRequests }).toEqual({ generationRequests: 1, verificationRequests: 0 })
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: true })
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', recovery: { requestCount: 3, extraRequestCount: 1 } })
+  expect({ generationRequests, verificationRequests }).toEqual({ generationRequests: 2, verificationRequests: 1 })
+})
+
+it('resumes a quota-blocked verification after restart without repeating a successful generation when automatic retries are off', async () => {
+  const stages: string[] = []
+  const f = await setup(async input => {
+    stages.push(input.schemaName)
+    return { model: input.model, content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+      ? diagnosisOutput(input) : verificationOutput(input)) }
+  })
+  await f.runtime.dispatchPending()
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  const policy = await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await setModelControl(f.runtime, admin, { enabled: true, requests: policy.workspace.used + 1, automaticRetries: false })
+  expect((await f.generate()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'pending', recovery: { requestCount: 1 } })
+  expect(stages).toEqual(['doctor_recommendations'])
+  await f.restart()
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', recovery: { requestCount: 2, extraRequestCount: 0 } })
+  expect(stages).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+})
 
 it('keeps a case-supported diagnostic direction read-only when only guideline support is absent', async () => {
   const fixture = await setup(async input => ({ model: input.model, content: JSON.stringify(input.schemaName === 'doctor_recommendations'

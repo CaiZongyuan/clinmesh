@@ -235,7 +235,11 @@ export class IdentityService {
       'encounter.clinical-document.draft.set', 'doctor.document-quality.check', 'doctor.document-quality.retain'])
   }
 
-  #doctorTaskContextStatus(context: ActorContext, operations: readonly string[]): 'active' | 'inactive' | 'superseded' {
+  modelTaskContextStatus(context: ActorContext, operations: readonly string[] = []): 'active' | 'inactive' | 'superseded' {
+    return this.#doctorTaskContextStatus(context, operations, false)
+  }
+
+  #doctorTaskContextStatus(context: ActorContext, operations: readonly string[], doctorOnly = true): 'active' | 'inactive' | 'superseded' {
     try {
       this.#workspaces.assertCurrent(context, context.scenarioRunId)
     } catch (error) {
@@ -248,7 +252,7 @@ export class IdentityService {
       if (error instanceof WorkspaceContextError) return 'inactive'
       throw error
     }
-    if (context.roleCode !== 'outpatient-doctor') return 'inactive'
+    if (doctorOnly && context.roleCode !== 'outpatient-doctor') return 'inactive'
     const authorized = this.#database.driver.prepare(`SELECT 1 FROM workspace_actor AS actor
       JOIN practitioner_role_binding AS role ON role.workspace_id = actor.workspace_id
       JOIN workspace ON workspace.workspace_id = actor.workspace_id

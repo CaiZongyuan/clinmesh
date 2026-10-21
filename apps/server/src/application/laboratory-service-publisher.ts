@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { modelUsageControlFailure } from './model-usage-control.ts'
+import { modelTaskOutcomeUnknown } from './model-task-recovery.ts'
 import {
   laboratoryServiceCandidateSearchSchema,
   laboratoryServicePublicationJobSchema,
@@ -116,6 +118,7 @@ export class LaboratoryServicePublisherError extends Error {
 }
 
 export class LaboratoryServicePublisher {
+  readonly #contextStatus: (context: ActorContext) => string
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #model: string | undefined
@@ -125,6 +128,7 @@ export class LaboratoryServicePublisher {
   readonly #referenceData: ReferenceDataService
 
   constructor(input: {
+    contextStatus?: (context: ActorContext) => string
     commands: CommandExecutor
     database: ClinMeshDatabase
     model?: string
@@ -133,6 +137,7 @@ export class LaboratoryServicePublisher {
     publications: LaboratoryServicePublicationRepository
     referenceData: ReferenceDataService
   }) {
+    this.#contextStatus = input.contextStatus ?? (() => 'active')
     this.#commands = input.commands
     this.#database = input.database
     this.#model = input.model
@@ -435,7 +440,11 @@ export class LaboratoryServicePublisher {
   async processNext(signal?: AbortSignal): Promise<LaboratoryServicePublicationJob | undefined> {
     const claimed = this.#publications.claimNext(new Date().toISOString())
     if (claimed === undefined) return undefined
+    const assertCurrent = () => {
+      if (this.#contextStatus(claimed.actorContext) !== 'active') throw new LaboratoryServicePublisherError('ROLE_NOT_ALLOWED', 'The original task context is no longer active', 403)
+    }
     try {
+      assertCurrent()
       const roots = claimed.conceptIds.map(conceptId => this.#resolveRoot(
         claimed.actorContext,
         claimed.referenceReleaseId,
@@ -476,6 +485,7 @@ export class LaboratoryServicePublisher {
           })),
         }
         const completion = await this.#provider.completeJson({
+          onBeforeRequest: assertCurrent,
           usageContext: { workspaceId: claimed.workspaceId, epoch: claimed.actorContext.epoch,
             actorId: claimed.actorContext.actorId, taskId: claimed.jobId, stage: 'catalog-enrichment', trigger: 'manual',
             sources: [{ kind: 'job', id: claimed.jobId, relationship: 'trigger' }] },
@@ -499,6 +509,7 @@ export class LaboratoryServicePublisher {
           409,
         )
       }
+      assertCurrent()
       const outputHash = canonicalJsonHash(output)
       return this.#commands.execute({
         context: claimed.actorContext,
@@ -526,7 +537,10 @@ export class LaboratoryServicePublisher {
         }
       }).data
     } catch (error) {
-      if (signal?.aborted === true) {
+      if (modelTaskOutcomeUnknown(error)) return this.#fail(claimed, {
+        code: 'MODEL_OUTCOME_UNKNOWN', message: 'The model request outcome is unknown; automatic processing has stopped',
+      })
+      if (modelUsageControlFailure(error) !== undefined || signal?.aborted === true) {
         return this.#commands.execute({
           context: claimed.actorContext,
           contextRequirement: 'known',

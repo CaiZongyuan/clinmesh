@@ -454,6 +454,15 @@ export class InvestigationService {
     return this.#agentGenerationPlan(concept).capability
   }
 
+  #assertRequestCurrent(workspaceId: string, epoch: string, requestId: string): void {
+    const current = this.#database.driver.prepare(`SELECT 1 FROM laboratory_request r
+      JOIN workspace w ON w.workspace_id = r.workspace_id AND w.active_epoch = r.epoch
+      JOIN workspace_epoch e ON e.workspace_id = w.workspace_id AND e.epoch = w.active_epoch AND e.state = 'active'
+      WHERE r.workspace_id = ? AND r.epoch = ? AND r.request_id = ? AND r.status = 'in-progress'`)
+      .get(workspaceId, epoch, requestId)
+    if (current === undefined) throw new InvestigationGenerationError('INVESTIGATION_UNSUPPORTED', 'The original laboratory request is no longer active')
+  }
+
   async resolveForRequest(
     workspaceId: string,
     epoch: string,
@@ -463,6 +472,7 @@ export class InvestigationService {
   ): Promise<InvestigationResultSnapshot | undefined> {
     const modelTaskId = `investigation:${epoch}:${requestId}`
       + (generationAttempt === undefined ? '' : `:retry:${generationAttempt}`)
+    this.#assertRequestCurrent(workspaceId, epoch, requestId)
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
@@ -574,6 +584,7 @@ export class InvestigationService {
     }
     const inputHash = canonicalJsonHash(payload)
     const completion = await this.#provider.completeJson({
+      onBeforeRequest: () => this.#assertRequestCurrent(workspaceId, epoch, requestId),
       usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: materializedRow.outpatient_case_id,
         encounterId: materializedRow.encounter_id, stage: 'investigation', trigger: generationAttempt === undefined ? 'automatic' : 'recovery',
         sources: [{ kind: 'report', id: requestId, relationship: 'trigger' }] },
@@ -773,6 +784,7 @@ export class InvestigationService {
     )
     if (existing !== undefined) return existing
     const completion = await this.#provider.completeJson({
+      onBeforeRequest: () => this.#assertRequestCurrent(workspaceId, epoch, requestId),
       usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: row.outpatient_case_id,
         encounterId: row.encounter_id, stage: 'investigation-service', trigger: 'automatic',
         sources: [{ kind: 'report', id: requestId, relationship: 'trigger' }] },

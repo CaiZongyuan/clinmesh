@@ -34,7 +34,8 @@ export class ConsultationReplyAttempts {
       )`).run()
     // There is no provider result lookup: interrupted executions cannot be resumed implicitly.
     database.driver.prepare(`UPDATE consultation_reply_attempt
-      SET status = 'unknown', error_code = 'CONSULTATION_REPLY_UNKNOWN' WHERE status = 'executing'`).run()
+      SET status = 'unknown', error_code = 'CONSULTATION_REPLY_UNKNOWN' WHERE status = 'executing'
+        AND COALESCE(error_code, '') <> 'MODEL_CONTROL_BLOCKED'`).run()
   }
 
   accept(input: {
@@ -86,11 +87,11 @@ export class ConsultationReplyAttempts {
     }).immediate()
   }
 
-  finish(context: ActorContext, attemptId: string, status: 'succeeded' | 'failed' | 'unknown',
+  finish(context: ActorContext, attemptId: string, status: 'succeeded' | 'failed' | 'unknown' | 'blocked',
     errorCode: z.infer<typeof consultationReplyErrorCodeSchema> | null): void {
     this.#database.driver.prepare(`UPDATE consultation_reply_attempt SET status = ?, error_code = ?
       WHERE workspace_id = ? AND epoch = ? AND attempt_id = ? AND status = 'executing'
-    `).run(status, errorCode, context.workspaceId, context.epoch, attemptId)
+    `).run(status === 'blocked' ? 'executing' : status, errorCode, context.workspaceId, context.epoch, attemptId)
   }
 }
 
@@ -102,7 +103,7 @@ export function consultationReplyProjection(database: ClinMeshDatabase, context:
     ORDER BY started_at DESC, rowid DESC LIMIT 1
   `).get(context.workspaceId, context.epoch, doctorTurnId))
   return row === undefined ? undefined : consultationReplyAttemptSchema.parse({
-    doctorTurnId: row.doctor_turn_id, status: row.status, startedAt: row.started_at, deadlineAt: row.deadline_at,
+    doctorTurnId: row.doctor_turn_id, status: row.error_code === 'MODEL_CONTROL_BLOCKED' && row.status === 'executing' ? 'blocked' : row.status, startedAt: row.started_at, deadlineAt: row.deadline_at,
     ...(row.error_code === null ? {} : { errorCode: row.error_code }),
   })
 }

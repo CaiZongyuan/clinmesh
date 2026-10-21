@@ -30,7 +30,7 @@ export interface ClaimOptions {
   now: Date
 }
 
-export type OutboxCompletion = 'ambiguous' | 'completed' | 'retryable-failed'
+export type OutboxCompletion = 'ambiguous' | 'completed' | 'retryable-failed' | 'model-blocked'
 
 interface OutboxRow {
   attempt: number
@@ -196,13 +196,14 @@ export class OutboxRepository {
       const finalStatus = active === undefined ? 'abandoned' : status
       const update = this.#database.driver.prepare(`
         UPDATE outbox_event
-        SET status = ?, next_attempt_at = ?, lease_owner = NULL,
+        SET status = ?, next_attempt_at = ?, attempt = attempt - ?, lease_owner = NULL,
           leased_until = NULL, updated_at = ?
         WHERE workspace_id = ? AND epoch = ? AND event_id = ?
           AND status = 'claimed' AND lease_owner = ? AND lease_version = ?
       `).run(
         finalStatus,
         nextAttemptAt,
+        completion === 'model-blocked' ? 1 : 0,
         now,
         claim.workspaceId,
         claim.epoch,
@@ -224,7 +225,7 @@ export class OutboxRepository {
         throw new Error('The outbox lease is no longer owned by this dispatcher')
       }
       this.#database.driver.exec('COMMIT')
-      return { ...claim, status: finalStatus }
+      return { ...claim, attempt: claim.attempt - (completion === 'model-blocked' ? 1 : 0), status: finalStatus }
     } catch (error) {
       if (this.#database.driver.inTransaction) this.#database.driver.exec('ROLLBACK')
       throw error

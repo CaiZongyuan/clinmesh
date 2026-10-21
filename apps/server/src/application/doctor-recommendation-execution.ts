@@ -7,6 +7,8 @@ import {
   type JsonChatCompletionInput, type JsonChatCompletionsProvider,
 } from '../infrastructure/ai/openai-chat-completions.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import { modelUsageControlFailure } from './model-usage-control.ts'
+import { modelTaskOutcomeUnknown } from './model-task-recovery.ts'
 
 const stageSchema = z.enum(['history-selection', 'history-consolidation', 'catalog-selection', 'generation', 'verification'])
 export type DoctorRecommendationExecutionStage = z.infer<typeof stageSchema>
@@ -33,6 +35,7 @@ const unitRowSchema = z.object({
   dependencies_json: z.string(), status: z.enum(['pending', 'dispatching', 'succeeded', 'failed', 'unknown']),
   request_count: z.number().int().min(0).max(3), result_json: z.string().nullable(),
   error_code: z.string().nullable(), resume_available: z.union([z.literal(0), z.literal(1)]),
+  blocked_kind: z.enum(['initial', 'format-repair', 'rate-limit-retry']).nullable(),
 })
 type UnitRow = z.infer<typeof unitRowSchema>
 const activeUnits = new WeakMap<ClinMeshDatabase['driver'], Set<string>>()
@@ -64,7 +67,7 @@ export interface DoctorRecommendationExecutionStatus {
 
 function executionUnits(database: ClinMeshDatabase, scope: readonly [string, string], key: string): UnitRow[] {
   return z.array(unitRowSchema).parse(database.driver.prepare(`SELECT stage, batch_id, input_hash,
-    dependencies_json, status, request_count, result_json, error_code, resume_available
+    dependencies_json, status, request_count, result_json, error_code, resume_available, blocked_kind
     FROM doctor_recommendation_execution_unit WHERE workspace_id = ? AND epoch = ? AND execution_key = ? ORDER BY rowid`).all(...scope, key))
 }
 
@@ -109,6 +112,7 @@ export class DoctorRecommendationExecution {
     provider: JsonChatCompletionsProvider
     assertCurrent: () => void
     usageContext?: Pick<ModelUsageContext, 'trigger' | 'sources'>
+    automaticRetries?: () => boolean
   }) {
     const binding = bindingSchema.parse({ identity: options.identity, inputFingerprint: options.inputFingerprint,
       model: options.model, policyVersion: options.policyVersion })
@@ -254,7 +258,7 @@ export class DoctorRecommendationExecution {
     const activeKey = `${this.#key}:${input.stage}:${input.batchId}`
     if (active.has(activeKey)) throw new DoctorRecommendationExecutionError('running')
     active.add(activeKey)
-    let usageKind = input.request.usageKind
+    let usageKind = unit.blocked_kind ?? input.request.usageKind
     try {
       while (true) {
         let outstanding = false
@@ -308,6 +312,14 @@ export class DoctorRecommendationExecution {
           return value
         } catch (caught) {
           const error: unknown = caught instanceof ChatCompletionRequestControlError ? caught.cause : caught
+          if (!outstanding && modelUsageControlFailure(error) !== undefined && !modelTaskOutcomeUnknown(error)) {
+            const blockedKind = caught instanceof ChatCompletionRequestControlError ? caught.requestKind : undefined
+            this.options.database.driver.prepare(`UPDATE doctor_recommendation_execution_unit SET status = 'pending', blocked_kind = ?
+              WHERE workspace_id = ? AND epoch = ? AND execution_key = ? AND stage = ? AND batch_id = ?`)
+              .run(blockedKind ?? usageKind ?? 'initial', ...this.#scope, this.#key, input.stage, input.batchId)
+            throw error
+          }
+          outstanding ||= modelTaskOutcomeUnknown(error)
           const errorCode = error instanceof ChatCompletionsError ? error.code : error instanceof DoctorRecommendationExecutionError ? error.code : 'EXECUTION_FAILED'
           this.options.database.driver.prepare(`UPDATE doctor_recommendation_execution_unit SET status = ?, error_code = ?
             WHERE workspace_id = ? AND epoch = ? AND execution_key = ? AND stage = ? AND batch_id = ?`).run(outstanding ? 'unknown' : 'failed', errorCode, ...this.#scope, this.#key, input.stage, input.batchId)
@@ -318,7 +330,7 @@ export class DoctorRecommendationExecution {
             || error instanceof ChatCompletionsError && (error.code === 'AI_RESPONSE_INVALID'
               || (error.code === 'AI_REQUEST_FAILED' && (error.httpStatus === 429 || (error.httpStatus ?? 0) >= 500)))
           if (this.status().status === 'exhausted') throw new DoctorRecommendationExecutionError('exhausted', { cause: error })
-          if (!recoverable || requests === 0) throw new DoctorRecommendationExecutionError('failed', { cause: error })
+          if (!recoverable || requests === 0 || this.options.automaticRetries?.() === false) throw new DoctorRecommendationExecutionError('failed', { cause: error })
           if (error instanceof SyntaxError || error instanceof z.ZodError
             || error instanceof ChatCompletionsError && error.code === 'AI_RESPONSE_INVALID') usageKind = 'format-repair'
           else if (error instanceof ChatCompletionsError && error.httpStatus === 429) usageKind = 'rate-limit-retry'
