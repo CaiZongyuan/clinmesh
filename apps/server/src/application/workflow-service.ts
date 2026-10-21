@@ -80,6 +80,10 @@ import {
   type InvestigationGenerationCapability,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
+  paymentTendersSchema,
+  paymentRecordedTendersSchema,
+  paymentSimulatorRuleSchema,
+  billingCaseSchema,
   type PatientSummary,
   noMedicationConclusionSchema,
   orderHospitalServiceResponseSchema,
@@ -105,6 +109,7 @@ import { doctorHistoryEntryAllowed, doctorVisibleHistory, doctorVisibleHistoryDe
 import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction } from './command-executor.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
+import { PaymentLedger } from './payment-ledger.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { PathologyRequestService } from './pathology-request-service.ts'
 import { ConsultationRecordingService } from './consultation-recording-service.ts'
@@ -310,6 +315,7 @@ const paymentChargeRowSchema = paymentWorkflowRowSchema.extend({
 
 const paymentPreviewRowSchema = paymentWorkflowRowSchema.extend({
   account_id: z.string().min(1),
+  actor_context_hash: z.string().nullable(),
   amount_fen: z.number().int().nonnegative(),
   case_id: z.string().min(1),
   category: z.enum(['laboratory', 'medication']),
@@ -326,6 +332,7 @@ const paymentPreviewRowSchema = paymentWorkflowRowSchema.extend({
   prescription_id: z.string().min(1).nullable(),
   service_request_id: z.string().min(1).nullable(),
   simulator_rule: z.string().min(1),
+  tenders_json: z.string().nullable(),
   token_hash: z.string().min(1),
 })
 
@@ -1157,6 +1164,7 @@ export class WorkflowService {
   readonly #fhir: FhirRepository
   readonly #investigation: InvestigationCapabilityResolver | undefined
   readonly #now: () => Date
+  readonly #payments: PaymentLedger
   readonly #referenceData: ReferenceDataService | undefined
   readonly #requests: ClinicalRequestKernel
   readonly #tokenSecret: string
@@ -1188,6 +1196,7 @@ export class WorkflowService {
     this.#fhir = fhir
     this.#investigation = options.investigation
     this.#now = options.now ?? (() => new Date())
+    this.#payments = new PaymentLedger(database)
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
@@ -2888,7 +2897,8 @@ export class WorkflowService {
             && (
               prescription.status === 'signed' || prescription.status === 'paid'
             )
-            && !this.#prescriptionHasDispensedQuantity(context, prescription.id),
+            && !this.#prescriptionHasDispensedQuantity(context, prescription.id)
+            && !this.#prescriptionHasUnsettledFunds(context, prescription.id),
         }
     const noMedication = this.#noMedicationConclusion(context, caseId)
     const clinicalDocuments = this.#completedCaseClinicalDocuments(context, caseId)
@@ -4825,6 +4835,12 @@ export class WorkflowService {
             owner: 'prescription',
             resource: `Prescription/${input.prescriptionId}`,
           },
+        )
+      }
+      if (this.#prescriptionHasUnsettledFunds(input.context, input.prescriptionId)) {
+        throw new WorkflowError(
+          'WORKFLOW_CONFLICT',
+          'The prescription cannot be withdrawn while a payment is unresolved or partially collected',
         )
       }
       const items = z.array(prescriptionDispensingRowSchema).parse(
@@ -8216,6 +8232,48 @@ export class WorkflowService {
     })
   }
 
+  billingCase(input: { context: ActorContext; caseId: string }) {
+    this.#assertRole(input.context, ['cashier'])
+    const scope = [input.context.workspaceId, input.context.epoch, input.caseId]
+    const row = z.object({ account_id: z.string(), encounter_id: z.string(), patient_json: z.string() }).optional().parse(
+      this.#database.driver.prepare(`
+        SELECT outpatient_case.account_id, outpatient_case.encounter_id, patient.content_json AS patient_json
+        FROM outpatient_case JOIN fhir_resource AS patient
+          ON patient.workspace_id = outpatient_case.workspace_id AND patient.epoch = outpatient_case.epoch
+          AND patient.resource_type = 'Patient' AND patient.resource_id = outpatient_case.patient_id
+        WHERE outpatient_case.workspace_id = ? AND outpatient_case.epoch = ? AND outpatient_case.case_id = ?
+      `).get(...scope),
+    )
+    if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The billing case is unavailable')
+    const ledger = this.#payments
+    const charges = z.array(z.object({
+      amountFen: z.number(), category: z.enum(['registration', 'laboratory', 'medication']),
+      chargeItemId: z.string(), chargeVersion: z.number(), descriptionEn: z.string(), descriptionZh: z.string(), status: z.string(),
+    })).parse(this.#database.driver.prepare(`
+      SELECT total_fen AS amountFen, category, charge_item_id AS chargeItemId, version AS chargeVersion,
+        description_en AS descriptionEn, description_zh AS descriptionZh, status
+      FROM charge_record AS charge
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+        AND NOT (charge.category = 'medication' AND charge.status != 'paid' AND EXISTS (
+          SELECT 1 FROM prescription_withdrawal AS withdrawal
+          WHERE withdrawal.workspace_id = charge.workspace_id AND withdrawal.epoch = charge.epoch
+            AND charge.source_reference = 'Prescription/' || withdrawal.prescription_id
+        ))
+      ORDER BY created_at, charge_id
+    `).all(...scope)).map(charge => {
+      const { paidFen } = ledger.balance(input.context, charge.chargeItemId)
+      return { ...charge, paidFen, remainingFen: charge.amountFen - paidFen }
+    })
+    return billingCaseSchema.parse({
+      accountId: row.account_id, caseId: input.caseId, encounterId: row.encounter_id,
+      patient: patientSummary(parseStoredFhirResource(row.patient_json)), charges,
+      payments: ledger.attempts(input.context, input.caseId),
+      totalFen: charges.reduce((sum, charge) => sum + charge.amountFen, 0),
+      paidFen: charges.reduce((sum, charge) => sum + charge.paidFen, 0),
+      remainingFen: charges.reduce((sum, charge) => sum + charge.remainingFen, 0),
+    })
+  }
+
   billingQueue(input: {
     category: 'laboratory' | 'medication'
     context: ActorContext
@@ -8989,7 +9047,8 @@ export class WorkflowService {
     context: ActorContext
     expectedVersions: Record<string, string>
     idempotencyKey: string
-    simulatorRule: 'ambiguous' | 'decline' | 'success'
+    simulatorRule: z.infer<typeof paymentSimulatorRuleSchema>
+    tenders?: z.infer<typeof paymentTendersSchema> | undefined
   }): CommandResponse<{
     allocations: Array<{
       amountFen: number
@@ -9013,6 +9072,7 @@ export class WorkflowService {
         caseId: input.caseId,
         category: input.category,
         simulatorRule: input.simulatorRule,
+        tenders: input.tenders,
       },
       operation: 'payment.preview',
     }, () => {
@@ -9045,6 +9105,12 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The charge is not available for payment')
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${charge.charge_item_id}`])
+      const balance = this.#payments.balance(input.context, charge.charge_item_id)
+      if (balance.unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
+      const remainingFen = charge.total_fen - balance.paidFen
+      const tenders = paymentRecordedTendersSchema.parse(input.tenders ?? [{ method: 'cash', amountFen: remainingFen }])
+      const amountFen = tenders.reduce((sum, tender) => sum + tender.amountFen, 0)
+      if (amountFen > remainingFen) throw new WorkflowError('WORKFLOW_CONFLICT', 'Payment exceeds the remaining receivable')
       const encounter = this.#fhir.read(input.context, 'Encounter', charge.encounter_id)
       if (
         (input.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment')
@@ -9058,37 +9124,42 @@ export class WorkflowService {
       const rule = this.#database.driver.prepare(`
         SELECT outcome FROM scenario_simulator_rule
         WHERE workspace_id = ? AND epoch = ? AND simulator = 'payment' AND rule_code = ?
-      `).get(input.context.workspaceId, input.context.epoch, input.simulatorRule) as {
+      `).get(input.context.workspaceId, input.context.epoch, input.simulatorRule.startsWith('ambiguous') ? 'ambiguous' : input.simulatorRule) as {
         outcome: 'ambiguous' | 'declined' | 'success'
       } | undefined
       if (rule === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The payment simulator rule is unavailable')
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(previewId)}`
-      const expiresAt = new Date(Date.parse(this.#virtualTime(input.context)) + 5 * 60_000).toISOString()
+      const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
       this.#database.driver.prepare(`
         INSERT INTO payment_preview (
           workspace_id, epoch, preview_id, case_id, category, amount_fen,
-          expected_charge_version, simulator_rule, token_hash, expires_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          expected_charge_version, simulator_rule, token_hash, expires_at, tenders_json, actor_context_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
         previewId,
         input.caseId,
         input.category,
-        charge.total_fen,
+        amountFen,
         charge.version,
         input.simulatorRule,
         this.#hashToken(commitToken),
         expiresAt,
+        JSON.stringify(tenders),
+        this.#actorContextHash(input.context),
       )
       return {
         data: {
           allocations: [{
-            amountFen: charge.total_fen,
+            amountFen,
             chargeItemId: charge.charge_item_id,
           }],
-          amountFen: charge.total_fen,
+          amountFen,
+          tenders,
+          paidFen: balance.paidFen,
+          remainingFen,
           channel: 'synthetic-payment',
           chargeItemId: charge.charge_item_id,
           chargeVersion: charge.version,
@@ -9106,28 +9177,8 @@ export class WorkflowService {
     })
   }
 
-  confirmPayment(input: {
-    commitToken: string
-    context: ActorContext
-    expectedVersions: Record<string, string>
-    idempotencyKey: string
-    previewId: string
-  }): CommandResponse<{
-    amountFen: number
-    outcome: 'ambiguous' | 'declined' | 'success'
-    paymentId: string
-    status: string
-  }> {
-    return this.#commands.execute({
-      context: input.context,
-      dataSchema: paymentResponseSchema.shape.data,
-      expectedVersions: input.expectedVersions,
-      idempotencyKey: input.idempotencyKey,
-      input: { commitToken: input.commitToken, previewId: input.previewId },
-      operation: 'payment.confirm',
-    }, transaction => {
-      this.#assertRole(input.context, ['cashier'])
-      const preview = paymentPreviewRowSchema.optional().parse(
+  #readPaymentPreview(context: ActorContext, previewId: string) {
+    return paymentPreviewRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT preview.*, charge.charge_id, charge.charge_item_id,
             charge.status AS charge_status, charge.version AS charge_version,
@@ -9156,24 +9207,51 @@ export class WorkflowService {
            AND withdrawal.epoch = prescription.epoch
            AND withdrawal.prescription_id = prescription.prescription_id
           WHERE preview.workspace_id = ? AND preview.epoch = ? AND preview.preview_id = ?
-        `).get(input.context.workspaceId, input.context.epoch, input.previewId),
+        `).get(context.workspaceId, context.epoch, previewId),
       )
+  }
+
+  confirmPayment(input: {
+    commitToken: string
+    context: ActorContext
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    previewId: string
+  }): CommandResponse<{
+    amountFen: number
+    outcome: 'ambiguous' | 'declined' | 'success'
+    paymentId: string
+    status: string
+  }> {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: paymentResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: { commitToken: input.commitToken, previewId: input.previewId },
+      operation: 'payment.confirm',
+    }, transaction => {
+      this.#assertRole(input.context, ['cashier'])
+      const preview = this.#readPaymentPreview(input.context, input.previewId)
       if (preview === undefined || preview.consumed_at !== null) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment preview is unavailable')
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${preview.charge_item_id}`])
-      if (preview.token_hash !== this.#hashToken(input.commitToken)) {
+      if (preview.token_hash !== this.#hashToken(input.commitToken)
+        || preview.actor_context_hash !== this.#actorContextHash(input.context)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment commit token is invalid')
       }
-      if (Date.parse(preview.expires_at) < Date.parse(this.#virtualTime(input.context))) {
+      if (Date.parse(preview.expires_at) <= this.#now().getTime()) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment preview has expired')
       }
       if (!['billable', 'declined'].includes(preview.charge_status)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The charge is no longer payable')
       }
+      const ledger = this.#payments
+      const balance = ledger.balance(input.context, preview.charge_item_id)
       if (
         preview.charge_version !== preview.expected_charge_version
-        || preview.current_amount_fen !== preview.amount_fen
+        || preview.amount_fen > preview.current_amount_fen - balance.paidFen
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment preview no longer matches the charge')
       }
@@ -9189,17 +9267,25 @@ export class WorkflowService {
       const rule = this.#database.driver.prepare(`
         SELECT outcome FROM scenario_simulator_rule
         WHERE workspace_id = ? AND epoch = ? AND simulator = 'payment' AND rule_code = ?
-      `).get(input.context.workspaceId, input.context.epoch, preview.simulator_rule) as {
+      `).get(input.context.workspaceId, input.context.epoch, preview.simulator_rule.startsWith('ambiguous') ? 'ambiguous' : preview.simulator_rule) as {
         outcome: 'ambiguous' | 'declined' | 'success'
       } | undefined
       if (rule === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The payment simulator rule is unavailable')
+      if (balance.unresolved > 0) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
+      }
+      const tenders = paymentRecordedTendersSchema.parse(preview.tenders_json === null
+        ? [{ method: 'cash', amountFen: preview.amount_fen }] : JSON.parse(preview.tenders_json))
+      if (tenders.reduce((sum, tender) => sum + tender.amountFen, 0) !== preview.amount_fen) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Payment methods do not match the reviewed amount')
+      }
       const paymentId = uuidv7()
       const now = this.#virtualTime(input.context)
       this.#database.driver.prepare(`
         INSERT INTO payment_transaction (
           workspace_id, epoch, payment_id, case_id, category, amount_fen,
-          outcome, correlation_id, preview_id, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          outcome, correlation_id, preview_id, created_at, recovery_outcome
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -9211,65 +9297,20 @@ export class WorkflowService {
         `sim-${paymentId}`,
         input.previewId,
         now,
+        preview.simulator_rule === 'ambiguous' ? 'success'
+          : preview.simulator_rule === 'ambiguous-decline' ? 'declined' : 'ambiguous',
       )
+      ledger.allocate(input.context, paymentId, preview.charge_item_id, tenders)
       this.#database.driver.prepare(`
         UPDATE payment_preview SET consumed_at = ?
         WHERE workspace_id = ? AND epoch = ? AND preview_id = ? AND consumed_at IS NULL
       `).run(now, input.context.workspaceId, input.context.epoch, input.previewId)
-      let status = preview.case_status
       const effects: CommandEffect[] = [{
         kind: 'created' as const,
         reference: `PaymentTransaction/${paymentId}`,
         versionId: '1',
       }]
-      const chargeItem = transaction.fhir.read(input.context, 'ChargeItem', preview.charge_item_id)
-      const updatedChargeItem = transaction.fhir.update(input.context, {
-        ...chargeItem,
-        status: rule.outcome === 'success' ? 'billed' : 'billable',
-      }, chargeItem.meta?.versionId ?? '1')
-      effects.push({
-        kind: 'updated',
-        reference: `ChargeItem/${preview.charge_item_id}`,
-        versionId: updatedChargeItem.meta?.versionId ?? String(preview.charge_version + 1),
-      })
-      if (rule.outcome === 'success') {
-        this.#database.driver.prepare(`
-          UPDATE charge_record SET status = 'paid', version = version + 1
-          WHERE workspace_id = ? AND epoch = ? AND charge_id = ?
-        `).run(input.context.workspaceId, input.context.epoch, preview.charge_id)
-        status = preview.category === 'laboratory' ? 'awaiting-lis' : 'awaiting-dispense'
-        this.#database.driver.prepare(`
-          UPDATE outpatient_case SET status = ?, version = version + 1, updated_at = ?
-          WHERE workspace_id = ? AND epoch = ? AND case_id = ?
-        `).run(status, now, input.context.workspaceId, input.context.epoch, preview.case_id)
-        if (preview.category === 'laboratory') {
-          transaction.enqueue({
-            dedupKey: `lis:${preview.service_request_id}`,
-            kind: 'lis.process-order',
-            payload: {
-              caseId: preview.case_id,
-              encounterId: preview.encounter_id,
-              patientId: preview.patient_id,
-              serviceRequestId: preview.service_request_id,
-            },
-          })
-        } else {
-          this.#database.driver.prepare(`
-            UPDATE prescription SET status = 'paid', version = version + 1
-            WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
-          `).run(input.context.workspaceId, input.context.epoch, preview.prescription_id)
-          transaction.enqueue({
-            dedupKey: `pharmacy:${preview.prescription_id}`,
-            kind: 'pharmacy.ready',
-            payload: { caseId: preview.case_id, prescriptionId: preview.prescription_id },
-          })
-        }
-      } else {
-        this.#database.driver.prepare(`
-          UPDATE charge_record SET status = ?, version = version + 1
-          WHERE workspace_id = ? AND epoch = ? AND charge_id = ?
-        `).run(rule.outcome, input.context.workspaceId, input.context.epoch, preview.charge_id)
-      }
+      const status = this.#applyPaymentOutcome(transaction, input.context, preview, rule.outcome, effects)
       return {
         data: {
           amountFen: preview.amount_fen,
@@ -9280,6 +9321,89 @@ export class WorkflowService {
         effects,
       }
     })
+  }
+
+  recoverPayment(input: {
+    context: ActorContext
+    expectedPaymentVersion: number
+    expectedVersions: Record<string, string>
+    idempotencyKey: string
+    paymentId: string
+  }) {
+    return this.#commands.execute({
+      context: input.context,
+      dataSchema: paymentResponseSchema.shape.data,
+      expectedVersions: input.expectedVersions,
+      idempotencyKey: input.idempotencyKey,
+      input: { paymentId: input.paymentId, expectedPaymentVersion: input.expectedPaymentVersion },
+      operation: 'payment.recover',
+    }, transaction => {
+      this.#assertRole(input.context, ['cashier'])
+      const payment = z.object({ case_id: z.string(), preview_id: z.string(), recovery_outcome: z.enum(['ambiguous', 'declined', 'success']) }).optional().parse(
+        this.#database.driver.prepare(`SELECT case_id, preview_id, recovery_outcome FROM payment_transaction
+          WHERE workspace_id = ? AND epoch = ? AND payment_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.paymentId),
+      )
+      if (payment === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment attempt is unavailable')
+      const attempt = this.#payments.attempts(input.context, payment.case_id).find(item => item.paymentId === input.paymentId)
+      const preview = this.#readPaymentPreview(input.context, payment.preview_id)
+      if (attempt === undefined || preview === undefined || attempt.version !== input.expectedPaymentVersion) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment version has changed; refresh the bill')
+      }
+      this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${attempt.chargeItemId}`])
+      if (attempt.outcome !== 'ambiguous' || payment.recovery_outcome === 'ambiguous') {
+        return { data: { amountFen: attempt.amountFen, outcome: attempt.outcome, paymentId: input.paymentId, status: preview.case_status }, effects: [] }
+      }
+      if (preview.charge_status !== 'ambiguous'
+        || (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment')
+        || (preview.category === 'medication' && (preview.prescription_status !== 'signed' || preview.withdrawal_id !== null
+          || transaction.fhir.read(input.context, 'Encounter', preview.encounter_id).status !== 'completed'))) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'The original receivable is no longer recoverable')
+      }
+      this.#database.driver.prepare(`INSERT INTO payment_resolution
+        (workspace_id, epoch, payment_id, outcome, resolved_at) VALUES (?, ?, ?, ?, ?)
+      `).run(input.context.workspaceId, input.context.epoch, input.paymentId, payment.recovery_outcome, this.#virtualTime(input.context))
+      const effects: CommandEffect[] = [{ kind: 'created', reference: `PaymentResolution/${input.paymentId}`, versionId: '1' }]
+      const status = this.#applyPaymentOutcome(transaction, input.context, preview, payment.recovery_outcome, effects)
+      return { data: { amountFen: attempt.amountFen, outcome: payment.recovery_outcome, paymentId: input.paymentId, status }, effects }
+    })
+  }
+
+  #applyPaymentOutcome(
+    transaction: CommandTransaction,
+    context: ActorContext,
+    charge: z.infer<typeof paymentPreviewRowSchema>,
+    outcome: 'ambiguous' | 'declined' | 'success',
+    effects: CommandEffect[],
+  ): string {
+    const paidFen = this.#payments.balance(context, charge.charge_item_id).paidFen
+    const fullyPaid = outcome === 'success' && paidFen === charge.current_amount_fen
+    const chargeItem = transaction.fhir.read(context, 'ChargeItem', charge.charge_item_id)
+    const updated = transaction.fhir.update(context, { ...chargeItem, status: fullyPaid ? 'billed' : 'billable' }, chargeItem.meta?.versionId ?? '1')
+    effects.push({ kind: 'updated', reference: `ChargeItem/${charge.charge_item_id}`, versionId: updated.meta?.versionId ?? String(charge.charge_version + 1) })
+    this.#database.driver.prepare(`
+      UPDATE charge_record SET status = ?, version = version + 1
+      WHERE workspace_id = ? AND epoch = ? AND charge_id = ?
+    `).run(fullyPaid ? 'paid' : outcome === 'success' ? 'billable' : outcome, context.workspaceId, context.epoch, charge.charge_id)
+    if (!fullyPaid) return charge.case_status
+    const status = charge.category === 'laboratory' ? 'awaiting-lis' : 'awaiting-dispense'
+    this.#database.driver.prepare(`
+      UPDATE outpatient_case SET status = ?, version = version + 1, updated_at = ?
+      WHERE workspace_id = ? AND epoch = ? AND case_id = ?
+    `).run(status, this.#virtualTime(context), context.workspaceId, context.epoch, charge.case_id)
+    if (charge.category === 'laboratory') {
+      transaction.enqueue({ dedupKey: `lis:${charge.service_request_id}`, kind: 'lis.process-order', payload: {
+        caseId: charge.case_id, encounterId: charge.encounter_id, patientId: charge.patient_id, serviceRequestId: charge.service_request_id,
+      } })
+    } else {
+      this.#database.driver.prepare(`UPDATE prescription SET status = 'paid', version = version + 1
+        WHERE workspace_id = ? AND epoch = ? AND prescription_id = ?
+      `).run(context.workspaceId, context.epoch, charge.prescription_id)
+      transaction.enqueue({ dedupKey: `pharmacy:${charge.prescription_id}`, kind: 'pharmacy.ready', payload: {
+        caseId: charge.case_id, prescriptionId: charge.prescription_id,
+      } })
+    }
+    return status
   }
 
   processLisOrder(input: {
@@ -11480,6 +11604,19 @@ export class WorkflowService {
       withdrawnAt: withdrawal.withdrawn_at,
       withdrawnByActorId: withdrawal.withdrawn_by_actor_id,
       withdrawnByPractitionerRoleId: withdrawal.withdrawn_by_practitioner_role_id,
+    })
+  }
+
+  #prescriptionHasUnsettledFunds(context: ActorContext, prescriptionId: string): boolean {
+    const charges = z.array(z.object({ charge_item_id: z.string(), total_fen: z.number().int().nonnegative() })).parse(
+      this.#database.driver.prepare(`
+        SELECT charge_item_id, total_fen FROM charge_record
+        WHERE workspace_id = ? AND epoch = ? AND source_reference = ?
+      `).all(context.workspaceId, context.epoch, `Prescription/${prescriptionId}`),
+    )
+    return charges.some(charge => {
+      const balance = this.#payments.balance(context, charge.charge_item_id)
+      return balance.unresolved > 0 || (balance.paidFen > 0 && balance.paidFen < charge.total_fen)
     })
   }
 

@@ -1,6 +1,3 @@
-/// <reference path="../../server/src/infrastructure/imaging-assets/dcmjs.d.ts" />
-/// <reference path="../../server/src/infrastructure/imaging-assets/openjpeg.d.ts" />
-
 import { randomUUID } from 'node:crypto'
 import { expect, type Page } from '@playwright/test'
 import {

@@ -354,6 +354,8 @@ POST /api/his/v1/encounters/{id}/actions/complete
 POST /api/his/v1/clinical-documents/{compositionId}/actions/revise
 POST /api/his/v1/payments/actions/preview
 POST /api/his/v1/payments/{previewId}/actions/confirm
+GET  /api/his/v1/billing/cases/{caseId}
+POST /api/his/v1/payments/{paymentId}/actions/recover
 POST /api/his/v1/prescriptions/{prescriptionId}/actions/withdraw
 POST /api/his/v1/prescriptions/{prescriptionId}/actions/dispense
 POST /api/sim/v1/scenario-runs/{id}/actions/reset
@@ -429,6 +431,8 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 ### 6.6 预览与提交
 
-当前临床文书签署和支付使用预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；支付预览绑定 Charge Item。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
+当前临床文书签署和支付使用预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；支付预览绑定岗位上下文、ChargeItem 版本、本次金额及组合方式。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
 
 提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、退款、医保、库存调拨、出院和病案归档不属于当前能力，也不宣称已有预览协议。
+
+门诊账单 GET 仅向收费员返回当前作用域内一次门诊的应收、余额与原支付历史。`payment.recover` 是审阅后的窄 Command，要求幂等键、`input.expectedPaymentVersion` 和原应收的 ChargeItem expected version；没有任意金额或 outcome 输入，也不重用预览 token。未解决支付版本为 1，追加确定结果后为 2；终态查询返回既有结果，继续未知不改变版本。HTTP、Operation Catalog、CLI 和 Surface 共用此 owner，业务与恢复边界见[收费与支付](clinical-workflows.md#85-收费支付与退款)。
