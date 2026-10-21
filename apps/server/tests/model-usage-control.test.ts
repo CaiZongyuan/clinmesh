@@ -71,15 +71,23 @@ it.each(['direct', 'bridge'] as const)('requires a trustworthy boundary before f
   })
   const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
   const requests = async () => modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
-  for (const dimension of ['tokens', 'cny'] as const) {
-    await control(fixture, { tokens: dimension === 'tokens' ? 100 : null, cny: dimension === 'cny' ? 1 : null })
-    await expect(startConsultationCase(fixture.runtime)).rejects.toThrow('Persona generation failed')
-    expect(dispatched).toBe(0)
-    expect((await control(fixture)).lastRejection).toMatchObject({ code: 'MODEL_METERING_UNAVAILABLE', scope: 'workspace', dimension })
-    expect((await requests()).total).toBe(0)
-  }
+  await control(fixture, { tokens: 100, cny: null })
+  await expect(startConsultationCase(fixture.runtime)).rejects.toThrow('Persona generation failed')
+  expect(dispatched).toBe(0)
+  expect((await control(fixture)).lastRejection).toMatchObject({ code: 'MODEL_METERING_UNAVAILABLE', scope: 'workspace', dimension: 'tokens' })
+  expect((await requests()).total).toBe(0)
+  await control(fixture, { tokens: null, cny: 1 })
+  const waiting = await fixture.runtime.patientPersona.processNext()
+  expect(waiting).toMatchObject({ status: 'queued' })
+  expect(dispatched).toBe(0)
+  expect((await control(fixture)).lastRejection).toMatchObject({ code: 'MODEL_METERING_UNAVAILABLE', scope: 'workspace', dimension: 'cny' })
+  expect((await requests()).total).toBe(0)
   await control(fixture, { tokens: null, cny: null })
-  await startConsultationCase(fixture.runtime)
+  await expect.poll(async () => {
+    const response = await fixture.runtime.app.request(`/api/sim/v1/patient-persona-jobs/${waiting!.jobId}`, { headers: { cookie } })
+    expect(response.status).toBe(200)
+    return response.json()
+  }).toMatchObject({ jobId: waiting!.jobId, status: 'succeeded' })
   expect(dispatched).toBe(1)
   expect((await requests()).items[0]).toMatchObject({ reservationBoundary: {
     adapter: transport === 'direct' ? 'openai-chat' : 'dsh-bridge', inputTokens: null, outputTokens: null,
