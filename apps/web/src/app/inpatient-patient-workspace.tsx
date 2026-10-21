@@ -1,4 +1,4 @@
-import type { SessionContext } from '@clinmesh/contracts/his'
+import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/his'
 import { inpatientCatalogSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { z } from 'zod'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -6,22 +6,24 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@clinmesh/ui/components/tabs'
-import { ArrowRightIcon, RefreshCwIcon } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { ArrowRightIcon, CheckIcon, MinusIcon, RefreshCwIcon } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Fragment, useState } from 'react'
 import { InpatientClinical } from './inpatient-clinical.tsx'
 import { InpatientCharges } from './inpatient-charges.tsx'
 import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.tsx'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
 import { InpatientRecord } from './inpatient-record.tsx'
+import { inpatientStageStates, type InpatientStageId, type InpatientStageState } from './inpatient-stage-states.ts'
 import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { InpatientTransfers } from './inpatient-transfers.tsx'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { apiGet } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
-type Stage = 'admission' | 'orders' | 'investigations' | 'surgery' | 'transfer' | 'fees' | 'discharge' | 'record'
+type Stage = InpatientStageId
 const stages = [
   { id: 'admission', zh: '入科分床', en: 'Admission', ownerZh: '病区护士', ownerEn: 'Ward nurse', conditionZh: '登记完成后由病区护士接诊并分床，入科后开始住院诊疗。', conditionEn: 'After registration, the ward nurse receives the patient and assigns a bed before inpatient care.' },
   { id: 'orders', zh: '诊断医嘱', en: 'Diagnoses & orders', ownerZh: '住院医生 → 病区护士 → 药师', ownerEn: 'Inpatient doctor → ward nurse → pharmacist', conditionZh: '入科后医生确认诊断、签发医嘱；护士校对后执行。药品须先由药师在“住院药房”发药，再由护士给药。', conditionEn: 'After admission, the doctor confirms diagnoses and issues orders. Nurses verify before execution; medication must be dispensed in Inpatient pharmacy before administration.' },
@@ -49,11 +51,29 @@ function nextStep(admission: InpatientAdmission, locale: WorkspaceLocale): { sta
 }
 
 type Props = { allowTransfers: boolean; admission: InpatientAdmission; admissions: InpatientAdmission[]; catalog: z.infer<typeof inpatientCatalogSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
+const stageGroups: Array<{ zh: string; en: string; ids: Stage[] }> = [
+  { zh: '入院', en: 'Admission', ids: ['admission'] },
+  { zh: '在院', en: 'In care', ids: ['orders', 'investigations', 'surgery', 'transfer', 'fees'] },
+  { zh: '出院', en: 'Discharge', ids: ['discharge'] },
+  { zh: '病案', en: 'Record', ids: ['record'] },
+]
+const optionalStages: ReadonlySet<Stage> = new Set(['investigations', 'surgery', 'transfer'])
+const stateMarker: Record<InpatientStageState, { icon: 'done' | 'current' | 'closed' | null; titleZh: string; titleEn: string }> = {
+  done: { icon: 'done', titleZh: '已完成', titleEn: 'Done' },
+  current: { icon: 'current', titleZh: '进行中', titleEn: 'Current' },
+  todo: { icon: null, titleZh: '待办', titleEn: 'Upcoming' },
+  closed: { icon: 'closed', titleZh: '已关闭，本次住院未发生', titleEn: 'Closed; did not occur this admission' },
+}
 export function InpatientPatientWorkspace({ admission, admissions, catalog, allowTransfers, session, locale, write }: Props): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const role = session.actor.roleCode, nurse = role === 'ward-nurse', doctor = role === 'inpatient-doctor', cashier = role === 'cashier'
   const clinical = doctor || nurse, archived = admission.recordStatus === 'archived'
   const next = nextStep(admission, locale)
+  const stageStates = inpatientStageStates(admission)
+  const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'], queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal), retry: false })
+  const careDay = admission.admittedAt !== undefined && scenario.data !== undefined
+    ? Math.max(1, Math.floor((Date.parse(scenario.data.virtualTime) - Date.parse(admission.admittedAt)) / 86_400_000) + 1)
+    : undefined
   const defaultStage = cashier ? 'discharge' : role === 'registrar' ? 'admission' : archived || role === 'medical-records' ? 'record' : next.stage
   const [selectedStage, setSelectedStage] = useState<Stage | null>(null), [visited, setVisited] = useState<Stage[]>([])
   const active = selectedStage ?? defaultStage
@@ -69,12 +89,28 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   }
   return <section aria-label={t('住院详情', 'Admission details')} className="flex min-h-0 flex-1 flex-col">
     <section aria-label={t('当前住院患者', 'Current inpatient')} className="flex max-h-[40%] shrink-0 flex-col gap-2 overflow-y-auto border-b bg-background px-4 py-3">
-      <div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{admission.patientName}</h2><Badge variant="outline">{t('住院号 ', 'Inpatient number ')}{admission.inpatientNumber}</Badge><Badge variant="secondary">{inpatientStatus(admission, locale)}</Badge>{archived ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
+      <div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{admission.patientName}</h2>{careDay !== undefined ? <Badge variant="outline">{t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</Badge> : null}<Badge variant="outline">{t('住院号 ', 'Inpatient number ')}{admission.inpatientNumber}</Badge><Badge variant="secondary">{inpatientStatus(admission, locale)}</Badge>{archived ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted-foreground"><span>{ward?.name ?? '—'}</span><span>{t('当前床位：', 'Current bed: ')}{bed?.name ?? (admission.bedId === undefined ? t('未分床', 'Unassigned') : '—')}</span><span>{t('预交金：', 'Deposit: ')}{formatFen(admission.depositFen, locale)}</span><span>{t('累计费用：', 'Charges: ')}{formatFen(admission.chargesFen, locale)}</span><span>{admission.financialStatus === 'settled' ? t('已结算', 'Settled') : t('未结算', 'Not settled')}</span></div>
       <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm">{archived ? t('流程状态：', 'Workflow: ') : t('下一步：', 'Next: ')}{next.text}</p><Button size="sm" variant="ghost" onClick={() => changeStage(next.stage)}><ArrowRightIcon data-icon="inline-start" aria-hidden />{archived ? t('查看病案', 'Read record') : t('查看办理环节', 'View next step')}</Button></div>
     </section>
     <Tabs value={active} onValueChange={value => { if (visibleStages.some(stage => stage.id === value)) changeStage(value as Stage) }} className="min-h-0 flex-1 gap-0">
-      <div className="flex shrink-0 items-center gap-2 border-b px-4"><div className="min-w-0 flex-1 overflow-x-auto"><TabsList aria-label={t('住院阶段', 'Inpatient stages')} variant="line" className="min-w-max gap-3">{visibleStages.map(stage => <TabsTrigger key={stage.id} value={stage.id}>{zh ? stage.zh : stage.en}</TabsTrigger>)}</TabsList></div><Button size="icon-sm" variant="ghost" aria-label={t('刷新诊疗记录', 'Refresh care')} onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}><RefreshCwIcon aria-hidden /></Button></div>
+      <div className="flex shrink-0 items-center gap-2 border-b px-4"><div className="min-w-0 flex-1 overflow-x-auto"><TabsList aria-label={t('住院阶段', 'Inpatient stages')} variant="line" className="min-w-max gap-2">{stageGroups.map(group => {
+        const groupStages = visibleStages.filter(stage => group.ids.includes(stage.id))
+        if (groupStages.length === 0) return null
+        return <Fragment key={group.zh}>
+          <span aria-hidden className="flex items-center gap-2 ps-1 text-xs font-medium text-muted-foreground"><span>{zh ? group.zh : group.en}</span><span className="h-4 w-px bg-border" /></span>
+          {groupStages.map(stage => {
+            const state = stageStates[stage.id], marker = stateMarker[state]
+            return <TabsTrigger key={stage.id} value={stage.id} data-stage-state={state} title={t(marker.titleZh, marker.titleEn)}>
+              {marker.icon === 'done' ? <CheckIcon aria-hidden className="size-3.5 shrink-0 text-green-700 dark:text-green-500" />
+                : marker.icon === 'current' ? <span aria-hidden className="size-2 shrink-0 rounded-full bg-primary" />
+                  : marker.icon === 'closed' ? <MinusIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" /> : null}
+              {zh ? stage.zh : stage.en}
+              {optionalStages.has(stage.id) ? <span aria-hidden className="text-[10px] font-normal text-muted-foreground">{t('可选', 'optional')}</span> : null}
+            </TabsTrigger>
+          })}
+        </Fragment>
+      })}</TabsList></div><Button size="icon-sm" variant="ghost" aria-label={t('刷新诊疗记录', 'Refresh care')} onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}><RefreshCwIcon aria-hidden /></Button></div>
       {visibleStages.map(stage => <TabsContent key={stage.id} value={stage.id} keepMounted className="min-h-0 overflow-y-auto p-4">
         {active === stage.id || visited.includes(stage.id) ? <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1"><h3 className="font-medium">{zh ? stage.zh : stage.en}</h3><p className="text-sm text-muted-foreground">{t('负责岗位：', 'Responsible: ')}{zh ? stage.ownerZh : stage.ownerEn}</p><p className="text-sm text-muted-foreground">{zh ? stage.conditionZh : stage.conditionEn}</p></div>

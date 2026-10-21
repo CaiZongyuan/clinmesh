@@ -12,6 +12,7 @@ const session: SessionContext = {
 }
 const admission = { id: 'admission-1', patientId: 'patient-1', patientName: '李淑芬', inpatientNumber: 'ZY-0001', admissionRoute: 'direct', wardId: 'ward-general', organizationId: 'organization-inpatient', bedId: 'bed-1', status: 'admitted', financialStatus: 'open', recordStatus: 'open', registeredAt: '2026-08-24T09:00:00+08:00', admittedAt: '2026-08-24T09:10:00+08:00', depositFen: 100000, chargesFen: 5000, versionId: '2' }
 const catalog = { wards: [{ id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient', acceptingAdmissions: true }], beds: [{ id: 'bed-1', name: '1床', roomId: 'room-1', wardId: 'ward-general', dailyPriceFen: 5000, admissionId: admission.id }] }
+const scenarioState = { clinicalReview: null, epoch: 'epoch-1', initialStateHash: 'hash-1', kind: 'candidate', scenarioId: 'scenario-1', scenarioRunId: 'scenario-run-1', seed: 1, status: 'active', virtualTime: '2026-08-24T15:00:00+08:00', workspaceId: 'workspace-demo' }
 function mount(activeSession: SessionContext = session) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><InpatientWorkspace session={activeSession} locale="zh-CN" /></QueryClientProvider>)
 }
@@ -29,6 +30,7 @@ it('患者横幅常驻，阶段只显示当前业务表单，切换后保留原�
     if (path.endsWith('/clinical')) return Response.json({ admissionId: admission.id, encounterVersion: '2', diagnosis: { revision: 0, entries: [] }, orders: [], executions: [], dispenses: [], charges: [], chargesFen: 5000 })
     if (path.endsWith('/surgeries')) return Response.json({ admissionId: admission.id, encounterVersion: '2', virtualTime: '2026-08-24T09:00:00+08:00', requests: [], executions: [] })
     if (path.endsWith('/discharge')) return Response.json({ admissionId: admission.id, events: [] })
+    if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
     throw new Error(`Unexpected read ${path}`)
   }))
   mount()
@@ -39,6 +41,10 @@ it('患者横幅常驻，阶段只显示当前业务表单，切换后保留原�
   expect(banner.textContent).toContain('住院病区')
   expect(banner.textContent).toContain('1床')
   expect(banner.textContent).toContain('50.00')
+  expect(within(banner).getByText('住院第 1 天')).toBeDefined()
+  expect(screen.getByRole('tab', { name: '入科分床' }).getAttribute('data-stage-state')).toBe('done')
+  expect(screen.getByRole('tab', { name: '诊断医嘱' }).getAttribute('data-stage-state')).toBe('current')
+  expect(screen.getByRole('tab', { name: '检查检验' }).getAttribute('data-stage-state')).toBe('todo')
   await screen.findByLabelText('医嘱项目')
   expect(screen.queryByRole('textbox', { name: '出院处理说明' })).toBeNull()
   expect(screen.queryByRole('combobox', { name: '计划术式' })).toBeNull()
@@ -54,6 +60,23 @@ it('患者横幅常驻，阶段只显示当前业务表单，切换后保留原�
   await user.click(screen.getByRole('tab', { name: '出院结算' }))
   expect((screen.getByLabelText('出院处理说明') as HTMLInputElement).value).toBe('治疗完成，等待原住院确认')
   expect(screen.queryByRole('tab', { name: '转科交接' })).toBeNull()
+})
+
+it('阶段导航随住院状态推进标注完成、进行中与已关闭', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => {
+    if (path.endsWith('/inpatient/catalog')) return Response.json(catalog)
+    if (path.endsWith('/inpatient/transfer-catalog')) return Response.json({ wards: [{ id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient' }], beds: [] })
+    if (path.endsWith('/inpatient/admissions')) return Response.json({ items: [{ ...admission, status: 'discharge-pending' }] })
+    if (path.endsWith('/scenario-runs/current')) return Response.json(scenarioState)
+    throw new Error(`Unexpected read ${path}`)
+  }))
+  mount()
+  await userEvent.setup().click(await screen.findByRole('button', { name: '查看李淑芬' }))
+  expect(screen.getByRole('tab', { name: '诊断医嘱' }).getAttribute('data-stage-state')).toBe('done')
+  expect(screen.getByRole('tab', { name: '检查检验' }).getAttribute('data-stage-state')).toBe('closed')
+  expect(screen.getByRole('tab', { name: '手术' }).getAttribute('data-stage-state')).toBe('closed')
+  expect(screen.getByRole('tab', { name: '出院结算' }).getAttribute('data-stage-state')).toBe('current')
+  expect(screen.getByRole('tab', { name: '病案' }).getAttribute('data-stage-state')).toBe('todo')
 })
 
 it('药师选中患者后保留窄住院上下文，显示发药后交接给护士的办理位置', async () => {
