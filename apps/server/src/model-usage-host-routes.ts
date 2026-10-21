@@ -31,6 +31,7 @@ export function installHostModelUsageRoutes(app: Hono, usage: ModelUsageService,
       const binding = integration.doctorRecognitionContext(input.permit)
       const attemptId = usage.admitHost({ context: binding, feature: 'doctor_delegation',
         provider: input.provider, model: input.model, outputLimit: 1024, kind: 'initial',
+        ...(input.reservationBoundary === undefined ? {} : { reservationBoundary: input.reservationBoundary }),
         ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }) })
       integration.hostModelWaiting.clear(binding)
       if (attemptId === undefined) return context.json({ error: { code: 'HOST_ATTEMPT_ALREADY_ADMITTED' } }, 409)
@@ -38,7 +39,8 @@ export function installHostModelUsageRoutes(app: Hono, usage: ModelUsageService,
       return context.json({ attemptId, receipt }, 201)
     } catch (error) {
       const failure = modelUsageControlFailure(error)
-      if (failure !== undefined) return context.json({ error: { code: failure.code, scope: failure.scope } }, failure.status)
+      if (failure !== undefined) return context.json({ error: { code: failure.code, scope: failure.scope,
+        ...(failure.dimension === 'tokens' || failure.dimension === 'cny' ? { dimension: failure.dimension, remaining: failure.remaining, required: failure.required } : {}) } }, failure.status)
       if (error instanceof AgentIntegrationError) return context.json({ error: { code: error.code } }, error.status)
       if (error instanceof z.ZodError || error instanceof SyntaxError) return context.json({ error: { code: 'HOST_INPUT_INVALID' } }, 400)
       return context.json({ error: { code: 'HOST_ADMISSION_UNAVAILABLE' } }, 503)

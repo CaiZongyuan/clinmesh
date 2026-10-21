@@ -2,6 +2,7 @@ import { ModelTaskRecovery, modelControlWaitingCount } from './application/model
 import { createApp } from './app.ts'
 import { ModelUsageService } from './application/model-usage-service.ts'
 import type { ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
+import type { ModelPricingConfig } from '@clinmesh/contracts/model-pricing'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
 import { ScenarioService } from './application/scenario-service.ts'
@@ -124,6 +125,7 @@ function pathologyActorContext(event: {
 
 export interface CreateClinMeshRuntimeOptions {
   modelUsageControl?: ModelUsagePolicyConfig
+  modelPricing?: ModelPricingConfig
   dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   activeReferenceReleaseId?: string
   ai?: {
@@ -223,7 +225,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const patientPersonas = new PatientPersonaRepository(database, syntheticCases)
     const investigationResults = new InvestigationResultRepository(database)
     const laboratoryServicePublications = new LaboratoryServicePublicationRepository(database)
-    const modelUsage = new ModelUsageService(database, commands, options.modelUsageControl)
+    const modelUsage = new ModelUsageService(database, commands, options.modelUsageControl, options.modelPricing)
     const unaccountedChatCompletions: JsonChatCompletionsProvider | undefined = options.chatCompletionsProvider
       ?? (options.dshModelBridge === undefined ? undefined : new DshModelProvider(options.dshModelBridge))
       ?? (options.ai === undefined

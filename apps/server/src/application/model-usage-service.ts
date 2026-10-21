@@ -6,18 +6,22 @@ import {
   hostDoctorRecognitionTimeoutMs, mergeModelTokenUsage, unknownModelTokenUsage,
   type ModelTokenUsage, type ModelUsageAttempt, type ModelUsageConfiguration, type ModelUsageFilter, type ModelUsageOutcome,
   type ModelUsagePolicyConfig, type ModelUsageControlUpdate,
+  modelUsageReservationBoundarySchema, modelUsageReconcileSchema, modelUsageRepriceSchema,
 } from '@clinmesh/contracts/model-usage'
+import { modelPricingConfigSchema, modelPricingDecimalMicro, type ModelPricingConfig, type ModelUsageCost } from '@clinmesh/contracts/model-pricing'
+import { freezeModelPrice, priceModelUsage, priceModelReservation } from './model-usage-pricing.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { ModelUsageRecorder } from './model-usage-lifecycle.ts'
-import { ModelUsageControl, ModelUsageControlError } from './model-usage-control.ts'
+import { ModelUsageControl, ModelUsageControlError, ModelUsagePolicyError } from './model-usage-control.ts'
 
 const rowSchema = z.object({ record_json: z.string() })
 const summaryRowSchema = z.object({
   requests: z.number(), inFlight: z.number(), unknownRequests: z.number(),
   knownTokens: z.number(), unknownTokenRequests: z.number(),
+  cnyMicro: z.number().int().nonnegative().safe().nullable(), unpricedRequests: z.number(),
 })
-const knownTokensSql = `COALESCE(json_extract(record_json, '$.usage.totalTokens'),
+const knownTokensSql = `COALESCE(json_extract(record_json, '$.accounting.totalTokens'), json_extract(record_json, '$.usage.totalTokens'),
   COALESCE(json_extract(record_json, '$.usage.inputTokens'),
     CASE WHEN json_extract(record_json, '$.usage.raw.format') = 'dsh' THEN
       COALESCE(json_extract(record_json, '$.usage.raw.uncachedInputTokens'), 0)
@@ -30,12 +34,16 @@ const totalsSql = `COALESCE(SUM(${actualRequestSql}), 0) AS requests,
   COALESCE(SUM(status = 'in-flight'), 0) AS inFlight,
   COALESCE(SUM(status = 'unknown'), 0) AS unknownRequests,
   COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens,
-  COALESCE(SUM((${actualRequestSql}) AND json_extract(record_json, '$.usage.totalTokens') IS NULL), 0) AS unknownTokenRequests`
+  COALESCE(SUM((${actualRequestSql}) AND COALESCE(json_extract(record_json, '$.accounting.totalTokens'), json_extract(record_json, '$.usage.totalTokens')) IS NULL), 0) AS unknownTokenRequests,
+  SUM(COALESCE(json_extract(record_json, '$.effectiveCost.cnyMicro'), json_extract(record_json, '$.cost.cnyMicro'))) AS cnyMicro,
+  COALESCE(SUM((${actualRequestSql}) AND COALESCE(json_extract(record_json, '$.effectiveCost.cnyMicro'), json_extract(record_json, '$.cost.cnyMicro')) IS NULL), 0) AS unpricedRequests`
 
 /** One writer owns attempts, task admission and settlement. Queries never expose clinical content. */
 export class ModelUsageService implements ModelUsageRecorder {
   readonly #control: ModelUsageControl
-  constructor(private readonly database: ClinMeshDatabase, commands: CommandExecutor, deployment?: ModelUsagePolicyConfig) {
+  readonly #pricing: ModelPricingConfig
+  constructor(private readonly database: ClinMeshDatabase, private readonly commands: CommandExecutor, deployment?: ModelUsagePolicyConfig, pricing: ModelPricingConfig = { prices: [], exchangeRates: [] }) {
+    this.#pricing = modelPricingConfigSchema.parse(pricing)
     this.#control = new ModelUsageControl(database, commands, deployment)
     // A previous writer cannot prove whether its in-flight requests reached the Provider.
     this.database.driver.prepare(`UPDATE model_usage_attempt SET status = 'unknown',
@@ -49,6 +57,7 @@ export class ModelUsageService implements ModelUsageRecorder {
     return { ...state, deployment: context.roleCode === 'administrator' ? state.deployment : null }
   }
   updateControl(context: ActorContext, input: ModelUsageControlUpdate, key: string) { return this.#control.update(context, input, key) }
+  pricing() { return this.#pricing }
   canDispatch(workspaceId: string) { return this.#control.canDispatch(workspaceId) }
   automaticRetries(workspaceId: string) { return this.#control.automaticRetries(workspaceId) }
   subscribe(listener: () => void) { return this.#control.subscribe(listener) }
@@ -59,13 +68,19 @@ export class ModelUsageService implements ModelUsageRecorder {
 
   begin(input: Parameters<ModelUsageRecorder['begin']>[0], reserve?: () => void): string {
     const context = modelUsageContextSchema.parse(input.context)
+    const priceSnapshot = freezeModelPrice(this.#pricing, input.provider, input.model)
+    const boundary = input.reservationBoundary === undefined ? null : modelUsageReservationBoundarySchema.parse(input.reservationBoundary)
+    const bounds = boundary ?? { inputTokens: null, outputTokens: null }
+    const reservation = priceModelReservation(priceSnapshot, bounds)
+    const tokenBound = bounds.inputTokens === null || bounds.outputTokens === null ? null : bounds.inputTokens + bounds.outputTokens
+    if (tokenBound !== null && !Number.isSafeInteger(tokenBound)) throw new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', 'workspace', 'tokens')
     const record = modelUsageAttemptSchema.parse({
       id: uuidv7(), context, feature: modelUsageFeatureSchema.parse(input.feature),
       provider: input.provider, requestedModel: input.model, actualModel: null,
       reasoningEffort: input.reasoningEffort ?? null, outputLimit: input.outputLimit,
       kind: input.kind, status: 'in-flight', startedAt: new Date().toISOString(), endedAt: null,
       providerRequestId: null, httpStatus: null, usage: unknownModelTokenUsage,
-      cost: { status: 'price-not-configured', cny: null },
+      priceSnapshot, reservationBoundary: boundary, cost: priceModelUsage(priceSnapshot, unknownModelTokenUsage, 'unknown'),
     })
     try { return this.database.driver.transaction(() => {
       this.database.driver.prepare(`INSERT INTO model_usage_attempt
@@ -73,7 +88,7 @@ export class ModelUsageService implements ModelUsageRecorder {
         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'in-flight', ?, ?)`)
         .run(record.id, context.workspaceId, context.epoch, context.caseId ?? null, record.feature,
           record.provider, record.requestedModel, record.startedAt, JSON.stringify(record))
-      this.#control.reserve(context.workspaceId, record.id, record.kind)
+      this.#control.reserve(context.workspaceId, record.id, record.kind, { tokens: tokenBound, cny: reservation.cnyMicro })
       reserve?.()
       return record.id
     })() } catch (cause) {
@@ -98,17 +113,19 @@ export class ModelUsageService implements ModelUsageRecorder {
       const row = rowSchema.parse(this.database.driver.prepare('SELECT record_json FROM model_usage_attempt WHERE attempt_id = ?').get(attemptId))
       const previous = modelUsageAttemptSchema.parse(JSON.parse(row.record_json))
       // A completed attempt is immutable; duplicate transport delivery is harmless.
-      if (previous.status !== 'in-flight' && previous.status !== 'unknown') return
+      if (previous.status !== 'in-flight' && previous.status !== 'unknown' && previous.usage.totalTokens !== null && previous.cost.cny !== null) return
       const usage = mergeModelTokenUsage(previous.usage, outcome.usage)
+      const dispatch = previous.dispatch === 'dispatched' ? 'dispatched' : outcome.dispatch ?? previous.dispatch
+      const priceSnapshot = previous.priceSnapshot ?? freezeModelPrice({ prices: [], exchangeRates: [] }, previous.provider, previous.requestedModel)
+      const cost = priceModelUsage(priceSnapshot, usage, dispatch)
       const record = modelUsageAttemptSchema.parse({ ...previous, ...outcome, usage,
-        dispatch: previous.dispatch === 'dispatched' ? 'dispatched' : outcome.dispatch ?? previous.dispatch,
+        dispatch, cost, priceSnapshot,
         actualModel: outcome.actualModel ?? previous.actualModel,
         providerRequestId: outcome.providerRequestId ?? previous.providerRequestId,
         httpStatus: outcome.httpStatus ?? previous.httpStatus,
         endedAt: outcome.status === undefined ? previous.endedAt : new Date().toISOString(),
       })
-      this.database.driver.prepare(`UPDATE model_usage_attempt SET actual_model = ?, status = ?, record_json = ? WHERE attempt_id = ?`)
-        .run(record.actualModel, record.status, JSON.stringify(record), attemptId)
+      this.#save(this.#account(record))
       this.#control.settle(attemptId, record.dispatch)
     })()
   }
@@ -125,9 +142,12 @@ export class ModelUsageService implements ModelUsageRecorder {
       SELECT feature, SUM(${actualRequestSql}) AS requests, COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens
       FROM model_usage_attempt a WHERE ${query.sql} GROUP BY feature ORDER BY requests DESC`).all(...query.args))
     const control = this.control(context.workspaceId)
-    return modelUsageOverviewSchema.parse({ totals: { ...totals, unpricedRequests: totals.requests, cny: null },
+    const { cnyMicro, ...visibleTotals } = totals
+    return modelUsageOverviewSchema.parse({ totals: { ...visibleTotals, cny: cnyMicro === null ? null : cnyMicro / 1_000_000,
+      reservedTokens: control.workspace.tokensReserved, reservedCny: control.workspace.cnyReserved,
+      tokensUnknownReservations: control.workspace.tokensUnknownReservations, cnyUnknownReservations: control.workspace.cnyUnknownReservations },
       trend, features, coverage: 'server-direct-bridge-and-host', policy: { enabled: control.effective.enabled,
-        requests: control.workspace.requests, tokens: null, cny: null } })
+        requests: control.workspace.requests, tokens: control.workspace.tokens, cny: control.workspace.cny } })
   }
 
   list(context: ActorContext, filter: ModelUsageFilter) {
@@ -178,6 +198,81 @@ export class ModelUsageService implements ModelUsageRecorder {
       "SELECT record_json FROM model_usage_attempt WHERE attempt_id = ? AND feature = 'doctor_delegation'").get(attemptId))
     const attempt = modelUsageAttemptSchema.parse(JSON.parse(row.record_json))
     return attempt.status !== 'in-flight' || !this.control(attempt.context.workspaceId).effective.enabled
+  }
+
+  reconcile(context: ActorContext, attemptId: string, input: z.infer<typeof modelUsageReconcileSchema>, key: string) {
+    return this.#correct(context, attemptId, modelUsageReconcileSchema.parse(input), key, false)
+  }
+
+  reprice(context: ActorContext, attemptId: string, input: z.infer<typeof modelUsageRepriceSchema>, key: string) {
+    return this.#correct(context, attemptId, modelUsageRepriceSchema.parse(input), key, true)
+  }
+
+  #correct(context: ActorContext, attemptId: string,
+    input: z.infer<typeof modelUsageReconcileSchema> | z.infer<typeof modelUsageRepriceSchema>, key: string, reprice: boolean) {
+    if (context.roleCode !== 'administrator') throw new ModelUsagePolicyError('ROLE_NOT_ALLOWED', 403)
+    return this.commands.execute({ context, contextRequirement: 'current', idempotencyScope: 'workspace',
+      dataSchema: modelUsageAttemptSchema, expectedVersions: {}, idempotencyKey: key, input: { attemptId, ...input },
+      operation: reprice ? 'model-usage.reprice' : 'model-usage.reconcile' }, () => {
+      const previous = this.detail(context, attemptId)
+      if (previous === undefined) throw new ModelUsagePolicyError('NOT_FOUND', 404)
+      if (previous.corrections.length !== input.expectedRevision) throw new ModelUsagePolicyError('EXPECTED_VERSION_CONFLICT', 409)
+      if (previous.status === 'in-flight' || previous.dispatch === 'not-dispatched') throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
+      const current = this.#account(previous)
+      let totalTokens: number | null = null
+      let cny: number | null = null
+      let priceSnapshot = null
+      let cost: ModelUsageCost | null = null
+      if (reprice) {
+        if (!['price-not-configured', 'exchange-rate-not-configured'].includes(previous.cost.status) || current.effectiveCost?.cny != null) {
+          throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
+        }
+        const configured = freezeModelPrice(this.#pricing, previous.provider, previous.requestedModel)
+        // A missing FX rate does not authorize changing the invocation's original unit prices.
+        priceSnapshot = configured
+        if (previous.priceSnapshot?.price != null) {
+          const rate = this.#pricing.exchangeRates.find(rate => rate.currency === previous.priceSnapshot!.price!.currency)
+          priceSnapshot = { ...previous.priceSnapshot, exchangeRate: rate === undefined ? null : { version: rate.version, cnyPerUnit: rate.cnyPerUnit } }
+        }
+        cost = priceModelUsage(priceSnapshot, previous.usage, previous.dispatch)
+        if (cost.cny === null) throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
+        cny = cost.cny
+      } else {
+        if ('totalTokens' in input && input.totalTokens !== undefined) {
+          if (current.accounting?.totalTokens !== null) throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
+          totalTokens = input.totalTokens
+        }
+        if ('cny' in input && input.cny !== undefined) {
+          if (current.accounting?.cny !== null) throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
+          cny = input.cny
+        }
+      }
+      const record = modelUsageAttemptSchema.parse({ ...current, corrections: [...previous.corrections, {
+        revision: previous.corrections.length + 1, at: new Date().toISOString(), actorId: context.actorId,
+        evidence: input.evidence, kind: reprice ? 'reprice' : 'reconcile', totalTokens, cny, priceSnapshot, cost,
+      }] })
+      const saved = this.#account(record)
+      this.#save(saved)
+      return { data: saved, effects: [] }
+    }).data
+  }
+
+  #account(record: ModelUsageAttempt): ModelUsageAttempt {
+    let effectiveCost = record.cost
+    let totalTokens = record.dispatch === 'not-dispatched' ? 0 : record.usage.totalTokens
+    for (const correction of record.corrections) {
+      if (correction.totalTokens !== null) totalTokens = correction.totalTokens
+      if (correction.cost !== null) effectiveCost = correction.cost
+      if (correction.cny !== null) effectiveCost = { ...effectiveCost, status: 'priced', cny: correction.cny,
+        cnyMicro: Number(modelPricingDecimalMicro(correction.cny)) }
+    }
+    if (record.status !== 'in-flight') this.#control.settleDimensions(record.id, { tokens: totalTokens, cny: effectiveCost.cnyMicro }, record.dispatch === 'not-dispatched')
+    return { ...record, effectiveCost, accounting: { totalTokens, cny: effectiveCost.cny } }
+  }
+
+  #save(record: ModelUsageAttempt): void {
+    this.database.driver.prepare('UPDATE model_usage_attempt SET actual_model = ?, status = ?, record_json = ? WHERE attempt_id = ?')
+      .run(record.actualModel, record.status, JSON.stringify(record), record.id)
   }
 
   #expireHostAttempts(): void {

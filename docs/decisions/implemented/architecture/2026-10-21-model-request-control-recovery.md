@@ -28,6 +28,6 @@ Server 在途请求接入工作区取消信号。Host 独立识别通过原尝�
 
 ## Consequences
 
-模型生成依赖账本可写性；即使额度无限，记账失败仍暂停新派发。停用不影响普通 HIS 读写或确定性检查，取消也不保证服务商停止计费。部署仍为单 Server/SQLite writer，Host 不保存第二份余额。Token、人民币计价、人工核对及明细清理仍由[正式规格](../../../spec/2026-10-19-model-usage-control.md)的后续切片拥有。
+模型生成依赖账本可写性；即使额度无限，记账失败仍暂停新派发。停用不影响普通 HIS 读写或确定性检查，取消也不保证服务商停止计费。部署仍为单 Server/SQLite writer，Host 不保存第二份余额。Token、人民币计价与人工核对由[计价控制决策](2026-10-21-model-usage-pricing-control.md)拥有；明细清理由[正式规格](../../../spec/2026-10-19-model-usage-control.md)的后续切片拥有。
 
 验证使用公开 HTTP、临时 SQLite、少量带屏障的合成请求和三类实际派发边界，管理界面使用 Web 持久化旅程及 DSH React 18/19 合同；不运行真实模型或压测。当前接口与持久化事实分别由[安全合同](../../../architecture/security-and-reliability.md#模型用量查询)和[存储合同](../../../architecture/storage.md#910-模型调用账本)拥有。

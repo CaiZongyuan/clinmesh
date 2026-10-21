@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { installHostModelUsageRoutes } from './model-usage-host-routes.ts'
-import { modelUsageFilterSchema, modelUsageControlUpdateSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageFilterSchema, modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema } from '@clinmesh/contracts/model-usage'
 import { ModelUsagePolicyError } from './application/model-usage-control.ts'
 import type { ModelUsageService } from './application/model-usage-service.ts'
 import { extname } from 'node:path'
@@ -400,6 +400,25 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const identity = options.identity
     if (options.modelUsage !== undefined) {
       const usage = options.modelUsage
+      app.get('/api/model-usage/pricing', async context => {
+        try {
+          await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.pricing())
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      for (const operation of ['reconcile', 'reprice'] as const) {
+        app.post(`/api/model-usage/requests/:attemptId/${operation}`, async context => {
+          try {
+            identity.assertTrustedMutation(context.req.raw.headers)
+            const session = await identity.resolveSessionContext(context.req.raw.headers)
+            const id = z.uuid().parse(context.req.param('attemptId'))
+            const body: unknown = await context.req.json()
+            return context.json(operation === 'reconcile'
+              ? usage.reconcile(session.actor, id, modelUsageReconcileSchema.parse(body), requestIdempotencyKey(context))
+              : usage.reprice(session.actor, id, modelUsageRepriceSchema.parse(body), requestIdempotencyKey(context)))
+          } catch (error) { return apiErrorResponse(context, error) }
+        })
+      }
       app.get('/api/model-usage/control', async context => {
         try {
           const session = await identity.resolveSessionContext(context.req.raw.headers)

@@ -1,8 +1,29 @@
 import { z } from 'zod'
+import { modelPriceSnapshotSchema, modelUsageCostSchema, modelPricingDecimalMicro } from './model-pricing.ts'
 
 const identifier = z.string().min(1).max(256).regex(/^[\p{L}\p{N}_.:/@+{}"[\], -]+$/u)
 const modelName = z.string().min(1).max(1024).regex(/^[\p{L}\p{N}_.:/@+{}"[\], -]+$/u)
 const count = z.number().int().nonnegative().safe().nullable()
+const money = z.number().nonnegative().refine(value => {
+  try { modelPricingDecimalMicro(value); return true } catch { return false }
+}, 'Expected a safe amount with at most six decimal places').nullable()
+export const modelUsageReservationBoundarySchema = z.object({
+  adapter: z.enum(['openai-chat', 'dsh-bridge', 'dsh-host']), version: identifier,
+  inputTokens: count, outputTokens: count,
+  reason: z.enum(['output-limit-unbounded', 'adapter-metering-unavailable']).nullable(),
+}).strict()
+export type ModelUsageReservationBoundary = z.infer<typeof modelUsageReservationBoundarySchema>
+export const modelUsageCorrectionSchema = z.object({
+  revision: z.number().int().nonnegative().safe(), at: z.iso.datetime(), actorId: identifier,
+  evidence: identifier, kind: z.enum(['reconcile', 'reprice']),
+  totalTokens: count, cny: money,
+  priceSnapshot: modelPriceSnapshotSchema.nullable(), cost: modelUsageCostSchema.nullable(),
+}).strict()
+export const modelUsageReconcileSchema = z.object({
+  expectedRevision: z.number().int().nonnegative().safe(), evidence: identifier,
+  totalTokens: z.number().int().nonnegative().safe().optional(), cny: money.unwrap().optional(),
+}).strict().refine(input => input.totalTokens !== undefined || input.cny !== undefined, 'At least one verified dimension is required')
+export const modelUsageRepriceSchema = z.object({ expectedRevision: z.number().int().nonnegative().safe(), evidence: identifier }).strict()
 export const modelUsageFeatureSchema = z.enum(['patient_persona', 'patient_dialogue_reply',
   'consultation_history_increment', 'consultation_history_summary', 'investigation_result',
   'investigation_service_result', 'laboratory_service_enrichment', 'doctor_recommendations',
@@ -124,7 +145,12 @@ export const modelUsageAttemptSchema = z.object({
   startedAt: z.string().datetime(), endedAt: z.string().datetime().nullable(),
   providerRequestId: identifier.nullable(), httpStatus: z.number().int().nullable(),
   usage: modelTokenUsageSchema,
-  cost: z.object({ status: z.literal('price-not-configured'), cny: z.null() }).strict(),
+  cost: modelUsageCostSchema,
+  priceSnapshot: modelPriceSnapshotSchema.nullable().default(null),
+  reservationBoundary: modelUsageReservationBoundarySchema.nullable().default(null),
+  effectiveCost: modelUsageCostSchema.optional(),
+  accounting: z.object({ totalTokens: count, cny: money }).strict().optional(),
+  corrections: z.array(modelUsageCorrectionSchema).default([]),
 }).strict()
 export type ModelUsageAttempt = z.infer<typeof modelUsageAttemptSchema>
 export const modelUsageFilterSchema = z.object({
@@ -139,42 +165,50 @@ const totalsSchema = z.object({
   requests: z.number().int().nonnegative(), inFlight: z.number().int().nonnegative(),
   unknownRequests: z.number().int().nonnegative(), knownTokens: z.number().nonnegative(),
   unknownTokenRequests: z.number().int().nonnegative(), unpricedRequests: z.number().int().nonnegative(),
-  cny: z.null(),
+  cny: money, reservedTokens: z.number().nonnegative().default(0), reservedCny: z.number().nonnegative().default(0),
+  tokensUnknownReservations: z.number().int().nonnegative().default(0), cnyUnknownReservations: z.number().int().nonnegative().default(0),
 }).strict()
 export const modelUsageOverviewSchema = z.object({
   totals: totalsSchema,
   trend: z.array(z.object({ date: z.string().date(), requests: z.number().int(), knownTokens: z.number() }).strict()),
   features: z.array(z.object({ feature: modelUsageFeatureSchema, requests: z.number().int(), knownTokens: z.number() }).strict()),
   coverage: z.literal('server-direct-bridge-and-host'),
-  policy: z.object({ enabled: z.boolean(), requests: count, tokens: z.null(), cny: z.null() }).strict(),
+  policy: z.object({ enabled: z.boolean(), requests: count, tokens: count, cny: money }).strict(),
 }).strict()
 export type ModelUsageOverview = z.infer<typeof modelUsageOverviewSchema>
 export const modelUsageListSchema = z.object({ items: z.array(modelUsageAttemptSchema), total: z.number().int().nonnegative() }).strict()
 
 export const modelUsagePolicyConfigSchema = z.object({
   enabled: z.boolean().default(true), requests: count.default(null), automaticRetries: z.boolean().default(true),
+  tokens: count.optional(), cny: money.optional(),
 }).strict()
 export type ModelUsagePolicyConfig = z.infer<typeof modelUsagePolicyConfigSchema>
-export const modelUsageControlUpdateSchema = modelUsagePolicyConfigSchema.required().extend({
+export const modelUsageControlUpdateSchema = modelUsagePolicyConfigSchema.pick({ enabled: true, requests: true, automaticRetries: true }).required().extend({
   expectedVersion: z.number().int().positive().safe(),
+  tokens: count.optional(), cny: money.optional(),
 }).strict()
 export type ModelUsageControlUpdate = z.infer<typeof modelUsageControlUpdateSchema>
-export const modelUsageControlCodeSchema = z.enum(['MODEL_DISABLED', 'MODEL_REQUEST_LIMIT', 'MODEL_RETRY_DISABLED', 'MODEL_LEDGER_UNAVAILABLE'])
+export const modelUsageControlCodeSchema = z.enum(['MODEL_DISABLED', 'MODEL_REQUEST_LIMIT', 'MODEL_TOKEN_LIMIT', 'MODEL_CNY_LIMIT', 'MODEL_METERING_UNAVAILABLE', 'MODEL_RETRY_DISABLED', 'MODEL_LEDGER_UNAVAILABLE'])
 const controlScopeSchema = modelUsagePolicyConfigSchema.required().extend({
   version: z.number().int().positive(), requestsStartedAt: z.iso.datetime().nullable(),
   used: z.number().int().nonnegative().safe(), reserved: z.number().int().nonnegative().safe(), remaining: count,
+  tokensStartedAt: z.iso.datetime().nullable(), tokensUsed: z.number().int().nonnegative().safe(), tokensReserved: z.number().int().nonnegative().safe(), tokensRemaining: count,
+  cnyStartedAt: z.iso.datetime().nullable(), cnyUsed: money.unwrap(), cnyReserved: money.unwrap(), cnyRemaining: money,
+  tokensUnknownReservations: z.number().int().nonnegative(), cnyUnknownReservations: z.number().int().nonnegative(),
 }).strict()
 export const modelUsageControlSchema = z.object({
   workspace: controlScopeSchema, deployment: controlScopeSchema.nullable(),
   effective: z.object({ enabled: z.boolean(), automaticRetries: z.boolean() }).strict(),
   waiting: z.number().int().nonnegative(), inFlight: z.number().int().nonnegative(),
-  lastRejection: z.object({ code: modelUsageControlCodeSchema, scope: z.enum(['workspace', 'deployment']), at: z.iso.datetime() }).strict().nullable(),
+  lastRejection: z.object({ code: modelUsageControlCodeSchema, scope: z.enum(['workspace', 'deployment']), at: z.iso.datetime(),
+    dimension: z.enum(['requests', 'tokens', 'cny']).nullable().default(null), remaining: z.number().nonnegative().nullable().default(null), required: z.number().nonnegative().nullable().default(null) }).strict().nullable(),
 }).strict()
 export type ModelUsageControl = z.infer<typeof modelUsageControlSchema>
 
 export const hostDoctorUsageAdmissionSchema = z.object({
   permit: z.string().min(32).max(8192), provider: identifier, model: modelName,
   reasoningEffort: identifier.optional(),
+  reservationBoundary: modelUsageReservationBoundarySchema.optional(),
 }).strict()
 export const hostDoctorRecognitionTimeoutMs = 30_000
 export const hostDoctorUsagePermitSchema = z.object({

@@ -259,6 +259,7 @@ describe('SQLite lifecycle', () => {
         '0072_model-usage-control.sql',
         '0073_model-task-recovery.sql',
         '0074_host-model-waiting.sql',
+        '0075_model-usage-dimensions.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -392,6 +393,7 @@ describe('SQLite lifecycle', () => {
         '0072_model-usage-control.sql',
         '0073_model-task-recovery.sql',
         '0074_host-model-waiting.sql',
+        '0075_model-usage-dimensions.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -2033,6 +2035,7 @@ describe('SQLite lifecycle', () => {
         '0072_model-usage-control.sql',
         '0073_model-task-recovery.sql',
         '0074_host-model-waiting.sql',
+        '0075_model-usage-dimensions.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([

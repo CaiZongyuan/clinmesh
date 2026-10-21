@@ -13,6 +13,7 @@ const databasePath = resolve(config.databasePath)
 await mkdir(dirname(databasePath), { recursive: true })
 const runtime = await createClinMeshRuntime({
   ...(config.modelUsageControl === undefined ? {} : { modelUsageControl: config.modelUsageControl }),
+  ...(config.modelPricing === undefined ? {} : { modelPricing: config.modelPricing }),
   ...(config.ai === undefined ? {} : { ai: config.ai }),
   ...(config.dshModelBridge === undefined ? {} : { dshModelBridge: config.dshModelBridge }),
   ...(config.referenceReleaseId === undefined
