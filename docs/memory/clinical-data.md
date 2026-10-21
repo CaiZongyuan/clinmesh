@@ -54,6 +54,8 @@
 
 - 校验持久后台任务的 Grant 时，覆盖同一业务结果的所有公开触发路径，尤其失败后的显式重试、暂停恢复和取消签署；不能只检查主入口操作权限。失效回归保留原 Grant 撤销后同一 Client 仍有其他有效 Grant 的场景，防止借用另一授权继续旧任务。 同岗位的不同后台任务可以共享身份基础校验，但保留各自操作白名单，避免为新任务放宽旧任务权限。
 
+- 后台任务回归需要第二位参与者时，建立真实的合成 User Account、活动 Workspace Membership 和岗位授权；只替换 context 的 Actor ID 会被持久身份校验拒绝。保留不同 Actor 使用同一幂等键的原断言，不为旧夹具放宽生产权限；示例见[DSH 模型集成测试](../../apps/server/tests/dsh-model-integration.test.ts)。
+
 - 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../decisions/implemented/architecture/2026-10-08-consultation-history-increments.md)。
 
 - 预填与后台文本合并的回归须覆盖首次自动更新同一个未保存字段，以及其他字段已有自动草稿时该字段才首次更新；同时断言编辑框、保存后的服务端正文和刷新结果，防止界面丢弃新增后又通过保存删掉服务端已应用的内容。当前合并基线见[片段归属决策](../decisions/implemented/architecture/2026-10-08-consultation-history-ownership.md)。

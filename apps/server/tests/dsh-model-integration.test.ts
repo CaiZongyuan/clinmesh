@@ -981,6 +981,18 @@ it('pins queued personas through settings changes and a Server restart', async (
   expect(await instance.runtime.patientPersona.processNext()).toMatchObject({ status: 'succeeded' })
   expect(dsh.calls.at(-1)?.provider).toBe('synthetic-provider-a')
   // Idempotency belongs to the actor: another administrator's new task uses the new selection.
+  const database = instance.runtime.database
+  database.driver.transaction(() => {
+    database.driver.prepare(`INSERT INTO user (id, name, email, email_verified, created_at, updated_at)
+      VALUES ('user-second-administrator', '合成第二管理员', 'second-administrator@example.invalid', 1, 1, 1)`).run()
+    database.driver.prepare(`INSERT INTO workspace_membership
+      (membership_id, workspace_id, user_id, actor_id, status, created_at)
+      SELECT 'membership-second-administrator', workspace_id, 'user-second-administrator',
+        'synthetic-second-administrator', 'active', created_at FROM workspace_membership
+      WHERE workspace_id = ? AND actor_id = ?`).run(context.workspaceId, context.actorId)
+    database.driver.prepare(`INSERT INTO membership_practitioner_role (membership_id, workspace_id, practitioner_role_id)
+      VALUES ('membership-second-administrator', ?, ?)`).run(context.workspaceId, context.practitionerRoleId!)
+  })()
   await instance.runtime.patientPersona.enqueue({ caseId: generated!.caseIds[0]!,
     context: { ...context, actorId: 'synthetic-second-administrator' }, idempotencyKey })
   expect(await instance.runtime.patientPersona.processNext()).toMatchObject({ status: 'succeeded' })
