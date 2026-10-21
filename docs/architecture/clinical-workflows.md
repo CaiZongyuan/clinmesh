@@ -148,7 +148,7 @@ Report Acknowledgement 是按报告版本独立保存的领域事实，只能由
 
 Scenario 默认提供一个“住院科”、一个“住院病区”、一间病房与三张床位，沿用 `organization-inpatient-medicine`、`ward-general` 等稳定标识；住院医生与病区护士各有一个默认 Practitioner Role。目录以 `acceptingAdmissions` 区分新入院目标，新的直接入院、转院登记及新签发住院证仅接受默认病区，其他病区返回 `INPATIENT_WARD_UNAVAILABLE`；已签发住院证继续按原患者及目标病区转收，原幂等键优先重放，不重复收费。服务端仍按受信 Organization 和病区 Location 限定读写，管理员岗位只控制场景。
 
-旧库的病区名称、资源、岗位、患者归属、床位占用、费用、审核归档及原回执完整保留；启动不合并历史病区、不自动转科或停嘱。目录保留旧病区并标记其不接收新登记，原岗位仍负责既有住院与转科任务。身份响应的可选 `locationName` 取自当前 Workspace/Epoch 的权威 FHIR Location，位置缺失不移除原岗位或改变 Actor Context。收敛默认配置的取舍见[单住院科与旧上下文保留](../decisions/implemented/simplification/2026-10-21-single-inpatient-default.md)。
+旧库的资源、岗位、患者归属、床位占用、费用、审核归档及原回执完整保留；启动不合并历史病区、不自动转科或停嘱。已识别的原默认住院科、病区、病房和床位显示名在原稳定 ID 上升级为中性名称，FHIR 旧名称仍可从历史版本读取，病区目录名称同步更新；自定义名称及其他旧病区名称保持原样，不改变临床版本、首页来源指纹或原回执。目录保留旧病区并标记其不接收新登记，原岗位仍负责既有住院与转科任务。身份响应的可选 `locationName` 取自当前 Workspace/Epoch 的权威 FHIR Location，位置缺失不移除原岗位或改变 Actor Context。收敛默认配置的取舍见[单住院科与旧上下文保留](../decisions/implemented/simplification/2026-10-21-single-inpatient-default.md)。
 
 床位占用保存起止时间，活动床位与活动住院各有唯一约束。接诊、转床与互换床位同时更新占用事实及 Encounter.location 历史；任一侧版本、投影或审计失败则整体回滚。跨科转移属于独立转科流程；多病区责任边界通过显式双病区测试环境验证。
 
