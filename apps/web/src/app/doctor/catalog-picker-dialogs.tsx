@@ -449,8 +449,8 @@ export function DiagnosisCatalogPicker({
                   const excluded = excludedIds.has(selection.catalogItemId)
                   // 行内目录单行紧凑行：名称截断、编码收尾，完整信息保留在编码提示与选中详情里。
                   return <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={selection.catalogItemId}>
-                    <span className="flex min-w-0 items-baseline gap-2">
-                      <strong className="min-w-0 truncate text-sm [contain:inline-size]" title={selection.display}>{selection.display}</strong>
+                    <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                      <strong className="min-w-0 truncate text-sm" title={selection.display}>{selection.display}</strong>
                       <span className="shrink-0 font-mono text-xs text-muted-foreground" title={useLocal ? undefined : ('system' in item ? item.system : undefined)}>
                         {useLocal ? `${messages.localCatalog} · ` : ''}{selection.code}
                       </span>
@@ -643,8 +643,8 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
                   // 行内检验目录单行紧凑行：项目名截断、LOINC 收尾；标本、报告结构与 TAT 在选中后的表单区展示。
                   return (
                     <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={selection.catalogItemId}>
-                      <span className="flex min-w-0 items-baseline gap-2">
-                        <strong className="min-w-0 truncate text-sm [contain:inline-size]" title={selection.display}>{selection.display}</strong>
+                      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                        <strong className="min-w-0 truncate text-sm" title={selection.display}>{selection.display}</strong>
                         <span className="shrink-0 font-mono text-xs text-muted-foreground">{selection.code}</span>
                       </span>
                       <SelectionButton
@@ -851,8 +851,8 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
   if (onConfirm === undefined) return (
     // 行内药品单行紧凑行：通用名截断、规格收尾；完整注册信息（厂家、剂型、商品名、批准文号）经悬停提示呈现。
     <li className="flex min-w-0 items-center gap-2 px-3 py-2" title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ') || undefined}>
-      <strong data-agent-medication-name="" className="min-w-0 truncate text-sm [contain:inline-size]" title={item.genericName}>{item.genericName}</strong>
-      <span className="max-w-24 shrink-0 truncate text-xs text-muted-foreground [contain:inline-size]" title={item.strength}>{item.strength}</span>
+      <strong data-agent-medication-name="" className="min-w-0 truncate text-sm" title={item.genericName}>{item.genericName}</strong>
+      <span className="max-w-24 min-w-0 truncate text-xs text-muted-foreground" title={item.strength}>{item.strength}</span>
       <div className="min-w-0 flex-1">{packageSelector}</div>
       <Button aria-label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`} className="shrink-0" disabled={unavailable} onClick={() => onSelect(selection)} size="sm" type="button" variant="outline">
         {excludedIds.has(item.id) ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : item.status !== 'active' ? (locale === 'zh-CN' ? '停用' : 'Inactive') : (locale === 'zh-CN' ? '选择包装' : 'Select package')}
@@ -966,8 +966,8 @@ export function MedicationCatalogPicker({
             ) : (
               onConfirm === undefined ? <ul className="divide-y">
                 {useLocal ? localResults.map(item => <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={item.id}>
-                  <span className="flex min-w-0 items-baseline gap-2">
-                    <strong data-agent-medication-name="" className="min-w-0 truncate text-sm [contain:inline-size]">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong>
+                  <span className="flex min-w-0 flex-1 items-baseline gap-2">
+                    <strong data-agent-medication-name="" className="min-w-0 truncate text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong>
                     <span className="shrink-0 text-xs text-muted-foreground">{messages.localCatalog}</span>
                   </span>
                   <Button aria-label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} className="shrink-0" disabled={disabled || results.isFetching || excludedIds.has(item.id)} onClick={() => select({ kind: 'local', medication: item })} size="sm" type="button" variant="outline">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : messages.chooseMedication}</Button>

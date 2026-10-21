@@ -370,6 +370,35 @@ for (const version of ['18', '19']) {
     await expectNoFixtureErrors(page)
   })
 
+  test(`renders inline catalog row names with nonzero width at both breakpoints on React ${version}`, async ({ page }) => {
+    // 回归合同：行内截断段不得因尺寸包含塌缩为 0 宽（2026-10 批次 6 曾让三页签目录项目名全部不可见）。
+    await mount(page, version, 'empty')
+    for (const width of [1280, 390]) {
+      await test.step(`viewport ${width}`, async () => {
+        await appearance(page, 'zh-CN', 'light', 'standard', width)
+        await page.getByRole('tab', { name: '诊断', exact: true }).click()
+        const diagnosisNames = page.locator('[data-agent-catalog="diagnosis"] ul li strong')
+        await expect(diagnosisNames.first()).toBeVisible()
+        for (let index = 0; index < await diagnosisNames.count(); index += 1) {
+          expect(await diagnosisNames.nth(index).evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(0)
+        }
+        await page.getByRole('tab', { name: '检验检查', exact: true }).click()
+        const laboratoryNames = page.locator('[data-agent-catalog="laboratory"] ul li strong')
+        await expect(laboratoryNames.first()).toBeVisible()
+        for (let index = 0; index < await laboratoryNames.count(); index += 1) {
+          expect(await laboratoryNames.nth(index).evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(0)
+        }
+        await page.getByRole('tab', { name: '处方', exact: true }).click()
+        const medicationNames = page.locator('[data-agent-medication-name]')
+        await expect(medicationNames.first()).toBeVisible()
+        for (let index = 0; index < await medicationNames.count(); index += 1) {
+          expect(await medicationNames.nth(index).evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(0)
+        }
+      })
+    }
+    await expectNoFixtureErrors(page)
+  })
+
   test(`keeps long diagnosis edits within the viewport and focuses confirmed details on React ${version}`, async ({ page }) => {
     await mount(page, version, 'existing')
     await appearance(page, 'zh-CN', 'light', 'standard', 390)

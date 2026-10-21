@@ -435,7 +435,7 @@ export function ImagingPage({
               <ul className="divide-y">
                 {visibleServices.map(({ available, service }) => <li key={service.id}>
                   <Button aria-pressed={serviceId === service.id} className="h-auto w-full min-w-0 items-center justify-between gap-2 whitespace-normal px-1 py-2 text-left" disabled={!available || draftAction.isPending || (state?.draft !== undefined && state.draft.service.id !== service.id)} onClick={() => { setServiceId(service.id); setCatalogOpen(false); if (hasRequests) catalogToggleRef.current?.focus() }} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
-                    <span className="min-w-0 truncate [contain:inline-size]" title={available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
+                    <span className="min-w-0 truncate" title={available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
                     <span className="shrink-0 text-xs text-muted-foreground">{service.bodySite} · {service.method}</span>
                   </Button>
                 </li>)}

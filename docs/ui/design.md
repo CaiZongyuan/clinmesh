@@ -124,7 +124,7 @@ Web“设置 → 外观”的字号偏好提供“标准 / 较大 / 大”三档
 - 状态使用 Badge，集合加载使用 Skeleton，操作中使用 Spinner，完整错误和风险提示使用 Alert。
 - Card 只包裹独立重复项、弹层和真正需要边界的工具；页面分区不做浮动 Card，不嵌套 Card。
 - 长表单的提交区使用顶边线和稳定高度，不用常驻阴影。
-- `truncate`（`white-space: nowrap`）会让元素向祖先上报整行固有宽度：`min-w-0` 只解决布局期收缩，固有宽度仍沿 flex 链上传到 `min-inline-size: min-content` 的 fieldset，在窄视口撑出横向滚动。行内截断需同时加 `[contain:inline-size]`（或改用 `break-words` 换行），窄视口合同在 DSH 浏览器合同中验证。
+- `truncate`（`white-space: nowrap`）会让元素向祖先上报整行固有宽度：`min-w-0` 只解决布局期收缩，固有宽度仍沿 flex 链上传到 `min-inline-size: min-content` 的 fieldset，在窄视口撑出横向滚动。行内截断段用 `min-w-0` 阻断 min-content 上传，需要吃剩余空间时再加 `flex-1`（basis 归零即断开固有宽度链）；禁止对依赖内容宽度参与 flex 分配的截断段使用 `[contain:inline-size]`——content size 按空计算会使 flex-basis 塌缩为 0，内容整段不可见（2026-10 批次 6 曾因此让三页签目录行项目名全部 0 宽）。或改用 `break-words` 换行。窄视口合同与「名称可见宽度 > 0」断言在 DSH 浏览器合同中验证。
 
 ## 开发者组件目录
 
