@@ -49,7 +49,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   acknowledgeImagingReport,
@@ -116,7 +116,7 @@ import {
 } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
-import { EncounterCompletionProgress } from './completion-checklist.tsx'
+import { EncounterCompletionChecklist, EncounterCompletionProgress } from './completion-checklist.tsx'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import {
   ClinicalDocumentPage,
@@ -376,6 +376,14 @@ function DoctorCaseController({
     setPage(1)
   }
   const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
+  const [completionNavigate, setCompletionNavigate] = useState<((target: EncounterCompletionTarget) => void) | undefined>()
+  const setCompletionNavigateStable = useCallback(
+    (navigate: (target: EncounterCompletionTarget) => void) => {
+      setCompletionNavigate((current: ((target: EncounterCompletionTarget) => void) | undefined) =>
+        current === navigate ? current : navigate)
+    },
+    [],
+  )
   const caseDetailRoot = useRef<HTMLElement>(null)
   const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
     enabled: false,
@@ -881,19 +889,21 @@ function DoctorCaseController({
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const saveLaboratoryRequest = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
+    mutationFn: ({ caseId, override }: { caseId: string; override?: { catalogItemId: string; indicationCode: string } }) => {
       const current = detail.data
+      const catalogItemId = override?.catalogItemId ?? resolvedLaboratoryItemId
+      const indicationCode = override?.indicationCode ?? resolvedIndicationCode
       if (current?.caseId !== caseId
-        || !isLaboratoryRequestCatalogItemId(resolvedLaboratoryItemId)
-        || resolvedIndicationCode.length === 0) {
+        || !isLaboratoryRequestCatalogItemId(catalogItemId)
+        || indicationCode.length === 0) {
         throw new Error(messages.consultationUnavailable)
       }
       return saveLaboratoryRequestDraft({
-        catalogItemId: resolvedLaboratoryItemId,
+        catalogItemId,
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
         expectedDraftVersion: current.laboratoryRequests?.draftVersion ?? 0,
-        indicationCode: resolvedIndicationCode,
+        indicationCode,
       }, newIdempotencyKey())
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
@@ -2622,7 +2632,8 @@ function DoctorCaseController({
       suggestions={{
         label: messages.suggestionStackTitle,
         node: <DoctorSuggestionStack completion={completion} detail={detailUnavailable ? undefined : detail.data}
-          clinicalDocument={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope} />,
+          clinicalDocument={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope}
+          {...(completionNavigate === undefined ? {} : { onNavigateToCompletionTarget: completionNavigate })} />,
       }}
       queue={showDetail => (
       <DoctorQueueModule
@@ -2666,6 +2677,7 @@ function DoctorCaseController({
         ) : (
           <CaseDetail
             clinicalDocumentUpdates={clinicalDocumentUpdates}
+            onCompletionNavigateChange={setCompletionNavigateStable}
             recommendationScope={pageScope}
             recommendationRevision={recommendationRevision}
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
@@ -2950,7 +2962,7 @@ function DoctorCaseController({
                 error: saveLaboratoryRequest.variables?.caseId === detail.data.caseId
                   ? saveLaboratoryRequest.error
                   : null,
-                onSubmit: () => saveLaboratoryRequest.mutate({ caseId: detail.data.caseId }),
+                onSubmit: override => saveLaboratoryRequest.mutate({ caseId: detail.data.caseId, ...(override === undefined ? {} : { override }) }),
                 pending: saveLaboratoryRequest.isPending
                   && saveLaboratoryRequest.variables?.caseId === detail.data.caseId,
               },
@@ -3086,6 +3098,7 @@ function DoctorCaseController({
 
 function CaseDetail({
   clinicalDocumentUpdates,
+  onCompletionNavigateChange,
   agentDraftHydrationRevisions,
   recommendationScope,
   recommendationRevision,
@@ -3150,6 +3163,7 @@ function CaseDetail({
   clinicalDocumentActions: ClinicalDocumentPageActions
   completion: UseQueryResult<EncounterCompletionPreview, Error>
   completionAction: EncounterCompletionAction
+  onCompletionNavigateChange?: (navigate: (target: EncounterCompletionTarget) => void) => void
   consultationAction: ConsultationPageAction
   correctionTarget: CompletedCaseCorrectionTarget | undefined
   detail: DoctorCaseDetail
@@ -3281,11 +3295,14 @@ function CaseDetail({
     onActiveSectionChange(activeSection)
   }, [activeSection, onActiveSectionChange])
 
-  const navigateToCompletionTarget = (target: EncounterCompletionTarget): void => {
+  const navigateToCompletionTarget = useCallback((target: EncounterCompletionTarget): void => {
     navigateInvestigationTarget(target)
     setActiveSection(caseDetailSectionByCompletionTarget[target])
     setPendingNavigation({ source: 'checklist', target })
-  }
+  }, [navigateInvestigationTarget])
+  useEffect(() => {
+    onCompletionNavigateChange?.(navigateToCompletionTarget)
+  }, [navigateToCompletionTarget, onCompletionNavigateChange])
 
   const overviewWorkflow = readOnly ? null : detail.status === 'awaiting-doctor' ? (
     <div className="flex flex-col items-start gap-3">
@@ -3503,6 +3520,7 @@ function CaseDetail({
                 completionAction: (
                   <EncounterCompletionPanel
                     action={completionAction}
+                    locale={locale}
                     messages={messages}
                     onNavigate={navigateToCompletionTarget}
                     preview={completion}
@@ -3743,9 +3761,10 @@ function CaseDetail({
   )
 }
 
-function EncounterCompletionPanel({ action, messages, onNavigate, preview }: {
+function EncounterCompletionPanel({ action, messages, locale, onNavigate, preview }: {
   action: EncounterCompletionAction
   messages: ReturnType<typeof getWorkspaceMessages>
+  locale: WorkspaceLocale
   onNavigate: (target: EncounterCompletionTarget) => void
   preview: UseQueryResult<EncounterCompletionPreview, Error>
 }): React.JSX.Element {
@@ -3753,7 +3772,6 @@ function EncounterCompletionPanel({ action, messages, onNavigate, preview }: {
   useEffect(() => {
     if (action.success) setOpen(false)
   }, [action.success])
-  const incompleteItems = preview.data?.items.filter(item => item.status !== 'complete') ?? []
 
   return (
     <AlertDialog onOpenChange={setOpen} open={open}>
@@ -3781,30 +3799,12 @@ function EncounterCompletionPanel({ action, messages, onNavigate, preview }: {
             message={getWorkspaceErrorMessage(preview.error, messages)}
             title={getWorkspaceErrorTitle(preview.error, messages, messages.encounterCompletionUnavailable)}
           />
-        ) : incompleteItems.length === 0 ? null : (
-          <ul className="grid gap-2">
-            {incompleteItems.map(item => {
-              const navigationLabel = messages.encounterCompletionTarget.replace('{status}', item.statusText)
-              return (
-                <li className="flex items-center justify-between gap-3 rounded-md border px-3 py-2" key={item.code}>
-                  <span className="text-sm">{item.statusText}</span>
-                  <Button
-                    aria-label={navigationLabel}
-                    onClick={() => {
-                      setOpen(false)
-                      onNavigate(item.target)
-                    }}
-                    size="icon-sm"
-                    title={navigationLabel}
-                    type="button"
-                    variant="ghost"
-                  >
-                    <ArrowRightIcon />
-                  </Button>
-                </li>
-              )
-            })}
-          </ul>
+        ) : preview.data === undefined ? null : (
+          <EncounterCompletionChecklist completion={preview.data} locale={locale} messages={messages}
+            onNavigate={target => {
+              setOpen(false)
+              onNavigate(target)
+            }} />
         )}
         {action.error === null ? null : (
           <ErrorAlert

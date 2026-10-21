@@ -1,11 +1,11 @@
-import type { ClinicalDocumentContent, DoctorCaseDetail, EncounterCompletionPreview } from '@clinmesh/contracts/his'
+import type { ClinicalDocumentContent, DoctorCaseDetail, EncounterCompletionPreview, EncounterCompletionTarget } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { cn } from '@clinmesh/ui/lib/utils'
-import { CheckCircleIcon, SparklesIcon } from 'lucide-react'
+import { ArrowRightIcon, CheckCircleIcon, SparklesIcon } from 'lucide-react'
 import type { WorkspaceLocale, WorkspaceMessages } from '../workspace-i18n.ts'
-import { encounterCompletionItemLabel } from './completion-checklist.tsx'
+import { completionGoToLabel, encounterCompletionItemLabel } from './completion-checklist.tsx'
 import { openIssues, shortIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { doctorRecommendationKindTitles } from './doctor-recommendations.tsx'
 import { preparationKinds, useDoctorPreparation, type DoctorPreparationJob } from './doctor-preparation-state.tsx'
@@ -30,27 +30,30 @@ function groupIssueLines(issues: QualityIssue[], messages: WorkspaceMessages, lo
 }
 
 /** 建议栈：完诊清单未完项、质控疑点与医生推荐的聚合摘要。同一描述会同时挂载在右栏与抽屉中，禁止声明 DOM id。 */
-export function DoctorSuggestionStack({ completion, detail, clinicalDocument, scope, locale, messages }: {
+export function DoctorSuggestionStack({ completion, detail, clinicalDocument, scope, locale, messages, onNavigateToCompletionTarget }: {
   completion: SuggestionCompletionView
   detail: DoctorCaseDetail | undefined
   clinicalDocument: ClinicalDocumentContent | undefined
   scope: string
   locale: WorkspaceLocale
   messages: WorkspaceMessages
+  onNavigateToCompletionTarget?: (target: EncounterCompletionTarget) => void
 }): React.JSX.Element {
   if (detail === undefined) {
     return <p className="p-3 text-sm text-muted-foreground">{messages.suggestionNoCase}</p>
   }
-  return <ActiveSuggestionStack completion={completion} detail={detail} clinicalDocument={clinicalDocument} locale={locale} messages={messages} scope={scope} />
+  return <ActiveSuggestionStack completion={completion} detail={detail} clinicalDocument={clinicalDocument} locale={locale} messages={messages} scope={scope}
+    {...(onNavigateToCompletionTarget === undefined ? {} : { onNavigateToCompletionTarget })} />
 }
 
-function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, messages, scope }: {
+function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, messages, scope, onNavigateToCompletionTarget }: {
   completion: SuggestionCompletionView
   detail: DoctorCaseDetail
   clinicalDocument: ClinicalDocumentContent | undefined
   scope: string
   locale: WorkspaceLocale
   messages: WorkspaceMessages
+  onNavigateToCompletionTarget?: (target: EncounterCompletionTarget) => void
 }): React.JSX.Element {
   const preparation = useDoctorPreparation()
   const readOnly = detail.encounter.status !== 'in-progress' || detail.status === 'awaiting-doctor'
@@ -65,9 +68,11 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
     && (qualityStatus === 'failed' || qualityStatus === 'incomplete' || qualityStatus === 'unavailable')
   const jobs = preparation === undefined ? [] : preparationKinds.map(kind => ({ kind, job: preparation.jobs[kind] }))
   const jobAttention = jobs.some(({ job }) => jobNeedsAttention(job))
-  const attention = completion.error !== null || quality.error !== null || qualityIncomplete || incompleteItems.length > 0
-    || issues.length > 0 || jobAttention
-  if (!attention && !completion.isLoading && !quality.pending) {
+  // 完诊清单只在就诊进行中呈现：完诊后检查单已定稿，残留未完项与前往动作会与只读状态矛盾。
+  const completionActive = !readOnly
+  const attention = (completionActive && (completion.error !== null || incompleteItems.length > 0))
+    || quality.error !== null || qualityIncomplete || issues.length > 0 || jobAttention
+  if (!attention && !(completionActive && completion.isLoading) && !quality.pending) {
     return (
       <div className="flex min-h-0 flex-col gap-3 p-3">
         <div className="flex flex-col items-center gap-2 py-10 text-center">
@@ -81,27 +86,43 @@ function ActiveSuggestionStack({ completion, detail, clinicalDocument, locale, m
   const completionClear = completion.data === undefined || incompleteItems.length > 0 ? null : messages.suggestionCompletionClear
   return (
     <div className="flex min-h-0 flex-col gap-4 p-3">
-      <section aria-label={messages.encounterCompletionChecklist} className="flex min-w-0 flex-col gap-1.5">
-        <h3 className="text-xs font-medium text-muted-foreground">{messages.encounterCompletionChecklist}</h3>
-        <StackSectionState
-          clearText={completionClear}
-          error={completion.error}
-          messages={messages}
-          onRetry={completion.refetch}
-          pending={completion.isLoading}
-        >
-          {completion.data === undefined ? null : (
-            <ul className="flex min-w-0 flex-col gap-1">
-              {incompleteItems.map(item => (
-                <li className="flex min-w-0 items-baseline justify-between gap-2 text-sm" key={item.code}>
-                  <span className="shrink-0">{encounterCompletionItemLabel(item.code, locale)}</span>
-                  <span className="min-w-0 truncate text-xs text-muted-foreground">{item.statusText}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </StackSectionState>
-      </section>
+      {completionActive ? (
+        <section aria-label={messages.encounterCompletionChecklist} className="flex min-w-0 flex-col gap-1.5">
+          <h3 className="text-xs font-medium text-muted-foreground">{messages.encounterCompletionChecklist}</h3>
+          <StackSectionState
+            clearText={completionClear}
+            error={completion.error}
+            messages={messages}
+            onRetry={completion.refetch}
+            pending={completion.isLoading}
+          >
+            {completion.data === undefined ? null : (
+              <ul className="flex min-w-0 flex-col gap-1">
+                {incompleteItems.map(item => (
+                  <li className="min-w-0" key={item.code}>
+                    {onNavigateToCompletionTarget === undefined ? (
+                      <div className="flex min-w-0 items-baseline justify-between gap-2 text-sm">
+                        <span className="shrink-0">{encounterCompletionItemLabel(item.code, locale)}</span>
+                        <span className="min-w-0 truncate text-xs text-muted-foreground">{item.statusText}</span>
+                      </div>
+                    ) : (
+                      <Button aria-label={completionGoToLabel(item, locale, messages)}
+                        className="h-auto w-full justify-between gap-2 px-2 py-1.5"
+                        onClick={() => { onNavigateToCompletionTarget(item.target) }} size="sm" type="button" variant="ghost">
+                        <span className="shrink-0">{encounterCompletionItemLabel(item.code, locale)}</span>
+                        <span className="flex min-w-0 items-center gap-1">
+                          <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{item.statusText}</span>
+                          <ArrowRightIcon aria-hidden="true" className="size-3.5 shrink-0 text-muted-foreground" />
+                        </span>
+                      </Button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </StackSectionState>
+        </section>
+      ) : null}
       {qualityEnabled ? (
         <section aria-label={messages.documentQualityTitle} className="flex min-w-0 flex-col gap-1.5">
           <h3 className="text-xs font-medium text-muted-foreground">{messages.documentQualityTitle}</h3>

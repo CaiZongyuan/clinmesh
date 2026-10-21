@@ -3836,6 +3836,9 @@ describe('role workspaces', () => {
           system: 'http://hl7.org/fhir/sid/icd-10', version: 1 }],
         laboratory: [], medications: [], prescriptionConclusionSupported: true,
       })
+      if (path === '/api/his/v1/reference-catalogs/diagnoses') {
+        return Response.json({ items: [], ...pagination(0) })
+      }
       if (path === '/api/his/v1/doctor/cases/case-recording/recommendations/diagnosis') {
         return Response.json(doctorRecommendationStateSchema.parse({
           caseId: 'case-recording', encounterId: 'encounter-recording', encounterVersion: '1',
@@ -3853,15 +3856,23 @@ describe('role workspaces', () => {
     await user.click(screen.getByRole('button', { name: '依据与说明' }))
     await screen.findByText('合成建议资料版本一')
     await user.keyboard('{Escape}')
-    await user.click(screen.getByRole('button', { name: '选择 发热 R50.9' }))
-    fireEvent.change(screen.getByLabelText('诊断备注', { exact: true }), { target: { value: '医生未保存的备注' } })
+    // 弹窗合同：先确认建议随病例资料刷新，再在弹窗内验证未保存编辑的保留。
     recommendationNote = '合成建议资料版本二'
     fixture.recordAddition('合成新增问诊资料。')
     await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
     await user.click(screen.getByRole('button', { name: '依据与说明' }))
     await screen.findByText('合成建议资料版本二')
     await user.keyboard('{Escape}')
-    expect((screen.getByLabelText('诊断备注', { exact: true }) as HTMLTextAreaElement).value).toBe('医生未保存的备注')
+    // 弹窗合同：选择诊断与填写备注在同一次弹窗内完成，未确认的编辑保存在弹窗中。
+    await user.click(screen.getByRole('button', { name: '添加诊断' }))
+    const diagnosisComposer = within(await screen.findByRole('dialog'))
+    await user.click(await diagnosisComposer.findByRole('button', { name: '选择 发热 R50.9' }))
+    fireEvent.change(diagnosisComposer.getByLabelText('诊断备注', { exact: true }), { target: { value: '医生未保存的备注' } })
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: ['doctor-case'] }) })
+    // 病例数据再次刷新后，弹窗内未保存的备注不被重置。
+    expect((diagnosisComposer.getByLabelText('诊断备注', { exact: true }) as HTMLTextAreaElement).value).toBe('医生未保存的备注')
+    await user.click(diagnosisComposer.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     recommendationNote = '合成建议新数据世代'
     const nextSession = { ...doctorSession, actor: { ...doctorSession.actor, epoch: 'epoch-recommendation-next' } }
     view.rerender(<QueryClientProvider client={queryClient}><DoctorWorkspace locale="zh-CN" session={nextSession} /></QueryClientProvider>)
@@ -4458,14 +4469,22 @@ describe('role workspaces', () => {
     await waitFor(() => expect(releaseIssue).toBeDefined())
     expect(screen.queryByRole('dialog')).toBeNull()
     await user.click(screen.getByRole('tab', { name: `${otherCategory} 0` }))
-    const input = await screen.findByRole('textbox', { name: otherField })
+    // 弹窗合同：另一分类的申请表单在弹窗内，从草稿卡片打开弹窗后修改未保存字段。
+    await user.click(screen.getByRole('button', { name: category === 'imaging'
+      ? `编辑病理会诊 ${pathologyService.name}`
+      : `编辑放射申请 ${imagingService.name}` }))
+    const otherComposer = within(await screen.findByRole('dialog'))
+    const input = await otherComposer.findByRole('textbox', { name: otherField })
     await user.clear(input)
     await user.type(input, '另一分类尚未保存的申请信息')
     await act(async () => { releaseIssue?.() })
     await waitFor(() => expect(screen.getAllByRole('tab', { hidden: true }).find(tab => tab.textContent?.startsWith(originalCategory))?.textContent).toMatch(/2$/))
-    expect(screen.getByRole('region', { name: category === 'imaging' ? '开具病理会诊' : '开具放射申请' })).toBeTruthy()
-    expect((screen.getByRole('textbox', { name: otherField }) as HTMLTextAreaElement).value).toBe('另一分类尚未保存的申请信息')
-    expect(screen.getByRole('tab', { name: `${otherCategory} 0` }).getAttribute('aria-selected')).toBe('true')
+    // 迟到开具只刷新原分类，另一分类弹窗内未保存的输入保持不动。
+    expect((otherComposer.getByRole('textbox', { name: otherField }) as HTMLTextAreaElement).value).toBe('另一分类尚未保存的申请信息')
+    expect(screen.getByRole('tab', { name: `${otherCategory} 0`, hidden: true }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByRole('region', { name: category === 'imaging' ? '开具病理会诊' : '开具放射申请', hidden: true })).toBeTruthy()
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(await screen.findByRole('tab', { name: `${originalCategory} 2` }))
     const list = screen.getByRole('region', { name: '申请列表' })
     const serviceName = category === 'imaging' ? imagingService.name : pathologyService.name
@@ -4476,7 +4495,7 @@ describe('role workspaces', () => {
     expect(within(list).getByRole('button', { name: `${serviceName} 已取消` }).getAttribute('aria-pressed')).toBe('false')
   })
 
-  it.each([false, true])('keeps the investigation catalog inline and recovers a failed read=%s', async failFirstRead => {
+  it.each([false, true])('keeps each investigation catalog inside its composer dialog and recovers a failed read=%s', async failFirstRead => {
     window.history.replaceState(null, '', '/consultation')
     let laboratoryReads = 0
     const patient = {
@@ -4516,24 +4535,37 @@ describe('role workspaces', () => {
     const categories = screen.getByRole('tablist', { name: '检查分类' })
     expect(within(categories).getByRole('tab', { name: '检验 0' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.getByRole('tabpanel', { name: '检验 0' })).toBeTruthy()
-    expect(screen.getByLabelText('搜索检验目录')).toBeTruthy()
+    // 弹窗合同：检验目录在「添加检验」弹窗内检索，页面主列不再常驻目录。
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const laboratoryComposer = within(await screen.findByRole('dialog'))
+    expect(await laboratoryComposer.findByLabelText('搜索检验目录')).toBeTruthy()
     if (failFirstRead) {
-      expect(await screen.findByText('无法加载本院检验目录')).toBeTruthy()
-      const failure = screen.getByText('无法加载本院检验目录').closest<HTMLElement>('[role="alert"]')
+      expect(await laboratoryComposer.findByText('无法加载本院检验目录')).toBeTruthy()
+      const failure = laboratoryComposer.getByText('无法加载本院检验目录').closest<HTMLElement>('[role="alert"]')
       if (failure === null) throw new Error('Missing hospital catalog failure notice')
       await user.click(within(failure).getByRole('button', { name: '重试' }))
       await waitFor(() => expect(laboratoryReads).toBe(2))
-      await waitFor(() => expect(screen.queryByText('无法加载本院检验目录')).toBeNull())
+      await waitFor(() => expect(laboratoryComposer.queryByText('无法加载本院检验目录')).toBeNull())
     }
-    expect(await screen.findByLabelText('搜索检验目录')).toBeTruthy()
+    expect(await laboratoryComposer.findByLabelText('搜索检验目录')).toBeTruthy()
+    await user.click(laboratoryComposer.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.getByText('尚未选择检验项目')).toBeTruthy()
     expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
     await user.click(within(categories).getByRole('tab', { name: '放射检查 0' }))
     expect(screen.queryByRole('textbox', { name: '搜索检验目录' })).toBeNull()
+    // 弹窗合同：放射目录在「添加放射检查」弹窗内检索。
+    await user.click(screen.getByRole('button', { name: '添加放射检查' }))
     expect(await screen.findByLabelText('搜索放射目录')).toBeTruthy()
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(within(categories).getByRole('tab', { name: '病理会诊 0' }))
     expect(screen.queryByRole('textbox', { name: '搜索放射目录' })).toBeNull()
+    // 弹窗合同：病理目录在「添加病理会诊」弹窗内检索。
+    await user.click(screen.getByRole('button', { name: '添加病理会诊' }))
     expect(await screen.findByLabelText('搜索病理目录')).toBeTruthy()
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(within(categories).getByRole('tab', { name: '检验 0' }))
     expect(screen.getByText('尚未选择检验项目')).toBeTruthy()
   })
@@ -4792,28 +4824,34 @@ describe('role workspaces', () => {
     }} />)
 
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    const requestRegion = await screen.findByRole('region', { name: '检验申请' })
-    expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
-    expect(screen.getByRole('region', { name: '检验申请' })).toBeTruthy()
-    const laboratoryDirectory = screen
-    await user.type(laboratoryDirectory.getByLabelText('搜索检验目录'), '血常')
-    await user.click(laboratoryDirectory.getByRole('button', { name: '执行检验目录搜索' }))
+    // 弹窗合同：检验目录在「添加检验」弹窗内检索与选择。
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const laboratoryComposer = within(await screen.findByRole('dialog'))
+    await user.type(await laboratoryComposer.findByRole('textbox', { name: '搜索检验目录' }), '血常')
+    await user.click(laboratoryComposer.getByRole('button', { name: '执行检验目录搜索' }))
     await waitFor(() => expect(laboratoryQueries).toContain('血常'))
-    expect(laboratoryDirectory.queryByText('当前病例')).toBeNull()
-    expect(laboratoryDirectory.queryByText('当前病例不可生成')).toBeNull()
-    expect(laboratoryDirectory.queryByText('可开立')).toBeNull()
-    expect(laboratoryDirectory.queryByText('体温')).toBeNull()
-    await user.click(await laboratoryDirectory.findByRole('button', {
+    expect(laboratoryComposer.queryByText('当前病例')).toBeNull()
+    expect(laboratoryComposer.queryByText('当前病例不可生成')).toBeNull()
+    expect(laboratoryComposer.queryByText('可开立')).toBeNull()
+    expect(laboratoryComposer.queryByText('体温')).toBeNull()
+    await user.click(await laboratoryComposer.findByRole('button', {
       name: '选择 血常规 58410-2',
     }))
+    await user.click(laboratoryComposer.getByRole('button', { name: '加入检验申请' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    const requestRegion = await screen.findByRole('region', { name: '检验申请' })
+    expect(screen.queryByRole('region', { name: '申请列表' })).toBeNull()
     expect(within(requestRegion).getByText('血常规')).toBeTruthy()
     expect(within(requestRegion).queryByRole('combobox', { name: '检验适应证' })).toBeNull()
-    expect(within(requestRegion).getByText('临床评估')).toBeTruthy()
+    // 弹窗合同：草稿卡片把适应证与标签合并为一行文本。
+    expect(within(requestRegion).getByText('检验适应证: 临床评估')).toBeTruthy()
     const expectVisibleLaboratoryDraft = async (): Promise<void> => {
-      await waitFor(() => expect(registration?.tools.some(candidate => (
-        candidate.name === 'clinmesh_read_current_context'
-      ))).toBe(true))
-      const read = registration!.tools.find(candidate => candidate.name === 'clinmesh_read_current_context')!
+      // 确认直写会触发 case 刷新与 agent 重注册，注册可能在轮询间隙被置空：在 waitFor 内原子捕获，避免通过后取值踩到空档。
+      const read = await waitFor(() => {
+        const tool = registration?.tools.find(candidate => candidate.name === 'clinmesh_read_current_context')
+        expect(tool).toBeDefined()
+        return tool!
+      })
       await act(async () => {
         const result = JSON.parse(await read.execute(boundAgentToolInput(read, {}), new AbortController().signal))
         expect(result).toMatchObject({ data: { pageState: { laboratoryDraft: {
@@ -4827,13 +4865,17 @@ describe('role workspaces', () => {
     expect(await screen.findByText('草稿已自动保存')).toBeTruthy()
     const savedRequestRegion = screen.getByRole('region', { name: '检验申请' })
     expect(within(savedRequestRegion).getByText('草稿已自动保存')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: '选择 血常规 58410-2' }))
-    expect(screen.getByRole('button', { name: '选择 血常规 58410-2' }).getAttribute('aria-pressed')).toBe('true')
-    expect(within(savedRequestRegion).queryByRole('button', { name: '开具检验申请' })).toBeNull()
-    expect(within(savedRequestRegion).getByText('请先开具或删除已有检验草稿，再选择其他项目。')).toBeTruthy()
+    // 弹窗合同：已有草稿时从草稿卡片重开弹窗换选其他项目，只在弹窗内提示冲突且不产生新的保存。
+    await user.click(screen.getByRole('button', { name: '编辑检验 血常规' }))
+    const conflictComposer = within(await screen.findByRole('dialog'))
+    await user.click(await conflictComposer.findByRole('button', { name: '选择 C 反应蛋白 1988-5' }))
+    expect(conflictComposer.getByText('请先开具或删除已有检验草稿，再选择其他项目。')).toBeTruthy()
     expect(draftSaves).toBe(1)
     await expectVisibleLaboratoryDraft()
-    await user.click(screen.getByRole('button', { name: '选择 血常规 58410-2' }))
+    await user.click(conflictComposer.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // 草稿仍在时页面不提供再次开具入口。
+    expect(within(screen.getByRole('region', { name: '检验申请' })).queryByRole('button', { name: '开具检验申请' })).toBeNull()
 
     cleanup()
     render(<WebApp runtime={{
@@ -4842,18 +4884,17 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     const reopenedRequestRegion = await screen.findByRole('region', { name: '检验申请' })
     expect(await within(reopenedRequestRegion).findByText(laboratoryService.nameZh)).toBeTruthy()
-    expect(within(reopenedRequestRegion).getByText('临床评估')).toBeTruthy()
+    expect(within(reopenedRequestRegion).getByText('检验适应证: 临床评估')).toBeTruthy()
     await expectVisibleLaboratoryDraft()
-    await waitFor(() => {
+    // 确认直写会触发 case 刷新与 agent 重注册，注册可能在轮询间隙被置空：在 waitFor 内原子捕获，避免通过后取值踩到空档。
+    const fillLaboratory = await waitFor(() => {
       const tool = registration?.tools.find(candidate => (
         candidate.name === 'clinmesh_fill_laboratory_draft'
       ))
       expect(tool).toBeDefined()
       expect(boundAgentToolInput(tool!, {}).pageRevision).toBe(persistedDraftPageRevision)
+      return tool!
     })
-    const fillLaboratory = registration!.tools.find(candidate => (
-      candidate.name === 'clinmesh_fill_laboratory_draft'
-    ))!
     expect((fillLaboratory.parameters as {
       properties: Record<string, unknown>
     }).properties.catalogItemId).toEqual({ type: 'string' })
@@ -4901,7 +4942,7 @@ describe('role workspaces', () => {
         }], ...pagination(1),
       }
 
-  it('retains the catalog query and page after issuing only the first of two AI laboratory items', async () => {
+  it('starts each laboratory catalog dialog fresh and keeps the second AI item pending after issuing the first', async () => {
     stubRecordingWorkspace('pause')
     const originalFetch = globalThis.fetch
     const first = laboratoryTestCatalog.items[0]!
@@ -4948,17 +4989,29 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     const panel = screen.getByRole('region', { name: '待开具检验' })
     await user.click(await within(panel).findByRole('checkbox', { name: '选择合成第二项检验' }))
-    const search = screen.getByRole('textbox', { name: '搜索检验目录' })
-    await user.type(search, '血常')
-    await user.click(screen.getByRole('button', { name: '执行检验目录搜索' }))
-    await user.click(screen.getByRole('button', { name: '下一页' }))
+    // 弹窗合同：目录检索移入「添加检验」弹窗，在同一次弹窗内完成检索与翻页。
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const catalogComposer = within(await screen.findByRole('dialog'))
+    await user.type(await catalogComposer.findByRole('textbox', { name: '搜索检验目录' }), '血常')
+    await user.click(catalogComposer.getByRole('button', { name: '执行检验目录搜索' }))
+    await user.click(catalogComposer.getByRole('button', { name: '下一页' }))
     await waitFor(() => expect(directoryReads.at(-1)).toEqual({ query: '血常', page: 2 }))
+    await user.click(catalogComposer.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(within(panel).getByRole('button', { name: /^开具选中项目/ }))
     await within(await screen.findByRole('region', { name: '申请列表' })).findByRole('button', { name: /白细胞计数 已开具/ })
-    await user.click(screen.getByRole('button', { name: '展开目录' }))
-    expect(screen.getByRole('textbox', { name: '搜索检验目录' })).toHaveProperty('value', '血常')
-    expect(screen.getByText('共 41 条 · 2/3')).toBeTruthy()
-    expect(directoryReads.at(-1)).toEqual({ query: '血常', page: 2 })
+    // 新合同下重开弹窗会重置检索词与页码，仍可再次检索翻页找回待选的第二项。
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const reopenedComposer = within(await screen.findByRole('dialog'))
+    expect(await reopenedComposer.findByRole('textbox', { name: '搜索检验目录' })).toHaveProperty('value', '')
+    await waitFor(() => expect(directoryReads.at(-1)).toEqual({ query: null, page: 1 }))
+    await user.type(reopenedComposer.getByRole('textbox', { name: '搜索检验目录' }), '血常')
+    await user.click(reopenedComposer.getByRole('button', { name: '执行检验目录搜索' }))
+    await user.click(reopenedComposer.getByRole('button', { name: '下一页' }))
+    await waitFor(() => expect(directoryReads.at(-1)).toEqual({ query: '血常', page: 2 }))
+    expect(reopenedComposer.getByText('共 41 条 · 2/3')).toBeTruthy()
+    await user.click(reopenedComposer.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(within(screen.getByRole('region', { name: '待开具检验' })).getByRole('checkbox', { name: '选择合成第二项检验' }).getAttribute('aria-checked')).toBe('false')
     expect(within(screen.getByRole('region', { name: '待开具检验' })).getByText('发热')).toBeTruthy()
     expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-recording': '1' }, input: {
@@ -5004,7 +5057,8 @@ describe('role workspaces', () => {
     await waitFor(() => expect(saves).toEqual([{ expectedVersions: { 'Encounter/encounter-recording': '1' },
       input: { catalogItemId: service.id, indicationCode: 'clinical-evaluation', expectedDraftVersion: 1 } }]))
     expect(within(panel).getByText('临床评估')).toBeTruthy()
-    expect(screen.getByRole('combobox', { name: '检验适应证' }).textContent).toContain('临床评估')
+    // 弹窗合同：适应证展示在草稿卡片上，页面不再提供适应证下拉。
+    expect(screen.getByText('检验适应证: 临床评估').textContent).toContain('临床评估')
   })
 
   it.each(['laboratory', 'imaging', 'pathology'] as const)('restores a late Agent %s draft on return to its patient without changing another patient', async kind => {
@@ -5144,7 +5198,12 @@ describe('role workspaces', () => {
       expect(within(patientAPanel).queryByText(kind === 'laboratory' ? '临床评估' : '甲患者人工修改的旧检查资料')).toBeNull()
       expect(writes).toEqual(Array(kind === 'laboratory' ? 2 : 1).fill(`/api/his/v1/encounters/encounter-late-agent-0/${kind}-request/draft`))
       if (kind === 'pathology') {
-        expect(screen.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('合成新手术')
+        // 弹窗合同：送检手术在「编辑病理会诊」弹窗内展示，迟到回填后仍指向新手术。
+        await user.click(screen.getByRole('button', { name: `编辑病理会诊 ${pathology.name}` }))
+        const pathologyComposer = within(await screen.findByRole('dialog'))
+        expect(pathologyComposer.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('合成新手术')
+        await user.click(pathologyComposer.getByRole('button', { name: '取消' }))
+        await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
       }
     } finally { releaseSave?.(); await completion }
   })
@@ -5196,11 +5255,16 @@ describe('role workspaces', () => {
     await user.click(within(dialog).getByRole('button', { name: '取消' }))
     await user.click(screen.getByRole('button', { name: '选择病例 合成删除患者乙' }))
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
-    const choose = await screen.findByRole('button', { name: '选择 血常规 6690-2' })
+    // 弹窗合同：患者乙在「添加检验」弹窗内选择项目并确认落单。
+    await user.click(screen.getByRole('button', { name: '添加检验' }))
+    const patientBComposer = within(await screen.findByRole('dialog'))
+    const choose = await patientBComposer.findByRole('button', { name: '选择 血常规 6690-2' })
     await user.click(choose)
     expect(choose.getAttribute('aria-pressed')).toBe('true')
+    await user.click(patientBComposer.getByRole('button', { name: '加入检验申请' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await act(async () => { releaseDeletion?.() })
-    expect(choose.getAttribute('aria-pressed')).toBe('true')
+    // 患者甲的迟到删除不影响患者乙刚确认的草稿，也不弹出删除完成提示。
     expect(within(screen.getByRole('region', { name: '检验申请' })).getByText('血常规')).toBeTruthy()
     expect(screen.queryByText('检验草稿已删除')).toBeNull()
   })
@@ -6600,21 +6664,29 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('heading', { name: '用药结论' })).toBeNull()
     expect(screen.queryByLabelText('诊断编码')).toBeNull()
     await user.click(screen.getByRole('tab', { name: '诊断' }))
-    const diagnosisDirectory = screen.getByRole('region', { name: '诊断目录' })
-    await user.type(within(diagnosisDirectory).getByLabelText('搜索疾病目录'), '流感')
-    await user.click(within(diagnosisDirectory).getByRole('button', { name: '执行疾病目录搜索' }))
+    // 弹窗合同：目录检索与备注填写在同一次「添加诊断」弹窗内完成，一次弹窗确认一条。
+    await user.click(screen.getByRole('button', { name: '添加诊断' }))
+    const primaryComposer = within(await screen.findByRole('dialog'))
+    await user.type(await primaryComposer.findByRole('textbox', { name: '搜索疾病目录' }), '流感')
+    await user.click(primaryComposer.getByRole('button', { name: '执行疾病目录搜索' }))
     await waitFor(() => expect(diagnosisQueries).toContain('流感'))
-    await user.click(await within(diagnosisDirectory).findByRole('button', {
+    await user.click(await primaryComposer.findByRole('button', {
       name: '选择 流感伴其他呼吸道表现 J10.1',
     }))
-    await user.type(screen.getByLabelText('诊断备注'), '结合甲型流感抗原结果。')
-    await user.clear(within(diagnosisDirectory).getByLabelText('搜索疾病目录'))
-    await user.type(within(diagnosisDirectory).getByLabelText('搜索疾病目录'), '高血')
-    await user.click(within(diagnosisDirectory).getByRole('button', { name: '执行疾病目录搜索' }))
+    await user.type(primaryComposer.getByLabelText('诊断备注'), '结合甲型流感抗原结果。')
+    await user.click(primaryComposer.getByRole('button', { name: '加入诊断' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // 重开弹窗检索第二条；弹窗合同下检索词随弹窗关闭重置。
+    await user.click(screen.getByRole('button', { name: '添加诊断' }))
+    const secondaryComposer = within(await screen.findByRole('dialog'))
+    await user.type(await secondaryComposer.findByRole('textbox', { name: '搜索疾病目录' }), '高血')
+    await user.click(secondaryComposer.getByRole('button', { name: '执行疾病目录搜索' }))
     await waitFor(() => expect(diagnosisQueries).toContain('高血'))
-    await user.click(await within(diagnosisDirectory).findByRole('button', {
+    await user.click(await secondaryComposer.findByRole('button', {
       name: '选择 原发性高血压 I10',
     }))
+    await user.click(secondaryComposer.getByRole('button', { name: '加入诊断' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(screen.queryByRole('button', { name: '保存诊断草稿' })).toBeNull()
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(2), { timeout: 3_000 })
     expect(await screen.findByText('草稿已自动保存')).toBeTruthy()
@@ -6634,8 +6706,8 @@ describe('role workspaces', () => {
     })
     await user.click(within(screen.getByRole('region', { name: '诊断列表' })).getByRole('button', { name: /原发性高血压/ }))
     await user.click(screen.getByRole('button', { name: '修改已确认诊断' }))
-    await user.click(within(screen.getByRole('region', { name: '填写诊断' })).getByRole('button', { name: '原发性高血压' }))
-    await user.click(screen.getByRole('button', { name: '移除诊断 2' }))
+    // 弹窗合同：条目卡片自带移除入口，不再需要先在表单中选中条目。
+    await user.click(screen.getByRole('button', { name: '移除诊断 原发性高血压' }))
     await waitFor(() => expect(savedDiagnosisEntries.at(-1)).toHaveLength(1), { timeout: 3_000 })
     await waitFor(() => expect((screen.getByRole('button', { name: /^确认选中诊断/ }) as HTMLButtonElement).disabled).toBe(false))
     const { fillDiagnosis, tools: diagnosisTools } = await waitFor(() => {
@@ -7032,7 +7104,7 @@ describe('role workspaces', () => {
     expect(screen.getByRole('heading', { name: '确认完诊' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '确认完诊' }))
 
-    expect(await screen.findByText('Encounter 已完成，当前病例为只读。')).toBeTruthy()
+    expect(await screen.findByText('已完诊 · 病例只读')).toBeTruthy()
     expect(within(screen.getByRole('complementary', { name: '候诊队列' })).queryByRole('button', { name: /^选择病例 / })).toBeNull()
     expect(within(screen.getByRole('complementary', { name: '候诊队列' })).getByText('0')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '向患者提问' })).toBeNull()
@@ -7396,32 +7468,39 @@ describe('role workspaces', () => {
 
     await user.click(await screen.findByRole('tab', { name: '处方' }))
     expect(screen.queryByLabelText('剂量')).toBeNull()
-    const medicationDirectory = await screen.findByRole('region', { name: '药品目录' })
-    await user.type(within(medicationDirectory).getByLabelText('搜索药品目录'), '奥司')
-    await user.click(within(medicationDirectory).getByRole('button', { name: '执行药品目录搜索' }))
+    // 弹窗合同：药品目录检索、包装选择与剂量填写在同一次「添加药品」弹窗内完成。
+    await user.click(screen.getByRole('button', { name: '添加药品' }))
+    const medicationComposer = within(await screen.findByRole('dialog'))
+    await user.type(await medicationComposer.findByRole('textbox', { name: '搜索药品目录' }), '奥司')
+    await user.click(medicationComposer.getByRole('button', { name: '执行药品目录搜索' }))
     await waitFor(() => expect(medicationQueries).toContain('奥司'))
-    expect(within(medicationDirectory).queryByText('2 个包装')).toBeNull()
-    expect(within(medicationDirectory).getAllByRole('combobox', { name: /^包装 / })).toHaveLength(2)
-    expect(within(medicationDirectory).getAllByText(/^合成制药有限公司 · /)).toHaveLength(1)
-    expect(within(medicationDirectory).getByText(/^另一合成制药有限公司 · /)).toBeTruthy()
-    await waitFor(() => expect((within(medicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }) as HTMLButtonElement).disabled).toBe(false))
-    act(() => within(medicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).focus())
+    expect(medicationComposer.queryByText('2 个包装')).toBeNull()
+    expect(medicationComposer.getAllByRole('combobox', { name: /^包装 / })).toHaveLength(2)
+    expect(medicationComposer.queryByText(/^合成制药有限公司 · /)).toBeNull()
+    // 弹窗内同为单行紧凑行：厂家等完整注册事实保留在行级悬停提示。
+    const rowTitles = medicationComposer.getAllByRole('listitem').map(row => row.getAttribute('title') ?? '')
+    expect(rowTitles.filter(title => title.startsWith('合成制药有限公司 · '))).toHaveLength(1)
+    expect(rowTitles.some(title => title.startsWith('另一合成制药有限公司 · '))).toBe(true)
+    await waitFor(() => expect((medicationComposer.getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }) as HTMLButtonElement).disabled).toBe(false))
+    act(() => medicationComposer.getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).focus())
     await user.keyboard('{Enter}')
     await user.click(await screen.findByRole('option', { name: '12粒/盒' }))
-    await user.click(within(medicationDirectory).getByRole('button', {
+    await user.click(medicationComposer.getByRole('button', {
       name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))
-    const dose = await screen.findByLabelText('剂量')
-    const frequency = screen.getByLabelText('频次')
-    const course = screen.getByLabelText('疗程')
-    const quantity = screen.getByLabelText('数量')
+    const dose = await medicationComposer.findByLabelText('剂量')
+    const frequency = medicationComposer.getByLabelText('频次')
+    const course = medicationComposer.getByLabelText('疗程')
+    const quantity = medicationComposer.getByLabelText('数量')
     await user.type(dose, '75 mg')
     await user.type(frequency, 'BID')
     await user.clear(course)
     await user.type(course, '5')
     await user.clear(quantity)
     await user.type(quantity, '10')
-    expect(screen.queryByRole('button', { name: '保存处方草稿' })).toBeNull()
+    expect(medicationComposer.queryByRole('button', { name: '保存处方草稿' })).toBeNull()
+    await user.click(medicationComposer.getByRole('button', { name: '加入处方' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(medicationConclusion?.draftVersion).toBe(1), { timeout: 3_000 })
     expect(await screen.findByText('草稿已自动保存')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '删除处方草稿' }))
@@ -7434,22 +7513,31 @@ describe('role workspaces', () => {
       name: '确认删除处方草稿',
     })).toBeNull())
     expect(draftDeletionRequests).toBe(1)
-    const reopenedMedicationDirectory = await screen.findByRole('region', { name: '药品目录' })
-    await waitFor(() => expect((within(reopenedMedicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }) as HTMLButtonElement).disabled).toBe(false))
-    expect(within(reopenedMedicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).textContent).toContain('12粒/盒')
-    await user.click(await within(reopenedMedicationDirectory).findByRole('button', {
+    // 弹窗合同：重开弹窗即重置检索与包装选择，需重新检索并再次选择 12 粒包装。
+    await user.click(screen.getByRole('button', { name: '添加药品' }))
+    const reopenedComposer = within(await screen.findByRole('dialog'))
+    await user.type(await reopenedComposer.findByRole('textbox', { name: '搜索药品目录' }), '奥司')
+    await user.click(reopenedComposer.getByRole('button', { name: '执行药品目录搜索' }))
+    await waitFor(() => expect((reopenedComposer.getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }) as HTMLButtonElement).disabled).toBe(false))
+    expect(reopenedComposer.getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).textContent).not.toContain('12粒/盒')
+    act(() => reopenedComposer.getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).focus())
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('option', { name: '12粒/盒' }))
+    await user.click(await reopenedComposer.findByRole('button', {
       name: '选择 磷酸奥司他韦胶囊 75 mg 12粒/盒 合成制药有限公司 国药准字H20260001',
     }))
-    await user.type(await screen.findByLabelText('剂量'), '75 mg')
-    await user.type(screen.getByLabelText('频次'), 'BID')
-    await user.clear(screen.getByLabelText('疗程'))
-    await user.type(screen.getByLabelText('疗程'), '5')
-    await user.clear(screen.getByLabelText('数量'))
-    await user.type(screen.getByLabelText('数量'), '10')
+    await user.type(await reopenedComposer.findByLabelText('剂量'), '75 mg')
+    await user.type(reopenedComposer.getByLabelText('频次'), 'BID')
+    await user.clear(reopenedComposer.getByLabelText('疗程'))
+    await user.type(reopenedComposer.getByLabelText('疗程'), '5')
+    await user.clear(reopenedComposer.getByLabelText('数量'))
+    await user.type(reopenedComposer.getByLabelText('数量'), '10')
+    await user.click(reopenedComposer.getByRole('button', { name: '加入处方' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(medicationConclusion?.draftVersion).toBe(3), { timeout: 3_000 })
     await waitFor(() => expect((screen.getByRole('button', { name: /^开具处方（/ }) as HTMLButtonElement).disabled).toBe(false))
     await user.click(screen.getByRole('button', { name: /^开具处方（/ }))
-    expect(await screen.findByText('处方已正式开具')).toBeTruthy()
+    expect(await screen.findByText('已开具')).toBeTruthy()
     expect(screen.getByText(/CM-RX-20260824-0001/)).toBeTruthy()
     expect(screen.queryByRole('combobox', { name: '药品' })).toBeNull()
 
@@ -7458,7 +7546,7 @@ describe('role workspaces', () => {
     expect(within(dialog).getByText('CM-RX-20260824-0001')).toBeTruthy()
     expect(within(dialog).getByText('已开具')).toBeTruthy()
     await user.click(within(dialog).getByRole('button', { name: '确认撤回' }))
-    expect(await screen.findByText(/处方已撤回/)).toBeTruthy()
+    expect(await screen.findByText('已撤回')).toBeTruthy()
 
     await user.click(screen.getByRole('button', { name: '无需用药' }))
     await user.click(screen.getByRole('button', { name: '确认无需用药' }))
@@ -7560,6 +7648,12 @@ describe('role workspaces', () => {
           },
         }, { status: 409 })
       }
+      if (url.pathname === '/api/his/v1/reference-catalogs/medications') {
+        // 弹窗合同：编辑药品弹窗挂载即发起参考目录检索；本院药回退显示目录条目。
+        return Response.json({
+          items: [], page: 1, pageSize: 20, releaseId: 'reference-http-test-v1', total: 0,
+        })
+      }
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
@@ -7569,11 +7663,14 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('button', { name: /^开具处方（/ }))
     expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(await screen.findByText('当前诊断、过敏信息、目录或处方状态不允许正式开具，请检查后重试。')).toBeTruthy()
+    // 开具被拒后草稿条目仍在，剂量详情在「编辑药品」弹窗内展示。
     expect(screen.getAllByText('磷酸奥司他韦胶囊').length).toBeGreaterThan(0)
-    expect(screen.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
-    expect(screen.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
-    expect(screen.getByRole('combobox', { name: '疗程' }).textContent).toContain('5 天')
-    expect(screen.getByRole('combobox', { name: '数量' }).textContent).toContain('10')
+    await user.click(screen.getByRole('button', { name: '编辑药品 磷酸奥司他韦胶囊' }))
+    const draftComposer = within(await screen.findByRole('dialog'))
+    expect(draftComposer.getByRole('combobox', { name: '剂量' }).textContent).toContain('75 mg')
+    expect(draftComposer.getByRole('combobox', { name: '频次' }).textContent).toContain('BID')
+    expect(draftComposer.getByRole('combobox', { name: '疗程' }).textContent).toContain('5 天')
+    expect(draftComposer.getByRole('combobox', { name: '数量' }).textContent).toContain('10')
   })
 
   it('previews clinical signing and completes the Encounter before medication payment', async () => {
@@ -8517,7 +8614,7 @@ describe('role workspaces', () => {
     expect(within(dialog).getByText(prescription.number)).toBeTruthy()
     await user.click(within(dialog).getByRole('button', { name: '确认撤回' }))
 
-    expect(await screen.findByText('处方已撤回')).toBeTruthy()
+    expect(await screen.findByText('已撤回')).toBeTruthy()
     expect(withdrawalRequest).toEqual({
       expectedVersions: {
         [`MedicationRequest/${prescription.items[0]?.medicationRequestId}`]: '2',
@@ -9258,17 +9355,19 @@ describe('role workspaces', () => {
       input: { expectedDraftVersion: 1 },
     })
 
-    const replacementMedicationDirectory = await screen.findByRole('region', { name: '药品目录' })
-    await user.click(await within(replacementMedicationDirectory).findByRole('button', {
-      name: '选择 磷酸奥司他韦胶囊',
-    }))
+    // 弹窗合同：删除草稿后从「添加药品」弹窗重选替代药品，本院药默认值可直接确认。
+    await user.click(screen.getByRole('button', { name: '添加药品' }))
+    const replacementComposer = within(await screen.findByRole('dialog'))
+    await user.click(await replacementComposer.findByRole('button', { name: '选择 磷酸奥司他韦胶囊' }))
+    await user.click(replacementComposer.getByRole('button', { name: '加入处方' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(prescriptionDraftRequest).toEqual({
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
       input: { expectedDraftVersion: 2, items: [prescriptionDraftItem] },
     }), { timeout: 3_000 })
     await waitFor(() => expect((screen.getByRole('button', { name: /^开具处方（/ }) as HTMLButtonElement).disabled).toBe(false))
     await user.click(screen.getByRole('button', { name: /^开具处方（/ }))
-    expect(await screen.findByText('处方已正式开具')).toBeTruthy()
+    expect(await screen.findByText('已开具')).toBeTruthy()
     expect(prescriptionIssueRequest).toEqual({
       expectedVersions: { 'Encounter/encounter-completed-correction-1': '6' },
       input: { expectedDraftVersion: 3, resolveExistingDraft: true, selections: [{ source: 'manual', kind: 'prescription', ...prescriptionDraftItem }] },
@@ -9280,7 +9379,7 @@ describe('role workspaces', () => {
     })
     expect(within(prescriptionWithdrawalDialog).getByText(issuedPrescription.number)).toBeTruthy()
     await user.click(within(prescriptionWithdrawalDialog).getByRole('button', { name: '确认撤回' }))
-    expect(await screen.findByText('处方已撤回')).toBeTruthy()
+    expect(await screen.findByText('已撤回')).toBeTruthy()
     expect(prescriptionWithdrawalRequest).toEqual({
       expectedVersions: {
         'MedicationRequest/medication-request-correction-replacement-1': '1',

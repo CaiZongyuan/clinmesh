@@ -19,6 +19,8 @@ import {
 } from '@clinmesh/ui/components/alert-dialog'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
 import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
@@ -94,7 +96,8 @@ export interface LaboratoryPageActions {
   }
   save: {
     error: Error | null
-    onSubmit: () => void
+    /** override 供弹窗确认直写：受控值此刻尚未完成重渲染，渲染闭包读到的还是旧值。 */
+    onSubmit: (override?: { catalogItemId: string; indicationCode: string }) => void
     pending: boolean
   }
 }
@@ -114,6 +117,112 @@ function ErrorAlert({ message, title }: { message: string; title: string }): Rea
       <AlertTitle>{title}</AlertTitle>
       <AlertDescription>{message}</AlertDescription>
     </Alert>
+  )
+}
+
+interface LaboratoryComposerTarget {
+  /** 草稿来自目录条目（非完整服务快照）时，提供适应证取值范围。 */
+  allowedIndicationCodes?: readonly string[] | undefined
+  indicationCode: string
+  selection: LaboratoryCatalogSelection
+}
+
+/** 三页签统一弹窗合同（检验）：目录选项目与适应证在同一次弹窗内完成，点「确认」落单这一条并关闭；未确认关闭即弃置弹窗内输入。 */
+function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId, locale, messages, onConfirm, onOpenChange, open, search, target }: {
+  allowedIndicationCodes?: readonly string[] | undefined
+  existingDraftItemId?: string | undefined
+  locale: WorkspaceLocale
+  messages: ReturnType<typeof getWorkspaceMessages>
+  onConfirm: (selection: LaboratoryCatalogSelection, indicationCode: string) => void
+  onOpenChange: (open: boolean) => void
+  open: boolean
+  search: ReferenceCatalogSearches['laboratory']
+  target?: LaboratoryComposerTarget | undefined
+}): React.JSX.Element {
+  const zh = locale === 'zh-CN'
+  const targetRef = useRef(target)
+  targetRef.current = target
+  const openingRef = useRef(open)
+  const [selected, setSelected] = useState<LaboratoryCatalogSelection | undefined>()
+  const [indicationCode, setIndicationCode] = useState('')
+  const [conflict, setConflict] = useState(false)
+  useEffect(() => {
+    if (open && !openingRef.current) {
+      setSelected(targetRef.current?.selection)
+      setIndicationCode(targetRef.current?.indicationCode ?? '')
+      setConflict(false)
+    }
+    openingRef.current = open
+  }, [open])
+  const select = (selection: LaboratoryCatalogSelection | undefined) => {
+    if (selection !== undefined && existingDraftItemId !== undefined && selection.catalogItemId !== existingDraftItemId) {
+      setConflict(true)
+      return
+    }
+    setConflict(false)
+    // 换选项目时适应证跟随项目重置，默认取该项目首个允许值（与控制器解析规则一致）。
+    if (selection === undefined || selected === undefined || selection.catalogItemId !== selected.catalogItemId) {
+      setIndicationCode(selection?.laboratoryService?.allowedIndicationCodes[0] ?? '')
+    }
+    setSelected(selection)
+  }
+  const allowedCodes = selected?.laboratoryService?.allowedIndicationCodes ?? allowedIndicationCodes
+  const indicationItems = allowedCodes !== undefined
+    ? allowedCodes.map(value => ({ value, label: indicationLabel(value, messages) }))
+    : indicationCode === '' ? [] : [{ value: indicationCode, label: indicationLabel(indicationCode, messages) }]
+  const confirm = () => {
+    if (selected === undefined || indicationCode === '') return
+    onConfirm(selected, indicationCode)
+    onOpenChange(false)
+  }
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="laboratory">
+        <DialogHeader>
+          <DialogTitle>{target === undefined ? (zh ? '选择检验项目' : 'Select laboratory item') : (zh ? '编辑检验' : 'Edit laboratory item')}</DialogTitle>
+          <DialogDescription>{zh
+            ? '在目录中选择检验项目并确认适应证，一次弹窗确认一条检验申请。'
+            : 'Pick a laboratory item and confirm the indication; one dialog confirms one laboratory request.'}</DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {open ? <LaboratoryCatalogPicker active={open} locale={locale} onSelect={select} search={search}
+            {...(selected === undefined ? {} : { selectedId: selected.catalogItemId })} /> : null}
+        </div>
+        {selected === undefined ? null : (
+          <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
+            <div>
+              <strong className="block truncate text-sm">{selected.display}</strong>
+              <span className="mt-1 block break-all font-mono text-xs text-muted-foreground">{selected.code}</span>
+            </div>
+            {selected.laboratoryService === undefined ? null : (
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
+                <dt className="text-muted-foreground">{zh ? '标本' : 'Specimen'}</dt><dd className="break-words">{selected.laboratoryService.specimen.display}</dd>
+                <dt className="text-muted-foreground">{zh ? '报告结构' : 'Report structure'}</dt><dd>{zh ? `${selected.laboratoryService.reportDefinition.results.length} 项指标` : `${selected.laboratoryService.reportDefinition.results.length} indicators`}</dd>
+                <dt className="text-muted-foreground">TAT</dt><dd className="tabular-nums">{selected.laboratoryService.tatMinutes} min</dd>
+                <dt className="text-muted-foreground">{zh ? '费用' : 'Price'}</dt><dd>{formatLaboratoryPrice(selected.laboratoryService.priceFen, locale)}</dd>
+              </dl>
+            )}
+            <Field>
+              <FieldLabel htmlFor="laboratory-composer-indication">{messages.laboratoryIndication}</FieldLabel>
+              {indicationItems.length === 1 ? (
+                <div className="flex h-8 items-center rounded-md border px-2.5 text-sm" id="laboratory-composer-indication">
+                  {indicationItems[0]?.label}
+                </div>
+              ) : (
+                <WorkspaceSelect id="laboratory-composer-indication" items={indicationItems} onValueChange={value => setIndicationCode(value ?? '')} value={indicationCode} />
+              )}
+            </Field>
+          </div>
+        )}
+        {conflict ? <p role="alert" className="text-sm text-destructive">{zh ? '请先开具或删除已有检验草稿，再选择其他项目。' : 'Issue or delete the existing laboratory draft before choosing another item.'}</p> : null}
+        <DialogFooter>
+          <DialogClose render={<Button type="button" variant="outline" />}>{messages.cancel}</DialogClose>
+          <Button disabled={selected === undefined || indicationCode === ''} onClick={confirm} type="button">
+            {target === undefined ? (zh ? '加入检验申请' : 'Add laboratory request') : (zh ? '保存修改' : 'Save changes')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -270,7 +379,6 @@ export function LaboratoryPage({
             encounter={detail.encounter}
             catalog={laboratoryCatalog}
             indicationCode={indicationCode}
-            indicationItems={indicationItems}
             key={`laboratory-request:${detail.caseId}`}
             laboratoryItemId={laboratoryItemId}
             locale={locale}
@@ -300,7 +408,6 @@ function LaboratoryRequestEditor({
   encounter,
   catalog,
   indicationCode,
-  indicationItems,
   laboratoryItemId,
   locale,
   messages,
@@ -322,7 +429,6 @@ function LaboratoryRequestEditor({
   encounter: DoctorCaseDetail['encounter']
   catalog: ClinicalCatalog['laboratory']
   indicationCode: string
-  indicationItems: Array<{ label: string; value: string }>
   laboratoryItemId: string
   locale: WorkspaceLocale
   messages: ReturnType<typeof getWorkspaceMessages>
@@ -376,13 +482,6 @@ function LaboratoryRequestEditor({
     ?? selectedItem?.id
   const draftMatchesSelection = state?.draft?.catalogItemId === laboratoryItemId
     && state.draft.indicationCode === indicationCode
-  const effectiveIndicationItems = selectedService !== undefined
-    ? selectedService.allowedIndicationCodes.map(value => ({ value, label: indicationLabel(value, messages) }))
-    : indicationItems.length > 0
-    ? indicationItems
-    : laboratoryItemId.length === 0 || indicationCode.length === 0
-      ? []
-      : [{ label: indicationLabel(indicationCode, messages), value: indicationCode }]
   useAutosave({
     delayMs: 800,
     enabled: !readOnly
@@ -394,7 +493,39 @@ function LaboratoryRequestEditor({
     onSave: actions.save.onSubmit,
     revision: `${caseId}:${state?.draftVersion ?? 0}:${laboratoryItemId}:${indicationCode}`,
   })
-  const [selectionConflict, setSelectionConflict] = useState(false)
+  const [composerOpen, setComposerOpen] = useState(false)
+  const composerTarget = useMemo<LaboratoryComposerTarget | undefined>(() => {
+    if (laboratoryItemId === '') return undefined
+    if (selectedReference?.catalogItemId === laboratoryItemId) return { indicationCode, selection: selectedReference }
+    const draft = state?.draft
+    if (draft?.catalogItemId !== laboratoryItemId) return undefined
+    const service = draft.laboratoryService ?? catalogById.get(laboratoryItemId)
+    if (service === undefined) return undefined
+    if ('allowedIndicationCodes' in service && !('specimen' in service)) {
+      // 目录条目：瘦身形状，适应证取值范围随 target 单独携带。
+      const referenceConcept = draft.referenceConcept ?? service.referenceConcept
+      return {
+        allowedIndicationCodes: service.allowedIndicationCodes,
+        indicationCode: draft.indicationCode,
+        selection: {
+          catalogItemId: laboratoryItemId,
+          code: draft.referenceConcept?.code ?? service.referenceConcept?.code ?? laboratoryItemId,
+          display: locale === 'zh-CN' ? service.nameZh : service.nameEn,
+          ...(referenceConcept === undefined ? {} : { referenceConcept }),
+        },
+      }
+    }
+    return {
+      indicationCode: draft.indicationCode,
+      selection: {
+        catalogItemId: laboratoryItemId,
+        code: draft.referenceConcept?.code ?? service.referenceConcept.code,
+        display: (locale === 'zh-CN' ? service.nameZh : service.nameEn) ?? draft.referenceConcept?.display ?? laboratoryItemId,
+        laboratoryService: service,
+        referenceConcept: draft.referenceConcept ?? { ...service.referenceConcept },
+      },
+    }
+  }, [catalogById, indicationCode, laboratoryItemId, locale, selectedReference, state?.draft])
   const recommendationUnavailableReason = (): string | undefined => {
     if (actions.save.pending || actions.issue.pending || actions.deleteDraft.pending) {
       return messages.recommendationRequestTargetUnavailable
@@ -422,121 +553,122 @@ function LaboratoryRequestEditor({
     onSelectRequest?.(id)
   }, [actions.issue.successRequestId, requests, onSelectRequest])
   const requestHeadingId = `laboratory-request-heading-${caseId}`
+  // 三页签统一结构（检验）：左主列为入口与草稿卡片，目录检索与适应证在同一次弹窗内完成。
   const editor = (
-    <div className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
-      <LaboratoryCatalogPicker active={active} collapsible={requests.length > 0} locale={locale} search={referenceSearch} selectedId={laboratoryItemId}
-        onSelect={selection => {
-          if (state?.draft !== undefined && selection?.catalogItemId !== state.draft.catalogItemId) {
-            setSelectionConflict(true)
-            return
-          }
-          setSelectionConflict(false)
+    <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-3">
+      <h3 className="text-sm font-semibold" id={requestHeadingId}>{messages.laboratoryOrder}</h3>
+      {laboratoryItemId === '' ? (
+        <>
+          <div>
+            <Button data-agent-catalog-trigger="laboratory" onClick={() => setComposerOpen(true)} type="button">
+              <FlaskConicalIcon data-icon="inline-start" />{locale === 'zh-CN' ? '添加检验' : 'Add laboratory item'}
+            </Button>
+          </div>
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle>{messages.laboratoryItemEmpty}</EmptyTitle>
+              <EmptyDescription>{messages.laboratoryItemEmptyDescription}</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </>
+      ) : (
+        <Button
+          aria-label={`${locale === 'zh-CN' ? '编辑检验' : 'Edit laboratory item'} ${selectedDisplay ?? laboratoryItemId}`}
+          className="h-auto w-full min-w-0 items-start justify-start gap-2 whitespace-normal p-3 text-left"
+          onClick={() => setComposerOpen(true)}
+          type="button"
+          variant="outline"
+        >
+          <span className="min-w-0 flex-1">
+            <strong className="block truncate text-sm">{selectedDisplay}</strong>
+            <span className="mt-1 block break-all font-mono text-xs text-muted-foreground">
+              {selectedCode}
+            </span>
+            <span className="mt-1 block text-xs text-muted-foreground">
+              {messages.laboratoryIndication}: {indicationCode === '' ? '—' : indicationLabel(indicationCode, messages)}
+            </span>
+          </span>
+        </Button>
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <p aria-live="polite" className="mr-auto text-xs text-muted-foreground">
+          {actions.save.error !== null
+            ? messages.autosaveFailed
+            : actions.save.pending
+            ? messages.autosaveSaving
+            : state?.draft === undefined && laboratoryItemId === ''
+            ? ''
+            : !draftMatchesSelection
+              ? messages.autosavePending
+              : state?.draft === undefined ? '' : messages.autosaveSaved}
+        </p>
+        {state?.draft === undefined ? null : (
+            <AlertDialog>
+              <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending || actions.issue.pending || actions.save.pending || !draftMatchesSelection} type="button" variant="destructive" />}>
+                <Trash2Icon data-icon="inline-start" />{messages.deleteLaboratoryRequestDraft}
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{messages.deleteLaboratoryRequestDraftTitle}</AlertDialogTitle>
+                  <AlertDialogDescription>{messages.deleteLaboratoryRequestDraftDescription}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <dl className="text-sm">
+                  <div>
+                    <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
+                    <dd className="mt-1 font-medium">
+                      {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
+                        ?? (locale === 'zh-CN'
+                          ? state.draft.laboratoryService?.nameZh
+                          : state.draft.laboratoryService?.nameEn)
+                        ?? state.draft.referenceConcept?.display
+                        ?? state.draft.catalogItemId}
+                    </dd>
+                  </div>
+                </dl>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={actions.deleteDraft.pending || actions.save.pending}
+                    onClick={actions.deleteDraft.onSubmit}
+                    variant="destructive"
+                  >
+                    <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+        )}
+      </div>
+      {actions.deleteDraft.success?.caseId === caseId
+        && state?.draft === undefined
+        && state?.draftVersion === actions.deleteDraft.success.draftVersion ? (
+        <Alert>
+          <CheckIcon aria-hidden="true" />
+          <AlertTitle>{messages.laboratoryRequestDraftDeleted}</AlertTitle>
+        </Alert>
+      ) : null}
+      {actions.save.error === null ? null : <Button disabled={actions.save.pending} onClick={() => actions.save.onSubmit()} type="button" variant="outline">{locale === 'zh-CN' ? '重试保存' : 'Retry saving'}</Button>}
+      {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
+      {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
+      {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
+      <LaboratoryComposerDialog
+        allowedIndicationCodes={composerTarget?.allowedIndicationCodes}
+        existingDraftItemId={state?.draft?.catalogItemId}
+        locale={locale}
+        messages={messages}
+        onConfirm={(selection, indication) => {
           setSelectedReference(selection)
-          onLaboratoryItemChange(selection?.catalogItemId ?? '')
-        }} />
-        <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-3">
-          <h3 className="text-sm font-semibold" id={requestHeadingId}>{messages.laboratoryOrder}</h3>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="laboratory-item">{messages.laboratoryItem}</FieldLabel>
-              <div className="flex min-h-16 items-center justify-between gap-3 border px-3 py-2" id="laboratory-item">
-                <span className="min-w-0">
-                  {selectedDisplay === undefined ? (
-                    <span className="text-sm text-muted-foreground">
-                      {locale === 'zh-CN' ? '尚未选择检验项目' : 'No laboratory item selected'}
-                    </span>
-                  ) : (
-                    <>
-                      <strong className="block truncate text-sm">{selectedDisplay}</strong>
-                      <span className="mt-1 block break-all font-mono text-xs text-muted-foreground">
-                        {selectedCode}
-                      </span>
-                    </>
-                  )}
-                </span>
-              </div>
-            </Field>
-            {selectedService === undefined ? null : (
-              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-xs">
-                <dt className="text-muted-foreground">{locale === 'zh-CN' ? '标本' : 'Specimen'}</dt><dd className="break-words">{selectedService.specimen.display}</dd>
-                <dt className="text-muted-foreground">{locale === 'zh-CN' ? '报告结构' : 'Report structure'}</dt><dd>{locale === 'zh-CN' ? `${selectedService.reportDefinition.results.length} 项指标` : `${selectedService.reportDefinition.results.length} indicators`}</dd>
-                <dt className="text-muted-foreground">TAT</dt><dd className="tabular-nums">{selectedService.tatMinutes} min</dd>
-                <dt className="text-muted-foreground">{locale === 'zh-CN' ? '费用' : 'Price'}</dt><dd>{formatLaboratoryPrice(selectedService.priceFen, locale)}</dd>
-              </dl>
-            )}
-            {laboratoryItemId.length === 0 ? null : <Field>
-              <FieldLabel htmlFor="laboratory-indication">{messages.laboratoryIndication}</FieldLabel>
-              {effectiveIndicationItems.length === 1 ? (
-                <div className="flex h-8 items-center rounded-md border px-2.5 text-sm" id="laboratory-indication">
-                  {effectiveIndicationItems[0]?.label}
-                </div>
-              ) : (
-                <WorkspaceSelect id="laboratory-indication" items={effectiveIndicationItems} onValueChange={value => onIndicationChange(value ?? '')} value={indicationCode} />
-              )}
-            </Field>}
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <p aria-live="polite" className="mr-auto text-xs text-muted-foreground">
-                {actions.save.error !== null
-                  ? messages.autosaveFailed
-                  : actions.save.pending
-                  ? messages.autosaveSaving
-                  : !draftMatchesSelection
-                    ? messages.autosavePending
-                    : state?.draft === undefined ? '' : messages.autosaveSaved}
-              </p>
-              {state?.draft === undefined ? null : (
-                  <AlertDialog>
-                    <AlertDialogTrigger render={<Button disabled={actions.deleteDraft.pending || actions.issue.pending || actions.save.pending || !draftMatchesSelection} type="button" variant="destructive" />}>
-                      <Trash2Icon data-icon="inline-start" />{messages.deleteLaboratoryRequestDraft}
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>{messages.deleteLaboratoryRequestDraftTitle}</AlertDialogTitle>
-                        <AlertDialogDescription>{messages.deleteLaboratoryRequestDraftDescription}</AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <dl className="text-sm">
-                        <div>
-                          <dt className="text-xs text-muted-foreground">{messages.laboratoryItem}</dt>
-                          <dd className="mt-1 font-medium">
-                            {(locale === 'zh-CN' ? draftItem?.nameZh : draftItem?.nameEn)
-                              ?? (locale === 'zh-CN'
-                                ? state.draft.laboratoryService?.nameZh
-                                : state.draft.laboratoryService?.nameEn)
-                              ?? state.draft.referenceConcept?.display
-                              ?? state.draft.catalogItemId}
-                          </dd>
-                        </div>
-                      </dl>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                        <AlertDialogAction
-                          disabled={actions.deleteDraft.pending || actions.save.pending}
-                          onClick={actions.deleteDraft.onSubmit}
-                          variant="destructive"
-                        >
-                          <Trash2Icon data-icon="inline-start" />{messages.confirmDelete}
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-              )}
-            </div>
-            {actions.deleteDraft.success?.caseId === caseId
-              && state?.draft === undefined
-              && state?.draftVersion === actions.deleteDraft.success.draftVersion ? (
-              <Alert>
-                <CheckIcon aria-hidden="true" />
-                <AlertTitle>{messages.laboratoryRequestDraftDeleted}</AlertTitle>
-              </Alert>
-            ) : null}
-            {selectionConflict ? <p role="alert" className="text-sm text-destructive">{locale === 'zh-CN' ? '请先开具或删除已有检验草稿，再选择其他项目。' : 'Issue or delete the existing laboratory draft before choosing another item.'}</p> : null}
-            {actions.save.error === null ? null : <Button disabled={actions.save.pending} onClick={actions.save.onSubmit} type="button" variant="outline">{locale === 'zh-CN' ? '重试保存' : 'Retry saving'}</Button>}
-            {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
-            {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
-            {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
-          </FieldGroup>
-        </section>
-    </div>
+          onLaboratoryItemChange(selection.catalogItemId)
+          onIndicationChange(indication)
+          // 确认即写入服务端草稿：不等 800ms 自动保存，避免确认后立即换例等卸载场景丢保存（与放射/病理弹窗一致）。
+          actions.save.onSubmit({ catalogItemId: selection.catalogItemId, indicationCode: indication })
+        }}
+        onOpenChange={setComposerOpen}
+        open={composerOpen}
+        search={referenceSearch}
+        target={composerTarget}
+      />
+    </section>
   )
   const pending = (
     <DoctorRecommendationsPanel
