@@ -71,6 +71,7 @@
 | [主 Agent 统筹的开发方式](2026-10-16-primary-agent-development-workflow.md) | `implemented` |
 | [文档归属与结构整理](2026-10-19-documentation-ownership.md) | `implemented` |
 | [共享工程资料与本机 Agent 目录分离](2026-10-19-repository-materials.md) | `implemented` |
+| [诊疗建议信封预算与分批瘦身](2026-10-20-recommendation-envelope-budget.md) | `implemented` |
 | [医生 Agent 临床助手](2026-10-08-doctor-agent-assistant.md) | `implemented` |
 
 ## Issue 与交付

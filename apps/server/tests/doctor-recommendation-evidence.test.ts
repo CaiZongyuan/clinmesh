@@ -16,22 +16,31 @@ function unpack(history: ReturnType<typeof packDoctorRecommendationHistory>): Do
   return [...history.required, ...history.optional].flatMap(evidence => {
     doctorCaseEvidenceSchema.parse(evidence)
     const { entries, ...common } = JSON.parse(evidence.text)
-    return entries.map((entry: unknown) => doctorCaseHistoryDetailSchema.parse({
-      ...(common.source === 'local-completed' ? { source: common.source } : common), ...Object(entry),
-    }))
+    return entries.map((entry: unknown) => {
+      const { fieldPath: _fieldPath, ...detail } = Object(entry)
+      return doctorCaseHistoryDetailSchema.parse({
+        ...(common.source === 'local-completed' ? { source: common.source } : common), ...detail,
+      })
+    })
   })
 }
 
 describe('doctor recommendation history evidence', () => {
-  it('preserves exactly 12000 characters and refuses an indivisible field beyond that limit', () => {
-    const empty = visible('Condition', 0, { conclusion: '' })
-    const overhead = packDoctorRecommendationHistory('current-case', [empty]).required[0]?.text.length ?? 0
-    const boundary = visible('Condition', 0, { conclusion: 'x'.repeat(12_000 - overhead) })
-    const fits = packDoctorRecommendationHistory('current-case', [boundary])
-    const oversized = packDoctorRecommendationHistory('current-case', [visible('Condition', 1, { conclusion: 'x'.repeat(12_001) })])
+  it('refuses an indivisible field beyond the byte budget while splitting Chinese records between complete fields', () => {
+    const chinese = visible('Condition', 0, { conclusion: '并非确诊。'.repeat(700), note: [{ text: '仅既往可疑，尚待复查。'.repeat(350) }],
+      clinicalStatus: { text: '已缓解' }, onsetDateTime: '1995-01-01' })
+    const fits = packDoctorRecommendationHistory('current-case', [chinese])
+    const oversized = packDoctorRecommendationHistory('current-case', [visible('Condition', 1, { conclusion: 'x'.repeat(13 * 1024) })])
 
-    expect(fits.required[0]?.text).toHaveLength(12_000)
-    expect(unpack(fits)).toEqual([boundary])
+    expect(fits.missingInformation).toEqual([])
+    expect(fits.required.length).toBeGreaterThan(1)
+    for (const evidence of fits.required) {
+      expect(evidence.text.length).toBeLessThanOrEqual(12_000)
+      expect(Buffer.byteLength(evidence.text)).toBeLessThanOrEqual(12 * 1024)
+    }
+    expect(new Set(unpack(fits).map(item => item.entryId))).toEqual(new Set(['source-0']))
+    expect(Object.assign({}, ...unpack(fits).map(item => item.source === 'visible-source' ? item.clinical : {})))
+      .toEqual(chinese.source === 'visible-source' ? chinese.clinical : undefined)
     expect(oversized.required).toEqual([])
     expect(oversized.optional).toEqual([])
     expect(oversized.missingInformation).toEqual(['一条完整历史记录或临床字段超过建议证据预算，无法安全拆分；请核查来源资料。'])
@@ -85,8 +94,8 @@ describe('doctor recommendation history evidence', () => {
   })
 
   it('splits oversized required records only between complete fields and preserves their source identity', () => {
-    const history = [visible('Condition', 0, { conclusion: '并非确诊。'.repeat(1400),
-      note: [{ text: '仅既往可疑，尚待复查。'.repeat(600) }], clinicalStatus: { text: '已缓解' }, onsetDateTime: '1995-01-01' })]
+    const history = [visible('Condition', 0, { conclusion: '并非确诊。'.repeat(700),
+      note: [{ text: '仅既往可疑，尚待复查。'.repeat(350) }], clinicalStatus: { text: '已缓解' }, onsetDateTime: '1995-01-01' })]
     const result = packDoctorRecommendationHistory('current-case', history)
 
     expect(result.missingInformation).toEqual([])
@@ -97,7 +106,10 @@ describe('doctor recommendation history evidence', () => {
       && fragment.title === '合成历史项目 0' && typeof fragment.fieldPath === 'string')).toBe(true)
     expect(fragments.reduce((clinical, fragment) => ({ ...clinical, ...fragment.clinical }), {})).toEqual(
       history[0]?.source === 'visible-source' ? history[0].clinical : undefined)
-    for (const evidence of result.required) expect(evidence.text.length).toBeLessThanOrEqual(12_000)
+    for (const evidence of result.required) {
+      expect(evidence.text.length).toBeLessThanOrEqual(12_000)
+      expect(Buffer.byteLength(evidence.text)).toBeLessThanOrEqual(12 * 1024)
+    }
   })
 
   it('keeps old safety facts and abnormal or uncertain observations required without treating unmarked results as normal', () => {
