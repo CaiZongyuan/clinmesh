@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { installHostModelUsageRoutes } from './model-usage-host-routes.ts'
-import { modelUsageFilterSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageFilterSchema, modelUsageControlUpdateSchema } from '@clinmesh/contracts/model-usage'
+import { ModelUsagePolicyError } from './application/model-usage-control.ts'
 import type { ModelUsageService } from './application/model-usage-service.ts'
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
@@ -231,6 +232,7 @@ function apiErrorResponse(
   }
     if (
       error instanceof IdentityError
+      || error instanceof ModelUsagePolicyError
       || error instanceof AgentIntegrationError
       || error instanceof ConsultationDialogueError
       || error instanceof LaboratoryServicePublisherError
@@ -398,6 +400,19 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const identity = options.identity
     if (options.modelUsage !== undefined) {
       const usage = options.modelUsage
+      app.get('/api/model-usage/control', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.control(session.actor.workspaceId))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.put('/api/model-usage/control', async context => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.updateControl(session.actor, modelUsageControlUpdateSchema.parse(await context.req.json()), requestIdempotencyKey(context)))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
       app.get('/api/model-usage/overview', async context => {
         try {
           const session = await identity.resolveSessionContext(context.req.raw.headers)

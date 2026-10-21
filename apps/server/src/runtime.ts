@@ -1,5 +1,6 @@
 import { createApp } from './app.ts'
 import { ModelUsageService } from './application/model-usage-service.ts'
+import type { ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
 import { ScenarioService } from './application/scenario-service.ts'
@@ -121,6 +122,7 @@ function pathologyActorContext(event: {
 }
 
 export interface CreateClinMeshRuntimeOptions {
+  modelUsageControl?: ModelUsagePolicyConfig
   dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   activeReferenceReleaseId?: string
   ai?: {
@@ -220,7 +222,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const patientPersonas = new PatientPersonaRepository(database, syntheticCases)
     const investigationResults = new InvestigationResultRepository(database)
     const laboratoryServicePublications = new LaboratoryServicePublicationRepository(database)
-    const modelUsage = new ModelUsageService(database)
+    const modelUsage = new ModelUsageService(database, commands, options.modelUsageControl)
     const unaccountedChatCompletions: JsonChatCompletionsProvider | undefined = options.chatCompletionsProvider
       ?? (options.dshModelBridge === undefined ? undefined : new DshModelProvider(options.dshModelBridge))
       ?? (options.ai === undefined
@@ -235,7 +237,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...(unaccountedChatCompletions.supportsUsageAccounting === undefined ? {} : { supportsUsageAccounting: unaccountedChatCompletions.supportsUsageAccounting }),
       ...(unaccountedChatCompletions.supportsRequestControl === undefined ? {} : { supportsRequestControl: unaccountedChatCompletions.supportsRequestControl }),
       ...(unaccountedChatCompletions.resolveModel === undefined ? {} : { resolveModel: (model, signal) => unaccountedChatCompletions.resolveModel!(model, signal) }),
-      completeJson: input => unaccountedChatCompletions.completeJson({ ...input, usageRecorder: modelUsage }),
+      completeJson: input => modelUsage.run(input.usageContext?.workspaceId ?? 'workspace-demo', input.signal,
+        signal => unaccountedChatCompletions.completeJson({ ...input, signal, usageRecorder: modelUsage })),
     }
     const hostModel = options.dshModelBridge === undefined ? undefined : dshDefaultModel
     const models = new GenerationModelBinding(database, chatCompletions)

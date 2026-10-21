@@ -5,10 +5,12 @@ import {
   modelUsageOutcomeSchema, modelUsageOverviewSchema, modelUsageListSchema, modelTokenUsageSchema,
   hostDoctorRecognitionTimeoutMs, mergeModelTokenUsage, unknownModelTokenUsage,
   type ModelTokenUsage, type ModelUsageAttempt, type ModelUsageFilter, type ModelUsageOutcome,
+  type ModelUsagePolicyConfig, type ModelUsageControlUpdate,
 } from '@clinmesh/contracts/model-usage'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
-import type { ActorContext } from './command-executor.ts'
+import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { ModelUsageRecorder } from './model-usage-lifecycle.ts'
+import { ModelUsageControl, ModelUsageControlError } from './model-usage-control.ts'
 
 const rowSchema = z.object({ record_json: z.string() })
 const summaryRowSchema = z.object({
@@ -32,11 +34,23 @@ const totalsSql = `COALESCE(SUM(${actualRequestSql}), 0) AS requests,
 
 /** One writer owns attempts, task admission and settlement. Queries never expose clinical content. */
 export class ModelUsageService implements ModelUsageRecorder {
-  constructor(private readonly database: ClinMeshDatabase) {
+  readonly #control: ModelUsageControl
+  constructor(private readonly database: ClinMeshDatabase, commands: CommandExecutor, deployment?: ModelUsagePolicyConfig) {
+    this.#control = new ModelUsageControl(database, commands, deployment)
     // A previous writer cannot prove whether its in-flight requests reached the Provider.
     this.database.driver.prepare(`UPDATE model_usage_attempt SET status = 'unknown',
       record_json = json_set(record_json, '$.status', 'unknown', '$.endedAt', ?)
       WHERE status = 'in-flight'`).run(new Date().toISOString())
+  }
+
+  control(workspaceId: string) { return this.#control.read(workspaceId) }
+  updateControl(context: ActorContext, input: ModelUsageControlUpdate, key: string) { return this.#control.update(context, input, key) }
+  canDispatch(workspaceId: string) { return this.#control.canDispatch(workspaceId) }
+  automaticRetries(workspaceId: string) { return this.#control.automaticRetries(workspaceId) }
+  subscribe(listener: () => void) { return this.#control.subscribe(listener) }
+  setWaitingCount(read: (workspaceId: string) => number) { this.#control.setWaitingCount(read) }
+  run<T>(workspaceId: string, signal: AbortSignal | undefined, invoke: (signal: AbortSignal) => Promise<T>) {
+    return this.#control.run(workspaceId, signal, invoke)
   }
 
   begin(input: Parameters<ModelUsageRecorder['begin']>[0], reserve?: () => void): string {
@@ -49,15 +63,21 @@ export class ModelUsageService implements ModelUsageRecorder {
       providerRequestId: null, httpStatus: null, usage: unknownModelTokenUsage,
       cost: { status: 'price-not-configured', cny: null },
     })
-    return this.database.driver.transaction(() => {
+    try { return this.database.driver.transaction(() => {
       this.database.driver.prepare(`INSERT INTO model_usage_attempt
         (attempt_id, workspace_id, epoch, case_id, feature, provider, requested_model, actual_model, status, started_at, record_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'in-flight', ?, ?)`)
         .run(record.id, context.workspaceId, context.epoch, context.caseId ?? null, record.feature,
           record.provider, record.requestedModel, record.startedAt, JSON.stringify(record))
+      this.#control.reserve(context.workspaceId, record.id, record.kind)
       reserve?.()
       return record.id
-    })()
+    })() } catch (cause) {
+      const sqlite = z.object({ code: z.string().startsWith('SQLITE_') }).safeParse(cause)
+      const error = sqlite.success ? new ModelUsageControlError('MODEL_LEDGER_UNAVAILABLE', 'workspace') : cause
+      if (error instanceof ModelUsageControlError) this.#control.reject(context.workspaceId, error)
+      throw error
+    }
   }
 
   checkpoint(attemptId: string, usage: ModelTokenUsage): void {
@@ -84,6 +104,7 @@ export class ModelUsageService implements ModelUsageRecorder {
       })
       this.database.driver.prepare(`UPDATE model_usage_attempt SET actual_model = ?, status = ?, record_json = ? WHERE attempt_id = ?`)
         .run(record.actualModel, record.status, JSON.stringify(record), attemptId)
+      this.#control.settle(attemptId, record.dispatch)
     })()
   }
 
@@ -98,8 +119,11 @@ export class ModelUsageService implements ModelUsageRecorder {
     const features = z.array(z.object({ feature: modelUsageFeatureSchema, requests: z.number(), knownTokens: z.number() })).parse(this.database.driver.prepare(`
       SELECT feature, SUM(${actualRequestSql}) AS requests, COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens
       FROM model_usage_attempt a WHERE ${query.sql} GROUP BY feature ORDER BY requests DESC`).all(...query.args))
+    const control = this.control(context.workspaceId)
+    const limits = [control.workspace.requests, control.deployment.requests].filter((value): value is number => value !== null)
     return modelUsageOverviewSchema.parse({ totals: { ...totals, unpricedRequests: totals.requests, cny: null },
-      trend, features, coverage: 'server-direct-bridge-and-host', policy: { enabled: true, requests: null, tokens: null, cny: null } })
+      trend, features, coverage: 'server-direct-bridge-and-host', policy: { enabled: control.effective.enabled,
+        requests: limits.length === 0 ? null : Math.min(...limits), tokens: null, cny: null } })
   }
 
   list(context: ActorContext, filter: ModelUsageFilter) {

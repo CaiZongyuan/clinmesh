@@ -140,10 +140,31 @@ export const modelUsageOverviewSchema = z.object({
   trend: z.array(z.object({ date: z.string().date(), requests: z.number().int(), knownTokens: z.number() }).strict()),
   features: z.array(z.object({ feature: modelUsageFeatureSchema, requests: z.number().int(), knownTokens: z.number() }).strict()),
   coverage: z.literal('server-direct-bridge-and-host'),
-  policy: z.object({ enabled: z.literal(true), requests: z.null(), tokens: z.null(), cny: z.null() }).strict(),
+  policy: z.object({ enabled: z.boolean(), requests: count, tokens: z.null(), cny: z.null() }).strict(),
 }).strict()
 export type ModelUsageOverview = z.infer<typeof modelUsageOverviewSchema>
 export const modelUsageListSchema = z.object({ items: z.array(modelUsageAttemptSchema), total: z.number().int().nonnegative() }).strict()
+
+export const modelUsagePolicyConfigSchema = z.object({
+  enabled: z.boolean().default(true), requests: count.default(null), automaticRetries: z.boolean().default(true),
+}).strict()
+export type ModelUsagePolicyConfig = z.infer<typeof modelUsagePolicyConfigSchema>
+export const modelUsageControlUpdateSchema = modelUsagePolicyConfigSchema.required().extend({
+  expectedVersion: z.number().int().positive().safe(),
+}).strict()
+export type ModelUsageControlUpdate = z.infer<typeof modelUsageControlUpdateSchema>
+export const modelUsageControlCodeSchema = z.enum(['MODEL_DISABLED', 'MODEL_REQUEST_LIMIT', 'MODEL_RETRY_DISABLED', 'MODEL_LEDGER_UNAVAILABLE'])
+const controlScopeSchema = modelUsagePolicyConfigSchema.required().extend({
+  version: z.number().int().positive(), requestsStartedAt: z.iso.datetime().nullable(),
+  used: z.number().int().nonnegative().safe(), reserved: z.number().int().nonnegative().safe(), remaining: count,
+}).strict()
+export const modelUsageControlSchema = z.object({
+  workspace: controlScopeSchema, deployment: controlScopeSchema,
+  effective: z.object({ enabled: z.boolean(), automaticRetries: z.boolean() }).strict(),
+  waiting: z.number().int().nonnegative(), inFlight: z.number().int().nonnegative(),
+  lastRejection: z.object({ code: modelUsageControlCodeSchema, scope: z.enum(['workspace', 'deployment']), at: z.iso.datetime() }).strict().nullable(),
+}).strict()
+export type ModelUsageControl = z.infer<typeof modelUsageControlSchema>
 
 export const hostDoctorUsageAdmissionSchema = z.object({
   permit: z.string().min(32).max(8192), provider: identifier, model: modelName,

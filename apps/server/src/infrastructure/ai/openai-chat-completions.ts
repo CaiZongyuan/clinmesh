@@ -69,12 +69,13 @@ export function invokeChatCompletionRequestControl(hook: (() => void) | undefine
 }
 
 /** The ledger and the existing task gate share the recorder's reservation transaction. */
-export function beginChatCompletionUsage(input: Pick<JsonChatCompletionInput, 'usageContext' | 'usageRecorder' | 'onBeforeRequest' | 'schemaName'>,
+export function beginChatCompletionUsage(input: Pick<JsonChatCompletionInput, 'usageContext' | 'usageRecorder' | 'onBeforeRequest' | 'onBeforeUsageRequest' | 'schemaName'>,
   metadata: Omit<Parameters<ModelUsageRecorder['begin']>[0], 'context' | 'feature'>): string | undefined {
   try {
-    if (input.usageRecorder === undefined) { input.onBeforeRequest?.(); return undefined }
+    const reserve = () => { input.onBeforeUsageRequest?.({ kind: metadata.kind }); input.onBeforeRequest?.() }
+    if (input.usageRecorder === undefined) { reserve(); return undefined }
     if (input.usageContext === undefined) throw new Error('Trusted model usage context is required')
-    return input.usageRecorder.begin({ ...metadata, context: input.usageContext, feature: input.schemaName }, input.onBeforeRequest)
+    return input.usageRecorder.begin({ ...metadata, context: input.usageContext, feature: input.schemaName }, reserve)
   } catch (cause) { throw new ChatCompletionRequestControlError(cause) }
 }
 
@@ -121,6 +122,8 @@ export interface JsonChatCompletionInput {
   usageKind?: Parameters<ModelUsageRecorder['begin']>[0]['kind']
   /** Synchronous, atomic reservation immediately before each actual completion fetch. */
   onBeforeRequest?: () => void
+  /** Owning task recovery keeps its original attempt envelope in the same admission transaction. */
+  onBeforeUsageRequest?: (metadata: { kind: 'initial' | 'format-repair' | 'rate-limit-retry' }) => void
   /** A complete transport outcome arrived; headers alone do not establish this. */
   onRequestComplete?: () => void
   maxAttempts?: 1 | 2
