@@ -30,6 +30,8 @@
 
 - 精确运行 Vitest 文件时使用 `pnpm --filter <package> exec vitest run <file>`。脚本经 `pnpm --filter <package> test -- <file>` 转发时会保留 `--`，当前 Vitest 可能运行整个包而未应用文件筛选；以实际 Test Files 数量确认范围。
 
+- 从仓库根目录 `npx vitest run apps/server/tests/...` 不报错且用例照常运行，但加载的是根级配置：`apps/server` 的 `testTimeout: 15_000` 静默失效、回落默认 5s，多次模型请求的重型 HTTP 测试在本机会出现看似回归的超时失败。怀疑超时回归时先核对实际生效的配置入口，再 stash 修复复跑基线判定"变慢"归属；从包目录执行或用 `pnpm --filter` 入口即为正确超时。
+
 - Playwright 使用与锁定版本匹配的 browser cache；跨项目参考配置时同时核对 runner 版本与已安装 revision，缺失时用本仓库的 `pnpm exec playwright install chromium` 安装。运行合同与真实入口的方式见[测试策略](../testing.md#用户界面验证)。
 
 - `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，不能只凭包级 `tsc` 通过判断完整类型检查通过。修改 `apps/web/e2e/` 后运行 `pnpm exec tsc --noEmit -p tsconfig.browser.json`；Playwright 会转译 TypeScript，但不做类型检查，E2E 通过不能替代这项检查。
