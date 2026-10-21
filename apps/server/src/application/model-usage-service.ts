@@ -144,14 +144,19 @@ export class ModelUsageService implements ModelUsageRecorder {
 
   admitHost(input: Parameters<ModelUsageRecorder['begin']>[0]): string | undefined {
     this.#expireHostAttempts()
-    return this.database.driver.transaction(() => {
+    try { return this.database.driver.transaction(() => {
       const existing = this.database.driver.prepare(`SELECT 1 FROM model_usage_attempt
         WHERE workspace_id = ? AND epoch = ? AND feature = 'doctor_delegation'
           AND json_extract(record_json, '$.context.taskId') = ?`)
         .get(input.context.workspaceId, input.context.epoch, input.context.taskId)
       if (existing !== undefined) return undefined
       return this.begin(input)
-    })()
+    })() } catch (error) {
+      // begin() runs in a nested transaction here; persist the rejection after
+      // the outer admission transaction has also rolled back.
+      if (error instanceof ModelUsageControlError) this.#control.reject(input.context.workspaceId, error)
+      throw error
+    }
   }
 
   observeHost(attemptId: string, outcome: ModelUsageOutcome, progress: boolean): void {
