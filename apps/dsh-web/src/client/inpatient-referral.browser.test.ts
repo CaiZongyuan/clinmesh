@@ -15,7 +15,7 @@ for (const version of ['18', '19']) {
       if (route.request().url().endsWith('/api/auth/context')) return route.fulfill({ json: session })
       if (route.request().url().includes('/command-receipts?')) return route.fulfill({ status: 404, json: { error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'synthetic missing' } } })
       if (route.request().url().endsWith('/inpatient/catalog')) return route.fulfill({ json: {
-        wards: [{ id: 'ward-general', name: '内科病区', organizationId: 'organization-inpatient-medicine' }], beds: [],
+        wards: [{ id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient-medicine' }], beds: [],
       } })
       if (route.request().url().endsWith('/inpatient/referrals')) {
         submitted.push({ input: route.request().postDataJSON(), key: route.request().headers()['idempotency-key'] })
@@ -50,7 +50,7 @@ for (const version of ['18', '19']) {
     await expect(dialog).toBeVisible()
     expect(await dialog.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
     await dialog.getByLabel('收治病区').click()
-    await page.getByRole('option', { name: '内科病区', exact: true }).click()
+    await page.getByRole('option', { name: '住院病区', exact: true }).click()
     await dialog.getByLabel('住院原因').fill('持续发热需住院观察')
     await dialog.getByRole('button', { name: '确认开具住院证', exact: true }).click()
     await expect(dialog.getByRole('alert')).toContainText('无法连接科灵脉智服务，请检查网络连接后重试。')
@@ -67,14 +67,18 @@ for (const version of ['18', '19']) {
     expect(submitted[1]).toEqual(submitted[0])
     expect(submitted[0]?.input).toEqual({ input: { encounterId: 'synthetic-encounter', encounterVersion: '3', wardId: 'ward-general', reason: '持续发热需住院观察' } })
     await dialog.getByLabel('收治病区').click()
-    await page.getByRole('option', { name: '内科病区', exact: true }).click()
+    await page.getByRole('option', { name: '住院病区', exact: true }).click()
     await dialog.getByLabel('住院原因').fill('病例B需住院观察')
     await expect(dialog.getByRole('button', { name: '确认开具住院证', exact: true })).toBeEnabled()
     await dialog.getByRole('button', { name: '确认开具住院证', exact: true }).click()
     await expect(dialog.getByRole('status')).toContainText('住院证已开具')
+    await expect(dialog.getByRole('status')).toContainText('登记员 → 住院登记 → 门诊住院证转收')
     expect(submitted).toHaveLength(3)
     expect(submitted[2]?.input).toMatchObject({ input: { encounterId: 'synthetic-encounter-b', reason: '病例B需住院观察' } })
     expect(submitted[2]?.key).not.toBe(submitted[0]?.key)
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(dialog).not.toBeVisible()
+    await expect(page.getByRole('status', { name: '住院证交接', exact: true })).toContainText('登记员 → 住院登记 → 门诊住院证转收')
     expect(errors).toEqual([])
   })
 }

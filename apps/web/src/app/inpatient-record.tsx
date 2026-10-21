@@ -40,7 +40,7 @@ export function InpatientRecord({ admission, session, locale, write }: {
   const blocked = write.blocked || record.isFetching || archived
   const submit = () => { if (expected)
     write.mutation.mutate({ operation: 'inpatient.record.submit', input: { ...expected, expectedRevision: draft?.revision ?? expected.expectedRevision, expectedSourcesHash: draft?.hash ?? expected.expectedSourcesHash, mainProcedureExecutionId: draft?.main ?? null } }); }
-  return <section aria-label={t('住院病案首页核心字段集', 'Inpatient record core fields')} className="mt-4 flex flex-col gap-3 rounded-md border p-4">
+  return <section aria-label={t('住院病案首页核心字段集', 'Inpatient record core fields')} className="flex flex-col gap-3">
   <h3>{t('住院病案首页核心字段集', 'Inpatient record core fields')}</h3>
   {record.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(record.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
   {snapshot && data ? <>

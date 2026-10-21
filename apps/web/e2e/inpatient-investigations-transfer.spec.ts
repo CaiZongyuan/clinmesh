@@ -1,3 +1,4 @@
+import { addSecondaryInpatientWard } from '../../server/tests/fixtures/inpatient-secondary-ward.ts'
 import { sourceArtifactHash } from '../../server/src/application/scenario-data/provider.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -35,6 +36,7 @@ const test=base.extend<{source:Awaited<ReturnType<typeof startConsultationCase>>
 })
 
 test('住院检验丢回执恢复、护士送检和转科三方交接通过真实入口',async({page,browserApp,source})=>{
+  await addSecondaryInpatientWard(browserApp.runtime)
   const login=async(name:string,first=false)=>{
     if(!first){await page.getByRole('button',{name:'用户菜单'}).click();await page.getByRole('menuitem',{name:'退出登录'}).click()}
     await page.getByLabel('账户邮箱').fill(`${name}@demo.clinmesh.local`)
@@ -56,6 +58,7 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   expect((await post(`${path}/receive`,{encounterVersion:admission.versionId,bedId:'bed-general-1'})).status()).toBe(200)
   await login('inpatient-doctor')
   await page.getByRole('button',{name:`查看${admission.patientName}`,exact:true}).click()
+  await page.getByRole('tab',{name:'检查检验',exact:true}).click()
   await page.getByLabel('住院检查项目',{exact:true}).click()
   await page.getByRole('option',{name:/合成白细胞计数/}).click()
   let issuePosts=0
@@ -65,20 +68,25 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await page.reload()
   await page.getByRole('button',{name:'恢复原住院操作',exact:true}).click()
   await page.getByRole('button',{name:`查看${admission.patientName}`,exact:true}).click()
+  await page.getByRole('tab',{name:'检查检验',exact:true}).click()
   await expect(page.getByRole('region',{name:'住院检查检验',exact:true})).toContainText('待送检')
   expect(issuePosts).toBe(1)
   await page.unroute(`**${path}/investigations/issue`)
   await login('ward-nurse')
   await page.getByRole('button',{name:`查看${admission.patientName}`,exact:true}).click()
+  await page.getByRole('tab',{name:'检查检验',exact:true}).click()
   const sendResponse=page.waitForResponse(response=>response.url().endsWith(`${path}/investigations/send`))
   await page.getByRole('button',{name:'校对并送检',exact:true}).click()
   expect((await sendResponse).status()).toBe(200)
   await browserApp.runtime.dispatchPending()
   await page.getByRole('button',{name:'刷新诊疗记录',exact:true}).click()
+  await page.getByRole('tab',{name:'检查检验',exact:true}).click()
   await expect(page.getByRole('region',{name:'住院检查检验',exact:true})).toContainText('11.2')
   await login('inpatient-doctor')
   await page.getByRole('button',{name:`查看${admission.patientName}`,exact:true}).click()
+  await page.getByRole('tab',{name:'检查检验',exact:true}).click()
   await page.getByRole('button',{name:'确认报告已阅',exact:true}).click()
+  await page.getByRole('tab',{name:'转科交接',exact:true}).click()
   await page.getByLabel('转入病区',{exact:true}).click()
   await page.getByRole('option',{name:'外科病区',exact:true}).click()
   await page.getByLabel('转科理由',{exact:true}).fill('合成病区转科评估')
@@ -86,6 +94,7 @@ test('住院检验丢回执恢复、护士送检和转科三方交接通过真�
   await expect(page.getByRole('region',{name:'住院转科',exact:true})).toContainText('待原科交接')
   await login('ward-nurse')
   await page.getByRole('button',{name:`查看${admission.patientName}`,exact:true}).click()
+  await page.getByRole('tab',{name:'转科交接',exact:true}).click()
   await page.getByRole('button',{name:'完成原科交接',exact:true}).click()
   await expect(page.getByRole('region',{name:'住院转科',exact:true})).toContainText('待目标科接收')
   expect((await page.request.post(`${browserApp.origin}/api/auth/role`,{headers:{origin:browserApp.origin},data:{practitionerRoleId:'practitioner-role-ward-nurse-surgery'}})).status()).toBe(200)

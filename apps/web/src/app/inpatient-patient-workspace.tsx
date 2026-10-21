@@ -1,0 +1,113 @@
+import type { SessionContext } from '@clinmesh/contracts/his'
+import { inpatientCatalogSchema, type InpatientAdmission } from '@clinmesh/contracts/inpatient'
+import type { z } from 'zod'
+import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
+import { Badge } from '@clinmesh/ui/components/badge'
+import { Button } from '@clinmesh/ui/components/button'
+import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@clinmesh/ui/components/tabs'
+import { ArrowRightIcon, RefreshCwIcon } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { InpatientClinical } from './inpatient-clinical.tsx'
+import { InpatientCharges } from './inpatient-charges.tsx'
+import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.tsx'
+import { InpatientInvestigations } from './inpatient-investigations.tsx'
+import { InpatientRecord } from './inpatient-record.tsx'
+import { InpatientSurgery } from './inpatient-surgery.tsx'
+import { InpatientTransfers } from './inpatient-transfers.tsx'
+import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { WorkspaceSelect } from './workspace-select.tsx'
+import { formatFen } from './workspace-format.ts'
+import type { WorkspaceLocale } from './workspace-i18n.ts'
+
+type Stage = 'admission' | 'orders' | 'investigations' | 'surgery' | 'transfer' | 'fees' | 'discharge' | 'record'
+const stages = [
+  { id: 'admission', zh: '入科分床', en: 'Admission', ownerZh: '病区护士', ownerEn: 'Ward nurse', conditionZh: '登记完成后由病区护士接诊并分床，入科后开始住院诊疗。', conditionEn: 'After registration, the ward nurse receives the patient and assigns a bed before inpatient care.' },
+  { id: 'orders', zh: '诊断医嘱', en: 'Diagnoses & orders', ownerZh: '住院医生 → 病区护士 → 药师', ownerEn: 'Inpatient doctor → ward nurse → pharmacist', conditionZh: '入科后医生确认诊断、签发医嘱；护士校对后执行。药品须先由药师在“住院药房”发药，再由护士给药。', conditionEn: 'After admission, the doctor confirms diagnoses and issues orders. Nurses verify before execution; medication must be dispensed in Inpatient pharmacy before administration.' },
+  { id: 'investigations', zh: '检查检验', en: 'Investigations', ownerZh: '住院医生 → 病区护士 → 检验 / 检查执行岗位', ownerEn: 'Inpatient doctor → ward nurse → investigation staff', conditionZh: '入科后开立申请，由病区护士校对并送检；执行岗位签发报告后，回到本次住院查看并确认已阅。', conditionEn: 'Order after admission; the ward nurse verifies and dispatches. Published reports return to this admission for review.' },
+  { id: 'surgery', zh: '手术', en: 'Surgery', ownerZh: '住院医生 → 病区护士 → 住院医生', ownerEn: 'Inpatient doctor → ward nurse → inpatient doctor', conditionZh: '医生申请手术并确认知情同意已签署，护士完成术前检查核对，两项准备齐全后才能记录实际手术。术后医嘱在“诊断医嘱”办理。', conditionEn: 'The doctor requests surgery and confirms signed consent; the nurse verifies preoperative checks. Both are required before recording surgery. Issue postoperative orders under Diagnoses & orders.' },
+  { id: 'transfer', zh: '转科交接', en: 'Transfer', ownerZh: '住院医生 → 原病区护士 → 接收病区护士', ownerEn: 'Inpatient doctor → source nurse → receiving nurse', conditionZh: '转科申请须先完成原病区交接，再由目标病区护士接收并分床；接收后切换责任病区。', conditionEn: 'Source handover precedes receiving nurse acceptance and bed assignment; responsibility changes on receipt.' },
+  { id: 'fees', zh: '费用', en: 'Charges', ownerZh: '收费员', ownerEn: 'Cashier', conditionZh: '费用来自实际执行、发药、手术及每日床费；收费员可核对并按原费用冲正，预交金独立记录。', conditionEn: 'Charges come from actual execution, dispensing, surgery and daily bed fees. Cashiers reconcile and reverse original charges; deposits remain separate.' },
+  { id: 'discharge', zh: '出院结算', en: 'Discharge & settlement', ownerZh: '住院医生 → 病区护士 → 收费员', ownerEn: 'Inpatient doctor → ward nurse → cashier', conditionZh: '医生开出院医嘱，护士办理出区后收费员才能结算；结算完成后护士清床。未收口的医嘱、检查、手术或转科会阻止出院。', conditionEn: 'The doctor orders discharge, the nurse records departure, the cashier settles, then the nurse clears the bed. Outstanding care can block discharge.' },
+  { id: 'record', zh: '病案', en: 'Medical record', ownerZh: '住院医生 → 病案人员', ownerEn: 'Inpatient doctor → medical records staff', conditionZh: '医生核对真实来源并提交首页，病案人员编码审核；结算并清床、当前修订审核通过后方可归档。来源变化需重新提交与审核，归档后只读。', conditionEn: 'The doctor submits the record from real sources; medical records staff review coding. Settlement, bed clearance and current approval precede archiving. Source changes require resubmission and review; archived records are read only.' },
+] as const
+
+export function inpatientStatus(admission: InpatientAdmission, locale: WorkspaceLocale): string {
+  const zh = locale === 'zh-CN'
+  return { registered: zh ? '待入科' : 'Registered', admitted: zh ? '在院' : 'Admitted', 'discharge-pending': zh ? '待出院' : 'Discharge pending', departed: zh ? '已出区' : 'Departed', cleared: zh ? '已清床' : 'Cleared' }[admission.status]
+}
+
+function nextStep(admission: InpatientAdmission, locale: WorkspaceLocale): { stage: Stage; text: string } {
+  const zh = locale === 'zh-CN'
+  if (admission.recordStatus === 'archived') return { stage: 'record', text: zh ? '归档完成，可在病案区查询固定首页。' : 'Archiving complete; read the fixed snapshot under Medical record.' }
+  if (admission.status === 'registered') return { stage: 'admission', text: zh ? '病区护士 → 入科分床 → 接诊并分床' : 'Ward nurse → Admission → Receive and assign bed' }
+  if (admission.status === 'admitted') return { stage: 'orders', text: zh ? '住院医生 → 诊断医嘱；病区护士 → 校对与执行' : 'Inpatient doctor → Diagnoses & orders; ward nurse → verify and execute' }
+  if (admission.status === 'discharge-pending') return { stage: 'discharge', text: zh ? '病区护士 → 出院结算 → 办理出区' : 'Ward nurse → Discharge & settlement → Record departure' }
+  if (admission.status === 'departed') return { stage: 'discharge', text: admission.financialStatus === 'settled' ? (zh ? '病区护士 → 出院结算 → 清床' : 'Ward nurse → Discharge & settlement → Clear bed') : (zh ? '收费员 → 住院费用 → 出院结算 → 预览并确认结算' : 'Cashier → Inpatient charges → Discharge & settlement → Preview and confirm settlement') }
+  return { stage: 'record', text: zh ? '住院医生 → 病案 → 提交首页；病案人员 → 编码审核与归档' : 'Inpatient doctor → Medical record → Submit; medical records staff → Review and archive' }
+}
+
+type Props = { allowTransfers: boolean; admission: InpatientAdmission; admissions: InpatientAdmission[]; catalog: z.infer<typeof inpatientCatalogSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
+export function InpatientPatientWorkspace({ admission, admissions, catalog, allowTransfers, session, locale, write }: Props): React.JSX.Element {
+  const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
+  const role = session.actor.roleCode, nurse = role === 'ward-nurse', doctor = role === 'inpatient-doctor', cashier = role === 'cashier'
+  const clinical = doctor || nurse, archived = admission.recordStatus === 'archived'
+  const next = nextStep(admission, locale)
+  const defaultStage = cashier ? 'discharge' : role === 'registrar' ? 'admission' : archived || role === 'medical-records' ? 'record' : next.stage
+  const [selectedStage, setSelectedStage] = useState<Stage | null>(null), [visited, setVisited] = useState<Stage[]>([])
+  const active = selectedStage ?? defaultStage
+  const client = useQueryClient()
+  const ward = catalog?.wards.find(item => item.id === admission.wardId), bed = catalog?.beds.find(item => item.id === admission.bedId)
+  const changeStage = (stage: Stage) => { setSelectedStage(stage); setVisited(current => [...new Set([...current, active, stage])]) }
+  const visibleStages = stages.filter(stage => stage.id !== 'transfer' || clinical && allowTransfers)
+  const mayRead = (stage: Stage) => {
+    if (stage === 'admission') return true
+    if (stage === 'record') return clinical || role === 'medical-records'
+    if (stage === 'fees' || stage === 'discharge') return cashier || clinical && !archived
+    return clinical && !archived
+  }
+  return <section aria-label={t('住院详情', 'Admission details')} className="flex min-h-0 flex-1 flex-col">
+    <section aria-label={t('当前住院患者', 'Current inpatient')} className="flex max-h-[40%] shrink-0 flex-col gap-2 overflow-y-auto border-b bg-background px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{admission.patientName}</h2><Badge variant="outline">{t('住院号 ', 'Inpatient number ')}{admission.inpatientNumber}</Badge><Badge variant="secondary">{inpatientStatus(admission, locale)}</Badge>{archived ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-muted-foreground"><span>{ward?.name ?? '—'}</span><span>{t('当前床位：', 'Current bed: ')}{bed?.name ?? (admission.bedId === undefined ? t('未分床', 'Unassigned') : '—')}</span><span>{t('预交金：', 'Deposit: ')}{formatFen(admission.depositFen, locale)}</span><span>{t('累计费用：', 'Charges: ')}{formatFen(admission.chargesFen, locale)}</span><span>{admission.financialStatus === 'settled' ? t('已结算', 'Settled') : t('未结算', 'Not settled')}</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm">{archived ? t('流程状态：', 'Workflow: ') : t('下一步：', 'Next: ')}{next.text}</p><Button size="sm" variant="ghost" onClick={() => changeStage(next.stage)}><ArrowRightIcon data-icon="inline-start" aria-hidden />{archived ? t('查看病案', 'Read record') : t('查看办理环节', 'View next step')}</Button></div>
+    </section>
+    <Tabs value={active} onValueChange={value => { if (visibleStages.some(stage => stage.id === value)) changeStage(value as Stage) }} className="min-h-0 flex-1 gap-0">
+      <div className="flex shrink-0 items-center gap-2 border-b px-4"><div className="min-w-0 flex-1 overflow-x-auto"><TabsList aria-label={t('住院阶段', 'Inpatient stages')} variant="line" className="min-w-max gap-3">{visibleStages.map(stage => <TabsTrigger key={stage.id} value={stage.id}>{zh ? stage.zh : stage.en}</TabsTrigger>)}</TabsList></div><Button size="icon-sm" variant="ghost" aria-label={t('刷新诊疗记录', 'Refresh care')} onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}><RefreshCwIcon aria-hidden /></Button></div>
+      {visibleStages.map(stage => <TabsContent key={stage.id} value={stage.id} keepMounted className="min-h-0 overflow-y-auto p-4">
+        {active === stage.id || visited.includes(stage.id) ? <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1"><h3 className="font-medium">{zh ? stage.zh : stage.en}</h3><p className="text-sm text-muted-foreground">{t('负责岗位：', 'Responsible: ')}{zh ? stage.ownerZh : stage.ownerEn}</p><p className="text-sm text-muted-foreground">{zh ? stage.conditionZh : stage.conditionEn}</p></div>
+          {admission.status === 'registered' && stage.id !== 'admission' ? <Alert role="note"><AlertDescription>{t('尚未入科。请先由病区护士在“入科分床”接诊并分床。', 'Not yet received. The ward nurse must receive and assign a bed under Admission first.')}</AlertDescription></Alert> : null}
+          {!mayRead(stage.id) ? <Alert role="note"><AlertDescription>{archived ? t('病案已归档，诊疗写入关闭；有权限的岗位可在“病案”查询归档快照。', 'The record is archived and care writes are closed. Authorized staff can read the archived snapshot under Medical record.') : t('请由上述负责岗位从自己的工作台进入本环节办理。切换环节不会变更当前账户或岗位。', 'The responsible staff must continue from their own workspace. Changing stages does not change your account or role.')}</AlertDescription></Alert> : <>
+            {stage.id === 'admission' ? nurse && !archived ? <InpatientBedAssignment admission={admission} admissions={admissions} catalog={catalog} locale={locale} write={write} /> : <p>{admission.status === 'registered' ? t('登记已完成，等待病区护士接诊。', 'Registration completed; awaiting ward nurse receipt.') : t('入科登记已完成；床位变更由病区护士办理。', 'Admission received; the ward nurse handles bed changes.')}</p> : null}
+            {stage.id === 'orders' ? <InpatientClinical admission={admission} session={session} locale={locale} write={write} /> : null}
+            {stage.id === 'investigations' ? <InpatientInvestigations admission={admission} session={session} locale={locale} write={write} /> : null}
+            {stage.id === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} /> : null}
+            {stage.id === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
+            {stage.id === 'fees' ? cashier ? <InpatientCharges admissionId={admission.id} session={session} locale={locale} write={write} /> : <InpatientClinical admission={admission} session={session} locale={locale} write={write} view="fees" /> : null}
+            {stage.id === 'discharge' ? cashier ? <InpatientSettlement admission={admission} session={session} locale={locale} write={write} /> : <InpatientDischarge admission={admission} session={session} locale={locale} write={write} /> : null}
+            {stage.id === 'record' ? <InpatientRecord admission={admission} session={session} locale={locale} write={write} /> : null}
+          </>}
+        </div> : null}
+      </TabsContent>)}
+    </Tabs>
+  </section>
+}
+
+function InpatientBedAssignment({ admission, admissions, catalog, locale, write }: Pick<Props, 'admission' | 'admissions' | 'catalog' | 'locale' | 'write'>): React.JSX.Element {
+  const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
+  const [bedId, setBedId] = useState<string | null>(null), [swapId, setSwapId] = useState<string | null>(null)
+  const assignBed = () => {
+    if (bedId !== null) write.mutation.mutate({ operation: admission.status === 'registered' ? 'inpatient.admission.receive' : 'inpatient.admission.move-bed', input: { admissionId: admission.id, encounterVersion: admission.versionId, bedId } })
+  }
+  const swapBeds = () => {
+    const other = admissions.find(item => item.id === swapId)
+    if (other) write.mutation.mutate({ operation: 'inpatient.admission.swap-bed', input: { admissionId: admission.id, encounterVersion: admission.versionId, otherAdmissionId: other.id, otherEncounterVersion: other.versionId } })
+  }
+  return <FieldSet disabled={write.blocked}><FieldGroup className="grid gap-3 md:grid-cols-2">
+    <Field><FieldLabel htmlFor="inpatient-bed">{t('目标床位', 'Target bed')}</FieldLabel><WorkspaceSelect id="inpatient-bed" value={bedId} items={(catalog?.beds ?? []).filter(bed => bed.wardId === admission.wardId && bed.admissionId === undefined).map(bed => ({ value: bed.id, label: `${bed.name} · ${formatFen(bed.dailyPriceFen, locale)}/${t('日', 'day')}` }))} onValueChange={setBedId} /></Field>
+    <Button disabled={write.blocked || bedId === null || !['registered', 'admitted'].includes(admission.status)} onClick={assignBed}>{admission.status === 'registered' ? t('接诊并分床', 'Receive and assign bed') : t('转床', 'Move bed')}</Button>
+    {admission.status === 'admitted' ? <><Field><FieldLabel htmlFor="inpatient-swap">{t('换床患者', 'Swap with')}</FieldLabel><WorkspaceSelect id="inpatient-swap" value={swapId} items={admissions.filter(item => item.id !== admission.id && item.wardId === admission.wardId && item.status === 'admitted').map(item => ({ value: item.id, label: `${item.patientName} · ${catalog?.beds.find(bed => bed.id === item.bedId)?.name}` }))} onValueChange={setSwapId} /></Field><Button disabled={write.blocked || swapId === null} onClick={swapBeds}>{t('互换床位', 'Swap beds')}</Button></> : null}
+  </FieldGroup></FieldSet>
+}

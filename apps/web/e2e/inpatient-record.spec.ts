@@ -58,6 +58,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await page.getByRole('option', { name: '1 · 有', exact: true }).click()
   await page.getByRole('button', { name: '确认住院诊断', exact: true }).click()
   await expect(page.getByText('主诊断：合成临床版高血压', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: '出院结算', exact: true }).click()
   await page.getByLabel('出院处理说明', { exact: true }).fill('本次治疗完成')
   await page.getByRole('button', { name: '开出院医嘱', exact: true }).click()
   await expect(page.getByRole('button', { name: '开出院医嘱', exact: true })).toHaveCount(0)
@@ -117,7 +118,7 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await login('ward-nurse')
   await select()
   await expect(page.getByText(/病案已归档，只读可查/)).toBeVisible()
-  await expect(page.getByRole('region', { name: '待接收转科', exact: true }).getByText('暂无待接收转科', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: '待接收转科', exact: true })).toHaveCount(0)
   await expect(page.getByRole('alert')).toHaveCount(0)
   await login('registrar')
   const referralsRead = page.waitForResponse(response => response.url().endsWith('/inpatient/referrals') && response.request().method() === 'GET')
@@ -130,10 +131,11 @@ test('真实首页提交丢回执恢复、编码退回修订与归档，Scenario
   await login('cashier')
   const chargesRead = page.waitForResponse(response => response.url().endsWith(`${path}/charges`) && response.request().method() === 'GET')
   await select()
+  await expect(page.getByText('已结算并清床', { exact: true })).toBeVisible()
+  await page.getByRole('tab', { name: '费用', exact: true }).click()
   const chargesResponse = await chargesRead
   expect.soft(chargesResponse.status()).toBe(200)
   if (chargesResponse.ok()) {
-    await expect(page.getByText('已结算并清床', { exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: '费用明细', exact: true })).toBeVisible()
     await expect(page.getByRole('alert')).toHaveCount(0)
   }
@@ -190,6 +192,7 @@ test('A完成后保留用户正在编辑的B主操作及原修订指纹，B不�
   await login('inpatient-doctor')
   for (const request of requests) expect((await post(`${path}/surgeries/execute`, { requestId: request.id, expectedRequestVersion: request.version, procedureId: request.procedureId, catalogVersion: 1, note: '实际完成合成操作', materials: [] })).status()).toBe(200)
   await page.getByRole('button', { name: '查看合成主操作草稿患者', exact: true }).click()
+  await page.getByRole('tab', { name: '病案', exact: true }).click()
   const record = page.getByRole('region', { name: '住院病案首页核心字段集', exact: true })
   const before = inpatientRecordSchema.parse(await (await page.request.get(`${browserApp.origin}${path}/record`)).json())
   const [a, b] = before.snapshot.clinical.operations

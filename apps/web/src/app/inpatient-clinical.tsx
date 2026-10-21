@@ -1,7 +1,4 @@
-import { InpatientSurgery } from './inpatient-surgery.tsx'
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
-import { InpatientInvestigations } from './inpatient-investigations.tsx'
-import { InpatientTransfers } from './inpatient-transfers.tsx'
 import { InpatientChargeList } from './inpatient-charges.tsx'
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
@@ -10,7 +7,7 @@ import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet, FieldLegend } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiGet } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -19,17 +16,17 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 
-export function InpatientClinical({ admission, session, locale, write }: { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }): React.JSX.Element {
+export function InpatientClinical({ admission, session, locale, write, view = 'orders' }: { view?: 'orders' | 'fees'; admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const scope = ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId]
-  const client = useQueryClient(), messages = getWorkspaceMessages(locale)
+  const messages = getWorkspaceMessages(locale)
   const clinical = useQuery({ queryKey: [...scope,admission.id,'clinical'], queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/clinical`,inpatientFullClinicalSchema,signal) })
-  const catalog = useQuery({ queryKey: [...scope,'clinical-catalog'], enabled: doctor || nurse, queryFn: ({signal}) => apiGet('/api/his/v1/inpatient/clinical-catalog',inpatientFullCatalogSchema,signal) })
+  const catalog = useQuery({ queryKey: [...scope,'clinical-catalog'], enabled: (doctor || nurse) && view === 'orders', queryFn: ({signal}) => apiGet('/api/his/v1/inpatient/clinical-catalog',inpatientFullCatalogSchema,signal) })
   const [itemId,setItemId] = useState<string|null>(null), [duration,setDuration] = useState<'long'|'temporary'>('long')
   const [frequency,setFrequency] = useState<'QD'|'BID'|'PRN'|null>(null), [dose,setDose] = useState<string|null>(null)
   const [reason,setReason] = useState(''), [surgeryId,setSurgeryId] = useState<string|null>(null)
-  const surgery = useQuery({ queryKey: [...scope,admission.id,'surgeries'], enabled: doctor, queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`,inpatientSurgerySchema,signal) })
+  const surgery = useQuery({ queryKey: [...scope,admission.id,'surgeries'], enabled: doctor && view === 'orders', queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`,inpatientSurgerySchema,signal) })
   const medication = catalog.data?.medications.find(item => item.id === itemId), service = catalog.data?.services.find(item => item.id === itemId)
   const selectedDose = medication?.doses.find(item => item.doseText === dose) ?? medication?.doses[0]
   const selectedFrequency = frequency !== null && medication?.frequencyCodes.includes(frequency) ? frequency : medication?.frequencyCodes[0]
@@ -42,9 +39,10 @@ export function InpatientClinical({ admission, session, locale, write }: { admis
     else if(service) write.mutation.mutate({operation:'inpatient.order.issue',input:{...common,selection:{kind:'service',serviceId:service.id,serviceVersion:service.version,quantity:1}}})
   }
   const error=clinical.error ?? catalog.error
-  return <section aria-label={t('住院诊疗','Inpatient care')} className="mt-4 flex flex-col gap-4">
+  if (view === 'fees') return <>{error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,messages)}</AlertDescription></Alert> : null}{data ? <InpatientChargeList data={{ admissionId: admission.id, financialStatus: admission.financialStatus, charges: data.charges, chargesFen: data.chargesFen }} locale={locale} /> : null}</>
+  return <section aria-label={t('住院诊疗','Inpatient care')} className="flex flex-col gap-4">
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,messages)}</AlertDescription></Alert> : null}
-    <div className="flex items-center gap-2"><h3>{t('诊断与医嘱','Diagnoses and orders')}</h3><Button variant="outline" onClick={() => void client.invalidateQueries({queryKey:['inpatient']})}>{t('刷新诊疗记录','Refresh care')}</Button></div>
+    <h3>{t('诊断与医嘱','Diagnoses and orders')}</h3>
     {clinical.isPending ? <p>{t('正在加载诊疗记录','Loading care')}</p> : null}
     {data?.diagnosis.entries.map(entry => <p key={entry.conditionId}>{entry.role==='primary' ? t('主诊断：','Primary: ') : t('次诊断：','Secondary: ')}{entry.coding.display}</p>)}
     {doctor && data ? <InpatientDiagnosisEditor data={data} diagnoses={catalog.data?.diagnoses ?? []} session={session} locale={locale} blocked={write.blocked || admission.recordStatus === 'archived' || admission.status === 'registered'} write={write} /> : null}
@@ -79,8 +77,5 @@ export function InpatientClinical({ admission, session, locale, write }: { admis
       </article>
     })}
     {data?.orders.length===0 ? <p>{t('暂无医嘱','No orders')}</p>:null}
-    <InpatientSurgery admission={admission} session={session} locale={locale} write={write} />
-    {doctor||nurse?<><InpatientInvestigations admission={admission} session={session} locale={locale} write={write}/><InpatientTransfers admission={admission} session={session} locale={locale} write={write}/></>:null}
-    {data ? <InpatientChargeList data={{ admissionId: admission.id, financialStatus: admission.financialStatus, charges: data.charges, chargesFen: data.chargesFen }} locale={locale} /> : null}
   </section>
 }

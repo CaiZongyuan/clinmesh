@@ -12,7 +12,10 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
     await page.getByRole('button', { name: '登录', exact: true }).click()
     await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
   }
-  const selectPatient = () => page.getByRole('button', { name: '查看合成手术患者', exact: true }).click()
+  const selectPatient = async () => {
+    await page.getByRole('button', { name: '查看合成手术患者', exact: true }).click()
+    await page.getByRole('tab', { name: '手术', exact: true }).click()
+  }
   await page.goto(`${browserApp.origin}/registration`)
   await login('registrar', true)
   const request = async (path: string, input: unknown) => page.request.post(`${browserApp.origin}${path}`, { headers: { origin: browserApp.origin, 'idempotency-key': randomUUID() }, data: { input } })
@@ -70,6 +73,7 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   await expect(page.getByText('合成演示缝合材料 · 2包', { exact: true })).toBeVisible()
   const surgery = inpatientSurgerySchema.parse(await (await page.request.get(`${browserApp.origin}${path}/surgeries`)).json())
   expect(surgery.executions).toHaveLength(1)
+  await page.getByRole('tab', { name: '诊断医嘱', exact: true }).click()
   await page.getByLabel('术后关联手术', { exact: true }).click()
   await page.getByRole('option', { name: /51.2300 · 腹腔镜下胆囊切除术/ }).click()
   await page.getByLabel('医嘱项目', { exact: true }).click()
