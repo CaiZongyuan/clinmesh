@@ -48,7 +48,22 @@ export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirR
   for (const [suffix, name, department] of [['general', '住院病区', 'medicine']] as const) {
     const wardId = `ward-${suffix}`
     if (database.driver.prepare('SELECT 1 FROM inpatient_ward WHERE workspace_id=? AND epoch=? AND ward_id=?')
-      .get(context.workspaceId, context.epoch, wardId) !== undefined) continue
+      .get(context.workspaceId, context.epoch, wardId) !== undefined) {
+      // 仅升级原默认显示名；稳定引用、自定义名称和临床事实保持原样。
+      for (const [type, id, oldName, newName] of [
+        ['Organization', 'organization-inpatient-medicine', '合成住院内科', '住院科'],
+        ['Location', wardId, '内科病区', name],
+        ['Location', 'room-general-101', '内科病区101室', `${name}101室`],
+        ...[1, 2, 3].map(number => ['Location', `bed-general-${number}`, `内科病区${number}床`, `${name}${number}床`] as const),
+      ] as const) {
+        if (!exists(type, id)) continue
+        const resource = fhir.read(context, type, id)
+        if (resource.name === oldName) fhir.update(context, { ...resource, name: newName }, resource.meta!.versionId!)
+      }
+      database.driver.prepare('UPDATE inpatient_ward SET name=? WHERE workspace_id=? AND epoch=? AND ward_id=? AND name=?')
+        .run(name, context.workspaceId, context.epoch, wardId, '内科病区')
+      continue
+    }
     const organizationId = `organization-inpatient-${department}`
     fhir.create(context, { resourceType: 'Organization', id: organizationId, active: true,
       name: '住院科', partOf: { reference: 'Organization/organization-clinmesh' } })

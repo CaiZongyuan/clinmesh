@@ -68,6 +68,63 @@ describe('住院建档与入科 HTTP 合同', () => {
     expect(canonicalStateHash(reopened.database)).toBe(before)
   })
 
+  it.each(['managed', 'custom'] as const)('旧默认%s展示名升级保留住院来源和原receipt，自定义及外科名称不覆盖，重启幂等', async kind => {
+    const { runtime, request, login, registrar, patient, reopen } = await setup()
+    await addSecondaryInpatientWard(runtime)
+    const input = { input: { expectedEpoch: 'epoch-1', patientId: patient.id, patientVersion: patient.versionId,
+      admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000 } }, key = randomUUID()
+    const registered = await request(registrar, '/api/his/v1/inpatient/admissions', input, key)
+    expect(registered.status).toBe(200)
+    const receipt = await registered.json(), path = `/api/his/v1/inpatient/admissions/${receipt.data.admission.id}`
+    const nurse = await login('ward-nurse'), doctor = await login('inpatient-doctor')
+    expect((await request(nurse, `${path}/receive`, { input: { encounterVersion: receipt.data.admission.versionId, bedId: 'bed-general-1' } })).status).toBe(200)
+    const context = { workspaceId: 'workspace-demo', epoch: 'epoch-1' }
+    const names = [
+      ['Organization', 'organization-inpatient-medicine', '合成住院内科', '住院科'],
+      ['Location', 'ward-general', '内科病区', '住院病区'],
+      ['Location', 'room-general-101', '内科病区101室', '住院病区101室'],
+      ['Location', 'bed-general-1', '内科病区1床', '住院病区1床'],
+      ['Location', 'bed-general-2', '内科病区2床', '住院病区2床'],
+      ['Location', 'bed-general-3', '内科病区3床', '住院病区3床'],
+    ] as const
+    const oldResources = names.map(([type, id, oldName, newName]) => {
+      const current = runtime.fhir.read(context, type, id), name = kind === 'managed' ? oldName : `自定义${oldName}`
+      return { resource: runtime.fhir.update(context, { ...current, name }, current.meta!.versionId!), newName: kind === 'managed' ? newName : name }
+    })
+    const wardName = kind === 'managed' ? '内科病区' : '自定义内科病区'
+    runtime.database.driver.prepare('UPDATE inpatient_ward SET name=? WHERE workspace_id=? AND epoch=? AND ward_id=?')
+      .run(wardName, context.workspaceId, context.epoch, 'ward-general')
+    const original = await (await request(doctor, `${path}/record`)).json()
+    const encounter = runtime.fhir.read(context, 'Encounter', receipt.data.admission.id)
+    await runtime.close()
+    const upgraded = await reopen()
+    const get = (url: string, cookie = doctor) => upgraded.app.request(url, { headers: { cookie } })
+    const wards = (await (await get('/api/his/v1/inpatient/catalog', registrar)).json()).wards
+    expect(wards).toEqual([
+      { id: 'ward-general', name: kind === 'managed' ? '住院病区' : wardName, organizationId: 'organization-inpatient-medicine', acceptingAdmissions: true },
+      { id: 'ward-surgery', name: '外科病区', organizationId: 'organization-inpatient-surgery', acceptingAdmissions: false },
+    ])
+    expect((await (await get('/api/auth/context', nurse)).json()).availableRoles[0].locationName).toBe(kind === 'managed' ? '住院病区' : wardName)
+    for (const { resource, newName } of oldResources) {
+      const current = upgraded.fhir.read(context, resource.resourceType, resource.id)
+      expect({ ...current, meta: undefined }).toEqual({ ...resource, name: newName, meta: undefined })
+      expect(current.meta!.versionId).toBe(String(Number(resource.meta!.versionId) + (kind === 'managed' ? 1 : 0)))
+      expect(upgraded.fhir.vread(context, resource.resourceType, resource.id, resource.meta!.versionId!)).toEqual(resource)
+    }
+    expect(upgraded.fhir.read(context, 'Location', 'ward-surgery').name).toBe('外科病区')
+    expect(upgraded.fhir.read(context, 'Encounter', receipt.data.admission.id)).toEqual(encounter)
+    expect(await (await get(`${path}/record`)).json()).toEqual(original)
+    const beforeReplay = canonicalStateHash(upgraded.database)
+    const replayed = await upgraded.app.request('/api/his/v1/inpatient/admissions', { method: 'POST', headers: { cookie: registrar,
+      origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(input) })
+    expect(replayed.status).toBe(200)
+    expect(await replayed.json()).toEqual(receipt)
+    expect(canonicalStateHash(upgraded.database)).toBe(beforeReplay)
+    await upgraded.close()
+    const again = await reopen()
+    expect(canonicalStateHash(again.database)).toBe(beforeReplay)
+  })
+
   it('保留旧病区与岗位，仅默认病区接收新的直接入院', async () => {
     const { runtime, request, login, registrar, patient } = await setup()
     await addSecondaryInpatientWard(runtime)
