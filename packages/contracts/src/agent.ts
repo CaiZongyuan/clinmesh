@@ -420,9 +420,11 @@ export const agentToolCatalog: readonly AgentToolDefinition[] = Object.freeze([
   tool('outpatient.encounter.complete.propose', 'clinmesh_prepare_complete_encounter', 'proposal', 'human-review', doctor, ['consultation']),
 
   tool('billing.queue.read', 'clinmesh_read_billing_queue', 'query', 'read-only', cashier, ['billing']),
+  tool('billing.case.read', 'clinmesh_read_billing_case', 'query', 'read-only', cashier, ['billing']),
   tool('billing.item.select', 'clinmesh_select_billing_item', 'ui', 'ui-only', cashier, ['billing']),
   tool('billing.payment.preview', 'clinmesh_preview_payment', 'preview', 'read-only', cashier, ['billing']),
   tool('billing.payment.confirm.propose', 'clinmesh_prepare_confirm_payment', 'proposal', 'human-review', cashier, ['billing']),
+  tool('billing.payment.recover.propose', 'clinmesh_prepare_recover_payment', 'proposal', 'human-review', cashier, ['billing']),
 
   tool('pharmacy.queue.read', 'clinmesh_read_pharmacy_queue', 'query', 'read-only', pharmacist, ['pharmacy']),
   tool('pharmacy.prescription.select', 'clinmesh_select_pharmacy_prescription', 'ui', 'ui-only', pharmacist, ['pharmacy']),

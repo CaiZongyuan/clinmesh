@@ -198,6 +198,7 @@ export const proposalCommandOperations: Readonly<Record<string, readonly string[
   'outpatient.record.revise.propose': ['clinical-document.revise'],
   'outpatient.encounter.complete.propose': ['encounter.complete'],
   'billing.payment.confirm.propose': ['payment.confirm'],
+  'billing.payment.recover.propose': ['payment.recover'],
   'pharmacy.review.propose': ['prescription.review'],
   'pharmacy.dispense.propose': ['prescription.dispense'],
 })
@@ -590,8 +591,14 @@ function narrowOperations(
   }
   if (claim.viewId === 'billing') {
     const operations: AgentOperationId[] = ['billing.queue.read', 'billing.item.select']
-    if (selection.kind === 'billing-item' && selection.status === 'billable') {
-      operations.push('billing.payment.preview', 'billing.payment.confirm.propose')
+    if (selection.kind === 'billing-item') {
+      operations.push('billing.case.read')
+      if (selection.category !== 'registration') {
+        if (selection.status === 'billable' || selection.status === 'declined') {
+          operations.push('billing.payment.preview', 'billing.payment.confirm.propose')
+        }
+        if (selection.status === 'ambiguous') operations.push('billing.payment.recover.propose')
+      }
     }
     retain(operations)
     return

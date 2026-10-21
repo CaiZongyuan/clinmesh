@@ -37,6 +37,7 @@ import {
   retryConsultationReplyResponseSchema,
   sendConsultationMessageResponseSchema,
   billingQueueSchema,
+  billingCaseSchema,
   cancelLaboratoryRequestRequestSchema,
   caseLaboratoryCatalogSearchSchema,
   clinicalCatalogSchema,
@@ -84,6 +85,8 @@ import {
   orderHospitalServiceResponseSchema,
   patientSearchSchema,
   paymentPreviewResponseSchema,
+  paymentSimulatorRuleSchema,
+  paymentTendersSchema,
   paymentResponseSchema,
   publishLaboratoryServicesRequestSchema,
   publishLaboratoryServicesResponseSchema,
@@ -541,12 +544,15 @@ const billingQueueInputSchema = paginationInputSchema.extend({
   status: z.enum(['ambiguous', 'declined', 'paid', 'pending']),
 }).strict()
 
+const billingCaseInputSchema = z.object({ caseId: z.string().min(1) }).strict()
+
 const paymentPreviewOperationInputSchema = z.object({
   caseId: z.string().min(1),
   category: z.enum(['laboratory', 'medication']),
   chargeItemId: z.string().min(1),
   chargeVersion: z.number().int().positive(),
-  simulatorRule: z.enum(['ambiguous', 'decline', 'success']),
+  simulatorRule: paymentSimulatorRuleSchema,
+  tenders: paymentTendersSchema.optional(),
 }).strict()
 
 const paymentConfirmOperationInputSchema = z.object({
@@ -554,6 +560,13 @@ const paymentConfirmOperationInputSchema = z.object({
   chargeVersion: z.number().int().positive(),
   commitToken: z.string().min(1),
   previewId: z.string().min(1),
+}).strict()
+
+const paymentRecoverOperationInputSchema = z.object({
+  chargeItemId: z.string().min(1),
+  chargeVersion: z.number().int().positive(),
+  expectedPaymentVersion: z.number().int().positive(),
+  paymentId: z.string().min(1),
 }).strict()
 
 const pharmacyQueueInputSchema = paginationInputSchema.extend({
@@ -930,6 +943,11 @@ const bodyEncoders = {
   'payment.confirm': (rawInput: unknown) => {
     const { chargeItemId, chargeVersion, commitToken } = paymentConfirmOperationInputSchema.parse(rawInput)
     return commandBody({ [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, { commitToken })
+  },
+  'payment.recover': (rawInput: unknown) => {
+    const { chargeItemId, chargeVersion, expectedPaymentVersion }
+      = paymentRecoverOperationInputSchema.parse(rawInput)
+    return commandBody({ [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, { expectedPaymentVersion })
   },
   'prescription.review': (rawInput: unknown) => {
     const {
@@ -2212,6 +2230,25 @@ const operationDefinitions = [
     version: 1,
   },
   {
+    cliPath: ['billing', 'case', 'get'],
+    http: {
+      method: 'GET',
+      path: '/api/his/v1/billing/cases/:caseId',
+    },
+    id: 'billing.case.get',
+    input: billingCaseInputSchema,
+    mode: 'query',
+    output: billingCaseSchema,
+    requirements: {
+      expectedVersions: false,
+      idempotency: 'none',
+    },
+    risk: 'read',
+    roles: ['cashier'],
+    summary: 'Read one unified bill with payment attempts and unpaid registration charges; registration remains read-only',
+    version: 1,
+  },
+  {
     cliPath: ['payment', 'preview'],
     http: {
       method: 'POST',
@@ -2227,8 +2264,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['cashier'],
-    summary: 'Create a version-bound payment preview',
-    version: 1,
+    summary: 'Create a version-bound payment preview with optional cash, bank-card, and mobile tenders; recorded ambiguous results require recovery before another payment',
+    version: 2,
   },
   {
     cliPath: ['payment', 'confirm'],
@@ -2246,7 +2283,26 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['cashier'],
-    summary: 'Confirm a payment from a valid preview',
+    summary: 'Confirm frozen tenders from a valid preview; only a fully paid charge advances clinical fulfillment',
+    version: 2,
+  },
+  {
+    cliPath: ['payment', 'recover'],
+    http: {
+      method: 'POST',
+      path: '/api/his/v1/payments/:paymentId/actions/recover',
+    },
+    id: 'payment.recover',
+    input: paymentRecoverOperationInputSchema,
+    mode: 'command',
+    output: paymentResponseSchema,
+    requirements: {
+      expectedVersions: true,
+      idempotency: 'required',
+    },
+    risk: 'high-risk-write',
+    roles: ['cashier'],
+    summary: 'Recover a recorded ambiguous payment from its channel result; keep pending ambiguous and inspect the original Command receipt after response loss',
     version: 1,
   },
   {
@@ -2462,6 +2518,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'admin.laboratory-services.candidates.search': 'clinmesh-administrator',
   'admin.laboratory-services.job.get': 'clinmesh-administrator',
   'admin.laboratory-services.publish': 'clinmesh-administrator',
+  'billing.case.get': 'clinmesh-billing',
   'billing.queue.list': 'clinmesh-billing',
   'catalog.clinical.read': 'clinmesh-doctor',
   'catalog.registration.read': 'clinmesh-registration',
@@ -2520,6 +2577,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'patient.search': 'clinmesh-registration',
   'payment.confirm': 'clinmesh-billing',
   'payment.preview': 'clinmesh-billing',
+  'payment.recover': 'clinmesh-billing',
   'pharmacy.queue.list': 'clinmesh-pharmacy',
   'prescription.dispense': 'clinmesh-pharmacy',
   'prescription.review': 'clinmesh-pharmacy',

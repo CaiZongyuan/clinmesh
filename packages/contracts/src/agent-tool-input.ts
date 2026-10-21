@@ -180,9 +180,11 @@ export const agentToolInputSchemas = Object.freeze({
   'outpatient.record.revise.propose': clinicalDocumentRevisionInputSchema,
   'outpatient.encounter.complete.propose': emptyInputSchema,
   'billing.queue.read': emptyInputSchema,
+  'billing.case.read': emptyInputSchema,
   'billing.item.select': z.object({ chargeItemId: boundedIdSchema }).strict(),
   'billing.payment.preview': emptyInputSchema,
   'billing.payment.confirm.propose': emptyInputSchema,
+  'billing.payment.recover.propose': emptyInputSchema,
   'pharmacy.queue.read': emptyInputSchema,
   'pharmacy.prescription.select': z.object({ prescriptionId: boundedIdSchema }).strict(),
   'pharmacy.review.draft.set': z.object({
