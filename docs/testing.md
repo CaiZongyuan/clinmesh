@@ -125,6 +125,8 @@ pnpm docs:check
 
 `playwright.config.ts` 的 `contracts` project 拥有 `*.browser.test.ts`，Vitest 排除这些文件；`web` project 拥有 `apps/web/e2e/*.spec.ts`。合同保留现有 Vite/Tailwind 生产构建、React 18/19、ShadowRoot、布局和合成 canvas 断言。Playwright 在 worker 内复用 Chromium，每个测试有独立 context/page；默认两 worker、零重试，runner 限时等待 fixture 的结果信号，不用 Chrome DOM 导出取得结果。字号合同断言 standalone computed font-size、布局尺寸、Desktop 默认 token、Surface 字号和宿主隔离。
 
+Playwright 的 Node 宿主固定使用 `NODE_ENV=test`，避免同一 worker 中的 Vite 构建改变后续服务端模块的生产默认值。浏览器合同显式定义生产 bundle；Web E2E 仅在 Vite 构建期间切换到 `production`，无论构建成功或失败都先恢复宿主环境，再启动真实 HTTP fixture。认证的 origin 与 CSRF 校验继续保持开启。
+
 首次安装依赖后安装与锁定 Playwright 版本匹配的 Chromium；CI 同时安装系统依赖：
 
 ```sh
