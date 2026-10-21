@@ -19,6 +19,7 @@ const baseDocument: ClinicalDocumentContent = {
   assessment: '发热，待查。', disposition: '门诊观察。', followUp: '症状加重及时复诊。',
 }
 const detail = doctorCaseDetailSchema.parse({
+  registrationNumber: null,
   caseId: 'case-quality', taskId: 'task-quality', taskVersion: '1', status: 'first-visit',
   patient: { id: 'patient-quality', identifier: 'CM-SYN-QC', name: '合成质控患者', birthDate: '1988-03-16',
     gender: 'female', synthetic: true, versionId: '1' },

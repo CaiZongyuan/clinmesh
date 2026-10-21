@@ -31,6 +31,7 @@ import {
 } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { PaginationControls } from './pagination-controls.tsx'
+import { RegistrationNumber } from './registration-number.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -724,7 +725,7 @@ export function RegistrarWorkspace({ locale, session }: RegistrarWorkspaceProps)
           <div className="flex flex-col gap-2">
             <Table>
               <TableHeader><TableRow><TableHead>{messages.registrationNumber}</TableHead><TableHead>{messages.patient}</TableHead><TableHead>{messages.arrivedAt}</TableHead><TableHead>{messages.status}</TableHead></TableRow></TableHeader>
-              <TableBody>{registrations.data.items.map(item => <TableRow key={item.registrationId}><TableCell className="font-medium">{item.registrationNumber}</TableCell><TableCell>{item.patient.name}</TableCell><TableCell>{new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.arrivedAt))}</TableCell><TableCell><Badge variant="outline">{item.status === 'awaiting-triage' ? messages.awaitingTriage : item.status}</Badge></TableCell></TableRow>)}</TableBody>
+              <TableBody>{registrations.data.items.map(item => <TableRow key={item.registrationId}><TableCell className="min-w-52 whitespace-normal"><RegistrationNumber messages={messages} registrationNumber={item.registrationNumber} /></TableCell><TableCell>{item.patient.name}</TableCell><TableCell>{new Intl.DateTimeFormat(locale, { dateStyle: 'short', timeStyle: 'short' }).format(new Date(item.arrivedAt))}</TableCell><TableCell><Badge variant="outline">{item.status === 'awaiting-triage' ? messages.awaitingTriage : item.status}</Badge></TableCell></TableRow>)}</TableBody>
             </Table>
             <PaginationControls
               messages={messages}

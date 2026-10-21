@@ -436,6 +436,7 @@ describe('prepared clinical confirmation', () => {
     })
     const mounted = mount(initial, true)
     const observer = new QueryObserver(mounted.client, { queryKey: ['doctor-case', 'scope', 'case-fever'], queryFn: async () => doctorCaseDetailSchema.parse({
+      registrationNumber: null,
       caseId: 'case-fever', allergies: [], encounter: { id: 'encounter-fever', versionId: confirmed ? '3' : '2', status: 'in-progress' },
       patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', synthetic: true, versionId: '1' },
       presentation: null, priorFacts: [], status: 'first-visit', taskId: 'task', taskVersion: '1',
@@ -902,7 +903,7 @@ it('retains a newer generation when an older completed generation receipt arrive
 it('keeps a known confirmation success when case refresh fails and refreshes records without issuing another command', async () => {
   const calls = stubRequests(); const mounted = mount(props(), true)
   let available = false
-  const clinical = doctorCaseDetailSchema.parse({ caseId: 'case-fever', allergies: [], encounter: { id: 'encounter-fever', versionId: '3', status: 'in-progress' },
+  const clinical = doctorCaseDetailSchema.parse({ registrationNumber: null, caseId: 'case-fever', allergies: [], encounter: { id: 'encounter-fever', versionId: '3', status: 'in-progress' },
     patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', synthetic: true, versionId: '1' },
     presentation: null, priorFacts: [], status: 'first-visit', taskId: 'task', taskVersion: '1', diagnosis: { draftVersion: 2,
       confirmation: { id: 'formal-record-1', confirmedAt: '2026-10-18T12:00:00+08:00', provenanceId: 'provenance-1', entries: [{
@@ -992,7 +993,7 @@ it('can issue a retained unselected manual item after new preparation without re
   const original = props({ kind: 'laboratory', expectedDraftVersion: 0 })
   const mounted = mount(original)
   const observer = new QueryObserver(mounted.client, { queryKey: ['doctor-case', 'scope', 'case-fever'], retry: false,
-    queryFn: async () => doctorCaseDetailSchema.parse({ caseId: 'case-fever', allergies: [], encounter: { id: 'encounter-fever', versionId: '2', status: 'in-progress' },
+    queryFn: async () => doctorCaseDetailSchema.parse({ registrationNumber: null, caseId: 'case-fever', allergies: [], encounter: { id: 'encounter-fever', versionId: '2', status: 'in-progress' },
       patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', synthetic: true, versionId: '1' },
       presentation: null, priorFacts: [], status: 'first-visit', taskId: 'task', taskVersion: '1', laboratoryRequests: {
         draftVersion: issued.length * 2, reportingSupported: true, requests: issued.map(name => ({ id: `formal-${name}`, catalogItemId: `lab-${name}`,

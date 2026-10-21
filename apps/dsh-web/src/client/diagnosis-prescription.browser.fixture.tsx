@@ -94,6 +94,7 @@ const initialItems: PrescriptionDraftItem[] = [products[1]!, products[2]!].map(p
   quantity: 1, referenceProduct: product,
 }))
 const detail: DoctorCaseDetail = {
+  registrationNumber: 'CM-OP-20261020-1234567',
   allergies: [], caseId: 'synthetic-case', consultation: { turns: [], version: 1 },
   consultationRecording: { hasSavedDraft: false, version: 1, paused: false, processedCount: 0,
     remainingCount: 0, failedCount: 0, status: 'idle', failures: [], additions: [] },
@@ -162,7 +163,7 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       defaultDoseText: '10 mg', defaultFrequencyCode: 'BID', defaultCourseDays: 3, defaultQuantity: 1,
     })) : [], prescriptionConclusionSupported: true })
   if (path === '/api/his/v1/doctor/queue') return Response.json({
-    items: [{ caseId: detail.caseId, encounterId: detail.encounter.id, encounterVersion: '1', patient: detail.patient,
+    items: [{ registrationNumber: detail.registrationNumber, caseId: detail.caseId, encounterId: detail.encounter.id, encounterVersion: '1', patient: detail.patient,
       presentation: detail.presentation, status: detail.status, taskId: detail.taskId, taskVersion: '1' }],
     page: 1, pageSize: 20, total: 1,
   })

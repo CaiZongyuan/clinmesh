@@ -16,6 +16,7 @@ it('asks the doctor to review an existing record only when a newer authorized fa
   const review = vi.fn()
   const recordTime = '2026-10-18T09:00:00+08:00'
   const detail = doctorCaseDetailSchema.parse({
+    registrationNumber: null,
     caseId: 'synthetic-review-case', allergies: [], priorFacts: [], presentation: null, status: 'first-visit', taskId: 'task-review', taskVersion: '1',
     patient: { id: 'patient-review', identifier: 'SYN-REVIEW', name: '合成核对患者', gender: 'female', birthDate: '1990-01-01', synthetic: true, versionId: '1' },
     encounter: { id: 'encounter-review', status: 'in-progress', versionId: '1' }, consultation: { version: 1, turns: [] },

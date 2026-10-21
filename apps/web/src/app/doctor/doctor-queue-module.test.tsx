@@ -12,6 +12,7 @@ const messages = getWorkspaceMessages('zh-CN')
 
 function queuePage() {
   const detail = doctorCaseDetailSchema.parse({
+    registrationNumber: null,
     allergies: [],
     caseId: 'queue-compact-0',
     consultation: { turns: [], version: 1 },

@@ -33,6 +33,7 @@ const signed = (revisionNumber: number) => ({
   ...(revisionNumber > 1 ? { revisionReason: `第 ${revisionNumber} 次核对。` } : {}),
 })
 const detail: DoctorCaseDetail = {
+  registrationNumber: null,
   allergies: [], caseId: 'synthetic-case', encounter: { id: 'encounter', status: 'in-progress', versionId: '1' },
   patient: { id: 'patient', identifier: 'SYNTHETIC', name: '合成患者', gender: 'female', birthDate: '1990-01-01', synthetic: true, versionId: '1' },
   presentation: null, priorFacts: [], status: 'first-visit', taskId: 'task', taskVersion: '1',

@@ -12,9 +12,11 @@ function projectCoding({ id, system, version, code, display }: ReferenceConceptS
   return { id, system, version, code, display }
 }
 
+// 请求目录保留项目身份、编码、标本、组合、允许适应证与适用条件；报告定义与参考范围只在归一化、
+// 独立核验、保存与失效判断中使用完整定义（选中条目经 selectedCatalogItems 提供）。
 export function projectRecommendationCatalogs({ diagnoses, laboratory, ...catalogs }: DoctorRecommendationCatalogs) {
   return { ...catalogs, ...(diagnoses === undefined ? {} : { diagnoses: {
-    ...diagnoses, reference: diagnoses.reference.map(({ sourceLocator: _sourceLocator, ...clinical }) => clinical),
+    ...diagnoses, reference: diagnoses.reference.map(({ sourceLocator: _sourceLocator, domain: _domain, status: _status, ...clinical }) => clinical),
   } }), ...(laboratory === undefined ? {} : { laboratory: { ...laboratory, items: laboratory.items.map(item => ({
     id: item.id, localCode: item.localCode, nameZh: item.nameZh, nameEn: item.nameEn, version: item.version,
     serviceKind: item.serviceKind, doctorOrderable: item.doctorOrderable,
@@ -22,12 +24,5 @@ export function projectRecommendationCatalogs({ diagnoses, laboratory, ...catalo
     referenceConcept: projectCoding(item.referenceConcept), specimen: item.specimen, standardStatus: item.standardStatus,
     ...(item.sourceDataset === undefined ? {} : { sourceDataset: { datasetId: item.sourceDataset.datasetId } }),
     ...(item.sourceDataset?.datasetId === 'laboratory-cn' ? { minimumAgeYears: 18 } : {}),
-    reportDefinition: { results: item.reportDefinition.results.map(result => ({
-      referenceConcept: projectCoding(result.referenceConcept), alternateCodings: result.alternateCodings,
-      unit: result.unit, valueType: result.valueType, referenceRange: result.referenceRange, allowedValues: result.allowedValues,
-      adultReferenceRules: result.adultReferenceRules?.map(({ high, low, normalValue, notes, referenceKind, sex }) => (
-        { high, low, normalValue, notes, referenceKind, sex }
-      )),
-    })) },
   })) } }) }
 }

@@ -18,6 +18,7 @@ function idleRecommendation(caseId: string, encounterId: string, kind: string) {
 test('doctor banner merges vitals with completion progress and moves per-item detail into the suggestion stack', async ({ page, browserApp }) => {
   // Authenticate against the real server; use controlled clinical responses for layout only.
   const cases = ['布局测试甲', '布局测试乙'].map((name, index) => doctorCaseDetailSchema.parse({
+    registrationNumber: null,
     allergies: index === 0 ? [
       { code: 'synthetic-penicillin', display: '青霉素过敏' },
       { code: 'synthetic-sulfonamide', display: '磺胺类过敏' },

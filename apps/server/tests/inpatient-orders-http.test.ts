@@ -504,7 +504,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
     s.runtime.database.driver.prepare('INSERT INTO inventory_movement(workspace_id,epoch,movement_id,prescription_id,lot_id,quantity,occurred_at) VALUES(?,?,?,?,?,3,?)').run(outpatient.context.workspaceId,outpatient.context.epoch,'legacy-movement',outpatient.id,lotId,clock.virtualTime)
     await s.runtime.close()
     const migrations=join(s.directory,'legacy-migrations');await mkdir(migrations)
-    for(const file of (await readdir('drizzle')).filter(name=>/^\d{4}_.+\.sql$/.test(name)&&name<'0070_')) await copyFile(join('drizzle',file),join(migrations,file))
+    for(const file of (await readdir('drizzle')).filter(name=>/^\d{4}_.+\.sql$/.test(name)&&name<'0070_'&&name!=='0069_registration-numbering.sql')) await copyFile(join('drizzle',file),join(migrations,file))
     const legacy=openClinMeshDatabase({databasePath:join(s.directory,'legacy.sqlite'),busyTimeoutMs:5000})
     try {
       expect(applyMigrations(legacy,migrations).schemaVersion).toBe(77)
@@ -517,7 +517,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       }
       legacy.driver.exec('COMMIT');legacy.driver.exec('DETACH DATABASE captured');legacy.driver.pragma('foreign_keys = ON')
       expect(legacy.driver.pragma('foreign_key_check')).toEqual([])
-      expect(applyMigrations(legacy)).toMatchObject({applied:['0070_inpatient-orders.sql','0071_inpatient-investigations-transfer.sql','0072_inpatient-surgery.sql','0073_inpatient-discharge.sql','0074_inpatient-record.sql'],schemaVersion:82})
+      expect(applyMigrations(legacy)).toMatchObject({applied:['0069_registration-numbering.sql','0070_doctor-recommendation-consolidation-stage.sql','0070_inpatient-orders.sql','0071_inpatient-investigations-transfer.sql','0072_inpatient-surgery.sql','0073_inpatient-discharge.sql','0074_inpatient-record.sql'],schemaVersion:84})
       expect(legacy.driver.prepare('SELECT prescription_id,inpatient_dispense_id,quantity FROM inventory_movement WHERE movement_id=?').get('legacy-movement')).toEqual({prescription_id:outpatient.id,inpatient_dispense_id:null,quantity:3})
       expect(legacy.driver.prepare('SELECT amount_fen FROM inpatient_charge WHERE admission_id=?').get(s.admission.id)).toEqual({amount_fen:5000})
       expect(legacy.driver.prepare("SELECT COUNT(*) count FROM fhir_history WHERE resource_type='MedicationRequest' AND resource_id='synthetic-outpatient-medication-request'").get()).toEqual({count:1})

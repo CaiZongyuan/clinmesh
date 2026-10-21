@@ -172,7 +172,7 @@ describe('SQLite lifecycle', () => {
       foreignKeys: true,
       integrity: 'ok',
       journalMode: 'wal',
-      schemaVersion: 82,
+      schemaVersion: 84,
     })
     expect(firstMigration).toEqual({
       applied: [
@@ -253,13 +253,15 @@ describe('SQLite lifecycle', () => {
         '0067_dialogue-reply-attempts.sql',
         '0068_doctor-recommendation-execution.sql',
         '0069_inpatient-admission.sql',
+        '0069_registration-numbering.sql',
+        '0070_doctor-recommendation-consolidation-stage.sql',
         '0070_inpatient-orders.sql',
         '0071_inpatient-investigations-transfer.sql',
         '0072_inpatient-surgery.sql',
         '0073_inpatient-discharge.sql',
         '0074_inpatient-record.sql',
       ],
-      schemaVersion: 82,
+      schemaVersion: 84,
     })
     expect(first.driver.prepare(`
       SELECT name FROM sqlite_schema
@@ -275,8 +277,8 @@ describe('SQLite lifecycle', () => {
     first.close()
 
     const reopened = openClinMeshDatabase({ databasePath, busyTimeoutMs: 5_000 })
-    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 82 })
-    expect(reopened.diagnostics().schemaVersion).toBe(82)
+    expect(applyMigrations(reopened)).toEqual({ applied: [], schemaVersion: 84 })
+    expect(reopened.diagnostics().schemaVersion).toBe(84)
     reopened.close()
   })
 
@@ -301,6 +303,12 @@ describe('SQLite lifecycle', () => {
       workspaceId: 'workspace-command-receipt-role',
       workspaceName: 'Command receipt role migration',
     })
+    const receiptAuditHash = canonicalJsonHash({
+      actorId: 'actor-command-receipt-role', auditId: 'audit-command-receipt-role', operation: 'patient.create',
+      practitionerId: 'practitioner-command-receipt-role', practitionerRoleId: 'practitioner-role-outpatient-doctor',
+      previousHash: '0'.repeat(64), requestHash: '2'.repeat(64), roleCode: 'outpatient-doctor',
+      sequence: 1, timestamp: '2026-08-31T00:00:00.000Z',
+    })
     database.driver.prepare(`
       INSERT INTO audit_log (
         workspace_id, epoch, audit_id, sequence, previous_hash, current_hash,
@@ -312,7 +320,7 @@ describe('SQLite lifecycle', () => {
       'epoch-command-receipt-role',
       'audit-command-receipt-role',
       '0'.repeat(64),
-      '1'.repeat(64),
+      receiptAuditHash,
       '2026-08-31T00:00:00.000Z',
       'actor-command-receipt-role',
       'practitioner-command-receipt-role',
@@ -322,6 +330,13 @@ describe('SQLite lifecycle', () => {
       'patient.create',
       '2'.repeat(64),
     )
+    database.driver.prepare('UPDATE audit_head SET sequence = 1, hash = ?').run(receiptAuditHash)
+    new FhirRepository(database).createProjection({
+      workspaceId: 'workspace-command-receipt-role', epoch: 'epoch-command-receipt-role',
+    }, {
+      resourceType: 'AuditEvent', id: 'audit-command-receipt-role',
+      code: { text: 'patient.create' }, outcome: { code: { code: '0' } },
+    })
     database.driver.prepare(`
       INSERT INTO command_receipt (
         workspace_id, epoch, actor_id, operation, idempotency_key,
@@ -373,13 +388,15 @@ describe('SQLite lifecycle', () => {
         '0067_dialogue-reply-attempts.sql',
         '0068_doctor-recommendation-execution.sql',
         '0069_inpatient-admission.sql',
+        '0069_registration-numbering.sql',
+        '0070_doctor-recommendation-consolidation-stage.sql',
         '0070_inpatient-orders.sql',
         '0071_inpatient-investigations-transfer.sql',
         '0072_inpatient-surgery.sql',
         '0073_inpatient-discharge.sql',
         '0074_inpatient-record.sql',
       ],
-      schemaVersion: 82,
+      schemaVersion: 84,
     })
     expect(database.driver.prepare(`
       SELECT practitioner_role_id FROM command_receipt
@@ -1633,7 +1650,7 @@ describe('SQLite lifecycle', () => {
     unmigrated.close()
 
     const runtime = await createClinMeshRuntime(options)
-    expect(runtime.database.diagnostics().schemaVersion).toBe(82)
+    expect(runtime.database.diagnostics().schemaVersion).toBe(84)
     await runtime.close()
   })
 
@@ -1669,7 +1686,7 @@ describe('SQLite lifecycle', () => {
     }
   })
 
-  it('restores a consistent backup to a new path without changing the active database', async () => {
+  it('restores a consistent backup to a new path while preserving facts and retiring the previous writer', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-backup-'))
     temporaryDirectories.push(directory)
     const databasePath = join(directory, 'active.sqlite')
@@ -1735,7 +1752,7 @@ describe('SQLite lifecycle', () => {
 
     expect(await backupDatabase(database, backupPath)).toMatchObject({
       canonicalStateHash: expectedHash,
-      schemaVersion: 82,
+      schemaVersion: 84,
     })
     repository.update(context, {
       resourceType: 'Patient',
@@ -1744,14 +1761,15 @@ describe('SQLite lifecycle', () => {
     }, '1')
 
     expect(await restoreDatabase({
+      authorityDatabasePath: databasePath,
       backupPath,
       busyTimeoutMs: 5_000,
       destinationPath: restoredPath,
-      expectedSchemaVersion: 82,
+      expectedSchemaVersion: 84,
     })).toMatchObject({
       canonicalStateHash: expectedHash,
       integrity: 'ok',
-      schemaVersion: 82,
+      schemaVersion: 84,
     })
 
     const restored = openClinMeshDatabase({ databasePath: restoredPath, busyTimeoutMs: 5_000 })
@@ -1791,6 +1809,7 @@ describe('SQLite lifecycle', () => {
     await writeFile(corruptPath, 'this is not a SQLite database')
 
     await expect(restoreDatabase({
+      authorityDatabasePath: activePath,
       backupPath: corruptPath,
       busyTimeoutMs: 5_000,
       destinationPath,
@@ -1935,7 +1954,7 @@ describe('SQLite lifecycle', () => {
         path: z.string().min(1),
         schemaVersion: z.literal(7),
       }),
-      schemaVersion: z.literal(82),
+      schemaVersion: z.literal(84),
     }).parse(await runDatabaseCli([
       'migrate',
       '--database',
@@ -2012,31 +2031,35 @@ describe('SQLite lifecycle', () => {
         '0067_dialogue-reply-attempts.sql',
         '0068_doctor-recommendation-execution.sql',
         '0069_inpatient-admission.sql',
+        '0069_registration-numbering.sql',
+        '0070_doctor-recommendation-consolidation-stage.sql',
         '0070_inpatient-orders.sql',
         '0071_inpatient-investigations-transfer.sql',
         '0072_inpatient-surgery.sql',
         '0073_inpatient-discharge.sql',
-        '0074_inpatient-record.sql',
+      '0074_inpatient-record.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
       'verify',
       '--database',
       databasePath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 82 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 84 })
     await expect(runDatabaseCli([
       'backup',
       '--database',
       databasePath,
       '--output',
       backupPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 82 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 84 })
     await expect(runDatabaseCli([
       'restore',
+      '--authority-database',
+      databasePath,
       '--backup',
       backupPath,
       '--destination',
       restoredPath,
-    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 82 })
+    ], {})).resolves.toMatchObject({ integrity: 'ok', schemaVersion: 84 })
   })
 })

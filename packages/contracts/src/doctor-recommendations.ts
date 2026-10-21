@@ -89,11 +89,11 @@ export const doctorRecommendationRecoverySchema = z.object({
   requestCount: z.number().int().nonnegative(), extraRequestCount: z.number().int().min(0).max(4),
   maxRequestsPerUnit: z.literal(3), maxExtraRequests: z.literal(4), canContinue: z.boolean(),
   units: z.array(z.object({
-    stage: z.enum(['history-selection', 'catalog-selection', 'generation', 'verification']),
+    stage: z.enum(['history-selection', 'history-consolidation', 'catalog-selection', 'generation', 'verification']),
     batchId: z.string().min(1).max(256),
     status: z.enum(['pending', 'dispatching', 'succeeded', 'failed', 'unknown']),
     requestCount: z.number().int().min(0).max(3), errorCode: z.string().min(1).max(64).optional(),
-  }).strict()).max(25),
+  }).strict()).max(26),
 }).strict()
 
 export const doctorRecommendationStateSchema = z.object({

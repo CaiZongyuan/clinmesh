@@ -100,6 +100,16 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 - 患者合并保留源 Patient，并通过 link/状态表达；禁止改写所有历史 ID。
 - 场景 fixture 使用稳定逻辑 key，运行时 ID 可由 scenario seed + logical key 确定性生成。
 
+#### 门诊号发行状态
+
+门诊号标识本次就诊，保存在 Registration 和 Encounter.identifier，患者级标识保持独立。新号格式为 `CM-OP-YYYYMMDD-流水号`，业务日期使用已校验的就诊日期；流水至少六位，超过六位自然增长，以日期和数值流水排序。普通挂号、合成病例开始及 reset 后的重放都经过同一个发号边界，在原 Command 写事务内提交发行状态、Registration、Encounter 与回执；同键重放不再发行。
+
+`registration_number_counter(visit_date, high_water)` 按日期保存全数据库共用的已提交发行高水位，作用域不含 Workspace/Epoch，业务删除和产品内 reset 不清理它。`registration_number_authority` 保存单例发行权威 ID、active/retired 状态以及全部日期计数器的规范化 SHA-256 摘要；每次分配都在写锁内验证完整状态并原子更新摘要。缺失日期只有在完整计数器清单仍匹配时才是首次使用；缺行、损坏、已退休权威和安全整数容量耗尽均拒绝发行，不从现存业务行重建。
+
+迁移必须先证明历史完整性，再跨全部 Workspace/Epoch 汇总按日高水位。证明包含每个 Epoch 的完整审计链与头、每条审计的初始 AuditEvent 投影、正常挂号及合成病例开始的初始 Encounter 号码，并反查现存挂号和全部有号 Encounter 历史。当前最大存量号只是下界，不能独立作为迁移依据。旧版成功 reset 未保存完整重放发行清单，或必要历史证据已删除、损坏、无法关联时，迁移返回 `REGISTRATION_NUMBER_HISTORY_UNVERIFIED` 并回滚该迁移，保留原数据及旧号；不会把未确认历史视为零。跨作用域已有重复号保留原值，新发行从已证实的全局高水位继续。
+
+发行状态随一致备份保存并纳入 canonical state hash。受控恢复要求保留可信最新发行权威库；恢复在停用旧权威后，将备份和最新权威的每日期高水位取大值，再启用一个恢复目标。缺少最新权威、身份不一致或状态无法验证时拒绝恢复发号；退休后的失败也不自动重新启用旧库。操作入口与恢复失败处理见 [Demo 数据库运维](../demo-architecture.md#database-operations)，证明边界与替代方案见[发行完整性决策](../decisions/implemented/architecture/2026-10-20-registration-numbering-integrity.md)。摘要用于检测发行状态的意外缺失和损坏，不抵抗管理员同时篡改事实与校验值；应用不自动识别任意文件复制或保证独立克隆双写后的全历史唯一。
+
 ### 9.5 SQLite 类型规则
 
 - 主键：`TEXT` UUIDv7；确定性 fixture 可使用 UUIDv5。对外引用只暴露 FHIR logical id，不暴露 workspace 复合键。
@@ -165,9 +175,13 @@ queued/claimed    -> abandoned
 
 影像检查的像素不是附件，也不进入 SQLite、Git、日志或模型输入。像素保存在数据库之外的本地素材目录，由影像读取边界按本院检查标识读取；FHIR 正文、临床读模型和阅片描述都不包含文件路径。数据库只保存本院检查与素材的私有对应关系和报告内容，见 [10.7 节](simulation.md#107-影像素材与病例影像准备)。
 
+<a id="99-数据库迁移边界"></a>
+
 ### 9.9 数据库迁移边界
 
 首期只有 SQLite Repository adapter。Drizzle schema 和迁移以 SQLite 为真实目标，不维护 D1 或 PostgreSQL 方言的虚假兼容层。Workspace 级 Profile、Case、Brief 和 Investigation Snapshot 使用稳定逻辑 key 和显式 revision，不依赖本地自增 ID。
+
+当前 Operational schema version 为 84，按完整迁移文件名及校验和识别已应用迁移，数字前缀不作为唯一身份。`0069_inpatient-admission.sql` 与 `0069_registration-numbering.sql`、`0070_inpatient-orders.sql` 与 `0070_doctor-recommendation-consolidation-stage.sql` 均保留原文件及已落库身份；从门诊发号版 78 升级只补六份住院迁移，从住院版 82 升级只补两份门诊发号与建议阶段迁移。两条路径保留原 FHIR current/history、领域事实、回执及已应用迁移记录；发号历史证据不足仍按[发行状态](#门诊号发行状态)拒绝迁移，不能用住院兼容绕过。理由见[迁移身份兼容决策](../decisions/implemented/bug-fix/2026-10-21-inpatient-main-migration-identity.md)。
 
 未来选择 D1、PostgreSQL 或 Supabase 时必须：
 

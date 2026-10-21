@@ -115,6 +115,7 @@ import type { SyntheticCaseVisitService } from './application/synthetic-case-vis
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
+import { RegistrationNumberError } from './infrastructure/sqlite/registration-numbering.ts'
 import type { DoctorRecommendationsService } from './application/doctor-recommendations-service.ts'
 import { doctorRecommendationKindSchema, generateDoctorRecommendationsRequestSchema, confirmDoctorPreparationRequestSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { createCapabilityStatement } from './fhir/capabilities.ts'
@@ -247,6 +248,7 @@ function apiErrorResponse(
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
     || error instanceof WorkflowError
+    || error instanceof RegistrationNumberError
     || error instanceof CommandReceiptNotFoundError
   ) {
     return context.json(apiErrorBody(

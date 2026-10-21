@@ -362,7 +362,7 @@ describe('住院检查检验 HTTP 合同', () => {
     expect(await (await s.request(opDoctor, `/api/his/v1/doctor/cases/${s.visit.outpatientCaseId}`)).json()).toMatchObject({ laboratoryRequests: { requests: [{ status: 'reported', report: { results: [{ value: 7.2 }] } }] } })
     await s.runtime.close()
     const directory = join(s.directory, 'migration-copy'); await mkdir(directory)
-    for (const file of (await readdir('drizzle')).filter(file => /^\d{4}_.+\.sql$/.test(file) && file < '0071_')) await copyFile(join('drizzle', file), join(directory, file))
+    for (const file of (await readdir('drizzle')).filter(file => /^\d{4}_.+\.sql$/.test(file) && file < '0071_' && !['0069_registration-numbering.sql', '0070_doctor-recommendation-consolidation-stage.sql'].includes(file))) await copyFile(join('drizzle', file), join(directory, file))
     const database = openClinMeshDatabase({ databasePath: join(s.directory, 'old.sqlite'), busyTimeoutMs: 5000 })
     try {
       expect(applyMigrations(database, directory).schemaVersion).toBe(78)

@@ -1038,6 +1038,7 @@ function stubLaboratoryReportPolling(reportingSupported: boolean) {
     if (url.pathname === '/api/his/v1/doctor/queue') {
       return Response.json({
         items: [{
+          registrationNumber: null,
           caseId: 'case-virtual-1',
           encounterId: 'encounter-virtual-1',
           encounterVersion: '1',
@@ -1053,6 +1054,7 @@ function stubLaboratoryReportPolling(reportingSupported: boolean) {
     if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
       detailRequests += 1
       return Response.json({
+        registrationNumber: null,
         allergies: [],
         caseId: 'case-virtual-1',
         consultation: { turns: [], version: 1 },
@@ -1172,6 +1174,7 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
   const patient = { birthDate: '1988-03-16', gender: 'female', id: 'patient-recording',
     identifier: 'CM-SYN-RECORDING', name: '合成病史患者', synthetic: true, versionId: '1' }
   const detail = () => ({
+    registrationNumber: null,
     allergies: [], caseId: 'case-recording', consultation: { turns, version: 1 },
     consultationRecording: action === 'activate' && recording.version === 0 ? undefined : recording,
     clinicalDocument: { draft: { ...document, version: draftVersion, updatedAt: '2026-10-08T09:00:00+08:00' }, signed: [] },
@@ -1187,9 +1190,9 @@ function stubRecordingWorkspace(action: 'activate' | 'pause' | 'resume' | 'backf
     if (path === '/api/his/v1/catalogs/clinical') return Response.json({ diagnoses: [], laboratory: [], medications: [],
       prescriptionConclusionSupported: true })
     if (path === '/api/his/v1/doctor/queue') return Response.json({
-      items: [{ caseId: 'case-recording', encounterId: 'encounter-recording', encounterVersion: '1',
+      items: [{ registrationNumber: null, caseId: 'case-recording', encounterId: 'encounter-recording', encounterVersion: '1',
         patient, presentation: doctorPresentation, status: caseStatus, taskId: 'task-recording', taskVersion: '1' },
-        ...(additionalCase ? [{ caseId: 'case-other', encounterId: 'encounter-other', encounterVersion: '1',
+        ...(additionalCase ? [{ registrationNumber: null, caseId: 'case-other', encounterId: 'encounter-other', encounterVersion: '1',
           patient: { ...patient, id: 'patient-other', name: '合成其他患者' }, presentation: doctorPresentation,
           status: 'first-visit', taskId: 'task-other', taskVersion: '1' }] : [])],
       ...pagination(additionalCase ? 2 : 1),
@@ -2937,6 +2940,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-direct',
             encounterId: 'encounter-direct',
             encounterVersion: '1',
@@ -2951,6 +2955,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-direct',
           consultation: { turns, version: consultationVersion },
@@ -3052,6 +3057,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-direct',
             encounterId: 'encounter-direct',
             encounterVersion: '1',
@@ -3066,6 +3072,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-direct',
           consultation: { turns: [], version: 1 },
@@ -3140,6 +3147,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-direct',
             encounterId: 'encounter-direct',
             encounterVersion: '1',
@@ -3154,6 +3162,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-direct',
           clinicalDocument: {
@@ -3270,6 +3279,7 @@ describe('role workspaces', () => {
         await queueGate
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-direct',
             encounterId: 'encounter-direct',
             encounterVersion: '1',
@@ -3284,6 +3294,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-direct') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-direct',
           clinicalDocument: persistedDocument ? {
@@ -3947,11 +3958,12 @@ describe('role workspaces', () => {
       if (path === '/api/auth/context') return Response.json(doctorSession)
       if (path === '/api/his/v1/catalogs/clinical') return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
       if (path === '/api/his/v1/doctor/queue') return Response.json({
-        items: [{ caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
+        items: [{ registrationNumber: null, caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
           patient, presentation: doctorPresentation, status: 'first-visit', taskId: 'task-1', taskVersion: '1' }],
         ...pagination(1),
       })
       if (path === '/api/his/v1/doctor/cases/case-1') return Response.json({
+        registrationNumber: null,
         allergies: [], caseId: 'case-1', consultation: { turns: [], version: 1 },
         encounter: { id: 'encounter-1', status: 'in-progress', versionId: '1' },
         patient, presentation: doctorPresentation, priorFacts: [], status: 'first-visit',
@@ -4020,6 +4032,7 @@ describe('role workspaces', () => {
       birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1',
     }
     const queueItems = [1, 2].map(index => ({
+      registrationNumber: null,
       caseId: 'case-' + index, encounterId: 'encounter-' + index, encounterVersion: '1',
       patient: { ...patient, id: 'patient-' + index, name: '合成测试患者' + index },
       presentation: doctorPresentation, status: index === 1 ? 'first-visit' : 'awaiting-doctor', taskId: 'task-' + index, taskVersion: '1',
@@ -4105,6 +4118,7 @@ describe('role workspaces', () => {
       },
     }
     const queueItem = {
+      registrationNumber: null,
       caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
       patient: {
         id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
@@ -4245,6 +4259,7 @@ describe('role workspaces', () => {
   it('keeps refreshing the doctor case while an imaging request is waiting for its report', async () => {
     window.history.replaceState(null, '', '/consultation')
     const queueItem = {
+      registrationNumber: null,
       caseId: 'case-1', encounterId: 'encounter-1', encounterVersion: '1',
       patient: {
         id: 'patient-1', identifier: 'CM-SYN-001', name: '合成测试患者',
@@ -4384,6 +4399,7 @@ describe('role workspaces', () => {
       ? { ...initialImagingRequest, id: 'imaging-request-new', serviceRequestId: 'imaging-service-request-new', taskId: 'imaging-task-new', status: 'issued' as const }
       : { ...initialPathologyRequest, id: 'pathology-request-new', serviceRequestId: 'pathology-service-request-new', taskId: 'pathology-task-new', status: 'issued' as const }
     const queueItem = {
+      registrationNumber: null,
       caseId: 'case-late-investigation', encounterId: 'encounter-late-investigation', encounterVersion: '1',
       patient: { id: 'patient-late-investigation', identifier: 'CM-SYN-LATE', name: '合成迟到检查患者',
         birthDate: '1988-03-16', gender: 'female', synthetic: true, versionId: '1' },
@@ -4472,11 +4488,12 @@ describe('role workspaces', () => {
       if (path === '/api/auth/context') return Response.json(doctorSession)
       if (path.endsWith('/catalogs/clinical')) return Response.json({ laboratory: [], medications: [], prescriptionConclusionSupported: true })
       if (path.endsWith('/doctor/queue')) return Response.json({
-        items: [{ caseId: 'case-investigation', encounterId: 'encounter-investigation', encounterVersion: '1',
+        items: [{ registrationNumber: null, caseId: 'case-investigation', encounterId: 'encounter-investigation', encounterVersion: '1',
           patient, presentation: doctorPresentation, status: 'first-visit', taskId: 'task-investigation', taskVersion: '1' }],
         ...pagination(1),
       })
       if (path.endsWith('/cases/case-investigation')) return Response.json({
+        registrationNumber: null,
         allergies: [], caseId: 'case-investigation', consultation: { turns: [], version: 1 },
         encounter: { id: 'encounter-investigation', status: 'in-progress', versionId: '1' },
         laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [] },
@@ -4675,6 +4692,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-virtual-1',
             encounterId: 'encounter-virtual-1',
             encounterVersion: '1',
@@ -4689,6 +4707,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-virtual-1',
           consultation: { turns: [], version: 1 },
@@ -4999,7 +5018,7 @@ describe('role workspaces', () => {
       reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'], specimenType: '石蜡切片', stain: 'HE', version: 1 }
     const procedures = [{ code: '392021009', display: '合成原手术', performedAt: '2022-04-01T08:00:00+08:00', sourceReference: 'urn:uuid:late-agent-old' },
       { code: '392023007', display: '合成新手术', performedAt: '2023-01-05T08:00:00+08:00', sourceReference: 'urn:uuid:late-agent-new' }]
-    const cases = ['甲', '乙'].map((name, index) => ({ caseId: `case-late-agent-${index}`, encounterId: `encounter-late-agent-${index}`, encounterVersion: '1',
+    const cases = ['甲', '乙'].map((name, index) => ({ registrationNumber: null, caseId: `case-late-agent-${index}`, encounterId: `encounter-late-agent-${index}`, encounterVersion: '1',
       patient: { id: `patient-late-agent-${index}`, identifier: `SYN-LATE-AGENT-${index}`, name: `合成回填患者${name}`,
         gender: 'female', synthetic: true, versionId: '1' }, presentation: doctorPresentation, status: 'first-visit',
       taskId: `task-late-agent-${index}`, taskVersion: '1' }))
@@ -5136,6 +5155,7 @@ describe('role workspaces', () => {
     let deleted = false
     const service = laboratoryTestCatalog.items[0]!
     const cases = ['甲', '乙'].map((name, index) => ({
+      registrationNumber: null,
       caseId: `case-deletion-${index}`, encounterId: `encounter-deletion-${index}`, encounterVersion: '1',
       patient: { id: `patient-deletion-${index}`, identifier: `SYN-DELETE-${index}`, name: `合成删除患者${name}`,
         gender: 'female', synthetic: true, versionId: '1' },
@@ -5194,6 +5214,7 @@ describe('role workspaces', () => {
         return () => { if (registration === value) registration = undefined }
       } }
       const queueItem = {
+        registrationNumber: null,
         caseId: 'case-failed-laboratory', encounterId: 'encounter-failed-laboratory', encounterVersion: '1',
         patient: { id: 'patient-failed-laboratory', identifier: 'SYN-FAILED-LAB', name: '合成检验患者',
           gender: 'female', birthDate: '1988-03-16', synthetic: true, versionId: '1' },
@@ -5448,6 +5469,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-virtual-1',
             encounterId: 'encounter-virtual-1',
             encounterVersion: '1',
@@ -5457,6 +5479,7 @@ describe('role workspaces', () => {
             taskId: 'task-doctor-virtual-1',
             taskVersion: '1',
           }, {
+            registrationNumber: null,
             caseId: 'case-virtual-2',
             encounterId: 'encounter-virtual-2',
             encounterVersion: '1',
@@ -5471,6 +5494,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-1') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-virtual-1',
           consultation: { turns: [], version: 1 },
@@ -5491,6 +5515,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-virtual-2') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-virtual-2',
           consultation: { turns: [], version: 1 },
@@ -5777,6 +5802,7 @@ describe('role workspaces', () => {
         }
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-1',
             encounterId: 'encounter-1',
             ...visitVersions(),
@@ -5791,6 +5817,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-1',
           ...(draftVersion === 0 ? {} : {
@@ -6162,6 +6189,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-1',
             diagnosticReportId: 'diagnostic-report-1',
             encounterId: 'encounter-1',
@@ -6178,6 +6206,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
         return Response.json({
+          registrationNumber: null,
           allergies: [{
             code: 'OSELTAMIVIR',
             display: '磷酸奥司他韦过敏',
@@ -6474,6 +6503,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-independent-diagnosis',
             encounterId: 'encounter-independent-diagnosis',
             encounterVersion,
@@ -6488,6 +6518,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-independent-diagnosis') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-independent-diagnosis',
           consultation: { turns: [], version: 1 },
@@ -6645,6 +6676,9 @@ describe('role workspaces', () => {
   it('keeps each patient clinical record while aligning the consultation workbench', async () => {
     const questionText = '什么时候开始不舒服？'
     let releaseFirstPatientAnswer: (() => void) | undefined
+    let releaseSecondDetail: (() => void) | undefined
+    let holdSecondDetail = true
+    const visitNumbers = ['CM-OP-20261020-000123', 'CM-OP-20261020-1000000', 'CM-OP-20261020-1000001']
     const patients = [{
       birthDate: '1981-06-12',
       gender: 'male',
@@ -6661,6 +6695,8 @@ describe('role workspaces', () => {
       name: '李静',
       synthetic: true,
       versionId: '1',
+    }, {
+      id: 'patient-failed', identifier: 'SYN-PATIENT-FAILED', name: '读取失败合成患者', synthetic: true, versionId: '1',
     }]
     vi.stubGlobal('fetch', documentQualityFetch(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), 'http://localhost')
@@ -6676,6 +6712,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: patients.map((patient, index) => ({
+            registrationNumber: visitNumbers[index],
             caseId: `case-${index + 1}`,
             encounterId: `encounter-${index + 1}`,
             encounterVersion: '1',
@@ -6689,7 +6726,7 @@ describe('role workspaces', () => {
             taskId: `task-${index + 1}`,
             taskVersion: '1',
           })),
-          ...pagination(2),
+          ...pagination(3),
         })
       }
       const caseMatch = /^\/api\/his\/v1\/doctor\/cases\/case-(\d)$/.exec(url.pathname)
@@ -6697,7 +6734,12 @@ describe('role workspaces', () => {
         const index = Number(caseMatch[1]) - 1
         const patient = patients[index]
         if (patient === undefined) throw new Error('Patient fixture was not found')
+        if (index === 2) return Response.json({ error: { code: 'WORKFLOW_CONFLICT', message: 'Case read failed' } }, { status: 503 })
+        if (index === 1 && holdSecondDetail) await new Promise<void>(resolve => {
+          releaseSecondDetail = () => { holdSecondDetail = false; resolve() }
+        })
         return Response.json({
+          registrationNumber: visitNumbers[index],
           allergies: [],
           caseId: `case-${index + 1}`,
           consultation: { turns: [], version: 1 },
@@ -6743,6 +6785,7 @@ describe('role workspaces', () => {
       throw new Error(`Unexpected request: ${url.pathname}`)
     }))
     const user = userEvent.setup()
+    const writeClipboard = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
     render(<WebApp />)
 
     expect(await screen.findByRole('tab', { name: '病历记录' })).toBeTruthy()
@@ -6753,6 +6796,9 @@ describe('role workspaces', () => {
     expect(screen.queryByRole('tab', { name: '当前诊疗' })).toBeNull()
     expect(within(queueRegion).getByRole('button', { name: '选择病例 王晓明' })).toBeTruthy()
     const patientBanner = screen.getByRole('region', { name: '当前患者' })
+    expect(within(patientBanner).getByText(visitNumbers[0]!)).toBeTruthy()
+    await user.click(within(patientBanner).getByRole('button', { name: `复制门诊号 ${visitNumbers[0]}` }))
+    expect(writeClipboard).toHaveBeenLastCalledWith(visitNumbers[0])
     expect(within(patientBanner).getByRole('img', { name: '王晓明 患者' })).toBeTruthy()
     expect(screen.queryByRole('complementary', { name: '病例上下文' })).toBeNull()
     expect(screen.queryByRole('button', { name: '收起右侧边栏' })).toBeNull()
@@ -6767,7 +6813,13 @@ describe('role workspaces', () => {
       name: '正在等待患者回答',
     }) as HTMLButtonElement).disabled).toBe(true)
     await user.click(screen.getByRole('button', { name: '选择病例 李静' }))
+    expect(screen.queryByRole('region', { name: '当前患者' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^复制门诊号/ })).toBeNull()
+    expect(screen.queryByText('门诊号已复制')).toBeNull()
+    await act(async () => { releaseSecondDetail?.() })
     expect(await screen.findByRole('heading', { name: '李静' })).toBeTruthy()
+    await user.click(within(screen.getByRole('region', { name: '当前患者' })).getByRole('button', { name: `复制门诊号 ${visitNumbers[1]}` }))
+    expect(writeClipboard).toHaveBeenLastCalledWith(visitNumbers[1])
     expect(screen.queryByRole('button', { name: '正在等待患者回答' })).toBeNull()
     await act(async () => {
       releaseFirstPatientAnswer?.()
@@ -6787,6 +6839,10 @@ describe('role workspaces', () => {
       .toBe('患者三天前受凉后出现咳嗽、发热。')
     expect(screen.getByRole('button', { name: '保存病历草稿' })).toBeTruthy()
     expect(screen.queryByText(/草稿版本|版本 \d/)).toBeNull()
+    await user.click(screen.getByRole('button', { name: '选择病例 读取失败合成患者' }))
+    expect(await screen.findByText('诊疗服务不可用')).toBeTruthy()
+    expect(screen.queryByRole('region', { name: '当前患者' })).toBeNull()
+    expect(screen.queryByRole('button', { name: /^复制门诊号/ })).toBeNull()
   })
 
   it('completes an eligible Encounter from the patient header and converts it to read-only', async () => {
@@ -6885,6 +6941,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: completed ? [] : [{
+            registrationNumber: null,
             caseId: 'case-completion',
             encounterId: 'encounter-completion',
             encounterVersion: '2',
@@ -6899,6 +6956,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-completion') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-completion',
           clinicalDocument: {
@@ -7019,6 +7077,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-diagnosis-validation',
             encounterId: 'encounter-diagnosis-validation',
             encounterVersion: '6',
@@ -7033,6 +7092,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-diagnosis-validation') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-diagnosis-validation',
           consultation: { turns: [], version: 1 },
@@ -7212,6 +7272,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-prescription-conclusion',
             encounterId: 'encounter-prescription-conclusion',
             encounterVersion: '6',
@@ -7226,6 +7287,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-prescription-conclusion') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-prescription-conclusion',
           consultation: { turns: [], version: 1 },
@@ -7452,6 +7514,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-prescription-conflict',
             encounterId: 'encounter-prescription-conflict',
             encounterVersion: '6',
@@ -7466,6 +7529,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-prescription-conflict') {
         return Response.json({
+          registrationNumber: null,
           allergies: [{ code: 'OSELTAMIVIR', display: '磷酸奥司他韦过敏' }],
           caseId: 'case-prescription-conflict',
           consultation: { turns: [], version: 1 },
@@ -7558,6 +7622,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: signed ? [] : [{
+            registrationNumber: null,
             caseId: 'case-1',
             diagnosticReportId: 'diagnostic-report-1',
             encounterId: 'encounter-1',
@@ -7574,6 +7639,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-1',
           drafts: {
@@ -7733,6 +7799,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-1',
             encounterId: 'encounter-1',
             encounterVersion: '1',
@@ -7748,6 +7815,7 @@ describe('role workspaces', () => {
       }
       if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-1',
           clinicalDocument: {
@@ -7946,6 +8014,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/queue') {
         return Response.json({
           items: [{
+            registrationNumber: null,
             caseId: 'case-1',
             diagnosticReportId: 'diagnostic-report-1',
             encounterId: 'encounter-1',
@@ -7963,6 +8032,7 @@ describe('role workspaces', () => {
       if (url.pathname === '/api/his/v1/doctor/cases/case-1') {
         caseDetailRequests += 1
         return Response.json({
+          registrationNumber: null,
           allergies: [],
           caseId: 'case-1',
           clinicalDocument: { signed: signedDocuments },
@@ -8329,6 +8399,7 @@ describe('role workspaces', () => {
       withdrawnByPractitionerRoleId: 'practitioner-role-outpatient-doctor',
     }
     let activeDetail: DoctorCaseDetail = {
+      registrationNumber: null,
       allergies: [],
       caseId: 'case-completed-paid-1',
       consultation: { turns: [], version: 1 },
@@ -8812,6 +8883,7 @@ describe('role workspaces', () => {
       relatedReferences: [`Prescription/${issuedPrescription.id}`],
     }
     let currentActiveDetail: DoctorCaseDetail = {
+      registrationNumber: null,
       allergies: [],
       caseId: completedDetail.caseId,
       clinicalDocument: { signed: [signedDocument] },
@@ -8899,6 +8971,7 @@ describe('role workspaces', () => {
         if (url.pathname === '/api/his/v1/doctor/queue') {
           return Response.json({
             items: [{
+              registrationNumber: null,
               caseId: completedDetail.caseId,
               encounterId: completedDetail.encounter.id,
               encounterVersion: completedDetail.encounter.versionId,

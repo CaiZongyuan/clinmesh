@@ -826,6 +826,7 @@ export const doctorQueueViewStatusGroups: Record<DoctorQueueView, readonly Docto
 
 export const doctorQueueItemSchema = z.object({
   caseId: z.string().min(1),
+  registrationNumber: z.string().min(1).nullable(),
   diagnosticReportId: z.string().min(1).optional(),
   encounterId: z.string().min(1),
   encounterVersion: z.string().regex(/^\d+$/),
@@ -2015,6 +2016,7 @@ export const doctorCompletedCaseDetailSchema = z.object({
 export const doctorCaseDetailSchema = z.object({
   allergies: z.array(allergyWarningSchema),
   caseId: z.string().min(1),
+  registrationNumber: z.string().min(1).nullable(),
   clinicalDocument: clinicalDocumentStateSchema.optional(),
   qualityControl: clinicalDocumentQualityControlStateSchema.optional(),
   consultationRecording: consultationRecordingSchema.optional(),
