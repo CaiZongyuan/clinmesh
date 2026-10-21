@@ -189,7 +189,7 @@ function CatalogSearchForm({
     if (!invalidLength) onSearch()
   }
   return (
-    <form className="flex shrink-0 items-center gap-2 px-4 py-3" onSubmit={submit}>
+    <form className="flex shrink-0 items-center gap-2 px-3 py-2.5" onSubmit={submit}>
       <Input
         aria-label={inputLabel}
         aria-invalid={invalidLength}
@@ -429,8 +429,9 @@ export function DiagnosisCatalogPicker({
           placeholder={messages.diagnosisPlaceholder}
         />
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
-        {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载疾病目录' : 'Loading diagnosis catalog'} role="status" className="mx-4 min-h-0 flex-1"><Skeleton className="h-full min-h-24" /></div> : (
-          <div className="mx-4 min-h-0 flex-1 overflow-auto border">
+        {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载疾病目录' : 'Loading diagnosis catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
+          // 行内目录可见高度封顶五条，超出内部滚动；弹窗目录沿用弹窗自身的高度约束。
+          <div className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
             {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
                 <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
@@ -439,18 +440,18 @@ export function DiagnosisCatalogPicker({
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              onConfirm === undefined ? <ul className="flex flex-col gap-2 p-2">
+              onConfirm === undefined ? <ul className="divide-y">
                 {(useLocal ? localResults : remoteResults).map(item => {
                   const selection: DiagnosisCatalogSelection = 'domain' in item
                     ? { catalogItemId: item.id, code: item.code, display: item.display, referenceConcept: diagnosisReferenceSnapshot(item) }
                     : item
                   const inactive = 'status' in item && item.status !== 'active'
                   const excluded = excludedIds.has(selection.catalogItemId)
-                  // 行内目录与弹窗表格同一密度合同：名称与编码同卡单行排布，目录体系只保留在编码的提示里。
-                  return <li className="flex min-w-0 items-center justify-between gap-2 rounded-lg border px-3 py-2" key={selection.catalogItemId}>
-                    <span className="flex min-w-0 flex-col">
-                      <strong className="break-words text-sm">{selection.display}</strong>
-                      <span className="break-all font-mono text-xs text-muted-foreground" title={useLocal ? undefined : ('system' in item ? item.system : undefined)}>
+                  // 行内目录单行紧凑行：名称截断、编码收尾，完整信息保留在编码提示与选中详情里。
+                  return <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={selection.catalogItemId}>
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <strong className="min-w-0 truncate text-sm [contain:inline-size]" title={selection.display}>{selection.display}</strong>
+                      <span className="shrink-0 font-mono text-xs text-muted-foreground" title={useLocal ? undefined : ('system' in item ? item.system : undefined)}>
                         {useLocal ? `${messages.localCatalog} · ` : ''}{selection.code}
                       </span>
                     </span>
@@ -621,14 +622,41 @@ export function LaboratoryCatalogPicker({ active = true, collapsible = false, lo
           placeholder={messages.laboratoryPlaceholder}
         />
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col gap-3', resultsVisible ? 'flex' : 'hidden')}>
-        {results.isPending ? <Skeleton aria-label={locale === 'zh-CN' ? '正在加载检验目录' : 'Loading laboratory catalog'} role="status" className="mx-4 min-h-24 flex-1" /> : results.isError ? (
+        {results.isPending ? <Skeleton aria-label={locale === 'zh-CN' ? '正在加载检验目录' : 'Loading laboratory catalog'} role="status" className="m-3 min-h-24" /> : results.isError ? (
           <Alert className="mx-4" variant="destructive"><CircleAlertIcon /><AlertTitle>{locale === 'zh-CN' ? '无法加载本院检验目录' : 'Unable to load the hospital laboratory catalog'}</AlertTitle><Button onClick={() => search.onSearch(query, page)} type="button" variant="outline">{locale === 'zh-CN' ? '重试' : 'Retry'}</Button></Alert>
         ) : (
-          <div className="mx-4 min-h-0 flex-1 overflow-auto border">
+          <div className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
             {visibleResults.length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">
                 {messages.noResults}
               </p>
+            ) : onConfirm === undefined ? (
+              <ul className="divide-y">
+                {visibleResults.map(item => {
+                  const selection: LaboratoryCatalogSelection = {
+                    catalogItemId: item.id,
+                    code: item.referenceConcept.code,
+                    display: locale === 'zh-CN' ? item.nameZh : (item.nameEn ?? item.nameZh),
+                    referenceConcept: item.referenceConcept,
+                    laboratoryService: item,
+                  }
+                  // 行内检验目录单行紧凑行：项目名截断、LOINC 收尾；标本、报告结构与 TAT 在选中后的表单区展示。
+                  return (
+                    <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={selection.catalogItemId}>
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        <strong className="min-w-0 truncate text-sm [contain:inline-size]" title={selection.display}>{selection.display}</strong>
+                        <span className="shrink-0 font-mono text-xs text-muted-foreground">{selection.code}</span>
+                      </span>
+                      <SelectionButton
+                        disabled={false}
+                        label={`${messages.choose} ${selection.display} ${selection.code}`}
+                        onSelectedChange={next => select(next ? selection : undefined)}
+                        selected={selectedId === selection.catalogItemId}
+                      />
+                    </li>
+                  )
+                })}
+              </ul>
             ) : (
               <Table className="min-w-[620px]" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">
@@ -820,17 +848,17 @@ function MedicationProductRow({ group, disabled = false, excludedIds, locale, se
           </SelectContent>
         </Select>
   )
-  if (onConfirm === undefined) return <li className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-2.5">
-    <div className="flex flex-wrap items-start justify-between gap-2"><strong data-agent-medication-name="" className="break-words text-sm">{item.genericName}</strong><Badge variant="outline">{item.strength}</Badge></div>
-    {/* contain:inline-size 让 truncate 段落不再向 fieldset 上报整行固有宽度（min-w-0 只影响布局期收缩），窄视口不再横向溢出。 */}
-    <p className="truncate [contain:inline-size] text-xs text-muted-foreground" title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}>{[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ')}</p>
-    <div className="flex min-w-0 items-center gap-1.5">
+  if (onConfirm === undefined) return (
+    // 行内药品单行紧凑行：通用名截断、规格收尾；完整注册信息（厂家、剂型、商品名、批准文号）经悬停提示呈现。
+    <li className="flex min-w-0 items-center gap-2 px-3 py-2" title={[item.manufacturer, item.dosageForm, item.brandName, item.approvalNumber].filter(Boolean).join(' · ') || undefined}>
+      <strong data-agent-medication-name="" className="min-w-0 truncate text-sm [contain:inline-size]" title={item.genericName}>{item.genericName}</strong>
+      <span className="max-w-24 shrink-0 truncate text-xs text-muted-foreground [contain:inline-size]" title={item.strength}>{item.strength}</span>
       <div className="min-w-0 flex-1">{packageSelector}</div>
       <Button aria-label={`${messages.choose} ${item.genericName} ${item.strength} ${item.packageDescription} ${item.manufacturer} ${item.approvalNumber}`} className="shrink-0" disabled={unavailable} onClick={() => onSelect(selection)} size="sm" type="button" variant="outline">
         {excludedIds.has(item.id) ? <CheckIcon data-icon="inline-start" /> : <PlusIcon data-icon="inline-start" />}{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : item.status !== 'active' ? (locale === 'zh-CN' ? '停用' : 'Inactive') : (locale === 'zh-CN' ? '选择包装' : 'Select package')}
       </Button>
-    </div>
-  </li>
+    </li>
+  )
   return (
     <TableRow className={cn(unavailable && 'opacity-50', selected && 'bg-muted/70')}
       onDoubleClick={() => { if (!unavailable) onConfirm(selection) }}>
@@ -925,9 +953,9 @@ export function MedicationCatalogPicker({
           placeholder={messages.medicationPlaceholder}
         />
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
-        {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="mx-4 min-h-0 flex-1"><Skeleton className="h-full min-h-24" /></div> : (
-          // 内联目录限高内部滚动，避免选药空态把左栏拉出大段空白；对话框内已有自身高度约束，不受影响。
-          <div className="mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border">
+        {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
+          // 行内目录可见高度封顶五条，超出内部滚动；弹窗目录沿用弹窗自身的高度约束。
+          <div className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border'}>
             {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
                 <Button disabled={results.isFetching} onClick={() => search.onSearch(query, page)} size="sm" type="button" variant="outline">{locale === 'zh-CN' ? '重试目录' : 'Retry catalog'}</Button>
@@ -936,10 +964,13 @@ export function MedicationCatalogPicker({
             {(useLocal ? localResults : remoteResults).length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">{messages.noResults}</p>
             ) : (
-              onConfirm === undefined ? <ul className="flex flex-col gap-1.5 p-2">
-                {useLocal ? localResults.map(item => <li className="flex min-w-0 flex-col gap-1.5 rounded-lg border p-2.5" key={item.id}>
-                  <strong data-agent-medication-name="" className="break-words text-sm">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong><span className="text-xs text-muted-foreground">{messages.localCatalog}</span>
-                  <Button aria-label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} className="self-start" disabled={disabled || results.isFetching || excludedIds.has(item.id)} onClick={() => select({ kind: 'local', medication: item })} size="sm" type="button" variant="outline">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : messages.chooseMedication}</Button>
+              onConfirm === undefined ? <ul className="divide-y">
+                {useLocal ? localResults.map(item => <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={item.id}>
+                  <span className="flex min-w-0 items-baseline gap-2">
+                    <strong data-agent-medication-name="" className="min-w-0 truncate text-sm [contain:inline-size]">{locale === 'zh-CN' ? item.nameZh : item.nameEn}</strong>
+                    <span className="shrink-0 text-xs text-muted-foreground">{messages.localCatalog}</span>
+                  </span>
+                  <Button aria-label={`${messages.choose} ${locale === 'zh-CN' ? item.nameZh : item.nameEn}`} className="shrink-0" disabled={disabled || results.isFetching || excludedIds.has(item.id)} onClick={() => select({ kind: 'local', medication: item })} size="sm" type="button" variant="outline">{excludedIds.has(item.id) ? (locale === 'zh-CN' ? '已添加' : 'Added') : messages.chooseMedication}</Button>
                 </li>) : referenceGroups.map(group => <MedicationProductRow key={medicationProductGroupKey(group.product)} group={group} disabled={disabled || results.isFetching} excludedIds={excludedIds} locale={locale} onSelect={select} />)}
               </ul> : <Table className="min-w-[1000px] table-fixed" singleScrollContainer>
                 <TableHeader className="sticky top-0 z-10 bg-popover">

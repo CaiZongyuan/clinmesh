@@ -7340,8 +7340,11 @@ describe('role workspaces', () => {
     await waitFor(() => expect(medicationQueries).toContain('奥司'))
     expect(within(medicationDirectory).queryByText('2 个包装')).toBeNull()
     expect(within(medicationDirectory).getAllByRole('combobox', { name: /^包装 / })).toHaveLength(2)
-    expect(within(medicationDirectory).getAllByText(/^合成制药有限公司 · /)).toHaveLength(1)
-    expect(within(medicationDirectory).getByText(/^另一合成制药有限公司 · /)).toBeTruthy()
+    expect(within(medicationDirectory).queryByText(/^合成制药有限公司 · /)).toBeNull()
+    // 单行紧凑行不再平铺注册信息：厂家等完整注册事实移到行级悬停提示。
+    const rowTitles = within(medicationDirectory).getAllByRole('listitem').map(row => row.getAttribute('title') ?? '')
+    expect(rowTitles.filter(title => title.startsWith('合成制药有限公司 · '))).toHaveLength(1)
+    expect(rowTitles.some(title => title.startsWith('另一合成制药有限公司 · '))).toBe(true)
     await waitFor(() => expect((within(medicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }) as HTMLButtonElement).disabled).toBe(false))
     act(() => within(medicationDirectory).getByRole('combobox', { name: '包装 磷酸奥司他韦胶囊 合成制药有限公司' }).focus())
     await user.keyboard('{Enter}')

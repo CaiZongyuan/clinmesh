@@ -295,11 +295,11 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       && `${diagnosis.code} ${diagnosis.display}`.toLocaleLowerCase().includes(recordQuery.trim().toLocaleLowerCase())
   })
   const showMobileDetail = mobileDetailOpen && visibleEntries.some(entry => entry.key === activeKey)
-  const renderEditor = (showChips = true) => {
+  const renderEditor = (showChips = true, plain = false) => {
     const entry = showChips ? entries.find(entry => entry.key === selectedKey) ?? entries[0] : visibleEntries.find(candidate => candidate.key === activeKey)
     const index = entries.findIndex(candidate => candidate.key === entry?.key)
     if (entry === undefined) return showChips ? (
-      <div className="rounded-lg border border-dashed p-3">
+      <div className={plain ? 'p-4' : 'rounded-lg border border-dashed p-3'}>
         <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择一个诊断开始填写' : 'Select a diagnosis to start'}</p>
         <p className="mt-1 text-xs text-muted-foreground">{
           locale === 'zh-CN' ? '检索疾病名称或 ICD 编码，明确选择后编辑诊断信息。' : 'Search a disease name or ICD code, then select a diagnosis to edit its details.'}</p>
@@ -316,7 +316,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     const suffix = index === 0 ? '' : ` ${index + 1}`
     return (
       <section aria-label={locale === 'zh-CN' ? showChips && state?.confirmation !== undefined ? '填写诊断详情' : '诊断详情' : showChips && state?.confirmation !== undefined ? 'Enter diagnosis details' : 'Diagnosis details'} data-agent-diagnosis-entry=""
-        className={cn('flex min-w-0 flex-col gap-4 rounded-lg border p-4', !showChips && !showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
+        className={cn('flex min-w-0 flex-col gap-4', plain ? 'p-4' : 'rounded-lg border p-4', !showChips && !showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
         {showChips ? null : (
           <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
             setMobileDetailOpen(false)
@@ -382,14 +382,16 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     )
   }
   const catalogEditor = (
-    <div className="flex min-w-0 flex-col gap-4">
-      {/* 目录列表限制高度内部滚动：编辑区与待办不因长目录被推到首屏之外，检索行保持可见。 */}
-      <div className="flex max-h-72 min-w-0 flex-col">
+    // 目录+表单同卡：目录居左、表单居右（约 3:2），窄容器回落上下堆叠；目录可见高度封顶五条。
+    <div className="@container/card grid min-w-0 overflow-hidden rounded-lg border @min-[640px]/card:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="min-w-0 border-b @min-[640px]/card:border-b-0 @min-[640px]/card:border-r">
         <DiagnosisCatalogPicker active={!replacementOpen && !readOnly} collapsible={state?.confirmation !== undefined} disabled={pending || entries.length >= 8} excludedIds={usedCatalogItemIds}
           localCatalog={catalog} locale={locale} onSelect={selection => { if (selection !== undefined) addEntry(selection) }}
           search={referenceSearch} />
       </div>
-      {renderEditor()}
+      <div className="min-w-0">
+        {renderEditor(true, true)}
+      </div>
     </div>
   )
 

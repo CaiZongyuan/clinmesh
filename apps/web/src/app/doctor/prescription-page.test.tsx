@@ -898,11 +898,14 @@ describe('PrescriptionPage', () => {
 })
 
 describe('处方页签布局整理', () => {
-  it('将「用药结论方式」放进待办侧栏顶部，与待开具清单同一上下文', () => {
+  it('将「用药结论方式」放到左主列顶部，右辅助列只保留待开具面板', () => {
     renderPage()
-    const aside = screen.getByRole('region', { name: '待开具处方' }).closest('[data-conclusion-aside]')
-    expect(aside).not.toBeNull()
-    const mode = within(aside as HTMLElement).getByRole('group', { name: '用药结论方式' })
+    const entry = document.querySelector('[data-order-entry]')
+    expect(entry).not.toBeNull()
+    const mode = within(entry as HTMLElement).getByRole('group', { name: '用药结论方式' })
+    // 结论方式先于目录+表单卡出现，也先于右辅助列的待开具区域。
+    expect(mode.compareDocumentPosition(screen.getByRole('region', { name: '填写处方' }))
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(mode.compareDocumentPosition(screen.getByRole('region', { name: '待开具处方' }))
       & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getAllByRole('group', { name: '用药结论方式' })).toHaveLength(1)
@@ -917,13 +920,17 @@ describe('处方页签布局整理', () => {
     expect(within(details).getByText('从药品目录选择具体产品与包装，加入同一张处方草稿。')).toBeTruthy()
   })
 
-  it('有草稿时把自动保存状态与删除入口放进待办侧栏，而不是独立页脚', () => {
+  it('有草稿时自动保存状态与删除入口跟随表单区，右辅助列不再放置草稿工具', () => {
     renderPage({ detail: { ...detail, medicationConclusion: {
       draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
     } } })
-    const aside = screen.getByRole('region', { name: '待开具处方' }).closest('[data-conclusion-aside]') as HTMLElement
-    expect(within(aside).getByRole('button', { name: '删除处方草稿' })).toBeTruthy()
-    expect(within(aside).getByText('草稿已自动保存')).toBeTruthy()
+    const form = screen.getByRole('region', { name: '药品详情' })
+    const tools = form.querySelector('[data-draft-tools]')
+    expect(tools).not.toBeNull()
+    expect(within(tools as HTMLElement).getByRole('button', { name: '删除处方草稿' })).toBeTruthy()
+    expect(within(tools as HTMLElement).getByText('草稿已自动保存')).toBeTruthy()
+    const aside = screen.getByRole('region', { name: '待开具处方' }).parentElement
+    expect(aside?.querySelector('[data-draft-tools]')).toBeNull()
   })
 
   it('无草稿时不渲染空草稿工具块', () => {
@@ -990,14 +997,17 @@ describe('处方页签布局整理', () => {
     expect(screen.getByText(/原处方明细保留，已支付记录不会自动退款/)).toBeTruthy()
   })
 
-  it('目录卡片与结果列表按密度合同收紧', () => {
+  it('药品目录行为单行紧凑行，列表可见高度封顶五条', () => {
     const { container } = renderPage({ referenceSearch: {
       data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
       error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
     } })
     const card = screen.getByRole('button', { name: /^选择 合成参考药品/ }).closest('li')
-    expect(card?.className).toContain('p-2.5')
-    expect(card?.className).toContain('gap-1.5')
+    // 单行紧凑行：名称截断、整行收紧为 px-3 py-2，注册信息移出平铺文本。
+    expect(card?.className).toContain('px-3 py-2')
+    expect(card?.className).toContain('items-center')
+    expect(card?.querySelector('strong')?.className).toContain('truncate')
+    // 目录列表可见高度封顶五条，超出内部滚动。
     expect(container.querySelector('[data-agent-catalog="medication"] div[class*="max-h-"]')).not.toBeNull()
   })
 

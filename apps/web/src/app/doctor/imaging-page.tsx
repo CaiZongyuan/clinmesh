@@ -421,28 +421,30 @@ export function ImagingPage({
     </Alert>
   ) : (
     <section aria-label={zh ? '开具放射申请' : 'Prepare imaging request'} className="@container/imaging-editor">
-      <div className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
+      {/* 目录+表单同卡：目录居左、表单居右（约 3:2），窄容器回落上下堆叠；目录可见高度封顶五条。 */}
+      <div className="@container/card grid min-w-0 overflow-hidden rounded-lg border @min-[640px]/card:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div className="flex min-w-0 flex-col gap-3 border-b p-4 @min-[640px]/card:border-b-0 @min-[640px]/card:border-r">
         <FieldGroup>
           <Field>
             <FieldLabel htmlFor={`${elementId}-search`}>{zh ? '搜索放射目录' : 'Search imaging catalog'}</FieldLabel>
             <Input id={`${elementId}-search`} onFocus={() => { if (hasRequests) setCatalogOpen(true) }} maxLength={128} onChange={event => { setSearch(event.target.value); if (hasRequests) setCatalogOpen(true) }} value={search} />
           </Field>
           {hasRequests ? <Button aria-controls={`${elementId}-catalog-results`} aria-expanded={catalogOpen} ref={catalogToggleRef} onClick={() => setCatalogOpen(open => !open)} size="sm" type="button" variant="ghost">{zh ? catalogOpen ? '收起目录' : '展开目录' : catalogOpen ? 'Hide catalog' : 'Show catalog'}</Button> : null}
-          <div hidden={hasRequests && !catalogOpen} id={`${elementId}-catalog-results`}>
+          <div className="max-h-[12.5rem] overflow-y-auto" hidden={hasRequests && !catalogOpen} id={`${elementId}-catalog-results`}>
             {visibleServices.length === 0 ? <Empty role="status"><EmptyHeader><EmptyTitle>{zh ? '没有匹配的放射检查' : 'No matching imaging examinations'}</EmptyTitle></EmptyHeader></Empty> : (
-              <ul className="flex flex-col gap-2">
+              <ul className="divide-y">
                 {visibleServices.map(({ available, service }) => <li key={service.id}>
-                  <Button aria-pressed={serviceId === service.id} className="h-auto w-full justify-start whitespace-normal" disabled={!available || draftAction.isPending || (state?.draft !== undefined && state.draft.service.id !== service.id)} onClick={() => { setServiceId(service.id); setCatalogOpen(false); if (hasRequests) catalogToggleRef.current?.focus() }} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
-                    <span className="flex min-w-0 flex-col items-start gap-1 text-left">
-                      <span>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
-                      <span>{service.bodySite} · {service.method}</span>
-                    </span>
+                  <Button aria-pressed={serviceId === service.id} className="h-auto w-full min-w-0 items-center justify-between gap-2 whitespace-normal px-1 py-2 text-left" disabled={!available || draftAction.isPending || (state?.draft !== undefined && state.draft.service.id !== service.id)} onClick={() => { setServiceId(service.id); setCatalogOpen(false); if (hasRequests) catalogToggleRef.current?.focus() }} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
+                    <span className="min-w-0 truncate [contain:inline-size]" title={available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{service.bodySite} · {service.method}</span>
                   </Button>
                 </li>)}
               </ul>
             )}
           </div>
         </FieldGroup>
+        </div>
+        <div className="min-w-0 p-4">
         <FieldGroup>
           {selectedService === undefined ? <Empty><EmptyHeader><EmptyTitle>{zh ? '选择放射检查' : 'Select an examination'}</EmptyTitle><EmptyDescription>{zh ? '选择检查项目后填写申请信息' : 'Select an examination to enter request information'}</EmptyDescription></EmptyHeader></Empty> : (
             <>
@@ -479,6 +481,7 @@ export function ImagingPage({
             </Alert>
           ) : null}
         </FieldGroup>
+        </div>
       </div>
     </section>
   )

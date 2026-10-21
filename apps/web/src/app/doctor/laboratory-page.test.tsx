@@ -644,12 +644,15 @@ describe('laboratory investigation workspace', () => {
     expect(screen.getByText('No laboratory item selected')).toBeTruthy()
     expect(screen.getByText('Pick a laboratory item from the catalog above to enter the request information.')).toBeTruthy()
   })
-  it('keeps the catalog search outside the bordered order form and the loading height compact', () => {
+  it('places the catalog search and the order form inside one split card', () => {
     const page = props()
     render(<LaboratoryPage {...page} referenceSearch={{ ...page.referenceSearch, isPending: true }} />)
     const form = screen.getByRole('region', { name: '检验申请' })
-    expect(form.contains(screen.getByRole('textbox', { name: '搜索检验目录' }))).toBe(false)
-    expect(form.className).toContain('rounded-lg border')
+    const card = form.parentElement
+    // 同卡分栏：目录单元格与表单单元格共存于同一卡片，表单区不再自带整块边框。
+    expect(form.className).not.toContain('rounded-lg')
+    expect(card?.className).toContain('@container/card')
+    expect(card?.contains(screen.getByRole('textbox', { name: '搜索检验目录' }))).toBe(true)
     expect(screen.getByRole('status', { name: '正在加载检验目录' }).className).toContain('min-h-24')
   })
   it('groups the request list count beside the heading and inlines the status badge with the item name', () => {

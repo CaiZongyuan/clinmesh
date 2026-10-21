@@ -423,18 +423,21 @@ function LaboratoryRequestEditor({
   }, [actions.issue.successRequestId, requests, onSelectRequest])
   const requestHeadingId = `laboratory-request-heading-${caseId}`
   const editor = (
-    <div className="flex min-w-0 flex-col gap-4">
-      <LaboratoryCatalogPicker active={active} collapsible={requests.length > 0} locale={locale} search={referenceSearch} selectedId={laboratoryItemId}
-        onSelect={selection => {
-          if (state?.draft !== undefined && selection?.catalogItemId !== state.draft.catalogItemId) {
-            setSelectionConflict(true)
-            return
-          }
-          setSelectionConflict(false)
-          setSelectedReference(selection)
-          onLaboratoryItemChange(selection?.catalogItemId ?? '')
-        }} />
-        <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-3 rounded-lg border p-4">
+    // 目录+表单同卡：目录居左、表单居右（约 3:2），窄容器回落上下堆叠。
+    <div className="@container/card grid min-w-0 overflow-hidden rounded-lg border @min-[640px]/card:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+      <div className="min-w-0 border-b @min-[640px]/card:border-b-0 @min-[640px]/card:border-r">
+        <LaboratoryCatalogPicker active={active} collapsible={requests.length > 0} locale={locale} search={referenceSearch} selectedId={laboratoryItemId}
+          onSelect={selection => {
+            if (state?.draft !== undefined && selection?.catalogItemId !== state.draft.catalogItemId) {
+              setSelectionConflict(true)
+              return
+            }
+            setSelectionConflict(false)
+            setSelectedReference(selection)
+            onLaboratoryItemChange(selection?.catalogItemId ?? '')
+          }} />
+      </div>
+      <section aria-labelledby={requestHeadingId} className="flex min-w-0 flex-col gap-3 p-4">
           <h3 className="text-sm font-semibold" id={requestHeadingId}>{messages.laboratoryOrder}</h3>
           <FieldGroup>
             <Field>
@@ -540,7 +543,7 @@ function LaboratoryRequestEditor({
             {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
             {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
           </FieldGroup>
-        </section>
+      </section>
     </div>
   )
   const pending = (

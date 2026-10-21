@@ -363,8 +363,8 @@ export function PrescriptionPage({
     </div>
   )
 
-  // 结论方式与草稿工具归属待办侧栏：方式控制贴住结论上下文，工具块只在有内容可显示时出现，
-  // 连同待开具卡片一起把右栏从"空腔"变成有真实内容的紧凑待办列。
+  // 结论方式开关移到左主列顶部（目录+表单同卡之上）；草稿工具跟随表单区；
+  // 右辅助列只保留一块推荐/待开具面板。
   const deletionReceiptVisible = actions.deleteDraft.data !== undefined
     && actions.deleteDraft.data.caseId === detail.caseId
     && state?.draft === undefined
@@ -393,7 +393,7 @@ export function PrescriptionPage({
   )
   const draftTools = canEditDraft
     && (dirty || state?.draft !== undefined || actions.saveDraft.error !== null || deletionReceiptVisible) ? (
-      <div className="flex min-w-0 flex-col gap-2 rounded-lg border p-2.5" data-draft-tools="">
+      <div className="flex min-w-0 flex-col gap-2 border-t pt-3" data-draft-tools="">
         {draftSaveFeedback}
         {state?.draft === undefined ? null : (
           <AlertDialog onOpenChange={setDeleteDraftOpen} open={deleteDraftOpen}>
@@ -455,10 +455,72 @@ export function PrescriptionPage({
       </div>
     ) : null
 
+  // 无需用药结论在左主列内呈现：结论方式切换后直接替换目录+表单卡，不空置栏位、不再另起整页横条。
+  const noMedicationPanel = readOnly || noMedicationConclusion !== undefined || mode !== 'no-medication' ? null : (
+    <section aria-label={messages.confirmNoMedication} className="flex min-w-0 flex-col gap-3 rounded-lg border p-4">
+      <Alert>
+        <CheckIcon aria-hidden="true" />
+        <AlertTitle>{messages.confirmNoMedication}</AlertTitle>
+        <AlertDescription>
+          {locale === 'zh-CN' ? '记录本次就诊无需用药，不生成药品医嘱或处方。' : 'Record that no medication is needed for this encounter. No medication orders or prescription will be created.'}
+          {items.length === 0 ? null : (locale === 'zh-CN' ? '现有未开具草稿将同时清除。' : 'The existing unissued draft will also be cleared.')}
+        </AlertDescription>
+      </Alert>
+      {draftSaveFeedback}
+      <AlertDialog onOpenChange={setNoMedicationOpen} open={noMedicationOpen}>
+        <AlertDialogTrigger render={<Button
+          className="self-start"
+          disabled={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending}
+          type="button"
+        />}>
+          <CheckIcon data-icon="inline-start" />{messages.confirmNoMedication}
+        </AlertDialogTrigger>
+        <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
+          <AlertDialogHeader>
+            <AlertDialogTitle>{messages.confirmNoMedication}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {locale === 'zh-CN' ? '记录本次就诊无需用药，不生成药品医嘱或处方。' : 'Record that no medication is needed for this encounter. No medication orders or prescription will be created.'}
+              {items.length === 0 ? null : (locale === 'zh-CN' ? '现有未开具草稿将同时清除。' : 'The existing unissued draft will also be cleared.')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <p className="break-words text-sm font-medium">{detail.patient.name}</p>
+          {items.length === 0 ? null : (
+            <ul className="flex flex-col gap-2 text-sm">
+              {items.map(item => (
+                <li className="flex flex-wrap justify-between gap-2" key={item.key}>
+                  <span className="break-words">{item.referenceProduct?.genericName
+                    ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
+                    ?? item.catalogItemId}</span>
+                  <span className="text-muted-foreground">{messages.quantity} {item.quantity}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
+            <AlertDialogCancel disabled={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending} onClick={() => {
+              setNoMedicationOpen(false)
+              queueMicrotask(actions.confirmNoMedication.onSubmit)
+            }} variant="default">
+              <CheckIcon data-icon="inline-start" />{messages.confirmNoMedication}
+            </AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {actions.confirmNoMedication.error === null ? null : (
+        <ErrorAlert
+          message={getWorkspaceErrorMessage(actions.confirmNoMedication.error, messages)}
+          title={getWorkspaceErrorTitle(actions.confirmNoMedication.error, messages, messages.operationFailed)}
+        />
+      )}
+    </section>
+  )
+
   const draftEditor = (
     <FieldSet disabled={!canEditDraft || pending}>
-      <div className="flex min-w-0 flex-col gap-4">
-        <div className="min-w-0">
+      {/* 目录+表单同卡：目录居左、表单居右（约 3:2），窄容器回落上下堆叠；草稿工具与自动保存状态收敛在表单侧。 */}
+      <div className="@container/card grid min-w-0 overflow-hidden rounded-lg border @min-[640px]/card:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div className="min-w-0 border-b @min-[640px]/card:border-b-0 @min-[640px]/card:border-r">
           <MedicationCatalogPicker
             active={!replacementOpen && !readOnly}
             collapsible={prescription !== undefined}
@@ -473,7 +535,7 @@ export function PrescriptionPage({
             selectedId={selectedDraft?.catalogItemId}
           />
         </div>
-        <section aria-label={locale === 'zh-CN' ? prescription === undefined ? '药品详情' : '填写药品' : prescription === undefined ? 'Medication details' : 'Enter medication'} className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
+        <section aria-label={locale === 'zh-CN' ? prescription === undefined ? '药品详情' : '填写药品' : prescription === undefined ? 'Medication details' : 'Enter medication'} className="flex min-w-0 flex-col gap-4 p-4">
           {items.length === 0 ? (
             // 空态引导左对齐贴住目录入口，不再用居中 Empty 在详情框里悬空。
             <div className="flex flex-col gap-1 py-1" data-medication-details-hint="">
@@ -620,6 +682,7 @@ export function PrescriptionPage({
               </FieldSet>
             )
           })}
+          {draftTools}
         </section>
       </div>
     </FieldSet>
@@ -729,15 +792,19 @@ export function PrescriptionPage({
 
       <DoctorOrderWorkspace
         hasRecords={prescription !== undefined}
-        entry={readOnly || noMedicationConclusion !== undefined || mode !== 'prescription' ? null : <section aria-label={locale === 'zh-CN' ? '填写处方' : 'Enter prescription'} className="flex min-w-0 flex-col gap-3">
-          {hasActivePrescription ? <p className="text-xs text-muted-foreground">{locale === 'zh-CN'
-            ? '本次就诊已有有效处方；如需调整，请先按处方状态撤回。未开具项目仍保留在下方。'
-            : 'This encounter has an active prescription. Withdraw it according to its status before adjusting. Unissued items remain below.'}</p> : null}
-          {draftEditor}
-        </section>}
-        pending={
-          <div className="flex min-w-0 flex-col gap-3 @min-[800px]/order-workspace:sticky @min-[800px]/order-workspace:top-2" data-conclusion-aside="">
+        entry={readOnly || noMedicationConclusion !== undefined ? null : (
+          <div className="flex min-w-0 flex-col gap-3">
             {conclusionModeControl}
+            {mode === 'prescription' ? <section aria-label={locale === 'zh-CN' ? '填写处方' : 'Enter prescription'} className="flex min-w-0 flex-col gap-3">
+              {hasActivePrescription ? <p className="text-xs text-muted-foreground">{locale === 'zh-CN'
+                ? '本次就诊已有有效处方；如需调整，请先按处方状态撤回。未开具项目仍保留在下方。'
+                : 'This encounter has an active prescription. Withdraw it according to its status before adjusting. Unissued items remain below.'}</p> : null}
+              {draftEditor}
+            </section> : noMedicationPanel}
+          </div>
+        )}
+        pending={
+          <div className="min-w-0 @min-[800px]/order-workspace:sticky @min-[800px]/order-workspace:top-2">
             <DoctorRecommendationsPanel
               caseId={detail.caseId}
             enabled={!readOnly && noMedicationConclusion === undefined && mode === 'prescription'}
@@ -763,11 +830,10 @@ export function PrescriptionPage({
             unavailableReason={suggestion => isRecommendationAvailable(suggestion) ? undefined : messages.recommendationRequestTargetUnavailable}
             scope={recommendationScope}
           />
-            {draftTools}
           </div>
         }
         records={prescription === undefined ? null : (
-            <section aria-label={locale === 'zh-CN' ? '药品列表' : 'Medication list'} className={cn('min-w-0 flex-col gap-3 @min-[640px]/case-content:flex', selectedRecord === undefined ? 'flex' : 'hidden')}>
+            <section aria-label={locale === 'zh-CN' ? '药品列表' : 'Medication list'} className={cn('min-w-0 flex-col gap-3 @min-[760px]/case-content:flex', selectedRecord === undefined ? 'flex' : 'hidden')}>
               <Input
                 aria-label={locale === 'zh-CN' ? '搜索处方药品' : 'Search prescription medications'}
                 onChange={event => setRecordSearch(event.currentTarget.value)}
@@ -812,7 +878,7 @@ export function PrescriptionPage({
         details={prescription === undefined ? null : (
           <div className="flex min-w-0 flex-col gap-4">
             {issuedSummary}
-            <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className={cn('min-w-0 flex-col gap-4 rounded-lg border p-4 @min-[640px]/case-content:flex', selectedRecord === undefined ? 'hidden' : 'flex')}>
+            <section aria-label={locale === 'zh-CN' ? '药品详情' : 'Medication details'} className={cn('min-w-0 flex-col gap-4 rounded-lg border p-4 @min-[760px]/case-content:flex', selectedRecord === undefined ? 'hidden' : 'flex')}>
               {selectedRecord === undefined ? (
                 <Empty>
                   <EmptyHeader>
@@ -822,7 +888,7 @@ export function PrescriptionPage({
                 </Empty>
               ) : (
                 <>
-                  <Button className="self-start @min-[640px]/case-content:hidden" onClick={() => {
+                  <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
                     setSelectedRecordId(null)
                     queueMicrotask(() => recordSearchRef.current?.focus())
                   }} size="sm" type="button" variant="ghost">
@@ -863,7 +929,7 @@ export function PrescriptionPage({
         </Alert>
       )}
 
-      {/* 结论方式控制已并入待办侧栏（见 conclusionModeControl）；页脚只保留需要整页可见的错误提示。 */}
+      {/* 结论方式控制位于左主列顶部（见 conclusionModeControl）；页脚只保留需要整页可见的错误提示。 */}
       {actions.saveDraft.error === null ? null : (
         <ErrorAlert
           message={getWorkspaceErrorMessage(actions.saveDraft.error, messages)}
@@ -885,68 +951,6 @@ export function PrescriptionPage({
           title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)}
         />
       )}
-
-      {!readOnly
-        && noMedicationConclusion === undefined
-        && !hasActivePrescription
-        && mode === 'no-medication' ? (
-          <div className="flex flex-col items-end gap-3">
-            <Alert>
-              <CheckIcon aria-hidden="true" />
-              <AlertTitle>{messages.confirmNoMedication}</AlertTitle>
-              <AlertDescription>
-                {locale === 'zh-CN' ? '记录本次就诊无需用药，不生成药品医嘱或处方。' : 'Record that no medication is needed for this encounter. No medication orders or prescription will be created.'}
-                {items.length === 0 ? null : (locale === 'zh-CN' ? '现有未开具草稿将同时清除。' : 'The existing unissued draft will also be cleared.')}
-              </AlertDescription>
-            </Alert>
-            {draftSaveFeedback}
-            <AlertDialog onOpenChange={setNoMedicationOpen} open={noMedicationOpen}>
-              <AlertDialogTrigger render={<Button
-                disabled={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending}
-                type="button"
-              />}>
-                <CheckIcon data-icon="inline-start" />{messages.confirmNoMedication}
-              </AlertDialogTrigger>
-              <AlertDialogContent className="max-h-[calc(100svh-2rem)] overflow-y-auto">
-                <AlertDialogHeader>
-                  <AlertDialogTitle>{messages.confirmNoMedication}</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {locale === 'zh-CN' ? '记录本次就诊无需用药，不生成药品医嘱或处方。' : 'Record that no medication is needed for this encounter. No medication orders or prescription will be created.'}
-                    {items.length === 0 ? null : (locale === 'zh-CN' ? '现有未开具草稿将同时清除。' : 'The existing unissued draft will also be cleared.')}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <p className="break-words text-sm font-medium">{detail.patient.name}</p>
-                {items.length === 0 ? null : (
-                  <ul className="flex flex-col gap-2 text-sm">
-                    {items.map(item => (
-                      <li className="flex flex-wrap justify-between gap-2" key={item.key}>
-                        <span className="break-words">{item.referenceProduct?.genericName
-                          ?? (locale === 'zh-CN' ? catalogById.get(item.catalogItemId)?.nameZh : catalogById.get(item.catalogItemId)?.nameEn)
-                          ?? item.catalogItemId}</span>
-                        <span className="text-muted-foreground">{messages.quantity} {item.quantity}</span>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                <AlertDialogFooter>
-                  <AlertDialogCancel>{messages.cancel}</AlertDialogCancel>
-                  <AlertDialogCancel disabled={dirty || actions.confirmNoMedication.pending || actions.deleteDraft.pending || actions.issue.pending || actions.saveDraft.pending} onClick={() => {
-                    setNoMedicationOpen(false)
-                    queueMicrotask(actions.confirmNoMedication.onSubmit)
-                  }} variant="default">
-                    <CheckIcon data-icon="inline-start" />{messages.confirmNoMedication}
-                  </AlertDialogCancel>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-            {actions.confirmNoMedication.error === null ? null : (
-              <ErrorAlert
-                message={getWorkspaceErrorMessage(actions.confirmNoMedication.error, messages)}
-                title={getWorkspaceErrorTitle(actions.confirmNoMedication.error, messages, messages.operationFailed)}
-              />
-            )}
-          </div>
-        ) : null}
     </section>
   )
 }

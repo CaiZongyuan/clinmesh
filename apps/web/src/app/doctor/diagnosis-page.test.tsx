@@ -597,7 +597,7 @@ describe('diagnosis workspace', () => {
     expect((editor.getByRole('textbox', { name: page.messages.diagnosisNote }) as HTMLTextAreaElement).value).toBe('第一条保存备注')
     expect(editor.getByRole('button', { name: page.messages.primaryDiagnosis }).getAttribute('aria-pressed')).toBe('true')
   })
-  it('compacts the inline diagnosis catalog into single action rows inside a bounded picker', () => {
+  it('compacts the inline diagnosis catalog into single bounded rows inside the same card as the editor', () => {
     render(<DiagnosisPage {...props()} />)
     const chooser = screen.getByRole('button', { name: '选择 合成诊断1 SYN-1' })
     const row = chooser.closest('li')
@@ -605,9 +605,13 @@ describe('diagnosis workspace', () => {
     expect(row!.textContent).toContain('合成诊断1')
     expect(row!.textContent).toContain('SYN-1')
     expect(row!.textContent).not.toContain('https://clinmesh.example.com/icd-10')
-    expect(row!.className).toContain('py-2')
+    expect(row!.className).toContain('px-3 py-2')
     const catalog = document.querySelector('[data-agent-catalog="diagnosis"]')
-    expect(catalog?.parentElement?.className).toContain('max-h-')
+    // 目录可见高度封顶五条，超出内部滚动。
+    expect(catalog?.querySelector('div[class*="max-h-"]')).not.toBeNull()
+    // 目录与编辑器同卡：目录单元格带分栏边线，卡片网格持有圆角边框。
+    expect(catalog?.parentElement?.className).toContain('border-r')
+    expect(catalog?.parentElement?.parentElement?.className).toContain('@container/card')
   })
   it('keeps the unselected editor hint compact instead of a centered cavity and drops the side wording', () => {
     render(<DiagnosisPage {...props()} />)

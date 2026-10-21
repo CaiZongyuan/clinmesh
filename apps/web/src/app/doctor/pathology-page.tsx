@@ -413,7 +413,9 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
     </Alert>
   ) : (
     <section aria-label={zh ? '开具病理会诊' : 'Prepare pathology consultation'} className="@container">
-      <div className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
+      {/* 目录+表单同卡：目录居左、表单居右（约 3:2），窄容器回落上下堆叠；目录可见高度封顶五条。 */}
+      <div className="@container/card grid min-w-0 overflow-hidden rounded-lg border @min-[640px]/card:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+        <div className="min-w-0 border-b p-4 @min-[640px]/card:border-b-0 @min-[640px]/card:border-r">
         <FieldSet className="min-w-0">
           <FieldLegend>{zh ? '本院病理会诊目录' : 'Hospital pathology catalog'}</FieldLegend>
           <Field>
@@ -421,7 +423,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
             <Input disabled={draftAction.isPending} id={`${elementId}-catalog-search`} onFocus={() => { if (requests.length > 0) setCatalogOpen(true) }} onChange={event => { setCatalogSearch(event.target.value); if (requests.length > 0) setCatalogOpen(true) }} type="search" value={catalogSearch} />
           </Field>
           {requests.length > 0 ? <Button aria-controls={`${elementId}-catalog-results`} aria-expanded={catalogOpen} ref={catalogToggleRef} onClick={() => setCatalogOpen(open => !open)} size="sm" type="button" variant="ghost">{zh ? catalogOpen ? '收起目录' : '展开目录' : catalogOpen ? 'Hide catalog' : 'Show catalog'}</Button> : null}
-          <div hidden={requests.length > 0 && !catalogOpen} id={`${elementId}-catalog-results`}>
+          <div className="max-h-[12.5rem] overflow-y-auto" hidden={requests.length > 0 && !catalogOpen} id={`${elementId}-catalog-results`}>
             <Table aria-label={zh ? '病理会诊项目' : 'Pathology consultations'}>
               <TableHeader>
                 <TableRow>
@@ -459,7 +461,8 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
             {visibleServices.length > 0 ? null : <p className="text-sm text-muted-foreground" role="status">{zh ? '没有匹配的病理会诊项目。' : 'No matching pathology consultations.'}</p>}
           </div>
         </FieldSet>
-        <div className="min-w-0">
+        </div>
+        <div className="min-w-0 p-4">
           <h4 className="mb-4 text-sm font-semibold">{zh ? '申请信息' : 'Request details'}</h4>
           {selectedService === undefined ? <p className="text-sm text-muted-foreground">{zh ? '从目录选择一个会诊项目。' : 'Select a consultation from the catalog.'}</p> : (
             <FieldSet disabled={draftAction.isPending}>
