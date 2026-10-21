@@ -1718,7 +1718,8 @@ export const caseImagingServiceCatalogSchema = z.object({
   }).strict()),
 }).strict()
 
-const imagingIndicationSchema = z.string().trim().min(2).max(500)
+/** 检查指征。弹窗确认与草稿保存共用同一值域。 */
+export const imagingIndicationSchema = z.string().trim().min(2).max(500)
 
 export const saveImagingRequestDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
@@ -1842,7 +1843,8 @@ export const casePathologyServiceCatalogSchema = z.object({
   }).strict()),
 }).strict()
 
-const pathologyPurposeSchema = z.string().trim().min(2).max(500)
+/** 会诊目的。弹窗确认与草稿保存共用同一值域。 */
+export const pathologyPurposeSchema = z.string().trim().min(2).max(500)
 
 export const savePathologyRequestDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,

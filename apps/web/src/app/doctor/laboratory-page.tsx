@@ -95,7 +95,8 @@ export interface LaboratoryPageActions {
   }
   save: {
     error: Error | null
-    onSubmit: () => void
+    /** override 供弹窗确认直写：受控值此刻尚未完成重渲染，渲染闭包读到的还是旧值。 */
+    onSubmit: (override?: { catalogItemId: string; indicationCode: string }) => void
     pending: boolean
   }
 }
@@ -645,7 +646,7 @@ function LaboratoryRequestEditor({
           <AlertTitle>{messages.laboratoryRequestDraftDeleted}</AlertTitle>
         </Alert>
       ) : null}
-      {actions.save.error === null ? null : <Button disabled={actions.save.pending} onClick={actions.save.onSubmit} type="button" variant="outline">{locale === 'zh-CN' ? '重试保存' : 'Retry saving'}</Button>}
+      {actions.save.error === null ? null : <Button disabled={actions.save.pending} onClick={() => actions.save.onSubmit()} type="button" variant="outline">{locale === 'zh-CN' ? '重试保存' : 'Retry saving'}</Button>}
       {actions.save.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.save.error, messages)} title={getWorkspaceErrorTitle(actions.save.error, messages, messages.operationFailed)} />}
       {actions.deleteDraft.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.deleteDraft.error, messages)} title={getWorkspaceErrorTitle(actions.deleteDraft.error, messages, messages.operationFailed)} />}
       {actions.issue.error === null ? null : <ErrorAlert message={getWorkspaceErrorMessage(actions.issue.error, messages)} title={getWorkspaceErrorTitle(actions.issue.error, messages, messages.operationFailed)} />}
@@ -658,6 +659,8 @@ function LaboratoryRequestEditor({
           setSelectedReference(selection)
           onLaboratoryItemChange(selection.catalogItemId)
           onIndicationChange(indication)
+          // 确认即写入服务端草稿：不等 800ms 自动保存，避免确认后立即换例等卸载场景丢保存（与放射/病理弹窗一致）。
+          actions.save.onSubmit({ catalogItemId: selection.catalogItemId, indicationCode: indication })
         }}
         onOpenChange={setComposerOpen}
         open={composerOpen}

@@ -1,6 +1,6 @@
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import type { PathologyReport, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
-import { savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
+import { pathologyPurposeSchema, savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
 import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -379,7 +379,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
     setProcedureReference(item.sourceProcedures[0]?.sourceReference ?? null)
   }
   const confirm = () => {
-    if (serviceId === null || procedureReference === null || purpose.trim() === '') return
+    if (serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success) return
     onConfirm({ purpose, procedureReference, serviceId })
     onOpenChange(false)
   }
@@ -450,7 +450,7 @@ function PathologyComposerDialog({ draftPending, existingServiceId, locale, onCo
         {conflict ? <p className="text-sm text-destructive" role="alert">{zh ? '已有保存的病理会诊草稿，请先开具或删除后再更换会诊项目。' : 'Issue or delete the saved pathology draft before choosing another consultation.'}</p> : null}
         <DialogFooter>
           <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-          <Button disabled={serviceId === null || procedureReference === null || purpose.trim() === '' || draftPending} onClick={confirm} type="button">
+          <Button disabled={serviceId === null || procedureReference === null || !pathologyPurposeSchema.safeParse(purpose).success || draftPending} onClick={confirm} type="button">
             {zh ? '保存草稿' : 'Save draft'}
           </Button>
         </DialogFooter>

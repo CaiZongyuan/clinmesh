@@ -691,6 +691,8 @@ describe('laboratory investigation workspace', () => {
     const card = within(screen.getByRole('region', { name: '检验申请' })).getByRole('button', { name: '编辑检验 合成检验项目' })
     expect(card.textContent).toContain('SYN-1')
     expect(card.textContent).toContain('临床评估')
+    // 确认即写入服务端草稿：不等 800ms 自动保存，确认后立即换例等卸载场景也不丢保存。
+    expect(page.actions.save.onSubmit).toHaveBeenCalledWith({ catalogItemId: 'synthetic-laboratory-service', indicationCode: 'clinical-evaluation' })
   })
   it('discards in-dialog input when closing without confirm and offers a fresh add next time', async () => {
     const page = props()

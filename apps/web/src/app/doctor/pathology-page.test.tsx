@@ -245,7 +245,11 @@ describe('doctor pathology consultation page', () => {
     expect(dialog.getByRole('combobox', { name: '送检的既往手术' }).textContent).toContain('乳腺病灶切除术 · 2023-01-05')
     expect(dialog.getByLabelText('会诊目的')).toBeTruthy()
     expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', true)
-    await user.type(dialog.getByLabelText('会诊目的'), '外院手术切片复核，明确病理类型')
+    // 会诊目的值域与草稿保存合同一致：trim 后不足 2 字符不能确认，弹窗内修正而不是提交后被服务端拒绝。
+    await user.type(dialog.getByLabelText('会诊目的'), '外')
+    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', true)
+    await user.type(dialog.getByLabelText('会诊目的'), '院手术切片复核，明确病理类型')
+    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', false)
     await user.click(dialog.getByRole('button', { name: '保存草稿' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(calls.find(call => call.method === 'PUT')).toMatchObject({

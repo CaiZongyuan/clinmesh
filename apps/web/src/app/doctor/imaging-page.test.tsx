@@ -237,7 +237,11 @@ describe('doctor imaging page', () => {
     expect(dialog.queryByRole('button', { name: /胸片.*本院当前未开展/ })).toBeNull()
     await user.click(dialog.getByRole('button', { name: /胸部 CT 平扫.*平扫/ }))
     expect(dialog.getByText(ctService.applicability)).toBeTruthy()
-    await user.type(dialog.getByLabelText('检查指征'), '咳嗽两周')
+    // 指征值域与草稿保存合同一致：trim 后不足 2 字符不能确认，弹窗内修正而不是提交后被服务端拒绝。
+    await user.type(dialog.getByLabelText('检查指征'), '咳')
+    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', true)
+    await user.type(dialog.getByLabelText('检查指征'), '嗽两周')
+    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', false)
     await user.click(dialog.getByRole('button', { name: '保存草稿' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(calls.find(call => call.method === 'PUT')).toMatchObject({
@@ -417,7 +421,11 @@ describe('doctor imaging page', () => {
     await user.click(await screen.findByRole('button', { name: '添加放射检查' }))
     const dialog = within(screen.getByRole('dialog'))
     await user.click(dialog.getByRole('button', { name: /胸部 CT 平扫/ }))
-    await user.type(dialog.getByLabelText('检查指征'), '咳嗽两周')
+    // 指征值域与草稿保存合同一致：trim 后不足 2 字符不能确认，弹窗内修正而不是提交后被服务端拒绝。
+    await user.type(dialog.getByLabelText('检查指征'), '咳')
+    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', true)
+    await user.type(dialog.getByLabelText('检查指征'), '嗽两周')
+    expect(dialog.getByRole('button', { name: '保存草稿' })).toHaveProperty('disabled', false)
     await user.click(dialog.getByRole('button', { name: '保存草稿' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await waitFor(() => expect(calls.filter(call => call.method === 'PUT')).toHaveLength(1))

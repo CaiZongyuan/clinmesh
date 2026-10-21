@@ -1,3 +1,4 @@
+import { imagingIndicationSchema } from '@clinmesh/contracts/his'
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
@@ -387,7 +388,7 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
     setServiceId(item.service.id)
   }
   const confirm = () => {
-    if (serviceId === null || indication.trim() === '') return
+    if (serviceId === null || !imagingIndicationSchema.safeParse(indication).success) return
     onConfirm({ indication, serviceId })
     onOpenChange(false)
   }
@@ -435,7 +436,7 @@ function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConf
         {conflict ? <p className="text-sm text-destructive" role="alert">{zh ? '已有保存的放射申请草稿，请先开具或删除后再更换检查项目。' : 'Issue or delete the saved imaging draft before choosing another examination.'}</p> : null}
         <DialogFooter>
           <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
-          <Button disabled={serviceId === null || indication.trim() === '' || draftPending} onClick={confirm} type="button">
+          <Button disabled={serviceId === null || !imagingIndicationSchema.safeParse(indication).success || draftPending} onClick={confirm} type="button">
             {zh ? '保存草稿' : 'Save draft'}
           </Button>
         </DialogFooter>

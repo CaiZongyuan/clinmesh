@@ -888,19 +888,21 @@ function DoctorCaseController({
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const saveLaboratoryRequest = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
+    mutationFn: ({ caseId, override }: { caseId: string; override?: { catalogItemId: string; indicationCode: string } }) => {
       const current = detail.data
+      const catalogItemId = override?.catalogItemId ?? resolvedLaboratoryItemId
+      const indicationCode = override?.indicationCode ?? resolvedIndicationCode
       if (current?.caseId !== caseId
-        || !isLaboratoryRequestCatalogItemId(resolvedLaboratoryItemId)
-        || resolvedIndicationCode.length === 0) {
+        || !isLaboratoryRequestCatalogItemId(catalogItemId)
+        || indicationCode.length === 0) {
         throw new Error(messages.consultationUnavailable)
       }
       return saveLaboratoryRequestDraft({
-        catalogItemId: resolvedLaboratoryItemId,
+        catalogItemId,
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
         expectedDraftVersion: current.laboratoryRequests?.draftVersion ?? 0,
-        indicationCode: resolvedIndicationCode,
+        indicationCode,
       }, newIdempotencyKey())
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
@@ -2958,7 +2960,7 @@ function DoctorCaseController({
                 error: saveLaboratoryRequest.variables?.caseId === detail.data.caseId
                   ? saveLaboratoryRequest.error
                   : null,
-                onSubmit: () => saveLaboratoryRequest.mutate({ caseId: detail.data.caseId }),
+                onSubmit: override => saveLaboratoryRequest.mutate({ caseId: detail.data.caseId, ...(override === undefined ? {} : { override }) }),
                 pending: saveLaboratoryRequest.isPending
                   && saveLaboratoryRequest.variables?.caseId === detail.data.caseId,
               },
