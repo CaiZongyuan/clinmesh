@@ -88,7 +88,7 @@ ClinMesh 的患者回答、自动记录与核验、病历质控、五类诊疗�
 
 管理员可以编辑本工作区开关、三项上限、自动重试与保留期，核对待确认用量；部署总政策只读，非管理员仅开放其授权的读能力。隔离交互预览只保存内存中的合成状态，不作为认证、持久化或真实模型控制的实现证据。
 
-沿用[当前单实例部署](../demo-architecture.md)的单 Hono/SQLite writer；拟让 Host 与 Server 两进程共同遵守统一控制，本期不扩展为多个 Server writer 或分布式配额系统。模块接缝、持久边界及权衡由[统一调用账本与控制提案](../decisions/proposed/architecture/2026-10-21-model-usage-accounting-control.md)说明。
+沿用[当前单实例部署](../demo-architecture.md)的单 Hono/SQLite writer；Host 与 Server 两进程共同遵守统一控制，本期不扩展为多个 Server writer 或分布式配额系统。模块接缝、持久边界及权衡由[统一调用账本与控制决策](../decisions/implemented/architecture/2026-10-21-model-usage-accounting-control.md)说明。
 
 ## 测试策略
 

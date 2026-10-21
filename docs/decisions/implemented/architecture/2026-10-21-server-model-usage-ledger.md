@@ -4,7 +4,7 @@ Status: implemented
 
 ## Problem
 
-完整任务内存在格式纠错和限流重发；只在任务外记录最终成功会漏掉真实消耗。DSH 与直接接口的缓存 Token 口径也不同，断流不能推断零费用。现有建议请求次数与成功步骤恢复已经持久化，新增账本不能先扣次数再因记账失败丢失机会。[正式规格](../../../spec/2026-10-19-model-usage-control.md)及第一张执行票定义本切片范围，后续控制决策由[总提案](../../proposed/architecture/2026-10-21-model-usage-accounting-control.md)拥有。
+完整任务内存在格式纠错和限流重发；只在任务外记录最终成功会漏掉真实消耗。DSH 与直接接口的缓存 Token 口径也不同，断流不能推断零费用。现有建议请求次数与成功步骤恢复已经持久化，新增账本不能先扣次数再因记账失败丢失机会。[正式规格](../../../spec/2026-10-19-model-usage-control.md)定义需求范围，跨入口与持久所有权由[统一账本与控制决策](2026-10-21-model-usage-accounting-control.md)拥有。
 
 ## Decision
 

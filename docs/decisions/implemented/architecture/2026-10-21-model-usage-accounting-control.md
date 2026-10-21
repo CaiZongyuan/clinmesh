@@ -1,22 +1,22 @@
 # Agent Note: 统一模型调用账本与可选额度控制
 
-Status: proposed
+Status: implemented
 
 ## Problem
 
 ClinMesh 的任务模型绑定只保存路由来源，不能表达一次任务内的格式纠错、限流重发、阶段恢复和实际用量。Server 统一 Provider 与 DSH Host 独立代问识别存在不同派发边界，前端暂停和外层任务计数无法覆盖全部调用。监控需要支持本地模型和默认无限额度，同时保证已配置的有限额度不因缺价、并发、取消或重启而失去控制。[正式规格](../../../spec/2026-10-19-model-usage-control.md)拥有产品要求与验收。
 
-现有请求复用与阶段恢复已交付，见[持久恢复决策](../../implemented/architecture/2026-10-19-model-request-reuse-recovery.md)；本提案叠加全局账本、Token/费用计量和控制，不重做患者回答共享、建议成功步骤或原有单元及 generation 次数限制。
+现有请求复用与阶段恢复由[持久恢复决策](2026-10-19-model-request-reuse-recovery.md)拥有；统一账本叠加 Token／费用计量和控制，保留患者回答共享、建议成功步骤与原有单元及 generation 次数限制。
 
-## Proposal
+## Decision
 
 ### 一个控制所有者，三个实际派发边界
 
 在 Server application 层建立统一调用控制模块，拥有部署及 Workspace 政策、受信尝试身份、预占、用量结算、计价版本和账本查询。SQLite 为唯一持久所有者；沿用单 Server writer 部署，不将额度状态复制到 Host、浏览器或另一个数据库。
 
-Server 的直接 fetch 与 DSH Provider 每次真正派发前接入，而不是只装饰完整的 completeJson。现有 onBeforeRequest 是预占接缝；无参数完成通知须扩展为可报告派发状态、用量和终态的生命周期。与已有建议请求次数预占协调成一次幂等准入，避免两套计数部分成功后重试再次占用。
+Server 的直接 fetch 与 DSH Provider 在每次真正派发前接入，以生命周期回调报告派发状态、用量和终态。账本预占与已有建议请求次数预占协调成一次幂等准入，避免两套计数部分成功后重试再次占用，见[Server 逐次计量决策](2026-10-21-server-model-usage-ledger.md)。
 
-Host 的医生代问意图识别直接调用 ctx.llm.stream，须使用同一服务的窄准入、开始与结算协议。Workspace/Epoch、Actor、岗位及任务取自现有受信上下文，客户端声明不能代替授权。Server 派发经 bridge 进入 Host 时沿用同一个尝试身份，不能再记成第二次独立请求；Host 自发的识别则单独建立尝试。
+Host 的医生代问意图识别在 ctx.llm.stream 前使用同一服务的窄准入、开始与结算协议。Workspace/Epoch、Actor、岗位及任务取自现有受信上下文，客户端声明不能代替授权。Server 派发经 bridge 进入 Host 时沿用同一个尝试身份，不记成第二次独立请求；Host 自发的识别单独建立尝试，见[Host 准入决策](2026-10-21-host-recognition-usage-admission.md)。
 
 停用与准入事务确定新的派发授权是否成立；已取得授权的尝试属于在途集合，停用对其主动传递取消。许可具有任务、模型、策略版本和唯一尝试身份，不能当成可重放的任意模型调用权限。Host 失联、权限失效和模型返回后尚未结算的窗口都不能推断为未派发或零用量。
 
@@ -46,7 +46,7 @@ Host 的医生代问意图识别直接调用 ctx.llm.stream，须使用同一服
 
 contracts 定义窄元数据、控制与查询响应，Server application 模块承载规则，SQLite adapter 承载原子性与查询。Provider adapter 映射实际模型、用量及错误分类；Web/DSH 通过共享视图消费服务端状态，TanStack Query 拥有查询数据。Host 通过现有扩展和受保护本机通道参与，不修改官方 DSH 源码。
 
-入口为 ClinMesh 设置中的模型用量页。Workspace 管理员编辑自身额度、开关、自动重试、保留期及人工核对；部署价表、汇率和总政策只读，不建立新的平台管理员。具体共享组件、路由和错误 schema 随实施明确，不能在实现前声明新增接口已存在。
+入口为 ClinMesh 设置中的模型用量页。Workspace 管理员编辑自身额度、开关、自动重试、保留期及人工核对；部署价表、汇率和总政策只读，不建立新的平台管理员。当前查询、写入及授权合同由[安全与可靠性](../../../architecture/security-and-reliability.md#模型用量查询)拥有，持久化由[存储合同](../../../architecture/storage.md#910-模型调用账本)拥有。
 
 ## Alternatives considered
 
@@ -59,12 +59,14 @@ contracts 定义窄元数据、控制与查询响应，Server application 模块
 - 一次操作的完整因果图：需要新增跨 Command、outbox、前端与合批多父关系的传播合同；首期采用可证实的任务、阶段和来源关联。
 - 清理旧明细时一起删计数：实现更短，但会恢复额度并破坏长期监控；明细、汇总和额度分别管理生命周期。
 
-## Acceptance criteria
+## Consequences
 
-正式验收由规格拥有。实施需用合成 Provider、临时 SQLite、受控 DSH stream 及真实公开接口证明三个派发边界、跨进程取消、逐次记账、并发预占、未知保留、同身份幂等结算、旧库迁移和清理后累计不变。普通成员列表查询须覆盖病例责任及旧 Epoch 负例。Web/DSH 入口验证默认无限、限额阻止、只读统一计价和人工核对，新 Dialog 覆盖 React 18/19。
+统一持久化使记账故障成为所有模型入口的阻断条件。控制恢复与未知结果的处理由[双层控制与恢复决策](2026-10-21-model-request-control-recovery.md)拥有；调用时价格、分维度结算和人工修订由[计价控制决策](2026-10-21-model-usage-pricing-control.md)拥有；明细清理、长期聚合与最低审计保留由[保留策略决策](2026-10-21-model-usage-retention.md)拥有。
+
+验证使用合成 Provider、临时 SQLite、受控 DSH stream 及真实公开接口，覆盖三个派发边界、逐次记账、原子预占、未知保留、幂等结算、非空旧库迁移和清理后累计不变。普通成员查询覆盖病例责任及旧 Epoch 负例；Web/DSH 入口和 React 18/19 合同覆盖共享管理组件。具体证据与正式验收仍由规格和集成 PR 拥有，测试边界见[测试策略](../../../testing.md)。
 
 ## Risks
 
 SDK 用量字段、输出上限和模型解析能力按锁定版本验证；价格与汇率只能提供配置口径下的估算，取消也不保证服务商停止收费。无法识别的上游内部派发保持观测边界。强制账本持久化意味着记账故障会暂停所有新模型调用；未知预占也可能持续占用有限额度，需要明确的管理员处理入口。
 
-当前已交付[Server 逐次账本与查询](../../implemented/architecture/2026-10-21-server-model-usage-ledger.md)、[Host 独立识别接入](../../implemented/architecture/2026-10-21-host-recognition-usage-admission.md)及[双层请求控制与恢复](../../implemented/architecture/2026-10-21-model-request-control-recovery.md)，监控与开关覆盖三类 ClinMesh 入口。Token／金额的有限保护、人民币计价、人工核对及清理仍按本提案与正式规格后续实施。压测和真实模型验证继续需要针对本次执行的独立许可。
+当前直接 OpenAI-compatible 入口没有硬输出 Token 上限，锁定的 DSH SDK 也没有可绑定实际 wire adapter 的可信计量上界。因此有限 Token 或无法核算的非零金额保护会拒绝这些生产入口；全部无限仍可监控，明确全零价表可形成零金额上界。有界合成适配器验证通用预占内核，不表示生产入口已具备可信上界。压测和真实模型验证继续需要针对本次执行的独立许可。

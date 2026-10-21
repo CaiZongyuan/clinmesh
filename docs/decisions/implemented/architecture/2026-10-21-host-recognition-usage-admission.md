@@ -22,4 +22,4 @@ Host 先通过 SDK 准备句柄锁定实际模型配置，预检失败不计实�
 
 ## Consequences
 
-Server 和账本可写性成为 Host 辅助识别的前置条件。识别失败保留原工具拒绝合同，不自动重发；未知记录可以继续接收可信用量与终态。全部额度仍无限，有限额度与全局停用按后续切片实施。当前接口与信任边界见[模型用量查询](../../../architecture/security-and-reliability.md#模型用量查询)，持久化见[账本合同](../../../architecture/storage.md#910-模型调用账本)，验证见[测试策略](../../../testing.md)。
+Server 和账本可写性成为 Host 辅助识别的前置条件。识别失败保留原工具拒绝合同，不自动重发；未知记录可以继续接收可信用量与终态。统一开关与请求限额由[控制恢复决策](2026-10-21-model-request-control-recovery.md)拥有，Token／金额保护的生产适配器边界由[计价控制决策](2026-10-21-model-usage-pricing-control.md)拥有。当前接口与信任边界见[模型用量查询](../../../architecture/security-and-reliability.md#模型用量查询)，持久化见[账本合同](../../../architecture/storage.md#910-模型调用账本)，验证见[测试策略](../../../testing.md)。
