@@ -22,7 +22,8 @@ export const usageAttempt: ModelUsageAttempt = {
   kind: 'format-repair', status: 'unknown', dispatch: 'dispatched', startedAt: '2026-10-20T01:00:00.000Z', endedAt: '2026-10-20T01:01:00.000Z',
   providerRequestId: 'provider-request-synthetic', httpStatus: 200,
   usage: { inputTokens: 120, outputTokens: null, cachedInputTokens: 30, reasoningOutputTokens: null,
-    totalTokens: null, mapping: 'dsh-v1' },
+    totalTokens: null, mapping: 'dsh-v1', raw: { format: 'dsh', uncachedInputTokens: 90,
+      outputTokens: null, cacheReadTokens: 20, cacheWriteTokens: 10, reasoningTokens: null, totalTokens: null } },
   cost: { status: 'price-not-configured', cny: null },
 }
 

@@ -67,7 +67,7 @@ it('opens an empty unlimited overview for members and requires authentication', 
 it('meters actual direct requests, keeps actual model across restart and restricts administrative details', async () => {
   let dispatched = 0
   const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'configured-model',
-    chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic-private-key', baseUrl: 'https://synthetic.invalid/v1',
+    chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic-private-key', baseUrl: 'http://[::1]:11434/v1',
       fetch: async () => { dispatched++; return Response.json({ id: 'synthetic-request-1', model: 'actual-model-v1',
         choices: [{ message: { content: JSON.stringify(persona) } }],
         usage: { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120,
@@ -84,7 +84,7 @@ it('meters actual direct requests, keeps actual model across restart and restric
   expect(dispatched).toBe(1)
   const records = modelUsageListSchema.parse(await (await read('/api/model-usage/requests')).json())
   expect(records.total).toBe(1)
-  expect(records.items[0]).toMatchObject({ actualModel: 'actual-model-v1', requestedModel: 'configured-model',
+  expect(records.items[0]).toMatchObject({ provider: '[::1]', actualModel: 'actual-model-v1', requestedModel: 'configured-model',
     feature: 'patient_persona', usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 30, reasoningOutputTokens: 5, totalTokens: 120 },
     cost: { cny: null, status: 'price-not-configured' } })
   const id = records.items[0]!.id
@@ -98,6 +98,14 @@ it('meters actual direct requests, keeps actual model across restart and restric
   const recovered = modelUsageListSchema.parse(await (await read('/api/model-usage/requests')).json())
   expect(recovered.items[0]).toEqual(records.items[0])
   expect(dispatched).toBe(1)
+  // Real timestamps remain UTC in storage; date filters and trend use Asia/Shanghai.
+  const midnightRecord = { ...recovered.items[0]!, startedAt: '2026-10-20T16:30:00.000Z' }
+  fixture.runtime.database.driver.prepare('UPDATE model_usage_attempt SET started_at = ?, record_json = ? WHERE attempt_id = ?')
+    .run(midnightRecord.startedAt, JSON.stringify(midnightRecord), id)
+  const localDay = modelUsageOverviewSchema.parse(await (await read('/api/model-usage/overview?from=2026-10-21&to=2026-10-21')).json())
+  expect(localDay.totals.requests).toBe(1)
+  expect(localDay.trend).toEqual([{ date: '2026-10-21', requests: 1, knownTokens: 120 }])
+  expect(modelUsageListSchema.parse(await (await read('/api/model-usage/requests?from=2026-10-20&to=2026-10-20')).json()).total).toBe(0)
 })
 
 it('requires durable accounting before dispatch even when every limit is unlimited', async () => {
@@ -213,12 +221,34 @@ it('persists every DSH resend and repair through the real Host without double-co
     provider: bridgeRoute.provider, actualModel: bridgeRoute.model,
     usage: { inputTokens: 125, cachedInputTokens: 25, outputTokens: 30, reasoningOutputTokens: 10, totalTokens: 155, mapping: 'dsh-v1' },
   })
+  expect(records.items.find(item => item.kind === 'format-repair')?.usage.raw).toEqual({
+    format: 'dsh', uncachedInputTokens: 100, outputTokens: 30, cacheReadTokens: 20, cacheWriteTokens: 5, reasoningTokens: 10, totalTokens: 155,
+  })
   const overview = modelUsageOverviewSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/overview', { headers: { cookie } })).json())
   expect(overview.totals).toMatchObject({ requests: 3, knownTokens: 310, unknownTokenRequests: 1 })
   await fixture.restart()
   const recovered = modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
   expect(recovered).toEqual(records)
   expect(dispatched).toBe(3)
+})
+
+it('retains partial DSH input evidence and includes its known lower bound without inventing a total', async () => {
+  const bridge = await host(async function *(): AsyncGenerator<StreamChunk> {
+    yield { type: 'text-delta', index: 0, text: JSON.stringify(persona) }
+    yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 3 } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  })
+  const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(), dshModelBridge: bridge })
+  await startConsultationCase(fixture.runtime)
+  const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
+  const read = async (path: string) => fixture.runtime.app.request(path, { headers: { cookie } })
+  const records = modelUsageListSchema.parse(await (await read('/api/model-usage/requests')).json())
+  expect(records.items[0]?.usage).toMatchObject({ inputTokens: null, outputTokens: 3, totalTokens: null,
+    raw: { format: 'dsh', uncachedInputTokens: 12, outputTokens: 3, cacheReadTokens: null, cacheWriteTokens: null, totalTokens: null } })
+  const overview = modelUsageOverviewSchema.parse(await (await read('/api/model-usage/overview')).json())
+  expect(overview.totals).toMatchObject({ requests: 1, knownTokens: 15, unknownTokenRequests: 1 })
+  await fixture.restart()
+  expect(modelUsageListSchema.parse(await (await read('/api/model-usage/requests')).json())).toEqual(records)
 })
 
 it('keeps Host preflight rejection queryable without presenting it as an actual model request', async () => {

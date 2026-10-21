@@ -98,7 +98,7 @@ function RequestTable({ items, locale, messages, select }: {
     {[messages.requestTime, messages.feature, messages.provider, messages.actualModel, messages.result, messages.token, messages.cost, messages.detail]
       .map(label => <TableHead key={label}>{label}</TableHead>)}
   </TableRow></TableHeader><TableBody>{items.map(item => <TableRow key={item.id}>
-    <TableCell><time dateTime={item.startedAt}>{new Date(item.startedAt).toLocaleString(locale)}</time></TableCell>
+    <TableCell><time dateTime={item.startedAt}>{new Date(item.startedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</time></TableCell>
     <TableCell>{messages.featureLabel(item.feature)}<p className="text-xs text-muted-foreground">{messages.kindLabel(item.kind)}</p></TableCell>
     <TableCell>{item.provider}</TableCell>
     <TableCell className="max-w-56 whitespace-normal break-all">{item.actualModel ?? messages.notReturned}</TableCell>
@@ -124,8 +124,8 @@ function RequestDetail({ item, locale, messages, close }: {
     [messages.provider, item.provider], [messages.requestedModel, item.requestedModel],
     [messages.actualModel, item.actualModel ?? messages.notReturned], [messages.reasoning, item.reasoningEffort ?? messages.notReturned],
     [messages.outputLimit, formatCount(item.outputLimit, locale, messages)], [messages.providerRequest, item.providerRequestId ?? messages.notReturned],
-    [messages.startedAt, new Date(item.startedAt).toLocaleString(locale)],
-    [messages.endedAt, item.endedAt === null ? messages.notReturned : new Date(item.endedAt).toLocaleString(locale)],
+    [messages.startedAt, new Date(item.startedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
+    [messages.endedAt, item.endedAt === null ? messages.notReturned : new Date(item.endedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
     [messages.httpStatus, item.httpStatus ?? messages.notReturned], [messages.mapping, item.usage.mapping],
     [messages.inputTokens, formatCount(item.usage.inputTokens, locale, messages)],
     [messages.outputTokens, formatCount(item.usage.outputTokens, locale, messages)],
@@ -141,6 +141,11 @@ function RequestDetail({ item, locale, messages, close }: {
       {facts.map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-muted-foreground">{label}</dt>
         <dd className="break-all">{value}</dd></div>)}
     </dl>
+      {item.usage.raw === undefined ? null : <div><h3 className="mb-3 font-medium">{messages.rawUsage}</h3>
+        <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{Object.entries(item.usage.raw).flatMap(([key, value]) =>
+          typeof value === 'string' ? [] : [<div key={key}><dt className="text-muted-foreground">{messages.rawCounterLabel(key)}</dt>
+            <dd>{formatCount(value, locale, messages)}</dd></div>])}</dl>
+      </div>}
       <div className="flex flex-col gap-2"><h3 className="font-medium">{messages.sources}</h3><p className="text-muted-foreground">{messages.sourceDescription}</p>
         {item.context.sources.length === 0 ? <p>{messages.noSources}</p> : <Table aria-label={messages.sources}>
           <TableHeader><TableRow><TableHead>{messages.trigger}</TableHead><TableHead>{messages.sourceKind}</TableHead><TableHead>ID</TableHead></TableRow></TableHeader>

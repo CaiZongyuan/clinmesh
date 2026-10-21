@@ -4,7 +4,7 @@ import type { WorkspaceLocale } from './workspace-i18n.ts'
 const zh = {
   overview: '用量总览', requests: '请求明细', policy: '额度与策略', pricing: '计价说明',
   coverage: '监控覆盖范围',
-  coverageDescription: '已覆盖 Server 直接模型调用和经 DSH bridge 发起的调用。Host 独立识别将在 #262 接入；其他 DSH 原生会话及插件发起的调用未覆盖。',
+  coverageDescription: '已覆盖 Server 直接模型调用和经 DSH bridge 发起的调用。Host 独立识别、其他 DSH 原生会话及插件发起的调用尚未覆盖。',
   aggregateScope: '总览汇总当前 Workspace 的全部 Epoch；请求明细仅显示当前业务权限允许的记录。',
   memberScope: '普通成员的明细限于活动 Epoch，历史 Epoch 明细仅管理员可查看。',
   dispatched: '已派发请求', knownTokens: '已知 Token', cost: '人民币费用', outstanding: '在途与未决',
@@ -27,6 +27,7 @@ const zh = {
   providerRequest: 'Provider 请求 ID', httpStatus: 'HTTP 状态', mapping: '计量映射',
   inputTokens: '输入 Token', outputTokens: '输出 Token', cachedTokens: '缓存输入 Token（输入子集）',
   reasoningTokens: '推理输出 Token（输出子集）', totalTokens: '总 Token',
+  rawUsage: '服务商原始 Token 计数',
   tokenExplanation: '缓存输入包含在输入中，推理输出包含在输出中，子集不重复相加。未返回的用量保持未知，失败或取消不视为零消耗。',
   sources: '来源关联', sourceKind: '来源类型', triggerSources: '触发来源', evidenceSources: '证据来源', noSources: '无可信来源关联',
   sourceDescription: '展示已记录的业务关联；多条触发与证据不代表完整因果关系。',
@@ -40,7 +41,7 @@ const zh = {
 const en: Record<keyof typeof zh, string> = {
   overview: 'Usage overview', requests: 'Requests', policy: 'Quotas and policy', pricing: 'Pricing',
   coverage: 'Monitoring coverage',
-  coverageDescription: 'Covers direct Server model calls and calls sent through the DSH bridge. Independent Host recognition will be added in #262; other DSH native sessions and plugin calls are outside this coverage.',
+  coverageDescription: 'Covers direct Server model calls and calls sent through the DSH bridge. Independent Host recognition, other DSH native sessions and plugin calls are outside this coverage.',
   aggregateScope: 'Overview totals span all Epochs in this Workspace; request details follow your existing business access.',
   memberScope: 'Members can access authorized details in the active Epoch. Historical Epoch details require an administrator.',
   dispatched: 'Dispatched requests', knownTokens: 'Known tokens', cost: 'CNY cost', outstanding: 'In flight and unresolved',
@@ -63,6 +64,7 @@ const en: Record<keyof typeof zh, string> = {
   providerRequest: 'Provider request ID', httpStatus: 'HTTP status', mapping: 'Usage mapping',
   inputTokens: 'Input tokens', outputTokens: 'Output tokens', cachedTokens: 'Cached input tokens (input subset)',
   reasoningTokens: 'Reasoning output tokens (output subset)', totalTokens: 'Total tokens',
+  rawUsage: 'Original provider token counters',
   tokenExplanation: 'Cached input is included in input, and reasoning output is included in output. Subsets are never added twice. Unreported usage stays unknown; failure or cancellation does not imply zero usage.',
   sources: 'Source associations', sourceKind: 'Source type', triggerSources: 'Trigger sources', evidenceSources: 'Evidence sources', noSources: 'No trusted source associations',
   sourceDescription: 'These are recorded business associations. Multiple triggers and evidence do not imply complete causality.',
@@ -100,6 +102,16 @@ const dispatches: Record<ModelUsageAttempt['dispatch'], readonly [string, string
 const triggers: Record<ModelUsageContext['trigger'], readonly [string, string]> = {
   automatic: ['自动', 'Automatic'], manual: ['手动', 'Manual'], recovery: ['恢复', 'Recovery'], unknown: ['未知', 'Unknown'],
 }
+const rawCounters: Record<string, readonly [string, string]> = {
+  promptTokens: ['提示词 Token（含缓存）', 'Prompt tokens (including cache)'],
+  completionTokens: ['生成 Token（含推理）', 'Completion tokens (including reasoning)'],
+  cachedPromptTokens: ['缓存提示词 Token', 'Cached prompt tokens'],
+  reasoningCompletionTokens: ['推理生成 Token', 'Reasoning completion tokens'],
+  uncachedInputTokens: ['未缓存输入 Token', 'Uncached input tokens'],
+  outputTokens: ['输出 Token（含推理）', 'Output tokens (including reasoning)'],
+  cacheReadTokens: ['缓存读取 Token', 'Cache read tokens'], cacheWriteTokens: ['缓存写入 Token', 'Cache write tokens'],
+  reasoningTokens: ['推理 Token', 'Reasoning tokens'], totalTokens: ['服务商报告总 Token', 'Provider reported total tokens'],
+}
 
 export function modelUsageMessages(locale: WorkspaceLocale) {
   const index = locale === 'zh-CN' ? 0 : 1
@@ -109,5 +121,6 @@ export function modelUsageMessages(locale: WorkspaceLocale) {
     dispatchLabel: (value: ModelUsageAttempt['dispatch']) => dispatches[value][index],
     kindLabel: (value: ModelUsageAttempt['kind']) => kinds[value][index],
     triggerLabel: (value: ModelUsageContext['trigger']) => triggers[value][index],
+    rawCounterLabel: (value: string) => rawCounters[value]?.[index] ?? value,
   }
 }

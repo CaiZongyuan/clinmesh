@@ -31,7 +31,10 @@ function tokenUsage(value: unknown): ModelTokenUsage {
     || total !== null && !Number.isSafeInteger(total)) return unknownModelTokenUsage
   return { inputTokens: input, outputTokens: usage.outputTokens, cachedInputTokens: cached ?? (input === null ? null : input - usage.inputTokens),
     reasoningOutputTokens: usage.reasoningTokens !== undefined && usage.reasoningTokens <= usage.outputTokens ? usage.reasoningTokens : null,
-    totalTokens: usage.totalTokens === undefined ? total : usage.totalTokens === total ? usage.totalTokens : null, mapping: 'dsh-v1' }
+    totalTokens: usage.totalTokens === undefined ? total : usage.totalTokens === total ? usage.totalTokens : null, mapping: 'dsh-v1',
+    raw: { format: 'dsh', uncachedInputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
+      cacheReadTokens: usage.cacheReadTokens ?? null, cacheWriteTokens: usage.cacheWriteTokens ?? null,
+      reasoningTokens: usage.reasoningTokens ?? null, totalTokens: usage.totalTokens ?? null } }
 }
 
 export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaultModel'>, secret: string, selection: () => string) {

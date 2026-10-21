@@ -42,7 +42,8 @@ it('records every direct fallback with actual model and inclusive token subsets'
   expect(accounting.attempts.map(attempt => attempt.metadata.kind)).toEqual(['initial', 'format-repair'])
   expect(accounting.attempts.map(attempt => attempt.outcome)).toEqual([1, 2].map(request => ({
     status: 'succeeded', dispatch: 'dispatched', actualModel: 'actual-synthetic', providerRequestId: `request-${request}`, httpStatus: 200,
-    usage: { inputTokens: 100, outputTokens: 30, totalTokens: 130, cachedInputTokens: 20, reasoningOutputTokens: 10, mapping: 'openai-v1' },
+    usage: { inputTokens: 100, outputTokens: 30, totalTokens: 130, cachedInputTokens: 20, reasoningOutputTokens: 10, mapping: 'openai-v1',
+      raw: { format: 'openai', promptTokens: 100, completionTokens: 30, cachedPromptTokens: 20, reasoningCompletionTokens: 10, totalTokens: 130 } },
   })))
   expect(JSON.stringify(accounting.attempts)).not.toContain('synthetic-secret')
 })
@@ -115,7 +116,8 @@ it('uses one attempt across the real bridge and separately accounts rate-limit r
     expect(accounting.attempts.map(attempt => attempt.metadata.kind)).toEqual(['initial', 'rate-limit-retry', 'format-repair'])
     expect(new Set(accounting.attempts.map(attempt => attempt.id)).size).toBe(3)
     expect(accounting.attempts[1]?.outcome?.usage).toEqual({ inputTokens: 125, outputTokens: 30,
-      cachedInputTokens: 25, reasoningOutputTokens: 10, totalTokens: 155, mapping: 'dsh-v1' })
+      cachedInputTokens: 25, reasoningOutputTokens: 10, totalTokens: 155, mapping: 'dsh-v1',
+      raw: { format: 'dsh', uncachedInputTokens: 100, outputTokens: 30, cacheReadTokens: 20, cacheWriteTokens: 5, reasoningTokens: 10, totalTokens: 155 } })
     expect(JSON.stringify(accounting.attempts)).not.toMatch(/private-provider-message|synthetic-model-bridge-secret/)
   } finally { await bridge.close() }
 })
@@ -167,6 +169,7 @@ it('retains known Host usage when a later SDK snapshot omits previously reported
     await provider.completeJson({ ...input, model: encodeModelRoute(route), usageContext, usageRecorder: accounting.service })
     expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'succeeded', dispatch: 'dispatched', usage: {
       inputTokens: 15, outputTokens: 3, cachedInputTokens: 3, reasoningOutputTokens: 1, totalTokens: 18, mapping: 'dsh-v1',
+      raw: { format: 'dsh', uncachedInputTokens: 12, outputTokens: 3, cacheReadTokens: 2, cacheWriteTokens: 1, reasoningTokens: 1, totalTokens: 18 },
     } })
   } finally { await bridge.close() }
 })

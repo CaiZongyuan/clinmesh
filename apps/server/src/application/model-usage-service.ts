@@ -16,7 +16,12 @@ const summaryRowSchema = z.object({
   knownTokens: z.number(), unknownTokenRequests: z.number(),
 })
 const knownTokensSql = `COALESCE(json_extract(record_json, '$.usage.totalTokens'),
-  COALESCE(json_extract(record_json, '$.usage.inputTokens'), json_extract(record_json, '$.usage.cachedInputTokens'), 0)
+  COALESCE(json_extract(record_json, '$.usage.inputTokens'),
+    CASE WHEN json_extract(record_json, '$.usage.raw.format') = 'dsh' THEN
+      COALESCE(json_extract(record_json, '$.usage.raw.uncachedInputTokens'), 0)
+      + COALESCE(json_extract(record_json, '$.usage.raw.cacheReadTokens'), 0)
+      + COALESCE(json_extract(record_json, '$.usage.raw.cacheWriteTokens'), 0)
+    ELSE json_extract(record_json, '$.usage.cachedInputTokens') END, 0)
   + COALESCE(json_extract(record_json, '$.usage.outputTokens'), json_extract(record_json, '$.usage.reasoningOutputTokens'), 0))`
 const actualRequestSql = `COALESCE(json_extract(record_json, '$.dispatch'), 'unknown') != 'not-dispatched'`
 const totalsSql = `COALESCE(SUM(${actualRequestSql}), 0) AS requests,
@@ -77,9 +82,9 @@ export class ModelUsageService implements ModelUsageRecorder {
     const query = this.#where(context, filter, false)
     const totals = summaryRowSchema.parse(this.database.driver.prepare(`SELECT ${totalsSql} FROM model_usage_attempt a WHERE ${query.sql}`).get(...query.args))
     const trend = z.array(z.object({ date: z.string(), requests: z.number(), knownTokens: z.number() })).parse(this.database.driver.prepare(`
-      SELECT substr(started_at, 1, 10) AS date, SUM(${actualRequestSql}) AS requests,
+      SELECT date(started_at, '+8 hours') AS date, SUM(${actualRequestSql}) AS requests,
       COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens
-      FROM model_usage_attempt a WHERE ${query.sql} GROUP BY substr(started_at, 1, 10) ORDER BY date`).all(...query.args))
+      FROM model_usage_attempt a WHERE ${query.sql} GROUP BY date(started_at, '+8 hours') ORDER BY date`).all(...query.args))
     const features = z.array(z.object({ feature: modelUsageFeatureSchema, requests: z.number(), knownTokens: z.number() })).parse(this.database.driver.prepare(`
       SELECT feature, SUM(${actualRequestSql}) AS requests, COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens
       FROM model_usage_attempt a WHERE ${query.sql} GROUP BY feature ORDER BY requests DESC`).all(...query.args))
@@ -114,8 +119,8 @@ export class ModelUsageService implements ModelUsageRecorder {
         args.push(context.practitionerRoleId)
       } else clauses.push('0 = 1')
     }
-    if (filter.from !== undefined) { clauses.push('a.started_at >= ?'); args.push(`${filter.from}T00:00:00.000Z`) }
-    if (filter.to !== undefined) { clauses.push('a.started_at <= ?'); args.push(`${filter.to}T23:59:59.999Z`) }
+    if (filter.from !== undefined) { clauses.push('a.started_at >= ?'); args.push(new Date(`${filter.from}T00:00:00.000+08:00`).toISOString()) }
+    if (filter.to !== undefined) { clauses.push('a.started_at <= ?'); args.push(new Date(`${filter.to}T23:59:59.999+08:00`).toISOString()) }
     for (const [key, column] of [['feature', 'feature'], ['provider', 'provider'], ['status', 'status'], ['caseId', 'case_id']] as const) {
       if (filter[key] !== undefined) { clauses.push(`a.${column} = ?`); args.push(filter[key]) }
     }

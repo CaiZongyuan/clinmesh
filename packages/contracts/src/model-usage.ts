@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
-const identifier = z.string().min(1).max(256).regex(/^[\p{L}\p{N}_.:/@+{}", -]+$/u)
-const modelName = z.string().min(1).max(1024).regex(/^[\p{L}\p{N}_.:/@+{}", -]+$/u)
+const identifier = z.string().min(1).max(256).regex(/^[\p{L}\p{N}_.:/@+{}"\[\], -]+$/u)
+const modelName = z.string().min(1).max(1024).regex(/^[\p{L}\p{N}_.:/@+{}"\[\], -]+$/u)
 const count = z.number().int().nonnegative().safe().nullable()
 export const modelUsageFeatureSchema = z.enum(['patient_persona', 'patient_dialogue_reply',
   'consultation_history_increment', 'consultation_history_summary', 'investigation_result',
@@ -29,6 +29,12 @@ export const modelTokenUsageSchema = z.object({
   inputTokens: count, outputTokens: count, cachedInputTokens: count,
   reasoningOutputTokens: count, totalTokens: count,
   mapping: z.enum(['openai-v1', 'dsh-v1', 'unknown']),
+  raw: z.discriminatedUnion('format', [
+    z.object({ format: z.literal('openai'), promptTokens: count, completionTokens: count,
+      cachedPromptTokens: count, reasoningCompletionTokens: count, totalTokens: count }).strict(),
+    z.object({ format: z.literal('dsh'), uncachedInputTokens: count, outputTokens: count,
+      cacheReadTokens: count, cacheWriteTokens: count, reasoningTokens: count, totalTokens: count }).strict(),
+  ]).optional(),
 }).strict()
 export type ModelTokenUsage = z.infer<typeof modelTokenUsageSchema>
 export const unknownModelTokenUsage: ModelTokenUsage = {
@@ -38,6 +44,20 @@ export const unknownModelTokenUsage: ModelTokenUsage = {
 
 /** Usage snapshots replace reported counters; omitted counters cannot erase known consumption. */
 export function mergeModelTokenUsage(known: ModelTokenUsage, next: ModelTokenUsage): ModelTokenUsage {
+  let raw = next.raw ?? known.raw
+  if (known.raw?.format === 'dsh' && next.raw?.format === 'dsh') {
+    raw = { format: 'dsh', uncachedInputTokens: next.raw.uncachedInputTokens ?? known.raw.uncachedInputTokens,
+      outputTokens: next.raw.outputTokens ?? known.raw.outputTokens,
+      cacheReadTokens: next.raw.cacheReadTokens ?? known.raw.cacheReadTokens,
+      cacheWriteTokens: next.raw.cacheWriteTokens ?? known.raw.cacheWriteTokens,
+      reasoningTokens: next.raw.reasoningTokens ?? known.raw.reasoningTokens, totalTokens: next.raw.totalTokens ?? known.raw.totalTokens }
+  } else if (known.raw?.format === 'openai' && next.raw?.format === 'openai') {
+    raw = { format: 'openai', promptTokens: next.raw.promptTokens ?? known.raw.promptTokens,
+      completionTokens: next.raw.completionTokens ?? known.raw.completionTokens,
+      cachedPromptTokens: next.raw.cachedPromptTokens ?? known.raw.cachedPromptTokens,
+      reasoningCompletionTokens: next.raw.reasoningCompletionTokens ?? known.raw.reasoningCompletionTokens,
+      totalTokens: next.raw.totalTokens ?? known.raw.totalTokens }
+  }
   return {
     inputTokens: next.inputTokens ?? known.inputTokens,
     outputTokens: next.outputTokens ?? known.outputTokens,
@@ -45,6 +65,7 @@ export function mergeModelTokenUsage(known: ModelTokenUsage, next: ModelTokenUsa
     reasoningOutputTokens: next.reasoningOutputTokens ?? known.reasoningOutputTokens,
     totalTokens: next.totalTokens ?? known.totalTokens,
     mapping: next.mapping === 'unknown' ? known.mapping : next.mapping,
+    ...(raw === undefined ? {} : { raw }),
   }
 }
 export const modelUsageOutcomeSchema = z.object({

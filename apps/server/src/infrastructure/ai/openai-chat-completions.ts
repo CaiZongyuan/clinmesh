@@ -110,7 +110,8 @@ function openAIOutcome(response: Response, value: unknown): ModelUsageOutcome {
       totalTokens: counts.total_tokens === undefined ? derivedTotal : derivedTotal === null || counts.total_tokens === derivedTotal ? counts.total_tokens : null,
       cachedInputTokens: cached !== null && (inputTokens === null || cached <= inputTokens) ? cached : null,
       reasoningOutputTokens: reasoning !== null && (outputTokens === null || reasoning <= outputTokens) ? reasoning : null,
-      mapping: 'openai-v1' },
+      mapping: 'openai-v1', raw: { format: 'openai', promptTokens: inputTokens, completionTokens: outputTokens,
+        cachedPromptTokens: cached, reasoningCompletionTokens: reasoning, totalTokens: counts.total_tokens ?? null } },
   }
 }
 
