@@ -18,6 +18,7 @@
 - [医生诊疗建议的权威指南库与证据接入](2026-10-13-clinical-recommendation-guidelines.md)
 - [冠心病单病例 DRG 质控功能方案](2026-10-15-coronary-drg-quality-control-plan.md)
 - [冠心病单病例 DRG 质控：官方规则依据](2026-10-15-drg-official-evidence.md)
+- [DRG 运营分析前置条件与建设路径](2026-10-20-drg-operations-prerequisites.md)
 - [通用门诊病历缺项的官方依据与适用边界](2026-10-15-outpatient-record-quality-rules.md)
 
 ## Agent 接入与协议
