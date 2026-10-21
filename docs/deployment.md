@@ -55,6 +55,24 @@ pnpm reference:sync
 
 正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。`.env.example` 已默认启用 `CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite`；当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`（lock 升级后自动跟随），仅覆盖 `CLINMESH_REFERENCE_RELEASE_ID` 时才需要手动维护。同步不会修改 `.env`，也不会热切换已启动的 Server。库中缺少当前 Release 时 Server 启动失败关闭（`REFERENCE_RELEASE_NOT_FOUND`），错误消息指引重跑 `pnpm reference:sync`。跳过本步时 Server 使用内置合成 fixture（`clinmesh-hospital-reference-fixture-2026-08-28`）：诊断与检验目录为空，药品目录只有 3 条合成产品，医生无法下诊断或开检验。
 
+### 离线 DRG 资料核对
+
+资料维护者使用本地既有五目录 r3 和 OpenDRG 2026-10-20 包核对首期 CHS-DRG 3.0 来源。仓库只发布[固定清单](../apps/server/reference-data/drg-offline.lock.json)，原件、标准化文件及 SQLite 保留本地。先完成上面的参考库同步，再从仓库根目录运行：
+
+```sh
+pnpm --filter @clinmesh/server reference-db migrate --database ../../.data/clinmesh-reference.sqlite
+pnpm --filter @clinmesh/server reference-db prepare-inventory --database ../../.data/clinmesh-reference.sqlite --manifest reference-data/drg-offline.lock.json --input-root ../..
+pnpm --filter @clinmesh/server reference-db list-inventories --database ../../.data/clinmesh-reference.sqlite --page 1 --page-size 20
+pnpm --filter @clinmesh/server reference-db inventory-audit --database ../../.data/clinmesh-reference.sqlite
+pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinmesh-reference.sqlite
+```
+
+`--input-root` 是锁定清单中各包路径的共同根，默认清单要求其中存在 `.data/reference-prepared/r3` 与 `.data/exports/opendrg-2026-10-20`；可指向已有资料所在的另一个仓库根，无需复制资料。`--database` 应与 Server 配置一致。迁移旧参考库后重启 Server；已有查询连接能读取后来原子发布的清单。
+
+重复准备会重新检查全部文件并返回 `created: false`。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径与重复文件均拒绝发布；同一 `inventoryId` 不能覆盖。修复输入后使用原命令重试；新资料需要新版本及新身份，不能直接修改既有发布内容。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败；不记录原文。
+
+管理员可在登录会话下请求 `GET /api/sim/v1/reference-data/offline-inventories?page=1&pageSize=20`，回读来源、Manifest／文件哈希、版本、行数、来源单位、覆盖与隔离项。HTTP 与 CLI 清单列表均返回 `items/page/pageSize/total`，默认每页 20 条、最多 50 条，可按总数继续翻页。普通岗位访问被拒绝；成功和失败读取沿用 operational 审计链及 FHIR AuditEvent。查询与恢复依据见[参考数据合同](architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
+
 ### 免费指南全文同步
 
 完成依赖安装后，在仓库根目录运行：

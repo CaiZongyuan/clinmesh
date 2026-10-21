@@ -160,6 +160,12 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
+离线 DRG 资料清单使用 `apps/server/reference-data/drg-offline.lock.json`，通过现有 `reference-db` 运维入口准备和查询，运行方式见[部署指南](../deployment.md#离线-drg-资料核对)。`reference_offline_inventory` 保存不可变摘要及内容哈希，不进入 `reference_release` 或临床编码目录；Server 继续只读 Reference SQLite。准备一次性验证所有包后，在事务中发布整个清单及本地审计，失败保留原清单；`verify` 同时检查已存摘要的身份和哈希。
+
+清单用途固定为 `offline-review`，`validationScope=integrity-only`、`runtimeEnabled=false`。五目录逐文件验证 SHA-256、JSONL 格式及行数，保留各来源的原件哈希、来源发表核验状态与原文计价单位；`unitStatus=source-only-unverified` 不表示包装换算或本院计价已确认。没有来源单位时返回空列表，不以包装列补齐。OpenDRG 验证固定 Manifest 与全部 checksum 项，并重新统计数据集覆盖；CHS-DRG 3.0 支付表标为 `selected-scheme`，其他支付表标为 `excluded-other-scheme`，字典只作来源核对。缺权重或参考费用的病组逐码列入 `missingParameterCodes`，不补零或借用其他方案参数。公开清单的内容哈希绑定全部来源与隔离状态，绝对本地路径及资料正文不出现在 HTTP 响应中。
+
+来源参考、临床／医保编码兼容、使用条件、当前适用性、医院支付参数及算法正确性分别核验。名称、前缀和字面相同都不生成临床编码映射；通用 3.0 与浙江零散参数不组成浙江结算方案。包内程序只参与字节哈希，准备和运行期均不执行；完整性通过不能作为分组算法对照验证证据。读取 `GET /api/sim/v1/reference-data/offline-inventories` 仅向管理员开放，并复用共享 Command 的审计实现追加读取结果，不新增临床写操作或 Agent 任意写工具。清单列表使用有硬上限的分页；数据库完整验证分批遍历全部历史清单，不受公开查询默认页范围限制。
+
 独立 Reference SQLite 通过 `reference-data.lock.json` 和 `pnpm reference:sync` 获取、验证并导入版本固定的疾病、药品与检验来源。项目内锁固定 `cn-health` 版本、Registry URL、Ed25519 信任根、Dataset Release、Manifest hash 和复合 Release 身份；`cn-health dataset materialize` 只在显式同步时访问 Registry，并把签名已验证的 Manifest、SQLite 和 receipt 原子交给 ClinMesh。ClinMesh 再校验 receipt、hash、SQLite、Schema 和 canonical 表不变量。check-only 使用临时 Reference SQLite，正式同步失败不留下部分 Release，也不切换 Server 当前 Release。运行中的 Server 只读 ClinMesh Reference SQLite，不调用 `cn-health`、GitHub 或 Registry。
 
 每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、materialization provenance、记录数、导入诊断和 content hash。`loinc-zh-cn` Dataset Schema v2 把完整 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边保存在同一不可变 Release，Class Type 1 进入 laboratory domain，其他 Class Type 进入 `other`。`laboratory-cn` Schema v2 在同一 Release 中保存 WS/T 886 原子项目、全部成人参考规则、项目整理 panel 和有序成员边；首个锁定 Release 的四张表分别有 84、96、15 和 88 条记录。Server 使用索引和 FTS 提供有界分页查询，不把全国目录复制进 Workspace、Epoch 或 operational SQLite。
