@@ -45,6 +45,7 @@ function NoRequests({ messages }: { messages: Messages }) {
 
 function Summary({ data, locale, messages }: { data: ModelUsageOverview; locale: WorkspaceLocale; messages: Messages }) {
   const { totals } = data
+  const reservation = (known: number, unknown: number) => `${formatCount(known, locale, messages)}${unknown === 0 ? '' : ` + ${unknown} ${messages.unknownReservations}`}`
   const metrics = [
     { label: messages.dispatched, value: formatCount(totals.requests, locale, messages), description: messages.dispatchScope },
     { label: messages.knownTokens, value: formatCount(totals.knownTokens, locale, messages),
@@ -60,8 +61,8 @@ function Summary({ data, locale, messages }: { data: ModelUsageOverview; locale:
       <CardContent className="flex flex-col gap-2"><p className="text-2xl font-semibold tabular-nums">{metric.value}</p>
         <p className="text-sm text-muted-foreground">{metric.description}</p></CardContent>
     </Card>)}
-  </div><p className="text-sm text-muted-foreground">{messages.tokensReserved}: {formatCount(totals.reservedTokens, locale, messages)}
-    {' · '}{messages.cnyReserved}: {formatCount(totals.reservedCny, locale, messages)}</p>
+  </div><p className="text-sm text-muted-foreground">{messages.tokensReserved}: {reservation(totals.reservedTokens, totals.tokensUnknownReservations)}
+    {' · '}{messages.cnyReserved}: {reservation(totals.reservedCny, totals.cnyUnknownReservations)}</p>
     <p className="text-sm text-muted-foreground">{messages.reservations}</p></div>
 }
 

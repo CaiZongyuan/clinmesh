@@ -65,6 +65,7 @@ const zh = {
   correctionError: '操作失败，请检查后重试。', correctionConflict: '记录已被其他管理员修订，请刷新后核对。',
   correctionDenied: '已无权管理该记录，请刷新账户权限。', correctionSaved: '修订已保存',
   reservationBoundary: '派发预占边界', inputBoundary: '输入 Token 上界', outputBoundary: '输出 Token 上界',
+  reservationUnbounded: '输出配置不能提供可信预占上界', reservationUnavailable: '适配器缺少可信计量边界',
   rejectionTokens: 'Token 额度不足', rejectionCny: '人民币额度不足', rejectionMetering: '无法可靠核算有限额度',
 }
 
@@ -132,6 +133,7 @@ const en: Record<keyof typeof zh, string> = {
   correctionError: 'The operation failed. Check and retry.', correctionConflict: 'Another administrator revised this record. Refresh before reconciling.',
   correctionDenied: 'You no longer have permission to manage this record. Refresh account permissions.', correctionSaved: 'Revision saved',
   reservationBoundary: 'Dispatch reservation bounds', inputBoundary: 'Input token upper bound', outputBoundary: 'Output token upper bound',
+  reservationUnbounded: 'Output settings cannot provide a trusted reservation upper bound', reservationUnavailable: 'The adapter lacks trusted metering bounds',
   rejectionTokens: 'token quota is exhausted', rejectionCny: 'CNY quota is exhausted', rejectionMetering: 'finite quota cannot be metered reliably',
 }
 

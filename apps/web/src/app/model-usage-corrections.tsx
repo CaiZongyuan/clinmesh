@@ -92,7 +92,9 @@ export function ModelUsageCorrections({ item, locale, administrator, saved }: {
     <p>{messages.totalTokens}: {format(totalTokens)} · {messages.cost}: {format(cny)}</p>
     {item.reservationBoundary === null ? null : <div><h3 className="font-medium">{messages.reservationBoundary}</h3>
       <p>{item.reservationBoundary.adapter} · {item.reservationBoundary.version}</p>
-      <p>{messages.inputBoundary}: {format(item.reservationBoundary.inputTokens)} · {messages.outputBoundary}: {format(item.reservationBoundary.outputTokens)}</p></div>}
+      <p>{messages.inputBoundary}: {format(item.reservationBoundary.inputTokens)} · {messages.outputBoundary}: {format(item.reservationBoundary.outputTokens)}</p>
+      {item.reservationBoundary.reason === null ? null : <p>{item.reservationBoundary.reason === 'output-limit-unbounded'
+        ? messages.reservationUnbounded : messages.reservationUnavailable}</p>}</div>}
     {canCorrect ? <div className="flex flex-wrap gap-2">
       {totalTokens === null || cny === null ? <CorrectionDialog item={item} mode="reconcile" locale={locale} saved={saved} /> : null}
       {canReprice ? <CorrectionDialog item={item} mode="reprice" locale={locale} saved={saved} /> : null}

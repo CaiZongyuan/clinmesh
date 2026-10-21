@@ -64,6 +64,8 @@ it('shows known usage separately from unknown values and reads historical reques
   expect(total.textContent).toContain('3')
   expect(screen.getByRole('region', { name: '已知 Token' }).textContent).toContain('120')
   expect(screen.getByRole('region', { name: '人民币费用' }).textContent).toContain('未知')
+  expect(screen.getByText(/已预占 Token: 200 \+ 1 次未决占用无可信上界/)).toBeTruthy()
+  expect(screen.getByText(/已预占人民币: 0.12 \+ 1 次未决占用无可信上界/)).toBeTruthy()
   expect(screen.getByText(/已覆盖 Server 直接模型调用、经 DSH bridge 发起的调用及 Host 独立医生代问识别/)).toBeTruthy()
   expect(screen.getByText(/其他 DSH 原生会话及插件发起的调用不在覆盖范围/)).toBeTruthy()
   await user.click(await screen.findByRole('button', { name: '查看请求详情' }))

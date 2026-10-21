@@ -48,13 +48,21 @@ async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit) {
   }
   if (url.pathname.endsWith('/reconcile') || url.pathname.endsWith('/reprice')) {
     const reprice = url.pathname.endsWith('/reprice')
-    const body = reprice ? modelUsageRepriceSchema.parse(JSON.parse(String(init?.body))) : modelUsageReconcileSchema.parse(JSON.parse(String(init?.body)))
+    const payload = JSON.parse(String(init?.body))
+    let body: { expectedRevision: number; evidence: string }
+    let totalTokens: number | undefined
+    let cny: number | undefined
+    if (reprice) body = modelUsageRepriceSchema.parse(payload)
+    else {
+      const reconciliation = modelUsageReconcileSchema.parse(payload)
+      body = reconciliation
+      totalTokens = reconciliation.totalTokens
+      cny = reconciliation.cny
+    }
     document.documentElement.dataset.usageCorrection = JSON.stringify(body)
     document.documentElement.dataset.usageCorrectionKind = reprice ? 'reprice' : 'reconcile'
     document.documentElement.dataset.usageIdempotency = new Headers(init?.headers).get('idempotency-key') ?? ''
     const cost = reprice ? { status: 'priced' as const, currency: 'USD', original: 0.00042, cny: 0.00294, originalMicro: 420, cnyMicro: 2940 } : null
-    const totalTokens = 'totalTokens' in body ? body.totalTokens : undefined
-    const cny = 'cny' in body ? body.cny : undefined
     attempt = { ...attempt, accounting: { totalTokens: totalTokens ?? attempt.accounting?.totalTokens ?? attempt.usage.totalTokens,
       cny: cny ?? cost?.cny ?? attempt.accounting?.cny ?? null }, ...(cost === null ? {} : { effectiveCost: cost }),
       corrections: [...attempt.corrections, { revision: body.expectedRevision + 1, evidence: body.evidence,

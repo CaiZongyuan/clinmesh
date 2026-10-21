@@ -30,7 +30,8 @@ export const usageAttempt: ModelUsageAttempt = {
 
 export const usageOverview: ModelUsageOverview = {
   totals: { requests: 3, inFlight: 1, unknownRequests: 1, knownTokens: 120,
-    unknownTokenRequests: 2, unpricedRequests: 3, cny: null, reservedTokens: 200, reservedCny: 0.12 },
+    unknownTokenRequests: 2, unpricedRequests: 3, cny: null, reservedTokens: 200, reservedCny: 0.12,
+    tokensUnknownReservations: 1, cnyUnknownReservations: 1 },
   trend: [{ date: '2026-10-19', requests: 1, knownTokens: 0 }, { date: '2026-10-20', requests: 2, knownTokens: 120 }],
   features: [{ feature: 'patient_dialogue_reply', requests: 1, knownTokens: 0 },
     { feature: 'doctor_recommendation_verification', requests: 2, knownTokens: 120 }],
