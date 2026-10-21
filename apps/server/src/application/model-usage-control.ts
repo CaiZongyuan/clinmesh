@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { modelUsageControlSchema, modelUsagePolicyConfigSchema,
-  type ModelUsageControl as ModelUsageControlState, type ModelUsageControlUpdate, type ModelUsagePolicyConfig,
+  type ModelUsageControlUpdate, type ModelUsagePolicyConfig,
   type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
@@ -31,6 +31,7 @@ const policyRow = z.object({ scope_id: z.string(), enabled: z.union([z.literal(0
   automatic_retries: z.union([z.literal(0), z.literal(1)]), version: z.number().int().positive().safe(),
   requests_started_at: z.iso.datetime().nullable(), used: persistedCount, reserved: persistedCount })
 type PolicyRow = z.infer<typeof policyRow>
+const internalControlSchema = modelUsageControlSchema.extend({ deployment: modelUsageControlSchema.shape.workspace })
 
 /** Persistent request budgets have a lifecycle independent of attempt retention and Epochs. */
 export class ModelUsageControl {
@@ -46,20 +47,20 @@ export class ModelUsageControl {
   setWaitingCount(read: (workspaceId: string) => number): void { this.#waitingCount = read }
   subscribe(listener: () => void): () => void { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
 
-  read(workspaceId: string): ModelUsageControlState {
+  read(workspaceId: string) {
     const workspace = this.#scope(this.#workspace(workspaceId))
     const deployment = this.#scope(this.#row('deployment'))
     const last = z.object({ code: z.string(), scope: z.string(), rejected_at: z.string() }).optional().parse(
       this.database.driver.prepare('SELECT code, scope, rejected_at FROM model_usage_control_rejection WHERE workspace_id = ?').get(workspaceId))
     const inFlight = z.object({ count: z.number() }).parse(this.database.driver.prepare(
       "SELECT COUNT(*) AS count FROM model_usage_attempt WHERE workspace_id = ? AND status = 'in-flight'").get(workspaceId)).count
-    return modelUsageControlSchema.parse({ workspace, deployment,
+    return internalControlSchema.parse({ workspace, deployment,
       effective: { enabled: workspace.enabled && deployment.enabled, automaticRetries: workspace.automaticRetries && deployment.automaticRetries },
       waiting: this.#waitingCount(workspaceId), inFlight,
       lastRejection: last === undefined ? null : { code: last.code, scope: last.scope, at: last.rejected_at } })
   }
 
-  update(context: ActorContext, input: ModelUsageControlUpdate, idempotencyKey: string): ModelUsageControlState {
+  update(context: ActorContext, input: ModelUsageControlUpdate, idempotencyKey: string) {
     if (context.roleCode !== 'administrator') throw new ModelUsagePolicyError('ROLE_NOT_ALLOWED', 403)
     const result = this.commands.execute({ context, contextRequirement: 'current', idempotencyScope: 'workspace',
       dataSchema: modelUsageControlSchema, expectedVersions: {}, idempotencyKey, input, operation: 'model-usage.control.update' }, () => {

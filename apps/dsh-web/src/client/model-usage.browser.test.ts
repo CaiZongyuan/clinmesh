@@ -67,8 +67,8 @@ for (const version of ['18', '19']) {
         await page.getByRole('tab', { name: zh ? '额度与策略' : 'Quotas and policy' }).click()
         const workspace = page.getByRole('region', { name: zh ? '工作区控制' : 'Workspace controls', exact: true })
         await expect(workspace.getByText(zh ? '无限' : 'Unlimited', { exact: true })).toHaveCount(4)
-        await expect(page.getByRole('region', { name: zh ? '部署控制（只读）' : 'Deployment controls (read only)', exact: true }).getByText('6', { exact: true })).toBeVisible()
         if (scenario.administrator) {
+          await expect(page.getByRole('region', { name: zh ? '部署控制（只读）' : 'Deployment controls (read only)', exact: true }).getByText('6', { exact: true })).toBeVisible()
           await workspace.getByRole('checkbox', { name: zh ? '请求次数无限' : 'Unlimited requests' }).uncheck()
           await workspace.getByLabel(zh ? '请求次数上限' : 'Request limit', { exact: true }).fill('0')
           await workspace.getByRole('checkbox', { name: zh ? '启用模型生成' : 'Enable model generation' }).uncheck()
@@ -80,6 +80,7 @@ for (const version of ['18', '19']) {
           await workspace.getByRole('button', { name: zh ? '保存工作区策略' : 'Save Workspace policy' }).click()
           await expect(page.locator('html')).toHaveAttribute('data-usage-control-write', /"requests":null/)
         } else {
+          await expect(page.getByRole('region', { name: 'Deployment controls (read only)', exact: true })).toHaveCount(0)
           await expect(workspace.getByRole('button', { name: 'Save Workspace policy' })).toHaveCount(0)
           await expect(workspace.getByText('Only administrators can change Workspace controls.', { exact: true })).toBeVisible()
         }

@@ -44,6 +44,10 @@ export class ModelUsageService implements ModelUsageRecorder {
   }
 
   control(workspaceId: string) { return this.#control.read(workspaceId) }
+  controlFor(context: ActorContext) {
+    const state = this.control(context.workspaceId)
+    return { ...state, deployment: context.roleCode === 'administrator' ? state.deployment : null }
+  }
   updateControl(context: ActorContext, input: ModelUsageControlUpdate, key: string) { return this.#control.update(context, input, key) }
   canDispatch(workspaceId: string) { return this.#control.canDispatch(workspaceId) }
   automaticRetries(workspaceId: string) { return this.#control.automaticRetries(workspaceId) }
@@ -120,10 +124,9 @@ export class ModelUsageService implements ModelUsageRecorder {
       SELECT feature, SUM(${actualRequestSql}) AS requests, COALESCE(SUM(${knownTokensSql}), 0) AS knownTokens
       FROM model_usage_attempt a WHERE ${query.sql} GROUP BY feature ORDER BY requests DESC`).all(...query.args))
     const control = this.control(context.workspaceId)
-    const limits = [control.workspace.requests, control.deployment.requests].filter((value): value is number => value !== null)
     return modelUsageOverviewSchema.parse({ totals: { ...totals, unpricedRequests: totals.requests, cny: null },
       trend, features, coverage: 'server-direct-bridge-and-host', policy: { enabled: control.effective.enabled,
-        requests: limits.length === 0 ? null : Math.min(...limits), tokens: null, cny: null } })
+        requests: control.workspace.requests, tokens: null, cny: null } })
   }
 
   list(context: ActorContext, filter: ModelUsageFilter) {

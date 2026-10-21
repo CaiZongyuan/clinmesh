@@ -13,6 +13,7 @@ function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | '
   const requests: URL[] = []
   const writes: RequestInit[] = []
   let control = structuredClone(usageControl)
+  if (!administrator) control.deployment = null
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
     requests.push(url)
@@ -73,6 +74,12 @@ it('lets administrators persist a zero request quota and switch back to unlimite
   fireEvent.change(screen.getByLabelText('请求次数上限'), { target: { value: '-1' } })
   await user.click(screen.getByRole('button', { name: '保存工作区策略' }))
   expect(screen.getByRole('alert').textContent).toContain('请求次数必须是非负整数，或选择无限')
+  const limit = screen.getByLabelText('请求次数上限')
+  expect(limit.getAttribute('aria-invalid')).toBe('true')
+  const errorId = screen.getByRole('alert').id
+  expect(errorId).not.toBe('')
+  expect(limit.getAttribute('aria-describedby')?.split(' ')).toContain(errorId)
+  expect(limit.closest('[data-invalid]')?.contains(screen.getByRole('alert'))).toBe(true)
   expect(writes).toHaveLength(0)
   fireEvent.change(screen.getByLabelText('请求次数上限'), { target: { value: '0' } })
   await user.click(screen.getByRole('checkbox', { name: '启用模型生成' }))
@@ -159,8 +166,7 @@ it('applies filters to real overview and request queries, paginates, and keeps p
   expect(within(workspace).getAllByText('无限')).toHaveLength(4)
   expect(within(workspace).queryByRole('button', { name: '保存工作区策略' })).toBeNull()
   expect(screen.getByText('仅管理员可修改工作区控制。')).toBeTruthy()
-  const deployment = screen.getByRole('region', { name: '部署控制（只读）' })
-  expect(within(deployment).getByText('6')).toBeTruthy()
+  expect(screen.queryByRole('region', { name: '部署控制（只读）' })).toBeNull()
   expect(screen.getByText('部署已关闭自动重试')).toBeTruthy()
   expect(screen.getByRole('region', { name: '待办与恢复' }).textContent).toContain('2')
   await user.click(screen.getByRole('tab', { name: '计价说明' }))

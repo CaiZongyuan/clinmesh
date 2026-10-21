@@ -504,7 +504,7 @@ export class ClinicalDocumentQualityControl {
     } catch (error) {
       if (!current()) return { status: 'completed' }
       const deferred = model.recovery?.defer(event, error)
-      if (deferred?.status === 'ambiguous') finish({ ...pending, status: 'incomplete', errorCode: 'MODEL_TIMEOUT', failure: { stage, reason: 'timeout' }, notices: [...pending.notices, '?????????????????'] })
+      if (deferred?.status === 'ambiguous') finish({ ...pending, status: 'incomplete', errorCode: 'MODEL_TIMEOUT', failure: { stage, reason: 'timeout' }, notices: [...pending.notices, '模型请求结果未知，已停止自动重发。'] })
       if (deferred !== undefined) return deferred
       if (model.shutdownSignal.aborted && event.attempt < 3) return { status: 'retryable-failed' }
       const retrying = model.automaticRetries?.(event.workspaceId) !== false && error instanceof ChatCompletionsError

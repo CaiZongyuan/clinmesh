@@ -422,7 +422,7 @@ pnpm --filter @clinmesh/server db:migrate
 
 Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览展示 Server 直接调用、DSH bridge 调用及 Host 独立医生代问识别的请求、已知 Token、未知量、缺价费用、趋势、功能分布和授权最近请求；功能筛选提供“医生代问识别”，详情保留调用时的模型与阶段来源。计价未配置时显示未知，不能当作服务商实际账单；DSH 原生会话及其他插件仍在监控边界之外。Host 使用已有 `upstreamOrigin` 与 `bridgeSecret` 接入 Server 准入，不新增本地账本。权限与统计口径见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。
 
-“额度与策略”页签中，Workspace 管理员可停用或恢复本工作区的全部 ClinMesh 模型入口，设置累计请求次数上限或无限，并关闭自动重试；普通成员只读。页面显示部署政策、剩余请求、等待恢复的任务和最近拒绝原因。默认启用、请求无限、保留原有有界重试；零上限明确阻止新请求。Token 与人民币费用目前仍为无限。
+“额度与策略”页签中，Workspace 管理员可停用或恢复本工作区的全部 ClinMesh 模型入口，设置累计请求次数上限或无限，并关闭自动重试；普通成员只读自身工作区政策及生效状态。页面显示剩余请求、等待恢复的任务和最近拒绝原因，部署总上限及累计量仅管理员可只读查看，权限边界见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。默认启用、请求无限、保留原有有界重试；零上限明确阻止新请求。Token 与人民币费用目前仍为无限。
 
 部署维护者可设置 `CLINMESH_MODEL_CONTROL_PATH=.data/model-control.json`，文件路径相对 `.env` 所在仓库解析；文件由部署方管理，不进入 Git。配置示例如下，`requests: null` 表示无限：
 

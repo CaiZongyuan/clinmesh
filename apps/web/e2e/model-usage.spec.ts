@@ -108,6 +108,8 @@ test('administrators save model controls through Settings and members can only r
   await expect(workspace.getByRole('checkbox')).toHaveCount(0)
   await expect(workspace.getByRole('button', { name: '保存工作区策略' })).toHaveCount(0)
   const persisted = modelUsageControlSchema.parse(await (await page.request.get(`${browserApp.origin}/api/model-usage/control`)).json())
+  expect(persisted.deployment).toBeNull()
+  await expect(page.getByRole('region', { name: '部署控制（只读）' })).toHaveCount(0)
   expect(persisted.workspace).toMatchObject({ enabled: true, requests: null, automaticRetries: false, version: 3,
     requestsStartedAt: control.workspace.requestsStartedAt })
 })

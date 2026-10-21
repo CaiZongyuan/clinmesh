@@ -132,6 +132,8 @@
 
 - 模型传输引用的编号差异不能直接当作业务内容差异；回归同时覆盖同来源重复原句、不同来源同文和多个无效编号，验证解码后的等价去重、来源独立性及失败归属。句子引用的当前规则由[句子引用决策](../decisions/implemented/architecture/2026-10-19-recording-sentence-references.md)拥有。
 
+- 测试包装实际模型 Provider 时必须透传 `supportsRequestControl` 与 `supportsUsageAccounting` 能力，或直接注入实际 Provider；只包装 `completeJson` 却转发底层 hook 会让兼容层和底层重复预占同一次请求。格式修复回归应同时断言请求次数与业务结果，避免误判为输出校验失败。
+
 ## 参考目录、Synthea 与影像素材
 
 - `pnpm reference:sync` 固定写入默认路径 `.data/clinmesh-reference.sqlite`，不读取 `.env` 的 `CLINMESH_REFERENCE_DATABASE_PATH`；`.env` 指向自定义路径时会与同步结果分叉，出现"诊断药品正常、检验目录为空"（旧 Release 不含 `laboratory-cn`）。排查时直接查库：`reference_release` 表按 `release_id` 看 `laboratory_definition_count`。当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`，不要在 `.env` 手抄该 ID 制造双事实来源；运行中 Server 不热切换参考库，修复后必须重启。

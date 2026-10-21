@@ -34,10 +34,10 @@ async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit) {
       const { expectedVersion, ...policy } = update
       control = { ...control, workspace: { ...control.workspace, ...policy, version: expectedVersion + 1,
         requestsStartedAt: update.requests === null ? control.workspace.requestsStartedAt : '2026-10-20T00:00:00.000Z',
-        remaining: update.requests }, effective: { enabled: update.enabled && control.deployment.enabled,
-        automaticRetries: update.automaticRetries && control.deployment.automaticRetries } }
+        remaining: update.requests }, effective: { enabled: update.enabled && (control.deployment?.enabled ?? true),
+        automaticRetries: update.automaticRetries && (control.deployment?.automaticRetries ?? true) } }
     }
-    return Response.json(control)
+    return Response.json({ ...control, deployment: document.documentElement.dataset.usageAdministrator === 'true' ? control.deployment : null })
   }
   if (url.pathname === '/clinmesh/api/model-usage/requests') {
     document.documentElement.dataset.usageFilter = url.search

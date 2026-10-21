@@ -6,7 +6,7 @@ import { afterEach, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { signIn } from './fixtures/consultation.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
-import { modelUsageControlSchema, modelUsageListSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 
 const dispose: Array<() => Promise<void>> = []
@@ -97,7 +97,7 @@ it('persists administrator control with versioned idempotent writes and keeps me
   expect(initial.status).toBe(200)
   expect(await initial.json()).toMatchObject({
     workspace: { enabled: true, requests: null, automaticRetries: true, version: 1, requestsStartedAt: null, used: 0, reserved: 0, remaining: null },
-    deployment: { enabled: true, requests: null, automaticRetries: true, requestsStartedAt: null },
+    deployment: null,
     effective: { enabled: true, automaticRetries: true }, waiting: 0, inFlight: 0, lastRejection: null,
   })
   const input = { expectedVersion: 1, enabled: false, requests: 0, automaticRetries: false }
@@ -113,6 +113,24 @@ it('persists administrator control with versioned idempotent writes and keeps me
   expect((await write(admin, { ...input, expectedVersion: 2, workspaceId: 'workspace-other' })).status).toBe(400)
   await fixture.restart()
   expect(await (await read()).json()).toMatchObject({ workspace: { enabled: false, requests: 0, automaticRetries: false, version: 2, used: 0 } })
+})
+
+it('hides deployment ceilings and aggregate counters from members in control and overview responses', async () => {
+  const fixture = await setup({ modelUsageControl: { enabled: true, requests: 7, automaticRetries: false } })
+  await control(fixture, { requests: 20 })
+  fixture.runtime.database.driver.exec("UPDATE model_usage_control SET used = 3, reserved = 1 WHERE scope_id = 'deployment'")
+  for (const account of ['doctor@demo.clinmesh.local', 'registrar@demo.clinmesh.local']) {
+    const cookie = await signIn(fixture.runtime, account)
+    const response = await fixture.runtime.app.request('/api/model-usage/control', { headers: { cookie } })
+    expect(response.status).toBe(200)
+    const state = modelUsageControlSchema.parse(await response.json())
+    expect(state.deployment).toBeNull()
+    expect(state.workspace).toMatchObject({ requests: 20, used: 0, reserved: 0 })
+    expect(state.effective).toEqual({ enabled: true, automaticRetries: false })
+    const overview = modelUsageOverviewSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/overview', { headers: { cookie } })).json())
+    expect(overview.policy.requests).toBe(20)
+  }
+  expect((await control(fixture)).deployment).toMatchObject({ requests: 7, used: 3, reserved: 1, remaining: 3 })
 })
 
 it('refuses dispatch when persisted request counters are invalid even with unlimited policy', async () => {

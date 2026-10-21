@@ -62,7 +62,8 @@ async function fixture(account = 'doctor@demo.clinmesh.local', deployment?: Mode
   const post = (path: string, body: unknown, authorization = `Bearer ${secret}`) => runtime.app.request(path, {
     method: 'POST', headers: { authorization, 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const list = async () => modelUsageListSchema.parse(await (await runtime.app.request('/api/model-usage/requests?feature=doctor_delegation', { headers: { cookie: doctor } })).json())
-  const control = async (cookie = doctor) => modelUsageControlSchema.parse(await (await runtime.app.request('/api/model-usage/control', { headers: { cookie } })).json())
+  const control = async (cookie?: string) => modelUsageControlSchema.parse(await (await runtime.app.request('/api/model-usage/control', {
+    headers: { cookie: cookie ?? await signIn(runtime, 'admin@demo.clinmesh.local') } })).json())
   const policy = async (input: Partial<ModelUsagePolicyConfig>) => {
     const admin = await signIn(runtime, 'admin@demo.clinmesh.local')
     const current = (await control(admin)).workspace
@@ -243,9 +244,9 @@ it('keeps independent Host quota starting points through unlimited periods and d
   const workspaceStart = (await f.policy({ requests: 4 })).workspace.requestsStartedAt
   await dispatch()
   expect((await f.control()).workspace).toMatchObject({ used: 1, reserved: 0 })
-  expect((await f.control()).deployment.requestsStartedAt).toBeNull()
+  expect((await f.control()).deployment?.requestsStartedAt).toBeNull()
   await f.restart({ enabled: true, requests: 2, automaticRetries: true })
-  const deploymentStart = (await f.control()).deployment.requestsStartedAt
+  const deploymentStart = (await f.control()).deployment?.requestsStartedAt
   expect(deploymentStart).not.toBe(workspaceStart)
   await dispatch()
   await f.policy({ requests: null })

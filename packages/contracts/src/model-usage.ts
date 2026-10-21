@@ -159,7 +159,7 @@ const controlScopeSchema = modelUsagePolicyConfigSchema.required().extend({
   used: z.number().int().nonnegative().safe(), reserved: z.number().int().nonnegative().safe(), remaining: count,
 }).strict()
 export const modelUsageControlSchema = z.object({
-  workspace: controlScopeSchema, deployment: controlScopeSchema,
+  workspace: controlScopeSchema, deployment: controlScopeSchema.nullable(),
   effective: z.object({ enabled: z.boolean(), automaticRetries: z.boolean() }).strict(),
   waiting: z.number().int().nonnegative(), inFlight: z.number().int().nonnegative(),
   lastRejection: z.object({ code: modelUsageControlCodeSchema, scope: z.enum(['workspace', 'deployment']), at: z.iso.datetime() }).strict().nullable(),

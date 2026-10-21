@@ -403,7 +403,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       app.get('/api/model-usage/control', async context => {
         try {
           const session = await identity.resolveSessionContext(context.req.raw.headers)
-          return context.json(usage.control(session.actor.workspaceId))
+          return context.json(usage.controlFor(session.actor))
         } catch (error) { return apiErrorResponse(context, error) }
       })
       app.put('/api/model-usage/control', async context => {

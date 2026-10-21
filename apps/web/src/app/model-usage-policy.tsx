@@ -6,7 +6,7 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clinmesh/ui/components/card'
 import { Checkbox } from '@clinmesh/ui/components/checkbox'
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { ApiClientError } from './api-client.ts'
 import { updateModelUsageControl } from './model-usage-api.ts'
@@ -53,13 +53,13 @@ function WorkspaceControlForm({ scope, messages, pending, save }: {
       <FieldLabel htmlFor="model-requests-unlimited">{messages.requestsUnlimited}</FieldLabel></Field>
     <Field data-invalid={invalid} data-disabled={pending || unlimited}><FieldLabel htmlFor="model-request-limit">{messages.requestLimit}</FieldLabel>
       <Input id="model-request-limit" type="number" min="0" step="1" inputMode="numeric" aria-invalid={invalid}
-        aria-describedby="model-request-limit-description" disabled={pending || unlimited} value={requests}
+        aria-describedby={invalid ? 'model-request-limit-description model-request-limit-error' : 'model-request-limit-description'} disabled={pending || unlimited} value={requests}
         onChange={event => { setRequests(event.target.value); setInvalid(false) }} />
-      <FieldDescription id="model-request-limit-description">{messages.requestLimitDescription}</FieldDescription></Field>
+      <FieldDescription id="model-request-limit-description">{messages.requestLimitDescription}</FieldDescription>
+      {invalid ? <FieldError id="model-request-limit-error">{messages.invalidLimit}</FieldError> : null}</Field>
     <Field orientation="horizontal" data-disabled={pending}><Checkbox id="model-automatic-retries" checked={automaticRetries} disabled={pending} onCheckedChange={setAutomaticRetries} />
       <FieldLabel htmlFor="model-automatic-retries">{messages.retriesEnabled}</FieldLabel></Field>
     <FieldDescription>{messages.retriesDescription}</FieldDescription>
-    {invalid ? <Alert variant="destructive"><AlertDescription>{messages.invalidLimit}</AlertDescription></Alert> : null}
     <Button type="submit" disabled={pending}>{pending ? messages.savingPolicy : messages.savePolicy}</Button>
   </FieldGroup></form>
 }
@@ -83,9 +83,9 @@ export function ModelUsagePolicy({ data, locale, administrator, saved }: {
       {mutation.isSuccess ? <p role="status">{messages.savedPolicy}</p> : null}
       <p className="text-muted-foreground">{messages.futurePolicy}</p>
     </CardContent></Card>
-    <Card role="region" aria-label={messages.deploymentControl}><CardHeader><CardTitle>{messages.deploymentControl}</CardTitle></CardHeader><CardContent>
+    {data.deployment === null ? null : <Card role="region" aria-label={messages.deploymentControl}><CardHeader><CardTitle>{messages.deploymentControl}</CardTitle></CardHeader><CardContent>
       <ScopeSummary scope={data.deployment} locale={locale} messages={messages} />
-    </CardContent></Card>
+    </CardContent></Card>}
     <Card role="region" aria-label={messages.recovery}><CardHeader><CardTitle>{messages.recovery}</CardTitle>
       <CardDescription>{messages.recoveryDescription}</CardDescription></CardHeader><CardContent className="flex flex-col gap-4">
       <dl className="grid gap-4 sm:grid-cols-2"><div><dt>{messages.waiting}</dt><dd>{data.waiting}</dd></div>
