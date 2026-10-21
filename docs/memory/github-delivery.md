@@ -6,6 +6,8 @@
 
 ## 连接、权限与 PR 操作
 
+- Windows 上用 Python 为 `gh --body-file` 准备正文时，`Path.write_text` 默认可能写入 CRLF，GitHub 读回正文也会保留这些换行。写入时显式使用 `newline='\n'`，一致性校验时统一 CRLF／LF；仅换行不同不能当作发布丢失或据此重复创建 Issue。仍须分别核对正文内容、标签、父子关系与原生阻塞依赖。
+
 - 旧版 `gh pr edit` 可能因 GraphQL 请求已退役的 `projectCards` 字段而失败。已有 PR 正文更新授权时，使用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> --input <json-file>` 的 REST 入口，JSON 保留实际换行；写入后核对正文、draft 和 head，不把工具兼容问题变成新的内容审批或安装流程。
 
 - 排查 FlClash／TUN 环境的 GitHub 连接时，`198.18.0.0/15` 可能是正常的 Fake-IP；仅清除命令行代理环境变量不能证明绕过了 TUN。分别比较国内与境外 HTTPS、代理 CONNECT 和 TLS 握手阶段，再判断节点、分流或系统拦截，不把握手前失败归为 GitHub 账号权限问题。
