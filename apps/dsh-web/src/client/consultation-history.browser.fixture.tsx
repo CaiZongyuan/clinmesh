@@ -12,6 +12,7 @@ const documentContent: ClinicalDocumentContent = {
   physicalExamination: '', disposition: '', followUp: '',
 }
 const detail: DoctorCaseDetail = {
+  registrationNumber: null,
   allergies: [], caseId: 'synthetic-case', encounter: { id: 'synthetic-encounter', status: 'in-progress', versionId: '1' },
   patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', gender: 'female', birthDate: '1990-01-01', synthetic: true, versionId: '1' },
   presentation: null, priorFacts: [], status: 'first-visit', taskId: 'synthetic-task', taskVersion: '1',

@@ -7,7 +7,7 @@ import {
 } from '../infrastructure/ai/openai-chat-completions.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
-const stageSchema = z.enum(['history-selection', 'catalog-selection', 'generation', 'verification'])
+const stageSchema = z.enum(['history-selection', 'history-consolidation', 'catalog-selection', 'generation', 'verification'])
 export type DoctorRecommendationExecutionStage = z.infer<typeof stageSchema>
 const nameSchema = z.string().min(1).max(256)
 const dependencySchema = z.object({ stage: stageSchema, batchId: nameSchema }).strict()

@@ -28,6 +28,8 @@
 
 - PR 审查的 three-dot diff 以 merge-base 确定改动范围，合并冲突则以当前远端目标分支 tip 判断。PR 元数据中的 base SHA 与远端分支 tip 不一致时，用 `git ls-remote` 或远端 ref API 核对并 fetch 最新目标分支，再以 `git merge-tree --write-tree <target-tip> <head>` 验证；不能把旧 base 与 head 合并成功当作当前可合并的证据。
 
+- 有合并冲突的 PR（`mergeable: CONFLICTING`、`mergeStateStatus: DIRTY`）不会运行任何 `pull_request` 工作流，表象是推送后 CI 完全静默。先核对 PR mergeable 状态再排查工作流配置、配额或 draft 属性；消除冲突（集成目标分支并推送）后工作流即恢复。查询提交的 check runs 必须传完整 commit SHA：`gh api repos/.../commits/HEAD/...` 的 HEAD 由服务端解析为默认分支而非 PR head，会产生误读；本地猜 SHA 也会得到无意义的空结果。
+
 - 分支范围以当前 canonical issue 正文为准；不能仅凭分支名或提交主题判定串票。整理旧分支前先核对 issue 全文、关联 PR 状态和远端提交，避免拆散已经批准的一次集成交付。
 
 - 本地 main 落后且子模块显示 `M` 时，先比较 main 记录、子模块实际 HEAD、远端 main 记录，并检查子模块内部是否干净。实际 HEAD 已与远端一致时，这是版本指针差异，不能称为用户源码改动；可快进 main 后在当前目录开分支，不应仅因此创建额外 worktree。

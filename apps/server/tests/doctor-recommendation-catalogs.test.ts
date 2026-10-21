@@ -2,7 +2,7 @@ import { expect, it } from 'vitest'
 import { projectRecommendationCatalogs, type DoctorRecommendationCatalogs } from '../src/application/doctor-recommendation-catalogs.ts'
 import { normalizeDoctorDiagnosisRecommendation } from '../src/application/doctor-diagnosis-recommendations.ts'
 
-it('projects complete diagnosis identities for the model while retaining the original provenance for normalization', () => {
+it('projects coding identities for the model while retaining the original provenance for normalization', () => {
   const catalogs: DoctorRecommendationCatalogs = {
     diagnoses: {
       local: [{
@@ -31,10 +31,10 @@ it('projects complete diagnosis identities for the model while retaining the ori
     }],
     reference: [{
       id: 'reference-hypertension', code: 'I10', display: '原发性高血压',
-      domain: 'diagnosis', status: 'active', system: 'http://hl7.org/fhir/sid/icd-10', version: '2022',
+      system: 'http://hl7.org/fhir/sid/icd-10', version: '2022',
     }, {
       id: 'retired-reference', code: 'R50.9', display: '停用的合成诊断',
-      domain: 'diagnosis', status: 'inactive', system: 'http://hl7.org/fhir/sid/icd-10', version: '2021',
+      system: 'http://hl7.org/fhir/sid/icd-10', version: '2021',
     }],
   })
   expect(catalogs).toEqual(original)

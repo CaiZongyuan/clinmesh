@@ -1210,8 +1210,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['registrar'],
-    summary: 'Register a patient for an outpatient visit',
-    version: 1,
+    summary: 'Register a patient with a durable dated outpatient number; REGISTRATION_NUMBER_STATE_INVALID, REGISTRATION_NUMBER_EXHAUSTED, or REGISTRATION_NUMBER_AUTHORITY_RETIRED requires administrator recovery, not a new intent or a guessed number',
+    version: 2,
   },
   {
     cliPath: ['registration', 'synthetic-case', 'list'],
@@ -1248,8 +1248,8 @@ const operationDefinitions = [
     },
     risk: 'write',
     roles: ['administrator', 'registrar'],
-    summary: 'Start an outpatient visit from a ready Synthetic Case Instance',
-    version: 1,
+    summary: 'Start an outpatient visit from a ready Synthetic Case Instance using the shared durable number allocator; REGISTRATION_NUMBER_STATE_INVALID, REGISTRATION_NUMBER_EXHAUSTED, or REGISTRATION_NUMBER_AUTHORITY_RETIRED requires administrator recovery, not a new intent or a guessed number',
+    version: 2,
   },
   {
     cliPath: ['triage', 'queue', 'list'],
@@ -1305,8 +1305,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'List the doctor work queue; presentation is null when no triage record exists',
-    version: 2,
+    summary: 'List the doctor work queue with the current Registration registrationNumber, or null for an unrecorded legacy number; presentation is null when no triage record exists',
+    version: 3,
   },
   {
     cliPath: ['doctor', 'completed-cases', 'list'],
@@ -1362,8 +1362,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['outpatient-doctor'],
-    summary: 'Read the active doctor case, incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, succeeded, failed or unknown with the original deadline and safe error code, including CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; qualityControl binds current ten-field content and saved evidence to nonblocking completion and verification prompts',
-    version: 13,
+    summary: 'Read the active doctor case with its current Registration registrationNumber (null when unrecorded), incomplete draft and consultationRecording with hasSavedDraft, persistent control version, progress, sourceResults, safe recording failures, fragment ownership and fact-level sources; consultation.replyAttempt exposes executing, succeeded, failed or unknown with the original deadline and safe error code, including CONSULTATION_CASE_NOT_FOUND and CONSULTATION_PERSONA_OUTDATED; source validation precedes persistence, source meaning and recording changes are checked by existing qualityControl; legacy verification counts are zero and issues empty; presentation is null when no triage record exists; qualityControl binds current ten-field content and saved evidence to nonblocking completion and verification prompts',
+    version: 14,
   },
   {
     cliPath: ['doctor', 'document-quality', 'get'],

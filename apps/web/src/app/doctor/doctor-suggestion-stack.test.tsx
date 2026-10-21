@@ -23,6 +23,7 @@ const baseDocument: ClinicalDocumentContent = {
 }
 
 const detail = doctorCaseDetailSchema.parse({
+  registrationNumber: null,
   caseId: 'case-stack', taskId: 'task-stack', taskVersion: '1', status: 'first-visit',
   patient: { id: 'patient-stack', identifier: 'CM-SYN-STACK', name: '合成建议栈患者', birthDate: '1988-03-16',
     gender: 'female', synthetic: true, versionId: '1' },

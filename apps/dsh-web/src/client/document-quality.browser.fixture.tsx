@@ -14,6 +14,7 @@ const content: ClinicalDocumentContent = {
   assessment: 'Agent新增：确诊合成疾病，尚无来源。', disposition: '进一步核实病史。', followUp: '加重时及时就诊。',
 }
 const detail: DoctorCaseDetail = {
+  registrationNumber: null,
   allergies: [], caseId: 'quality-case', encounter: { id: 'quality-encounter', status: 'in-progress', versionId: '1' },
   patient: { id: 'quality-patient', identifier: 'SYNTHETIC', name: '合成患者', gender: 'female', birthDate: '1990-01-01', synthetic: true, versionId: '1' },
   presentation: null, priorFacts: [], status: 'first-visit', taskId: 'quality-task', taskVersion: '1',

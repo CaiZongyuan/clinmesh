@@ -44,6 +44,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [门诊号按日期持久发号与一致展示](2026-10-20-registration-numbering.md) | `implemented` |
 | [医生主诉展示同步与分诊差异质控优化](2026-10-20-current-chief-complaint.md) | `implemented` |
 | [同输入建议复用、患者回答去重与模型任务阶段恢复](2026-10-19-model-request-reuse-recovery.md) | `implemented` |
 | [自动记录语义检查统一归病历质控](2026-10-19-recording-quality-consolidation.md) | `implemented` |
@@ -70,6 +71,7 @@
 | [主 Agent 统筹的开发方式](2026-10-16-primary-agent-development-workflow.md) | `implemented` |
 | [文档归属与结构整理](2026-10-19-documentation-ownership.md) | `implemented` |
 | [共享工程资料与本机 Agent 目录分离](2026-10-19-repository-materials.md) | `implemented` |
+| [诊疗建议信封预算与分批瘦身](2026-10-20-recommendation-envelope-budget.md) | `implemented` |
 | [医生 Agent 临床助手](2026-10-08-doctor-agent-assistant.md) | `implemented` |
 
 ## Issue 与交付

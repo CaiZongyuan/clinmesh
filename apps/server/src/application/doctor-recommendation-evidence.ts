@@ -65,15 +65,19 @@ export function packDoctorRecommendationHistory(caseId: string, history: DoctorC
       })
     }
     let entries: PackedEntry[] = []
+    // 单包在既有 12,000 字符合同（证据 schema 上限）之上增加 UTF-8 字节预算：请求信封按字节约束，
+    // 中文内容的字符计数会低估 3 倍体积；纯 ASCII 内容两者基本等价。
+    const packByteLimit = 12 * 1024
+    const withinBudget = (text: string) => text.length <= 12_000 && Buffer.byteLength(text) <= packByteLimit
     const completeEntries = group.entries.flatMap(entry => {
-      if (serialize([entry]).length <= 12_000) return [entry]
+      if (withinBudget(serialize([entry]))) return [entry]
       if (group.required) {
         const { clinical, record, ...identity } = entry
         const parts = Object.entries(clinical ?? record ?? {}).map(([field, value]) => ({
           ...identity, fieldPath: `${clinical === undefined ? 'record' : 'clinical'}.${field}`,
           ...(clinical === undefined ? { record: { [field]: value } } : { clinical: { [field]: value } }),
         }))
-        if (parts.every(part => serialize([part]).length <= 12_000)) return parts
+        if (parts.every(part => withinBudget(serialize([part])))) return parts
       }
       if (result.missingInformation.length === 0) {
         result.missingInformation.push('一条完整历史记录或临床字段超过建议证据预算，无法安全拆分；请核查来源资料。')

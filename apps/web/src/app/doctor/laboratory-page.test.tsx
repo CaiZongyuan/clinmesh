@@ -25,6 +25,7 @@ const service: CaseLaboratoryCatalogSearch['items'][number] = {
   }, specimen: { code: 'blood', display: '静脉血' }, serviceKind: 'laboratory', tatMinutes: 180, version: 1,
 }
 const detail: DoctorCaseDetail = {
+  registrationNumber: null,
   allergies: [], caseId: 'synthetic-case', consultation: { turns: [], version: 1 },
   encounter: { id: 'synthetic-encounter', versionId: '1' },
   laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [] },

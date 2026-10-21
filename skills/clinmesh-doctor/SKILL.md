@@ -9,6 +9,8 @@ Read [`../clinmesh-shared/SKILL.md`](../clinmesh-shared/SKILL.md) first. Read [r
 
 Start from the queue and current case DTO; it owns the responsible doctor, current versions, frozen dialogue turns and visible evidence. On an `awaiting-doctor` Synthetic Case, the first consultation question also starts the first visit and binds this Practitioner Role as responsible doctor. Re-read the case after every write because independent lifecycles may advance different resources.
 
+Use `registrationNumber` from the queue or case DTO to identify this visit. A `null` value means the legacy visit number was not recorded; report it as missing. `patient.identifier` identifies the patient and cannot replace the visit number. Preserve the full number when reading, displaying, copying or searching it, including historical formats.
+
 ```bash
 clinmesh doctor queue list
 clinmesh doctor queue list --view waiting

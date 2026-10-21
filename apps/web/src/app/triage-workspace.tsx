@@ -13,6 +13,7 @@ import { CheckIcon, CircleAlertIcon, HeartPulseIcon, UserRoundCheckIcon } from '
 import { useMemo, useState } from 'react'
 import { getTriageQueue, newIdempotencyKey, recordTriage } from './api-client.ts'
 import { PaginationControls } from './pagination-controls.tsx'
+import { RegistrationNumber } from './registration-number.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -341,9 +342,9 @@ export function TriageWorkspace({ locale, session }: TriageWorkspaceProps): Reac
               <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3">
                 <div className="min-w-0">
                   <div className="truncate font-medium">{selectedCase.patient.name}</div>
-                  <div className="text-sm text-muted-foreground">{selectedCase.registrationNumber}</div>
+                  <div className="text-sm text-muted-foreground"><RegistrationNumber key={selectedCase.caseId} messages={messages} registrationNumber={selectedCase.registrationNumber} /></div>
                 </div>
-                <Badge variant="outline">{selectedCase.patient.identifier}</Badge>
+                <Badge className="h-auto max-w-full whitespace-normal break-all" variant="outline">{messages.patientNumber}：{selectedCase.patient.identifier}</Badge>
               </div>
               <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
                 <div><dt className="text-muted-foreground">{messages.department}</dt><dd className="font-medium">{locale === 'zh-CN' ? selectedCase.department.nameZh : selectedCase.department.nameEn}</dd></div>
@@ -426,24 +427,24 @@ function CaseRow({
   selected: boolean
   selectLabel: string
 }): React.JSX.Element {
+  const messages = getWorkspaceMessages(locale)
   return (
-    <Button
-      aria-label={`${selectLabel} ${item.patient.name}`}
-      data-agent-selection={item.caseId}
-      className="h-auto min-h-16 w-full justify-between gap-3 px-3 py-2 text-left"
-      onClick={onSelect}
-      role="listitem"
-      type="button"
-      variant={selected ? 'secondary' : 'outline'}
-    >
-      <span className="min-w-0">
-        <span className="block truncate font-medium">{item.patient.name}</span>
-        <span className="block truncate text-xs text-muted-foreground">{item.registrationNumber}</span>
-      </span>
-      <span className="shrink-0 text-xs text-muted-foreground">
-        {new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(item.arrivedAt))}
-      </span>
-    </Button>
+    <div aria-label={`${selectLabel} ${item.patient.name}`} className="flex min-w-0 flex-col gap-1" role="listitem">
+      <Button
+        aria-label={`${selectLabel} ${item.patient.name}`}
+        data-agent-selection={item.caseId}
+        className="h-auto min-h-12 w-full justify-between gap-3 px-3 py-2 text-left"
+        onClick={onSelect}
+        type="button"
+        variant={selected ? 'secondary' : 'outline'}
+      >
+        <span className="min-w-0 truncate font-medium">{item.patient.name}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(item.arrivedAt))}
+        </span>
+      </Button>
+      <div className="px-3 text-xs text-muted-foreground"><RegistrationNumber messages={messages} registrationNumber={item.registrationNumber} /></div>
+    </div>
   )
 }
 

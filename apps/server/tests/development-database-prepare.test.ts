@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { prepareDevelopmentDatabases } from '../src/development-database-prepare.ts'
 import {
+  expectedSchemaVersion,
   openClinMeshDatabase,
   verifyMigrations,
 } from '../src/infrastructure/sqlite/database.ts'
@@ -45,12 +46,12 @@ describe('development database preparation', () => {
       databasePath,
       referenceDatabasePath,
     })).resolves.toMatchObject({
-      operational: { schemaVersion: 76 },
+      operational: { schemaVersion: expectedSchemaVersion() },
       reference: { schemaVersion: 10 },
     })
 
     const operational = openClinMeshDatabase({ busyTimeoutMs: 5_000, databasePath })
-    expect(verifyMigrations(operational)).toMatchObject({ schemaVersion: 76 })
+    expect(verifyMigrations(operational)).toMatchObject({ schemaVersion: expectedSchemaVersion() })
     operational.close()
     const reference = openReferenceDatabase({
       busyTimeoutMs: 5_000,

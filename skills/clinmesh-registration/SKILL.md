@@ -24,4 +24,8 @@ clinmesh registration synthetic-case list --search <name-or-mrn>
 clinmesh registration synthetic-case start --input @case-start.json --idempotency-key <key>
 ```
 
-The ordinary and Synthetic Case paths converge on the same Registration, Encounter, and triage Queue Task. After a conflict, refresh the Synthetic Case queue before forming a new intent. Registration work is complete only when `registration list` returns those references; hand them to a triage-nurse Grant and stop acting as registrar.
+The ordinary and Synthetic Case paths converge on the same Registration, Encounter, and triage Queue Task. After a conflict, refresh the Synthetic Case queue before forming a new intent.
+
+`registrationNumber` identifies this outpatient visit; `patient.identifier` identifies the patient. After either registration command, including an idempotent replay, use its returned `registrationId` or `encounterId` to find the matching row in `registration list`, paging as needed. Command receipts supply those references; the matching list row supplies `registrationNumber`. Registration work is complete when that row confirms the visit; hand its references and complete number to a triage-nurse Grant and stop acting as registrar. Keep the date and full serial value, including historical formats.
+
+For `REGISTRATION_NUMBER_STATE_INVALID`, `REGISTRATION_NUMBER_EXHAUSTED`, or `REGISTRATION_NUMBER_AUTHORITY_RETIRED`, stop issuance and ask the administrator to preserve and verify the authority database using the [storage and recovery contract](../../docs/architecture/storage.md#94-标识符). Keep the original intent and key for retry after recovery. Do not replace the date, manufacture a number, reset the Scenario, or send a new intent to bypass the error.
