@@ -1,6 +1,6 @@
 import { dshDefaultModel, decodeModelRoute, modelBridgeAccountingMediaType, modelBridgeFrameSchema,
   modelBridgeErrorSchema, modelBridgeFirstTextHeader, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
-import { mergeModelTokenUsage, unknownModelTokenUsage, type ModelTokenUsage, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
+import { mergeModelTokenUsage, unknownModelTokenUsage, type ModelTokenUsage, type ModelUsageConfiguration, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import { beginChatCompletionUsage, settleChatCompletionUsage, ChatCompletionRequestControlError, invokeChatCompletionRequestControl, ChatCompletionsError, StructuredOutputValidationError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
 import { z, ZodError } from 'zod'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -88,6 +88,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         })
         const body = attemptId === undefined ? serialized : JSON.stringify({ ...completionPayload, attemptId })
         let knownUsage: ModelTokenUsage = unknownModelTokenUsage
+        let knownConfiguration: ModelUsageConfiguration | undefined
         const observation: { dispatch: NonNullable<ModelUsageOutcome['dispatch']> } = { dispatch: 'unknown' }
         let settled = false
         try {
@@ -114,8 +115,9 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
             if (attemptId === undefined || parsed.attemptId !== attemptId) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the attempt identity')
             if (parsed.type === 'usage') {
               knownUsage = mergeModelTokenUsage(knownUsage, parsed.usage)
+              knownConfiguration = parsed.configuration ?? knownConfiguration
               observation.dispatch = 'dispatched'
-              invokeChatCompletionRequestControl(() => control?.usageRecorder?.checkpoint(parsed.attemptId, knownUsage))
+              invokeChatCompletionRequestControl(() => control?.usageRecorder?.checkpoint(parsed.attemptId, knownUsage, knownConfiguration))
             }
             else terminal = parsed.type === 'result' ? { value: parsed.result, status: 200 }
               : { value: parsed.error, status: parsed.httpStatus }
@@ -159,8 +161,8 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
           if (!unknownResult) invokeChatCompletionRequestControl(control?.onRequestComplete)
           settled = true
           if (control !== undefined) settleChatCompletionUsage(control, attemptId, accounting === undefined
-            ? { status: responseStatus >= 400 ? 'failed' : 'succeeded', dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus }
-            : { ...withoutAttemptIdentity(accounting), dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus })
+            ? { ...knownConfiguration, status: responseStatus >= 400 ? 'failed' : 'succeeded', dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus }
+            : { ...knownConfiguration, ...withoutAttemptIdentity(accounting), dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus })
           if (unknownResult) throw new ChatCompletionsError(failure.success && failure.data.error === 'MODEL_TIMEOUT'
             ? 'AI_TIMEOUT' : 'AI_REQUEST_FAILED', 'The DSH model request outcome is unknown')
           if (responseStatus >= 400) {
@@ -195,7 +197,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
             ...(firstText?.success ? { firstTextMs: firstText.data } : {}) }
         } catch (error) {
           if (!settled && control !== undefined) settleChatCompletionUsage(control, attemptId, {
-            status: callerSignal?.aborted ? 'cancelled' : 'unknown', dispatch: observation.dispatch, usage: knownUsage,
+            ...knownConfiguration, status: callerSignal?.aborted ? 'cancelled' : 'unknown', dispatch: observation.dispatch, usage: knownUsage,
           })
           throw error
         }

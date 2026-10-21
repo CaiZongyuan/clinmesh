@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { modelTokenUsageSchema, modelUsageOutcomeSchema } from './model-usage.ts'
+import { modelTokenUsageSchema, modelUsageConfigurationSchema, modelUsageOutcomeSchema } from './model-usage.ts'
 
 export const modelBridgePath = '/clinmesh-model-bridge'
 export const modelBridgeFirstTextHeader = 'x-clinmesh-model-first-text-ms'
@@ -55,7 +55,8 @@ export const modelBridgeErrorSchema = z.discriminatedUnion('error', [
 
 /** Only a trusted Server attempt can negotiate incremental, body-free usage metadata. */
 export const modelBridgeFrameSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('usage'), attemptId: z.string().uuid(), usage: modelTokenUsageSchema }).strict(),
+  z.object({ type: z.literal('usage'), attemptId: z.string().uuid(), usage: modelTokenUsageSchema,
+    configuration: modelUsageConfigurationSchema.optional() }).strict(),
   z.object({ type: z.literal('result'), attemptId: z.string().uuid(), result: modelBridgeResponseSchema }).strict(),
   z.object({ type: z.literal('error'), attemptId: z.string().uuid(), error: modelBridgeErrorSchema,
     httpStatus: z.number().int().min(400).max(599) }).strict(),

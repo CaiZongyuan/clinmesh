@@ -66,6 +66,9 @@ async function host() {
   const ctx = {
     agentDefaultModel: { currentSelection: () => route },
     llm: {
+      async prepareCall(config: Parameters<HostContext['llm']['prepareCall']>[0]) {
+        return { config, stream: (options: GenerateOptions) => this.stream(options) }
+      },
       listModels: async (provider: string) => {
         if (!available) throw new Error('Synthetic catalog unavailable')
         return [{ provider, id: 'same-model', name: 'Synthetic model' }]

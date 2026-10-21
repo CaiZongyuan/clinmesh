@@ -37,9 +37,11 @@ type HostContext = Parameters<typeof createModelBridgeHandler>[0]
 type StreamChunk = ReturnType<HostContext['llm']['stream']> extends AsyncIterable<infer Chunk> ? Chunk : never
 const bridgeSecret = 'synthetic-model-bridge-secret-at-least-32-characters'
 const bridgeRoute = { provider: 'synthetic-provider', model: 'synthetic-actual' }
-async function host(stream: HostContext['llm']['stream'], catalogAvailable = true) {
+async function host(stream: HostContext['llm']['stream'], catalogAvailable = true, maxTokens?: number) {
   const bridge = createModelBridgeHandler({
-    llm: { listModels: async () => catalogAvailable ? [{ id: bridgeRoute.model }] : [], stream },
+    llm: { listModels: async () => catalogAvailable ? [{ id: bridgeRoute.model }] : [], stream,
+      prepareCall: async (config: Parameters<HostContext['llm']['prepareCall']>[0]) => ({
+        config: { ...config, ...(maxTokens === undefined ? {} : { maxTokens }) }, stream }) },
     agentDefaultModel: { currentSelection: () => bridgeRoute },
   } as unknown as HostContext, bridgeSecret, () => 'default')
   const server = createServer(bridge.handler)
@@ -368,7 +370,7 @@ it('recovers a crash snapshot taken after a usage frame but before terminal sett
     await finish
     yield { type: 'text-delta', index: 0, text: JSON.stringify(persona) }
     yield { type: 'finish', reason: { kind: 'stop' } }
-  })
+  }, true, 4096)
   const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: encodeModelRoute(bridgeRoute),
     chatCompletionsProvider: new DshModelProvider({ ...bridge, fetch: async (url, init) => {
       const response = await fetch(url, init)
@@ -384,7 +386,7 @@ it('recovers a crash snapshot taken after a usage frame but before terminal sett
     await firstUsage
     const read = async () => modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
     const inFlight = await read()
-    expect(inFlight.items[0]).toMatchObject({ status: 'in-flight', endedAt: null })
+    expect(inFlight.items[0]).toMatchObject({ status: 'in-flight', endedAt: null, outputLimit: 4096 })
     // Restore only bytes durable while the stream is still open; no terminal/catch can populate this snapshot.
     const snapshot = join(fixture.directory, 'crash-snapshot.sqlite')
     await fixture.runtime.database.driver.backup(snapshot)
@@ -393,7 +395,7 @@ it('recovers a crash snapshot taken after a usage frame but before terminal sett
     await fixture.restart(snapshot)
     const recovered = await read()
     expect(recovered.items[0]).toMatchObject({ id: inFlight.items[0]!.id, status: 'unknown', dispatch: 'dispatched',
-      usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 } })
+      outputLimit: 4096, usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 } })
     expect(dispatched).toBe(1)
   } finally { release(); await running.catch(() => {}) }
 })
