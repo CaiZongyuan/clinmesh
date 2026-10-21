@@ -146,7 +146,11 @@ Report Acknowledgement 是按报告版本独立保存的领域事实，只能由
 
 住院由独立 `InpatientService` 通过共享 CommandExecutor 执行，不借用 `outpatient_case`、门诊 Registration 或门诊支付外键。登记输入固定当次受信 context 的 `expectedEpoch`，仅作为事务前置断言，不能选择活动 Epoch。每次登记创建独立住院号、`Encounter.class=IMP` 和 Account；`registered` 对应标准 `planned`，接诊后为 `admitted` / `in-progress`。行政、财务及病案状态分别保存，不把它们合并为 Encounter.status。住院证以 ServiceRequest 记录，转收后完成，不能重复使用；零预交金不创建资金交易，正数以安全整数分形成独立交易。重试由 Command receipt 去重。
 
-Scenario 提供内科和外科两个独立 Organization、病区、病房与各三张床位。住院医生与病区护士有分别绑定两科的 Practitioner Role，服务端按受信 Organization 和病区 Location 限定读写；管理员岗位只控制场景。床位占用保存起止时间，活动床位与活动住院各有唯一约束。接诊、转床与互换床位同时更新占用事实及 Encounter.location 历史；任一侧版本、投影或审计失败则整体回滚。跨科转移属于独立转科流程。
+Scenario 默认提供一个“住院科”、一个“住院病区”、一间病房与三张床位，沿用 `organization-inpatient-medicine`、`ward-general` 等稳定标识；住院医生与病区护士各有一个默认 Practitioner Role。目录以 `acceptingAdmissions` 区分新入院目标，新的直接入院、转院登记及新签发住院证仅接受默认病区，其他病区返回 `INPATIENT_WARD_UNAVAILABLE`；已签发住院证继续按原患者及目标病区转收，原幂等键优先重放，不重复收费。服务端仍按受信 Organization 和病区 Location 限定读写，管理员岗位只控制场景。
+
+旧库的病区名称、资源、岗位、患者归属、床位占用、费用、审核归档及原回执完整保留；启动不合并历史病区、不自动转科或停嘱。目录保留旧病区并标记其不接收新登记，原岗位仍负责既有住院与转科任务。身份响应的可选 `locationName` 取自当前 Workspace/Epoch 的权威 FHIR Location，位置缺失不移除原岗位或改变 Actor Context。收敛默认配置的取舍见[单住院科与旧上下文保留](../decisions/implemented/simplification/2026-10-21-single-inpatient-default.md)。
+
+床位占用保存起止时间，活动床位与活动住院各有唯一约束。接诊、转床与互换床位同时更新占用事实及 Encounter.location 历史；任一侧版本、投影或审计失败则整体回滚。跨科转移属于独立转科流程；多病区责任边界通过显式双病区测试环境验证。
 
 登记时仅在能确定唯一合成病例来源时固定内部 `source_case_id`，它引用同 Workspace/Epoch 的 synthetic_case_materialization。门诊转收必须与住院证的患者及来源 Encounter 一致；直接登记遇到多个来源时要求显式指定来源 Encounter，手工建档且无来源时保持空值。该私有关联不进入临床 DTO；后续检查不能从无来源患者制造合成事实。
 
