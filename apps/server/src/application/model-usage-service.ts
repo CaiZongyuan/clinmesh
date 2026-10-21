@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import {
   modelUsageAttemptSchema, modelUsageContextSchema, modelUsageFeatureSchema,
@@ -42,7 +42,7 @@ export class ModelUsageService implements ModelUsageRecorder {
   begin(input: Parameters<ModelUsageRecorder['begin']>[0], reserve?: () => void): string {
     const context = modelUsageContextSchema.parse(input.context)
     const record = modelUsageAttemptSchema.parse({
-      id: randomUUID(), context, feature: modelUsageFeatureSchema.parse(input.feature),
+      id: uuidv7(), context, feature: modelUsageFeatureSchema.parse(input.feature),
       provider: input.provider, requestedModel: input.model, actualModel: null,
       reasoningEffort: input.reasoningEffort ?? null, outputLimit: input.outputLimit,
       kind: input.kind, status: 'in-flight', startedAt: new Date().toISOString(), endedAt: null,
