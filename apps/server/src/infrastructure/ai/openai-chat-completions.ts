@@ -58,7 +58,7 @@ export class StructuredOutputValidationError extends Error {
 
 /** Control failures must never become provider retry or format-repair failures. */
 export class ChatCompletionRequestControlError extends Error {
-  constructor(cause: unknown) {
+  constructor(cause: unknown, readonly requestKind?: 'initial' | 'format-repair' | 'rate-limit-retry') {
     super('The model request was stopped by its execution control', { cause })
     this.name = 'ChatCompletionRequestControlError'
   }
@@ -76,7 +76,7 @@ export function beginChatCompletionUsage(input: Pick<JsonChatCompletionInput, 'u
     if (input.usageRecorder === undefined) { reserve(); return undefined }
     if (input.usageContext === undefined) throw new Error('Trusted model usage context is required')
     return input.usageRecorder.begin({ ...metadata, context: input.usageContext, feature: input.schemaName }, reserve)
-  } catch (cause) { throw new ChatCompletionRequestControlError(cause) }
+  } catch (cause) { throw new ChatCompletionRequestControlError(cause, metadata.kind) }
 }
 
 export function settleChatCompletionUsage(input: Pick<JsonChatCompletionInput, 'usageRecorder'>, attemptId: string | undefined,
