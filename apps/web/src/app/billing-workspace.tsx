@@ -84,9 +84,14 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     chargeItemId: selectedCharge?.chargeItemId,
     identity: latestView.current,
     revision: selectionRevision.current,
+    scope: agentViewRevision({ scope }),
   })
+  const paymentContexts = useRef<Partial<Record<'confirm' | 'preview' | 'recover', ReturnType<typeof paymentMutationContext>>>>({})
   const ownsPaymentResult = (context: ReturnType<typeof paymentMutationContext> | undefined) =>
     context?.identity === latestView.current && context.revision === selectionRevision.current
+  const displaysPaymentResult = (context: ReturnType<typeof paymentMutationContext> | undefined) =>
+    context?.chargeItemId !== undefined && context.chargeItemId === selectedCharge?.chargeItemId
+      && context.scope === agentViewRevision({ scope }) && context.revision === selectionRevision.current
   const refreshBilling = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['billing-queue', ...scope] }),
@@ -98,7 +103,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     onMutate: (paymentId: string) => {
       const attempt = bill.data?.payments.find(item => item.paymentId === paymentId)
       const charge = bill.data?.charges.find(item => item.chargeItemId === attempt?.chargeItemId)
-      return { ...paymentMutationContext(), chargeItemId: charge?.chargeItemId, category: charge?.category }
+      const context = { ...paymentMutationContext(), chargeItemId: charge?.chargeItemId, category: charge?.category }
+      paymentContexts.current.recover = context
+      return context
     },
     mutationFn: (paymentId: string) => {
       const attempt = bill.data?.payments.find(item => item.paymentId === paymentId)
@@ -119,6 +126,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     ? ''
     : locale === 'zh-CN' ? selectedCharge.descriptionZh : selectedCharge.descriptionEn
   const preview = useMutation({
+    onMutate: () => {
+      const context = paymentMutationContext()
+      paymentContexts.current.preview = context
+      return context
+    },
     mutationFn: () => {
       if (selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
       return previewPayment({
@@ -132,7 +144,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     },
   })
   const confirm = useMutation({
-    onMutate: paymentMutationContext,
+    onMutate: () => {
+      const context = paymentMutationContext()
+      paymentContexts.current.confirm = context
+      return context
+    },
     mutationFn: () => {
       if (preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge?.chargeItemId) throw new Error(messages.paymentUnavailable)
       return confirmPayment({
@@ -389,9 +405,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
 
       <section aria-labelledby="payment-details-heading" className="flex min-w-0 flex-col gap-5">
         <h2 className="text-base font-semibold" id="payment-details-heading">{messages.paymentDetails}</h2>
-        {confirm.isSuccess ? <PaymentOutcome outcome={confirm.data.data.outcome} messages={messages} /> : null}
-        {recover.isSuccess ? <PaymentOutcome outcome={recover.data.data.outcome} messages={messages} /> : null}
-        {recover.isError ? <PaymentError message={getWorkspaceErrorMessage(recover.error, messages)} title={messages.operationFailed} /> : null}
+        {confirm.isSuccess && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentOutcome outcome={confirm.data.data.outcome} messages={messages} /> : null}
+        {recover.isSuccess && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentOutcome outcome={recover.data.data.outcome} messages={messages} /> : null}
+        {recover.isError && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentError message={getWorkspaceErrorMessage(recover.error, messages)} title={messages.operationFailed} /> : null}
         {selectedCharge === undefined ? (
           <Empty className="min-h-44 border"><EmptyHeader><EmptyMedia variant="icon"><CreditCardIcon aria-hidden="true" /></EmptyMedia><EmptyTitle>{messages.noBillingItems}</EmptyTitle></EmptyHeader></Empty>
         ) : (
@@ -443,11 +459,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                     value={simulatorRule}
                   />
                 </Field>
-                <div className="flex justify-end"><Button disabled={preview.isPending} onClick={() => preview.mutate()} type="button"><CreditCardIcon data-icon="inline-start" />{messages.previewPayment}</Button></div>
-                {preview.isError ? <PaymentError message={getWorkspaceErrorMessage(preview.error, messages)} title={getWorkspaceErrorTitle(preview.error, messages, messages.operationFailed)} /> : null}
+                <div className="flex justify-end"><Button disabled={paymentPending} onClick={() => preview.mutate()} type="button"><CreditCardIcon data-icon="inline-start" />{messages.previewPayment}</Button></div>
+                {preview.isError && displaysPaymentResult(paymentContexts.current.preview) ? <PaymentError message={getWorkspaceErrorMessage(preview.error, messages)} title={getWorkspaceErrorTitle(preview.error, messages, messages.operationFailed)} /> : null}
               </FieldGroup>
             ) : null}
-            {preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge.chargeItemId ? null : (
+            {preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge.chargeItemId || !displaysPaymentResult(paymentContexts.current.preview) ? null : (
               <section aria-labelledby="payment-preview-heading" className="flex flex-col gap-3 border-t pt-5">
                 <h3 className="text-sm font-semibold" id="payment-preview-heading">{messages.paymentPreview}</h3>
                 <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
@@ -492,7 +508,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                         <div><dt className="text-muted-foreground">{messages.paymentChannel}</dt><dd className="font-medium">{messages.syntheticPaymentChannel}</dd></div>
                         {preview.data.data.tenders?.map(tender => <div key={tender.method}><dt>{paymentMethodLabel(tender.method, messages)}</dt><dd>{formatFen(tender.amountFen, locale)}</dd></div>)}
                       </dl>
-                      {confirm.isError ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
+                      {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
                       <AlertDialogFooter>
                         <AlertDialogCancel disabled={confirm.isPending}>{messages.cancel}</AlertDialogCancel>
                         <AlertDialogAction disabled={confirm.isPending} onClick={() => confirm.mutate()}>
