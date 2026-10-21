@@ -115,3 +115,33 @@ it('admits the prepared SDK defaults before dispatching exactly one bounded clas
     expect(reports).toMatchObject([{ phase: 'terminal', outcome: { status: 'succeeded', dispatch: 'dispatched', actualModel: 'classifier' } }])
   } finally { await ctx.fiber.dispose() }
 })
+
+it('records an SDK-normalized recognition transport interruption as unknown without resending', async () => {
+  const ctx = new Context()
+  let streams = 0
+  const reports: unknown[] = []
+  class InterruptedClassifier extends LlmAdapter {
+    override async resolveModel(provider: string, model: string) { return { provider, id: model, name: model } }
+    override async *stream(_request: GenerateOptions): AsyncIterable<StreamChunk> {
+      streams++
+      yield { type: 'usage', usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }
+      throw new Error('Synthetic connection lost with private details')
+    }
+  }
+  try {
+    await ctx.plugin(Llm)
+    ctx.llm.registerAdapter(['synthetic'], new InterruptedClassifier())
+    await expect(isDoctorDelegation(ctx, { provider: 'synthetic', model: 'classifier' }, '讨论头晕的诱因。',
+      new AbortController().signal, { ...syntheticHostUsageControl, secret: 'synthetic-only-host-secret',
+        permit: 'synthetic-only-input-permit-at-least-32-characters', fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          if (new URL(String(input)).pathname.endsWith('/observe')) reports.push(hostDoctorUsageObservationSchema.parse(JSON.parse(String(init?.body))))
+          return syntheticHostUsageControl.fetch(input, init)
+        }) as typeof fetch })).rejects.toThrow('CLINMESH_DELEGATION_UNCONFIRMED')
+    expect(streams).toBe(1)
+    expect(reports).toMatchObject([
+      { phase: 'progress', outcome: { status: 'unknown', usage: { totalTokens: 12 } } },
+      { phase: 'terminal', outcome: { status: 'unknown', dispatch: 'dispatched', usage: { totalTokens: 12 } } },
+    ])
+    expect(JSON.stringify(reports)).not.toContain('private details')
+  } finally { await ctx.fiber.dispose() }
+})

@@ -5,6 +5,7 @@ import {
 import { z } from 'zod'
 import type { ActorContext } from '../../application/command-executor.ts'
 import type { ClinMeshDatabase } from './database.ts'
+import { QueuedJobScan } from './queued-job-scan.ts'
 
 const actorContextSchema = z.object({
   actorId: z.string().min(1),
@@ -95,9 +96,11 @@ export class LaboratoryServicePublicationVersionError extends Error {
 
 export class LaboratoryServicePublicationRepository {
   readonly #database: ClinMeshDatabase
+  readonly #queue: QueuedJobScan<z.infer<typeof jobRowSchema>>
 
   constructor(database: ClinMeshDatabase) {
     this.#database = database
+    this.#queue = new QueuedJobScan(database, selectJob, row => jobRowSchema.parse(row))
   }
 
   create(
@@ -224,15 +227,10 @@ export class LaboratoryServicePublicationRepository {
     return jobs
   }
 
-  claimNext(now: string): ClaimedLaboratoryServicePublicationJob | undefined {
+  claimNext(now: string, canResume: (workspaceId: string, taskId: string) => boolean = () => true): ClaimedLaboratoryServicePublicationJob | undefined {
     return this.#database.driver.transaction(() => {
-      const row = this.#database.driver.prepare(`${selectJob}
-        WHERE status = 'queued'
-        ORDER BY created_at, job_id
-        LIMIT 1
-      `).get()
-      if (row === undefined) return undefined
-      const candidate = jobRowSchema.parse(row)
+      const candidate = this.#queue.next(canResume)
+      if (candidate === undefined) return undefined
       const update = this.#database.driver.prepare(`
         UPDATE laboratory_service_publication_job
         SET status = 'running', started_at = ?, updated_at = ?

@@ -273,6 +273,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       tokenSecret: options.cursorSecret,
     })
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
+      canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
       contextStatus: context => identity.modelTaskContextStatus(context),
       models,
       commands,
@@ -308,6 +309,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     patientPersonas.requeueInterrupted(new Date().toISOString())
     laboratoryServicePublications.requeueInterrupted(new Date().toISOString())
     const patientPersona = new PatientPersonaService({
+      canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
       contextStatus: context => identity.modelTaskContextStatus(context),
       models,
       briefs: patientPersonas,

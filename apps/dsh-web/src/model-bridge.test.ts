@@ -8,6 +8,9 @@ import { createModelBridgeHandler } from './model-bridge.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
 import type { ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
+import { applyMigrations, openClinMeshDatabase } from '../../server/src/infrastructure/sqlite/database.ts'
+import { DoctorRecommendationExecution, recommendationRequestHash } from '../../server/src/application/doctor-recommendation-execution.ts'
+import { z } from 'zod'
 
 type HostContext = Parameters<typeof createModelBridgeHandler>[0]
 type GenerateOptions = Parameters<HostContext['llm']['stream']>[0]
@@ -124,6 +127,69 @@ it('reports the exact prepared SDK defaults in bridge accounting', async () => {
   })
   expect(calls).toMatchObject([{ reasoningEffort: 'synthetic-high', maxTokens: 4096 }])
   expect(outcomes).toMatchObject([{ status: 'succeeded', reasoningEffort: 'synthetic-high', outputLimit: 4096 }])
+})
+
+it('keeps an SDK-normalized network interruption unknown until an explicit recommendation continuation', async () => {
+  let streams = 0
+  class InterruptedModel extends LlmAdapter {
+    override async listModels(provider: string) { return [{ provider, id: 'synthetic-model', name: 'Synthetic' }] }
+    override async resolveModel(provider: string, model: string) { return { provider, id: model, name: model } }
+    override async *stream(_request: SdkGenerateOptions): AsyncIterable<SdkStreamChunk> {
+      streams++
+      yield { type: 'text-delta', index: 0, text: streams === 1 ? '{' : '{"ok":true}' }
+      yield { type: 'usage', usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }
+      if (streams === 1) throw new Error('Synthetic disconnected transport with private details')
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+  }
+  const { provider, model } = await sdkHost(new InterruptedModel())
+  const database = openClinMeshDatabase({ databasePath: ':memory:', busyTimeoutMs: 5000 })
+  cleanup.push(async () => { database.close() })
+  applyMigrations(database)
+  database.driver.prepare("INSERT INTO workspace (workspace_id, name, created_at) VALUES ('synthetic', 'Synthetic', '2026-10-21T00:00:00.000Z')").run()
+  database.driver.prepare(`INSERT INTO workspace_epoch (workspace_id, epoch, state, scenario_id, created_at)
+    VALUES ('synthetic', 'synthetic', 'active', 'synthetic', '2026-10-21T00:00:00.000Z')`).run()
+  const outcomes: ModelUsageOutcome[] = []
+  const output = z.object({ ok: z.boolean() }).strict()
+  const request = { ...input, model, jsonSchema: z.toJSONSchema(output), validate: (value: unknown) => output.safeParse(value).success,
+    usageRecorder: { begin(_input: unknown, reserve?: () => void) { reserve?.(); return randomUUID() }, checkpoint() {},
+      settle(_id: string, outcome: ModelUsageOutcome) { outcomes.push(outcome) } },
+  }
+  const options = { database, identity: { workspaceId: 'synthetic', epoch: 'synthetic', actorId: 'synthetic', contextKey: 'synthetic',
+    caseId: 'synthetic', kind: 'diagnosis' as const, generation: 1 }, inputFingerprint: 'synthetic', model, policyVersion: 'synthetic',
+    provider, assertCurrent: () => {} }
+  const execution = new DoctorRecommendationExecution(options)
+  execution.plan('generation', [{ batchId: '0', inputHash: recommendationRequestHash(request) }])
+  const run = (target = execution) => target.run({ stage: 'generation', batchId: '0', request }, value => output.parse(value))
+  await expect(run()).rejects.toMatchObject({ kind: 'unknown' })
+  await expect(run(new DoctorRecommendationExecution(options))).rejects.toMatchObject({ kind: 'unknown' })
+  expect(streams).toBe(1)
+  expect(execution.status()).toMatchObject({ status: 'unknown', requestCount: 1, extraRequestCount: 0 })
+  expect(outcomes).toMatchObject([{ status: 'unknown', dispatch: 'dispatched', usage: { totalTokens: 12 } }])
+  expect(JSON.stringify(outcomes)).not.toContain('private details')
+  expect(execution.continue('synthetic-human-intent')).toBe(true)
+  await expect(run()).resolves.toEqual({ ok: true })
+  expect(streams).toBe(2)
+  expect(execution.status()).toMatchObject({ status: 'completed', requestCount: 2, extraRequestCount: 1 })
+})
+
+it.each([503, 408, 504])('distinguishes a definite Provider failure from an unknown timeout with HTTP %s', async status => {
+  class RejectedModel extends LlmAdapter {
+    override async listModels(provider: string) { return [{ provider, id: 'synthetic-model', name: 'Synthetic' }] }
+    override async resolveModel(provider: string, model: string) { return { provider, id: model, name: model } }
+    override async *stream(_request: SdkGenerateOptions): AsyncIterable<SdkStreamChunk> {
+      yield { type: 'finish', reason: { kind: 'error', failure: { code: 'PROVIDER_ERROR', status, message: 'Synthetic failure' } } }
+    }
+  }
+  const { provider, model } = await sdkHost(new RejectedModel())
+  const outcomes: ModelUsageOutcome[] = []
+  let completed = 0
+  await expect(provider.completeJson({ ...input, model, onRequestComplete: () => { completed++ },
+    usageContext: { workspaceId: 'synthetic', epoch: 'synthetic', taskId: 'synthetic', stage: 'generation', trigger: 'manual', sources: [] },
+    usageRecorder: { begin(_input, reserve) { reserve?.(); return randomUUID() }, checkpoint() {}, settle(_id, outcome) { outcomes.push(outcome) } },
+  })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED' })
+  expect(outcomes).toMatchObject([{ status: status === 503 ? 'failed' : 'unknown', dispatch: 'dispatched' }])
+  expect(completed).toBe(status === 503 ? 1 : 0)
 })
 
 it.each(['none', 'gzip'] as const)('preserves usage before a cancelled stream through the actual %s Host', async compression => {

@@ -23,6 +23,8 @@ import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
 } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { setModelControl } from './fixtures/model-control.ts'
 import { openReferenceDatabase } from '../src/infrastructure/sqlite/reference-database.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
@@ -638,6 +640,57 @@ describe('Laboratory Service Publisher HTTP contract', () => {
       },
     )).json()).data.request
   }
+
+  it.each(['policy', 'task-journal'])('publishes deterministic work behind a %s refusal and resumes the original job after recovery', async failure => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-catalog-queue-recovery-'))
+    temporaryDirectories.push(directory)
+    let sent = 0
+    const runtime = await createClinMeshRuntime({
+      activeReferenceReleaseId: 'laboratory-service-reference-v1',
+      authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
+      cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'operational.sqlite'),
+      demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', trustedOrigins: ['http://localhost'],
+      referenceDatabasePath: await createReferenceDatabase(directory), catalogEnrichmentModel: 'catalog-test-model',
+      chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+        fetch: async () => {
+          sent++
+          return Response.json({ choices: [{ message: { content: JSON.stringify({ services: [{
+            conclusionTemplate: '血常规结果已完成。', nameEn: 'Complete blood count', nameZh: '血常规', priceFen: 2500,
+            results: [{ conceptId: 'loinc:synthetic:6690-2', referenceRange: { high: 10, low: 4, text: '4.0-10.0 x10^9/L' }, valueType: 'quantity' }],
+            rootConceptId: 'loinc:synthetic:58410-2', tatMinutes: 20,
+          }] }) } }] })
+        } }),
+    })
+    runtimes.push(runtime)
+    const cookie = await signIn(runtime, 'Synthetic-Demo-Password-2026!', 'admin@demo.clinmesh.local')
+    await setModelControl(runtime, cookie, { enabled: failure !== 'policy', requests: null, automaticRetries: true })
+    if (failure === 'task-journal') runtime.database.driver.exec(`CREATE TRIGGER synthetic_task_journal_unavailable BEFORE INSERT ON model_task_step
+      BEGIN SELECT RAISE(ABORT, 'synthetic unavailable'); END`)
+    const first = await publishCbc(runtime, cookie, 0)
+    expect(first.response.status).toBe(200)
+    const jobId = publishLaboratoryServicesResponseSchema.parse(first.value).data.jobId
+    const read = async () => laboratoryServicePublicationJobSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/admin/laboratory-services/jobs/${jobId}`, { headers: { cookie } })).json())
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    expect(await read()).toMatchObject({ status: 'queued' })
+    const response = await runtime.app.request('/api/his/v1/admin/laboratory-services/actions/publish', {
+      method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ input: { entries: [{ conceptId: 'laboratory-panel-cn:2026-09-01:CN-LAB-CBC', expectedVersion: 0 }] } }),
+    })
+    expect(response.status).toBe(200)
+    const deterministicJobId = publishLaboratoryServicesResponseSchema.parse(await response.json()).data.jobId
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    expect(laboratoryServicePublicationJobSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/admin/laboratory-services/jobs/${deterministicJobId}`, { headers: { cookie } })).json())).toMatchObject({ status: 'succeeded' })
+    expect(await read()).toMatchObject({ status: 'queued' })
+    expect(sent).toBe(0)
+    if (failure === 'task-journal') runtime.database.driver.exec('DROP TRIGGER synthetic_task_journal_unavailable')
+    await setModelControl(runtime, cookie, { enabled: true, requests: null, automaticRetries: true })
+    await expect.poll(async () => (await read()).status).toBe('succeeded')
+    expect(await read()).toMatchObject({ jobId, status: 'succeeded' })
+    expect(sent).toBe(1)
+  })
 
   it('makes every laboratory-cn panel and test orderable without manual publication', async () => {
     const fixture = await createRuntime()

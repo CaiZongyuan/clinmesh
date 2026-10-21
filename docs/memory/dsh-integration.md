@@ -52,6 +52,8 @@
 
 - DSH 页面未显示前端修改时，区分磁盘产物、宿主按 revision 实际提供的 `/plugins` 脚本与浏览器已加载的页面；不能只凭独立 Web 通过就声明当前 DSH 已生效。Surface 布局复现应使用宿主的 ShadowRoot 基础样式（尤其 `contain: strict` 与内容容器），并断言弹层文字没有超出 Surface 边界。
 
+- DSH SDK 会把适配器迭代时抛出的普通异常归一化为 `finish:error/UNKNOWN`；测试直接抛错的简化 stream 会绕过这个转换，掩盖把网络中断当作明确失败的问题。通过真实 `LlmAdapter` 注入合成断流，核对未知结算、已知用量、任务重建不重发与人工继续；恢复分类由[模型控制恢复决策](../decisions/implemented/architecture/2026-10-21-model-request-control-recovery.md)拥有。
+
 ## Profile、构建与桥接升级
 
 - DSH 产物体积受 Bun 编译器版本影响；本地或 CI 超标时，先用 CI 的精确 Bun 版本构建同一源码和锁定依赖再比较，不能直接归因于依赖漂移或放宽预算。已验证版本与体积依据见[病理阅片引擎 Agent Note](../decisions/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。

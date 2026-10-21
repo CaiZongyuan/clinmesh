@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { hostDoctorUsageAdmissionSchema, hostDoctorUsagePermitSchema, mergeModelTokenUsage,
   hostDoctorRecognitionTimeoutMs, modelUsageControlCodeSchema, modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import { dshTokenUsage } from './dsh-token-usage.ts'
+import { isDefinitiveDshFailure } from './dsh-model-failure.ts'
 
 export interface DoctorRecognitionControl {
   upstreamOrigin: string
@@ -154,7 +155,7 @@ export async function isDoctorDelegation(
           // Provider messages may contain private data; retain only a validated identifier.
           const parsed = modelUsageOutcomeSchema.shape.providerRequestId.safeParse(requestId)
           if (parsed.success) providerRequestId = parsed.data
-          if (chunk.reason.failure.code !== 'TIMEOUT') terminal = 'failed'
+          if (isDefinitiveDshFailure(chunk.reason.failure)) terminal = 'failed'
         }
         if (chunk.reason.kind !== 'stop') throw new Error('CLINMESH_DELEGATION_UNCONFIRMED')
         finished = true
