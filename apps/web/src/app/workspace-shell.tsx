@@ -492,7 +492,8 @@ export function WorkspaceShell({
   return (
     <TooltipProvider>
       <ResponsiveSidebarProvider
-        className={activeSection === 'consultation' ? 'h-svh overflow-hidden' : undefined}
+        className={['consultation', 'inpatient', 'registration', 'billing', 'pharmacy'].includes(activeSection)
+          ? 'h-svh overflow-hidden' : undefined}
         heightMode="viewport"
         style={{
           '--sidebar-width': '13.75rem',
