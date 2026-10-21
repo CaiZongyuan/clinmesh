@@ -1007,8 +1007,8 @@ describe('处方页签布局整理', () => {
     expect(card?.className).toContain('px-3 py-2')
     expect(card?.className).toContain('items-center')
     expect(card?.querySelector('strong')?.className).toContain('truncate')
-    // 目录列表可见高度封顶五条，超出内部滚动。
-    expect(container.querySelector('[data-agent-catalog="medication"] div[class*="max-h-"]')).not.toBeNull()
+    // 目录列表可见高度封顶五条（12.5rem），超出内部滚动；锁定具体值防止回退到旧八条封顶。
+    expect(container.querySelector('[data-agent-catalog="medication"] div[class*="max-h-[12.5rem]"]')).not.toBeNull()
   })
 
   it('新增呈现提供英文文案（草稿态与开具态）', () => {

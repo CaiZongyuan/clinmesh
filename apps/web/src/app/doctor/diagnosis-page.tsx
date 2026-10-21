@@ -295,7 +295,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       && `${diagnosis.code} ${diagnosis.display}`.toLocaleLowerCase().includes(recordQuery.trim().toLocaleLowerCase())
   })
   const showMobileDetail = mobileDetailOpen && visibleEntries.some(entry => entry.key === activeKey)
-  const renderEditor = (showChips = true, plain = false) => {
+  const renderEditor = ({ plain = false, showChips = true }: { plain?: boolean, showChips?: boolean } = {}) => {
     const entry = showChips ? entries.find(entry => entry.key === selectedKey) ?? entries[0] : visibleEntries.find(candidate => candidate.key === activeKey)
     const index = entries.findIndex(candidate => candidate.key === entry?.key)
     if (entry === undefined) return showChips ? (
@@ -390,7 +390,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           search={referenceSearch} />
       </div>
       <div className="min-w-0">
-        {renderEditor(true, true)}
+        {renderEditor({ plain: true })}
       </div>
     </div>
   )
@@ -500,7 +500,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
             })}
           </section>
         )}
-        details={state?.confirmation === undefined ? null : renderEditor(false)}
+        details={state?.confirmation === undefined ? null : renderEditor({ showChips: false })}
       />
       {readOnly ? null : <div className="flex flex-wrap items-center justify-between gap-2">
         <p aria-live="polite" className="text-xs text-muted-foreground">{saveStatus}</p>

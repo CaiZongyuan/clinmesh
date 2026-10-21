@@ -607,8 +607,8 @@ describe('diagnosis workspace', () => {
     expect(row!.textContent).not.toContain('https://clinmesh.example.com/icd-10')
     expect(row!.className).toContain('px-3 py-2')
     const catalog = document.querySelector('[data-agent-catalog="diagnosis"]')
-    // 目录可见高度封顶五条，超出内部滚动。
-    expect(catalog?.querySelector('div[class*="max-h-"]')).not.toBeNull()
+    // 目录可见高度封顶五条（12.5rem），超出内部滚动；锁定具体值防止回退到旧八条封顶。
+    expect(catalog?.querySelector('div[class*="max-h-[12.5rem]"]')).not.toBeNull()
     // 目录与编辑器同卡：目录单元格带分栏边线，卡片网格持有圆角边框。
     expect(catalog?.parentElement?.className).toContain('border-r')
     expect(catalog?.parentElement?.parentElement?.className).toContain('@container/card')
