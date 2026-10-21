@@ -65,6 +65,7 @@ function DoctorCaseRow({ item, messages, onSelect, selected }: {
               </span>
             </span>
             <span className="mt-1 block truncate text-xs text-muted-foreground">{item.presentation?.chiefComplaint ?? messages.triageNotRecorded}</span>
+            <span className="mt-1 block whitespace-normal break-all font-mono text-xs text-muted-foreground tabular-nums">{messages.registrationNumber}：{item.registrationNumber ?? messages.registrationNumberNotRecorded}</span>
           </span>
         </span>
         <Badge className="shrink-0" variant="outline">{doctorCaseStatusLabel(item.status, messages)}</Badge>

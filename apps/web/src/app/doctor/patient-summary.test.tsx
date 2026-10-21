@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { doctorCaseDetailSchema, type ClinicalDocumentContent } from '@clinmesh/contracts/his'
 import { cleanup, render, screen, within } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import userEvent from '@testing-library/user-event'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { getWorkspaceMessages } from '../workspace-i18n.ts'
 import { PatientBanner } from './patient-summary.tsx'
 
@@ -24,6 +25,7 @@ function bannerDetail() {
       { code: 'synthetic-sulfonamide', display: '磺胺类过敏' },
     ],
     caseId: 'case-compact-1',
+    registrationNumber: 'CM-OP-20261020-000123',
     consultation: { turns: [], version: 1 },
     encounter: { id: 'encounter-compact-1', status: 'in-progress', versionId: '1' },
     laboratoryRequests: { draftVersion: 0, reportingSupported: true, requests: [] },
@@ -154,10 +156,38 @@ describe('PatientBanner 紧凑布局', () => {
 
   it('门诊号、主诉与完诊动作仍然可见', () => {
     renderBanner()
-    expect(screen.getByText(/SYN-COMPACT-1/)).toBeTruthy()
+    expect(screen.getByText('CM-OP-20261020-000123')).toBeTruthy()
+    expect(screen.queryByText(/门诊号：SYN-COMPACT-1/)).toBeNull()
     expect(screen.getByText(/发热伴咽痛两天/)).toBeTruthy()
     expect(screen.getByRole('button', { name: '完诊' })).toBeTruthy()
     expect(screen.getByText('首诊中')).toBeTruthy()
+  })
+
+  it('复制完整的当前门诊号，切换病例后不保留旧号码或成功反馈', async () => {
+    const user = userEvent.setup()
+    const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined)
+    const { rerender } = renderBanner()
+    await user.click(screen.getByRole('button', { name: '复制门诊号 CM-OP-20261020-000123' }))
+    expect(write).toHaveBeenLastCalledWith('CM-OP-20261020-000123')
+    expect(screen.getByRole('status').textContent).toBe('门诊号已复制')
+    rerender(<PatientBanner detail={{ ...bannerDetail(), caseId: 'case-next', registrationNumber: 'CM-OP-20261020-1234567' }} messages={messages} statusText={messages.status_firstVisit} />)
+    expect(screen.queryByText('CM-OP-20261020-000123')).toBeNull()
+    expect(screen.queryByText('门诊号已复制')).toBeNull()
+    await user.click(screen.getByRole('button', { name: '复制门诊号 CM-OP-20261020-1234567' }))
+    expect(write).toHaveBeenLastCalledWith('CM-OP-20261020-1234567')
+  })
+
+  it('缺少门诊号时显示未记录，复制被拒绝时只显示失败', async () => {
+    const user = userEvent.setup()
+    const { rerender } = renderBanner()
+    vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(new Error('Denied'))
+    await user.click(screen.getByRole('button', { name: /复制门诊号/ }))
+    expect(screen.getByRole('alert').textContent).toBe('复制失败，请手动选择门诊号复制')
+    expect(screen.queryByText('门诊号已复制')).toBeNull()
+    rerender(<PatientBanner detail={{ ...bannerDetail(), registrationNumber: null }} messages={messages} statusText={messages.status_firstVisit} />)
+    expect(screen.getByText('未记录')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /复制门诊号/ })).toBeNull()
+    expect(screen.queryByText(/SYN-COMPACT-1/)).toBeNull()
   })
 
   it('完诊进度与生命体征合并为同一次级行，不再单独占一行', () => {

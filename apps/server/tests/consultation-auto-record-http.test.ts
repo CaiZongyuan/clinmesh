@@ -8,6 +8,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { expectedSchemaVersion } from '../src/infrastructure/sqlite/database.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import type { JsonChatCompletionInput, JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
@@ -34,7 +35,7 @@ it.each(['incremental', 'quality'] as const)('upgrades a populated %s release wh
   expect(stored.branchRows.length).toBeGreaterThan(0)
   expect(stored.receipts.length).toBeGreaterThan(0)
   await fixture.restart(path => replaceWithRecordingBranchDatabase(path, branch))
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 77, integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: expectedSchemaVersion(), integrity: 'ok', foreignKeys: true })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()
@@ -74,7 +75,7 @@ it.each(['main', 'fields'] as const)('integrates a populated %s branch database 
   })
   const stored = snapshot()
   await fixture.restart(path => replaceWithRecordingBranchDatabase(path, branch))
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 77, integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: expectedSchemaVersion(), integrity: 'ok', foreignKeys: true })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()
@@ -438,7 +439,7 @@ it('retires legacy verdicts and duplicate outbox deliveries on a populated datab
     content_hash, actor_context_json, reason, elapsed_ms FROM consultation_recording_verification ORDER BY rowid`).all()
   const requests = fixture.requests.length
   await fixture.restart(replaceWithPreConsolidationDatabase)
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 77, integrity: 'ok', foreignKeys: true })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: expectedSchemaVersion(), integrity: 'ok', foreignKeys: true })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   const verdicts = () => fixture.runtime.database.driver.prepare(`SELECT status, retired_status
     FROM consultation_recording_verification ORDER BY rowid`).all()
@@ -1726,7 +1727,7 @@ it.each(['job-with-grant', 'no-job-human'] as const)('upgrades a populated pre-0
       expect.objectContaining({ ownership: 'manual' }), expect.objectContaining({ rejected: 1, undone: 1 })]))
   }
   await fixture.restart(replaceWithPreSourceDatabase)
-  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: 77, foreignKeys: true, integrity: 'ok' })
+  expect(fixture.runtime.database.diagnostics()).toMatchObject({ schemaVersion: expectedSchemaVersion(), foreignKeys: true, integrity: 'ok' })
   expect(fixture.runtime.database.driver.pragma('foreign_key_check')).toEqual([])
   expect(snapshot()).toEqual(stored)
   const upgraded = await fixture.read()

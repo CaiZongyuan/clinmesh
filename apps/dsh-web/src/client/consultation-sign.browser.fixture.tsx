@@ -11,6 +11,7 @@ const content: ClinicalDocumentContent = { chiefComplaint: '头晕一周。', hi
   priorMedicalHistory: '既往高血压。', physicalExamination: '查体正常。', auxiliaryExamination: '暂无检查。',
   assessment: '进一步评估。', disposition: '门诊随访。', followUp: '加重及时就诊。' }
 const detail: DoctorCaseDetail = {
+  registrationNumber: null,
   allergies: [], caseId: 'synthetic-sign-case', encounter: { id: 'synthetic-encounter', status: 'in-progress', versionId: '1' },
   patient: { id: 'synthetic-patient', identifier: 'SYNTHETIC', name: '合成患者', gender: 'female', birthDate: '1990-01-01', synthetic: true, versionId: '1' },
   presentation: null, priorFacts: [], status: 'first-visit', taskId: 'synthetic-task', taskVersion: '1',

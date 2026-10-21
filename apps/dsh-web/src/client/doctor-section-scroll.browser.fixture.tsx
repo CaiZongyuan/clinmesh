@@ -11,6 +11,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { runCompletedCaseScrollFixture } from '../../../web/e2e/doctor-completed-scroll.browser.fixture.tsx'
 const messages = getWorkspaceMessages('zh-CN')
 const detail: React.ComponentProps<typeof PatientBanner>['detail'] = {
+  registrationNumber: null,
   allergies: [
     { code: 'synthetic-penicillin', display: 'Penicillin allergy' },
     { code: 'synthetic-sulfonamide', display: 'Sulfonamide allergy' },
