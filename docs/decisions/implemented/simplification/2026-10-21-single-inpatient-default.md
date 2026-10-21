@@ -10,7 +10,7 @@ Status: implemented
 
 默认环境使用现有稳定标识创建一个中性住院科和病区。初始化补齐缺失的默认环境，并仅升级稳定默认 ID 上与原种子精确匹配的科室、病区、病房和床位显示名；FHIR Repository 维护当前资源、历史版本与索引，病区目录名称同步更新。自定义名称及其他旧病区名称保留，原资源引用、岗位和运行事实不迁移；数据库 schema 保持不变。病区目录保留旧条目，以 `acceptingAdmissions` 表达新入院目标。新直接入院、转院登记及新签发住院证只接收默认病区，已签发住院证与旧幂等键保持原合同。原医护上下文继续操作所属住院与在途转科，不扩大服务端作用域。
 
-身份的病区显示名来自当前 Workspace/Epoch 的 FHIR Location。使用 LEFT JOIN，使显示元数据缺失不会取消已有岗位。当前合同与错误由[临床业务流程](../../../architecture/clinical-workflows.md#82-住院闭环)拥有。
+Workspace 级岗位绑定必须保留以便原回执恢复，但不能让未安装于新 Epoch 的职责再次生效；身份与显示元数据边界由[身份认证](../../../architecture/security-and-reliability.md#111-认证)拥有，住院入口与错误由[临床业务流程](../../../architecture/clinical-workflows.md#82-住院闭环)拥有。
 
 ## Alternatives considered
 

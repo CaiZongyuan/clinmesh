@@ -146,6 +146,59 @@ describe('住院建档与入科 HTTP 合同', () => {
     ])
   })
 
+  it.each(['reset', 'install'] as const)('旧病区原scope与receipt保留，真实%s后的新世代不能选择或授权旧岗位', async action => {
+    const { runtime, request, login, registrar, patient } = await setup()
+    await addSecondaryInpatientWard(runtime)
+    const doctor = await login('inpatient-doctor'), nurse = await login('ward-nurse'), admin = await login('admin')
+    const registered = await request(registrar, '/api/his/v1/inpatient/admissions', { input: { expectedEpoch: 'epoch-1',
+      patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 } })
+    const admission = (await registered.json()).data.admission, path = `/api/his/v1/inpatient/admissions/${admission.id}`
+    const received = await request(nurse, `${path}/receive`, { input: { encounterVersion: admission.versionId, bedId: 'bed-general-1' } })
+    expect(received.status).toBe(200)
+    const admitted = (await received.json()).data.admission
+    const transferred = await request(doctor, `${path}/transfers/request`, { input: { encounterVersion: admitted.versionId,
+      targetWardId: 'ward-surgery', reason: '合成旧病区上下文安排' } })
+    const transfer = (await transferred.json()).data.transfers[0]
+    expect((await request(nurse, `${path}/transfers/handover`, { input: { encounterVersion: admitted.versionId,
+      transferId: transfer.id, expectedTransferVersion: transfer.version } })).status).toBe(200)
+    for (const [cookie, code] of [[doctor, 'inpatient-doctor'], [nurse, 'ward-nurse']] as const) {
+      const selected = await request(cookie, '/api/auth/role', { practitionerRoleId: `practitioner-role-${code}-surgery` })
+      expect(selected.status).toBe(200)
+      expect((await selected.json()).actor.practitionerRoleId).toBe(`practitioner-role-${code}-surgery`)
+    }
+    const input = { input: { encounterVersion: admitted.versionId, transferId: transfer.id,
+      expectedTransferVersion: transfer.version + 1, bedId: 'bed-surgery-1' } }, key = randomUUID()
+    const targetReceived = await request(nurse, `${path}/transfers/receive`, input, key)
+    expect(targetReceived.status).toBe(200)
+    const receipt = await targetReceived.json(), beforeReplay = canonicalStateHash(runtime.database)
+    expect(await (await request(nurse, `${path}/transfers/receive`, input, key)).json()).toEqual(receipt)
+    expect(canonicalStateHash(runtime.database)).toBe(beforeReplay)
+    const switchEpoch = await request(admin, action === 'reset' ? '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset'
+      : '/api/sim/v1/scenarios/actions/install', action === 'reset' ? {} : { kind: 'candidate' })
+    expect(switchEpoch.status).toBe(200)
+    expect((await (await request(registrar, '/api/his/v1/inpatient/catalog')).json()).wards).toEqual([
+      { id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient-medicine', acceptingAdmissions: true },
+    ])
+    for (const code of ['inpatient-doctor', 'ward-nurse']) {
+      const cookie = await login(code), context = await (await request(cookie, '/api/auth/context')).json()
+      expect(context.actor.epoch).not.toBe('epoch-1')
+      expect(context.availableRoles.map((role: { id: string }) => role.id)).toEqual([`practitioner-role-${code}`])
+      const rejected = await request(cookie, '/api/auth/role', { practitionerRoleId: `practitioner-role-${code}-surgery` })
+      expect(rejected.status).toBe(403)
+      expect((await rejected.json()).error.code).toBe('ROLE_NOT_ALLOWED')
+      expect((await (await request(cookie, '/api/auth/context')).json()).actor.practitionerRoleId).toBe(`practitioner-role-${code}`)
+    }
+    const client = await request(admin, '/api/agent/v1/clients', { name: '合成新世代角色边界' })
+    const grant = await request(admin, '/api/agent/v1/grants', { agentClientId: (await client.json()).agentClientId,
+      operationIds: ['inpatient.admission.list'], practitionerRoleId: 'practitioner-role-ward-nurse-surgery', ttlSeconds: 3600 })
+    expect(grant.status).toBe(403)
+    expect((await grant.json()).error.code).toBe('ROLE_NOT_ALLOWED')
+    expect(runtime.fhir.read({ workspaceId: 'workspace-demo', epoch: 'epoch-1' }, 'PractitionerRole', 'practitioner-role-ward-nurse-surgery').active).toBe(true)
+    const stored = runtime.database.driver.prepare('SELECT response_json FROM command_receipt WHERE epoch=? AND operation=? AND idempotency_key=?')
+      .get('epoch-1', 'inpatient.transfer.receive', key) as { response_json: string }
+    expect(JSON.parse(stored.response_json)).toEqual(receipt)
+  })
+
   it('混合时区Virtual Time的住院清单和住院证按真实时点排序且读不改事实', async () => {
     const { runtime, request, login, registrar, patient } = await setup()
     const admin = await login('admin'), doctor = await login('doctor'), triageNurse = await login('triage')

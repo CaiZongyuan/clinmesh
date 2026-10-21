@@ -10,6 +10,8 @@
 
 每个受保护请求先验证浏览器会话，再由 ClinMesh Identity & Access 模块重新解析 active Workspace Membership、选择的 Practitioner Role、active Epoch、组织和地点，形成受信 Actor context。岗位切换通过服务端动作保存当前 session 的角色选择；后续业务 Command 以该 Actor context 写入审计。cookie 或请求体中的角色、Workspace 和 Epoch 不能替代数据库事实。
 
+可选岗位和显式岗位切换要求当前 Workspace/Epoch 存在未删除的 FHIR PractitionerRole，并同时满足原 Membership 授权与有效岗位绑定。旧 Epoch 的岗位资源、Workspace 级绑定和原回执继续保留；reset 或重新安装场景不使尚未安装于新 Epoch 的旧岗位重新成为可选职责。显式选择缺少当前有效资源的岗位返回 `ROLE_NOT_ALLOWED`，不保存该选择；新 Agent Grant 只能绑定管理员当前可选的岗位。Location 名称仅是可选显示元数据，按当前 Workspace/Epoch LEFT JOIN 读取，位置不存在或已删除不会移除仍有效的岗位或改变 Actor 权限。
+
 当前不发布 OAuth/OIDC Provider、JWKS、SMART configuration 或 backend services。DSH 浏览器仍使用当前人类 Better Auth session，execution proof 只证明真实 Tool pipeline 调用，不能替代 Actor 认证；任务 Agent 使用 ClinMesh 私有的短期 Capability Grant token，不将其声明为 OAuth、SMART 或可跨系统互操作的凭据。浏览器会话与 Grant 使用不同协议表面，但都解析为同一种 Actor context。
 
 ### 11.2 授权模型

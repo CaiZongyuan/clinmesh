@@ -161,15 +161,38 @@ describe('trusted session and Scenario HTTP contract', () => {
       expect.objectContaining({ id: 'practitioner-role-ward-nurse', locationName: '住院病区' }),
       expect.objectContaining({ id: 'practitioner-role-ward-nurse-surgery', locationName: '旧病区权威名称' }),
     ])
-    const admin = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
-    expect((await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', { method: 'POST',
-      headers: { cookie: admin, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }, body: '{}' })).status).toBe(200)
+    // 位置已删除的持久状态fixture；本世代的PractitionerRole仍然有效。
+    runtime.database.driver.prepare('UPDATE fhir_resource SET deleted=1 WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=?')
+      .run('workspace-demo', 'epoch-1', 'Location', 'ward-surgery')
     const after = sessionContextSchema.parse(await (await get()).json())
-    expect(after.actor.epoch).not.toBe('epoch-1')
+    expect(after.actor).toEqual(before.actor)
     expect(after.availableRoles).toHaveLength(2)
     expect(after.availableRoles[0]).toMatchObject({ id: 'practitioner-role-ward-nurse', locationName: '住院病区' })
     expect(after.availableRoles[1]).toEqual({ code: 'ward-nurse', id: 'practitioner-role-ward-nurse-surgery', locationId: 'ward-surgery',
       organizationId: 'organization-inpatient-surgery', practitionerId: 'practitioner-ward-nurse', practitionerName: '合成病区护士' })
+  })
+
+  it('当前世代已删除的FHIR岗位不能列为可选、被选择或签发新Grant', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-deleted-role-')
+    await addSecondaryInpatientWard(runtime)
+    runtime.database.driver.prepare('UPDATE fhir_resource SET deleted=1 WHERE workspace_id=? AND epoch=? AND resource_type=? AND resource_id=?')
+      .run('workspace-demo', 'epoch-1', 'PractitionerRole', 'practitioner-role-ward-nurse-surgery')
+    const cookie = await signInSyntheticAccount(runtime, password, 'ward-nurse@demo.clinmesh.local')
+    const get = () => runtime.app.request('/api/auth/context', { headers: { cookie } })
+    const context = sessionContextSchema.parse(await (await get()).json())
+    expect(context.availableRoles.map(role => role.id)).toEqual(['practitioner-role-ward-nurse'])
+    const selected = await runtime.app.request('/api/auth/role', { method: 'POST', headers: { cookie,
+      origin: 'http://localhost', 'content-type': 'application/json' }, body: JSON.stringify({ practitionerRoleId: 'practitioner-role-ward-nurse-surgery' }) })
+    expect(selected.status).toBe(403)
+    expect(apiErrorSchema.parse(await selected.json()).error.code).toBe('ROLE_NOT_ALLOWED')
+    const admin = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    const post = (url: string, input: unknown) => runtime.app.request(url, { method: 'POST', headers: { cookie: admin,
+      origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }, body: JSON.stringify(input) })
+    const client = await post('/api/agent/v1/clients', { name: '合成已删除岗位边界' })
+    const grant = await post('/api/agent/v1/grants', { agentClientId: (await client.json()).agentClientId,
+      operationIds: ['inpatient.admission.list'], practitionerRoleId: 'practitioner-role-ward-nurse-surgery', ttlSeconds: 3600 })
+    expect(grant.status).toBe(403)
+    expect(apiErrorSchema.parse(await grant.json()).error.code).toBe('ROLE_NOT_ALLOWED')
   })
 
   it('searches only the indexed Hospital Service catalog with bounded pagination', async () => {

@@ -822,6 +822,13 @@ export class IdentityService {
         JOIN practitioner_role_binding AS role
           ON role.workspace_id = granted.workspace_id
          AND role.practitioner_role_id = granted.practitioner_role_id
+        JOIN workspace ON workspace.workspace_id = membership.workspace_id
+        JOIN fhir_resource AS current_role
+          ON current_role.workspace_id = role.workspace_id
+         AND current_role.epoch = workspace.active_epoch
+         AND current_role.resource_type = 'PractitionerRole'
+         AND current_role.resource_id = role.practitioner_role_id
+         AND current_role.deleted = 0
         WHERE membership.user_id = ?
           AND membership.status = 'active'
           AND granted.practitioner_role_id = ?
@@ -872,6 +879,12 @@ export class IdentityService {
       JOIN practitioner_role_binding AS role
         ON role.workspace_id = granted.workspace_id
        AND role.practitioner_role_id = granted.practitioner_role_id
+      JOIN fhir_resource AS current_role
+        ON current_role.workspace_id = role.workspace_id
+       AND current_role.epoch = workspace.active_epoch
+       AND current_role.resource_type = 'PractitionerRole'
+       AND current_role.resource_id = role.practitioner_role_id
+       AND current_role.deleted = 0
       JOIN fhir_resource AS practitioner
         ON practitioner.workspace_id = role.workspace_id
        AND practitioner.epoch = workspace.active_epoch
