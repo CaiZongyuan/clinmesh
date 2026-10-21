@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { modelPricingConfigSchema } from '@clinmesh/contracts/model-pricing'
+import { modelPricingConfigSchema, modelUsageCostSchema } from '@clinmesh/contracts/model-pricing'
 import { unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { freezeModelPrice, priceModelUsage, priceModelReservation } from '../src/application/model-usage-pricing.ts'
 
@@ -48,4 +48,64 @@ it('reserves a conservative upper bound across all token partitions and rounds u
   config.prices[0]!.rates = { input: 0.000001, output: 0.000001 }
   expect(priceModelReservation(freezeModelPrice(config, 'synthetic', 'example'), { inputTokens: 1, outputTokens: 1 }))
     .toMatchObject({ status: 'priced', cnyMicro: 1, cny: 0.000001 })
+})
+
+it('uses disjoint DSH cache partitions and requires only counters with differing prices', () => {
+  const config = modelPricingConfigSchema.parse({ prices: [{ provider: 'synthetic', model: 'dsh',
+    version: 'p1', currency: 'CNY', rates: { input: 2, output: 8, cacheRead: 0.5, cacheWrite: 3 } }], exchangeRates: [] })
+  const dsh: ModelTokenUsage = { ...usage, mapping: 'dsh-v1', raw: { format: 'dsh', uncachedInputTokens: 800_000,
+    cacheReadTokens: 150_000, cacheWriteTokens: 50_000, outputTokens: 500_000, reasoningTokens: 100_000, totalTokens: 1_500_000 } }
+  expect(priceModelUsage(freezeModelPrice(config, 'synthetic', 'dsh'), dsh, 'dispatched'))
+    .toMatchObject({ status: 'priced', cny: 5.825 })
+  dsh.raw = { format: 'dsh', uncachedInputTokens: null, cacheReadTokens: null, cacheWriteTokens: 50_000,
+    outputTokens: null, reasoningTokens: null, totalTokens: null }
+  dsh.cachedInputTokens = null
+  expect(priceModelUsage(freezeModelPrice(config, 'synthetic', 'dsh'), dsh, 'dispatched')).toMatchObject({ status: 'usage-unknown', cny: null })
+  config.prices[0]!.rates.cacheRead = 2
+  expect(priceModelUsage(freezeModelPrice(config, 'synthetic', 'dsh'), dsh, 'dispatched'))
+    .toMatchObject({ status: 'priced', cny: 6.05 })
+})
+
+it('reads pre-pricing records with explicit unknown amount defaults', () => {
+  expect(modelUsageCostSchema.parse({ status: 'price-not-configured', cny: null })).toEqual({
+    status: 'price-not-configured', currency: null, original: null, cny: null, originalMicro: null, cnyMicro: null,
+  })
+})
+
+it('requires cache/reasoning counters when they change the billed amount', () => {
+  const config = modelPricingConfigSchema.parse({ prices: [{ provider: 'synthetic', model: 'example',
+    version: 'p1', currency: 'CNY', rates: { input: 2, output: 8, cacheRead: 0.5, reasoning: 4 } }], exchangeRates: [] })
+  const snapshot = freezeModelPrice(config, 'synthetic', 'example')
+  expect(priceModelUsage(snapshot, { ...usage, cachedInputTokens: null }, 'dispatched')).toMatchObject({ status: 'usage-unknown', cny: null })
+  expect(priceModelUsage(snapshot, { ...usage, reasoningOutputTokens: null }, 'dispatched')).toMatchObject({ status: 'usage-unknown', cny: null })
+  expect(priceModelUsage(snapshot, { ...usage, cachedInputTokens: 1_000_001 }, 'dispatched')).toMatchObject({ status: 'usage-unknown', cny: null })
+})
+
+it('converts exact decimals before rounding and refuses unsafe micro totals', () => {
+  const config = modelPricingConfigSchema.parse({ prices: [{ provider: 'synthetic', model: 'tiny',
+    version: 'p1', currency: 'USD', rates: { input: 0.000001, output: 0 } }],
+  exchangeRates: [{ currency: 'USD', version: 'fx1', cnyPerUnit: 0.5 }] })
+  const snapshot = freezeModelPrice(config, 'synthetic', 'tiny')
+  expect(priceModelUsage(snapshot, { ...unknownModelTokenUsage, inputTokens: 500_000 }, 'dispatched'))
+    .toMatchObject({ status: 'priced', originalMicro: 1, cnyMicro: 0 })
+  config.prices[0]!.rates.input = 1
+  config.prices[0]!.currency = 'CNY'
+  const safe = freezeModelPrice(config, 'synthetic', 'tiny')
+  expect(priceModelUsage(safe, { ...unknownModelTokenUsage, inputTokens: Number.MAX_SAFE_INTEGER }, 'dispatched'))
+    .toMatchObject({ originalMicro: Number.MAX_SAFE_INTEGER, cnyMicro: Number.MAX_SAFE_INTEGER })
+  config.prices[0]!.rates.input = 2
+  expect(() => priceModelUsage(freezeModelPrice(config, 'synthetic', 'tiny'),
+    { ...unknownModelTokenUsage, inputTokens: Number.MAX_SAFE_INTEGER }, 'dispatched')).toThrow(RangeError)
+  expect(() => priceModelReservation(safe, { inputTokens: Number.MAX_SAFE_INTEGER + 1, outputTokens: 0 })).toThrow(RangeError)
+})
+
+it('rejects ambiguous or unsafe deployment pricing configuration', () => {
+  const price = { provider: 'synthetic', model: 'example', version: 'p1', currency: 'CNY', rates: { input: 2, output: 8 } }
+  for (const input of [-1, 0.1000001, Infinity, Number.MAX_SAFE_INTEGER]) {
+    expect(modelPricingConfigSchema.safeParse({ prices: [{ ...price, rates: { input, output: 8 } }], exchangeRates: [] }).success).toBe(false)
+  }
+  expect(modelPricingConfigSchema.safeParse({ prices: [price, price], exchangeRates: [] }).success).toBe(false)
+  expect(modelPricingConfigSchema.safeParse({ prices: [{ ...price, version: 'space version' }], exchangeRates: [] }).success).toBe(false)
+  expect(modelPricingConfigSchema.safeParse({ prices: [{ ...price, currency: 'cny' }], exchangeRates: [] }).success).toBe(false)
+  expect(modelPricingConfigSchema.safeParse({ prices: [price], exchangeRates: [{ currency: 'CNY', version: 'fx1', cnyPerUnit: 2 }] }).success).toBe(false)
 })

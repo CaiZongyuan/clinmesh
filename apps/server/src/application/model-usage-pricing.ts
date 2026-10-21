@@ -29,6 +29,7 @@ function tokenCount(value: number | null): bigint | null {
 function partition(total: bigint | null, base: bigint, subset: bigint | null, subsetRate: bigint): bigint | null {
   if (total !== null && subset !== null && subset > total) return null
   if (base === 0n && subsetRate === 0n || total === 0n) return 0n
+  if (base === 0n && subset !== null) return subset * subsetRate
   if (total === null) return null
   if (base === subsetRate) return total * base
   if (subset === null) return null
@@ -42,16 +43,22 @@ function inputNumerator(snapshot: NonNullable<ModelPriceSnapshot['price']>, usag
   const total = tokenCount(usage.inputTokens)
   const cached = tokenCount(usage.cachedInputTokens)
   if (usage.mapping === 'openai-v1') return partition(total, input, cached, read)
-  if (input === read && read === write) return partition(total, input, cached, read)
   if (read === write) return partition(total, input, cached, read)
   if (total === 0n) return 0n
   if (usage.raw?.format !== 'dsh') return null
-  const readCount = tokenCount(usage.raw.cacheReadTokens)
-  const writeCount = tokenCount(usage.raw.cacheWriteTokens)
-  if (readCount === null || writeCount === null || total === null) return null
-  const combined = readCount + writeCount
-  if (combined > total || cached !== null && combined !== cached) return null
-  return (total - combined) * input + readCount * read + writeCount * write
+  let readCount = tokenCount(usage.raw.cacheReadTokens)
+  let writeCount = tokenCount(usage.raw.cacheWriteTokens)
+  if (cached !== null) {
+    if (readCount !== null && readCount > cached || writeCount !== null && writeCount > cached) return null
+    if (readCount === null && writeCount !== null) readCount = cached - writeCount
+    if (writeCount === null && readCount !== null) writeCount = cached - readCount
+  }
+  if (total !== null && (cached !== null && cached > total
+    || (readCount ?? 0n) + (writeCount ?? 0n) > total)) return null
+  if (readCount !== null && writeCount !== null && cached !== null && readCount + writeCount !== cached) return null
+  if (total === null && input !== 0n || readCount === null && read !== input || writeCount === null && write !== input) return null
+  const numerator = (total ?? 0n) * input + (readCount ?? 0n) * (read - input) + (writeCount ?? 0n) * (write - input)
+  return numerator < 0n ? null : numerator
 }
 
 function roundedMicro(numerator: bigint, divisor: bigint, ceiling: boolean): number {

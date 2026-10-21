@@ -64,7 +64,7 @@ const amount = z.number().finite().nonnegative().nullable()
 const microAmount = z.number().int().nonnegative().safe().nullable()
 export const modelUsageCostSchema = z.object({
   status: z.enum(['priced', 'price-not-configured', 'exchange-rate-not-configured', 'usage-unknown', 'not-dispatched']),
-  currency: currency.nullable(), original: amount, cny: amount,
-  originalMicro: microAmount, cnyMicro: microAmount,
+  currency: currency.nullable().default(null), original: amount.default(null), cny: amount,
+  originalMicro: microAmount.default(null), cnyMicro: microAmount.default(null),
 }).strict()
 export type ModelUsageCost = z.infer<typeof modelUsageCostSchema>
