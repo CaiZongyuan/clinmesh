@@ -8,6 +8,7 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { signIn, persona, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { WorkspaceRepository } from '../src/infrastructure/sqlite/workspace-repository.ts'
+import { openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 
 const dispose: Array<() => Promise<void>> = []
 afterEach(async () => {
@@ -53,7 +54,17 @@ async function fixture(settings: { unpriced?: boolean; unknownUsage?: boolean } 
     configurePrices() { modelPricing = configuredPrices },
     async login(email: string) { cookie = await signIn(runtime, email) },
     async at(date: string) { vi.setSystemTime(new Date(date)); cookie = await signIn(runtime, 'admin@demo.clinmesh.local') },
-    async restart() { await runtime.close(); runtime = await createClinMeshRuntime({ ...options, modelPricing }); cookie = await signIn(runtime, 'admin@demo.clinmesh.local') } }
+    async restart(legacy = false) {
+      await runtime.close()
+      if (legacy) {
+        // The new migration only adds these tables. Preserve the real nonempty ledger and budgets
+        // while materializing the exact schema immediately before this release.
+        const old = openClinMeshDatabase({ databasePath: options.databasePath, busyTimeoutMs: 5000 })
+        try { old.driver.exec(`DROP TABLE model_usage_correction_audit; DROP TABLE model_usage_daily; DROP TABLE model_usage_retention;
+          DELETE FROM schema_migration WHERE migration_id = '0076_model-usage-retention.sql'`) } finally { old.close() }
+      }
+      runtime = await createClinMeshRuntime({ ...options, modelPricing }); cookie = await signIn(runtime, 'admin@demo.clinmesh.local')
+    } }
 }
 
 it('defaults to 90 days and persists protected custom or permanent retention with version and idempotency checks', async () => {
@@ -234,4 +245,27 @@ it('preserves missing-price aggregates as incomplete and never offers expired de
   expect((await f.request(`/requests/${attempt.id}/reprice`, { expectedRevision: 0, evidence: 'synthetic-price-v1' })).status).toBe(404)
   expect(modelUsageOverviewSchema.parse(await (await f.request('/overview')).json()).totals).toMatchObject({ requests: 1, knownTokens: 15, cny: null, unpricedRequests: 1 })
   expect(modelUsageListSchema.parse(await (await f.request('/requests')).json()).total).toBe(0)
+})
+
+it('upgrades a nonempty pre-retention ledger without losing known totals, unknown evidence or independent budget starts', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+  const f = await fixture()
+  await f.request('/control', { enabled: true, requests: 5, tokens: 100, cny: 1, automaticRetries: true, expectedVersion: 1 })
+  await f.request('/control', { enabled: true, requests: 5, tokens: null, cny: null, automaticRetries: true, expectedVersion: 2 })
+  await f.generatePersona()
+  f.setUsageKnown(false)
+  await f.generatePersona()
+  const control = modelUsageControlSchema.parse(await (await f.request('/control')).json())
+  const overview = modelUsageOverviewSchema.parse(await (await f.request('/overview')).json())
+  const records = modelUsageListSchema.parse(await (await f.request('/requests')).json())
+  await f.at('2026-04-02T00:00:00.000Z')
+  await f.restart(true)
+  expect(modelUsageOverviewSchema.parse(await (await f.request('/overview')).json())).toEqual(overview)
+  expect(modelUsageControlSchema.parse(await (await f.request('/control')).json())).toEqual(control)
+  const retained = modelUsageListSchema.parse(await (await f.request('/requests')).json())
+  expect(retained.items).toEqual(records.items.filter(item => item.usage.totalTokens === null))
+  expect(modelUsageRetentionSchema.parse(await (await f.request('/retention')).json())).toMatchObject({ days: 90, compactedRequests: 1 })
+  await f.restart()
+  expect(modelUsageOverviewSchema.parse(await (await f.request('/overview')).json())).toEqual(overview)
 })
