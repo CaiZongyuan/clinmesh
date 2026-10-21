@@ -163,6 +163,14 @@ export class ModelUsageService implements ModelUsageRecorder {
     this.#update(attemptId, progress ? observation : parsed)
   }
 
+  hostShouldAbort(attemptId: string): boolean {
+    this.#expireHostAttempts()
+    const row = rowSchema.parse(this.database.driver.prepare(
+      "SELECT record_json FROM model_usage_attempt WHERE attempt_id = ? AND feature = 'doctor_delegation'").get(attemptId))
+    const attempt = modelUsageAttemptSchema.parse(JSON.parse(row.record_json))
+    return attempt.status !== 'in-flight' || !this.control(attempt.context.workspaceId).effective.enabled
+  }
+
   #expireHostAttempts(): void {
     const now = new Date()
     // Reading or reporting after Host loss converges the durable attempt without
