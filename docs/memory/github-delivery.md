@@ -14,7 +14,7 @@
 
 - 关联 issue 用 `Ref`/`Refs #N` 只建立引用，GitHub 自动关闭只识别 `Closes`/`Fixes`/`Resolves` 关键词；本仓库 squash merge 的提交说明是"PR 标题 + 各条提交正文"，不含 PR 正文，所以正文里的关闭关键词在 squash 下也不生效。交付型 PR（issue 范围随本次交付完成）的正文统一写 `Closes #N`；合并后发现 issue 仍 OPEN 时核对提交说明后手动关闭并附原因，不重复推送只改关键词的空提交。
 
-- `git push` 成功不等于 CI 已触发：GitHub 偶发丢失 push 事件（webhook 处理失败），连续两次推送都没有创建 workflow run。推送后用 `gh run list --branch <branch> --limit 1` 核对出现了绑定新 head SHA 的 run，再挂监控或声称"CI 运行中"；核对仍无 run 时推送空提交重新触发，不把"推送完成"当作"CI 已启动"。
+- 本仓库 `ci.yml` 的 `push` 触发仅限 `main`/`master`；feature 分支的 CI 由 PR 的 `pull_request` 事件触发。push 后 `gh run list` 为空时先核对分支是否在 push 触发列表、PR 是否已创建（PR 不存在时无 run 属预期），再怀疑 GitHub 偶发丢失 push 事件；确认事件丢失才推送空提交重新触发，不把"推送完成"当作"CI 已启动"。
 
 - Actions 的 `pull-requests:write` 不等于仓库允许机器人创建 PR；出现明确的创建权限错误时先核对仓库设置，不反复重试。没有管理员权限时，可按[持续升级故障恢复](../deployment.md#dsh-持续升级)验证已有候选 PR 的更新与验收，并单独保留首次创建权限限制。
 
