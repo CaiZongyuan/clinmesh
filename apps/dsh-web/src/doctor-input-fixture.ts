@@ -9,10 +9,13 @@ export function syntheticRecognitionLlm(stream: PreparedLlmCall['stream']) {
 // and persistence are covered by the real Server/Host integration tests.
 export const syntheticHostUsageControl = {
   upstreamOrigin: 'http://synthetic.invalid',
-  fetch: (async (input: RequestInfo | URL) => new URL(String(input)).pathname.endsWith('/admit')
-    ? Response.json({ attemptId: randomUUID(), receipt: 'synthetic-receipt-for-host-only-tests' }, { status: 201 })
-    : new URL(String(input)).pathname.endsWith('/status') ? Response.json({ abort: false })
-      : Response.json({ recorded: true })) as typeof fetch,
+  fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname
+    if (path.endsWith('/admit')) return Response.json({ attemptId: randomUUID(), receipt: 'synthetic-receipt-for-host-only-tests' }, { status: 201 })
+    if (path.endsWith('/status')) return Response.json({ abort: false })
+    if (path.endsWith('/wait')) return Response.json({ waiting: JSON.parse(String(init?.body)).phase === 'waiting' })
+    return Response.json({ recorded: true })
+  }) as typeof fetch,
 }
 
 export function doctorInputPermit(input: {

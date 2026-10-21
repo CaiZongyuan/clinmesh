@@ -6,6 +6,7 @@ import { hostDoctorUsageAdmissionSchema, hostDoctorUsageObservationSchema, hostD
 import type { ModelUsageService } from './application/model-usage-service.ts'
 import { modelUsageControlFailure } from './application/model-usage-control.ts'
 import { AgentIntegrationError, type AgentIntegrationService } from './application/agent-integration-service.ts'
+import { hostModelWaitSchema } from './application/host-model-waiting.ts'
 
 export function installHostModelUsageRoutes(app: Hono, usage: ModelUsageService,
   integration: AgentIntegrationService, secret: string): void {
@@ -31,6 +32,7 @@ export function installHostModelUsageRoutes(app: Hono, usage: ModelUsageService,
       const attemptId = usage.admitHost({ context: binding, feature: 'doctor_delegation',
         provider: input.provider, model: input.model, outputLimit: 1024, kind: 'initial',
         ...(input.reasoningEffort === undefined ? {} : { reasoningEffort: input.reasoningEffort }) })
+      integration.hostModelWaiting.clear(binding)
       if (attemptId === undefined) return context.json({ error: { code: 'HOST_ATTEMPT_ALREADY_ADMITTED' } }, 409)
       const receipt = receiptFor(attemptId)
       return context.json({ attemptId, receipt }, 201)
@@ -40,6 +42,16 @@ export function installHostModelUsageRoutes(app: Hono, usage: ModelUsageService,
       if (error instanceof AgentIntegrationError) return context.json({ error: { code: error.code } }, error.status)
       if (error instanceof z.ZodError || error instanceof SyntaxError) return context.json({ error: { code: 'HOST_INPUT_INVALID' } }, 400)
       return context.json({ error: { code: 'HOST_ADMISSION_UNAVAILABLE' } }, 503)
+    }
+  })
+  app.post('/api/model-usage/host/doctor-delegation/wait', async context => {
+    try {
+      const input = hostModelWaitSchema.parse(await context.req.json())
+      return context.json({ waiting: integration.hostModelWaiting.update(input) })
+    } catch (error) {
+      if (error instanceof AgentIntegrationError) return context.json({ error: { code: error.code } }, error.status)
+      if (error instanceof z.ZodError || error instanceof SyntaxError) return context.json({ error: { code: 'HOST_INPUT_INVALID' } }, 400)
+      return context.json({ error: { code: 'HOST_WAIT_UNAVAILABLE' } }, 503)
     }
   })
   app.post('/api/model-usage/host/doctor-delegation/status', async context => {

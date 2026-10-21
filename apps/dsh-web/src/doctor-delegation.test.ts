@@ -34,7 +34,11 @@ it('stops waiting on an explicit control rejection when its caller cancels, with
   const result = isDoctorDelegation(ctx as unknown as Parameters<typeof isDoctorDelegation>[0], { provider: 'synthetic', model: 'classifier' },
     '替我问清头晕的诱因。', abort.signal, { ...syntheticHostUsageControl,
       secret: 'synthetic-only-host-secret', permit: 'synthetic-only-input-permit-at-least-32-characters',
-      fetch: (async (_input: RequestInfo | URL) => { admissions++; return Response.json({ error: { code: 'MODEL_DISABLED', scope: 'deployment' } }, { status: 409 }) }) as typeof fetch,
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (new URL(String(input)).pathname.endsWith('/wait')) return Response.json({ waiting: JSON.parse(String(init?.body)).phase === 'waiting' })
+        admissions++
+        return Response.json({ error: { code: 'MODEL_DISABLED', scope: 'deployment' } }, { status: 409 })
+      }) as typeof fetch,
     }).then(() => 'succeeded', () => 'rejected')
   await vi.advanceTimersByTimeAsync(500)
   expect(admissions).toBeGreaterThan(1)

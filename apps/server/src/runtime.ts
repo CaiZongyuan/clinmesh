@@ -409,6 +409,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           ...clockOptions,
           secret: options.dshBridgeSecret,
         })
+    modelUsage.setWaitingCount(workspaceId => agentIntegration?.hostModelWaiting.count(workspaceId) ?? 0)
     const lisPayloadSchema = z.object({
       caseId: z.string().min(1),
       encounterId: z.string().min(1),

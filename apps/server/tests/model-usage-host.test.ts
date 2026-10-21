@@ -99,6 +99,52 @@ it.each([
   expect(response.status).toBe(409)
   expect(await response.json()).toEqual({ error: { code: input.code, scope: input.scope } })
   expect((await f.list()).total).toBe(0)
+  expect((await f.control()).lastRejection).toMatchObject({ code: input.code, scope: input.scope })
+})
+
+it('shows a valid undispatched Host wait without an attempt and removes it when the caller ends', async () => {
+  const f = await fixture()
+  await f.policy({ enabled: false })
+  const waiting = latch<void>()
+  const abort = new AbortController()
+  let streams = 0
+  const ctx = { llm: syntheticRecognitionLlm(async function* () { streams++; yield { type: 'finish', reason: { kind: 'stop' } } }) }
+  const result = isDoctorDelegation(ctx as unknown as Parameters<typeof isDoctorDelegation>[0], { provider: 'synthetic', model: 'classifier' },
+    '替我问清头晕的诱因。', abort.signal, { upstreamOrigin: 'http://localhost', secret, permit: await f.permit(),
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const response = await f.runtime.app.request(new Request(input, init))
+        if (new URL(String(input)).pathname.endsWith('/admit')) waiting.resolve()
+        return response
+      }) as typeof fetch }).then(() => 'succeeded', () => 'rejected')
+  await waiting.promise
+  await vi.waitFor(async () => { expect((await f.control()).waiting).toBe(1) })
+  expect((await f.list()).total).toBe(0)
+  expect(streams).toBe(0)
+  abort.abort()
+  expect(await result).toBe('rejected')
+  expect((await f.control()).waiting).toBe(0)
+})
+
+it.each(['lease', 'deadline', 'expired', 'membership', 'page-left', 'admitted'] as const)('excludes a Host waiter after %s invalidation without creating a retryable attempt', async invalidation => {
+  const f = await fixture()
+  const permit = await f.permit()
+  const wait = (phase: 'waiting' | 'finished', deadlineAt = new Date(Date.now() + 30_000).toISOString()) =>
+    f.post('/api/model-usage/host/doctor-delegation/wait', { permit, phase, ...(phase === 'waiting' ? { deadlineAt } : {}) })
+  expect((await wait('waiting', new Date(Date.now() + (invalidation === 'deadline' ? 500 : 30_000)).toISOString())).status).toBe(200)
+  expect((await f.control()).waiting).toBe(1)
+  if (invalidation === 'membership') f.runtime.database.driver.exec("UPDATE workspace_membership SET status = 'suspended' WHERE actor_id = 'actor-outpatient-doctor'")
+  if (invalidation === 'page-left') expect((await f.renew({ selection: undefined, ui: { status: 'empty' }, viewRevision: 'left' })).status).toBe(201)
+  if (invalidation === 'admitted') {
+    expect((await f.post('/api/model-usage/host/doctor-delegation/admit', { permit, provider: 'synthetic', model: 'classifier' })).status).toBe(201)
+    expect(await (await wait('waiting')).json()).toEqual({ waiting: false })
+  }
+  if (['lease', 'deadline', 'expired'].includes(invalidation)) {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + (invalidation === 'lease' ? 1001 : invalidation === 'deadline' ? 501 : 61_000))
+  }
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  expect((await f.control(admin)).waiting).toBe(0)
+  expect((await wait('finished')).status).toBe(200)
 })
 
 it('binds cancellation status to its receipt and cancels a stalled Host stream when its workspace is disabled', async () => {

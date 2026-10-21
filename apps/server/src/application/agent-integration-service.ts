@@ -36,6 +36,7 @@ import {
   resolveAgentPageContext,
   validateAgentToolInputForContext,
 } from './agent-context-policy.ts'
+import { HostModelWaiting } from './host-model-waiting.ts'
 
 const PAGE_CONTEXT_TTL_MS = 5 * 60_000
 type ExecutionOrigin = NonNullable<z.infer<typeof agentExecutionProofPayloadSchema>['origin']>
@@ -109,6 +110,7 @@ export class AgentIntegrationError extends Error {
 }
 
 export class AgentIntegrationService {
+  readonly hostModelWaiting: HostModelWaiting
   readonly #cases: SyntheticCaseRepository
   readonly #database: ClinMeshDatabase
   readonly #now: () => Date
@@ -119,6 +121,14 @@ export class AgentIntegrationService {
     this.#database = database
     this.#now = options.now ?? (() => new Date())
     this.#secret = options.secret
+    this.hostModelWaiting = new HostModelWaiting(database, {
+      verify: token => this.#verifySignedToken(token, doctorAgentTaskPermitPayloadSchema),
+      resolve: task => {
+        try { return this.doctorRecognitionTaskContext(task) }
+        catch (error) { if (error instanceof AgentIntegrationError) return undefined; throw error }
+      },
+      now: this.#now,
+    })
   }
 
   createPageContext(input: CreatePageContextInput): {
@@ -381,6 +391,10 @@ export class AgentIntegrationService {
 
   doctorRecognitionContext(token: string): ModelUsageContext {
     const permit = this.#verifySignedToken(token, doctorAgentTaskPermitPayloadSchema)
+    return this.doctorRecognitionTaskContext(permit)
+  }
+
+  doctorRecognitionTaskContext(permit: z.infer<typeof doctorAgentTaskPermitPayloadSchema>): ModelUsageContext {
     if (Date.parse(permit.expiresAt) <= this.#now().getTime()) throw this.#invalidProof()
     const row = z.object({ workspace_id: z.string(), epoch: z.string(), user_account_id: z.string(),
       client_id: z.string() }).optional().parse(

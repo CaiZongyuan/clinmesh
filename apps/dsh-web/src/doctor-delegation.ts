@@ -17,6 +17,7 @@ const admissionFailureSchema = z.object({ error: z.object({
   code: modelUsageControlCodeSchema, scope: z.enum(['workspace', 'deployment']),
 }).strict() }).strict()
 const statusSchema = z.object({ abort: z.boolean() }).strict()
+const waitSchema = z.object({ waiting: z.boolean() }).strict()
 
 function waitForControl(signal: AbortSignal): Promise<void> {
   signal.throwIfAborted()
@@ -45,8 +46,9 @@ export async function isDoctorDelegation(
   control?: DoctorRecognitionControl,
 ): Promise<boolean> {
   if (control === undefined) throw new Error('CLINMESH_MODEL_ADMISSION_REQUIRED')
+  const deadlineAt = new Date(Date.now() + hostDoctorRecognitionTimeoutMs).toISOString()
   signal = AbortSignal.any([signal, AbortSignal.timeout(hostDoctorRecognitionTimeoutMs)])
-  const post = async (operation: 'admit' | 'observe' | 'status', body: unknown, requestSignal: AbortSignal) => {
+  const post = async (operation: 'admit' | 'observe' | 'status' | 'wait', body: unknown, requestSignal: AbortSignal) => {
     const response = await (control.fetch ?? fetch)(new URL(`/api/model-usage/host/doctor-delegation/${operation}`, control.upstreamOrigin), {
       method: 'POST', redirect: 'error', signal: requestSignal,
       headers: { authorization: `Bearer ${control.secret}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
@@ -68,18 +70,34 @@ export async function isDoctorDelegation(
   const admission = hostDoctorUsageAdmissionSchema.parse({ permit: control.permit, provider: config.provider, model: config.model,
     ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }) })
   const grant = await (async () => {
-    for (;;) {
-      assertCurrent()
-      const response = await post('admit', admission, AbortSignal.any([signal, AbortSignal.timeout(5000)]))
-      const body: unknown = await response.json()
-      if (response.ok) return hostDoctorUsagePermitSchema.parse(body)
-      const failure = admissionFailureSchema.safeParse(body)
-      if (response.status !== 409 || !failure.success || failure.data.error.code === 'MODEL_RETRY_DISABLED') {
-        throw new Error('CLINMESH_MODEL_ACCOUNTING_UNAVAILABLE')
+    let waiting = false
+    try {
+      for (;;) {
+        assertCurrent()
+        const response = await post('admit', admission, AbortSignal.any([signal, AbortSignal.timeout(5000)]))
+        const body: unknown = await response.json()
+        if (response.ok) {
+          const grant = hostDoctorUsagePermitSchema.parse(body)
+          waiting = false // The successful Server admission withdrew the lease.
+          return grant
+        }
+        const failure = admissionFailureSchema.safeParse(body)
+        if (response.status !== 409 || !failure.success || failure.data.error.code === 'MODEL_RETRY_DISABLED') {
+          throw new Error('CLINMESH_MODEL_ACCOUNTING_UNAVAILABLE')
+        }
+        // Only an explicit policy rejection proves this attempt never dispatched.
+        // A lost response, duplicate admission or invalid permit must never resend.
+        waiting = true
+        const registered = waitSchema.parse(await (await post('wait', { permit: control.permit, phase: 'waiting', deadlineAt },
+          AbortSignal.any([signal, AbortSignal.timeout(5000)]))).json())
+        if (!registered.waiting) throw new Error('CLINMESH_MODEL_ACCOUNTING_UNAVAILABLE')
+        await waitForControl(signal)
       }
-      // Only an explicit policy rejection proves this attempt never dispatched.
-      // A lost response, duplicate admission or invalid permit must never resend.
-      await waitForControl(signal)
+    } finally {
+      if (waiting) {
+        try { await post('wait', { permit: control.permit, phase: 'finished' }, AbortSignal.timeout(5000)) }
+        catch { /* The short lease expires even if the Host cannot report its end. */ }
+      }
     }
   })()
   const cancelled = new AbortController()
