@@ -15,6 +15,8 @@ export interface DoctorRecognitionControl {
 
 const admissionFailureSchema = z.object({ error: z.object({
   code: modelUsageControlCodeSchema, scope: z.enum(['workspace', 'deployment']),
+  dimension: z.enum(['requests', 'tokens', 'cny']).nullable().optional(),
+  remaining: z.number().finite().nonnegative().nullable().optional(), required: z.number().finite().nonnegative().nullable().optional(),
 }).strict() }).strict()
 const statusSchema = z.object({ abort: z.boolean() }).strict()
 const waitSchema = z.object({ waiting: z.boolean() }).strict()
@@ -68,7 +70,10 @@ export async function isDoctorDelegation(
     temperature: 0, maxTokens: 1024 }, signal)
   config = prepared.config
   const admission = hostDoctorUsageAdmissionSchema.parse({ permit: control.permit, provider: config.provider, model: config.model,
-    ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }) })
+    ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }),
+    // Prepared controls bind the SDK generation, but do not identify its wire metering or cap semantics.
+    reservationBoundary: { adapter: 'dsh-host', version: 'dsh-sdk-0.2.1-rc.2-v1', inputTokens: null,
+      outputTokens: null, reason: 'adapter-metering-unavailable' } })
   const grant = await (async () => {
     let waiting = false
     try {
@@ -111,6 +116,7 @@ export async function isDoctorDelegation(
   let providerRequestId: string | undefined
   const observe = (status: ModelUsageOutcome['status'], progress = false) => post('observe', { ...grant, phase: progress ? 'progress' : 'terminal', outcome: {
     status, dispatch: dispatched ? 'dispatched' : 'not-dispatched', usage, actualModel: config.model,
+    reasoningEffort: config.reasoningEffort ?? null, outputLimit: config.maxTokens ?? null,
     ...(providerRequestId === undefined ? {} : { providerRequestId }),
   } }, AbortSignal.timeout(5000))
   let content = ''

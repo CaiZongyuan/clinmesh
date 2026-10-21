@@ -103,6 +103,43 @@ it.each([
   expect((await f.control()).lastRejection).toMatchObject({ code: input.code, scope: input.scope })
 })
 
+it('blocks unmetered Host streams under finite dimensions and retains their boundary in unlimited mode', async () => {
+  const f = await fixture()
+  let streams = 0
+  const ctx = { llm: syntheticRecognitionLlm(async function* () {
+    streams++
+    yield { type: 'text-delta', index: 0, text: '{"intent":"discuss","evidence":""}' }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }) } as unknown as Parameters<typeof isDoctorDelegation>[0]
+  for (const dimension of ['tokens', 'cny'] as const) {
+    await f.policy({ tokens: dimension === 'tokens' ? 100 : null, cny: dimension === 'cny' ? 1 : null })
+    const abort = new AbortController()
+    let rejection: { status: number; body: unknown } | undefined
+    await expect(isDoctorDelegation(ctx, { provider: 'synthetic', model: 'classifier' }, '替我问清头晕的诱因。',
+      abort.signal, { upstreamOrigin: 'http://localhost', secret, permit: await f.permit(),
+        fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+          const response = await f.runtime.app.request(new Request(input, init))
+          if (new URL(String(input)).pathname.endsWith('/admit')) {
+            rejection = { status: response.status, body: await response.clone().json() }
+            abort.abort()
+          }
+          return response
+        }) as typeof fetch })).rejects.toThrow()
+    expect(rejection).toMatchObject({ status: 409, body: { error: { code: 'MODEL_METERING_UNAVAILABLE', scope: 'workspace', dimension } } })
+    expect(streams).toBe(0)
+    expect((await f.list()).total).toBe(0)
+  }
+  await f.policy({ tokens: null, cny: null })
+  expect(await isDoctorDelegation(ctx, { provider: 'synthetic', model: 'classifier' }, '替我问清头晕的诱因。',
+    new AbortController().signal, { upstreamOrigin: 'http://localhost', secret, permit: await f.permit(),
+      fetch: ((input: RequestInfo | URL, init?: RequestInit) => f.runtime.app.request(new Request(input, init))) as typeof fetch })).toBe(false)
+  expect(streams).toBe(1)
+  expect((await f.list()).items[0]).toMatchObject({ reservationBoundary: {
+    adapter: 'dsh-host', version: 'dsh-sdk-0.2.1-rc.2-v1', inputTokens: null, outputTokens: null,
+    reason: 'adapter-metering-unavailable',
+  } })
+})
+
 it('shows a valid undispatched Host wait without an attempt and removes it when the caller ends', async () => {
   const f = await fixture()
   await f.policy({ enabled: false })

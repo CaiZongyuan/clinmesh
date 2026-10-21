@@ -41,6 +41,10 @@ it('records every direct fallback with actual model and inclusive token subsets'
   await provider.completeJson({ ...input, usageContext, usageRecorder: accounting.service, onBeforeRequest: () => { reserved += 1 } })
   expect({ sent, reserved }).toEqual({ sent: 2, reserved: 2 })
   expect(accounting.attempts.map(attempt => attempt.metadata.kind)).toEqual(['initial', 'format-repair'])
+  expect(accounting.attempts.map(attempt => attempt.metadata)).toMatchObject([1, 2].map(() => ({
+    reservationBoundary: { adapter: 'openai-chat', version: 'openai-chat-v1', inputTokens: null,
+      outputTokens: null, reason: 'output-limit-unbounded' },
+  })))
   expect(accounting.attempts.map(attempt => attempt.outcome)).toEqual([1, 2].map(request => ({
     status: 'succeeded', dispatch: 'dispatched', actualModel: 'actual-synthetic', providerRequestId: `request-${request}`, httpStatus: 200,
     usage: { inputTokens: 100, outputTokens: 30, totalTokens: 130, cachedInputTokens: 20, reasoningOutputTokens: 10, mapping: 'openai-v1',
@@ -116,6 +120,10 @@ it('uses one attempt across the real bridge and separately accounts rate-limit r
     await provider.completeJson({ ...input, model: encodeModelRoute(route), usageContext, usageRecorder: accounting.service })
     expect(streams).toBe(3)
     expect(accounting.attempts.map(attempt => attempt.metadata.kind)).toEqual(['initial', 'rate-limit-retry', 'format-repair'])
+    expect(accounting.attempts.map(attempt => attempt.metadata)).toMatchObject([1, 2, 3].map(() => ({
+      reservationBoundary: { adapter: 'dsh-bridge', version: 'dsh-sdk-0.2.1-rc.2-v1', inputTokens: null,
+        outputTokens: null, reason: 'adapter-metering-unavailable' },
+    })))
     expect(new Set(accounting.attempts.map(attempt => attempt.id)).size).toBe(3)
     expect(accounting.attempts[1]?.outcome?.usage).toEqual({ inputTokens: 125, outputTokens: 30,
       cachedInputTokens: 25, reasoningOutputTokens: 10, totalTokens: 155, mapping: 'dsh-v1',

@@ -85,6 +85,9 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         const attemptId = control === undefined || route === undefined ? undefined : beginChatCompletionUsage(control, {
           provider: route.provider, model: String(payload.model), ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
           outputLimit: null, kind: attempt === 0 ? requestKind : 'rate-limit-retry',
+          // SDK context defaults and maxTokens do not expose the bound wire adapter's metering guarantees.
+          reservationBoundary: { adapter: 'dsh-bridge', version: 'dsh-sdk-0.2.1-rc.2-v1', inputTokens: null,
+            outputTokens: null, reason: 'adapter-metering-unavailable' },
         })
         const body = attemptId === undefined ? serialized : JSON.stringify({ ...completionPayload, attemptId })
         let knownUsage: ModelTokenUsage = unknownModelTokenUsage

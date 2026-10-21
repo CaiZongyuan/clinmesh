@@ -8,6 +8,10 @@ import { signIn } from './fixtures/consultation.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { createServer } from 'node:http'
+import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
+import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
+import { createModelBridgeHandler } from '../../dsh-web/src/model-bridge.ts'
 
 const dispose: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of dispose.splice(0).reverse()) await close() })
@@ -28,7 +32,7 @@ async function setup(extra: Partial<Parameters<typeof createClinMeshRuntime>[0]>
   } }
 }
 
-async function control(fixture: Awaited<ReturnType<typeof setup>>, input?: { enabled?: boolean; requests?: number | null; automaticRetries?: boolean }) {
+async function control(fixture: Awaited<ReturnType<typeof setup>>, input?: { enabled?: boolean; requests?: number | null; automaticRetries?: boolean; tokens?: number | null; cny?: number | null }) {
   const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
   const current = modelUsageControlSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/control', { headers: { cookie } })).json())
   if (input === undefined) return current
@@ -39,6 +43,49 @@ async function control(fixture: Awaited<ReturnType<typeof setup>>, input?: { ena
   expect(response.status).toBe(200)
   return modelUsageControlSchema.parse(await response.json())
 }
+
+it.each(['direct', 'bridge'] as const)('requires a trustworthy boundary before finite Token or amount dispatches through %s', async transport => {
+  let dispatched = 0
+  const route = { provider: 'synthetic-provider', model: 'synthetic-model' }
+  const bridge = createModelBridgeHandler({ llm: {
+    listModels: async () => [{ id: route.model }],
+    prepareCall: async (config: unknown) => ({ config, stream: async function* () {
+      dispatched++
+      yield { type: 'text-delta', index: 0, text: JSON.stringify(persona) }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    } }),
+  }, agentDefaultModel: { currentSelection: () => route } } as unknown as Parameters<typeof createModelBridgeHandler>[0],
+  'synthetic-model-bridge-secret-at-least-32-characters', () => 'default')
+  const server = createServer(bridge.handler)
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  dispose.push(async () => { bridge.dispose(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())) })
+  const address = server.address()
+  if (address === null || typeof address === 'string') throw new Error('Synthetic bridge unavailable')
+  const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(),
+    patientPersonaModel: transport === 'direct' ? route.model : encodeModelRoute(route),
+    chatCompletionsProvider: transport === 'direct'
+      ? new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid',
+        fetch: async () => { dispatched++; return Response.json({ choices: [{ message: { content: JSON.stringify(persona) } }] }) } })
+      : new DshModelProvider({ origin: `http://127.0.0.1:${address.port}`, secret: 'synthetic-model-bridge-secret-at-least-32-characters',
+        timeoutMs: 2000, maxResponseBytes: 4096 }),
+  })
+  const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
+  const requests = async () => modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
+  for (const dimension of ['tokens', 'cny'] as const) {
+    await control(fixture, { tokens: dimension === 'tokens' ? 100 : null, cny: dimension === 'cny' ? 1 : null })
+    await expect(startConsultationCase(fixture.runtime)).rejects.toThrow('Persona generation failed')
+    expect(dispatched).toBe(0)
+    expect((await control(fixture)).lastRejection).toMatchObject({ code: 'MODEL_METERING_UNAVAILABLE', scope: 'workspace', dimension })
+    expect((await requests()).total).toBe(0)
+  }
+  await control(fixture, { tokens: null, cny: null })
+  await startConsultationCase(fixture.runtime)
+  expect(dispatched).toBe(1)
+  expect((await requests()).items[0]).toMatchObject({ reservationBoundary: {
+    adapter: transport === 'direct' ? 'openai-chat' : 'dsh-bridge', inputTokens: null, outputTokens: null,
+    reason: transport === 'direct' ? 'output-limit-unbounded' : 'adapter-metering-unavailable',
+  } })
+})
 
 it.each(['limit', 'retry'] as const)('checks %s again before a direct format repair without dispatching another request', async reason => {
   let dispatched = 0

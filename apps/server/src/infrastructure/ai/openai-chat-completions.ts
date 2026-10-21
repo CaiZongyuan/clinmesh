@@ -270,7 +270,10 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
       }
       if (signal.aborted) throw new ChatCompletionsError('AI_TIMEOUT', 'The AI provider request was cancelled or timed out')
       const attemptId = beginChatCompletionUsage(input, { provider: this.#endpoint.hostname, model: input.model,
-        outputLimit: null, kind: attempts === 1 ? input.usageKind ?? 'initial' : 'format-repair' })
+        outputLimit: null, kind: attempts === 1 ? input.usageKind ?? 'initial' : 'format-repair',
+        // The response byte guard cannot bound provider output or hidden reasoning tokens.
+        reservationBoundary: { adapter: 'openai-chat', version: 'openai-chat-v1', inputTokens: null,
+          outputTokens: null, reason: 'output-limit-unbounded' } })
       let settled = false
       try {
         const response = await this.#fetch(this.#endpoint, {
