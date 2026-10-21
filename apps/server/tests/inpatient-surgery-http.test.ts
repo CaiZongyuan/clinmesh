@@ -1,3 +1,4 @@
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -210,6 +211,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     const execution = { requestId: row.id, expectedRequestVersion: 2, procedureId: 'hospital-surgery-1', catalogVersion: 1, materials: [], note: '仅同意未核对不能执行' }
     expect((await s.request(s.doctor, `${s.path}/surgeries/execute`, execution)).status).toBe(409)
     expect((await s.request(s.nurse, `${s.path}/surgeries/check-preop`, action)).status).toBe(409)
+    await addSecondaryInpatientWard(s.runtime)
     const switched = await s.runtime.app.request('/api/auth/role', { method: 'POST', headers: { cookie: s.nurse, origin: 'http://localhost', 'content-type': 'application/json' },
       body: JSON.stringify({ practitionerRoleId: 'practitioner-role-ward-nurse-surgery' }) })
     expect(switched.status).toBe(200)

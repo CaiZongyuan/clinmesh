@@ -1,3 +1,4 @@
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { inpatientDischargeResponseSchema, inpatientSettlementResponseSchema, inpatientSettlementPreviewSchema, inpatientDischargeEventsSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -263,6 +264,7 @@ describe('住院出院与结算公共 HTTP', () => {
     expect((await rejected.json()).error.code).toBe('INPATIENT_SURGERY_PENDING')
     const request = (await surgery.json()).data.requests[0]
     expect((await s.request(s.doctor, `${s.path}/surgeries/cancel`, { requestId:request.id,expectedRequestVersion:request.version,note:'无需实施' })).status).toBe(200)
+    await addSecondaryInpatientWard(s.runtime)
     const role = await s.runtime.app.request('/api/auth/role', { method:'POST',headers:{cookie:s.doctor,origin:'http://localhost','content-type':'application/json'},body:JSON.stringify({practitionerRoleId:'practitioner-role-inpatient-doctor-surgery'}) })
     expect(role.status).toBe(200)
     expect((await s.request(s.doctor, `${s.path}/discharge/issue`, input)).status).toBe(403)

@@ -94,6 +94,7 @@ const roleRowSchema = z.object({
   actor_id: z.string().min(1),
   epoch: z.string().min(1),
   location_id: z.string().min(1),
+  location_name: z.string().min(1).nullable(),
   membership_id: z.string().min(1),
   organization_id: z.string().min(1),
   practitioner_id: z.string().min(1),
@@ -795,16 +796,6 @@ export class IdentityService {
         ) VALUES (?, ?, ?)
       `).run(membershipId, input.workspaceId, roleId)
     }
-    for (const roleCode of ['inpatient-doctor', 'ward-nurse'] as const) {
-      const roleId = `practitioner-role-${roleCode}-surgery`
-      this.#database.driver.prepare(`
-        INSERT OR IGNORE INTO practitioner_role_binding
-          (workspace_id, practitioner_role_id, practitioner_id, role_code, organization_id, location_id, active)
-        VALUES (?, ?, ?, ?, 'organization-inpatient-surgery', 'ward-surgery', 1)
-      `).run(input.workspaceId, roleId, `practitioner-${roleCode}`, roleCode)
-      this.#database.driver.prepare(`INSERT OR IGNORE INTO membership_practitioner_role (membership_id, workspace_id, practitioner_role_id) VALUES (?, ?, ?)`)
-        .run(`membership-${roleCode}`, input.workspaceId, roleId)
-    }
     this.#database.driver.prepare(`
       INSERT OR IGNORE INTO membership_practitioner_role (
         membership_id, workspace_id, practitioner_role_id
@@ -871,6 +862,7 @@ export class IdentityService {
         role.role_code,
         role.organization_id,
         role.location_id,
+        json_extract(location.content_json, '$.name') AS location_name,
         run.scenario_run_id
       FROM workspace_membership AS membership
       JOIN workspace ON workspace.workspace_id = membership.workspace_id
@@ -886,6 +878,12 @@ export class IdentityService {
        AND practitioner.resource_type = 'Practitioner'
        AND practitioner.resource_id = role.practitioner_id
        AND practitioner.deleted = 0
+      LEFT JOIN fhir_resource AS location
+        ON location.workspace_id = role.workspace_id
+       AND location.epoch = workspace.active_epoch
+       AND location.resource_type = 'Location'
+       AND location.resource_id = role.location_id
+       AND location.deleted = 0
       JOIN scenario_run AS run
         ON run.workspace_id = workspace.workspace_id
        AND run.epoch = workspace.active_epoch
@@ -917,6 +915,7 @@ export class IdentityService {
           code: role.role_code,
           id: role.practitioner_role_id,
           locationId: role.location_id,
+          ...(role.location_name === null ? {} : { locationName: role.location_name }),
           organizationId: role.organization_id,
           practitionerId: role.practitioner_id,
           practitionerName: role.practitioner_name,

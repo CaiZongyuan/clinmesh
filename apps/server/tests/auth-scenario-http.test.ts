@@ -19,6 +19,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { readServerConfig } from '../src/config.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 
 const betterAuthErrorSchema = z.object({
   code: z.string().min(1),
@@ -146,6 +147,29 @@ describe('trusted session and Scenario HTTP contract', () => {
         id: 'practitioner-role-registrar',
       }],
     })
+  })
+
+  it('岗位病区名称读取当前世代的权威Location，缺失位置不移除原岗位权限', async () => {
+    const { password, runtime } = await createTestRuntime('clinmesh-role-location-')
+    await addSecondaryInpatientWard(runtime)
+    const cookie = await signInSyntheticAccount(runtime, password, 'ward-nurse@demo.clinmesh.local')
+    const location = runtime.fhir.read({ workspaceId: 'workspace-demo', epoch: 'epoch-1' }, 'Location', 'ward-surgery')
+    runtime.fhir.update({ workspaceId: 'workspace-demo', epoch: 'epoch-1' }, { ...location, name: '旧病区权威名称' }, location.meta!.versionId!)
+    const get = () => runtime.app.request('/api/auth/context', { headers: { cookie } })
+    const before = sessionContextSchema.parse(await (await get()).json())
+    expect(before.availableRoles).toEqual([
+      expect.objectContaining({ id: 'practitioner-role-ward-nurse', locationName: '住院病区' }),
+      expect.objectContaining({ id: 'practitioner-role-ward-nurse-surgery', locationName: '旧病区权威名称' }),
+    ])
+    const admin = await signInSyntheticAccount(runtime, password, 'admin@demo.clinmesh.local')
+    expect((await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', { method: 'POST',
+      headers: { cookie: admin, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }, body: '{}' })).status).toBe(200)
+    const after = sessionContextSchema.parse(await (await get()).json())
+    expect(after.actor.epoch).not.toBe('epoch-1')
+    expect(after.availableRoles).toHaveLength(2)
+    expect(after.availableRoles[0]).toMatchObject({ id: 'practitioner-role-ward-nurse', locationName: '住院病区' })
+    expect(after.availableRoles[1]).toEqual({ code: 'ward-nurse', id: 'practitioner-role-ward-nurse-surgery', locationId: 'ward-surgery',
+      organizationId: 'organization-inpatient-surgery', practitionerId: 'practitioner-ward-nurse', practitionerName: '合成病区护士' })
   })
 
   it('searches only the indexed Hospital Service catalog with bounded pagination', async () => {
@@ -305,60 +329,54 @@ describe('trusted session and Scenario HTTP contract', () => {
     const expectedRoles = [{
       code: 'administrator',
       id: 'practitioner-role-administrator',
-      locationId: 'location-administrator',
+      locationId: 'location-administrator', locationName: '合成管理员工作区',
       organizationId: 'organization-clinmesh',
       practitionerId: 'practitioner-administrator',
       practitionerName: '合成管理员',
     }, {
       code: 'cashier',
       id: 'practitioner-role-cashier',
-      locationId: 'location-cashier',
+      locationId: 'location-cashier', locationName: '合成收费员工作区',
       organizationId: 'organization-clinmesh',
       practitionerId: 'practitioner-cashier',
       practitionerName: '合成收费员',
     }, {
-      code: 'inpatient-doctor', id: 'practitioner-role-inpatient-doctor', locationId: 'ward-general',
+      code: 'inpatient-doctor', id: 'practitioner-role-inpatient-doctor', locationId: 'ward-general', locationName: '住院病区',
       organizationId: 'organization-inpatient-medicine', practitionerId: 'practitioner-inpatient-doctor', practitionerName: '合成住院医生',
     }, {
-      code: 'inpatient-doctor', id: 'practitioner-role-inpatient-doctor-surgery', locationId: 'ward-surgery',
-      organizationId: 'organization-inpatient-surgery', practitionerId: 'practitioner-inpatient-doctor', practitionerName: '合成住院医生',
-    }, {
-      code: 'medical-records', id: 'practitioner-role-medical-records', locationId: 'location-medical-records',
+      code: 'medical-records', id: 'practitioner-role-medical-records', locationId: 'location-medical-records', locationName: '合成病案人员工作区',
       organizationId: 'organization-clinmesh', practitionerId: 'practitioner-medical-records', practitionerName: '合成病案人员',
     }, {
       code: 'outpatient-doctor',
       id: 'practitioner-role-outpatient-doctor',
-      locationId: 'location-outpatient-doctor',
+      locationId: 'location-outpatient-doctor', locationName: '合成门诊医生工作区',
       organizationId: 'organization-clinmesh',
       practitionerId: 'practitioner-outpatient-doctor',
       practitionerName: '合成门诊医生',
     }, {
       code: 'pharmacist',
       id: 'practitioner-role-pharmacist',
-      locationId: 'location-pharmacist',
+      locationId: 'location-pharmacist', locationName: '合成药师工作区',
       organizationId: 'organization-clinmesh',
       practitionerId: 'practitioner-pharmacist',
       practitionerName: '合成药师',
     }, {
       code: 'registrar',
       id: 'practitioner-role-registrar',
-      locationId: 'location-registrar',
+      locationId: 'location-registrar', locationName: '合成挂号员工作区',
       organizationId: 'organization-clinmesh',
       practitionerId: 'practitioner-registrar',
       practitionerName: '合成挂号员',
     }, {
       code: 'triage-nurse',
       id: 'practitioner-role-triage-nurse',
-      locationId: 'location-triage-nurse',
+      locationId: 'location-triage-nurse', locationName: '合成分诊护士工作区',
       organizationId: 'organization-clinmesh',
       practitionerId: 'practitioner-triage-nurse',
       practitionerName: '合成分诊护士',
     }, {
-      code: 'ward-nurse', id: 'practitioner-role-ward-nurse', locationId: 'ward-general',
+      code: 'ward-nurse', id: 'practitioner-role-ward-nurse', locationId: 'ward-general', locationName: '住院病区',
       organizationId: 'organization-inpatient-medicine', practitionerId: 'practitioner-ward-nurse', practitionerName: '合成病区护士',
-    }, {
-      code: 'ward-nurse', id: 'practitioner-role-ward-nurse-surgery', locationId: 'ward-surgery',
-      organizationId: 'organization-inpatient-surgery', practitionerId: 'practitioner-ward-nurse', practitionerName: '合成病区护士',
     }] as const
 
     const initialContextResponse = await runtime.app.request('/api/auth/context', {
@@ -811,10 +829,10 @@ describe('trusted session and Scenario HTTP contract', () => {
     expect(invalidPatientPage.status).toBe(400)
 
     for (const [resourceType, total] of [
-      ['Organization', 3],
-      ['Location', 19],
+      ['Organization', 2],
+      ['Location', 14],
       ['Practitioner', 9],
-      ['PractitionerRole', 11],
+      ['PractitionerRole', 9],
       ['Medication', 4],
     ] as const) {
       const response = await runtime.app.request(

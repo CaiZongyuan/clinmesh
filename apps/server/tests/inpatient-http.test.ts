@@ -9,6 +9,7 @@ import { registrationResponseSchema, triageResponseSchema, startVisitResponseSch
 import { canonicalStateHash, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { agentClientSchema, agentCapabilityGrantSchema } from '@clinmesh/contracts/agent'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 
 describe('住院建档与入科 HTTP 合同', () => {
   const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
@@ -47,6 +48,45 @@ describe('住院建档与入科 HTTP 合同', () => {
   afterEach(async () => {
     await Promise.all(runtimes.splice(0).map(runtime => runtime.close()))
     await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true })))
+  })
+
+  it('默认只有住院科一个病区及各一个医护岗位，重启保持目录与业务事实不变', async () => {
+    const { runtime, request, login, registrar, reopen } = await setup()
+    const catalog = await (await request(registrar, '/api/his/v1/inpatient/catalog')).json()
+    expect(catalog.wards).toEqual([{ id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient-medicine', acceptingAdmissions: true }])
+    expect(catalog.beds).toHaveLength(3)
+    for (const name of ['inpatient-doctor', 'ward-nurse']) {
+      const context = await (await request(await login(name), '/api/auth/context')).json()
+      expect(context.availableRoles).toEqual([expect.objectContaining({ id: `practitioner-role-${name}`, locationName: '住院病区' })])
+    }
+    const admin = await login('admin')
+    expect((await (await request(admin, '/fhir/R5/Organization/organization-inpatient-medicine')).json()).name).toBe('住院科')
+    const before = canonicalStateHash(runtime.database)
+    await runtime.close()
+    const reopened = await reopen()
+    expect(await (await reopened.app.request('/api/his/v1/inpatient/catalog', { headers: { cookie: registrar } })).json()).toEqual(catalog)
+    expect(canonicalStateHash(reopened.database)).toBe(before)
+  })
+
+  it('保留旧病区与岗位，仅默认病区接收新的直接入院', async () => {
+    const { runtime, request, login, registrar, patient } = await setup()
+    await addSecondaryInpatientWard(runtime)
+    const catalog = await (await request(registrar, '/api/his/v1/inpatient/catalog')).json()
+    expect(catalog.wards).toEqual([
+      { id: 'ward-general', name: '住院病区', organizationId: 'organization-inpatient-medicine', acceptingAdmissions: true },
+      { id: 'ward-surgery', name: '外科病区', organizationId: 'organization-inpatient-surgery', acceptingAdmissions: false },
+    ])
+    const rejected = await request(registrar, '/api/his/v1/inpatient/admissions', { input: {
+      patientId: patient.id, patientVersion: patient.versionId, expectedEpoch: 'epoch-1', admissionRoute: 'direct', wardId: 'ward-surgery', depositFen: 100000 } })
+    expect(rejected.status).toBe(409)
+    expect((await rejected.json()).error.code).toBe('INPATIENT_WARD_UNAVAILABLE')
+    expect((await (await request(registrar, '/api/his/v1/inpatient/admissions')).json()).items).toEqual([])
+    expect(runtime.database.driver.prepare('SELECT COUNT(*) count FROM inpatient_deposit').get()).toEqual({ count: 0 })
+    const context = await (await request(await login('ward-nurse'), '/api/auth/context')).json()
+    expect(context.availableRoles).toEqual([
+      expect.objectContaining({ id: 'practitioner-role-ward-nurse', locationName: '住院病区' }),
+      expect.objectContaining({ id: 'practitioner-role-ward-nurse-surgery', locationName: '外科病区' }),
+    ])
   })
 
   it('混合时区Virtual Time的住院清单和住院证按真实时点排序且读不改事实', async () => {
@@ -195,8 +235,9 @@ describe('住院建档与入科 HTTP 合同', () => {
     expect((await (await request(admin, '/api/sim/v1/scenario-runs/current')).json()).virtualTime).toBe(next)
   })
 
-  it('负责门诊医生开住院证，登记员按证转收且不能重复使用', async () => {
-    const { request, login, registrar, patient } = await setup()
+  it.each(['default', 'legacy'] as const)('负责门诊医生开住院证，%s病区签发目标可转收且原receipt重放不重复收款', async kind => {
+    const { runtime, request, login, registrar, patient, reopen } = await setup()
+    if (kind === 'legacy') await addSecondaryInpatientWard(runtime)
     const registered = await request(registrar, '/api/his/v1/registrations/actions/register', {
       expectedVersions: { [`Patient/${patient.id}`]: patient.versionId }, input: { patientId: patient.id,
         departmentId: 'department-general-medicine', locationId: 'location-outpatient', visitDate: '2026-08-24', visitTypeId: 'visit-general' } })
@@ -210,14 +251,36 @@ describe('住院建档与入科 HTTP 合同', () => {
     const started = await request(doctor, `/api/his/v1/encounters/${registration.encounterId}/actions/start-first-visit`, {
       expectedVersions: { [`Encounter/${registration.encounterId}`]: triage.encounterVersion, [`Task/${triage.doctorTaskId}`]: '1' }, input: {} })
     const visit = startVisitResponseSchema.parse(await started.json()).data
+    if (kind === 'legacy') {
+      const rejected = await request(doctor, '/api/his/v1/inpatient/referrals', { input: { encounterId: registration.encounterId,
+        encounterVersion: visit.encounterVersion, wardId: 'ward-surgery', reason: '新证不进入旧病区' } })
+      expect(rejected.status).toBe(409)
+      expect((await rejected.json()).error.code).toBe('INPATIENT_WARD_UNAVAILABLE')
+    }
     const referred = await request(doctor, '/api/his/v1/inpatient/referrals', { input: { encounterId: registration.encounterId,
       encounterVersion: visit.encounterVersion, wardId: 'ward-general', reason: '持续发热需住院观察' } })
     expect(referred.status).toBe(200)
     const referral = (await referred.json()).data.referral
+    // 旧版本已签发的住院证保留原目标；该事实不由本次默认环境配置改写。
+    if (kind === 'legacy') runtime.database.driver.prepare('UPDATE inpatient_referral SET ward_id=? WHERE referral_id=?').run('ward-surgery', referral.id)
     const input = { input: { patientId: patient.id, patientVersion: patient.versionId, expectedEpoch: 'epoch-1', admissionRoute: 'outpatient',
-      wardId: 'ward-general', referralId: referral.id, depositFen: 200_000 } }
-    expect((await request(registrar, '/api/his/v1/inpatient/admissions', input)).status).toBe(200)
+      wardId: kind === 'legacy' ? 'ward-surgery' : 'ward-general', referralId: referral.id, depositFen: 200_000 } }
+    const key = randomUUID(), admissionRegistered = await request(registrar, '/api/his/v1/inpatient/admissions', input, key)
+    expect(admissionRegistered.status).toBe(200)
+    const receipt = await admissionRegistered.json()
+    expect(await (await request(registrar, '/api/his/v1/inpatient/admissions', input, key)).json()).toEqual(receipt)
     expect((await request(registrar, '/api/his/v1/inpatient/admissions', input)).status).toBe(409)
+    if (kind === 'legacy') {
+      const before = canonicalStateHash(runtime.database)
+      await runtime.close()
+      const reopened = await reopen()
+      expect(canonicalStateHash(reopened.database)).toBe(before)
+      const replayed = await reopened.app.request('/api/his/v1/inpatient/admissions', { method: 'POST',
+        headers: { cookie: registrar, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(input) })
+      expect(replayed.status).toBe(200)
+      expect(await replayed.json()).toEqual(receipt)
+      expect(canonicalStateHash(reopened.database)).toBe(before)
+    }
   })
 
   it('存量带上海时区的23:30入科事实在次日00:00产生首夜床位费', async () => {
@@ -245,6 +308,7 @@ describe('住院建档与入科 HTTP 合同', () => {
     const admin = await login('admin')
     const admission = inpatientCommandResponseSchema.parse(await (await request(registrar, '/api/his/v1/inpatient/admissions', { input: {
       patientId: patient.id, patientVersion: patient.versionId, expectedEpoch: 'epoch-1', admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100 } })).json()).data.admission
+    await addSecondaryInpatientWard(runtime)
     expect((await request(nurse, '/api/auth/role', { practitionerRoleId: 'practitioner-role-ward-nurse-surgery' })).status).toBe(200)
     expect((await request(nurse, `/api/his/v1/inpatient/admissions/${admission.id}`)).status).toBe(403)
     expect(inpatientListSchema.parse(await (await request(nurse, '/api/his/v1/inpatient/admissions')).json()).items).toEqual([])
@@ -293,11 +357,11 @@ describe('住院建档与入科 HTTP 合同', () => {
     const get = (path: string) => reopened.app.request(path, { headers: { cookie: admin } })
     expect((await (await get('/api/sim/v1/scenario-runs/current')).json()).epoch).toBe(current.epoch)
     expect((await get(`/fhir/R5/Patient/${patientId}`)).status).toBe(200)
-    for (const id of ['practitioner-role-inpatient-doctor', 'practitioner-role-inpatient-doctor-surgery', 'practitioner-role-ward-nurse', 'practitioner-role-medical-records']) {
+    for (const id of ['practitioner-role-inpatient-doctor', 'practitioner-role-ward-nurse', 'practitioner-role-medical-records']) {
       expect((await get(`/fhir/R5/PractitionerRole/${id}`)).status).toBe(200)
     }
     const catalog = await reopened.app.request('/api/his/v1/inpatient/catalog', { headers: { cookie: registrar } })
-    expect((await catalog.json()).wards).toHaveLength(2)
+    expect((await catalog.json()).wards).toHaveLength(1)
   })
 
   it('人类Cookie延迟提交旧Epoch登记即使Patient标识和版本重用也不能在新Epoch收款', async () => {

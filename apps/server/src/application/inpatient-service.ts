@@ -135,7 +135,8 @@ export class InpatientService {
       WHERE b.workspace_id=? AND b.epoch=? AND b.ward_id=? ORDER BY b.bed_id`).all(context.workspaceId, context.epoch, ward.ward_id))
       .map(bed => ({ id: bed.bed_id, wardId: ward.ward_id, roomId: bed.room_id, name: bed.name, dailyPriceFen: bed.daily_price_fen,
         ...(bed.admission_id === null ? {} : { admissionId: bed.admission_id }) })))
-    return inpatientCatalogSchema.parse({ wards: wards.map(ward => ({ id: ward.ward_id, name: ward.name, organizationId: ward.organization_id })), beds })
+    return inpatientCatalogSchema.parse({ wards: wards.map(ward => ({ id: ward.ward_id, name: ward.name, organizationId: ward.organization_id,
+      acceptingAdmissions: ward.ward_id === 'ward-general' })), beds })
   }
   referrals(context: ActorContext) {
     this.assertReadRole(context, ['registrar', 'outpatient-doctor'])
@@ -167,6 +168,7 @@ export class InpatientService {
         .get(context.workspaceId, context.epoch, input.encounterId, context.practitionerRoleId ?? ''))
       if (row === undefined) throw new InpatientError('INPATIENT_REFERRAL_FORBIDDEN', '仅负责门诊医生可开具住院证', 403)
       if (!this.catalog(context).wards.some(ward => ward.id === input.wardId)) throw new InpatientError('INPATIENT_WARD_NOT_FOUND', '住院病区不存在', 404)
+      if (input.wardId !== 'ward-general') throw new InpatientError('INPATIENT_WARD_UNAVAILABLE', '当前病区不接收新的住院证，请使用默认住院病区')
       const id = uuidv7()
       this.database.driver.prepare(`INSERT INTO inpatient_referral VALUES (?, ?, ?, ?, ?, ?, ?, 'issued', ?)`)
         .run(context.workspaceId, context.epoch, id, row.patient_id, input.encounterId, input.wardId, input.reason, this.virtualTime(context))
@@ -190,6 +192,9 @@ export class InpatientService {
         'SELECT organization_id FROM inpatient_ward WHERE workspace_id=? AND epoch=? AND ward_id=?')
         .get(context.workspaceId, context.epoch, input.wardId))
       if (ward === undefined) throw new InpatientError('INPATIENT_WARD_NOT_FOUND', '住院病区不存在', 404)
+      if (input.referralId === undefined && input.wardId !== 'ward-general') {
+        throw new InpatientError('INPATIENT_WARD_UNAVAILABLE', '当前病区不接收新的入院登记，请使用默认住院病区或原已签发住院证')
+      }
       let sourceEncounterId = input.sourceEncounterId
       if (input.referralId !== undefined) {
         const referral = z.object({ patient_id: z.string(), ward_id: z.string(), status: z.string(), encounter_id: z.string() }).optional().parse(this.database.driver.prepare(

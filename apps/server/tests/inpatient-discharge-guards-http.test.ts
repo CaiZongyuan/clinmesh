@@ -1,3 +1,4 @@
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -23,6 +24,7 @@ async function setup() {
     valueQuantity: { value: 7.2, unit: '10^9/L', system: 'http://unitsofmeasure.org', code: '10*9/L' },
   } }] }], { persona: true })
   const { runtime } = created
+  await addSecondaryInpatientWard(runtime)
   cleanups.push(async () => { await runtime.close(); await rm(created.directory, { recursive: true, force: true }) })
   await installSyntheticImagingAssets({ assetDirectory: created.assetDirectory, catalogDirectory: created.catalogDirectory,
     assets: [{ assetId: 'synthetic-inpatient-radiograph', examCode: 'chest-radiograph' }],

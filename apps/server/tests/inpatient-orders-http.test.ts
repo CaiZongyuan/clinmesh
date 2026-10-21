@@ -1,3 +1,4 @@
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { serviceCatalogSearchSchema } from '@clinmesh/contracts/his'
 import { applyMigrations, canonicalStateHash, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { dispenseResponseSchema, prescriptionReviewResponseSchema, pharmacyQueueSchema, registrationResponseSchema } from '@clinmesh/contracts/his'
@@ -411,6 +412,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       clinicalStatus:{coding:[{code:'active'}]},verificationStatus:{coding:[{code:'confirmed'}]},code:{coding:[{code:'AMLODIPINE'}]}})
     expect((await s.request(s.doctor,`${s.path}/orders/issue`,{encounterVersion:diagnosed.data.encounterVersion,duration:'temporary',selection:{kind:'medication',catalogItemId:'medication-amlodipine',catalogVersion:1,doseText:'5 mg',doseQuantity:1,frequencyCode:'QD'}})).status).toBe(409)
     expect((await(await s.request(s.doctor,`${s.path}/clinical`)).json()).orders).toEqual([])
+    await addSecondaryInpatientWard(s.runtime)
     const role=await s.runtime.app.request('/api/auth/role',{method:'POST',headers:{cookie:s.doctor,origin:'http://localhost','content-type':'application/json'},body:JSON.stringify({practitionerRoleId:'practitioner-role-inpatient-doctor-surgery'})})
     expect(role.status).toBe(200)
     expect((await s.request(s.doctor,`${s.path}/clinical`)).status).toBe(403)
