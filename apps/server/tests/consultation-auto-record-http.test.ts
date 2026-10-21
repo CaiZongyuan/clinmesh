@@ -114,6 +114,7 @@ async function setup(options: {
   failFirstReply?: boolean
   reply?: string | (() => string)
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
+  extractProvider?: JsonChatCompletionsProvider
   resolveModel?: JsonChatCompletionsProvider['resolveModel']
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auto-record-'))
@@ -121,6 +122,8 @@ async function setup(options: {
   const requests: JsonChatCompletionInput[] = []
   let replyCalls = 0
   const provider: JsonChatCompletionsProvider = {
+    ...(options.extractProvider?.supportsRequestControl === undefined ? {} : { supportsRequestControl: options.extractProvider.supportsRequestControl }),
+    ...(options.extractProvider?.supportsUsageAccounting === undefined ? {} : { supportsUsageAccounting: options.extractProvider.supportsUsageAccounting }),
     ...(options.resolveModel === undefined ? {} : { resolveModel: options.resolveModel }),
     async completeJson(input) {
       requests.push(input)
@@ -129,6 +132,7 @@ async function setup(options: {
         if (options.failFirstReply && replyCalls++ === 0) throw new Error('Synthetic reply failure')
         return { content: JSON.stringify({ reply: typeof options.reply === 'function' ? options.reply() : options.reply ?? '头晕一周了，站起来时更明显。' }), model: 'synthetic' }
       }
+      if (options.extractProvider !== undefined) return options.extractProvider.completeJson(input)
       if (options.extract !== undefined) return { content: JSON.stringify(await options.extract(input)), model: 'synthetic' }
       const payload = input.userPayload as { turns: Array<{ id: string; speaker: string; messageText: string }> }
       const answer = payload.turns.findLast(turn => turn.speaker === 'patient')!
@@ -1246,9 +1250,10 @@ it.each([false, true])('repairs malformed output once within each recording atte
       }] }) })
     },
   })
-  const fixture = await setup({ reply: `${uncertain}${confirmed}`, extract: async input => {
-    const result = await provider.completeJson({ ...input, model: 'dsh:{"provider":"synthetic","model":"synthetic"}' })
-    return JSON.parse(result.content)
+  const fixture = await setup({ reply: `${uncertain}${confirmed}`, extractProvider: {
+    supportsRequestControl: provider.supportsRequestControl,
+    supportsUsageAccounting: provider.supportsUsageAccounting,
+    completeJson: input => provider.completeJson({ ...input, model: 'dsh:{"provider":"synthetic","model":"synthetic"}' }),
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()
