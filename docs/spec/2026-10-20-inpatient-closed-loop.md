@@ -61,6 +61,7 @@ Status: draft
 - 医嘱生命周期、执行引用与计费触发点沿用 [临床业务流程](../architecture/clinical-workflows.md#83-医嘱生命周期) 的既有约束，按项目类型声明。
 - 病案首页与编码审核是归档流程组成部分；诊断与操作编码目录及版本在实施设计时按病案编码规范核定，为后续 DRG 只读投影预留事实位置，本次不实现分组。
 - 手术取最小闭环：申请 → 术前准备 → 执行记录 → 术后医嘱；手术排班调度、麻醉与监护设备采集、耗材供应链管理后置（依据 [DRG 前置研究](../research/2026-10-20-drg-operations-prerequisites.md) 的建设顺序建议）。
+- 分层状态模型、床位互斥、虚拟时间与四段门禁的动机、替代方案与后果由 [住院闭环模型决策](../decisions/proposed/architecture/2026-10-21-inpatient-closed-loop-model.md) 记录。
 
 ## 测试策略
 
