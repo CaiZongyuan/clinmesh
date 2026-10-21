@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
-const identifier = z.string().min(1).max(256).regex(/^[\p{L}\p{N}_.:/@+{}"\[\], -]+$/u)
-const modelName = z.string().min(1).max(1024).regex(/^[\p{L}\p{N}_.:/@+{}"\[\], -]+$/u)
+const identifier = z.string().min(1).max(256).regex(/^[\p{L}\p{N}_.:/@+{}"[\], -]+$/u)
+const modelName = z.string().min(1).max(1024).regex(/^[\p{L}\p{N}_.:/@+{}"[\], -]+$/u)
 const count = z.number().int().nonnegative().safe().nullable()
 export const modelUsageFeatureSchema = z.enum(['patient_persona', 'patient_dialogue_reply',
   'consultation_history_increment', 'consultation_history_summary', 'investigation_result',
