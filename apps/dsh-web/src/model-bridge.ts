@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-import { decodeModelRoute, encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeAccountingSchema,
+import { decodeModelRoute, encodeModelRoute, mergeModelBridgeUsage, modelBridgeAccountingMediaType, modelBridgeAccountingSchema,
   modelBridgeFirstTextHeader, modelBridgeRequestSchema, modelRouteSchema } from '@clinmesh/contracts/model-bridge'
 import { modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { z } from 'zod'
@@ -56,6 +56,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
     let terminalReceived = false
     const accounting = (status: 'succeeded' | 'failed' | 'cancelled' | 'unknown') => attemptId === undefined ? {} : {
       accounting: modelBridgeAccountingSchema.parse({ attemptId, status, usage,
+        dispatch: modelStreamStarted ? 'dispatched' : 'not-dispatched',
         ...(actualModel === undefined ? {} : { actualModel }), ...(providerRequestId === undefined ? {} : { providerRequestId }) }),
     }
     const send = (status: number, body: string, firstTextMs?: number) => {
@@ -131,7 +132,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
           messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input.userPayload) }] }],
         })) {
           if (chunk.type === 'usage') {
-            usage = tokenUsage(chunk.usage)
+            usage = mergeModelBridgeUsage(usage, tokenUsage(chunk.usage))
             if (incremental && !response.destroyed && !responseStarted) {
               if (!streamStarted) {
                 response.writeHead(200, { 'content-type': modelBridgeAccountingMediaType, 'cache-control': 'no-store, no-transform' })

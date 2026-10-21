@@ -1,9 +1,22 @@
 import { z } from 'zod'
-import { modelTokenUsageSchema, modelUsageOutcomeSchema } from './model-usage.ts'
+import { modelTokenUsageSchema, modelUsageOutcomeSchema, type ModelTokenUsage } from './model-usage.ts'
 
 export const modelBridgePath = '/clinmesh-model-bridge'
 export const modelBridgeFirstTextHeader = 'x-clinmesh-model-first-text-ms'
 export const modelBridgeAccountingMediaType = 'application/x-ndjson'
+
+/** Usage snapshots replace reported counters; an omitted counter cannot erase known consumption. */
+export function mergeModelBridgeUsage(known: ModelTokenUsage, next: ModelTokenUsage): ModelTokenUsage {
+  return {
+    inputTokens: next.inputTokens ?? known.inputTokens,
+    outputTokens: next.outputTokens ?? known.outputTokens,
+    cachedInputTokens: next.cachedInputTokens ?? known.cachedInputTokens,
+    reasoningOutputTokens: next.reasoningOutputTokens ?? known.reasoningOutputTokens,
+    totalTokens: next.totalTokens ?? known.totalTokens,
+    mapping: next.mapping === 'unknown' ? known.mapping : next.mapping,
+  }
+}
+
 export const dshDefaultModel = 'dsh:default'
 export const modelRouteSchema = z.object({
   provider: z.string().min(1).max(128),

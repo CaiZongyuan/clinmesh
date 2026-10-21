@@ -1,4 +1,4 @@
-import { dshDefaultModel, decodeModelRoute, modelBridgeAccountingMediaType, modelBridgeFrameSchema,
+import { dshDefaultModel, decodeModelRoute, mergeModelBridgeUsage, modelBridgeAccountingMediaType, modelBridgeFrameSchema,
   modelBridgeErrorSchema, modelBridgeFirstTextHeader, modelBridgePath, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
 import { unknownModelTokenUsage, type ModelTokenUsage, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import { beginChatCompletionUsage, settleChatCompletionUsage, ChatCompletionRequestControlError, invokeChatCompletionRequestControl, ChatCompletionsError, StructuredOutputValidationError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from './openai-chat-completions.ts'
@@ -88,6 +88,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
         })
         const body = attemptId === undefined ? serialized : JSON.stringify({ ...completionPayload, attemptId })
         let knownUsage: ModelTokenUsage = unknownModelTokenUsage
+        const observation: { dispatch: NonNullable<ModelUsageOutcome['dispatch']> } = { dispatch: 'unknown' }
         let settled = false
         try {
           const response = await (this.options.fetch ?? fetch)(this.#endpoint, {
@@ -97,9 +98,8 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
           })
           onResponse?.()
           if (response.body === null) {
-            invokeChatCompletionRequestControl(control?.onRequestComplete)
             settled = true
-            if (control !== undefined) settleChatCompletionUsage(control, attemptId, { status: 'unknown', usage: knownUsage, httpStatus: response.status })
+            if (control !== undefined) settleChatCompletionUsage(control, attemptId, { status: 'unknown', dispatch: observation.dispatch, usage: knownUsage, httpStatus: response.status })
             if (!response.ok) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'The DSH model bridge is unavailable', { httpStatus: response.status })
             throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge returned no response')
           }
@@ -112,7 +112,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
             if (terminal !== undefined) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge sent data after its terminal frame')
             const parsed = modelBridgeFrameSchema.parse(JSON.parse(line))
             if (attemptId === undefined || parsed.attemptId !== attemptId) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the attempt identity')
-            if (parsed.type === 'usage') knownUsage = parsed.usage
+            if (parsed.type === 'usage') { knownUsage = mergeModelBridgeUsage(knownUsage, parsed.usage); observation.dispatch = 'dispatched' }
             else terminal = parsed.type === 'result' ? { value: parsed.result, status: 200 }
               : { value: parsed.error, status: parsed.httpStatus }
           }
@@ -149,13 +149,14 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
           const completed = modelBridgeResponseSchema.safeParse(parseJson(content))
           const accounting = failure.success ? failure.data.accounting : completed.success ? completed.data.accounting : undefined
           if (accounting !== undefined && accounting.attemptId !== attemptId) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the attempt identity')
-          if (accounting !== undefined) knownUsage = accounting.usage
+          if (accounting !== undefined) knownUsage = mergeModelBridgeUsage(knownUsage, accounting.usage)
+          if (observation.dispatch !== 'dispatched') observation.dispatch = accounting?.dispatch ?? observation.dispatch
           const unknownResult = accounting?.status === 'unknown' || accounting?.status === 'cancelled'
           if (!unknownResult) invokeChatCompletionRequestControl(control?.onRequestComplete)
           settled = true
           if (control !== undefined) settleChatCompletionUsage(control, attemptId, accounting === undefined
-            ? { status: responseStatus >= 400 ? 'failed' : 'succeeded', usage: knownUsage, httpStatus: responseStatus }
-            : { ...withoutAttemptIdentity(accounting), httpStatus: responseStatus })
+            ? { status: responseStatus >= 400 ? 'failed' : 'succeeded', dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus }
+            : { ...withoutAttemptIdentity(accounting), dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus })
           if (unknownResult) throw new ChatCompletionsError(failure.success && failure.data.error === 'MODEL_TIMEOUT'
             ? 'AI_TIMEOUT' : 'AI_REQUEST_FAILED', 'The DSH model request outcome is unknown')
           if (responseStatus >= 400) {
@@ -190,7 +191,7 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
             ...(firstText?.success ? { firstTextMs: firstText.data } : {}) }
         } catch (error) {
           if (!settled && control !== undefined) settleChatCompletionUsage(control, attemptId, {
-            status: callerSignal?.aborted ? 'cancelled' : 'unknown', usage: knownUsage,
+            status: callerSignal?.aborted ? 'cancelled' : 'unknown', dispatch: observation.dispatch, usage: knownUsage,
           })
           throw error
         }

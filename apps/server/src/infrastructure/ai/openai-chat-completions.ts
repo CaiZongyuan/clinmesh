@@ -103,7 +103,7 @@ function openAIOutcome(response: Response, value: unknown): ModelUsageOutcome {
   const cached = counts?.prompt_tokens_details?.cached_tokens ?? counts?.prompt_cache_hit_tokens ?? null
   const reasoning = counts?.completion_tokens_details?.reasoning_tokens ?? null
   const derivedTotal = inputTokens !== null && outputTokens !== null && Number.isSafeInteger(inputTokens + outputTokens) ? inputTokens + outputTokens : null
-  return { status: response.ok ? 'succeeded' : 'failed', httpStatus: response.status,
+  return { status: response.ok ? 'succeeded' : 'failed', dispatch: 'dispatched', httpStatus: response.status,
     ...(actualModel.success && actualModel.data !== undefined ? { actualModel: actualModel.data } : {}),
     ...(providerRequestId.success && providerRequestId.data !== undefined ? { providerRequestId: providerRequestId.data } : {}),
     usage: counts === undefined ? unknownModelTokenUsage : { inputTokens, outputTokens,
@@ -290,7 +290,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
         return response
       } catch (error) {
         if (!settled) settleChatCompletionUsage(input, attemptId, {
-          status: input.signal?.aborted ? 'cancelled' : 'unknown', usage: unknownModelTokenUsage,
+          status: input.signal?.aborted ? 'cancelled' : 'unknown', dispatch: 'unknown', usage: unknownModelTokenUsage,
         })
         if (error instanceof ChatCompletionRequestControlError) throw error
         if (error instanceof ChatCompletionsError) throw error

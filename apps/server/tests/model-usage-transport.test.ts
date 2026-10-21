@@ -4,7 +4,7 @@ import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
 import { createModelBridgeHandler } from '../../dsh-web/src/model-bridge.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { expect, it } from 'vitest'
-import type { ModelUsageContext, ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
+import { unknownModelTokenUsage, type ModelUsageContext, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import type { ModelUsageRecorder } from '../src/application/model-usage-lifecycle.ts'
 import { OpenAIChatCompletionsClient, type JsonChatCompletionInput } from '../src/infrastructure/ai/openai-chat-completions.ts'
 
@@ -41,7 +41,7 @@ it('records every direct fallback with actual model and inclusive token subsets'
   expect({ sent, reserved }).toEqual({ sent: 2, reserved: 2 })
   expect(accounting.attempts.map(attempt => attempt.metadata.kind)).toEqual(['initial', 'format-repair'])
   expect(accounting.attempts.map(attempt => attempt.outcome)).toEqual([1, 2].map(request => ({
-    status: 'succeeded', actualModel: 'actual-synthetic', providerRequestId: `request-${request}`, httpStatus: 200,
+    status: 'succeeded', dispatch: 'dispatched', actualModel: 'actual-synthetic', providerRequestId: `request-${request}`, httpStatus: 200,
     usage: { inputTokens: 100, outputTokens: 30, totalTokens: 130, cachedInputTokens: 20, reasoningOutputTokens: 10, mapping: 'openai-v1' },
   })))
   expect(JSON.stringify(accounting.attempts)).not.toContain('synthetic-secret')
@@ -64,8 +64,8 @@ type HostContext = Parameters<typeof createModelBridgeHandler>[0]
 type StreamChunk = ReturnType<HostContext['llm']['stream']> extends AsyncIterable<infer Chunk> ? Chunk : never
 const secret = 'synthetic-model-bridge-secret-at-least-32-characters'
 const route = { provider: 'synthetic-provider', model: 'synthetic' }
-async function host(stream: HostContext['llm']['stream']) {
-  const handler = createModelBridgeHandler({ llm: { listModels: async () => [{ id: route.model }], stream },
+async function host(stream: HostContext['llm']['stream'], listModels = async () => [{ id: route.model }]) {
+  const handler = createModelBridgeHandler({ llm: { listModels, stream },
     agentDefaultModel: { currentSelection: () => route } } as unknown as HostContext, secret, () => 'default')
   const server = createServer(handler.handler)
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -75,6 +75,26 @@ async function host(stream: HostContext['llm']['stream']) {
     handler.dispose(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()))
   } }
 }
+
+it.each(['unavailable', 'missing'] as const)('does not count an actual model dispatch when the Host catalog is %s', async failure => {
+  let streams = 0
+  const bridge = await host(async function *(): AsyncGenerator<StreamChunk> {
+    streams += 1
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }, async () => {
+    if (failure === 'unavailable') throw new Error('Synthetic catalog unavailable')
+    return []
+  })
+  try {
+    const accounting = recorder()
+    const provider = new DshModelProvider({ origin: bridge.origin, secret, timeoutMs: 2000, maxResponseBytes: 4096 })
+    await expect(provider.completeJson({ ...input, model: encodeModelRoute(route), usageContext, usageRecorder: accounting.service }))
+      .rejects.toMatchObject({ code: 'AI_REQUEST_FAILED' })
+    expect(streams).toBe(0)
+    expect(accounting.attempts).toHaveLength(1)
+    expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'failed', dispatch: 'not-dispatched' })
+  } finally { await bridge.close() }
+})
 
 it('uses one attempt across the real bridge and separately accounts rate-limit resends and format repairs', async () => {
   let streams = 0
@@ -127,10 +147,50 @@ it('retains validated bridge usage delivered before cancellation interrupts the 
     cancelled.abort()
     await rejected
     expect(accounting.attempts).toHaveLength(1)
-    expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'cancelled', usage: {
+    expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'cancelled', dispatch: 'dispatched', usage: {
       inputTokens: 12, outputTokens: 3, totalTokens: 15, mapping: 'dsh-v1',
     } })
   } finally { await bridge.close() }
+})
+
+it('retains known Host usage when a later SDK snapshot omits previously reported counters', async () => {
+  const bridge = await host(async function *(): AsyncGenerator<StreamChunk> {
+    yield { type: 'text-delta', index: 0, text: '{"ok":true}' }
+    yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 3, cacheReadTokens: 2,
+      cacheWriteTokens: 1, reasoningTokens: 1, totalTokens: 18 } }
+    yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 3 } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  })
+  try {
+    const accounting = recorder()
+    const provider = new DshModelProvider({ origin: bridge.origin, secret, timeoutMs: 2000, maxResponseBytes: 4096 })
+    await provider.completeJson({ ...input, model: encodeModelRoute(route), usageContext, usageRecorder: accounting.service })
+    expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'succeeded', dispatch: 'dispatched', usage: {
+      inputTokens: 15, outputTokens: 3, cachedInputTokens: 3, reasoningOutputTokens: 1, totalTokens: 18, mapping: 'dsh-v1',
+    } })
+  } finally { await bridge.close() }
+})
+
+it('retains trusted usage and dispatch through later empty bridge frames and terminal accounting', async () => {
+  const accounting = recorder()
+  const model = encodeModelRoute(route)
+  const provider = new DshModelProvider({ origin: 'http://127.0.0.1:12345', secret, timeoutMs: 2000, maxResponseBytes: 4096,
+    fetch: async (_url, init) => {
+      const { attemptId } = JSON.parse(String(init?.body)) as { attemptId: string }
+      return new Response([
+        { type: 'usage', attemptId, usage: { inputTokens: 15, outputTokens: 3, cachedInputTokens: 3,
+          reasoningOutputTokens: 1, totalTokens: 18, mapping: 'dsh-v1' } },
+        { type: 'usage', attemptId, usage: unknownModelTokenUsage },
+        { type: 'result', attemptId, result: { model, content: '{"ok":true}', accounting: {
+          attemptId, status: 'succeeded', dispatch: 'unknown', usage: unknownModelTokenUsage,
+        } } },
+      ].map(frame => JSON.stringify(frame)).join('\n'), { headers: { 'content-type': 'application/x-ndjson' } })
+    },
+  })
+  await provider.completeJson({ ...input, model, usageContext, usageRecorder: accounting.service })
+  expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'succeeded', dispatch: 'dispatched', usage: {
+    inputTokens: 15, outputTokens: 3, cachedInputTokens: 3, reasoningOutputTokens: 1, totalTokens: 18, mapping: 'dsh-v1',
+  } })
 })
 
 it('keeps a direct HTTP failure and missing usage distinct from zero consumption', async () => {
@@ -141,10 +201,21 @@ it('keeps a direct HTTP failure and missing usage distinct from zero consumption
   await expect(provider.completeJson({ ...input, usageContext, usageRecorder: accounting.service }))
     .rejects.toMatchObject({ code: 'AI_REQUEST_FAILED', httpStatus: 503 })
   expect(accounting.attempts).toHaveLength(1)
-  expect(accounting.attempts[0]?.outcome).toEqual({ status: 'failed', httpStatus: 503, usage: {
+  expect(accounting.attempts[0]?.outcome).toEqual({ status: 'failed', dispatch: 'dispatched', httpStatus: 503, usage: {
     inputTokens: null, outputTokens: null, cachedInputTokens: null, reasoningOutputTokens: null, totalTokens: null, mapping: 'unknown',
   } })
   expect(JSON.stringify(accounting.attempts)).not.toContain('private-model-text')
+})
+
+it('keeps a direct network failure dispatch unknown', async () => {
+  const accounting = recorder()
+  const provider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+    fetch: async () => { throw new Error('Synthetic connection lost') },
+  })
+  await expect(provider.completeJson({ ...input, usageContext, usageRecorder: accounting.service }))
+    .rejects.toMatchObject({ code: 'AI_REQUEST_FAILED' })
+  expect(accounting.attempts).toHaveLength(1)
+  expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'unknown', dispatch: 'unknown', usage: { totalTokens: null } })
 })
 
 it('rejects cross-attempt bridge metadata before accepting its usage or result', async () => {
@@ -157,7 +228,34 @@ it('rejects cross-attempt bridge metadata before accepting its usage or result',
   await expect(provider.completeJson({ ...input, model: encodeModelRoute(route), usageContext, usageRecorder: accounting.service }))
     .rejects.toMatchObject({ code: 'AI_RESPONSE_INVALID' })
   expect(accounting.attempts).toHaveLength(1)
-  expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'unknown', usage: { totalTokens: null } })
+  expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'unknown', dispatch: 'unknown', usage: { totalTokens: null } })
+})
+
+it.each([200, 503] as const)('retains an outstanding request when the bridge returns no body with HTTP %s', async status => {
+  const accounting = recorder()
+  let completed = 0
+  const provider = new DshModelProvider({ origin: 'http://127.0.0.1:12345', secret, timeoutMs: 2000, maxResponseBytes: 4096,
+    fetch: async () => new Response(null, { status }),
+  })
+  await expect(provider.completeJson({ ...input, model: encodeModelRoute(route), usageContext,
+    usageRecorder: accounting.service, onRequestComplete: () => { completed += 1 },
+  })).rejects.toMatchObject({ code: status === 200 ? 'AI_RESPONSE_INVALID' : 'AI_REQUEST_FAILED' })
+  expect(completed).toBe(0)
+  expect(accounting.attempts).toHaveLength(1)
+  expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'unknown', dispatch: 'unknown', usage: { totalTokens: null } })
+})
+
+it('retains an unknown outstanding request when the bridge disconnects before any frame', async () => {
+  const accounting = recorder()
+  let completed = 0
+  const provider = new DshModelProvider({ origin: 'http://127.0.0.1:12345', secret, timeoutMs: 2000, maxResponseBytes: 4096,
+    fetch: async () => new Response('', { headers: { 'content-type': 'application/x-ndjson' } }),
+  })
+  await expect(provider.completeJson({ ...input, model: encodeModelRoute(route), usageContext,
+    usageRecorder: accounting.service, onRequestComplete: () => { completed += 1 },
+  })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED' })
+  expect(completed).toBe(0)
+  expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'unknown', dispatch: 'unknown', usage: { totalTokens: null } })
 })
 
 it('does not authorize automatic resends when the bridge stream ends without a terminal model result', async () => {
@@ -173,6 +271,6 @@ it('does not authorize automatic resends when the bridge stream ends without a t
     })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED' })
     expect(completed).toBe(0)
     expect(accounting.attempts).toHaveLength(1)
-    expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'unknown', usage: { totalTokens: 15 } })
+    expect(accounting.attempts[0]?.outcome).toMatchObject({ status: 'unknown', dispatch: 'dispatched', usage: { totalTokens: 15 } })
   } finally { await bridge.close() }
 })
