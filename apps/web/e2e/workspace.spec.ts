@@ -1,6 +1,7 @@
 import { sessionContextSchema } from '@clinmesh/contracts/his'
 import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures.ts'
+import { addSecondaryInpatientWard } from '../../server/tests/fixtures/inpatient-secondary-ward.ts'
 
 async function signIn(page: Page, origin: string, email: string, password: string, path = '/') {
   await page.goto(`${origin}${path}`)
@@ -64,4 +65,40 @@ test('theme and font size persist on a narrow viewport', async ({ page, browserA
   await expect(page.locator('html')).toHaveClass(/dark/)
   await expect(page.getByRole('button', { name: '大', exact: true })).toHaveAttribute('aria-pressed', 'true')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+})
+
+test('新环境每个住院岗位只显示一次且不要求选择病区', async ({ page, browserApp }) => {
+  await signIn(page, browserApp.origin, 'admin@demo.clinmesh.local', browserApp.password)
+  await page.getByRole('button', { name: '用户菜单' }).click()
+  await expect(page.getByRole('menuitemradio', { name: '住院医生', exact: true })).toHaveCount(1)
+  await expect(page.getByRole('menuitemradio', { name: '病区护士', exact: true })).toHaveCount(1)
+  await page.getByRole('menuitemradio', { name: '住院医生', exact: true }).click()
+  await expect(page).toHaveURL(`${browserApp.origin}/inpatient`)
+  const context = sessionContextSchema.parse(await (await page.request.get(`${browserApp.origin}/api/auth/context`)).json())
+  expect(context.availableRoles.filter(role => role.code === 'inpatient-doctor')).toHaveLength(1)
+  expect(context.availableRoles.filter(role => role.code === 'ward-nurse')).toHaveLength(1)
+  expect(context.actor.locationId).toBe('ward-general')
+  await expect(page.getByRole('combobox', { name: '工作病区' })).toHaveCount(0)
+})
+
+test('旧病区职责通过单个人物入口切换并在刷新后保持原授权', async ({ page, browserApp }) => {
+  await addSecondaryInpatientWard(browserApp.runtime)
+  await signIn(page, browserApp.origin, 'admin@demo.clinmesh.local', browserApp.password)
+  await page.getByRole('button', { name: '用户菜单' }).click()
+  await expect(page.getByRole('menuitemradio', { name: '住院医生', exact: true })).toHaveCount(1)
+  await page.getByRole('menuitemradio', { name: '住院医生', exact: true }).click()
+  await expect(page).toHaveURL(`${browserApp.origin}/inpatient`)
+  await page.getByRole('combobox', { name: '工作病区' }).click()
+  await page.getByRole('option', { name: '外科病区', exact: true }).click()
+  await expect(page.getByRole('combobox', { name: '工作病区' })).toContainText('外科病区')
+  await page.reload()
+  await expect(page.getByRole('combobox', { name: '工作病区' })).toContainText('外科病区')
+  const context = sessionContextSchema.parse(await (await page.request.get(`${browserApp.origin}/api/auth/context`)).json())
+  expect(context.actor).toMatchObject({ roleCode: 'inpatient-doctor',
+    practitionerRoleId: 'practitioner-role-inpatient-doctor-surgery',
+    organizationId: 'organization-inpatient-surgery', locationId: 'ward-surgery' })
+  await page.getByRole('button', { name: '用户菜单' }).click()
+  const selected = page.getByRole('menuitemradio', { name: '住院医生', exact: true })
+  await expect(selected).toHaveCount(1)
+  await expect(selected).toHaveAttribute('aria-checked', 'true')
 })
