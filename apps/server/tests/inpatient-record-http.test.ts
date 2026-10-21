@@ -1,6 +1,8 @@
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { inpatientChargesSchema, inpatientPharmacyListSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientReferralListSchema } from '@clinmesh/contracts/inpatient'
 import { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
+import { canonicalStateHash } from '../src/infrastructure/sqlite/database.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
@@ -64,6 +66,64 @@ async function setup(depositFen = 100000, withReference = false) {
   return { runtime, options, request, login, patient, admission, doctor, nurse, cashier, registrar, path: `/api/his/v1/inpatient/admissions/${admission.id}` }
 }
 describe('住院病案首页公共 HTTP', () => {
+  it('旧病区的手术费用、病案归档与原岗位receipt重启后保真，默认病区不能越权读取', async () => {
+    const s = await setup(100000, true)
+    await addSecondaryInpatientWard(s.runtime)
+    const transferred = await s.request(s.doctor, `${s.path}/transfers/request`, { encounterVersion: s.admission.versionId,
+      targetWardId: 'ward-surgery', reason: '显式旧双病区测试安排' })
+    expect(transferred.status).toBe(200)
+    const transfer = (await transferred.json()).data.transfers[0]
+    expect((await s.request(s.nurse, `${s.path}/transfers/handover`, { encounterVersion: s.admission.versionId,
+      transferId: transfer.id, expectedTransferVersion: transfer.version })).status).toBe(200)
+    for (const [cookie, role] of [[s.nurse, 'ward-nurse'], [s.doctor, 'inpatient-doctor']] as const) {
+      expect((await s.runtime.app.request('/api/auth/role', { method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json' },
+        body: JSON.stringify({ practitionerRoleId: `practitioner-role-${role}-surgery` }) })).status).toBe(200)
+    }
+    expect((await s.request(s.nurse, `${s.path}/transfers/receive`, { encounterVersion: s.admission.versionId,
+      transferId: transfer.id, expectedTransferVersion: transfer.version + 1, bedId: 'bed-surgery-1' })).status).toBe(200)
+    s.admission = (await (await s.request(s.doctor, s.path)).json()).admission
+    const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json(), procedure = catalog.procedures[0]
+    const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: s.admission.versionId,
+      procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T09:00:00+08:00', reason: '合成旧病区实际手术' })
+    expect(requested.status).toBe(200)
+    let request = (await requested.json()).data.requests[0]
+    for (const [cookie, action] of [[s.doctor, 'confirm-consent'], [s.nurse, 'check-preop']] as const) {
+      const prepared = await s.request(cookie, `${s.path}/surgeries/${action}`, { requestId: request.id, expectedRequestVersion: request.version, note: '合成准备完成' })
+      expect(prepared.status).toBe(200)
+      request = (await prepared.json()).data.requests[0]
+    }
+    const key = randomUUID(), executionInput = { requestId: request.id, expectedRequestVersion: request.version,
+      procedureId: procedure.id, catalogVersion: procedure.version, note: '合成实际实施完成', materials: [] }
+    const executionResponse = await s.request(s.doctor, `${s.path}/surgeries/execute`, executionInput, key)
+    expect(executionResponse.status).toBe(200)
+    const executionReceipt = await executionResponse.json(), execution = executionReceipt.data.executions[0]
+    await finish(s)
+    expect((await confirm(s)).status).toBe(200)
+    const record = await (await s.request(s.doctor, `${s.path}/record`)).json()
+    expect((await s.request(s.doctor, `${s.path}/record/submit`, { expectedRevision: 0, expectedSourcesHash: record.sourcesHash, mainProcedureExecutionId: execution.id })).status).toBe(200)
+    const coder = await s.login('medical-records'), expected = { expectedRevision: 1, expectedSourcesHash: record.sourcesHash }
+    expect((await s.request(coder, `${s.path}/record/review`, { ...expected, outcome: 'approved' })).status).toBe(200)
+    expect((await s.request(coder, `${s.path}/record/archive`, expected)).status).toBe(200)
+    const wrongScope = await s.login('inpatient-doctor')
+    expect((await s.request(wrongScope, s.path)).status).toBe(403)
+    const stored = await (await s.request(s.doctor, `${s.path}/record`)).json()
+    expect(stored.archive.snapshot.stay.dischargeWardId).toBe('ward-surgery')
+    expect(stored.archive.snapshot.clinical.operations).toHaveLength(1)
+    expect(stored.archive.snapshot.fees.chargesFen).toBeGreaterThan(0)
+    const before = canonicalStateHash(s.runtime.database)
+    await s.runtime.close()
+    const reopened = await createClinMeshRuntime(s.options)
+    cleanups.unshift(async () => { await reopened.close() })
+    expect(canonicalStateHash(reopened.database)).toBe(before)
+    expect(await (await reopened.app.request(`${s.path}/record`, { headers: { cookie: s.doctor } })).json()).toEqual(stored)
+    const replay = await reopened.app.request(`${s.path}/surgeries/execute`, { method: 'POST', headers: { cookie: s.doctor,
+      origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify({ input: executionInput }) })
+    expect(replay.status).toBe(200)
+    expect(await replay.json()).toEqual(executionReceipt)
+    expect(canonicalStateHash(reopened.database)).toBe(before)
+    expect((await reopened.app.request(s.path, { headers: { cookie: wrongScope } })).status).toBe(403)
+  })
+
   it('主管医生提交独立首页修订，四组事实可追溯且明确本次无实际操作，其他岗位不能提交', async () => {
     const s = await setup()
     const initial = await s.request(s.doctor, `${s.path}/record`)
@@ -127,6 +187,7 @@ describe('住院病案首页公共 HTTP', () => {
     const change = await confirm(s, '归档后禁止新修订')
     expect(change.status).toBe(409)
     expect((await change.json()).error.code).toBe('INPATIENT_RECORD_ARCHIVED')
+    await addSecondaryInpatientWard(s.runtime)
     expect((await s.runtime.app.request('/api/auth/role', { method: 'POST', headers: { cookie: s.doctor, origin: 'http://localhost', 'content-type': 'application/json' }, body: JSON.stringify({ practitionerRoleId: 'practitioner-role-inpatient-doctor-surgery' }) })).status).toBe(200)
     const crossScope = await s.request(s.doctor, `${s.path}/diagnoses/confirm`, { ...diagnosisInput, encounterVersion: archived.data.snapshot.fees.encounterVersion, expectedRevision: 1 })
     expect(crossScope.status).toBe(403)

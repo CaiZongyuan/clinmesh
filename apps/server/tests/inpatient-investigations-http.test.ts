@@ -1,3 +1,4 @@
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -13,6 +14,7 @@ import { acuteBronchitis, caseBundle, createImagingRuntime, generateCase, mutati
 import { applyMigrations, canonicalStateHash, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { z } from 'zod'
 import { repairImagingAssets } from '../src/infrastructure/imaging-assets/imaging-asset-store.ts'
+import { createClinMeshRuntime } from '../src/runtime.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -25,6 +27,7 @@ async function setup() {
     valueQuantity: { value: 7.2, unit: '10^9/L', system: 'http://unitsofmeasure.org', code: '10*9/L' },
   } }] }], { persona: true })
   const { runtime } = created
+  await addSecondaryInpatientWard(runtime)
   cleanups.push(async () => { await runtime.close(); await rm(created.directory, { recursive: true, force: true }) })
   await installSyntheticImagingAssets({ assetDirectory: created.assetDirectory, catalogDirectory: created.catalogDirectory,
     assets: [{ assetId: 'synthetic-inpatient-radiograph', examCode: 'chest-radiograph' }],
@@ -441,6 +444,26 @@ describe('住院检查检验 HTTP 合同', () => {
     const encounter = await (await s.request(targetDoctor, `/fhir/R5/Encounter/${s.admission.id}`)).json()
     expect(encounter.serviceProvider.reference).toBe('Organization/organization-inpatient-surgery')
     expect(encounter.location).toMatchObject([{ status: 'completed', location: { reference: 'Location/bed-general-1' } }, { status: 'active', location: { reference: 'Location/bed-surgery-1' } }])
+    const reported = after.imagingRequests[0], key = randomUUID(), input = { requestId: reported.id, expectedRequestVersion: reported.version,
+      serviceRequestVersion: reported.serviceRequestVersion, taskVersion: reported.taskVersion,
+      diagnosticReportId: reported.report.diagnosticReportId, diagnosticReportVersion: reported.report.diagnosticReportVersion }
+    const acknowledged = await s.request(targetDoctor, `${s.path}/investigations/acknowledge`, input, key)
+    expect(acknowledged.status).toBe(200)
+    // 测试运行后安装的合成检验目录先完成与启动相同的计价补齐。
+    s.runtime.laboratoryServicePublisher.ensureInpatientPrices()
+    const receipt = await acknowledged.json(), before = canonicalStateHash(s.runtime.database)
+    await s.runtime.close()
+    const reopened = await createClinMeshRuntime(s.runtimeOptions)
+    cleanups.unshift(async () => { await reopened.close() })
+    expect(canonicalStateHash(reopened.database)).toBe(before)
+    expect(await (await reopened.app.request(`${s.path}/investigations`, { headers: { cookie: targetDoctor } })).json()).toEqual(receipt.data)
+    expect(await (await reopened.app.request(`${s.path}/charges`, { headers: { cookie: cashier } })).json()).toEqual(charges)
+    const replay = await reopened.app.request(`${s.path}/investigations/acknowledge`, { ...mutation(targetDoctor, { input }),
+      headers: { ...mutation(targetDoctor, {}).headers, 'idempotency-key': key } })
+    expect(replay.status).toBe(200)
+    expect(await replay.json()).toEqual(receipt)
+    expect(canonicalStateHash(reopened.database)).toBe(before)
+    expect((await reopened.app.request(s.path, { headers: { cookie: s.doctor } })).status).toBe(403)
   })
 
   it('医生开立后等待护士送检，复用 RIS 发布本次 IMP 报告并只计一次执行费', async () => {

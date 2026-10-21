@@ -45,13 +45,13 @@ export function seedInpatientEnvironment(database: ClinMeshDatabase, fhir: FhirR
       code: [{ text: 'medical-records' }], location: [{ reference: 'Location/location-medical-records' }],
     })
   }
-  for (const [suffix, name, department] of [['general', '内科病区', 'medicine'], ['surgery', '外科病区', 'surgery']] as const) {
+  for (const [suffix, name, department] of [['general', '住院病区', 'medicine']] as const) {
     const wardId = `ward-${suffix}`
     if (database.driver.prepare('SELECT 1 FROM inpatient_ward WHERE workspace_id=? AND epoch=? AND ward_id=?')
       .get(context.workspaceId, context.epoch, wardId) !== undefined) continue
     const organizationId = `organization-inpatient-${department}`
     fhir.create(context, { resourceType: 'Organization', id: organizationId, active: true,
-      name: suffix === 'general' ? '合成住院内科' : '合成住院外科', partOf: { reference: 'Organization/organization-clinmesh' } })
+      name: '住院科', partOf: { reference: 'Organization/organization-clinmesh' } })
     fhir.create(context, { resourceType: 'Location', id: wardId, status: 'active', name,
       managingOrganization: { reference: `Organization/${organizationId}` },
       form: { coding: [{ system: 'http://terminology.hl7.org/CodeSystem/location-physical-type', code: 'wa' }] } })
