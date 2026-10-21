@@ -317,6 +317,8 @@ POST /fhir/R5/MedicationRequest/{id}/$dispense
 
 ### 6.4 HIS Command API
 
+普通挂号、合成病例开始及 Epoch 重放共用同一个门诊发号边界，发行状态、Registration、Encounter.identifier 与 Command 回执原子提交；幂等重放返回原就诊事实。发行状态损坏、容量耗尽或发行源退休时返回可识别的 `REGISTRATION_NUMBER_*` 错误，保留原意图与幂等键，由管理员恢复后重试。号码的持久性、迁移与恢复合同见[存储与事务](storage.md#94-标识符)。
+
 FHIR 没有稳定等价物的聚合使用显式 API。当前写路由为：
 
 ```text

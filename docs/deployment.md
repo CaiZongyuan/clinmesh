@@ -233,6 +233,8 @@ pnpm --filter @clinmesh/server start
 
 构建顺序由 workspace 依赖和 Turborepo 决定：先生成 Web assets，再生成 Server 的 Node.js bundle，同时构建 Desktop、DSH Surface artifact 和文档站。Server 启动时只验证 migration 状态，不隐式修改 schema；`CLINMESH_HOST`、`CLINMESH_PORT` 和 `CLINMESH_WEB_ROOT` 可覆盖运行配置。
 
+升级前保留一致备份。门诊号迁移要求完整可信的历史发行证据，证据不足时拒绝迁移并保留原库；不要从现存最大号手工补发号状态。恢复旧备份需要同时保全可信最新发行权威库，停用旧 Server，再执行带 `--authority-database` 的受控恢复并切换到新目标。具体命令、失败处理和克隆边界见[数据库运维](demo-architecture.md#database-operations)。
+
 ### 局域网访问 Web 开发入口
 
 ```sh

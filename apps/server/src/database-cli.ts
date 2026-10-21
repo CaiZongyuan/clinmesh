@@ -15,6 +15,7 @@ import {
 
 const commandSchema = z.enum(['backup', 'migrate', 'reindex', 'restore', 'verify'])
 const optionNames = new Set([
+  '--authority-database',
   '--backup',
   '--busy-timeout-ms',
   '--database',
@@ -54,6 +55,7 @@ export async function runDatabaseCli(
 
   if (command === 'restore') {
     return restoreDatabase({
+      authorityDatabasePath: requiredPath(options.get('--authority-database'), 'Trusted current issuance authority database'),
       backupPath: requiredPath(options.get('--backup'), 'Backup path'),
       busyTimeoutMs,
       destinationPath: requiredPath(options.get('--destination'), 'Restore destination'),
@@ -79,7 +81,7 @@ export async function runDatabaseCli(
       const preMigrationBackup = { ...await backupDatabase(database, path), path }
       return { ...applyMigrations(database), preMigrationBackup }
     }
-    verifyMigrations(database)
+    verifyMigrations(database, undefined, command === 'backup' ? { allowRetiredRegistrationAuthority: true } : {})
     if (command === 'backup') {
       return await backupDatabase(
         database,

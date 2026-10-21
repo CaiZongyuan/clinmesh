@@ -60,6 +60,7 @@ import {
   doctorCompletedCaseDetailSchema,
   doctorCompletedCaseListSchema,
   doctorCompletedCaseTimelineEventSchema,
+  doctorQueueItemSchema,
   type DoctorQueueView,
   doctorQueueViewStatusGroups,
   encounterCompletionPreviewSchema,
@@ -97,6 +98,7 @@ import {
 } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
+import { allocateRegistrationNumber } from '../infrastructure/sqlite/registration-numbering.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import { doctorHistoryEntryAllowed, doctorVisibleHistory, doctorVisibleHistoryDetail, doctorVisibleHistoryDetails } from './doctor-case-history.ts'
@@ -2182,11 +2184,7 @@ export class WorkflowService {
     const chargeItemId = uuidv7()
     const chargeId = uuidv7()
     const now = this.#virtualTime(context)
-    const count = (this.#database.driver.prepare(`
-      SELECT COUNT(*) AS count FROM registration
-      WHERE workspace_id = ? AND epoch = ?
-    `).get(context.workspaceId, context.epoch) as { count: number }).count + 1
-    const registrationNumber = `CM-OP-${registration.visitDate.replaceAll('-', '')}-${String(count).padStart(4, '0')}`
+    const registrationNumber = allocateRegistrationNumber(this.#database, registration.visitDate)
     const encounter = transaction.fhir.create(context, {
       resourceType: 'Encounter',
       id: encounterId,
@@ -2616,9 +2614,14 @@ export class WorkflowService {
     `).get(...bindings) as { count: number }
     const rows = this.#database.driver.prepare(`
       SELECT outpatient_case.*, patient.content_json AS patient_json,
+        registration.registration_number,
         triage.acuity_code, triage.chief_complaint, triage.vital_json,
         encounter.version_id AS encounter_version, task.version_id AS task_version
       FROM outpatient_case
+      LEFT JOIN registration
+        ON registration.workspace_id = outpatient_case.workspace_id
+       AND registration.epoch = outpatient_case.epoch
+       AND registration.registration_id = outpatient_case.registration_id
       LEFT JOIN triage_record AS triage
         ON triage.workspace_id = outpatient_case.workspace_id
        AND triage.epoch = outpatient_case.epoch
@@ -2652,6 +2655,7 @@ export class WorkflowService {
       encounter_id: string
       encounter_version: number
       patient_json: string
+      registration_number: string | null
       status: string
       task_version: number
       vital_json: string | null
@@ -2667,6 +2671,7 @@ export class WorkflowService {
           encounterId: row.encounter_id,
           encounterVersion: String(row.encounter_version),
           patient: patientSummary(parseStoredFhirResource(row.patient_json)),
+          registrationNumber: doctorQueueItemSchema.shape.registrationNumber.parse(row.registration_number),
           presentation: casePresentation(triage),
           status: row.status,
           taskId: row.doctor_task_id,
@@ -3012,12 +3017,16 @@ export class WorkflowService {
     this.#assertRole(context, ['outpatient-doctor'])
     const row = this.#database.driver.prepare(`
       SELECT outpatient_case.case_id, outpatient_case.status, outpatient_case.diagnostic_report_id,
-        outpatient_case.doctor_task_id,
+        outpatient_case.doctor_task_id, registration.registration_number,
         patient.content_json AS patient_json,
         encounter.content_json AS encounter_json,
         task.version_id AS task_version,
         triage.acuity_code, triage.chief_complaint, triage.vital_json
       FROM outpatient_case
+      LEFT JOIN registration
+        ON registration.workspace_id = outpatient_case.workspace_id
+       AND registration.epoch = outpatient_case.epoch
+       AND registration.registration_id = outpatient_case.registration_id
       LEFT JOIN triage_record AS triage
         ON triage.workspace_id = outpatient_case.workspace_id
        AND triage.epoch = outpatient_case.epoch
@@ -3047,6 +3056,7 @@ export class WorkflowService {
       doctor_task_id: string
       encounter_json: string
       patient_json: string
+      registration_number: string | null
       status: string
       task_version: number
       vital_json: string | null
@@ -3226,6 +3236,7 @@ export class WorkflowService {
     return {
       allergies: this.#patientAllergyWarnings(context, patient.id),
       caseId: row.case_id,
+      registrationNumber: doctorCaseDetailSchema.shape.registrationNumber.parse(row.registration_number),
       ...(clinicalDocumentDraft === undefined && signedClinicalDocuments.length === 0 ? {} : {
         clinicalDocument: {
           ...(clinicalDocumentDraft === undefined ? {} : {
