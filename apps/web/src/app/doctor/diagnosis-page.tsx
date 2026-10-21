@@ -5,21 +5,19 @@ import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/ale
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { Field, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Separator } from '@clinmesh/ui/components/separator'
 import { cn } from '@clinmesh/ui/lib/utils'
-import { Textarea } from '@clinmesh/ui/components/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
-import { ArrowLeftIcon, CheckCircleIcon, CircleAlertIcon, Trash2Icon } from 'lucide-react'
+import { ArrowLeftIcon, CheckCircleIcon, CircleAlertIcon, PlusIcon, Trash2Icon } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRegisterAgentForm } from '../agent-page-context.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import {
-  DiagnosisCatalogDialog,
-  DiagnosisCatalogPicker,
+  DiagnosisComposerDialog,
   type DiagnosisCatalogSelection,
+  type DiagnosisComposerTarget,
   type ReferenceCatalogSearches,
 } from './catalog-picker-dialogs.tsx'
 import { DoctorRecommendationsPanel, type ManualPreparedItem, type PreparationDraft } from './doctor-recommendations.tsx'
@@ -76,14 +74,15 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     }
     return []
   })
-  const [selectedKey, setSelectedKey] = useState<string | undefined>(() => entries[0]?.key)
   const [selectedRecordCatalogItemId, setSelectedRecordCatalogItemId] = useState<string>()
   const [recordQuery, setRecordQuery] = useState('')
   const [roleFilter, setRoleFilter] = useState<'all' | DiagnosisDraftEntry['role']>('all')
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
   const listSearchRef = useRef<HTMLInputElement>(null)
   const detailsHeadingRef = useRef<HTMLHeadingElement>(null)
-  const [replacementOpen, setReplacementOpen] = useState(false)
+  // 弹窗合同：一次弹窗只处理一条诊断；undefined 编辑索引表示新增。
+  const [composerOpen, setComposerOpen] = useState(false)
+  const [composerEditIndex, setComposerEditIndex] = useState<number>()
   const [dirty, setDirty] = useState(false)
   useRegisterAgentForm({
     viewId: 'consultation', selectionId: caseId, name: 'diagnosis',
@@ -104,47 +103,48 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
     }
     return undefined
   }
-  const addEntry = (selection: DiagnosisCatalogSelection) => {
+  const addEntry = (selection: DiagnosisCatalogSelection, role: DiagnosisDraftEntry['role'], note: string) => {
     if (pending) return
     if (entries.length >= 8 || usedCatalogItemIds.has(selection.catalogItemId)) return
     const key = globalThis.crypto.randomUUID()
-    setEntries(current => [...current, {
-      catalogItemId: selection.catalogItemId,
-      key,
-      note: '',
-      ...(selection.referenceConcept === undefined
-        ? {}
-        : { referenceConcept: selection.referenceConcept }),
-      role: current.some(entry => entry.role === 'primary') ? 'secondary' : 'primary',
-    }])
-    setSelectedKey(key)
+    setEntries(current => {
+      const next = [...current, {
+        catalogItemId: selection.catalogItemId,
+        key,
+        note,
+        ...(selection.referenceConcept === undefined
+          ? {}
+          : { referenceConcept: selection.referenceConcept }),
+        role,
+      }]
+      // 与主次切换同一互斥语义：新的主诊断让位既有主诊断。
+      return role === 'primary'
+        ? next.map(entry => entry.key !== key && entry.role === 'primary' ? { ...entry, role: 'secondary' } : entry)
+        : next
+    })
     setDirty(true)
   }
-  const updateEntry = (index: number, update: Partial<DiagnosisDraftLine>) => {
+  const applyEntryEdit = (index: number, selection: DiagnosisCatalogSelection, role: DiagnosisDraftEntry['role'], note: string) => {
     if (pending) return
-    setEntries(current => current.map((entry, entryIndex) => (
-      entryIndex === index ? { ...entry, ...update } : entry
-    )))
-    setDirty(true)
-  }
-  const selectEntry = (index: number, selection: DiagnosisCatalogSelection) => {
-    if (pending) return
-    setEntries(current => current.map((entry, entryIndex) => {
-      if (entryIndex !== index) return entry
+    if (entries[index] === undefined) return
+    setEntries(current => current.map((line, lineIndex) => {
+      if (lineIndex !== index) return line
       const {
         referenceConcept: _previousReference,
         snapshotCode: _previousCode,
         snapshotDisplay: _previousDisplay,
         ...withoutReference
-      } = entry
+      } = line
       return {
         ...withoutReference,
         catalogItemId: selection.catalogItemId,
+        note,
         ...(selection.referenceConcept === undefined
           ? {}
           : { referenceConcept: selection.referenceConcept }),
       }
     }))
+    if (role !== entries[index].role) updateRole(index, role)
     setDirty(true)
   }
   const updateRole = (index: number, role: DiagnosisDraftEntry['role']) => {
@@ -167,9 +167,6 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
   }
   const removeEntry = (index: number) => {
     if (pending) return
-    if (entries[index]?.key === selectedKey) {
-      setSelectedKey(entries[index + 1]?.key ?? entries[index - 1]?.key)
-    }
     setEntries(current => {
       const remaining = current.filter((_, entryIndex) => entryIndex !== index)
       if (remaining.length > 0 && !remaining.some(entry => entry.role === 'primary')) {
@@ -209,7 +206,6 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       && value.catalogItemId === entry.catalogItemId && value.role === entry.role && (value.note ?? '') === entry.note.trim()))
     if (remaining.length === entries.length) return
     setEntries(remaining)
-    setSelectedKey(current => remaining.some(entry => entry.key === current) ? current : remaining[0]?.key)
     setDirty(remaining.length > 0)
   }
   const submittedEntries = (): DiagnosisDraftEntry[] => entries.map(({
@@ -265,7 +261,6 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
     }))
     setEntries(confirmed)
-    setSelectedKey(confirmed[0]?.key)
     setDirty(true)
   }
   const entryDisplay = (entry: DiagnosisDraftLine) => {
@@ -295,16 +290,9 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       && `${diagnosis.code} ${diagnosis.display}`.toLocaleLowerCase().includes(recordQuery.trim().toLocaleLowerCase())
   })
   const showMobileDetail = mobileDetailOpen && visibleEntries.some(entry => entry.key === activeKey)
-  const renderEditor = ({ plain = false, showChips = true }: { plain?: boolean, showChips?: boolean } = {}) => {
-    const entry = showChips ? entries.find(entry => entry.key === selectedKey) ?? entries[0] : visibleEntries.find(candidate => candidate.key === activeKey)
-    const index = entries.findIndex(candidate => candidate.key === entry?.key)
-    if (entry === undefined) return showChips ? (
-      <div className={plain ? 'p-4' : 'rounded-lg border border-dashed p-3'}>
-        <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择一个诊断开始填写' : 'Select a diagnosis to start'}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{
-          locale === 'zh-CN' ? '检索疾病名称或 ICD 编码，明确选择后编辑诊断信息。' : 'Search a disease name or ICD code, then select a diagnosis to edit its details.'}</p>
-      </div>
-    ) : (
+  const renderDetails = () => {
+    const entry = visibleEntries.find(candidate => candidate.key === activeKey)
+    if (entry === undefined) return (
       <Empty>
         <EmptyHeader>
           <EmptyTitle>{locale === 'zh-CN' ? '选择一条诊断查看详情' : 'Select a diagnosis to view details'}</EmptyTitle>
@@ -313,29 +301,18 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       </Empty>
     )
     const diagnosis = entryDisplay(entry)
-    const suffix = index === 0 ? '' : ` ${index + 1}`
     return (
-      <section aria-label={locale === 'zh-CN' ? showChips && state?.confirmation !== undefined ? '填写诊断详情' : '诊断详情' : showChips && state?.confirmation !== undefined ? 'Enter diagnosis details' : 'Diagnosis details'} data-agent-diagnosis-entry=""
-        className={cn('flex min-w-0 flex-col gap-4', plain ? 'p-4' : 'rounded-lg border p-4', !showChips && !showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
-        {showChips ? null : (
-          <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
-            setMobileDetailOpen(false)
-            window.setTimeout(() => listSearchRef.current?.focus(), 0)
-          }} size="sm" type="button" variant="ghost">
-            <ArrowLeftIcon data-icon="inline-start" />{locale === 'zh-CN' ? '返回诊断列表' : 'Back to diagnosis list'}
-          </Button>
-        )}
-        {showChips ? <div aria-label={locale === 'zh-CN' ? '已选诊断' : 'Selected diagnoses'} className="flex flex-wrap gap-2" role="group">
-          {entries.map(line => (
-            <Button aria-pressed={line.key === selectedKey} data-agent-diagnosis-entry="" key={line.key}
-              onClick={() => setSelectedKey(line.key)} size="sm" type="button" variant={line.key === selectedKey ? 'secondary' : 'outline'}>
-              {entryDisplay(line).display}
-            </Button>
-          ))}
-        </div> : null}
+      <section aria-label={locale === 'zh-CN' ? '诊断详情' : 'Diagnosis details'}
+        className={cn('flex min-w-0 flex-col gap-4 rounded-lg border p-4', !showMobileDetail && 'hidden @min-[760px]/case-content:flex')}>
+        <Button className="self-start @min-[760px]/case-content:hidden" onClick={() => {
+          setMobileDetailOpen(false)
+          window.setTimeout(() => listSearchRef.current?.focus(), 0)
+        }} size="sm" type="button" variant="ghost">
+          <ArrowLeftIcon data-icon="inline-start" />{locale === 'zh-CN' ? '返回诊断列表' : 'Back to diagnosis list'}
+        </Button>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
-            <h4 className="break-words font-semibold" ref={showChips ? undefined : detailsHeadingRef} tabIndex={-1}>{diagnosis.display}</h4>
+            <h4 className="break-words font-semibold" ref={detailsHeadingRef} tabIndex={-1}>{diagnosis.display}</h4>
             <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{diagnosis.code}</p>
           </div>
           <Badge variant={entry.role === 'primary' ? 'default' : 'secondary'}>
@@ -343,56 +320,98 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
           </Badge>
         </div>
         <Separator />
-        {!showChips || readOnly ? (
-          <dl className="flex flex-col gap-4 text-sm">
-            <div><dt className="text-muted-foreground">{messages.diagnosisRole}</dt>
-              <dd className="mt-1">{entry.role === 'primary' ? messages.primaryDiagnosis : messages.secondaryDiagnosis}</dd></div>
-            <div><dt className="text-muted-foreground">{messages.diagnosisNote}</dt>
-              <dd className="mt-1 whitespace-pre-wrap break-words">{entry.note || (locale === 'zh-CN' ? '未填写备注' : 'No note recorded')}</dd></div>
-          </dl>
-        ) : <FieldGroup>
-          <Field>
-            <FieldTitle>{messages.diagnosisRole}</FieldTitle>
-            <ToggleGroup disabled={pending} aria-label={`${messages.diagnosisRole}${suffix}`} className="max-w-full flex-wrap" onValueChange={value => {
-              const role = value[0]
-              if (role === 'primary' || role === 'secondary') updateRole(index, role)
-            }} size="sm" spacing={1} value={[entry.role]} variant="outline">
-              <ToggleGroupItem value="primary">{messages.primaryDiagnosis}</ToggleGroupItem>
-              <ToggleGroupItem disabled={entry.role === 'primary'} value="secondary">{messages.secondaryDiagnosis}</ToggleGroupItem>
-            </ToggleGroup>
-            <FieldDescription>{locale === 'zh-CN'
-              ? '整组诊断保留一条主诊断，其他诊断为次诊断。'
-              : 'Keep one primary diagnosis; all other diagnoses are secondary.'}</FieldDescription>
-          </Field>
-          <Field>
-            <FieldLabel htmlFor={`${elementId}-note`}>{messages.diagnosisNote}</FieldLabel>
-            <Textarea disabled={pending} aria-label={`${messages.diagnosisNote}${suffix}`} className="min-h-28" id={`${elementId}-note`}
-              maxLength={500} onChange={event => updateEntry(index, { note: event.currentTarget.value })} value={entry.note} />
-            <FieldDescription>{entry.note.length} / 500</FieldDescription>
-          </Field>
-        </FieldGroup>}
-        {!showChips || readOnly ? null : <div className="flex flex-wrap items-center justify-between gap-2">
-          <DiagnosisCatalogDialog excludedIds={new Set(entries.filter(line => line.key !== entry.key).map(line => line.catalogItemId))}
-            disabled={pending} localCatalog={catalog} locale={locale} mode="replace" onOpenChange={setReplacementOpen} onSelect={selection => selectEntry(index, selection)} search={referenceSearch} />
-          <Button aria-label={`${messages.removeDiagnosis}${suffix}`} disabled={pending} onClick={() => removeEntry(index)} size="sm" type="button" variant="ghost">
-            <Trash2Icon data-icon="inline-start" />{messages.removeDiagnosis}
-          </Button>
-        </div>}
+        <dl className="flex flex-col gap-4 text-sm">
+          <div><dt className="text-muted-foreground">{messages.diagnosisRole}</dt>
+            <dd className="mt-1">{entry.role === 'primary' ? messages.primaryDiagnosis : messages.secondaryDiagnosis}</dd></div>
+          <div><dt className="text-muted-foreground">{messages.diagnosisNote}</dt>
+            <dd className="mt-1 whitespace-pre-wrap break-words">{entry.note || (locale === 'zh-CN' ? '未填写备注' : 'No note recorded')}</dd></div>
+        </dl>
       </section>
     )
   }
-  const catalogEditor = (
-    // 目录+表单同卡：目录居左、表单居右（约 3:2），窄容器回落上下堆叠；目录可见高度封顶五条。
-    <div className="@container/card grid min-w-0 overflow-hidden rounded-lg border @min-[640px]/card:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-      <div className="min-w-0 border-b @min-[640px]/card:border-b-0 @min-[640px]/card:border-r">
-        <DiagnosisCatalogPicker active={!replacementOpen && !readOnly} collapsible={state?.confirmation !== undefined} disabled={pending || entries.length >= 8} excludedIds={usedCatalogItemIds}
-          localCatalog={catalog} locale={locale} onSelect={selection => { if (selection !== undefined) addEntry(selection) }}
-          search={referenceSearch} />
+  const composerTarget = useMemo<DiagnosisComposerTarget | undefined>(() => {
+    const entry = composerEditIndex === undefined ? undefined : entries[composerEditIndex]
+    if (entry === undefined) return undefined
+    const diagnosis = entryDisplay(entry)
+    return {
+      catalogItemId: entry.catalogItemId,
+      code: diagnosis.code,
+      display: diagnosis.display,
+      note: entry.note,
+      ...(entry.referenceConcept === undefined ? {} : { referenceConcept: entry.referenceConcept }),
+      role: entry.role,
+    }
+  }, [catalogById, composerEditIndex, entries, locale])
+  const composerDefaultRole: DiagnosisDraftEntry['role'] = entries.some(entry => entry.role === 'primary') ? 'secondary' : 'primary'
+  const draftEntrySection = (
+    // 弹窗合同：左主列只保留选择入口与已选列表；目录浏览与表单填写在同一次弹窗内完成。
+    <section aria-label={locale === 'zh-CN' ? '填写诊断' : 'Enter diagnosis'} className="flex min-w-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button data-agent-catalog-trigger="diagnosis" disabled={pending || entries.length >= 8}
+          onClick={() => { setComposerEditIndex(undefined); setComposerOpen(true) }} size="sm" type="button" variant="outline">
+          <PlusIcon data-icon="inline-start" />{messages.addDiagnosis}
+        </Button>
+        <p className="text-xs text-muted-foreground">{locale === 'zh-CN'
+          ? `最多 8 条 · 当前 ${entries.length} 条`
+          : `Up to 8 · ${entries.length} recorded`}</p>
       </div>
-      <div className="min-w-0">
-        {renderEditor({ plain: true })}
-      </div>
-    </div>
+      {entries.length === 0 ? (
+        <div className="rounded-lg border border-dashed p-3">
+          <p className="text-sm font-medium">{locale === 'zh-CN' ? '选择一个诊断开始填写' : 'Select a diagnosis to start'}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{
+            locale === 'zh-CN' ? '在弹窗中检索疾病名称或 ICD 编码，明确选择后填写诊断信息。' : 'Search a disease name or ICD code in the dialog, then enter the diagnosis details.'}</p>
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {entries.map((entry, index) => {
+            const diagnosis = entryDisplay(entry)
+            return (
+              <li className="flex min-w-0 items-center gap-1 rounded-md border px-2 py-1.5" key={entry.key}>
+                <Button aria-label={`${locale === 'zh-CN' ? '编辑诊断' : 'Edit diagnosis'} ${diagnosis.display}`}
+                  className="h-auto min-w-0 flex-1 justify-start gap-2" data-agent-diagnosis-entry=""
+                  onClick={() => { setComposerEditIndex(index); setComposerOpen(true) }}
+                  type="button" variant="ghost">
+                  <span className="flex min-w-0 flex-col items-start">
+                    <span className="break-words text-left font-medium text-sm">{diagnosis.display}</span>
+                    <span className="break-all text-left font-mono text-xs text-muted-foreground">{diagnosis.code}</span>
+                  </span>
+                </Button>
+                <Badge className="shrink-0" variant={entry.role === 'primary' ? 'default' : 'secondary'}>
+                  {entry.role === 'primary' ? messages.primaryDiagnosis : messages.secondaryDiagnosis}
+                </Badge>
+                <Button aria-label={`${messages.removeDiagnosis} ${diagnosis.display}`} disabled={pending}
+                  onClick={() => removeEntry(index)} size="icon-sm" title={messages.removeDiagnosis} type="button" variant="ghost">
+                  <Trash2Icon />
+                </Button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      {!readOnly && entries.length > 0 && primaryCount !== 1 ? (
+        <Alert variant="destructive">
+          <CircleAlertIcon />
+          <AlertTitle>{messages.diagnosisPrimaryRequiredDescription}</AlertTitle>
+        </Alert>
+      ) : null}
+      <DiagnosisComposerDialog
+        defaultRole={composerDefaultRole}
+        disabled={pending}
+        excludedIds={composerEditIndex === undefined
+          ? usedCatalogItemIds
+          : new Set(entries.filter((_, entryIndex) => entryIndex !== composerEditIndex).map(line => line.catalogItemId))}
+        localCatalog={catalog}
+        locale={locale}
+        onConfirm={(selection, role, note) => {
+          if (composerEditIndex === undefined) addEntry(selection, role, note)
+          else applyEntryEdit(composerEditIndex, selection, role, note)
+        }}
+        onOpenChange={setComposerOpen}
+        open={composerOpen}
+        search={referenceSearch}
+        target={composerTarget}
+      />
+    </section>
   )
 
   if (readOnly && state?.confirmation === undefined) {
@@ -417,15 +436,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
       </div>
       <DoctorOrderWorkspace
         hasRecords={state?.confirmation !== undefined}
-        entry={readOnly ? null : <section aria-label={locale === 'zh-CN' ? '填写诊断' : 'Enter diagnosis'} className="flex min-w-0 flex-col gap-3">
-          {catalogEditor}
-          {!readOnly && entries.length > 0 && primaryCount !== 1 ? (
-            <Alert variant="destructive">
-              <CircleAlertIcon />
-              <AlertTitle>{messages.diagnosisPrimaryRequiredDescription}</AlertTitle>
-            </Alert>
-          ) : null}
-        </section>}
+        entry={readOnly ? null : draftEntrySection}
         pending={
           <DoctorRecommendationsPanel caseId={caseId} enabled={!readOnly} disabled={actions.save.pending || actions.confirm.pending}
             expectedDraftVersion={state?.draftVersion ?? 0} inputRevision={recommendationRevision}
@@ -500,7 +511,7 @@ export function DiagnosisPage({ actions, caseId, catalog, elementId, encounter, 
             })}
           </section>
         )}
-        details={state?.confirmation === undefined ? null : renderEditor({ showChips: false })}
+        details={state?.confirmation === undefined ? null : renderDetails()}
       />
       {readOnly ? null : <div className="flex flex-wrap items-center justify-between gap-2">
         <p aria-live="polite" className="text-xs text-muted-foreground">{saveStatus}</p>

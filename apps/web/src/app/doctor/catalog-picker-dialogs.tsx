@@ -1,3 +1,4 @@
+import { prescriptionDraftItemSchema } from '@clinmesh/contracts/his'
 import type {
   CaseLaboratoryCatalogSearch,
   ClinicalCatalog,
@@ -23,9 +24,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@clinmesh/ui/components/dialog'
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel, FieldTitle } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@clinmesh/ui/components/select'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { Textarea } from '@clinmesh/ui/components/textarea'
+import { WorkspaceSelect } from '../workspace-select.tsx'
+import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { cn } from '@clinmesh/ui/lib/utils'
 import {
@@ -79,26 +84,44 @@ const copy = {
     confirmDiagnosis: 'Add diagnosis',
     confirmLaboratory: 'Select',
     confirmMedication: 'Add to prescription',
+    course: 'Course',
+    days: 'days',
     diagnosisDescription: 'Current diagnosis catalog',
+    diagnosisDetails: 'Diagnosis details',
+    diagnosisNote: 'Diagnosis note',
     diagnosisPlaceholder: 'Name or code (2+ characters)',
+    diagnosisRole: 'Diagnosis role',
     diagnosisSearchInput: 'Search diagnosis catalog',
+    dose: 'Dose',
+    editDiagnosis: 'Edit diagnosis',
+    editMedication: 'Edit medication',
+    frequency: 'Frequency',
     laboratoryDescription: 'Current laboratory catalog',
     laboratoryPlaceholder: 'Name or LOINC (2+ characters)',
     laboratorySearchInput: 'Search laboratory catalog',
     localCatalog: 'Local common',
+    localMedication: 'Local common medication',
+    medicationComposerDescription: 'Pick a product in the catalog, then enter the order; one dialog confirms one medication order.',
     medicationDescription: 'Current medication product catalog',
+    medicationDetails: 'Medication order',
+    medicationFieldsError: 'Enter dose and frequency. Course must be 1–30 days and quantity an integer from 1–1000.',
     medicationPlaceholder: 'Generic name, brand, manufacturer, or code',
     medicationSearchInput: 'Search medication catalog',
     next: 'Next page',
     noResults: 'No matching records',
     previous: 'Previous page',
+    primaryDiagnosis: 'Primary diagnosis',
+    quantity: 'Quantity',
     replaceDiagnosis: 'Replace diagnosis',
     replaceMedication: 'Replace medication',
     searchDiagnosis: 'Search diagnosis catalog',
     searchLaboratory: 'Search laboratory catalog',
     searchMedication: 'Search medication catalog',
     selectLaboratory: 'Select laboratory item',
+    secondaryDiagnosis: 'Secondary diagnosis',
     total: '{total} records',
+    updateDiagnosis: 'Save changes',
+    updateMedication: 'Save changes',
   },
   'zh-CN': {
     addDiagnosis: '添加诊断',
@@ -114,26 +137,44 @@ const copy = {
     confirmDiagnosis: '加入诊断',
     confirmLaboratory: '确定选择',
     confirmMedication: '加入处方',
+    course: '疗程',
+    days: '天',
     diagnosisDescription: '当前疾病诊断目录',
+    diagnosisDetails: '诊断信息',
+    diagnosisNote: '诊断备注',
     diagnosisPlaceholder: '病名或编码（至少 2 字）',
+    diagnosisRole: '诊断类型',
     diagnosisSearchInput: '搜索疾病目录',
+    dose: '剂量',
+    editDiagnosis: '编辑诊断',
+    editMedication: '编辑药品',
+    frequency: '频次',
     laboratoryDescription: '当前检验目录',
     laboratoryPlaceholder: '检验名称或 LOINC（至少 2 字）',
     laboratorySearchInput: '搜索检验目录',
     localCatalog: '本院常用',
+    localMedication: '本院常用药',
+    medicationComposerDescription: '在目录中选择药品包装后填写用药信息，一次弹窗确认一条药品医嘱。',
     medicationDescription: '当前药品产品目录',
+    medicationDetails: '用药信息',
+    medicationFieldsError: '请填写剂量与频次，疗程为 1–30 天，数量为 1–1000 的整数。',
     medicationPlaceholder: '通用名、商品名、厂家或编码',
     medicationSearchInput: '搜索药品目录',
     next: '下一页',
     noResults: '没有匹配记录',
     previous: '上一页',
+    primaryDiagnosis: '主诊断',
+    quantity: '数量',
     replaceDiagnosis: '更换诊断',
     replaceMedication: '更换药品',
     searchDiagnosis: '执行疾病目录搜索',
     searchLaboratory: '执行检验目录搜索',
     searchMedication: '执行药品目录搜索',
     selectLaboratory: '选择检验项目',
+    secondaryDiagnosis: '次诊断',
     total: '共 {total} 条',
+    updateDiagnosis: '保存修改',
+    updateMedication: '保存修改',
   },
 } as const
 
@@ -430,7 +471,7 @@ export function DiagnosisCatalogPicker({
         />
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载疾病目录' : 'Loading diagnosis catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
-          // 行内目录可见高度封顶五条，超出内部滚动；弹窗目录沿用弹窗自身的高度约束。
+          // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，必要时再封顶防止超长。
           <div className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 flex-1 overflow-auto border'}>
             {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
@@ -565,6 +606,258 @@ export function DiagnosisCatalogDialog({ disabled, excludedIds, localCatalog, lo
       <DialogFooter><DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose><Button disabled={selected === undefined || search.isFetching} onClick={() => confirm()} type="button">{messages.confirmDiagnosis}</Button></DialogFooter>
     </DialogContent>
   </Dialog>
+}
+
+export interface DiagnosisComposerTarget {
+  catalogItemId: string
+  code: string
+  display: string
+  note: string
+  referenceConcept?: DiagnosisDraftEntry['referenceConcept']
+  role: DiagnosisDraftEntry['role']
+}
+
+/** 三页签统一弹窗合同（诊断）：目录浏览与表单填写在同一次弹窗内完成，点「确认」落单这一条，未确认关闭即弃置弹窗内输入。 */
+export function DiagnosisComposerDialog({
+  defaultRole, disabled = false, excludedIds, localCatalog, locale, onConfirm, onOpenChange, open, search, target,
+}: {
+  defaultRole: DiagnosisDraftEntry['role']
+  disabled?: boolean
+  excludedIds: ReadonlySet<string>
+  localCatalog: ClinicalCatalog['diagnoses']
+  locale: WorkspaceLocale
+  onConfirm: (selection: DiagnosisCatalogSelection, role: DiagnosisDraftEntry['role'], note: string) => void
+  onOpenChange: (open: boolean) => void
+  open: boolean
+  search: ReferenceCatalogSearches['diagnoses']
+  target: DiagnosisComposerTarget | undefined
+}) {
+  const messages = copy[locale]
+  const [selected, setSelected] = useState<DiagnosisCatalogSelection>()
+  const [role, setRole] = useState<DiagnosisDraftEntry['role']>(defaultRole)
+  const [note, setNote] = useState('')
+  // latest-ref：打开瞬间读取当时的编辑目标，避免把易变 target 写进重置副作用的依赖。
+  const targetRef = useRef(target)
+  targetRef.current = target
+  const openingRef = useRef(open)
+  useEffect(() => {
+    if (open && !openingRef.current) {
+      const current = targetRef.current
+      setSelected(current === undefined ? undefined : {
+        catalogItemId: current.catalogItemId,
+        code: current.code,
+        display: current.display,
+        ...(current.referenceConcept === undefined ? {} : { referenceConcept: current.referenceConcept }),
+      })
+      setRole(current?.role ?? defaultRole)
+      setNote(current?.note ?? '')
+    }
+    openingRef.current = open
+  }, [defaultRole, open])
+  const select = (selection: DiagnosisCatalogSelection | undefined) => {
+    // 换选目录项只更换编码，保留已填的角色与备注（医生填到一半发现选错病，备注仍然适用）。
+    setSelected(selection)
+  }
+  const confirm = () => {
+    if (selected === undefined || disabled) return
+    onConfirm(selected, role, note.trim())
+    onOpenChange(false)
+  }
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="diagnosis">
+        <DialogHeader>
+          <DialogTitle>{target === undefined ? messages.chooseDiagnosis : messages.editDiagnosis}</DialogTitle>
+          <DialogDescription>{messages.diagnosisDescription}</DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {open ? <DiagnosisCatalogPicker active={open} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onSelect={select} search={search} selectedId={selected?.catalogItemId} /> : null}
+          {selected === undefined ? null : (
+            <section aria-label={messages.diagnosisDetails} className="flex flex-col gap-4 border-t p-4">
+              {/* 当前条目头：编辑的条目可能不在目录结果里（如调整过的建议），必须能看到在编辑谁。 */}
+              <div className="min-w-0">
+                <h4 className="break-words font-semibold text-sm">{selected.display}</h4>
+                <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{selected.code}</p>
+              </div>
+              <FieldGroup>
+                <Field>
+                  <FieldTitle>{messages.diagnosisRole}</FieldTitle>
+                  <ToggleGroup aria-label={messages.diagnosisRole} className="max-w-full flex-wrap" disabled={disabled} onValueChange={value => {
+                    const next = value[0]
+                    if (next === 'primary' || next === 'secondary') setRole(next)
+                  }} size="sm" spacing={1} value={[role]} variant="outline">
+                    <ToggleGroupItem value="primary">{messages.primaryDiagnosis}</ToggleGroupItem>
+                    {/* 与页面编辑器同一保护：主诊断要先让位给其他条目，才能降为次诊断。 */}
+                    <ToggleGroupItem disabled={role === 'primary'} value="secondary">{messages.secondaryDiagnosis}</ToggleGroupItem>
+                  </ToggleGroup>
+                  <FieldDescription>{locale === 'zh-CN'
+                    ? '整组诊断保留一条主诊断，其他诊断为次诊断。'
+                    : 'Keep one primary diagnosis; all other diagnoses are secondary.'}</FieldDescription>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="diagnosis-composer-note">{messages.diagnosisNote}</FieldLabel>
+                  <Textarea aria-label={messages.diagnosisNote} className="min-h-28" disabled={disabled} id="diagnosis-composer-note"
+                    maxLength={500} onChange={event => setNote(event.currentTarget.value)} value={note} />
+                  <FieldDescription>{note.length} / 500</FieldDescription>
+                </Field>
+              </FieldGroup>
+            </section>
+          )}
+        </div>
+        <DialogFooter>
+          <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
+          <Button disabled={selected === undefined || disabled} onClick={confirm} type="button">{target === undefined ? messages.confirmDiagnosis : messages.updateDiagnosis}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export interface MedicationComposerFields {
+  courseDays: number | null
+  doseText: string
+  frequencyCode: string
+  quantity: number | null
+}
+
+export interface MedicationComposerTarget {
+  fields: MedicationComposerFields
+  selection: MedicationCatalogSelection
+}
+
+const medicationComposerSelectionId = (selection: MedicationCatalogSelection): string =>
+  selection.kind === 'reference' ? selection.product.id : selection.medication.id
+
+/** 三页签统一弹窗合同（处方）：目录选药与用药字段在同一次弹窗内完成，点「确认」落单这一条；换选药品时值域随药品变化，字段重置为该药品默认值。 */
+export function MedicationComposerDialog({
+  disabled = false, excludedIds, localCatalog, locale, onConfirm, onOpenChange, open, search, target,
+}: {
+  disabled?: boolean
+  excludedIds: ReadonlySet<string>
+  localCatalog: PrescriptionMedication[]
+  locale: WorkspaceLocale
+  onConfirm: (selection: MedicationCatalogSelection, fields: MedicationComposerFields) => void
+  onOpenChange: (open: boolean) => void
+  open: boolean
+  search: ReferenceCatalogSearches['medications']
+  target: MedicationComposerTarget | undefined
+}) {
+  const messages = copy[locale]
+  const [selected, setSelected] = useState<MedicationCatalogSelection>()
+  const [doseText, setDoseText] = useState('')
+  const [frequencyCode, setFrequencyCode] = useState('')
+  const [courseDays, setCourseDays] = useState<number | null>(null)
+  const [quantity, setQuantity] = useState<number | null>(null)
+  // latest-ref：打开瞬间读取当时的编辑目标，避免把易变 target 写进重置副作用的依赖。
+  const targetRef = useRef(target)
+  targetRef.current = target
+  const openingRef = useRef(open)
+  useEffect(() => {
+    if (open && !openingRef.current) {
+      const current = targetRef.current
+      setSelected(current?.selection)
+      setDoseText(current?.fields.doseText ?? '')
+      setFrequencyCode(current?.fields.frequencyCode ?? '')
+      setCourseDays(current?.fields.courseDays ?? null)
+      setQuantity(current?.fields.quantity ?? null)
+    }
+    openingRef.current = open
+  }, [open])
+  const selectedMedication = selected?.kind === 'local' ? selected.medication : undefined
+  const selectedProduct = selected?.kind === 'reference' ? selected.product : undefined
+  const select = (selection: MedicationCatalogSelection | undefined) => {
+    if (selection === undefined) return
+    setSelected(selection)
+    // 换选药品时剂量/频次/疗程/数量的值域随药品变化，重置为该药品默认值；重复点选同一药品保留已填内容。
+    if (selected === undefined || medicationComposerSelectionId(selected) !== medicationComposerSelectionId(selection)) {
+      setDoseText(selection.kind === 'local' ? selection.medication.defaultDoseText : '')
+      setFrequencyCode(selection.kind === 'local' ? selection.medication.defaultFrequencyCode : '')
+      setCourseDays(selection.kind === 'local' ? selection.medication.defaultCourseDays : 3)
+      setQuantity(selection.kind === 'local' ? selection.medication.defaultQuantity : 1)
+    }
+  }
+  // 字段值域复用 prescriptionDraftItemSchema 各字段 schema，避免手抄边界与合同漂移；本院药另按目录 allowed 值域收紧。
+  const invalidFields = new Set<string>()
+  if (selected !== undefined) {
+    if (selectedMedication === undefined
+      ? !prescriptionDraftItemSchema.shape.doseText.safeParse(doseText.trim()).success
+      : !selectedMedication.allowedDoseTexts.includes(doseText)) invalidFields.add('doseText')
+    if (selectedMedication === undefined
+      ? !prescriptionDraftItemSchema.shape.frequencyCode.safeParse(frequencyCode.trim()).success
+      : !selectedMedication.allowedFrequencyCodes.includes(frequencyCode)) invalidFields.add('frequencyCode')
+    const courseResult = prescriptionDraftItemSchema.shape.courseDays.safeParse(courseDays)
+    if (!courseResult.success
+      || (selectedMedication !== undefined && !selectedMedication.allowedCourseDays.includes(courseResult.data))) invalidFields.add('courseDays')
+    const quantityResult = prescriptionDraftItemSchema.shape.quantity.safeParse(quantity)
+    if (!quantityResult.success
+      || (selectedMedication !== undefined && !selectedMedication.allowedQuantities.includes(quantityResult.data))) invalidFields.add('quantity')
+  }
+  const fieldsValid = selected !== undefined && invalidFields.size === 0
+  const confirm = () => {
+    if (selected === undefined || disabled || !fieldsValid) return
+    onConfirm(selected, { courseDays, doseText: doseText.trim(), frequencyCode: frequencyCode.trim(), quantity })
+    onOpenChange(false)
+  }
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="medication">
+        <DialogHeader>
+          <DialogTitle>{target === undefined ? messages.chooseMedication : messages.editMedication}</DialogTitle>
+          <DialogDescription>{messages.medicationComposerDescription}</DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          {open ? <MedicationCatalogPicker active={open} disabled={disabled} excludedIds={excludedIds} localCatalog={localCatalog} locale={locale} onSelect={select} search={search} {...(selected === undefined ? {} : { selectedId: medicationComposerSelectionId(selected) })} /> : null}
+          {selected === undefined ? null : (
+            <section aria-label={messages.medicationDetails} className="flex flex-col gap-4 border-t p-4">
+              {/* 当前条目头：编辑的条目可能不在目录结果里，必须能看到在编辑谁。 */}
+              <div className="min-w-0">
+                <h4 className="break-words font-semibold text-sm">{selectedProduct?.genericName
+                  ?? (locale === 'zh-CN' ? selectedMedication?.nameZh : selectedMedication?.nameEn)}</h4>
+                <p className="mt-1 break-words text-xs text-muted-foreground">{selectedProduct === undefined
+                  ? messages.localMedication
+                  : [selectedProduct.manufacturer, selectedProduct.strength, medicationPackageSummary(selectedProduct.packageDescription)].filter(Boolean).join(' · ')}</p>
+              </div>
+              <FieldGroup className="grid min-w-0 grid-cols-2 gap-3">
+                <Field data-invalid={invalidFields.has('doseText')}>
+                  <FieldLabel htmlFor="medication-composer-dose">{messages.dose}</FieldLabel>
+                  {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('doseText')} id="medication-composer-dose" maxLength={120} onChange={event => setDoseText(event.currentTarget.value)} value={doseText} />
+                    : <WorkspaceSelect id="medication-composer-dose" items={selectedMedication.allowedDoseTexts.map(value => ({ label: value, value }))}
+                      onValueChange={value => { if (value !== null) setDoseText(value) }}
+                      placeholder={messages.choose} value={doseText || null} />}
+                </Field>
+                <Field data-invalid={invalidFields.has('frequencyCode')}>
+                  <FieldLabel htmlFor="medication-composer-frequency">{messages.frequency}</FieldLabel>
+                  {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('frequencyCode')} id="medication-composer-frequency" maxLength={32} onChange={event => setFrequencyCode(event.currentTarget.value)} value={frequencyCode} />
+                    : <WorkspaceSelect id="medication-composer-frequency" items={selectedMedication.allowedFrequencyCodes.map(value => ({ label: value, value }))}
+                      onValueChange={value => { if (value !== null) setFrequencyCode(value) }}
+                      placeholder={messages.choose} value={frequencyCode || null} />}
+                </Field>
+                <Field data-invalid={invalidFields.has('courseDays')}>
+                  <FieldLabel htmlFor="medication-composer-course">{messages.course}</FieldLabel>
+                  {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('courseDays')} id="medication-composer-course" max={30} min={1} onChange={event => setCourseDays(event.currentTarget.value === '' ? null : Number(event.currentTarget.value))} step={1} type="number" value={courseDays ?? ''} />
+                    : <WorkspaceSelect id="medication-composer-course" items={selectedMedication.allowedCourseDays.map(value => ({ label: `${value} ${messages.days}`, value: String(value) }))}
+                      onValueChange={value => { if (value !== null) setCourseDays(Number(value)) }}
+                      placeholder={messages.choose} value={courseDays === null ? null : String(courseDays)} />}
+                </Field>
+                <Field data-invalid={invalidFields.has('quantity')}>
+                  <FieldLabel htmlFor="medication-composer-quantity">{messages.quantity}</FieldLabel>
+                  {selectedMedication === undefined ? <Input aria-invalid={invalidFields.has('quantity')} id="medication-composer-quantity" max={1_000} min={1} onChange={event => setQuantity(event.currentTarget.value === '' ? null : Number(event.currentTarget.value))} step={1} type="number" value={quantity ?? ''} />
+                    : <WorkspaceSelect id="medication-composer-quantity" items={selectedMedication.allowedQuantities.map(value => ({ label: String(value), value: String(value) }))}
+                      onValueChange={value => { if (value !== null) setQuantity(Number(value)) }}
+                      placeholder={messages.choose} value={quantity === null ? null : String(quantity)} />}
+                </Field>
+              </FieldGroup>
+              {invalidFields.size === 0 ? null : <FieldError>{messages.medicationFieldsError}</FieldError>}
+            </section>
+          )}
+        </div>
+        <DialogFooter>
+          <DialogClose render={<Button type="button" variant="outline" />}>{messages.close}</DialogClose>
+          <Button disabled={!fieldsValid || disabled} onClick={confirm} type="button">{target === undefined ? messages.confirmMedication : messages.updateMedication}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
 }
 
 export interface LaboratoryCatalogSelection {
@@ -954,7 +1247,7 @@ export function MedicationCatalogPicker({
         />
         <div hidden={!resultsVisible} id={resultsId} className={cn('min-h-0 flex-1 flex-col', resultsVisible ? 'flex' : 'hidden')}>
         {results.isPending ? <div aria-label={locale === 'zh-CN' ? '正在加载药品目录' : 'Loading medication catalog'} role="status" className="min-h-24 max-h-[12.5rem] px-3 py-2"><Skeleton className="h-24" /></div> : (
-          // 行内目录可见高度封顶五条，超出内部滚动；弹窗目录沿用弹窗自身的高度约束。
+          // 行内目录可见高度封顶五条（12.5rem），超出内部滚动；弹窗目录在弹窗可视高度内滚动，必要时再封顶防止超长。
           <div className={onConfirm === undefined ? 'max-h-[12.5rem] overflow-y-auto border-y' : 'mx-4 min-h-0 max-h-[28rem] flex-1 overflow-auto border'}>
             {results.isError ? (
               <Alert className="m-2"><CircleAlertIcon aria-hidden="true" /><AlertTitle>{messages.catalogUnavailable}</AlertTitle>
