@@ -6,8 +6,9 @@ import { afterEach, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { signIn } from './fixtures/consultation.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
-import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
-import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
+import { patientPersonaJobSchema } from '@clinmesh/contracts/scenario'
+import { beginChatCompletionUsage, settleChatCompletionUsage, OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { createServer } from 'node:http'
 import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
@@ -43,6 +44,75 @@ async function control(fixture: Awaited<ReturnType<typeof setup>>, input?: { ena
   expect(response.status).toBe(200)
   return modelUsageControlSchema.parse(await response.json())
 }
+
+it.each([
+  { scope: 'workspace', dimension: 'tokens' }, { scope: 'workspace', dimension: 'cny' },
+  { scope: 'deployment', dimension: 'tokens' }, { scope: 'deployment', dimension: 'cny' },
+] as const)('atomically reserves bounded concurrent $dimension calls against the $scope policy through HTTP jobs', async ({ scope, dimension }) => {
+  let release!: () => void
+  const barrier = new Promise<void>(resolve => { release = resolve })
+  let admitted!: () => void
+  const started = new Promise<void>(resolve => { admitted = resolve })
+  let dispatched = 0
+  const limit = { enabled: true, requests: 3, automaticRetries: true,
+    tokens: dimension === 'tokens' ? 100 : 200, cny: dimension === 'cny' ? 1 : 2 }
+  const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'bounded-synthetic',
+    ...(scope === 'deployment' ? { modelUsageControl: limit } : {}),
+    modelPricing: { prices: [{ provider: 'synthetic', model: 'bounded-synthetic', version: 'synthetic-v1',
+      currency: 'CNY', rates: { input: 10_000, output: 10_000 } }], exchangeRates: [] },
+    chatCompletionsProvider: { supportsUsageAccounting: true, supportsRequestControl: true, completeJson: async input => {
+      // This synthetic adapter guarantees 40 input + 20 output Tokens; production adapters claim no such bound.
+      const attempt = beginChatCompletionUsage(input, { provider: 'synthetic', model: input.model,
+        outputLimit: 20, kind: 'initial', reservationBoundary: { adapter: 'openai-chat', version: 'synthetic-bounded-v1',
+          inputTokens: 40, outputTokens: 20, reason: null } })
+      dispatched++
+      admitted()
+      await barrier
+      settleChatCompletionUsage(input, attempt, { status: 'succeeded', dispatch: 'dispatched',
+        usage: { ...unknownModelTokenUsage, inputTokens: 20, outputTokens: 10, totalTokens: 30, mapping: 'openai-v1' } })
+      input.onRequestComplete?.()
+      return { model: input.model, content: JSON.stringify(persona) }
+    } },
+  })
+  await control(fixture, scope === 'workspace' ? limit : { requests: 3, tokens: 300, cny: 3 })
+  const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
+  const headers = { cookie, origin: 'http://localhost', 'content-type': 'application/json' }
+  const jobIds: string[] = []
+  for (let i = 0; i < 2; i++) {
+    const generated = await fixture.runtime.app.request('/api/sim/v1/scenario-generation-jobs', { method: 'POST',
+      headers: { ...headers, 'idempotency-key': randomUUID() }, body: JSON.stringify({ name: '有界并发合成患者',
+        population: { age: { maximum: 65, minimum: 18 }, count: 1, gender: 'any' }, providerId: 'synthea',
+        seeds: { clinical: 7331, population: 4242 }, timeRange: { end: '2026-08-01', start: '2020-01-01' }, timeZone: 'Asia/Shanghai' }) })
+    expect(generated.status).toBe(200)
+    const generation = await fixture.runtime.scenarioData.processNextGenerationJob()
+    const response = await fixture.runtime.app.request(`/api/sim/v1/synthetic-cases/${generation!.caseIds[0]}/patient-persona-jobs`, {
+      method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: '{}' })
+    expect(response.status).toBe(200)
+    jobIds.push(patientPersonaJobSchema.parse((await response.json()).data).jobId)
+  }
+  const first = fixture.runtime.patientPersona.processNext()
+  try {
+    await started
+    expect(await fixture.runtime.patientPersona.processNext()).toMatchObject({ jobId: jobIds[1], status: 'queued' })
+    expect(dispatched).toBe(1)
+    const state = await control(fixture)
+    expect(state.lastRejection).toMatchObject({ scope, dimension, remaining: dimension === 'tokens' ? 40 : 0.4,
+      required: dimension === 'tokens' ? 60 : 0.6 })
+    for (const policy of scope === 'deployment' ? [state.workspace, state.deployment] : [state.workspace]) {
+      expect(policy).toMatchObject({ used: 0, reserved: 1, tokensUsed: 0, tokensReserved: 60, cnyUsed: 0, cnyReserved: 0.6 })
+    }
+    const attempts = modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
+    expect(attempts.total).toBe(1)
+    expect(attempts.items[0]).toMatchObject({ status: 'in-flight', reservationBoundary: { inputTokens: 40, outputTokens: 20 } })
+  } finally { release(); await first }
+  const completed = await fixture.runtime.app.request(`/api/sim/v1/patient-persona-jobs/${jobIds[0]}`, { headers: { cookie } })
+  expect(await completed.json()).toMatchObject({ status: 'succeeded' })
+  const settled = await control(fixture)
+  for (const policy of scope === 'deployment' ? [settled.workspace, settled.deployment] : [settled.workspace]) {
+    expect(policy).toMatchObject({ used: 1, reserved: 0, tokensUsed: 30, tokensReserved: 0, cnyUsed: 0.3, cnyReserved: 0 })
+  }
+  expect(dispatched).toBe(1)
+})
 
 it.each(['direct', 'bridge'] as const)('requires a trustworthy boundary before finite Token or amount dispatches through %s', async transport => {
   let dispatched = 0

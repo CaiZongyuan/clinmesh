@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { createHmac, randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { agentPageContextBindingSchema } from '@clinmesh/contracts/agent'
-import { modelUsageControlSchema, modelUsageListSchema, type ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
+import { modelUsageControlSchema, modelUsageListSchema, unknownModelTokenUsage, type ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
+import type { ModelPricingConfig } from '@clinmesh/contracts/model-pricing'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { isDoctorDelegation } from '../../dsh-web/src/doctor-delegation.ts'
@@ -22,7 +23,7 @@ function latch<T>() {
   const promise = new Promise<T>(accept => { resolve = accept })
   return { promise, resolve }
 }
-async function fixture(account = 'doctor@demo.clinmesh.local', deployment?: ModelUsagePolicyConfig) {
+async function fixture(account = 'doctor@demo.clinmesh.local', deployment?: ModelUsagePolicyConfig, modelPricing?: ModelPricingConfig) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-host-usage-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const options = { authBaseUrl: 'http://localhost', authSecret: secret, cursorSecret: secret,
@@ -30,7 +31,7 @@ async function fixture(account = 'doctor@demo.clinmesh.local', deployment?: Mode
     migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'], dshBridgeSecret: secret,
     syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'synthetic',
     chatCompletionsProvider: { completeJson: async () => ({ model: 'synthetic', content: JSON.stringify(persona) }) },
-    ...(deployment === undefined ? {} : { modelUsageControl: deployment }) }
+    ...(deployment === undefined ? {} : { modelUsageControl: deployment }), ...(modelPricing === undefined ? {} : { modelPricing }) }
   let runtime = await createClinMeshRuntime(options)
   cleanup.push(() => runtime.close())
   const started = await startConsultationCase(runtime)
@@ -438,6 +439,70 @@ it('settles only the admitted Host attempt, retaining raw usage after a failed t
   const records = await f.list()
   expect(records.total).toBe(1)
   expect(records.items[0]).toMatchObject({ id: grant.attemptId, status: 'succeeded', usage })
+})
+
+it('preserves an unpriced successful Host terminal when its acknowledgement is lost and conflicting reports arrive', async () => {
+  const f = await fixture()
+  let grant!: { attemptId: string; receipt: string }
+  let completed!: Awaited<ReturnType<typeof f.list>>['items'][number]
+  const ctx = { llm: syntheticRecognitionLlm(async function* () {
+    yield { type: 'text-delta', index: 0, text: '{"intent":"discuss","evidence":""}' }
+    yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 30, cacheReadTokens: 20, cacheWriteTokens: 5, reasoningTokens: 10, totalTokens: 155 } }
+    yield { type: 'finish', reason: { kind: 'stop' } }
+  }) } as unknown as Parameters<typeof isDoctorDelegation>[0]
+  await expect(isDoctorDelegation(ctx, { provider: 'synthetic-host', model: 'classifier-v1' }, '替我问清头晕的诱因。',
+    new AbortController().signal, { upstreamOrigin: 'http://localhost', secret, permit: await f.permit(),
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const response = await f.runtime.app.request(new Request(input, init))
+        const path = new URL(String(input)).pathname
+        if (path.endsWith('/admit') && response.ok) grant = await response.clone().json()
+        if (path.endsWith('/observe') && response.ok && JSON.parse(String(init?.body)).outcome.status === 'succeeded') {
+          completed = (await f.list()).items[0]!
+          throw new Error('synthetic acknowledgement lost after terminal commit')
+        }
+        return response
+      }) as typeof fetch })).rejects.toThrow('synthetic acknowledgement lost')
+  expect(completed).toMatchObject({ status: 'succeeded', usage: { totalTokens: 155 }, cost: { status: 'price-not-configured', cny: null } })
+  expect((await f.list()).items[0]).toEqual(completed)
+  expect((await f.post('/api/model-usage/host/doctor-delegation/observe', { ...grant, outcome: {
+    status: 'failed', dispatch: 'dispatched', actualModel: 'conflicting-model', usage: { ...completed.usage, totalTokens: 999 },
+  } })).status).toBe(200)
+  expect((await f.list()).items[0]).toEqual(completed)
+  await f.restart()
+  expect((await f.list()).items[0]).toEqual(completed)
+})
+
+it.each(['succeeded', 'failed', 'cancelled'] as const)('settles late trusted unknown dimensions while preserving the Host %s terminal and prior evidence', async status => {
+  const f = await fixture(undefined, undefined, { prices: [{ provider: 'synthetic-host', model: 'classifier-v1',
+    version: 'synthetic-v1', currency: 'CNY', rates: { input: 10_000, output: 10_000 } }], exchangeRates: [] })
+  await f.policy({ tokens: 500, cny: 5 })
+  await f.policy({ tokens: null, cny: null })
+  const response = await f.post('/api/model-usage/host/doctor-delegation/admit', {
+    permit: await f.permit(), provider: 'synthetic-host', model: 'classifier-v1' })
+  expect(response.status).toBe(201)
+  const grant = await response.json() as { attemptId: string; receipt: string }
+  const report = (outcome: unknown) => f.post('/api/model-usage/host/doctor-delegation/observe', { ...grant, outcome })
+  const partial = { ...unknownModelTokenUsage, outputTokens: 30, reasoningOutputTokens: 10, mapping: 'dsh-v1',
+    raw: { format: 'dsh', uncachedInputTokens: null, outputTokens: 30, cacheReadTokens: null,
+      cacheWriteTokens: null, reasoningTokens: 10, totalTokens: null } }
+  expect((await report({ status, dispatch: 'dispatched', actualModel: 'classifier-actual', usage: partial })).status).toBe(200)
+  const terminal = (await f.list()).items[0]!
+  expect((await f.control()).workspace).toMatchObject({ tokensUnknownReservations: 1, cnyUnknownReservations: 1 })
+  const usage = { inputTokens: 125, outputTokens: 30, cachedInputTokens: 25, reasoningOutputTokens: 10,
+    totalTokens: 155, mapping: 'dsh-v1', raw: { format: 'dsh', uncachedInputTokens: 100,
+      outputTokens: 30, cacheReadTokens: 20, cacheWriteTokens: 5, reasoningTokens: 10, totalTokens: 155 } }
+  const late = { status: 'succeeded', dispatch: 'dispatched', usage }
+  expect((await report(late)).status).toBe(200)
+  const settled = (await f.list()).items[0]!
+  expect(settled).toMatchObject({ status, endedAt: terminal.endedAt, actualModel: terminal.actualModel, usage,
+    accounting: { totalTokens: 155, cny: 1.55 } })
+  expect((await f.control()).workspace).toMatchObject({ tokensUsed: 155, cnyUsed: 1.55,
+    tokensUnknownReservations: 0, cnyUnknownReservations: 0, tokensReserved: 0, cnyReserved: 0 })
+  expect((await report(late)).status).toBe(200)
+  expect((await report({ ...late, usage: { ...usage, raw: { ...usage.raw, cacheReadTokens: 21 } } })).status).toBe(200)
+  expect((await f.list()).items[0]).toEqual(settled)
+  await f.restart()
+  expect((await f.list()).items[0]).toEqual(settled)
 })
 
 it('requires Server admission before the real Host classifier stream and records its actual route and original usage', async () => {

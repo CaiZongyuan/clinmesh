@@ -16,6 +16,10 @@ import type { ModelUsageRecorder } from './model-usage-lifecycle.ts'
 import { ModelUsageControl, ModelUsageControlError, ModelUsagePolicyError } from './model-usage-control.ts'
 
 const rowSchema = z.object({ record_json: z.string() })
+function preservesKnownNumbers(previous: object, next: object): boolean {
+  const counters = new Map(Object.entries(next))
+  return Object.entries(previous).every(([key, value]) => typeof value !== 'number' || counters.get(key) === value)
+}
 const summaryRowSchema = z.object({
   requests: z.number(), inFlight: z.number(), unknownRequests: z.number(),
   knownTokens: z.number(), unknownTokenRequests: z.number(),
@@ -112,19 +116,28 @@ export class ModelUsageService implements ModelUsageRecorder {
     this.database.driver.transaction(() => {
       const row = rowSchema.parse(this.database.driver.prepare('SELECT record_json FROM model_usage_attempt WHERE attempt_id = ?').get(attemptId))
       const previous = modelUsageAttemptSchema.parse(JSON.parse(row.record_json))
-      // A completed attempt is immutable; duplicate transport delivery is harmless.
-      if (previous.status !== 'in-flight' && previous.status !== 'unknown' && previous.usage.totalTokens !== null && previous.cost.cny !== null) return
+      const terminal = previous.status !== 'in-flight' && previous.status !== 'unknown'
+      if (terminal && previous.dispatch === 'not-dispatched') return
       const usage = mergeModelTokenUsage(previous.usage, outcome.usage)
-      const dispatch = previous.dispatch === 'dispatched' ? 'dispatched' : outcome.dispatch ?? previous.dispatch
+      // Late evidence may fill unknown consumption, but cannot revise completed evidence.
+      if (terminal && (!preservesKnownNumbers(previous.usage, usage)
+        || previous.usage.mapping !== 'unknown' && previous.usage.mapping !== usage.mapping
+        || previous.usage.raw !== undefined && (usage.raw === undefined || previous.usage.raw.format !== usage.raw.format
+          || !preservesKnownNumbers(previous.usage.raw, usage.raw)))) return
+      const dispatch = terminal
+        ? previous.dispatch === 'unknown' && outcome.dispatch === 'dispatched' ? 'dispatched' : previous.dispatch
+        : previous.dispatch === 'dispatched' ? 'dispatched' : outcome.dispatch ?? previous.dispatch
       const priceSnapshot = previous.priceSnapshot ?? freezeModelPrice({ prices: [], exchangeRates: [] }, previous.provider, previous.requestedModel)
       const cost = priceModelUsage(priceSnapshot, usage, dispatch)
-      const record = modelUsageAttemptSchema.parse({ ...previous, ...outcome, usage,
-        dispatch, cost, priceSnapshot,
+      if (terminal && (!preservesKnownNumbers(previous.cost, cost)
+        || previous.cost.currency != null && previous.cost.currency !== cost.currency)) return
+      const updated = terminal ? previous : { ...previous, ...outcome,
         actualModel: outcome.actualModel ?? previous.actualModel,
         providerRequestId: outcome.providerRequestId ?? previous.providerRequestId,
         httpStatus: outcome.httpStatus ?? previous.httpStatus,
         endedAt: outcome.status === undefined ? previous.endedAt : new Date().toISOString(),
-      })
+      }
+      const record = modelUsageAttemptSchema.parse({ ...updated, usage, dispatch, cost, priceSnapshot })
       this.#save(this.#account(record))
       this.#control.settle(attemptId, record.dispatch)
     })()
