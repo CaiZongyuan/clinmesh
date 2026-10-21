@@ -108,4 +108,5 @@ it('rejects ambiguous or unsafe deployment pricing configuration', () => {
   expect(modelPricingConfigSchema.safeParse({ prices: [{ ...price, version: 'space version' }], exchangeRates: [] }).success).toBe(false)
   expect(modelPricingConfigSchema.safeParse({ prices: [{ ...price, currency: 'cny' }], exchangeRates: [] }).success).toBe(false)
   expect(modelPricingConfigSchema.safeParse({ prices: [price], exchangeRates: [{ currency: 'CNY', version: 'fx1', cnyPerUnit: 2 }] }).success).toBe(false)
+  expect(modelPricingConfigSchema.safeParse({ prices: [price], exchangeRates: [{ currency: 'CNY', version: 'fx1', cnyPerUnit: 0.0000001 }] }).success).toBe(false)
 })

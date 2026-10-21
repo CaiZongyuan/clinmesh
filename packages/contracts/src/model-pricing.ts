@@ -1,6 +1,5 @@
 import { z } from 'zod'
 
-const microScale = 1_000_000n
 const maxMicro = BigInt(Number.MAX_SAFE_INTEGER)
 
 /** Convert a decimal rate without multiplying binary floating point values. */
@@ -45,7 +44,7 @@ export const modelPricingConfigSchema = z.object({
   const currencies = new Set<string>()
   for (const [index, rate] of config.exchangeRates.entries()) {
     if (currencies.has(rate.currency)) context.addIssue({ code: 'custom', path: ['exchangeRates', index], message: 'Duplicate exchange currency' })
-    if (rate.currency === 'CNY' && modelPricingDecimalMicro(rate.cnyPerUnit) !== microScale) {
+    if (rate.currency === 'CNY' && rate.cnyPerUnit !== 1) {
       context.addIssue({ code: 'custom', path: ['exchangeRates', index, 'cnyPerUnit'], message: 'CNY exchange rate must be one' })
     }
     currencies.add(rate.currency)
