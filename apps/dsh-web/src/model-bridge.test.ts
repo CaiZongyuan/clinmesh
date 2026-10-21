@@ -1,10 +1,12 @@
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
-import { dshDefaultModel } from '@clinmesh/contracts/model-bridge'
+import { dshDefaultModel, encodeModelRoute } from '@clinmesh/contracts/model-bridge'
 import { afterEach, expect, it, vi } from 'vitest'
 import { DshModelProvider } from '../../server/src/infrastructure/ai/dsh-model-provider.ts'
 import { createModelBridgeHandler } from './model-bridge.ts'
 import { setTimeout as delay } from 'node:timers/promises'
+import { randomUUID } from 'node:crypto'
+import type { ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 
 type HostContext = Parameters<typeof createModelBridgeHandler>[0]
 type GenerateOptions = Parameters<HostContext['llm']['stream']>[0]
@@ -14,7 +16,7 @@ const secret = 'synthetic-model-bridge-secret-at-least-32-characters'
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { vi.restoreAllMocks(); for (const dispose of cleanup.splice(0).reverse()) await dispose() })
 
-async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 'RATE_LIMIT', finishGate?: Promise<void>) {
+async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 'RATE_LIMIT', finishGate?: Promise<void>, reportUsage = false) {
   const ctx = new Context()
   cleanup.push(async () => { await ctx.fiber.dispose() })
   await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0, compression, compressionThresholdBytes: 0 })
@@ -27,6 +29,7 @@ async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 
         calls.push(options)
         if (finishGate !== undefined) {
           yield { type: 'text-delta', index: 0, text: '{"ok":true}' }
+          if (reportUsage) yield { type: 'usage', usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }
           await finishGate
           yield { type: 'finish', reason: { kind: 'stop' } }
           return
@@ -56,6 +59,37 @@ async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 
 
 const input = { model: dshDefaultModel, schemaName: 'patient_persona', jsonSchema: {},
   systemPrompt: 'synthetic', userPayload: {} }
+
+it.each(['none', 'gzip'] as const)('preserves usage before a cancelled stream through the actual %s Host', async compression => {
+  let release!: () => void
+  const dsh = await host(compression, undefined, new Promise<void>(resolve => { release = resolve }), true)
+  const cancel = new AbortController()
+  let received!: () => void
+  const metadata = new Promise<void>(resolve => { received = resolve })
+  const outcomes: ModelUsageOutcome[] = []
+  const provider = new DshModelProvider({ origin: dsh.origin, secret, timeoutMs: 2000, maxResponseBytes: 4096,
+    fetch: Object.assign(async (url: URL | RequestInfo, options?: RequestInit) => {
+      const response = await fetch(url, options)
+      expect(response.headers.get('content-encoding')).toBeNull()
+      return new Response(response.body!.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) { controller.enqueue(chunk); received() },
+      })), { headers: response.headers, status: response.status })
+    }, { preconnect: globalThis.fetch.preconnect }),
+  })
+  const execution = provider.completeJson({ ...input, model: encodeModelRoute({ provider: 'synthetic-provider', model: 'synthetic-model' }), signal: cancel.signal,
+    usageContext: { workspaceId: 'synthetic', epoch: 'synthetic', taskId: 'synthetic', stage: 'generation', trigger: 'manual', sources: [] },
+    usageRecorder: { begin(_input, reserve) { reserve?.(); return randomUUID() }, settle(_id, outcome) { outcomes.push(outcome) } },
+  })
+  const result = expect(execution).rejects.toMatchObject({ code: 'AI_TIMEOUT' })
+  try {
+    await metadata
+    await delay(0)
+    cancel.abort()
+    await result
+    expect(outcomes).toMatchObject([{ status: 'cancelled', usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }])
+    expect(dsh.calls).toHaveLength(1)
+  } finally { release() }
+})
 
 it.each(['none', 'gzip'] as const)('returns a safe deadline error through the actual %s host and cancels the model stream', async compression => {
   const dsh = await host(compression)
