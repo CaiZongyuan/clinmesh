@@ -96,7 +96,7 @@
 
 - `vendor/dsh-react-surface` 的 `lib/` 是未跟踪的生成目录。ClinMesh 的 Vitest 若直接导入由 DSH 注入的 `dsh-react-surface/client` external，必须通过显式测试 alias 解析到本地 stub；测试不能依赖开发机曾构建 submodule 后遗留的 `lib/client.js`。
 
-- 在独立 worktree 或干净克隆运行 DSH 浏览器合同前，先执行 `pnpm --filter ./apps/dsh-web build:styles` 生成 gitignored 的 `apps/dsh-web/src/client/styles.generated.ts`；缺失时相关 fixture 在 Vite 构建阶段报 `Could not resolve "./styles.generated.ts"`，表象是成批 dsh-web 合同失败而非单条断言失败。该文件不进入提交。
+- 在独立 worktree 或干净克隆运行 DSH 单元测试或浏览器合同前，先执行 `pnpm --filter ./apps/dsh-web build:styles` 生成 gitignored 的 `apps/dsh-web/src/client/styles.generated.ts`；缺失时相关入口在 Vite 加载或构建阶段报 `Failed to resolve import` 或 `Could not resolve "./styles.generated.ts"`，尚未执行测试断言。该文件不进入提交。
 
 - 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 
