@@ -183,7 +183,7 @@ export class ReferenceDataService {
     context: ActorContext,
     input: { page: number; pageSize: number; query?: string },
   ) {
-    this.#assertCatalogReader(context)
+    this.#assertDiagnosisReader(context)
     const release = this.#catalogRelease()
     const result = this.#reader?.searchConcepts === undefined
       ? { items: [], total: 0 }
@@ -281,10 +281,15 @@ export class ReferenceDataService {
   }
 
   diagnosisById(context: ActorContext, conceptId: string): ReferenceConcept | undefined {
-    this.#assertCatalogReader(context)
+    this.#assertDiagnosisReader(context)
     const release = this.#catalogRelease()
     const concept = this.#reader?.conceptById?.(release.releaseId, 'diagnosis', conceptId)
     return concept?.status === 'active' ? concept : undefined
+  }
+
+  /** 病案审核按确认时冻结的 Release 核验，不随当前启用目录切换。 */
+  diagnosisInRelease(releaseId:string, conceptId:string): ReferenceConcept | undefined {
+    return this.#reader?.conceptById?.(releaseId,'diagnosis',conceptId)
   }
 
   laboratoryById(context: ActorContext, conceptId: string): ReferenceConcept | undefined {
@@ -304,6 +309,11 @@ export class ReferenceDataService {
       ? syntheticNhsaMedicationProductSnapshot.find(item => item.id === productId)
       : this.#reader.medicationProductById(release.releaseId, productId)
     return product?.status === 'active' ? product : undefined
+  }
+
+  #assertDiagnosisReader(context: ActorContext) {
+    if (context.roleCode === 'inpatient-doctor') return
+    this.#assertCatalogReader(context)
   }
 
   #assertCatalogReader(context: ActorContext): void {

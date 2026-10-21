@@ -54,19 +54,16 @@ export class ImagingResultResolver {
       source_hash: z.string().min(1),
       synthetic_case_id: z.string().min(1),
     }).strict().optional().parse(this.#database.driver.prepare(`
-      SELECT detail.exam_code, materialization.case_id AS synthetic_case_id, synthetic_case.source_hash
+      SELECT detail.exam_code, source.synthetic_case_id, synthetic_case.source_hash
       FROM laboratory_request AS request
       JOIN imaging_request_detail AS detail
         ON detail.workspace_id = request.workspace_id
        AND detail.epoch = request.epoch
        AND detail.request_id = request.request_id
-      JOIN synthetic_case_materialization AS materialization
-        ON materialization.workspace_id = request.workspace_id
-       AND materialization.epoch = request.epoch
-       AND materialization.outpatient_case_id = request.case_id
+      JOIN clinical_request_source source ON source.workspace_id=request.workspace_id
+       AND source.epoch=request.epoch AND source.case_id=request.case_id
       JOIN synthetic_case_instance AS synthetic_case
-        ON synthetic_case.workspace_id = materialization.workspace_id
-       AND synthetic_case.case_id = materialization.case_id
+        ON synthetic_case.workspace_id=source.workspace_id AND synthetic_case.case_id=source.synthetic_case_id
       WHERE request.workspace_id = ? AND request.epoch = ? AND request.request_id = ?
         AND request.request_kind = 'imaging'
     `).get(workspaceId, epoch, requestId))

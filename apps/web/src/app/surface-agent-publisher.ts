@@ -38,6 +38,7 @@ import { useAgentActionFeedback } from './agent-action-feedback.tsx'
 
 const viewPaths: Record<AgentViewId, string> = {
   billing: '/billing',
+  inpatient: '/inpatient',
   consultation: '/consultation',
   overview: '/',
   pharmacy: '/pharmacy',

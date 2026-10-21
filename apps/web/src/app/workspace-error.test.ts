@@ -90,3 +90,22 @@ describe('workspace conflict messages', () => {
     )).toBe('服务暂时无法完成请求，请稍后重试。')
   })
 })
+
+it('localizes inpatient conflicts and local validation without exposing raw exception messages', () => {
+  expect(getWorkspaceErrorMessage(new ApiClientError(409, 'INPATIENT_BED_OCCUPIED', '床位私有错误详情'), getWorkspaceMessages('en-US')))
+    .toBe('The bed is occupied. Refresh the ward and choose an available bed.')
+  expect(getWorkspaceErrorMessage(new ApiClientError(409, 'VIRTUAL_TIME_CONFLICT', 'private clock error'), getWorkspaceMessages('zh-CN')))
+    .toBe('医院业务时间已更新或目标时间早于当前时间，请刷新后重新确认。')
+  expect(getWorkspaceErrorMessage(new Error('private local validation'), getWorkspaceMessages('zh-CN')))
+    .toBe(getWorkspaceMessages('zh-CN').serviceErrorDescription)
+  expect(getWorkspaceErrorMessage(new ApiClientError(400, 'INVALID_INPUT', 'private local validation'), getWorkspaceMessages('en-US')))
+    .toBe(getWorkspaceMessages('en-US').invalidInputDescription)
+})
+
+it.each([
+  ['zh-CN', '当前病区不接收新入院，请选择住院病区。'],
+  ['en-US', 'This ward does not accept new admissions. Select the default inpatient ward.'],
+] as const)('explains the default admission ward in %s', (locale, expected) => {
+  expect(getWorkspaceErrorMessage(new ApiClientError(409, 'INPATIENT_WARD_UNAVAILABLE', 'private ward detail'), getWorkspaceMessages(locale)))
+    .toBe(expected)
+})

@@ -1,3 +1,4 @@
+import { InpatientReferral } from '../inpatient-referral.tsx'
 import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
 import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
@@ -2641,6 +2642,7 @@ function DoctorCaseController({
       )}>
       <DoctorCaseDetailRegion containerRef={caseDetailRoot} labelledBy="case-detail-heading">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
+        {detail.data ? <InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session} /> : null}
         {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
           <Alert className="shrink-0">
             <CheckIcon aria-hidden="true" />

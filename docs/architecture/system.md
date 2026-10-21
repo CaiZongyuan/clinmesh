@@ -11,7 +11,7 @@
 
 ## 0. 执行摘要
 
-本系统不是生产医院信息平台，也不是完整 FHIR Server 产品。它用可重复、可审计的合成医院场景，让人类岗位通过 standalone Web 或 DSH React Surface、交互式 Agent 通过 DSH 页面 Tools、任务 Agent 通过 CLI 完成同一业务交接。当前发布证明多岗位普通门诊发热闭环、DSH Surface adapter、Agent CLI 和支撑这些能力的基础设施；Agent adapter 只开放已经实现的业务能力。
+本系统不是生产医院信息平台，也不是完整 FHIR Server 产品。它用可重复、可审计的合成医院场景，让人类岗位通过 standalone Web 或 DSH React Surface、交互式 Agent 通过 DSH 页面 Tools、任务 Agent 通过 CLI 完成同一业务交接。当前发布证明多岗位普通门诊发热闭环、住院建档、医嘱执行与手术最小闭环、DSH Surface adapter、Agent CLI 和支撑这些能力的基础设施；Agent adapter 只开放已经实现的业务能力。
 
 首期是一个运行于 Node.js 的 TypeScript 模块化单体：
 
@@ -158,10 +158,10 @@ standalone Web、DSH Surface 和 CLI 最终调用相同的 Query 与 Command han
 
 | 所有权 | 资源/聚合 | 写入方式 |
 | --- | --- | --- |
-| `fhir-native` | Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense | 只由 Case 开始或业务 Command 创建和更新；FHIR API 只读 |
+| `fhir-native` | Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense、MedicationAdministration | 只由 Case 开始或业务 Command 创建和更新；FHIR API 只读 |
 | `fhir-native-immutable` | 已签署的 Composition、document Bundle、Provenance | 业务 Command 只创建新资源；更正创建显式修订关系，不覆盖已签实例 |
-| `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile 与 Profile Revision、Synthetic Case Instance、Patient Persona Revision、Investigation Result Snapshot、Consultation 与 Consultation Record、Registration、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
-| `domain-projection` | AuditEvent、InventoryItem、ImagingStudy | 从领域事实同事务生成；FHIR API 只读 |
+| `domain-native` | Workspace Actor、Agent Client/Grant、Synthetic Patient Profile 与 Profile Revision、Synthetic Case Instance、Patient Persona Revision、Investigation Result Snapshot、Consultation 与 Consultation Record、Registration、[住院事实](clinical-workflows.md#82-住院闭环)、Diagnosis Draft 与 Diagnosis Confirmation、Prescription、PaymentTransaction、库存账、临床草稿、Scenario Run、Action Trace、audit_log | 只通过 `/api/agent/v1`、`/api/his/v1`、`/api/sim/v1` 或内部 Command 写入 |
+| `domain-projection` | AuditEvent、InventoryItem、ImagingStudy、Procedure | 从领域事实同事务生成；FHIR API 只读 |
 | `simulation-private` | Index Encounter、Case Truth、隐藏来源资源和生成模型输入 | Simulator 内部解析器可访问；管理员病例核对仅可读 Case Truth，生成模型输入仍不公开；普通 HIS、FHIR、来源历史详情和角色 Agent 均不可读取 |
 
 账务边界特别约定：Account、ChargeItem、Invoice 是标准交换事实并保存在 FHIR Resource Store；实际收款、退款、医保基金分配和收费员交账由领域账务表负责。两者通过明确引用关联，不把“账单”和“支付流水”混成一个资源。
@@ -245,7 +245,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 └── .agents/                 # skills 与 Agent Notes
 ```
 
-跨端包职责和未来 Mobile 共享限制见[跨端前端架构](../frontend-architecture.md)。当前 Server 以少量深模块组织：`IdentityService` 解析受信 Actor context，`ScenarioService` 拥有 Epoch 转换，`WorkflowService` 拥有首期门诊状态流，`CommandExecutor` 统一事务/幂等/审计，`AgentIntegrationService` 拥有 Page Context 与 Tool/proposal/review 关联，FHIR/Workspace/Outbox Repository 封装 SQLite 读写。Insurance、住院、完整库存、IG 和外部 Scenario package 在进入实际范围时再增加。
+跨端包职责和未来 Mobile 共享限制见[跨端前端架构](../frontend-architecture.md)。当前 Server 以少量深模块组织：`IdentityService` 解析受信 Actor context，`ScenarioService` 拥有 Epoch 转换，`WorkflowService` 拥有首期门诊状态流，`InpatientService` 拥有已交付的住院事实，`CommandExecutor` 统一事务/幂等/审计，`AgentIntegrationService` 拥有 Page Context 与 Tool/proposal/review 关联，FHIR/Workspace/Outbox Repository 封装 SQLite 读写。Insurance、完整库存、IG 和外部 Scenario package 在进入实际范围时再增加。
 
 依赖规则：
 
@@ -286,10 +286,10 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 
 ### 15.2 协议与业务
 
-- Better Auth 禁止公开注册，并幂等 seed 六个合成账户；Human 请求重新解析 Membership、Practitioner Role 和 active Workspace/Epoch。Agent 请求从短期 Capability Grant 重新解析同一 Actor context，原 token 不持久化。
+- Better Auth 禁止公开注册，并幂等 seed 九个合成账户；Human 请求重新解析 Membership、Practitioner Role 和 active Workspace/Epoch。Agent 请求从短期 Capability Grant 重新解析同一 Actor context，原 token 不持久化。
 - FHIR 固定 R5 `5.0.0`，当前资源只声明 read、vread、instance history 和 search-type；Search 白名单与负面保证见 [5.2 节](fhir-and-commands.md#52-只声明真实能力)。
 - `clinmesh` CLI 从 Catalog 生成全部 canonical HIS 命令和五个只读 FHIR 操作，提供离线 list/schema、JSON/table 输出、human profile、Agent Grant、结构化错误和 Command receipt 恢复；七个领域 Skills 与真实命令路径共同受测。
-- 五个岗位通过真实 API 推进同一个 Encounter。医生完成 Encounter 与药师完成 Scenario Run 是独立状态变化。
+- 门诊五个岗位通过真实 API 推进同一个 Encounter。医生完成 Encounter 与药师完成 Scenario Run 是独立状态变化。
 - 支付支持 success、declined 和 ambiguous；LIS 通过持久 outbox 推进独立检查申请的受理、执行和结构化报告签发，兼容收费检验仍只在支付成功后生成报告；药房只处理已签且成功支付的处方。
 - 结构化病历草稿使用 CAS 版本并可在 Web 恢复；独立签署不完成 Encounter。签署件不可普通覆盖，修订只能从最新版本创建新的 Composition、document Bundle、Provenance 和 Clinical Document Revision。
 - 诊断草稿使用受控目录和独立 CAS 版本；确认时恰有一个主诊断，并原子创建 Condition、更新 Encounter.diagnosis 和记录 Provenance。确认后仍可重新进入草稿，再次确认创建线性 revision 并保留旧 Condition 历史；既往 Condition 不进入本次诊断编辑状态。
@@ -300,11 +300,12 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 
 ### 15.3 Web 与明确边界
 
-- Web 提供挂号员、分诊护士、门诊医生、收费员、药师和管理员入口；管理员以模拟数据为唯一岗位首页，可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、查看本次病例真值、直接开始病例，并在确认影响范围后重置。检验目录默认自动启用 laboratory-cn，Web 不提供手动选择发布或标准/密集数据载入入口；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
+- Web 提供挂号员、分诊护士、门诊医生、住院医生、病区护士、病案人员、收费员、药师和管理员入口；管理员以模拟数据为唯一岗位首页，可生成 Synthetic Profile/Case、浏览 Visible Source History、生成并选择 Brief、查看本次病例真值、直接开始病例，并在确认影响范围后重置。检验目录默认自动启用 laboratory-cn，Web 不提供手动选择发布或标准/密集数据载入入口；未计价服务不显示为免费。医生工作台从全局 Reference Release 分页搜索诊断和药品，从病例级目录搜索本院已发布检验服务；诊断、检验和处方有效修改自动保存，已创建事实固定对应 snapshot。Investigation 的系统执行异常支持受控重试，不向医生展示生成 capability。病例库继续提供责任范围内的已完诊 Encounter 与受控更正入口。服务端状态只由 TanStack Query 缓存，退出或跨账户登录会清除非 session 查询。
 - 可见字符串具有中文和英文 catalog；独立 Web 主题支持 system、light 与 dark，DSH Surface 始终跟随宿主主题。岗位页面具有分页、加载、空、错误、冲突、无权限和成功状态，并覆盖长中文文本与窄视口。
 - DSH Web 可从统一 launcher 打开同一完整工作台，使用 Memory Router、ShadowRoot 和动态岗位 Tools；Agent 可执行读取、导航、选择、草稿和 preview，正式动作只进入 detached 人工审阅。
 - `clinmesh` CLI 通过 Operation Catalog、单岗位 Capability Grant 和领域 Skills 开放当前 Query、Command 与只读 FHIR 能力。
 - 首期不包含 Desktop/Mobile 产品行为、模型 runner、AG-UI Gateway/MCP、自治 Agent、评分、附件、真实外部系统、完整医保/住院/库存、远程数据库、多实例或高可用。
+- 住院提供登记入科、床位、医嘱校对与执行、药房发药与给药、检查检验送检报告、转科、手术实际事实、逐项费用、出区结算清床与召回、病案首页核心字段编码审核归档；范围及固定编码来源限制见[住院闭环](clinical-workflows.md#82-住院闭环)。
 - 当前没有 FHIR generic write、自定义 FHIR Operation、正式 Profile/IG、官方 Validator、标准 compartment、metrics exporter 或公开在线 SLA。
 
 ## 16. 关键风险与缓解
@@ -331,7 +332,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 
 以下边界已经确认，需求变化必须重新经过 design gate 并更新 canonical spec：
 
-1. 产品界面是 Web-only 的普通门诊发热闭环，同时提供 Agent CLI；不开发 Desktop 或 React Native Mobile 产品行为。
+1. 产品界面交付 Web 普通门诊发热闭环及住院建档、医嘱执行与手术最小闭环，同时提供 Agent CLI；不开发 Desktop 或 React Native Mobile 产品行为。
 2. 人类岗位为挂号员、分诊护士、门诊医生、收费员和药师；LIS 是系统 Actor，只有管理员能 reset Scenario。
 3. 一个 Encounter 贯穿挂号、分诊、首诊、检验和复诊；独立结构化病历签署不改变 Encounter，带 Consultation 的病例通过正式临床事实门禁完诊，首期复诊兼容流只在没有结构化签署根文书时组合签署与完诊；发药完成 Scenario Run。
 4. 首期使用单 Node.js 进程和 file-backed SQLite；D1、PostgreSQL 与 Supabase 只保留未来 adapter 迁移方向。
@@ -356,7 +357,7 @@ D1、PostgreSQL 或 Supabase 只在出现公开托管、多实例、持续写竞
 - 一个 Encounter 贯穿首期门诊；独立结构化病历签署与 Encounter 完成是不同事实，首期复诊兼容流仍可组合处理，发药只完成 Scenario Run。
 - 挂号原子创建 Registration、Encounter、Queue Task、Account 和挂号 Charge Item；Prescription 稳定关联 MedicationRequest、费用、支付和发药。
 - 医生接诊统一使用具有固定患者档案的 Synthetic Case；挂号与分诊提供接诊上下文。
-- 五个人类岗位可以通过 Web/API、单岗位任务 Agent 可以通过 CLI 完成由 Synthetic Case 直接开始的 Scenario；生成库、来源历史和全局目录查询满足分页与交互基线。
+- 门诊五岗及住院医生、病区护士、病案人员可以通过 Web/API、单岗位任务 Agent 可以通过 CLI 完成由 Synthetic Case 直接开始的 Scenario；生成库、来源历史和全局目录查询满足分页与交互基线。
 - standalone Web 与 DSH React Surface 复用同一 Web application；DSH 原生 Session 只能获得当前岗位/view 的窄 Tools，正式业务 Effect 需要人类审阅并可关联 Tool、proposal、review、Command、Audit 与 Trace。
 - `clinmesh` CLI 由同一 Operation Catalog 生成命令树，Capability Grant 绑定单一 Practitioner Role、Workspace/Epoch、Scenario Run、policy version 和真实过期时间。
 - Node.js 服务重启后从同一 SQLite 文件恢复；备份/恢复验证 schema、integrity 与 canonical state hash。

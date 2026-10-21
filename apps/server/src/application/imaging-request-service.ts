@@ -1,3 +1,4 @@
+import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
 import type { FhirResource } from '@clinmesh/contracts/fhir'
 import {
   acknowledgeImagingReportResponseSchema,
@@ -223,13 +224,19 @@ export class ImagingRequestService {
           service.version,
           JSON.stringify({ imagingService: service }),
         )
+        const priceFen = service.examCode === 'chest-radiograph' ? 8000 : 30000
+        this.#database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_set(config_json,
+          '$.inpatientInvestigationBilling',json(?)) WHERE workspace_id=? AND epoch=? AND service_id=?
+          AND json_type(config_json,'$.inpatientInvestigationBilling') IS NULL`).run(JSON.stringify({
+            id:`charge-definition-inpatient-${service.id}`,version:1,effectiveOn:'2026-08-24',display:service.name,priceFen,currency:'CNY',trigger:'execution-completed',source:'synthetic-hospital-price-2026',availableScopes:['inpatient'],
+          }),current.workspaceId,current.epoch,service.id)
       }
     }
   }
 
   /** 医生可开立的放射服务；是否开展由医院启用状态与素材就绪共同决定，不参考病例病情。 */
   serviceCatalog(context: ActorContext, readyExamCodes: ReadonlySet<ImagingExamCode>) {
-    assertRole(context, ['outpatient-doctor'])
+    assertRole(context, ['outpatient-doctor', 'inpatient-doctor', 'ward-nurse'])
     const services = z.array(z.object({ config_json: z.string() })).parse(this.#database.driver.prepare(`
       SELECT config_json FROM hospital_service_catalog
       WHERE workspace_id = ? AND epoch = ? AND active = 1
@@ -247,24 +254,29 @@ export class ImagingRequestService {
    * 检查不存在时返回 undefined；岗位或责任不符时抛出权限错误。
    */
   studyAccess(context: ActorContext, studyId: string) {
-    assertRole(context, ['outpatient-doctor'])
+    assertRole(context, ['outpatient-doctor', 'inpatient-doctor', 'ward-nurse'])
     const study = z.object({
       asset_id: z.string().min(1),
       asset_output_json: z.string().min(1),
       case_id: z.string().min(1),
+      organization_id:z.string().nullable(), ward_id:z.string().nullable(),
       exam_code: z.enum(['chest-ct-plain', 'chest-radiograph']),
     }).strict().optional().parse(this.#database.driver.prepare(`
-      SELECT study.asset_id, study.asset_output_json, study.case_id, study.exam_code
+      SELECT study.asset_id, study.asset_output_json, study.case_id, study.exam_code, admission.organization_id, admission.ward_id
       FROM imaging_study AS study
       JOIN laboratory_request AS request
         ON request.workspace_id = study.workspace_id
        AND request.epoch = study.epoch
        AND request.request_id = study.request_id
+      LEFT JOIN inpatient_admission admission ON admission.workspace_id=study.workspace_id AND admission.epoch=study.epoch AND admission.admission_id=study.case_id
       WHERE study.workspace_id = ? AND study.epoch = ? AND study.study_id = ?
         AND request.status IN ('reported', 'acknowledged')
     `).get(context.workspaceId, context.epoch, studyId))
     if (study === undefined) return undefined
-    this.#host.assertCaseResponsibility(context, study.case_id)
+    if(study.organization_id===null) this.#host.assertCaseResponsibility(context,study.case_id)
+    else if(!['inpatient-doctor','ward-nurse'].includes(context.roleCode) || context.organizationId!==study.organization_id || context.locationId!==study.ward_id) {
+      throw new WorkflowError('ROLE_NOT_ALLOWED','当前科室或病区不负责本次住院影像')
+    }
     return {
       assetId: study.asset_id,
       assetOutput: JSON.parse(study.asset_output_json) as unknown,
@@ -273,6 +285,7 @@ export class ImagingRequestService {
   }
 
   state(context: ActorContext, caseId: string) {
+    if (['inpatient-doctor','ward-nurse'].includes(context.roleCode)) assertInpatientRequestScope(this.#database,context,caseId)
     const draft = this.#draft(context, caseId)
     return imagingRequestStateSchema.parse({
       ...(draft?.draft_service_snapshot_json === null || draft?.draft_service_snapshot_json === undefined
@@ -313,6 +326,7 @@ export class ImagingRequestService {
         serviceId: input.serviceId,
       },
       operation: 'imaging-request.save-draft',
+      authorize: () => assertRole(input.context, ['outpatient-doctor']),
     }, transaction => this.applySaveDraft(transaction, input))
   }
 
@@ -425,6 +439,7 @@ export class ImagingRequestService {
       idempotencyKey: input.idempotencyKey,
       input: { encounterId: input.encounterId, expectedDraftVersion: input.expectedDraftVersion },
       operation: 'imaging-request.issue',
+      authorize: () => assertRole(input.context, ['outpatient-doctor']),
     }, transaction => this.applyIssue(transaction, input))
   }
 
@@ -530,7 +545,7 @@ export class ImagingRequestService {
       VALUES (?, ?, ?, ?, ?)
     `).run(input.context.workspaceId, input.context.epoch, requestId, service.examCode, draft.draft_indication)
     this.#updateDraft(input.context, outpatientCase.case_id, draft.version, { now })
-    transaction.enqueue({
+    if (inpatientRequestOwner(this.#database,input.context,outpatientCase.case_id) === undefined) transaction.enqueue({
       dedupKey: `imaging-request:${requestId}:accept`,
       kind: 'imaging.accept-request',
       payload: { requestId },
@@ -742,7 +757,7 @@ export class ImagingRequestService {
       })
       return {
         data: { diagnosticReportId: report.id, requestId: request.request_id, status: 'reported' as const, studyId },
-        effects: [...projections, report, provenance, completed.serviceRequest, completed.task].map(resourceEffect),
+        effects: [...projections, report, provenance, completed.serviceRequest, completed.task].map(resourceEffect).concat(completed.chargeEffects),
       }
     })
   }
@@ -1030,6 +1045,11 @@ export class ImagingRequestService {
   }
 
   #caseForAction(context: ActorContext, encounterId: string) {
+    const admission=assertInpatientRequestScope(this.#database,context,encounterId,['inpatient-doctor'])
+    if (admission !== undefined) {
+      if (admission.status !== 'admitted' || admission.source_case_id === null) throw new WorkflowError('WORKFLOW_CONFLICT','本次住院缺少可用合成病例来源或不在院')
+      return {case_id:admission.admission_id,patient_id:admission.patient_id,status:'admitted'}
+    }
     assertRole(context, ['outpatient-doctor'])
     const outpatientCase = this.#host.caseByEncounter(context, encounterId)
     this.#host.assertCaseResponsibility(context, outpatientCase.case_id)
@@ -1111,23 +1131,23 @@ export class ImagingRequestService {
       request.service_request_id, request.execution_task_id, request.diagnostic_report_id,
       request.status, request.version, request.authored_by,
       detail.exam_code, detail.indication,
-      outpatient_case.patient_id, outpatient_case.encounter_id
+      clinical_request_context.patient_id, clinical_request_context.encounter_id
     FROM laboratory_request AS request
     JOIN imaging_request_detail AS detail
       ON detail.workspace_id = request.workspace_id
      AND detail.epoch = request.epoch
      AND detail.request_id = request.request_id
-    JOIN outpatient_case
-      ON outpatient_case.workspace_id = request.workspace_id
-     AND outpatient_case.epoch = request.epoch
-     AND outpatient_case.case_id = request.case_id
+    JOIN clinical_request_context
+      ON clinical_request_context.workspace_id = request.workspace_id
+     AND clinical_request_context.epoch = request.epoch
+     AND clinical_request_context.case_id = request.case_id
   `
 
   #projectedRequests(context: ActorContext, caseId: string) {
     return z.array(requestRowSchema).parse(this.#database.driver.prepare(`${this.#requestSelect}
       WHERE request.workspace_id = ? AND request.epoch = ? AND request.case_id = ?
         AND request.request_kind = 'imaging'
-      ORDER BY request.authored_at, request.request_id
+      ORDER BY julianday(request.authored_at), request.request_id
     `).all(context.workspaceId, context.epoch, caseId)).map(request => this.#project(context, request))
   }
 

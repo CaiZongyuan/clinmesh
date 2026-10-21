@@ -10,11 +10,28 @@ const expectedSkills = [
   'clinmesh-billing',
   'clinmesh-doctor',
   'clinmesh-fhir',
+  'clinmesh-inpatient',
   'clinmesh-pharmacy',
   'clinmesh-registration',
   'clinmesh-shared',
   'clinmesh-triage',
 ]
+
+it('keeps inpatient pharmacy and charge reads and receipts aligned with role-specific contracts', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id, role] of [['pharmacy-list', 'inpatient.pharmacy.list', 'pharmacist'], ['pharmacy-read', 'inpatient.pharmacy.read', 'pharmacist'], ['charges', 'inpatient.charges.read', 'cashier']] as const) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path}`))!
+    expect(inspectExample(program, line).operation?.id).toBe(id)
+    expect(getHisOperation(id).roles).toEqual([role])
+  }
+  for (const id of ['inpatient.catalog', 'inpatient.admission.list', 'inpatient.admission.read', 'inpatient.clinical.catalog', 'inpatient.clinical.read']) {
+    expect(getHisOperation(id).roles).not.toContain('pharmacist')
+  }
+  expect(skill).toContain('inpatient.execution.dispense')
+  expect(skill).toContain('inpatient.charge.reverse')
+  expect(getHisOperation('inpatient.clinical.read').roles).not.toContain('cashier')
+})
 
 it('keeps registration examples and numbering recovery aligned with the command catalog', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
@@ -182,6 +199,33 @@ function inspectExample(program: Command, line: string) {
     operation: listHisOperations().find(operation => operation.cliPath.join(' ') === path.join(' ')),
   }
 }
+
+it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const examples = commandLines(skill)
+  expect(getHisOperation('inpatient.admission.register').version).toBe(3)
+  expect(getHisOperation('inpatient.admission.register').input.safeParse({ patientId: 'synthetic', patientVersion: '1', admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0 }).success).toBe(false)
+  expect(skill).toContain('expectedEpoch')
+  const admissionExample = /```json\n([\s\S]+?)\n```/.exec(skill)
+  expect(admissionExample).not.toBeNull()
+  expect(getHisOperation('inpatient.admission.register').input.parse(JSON.parse(admissionExample![1]!)))
+    .toMatchObject({ expectedEpoch: 'epoch-1', wardId: 'ward-general', depositFen: 100000 })
+  const diagnosisExample=[...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][1]
+  expect(diagnosisExample).toBeDefined()
+  expect(getHisOperation('inpatient.diagnosis.confirm').input.parse(JSON.parse(diagnosisExample![1]!))).toMatchObject({entries:[{role:'primary',admissionCondition:'1'}]})
+  expect(getHisOperation('reference.diagnoses.search').roles).toContain('inpatient-doctor')
+  expect(getHisOperation('reference.diagnoses.search').version).toBe(2)
+  for (const operation of listHisOperations().filter(operation => operation.id.startsWith('inpatient.'))) {
+    const prefix = `clinmesh ${operation.cliPath.join(' ')}`
+    const line = examples.find(line => line === prefix || line.startsWith(`${prefix} `))!
+    expect(line).toBeDefined()
+    expect(inspectExample(program, line).operation?.id).toBe(operation.id)
+    expect(operation.handlerOwner).toBe('InpatientService')
+    expect(operation.skill).toBe('clinmesh-inpatient')
+    if (operation.mode === 'command') expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+  }
+})
 
 describe('ClinMesh CLI Agent Skills', () => {
   it('keeps document quality examples narrow and separate from clinical draft writes', async () => {
@@ -406,4 +450,70 @@ describe('ClinMesh CLI Agent Skills', () => {
       'clinmesh command receipt get --operation-id patient.search --idempotency-key example-key',
     )).toThrow('Operation does not create a Command receipt: patient.search')
   })
+})
+
+it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id, role] of [
+    ['request-surgery','request','inpatient-doctor'], ['check-surgery-preop','check-preop','ward-nurse'],
+    ['confirm-surgery-consent','confirm-consent','inpatient-doctor'], ['execute-surgery','execute','inpatient-doctor'], ['cancel-surgery','cancel','inpatient-doctor'],
+  ] as const) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!
+    const operation = inspectExample(program, line).operation!
+    expect(operation.id).toBe(`inpatient.surgery.${id}`)
+    expect(operation.roles).toEqual([role])
+    expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+  }
+  const executionExample = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][2]
+  expect(executionExample).toBeDefined()
+  expect(getHisOperation('inpatient.surgery.execute').input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
+  expect(getHisOperation('inpatient.order.issue').version).toBe(2)
+  expect(skill).toContain('surgeryExecutionId')
+  expect(skill).toContain('inpatient.surgery.execute')
+})
+
+it('keeps inpatient investigation and transfer examples bound to narrow versioned commands', async () => {
+  const skill=await readFile(resolve(import.meta.dirname,'../../../skills/clinmesh-inpatient/SKILL.md'),'utf8')
+  const examples=[...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match=>JSON.parse(match[1]!))
+  const investigation=examples.find(input=>input.selection?.kind==='imaging')
+  expect(getHisOperation('inpatient.investigation.issue').input.parse(investigation)).toMatchObject({catalogVersion:1,selection:{kind:'imaging'}})
+  expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,amountFen:1}).success).toBe(false)
+  expect(getHisOperation('inpatient.investigation.issue').input.safeParse({...investigation,url:'https://example.invalid'}).success).toBe(false)
+  expect(getHisOperation('inpatient.transfer.receive').roles).toEqual(['ward-nurse'])
+  expect(getHisOperation('inpatient.transfer.receive').input.safeParse({admissionId:'synthetic-admission',encounterVersion:'2',transferId:'synthetic-transfer',expectedTransferVersion:2,bedId:'bed-surgery-1',organizationId:'untrusted'}).success).toBe(false)
+  expect(skill).toContain('unavailableReason=unpriced')
+})
+
+it('住院出院与结算示例使用冻结指纹、原输入与窄岗位合同', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id, role] of [['issue-discharge','issue','inpatient-doctor'],['depart','depart','ward-nurse'],['recall','recall','inpatient-doctor'],['clear-bed','clear','ward-nurse'],['settle','settle','cashier']] as const) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!
+    expect(inspectExample(program,line).operation?.id).toBe(`inpatient.discharge.${id}`)
+    expect(getHisOperation(`inpatient.discharge.${id}`).roles).toEqual([role])
+  }
+  const example = skill.match(/`settlement.json`[^]*?```json\n([^]*?)\n```/)
+  expect(example).not.toBeNull()
+  expect(getHisOperation('inpatient.discharge.settle').input.parse(JSON.parse(example![1]!))).toMatchObject({ expectedChargesFen:5000, expectedBalanceFen:-95000 })
+  expect(getHisOperation('inpatient.discharge.preview').roles).toEqual(['cashier'])
+  expect(getHisOperation('inpatient.discharge.read').roles).not.toContain('cashier')
+  expect(getHisOperation('inpatient.discharge.settle').input.safeParse({ admissionId:'synthetic',encounterVersion:'4',expectedChargesFen:5000,expectedBalanceFen:-95000 }).success).toBe(false)
+  expect(skill).toContain('INPATIENT_SETTLEMENT_PREVIEW_STALE')
+  expect(skill).toContain('inpatient.discharge.settle')
+})
+
+it('病案示例绑定原修订与来源指纹、显式主操作及独立审核岗位', async () => {
+  const program=createCliProgram({stdout:{write:()=>undefined},stderr:{write:()=>undefined}})
+  const skill=await readFile(resolve(import.meta.dirname,'../../../skills/clinmesh-inpatient/SKILL.md'),'utf8')
+  for(const [path,id,role] of [['submit-record','submit','inpatient-doctor'],['review-record','review','medical-records'],['archive-record','archive','medical-records']] as const) {
+    const line=commandLines(skill).find(line=>line.startsWith(`clinmesh inpatient ${path} `))!
+    expect(inspectExample(program,line).operation?.id).toBe(`inpatient.record.${id}`)
+    expect(getHisOperation(`inpatient.record.${id}`).roles).toEqual([role])
+    const match=skill.match(new RegExp('`record-'+id+'.json`[^]*?```json\\n([^]*?)\\n```'))!
+    expect(getHisOperation(`inpatient.record.${id}`).input.parse(JSON.parse(match[1]!))).toMatchObject({expectedSourcesHash:'a'.repeat(64)})
+  }
+  expect(getHisOperation('inpatient.record.submit').input.safeParse({admissionId:'synthetic',expectedRevision:0,expectedSourcesHash:'a'.repeat(64)}).success).toBe(false)
+  expect(getHisOperation('inpatient.record.review').input.safeParse({admissionId:'synthetic',expectedRevision:1,expectedSourcesHash:'a'.repeat(64),outcome:'returned'}).success).toBe(false)
+  expect(skill).toContain('INPATIENT_RECORD_STALE')
 })
