@@ -6,6 +6,7 @@
 
 ## 业务、临床与数据
 
+- [OpenDRG 公开资料包核验](2026-10-21-opendrg-public-data-inventory.md)
 - [OpenHIS ITAI Pro 架构与业务研究](openhis-itai-pro-architecture.md)
 - [合成医院数据来源研究](synthetic-hospital-data-sources.md)
 - [虚拟患者与病例创作系统研究](virtual-patient-and-case-authoring-systems.md)
