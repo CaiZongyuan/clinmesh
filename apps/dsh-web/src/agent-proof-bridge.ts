@@ -206,6 +206,7 @@ export function installAgentProofBridge(ctx: Context, secret: string,
         if (options.upstreamOrigin === undefined || inputPermit === undefined) throw new Error('CLINMESH_MODEL_ADMISSION_REQUIRED')
         delegated = !unselectedTasks.has(task) && await isDoctorDelegation(ctx, config, input.text, signal, {
           upstreamOrigin: options.upstreamOrigin, secret, permit: inputPermit,
+          isCurrent: () => activeTasks.get(String(execution.agent!.session.id)) === task,
           ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
         })
       }

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createHmac, randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { agentPageContextBindingSchema } from '@clinmesh/contracts/agent'
-import { modelUsageListSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageControlSchema, modelUsageListSchema, type ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { isDoctorDelegation } from '../../dsh-web/src/doctor-delegation.ts'
@@ -17,14 +17,20 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 const secret = 'synthetic-host-accounting-secret-at-least-32-characters'
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { vi.useRealTimers(); for (const close of cleanup.splice(0).reverse()) await close() })
-async function fixture(account = 'doctor@demo.clinmesh.local') {
+function latch<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(accept => { resolve = accept })
+  return { promise, resolve }
+}
+async function fixture(account = 'doctor@demo.clinmesh.local', deployment?: ModelUsagePolicyConfig) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-host-usage-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   const options = { authBaseUrl: 'http://localhost', authSecret: secret, cursorSecret: secret,
     databasePath: join(directory, 'clinmesh.sqlite'), demoPassword: 'Synthetic-Demo-Password-2026!',
     migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'], dshBridgeSecret: secret,
     syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'synthetic',
-    chatCompletionsProvider: { completeJson: async () => ({ model: 'synthetic', content: JSON.stringify(persona) }) } }
+    chatCompletionsProvider: { completeJson: async () => ({ model: 'synthetic', content: JSON.stringify(persona) }) },
+    ...(deployment === undefined ? {} : { modelUsageControl: deployment }) }
   let runtime = await createClinMeshRuntime(options)
   cleanup.push(() => runtime.close())
   const started = await startConsultationCase(runtime)
@@ -56,14 +62,83 @@ async function fixture(account = 'doctor@demo.clinmesh.local') {
   const post = (path: string, body: unknown, authorization = `Bearer ${secret}`) => runtime.app.request(path, {
     method: 'POST', headers: { authorization, 'content-type': 'application/json' }, body: JSON.stringify(body) })
   const list = async () => modelUsageListSchema.parse(await (await runtime.app.request('/api/model-usage/requests?feature=doctor_delegation', { headers: { cookie: doctor } })).json())
+  const control = async (cookie = doctor) => modelUsageControlSchema.parse(await (await runtime.app.request('/api/model-usage/control', { headers: { cookie } })).json())
+  const policy = async (input: Partial<ModelUsagePolicyConfig>) => {
+    const admin = await signIn(runtime, 'admin@demo.clinmesh.local')
+    const current = (await control(admin)).workspace
+    const response = await runtime.app.request('/api/model-usage/control', { method: 'PUT',
+      headers: { cookie: admin, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ enabled: current.enabled, requests: current.requests, automaticRetries: current.automaticRetries,
+        expectedVersion: current.version, ...input }) })
+    expect(response.status).toBe(200)
+    return modelUsageControlSchema.parse(await response.json())
+  }
   let revision = 1
   const renew = (claim: Record<string, unknown> = {}, cookie = doctor) => runtime.app.request('/api/agent/v1/page-contexts', { method: 'POST', headers: { ...headers, cookie },
     body: JSON.stringify({ client: { id: clientId, revision: ++revision }, dshSessionId: binding.snapshot.dshSessionId,
       claim: { ...binding.snapshot.claim, ...claim } }) })
-  return { get runtime() { return runtime }, started, binding, doctor, permit, post, list,
+  return { get runtime() { return runtime }, started, binding, doctor, permit, post, list, control, policy,
     renew,
-    restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) } }
+    restart: async (modelUsageControl = options.modelUsageControl) => {
+      await runtime.close()
+      runtime = await createClinMeshRuntime(modelUsageControl === undefined ? options : { ...options, modelUsageControl })
+    } }
 }
+
+it.each([
+  { enabled: false, requests: null, code: 'MODEL_DISABLED', scope: 'workspace' },
+  { enabled: true, requests: 0, code: 'MODEL_REQUEST_LIMIT', scope: 'workspace' },
+  { enabled: false, requests: null, code: 'MODEL_DISABLED', scope: 'deployment' },
+  { enabled: true, requests: 0, code: 'MODEL_REQUEST_LIMIT', scope: 'deployment' },
+] as const)('returns only the safe control code and scope when Host admission is blocked: $code', async input => {
+  const f = await fixture(undefined, input.scope === 'deployment'
+    ? { enabled: input.enabled, requests: input.requests, automaticRetries: true } : undefined)
+  if (input.scope === 'workspace') await f.policy({ enabled: input.enabled, requests: input.requests })
+  const response = await f.post('/api/model-usage/host/doctor-delegation/admit', {
+    permit: await f.permit(), provider: 'synthetic', model: 'classifier' })
+  expect(response.status).toBe(409)
+  expect(await response.json()).toEqual({ error: { code: input.code, scope: input.scope } })
+  expect((await f.list()).total).toBe(0)
+})
+
+it('binds cancellation status to its receipt and cancels a stalled Host stream when its workspace is disabled', async () => {
+  const f = await fixture()
+  const started = latch<{ signal: AbortSignal; grant: { attemptId: string; receipt: string } }>()
+  let grant: { attemptId: string; receipt: string }
+  let streams = 0
+  const ctx = { llm: syntheticRecognitionLlm(async function* (request) {
+    streams++
+    yield { type: 'usage', usage: { inputTokens: 12, outputTokens: 3 } }
+    const signal = request.signal!
+    started.resolve({ signal, grant })
+    await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }))
+    signal.throwIfAborted()
+  }) } as unknown as Parameters<typeof isDoctorDelegation>[0]
+  const result = isDoctorDelegation(ctx, { provider: 'synthetic', model: 'classifier' }, '替我问清头晕的诱因。',
+    new AbortController().signal, { upstreamOrigin: 'http://localhost', secret, permit: await f.permit(),
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const response = await f.runtime.app.request(new Request(input, init))
+        if (new URL(String(input)).pathname.endsWith('/admit') && response.ok) grant = await response.clone().json()
+        return response
+      }) as typeof fetch }).then(() => 'succeeded', () => 'rejected')
+  const active = await started.promise
+  const status = (receipt = active.grant.receipt) => f.post('/api/model-usage/host/doctor-delegation/status', { ...active.grant, receipt })
+  expect((await status('x'.repeat(43))).status).toBe(403)
+  expect((await f.post('/api/model-usage/host/doctor-delegation/status', active.grant, 'Bearer synthetic-wrong-secret')).status).toBe(403)
+  expect((await f.runtime.app.request('/api/model-usage/host/doctor-delegation/status', { method: 'POST',
+    headers: { origin: 'http://localhost', authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
+    body: JSON.stringify(active.grant) })).status).toBe(403)
+  expect(await (await status()).json()).toEqual({ abort: false })
+  await f.policy({ enabled: false })
+  expect(await (await status()).json()).toEqual({ abort: true })
+  expect(await result).toBe('rejected')
+  expect(active.signal.aborted).toBe(true)
+  expect(streams).toBe(1)
+  expect((await f.list()).items[0]).toMatchObject({ status: 'unknown', dispatch: 'dispatched', usage: {
+    raw: { format: 'dsh', uncachedInputTokens: 12, outputTokens: 3 }, totalTokens: null } })
+  await f.policy({ enabled: true })
+  expect(await (await status()).json()).toEqual({ abort: true })
+})
 
 it('admits one Host recognition per trusted doctor task and keeps unknown dispatch across restart', async () => {
   const f = await fixture()
@@ -84,6 +159,71 @@ it('admits one Host recognition per trusted doctor task and keeps unknown dispat
   expect((await f.post('/api/model-usage/host/doctor-delegation/admit', body)).status).toBe(409)
 })
 
+it('atomically grants the last Host request slot once and keeps its unknown occupancy and identity across restart', async () => {
+  const f = await fixture()
+  await f.policy({ requests: 1 })
+  const bodies = await Promise.all([f.permit(), f.permit()].map(async permit => ({ permit: await permit, provider: 'synthetic', model: 'classifier' })))
+  const responses = await Promise.all(bodies.map(body => f.post('/api/model-usage/host/doctor-delegation/admit', body)))
+  expect(responses.map(response => response.status).sort()).toEqual([201, 409])
+  const winner = responses.findIndex(response => response.status === 201)
+  const grant = await responses[winner]!.json() as { attemptId: string; receipt: string }
+  expect(await responses[1 - winner]!.json()).toEqual({ error: { code: 'MODEL_REQUEST_LIMIT', scope: 'workspace' } })
+  expect((await f.control()).workspace).toMatchObject({ used: 0, reserved: 1, remaining: 0 })
+  await f.restart()
+  expect((await f.list()).items).toMatchObject([{ id: grant.attemptId, status: 'unknown', dispatch: 'unknown' }])
+  expect((await f.control()).workspace).toMatchObject({ used: 0, reserved: 1, remaining: 0 })
+  expect((await f.post('/api/model-usage/host/doctor-delegation/admit', bodies[winner])).status).toBe(409)
+  expect((await f.post('/api/model-usage/host/doctor-delegation/admit', bodies[1 - winner])).status).toBe(409)
+  await f.policy({ requests: 2 })
+  expect((await f.post('/api/model-usage/host/doctor-delegation/admit', bodies[winner])).status).toBe(409)
+  expect((await f.post('/api/model-usage/host/doctor-delegation/admit', bodies[1 - winner])).status).toBe(201)
+  expect((await f.control()).workspace).toMatchObject({ used: 0, reserved: 2, remaining: 0 })
+})
+
+it('keeps independent Host quota starting points through unlimited periods and deployment restarts without allowing a workspace to loosen deployment policy', async () => {
+  const f = await fixture()
+  const dispatch = async () => {
+    const response = await f.post('/api/model-usage/host/doctor-delegation/admit', {
+      permit: await f.permit(), provider: 'synthetic', model: 'classifier' })
+    expect(response.status).toBe(201)
+    const grant = await response.json() as { attemptId: string; receipt: string }
+    const observation = { ...grant, outcome: { status: 'succeeded', dispatch: 'dispatched', usage: {
+      inputTokens: 3, outputTokens: 2, cachedInputTokens: null, reasoningOutputTokens: null,
+      totalTokens: 5, mapping: 'dsh-v1' } } }
+    expect((await f.post('/api/model-usage/host/doctor-delegation/observe', observation)).status).toBe(200)
+    expect((await f.post('/api/model-usage/host/doctor-delegation/observe', observation)).status).toBe(200)
+  }
+  await dispatch()
+  const workspaceStart = (await f.policy({ requests: 4 })).workspace.requestsStartedAt
+  await dispatch()
+  expect((await f.control()).workspace).toMatchObject({ used: 1, reserved: 0 })
+  expect((await f.control()).deployment.requestsStartedAt).toBeNull()
+  await f.restart({ enabled: true, requests: 2, automaticRetries: true })
+  const deploymentStart = (await f.control()).deployment.requestsStartedAt
+  expect(deploymentStart).not.toBe(workspaceStart)
+  await dispatch()
+  await f.policy({ requests: null })
+  await dispatch()
+  expect(await f.control()).toMatchObject({ workspace: { used: 3, requestsStartedAt: workspaceStart },
+    deployment: { used: 2, requestsStartedAt: deploymentStart } })
+  const rejected = await f.post('/api/model-usage/host/doctor-delegation/admit', {
+    permit: await f.permit(), provider: 'synthetic', model: 'classifier' })
+  expect(rejected.status).toBe(409)
+  expect(await rejected.json()).toEqual({ error: { code: 'MODEL_REQUEST_LIMIT', scope: 'deployment' } })
+  await f.restart({ enabled: true, requests: null, automaticRetries: true })
+  await f.policy({ requests: 4 })
+  await dispatch()
+  expect(await f.control()).toMatchObject({ workspace: { used: 4, requestsStartedAt: workspaceStart, remaining: 0 },
+    deployment: { used: 3, requestsStartedAt: deploymentStart, requests: null } })
+  expect((await f.list()).total).toBe(5)
+  const beforeReset = await f.control()
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  expect((await f.runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', { method: 'POST',
+    headers: { cookie: admin, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: '{}' })).status).toBe(200)
+  expect(await f.control(admin)).toMatchObject({ workspace: beforeReset.workspace, deployment: beforeReset.deployment })
+})
+
 it.each(['auth', 'origin', 'membership', 'role', 'actor', 'epoch', 'case', 'ledger', 'expired', 'spoofed-context'] as const)(
   'dispatches zero classifier streams when %s invalidates admission', async failure => {
     const f = await fixture()
@@ -100,6 +240,7 @@ it.each(['auth', 'origin', 'membership', 'role', 'actor', 'epoch', 'case', 'ledg
     if (failure === 'case') f.runtime.database.driver.prepare("UPDATE outpatient_case_responsibility SET practitioner_role_id = 'practitioner-role-administrator' WHERE case_id = ?").run(f.started.outpatientCaseId)
     if (failure === 'ledger') f.runtime.database.driver.exec("CREATE TRIGGER synthetic_admission_failure BEFORE INSERT ON model_usage_attempt BEGIN SELECT RAISE(ABORT, 'unwritable'); END")
     let streams = 0
+    const abort = new AbortController()
     const ctx = { llm: syntheticRecognitionLlm(async function* () { streams++; yield { type: 'finish', reason: { kind: 'stop' } } }) } as unknown as Parameters<typeof isDoctorDelegation>[0]
     const transport = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init)
@@ -107,10 +248,12 @@ it.each(['auth', 'origin', 'membership', 'role', 'actor', 'epoch', 'case', 'ledg
       if (failure === 'origin') request.headers.set('origin', 'http://localhost')
       if (failure === 'spoofed-context') return f.runtime.app.request(new Request(input, { ...init,
         body: JSON.stringify({ ...JSON.parse(String(init?.body)), workspaceId: 'workspace-other' }) }))
-      return f.runtime.app.request(request)
+      const response = await f.runtime.app.request(request)
+      if (failure === 'ledger') abort.abort()
+      return response
     }) as typeof fetch
     await expect(isDoctorDelegation(ctx, { provider: 'synthetic', model: 'classifier' }, '替我问清头晕的诱因。',
-      new AbortController().signal, { upstreamOrigin: 'http://localhost', secret, permit, fetch: transport })).rejects.toThrow()
+      abort.signal, { upstreamOrigin: 'http://localhost', secret, permit, fetch: transport })).rejects.toThrow()
     expect(streams).toBe(0)
   })
 
@@ -236,8 +379,13 @@ it('requires Server admission before the real Host classifier stream and records
   expect(streams).toBe(1)
 })
 
-it('connects the installed Host task handler to real Server admission before allowing a doctor Tool', async () => {
+it.each(['none', 'enabled', 'requests', 'ledger', 'expired', 'membership', 'task-ended'] as const)('connects the installed Host task handler and resumes valid undispatched work after %s recovery', async recovery => {
   const f = await fixture()
+  const invalidated = recovery === 'expired' || recovery === 'membership' || recovery === 'task-ended'
+  if (recovery === 'enabled' || invalidated) await f.policy({ enabled: false })
+  if (recovery === 'requests') await f.policy({ requests: 0 })
+  if (recovery === 'ledger') f.runtime.database.driver.exec("CREATE TRIGGER synthetic_admission_failure BEFORE INSERT ON model_usage_attempt BEGIN SELECT RAISE(ABORT, 'unwritable'); END")
+  const blocked = latch<void>()
   const permit = await f.permit()
   const payload = JSON.parse(Buffer.from(permit.split('.')[0]!, 'base64url').toString())
   const binding = { scopeKey: f.binding.snapshot.scopeKey, pageRevision: agentPageBindingRevision(f.binding.snapshot.claim) }
@@ -262,7 +410,11 @@ it('connects the installed Host task handler to real Server admission before all
       yield { type: 'finish', reason: { kind: 'stop' } }
     }),
   } as unknown as Parameters<typeof installAgentProofBridge>[0], secret, { upstreamOrigin: 'http://localhost',
-    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => f.runtime.app.request(new Request(input, init))) as typeof fetch })
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await f.runtime.app.request(new Request(input, init))
+      if (new URL(String(input)).pathname.endsWith('/admit') && response.status === 409) blocked.resolve()
+      return response
+    }) as typeof fetch })
   const agent = { session: { id: payload.dshSessionId, header: {}, requestHeader: () => ({
     config: { provider: 'synthetic-host', model: 'handler-classifier' },
     tools: [{ name: 'clinmesh_select_doctor_section', parameters }, { name: 'clinmesh_ask_virtual_patient', parameters }],
@@ -281,8 +433,24 @@ it('connects the installed Host task handler to real Server admission before all
   emit('session/event', agent.session, { type: 'step/start', data: { turn: 1, step: 1 } })
   emit('session/event', agent.session, { type: 'tool/call', data: { turn: 1, step: 1,
     name: 'clinmesh_ask_virtual_patient', callId: 'synthetic-call', arguments: JSON.stringify(binding) } })
-  const result = await emit('tools/pre-execute', { agent, name: 'clinmesh_ask_virtual_patient', callId: 'synthetic-call',
+  const pending = emit('tools/pre-execute', { agent, name: 'clinmesh_ask_virtual_patient', callId: 'synthetic-call',
     arguments: binding, signal: new AbortController().signal }, async () => ({ kind: 'allow' }))
+  if (recovery !== 'none') {
+    await blocked.promise
+    expect(streams).toBe(0)
+    if (recovery === 'expired') { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(Date.now() + 61_000) }
+    if (recovery === 'membership') f.runtime.database.driver.exec("UPDATE workspace_membership SET status = 'suspended' WHERE actor_id = 'actor-outpatient-doctor'")
+    if (recovery === 'task-ended') emit('session/event', agent.session, { type: 'turn/end', data: { turn: 1 } })
+    if (recovery === 'enabled' || invalidated) await f.policy({ enabled: true })
+    if (recovery === 'requests') await f.policy({ requests: 1 })
+    if (recovery === 'ledger') f.runtime.database.driver.exec('DROP TRIGGER synthetic_admission_failure')
+  }
+  const result = await pending
+  if (invalidated) {
+    expect(result).toMatchObject({ kind: 'deny' })
+    expect(streams).toBe(0)
+    return
+  }
   expect(result).toEqual({ kind: 'allow' })
   expect(streams).toBe(1)
   expect((await f.list()).items[0]).toMatchObject({ feature: 'doctor_delegation', status: 'succeeded', usage: { totalTokens: 7 } })

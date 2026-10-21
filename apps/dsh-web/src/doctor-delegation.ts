@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import { z } from 'zod'
 import { hostDoctorUsageAdmissionSchema, hostDoctorUsagePermitSchema, mergeModelTokenUsage,
-  hostDoctorRecognitionTimeoutMs, modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
+  hostDoctorRecognitionTimeoutMs, modelUsageControlCodeSchema, modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import { dshTokenUsage } from './dsh-token-usage.ts'
 
 export interface DoctorRecognitionControl {
@@ -10,6 +10,21 @@ export interface DoctorRecognitionControl {
   secret: string
   permit: string
   fetch?: typeof fetch
+  isCurrent?: () => boolean
+}
+
+const admissionFailureSchema = z.object({ error: z.object({
+  code: modelUsageControlCodeSchema, scope: z.enum(['workspace', 'deployment']),
+}).strict() }).strict()
+const statusSchema = z.object({ abort: z.boolean() }).strict()
+
+function waitForControl(signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted()
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(signal.reason) }
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve() }, 250)
+    signal.addEventListener('abort', abort, { once: true })
+  })
 }
 
 const decisionSchema = z.object({
@@ -31,15 +46,19 @@ export async function isDoctorDelegation(
 ): Promise<boolean> {
   if (control === undefined) throw new Error('CLINMESH_MODEL_ADMISSION_REQUIRED')
   signal = AbortSignal.any([signal, AbortSignal.timeout(hostDoctorRecognitionTimeoutMs)])
-  const post = async (operation: 'admit' | 'observe', body: unknown, requestSignal: AbortSignal) => {
+  const post = async (operation: 'admit' | 'observe' | 'status', body: unknown, requestSignal: AbortSignal) => {
     const response = await (control.fetch ?? fetch)(new URL(`/api/model-usage/host/doctor-delegation/${operation}`, control.upstreamOrigin), {
       method: 'POST', redirect: 'error', signal: requestSignal,
       headers: { authorization: `Bearer ${control.secret}`, 'content-type': 'application/json' }, body: JSON.stringify(body),
     })
-    if (!response.ok) throw new Error('CLINMESH_MODEL_ACCOUNTING_UNAVAILABLE')
+    if (!response.ok && operation !== 'admit') throw new Error('CLINMESH_MODEL_ACCOUNTING_UNAVAILABLE')
     return response
   }
-  signal.throwIfAborted()
+  const assertCurrent = () => {
+    signal.throwIfAborted()
+    if (control.isCurrent?.() === false) throw new Error('CLINMESH_TASK_CHANGED')
+  }
+  assertCurrent()
   // Resolve capabilities and defaults before admission. SDK preparation failures
   // are proven pre-dispatch and must not appear as actual model requests.
   const prepared = await ctx.llm.prepareCall({ provider: config.provider, model: config.model,
@@ -48,8 +67,25 @@ export async function isDoctorDelegation(
   config = prepared.config
   const admission = hostDoctorUsageAdmissionSchema.parse({ permit: control.permit, provider: config.provider, model: config.model,
     ...(config.reasoningEffort === undefined ? {} : { reasoningEffort: config.reasoningEffort }) })
-  const grant = hostDoctorUsagePermitSchema.parse(await (await post('admit', admission,
-    AbortSignal.any([signal, AbortSignal.timeout(5000)]))).json())
+  const grant = await (async () => {
+    for (;;) {
+      assertCurrent()
+      const response = await post('admit', admission, AbortSignal.any([signal, AbortSignal.timeout(5000)]))
+      const body: unknown = await response.json()
+      if (response.ok) return hostDoctorUsagePermitSchema.parse(body)
+      const failure = admissionFailureSchema.safeParse(body)
+      if (response.status !== 409 || !failure.success || failure.data.error.code === 'MODEL_RETRY_DISABLED') {
+        throw new Error('CLINMESH_MODEL_ACCOUNTING_UNAVAILABLE')
+      }
+      // Only an explicit policy rejection proves this attempt never dispatched.
+      // A lost response, duplicate admission or invalid permit must never resend.
+      await waitForControl(signal)
+    }
+  })()
+  const cancelled = new AbortController()
+  signal = AbortSignal.any([signal, cancelled.signal])
+  const stopPolling = new AbortController()
+  let polling: Promise<void> | undefined
   let usage = unknownModelTokenUsage
   let dispatched = false
   let settled = false
@@ -62,8 +98,21 @@ export async function isDoctorDelegation(
   let content = ''
   let finished = false
   try {
-    signal.throwIfAborted()
+    assertCurrent()
     dispatched = true
+    polling = (async () => {
+      const pollSignal = AbortSignal.any([signal, stopPolling.signal])
+      try {
+        for (;;) {
+          await waitForControl(pollSignal)
+          assertCurrent()
+          const response = await post('status', grant, AbortSignal.any([pollSignal, AbortSignal.timeout(5000)]))
+          if (statusSchema.parse(await response.json()).abort) throw new Error('CLINMESH_MODEL_REQUEST_CANCELLED')
+        }
+      } catch (error) {
+        if (!stopPolling.signal.aborted) cancelled.abort(error)
+      }
+    })()
     for await (const chunk of prepared.stream({
       ...config, signal, system,
       messages: [{ role: 'user', content: [{ type: 'text', text }] }],
@@ -95,6 +144,8 @@ export async function isDoctorDelegation(
     settled = true
     return result.intent === 'delegate'
   } finally {
+    stopPolling.abort()
+    await polling
     if (!settled) {
       try { await observe(!dispatched ? 'cancelled' : signal.aborted || !finished ? terminal : 'unknown') } catch { /* The durable attempt stays unresolved; never resend the stream. */ }
     }

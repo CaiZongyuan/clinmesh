@@ -2,13 +2,19 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { hostDoctorUsageAdmissionSchema, hostDoctorUsageObservationSchema } from '@clinmesh/contracts/model-usage'
+import { hostDoctorUsageAdmissionSchema, hostDoctorUsageObservationSchema, hostDoctorUsagePermitSchema } from '@clinmesh/contracts/model-usage'
 import type { ModelUsageService } from './application/model-usage-service.ts'
+import { modelUsageControlFailure } from './application/model-usage-control.ts'
 import { AgentIntegrationError, type AgentIntegrationService } from './application/agent-integration-service.ts'
 
 export function installHostModelUsageRoutes(app: Hono, usage: ModelUsageService,
   integration: AgentIntegrationService, secret: string): void {
   const receiptFor = (id: string) => createHmac('sha256', secret).update(`doctor-delegation:${id}`).digest('base64url')
+  const receiptMatches = (attemptId: string, receipt: string) => {
+    const actual = Buffer.from(receipt)
+    const expected = Buffer.from(receiptFor(attemptId))
+    return actual.length === expected.length && timingSafeEqual(actual, expected)
+  }
   app.use('/api/model-usage/host/*', async (context, next) => {
     const actual = Buffer.from(context.req.header('authorization') ?? '')
     const expected = Buffer.from(`Bearer ${secret}`)
@@ -29,17 +35,27 @@ export function installHostModelUsageRoutes(app: Hono, usage: ModelUsageService,
       const receipt = receiptFor(attemptId)
       return context.json({ attemptId, receipt }, 201)
     } catch (error) {
+      const failure = modelUsageControlFailure(error)
+      if (failure !== undefined) return context.json({ error: { code: failure.code, scope: failure.scope } }, failure.status)
       if (error instanceof AgentIntegrationError) return context.json({ error: { code: error.code } }, error.status)
       if (error instanceof z.ZodError || error instanceof SyntaxError) return context.json({ error: { code: 'HOST_INPUT_INVALID' } }, 400)
       return context.json({ error: { code: 'HOST_ADMISSION_UNAVAILABLE' } }, 503)
     }
   })
+  app.post('/api/model-usage/host/doctor-delegation/status', async context => {
+    try {
+      const input = hostDoctorUsagePermitSchema.parse(await context.req.json())
+      if (!receiptMatches(input.attemptId, input.receipt)) return context.json({ error: { code: 'HOST_RECEIPT_INVALID' } }, 403)
+      return context.json({ abort: usage.hostShouldAbort(input.attemptId) })
+    } catch (error) {
+      if (error instanceof z.ZodError || error instanceof SyntaxError) return context.json({ error: { code: 'HOST_INPUT_INVALID' } }, 400)
+      return context.json({ error: { code: 'HOST_STATUS_UNAVAILABLE' } }, 503)
+    }
+  })
   app.post('/api/model-usage/host/doctor-delegation/observe', async context => {
     try {
       const input = hostDoctorUsageObservationSchema.parse(await context.req.json())
-      const actual = Buffer.from(input.receipt)
-      const expected = Buffer.from(receiptFor(input.attemptId))
-      if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+      if (!receiptMatches(input.attemptId, input.receipt)) {
         return context.json({ error: { code: 'HOST_RECEIPT_INVALID' } }, 403)
       }
       usage.observeHost(input.attemptId, input.outcome, input.phase === 'progress')
