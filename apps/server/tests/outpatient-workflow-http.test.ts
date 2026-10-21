@@ -8714,11 +8714,27 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
 
+    const staleRejected = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: encounterVersion },
+          input: { expectedDraftVersion: prescriptionDraftVersion + 1 },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(staleRejected.status).toBe(409)
+    expect(apiErrorSchema.parse(await staleRejected.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT', reason: 'PRESCRIPTION_DRAFT_STALE' },
+    })
+
     const diagnosisRejected = await issue()
 
     expect(diagnosisRejected.status).toBe(409)
     expect(apiErrorSchema.parse(await diagnosisRejected.json())).toMatchObject({
-      error: { code: 'CATALOG_CONFLICT' },
+      error: { code: 'CATALOG_CONFLICT', reason: 'PRESCRIPTION_DIAGNOSIS_NOT_ALLOWED' },
     })
     runtime.fhir.create({ epoch: 'epoch-1', workspaceId: 'workspace-demo' }, {
       resourceType: 'AllergyIntolerance',
@@ -8753,7 +8769,7 @@ describe('outpatient workflow HTTP contract', () => {
 
     expect(allergyRejected.status).toBe(409)
     expect(apiErrorSchema.parse(await allergyRejected.json())).toMatchObject({
-      error: { code: 'WORKFLOW_CONFLICT' },
+      error: { code: 'WORKFLOW_CONFLICT', reason: 'PRESCRIPTION_ALLERGY_CONFLICT' },
     })
     const detailResponse = await runtime.app.request(
       `/api/his/v1/doctor/cases/${started.caseId}`,
@@ -8770,6 +8786,67 @@ describe('outpatient workflow HTTP contract', () => {
       { headers: { cookie: doctorCookie } },
     )
     expect(fhirBundleSchema.parse(await medicationSearchResponse.json()).total).toBe(0)
+  })
+
+  it('reports an unconfirmed diagnosis as the reason when issuing is blocked', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-prescription-unconfirmed-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
+    })
+    runtimes.push(runtime)
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const prescriptionDraftResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/draft`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
+          input: {
+            expectedDraftVersion: 0,
+            items: [{
+              catalogItemId: 'medication-oseltamivir',
+              courseDays: 5,
+              doseText: '75 mg',
+              frequencyCode: 'BID',
+              quantity: 10,
+            }],
+          },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'PUT',
+      },
+    )
+    expect(prescriptionDraftResponse.status).toBe(200)
+    const draftVersion = prescriptionDraftResponseSchema.parse(
+      await prescriptionDraftResponse.json(),
+    ).data.draftVersion
+    const issueResponse = await runtime.app.request(
+      `/api/his/v1/encounters/${started.encounterId}/prescription/actions/issue`,
+      {
+        body: JSON.stringify({
+          expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion },
+          input: { expectedDraftVersion: draftVersion },
+        }),
+        headers: commandHeaders(doctorCookie),
+        method: 'POST',
+      },
+    )
+    expect(issueResponse.status).toBe(409)
+    expect(apiErrorSchema.parse(await issueResponse.json())).toMatchObject({
+      error: { code: 'WORKFLOW_CONFLICT', reason: 'PRESCRIPTION_DIAGNOSIS_UNCONFIRMED' },
+    })
   })
 
   it('records a responsible no-medication conclusion and locks prescription editing', async () => {

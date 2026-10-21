@@ -16,6 +16,7 @@ import { decodeModelRoute, modelBridgeRequestSchema } from '../packages/contract
 import { createClinMeshRuntime } from '../apps/server/src/runtime.ts'
 import { DshModelProvider } from '../apps/server/src/infrastructure/ai/dsh-model-provider.ts'
 import { recordingSourceDiagnosticSchema } from '../apps/server/src/application/consultation-history-summary.ts'
+import { sourceArtifactHash } from '../apps/server/src/application/scenario-data/provider.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../apps/server/tests/fixtures/consultation.ts'
 import { journeyReplies, runRecordingJourney } from '../apps/web/e2e/consultation-recording-journey.ts'
 import { createRecommendationGuidelineDatabase, recommendationFixture, RecommendationSyntheaProvider } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
@@ -59,6 +60,9 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'apps/server/src/application/consultation-history-summary.ts', 'apps/server/src/application/consultation-recording-service.ts',
   'apps/server/src/application/consultation-recording-batch.ts', 'apps/server/src/application/consultation-recording-sentences.ts',
   'apps/server/src/application/clinical-document-quality.ts',
+  'apps/server/src/application/clinical-document-quality-context.ts',
+  'apps/web/src/app/doctor/clinical-document-content.ts',
+  'apps/web/src/app/doctor/patient-summary.tsx', 'apps/web/src/app/workspace-i18n.ts',
   'apps/server/drizzle/0059_consultation-history-summary.sql', 'apps/server/drizzle/0062_consultation-direct-recording.sql', 'packages/contracts/src/his.ts',
   'apps/server/drizzle/0060_z-recording-branch-staging.sql', 'apps/server/drizzle/0061_clinical-document-history-fields.sql',
   'apps/server/drizzle/0061_consultation-recording-sources.sql', 'apps/server/drizzle/0063_integrated-document-recording.sql',
@@ -292,7 +296,18 @@ export function apply(ctx) {
     dshModelBridge: { origin: hostOrigin, secret, timeoutMs: 120_000, maxResponseBytes: 1048576 },
     authBaseUrl: serverOrigin, trustedOrigins: [serverOrigin, hostOrigin], authSecret: secret, cursorSecret: secret,
     databasePath: join(scratch, 'hospital.sqlite'), migrationMode: 'apply', demoPassword: password,
-    syntheaProvider: recommendationsOnly ? new RecommendationSyntheaProvider() : new StubSyntheaProvider(), autoDispatchIntervalMs: 50,
+    syntheaProvider: recommendationsOnly ? new RecommendationSyntheaProvider() : new class extends StubSyntheaProvider {
+      generated = 0
+      override async generate() {
+        const corpus = await super.generate()
+        if (++this.generated === 1) return corpus
+        return { ...corpus, sources: corpus.sources.map(source => {
+          const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(source.raw)
+          raw.entry.find(entry => entry.resource.resourceType === 'Patient')!.resource.name = [{ text: `合成质控患者${this.generated}` }]
+          return { ...source, raw, hash: sourceArtifactHash(raw) }
+        }) }
+      }
+    }(), autoDispatchIntervalMs: 50,
   })
   listener = serve({ hostname: '127.0.0.1', port: serverPort, fetch: request => hospital!.app.fetch(request) })
   managed = startManagedProcess(process.execPath, [cli, '--profile', 'web', '--port', String(hostPort), '--no-open'], {
@@ -445,6 +460,45 @@ export function apply(ctx) {
         lastQualityClientId = checkClinicalDocumentQualityRequestSchema.parse(request.postDataJSON()).input.clientId
       }
     })
+    const chiefComplaint = page.getByLabel('主诉', { exact: true })
+    const banner = page.getByRole('region', { name: '当前患者', exact: true })
+    await chiefComplaint.fill('')
+    await expect(banner).toContainText('主诉：未记录')
+    await expect(banner).toContainText('未保存')
+    await page.getByRole('button', { name: '保存病历草稿', exact: true }).click()
+    await expect.poll(async () => (await read()).clinicalDocument?.draft?.chiefComplaint).toBe('')
+    activeTools = []
+    activeLeaseRequest = undefined
+    await page.reload()
+    await ready()
+    await expect(page.getByText('合成验收会话已就绪。', { exact: true }).last()).toBeVisible({ timeout: 30_000 })
+    await launcher.click({ timeout: 30_000 })
+    await page.getByRole('menuitem', { name: '打开 ClinMesh', exact: true }).click()
+    await page.getByRole('tab', { name: '在诊', exact: true }).click()
+    await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(chiefComplaint).toHaveValue('')
+    await expect(banner).toContainText('主诉：未记录')
+    await expect(banner).not.toContainText('未保存')
+    const second = await startConsultationCase(hospital, password, serverOrigin)
+    expect(second.outpatientCaseId).not.toBe(started.outpatientCaseId)
+    const unsavedComplaint = '原生病例手改主诉，尚未保存。'
+    await chiefComplaint.fill(unsavedComplaint)
+    await expect(banner).toContainText(`主诉：${unsavedComplaint}`)
+    await page.getByRole('tab', { name: '待诊', exact: true }).click()
+    await page.locator(`[data-agent-selection="${second.outpatientCaseId}"]`).click()
+    await expect(page.getByRole('button', { name: '开始首诊', exact: true })).toBeVisible()
+    await expect(banner).toContainText('主诉：反复头晕一周')
+    await expect(banner).not.toContainText(unsavedComplaint)
+    await page.getByRole('tab', { name: '在诊', exact: true }).click()
+    await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
+    await page.getByRole('tab', { name: '病历记录', exact: true }).click()
+    await expect(chiefComplaint).toHaveValue(unsavedComplaint)
+    await expect(banner).toContainText(`主诉：${unsavedComplaint}`)
+    await expect(banner).toContainText('未保存')
+    expect((await read()).clinicalDocument?.draft?.chiefComplaint).toBe('')
+    report.chiefComplaint = { clearedAfterReload: true, switchedCases: true, unsavedPreserved: true }
+    console.log('原生主诉清空保存、宿主刷新重开与真实病例切换通过')
     report.qualityControl = await runDocumentQualityJourney({ page, read,
       quality: async clientId => {
         const response = await hospital!.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}/document-quality-control${clientId === undefined ? '' : `?clientId=${encodeURIComponent(clientId)}`}`,
@@ -460,6 +514,10 @@ export function apply(ctx) {
       progress: message => console.log(message),
     }).catch(async error => {
       report.qualityCompactOnFailure = await page.locator('[data-document-quality-compact]').getByRole('button').allTextContents()
+      report.qualityStatusOnFailure = await page.locator('[data-document-quality-status]').evaluateAll(elements => elements.map(element => ({
+        status: element.getAttribute('data-document-quality-status'),
+        message: element.querySelector('[role="status"]')?.textContent,
+      })))
       const response = await hospital!.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}/document-quality-control${lastQualityClientId === undefined ? '' : `?clientId=${encodeURIComponent(lastQualityClientId)}`}`, { headers: { cookie } })
       if (response.ok) {
         const state = clinicalDocumentQualityControlStateSchema.parse(await response.json())
