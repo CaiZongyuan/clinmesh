@@ -5,7 +5,8 @@ import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { decodeModelRoute, encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeAccountingSchema,
   modelBridgeFirstTextHeader, modelBridgeRequestSchema, modelRouteSchema } from '@clinmesh/contracts/model-bridge'
-import { mergeModelTokenUsage, modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
+import { mergeModelTokenUsage, modelUsageConfigurationSchema, modelUsageOutcomeSchema, unknownModelTokenUsage,
+  type ModelTokenUsage, type ModelUsageConfiguration } from '@clinmesh/contracts/model-usage'
 import { dshTokenUsage } from './dsh-token-usage.ts'
 
 class ModelAccessError extends Error {}
@@ -33,10 +34,11 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
     let usage: ModelTokenUsage = unknownModelTokenUsage
     let actualModel: string | undefined
     let providerRequestId: string | undefined
+    let configuration: ModelUsageConfiguration | undefined
     let modelStreamStarted = false
     let terminalReceived = false
     const accounting = (status: 'succeeded' | 'failed' | 'cancelled' | 'unknown') => attemptId === undefined ? {} : {
-      accounting: modelBridgeAccountingSchema.parse({ attemptId, status, usage,
+      accounting: modelBridgeAccountingSchema.parse({ attemptId, status, usage, ...configuration,
         dispatch: modelStreamStarted ? 'dispatched' : 'not-dispatched',
         ...(actualModel === undefined ? {} : { actualModel }), ...(providerRequestId === undefined ? {} : { providerRequestId }) }),
     }
@@ -101,14 +103,18 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
         const catalog = await ctx.llm.listModels(route.provider)
         signal.throwIfAborted()
         if (!catalog.some(item => item.id === route.model)) throw new Error('Model unavailable')
+        const prepared = await ctx.llm.prepareCall({ provider: route.provider, model: route.model,
+          ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(route.reasoningEffort) }),
+          temperature: 0 }, signal)
+        signal.throwIfAborted()
+        configuration = modelUsageConfigurationSchema.parse({ reasoningEffort: prepared.config.reasoningEffort ?? null,
+          outputLimit: prepared.config.maxTokens ?? null })
         content = ''
         let finished = false
         // Auxiliary call: no Session, Agent system prompt, transcript, Tools or private log.
         modelStreamStarted = true
-        for await (const chunk of ctx.llm.stream({
-          provider: route.provider, model: route.model,
-          ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(route.reasoningEffort) }),
-          signal, temperature: 0,
+        for await (const chunk of prepared.stream({
+          ...prepared.config, signal,
           system: `${input.systemPrompt}\nReturn exactly one JSON data object matching this JSON Schema, without Markdown or $schema metadata:\n${JSON.stringify(input.jsonSchema)}`,
           messages: [{ role: 'user', content: [{ type: 'text', text: JSON.stringify(input.userPayload) }] }],
         })) {
@@ -119,7 +125,7 @@ export function createModelBridgeHandler(ctx: Pick<Context, 'llm' | 'agentDefaul
                 response.writeHead(200, { 'content-type': modelBridgeAccountingMediaType, 'cache-control': 'no-store, no-transform' })
                 streamStarted = true
               }
-              response.write(`${JSON.stringify({ type: 'usage', attemptId, usage })}\n`)
+              response.write(`${JSON.stringify({ type: 'usage', attemptId, usage, configuration })}\n`)
             }
           }
           if (chunk.type === 'text-delta') {

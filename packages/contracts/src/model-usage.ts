@@ -100,18 +100,24 @@ export function mergeModelTokenUsage(known: ModelTokenUsage, next: ModelTokenUsa
   }
   return merged
 }
+export const modelUsageConfigurationSchema = z.object({
+  reasoningEffort: identifier.nullable(), outputLimit: count,
+}).strict()
+export type ModelUsageConfiguration = z.infer<typeof modelUsageConfigurationSchema>
 export const modelUsageOutcomeSchema = z.object({
   status: z.enum(['succeeded', 'failed', 'cancelled', 'unknown']),
   dispatch: z.enum(['dispatched', 'not-dispatched', 'unknown']).optional(),
   usage: modelTokenUsageSchema,
   actualModel: modelName.optional(), providerRequestId: identifier.optional(),
+  reasoningEffort: modelUsageConfigurationSchema.shape.reasoningEffort.optional(),
+  outputLimit: modelUsageConfigurationSchema.shape.outputLimit.optional(),
   httpStatus: z.number().int().min(100).max(599).optional(),
 }).strict()
 export type ModelUsageOutcome = z.infer<typeof modelUsageOutcomeSchema>
 export const modelUsageAttemptSchema = z.object({
   id: z.string().uuid(), context: modelUsageContextSchema, feature: modelUsageFeatureSchema,
   provider: identifier, requestedModel: modelName, actualModel: modelName.nullable(),
-  reasoningEffort: identifier.nullable(), outputLimit: count,
+  ...modelUsageConfigurationSchema.shape,
   kind: z.enum(['initial', 'format-repair', 'rate-limit-retry']),
   status: z.enum(['in-flight', 'succeeded', 'failed', 'cancelled', 'unknown']),
   dispatch: z.enum(['dispatched', 'not-dispatched', 'unknown']).default('unknown'),

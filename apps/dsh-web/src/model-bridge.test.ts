@@ -1,4 +1,5 @@
 import { Context } from '@deepseek-ai/cordis'
+import Llm, { LlmAdapter, ReasoningEffortId, type GenerateOptions as SdkGenerateOptions, type StreamChunk as SdkStreamChunk } from '@deepseek-ai/dsh-llm'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { dshDefaultModel, encodeModelRoute } from '@clinmesh/contracts/model-bridge'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -25,6 +26,9 @@ async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 
     agentDefaultModel: { currentSelection: () => ({ provider: 'synthetic-provider', model: 'synthetic-model' }) },
     llm: {
       listModels: async () => [{ provider: 'synthetic-provider', id: 'synthetic-model', name: 'Synthetic model' }],
+      async prepareCall(config: Parameters<HostContext['llm']['prepareCall']>[0]) {
+        return { config, stream: (options: GenerateOptions) => this.stream(options) }
+      },
       async *stream(options: GenerateOptions): AsyncGenerator<StreamChunk> {
         calls.push(options)
         if (finishGate !== undefined) {
@@ -59,6 +63,68 @@ async function host(compression: 'none' | 'gzip', providerFailure?: 'TIMEOUT' | 
 
 const input = { model: dshDefaultModel, schemaName: 'patient_persona', jsonSchema: {},
   systemPrompt: 'synthetic', userPayload: {} }
+
+async function sdkHost(adapter: LlmAdapter) {
+  const ctx = new Context()
+  cleanup.push(async () => { await ctx.fiber.dispose() })
+  await ctx.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+  await ctx.plugin(Llm)
+  ctx.llm.registerAdapter(['synthetic'], adapter)
+  const route = { provider: 'synthetic', model: 'synthetic-model' }
+  const bridge = createModelBridgeHandler({ llm: ctx.llm,
+    agentDefaultModel: { currentSelection: () => route },
+  } as HostContext, secret, () => 'default')
+  cleanup.push(async () => { bridge.dispose() })
+  ctx.webServer.register({ kind: 'exact', path: '/clinmesh-model-bridge', handler: bridge.handler })
+  return { model: encodeModelRoute(route),
+    provider: new DshModelProvider({ origin: `http://127.0.0.1:${ctx.webServer.port}`, secret, timeoutMs: 2000, maxResponseBytes: 4096 }) }
+}
+
+it('keeps SDK capability rejection out of actual dispatched requests', async () => {
+  let dispatched = 0
+  class SyntheticModel extends LlmAdapter {
+    override async listModels(provider: string) { return [{ provider, id: 'synthetic-model', name: 'Synthetic' }] }
+    override async resolveModel(provider: string, model: string) { return { provider, id: model, name: model } }
+    override async *stream(_request: SdkGenerateOptions): AsyncIterable<SdkStreamChunk> {
+      dispatched++
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+  }
+  const { provider } = await sdkHost(new SyntheticModel())
+  const model = encodeModelRoute({ provider: 'synthetic', model: 'synthetic-model', reasoningEffort: 'unsupported' })
+  const outcomes: ModelUsageOutcome[] = []
+  await expect(provider.completeJson({ ...input, model,
+    usageContext: { workspaceId: 'synthetic', epoch: 'synthetic', taskId: 'synthetic', stage: 'generation', trigger: 'manual', sources: [] },
+    usageRecorder: { begin() { return randomUUID() }, checkpoint() {}, settle(_id, outcome) { outcomes.push(outcome) } },
+  })).rejects.toMatchObject({ code: 'AI_REQUEST_FAILED' })
+  expect(dispatched).toBe(0)
+  expect(outcomes).toMatchObject([{ status: 'failed', dispatch: 'not-dispatched' }])
+})
+
+it('reports the exact prepared SDK defaults in bridge accounting', async () => {
+  const calls: SdkGenerateOptions[] = []
+  class SyntheticModel extends LlmAdapter {
+    override async listModels(provider: string) { return [{ provider, id: 'synthetic-model', name: 'Synthetic' }] }
+    override async resolveModel(provider: string, model: string) {
+      return { provider, id: model, name: model, defaultMaxTokens: 4096, reasoning: {
+        efforts: [{ id: ReasoningEffortId('synthetic-high'), name: 'Synthetic' }], defaultEffort: ReasoningEffortId('synthetic-high') } }
+    }
+    override async *stream(request: SdkGenerateOptions): AsyncIterable<SdkStreamChunk> {
+      calls.push(request)
+      yield { type: 'text-delta', index: 0, text: '{"ok":true}' }
+      yield { type: 'usage', usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+  }
+  const { provider, model } = await sdkHost(new SyntheticModel())
+  const outcomes: ModelUsageOutcome[] = []
+  await provider.completeJson({ ...input, model,
+    usageContext: { workspaceId: 'synthetic', epoch: 'synthetic', taskId: 'synthetic', stage: 'generation', trigger: 'manual', sources: [] },
+    usageRecorder: { begin() { return randomUUID() }, checkpoint() {}, settle(_id, outcome) { outcomes.push(outcome) } },
+  })
+  expect(calls).toMatchObject([{ reasoningEffort: 'synthetic-high', maxTokens: 4096 }])
+  expect(outcomes).toMatchObject([{ status: 'succeeded', reasoningEffort: 'synthetic-high', outputLimit: 4096 }])
+})
 
 it.each(['none', 'gzip'] as const)('preserves usage before a cancelled stream through the actual %s Host', async compression => {
   let release!: () => void

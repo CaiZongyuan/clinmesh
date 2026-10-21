@@ -2,9 +2,9 @@ import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import {
   modelUsageAttemptSchema, modelUsageContextSchema, modelUsageFeatureSchema,
-  modelUsageOutcomeSchema, modelUsageOverviewSchema, modelUsageListSchema, modelTokenUsageSchema,
+  modelUsageOutcomeSchema, modelUsageOverviewSchema, modelUsageListSchema, modelTokenUsageSchema, modelUsageConfigurationSchema,
   hostDoctorRecognitionTimeoutMs, mergeModelTokenUsage, unknownModelTokenUsage,
-  type ModelTokenUsage, type ModelUsageAttempt, type ModelUsageFilter, type ModelUsageOutcome,
+  type ModelTokenUsage, type ModelUsageAttempt, type ModelUsageConfiguration, type ModelUsageFilter, type ModelUsageOutcome,
   type ModelUsagePolicyConfig, type ModelUsageControlUpdate,
 } from '@clinmesh/contracts/model-usage'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -84,8 +84,9 @@ export class ModelUsageService implements ModelUsageRecorder {
     }
   }
 
-  checkpoint(attemptId: string, usage: ModelTokenUsage): void {
-    this.#update(attemptId, { dispatch: 'dispatched', usage: modelTokenUsageSchema.parse(usage) })
+  checkpoint(attemptId: string, usage: ModelTokenUsage, configuration?: ModelUsageConfiguration): void {
+    this.#update(attemptId, { dispatch: 'dispatched', usage: modelTokenUsageSchema.parse(usage),
+      ...(configuration === undefined ? {} : modelUsageConfigurationSchema.parse(configuration)) })
   }
 
   settle(attemptId: string, input: ModelUsageOutcome): void {

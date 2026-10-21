@@ -67,7 +67,8 @@ type StreamChunk = ReturnType<HostContext['llm']['stream']> extends AsyncIterabl
 const secret = 'synthetic-model-bridge-secret-at-least-32-characters'
 const route = { provider: 'synthetic-provider', model: 'synthetic' }
 async function host(stream: HostContext['llm']['stream'], listModels = async () => [{ id: route.model }]) {
-  const handler = createModelBridgeHandler({ llm: { listModels, stream },
+  const handler = createModelBridgeHandler({ llm: { listModels, stream,
+    prepareCall: async (config: Parameters<HostContext['llm']['prepareCall']>[0]) => ({ config, stream }) },
     agentDefaultModel: { currentSelection: () => route } } as unknown as HostContext, secret, () => 'default')
   const server = createServer(handler.handler)
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))

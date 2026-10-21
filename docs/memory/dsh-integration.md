@@ -110,6 +110,8 @@
 
 ## 模型桥与诊断日志
 
+- 验证桥接派发与调用配置时，至少一条回归使用真实 Cordis/DSH SDK 与合成 `LlmAdapter`；直接替换 `llm.stream` 会跳过 SDK 能力预检和默认配置，掩盖零派发却计数及历史策略遗漏。对照 adapter 实际收到的配置、公开账本和用量帧后、终态前的重启快照，复用[模型桥回归](../../apps/dsh-web/src/model-bridge.test.ts)和[账本 HTTP 回归](../../apps/server/tests/model-usage-http.test.ts)；当前合同见[模型账本](../architecture/storage.md#910-模型调用账本)。
+
 - 独立 Server 测试导入 Host handler 后，Server 编译不会自动经过插件 `index.ts` 的类型增强入口。Host 模块依赖 `Context.webServer`、会话投影或用户问题服务时，在该模块显式保留相应 `import type {}`，不依赖其他入口的导入顺序；同时运行全仓类型检查和 `tsconfig.browser.json`，仅 Host 包编译通过不足以证明跨入口类型完整。
 
 - DSH 模型流以 `finish.reason` 携带标准失败码，消费方按 code 分类，不解析原始消息或把所有失败归成网络故障。超时回归同时覆盖宿主返回 `TIMEOUT` 与本地 `AbortSignal` 到期；只验证本地计时器会漏掉宿主超时被误归为调用失败的路径。同一 Provider 下的模型可有不同访问权限；单模型返回 403 不证明整个 Provider 不可用。可用性验证通过真实桥接向其他完整 Provider／model 路由发送最小合成请求，不修改已有任务绑定，也不输出凭据或模型私有输入。
