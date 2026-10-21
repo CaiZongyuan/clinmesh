@@ -184,6 +184,8 @@ pnpm perf:full-import -- --manifest /absolute/path/to/release.json
 
 模型用量从公开 HTTP、真实临时 SQLite 与受控外部 Provider 边界验证逐次尝试、缺失用量、实际模型、账本故障、病例责任、跨 Epoch 和重启。`model-usage-control.test.ts`、`model-usage-http.test.ts` 与 `model-usage-host.test.ts` 共同拥有双层停用、零上限、原子请求预占、独立累计起点、无限切换、控制拒绝及三类派发的重试检查；屏障只放行少量确定性请求，不运行持续负载。直接 Provider 与 DSH bridge 分别证明派发前记账；DSH 合成流验证 usage 帧、断流与取消，保留 #235 的请求次数和成功步骤复用回归。Host 独立识别用真实识别器、Host 任务 handler 与 Server 控制接口共同验证一次性许可、权限失效零 stream、同病例续签、身份或岗位切换、切走返回、用量帧、回执绑定的停用取消、控制待办恢复、结算失败、幂等重报与重启未知；完全失联的回归不发送终态，推进时钟后经真实读取证明超期未知、进度不续期、迟到结算与去重保留。真实 SDK 的缺失 adapter 和不支持的推理配置验证预检拒绝不计请求；原生 AgentLoop/Tools 合同保留正常委托和工具交接。Web/DSH 从真实设置导航验证总览、识别功能筛选、详情、管理员额度保存与刷新、普通成员只读及明确覆盖范围，DSH 使用 React 18/19 合同。常规验证不调用真实模型，也不运行压测；执行许可由[根工程规则](../AGENTS.md)拥有。
 
+Token 与人民币控制的公开 HTTP／SQLite 矩阵由 `model-usage-cost-control.test.ts` 拥有，覆盖调用时单价与汇率快照、原币与人民币估算、各层各维度首次设限、无限切换持续累计、重启、未知占用、部分核对、显式补算、修订幂等及当前管理员授权。三类真实派发回归分别位于 `model-usage-control.test.ts` 与 `model-usage-host.test.ts`：缺少可信计量边界时有限 Token／金额拒绝且外部请求或 stream 为零，切回无限后正常派发并保留边界原因。通用内核的有界合成适配器用于证明有限预占与并发结算，不能据此宣称生产适配器已有硬 Token 上界。`model-usage-transport.test.ts` 和 DSH SDK 合同继续验证实际尝试、配置与缓存／推理口径；价格纯函数用手算合成金额验证六位小数、整数安全范围、零价格、缺价、缺汇率及向上预占，金额不是实测账单。界面验证覆盖三项独立额度、只读统一价表、未知费用与预占分开显示、核对／补算及 React 18/19 对话框；完整权限与额度矩阵保留在服务端，不在浏览器重复。
+
 ### 14.1 应用与 Web 测试
 
 - Hono 与真实临时 SQLite 的场景测试覆盖认证、角色、Scenario、挂号、分诊、医生首诊/复诊、签署/修订、支付三结局、LIS、发药和 Epoch 隔离。

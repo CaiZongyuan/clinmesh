@@ -420,17 +420,52 @@ pnpm --filter @clinmesh/server db:migrate
 
 ## 模型用量
 
-Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览展示 Server 直接调用、DSH bridge 调用及 Host 独立医生代问识别的请求、已知 Token、未知量、缺价费用、趋势、功能分布和授权最近请求；功能筛选提供“医生代问识别”，详情保留调用时的模型与阶段来源。计价未配置时显示未知，不能当作服务商实际账单；DSH 原生会话及其他插件仍在监控边界之外。Host 使用已有 `upstreamOrigin` 与 `bridgeSecret` 接入 Server 准入，不新增本地账本。权限与统计口径见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。
+Web 与 DSH 的 ClinMesh 设置菜单均提供“模型用量”。默认总览展示 Server 直接调用、DSH bridge 调用及 Host 独立医生代问识别的请求、已知 Token、人民币费用估算、未知请求数、未决预占、趋势、功能分布和授权最近请求；已知部分不表示完整账单。功能筛选提供“医生代问识别”，详情保留调用时模型、阶段来源及计价依据。DSH 原生会话及其他插件在监控边界之外；Host 使用已有 `upstreamOrigin` 与 `bridgeSecret` 接入 Server，不新增本地账本。权限与统计口径见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。
 
-“额度与策略”页签中，Workspace 管理员可停用或恢复本工作区的全部 ClinMesh 模型入口，设置累计请求次数上限或无限，并关闭自动重试；普通成员只读自身工作区政策及生效状态。页面显示剩余请求、等待恢复的任务和最近拒绝原因，部署总上限及累计量仅管理员可只读查看，权限边界见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)。默认启用、请求无限、保留原有有界重试；零上限明确阻止新请求。Token 与人民币费用目前仍为无限。
+“额度与策略”页签中，Workspace 管理员可停用或恢复本工作区的全部 ClinMesh 模型入口，分别设置请求次数、Token 与人民币累计上限或无限，并关闭自动重试；普通成员只读自身工作区政策及生效状态。页面显示各项余量、预占、等待恢复的任务和最近拒绝原因，部署总上限及累计量仅管理员可只读查看。默认启用、三项无限、保留原有有界重试；请求上限零会阻止新请求。`PUT /api/model-usage/control` 省略 `tokens` 或 `cny` 时保留原有限值，显式 `null` 才取消该项限制。
 
-部署维护者可设置 `CLINMESH_MODEL_CONTROL_PATH=.data/model-control.json`，文件路径相对 `.env` 所在仓库解析；文件由部署方管理，不进入 Git。配置示例如下，`requests: null` 表示无限：
+部署维护者可设置 `CLINMESH_MODEL_CONTROL_PATH=.data/model-control.json`，文件路径相对 `.env` 所在仓库解析；文件由部署方管理，不进入 Git。示例保留请求次数保护，其余两项无限：
 
 ```json
-{ "enabled": true, "requests": 1000, "automaticRetries": true }
+{ "enabled": true, "requests": 1000, "tokens": null, "cny": null, "automaticRetries": true }
 ```
 
-重启 Server 后配置生效，缺省文件配置为启用、无限、保留自动重试；文件不存在、JSON 无效或上限不是非负安全整数时启动失败。部署与 Workspace 任一层停用或请求不足都会拒绝新派发；Workspace 设置不能放宽部署政策。每层首次有限配置建立独立累计起点，之后改额、切回无限、重启或 Epoch reset 均不重置，无限期间仍累计。停用尽力取消在途调用，未知派发保留预占。恢复开关、增加额度或账本恢复后仅接续仍有效的待办并复用成功阶段；已派发而结果未知的请求不会自动重做。普通 HIS 读写和确定性检查继续可用。
+`requests`、`tokens` 接受非负安全整数或 `null`；`cny` 接受最多六位小数的非负人民币金额或 `null`，省略的部署维度默认为无限。金额缩放为百万分之一单位后必须在 `Number.MAX_SAFE_INTEGER` 范围内。重启 Server 后配置生效；已配置路径不存在、JSON 无效或数值越界时启动失败。部署与 Workspace 任一层停用、余量不足或无法核算适用有限额度都会拒绝新派发，Workspace 设置不能放宽部署政策。每层的每个维度首次有限配置建立独立起点，之后改额、切回无限、重启或 Epoch reset 均不重置，无限期间仍累计。停用尽力取消在途调用，未知派发保留对应维度的占用。恢复条件只接续仍有效的待办并复用成功阶段，已派发而结果未知的请求不会自动重做。普通 HIS 读写和确定性检查继续可用。
+
+部署统一价表与汇率通过 `CLINMESH_MODEL_PRICING_PATH=.data/model-pricing.json` 配置，路径解析方式相同，修改后重启 Server。未设置时价表为空，全部额度无限仍可调用并显示缺价；已设置文件无法读取或验证失败则停止启动。下面全部是合成价格，单价单位为原币／百万 Token，`cnyPerUnit` 表示一单位原币兑换多少人民币：
+
+```json
+{
+  "prices": [
+    {
+      "provider": "synthetic.invalid",
+      "model": "synthetic-model",
+      "version": "synthetic-price-v1",
+      "currency": "USD",
+      "rates": { "input": 2, "output": 4, "cacheRead": 0.5, "cacheWrite": 2, "reasoning": 4 }
+    }
+  ],
+  "exchangeRates": [
+    { "currency": "USD", "version": "synthetic-fx-v1", "cnyPerUnit": 7 }
+  ]
+}
+```
+
+`provider` 与请求详情的 Provider 一致；直接调用取配置端点的 hostname。`model` 必须与 `requestedModel` 完全相同，DSH 填完整 `dsh:{"provider":"...","model":"..."}` 固定路由，含有的推理强度也保留；不按显示名、别名、响应中的 `actualModel` 或通配规则匹配。每个 Provider／模型只配置一项价格，每个币种只配置一项汇率。币种为三位大写字母，版本以字母或数字开头，后续可含字母、数字、`_`、`.`、`-`；每次改价或汇率应使用新版本。`input`、`output` 必填，缓存读写和推理单价省略时分别沿用输入、输出单价。单价非负、汇率为正，均最多六位小数且缩放后为安全整数。`CNY` 自动使用 `identity-v1` 的 1:1 汇率；若显式配置 CNY 汇率，其值必须为 1。零单价须显式填写，与缺价不同。
+
+每次请求冻结准入时的价表与汇率，修改只影响后续调用；原币与人民币金额按对应计量分项估算，不能当作服务商扣费凭证。输入包含缓存、输出包含推理，分项不重复计价。缺价、缺汇率与未知用量分别显示；所有当前 Workspace 成员可从“计价说明”或 `GET /api/model-usage/pricing` 只读查看统一配置，Workspace 管理员也不能在界面修改价格。
+
+当前三类入口的有限保护能力如下。`reservationBoundary` 随明细保存入口、版本及原因；请求次数限制与全部无限模式均保持可用。
+
+| 入口 | 有限 Token／非零金额的可信边界 | 明细原因 |
+| --- | --- | --- |
+| Server 直接 OpenAI-compatible 请求 | 未发送硬输出 Token 上限；响应字节限制不能约束服务商计费 Token | `output-limit-unbounded` |
+| Server 经 DSH bridge 调用 | SDK 准备句柄锁定配置，但未公开实际 wire adapter 的计量与硬上限保证 | `adapter-metering-unavailable` |
+| Host 独立医生代问识别 | 使用同一准备句柄和既有 1024 输出配置，仍缺少可信计量保证 | `adapter-metering-unavailable` |
+
+因此，为这些入口配置有限 Token 或非零人民币保护后，新派发以 `MODEL_METERING_UNAVAILABLE` 停止。SDK 上下文容量可能是目录回退值，输出配置也可能被底层协议省略；不能用 `contextWindow`、`maxTokens`、字符除数或历史均值代替上界。若人民币价表明确将所有适用分项配置为零，可信金额预占可为零；这不建立 Token 上界，也不能绕过其他有限维度。预占不足时显示所需量与剩余量，不自动降低输出上限、裁剪输入或改推理强度。
+
+管理员可从请求详情核对未知消费，提供受限的依据标识并仅填写已核实的 Token 总量或人民币金额；两项可分次处理，未核实维度继续占用。仍留存的缺价或缺汇率请求可显式补算；缺汇率时保留原单价，只补汇率。原始服务商用量、调用时快照和原估算保留，修订独立留审计，不把补算显示成调用时已知，也不触发模型重发。HTTP 版本、幂等及授权合同见[模型用量查询](architecture/security-and-reliability.md#模型用量查询)，精度与持久化见[模型账本](architecture/storage.md#910-模型调用账本)。
 
 ## 实时病历整理模型
 
