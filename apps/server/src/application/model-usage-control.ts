@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { modelUsageControlSchema, modelUsagePolicyConfigSchema,
-  type ModelUsageControl, type ModelUsageControlUpdate, type ModelUsagePolicyConfig,
+  type ModelUsageControl as ModelUsageControlState, type ModelUsageControlUpdate, type ModelUsagePolicyConfig,
   type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
@@ -44,7 +44,7 @@ export class ModelUsageControl {
   setWaitingCount(read: (workspaceId: string) => number): void { this.#waitingCount = read }
   subscribe(listener: () => void): () => void { this.#listeners.add(listener); return () => { this.#listeners.delete(listener) } }
 
-  read(workspaceId: string): ModelUsageControl {
+  read(workspaceId: string): ModelUsageControlState {
     const workspace = this.#scope(this.#workspace(workspaceId))
     const deployment = this.#scope(this.#row('deployment'))
     const last = z.object({ code: z.string(), scope: z.string(), rejected_at: z.string() }).optional().parse(
@@ -57,7 +57,7 @@ export class ModelUsageControl {
       lastRejection: last === undefined ? null : { code: last.code, scope: last.scope, at: last.rejected_at } })
   }
 
-  update(context: ActorContext, input: ModelUsageControlUpdate, idempotencyKey: string): ModelUsageControl {
+  update(context: ActorContext, input: ModelUsageControlUpdate, idempotencyKey: string): ModelUsageControlState {
     if (context.roleCode !== 'administrator') throw new ModelUsagePolicyError('ROLE_NOT_ALLOWED', 403)
     const result = this.commands.execute({ context, contextRequirement: 'current', idempotencyScope: 'workspace',
       dataSchema: modelUsageControlSchema, expectedVersions: {}, idempotencyKey, input, operation: 'model-usage.control.update' }, () => {

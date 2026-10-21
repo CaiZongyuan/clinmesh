@@ -13,6 +13,24 @@ import {
 } from '../src/config.ts'
 
 describe('Node.js server configuration', () => {
+  it('validates an optional deployment model policy file and keeps zero distinct from unlimited', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-control-config-'))
+    try {
+      const path = join(directory, 'model-control.json')
+      const environment = { CLINMESH_AUTH_SECRET: 'synthetic-auth-secret-at-least-32-characters',
+        CLINMESH_CURSOR_SECRET: 'synthetic-cursor-secret-at-least-32-characters',
+        CLINMESH_DATABASE_PATH: join(directory, 'synthetic.sqlite'), CLINMESH_DEMO_PASSWORD: 'Synthetic-password-2026!',
+        CLINMESH_MODEL_CONTROL_PATH: path }
+      await writeFile(path, JSON.stringify({ enabled: false, requests: 0, automaticRetries: false }))
+      expect(readServerConfig(environment)).toHaveProperty('modelUsageControl', { enabled: false, requests: 0, automaticRetries: false })
+      await writeFile(path, JSON.stringify({ requests: null }))
+      expect(readServerConfig(environment)).toHaveProperty('modelUsageControl', { enabled: true, requests: null, automaticRetries: true })
+      await writeFile(path, JSON.stringify({ requests: -1 }))
+      expect(() => readServerConfig(environment)).toThrow()
+      await writeFile(path, JSON.stringify({ requests: 'unlimited' }))
+      expect(() => readServerConfig(environment)).toThrow()
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
   it('resolves an independent local guideline corpus and preserves an explicit override', () => {
     const environment = {
       CLINMESH_AUTH_SECRET: 'synthetic-auth-secret-at-least-32-characters',
