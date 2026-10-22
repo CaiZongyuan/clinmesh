@@ -14,12 +14,11 @@ export class InpatientInsuranceAdjustments {
   constructor(readonly owner: InpatientService) {}
   get insurance() { return this.owner.workflow.insurance }
   #cycles(context: ActorContext, admissionId: string) {
-    return z.array(cycleSchema).parse(this.owner.database.driver.prepare(`SELECT adjustment_id AS adjustmentId,
+    const rows = z.array(cycleSchema.extend({ replacementSettlementId: z.string().nullable() })).parse(this.owner.database.driver.prepare(`SELECT adjustment_id AS adjustmentId,
       original_settlement_id AS originalSettlementId, compensation_id AS compensationId,
       replacement_id AS replacementSettlementId FROM inpatient_insurance_adjustment
-      WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY rowid`).all(context.workspaceId, context.epoch, admissionId)
-      .map(row => z.object({ replacementSettlementId: z.string().nullable() }).passthrough().parse(row))
-      .map(({ replacementSettlementId, ...row }) => ({ ...row, ...(replacementSettlementId === null ? {} : { replacementSettlementId }) })))
+      WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY rowid`).all(context.workspaceId, context.epoch, admissionId))
+    return rows.map(({ replacementSettlementId, ...row }) => ({ ...row, ...(replacementSettlementId === null ? {} : { replacementSettlementId }) }))
   }
   source(context: ActorContext, admissionId: string, source: InsuranceSource): InsuranceSource {
     const rows = z.array(z.object({ adjustment_id: z.string(), charge_id: z.string(), direction: z.enum(['increase', 'decrease']), amount_fen: z.number().int() })).parse(

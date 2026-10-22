@@ -170,7 +170,8 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         } else {
           const definition = getHisOperation(intent.command.operation)
           const input = intent.command.input
-          const path = 'admissionId' in input ? definition.http.path.replace(':admissionId', encodeURIComponent(input.admissionId)) : 'kind' in input && 'id' in input ? definition.http.path.replace(':kind', input.kind).replace(':id', encodeURIComponent(input.id)) : definition.http.path
+          let path = 'admissionId' in input ? definition.http.path.replace(':admissionId', encodeURIComponent(input.admissionId)) : 'kind' in input && 'id' in input ? definition.http.path.replace(':kind', input.kind).replace(':id', encodeURIComponent(input.id)) : definition.http.path
+          if ('adjustmentId' in input) path = path.replace(':adjustmentId', encodeURIComponent(input.adjustmentId))
           response = await apiMutation(path, definition.output, definition.http.encodeBody!(input), { idempotencyKey: intent.idempotencyKey })
         }
         clear()

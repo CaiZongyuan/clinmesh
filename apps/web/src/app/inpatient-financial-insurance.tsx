@@ -8,6 +8,8 @@ import { Button } from '@clinmesh/ui/components/button'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { getWorkspaceMessages } from './workspace-i18n.ts'
+import { getWorkspaceErrorMessage } from './workspace-error.ts'
 
 export function InpatientFinancialInsurance({ bill, locale, write, fetching }: { bill: z.infer<typeof inpatientFinancialSchema>;
   locale: WorkspaceLocale; write?: ReturnType<typeof useInpatientWriteIntent> | undefined; fetching: boolean }) {
@@ -25,6 +27,7 @@ export function InpatientFinancialInsurance({ bill, locale, write, fetching }: {
   if (!insurance) return null
   const latest = bill.adjustments.at(-1), cycle = insurance.cycles.find(row => row.adjustmentId === latest?.adjustmentId)
   const busy = !write || write.blocked || fetching || bill.reservedFen + bill.reservedCollectFen > 0
+  const error = write?.mutation.error ? getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale)) : undefined
   const detail = (value: typeof insurance.original) => `${t('基金', 'Fund')} ${formatFen(value.fundFen, locale)} · ${t('账户', 'Account')} ${formatFen(value.accountFen, locale)} · ${t('患者', 'Patient')} ${formatFen(value.patientFen, locale)}`
   return <section aria-label={t('后续医保更正', 'Later insurance correction')} className="flex flex-col gap-3">
     <h4>{t('后续医保更正', 'Later insurance correction')}</h4>
@@ -40,15 +43,17 @@ export function InpatientFinancialInsurance({ bill, locale, write, fetching }: {
       {cycle && !cycle.replacementSettlementId ? <Button variant="outline" disabled={busy} onClick={() => write.mutation.mutate({ operation: 'inpatient.financial.insurance.preview',
         input: { admissionId: bill.admissionId, adjustmentId: latest.adjustmentId, expectedFingerprint: bill.fingerprint } })}>{t('预览更正医保', 'Preview revised insurance')}</Button> : null}
     </> : null}
-    <AlertDialog open={!!cancel} onOpenChange={open => { if (!open && !write?.blocked) setCancel(undefined) }}><AlertDialogContent>
+    <AlertDialog open={!!cancel} onOpenChange={open => { if (!open && !write?.mutation.isPending) setCancel(undefined) }}><AlertDialogContent>
       <AlertDialogHeader><AlertDialogTitle>{t('确认原待遇补偿', 'Confirm original benefit compensation')}</AlertDialogTitle><AlertDialogDescription>{t('补偿原年度待遇影响，后续其他就诊的累计继续保留。补偿后须审阅新待遇。', 'Reverse the original year benefit effects while preserving later encounters. Review replacement benefits afterward.')}</AlertDialogDescription></AlertDialogHeader>
       <p>{cancel ? detail(cancel.settlement) : ''}</p>
-      <AlertDialogFooter><AlertDialogCancel disabled={write?.blocked}>{t('取消', 'Cancel')}</AlertDialogCancel><Button disabled={write?.blocked} onClick={() => { if (cancel) write?.mutation.mutate({ operation: 'inpatient.financial.insurance.cancel', input: cancel.input }) }}>{t('确认补偿原待遇', 'Confirm benefit compensation')}</Button></AlertDialogFooter>
+      {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+      <AlertDialogFooter><AlertDialogCancel disabled={write?.mutation.isPending}>{t('取消', 'Cancel')}</AlertDialogCancel><Button disabled={write?.blocked} onClick={() => { if (cancel) write?.mutation.mutate({ operation: 'inpatient.financial.insurance.cancel', input: cancel.input }) }}>{t('确认补偿原待遇', 'Confirm benefit compensation')}</Button></AlertDialogFooter>
     </AlertDialogContent></AlertDialog>
-    <AlertDialog open={!!review} onOpenChange={open => { if (!open && !write?.blocked) setReview(undefined) }}><AlertDialogContent>
+    <AlertDialog open={!!review} onOpenChange={open => { if (!open && !write?.mutation.isPending) setReview(undefined) }}><AlertDialogContent>
       <AlertDialogHeader><AlertDialogTitle>{t('确认更正医保待遇', 'Confirm revised insurance')}</AlertDialogTitle><AlertDialogDescription>{t('核对本次冻结分摊；费用或原年度余额变化后，须重新预览并审阅。', 'Review this frozen allocation. Preview and review again if charges or the original year balance change.')}</AlertDialogDescription></AlertDialogHeader>
       {review ? <p data-testid="financial-insurance-review">{review.settlement.year} · {detail(review.settlement)}</p> : null}
-      <AlertDialogFooter><AlertDialogCancel disabled={write?.blocked}>{t('取消', 'Cancel')}</AlertDialogCancel><Button disabled={write?.blocked} onClick={() => { if (review && latest) write?.mutation.mutate({ operation: 'inpatient.financial.insurance.confirm',
+      {error ? <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert> : null}
+      <AlertDialogFooter><AlertDialogCancel disabled={write?.mutation.isPending}>{t('取消', 'Cancel')}</AlertDialogCancel><Button disabled={write?.blocked} onClick={() => { if (review && latest) write?.mutation.mutate({ operation: 'inpatient.financial.insurance.confirm',
         input: { admissionId: bill.admissionId, adjustmentId: latest.adjustmentId, previewId: review.previewId, commitToken: review.commitToken } }) }}>{t('确认更正待遇', 'Confirm revised benefits')}</Button></AlertDialogFooter>
     </AlertDialogContent></AlertDialog>
   </section>
