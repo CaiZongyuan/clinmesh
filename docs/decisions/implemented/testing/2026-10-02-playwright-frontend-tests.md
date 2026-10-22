@@ -14,7 +14,7 @@ Agent 操作反馈的保持与淡出合同以固定的 Date 时钟逐步推进�
 
 检验目录合同按 React 版本在 `beforeAll` 中构建 fixture，并以文件的默认执行模式复用产物，避免全局 `fullyParallel` 使同一 fixture 在多个 worker 重复冷构建。构建 hook 与每条交互测试各自保持原有 30 秒时限；冷构建曾占用约 22 秒，把它放在交互测试中会使完整外观矩阵和开具申请在总时限处中断。每条测试仍使用独立 page/context，保留全部断言，不依赖前一测试的业务状态。
 
-Web E2E 每 worker 构建一次 Web，每测试创建真实 Hono listener、file-backed SQLite、合成账户和随机凭证；系统分配端口，fixture 完成后关闭 listener/runtime 并删除临时文件。登录、岗位切换和窄屏设置通过页面与正式 HTTP 会话查询验证，不读取开发配置或调用真实 provider。
+Web E2E 每 worker 构建一次 Web，生产构建 fixture 使用独立的 120 秒预算；复用它的浏览器合同仍保留每条交互的 30 秒时限，Web E2E 保留自身交互时限。生产构建在资源争用时可超过 30 秒，不能挤占状态、焦点与布局断言的时间。住院财务与医保更正按 React 版本在 `beforeAll` 构建共享 fixture，构建与交互分别计时。每测试创建真实 Hono listener、file-backed SQLite、合成账户和随机凭证；系统分配端口，fixture 完成后关闭 listener/runtime 并删除临时文件。登录、岗位切换和窄屏设置通过页面与正式 HTTP 会话查询验证，不读取开发配置或调用真实 provider。
 
 测试宿主与浏览器产物分别选择运行环境：宿主固定为 `test`，生产 Web 构建只在调用期间切换环境并在 `finally` 恢复，合同 bundle 显式定义生产模式。Vite 会在环境未设时写入 `production`；复用 worker 后，后加载的 Better Auth 会因此开启生产注册限流，使合成账户初始化依赖文件顺序。隔离构建环境可保留生产前端行为，也保持现有认证 origin 与 CSRF 校验。
 
