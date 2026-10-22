@@ -62,6 +62,7 @@ export class InpatientInsuranceAdjustments {
       const compensation = this.insurance.compensate(context, input.settlementId, effects)
       this.owner.database.driver.prepare('INSERT INTO inpatient_insurance_adjustment VALUES(?,?,?,?,?,?,NULL)')
         .run(context.workspaceId, context.epoch, input.adjustmentId, input.admissionId, input.settlementId, compensation.id)
+      effects.push({ kind: 'created', reference: `InpatientInsuranceAdjustment/${input.adjustmentId}`, versionId: '1' })
       return { data: this.owner.financialAdjustments.snapshot(context, input.admissionId), effects }
     })
   }
@@ -95,6 +96,7 @@ export class InpatientInsuranceAdjustments {
       this.insurance.recordSettlement(context, settlement, effects)
       this.owner.database.driver.prepare('UPDATE inpatient_insurance_adjustment SET replacement_id=? WHERE workspace_id=? AND epoch=? AND adjustment_id=?')
         .run(settlement.id, context.workspaceId, context.epoch, input.adjustmentId)
+      effects.push({ kind: 'updated', reference: `InpatientInsuranceAdjustment/${input.adjustmentId}`, versionId: '2' })
       return { data: this.owner.financialAdjustments.snapshot(context, input.admissionId), effects }
     })
   }
