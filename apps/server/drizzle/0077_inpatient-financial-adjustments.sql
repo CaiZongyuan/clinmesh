@@ -1,7 +1,7 @@
 CREATE TABLE inpatient_financial_adjustment (
   workspace_id TEXT NOT NULL, epoch TEXT NOT NULL, adjustment_id TEXT NOT NULL,
   admission_id TEXT NOT NULL, charge_id TEXT NOT NULL, settlement_id TEXT NOT NULL,
-  amount_fen INTEGER NOT NULL CHECK(amount_fen>0), reason TEXT NOT NULL,
+  amount_fen INTEGER NOT NULL CHECK(amount_fen>0), direction TEXT NOT NULL CHECK(direction IN ('increase','decrease')), reason TEXT NOT NULL,
   actor_id TEXT NOT NULL, practitioner_role_id TEXT NOT NULL, created_at TEXT NOT NULL,
   PRIMARY KEY(workspace_id,epoch,adjustment_id),
   FOREIGN KEY(workspace_id,epoch,admission_id) REFERENCES inpatient_admission(workspace_id,epoch,admission_id) ON DELETE RESTRICT,
