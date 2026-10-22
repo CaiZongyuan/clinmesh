@@ -42,11 +42,15 @@ async function expectShadowDialog(page: Page, dialog: Locator) {
   const bounds = await dialog.evaluate(element => {
     const root = element.getRootNode()
     const box = element.getBoundingClientRect()
-    return { inShadow: root instanceof ShadowRoot, focused: root instanceof ShadowRoot && element.contains(root.activeElement),
+    return { inShadow: root instanceof ShadowRoot,
       left: box.left, right: box.right, width: element.clientWidth, scrollWidth: element.scrollWidth }
   })
   expect(bounds.inShadow).toBe(true)
-  expect(bounds.focused).toBe(true)
+  // CI 双 worker 负载下焦点落位可能晚于可见断言（React 19 路径实测复现），轮询等待而非单次采样。
+  await expect.poll(async () => dialog.evaluate(element => {
+    const root = element.getRootNode()
+    return root instanceof ShadowRoot && element.contains(root.activeElement)
+  })).toBe(true)
   expect(bounds.left).toBeGreaterThanOrEqual(-1)
   expect(bounds.right).toBeLessThanOrEqual(page.viewportSize()!.width + 1)
   expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.width + 1)
