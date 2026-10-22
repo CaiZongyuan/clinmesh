@@ -74,12 +74,12 @@
       "maximumErrorCount": 0,
       "maximumQueriesPerIteration": 137,
       "maximumRetryCount": 0,
-      "maximumRowsWrittenPerIteration": 160,
-      "maximumStatementsPerIteration": 371,
+      "maximumRowsWrittenPerIteration": 391,
+      "maximumStatementsPerIteration": 602,
       "maximumTraceBytesPerIteration": 256,
       "maximumTraceRowsPerIteration": 1,
-      "maximumWritesPerIteration": 266,
-      "minimumRowsWrittenPerIteration": 160
+      "maximumWritesPerIteration": 497,
+      "minimumRowsWrittenPerIteration": 391
     },
     "trace-control-sqlite": {
       "maximumBusyCount": 0,

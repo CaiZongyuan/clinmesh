@@ -62,7 +62,9 @@ function SurgeryRequest({ row, catalog, admission, session, locale, write }: Pro
   const actual = catalog?.procedures.find(item => item.id === actualId)
   const active = ['requested','ready'].includes(row.status), blocked = write.blocked || admission.status !== 'admitted'
   const common = { admissionId: admission.id, requestId: row.id, expectedRequestVersion: row.version, note }
-  const materialValues = (catalog?.materials ?? []).map(item => ({ item, quantity: Number(quantities[item.id] ?? '0') }))
+  const materials = (catalog?.materials ?? []).filter(item => 'chargeDefinition' in item)
+  const unavailableCount = (catalog?.materials.length ?? 0) - materials.length
+  const materialValues = materials.filter(item => quantities[item.id] !== undefined).map(item => ({ item, quantity: Number(quantities[item.id]) }))
   const quantitiesValid = materialValues.every(value => Number.isSafeInteger(value.quantity) && value.quantity >= 0 && value.quantity <= 1000)
   const execute = () => {
     if (!actual || !quantitiesValid) return
@@ -85,7 +87,15 @@ function SurgeryRequest({ row, catalog, admission, session, locale, write }: Pro
       {doctor ? <>
         <Field><FieldLabel htmlFor={`surgery-actual-${row.id}`}>{t('实际术式','Performed procedure')}</FieldLabel><WorkspaceSelect id={`surgery-actual-${row.id}`} value={actualId} items={(catalog?.procedures ?? []).map(item => ({value:item.id,label:`${item.coding.code} · ${item.coding.display}`}))} onValueChange={setActualId} /></Field>
         {actual ? <p>{t('合成手术费用：','Synthetic procedure price: ')}{formatFen(actual.chargeDefinition.priceFen,locale)}</p> : null}
-        {(catalog?.materials ?? []).map(item => <Field key={item.id}><FieldLabel htmlFor={`surgery-material-${row.id}-${item.id}`}>{item.display}{t('实际用量',' quantity used')}</FieldLabel><Input id={`surgery-material-${row.id}-${item.id}`} type="number" min="0" max="1000" step="1" value={quantities[item.id] ?? '0'} onChange={event => setQuantities(previous => ({...previous,[item.id]:event.currentTarget.value}))} /><p>{formatFen(item.chargeDefinition.priceFen,locale)}/{item.chargeDefinition.unit}</p></Field>)}
+        <Field><FieldLabel htmlFor={`surgery-material-select-${row.id}`}>{t('手术耗材','Surgical material')}</FieldLabel>
+          <WorkspaceSelect id={`surgery-material-select-${row.id}`} value={null} placeholder={t('选择实际使用耗材（最多20项）','Select materials used (up to 20)')}
+            items={materialValues.length >= 20 ? [] : materials.filter(item => quantities[item.id] === undefined).map(item => ({ value: item.id, label: item.display }))}
+            onValueChange={id => { if (id) setQuantities(previous => ({ ...previous, [id]: '1' })) }} />
+        </Field>
+        {unavailableCount > 0 ? <p>{t(`${unavailableCount} 项耗材因计价单位未确认而未启用`,`${unavailableCount} materials are unavailable because their billing unit is unconfirmed`)}</p> : null}
+        {materialValues.map(({item}) => <Field key={item.id}><FieldLabel htmlFor={`surgery-material-${row.id}-${item.id}`}>{item.display}{t('实际用量',' quantity used')}</FieldLabel><Input id={`surgery-material-${row.id}-${item.id}`} type="number" min="0" max="1000" step="1" value={quantities[item.id] ?? '0'} onChange={event => setQuantities(previous => ({...previous,[item.id]:event.currentTarget.value}))} /><p>{formatFen(item.chargeDefinition.priceFen,locale)}/{item.chargeDefinition.unit}</p>
+          <Button type="button" variant="outline" aria-label={`${t('移除耗材','Remove material')} ${item.display}`} onClick={() => setQuantities(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id !== item.id)))}>{t('移除','Remove')}</Button>
+        </Field>)}
         <Button disabled={blocked || row.status !== 'ready' || !actual || !note.trim() || !quantitiesValid} onClick={execute}>{t('记录实际手术','Record performed surgery')}</Button>
       </> : null}
     </FieldGroup></FieldSet> : null}

@@ -13,7 +13,8 @@ const mainMigrations = ['0069_registration-numbering.sql', '0070_doctor-recommen
 const inpatientMigrations = ['0069_inpatient-admission.sql', '0070_inpatient-orders.sql', '0071_inpatient-investigations-transfer.sql',
   '0072_inpatient-surgery.sql', '0073_inpatient-discharge.sql', '0074_inpatient-record.sql']
 const modelUsageMigrations = ['0071_model-usage.sql', '0072_model-usage-control.sql', '0073_model-task-recovery.sql',
-  '0074_host-model-waiting.sql', '0075_model-usage-dimensions.sql', '0076_model-usage-retention.sql', '0077_model-usage-token-breakdown.sql']
+  '0074_host-model-waiting.sql', '0075_model-usage-dimensions.sql', '0076_model-usage-retention.sql', '0077_model-usage-token-breakdown.sql',
+  '0078_model-task-invalid-code.sql']
 const paymentMigrations = ['0071_payment-installments.sql', '0072_payment-history-pagination.sql']
 const directories: string[] = [], databases: ClinMeshDatabase[] = []
 afterEach(async () => {

@@ -1,14 +1,25 @@
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
-import { ChatCompletionRequestControlError, ChatCompletionsError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
+import { ChatCompletionRequestControlError, ChatCompletionsError, StructuredOutputValidationError, type JsonChatCompletionInput, type JsonChatCompletionsProvider } from '../infrastructure/ai/openai-chat-completions.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { ModelUsageControlError, modelUsageControlFailure } from './model-usage-control.ts'
 import type { OutboxHandlerInput, OutboxHandlerResult } from './outbox-dispatcher.ts'
 
 const stepSchema = z.object({ status: z.enum(['pending', 'dispatching', 'blocked', 'succeeded', 'unknown']),
   request_count: z.number(), repair_count: z.number(), rate_limit_count: z.number(),
-  blocked_kind: z.enum(['initial', 'format-repair', 'rate-limit-retry']).nullable(), blocked_code: z.string().nullable(), result_json: z.string().nullable() })
+  blocked_kind: z.enum(['initial', 'format-repair', 'rate-limit-retry']).nullable(), blocked_code: z.string().nullable(), invalid_code: z.string().nullable(), result_json: z.string().nullable() })
 const resultSchema = z.object({ content: z.string(), model: z.string() }).strict()
+
+/** Only the fixed safe domain code is persisted; no message, path, model field or full cause is stored. */
+function invalidOutputCode(error: unknown): string | undefined {
+  const seen = new Set<unknown>()
+  while (error instanceof Error && !seen.has(error)) {
+    if (error instanceof ChatCompletionsError && error.code === 'AI_RESPONSE_INVALID'
+      && error.cause instanceof StructuredOutputValidationError) return error.cause.code
+    seen.add(error); error = error.cause
+  }
+  return undefined
+}
 export class ModelTaskOutcomeUnknownError extends Error {
   constructor(cause?: unknown) { super('The model task has an unresolved request', { cause }); this.name = 'ModelTaskOutcomeUnknownError' }
 }
@@ -122,7 +133,9 @@ export class ModelTaskRecovery {
         if (row.request_count >= structuredLimit + (this.dsh ? 1 : 0)
           || attemptedKind === 'rate-limit-retry' && row.rate_limit_count >= 1
           || attemptedKind === 'format-repair' && row.repair_count >= structuredLimit - 1) {
-          throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The original structured response attempt budget was exhausted')
+          // 预算拒绝按持久安全分类回放，业务服务只识别自身白名单标记。
+          throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The original structured response attempt budget was exhausted',
+            row.invalid_code === null ? undefined : { validationIssues: [{ code: row.invalid_code, path: '' }] })
         }
         input.onBeforeRequest?.()
         this.database.driver.prepare(`UPDATE model_task_step SET status = 'dispatching', request_count = request_count + 1,
@@ -161,10 +174,11 @@ export class ModelTaskRecovery {
         } catch { /* The durable dispatch marker remains conservative if storage is unavailable. */ }
         throw new ModelTaskOutcomeUnknownError(error)
       }
-      this.database.driver.prepare(`UPDATE model_task_step SET status = ?, blocked_kind = ?, blocked_code = ?
+      this.database.driver.prepare(`UPDATE model_task_step SET status = ?, blocked_kind = ?, blocked_code = ?,
+        invalid_code = COALESCE(?, invalid_code)
         WHERE workspace_id = ? AND epoch = ? AND task_id = ? AND step_key = ?`)
         .run(blocked === undefined ? 'pending' : 'blocked', attemptedKind,
-          blocked?.code ?? null, ...key)
+          blocked?.code ?? null, invalidOutputCode(error) ?? null, ...key)
       if (blocked !== undefined) this.#block(context.workspaceId, `task:${context.taskId}`, blocked)
       throw error
     }

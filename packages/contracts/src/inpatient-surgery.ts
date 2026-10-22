@@ -10,9 +10,27 @@ export const inpatientProcedureCodingSchema = z.object({ system: z.literal('urn:
 }).strict()
 const charge = z.object({ id, priceFen: z.number().int().nonnegative().safe(), unit: z.string().min(1),
   synthetic: z.literal(true), trigger: z.literal('execution') }).strict()
+export const inpatientMaterialReferenceSchema = z.object({
+  workbookSha256: z.string().regex(/^[a-f0-9]{64}$/), verifiedOn: z.iso.date(), sheet: z.string().min(1), row: z.number().int().positive(),
+  category: z.string().min(1), enterprise: z.string().min(1), specification: z.string().min(1).nullable(), unit: z.string().min(1).nullable(),
+  priceFen: z.number().int().nonnegative().safe(), baseSupplyPriceFen: z.number().int().nonnegative().safe().nullable(),
+  priceType: z.string().min(1), region: z.string().min(1), effectiveFrom: z.iso.date().nullable(), effectiveThrough: z.iso.date().nullable(),
+  applicability: z.string().min(1), materialCode: z.string().min(1).nullable(), registrationNumber: z.string().min(1).nullable(),
+  sourceId: z.string().min(1), sourceLocator: z.string().min(1),
+  original: z.record(z.enum(['类别','产品或支付类别名称','企业（原表口径）','型号或规格','中选价格（元）','原表计价单位','价格类型',
+    '来源地区','执行起日','原周期止日','适用性说明','原耗材代码','注册证号','来源编号','原表定位','提取备注','基准品拟供应价（元）']), z.string()),
+  source: z.object({ '来源编号': z.string().min(1), '官方发布': z.string().min(1), '价格类型': z.string().min(1), '适用范围': z.string().min(1),
+    '执行起日': z.string(), '原协议止日': z.string(), '记录粒度': z.string().min(1), '当前适用性': z.string().min(1),
+    '通知地址': z.url(), '原始附件': z.url(), '原件 SHA-256': z.string().regex(/^[a-f0-9]{64}$/), '提取说明': z.string().min(1) }).strict(),
+}).strict()
 export const inpatientProcedureItemSchema = z.object({ id, version, coding: inpatientProcedureCodingSchema, chargeDefinition: charge }).strict()
-export const inpatientMaterialItemSchema = z.object({ id, version, display: z.string().min(1), chargeDefinition: charge }).strict()
-export const inpatientSurgeryCatalogSchema = z.object({ procedures: z.array(inpatientProcedureItemSchema), materials: z.array(inpatientMaterialItemSchema) }).strict()
+export const inpatientMaterialItemSchema = z.object({ id, version, display: z.string().min(1), chargeDefinition: charge,
+  reference: inpatientMaterialReferenceSchema.optional() }).strict()
+const unavailableMaterial = inpatientMaterialItemSchema.omit({ chargeDefinition: true, reference: true }).extend({
+  unavailableReason: z.literal('unit-unconfirmed'), reference: inpatientMaterialReferenceSchema.extend({ unit: z.null() }),
+}).strict()
+export const inpatientSurgeryCatalogSchema = z.object({ procedures: z.array(inpatientProcedureItemSchema),
+  materials: z.array(z.union([inpatientMaterialItemSchema, unavailableMaterial])) }).strict()
 export const inpatientSurgeryRequestInputSchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/),
   procedureId: id, catalogVersion: version, plannedFor: z.iso.datetime({ offset: true }), reason: note }).strict()
 export const inpatientSurgeryActionInputSchema = z.object({ admissionId: id, requestId: id, expectedRequestVersion: version, note }).strict()
