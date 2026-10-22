@@ -65,6 +65,44 @@ describe('ClinMesh React Surface definition', () => {
     expect(listeners.size).toBe(0)
   })
 
+  it('exposes the queue rail presentation only under the workspace-mirror layout', async () => {
+    const ctx = { get(name: string) {
+      if (name === 'sessions') return { binding: () => ({ session: { getSnapshot: () => ({ sessionId: 'session-1', pendingSubmissions: [] }), subscribe: () => () => {} } }) }
+      if (name === 'uiSession') return { adapter: { current: { getSnapshot: () => ({ key: 'session-1' }), subscribe: () => () => {} } } }
+      if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
+      if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
+      return {}
+    }, on: () => () => {} }
+    const render = vi.spyOn(application, 'WebApp').mockImplementation(() => createElement('div'))
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const definition = createDefinition(ctx as unknown as ClientContext)
+    const containers: Array<HTMLElement> = []
+    try {
+      for (const [layout, expected] of [
+        ['workspace-mirror', 'rail'],
+        ['workspace', 'column'],
+        ['full-frame', 'column'],
+      ] as const) {
+        let runtime: WebRuntimeOptions | undefined
+        render.mockImplementation(props => { runtime = props?.runtime; return createElement('div') })
+        const container = document.createElement('div')
+        document.body.append(container)
+        containers.push(container)
+        const root = createRoot(container)
+        await act(() => root.render(createElement(definition.component, {
+          active: true, conversationCollapsed: false, agent: { register: () => () => {} },
+          capabilities: { agent: { available: false, status: 'unavailable' } },
+          close() {}, layout, location: '/', navigate() {},
+        })))
+        expect(runtime?.surfaceDisplay?.queuePresentation).toBe(expected)
+      }
+    } finally {
+      containers.forEach(container => container.remove())
+      render.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('updates workspace routes, settings and launcher through the same host locale event', async () => {
     const listeners = new Set<() => void>()
     let language = 'zh-CN'
@@ -343,6 +381,6 @@ describe('ClinMesh React Surface definition', () => {
     expect(definition.branding.shell).toBe('preserve')
     expect(definition.branding.tokens).toBeUndefined()
     expect(definition.layout.fallback).toBe('shrink')
-    expect(definition.layout.supported).toEqual(['workspace', 'full-frame'])
+    expect(definition.layout.supported).toEqual(['workspace', 'workspace-mirror', 'full-frame'])
   })
 })

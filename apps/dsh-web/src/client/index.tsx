@@ -128,6 +128,8 @@ export function createDefinition(
           fullscreen: props.layout === 'full-frame',
           // 全屏保留宿主会话文件等原生右栏内容。
           fullscreenKeepsDetails: true,
+          // 镜像布局收起宿主会话列右侧的内容队列，队列改由内容区左缘卡片承担。
+          queuePresentation: props.layout === 'workspace-mirror' ? 'rail' : 'column',
           toggle: () => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? 'workspace' : 'full-frame'),
           conversation: {
             collapsed: props.conversationCollapsed,
@@ -158,7 +160,7 @@ export function createDefinition(
     minSurfaceWidth: 360,
     persist: true,
     resizable: true,
-    supported: ['workspace', 'full-frame'],
+    supported: ['workspace', 'workspace-mirror', 'full-frame'],
   },
   lifecycle: { mount: 'lazy', retention: 'keep-alive' },
   order: 10,
