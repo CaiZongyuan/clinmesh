@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { doctorRecommendationKindSchema, doctorRecommendationStateSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
 import { doctorCaseDetailSchema, sendConsultationMessageResponseSchema } from '@clinmesh/contracts/his'
 import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
+import { unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
@@ -26,8 +27,14 @@ function gate() {
   return { promise, open }
 }
 
+function bridgeResponse(input: CompleteRequest, body: Record<string, unknown>, status = 200) {
+  return Response.json({ ...body, accounting: { attemptId: input.attemptId,
+    status: status >= 400 ? 'failed' : 'succeeded', dispatch: 'dispatched', usage: unknownModelTokenUsage,
+  } }, { status })
+}
+
 function answer(input: CompleteRequest, value: unknown) {
-  return Response.json({ model: input.model, content: JSON.stringify(value) })
+  return bridgeResponse(input, { model: input.model, content: JSON.stringify(value) })
 }
 
 async function setup(respond: Responder) {
@@ -224,7 +231,12 @@ it('migrates unverifiable old pending input to unknown and requires an explicit 
   for (const table of ['continue', 'unit', 'plan', '']) fixture.runtime.database.driver.exec(
     `DROP TABLE doctor_recommendation_execution${table === '' ? '' : `_${table}`}`,
   )
-  fixture.runtime.database.driver.exec(readFileSync(new URL('../drizzle/0068_doctor-recommendation-execution.sql', import.meta.url), 'utf8'))
+  for (const table of ['model_task_step', 'model_task_wait', 'model_reply_wait']) {
+    fixture.runtime.database.driver.exec(`DROP TABLE ${table}`)
+  }
+  for (const migration of ['0068_doctor-recommendation-execution.sql', '0070_doctor-recommendation-consolidation-stage.sql', '0073_model-task-recovery.sql']) {
+    fixture.runtime.database.driver.exec(readFileSync(new URL(`../drizzle/${migration}`, import.meta.url), 'utf8'))
+  }
   await fixture.restart()
   expect(await fixture.read()).toMatchObject({ status: 'failed', generation: 1, errorCode: 'MODEL_OUTCOME_UNKNOWN' })
   await fixture.generate()
@@ -338,10 +350,10 @@ it('recovers only an interrupted verification after explicit continuation and ne
 
 it('shares the three-request unit limit between rate-limit resends and JSON repair, and automatic requests cannot reset it', async () => {
   let calls = 0
-  const fixture = await setup(async () => {
+  const fixture = await setup(async input => {
     calls++
-    return calls === 1 ? Response.json({ error: 'MODEL_RATE_LIMIT', retryAfterMs: 1 }, { status: 429 })
-      : Response.json({ model: 'synthetic', content: 'invalid JSON' })
+    return calls === 1 ? bridgeResponse(input, { error: 'MODEL_RATE_LIMIT', retryAfterMs: 1 }, 429)
+      : bridgeResponse(input, { model: input.model, content: 'invalid JSON' })
   })
   await fixture.claim()
   await fixture.generate()
@@ -363,7 +375,7 @@ it('retries a complete technical verification failure without repeating candidat
   const calls: string[] = []
   const fixture = await setup(async input => {
     calls.push(input.schemaName)
-    if (calls.length === 2) return Response.json({ error: 'MODEL_UNAVAILABLE' }, { status: 503 })
+    if (calls.length === 2) return bridgeResponse(input, { error: 'MODEL_UNAVAILABLE' }, 503)
     return answer(input, input.schemaName === 'doctor_recommendations' ? diagnosis(input) : verification(input))
   })
   await fixture.claim()

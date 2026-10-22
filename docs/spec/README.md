@@ -44,6 +44,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [心血管手术耗材目录](2026-10-22-cardiovascular-surgical-materials.md) | `implemented` |
 | [住院闭环](2026-10-20-inpatient-closed-loop.md) | `implemented` |
 | [门诊号按日期持久发号与一致展示](2026-10-20-registration-numbering.md) | `implemented` |
 | [医生主诉展示同步与分诊差异质控优化](2026-10-20-current-chief-complaint.md) | `implemented` |

@@ -6,7 +6,8 @@ import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
-import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
+import { encodeModelRoute, modelBridgeRequestSchema, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
+import { unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { clinicalDocumentDraftContentSchema, clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
@@ -41,8 +42,11 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
         : input.schemaName === 'consultation_history_summary' ? { additions: [] }
           : input.schemaName === 'patient_dialogue_reply' ? { reply }
             : complete === undefined ? { issues: [], agentFactChecks: [] } : await complete(input)
-      if (payload instanceof Response) return payload
-      return Response.json({ content: JSON.stringify(payload), model: input.model })
+      const result = payload instanceof Response ? modelBridgeResponseSchema.parse(await payload.json())
+        : { content: JSON.stringify(payload), model: input.model }
+      return Response.json({ ...result, accounting: { attemptId: input.attemptId,
+        status: 'succeeded', dispatch: 'dispatched', usage: unknownModelTokenUsage,
+      } }, { status: payload instanceof Response ? payload.status : 200 })
     } }),
   }
   let runtime = await createClinMeshRuntime(options)
