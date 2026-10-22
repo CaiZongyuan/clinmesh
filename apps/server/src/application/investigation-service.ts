@@ -20,6 +20,7 @@ import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic
 import type { SyntheticPatientProfileRepository } from '../infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import {
   ChatCompletionsError,
+  StructuredOutputValidationError,
   type JsonChatCompletionsProvider,
 } from '../infrastructure/ai/openai-chat-completions.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
@@ -162,6 +163,25 @@ export function investigationFailure(error: unknown): { code: string; message: s
     code: 'INVESTIGATION_GENERATION_FAILED',
     message: 'Investigation result generation failed',
   }
+}
+
+const invalidOutputMarker = 'investigation_output'
+
+/**
+ * The safe domain marker survives request budget exhaustion through the recovery's persisted
+ * classification; only this service's own whitelisted marker is replayed as a clinical failure.
+ */
+function replayedInvalidOutput(error: unknown): InvestigationGenerationError | undefined {
+  const seen = new Set<unknown>()
+  while (error instanceof Error && !seen.has(error)) {
+    if (error instanceof ChatCompletionsError && error.code === 'AI_RESPONSE_INVALID'
+      && (error.validationIssues?.some(issue => issue.code === invalidOutputMarker) === true
+        || error.cause instanceof StructuredOutputValidationError && error.cause.code === invalidOutputMarker)) {
+      return new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', 'The Investigation Agent returned an invalid result')
+    }
+    seen.add(error); error = error.cause
+  }
+  return undefined
 }
 
 function conceptCodings(resource: Resource) {
@@ -597,13 +617,14 @@ export class InvestigationService {
       validate: value => {
         const parsed = agentOutputSchema.safeParse(value)
         if (!parsed.success) return false
-        validateInterpretation(parsed.data)
+        try { validateInterpretation(parsed.data) } catch {
+          // 领域无效走安全固定码，请求预算耗尽后恢复层才能持久并回放同一分类。
+          throw new StructuredOutputValidationError(invalidOutputMarker, '')
+        }
         return true
       },
     }).catch((error: unknown) => {
-      if (error instanceof ChatCompletionsError && error.code === 'AI_RESPONSE_INVALID'
-        && error.cause instanceof InvestigationGenerationError && error.cause.code === 'INVESTIGATION_OUTPUT_INVALID') throw error.cause
-      throw error
+      throw replayedInvalidOutput(error) ?? error
     })
     const output = agentOutputSchema.parse(JSON.parse(completion.content))
     validateInterpretation(output)
@@ -798,25 +819,21 @@ export class InvestigationService {
       ...(signal === undefined ? {} : { signal }),
       systemPrompt: serviceSystemPrompt,
       userPayload: payload,
-      validate: value => serviceAgentOutputSchema.safeParse(value).success,
+      validate: value => {
+        const parsed = serviceAgentOutputSchema.safeParse(value)
+        if (!parsed.success) return false
+        try { this.#validatedServiceAgentResults(parsed.data, agentMissing) } catch (error) {
+          if (!(error instanceof InvestigationGenerationError)) throw error
+          // 与单指标路径一致：临床无效在 validate 内用安全固定码拒绝，避免坏正文成功 checkpoint。
+          throw new StructuredOutputValidationError(invalidOutputMarker, '')
+        }
+        return true
+      },
+    }).catch((error: unknown) => {
+      throw replayedInvalidOutput(error) ?? error
     })
     const output = serviceAgentOutputSchema.parse(JSON.parse(completion.content))
-    const outputByCode = new Map(output.results.map(result => [result.code, result]))
-    if (outputByCode.size !== output.results.length
-      || output.results.length !== agentMissing.length
-      || agentMissing.some(definition => !outputByCode.has(definition.referenceConcept.code))) {
-      throw new InvestigationGenerationError(
-        'INVESTIGATION_OUTPUT_INVALID',
-        'The Investigation Agent changed the requested report closure',
-      )
-    }
-    const generatedResults = new Map(agentMissing.map((definition) => {
-      const generated = outputByCode.get(definition.referenceConcept.code)!
-      return [definition.referenceConcept.code, this.#validatedServiceAgentResult(
-        definition,
-        generated,
-      )] as const
-    }))
+    const generatedResults = this.#validatedServiceAgentResults(output, agentMissing)
     const baselineResults = new Map(missing.flatMap((definition) => {
       const rule = adultRules.get(definition.referenceConcept.id)
       return rule === undefined
@@ -948,6 +965,32 @@ export class InvestigationService {
       ...(generated.unit === undefined ? {} : { unit: generated.unit }),
       value: generated.value,
     })
+  }
+
+  /**
+   * 项目闭合与逐项确定性校验同时服务 validate 门禁和 Provider 返回后的后置门禁；
+   * validate 失败由调用方转换为安全固定码，后置门禁保留原错误分类。
+   */
+  #validatedServiceAgentResults(
+    output: z.infer<typeof serviceAgentOutputSchema>,
+    agentMissing: ServiceResultDefinition[],
+  ): Map<string, InvestigationResultContent['results'][number]> {
+    const outputByCode = new Map(output.results.map(result => [result.code, result]))
+    if (outputByCode.size !== output.results.length
+      || output.results.length !== agentMissing.length
+      || agentMissing.some(definition => !outputByCode.has(definition.referenceConcept.code))) {
+      throw new InvestigationGenerationError(
+        'INVESTIGATION_OUTPUT_INVALID',
+        'The Investigation Agent changed the requested report closure',
+      )
+    }
+    return new Map(agentMissing.map((definition) => {
+      const generated = outputByCode.get(definition.referenceConcept.code)!
+      return [definition.referenceConcept.code, this.#validatedServiceAgentResult(
+        definition,
+        generated,
+      )] as const
+    }))
   }
 
   #formalEvidence(

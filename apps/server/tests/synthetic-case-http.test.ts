@@ -40,7 +40,7 @@ import {
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
-import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
+import { dshDefaultModel, encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
 import type {
   ScenarioGenerationProvider,
   SourcePatientCorpus,
@@ -50,6 +50,7 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository.ts'
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
@@ -333,8 +334,8 @@ describe('Synthetic Case generation HTTP contract', () => {
         ? {}
         : {
             chatCompletionsProvider: briefProvider,
-            investigationModel: 'fake-investigation-model',
-            patientPersonaModel: 'fake-brief-model',
+            investigationModel: briefProvider instanceof DshModelProvider ? dshDefaultModel : 'fake-investigation-model',
+            patientPersonaModel: briefProvider instanceof DshModelProvider ? dshDefaultModel : 'fake-brief-model',
           }),
       syntheaProvider: provider,
       trustedOrigins: ['http://localhost'],
@@ -2782,7 +2783,9 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(publicArtifacts).not.toMatch(/privateEpisodeEvidence|index-condition|hiddenResourceReferences/)
   }, 30_000)
 
-  async function prepareUnitConversionCase(observations: Array<Record<string, unknown>>, investigationOutputs: unknown[] = []) {
+  async function prepareUnitConversionCase(observations: Array<Record<string, unknown>>, investigationOutputs: unknown[] = [],
+    makeProvider?: (briefProvider: ControlledBriefProvider) => JsonChatCompletionsProvider,
+    options: { databasePath?: string } = {}) {
     const safeBrief: PatientPersonaContent = {
       chiefComplaint: '咽痛两天',
       knownHistorySummary: '既往体健。',
@@ -2797,7 +2800,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       symptomExperience: '两天前嗓子开始疼，吞口水更疼，喝了点热水没管用。',
     }
     const briefProvider = new ControlledBriefProvider([safeBrief, ...investigationOutputs])
-    const runtime = await createRuntime(new RetryingSyntheaProvider(1, false, observations), briefProvider)
+    const runtime = await createRuntime(new RetryingSyntheaProvider(1, false, observations), makeProvider?.(briefProvider) ?? briefProvider, options)
     const cookie = await signIn(runtime)
     await enqueue(runtime, cookie)
     const generation = await runtime.scenarioData.processNextGenerationJob()
@@ -3195,6 +3198,103 @@ describe('Synthetic Case generation HTTP contract', () => {
       report: { results: [{ code: '6690-2', value: 19.876, unit: service.reportDefinition.results[0]!.unit, interpretation: 'high' }] },
     })
     expect(recovered?.generationError).toBeUndefined()
+  }, 30_000)
+
+  it('repairs a clinically invalid published service response with the next legal opportunity', async () => {
+    const service = unitService('synthetic-service-repair', '6690-2', 'mg/L')
+    const definition = service.reportDefinition.results[0]!
+    const invalid = { conclusion: '合成 C 反应蛋白升高', results: [{
+      code: '6690-2', interpretation: 'normal', referenceRange: definition.referenceRange, unit: definition.unit, value: 24,
+    }] }
+    const corrected = { ...invalid, results: [{ ...invalid.results[0]!, interpretation: 'high' }] }
+    const { runtime, briefProvider, caseId, doctorCookie, startedCommand, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase(
+      [], [invalid, corrected],
+    )
+    publishUnitService(runtime, service)
+    const draft = await saveLaboratoryDraft(service.id, 0)
+    const request = (await issueLaboratory(draft.draftVersion)).request
+    await runtime.dispatchPending()
+    const generationRequests = () => briefProvider.requests.filter(item => item.schemaName === 'investigation_service_result')
+    // 临床无效正文不能成功 checkpoint：自动重领必须能请求并消费下一次合法纠正响应。
+    expect(generationRequests()).toHaveLength(2)
+    const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`, { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(detail.laboratoryRequests?.requests.find(item => item.id === request.id)).toMatchObject({
+      status: 'reported', report: { results: [{ code: '6690-2', value: 24, interpretation: 'high' }] },
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM investigation_result_snapshot WHERE workspace_id = ? AND case_id = ?
+    `).get('workspace-demo', caseId)).toEqual({ count: 1 })
+  }, 30_000)
+
+  it('keeps the clinical investigation code when the real provider budget is exhausted across restarts', async () => {
+    const service = unitService('synthetic-service-budget', '6690-2', 'mg/L')
+    const definition = service.reportDefinition.results[0]!
+    const invalid = { conclusion: '合成 C 反应蛋白升高', results: [{
+      code: '6690-2', interpretation: 'normal', referenceRange: definition.referenceRange, unit: definition.unit, value: 24,
+    }] }
+    const route = encodeModelRoute({ provider: 'synthetic', model: 'synthetic-crp' })
+    const usage = { inputTokens: 15, outputTokens: 3, cachedInputTokens: 0, reasoningOutputTokens: 0,
+      totalTokens: 18, mapping: 'dsh-v1' }
+    let completions = 0
+    const makeProvider = (briefProvider: ControlledBriefProvider) => new DshModelProvider({
+      origin: 'http://127.0.0.1:1', secret: 'synthetic-only', timeoutMs: 2000, maxResponseBytes: 65536,
+      fetch: async (_url, init) => {
+        const request = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
+        if (request.operation === 'resolve') return Response.json({ model: route })
+        const { attemptId } = request
+        if (attemptId === undefined) throw new Error('Expected an accounted synthetic completion')
+        let content: string
+        if (request.schemaName === 'patient_persona') {
+          content = (await briefProvider.completeJson({
+            jsonSchema: request.jsonSchema, model: request.model, schemaName: request.schemaName,
+            systemPrompt: request.systemPrompt, userPayload: request.userPayload,
+          })).content
+        } else {
+          completions += 1
+          content = JSON.stringify(invalid)
+        }
+        return new Response([
+          { type: 'usage', attemptId, usage },
+          { type: 'result', attemptId, result: { model: route, content, accounting: {
+            attemptId, status: 'succeeded', dispatch: 'dispatched', usage,
+          } } },
+        ].map(frame => JSON.stringify(frame)).join('\n'), { headers: { 'content-type': modelBridgeAccountingMediaType } })
+      },
+    })
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-pr287-restart-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'clinmesh.sqlite')
+    const first = await prepareUnitConversionCase([], [], makeProvider, { databasePath })
+    publishUnitService(first.runtime, service)
+    const draft = await first.saveLaboratoryDraft(service.id, 0)
+    const request = (await first.issueLaboratory(draft.draftVersion)).request
+    for (let index = 0; index < 20; index += 1) {
+      const event = await first.runtime.dispatcher.dispatchOnce()
+      if (event === undefined) break
+      if (event.kind === 'laboratory.report-request' && (event.payload as { requestId: string }).requestId === request.id) {
+        expect(event).toMatchObject({ attempt: 1, status: 'failed' })
+        break
+      }
+    }
+    expect(completions).toBe(2)
+    // 重启的 runtime 会重扫 active 目录；本测试的合成目录项未登记住院计费，置为 inactive。
+    first.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET active = 0 WHERE service_id = ?`).run(service.id)
+    await first.runtime.close()
+    // 重启恢复层后不再派发请求；持久安全分类必须让原临床错误码跨 outbox 与重启保留。
+    const restarted = await createRuntime(new RetryingSyntheaProvider(1, false, []), makeProvider(first.briefProvider), { databasePath })
+    await restarted.dispatchPending()
+    expect(completions).toBe(2)
+    const detail = doctorCaseDetailSchema.parse(await (await restarted.app.request(
+      `/api/his/v1/doctor/cases/${first.startedCommand.data.outpatientCaseId}`, { headers: { cookie: first.doctorCookie } },
+    )).json())
+    expect(detail.laboratoryRequests?.requests.find(item => item.id === request.id)).toMatchObject({
+      status: 'generation-failed', generationError: { code: 'INVESTIGATION_OUTPUT_INVALID' },
+    })
+    expect(restarted.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM investigation_result_snapshot WHERE workspace_id = ? AND case_id = ?
+    `).get('workspace-demo', first.caseId)).toEqual({ count: 0 })
   }, 30_000)
 
   it.each([
