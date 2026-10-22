@@ -221,6 +221,8 @@ clinmesh command receipt get --operation-id inpatient.discharge.settle --idempot
 
 ## 病案首页、编码审核与归档
 
+结算后的费用补计、冲减及原款收退款使用[后续财务更正](#结算清床及归档后的财务更正)，不通过普通临床写入或解档处理。
+
 1. 用 `record` 读取四组核心字段、当前 `sourcesHash` 与首页 `revision`。诊断来自正式诊断确认，操作只来自本次实际执行；有实际操作时主管医生显式选 `mainProcedureExecutionId`，无操作时明确 `null`。需要补充出区后诊断时仍用 `confirm-diagnosis`，可在清床后未归档窗口纠正，其他医嘱、库存和资金动作不因此恢复。
 2. 主管医生提交首页修订；病案人员核编码来源，针对同一修订与来源审核通过或附原因退回。临床版2022诊断保留完整编码、固定Release和来源定位；院内备用编码可提交待审稿，但须通过正式诊断入口更正后才可批准。临床版来源不证明医保等价或原始工作簿权威身份独立核验，操作3.0为有界摘录。
 3. 归档要求已结算、已清床、核心字段完整、唯一主诊断、本次有效实际主操作、当前审核通过、无在途事项且账目资金一致。归档读取固定快照；归档后普通写入及报告更正拒绝，既有原receipt无写重放仍可用。当前Epoch内Scenario完成后人类会话仍可读归档；已失效Agent Grant不因此恢复。
@@ -266,3 +268,56 @@ clinmesh command receipt get --operation-id inpatient.record.archive --idempoten
 ```
 
 `INPATIENT_RECORD_STALE` 表示来源或修订变化，旧审核已失效；重新审阅事实，由医生提交新首页再审核。`INPATIENT_RECORD_CODING_UNSUPPORTED` 要求使用正式诊断确认更正固定编码。`INPATIENT_RECORD_ARCHIVED` 表示当前病案只读。结果未知先查同operation原receipt，保留原输入、修订/hash和幂等键；不能自动刷新hash或换key重做。
+
+## 结算、清床及归档后的财务更正
+
+首次结算后，收费员先读取 `financial-adjustments`，分别核对首次冻结费用、净资金和当前更正差异。病案人员可只读此差异；医生、护士、医保或管理员岗位不取得收退款权限。当前 Workspace/Epoch 的人类收费会话可在 active/completed Run 办理窄财务更正，closed Run 与失效 Agent Grant 不开放新写。
+
+```bash
+clinmesh inpatient financial-adjustments --admission-id <admission-id>
+clinmesh inpatient adjust-finance --input @financial-adjustment.json --idempotency-key <key>
+clinmesh inpatient preview-financial-refund --input @financial-refund.json --idempotency-key <key>
+clinmesh inpatient confirm-financial-refund --input @financial-confirm.json --idempotency-key <key>
+clinmesh inpatient recover-financial-refund --input @financial-refund-recovery.json --idempotency-key <key>
+clinmesh inpatient preview-financial-payment --input @financial-payment.json --idempotency-key <key>
+clinmesh inpatient confirm-financial-payment --input @financial-confirm.json --idempotency-key <key>
+clinmesh inpatient recover-financial-payment --input @financial-payment-recovery.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.financial.refund.confirm --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.financial.payment.confirm --idempotency-key <key>
+```
+
+`financial-adjustment.json` 引用本次住院有效的正数原费用，`direction` 为 `decrease` 冲减或 `increase` 补计，金额为正整数分。冲减不超过当前剩余费用。用当前读取指纹替换示例后，人工确认方向、金额和具体原因；更正只追加费用差异，不发送资金：
+
+```json
+{"admissionId":"synthetic-admission","chargeId":"synthetic-charge","direction":"decrease","amountFen":2000,"expectedFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reason":"合成床日费核对冲减"}
+```
+
+`financial-refund.json` 使用当前冲减的 `adjustmentId`、成功原交易与其余额版本。退款同时受该依据剩余额度、全账待退净额和原款可退余额约束；成功/未知退款共享同一原交易及原方式余额，不能换原交易绕过依据额度：
+
+```json
+{"admissionId":"synthetic-admission","adjustmentId":"synthetic-adjustment","sourceKind":"inpatient-deposit","sourceId":"synthetic-payment","amountFen":2000,"expectedSourceVersion":1,"expectedFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","simulatorRule":"ambiguous"}
+```
+
+`financial-payment.json` 只关联 `increase` 补计依据，以当前待收净差额为上限，组合 `tenders` 合计须等于金额；示例中的依据与指纹需替换为实际读取结果：
+
+```json
+{"admissionId":"synthetic-admission","adjustmentId":"synthetic-adjustment","amountFen":1500,"tenders":[{"method":"cash","amountFen":1000},{"method":"bank-card","amountFen":500}],"expectedFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","simulatorRule":"ambiguous"}
+```
+
+`financial-confirm.json` 只使用对应预览返回的 `previewId/commitToken`，五分钟内由原岗位上下文人工审阅后确认。预览过期或 `INPATIENT_FINANCIAL_PREVIEW_STALE` 时重新读取并审阅，不自动换指纹确认：
+
+```json
+{"admissionId":"synthetic-admission","previewId":"synthetic-preview","commitToken":"replace-with-original-preview-token"}
+```
+
+响应丢失先查原 Command receipt，并保留完整原输入和幂等键。渠道结果未知须查询原尝试；`financial-refund-recovery.json` 与 `financial-payment-recovery.json` 分别使用实际原 ID 和版本，不接受金额或 outcome：
+
+```json
+{"admissionId":"synthetic-admission","refundId":"synthetic-refund","expectedRefundVersion":1}
+```
+
+```json
+{"admissionId":"synthetic-admission","paymentId":"synthetic-payment","expectedPaymentVersion":1}
+```
+
+成功、拒绝、未知分别保留原尝试和追加查询结果；未知金额预占，不得重收重退。确定拒绝后可按最新依据和差额重新预览。相反方向费用更正先抵消未处理差额，未知资金仍待查明。后续调整不改写原费用、首次结算及归档快照，不恢复床位、不撤销出区或解档；后续未知只使该调整待处理，首次财务完成与清床归档不倒退。

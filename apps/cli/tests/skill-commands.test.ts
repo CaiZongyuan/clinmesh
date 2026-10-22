@@ -17,6 +17,29 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('结算后更正示例绑定原费用、当前账目与原资金尝试', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = (await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')).replaceAll('\r\n', '\n')
+  for (const [path, id] of [
+    ['financial-adjustments', 'read'], ['adjust-finance', 'adjust'], ['preview-financial-refund', 'refund.preview'], ['confirm-financial-refund', 'refund.confirm'],
+    ['recover-financial-refund', 'refund.recover'], ['preview-financial-payment', 'payment.preview'], ['confirm-financial-payment', 'payment.confirm'], ['recover-financial-payment', 'payment.recover'],
+  ]) {
+    const operation = getHisOperation(`inpatient.financial.${id}`)
+    expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(operation.id)
+    expect(operation.roles).toEqual(id === 'read' ? ['cashier', 'medical-records'] : ['cashier'])
+    expect(operation.skill).toBe('clinmesh-inpatient')
+  }
+  const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  for (const [id, field] of [['adjust', 'direction'], ['refund.preview', 'expectedSourceVersion'], ['payment.preview', 'tenders'], ['refund.confirm', 'commitToken'], ['refund.recover', 'expectedRefundVersion'], ['payment.recover', 'expectedPaymentVersion']]) {
+    const example = examples.find(input => field! in input && (id !== 'payment.preview' || 'adjustmentId' in input))
+    const parsed = getHisOperation(`inpatient.financial.${id}`).input.safeParse(example)
+    expect(parsed.success, `${id}: ${parsed.success ? '' : parsed.error.message}`).toBe(true)
+  }
+  const adjustment = examples.find(input => input.direction === 'decrease')
+  expect(getHisOperation('inpatient.financial.adjust').input.safeParse({ ...adjustment, amountFen: -1 }).success).toBe(false)
+  expect(getHisOperation('inpatient.financial.adjust').input.safeParse({ ...adjustment, encounterId: 'untrusted' }).success).toBe(false)
+})
+
 it('keeps unified billing and recorded payment recovery examples aligned with the cashier catalog', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-billing/SKILL.md'), 'utf8')

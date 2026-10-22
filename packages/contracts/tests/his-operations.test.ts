@@ -20,6 +20,15 @@ const clinicalDocumentOperationIds = {
 } as const
 
 describe('HIS operation catalog', () => {
+  it('结算后收退确认声明原预览token，恢复只接受原尝试及版本', () => {
+    for (const kind of ['refund', 'payment']) {
+      const confirm = getHisOperation(`inpatient.financial.${kind}.confirm`)
+      expect(confirm.previewToken).toBe('required')
+      expect(confirm.input.safeParse({ admissionId: 'synthetic-admission', previewId: 'synthetic-preview', commitToken: 'original-preview-token', amountFen: 1 }).success).toBe(false)
+      expect(getHisOperation(`inpatient.financial.${kind}.recover`).requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+    }
+    expect(getHisOperation('inpatient.financial.refund.recover').input.safeParse({ admissionId: 'synthetic-admission', refundId: 'synthetic-original', expectedRefundVersion: 1, outcome: 'success' }).success).toBe(false)
+  })
   it('declares available inpatient investigations only with an explicit positive hospital price', () => {
     const item = { id: 'synthetic-investigation', kind: 'laboratory', display: '合成检验', version: 1, indicationCodes: ['clinical-assessment'] }
     const schema = getHisOperation('inpatient.investigation.catalog').output
@@ -735,10 +744,10 @@ describe('HIS operation catalog', () => {
 
     expect(counts).toEqual({
       'clinmesh-administrator': 3,
-      'clinmesh-billing': 5,
+      'clinmesh-billing': 10,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 56,
+      'clinmesh-inpatient': 64,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,
       'clinmesh-shared': 1,
@@ -760,7 +769,10 @@ describe('HIS operation catalog', () => {
     expect(listHisOperations()
       .filter(operation => operation.previewToken === 'required')
       .map(operation => operation.id)).toEqual([
+      'inpatient.financial.refund.confirm',
+      'inpatient.financial.payment.confirm',
       clinicalDocumentOperationIds.sign,
+      'refund.confirm',
       'payment.confirm',
     ])
     expect(getHisOperation('reference.diagnoses.search').handlerOwner).toBe('ReferenceDataService')
