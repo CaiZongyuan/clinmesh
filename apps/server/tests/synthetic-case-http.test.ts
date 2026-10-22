@@ -3217,6 +3217,9 @@ describe('Synthetic Case generation HTTP contract', () => {
     const generationRequests = () => briefProvider.requests.filter(item => item.schemaName === 'investigation_service_result')
     // 临床无效正文不能成功 checkpoint：自动重领必须能请求并消费下一次合法纠正响应。
     expect(generationRequests()).toHaveLength(2)
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM model_task_step WHERE workspace_id = ? AND status = 'succeeded' AND result_json LIKE ?
+    `).get('workspace-demo', '"interpretation\\":\\"normal\\"%')).toEqual({ count: 0 })
     const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`, { headers: { cookie: doctorCookie } },
     )).json())
