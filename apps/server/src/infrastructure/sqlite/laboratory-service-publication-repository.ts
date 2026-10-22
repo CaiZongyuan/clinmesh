@@ -9,6 +9,7 @@ import { QueuedJobScan } from './queued-job-scan.ts'
 
 const actorContextSchema = z.object({
   actorId: z.string().min(1),
+  agentGrantId: z.uuid().optional(),
   epoch: z.string().min(1),
   locationId: z.string().min(1).optional(),
   organizationId: z.string().min(1).optional(),
@@ -59,6 +60,7 @@ function parseActorContext(value: string): ActorContext {
   const context = actorContextSchema.parse(JSON.parse(value))
   return {
     actorId: context.actorId,
+    ...(context.agentGrantId === undefined ? {} : { agentGrantId: context.agentGrantId }),
     epoch: context.epoch,
     roleCode: context.roleCode,
     scenarioRunId: context.scenarioRunId,

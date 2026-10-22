@@ -41,7 +41,11 @@ export class ModelUsageRetention {
         AND a.started_at <= strftime('%Y-%m-%dT%H:%M:%fZ', ?, '-' || ? || ' days')
         AND a.status != 'in-flight'
         AND (json_extract(a.record_json, '$.dispatch') = 'not-dispatched' OR (
-          json_extract(a.record_json, '$.dispatch') = 'dispatched'
+          (json_extract(a.record_json, '$.dispatch') = 'dispatched' OR (
+            json_extract(a.record_json, '$.dispatch') = 'unknown'
+            AND json_extract(a.record_json, '$.effectiveCost.cnyMicro') IS NOT NULL
+            AND EXISTS (SELECT 1 FROM json_each(a.record_json, '$.corrections') correction
+              WHERE json_extract(correction.value, '$.kind') = 'reconcile')))
           AND COALESCE(json_extract(a.record_json, '$.accounting.totalTokens'), json_extract(a.record_json, '$.usage.totalTokens')) IS NOT NULL
           AND (COALESCE(json_extract(a.record_json, '$.effectiveCost.cnyMicro'), json_extract(a.record_json, '$.cost.cnyMicro')) IS NOT NULL
             OR COALESCE(json_extract(a.record_json, '$.effectiveCost.status'), json_extract(a.record_json, '$.cost.status'))
@@ -64,7 +68,8 @@ export class ModelUsageRetention {
           cny_micro = CASE WHEN cny_micro IS NULL AND excluded.cny_micro IS NULL THEN NULL ELSE COALESCE(cny_micro, 0) + COALESCE(excluded.cny_micro, 0) END,
           unpriced_requests = unpriced_requests + excluded.unpriced_requests`).run()
       this.database.driver.prepare(`INSERT INTO model_usage_correction_audit(attempt_id, workspace_id, evidence_json)
-        SELECT attempt_id, workspace_id, json_object('usage', json_extract(record_json, '$.usage'),
+        SELECT attempt_id, workspace_id, json_object('status', status, 'dispatch', json_extract(record_json, '$.dispatch'),
+          'usage', json_extract(record_json, '$.usage'),
           'cost', json_extract(record_json, '$.cost'), 'priceSnapshot', json_extract(record_json, '$.priceSnapshot'),
           'corrections', json_extract(record_json, '$.corrections'))
         FROM model_usage_attempt WHERE attempt_id IN (SELECT attempt_id FROM model_usage_expired_attempt)

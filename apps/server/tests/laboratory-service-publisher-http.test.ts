@@ -1080,6 +1080,31 @@ describe('Laboratory Service Publisher HTTP contract', () => {
     })
   })
 
+  it.each([false, true])('rechecks the publishing Agent grant before dispatch (revoked: %s)', async revoked => {
+    const provider = new LaboratoryEnrichmentProvider()
+    const { administratorCookie, runtime } = await createRuntime(provider)
+    const administratorHeaders = new Headers({ cookie: administratorCookie, origin: 'http://localhost' })
+    const client = await runtime.identity.createAgentClient(administratorHeaders, { name: 'Synthetic catalog Agent' }, randomUUID())
+    const grant = await runtime.identity.createAgentGrant(administratorHeaders, {
+      agentClientId: client.agentClientId, operationIds: ['admin.laboratory-services.publish'],
+      practitionerRoleId: 'practitioner-role-administrator', ttlSeconds: 600,
+    }, randomUUID())
+    const response = await runtime.app.request('/api/his/v1/admin/laboratory-services/actions/publish', {
+      method: 'POST', headers: { authorization: `Bearer ${grant.token}`, 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ input: { entries: [{ conceptId: 'loinc:synthetic:58410-2', expectedVersion: 0 }] } }),
+    })
+    expect(response.status, await response.clone().text()).toBe(200)
+    const { jobId } = publishLaboratoryServicesResponseSchema.parse(await response.json()).data
+    if (revoked) await runtime.identity.revokeAgentGrant(administratorHeaders, grant.grantId, randomUUID())
+    await runtime.dispatchLaboratoryServicePublicationJobs()
+    const job = laboratoryServicePublicationJobSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/admin/laboratory-services/jobs/${jobId}`, { headers: { cookie: administratorCookie } },
+    )).json())
+    expect(job).toMatchObject(revoked ? { status: 'failed', error: { code: 'ROLE_NOT_ALLOWED' }, publishedServiceIds: [] }
+      : { status: 'succeeded', error: null, publishedServiceIds: [expect.any(String), expect.any(String)] })
+    expect(provider.calls).toHaveLength(revoked ? 0 : 1)
+  })
+
   it('publishes an enriched panel atomically and exposes only its orderable root to doctors', async () => {
     const provider = new LaboratoryEnrichmentProvider()
     const fixture = await createRuntime(provider)

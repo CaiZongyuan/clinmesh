@@ -274,7 +274,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
       canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
-      contextStatus: context => identity.modelTaskContextStatus(context),
+      contextStatus: context => identity.modelTaskContextStatus(context, ['admin.laboratory-services.publish']),
       models,
       commands,
       database,

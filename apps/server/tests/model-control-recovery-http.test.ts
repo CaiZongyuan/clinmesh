@@ -149,3 +149,52 @@ it.each(['usage-ledger', 'task-journal', 'result-checkpoint', 'usage-settlement'
     expect(attempts.total).toBe(1)
   }
 })
+
+it.each(['missing-error', 'missing-success', 'malformed', 'unknown-dispatch'])('stops automatic resend when DSH accounting is %s, including after restart', async accounting => {
+  const directory = await mkdtemp(join(tmpdir(), 'clinmesh-bridge-recovery-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  let sent = 0
+  const model = encodeModelRoute({ provider: 'synthetic', model: 'synthetic' })
+  const options = {
+    authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
+    cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'test.sqlite'),
+    demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply' as const,
+    trustedOrigins: ['http://localhost'], syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: model,
+    chatCompletionsProvider: new DshModelProvider({ origin: 'http://127.0.0.1:12345', secret: 'synthetic', timeoutMs: 2000, maxResponseBytes: 16_384,
+      fetch: async (_url, init) => {
+        sent++
+        const { attemptId } = z.object({ attemptId: z.uuid() }).parse(JSON.parse(String(init?.body)))
+        return accounting === 'missing-success' ? Response.json({ model, content: JSON.stringify(persona) })
+          : Response.json({ error: 'MODEL_UNAVAILABLE', ...(accounting === 'malformed' ? { accounting: { attemptId, usage: {} } }
+            : accounting === 'unknown-dispatch' ? { accounting: { attemptId, status: 'failed', dispatch: 'unknown', usage: unknownModelTokenUsage } } : {}) }, { status: 503 })
+      } }),
+  }
+  let runtime = await createClinMeshRuntime(options)
+  cleanup.push(() => runtime.close())
+  const cookie = await signIn(runtime, 'admin@demo.clinmesh.local')
+  const headers = { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }
+  const generated = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', { method: 'POST', headers,
+    body: JSON.stringify({ name: '桥接核算合成患者', population: { count: 1, age: { minimum: 18, maximum: 65 }, gender: 'any' },
+      providerId: 'synthea', seeds: { clinical: 7331, population: 4242 },
+      timeRange: { start: '2020-01-01', end: '2026-08-01' }, timeZone: 'Asia/Shanghai' }) })
+  expect(generated.status).toBe(200)
+  const scenario = await runtime.scenarioData.processNextGenerationJob()
+  const queued = await runtime.app.request(`/api/sim/v1/synthetic-cases/${scenario!.caseIds[0]!}/patient-persona-jobs`, {
+    method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: '{}' })
+  expect(queued.status).toBe(200)
+  const { data: { jobId } } = z.object({ data: z.object({ jobId: z.string() }) }).parse(await queued.json())
+  await runtime.patientPersona.processNext()
+  const read = async () => patientPersonaJobSchema.parse(await (await runtime.app.request(
+    `/api/sim/v1/patient-persona-jobs/${jobId}`, { headers: { cookie } })).json())
+  expect(await read()).toMatchObject({ status: 'failed', error: { code: 'MODEL_OUTCOME_UNKNOWN' }, resultRevision: null })
+  await runtime.close()
+  runtime = await createClinMeshRuntime(options)
+  await setModelControl(runtime, cookie, { enabled: true, requests: 10, automaticRetries: true })
+  await runtime.dispatchPending()
+  await runtime.patientPersona.processNext()
+  expect(sent).toBe(1)
+  expect(await read()).toMatchObject({ status: 'failed', error: { code: 'MODEL_OUTCOME_UNKNOWN' }, resultRevision: null })
+  const attempts = modelUsageListSchema.parse(await (await runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
+  expect(attempts.total).toBe(1)
+  expect(attempts.items).toMatchObject([{ status: 'unknown', dispatch: 'unknown', usage: unknownModelTokenUsage }])
+})

@@ -131,7 +131,6 @@ export class ModelUsageService implements ModelUsageRecorder {
       }
       const record = modelUsageAttemptSchema.parse({ ...updated, usage, dispatch, cost, priceSnapshot })
       this.#save(this.#account(record))
-      this.#control.settle(attemptId, record.dispatch)
     })()
   }
 
@@ -275,6 +274,10 @@ export class ModelUsageService implements ModelUsageRecorder {
       if (correction.cny !== null) effectiveCost = { ...effectiveCost, status: 'priced', cny: correction.cny,
         cnyMicro: Number(modelPricingDecimalMicro(correction.cny)) }
     }
+    const reconciled = record.status !== 'in-flight' && totalTokens !== null && effectiveCost.cnyMicro !== null
+      && record.corrections.some(correction => correction.kind === 'reconcile')
+    // Full consumption reconciliation consumes one request without rewriting dispatch evidence.
+    this.#control.settle(record.id, record.dispatch === 'unknown' && reconciled ? 'dispatched' : record.dispatch)
     if (record.status !== 'in-flight') this.#control.settleDimensions(record.id, { tokens: totalTokens, cny: effectiveCost.cnyMicro }, record.dispatch === 'not-dispatched')
     return { ...record, effectiveCost, accounting: { totalTokens, cny: effectiveCost.cny } }
   }

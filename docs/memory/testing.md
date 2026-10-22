@@ -110,6 +110,8 @@
 
 - 模型恢复的数据库故障注入须覆盖实际请求返回后的用量结算，不能只测派发前账本创建与任务结果检查点。使用临时 SQLite 的结算 UPDATE trigger，恢复写入后分别在原进程和重启后调度，经公开任务／账本查询及合成网络请求次数确认没有重发；复用[控制恢复回归](../../apps/server/tests/model-control-recovery-http.test.ts)。
 
+- 后台 Agent 权限回归须从带授权的真实 HTTP 入队走到任务领取，并验证派发前撤销授权会阻止模型调用。只直接检查身份服务会漏掉持久上下文 strict schema 拒绝或丢失 `agentGrantId`，以及运行时漏传操作范围的问题；复用[检验目录发布回归](../../apps/server/tests/laboratory-service-publisher-http.test.ts)。
+
 - 更新增量病史输入后，同时运行 `pnpm smoke:consultation:native`：共享 Web 旅程通过不证明原生合成 Adapter 匹配。Fixture 需沿用[增量记录合同](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)的短引用与取消信号，不能依赖自动片段必有重复正文，也不能等待已取消请求正常返回。
 
 - HTTP 上传取消回归须等原生存储实际读取第一个数据块后再断开，并等清理完成后验证重试；固定短延迟可能在路由安装取消监听器前结束请求，使测试通过却没有验证取消路径。

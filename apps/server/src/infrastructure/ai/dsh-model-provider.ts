@@ -160,11 +160,14 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
           if (accounting !== undefined && accounting.attemptId !== attemptId) throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The model bridge changed the attempt identity')
           if (accounting !== undefined) knownUsage = mergeModelTokenUsage(knownUsage, accounting.usage)
           if (observation.dispatch !== 'dispatched') observation.dispatch = accounting?.dispatch ?? observation.dispatch
-          const unknownResult = accounting?.status === 'unknown' || accounting?.status === 'cancelled'
+          const unconfirmedAccounting = attemptId !== undefined && (accounting === undefined || observation.dispatch === 'unknown')
+          const unknownResult = unconfirmedAccounting || accounting?.status === 'unknown' || accounting?.status === 'cancelled'
           settled = true
-          if (control !== undefined) settleChatCompletionUsage(control, attemptId, accounting === undefined
-            ? { ...knownConfiguration, status: responseStatus >= 400 ? 'failed' : 'succeeded', dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus }
-            : { ...knownConfiguration, ...withoutAttemptIdentity(accounting), dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus })
+          if (control !== undefined) settleChatCompletionUsage(control, attemptId, {
+            ...knownConfiguration, ...(accounting === undefined ? {} : withoutAttemptIdentity(accounting)),
+            status: unconfirmedAccounting ? 'unknown' : accounting?.status ?? (responseStatus >= 400 ? 'failed' : 'succeeded'),
+            dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus,
+          })
           if (!unknownResult) invokeChatCompletionRequestControl(control?.onRequestComplete)
           if (unknownResult) throw new ChatCompletionsError(failure.success && failure.data.error === 'MODEL_TIMEOUT'
             ? 'AI_TIMEOUT' : 'AI_REQUEST_FAILED', 'The DSH model request outcome is unknown')

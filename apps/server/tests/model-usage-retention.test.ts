@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
-import { modelUsageRetentionSchema, modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
+import { modelUsageAttemptSchema, modelUsageRetentionSchema, modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema } from '@clinmesh/contracts/model-usage'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { signIn, persona, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
@@ -16,7 +16,7 @@ afterEach(async () => {
   vi.useRealTimers()
 })
 
-async function fixture(settings: { unpriced?: boolean; unknownUsage?: boolean } = {}) {
+async function fixture(settings: { unpriced?: boolean; unknownUsage?: boolean; unknownDispatch?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-retention-'))
   dispose.push(() => rm(directory, { recursive: true, force: true }))
   let usageKnown = !settings.unknownUsage
@@ -28,8 +28,11 @@ async function fixture(settings: { unpriced?: boolean; unknownUsage?: boolean } 
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'],
     syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'synthetic-model',
     chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid',
-      fetch: async () => Response.json({ model: 'actual-synthetic', choices: [{ message: { content: JSON.stringify(persona) } }],
-        ...(usageKnown ? { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } } : {}) }) }) }
+      fetch: async () => {
+        if (settings.unknownDispatch) throw new Error('Synthetic connection lost')
+        return Response.json({ model: 'actual-synthetic', choices: [{ message: { content: JSON.stringify(persona) } }],
+          ...(usageKnown ? { usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } } : {}) })
+      } }) }
   let runtime = await createClinMeshRuntime({ ...options, modelPricing })
   dispose.push(() => runtime.close())
   let cookie = await signIn(runtime, 'admin@demo.clinmesh.local')
@@ -48,7 +51,8 @@ async function fixture(settings: { unpriced?: boolean; unknownUsage?: boolean } 
       const created = await runtime.app.request(`/api/sim/v1/synthetic-cases/${generation!.caseIds[0]}/patient-persona-jobs`, {
         method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() }, body: '{}' })
       expect(created.status).toBe(200)
-      expect(await runtime.patientPersona.processNext()).toMatchObject({ status: 'succeeded' })
+      expect(await runtime.patientPersona.processNext()).toMatchObject(settings.unknownDispatch
+        ? { status: 'failed', error: { code: 'MODEL_OUTCOME_UNKNOWN' } } : { status: 'succeeded' })
     },
     setUsageKnown(value: boolean) { usageKnown = value },
     configurePrices() { modelPricing = configuredPrices },
@@ -179,6 +183,55 @@ it('retains unknown consumption and its independent reservations across expiry a
   expect(JSON.parse(receipt.response_json).data).toEqual({ attemptId: unknown.id, detailExpired: true })
   await f.restart()
   expect(modelUsageOverviewSchema.parse(await (await f.request('/overview')).json()).totals).toMatchObject({ requests: 2, knownTokens: 35, unknownTokenRequests: 0, cny: 0.5, unpricedRequests: 0 })
+})
+
+it.each([{ totalTokens: 20, cny: 0.3 }, { totalTokens: 0, cny: 0 }])('settles an unknown dispatch after full audited reconciliation and expires its detail (%j)', async values => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+  const f = await fixture({ unknownDispatch: true })
+  await f.request('/control', { enabled: true, requests: 2, tokens: 100, cny: 1, automaticRetries: true, expectedVersion: 1 })
+  await f.request('/control', { enabled: true, requests: 2, tokens: null, cny: null, automaticRetries: true, expectedVersion: 2 })
+  await f.generatePersona()
+  const original = modelUsageListSchema.parse(await (await f.request('/requests')).json()).items[0]!
+  expect(original).toMatchObject({ status: 'unknown', dispatch: 'unknown', usage: { totalTokens: null } })
+  const before = modelUsageControlSchema.parse(await (await f.request('/control')).json())
+  expect(before.workspace).toMatchObject({ used: 0, reserved: 1, remaining: 1, tokensUnknownReservations: 1, cnyUnknownReservations: 1 })
+  const tokens = { expectedRevision: 0, totalTokens: values.totalTokens, evidence: 'synthetic-token-receipt' }
+  const tokenKey = randomUUID()
+  expect((await f.request(`/requests/${original.id}/reconcile`, tokens, tokenKey)).status).toBe(200)
+  expect((await f.request(`/requests/${original.id}/reconcile`, tokens, tokenKey)).status).toBe(200)
+  await f.at('2026-04-02T00:00:00.000Z')
+  await f.restart()
+  expect((await f.request(`/requests/${original.id}`)).status).toBe(200)
+  expect(modelUsageControlSchema.parse(await (await f.request('/control')).json()).workspace).toMatchObject({
+    used: 0, reserved: 1, tokensUsed: values.totalTokens, tokensUnknownReservations: 0, cnyUnknownReservations: 1,
+  })
+  // Keep the already-expired detail briefly so replay can verify settlement is idempotent.
+  await f.request('/retention', { days: null, expectedVersion: 1 })
+  const money = { expectedRevision: 1, cny: values.cny, evidence: 'synthetic-money-receipt' }
+  const moneyKey = randomUUID()
+  const corrected = await f.request(`/requests/${original.id}/reconcile`, money, moneyKey)
+  expect(corrected.status).toBe(200)
+  expect(modelUsageAttemptSchema.parse(await corrected.json())).toMatchObject({
+    status: 'unknown', dispatch: 'unknown', usage: original.usage, cost: original.cost, priceSnapshot: original.priceSnapshot,
+    accounting: values, corrections: [{ evidence: tokens.evidence }, { evidence: money.evidence }],
+  })
+  expect((await f.request(`/requests/${original.id}/reconcile`, money, moneyKey)).status).toBe(200)
+  const settled = modelUsageControlSchema.parse(await (await f.request('/control')).json())
+  expect(settled.workspace).toMatchObject({ used: 1, reserved: 0, remaining: 1, tokensUsed: values.totalTokens,
+    cnyUsed: values.cny, tokensUnknownReservations: 0, cnyUnknownReservations: 0 })
+  const overview = modelUsageOverviewSchema.parse(await (await f.request('/overview')).json())
+  expect(overview.totals).toMatchObject({ requests: 1, unknownRequests: 1, knownTokens: values.totalTokens, cny: values.cny })
+  await f.request('/retention', { days: 90, expectedVersion: 2 })
+  expect((await f.request(`/requests/${original.id}`)).status).toBe(404)
+  expect((await f.request(`/requests/${original.id}/reconcile`, money, moneyKey)).status).toBe(404)
+  const audit = f.runtime.database.driver.prepare('SELECT evidence_json FROM model_usage_correction_audit WHERE attempt_id = ?').get(original.id) as { evidence_json: string }
+  expect(JSON.parse(audit.evidence_json)).toMatchObject({ status: 'unknown', dispatch: 'unknown', usage: original.usage,
+    corrections: [{ totalTokens: values.totalTokens }, { cny: values.cny }] })
+  await f.restart()
+  expect(modelUsageControlSchema.parse(await (await f.request('/control')).json())).toEqual(settled)
+  expect(modelUsageOverviewSchema.parse(await (await f.request('/overview')).json())).toEqual(overview)
+  expect(modelUsageListSchema.parse(await (await f.request('/requests')).json()).total).toBe(0)
 })
 
 it('keeps cross-Epoch aggregates bound to the current Workspace and retains historical details only for administrators', async () => {
