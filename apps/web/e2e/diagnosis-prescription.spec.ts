@@ -134,6 +134,8 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
   const prescriptionSection = page.locator('[data-agent-section="prescription"]')
   const medicationEntry = prescriptionSection.getByRole('region', { name: '填写处方', exact: true })
   await expect(medicationEntry.getByRole('button', { name: '添加药品', exact: true })).toBeVisible()
+  await expect(medicationEntry.getByText('选择药品，填写用法', { exact: true })).toBeVisible()
+  await expect(medicationEntry.getByText('存在未完成的药品信息，点击对应条目补全后才能开具。', { exact: true })).toHaveCount(0)
   expect((await readCase()).medicationConclusion?.draft).toBeUndefined()
   // 弹窗合同：本院药行仅在参考目录结果为空时出现，这里首条草稿使用参考产品（仅用于编辑与删除，不开具）。
   await medicationEntry.getByRole('button', { name: '添加药品', exact: true }).click()
@@ -201,6 +203,8 @@ for (const width of [1280, 390]) test(`keeps manual diagnosis and prescription i
     await expect.poll(async () => (await readCase()).medicationConclusion?.draft).toBeUndefined()
     await expect(pendingPrescription.getByRole('checkbox')).toHaveCount(0)
     await expect(medicationEntry.getByRole('button', { name: '添加药品', exact: true })).toBeEnabled()
+    await expect(medicationEntry.getByText('选择药品，填写用法', { exact: true })).toBeVisible()
+    await expect(medicationEntry.getByText('存在未完成的药品信息，点击对应条目补全后才能开具。', { exact: true })).toHaveCount(0)
   } finally {
     releaseDeletion()
     await page.unroute(draftPath)

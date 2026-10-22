@@ -601,7 +601,7 @@ export function PrescriptionPage({
               })}
             </ul>
           )}
-          {invalidDraft ? (
+          {items.length > 0 && invalidDraft ? (
             <Alert variant="destructive">
               <CircleAlertIcon />
               <AlertTitle>{locale === 'zh-CN' ? '存在未完成的药品信息，点击对应条目补全后才能开具。' : 'Some medication orders are incomplete. Open them to finish before issuing.'}</AlertTitle>
