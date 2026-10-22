@@ -47,7 +47,7 @@ describe('development database preparation', () => {
       referenceDatabasePath,
     })).resolves.toMatchObject({
       operational: { schemaVersion: expectedSchemaVersion() },
-      reference: { schemaVersion: 10 },
+      reference: { schemaVersion: 11 },
     })
 
     const operational = openClinMeshDatabase({ busyTimeoutMs: 5_000, databasePath })
@@ -58,7 +58,7 @@ describe('development database preparation', () => {
       databasePath: referenceDatabasePath,
       readonly: true,
     })
-    expect(verifyReferenceDatabase(reference)).toMatchObject({ schemaVersion: 10 })
+    expect(verifyReferenceDatabase(reference)).toMatchObject({ schemaVersion: 11 })
     reference.close()
 
     const packageJson = JSON.parse(await readFile(join(process.cwd(), 'package.json'), 'utf8')) as {

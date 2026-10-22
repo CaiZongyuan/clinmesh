@@ -1,6 +1,8 @@
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
+import { offlineReferenceInventoryQuerySchema } from '@clinmesh/contracts/reference-data'
+import { auditOfflineInventory, listOfflineInventories, listOfflineInventoryAudit, prepareOfflineInventory } from './infrastructure/reference-data/offline-reference-inventory.ts'
 import {
   applyReferenceMigrations,
   importReferenceDataRelease,
@@ -9,8 +11,8 @@ import {
   verifyReferenceDatabase,
 } from './infrastructure/sqlite/reference-database.ts'
 
-const commandSchema = z.enum(['import', 'list', 'migrate', 'verify'])
-const optionNames = new Set(['--busy-timeout-ms', '--database', '--manifest'])
+const commandSchema = z.enum(['import', 'list', 'migrate', 'verify', 'prepare-inventory', 'list-inventories', 'inventory-audit'])
+const optionNames = new Set(['--busy-timeout-ms', '--database', '--manifest', '--input-root', '--page', '--page-size'])
 
 function parseOptions(arguments_: string[]): Map<string, string> {
   const options = new Map<string, string>()
@@ -42,6 +44,21 @@ export async function runReferenceDatabaseCli(arguments_: string[]): Promise<unk
   const database = openReferenceDatabase({ busyTimeoutMs, databasePath })
   try {
     if (command === 'migrate') return applyReferenceMigrations(database)
+    if (command === 'prepare-inventory') return await prepareOfflineInventory(database,
+      requiredPath(options.get('--manifest'), 'Offline inventory manifest path'),
+      requiredPath(options.get('--input-root'), 'Offline inventory input root'))
+    if (command === 'list-inventories') {
+      try {
+        const query = offlineReferenceInventoryQuerySchema.parse({ page: options.get('--page'), pageSize: options.get('--page-size') })
+        const result = listOfflineInventories(database, query)
+        auditOfflineInventory(database, { operation: 'list', outcome: 'success' })
+        return result
+      } catch (error) {
+        auditOfflineInventory(database, { operation: 'list', outcome: 'failure' })
+        throw error
+      }
+    }
+    if (command === 'inventory-audit') return listOfflineInventoryAudit(database)
     if (command === 'import') {
       return importReferenceDataRelease(
         database,

@@ -681,6 +681,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
   if (options.identity !== undefined && options.referenceData !== undefined) {
     const identity = options.identity
     const referenceData = options.referenceData
+    app.get('/api/sim/v1/reference-data/offline-inventories', async (context) => {
+      try {
+        const session = await identity.resolveSessionContext(context.req.raw.headers)
+        return context.json(referenceData.offlineInventories(session.actor, context.req.query()))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.get('/api/sim/v1/reference-data/releases', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)

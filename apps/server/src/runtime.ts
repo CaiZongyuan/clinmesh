@@ -213,6 +213,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const referenceData = new ReferenceDataService(
       referenceDatabase === undefined ? undefined : new SqliteReferenceDataRepository(referenceDatabase),
       options.activeReferenceReleaseId,
+      (context, outcome, inventoryIds) => commands.auditRead(context, 'reference.offline-inventories.read', { inventoryIds }, outcome),
     )
     const generationJobs = new ScenarioGenerationJobRepository(database)
     const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
