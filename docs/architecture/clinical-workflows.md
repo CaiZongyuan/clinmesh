@@ -94,7 +94,7 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 无需用药结论是独立的 domain-native 正式事实，记录负责 Actor、Practitioner Role 和虚拟业务时间，不用空 Prescription 或空 MedicationRequest 代替。有效处方与无需用药结论互斥；处方撤回后可确认无需用药。确认动作也清除处方草稿并递增草稿版本。
 
-处方撤回使用不可变 `prescription_withdrawal` 事实表达，不删除或覆盖原 Prescription。只有未发生任何调剂的 signed 或 paid 处方可按 Prescription expected version 和全部 MedicationRequest expected versions 撤回；成功后各 MedicationRequest 进入 `cancelled` 并保留 FHIR history，Prescription 版本递增且读模型投影为 `withdrawn`。未收费的已撤回药品费用不再进入收费员待收费队列，已收费历史仍可查询且不会隐式退款；药房队列、审核、支付和发药入口都拒绝已撤回处方。
+处方撤回使用不可变 `prescription_withdrawal` 事实表达，不删除或覆盖原 Prescription。只有未发生任何调剂且无未知或部分收款的 signed 或 paid 处方可按 Prescription expected version 和全部 MedicationRequest expected versions 撤回；成功后各 MedicationRequest 进入 `cancelled` 并保留 FHIR history，Prescription 版本递增且读模型投影为 `withdrawn`。未收费的已撤回药品费用不再进入收费员待收费队列，已全额收费历史仍可查询且不会隐式退款；药房队列、审核、支付和发药入口都拒绝已撤回处方。
 
 带 Consultation 的病例使用独立检验申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。保存草稿重新读取 active、doctor-orderable Hospital Service 并冻结 service/report snapshot；开立再次校验相同 service ID 和版本，直接提交 Reference Concept ID 返回目录冲突。单一内部适应证 `clinical-evaluation` 不要求医生选择。没有病例责任人的 `awaiting-doctor` 病例必须先由接诊 Command 分配责任并推进状态，Web 才开放检验、诊断、处方和病历写入。开具时保存本院服务 coding、根 LOINC 和报告定义，创建 `ServiceRequest.status=active` 与 `Task.status=requested`，Task `focus` 指向该 ServiceRequest。服务配置保留合成价格，但该流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
 
@@ -293,16 +293,13 @@ requested -> reserved -> prepared -> dispensed
 
 ### 8.5 收费、支付与退款
 
-```text
-ChargeItem billable
-   -> payment preview
-   -> payment pending
-   -> confirmed
-   -> invoiced
+当前门诊账单按一次门诊的 Account 汇总既有 Charge Record，显示挂号、兼容检验与药品应收、累计成功收款、未收余额及各次支付历史。账单是只读聚合，不新增可编辑 Invoice 或独立余额。未收且已撤回的药品项与收费队列一样退出有效应收汇总，原费用和支付尝试仍保留；已全额收款后撤回的项目继续计入原总额与实收。挂号费用保留为未收应收，本期只有兼容检验和药品收款入口；独立检查申请仍不计费。退款、医保、预交金和正式票据尚未实现。
 
-confirmed -> refund requested -> refunded
-confirmed -> ambiguous external result -> reconciled/failed
-```
+收费员可对当前应收分次收款，每次可组合现金、银行卡和移动支付，同一种方式只出现一次。金额使用整数分；显式输入必须为正，各方式合计不得超过该应收剩余余额。未指定方式时默认现金收取全部剩余金额，保留历史零价项目的零元现金兼容行为。预览冻结本次金额、方式、费用版本及岗位上下文，人工审阅后用 token 确认；金额或临床依赖变化后须重新预览。
+
+成功尝试计入累计实收，拒付与未知尝试不计入，原始尝试及关联号始终保留。部分成功保持应收可继续收取，只有累计成功金额等于原费用总额才由原 Workflow Command 推进兼容检验 LIS 或已完诊处方药房放行；单次成功不等于全额完成，组合方式也不独立触发临床状态。部分收款后仍属于原队列时，页面保留队列页码及选中费用；支付历史独立翻页，切换就诊时从历史第一页开始，翻页不改变整单金额。
+
+未知尝试未查明前禁止对同一应收再次预览或确认。收费员从支付历史审阅“查询原支付结果”，提交原 payment ID、支付版本和当前 ChargeItem 版本；恢复仅给原尝试追加确定结果，不创建新收款。确定性模拟器的未知规则分别查询为成功、拒付或继续未知，查询计划在原收款时冻结；旧库未知尝试保持未知，不推定成功。恢复为拒付后可按最新余额重新预览；继续未知时仍禁止收款。页面刷新和服务重启后从同一持久账单恢复历史与可用动作。
 
 重要建模：
 

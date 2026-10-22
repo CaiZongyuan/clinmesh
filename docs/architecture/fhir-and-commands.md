@@ -361,6 +361,8 @@ POST /api/his/v1/encounters/{id}/actions/complete
 POST /api/his/v1/clinical-documents/{compositionId}/actions/revise
 POST /api/his/v1/payments/actions/preview
 POST /api/his/v1/payments/{previewId}/actions/confirm
+GET  /api/his/v1/billing/cases/{caseId}
+POST /api/his/v1/payments/{paymentId}/actions/recover
 POST /api/his/v1/prescriptions/{prescriptionId}/actions/withdraw
 POST /api/his/v1/prescriptions/{prescriptionId}/actions/dispense
 POST /api/sim/v1/scenario-runs/{id}/actions/reset
@@ -438,10 +440,11 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 ### 6.6 预览与提交
 
-临床文书签署和门诊支付使用带时效 token 的预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；门诊支付预览绑定 Charge Item。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
+临床文书签署和门诊支付使用带时效 token 的预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；门诊支付预览绑定岗位上下文、ChargeItem 版本、本次金额及组合方式。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
 
 提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、门诊退费、医保和库存调拨不属于当前能力，也不宣称已有预览协议。
 
+门诊账单 GET（`billing.case.get` v2）仅向收费员返回当前作用域内一次门诊的完整应收与余额，以及一页原支付历史。HTTP 与 CLI 使用 `page`、`pageSize`，默认 1、20，单页最多 100；`paymentsPagination` 返回页码、页大小与历史总条数，`payments` 按创建时间及 payment ID 倒序排列。Surface 的 `billing.case.read` 只绑定当前就诊，可选 `page` 读取并显示每页 20 条的历史，供人工审阅恢复；不接受其他病例 ID。`payment.recover` 是审阅后的窄 Command，要求幂等键、`input.expectedPaymentVersion` 和原应收的 ChargeItem expected version；没有任意金额或 outcome 输入，也不重用预览 token。未解决支付版本为 1，追加确定结果后为 2；终态查询返回既有结果，继续未知不改变版本。HTTP、Operation Catalog、CLI 和 Surface 共用此 owner，业务与恢复边界见[收费与支付](clinical-workflows.md#85-收费支付与退款)。
 住院结算使用独立的逐项账目指纹预览：提交校验原预览指纹、Encounter 版本与预期金额，不使用上述五分钟 `commitToken`。住院结算包含补缴或关联原入金的退款，与医生出院医嘱、护士出区和清床分别执行；状态门禁及原意图恢复合同见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
 
 病案首页通过 `inpatient.record.read/submit/review/archive` 共享 Query/Command 暴露四组核心字段及独立修订、审核和不可变快照，不新增未实现的通用FHIR病历写能力。提交显式携带本次实际主操作选择或空值，提交、审核与归档均绑定 `expectedRevision` 与 `expectedSourcesHash`；`INPATIENT_RECORD_STALE` 要求重新审阅来源并由医生重新提交，不能静默刷新hash后重做。归档新写返回 `INPATIENT_RECORD_ARCHIVED`，旧receipt优先重放；岗位和门禁见[病案首页与归档](clinical-workflows.md#病案首页与归档)。

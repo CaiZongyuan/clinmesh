@@ -14,6 +14,7 @@ import {
   apiErrorSchema,
   sendConsultationMessageResponseSchema,
   billingQueueSchema,
+  billingCaseSchema,
   cancelLaboratoryRequestRequestSchema,
   clinicalCatalogSchema,
   clinicalDocumentDraftResponseSchema,
@@ -68,6 +69,7 @@ import { z } from 'zod'
 import { AuditQuery } from '../src/application/audit-query.ts'
 import { WorkspaceContextError } from '../src/infrastructure/sqlite/workspace-repository.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import type { SqlitePerformanceObserver } from '../src/infrastructure/sqlite/performance-observer.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import type {
   ScenarioGenerationProvider,
@@ -1389,6 +1391,24 @@ const completionBlockerCases: Array<{
 describe('outpatient workflow HTTP contract', () => {
   const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
   const temporaryDirectories: string[] = []
+
+  async function paymentTestRuntime(now?: () => Date, performanceObserver?: SqlitePerformanceObserver) {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-payment-boundary-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const options = {
+      authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password, migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(), consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model', patientPersonaModel: 'fake-persona-model', syntheaProvider: new StubSyntheaProvider(),
+      ...(now === undefined ? {} : { now }),
+      ...(performanceObserver === undefined ? {} : { performanceObserver }),
+    }
+    const runtime = await createClinMeshRuntime(options)
+    runtimes.push(runtime)
+    return { runtime, password, options }
+  }
 
   it('keeps doctor queue pagination and case details readable when an active case has no triage record', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-doctor-queue-filter-'))
@@ -7096,6 +7116,319 @@ describe('outpatient workflow HTTP contract', () => {
     }
   })
 
+  it('collects a laboratory receivable in installments and combined methods without releasing LIS early', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-installment-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost',
+      authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
+      databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password,
+      migrationMode: 'apply',
+      trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(),
+      consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model',
+      patientPersonaModel: 'fake-persona-model',
+      syntheaProvider: new StubSyntheaProvider(),
+    })
+    runtimes.push(runtime)
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const collect = async (version: string, tenders: Array<{ method: string; amountFen: number }>) => {
+      const expectedVersions = { [`ChargeItem/${testCase.order.chargeItemId}`]: version }
+      const response = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+        method: 'POST', headers: commandHeaders(cookie),
+        body: JSON.stringify({ expectedVersions, input: {
+          caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success', tenders,
+        } }),
+      })
+      expect(response.status).toBe(200)
+      const preview = paymentPreviewResponseSchema.parse(await response.json()).data
+      const confirmed = await runtime.app.request(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, {
+        method: 'POST', headers: commandHeaders(cookie),
+        body: JSON.stringify({ expectedVersions, input: { commitToken: preview.commitToken } }),
+      })
+      expect(confirmed.status).toBe(200)
+      return paymentResponseSchema.parse(await confirmed.json()).data
+    }
+    const readBill = async () => {
+      const response = await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}`, { headers: { cookie } })
+      expect(response.status).toBe(200)
+      return billingCaseSchema.parse(await response.json())
+    }
+    expect((await readBill()).payments).toEqual([])
+    expect(await collect('1', [{ method: 'cash', amountFen: 2000 }])).toMatchObject({
+      amountFen: 2000, outcome: 'success', status: 'awaiting-lab-payment',
+    })
+    const partial = await readBill()
+    expect(partial.charges.find(charge => charge.category === 'laboratory')).toMatchObject({
+      amountFen: 6800, paidFen: 2000, remainingFen: 4800, status: 'billable', chargeVersion: 2,
+    })
+    expect(await runtime.dispatcher.dispatchOnce()).toBeUndefined()
+    expect(await collect('2', [{ method: 'bank-card', amountFen: 3000 }, { method: 'mobile', amountFen: 1800 }])).toMatchObject({
+      amountFen: 4800, outcome: 'success', status: 'awaiting-lis',
+    })
+    const bill = await readBill()
+    expect(bill.paidFen).toBe(6800)
+    expect(bill.payments).toHaveLength(2)
+    expect(bill.payments.find(payment => payment.amountFen === 4800)?.tenders).toEqual([{ method: 'bank-card', amountFen: 3000 }, { method: 'mobile', amountFen: 1800 }])
+    expect(bill.charges.find(charge => charge.category === 'laboratory')).toMatchObject({ paidFen: 6800, remainingFen: 0, status: 'paid' })
+  })
+
+  it('pages payment history with complete balances and recovers a hidden attempt without reading other tenders', async () => {
+    const queries: string[] = []
+    const { runtime, password } = await paymentTestRuntime(undefined, {
+      observeStatement: measurement => { if (measurement.kind === 'query') queries.push(measurement.sql) },
+      observeTransaction: () => {},
+    })
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const paymentIds: string[] = []
+    for (const [index, rule] of ['decline', 'decline', 'success', 'ambiguous'].entries()) {
+      const expectedVersions = { [`ChargeItem/${testCase.order.chargeItemId}`]: String(index + 1) }
+      const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+        method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input: {
+          caseId: testCase.caseId, category: 'laboratory', simulatorRule: rule,
+          tenders: [{ method: 'bank-card', amountFen: 1000 }, { method: 'mobile', amountFen: 1000 }],
+        } }),
+      })
+      expect(previewResponse.status).toBe(200)
+      const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
+      const response = await runtime.app.request(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, {
+        method: 'POST', headers: commandHeaders(cookie),
+        body: JSON.stringify({ expectedVersions, input: { commitToken: preview.commitToken } }),
+      })
+      expect(response.status).toBe(200)
+      paymentIds.push(paymentResponseSchema.parse(await response.json()).data.paymentId)
+    }
+    const readPage = async (page: number) => {
+      queries.length = 0
+      const response = await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}?page=${page}&pageSize=2`, { headers: { cookie } })
+      expect(response.status).toBe(200)
+      const bill = billingCaseSchema.parse(await response.json())
+      expect(bill.payments).toHaveLength(2)
+      expect(bill).toMatchObject({ paymentsPagination: { page, pageSize: 2, total: 4 }, paidFen: 2000, remainingFen: 6800, totalFen: 8800 })
+      expect(bill.payments.every(payment => payment.tenders.length === 2)).toBe(true)
+      expect(queries.filter(sql => /FROM payment_tender\b/u.test(sql))).toHaveLength(1)
+      return bill
+    }
+    const first = await readPage(1)
+    const second = await readPage(2)
+    expect(new Set([...first.payments, ...second.payments].map(payment => payment.paymentId))).toEqual(new Set(paymentIds))
+    for (const query of ['page=0', 'pageSize=101', 'pageSize=1.5']) {
+      expect((await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}?${query}`, { headers: { cookie } })).status).toBe(400)
+    }
+    queries.length = 0
+    const recoveredResponse = await runtime.app.request(`/api/his/v1/payments/${paymentIds[3]}/actions/recover`, {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '5' }, input: { expectedPaymentVersion: 1 },
+      }),
+    })
+    expect(recoveredResponse.status).toBe(200)
+    expect(paymentResponseSchema.parse(await recoveredResponse.json()).data).toMatchObject({ paymentId: paymentIds[3], outcome: 'success', status: 'awaiting-lab-payment' })
+    expect(queries.filter(sql => /FROM payment_tender\b/u.test(sql))).toHaveLength(0)
+    expect(queries.filter(sql => /FROM payment_transaction AS payment/u.test(sql) && /payment\.payment_id = \?/u.test(sql))).toHaveLength(1)
+    const billResponse = await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}?pageSize=1`, { headers: { cookie } })
+    const bill = billingCaseSchema.parse(await billResponse.json())
+    expect(bill).toMatchObject({ paidFen: 4000, remainingFen: 4800, paymentsPagination: { page: 1, pageSize: 1, total: 4 } })
+    expect(bill.payments).toHaveLength(1)
+  })
+
+  it.each([
+    ['ambiguous', 'success', 6800, 'paid'],
+    ['ambiguous-decline', 'declined', 0, 'declined'],
+    ['ambiguous-pending', 'ambiguous', 0, 'ambiguous'],
+  ] as const)('queries the original %s attempt without creating a second collection', async (rule, outcome, paidFen, status) => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-payment-recovery-http-'))
+    temporaryDirectories.push(directory)
+    const password = `Test-${randomUUID()}-Aa1!`
+    const runtime = await createClinMeshRuntime({
+      authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
+      cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'clinmesh.sqlite'),
+      demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
+      chatCompletionsProvider: new QueuePersonaProvider(), consultationModel: 'fake-consultation-model',
+      investigationModel: 'fake-investigation-model', patientPersonaModel: 'fake-persona-model', syntheaProvider: new StubSyntheaProvider(),
+    })
+    runtimes.push(runtime)
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' },
+        input: { caseId: testCase.caseId, category: 'laboratory', simulatorRule: rule },
+      }),
+    })
+    expect(previewResponse.status).toBe(200)
+    const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
+    const response = await runtime.app.request(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' }, input: { commitToken: preview.commitToken },
+      }),
+    })
+    const payment = paymentResponseSchema.parse(await response.json()).data
+    expect(payment.outcome).toBe('ambiguous')
+    const blocked = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '2' },
+        input: { caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success' },
+      }),
+    })
+    expect(blocked.status).toBe(409)
+    const key = randomUUID()
+    const recover = () => runtime.app.request(`/api/his/v1/payments/${payment.paymentId}/actions/recover`, {
+      method: 'POST', headers: commandHeaders(cookie, key), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '2' }, input: { expectedPaymentVersion: 1 },
+      }),
+    })
+    const recoveredResponse = await recover()
+    expect(recoveredResponse.status).toBe(200)
+    const recovered = paymentResponseSchema.parse(await recoveredResponse.json())
+    expect(recovered.data).toMatchObject({ outcome, paymentId: payment.paymentId })
+    expect(paymentResponseSchema.parse(await (await recover()).json())).toEqual(recovered)
+    const billResponse = await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}`, { headers: { cookie } })
+    const bill = billingCaseSchema.parse(await billResponse.json())
+    expect(bill.payments).toHaveLength(1)
+    expect(bill.payments[0]).toMatchObject({ initialOutcome: 'ambiguous', outcome, paymentId: payment.paymentId })
+    expect(bill.charges.find(charge => charge.category === 'laboratory')).toMatchObject({ paidFen, status })
+    await expectCommandAudit(runtime, cookie, recovered.auditId, 'payment.recover')
+  })
+
+  it.each(['success', 'ambiguous'] as const)('keeps a partially collected %s prescription out of pharmacy and prevents withdrawal until resolved and fully paid', async rule => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createSignedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const expectedVersions = { [`ChargeItem/${testCase.signed.chargeItemId}`]: '1' }
+    const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input: {
+        caseId: testCase.caseId, category: 'medication', simulatorRule: rule, tenders: [{ method: 'cash', amountFen: 1 }],
+      } }),
+    })
+    const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
+    const confirmResponse = await runtime.app.request(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input: { commitToken: preview.commitToken } }),
+    })
+    expect(confirmResponse.status).toBe(200)
+    const payment = paymentResponseSchema.parse(await confirmResponse.json()).data
+    const pharmacist = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+    const pharmacy = await runtime.app.request('/api/his/v1/pharmacy/queue?status=pending&pageSize=20', { headers: { cookie: pharmacist } })
+    expect(pharmacyQueueSchema.parse(await pharmacy.json()).items).toEqual([])
+    const withdraw = await runtime.app.request(`/api/his/v1/prescriptions/${testCase.draft.prescriptionId}/actions/withdraw`, {
+      method: 'POST', headers: commandHeaders(testCase.doctorCookie), body: JSON.stringify({
+        expectedVersions: Object.fromEntries(testCase.draft.medicationRequestIds.map(id => [`MedicationRequest/${id}`, '2'])),
+        input: { expectedPrescriptionVersion: 2 },
+      }),
+    })
+    expect(withdraw.status).toBe(409)
+    let chargeVersion = '2'
+    if (rule === 'ambiguous') {
+      const recovered = await runtime.app.request(`/api/his/v1/payments/${payment.paymentId}/actions/recover`, {
+        method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({
+          expectedVersions: { [`ChargeItem/${testCase.signed.chargeItemId}`]: '2' }, input: { expectedPaymentVersion: 1 },
+        }),
+      })
+      expect(paymentResponseSchema.parse(await recovered.json()).data.status).toBe('awaiting-medication-payment')
+      chargeVersion = '3'
+    }
+    const remainderResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.signed.chargeItemId}`]: chargeVersion },
+        input: { caseId: testCase.caseId, category: 'medication', simulatorRule: 'success' },
+      }),
+    })
+    expect(remainderResponse.status).toBe(200)
+    const remainder = paymentPreviewResponseSchema.parse(await remainderResponse.json()).data
+    const paidResponse = await runtime.app.request(`/api/his/v1/payments/${remainder.previewId}/actions/confirm`, {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.signed.chargeItemId}`]: chargeVersion }, input: { commitToken: remainder.commitToken },
+      }),
+    })
+    expect(paymentResponseSchema.parse(await paidResponse.json()).data.status).toBe('awaiting-dispense')
+    const ready = await runtime.app.request('/api/his/v1/pharmacy/queue?status=pending&pageSize=20', { headers: { cookie: pharmacist } })
+    expect(pharmacyQueueSchema.parse(await ready.json()).items).toHaveLength(1)
+  })
+
+  it('binds payment review to the acting context and expires it on real time while Virtual Time is frozen', async () => {
+    let now = new Date('2026-10-21T00:00:00.000Z')
+    const { runtime, password } = await paymentTestRuntime(() => now)
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const expectedVersions = { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' }
+    const response = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input: {
+        caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success',
+      } }),
+    })
+    expect(response.status).toBe(200)
+    const preview = paymentPreviewResponseSchema.parse(await response.json()).data
+    expect(preview.expiresAt).toBe('2026-10-21T00:05:00.000Z')
+    const path = `/api/his/v1/payments/${preview.previewId}/actions/confirm`
+    const actor = await runtime.identity.resolveRequestActor(new Headers({ cookie }), 'POST', path)
+    expect(() => runtime.workflow.confirmPayment({
+      commitToken: preview.commitToken, context: { ...actor, locationId: 'another-location' },
+      expectedVersions, idempotencyKey: randomUUID(), previewId: preview.previewId,
+    })).toThrow('The payment commit token is invalid')
+    const confirm = (commitToken: string) => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input: { commitToken } }),
+    })
+    expect((await confirm(`${preview.commitToken}invalid`)).status).toBe(409)
+    now = new Date('2026-10-21T00:05:00.000Z')
+    expect((await confirm(preview.commitToken)).status).toBe(409)
+    const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}`, {
+      headers: { cookie },
+    })).json())
+    expect(bill.payments).toEqual([])
+    expect(bill.paidFen).toBe(0)
+  })
+
+  it('preserves unknown attempts across restart and serializes competing previews and duplicate recovery', async () => {
+    const setup = await paymentTestRuntime()
+    let runtime = setup.runtime
+    const testCase = await createLabOrderedCase(runtime, setup.password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', setup.password)
+    const expectedVersions = { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' }
+    const preview = async (amountFen: number) => runtime.app.request('/api/his/v1/payments/actions/preview', {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input: {
+        caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'ambiguous', tenders: [{ method: 'mobile', amountFen }],
+      } }),
+    })
+    expect((await preview(6801)).status).toBe(409)
+    expect((await preview(0)).status).toBe(400)
+    const first = paymentPreviewResponseSchema.parse(await (await preview(6800)).json()).data
+    const competing = paymentPreviewResponseSchema.parse(await (await preview(6800)).json()).data
+    const confirm = (value: typeof first) => runtime.app.request(`/api/his/v1/payments/${value.previewId}/actions/confirm`, {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input: { commitToken: value.commitToken } }),
+    })
+    const responses = await Promise.all([confirm(first), confirm(competing)])
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409])
+    const payment = paymentResponseSchema.parse(await responses.find(response => response.status === 200)!.json()).data
+    await runtime.close()
+    runtimes.splice(runtimes.indexOf(runtime), 1)
+    runtime = await createClinMeshRuntime(setup.options)
+    runtimes.push(runtime)
+    const billUrl = `/api/his/v1/billing/cases/${testCase.caseId}`
+    const read = () => runtime.app.request(billUrl, { headers: { cookie } })
+    expect(billingCaseSchema.parse(await (await read()).json()).payments).toMatchObject([{ paymentId: payment.paymentId, outcome: 'ambiguous' }])
+    const doctor = await signIn(runtime, 'doctor@demo.clinmesh.local', setup.password)
+    expect((await runtime.app.request(billUrl, { headers: { cookie: doctor } })).status).toBe(403)
+    const key = randomUUID()
+    const recover = (actor = cookie) => runtime.app.request(`/api/his/v1/payments/${payment.paymentId}/actions/recover`, {
+      method: 'POST', headers: commandHeaders(actor, key), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '2' }, input: { expectedPaymentVersion: 1 },
+      }),
+    })
+    expect((await recover(doctor)).status).toBe(403)
+    const recovered = await Promise.all([recover(), recover()])
+    expect(recovered.map(response => response.status)).toEqual([200, 200])
+    expect(await recovered[0]!.json()).toEqual(await recovered[1]!.json())
+    const bill = billingCaseSchema.parse(await (await read()).json())
+    expect(bill.paidFen).toBe(6800)
+    expect(bill.payments).toHaveLength(1)
+    expect(bill.payments[0]).toMatchObject({ paymentId: payment.paymentId, initialOutcome: 'ambiguous', outcome: 'success', version: 2 })
+  })
+
   it('previews the authoritative laboratory amount and confirms one successful payment for LIS', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-lab-payment-http-'))
     temporaryDirectories.push(directory)
@@ -9047,6 +9380,13 @@ describe('outpatient workflow HTTP contract', () => {
       items: [],
       total: 0,
     })
+    const billResponse = await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}`, {
+      headers: { cookie: cashierCookie },
+    })
+    expect(billResponse.status).toBe(200)
+    const bill = billingCaseSchema.parse(await billResponse.json())
+    expect(bill.charges.every(charge => charge.category !== 'medication')).toBe(true)
+    expect(bill.remainingFen).toBe(bill.charges.filter(charge => charge.category === 'registration').reduce((sum, charge) => sum + charge.remainingFen, 0))
     const paymentResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
       body: JSON.stringify({
         expectedVersions: { [`ChargeItem/${testCase.signed.chargeItemId}`]: '1' },

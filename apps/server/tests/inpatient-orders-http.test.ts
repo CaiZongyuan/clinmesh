@@ -519,7 +519,8 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       expect(legacy.driver.pragma('foreign_key_check')).toEqual([])
       expect(applyMigrations(legacy)).toMatchObject({applied:[
         '0069_registration-numbering.sql', '0070_doctor-recommendation-consolidation-stage.sql', '0070_inpatient-orders.sql',
-        '0071_inpatient-investigations-transfer.sql', '0071_model-usage.sql', '0072_inpatient-surgery.sql', '0072_model-usage-control.sql',
+        '0071_inpatient-investigations-transfer.sql', '0071_model-usage.sql', '0071_payment-installments.sql',
+        '0072_inpatient-surgery.sql', '0072_model-usage-control.sql', '0072_payment-history-pagination.sql',
         '0073_inpatient-discharge.sql', '0073_model-task-recovery.sql', '0074_host-model-waiting.sql', '0074_inpatient-record.sql',
         '0075_model-usage-dimensions.sql', '0076_model-usage-retention.sql', '0077_model-usage-token-breakdown.sql',
       ],schemaVersion:expectedSchemaVersion()})

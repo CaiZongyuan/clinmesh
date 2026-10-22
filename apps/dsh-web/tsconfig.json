@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": { "types": ["bun"] },
-  "include": ["src/**/*.ts", "src/**/*.tsx", "../web/src/app/imaging/openseadragon-min.d.ts"]
+  "include": ["src/**/*.ts", "src/**/*.tsx", "../web/src/app/imaging/openseadragon-min.d.ts", "../server/src/infrastructure/imaging-assets/dcmjs.d.ts", "../server/src/infrastructure/imaging-assets/openjpeg.d.ts"]
 }
