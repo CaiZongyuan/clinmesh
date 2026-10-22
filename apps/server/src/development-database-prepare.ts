@@ -31,6 +31,7 @@ export async function prepareDevelopmentDatabases(input: {
 export async function prepareDevelopmentEnvironment(input: {
   busyTimeoutMs?: number
   databasePath: string
+  migrationsOnly?: boolean
   referenceDatabasePath?: string
   referenceReleaseId?: string
   repositoryRoot?: string
@@ -38,7 +39,7 @@ export async function prepareDevelopmentEnvironment(input: {
   onProgress?: (line: string) => void
 }) {
   const result = await prepareDevelopmentDatabases(input)
-  if (input.referenceDatabasePath === undefined) return result
+  if (input.migrationsOnly === true || input.referenceDatabasePath === undefined) return result
   const repositoryRoot = resolve(input.repositoryRoot ?? join(import.meta.dirname, '../../..'))
   const databasePath = resolve(input.referenceDatabasePath)
   if (!referenceDatabaseIsReady(databasePath, repositoryRoot, input.referenceReleaseId)) {
@@ -68,6 +69,7 @@ if (entrypoint !== undefined && resolve(entrypoint) === fileURLToPath(import.met
   const result = await prepareDevelopmentEnvironment({
     busyTimeoutMs: Number(environment.CLINMESH_BUSY_TIMEOUT_MS ?? '5000'),
     databasePath: config.databasePath,
+    migrationsOnly: process.argv.includes('--migrations-only'),
     ...(config.referenceDatabasePath === undefined
       ? {}
       : { referenceDatabasePath: config.referenceDatabasePath }),

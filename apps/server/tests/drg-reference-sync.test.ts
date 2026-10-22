@@ -1,4 +1,5 @@
 import { createServer, type Server } from 'node:http'
+import { createReadStream } from 'node:fs'
 import * as filesystem from 'node:fs/promises'
 import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -11,12 +12,17 @@ import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createDrgReferenceFixture, sha256 } from './fixtures/drg-reference.ts'
 
 vi.mock('node:fs/promises', { spy: true })
+vi.mock('node:fs', async importOriginal => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return { ...actual, createReadStream: vi.fn(actual.createReadStream) }
+})
 
 describe('DRG reference installation', () => {
   const roots: string[] = []
   const servers: Server[] = []
   afterEach(async () => {
     vi.mocked(filesystem.rename).mockRestore()
+    vi.mocked(createReadStream).mockClear()
     await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
       server.closeAllConnections()
       server.close(error => error === undefined ? resolve() : reject(error))
@@ -64,7 +70,9 @@ describe('DRG reference installation', () => {
     const input = await fixture()
     const options = { ...input, repositoryRoot: input.root, distributionPath: join(input.root, 'does-not-exist.json') }
     expect(await runDrgReferenceSync(options)).toMatchObject({ source: 'local', created: true, inventoryId: 'synthetic-inventory-v1' })
+    expect(vi.mocked(createReadStream).mock.calls.filter(([path]) => String(path).endsWith('records.jsonl'))).toHaveLength(1)
     expect(await runDrgReferenceSync(options)).toMatchObject({ source: 'local', created: false })
+    expect(vi.mocked(createReadStream).mock.calls.filter(([path]) => String(path).endsWith('records.jsonl'))).toHaveLength(2)
     expect(await runReferenceDatabaseCli(['list-inventories', '--database', input.databasePath]))
       .toMatchObject({ total: 1, items: [{ inventoryId: 'synthetic-inventory-v1', runtimeEnabled: false,
         packages: [{ tables: [{ units: ['次'] }] }] }] })
@@ -76,17 +84,20 @@ describe('DRG reference installation', () => {
     const input = await downloadable()
     const first = await runDrgReferenceSync(input.options)
     expect(first).toMatchObject({ source: 'download', created: true, inventoryId: 'synthetic-inventory-v1' })
+    expect(vi.mocked(createReadStream).mock.calls.filter(([path]) => String(path).endsWith('records.jsonl'))).toHaveLength(1)
     expect(await readFile(join(first.inputRoot, input.packageRoot, 'services/records.jsonl'), 'utf8')).toBe(input.records)
     expect(await runReferenceDatabaseCli(['list-inventories', '--database', input.databasePath]))
       .toMatchObject({ total: 1, items: [{ runtimeEnabled: false }] })
     await rm(input.distributionPath)
     expect(await runDrgReferenceSync(input.options)).toMatchObject({ source: 'installed', created: false })
+    expect(vi.mocked(createReadStream).mock.calls.filter(([path]) => String(path).endsWith('records.jsonl'))).toHaveLength(2)
     expect(input.requests()).toBe(1)
   })
 
   it('checks a fresh download without creating the formal database or install directory', async () => {
     const input = await downloadable()
     expect(await runDrgReferenceSync({ ...input.options, checkOnly: true })).toMatchObject({ source: 'download' })
+    expect(vi.mocked(createReadStream).mock.calls.filter(([path]) => String(path).endsWith('records.jsonl'))).toHaveLength(1)
     await expect(stat(input.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
     await expect(stat(input.installDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
   })

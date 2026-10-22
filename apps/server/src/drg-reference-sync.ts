@@ -8,9 +8,9 @@ import { pipeline } from 'node:stream/promises'
 import { parseArgs } from 'node:util'
 import { extract } from 'tar'
 import { z } from 'zod'
-import { offlineReferenceLockSchema } from '@clinmesh/contracts/reference-data'
+import { offlineReferenceLockSchema, type OfflineReferenceInventory } from '@clinmesh/contracts/reference-data'
 import { readServerEnvironment } from './config.ts'
-import { inspectOfflineInventory, listOfflineInventories, prepareOfflineInventory } from './infrastructure/reference-data/offline-reference-inventory.ts'
+import { inspectOfflineInventory, listOfflineInventories, publishOfflineInventory } from './infrastructure/reference-data/offline-reference-inventory.ts'
 import { applyReferenceMigrations, openReferenceDatabase } from './infrastructure/sqlite/reference-database.ts'
 
 const defaultRepositoryRoot = resolve(import.meta.dirname, '../../..')
@@ -50,8 +50,7 @@ export interface DrgReferenceSyncResult {
 
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
 
-async function publish(options: DrgReferenceSyncOptions, lockPath: string, inputRoot: string, source: DrgReferenceSyncResult['source']) {
-  const inventory = await inspectOfflineInventory(lockPath, inputRoot)
+async function publish(options: DrgReferenceSyncOptions, inventory: OfflineReferenceInventory, inputRoot: string, source: DrgReferenceSyncResult['source']) {
   let temporary: string | undefined
   let database: ReturnType<typeof openReferenceDatabase> | undefined
   try {
@@ -76,7 +75,7 @@ async function publish(options: DrgReferenceSyncOptions, lockPath: string, input
     const writable = openReferenceDatabase({ databasePath, busyTimeoutMs: 5_000 })
     try {
       applyReferenceMigrations(writable)
-      const result = await prepareOfflineInventory(writable, lockPath, inputRoot)
+      const result = publishOfflineInventory(writable, inventory)
       return { inventoryId: inventory.inventoryId, source, created: result.created, inputRoot }
     } finally { writable.close() }
   } finally {
@@ -127,10 +126,11 @@ export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Pro
   const installDirectory = resolve(options.installDirectory ?? join(dirname(resolve(options.databasePath)), 'drg-reference'))
   const installedRoot = join(installDirectory, lockHash)
   for (const [source, inputRoot] of [['local', repositoryRoot], ['installed', installedRoot]] as const) {
-    try { await inspectOfflineInventory(lockPath, inputRoot) }
+    let inventory: OfflineReferenceInventory
+    try { inventory = await inspectOfflineInventory(lockPath, inputRoot) }
     catch { continue }
     options.onProgress?.(`DRG 资料完整，复用${source === 'local' ? '本地' : '已安装'}资料：${lock.inventoryId}`)
-    return publish(options, lockPath, inputRoot, source)
+    return publish(options, inventory, inputRoot, source)
   }
 
   const distribution = distributionSchema.parse(JSON.parse(await readFile(options.distributionPath ?? defaultDistributionPath, 'utf8')))
@@ -171,15 +171,15 @@ export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Pro
     if (paths.size !== distribution.artifact.fileCount || bytes !== distribution.artifact.unpackedSizeBytes) {
       throw new Error('DRG archive is incomplete')
     }
-    await inspectOfflineInventory(lockPath, extracted)
-    if (options.checkOnly) return await publish(options, lockPath, extracted, 'download')
+    const inventory = await inspectOfflineInventory(lockPath, extracted)
+    if (options.checkOnly) return await publish(options, inventory, extracted, 'download')
     let previousExists = false
     try { await lstat(installedRoot); previousExists = true }
     catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error }
     if (previousExists) { await rename(installedRoot, backup); replaced = true }
     await rename(extracted, installedRoot)
     installed = true
-    const result = await publish(options, lockPath, installedRoot, 'download')
+    const result = await publish(options, inventory, installedRoot, 'download')
     options.onProgress?.(`DRG 资料准备完成：${result.inventoryId}`)
     return result
   } catch (error) {

@@ -112,7 +112,7 @@ describe('createLanDevelopmentPlan', () => {
       ],
       processes: [
         {
-          args: ['dev:server'],
+          args: ['--filter', '@clinmesh/server', 'dev:prepared'],
           environment: {
             CLINMESH_TRUSTED_ORIGINS: 'http://127.0.0.1:51868,http://127.0.0.1:51888,http://localhost:51888,http://192.168.1.23:51888',
           },
@@ -136,6 +136,23 @@ describe('createLanDevelopmentPlan', () => {
     expect(createLanDevelopmentPlan(['192.168.1.23']).origins).toContain(
       'http://localhost:51888',
     )
+  })
+
+  it('starts Server against the same absolute data paths prepared from the repository root', () => {
+    const repositoryRoot = resolve(import.meta.dirname, '..')
+    const plan = createLanDevelopmentPlan(['192.168.1.23'], {
+      CLINMESH_DATABASE_PATH: '.data/clinmesh.sqlite',
+      CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite',
+      CLINMESH_GUIDELINE_DATABASE_PATH: '.data/clinmesh-guidelines.sqlite',
+      CLINMESH_WEB_ROOT: 'apps/web/dist',
+    })
+
+    expect(plan.processes[0]?.environment).toMatchObject({
+      CLINMESH_DATABASE_PATH: join(repositoryRoot, '.data/clinmesh.sqlite'),
+      CLINMESH_REFERENCE_DATABASE_PATH: join(repositoryRoot, '.data/clinmesh-reference.sqlite'),
+      CLINMESH_GUIDELINE_DATABASE_PATH: join(repositoryRoot, '.data/clinmesh-guidelines.sqlite'),
+      CLINMESH_WEB_ROOT: join(repositoryRoot, 'apps/web/dist'),
+    })
   })
 })
 
@@ -257,14 +274,17 @@ describe('ensureDataSourcesReady', () => {
 
   it('runs reference sync automatically when the database file is missing', async () => {
     const runReferenceSync = vi.fn()
+    const runDrgReferenceSync = vi.fn()
     const write = vi.fn()
     await expect(ensureDataSourcesReady(createDependencies({
       environment: { CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite' },
       runReferenceSync,
+      runDrgReferenceSync,
       write,
     }))).resolves.toBeUndefined()
 
     expect(runReferenceSync).toHaveBeenCalledTimes(1)
+    expect(runDrgReferenceSync).not.toHaveBeenCalled()
     expect(write).toHaveBeenCalledWith(expect.stringContaining('自动执行 pnpm reference:sync'))
     expect(write).toHaveBeenCalledWith(expect.stringContaining('参考目录数据库同步完成'))
   })
@@ -409,7 +429,7 @@ describe.skipIf(process.platform === 'win32')('pnpm dev:lan process supervision'
 const { spawn } = require('node:child_process')
 const { writeFileSync } = require('node:fs')
 
-const role = process.argv[2]
+const role = process.argv.includes('dev:prepared') ? 'dev:server' : process.argv[2]
 if (role === 'reference:sync' || process.argv.includes('drg:prepare')) process.exit(0)
 const pidPathPrefix = process.env.CLINMESH_TEST_GRANDCHILD_PID_PREFIX
 if (pidPathPrefix === undefined) process.exit(2)
@@ -487,7 +507,7 @@ setInterval(() => {}, 1000)
 const { spawn } = require('node:child_process')
 const { existsSync, writeFileSync } = require('node:fs')
 
-const role = process.argv[2]
+const role = process.argv.includes('dev:prepared') ? 'dev:server' : process.argv[2]
 if (role === 'reference:sync' || process.argv.includes('drg:prepare')) process.exit(0)
 const pidPath = process.env.CLINMESH_TEST_GRANDCHILD_PID_FILE
 if (pidPath === undefined) process.exit(2)

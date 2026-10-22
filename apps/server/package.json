@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --filter @clinmesh/web build && pnpm db:prepare && tsx watch src/index.ts",
+    "dev:prepared": "pnpm --filter @clinmesh/web build && pnpm db:prepare --migrations-only && tsx watch src/index.ts",
     "build": "vite build",
     "db": "tsx src/database-cli.ts",
     "db:backup": "tsx src/database-cli.ts backup",

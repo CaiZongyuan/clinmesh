@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto'
 import { createConnection } from 'node:net'
 import { lstatSync } from 'node:fs'
 import { appendFile, cp, mkdir, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import { parseLock, type UpstreamLock } from './dsh-upstreams.ts'
@@ -11,6 +11,7 @@ import { loadRepositoryEnvironment } from './synthea-runtime.ts'
 import {
   createDataSourceReadinessDependencies,
   ensureDataSourcesReady,
+  resolveServerEnvironmentPaths,
   renderHeading,
   supportsAnsiColor,
 } from './dev-lan.ts'
@@ -136,14 +137,6 @@ export async function awaitDshReadiness(
   return { serverReady, hostUrl }
 }
 
-/** Server 会按 .env 所在目录解析这些路径；直启前对进程覆盖值采用相同规则。 */
-const serverResolvedEnvironmentKeys = [
-  'CLINMESH_DATABASE_PATH',
-  'CLINMESH_REFERENCE_DATABASE_PATH',
-  'CLINMESH_GUIDELINE_DATABASE_PATH',
-  'CLINMESH_WEB_ROOT',
-] as const
-
 export function dshvmEnvironmentFor(paths: Pick<DshSandboxPaths, 'versionsDir' | 'binDir'>): Record<string, string> {
   return {
     DSHVM_HOME: paths.versionsDir,
@@ -163,6 +156,7 @@ export function withLoopbackNoProxy(value: string | undefined): string {
 export function createDshDevelopmentPlan(input: DshDevelopmentPlanInput): DshDevelopmentPlan {
   const loopbackNoProxy = withLoopbackNoProxy(input.environment.NO_PROXY)
   const serverEnvironment: Record<string, string> = {
+    ...resolveServerEnvironmentPaths(input.repositoryRoot, input.environment),
     CLINMESH_TRUSTED_ORIGINS: input.trustedOrigins,
     CLINMESH_AI_SOURCE: 'dsh',
     CLINMESH_DSH_MODEL_ORIGIN: `http://127.0.0.1:${dshWebPort}`,
@@ -170,18 +164,12 @@ export function createDshDevelopmentPlan(input: DshDevelopmentPlanInput): DshDev
     NO_PROXY: loopbackNoProxy,
     no_proxy: loopbackNoProxy,
   }
-  for (const name of serverResolvedEnvironmentKeys) {
-    const value = input.environment[name]
-    if (value !== undefined) {
-      serverEnvironment[name] = isAbsolute(value) ? value : resolve(input.repositoryRoot, value)
-    }
-  }
   return {
     processes: [
       {
         name: 'Server',
         command: 'pnpm',
-        args: ['--filter', '@clinmesh/server', 'dev'],
+        args: ['--filter', '@clinmesh/server', 'dev:prepared'],
         environment: serverEnvironment,
         output: { prefix: '[Server]' },
       },

@@ -155,7 +155,7 @@ describe('createDshDevelopmentPlan', () => {
       {
         name: 'Server',
         command: 'pnpm',
-        args: ['--filter', '@clinmesh/server', 'dev'],
+        args: ['--filter', '@clinmesh/server', 'dev:prepared'],
         environment: {
           CLINMESH_TRUSTED_ORIGINS: 'http://127.0.0.1:51868,http://127.0.0.1:3080',
           CLINMESH_AI_SOURCE: 'dsh',

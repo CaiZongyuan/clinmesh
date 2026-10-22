@@ -1,7 +1,7 @@
 import spawn from 'cross-spawn'
 import { isIPv4 } from 'node:net'
 import { networkInterfaces, type NetworkInterfaceInfo } from 'node:os'
-import { resolve } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 import process from 'node:process'
 import { pathToFileURL } from 'node:url'
 import {
@@ -86,6 +86,7 @@ export function resolveLanAddresses(
 
 export function createLanDevelopmentPlan(
   detectedAddresses: string[],
+  environment: Readonly<Record<string, string | undefined>> = {},
 ): LanDevelopmentPlan {
   const addresses = [...new Set(detectedAddresses.filter(isPrivateIpv4))].sort()
   if (addresses.length === 0) {
@@ -103,8 +104,11 @@ export function createLanDevelopmentPlan(
     origins,
     processes: [
       {
-        args: ['dev:server'],
-        environment: { CLINMESH_TRUSTED_ORIGINS: origins.join(',') },
+        args: ['--filter', '@clinmesh/server', 'dev:prepared'],
+        environment: {
+          ...resolveServerEnvironmentPaths(resolve(import.meta.dirname, '..'), environment),
+          CLINMESH_TRUSTED_ORIGINS: origins.join(','),
+        },
         name: 'Server',
       },
       {
@@ -117,15 +121,29 @@ export function createLanDevelopmentPlan(
   }
 }
 
+/** 父进程在仓库根准备资料；Server 子进程切换目录后仍需使用同一组路径。 */
+export function resolveServerEnvironmentPaths(
+  repositoryRoot: string,
+  environment: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
+  const paths: Record<string, string> = {}
+  for (const name of ['CLINMESH_DATABASE_PATH', 'CLINMESH_REFERENCE_DATABASE_PATH',
+    'CLINMESH_GUIDELINE_DATABASE_PATH', 'CLINMESH_WEB_ROOT'] as const) {
+    const value = environment[name]
+    if (value !== undefined) paths[name] = isAbsolute(value) ? value : resolve(repositoryRoot, value)
+  }
+  return paths
+}
+
 const referenceFixtureFallback
   = '将使用内置合成 fixture，医生无法下诊断或开检验。完整目录可运行 pnpm reference:sync 同步。'
 
 export async function ensureDataSourcesReady(
   dependencies: DataSourceReadinessDependencies,
 ): Promise<void> {
-  await ensureReferenceDatabase(dependencies)
+  const referencesSynced = await ensureReferenceDatabase(dependencies)
   if (dependencies.environment.CLINMESH_REFERENCE_DATABASE_PATH !== undefined) {
-    await dependencies.runDrgReferenceSync()
+    if (!referencesSynced) await dependencies.runDrgReferenceSync()
     writeStatus(dependencies, 'ok', 'DRG 参考资料已就绪。')
   }
   await ensureSyntheaProvider(dependencies)
@@ -141,7 +159,7 @@ function writeStatus(
   )
 }
 
-async function ensureReferenceDatabase(dependencies: DataSourceReadinessDependencies): Promise<void> {
+async function ensureReferenceDatabase(dependencies: DataSourceReadinessDependencies): Promise<boolean> {
   const configuredPath = dependencies.environment.CLINMESH_REFERENCE_DATABASE_PATH
   if (configuredPath === undefined) {
     writeStatus(
@@ -149,11 +167,11 @@ async function ensureReferenceDatabase(dependencies: DataSourceReadinessDependen
       'warn',
       `未配置 CLINMESH_REFERENCE_DATABASE_PATH；${referenceFixtureFallback}`,
     )
-    return
+    return false
   }
   if (dependencies.referenceDatabaseReady(configuredPath)) {
     writeStatus(dependencies, 'ok', `参考目录数据库已就绪：${configuredPath}。`)
-    return
+    return false
   }
   writeStatus(
     dependencies,
@@ -168,9 +186,10 @@ async function ensureReferenceDatabase(dependencies: DataSourceReadinessDependen
       'warn',
       `参考目录自动同步失败：${error instanceof Error ? error.message : String(error)}；${referenceFixtureFallback}`,
     )
-    return
+    return false
   }
   writeStatus(dependencies, 'ok', `参考目录数据库同步完成：${configuredPath}。`)
+  return true
 }
 
 const loopbackHostnames = new Set(['127.0.0.1', 'localhost', '::1'])
@@ -295,6 +314,7 @@ export async function runLanDevelopment(): Promise<number> {
   await ensureDataSourcesReady(createDataSourceReadinessDependencies(repositoryRoot))
   const plan = createLanDevelopmentPlan(
     resolveLanAddresses(process.env.CLINMESH_LAN_IP),
+    process.env,
   )
   console.info('')
   console.info(renderHeading('访问地址', color))

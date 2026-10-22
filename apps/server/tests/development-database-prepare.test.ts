@@ -68,6 +68,7 @@ describe('development database preparation', () => {
       scripts: Record<string, string>
     }
     expect(packageJson.scripts.dev).toContain('pnpm db:prepare')
+    expect(packageJson.scripts['dev:prepared']).toContain('pnpm db:prepare --migrations-only')
   })
 
   it('prepares DRG materials during normal startup with an existing clinical reference release', async () => {
@@ -109,6 +110,26 @@ describe('development database preparation', () => {
     })).resolves.toMatchObject({ reference: null })
     expect(await readdir(directory)).not.toContain('drg-reference')
     expect(await readdir(directory)).not.toContain('reference.sqlite')
+  })
+
+  it('only migrates databases when the launcher has already prepared reference materials', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-prepared-'))
+    temporaryDirectories.push(directory)
+    const referenceDatabasePath = join(directory, 'reference.sqlite')
+
+    await expect(prepareDevelopmentEnvironment({
+      databasePath: join(directory, 'operational.sqlite'),
+      referenceDatabasePath,
+      repositoryRoot: directory,
+      drgReference: { lockPath: join(directory, 'absent-lock.json') },
+      migrationsOnly: true,
+    })).resolves.toMatchObject({
+      operational: { schemaVersion: expectedSchemaVersion() },
+      reference: { schemaVersion: 11 },
+    })
+    expect(await runReferenceDatabaseCli(['list-inventories', '--database', referenceDatabasePath]))
+      .toMatchObject({ items: [], total: 0 })
+    expect(await readdir(directory)).not.toContain('drg-reference')
   })
 
   it('attempts full reference acquisition for a new deployment and stops when acquisition fails', async () => {

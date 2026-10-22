@@ -206,10 +206,22 @@ export async function inspectOfflineInventory(manifestPath: string, inputRoot: s
 
 export async function prepareOfflineInventory(database: ReferenceDatabase, manifestPath: string, inputRoot: string) {
   let lock: OfflineReferenceLock | undefined
+  let inventory: OfflineReferenceInventory
   try {
     lock = offlineReferenceLockSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
-    const inventory = await inspectLock(lock, inputRoot)
-    const result = database.driver.transaction(() => {
+    inventory = await inspectLock(lock, inputRoot)
+  } catch (error) {
+    auditOfflineInventory(database, { operation: 'prepare', outcome: 'failure',
+      ...(lock === undefined ? {} : { inventoryId: lock.inventoryId }) })
+    throw error
+  }
+  return publishOfflineInventory(database, inventory)
+}
+
+/** Register the inventory already verified from files during this preparation. */
+export function publishOfflineInventory(database: ReferenceDatabase, inventory: OfflineReferenceInventory) {
+  try {
+    return database.driver.transaction(() => {
       const existingRow = database.driver.prepare('SELECT * FROM reference_offline_inventory WHERE inventory_id = ?').get(inventory.inventoryId)
       const existing = existingRow === undefined ? undefined : readInventory(existingRow)
       if (existing !== undefined && existing.contentHash !== inventory.contentHash) throw new Error('Offline inventory is immutable')
@@ -219,10 +231,9 @@ export async function prepareOfflineInventory(database: ReferenceDatabase, manif
         inventoryId: inventory.inventoryId, contentHash: inventory.contentHash })
       return { created: existing === undefined, inventory }
     }).immediate()
-    return result
   } catch (error) {
     auditOfflineInventory(database, { operation: 'prepare', outcome: 'failure',
-      ...(lock === undefined ? {} : { inventoryId: lock.inventoryId }) })
+      inventoryId: inventory.inventoryId })
     throw error
   }
 }
