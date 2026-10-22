@@ -46,6 +46,18 @@ export class OutpatientRefunds {
     return Math.max(0, this.adjustmentFen(context, chargeItemId) - basis.refundedFen - basis.reservedFen)
   }
   read(context: ActorContext, caseId: string) {
+    let result: z.infer<typeof refundCaseSchema>
+    try {
+      result = this.#statement(context, caseId)
+    } catch (error) {
+      try { this.commands.auditRead(context, 'billing.refunds.get', { caseId }, 'failed') }
+      catch { /* Preserve the original read rejection if its audit cannot be stored. */ }
+      throw error
+    }
+    this.commands.auditRead(context, 'billing.refunds.get', { caseId }, 'success')
+    return result
+  }
+  #statement(context: ActorContext, caseId: string) {
     this.#authorize(context)
     new WorkspaceRepository(this.database).assertCurrent(context, context.scenarioRunId)
     const found = this.database.driver.prepare('SELECT 1 FROM outpatient_case WHERE workspace_id=? AND epoch=? AND case_id=?').get(context.workspaceId, context.epoch, caseId)
