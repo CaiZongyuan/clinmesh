@@ -23,3 +23,5 @@ AI 原生医生工作台的"中病例 + 右建议栈"内容区布局要求助手
 `workspace-mirror` 进入 `VALID_LAYOUTS`；ClinMesh 侧桥接的 supported 声明、`ReactSurfaceLayout` 类型与 `verify-artifact` 产物 marker 守卫不进入上游 PR，在 lock 推进（连续升级管线 PR #283）之后的 ClinMesh 侧 diff（PR #284）交付，保持上游预设先于声明合入的顺序（旧构建产物的本机会被 marker 守卫正确拦截）。DSH 宿主集成验收（第三步）在锁定升级后执行；后续 DSH 上游若提供官方镜像预设，迁移路径为替换预设名，ClinMesh 内容区无感。
 
 第三步按上游依赖拆分推进：队列回落卡片（`DoctorQueueRail` 组件与 `surfaceDisplay.queuePresentation: 'rail'`）不依赖上游，先行交付并由 `apps/dsh-web` browser 合同覆盖（ShadowRoot、React 18/19、容器查询、双主题三档字号）；上游镜像预设经 PR #16 合入（`7db43de`）后，lock 由连续升级管线推进（PR #283），`workspace-mirror` 的三类桥接守卫与 `apps/dsh-web` 布局声明、传值切换（退出全屏回到进入前布局）在 PR #284 交付。`dev:dsh` 真实宿主手工验收（镜像几何、队列卡片实位、双主题）随锁定升级执行。
+
+2026-10-22 集成验收补充决定：集成宿主不提供布局切换入口——#153 的「医院工作台」导航以同 slot 同 id 替换了上游启动器（含布局下拉），镜像预设因此没有用户可见的切换路径。经确认（用户 2026-10-22），镜像布局直接作为 ClinMesh 表面的默认形态（注册声明 `default: 'workspace-mirror'`），不新增切换入口；`supported` 保留 `workspace` 供持久化偏好回落。宿主侧栏保持默认收起、所有权不变；「侧栏改造为会话助手」仍属路线 B（会话嵌入）候选，需上游会话列注入接口立项评估，不随本线交付。
