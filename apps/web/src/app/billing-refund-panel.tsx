@@ -10,14 +10,15 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
-import { adjustBillingCharge, confirmRefund, getRefundCase, newIdempotencyKey, previewRefund, recoverRefund } from './api-client.ts'
+import { getRefundCase, newIdempotencyKey, previewRefund } from './api-client.ts'
+import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 
 type FrozenRefund = { preview: z.infer<typeof refundPreviewResponseSchema>['data']; chargeVersion: number }
-type Correction = { chargeItemId: string; chargeVersion: number; amountFen: number; reason: string; key: string }
+type Correction = { chargeItemId: string; chargeVersion: number; amountFen: number; reason: string }
 function inputFen(value: string) {
   if (!/^(0|[1-9]\d*)(\.\d{1,2})?$/.test(value.trim())) throw new Error('请输入正数金额，最多两位小数 / Enter a positive amount with at most two decimals')
   const [yuan = '0', fraction = ''] = value.trim().split('.')
@@ -49,9 +50,12 @@ export function BillingRefundPanel({ bill, session, locale, onChanged }: {
   const [recoverId, setRecoverId] = useState<string>()
   const [inputError, setInputError] = useState<string>()
   const refresh = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey }), onChanged()]) }
-  const adjust = useMutation({ mutationFn: (value: Correction) => adjustBillingCharge(bill.caseId,
-    { chargeItemId: value.chargeItemId, amountFen: value.amountFen, reason: value.reason }, value.chargeVersion, value.key),
-    onSuccess: () => { setCorrection(undefined); setCorrectionAmount(''); setReason(''); setFrozen(undefined) }, onSettled: refresh })
+  const write = useInpatientWriteIntent(session, async command => {
+    if (command.operation === 'billing.charge.adjust') { setCorrection(undefined); setCorrectionAmount(''); setReason(''); setFrozen(undefined) }
+    if (command.operation === 'refund.confirm') { setFrozen(undefined); setRefundAmount('') }
+    if (command.operation === 'refund.recover') setRecoverId(undefined)
+    await refresh()
+  })
   const preview = useMutation({ mutationFn: async () => {
     if (source === undefined) throw new Error(messages.paymentUnavailable)
     const originalCharge = bill.charges.find(item => item.chargeItemId === source.chargeItemId)
@@ -59,19 +63,26 @@ export function BillingRefundPanel({ bill, session, locale, onChanged }: {
     const result = await previewRefund({ paymentId: source.sourceId, amountFen: inputFen(refundAmount), expectedSourceVersion: source.version, simulatorRule: rule }, source.chargeItemId, originalCharge.chargeVersion, newIdempotencyKey())
     return { preview: result.data, chargeVersion: originalCharge.chargeVersion }
   }, onSuccess: setFrozen })
-  const confirm = useMutation({ mutationFn: async (value: FrozenRefund) => confirmRefund(value.preview.previewId, value.preview.commitToken,
-    value.preview.chargeItemId, value.chargeVersion, `refund-confirm:${value.preview.previewId}`),
-    onSuccess: () => { setFrozen(undefined); setRefundAmount('') }, onSettled: refresh })
-  const recover = useMutation({ mutationFn: async (refundId: string) => {
+  const recover = (refundId: string) => {
     const attempt = ledger.data?.refunds.find(item => item.refundId === refundId)
     const original = ledger.data?.sources.find(item => item.sourceId === attempt?.sourceId)
     const originalCharge = bill.charges.find(item => item.chargeItemId === original?.chargeItemId)
-    if (attempt === undefined || originalCharge === undefined) throw new Error(messages.paymentUnavailable)
-    return recoverRefund(refundId, attempt.version, originalCharge.chargeItemId, originalCharge.chargeVersion,
-      `refund-recover:${refundId}:${attempt.version}:${originalCharge.chargeVersion}`)
-  }, onSuccess: () => setRecoverId(undefined), onSettled: refresh })
-  const busy = adjust.isPending || preview.isPending || confirm.isPending || recover.isPending
-  const error = [ledger, adjust, preview, confirm, recover].find(item => item.isError)?.error
+    if (attempt === undefined || originalCharge === undefined) { setInputError(messages.paymentUnavailable); return }
+    write.mutation.mutate({ operation: 'refund.recover', caseId: bill.caseId, input: { refundId, expectedRefundVersion: attempt.version,
+      chargeItemId: originalCharge.chargeItemId, chargeVersion: originalCharge.chargeVersion } })
+  }
+  const busy = write.blocked || preview.isPending
+  const error = write.storageFailure ?? [ledger, preview, write.mutation].find(item => item.isError)?.error
+  const pendingCommand = write.pending?.command
+  const ownPending = pendingCommand?.operation === 'billing.charge.adjust' ? pendingCommand.input.caseId === bill.caseId
+    : (pendingCommand?.operation === 'refund.confirm' || pendingCommand?.operation === 'refund.recover') && pendingCommand.caseId === bill.caseId
+  const feedback = <>
+    {write.pending === null ? null : <Alert><AlertTitle>{text('原操作结果待确认', 'Original operation awaiting confirmation')}</AlertTitle><AlertDescription>
+      {ownPending ? text('已保留原操作、幂等键及完整输入。恢复时先查询原回执，再按原意图恢复。', 'The original command, key and input are saved. Recovery checks its receipt first.') : text('当前岗位有其他待确认操作，请返回原患者或操作入口恢复。', 'Return to the original patient or operation to resolve the pending command.')}
+    </AlertDescription></Alert>}
+    {ownPending ? <Button disabled={write.mutation.isPending} variant="outline" onClick={() => write.mutation.mutate(undefined)}>{text('恢复原费用更正或退款', 'Recover original correction or refund')}</Button> : null}
+    {error === undefined && inputError === undefined ? null : <Alert variant="destructive"><AlertTitle>{messages.operationFailed}</AlertTitle><AlertDescription>{inputError ?? (error === undefined ? '' : getWorkspaceErrorMessage(error, messages))}</AlertDescription></Alert>}
+  </>
   const outcome = (value: string) => value === 'success' ? text('退款成功', 'Refund succeeded') : value === 'declined' ? text('退款被拒绝', 'Refund declined') : text('退款结果未知', 'Refund result unknown')
   const recovery = ledger.data?.refunds.find(item => item.refundId === recoverId)
   return <section aria-label={text('费用更正与退款', 'Fee corrections and refunds')} className="flex min-w-0 flex-col gap-4 rounded-md border p-3">
@@ -91,7 +102,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged }: {
         <Field><FieldLabel htmlFor="correction-reason">{text('费用更正原因', 'Reason for correction')}</FieldLabel><Input id="correction-reason" value={reason} maxLength={1000} disabled={busy} onChange={event => setReason(event.target.value)} /></Field>
       </FieldGroup>
       <Button disabled={busy || charge === undefined || reason.trim().length < 5 || correctionAmount === ''} variant="outline" onClick={() => {
-        try { if (charge !== undefined) { setCorrection({ chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion, amountFen: inputFen(correctionAmount), reason: reason.trim(), key: newIdempotencyKey() }); setInputError(undefined) } }
+        try { if (charge !== undefined) { setCorrection({ chargeItemId: charge.chargeItemId, chargeVersion: charge.chargeVersion, amountFen: inputFen(correctionAmount), reason: reason.trim() }); setInputError(undefined) } }
         catch (failure) { setInputError(failure instanceof Error ? failure.message : messages.operationFailed) }
       }}>{text('记录费用更正', 'Record fee correction')}</Button>
       {ledger.data.sources.length === 0 ? <p className="text-sm">{text('尚无可关联的成功原交易。', 'No successful original payment is available.')}</p> : <>
@@ -113,18 +124,18 @@ export function BillingRefundPanel({ bill, session, locale, onChanged }: {
         {item.outcome === 'ambiguous' ? <Button disabled={busy} variant="outline" onClick={() => setRecoverId(item.refundId)}>{text('查询原退款结果', 'Query original refund')}</Button> : null}
       </div>)}
     </>}
-    {error === undefined && inputError === undefined ? null : <Alert variant="destructive"><AlertTitle>{messages.operationFailed}</AlertTitle><AlertDescription>{inputError ?? (error === undefined ? '' : getWorkspaceErrorMessage(error, messages))}</AlertDescription></Alert>}
+    {feedback}
     <AlertDialog open={correction !== undefined} onOpenChange={open => { if (!open && !busy) setCorrection(undefined) }}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{text('确认费用更正', 'Confirm fee correction')}</AlertDialogTitle><AlertDialogDescription>{text('核对冲减金额及原因。本次操作不退款、不撤销临床执行。', 'Review the reduction and reason. Money and clinical execution are separate.')}</AlertDialogDescription></AlertDialogHeader>
-        <p>{formatFen(correction?.amountFen ?? 0, locale)} · {correction?.reason}</p><AlertDialogFooter><AlertDialogCancel disabled={busy}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (correction !== undefined) adjust.mutate(correction) }}>{text('确认费用更正', 'Confirm fee correction')}</Button></AlertDialogFooter></AlertDialogContent>
+        <p>{formatFen(correction?.amountFen ?? 0, locale)} · {correction?.reason}</p>{feedback}<AlertDialogFooter><AlertDialogCancel disabled={busy}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (correction !== undefined) write.mutation.mutate({ operation: 'billing.charge.adjust', input: { ...correction, caseId: bill.caseId } }) }}>{text('确认费用更正', 'Confirm fee correction')}</Button></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
     <AlertDialog open={frozen !== undefined} onOpenChange={open => { if (!open && !busy) setFrozen(undefined) }}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{text('确认退款', 'Confirm refund')}</AlertDialogTitle><AlertDialogDescription>{text('按本次冻结预览退款。未知结果需查询原尝试。', 'Submit the frozen refund. Query the original attempt if its result is unknown.')}</AlertDialogDescription></AlertDialogHeader>
-        <p className="break-all">{frozen?.preview.sourceId} · {formatFen(frozen?.preview.amountFen ?? 0, locale)}</p><AlertDialogFooter><AlertDialogCancel disabled={busy}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (frozen !== undefined) confirm.mutate(frozen) }}>{text('提交退款', 'Submit refund')}</Button></AlertDialogFooter></AlertDialogContent>
+        <p className="break-all">{frozen?.preview.sourceId} · {formatFen(frozen?.preview.amountFen ?? 0, locale)}</p>{feedback}<AlertDialogFooter><AlertDialogCancel disabled={busy}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (frozen !== undefined) write.mutation.mutate({ operation: 'refund.confirm', caseId: bill.caseId, input: { previewId: frozen.preview.previewId, commitToken: frozen.preview.commitToken, chargeItemId: frozen.preview.chargeItemId, chargeVersion: frozen.chargeVersion } }) }}>{text('提交退款', 'Submit refund')}</Button></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
     <AlertDialog open={recoverId !== undefined} onOpenChange={open => { if (!open && !busy) setRecoverId(undefined) }}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{text('查询原退款结果', 'Query original refund')}</AlertDialogTitle><AlertDialogDescription>{text('只查询已记录的退款，不另发退款。', 'Query this recorded refund without sending another refund.')}</AlertDialogDescription></AlertDialogHeader>
-        <p className="break-all">{recovery?.refundId} · {formatFen(recovery?.amountFen ?? 0, locale)}</p><AlertDialogFooter><AlertDialogCancel disabled={busy}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (recoverId !== undefined) recover.mutate(recoverId) }}>{text('查询原退款结果', 'Query original refund')}</Button></AlertDialogFooter></AlertDialogContent>
+        <p className="break-all">{recovery?.refundId} · {formatFen(recovery?.amountFen ?? 0, locale)}</p>{feedback}<AlertDialogFooter><AlertDialogCancel disabled={busy}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (recoverId !== undefined) recover(recoverId) }}>{text('查询原退款结果', 'Query original refund')}</Button></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
   </section>
 }
