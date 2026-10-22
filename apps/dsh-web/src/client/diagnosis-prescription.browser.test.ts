@@ -36,7 +36,7 @@ async function buildFixture(version: string) {
   artifacts.set(version, artifact)
   return artifact
 }
-async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery', multiple = false) {
+async function mount(page: Page, version: string, mode: 'empty' | 'existing' | 'recommendations' | 'failed' | 'recovery' | 'retry-disabled', multiple = false) {
   const { script, styles } = await buildFixture(version)
   // 宿主为 1440（容纳三栏建议栈后保持开单/检查双栏合同），视口需一致，否则文档出现横向滚动。
   await page.setViewportSize({ width: 1440, height: 900 })
@@ -155,6 +155,17 @@ async function expectWorkspaceColumns(page: Page, hasRecords: boolean) {
 }
 
 for (const version of ['18', '19']) {
+  test(`continues a retry-disabled pending task on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'retry-disabled')
+    await page.getByRole('tab', { name: '诊断', exact: true }).click()
+    const panel = page.getByRole('region', { name: '待确认诊断', exact: true })
+    expect(await readRecommendations(page, 'diagnosis')).toMatchObject({ status: 'pending', generation: 1, recovery: { canContinue: true } })
+    await expect(panel.getByRole('button', { name: '继续原任务', exact: true })).toBeEnabled()
+    await panel.getByRole('button', { name: '继续原任务', exact: true }).click()
+    await expect(panel.getByText(/本次任务的请求次数已用完/)).toBeVisible()
+    expect(await readRecommendations(page, 'diagnosis')).toMatchObject({ generation: 1, recovery: { status: 'exhausted', canContinue: false } })
+    await expectNoFixtureErrors(page)
+  })
   test(`continues the original task and regenerates after exhaustion on React ${version}`, async ({ page }) => {
     await mount(page, version, 'recovery')
     await page.getByRole('tab', { name: '诊断', exact: true }).click()

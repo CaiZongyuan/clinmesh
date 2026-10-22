@@ -84,7 +84,8 @@ export class ModelUsageService implements ModelUsageRecorder {
         VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'in-flight', ?, ?)`)
         .run(record.id, context.workspaceId, context.epoch, context.caseId ?? null, record.feature,
           record.provider, record.requestedModel, record.startedAt, JSON.stringify(record))
-      this.#control.reserve(context.workspaceId, record.id, record.kind, { tokens: tokenBound, cny: reservation.cnyMicro })
+      this.#control.reserve(context.workspaceId, record.id, record.kind, { tokens: tokenBound, cny: reservation.cnyMicro },
+        input.hasManualRetryAuthorization?.() === true)
       reserve?.()
       return record.id
     })() } catch (cause) {

@@ -51,7 +51,8 @@ const medication: ReferenceMedicationProduct = {
 const products = [medication, { ...medication, id: 'synthetic-product-2', code: 'SYN-M2', packageDescription: '20片/盒' },
   { ...medication, id: 'synthetic-product-3', code: 'SYN-M3', genericName: '合成第二药品', packageDescription: '30片/盒' }]
 const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
-const recoveryMode = document.documentElement.dataset.fixtureMode === 'recovery'
+const retryDisabledMode = document.documentElement.dataset.fixtureMode === 'retry-disabled'
+const recoveryMode = document.documentElement.dataset.fixtureMode === 'recovery' || retryDisabledMode
 const multipleRecommendations = document.documentElement.dataset.fixtureMultiple === 'true'
 const failedRecommendations = document.documentElement.dataset.fixtureMode === 'failed'
 const recommendationGuidelines: GuidelineEvidence[] = [
@@ -253,8 +254,9 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
           { id: 'synthetic-case-evidence-2', kind: 'presentation', label: '合成病例来源二', text: '合成病例第二条依据：需要医生继续核实。' },
         ], missingInformation: [],
       })
-      if (recoveryMode && kind === 'diagnosis') state = { ...state, status: 'failed', errorCode: 'MODEL_OUTCOME_UNKNOWN',
-        recovery: { status: 'unknown', requestCount: 2, extraRequestCount: 0, maxRequestsPerUnit: 3,
+      if (recoveryMode && kind === 'diagnosis') state = { ...state, status: retryDisabledMode ? 'pending' : 'failed',
+        ...(retryDisabledMode ? {} : { errorCode: 'MODEL_OUTCOME_UNKNOWN' }),
+        recovery: { status: retryDisabledMode ? 'pending' : 'unknown', requestCount: 2, extraRequestCount: 0, maxRequestsPerUnit: 3,
           maxExtraRequests: 4, canContinue: true, units: [] } }
       recommendationStates.set(kind, state)
     }

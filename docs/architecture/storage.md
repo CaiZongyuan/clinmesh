@@ -68,7 +68,9 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 `doctor_recommendation_execution`、`doctor_recommendation_execution_plan`、`doctor_recommendation_execution_unit` 与 `doctor_recommendation_execution_continue` 分别保存绑定及累计额外次数、稳定阶段计划、批次依赖及成功结果、人工继续意图。四表以 Workspace/Epoch 开头的复合主键、外键隔离，删除使用 `RESTRICT`。执行键由 Workspace/Epoch、Actor/context、病例、建议类型与 generation 身份派生，完整绑定另含输入指纹、模型和策略；持久 JSON、键与完整绑定在运行时验证，计划与单元哈希不允许恢复时改组。筛选成功步骤只有完整来源上下文、请求与受信作用域均相同时可跨任务复用，生成和核验只属于原执行。
 
-每次外部派发前用短事务原子预占单元次数和 generation 额外次数，Provider 内部限流重发和格式修复也经过同一边界；网络请求在事务外。次数与 outbox 调度 attempt 独立持久化，重新领取及重启不清零。预占后未保存完整结果的崩溃窗口保留占用并转为未知；人工继续意图只开放一次未知单元，重放不重复开放。恢复先校验固定依赖及成功步骤，再处理未完成单元；私有候选在全部必要核验结束前不投影为可采纳结果。
+每次外部派发前用短事务原子预占单元次数和 generation 额外次数，Provider 内部限流重发和格式修复也经过同一边界；网络请求在事务外。次数与 outbox 调度 attempt 独立持久化，重新领取及重启不清零。预占后未保存完整结果的崩溃窗口保留占用并转为未知。恢复先校验固定依赖及成功步骤，再处理未完成单元；私有候选在全部必要核验结束前不投影为可采纳结果。
+
+人工继续意图只为一个未知、失败或因 `MODEL_RETRY_DISABLED` 等待的单元持久保存一次 `resume_available` 授权，优先选择未知单元；同一意图重放不再次授权，已有未消费授权时不开放新的继续操作。每次实际请求准入均在事务内重新读取该授权，通过双层停用、额度、权限与原次数包络检查后，与请求次数预占原子消费。授权只豁免本次请求的自动重试开关，不重置预算、不改变 `blocked_kind`，也不自动开放其他失败单元或后续内部重试。准入拒绝保留未消费授权，重启可接续；技术失败终止当前继续意图并清除剩余授权，派发前失败不增加请求次数。派发后的崩溃仍转为未知，必须有新的人工意图才能再试。
 
 其他模型业务的 `model_task_step` 按 Workspace/Epoch、原任务与完整步骤输入指纹保存请求包络、被拒绝的实际请求种类、私有成功结果和未知状态。结果持久成功前仍保留派发中状态，崩溃不推断可重发；这些私有业务结果不进入用量账本。`model_task_wait` 关联控制阻塞的原 outbox 事件，恢复后复用成功步骤并重新验证业务有效性与权限，仍使用原并发通道。建议沿用既有执行单元及 `blocked_kind`，不另建一套成功结果缓存。
 

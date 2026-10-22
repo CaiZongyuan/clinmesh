@@ -10,6 +10,8 @@ export interface ModelUsageRecorder {
     reasoningEffort?: string
     outputLimit: number | null
     kind: 'initial' | 'format-repair' | 'rate-limit-retry'
+    /** Trusted task state, read inside admission and consumed by the task reservation. */
+    hasManualRetryAuthorization?: () => boolean
     reservationBoundary?: ModelUsageReservationBoundary
   }, reserve?: () => void): string
   /** Persist observed consumption without declaring the external request complete. */

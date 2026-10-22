@@ -93,14 +93,14 @@ export class ModelUsageControl {
     return result
   }
 
-  reserve(workspaceId: string, attemptId: string, kind: string, bounds: DimensionValues = { tokens: null, cny: null }): void {
+  reserve(workspaceId: string, attemptId: string, kind: string, bounds: DimensionValues = { tokens: null, cny: null }, manualRetry = false): void {
     this.#atomic('workspace', () => {
     dimensionValues.parse(bounds)
     const rows = [this.#row('deployment'), this.#workspace(workspaceId)]
     for (const [index, row] of rows.entries()) {
       const scope = index === 0 ? 'deployment' : 'workspace'
       if (!row.enabled) throw new ModelUsageControlError('MODEL_DISABLED', scope)
-      if (kind !== 'initial' && !row.automatic_retries) throw new ModelUsageControlError('MODEL_RETRY_DISABLED', scope)
+      if (kind !== 'initial' && !manualRetry && !row.automatic_retries) throw new ModelUsageControlError('MODEL_RETRY_DISABLED', scope)
       const occupied = this.#sum(row.used, row.reserved)
       if (row.request_limit !== null && occupied >= row.request_limit) throw new ModelUsageControlError('MODEL_REQUEST_LIMIT', scope, 'requests', Math.max(0, row.request_limit - occupied), 1)
       for (const dimension of this.#dimensions(row.scope_id)) {

@@ -79,6 +79,79 @@ it('keeps an incomplete transport unknown and opens it only once per explicit co
   expect(execution.status()).toMatchObject({ status: 'unknown', canContinue: true, extraRequestCount: 1 })
 })
 
+it.each(['format', 'unavailable', 'rate-limit', 'disconnected'])('allows only one request per manual intent with automatic retries off (%s)', async failure => {
+  let sent = 0
+  const { options } = fixture(async () => {
+    sent++
+    if (failure === 'disconnected') throw new TypeError('Synthetic disconnected transport')
+    if (failure === 'format') return Response.json({ choices: [{ message: { content: '{}' } }] })
+    return new Response('', { status: failure === 'rate-limit' ? 429 : 503 })
+  })
+  let execution = new DoctorRecommendationExecution({ ...options, automaticRetries: () => false })
+  execution.plan('generation', [{ batchId: '0', inputHash: recommendationRequestHash(request) }])
+  const run = () => execution.run({ stage: 'generation', batchId: '0', request }, value => output.parse(value))
+  await expect(run()).rejects.toBeDefined()
+  expect(execution.status()).toMatchObject({ requestCount: 1, canContinue: true })
+  expect(execution.continue('first-intent')).toBe(true)
+  expect(execution.status().canContinue).toBe(false)
+  execution = new DoctorRecommendationExecution({ ...options, automaticRetries: () => false })
+  await expect(run()).rejects.toBeDefined()
+  expect(sent).toBe(2)
+  expect(execution.status()).toMatchObject({ requestCount: 2, extraRequestCount: 1, canContinue: true })
+  expect(execution.continue('first-intent')).toBe(false)
+  await expect(run()).rejects.toBeDefined()
+  expect(sent).toBe(2)
+  expect(execution.continue('second-intent')).toBe(true)
+  await expect(run()).rejects.toBeDefined()
+  expect(sent).toBe(3)
+  expect(execution.status()).toMatchObject({ status: 'exhausted', requestCount: 3, extraRequestCount: 2, canContinue: false })
+})
+
+it('requires a new intent after a continuation terminates before dispatch without spending its request budget', async () => {
+  let sent = 0
+  const { execution } = fixture(async () => {
+    if (++sent === 1) throw new TypeError('Synthetic disconnected transport')
+    return success()
+  })
+  execution.plan('generation', [{ batchId: '0', inputHash: recommendationRequestHash(request) }])
+  const run = (next = request) => execution.run({ stage: 'generation', batchId: '0', request: next }, value => output.parse(value))
+  await expect(run()).rejects.toMatchObject({ kind: 'unknown' })
+  execution.continue('cancelled-intent')
+  await expect(run({ ...request, signal: AbortSignal.abort() })).rejects.toBeDefined()
+  expect(sent).toBe(1)
+  expect(execution.status()).toMatchObject({ status: 'failed', requestCount: 1, extraRequestCount: 0, canContinue: true })
+  expect(execution.continue('cancelled-intent')).toBe(false)
+  execution.continue('new-intent')
+  await run()
+  expect(sent).toBe(2)
+  expect(execution.status()).toMatchObject({ status: 'completed', requestCount: 2, extraRequestCount: 1 })
+})
+
+it.each(['failed', 'unknown'])('continues only one batch when another batch is %s and preserves the remaining failure', async outcome => {
+  let failing = true
+  let sent = 0
+  const { options } = fixture(async () => {
+    sent++
+    if (failing && sent === 2 && outcome === 'unknown') throw new TypeError('Synthetic disconnected transport')
+    return failing ? new Response('', { status: 401 }) : success()
+  })
+  const execution = new DoctorRecommendationExecution({ ...options, automaticRetries: () => false })
+  execution.plan('verification', ['0', '1'].map(batchId => ({ batchId, inputHash: recommendationRequestHash(batchRequest(batchId)) })))
+  const run = (batchId: string) => execution.run({ stage: 'verification', batchId, request: batchRequest(batchId) }, value => output.parse(value))
+  await Promise.allSettled(['0', '1'].map(run))
+  expect(execution.status()).toMatchObject({ requestCount: 2, canContinue: true })
+  failing = false
+  execution.continue('first-batch')
+  const results = await Promise.allSettled(['0', '1'].map(run))
+  expect(results.map(result => result.status)).toEqual(outcome === 'unknown' ? ['rejected', 'fulfilled'] : ['fulfilled', 'rejected'])
+  expect(sent).toBe(3)
+  expect(execution.status()).toMatchObject({ requestCount: 3, extraRequestCount: 1, canContinue: true })
+  execution.continue('second-batch')
+  await Promise.all(['0', '1'].map(run))
+  expect(sent).toBe(4)
+  expect(execution.status()).toMatchObject({ status: 'completed', requestCount: 4, extraRequestCount: 2 })
+})
+
 it('stops the generation after a unit consumes three actual format attempts', async () => {
   let sent = 0
   const { execution } = fixture(async () => { sent += 1; return Response.json({ choices: [{ message: { content: '{}' } }] }) })

@@ -69,13 +69,14 @@ export function invokeChatCompletionRequestControl(hook: (() => void) | undefine
 }
 
 /** The ledger and the existing task gate share the recorder's reservation transaction. */
-export function beginChatCompletionUsage(input: Pick<JsonChatCompletionInput, 'usageContext' | 'usageRecorder' | 'onBeforeRequest' | 'onBeforeUsageRequest' | 'schemaName'>,
-  metadata: Omit<Parameters<ModelUsageRecorder['begin']>[0], 'context' | 'feature'>): string | undefined {
+export function beginChatCompletionUsage(input: Pick<JsonChatCompletionInput, 'usageContext' | 'usageRecorder' | 'onBeforeRequest' | 'onBeforeUsageRequest' | 'schemaName' | 'hasManualRetryAuthorization'>,
+  metadata: Omit<Parameters<ModelUsageRecorder['begin']>[0], 'context' | 'feature' | 'hasManualRetryAuthorization'>): string | undefined {
   try {
     const reserve = () => { input.onBeforeUsageRequest?.({ kind: metadata.kind }); input.onBeforeRequest?.() }
     if (input.usageRecorder === undefined) { reserve(); return undefined }
     if (input.usageContext === undefined) throw new Error('Trusted model usage context is required')
-    return input.usageRecorder.begin({ ...metadata, context: input.usageContext, feature: input.schemaName }, reserve)
+    return input.usageRecorder.begin({ ...metadata, context: input.usageContext, feature: input.schemaName,
+      ...(input.hasManualRetryAuthorization === undefined ? {} : { hasManualRetryAuthorization: input.hasManualRetryAuthorization }) }, reserve)
   } catch (cause) { throw new ChatCompletionRequestControlError(cause, metadata.kind) }
 }
 
@@ -120,6 +121,8 @@ export interface JsonChatCompletionInput {
   usageContext?: ModelUsageContext
   usageRecorder?: ModelUsageRecorder
   usageKind?: Parameters<ModelUsageRecorder['begin']>[0]['kind']
+  /** Server-owned one-use authorization; never supplied by a model or HTTP body. */
+  hasManualRetryAuthorization?: () => boolean
   /** Synchronous, atomic reservation immediately before each actual completion fetch. */
   onBeforeRequest?: () => void
   /** Owning task recovery keeps its original attempt envelope in the same admission transaction. */

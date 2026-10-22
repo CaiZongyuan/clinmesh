@@ -78,7 +78,7 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 建议按资料筛选、目录筛选、生成和核验的稳定计划保存私有成功步骤；后段技术失败或重启恢复只处理未完成单元。同一阶段批次含首次最多三次真实模型请求，同一 generation 的所有批次合计最多四次额外请求；限流重发、格式修复、自动恢复和人工继续共享派发前原子预占的持久计数。任一上限耗尽即停止所有新派发，outbox 重新领取不增加额度。明确可恢复技术失败在剩余额度内恢复；已发出但未获得完整结果的超时、断流、关停及无法证明未派发的崩溃窗口为未知，保留次数且不自动重发。
 
-普通 `refresh:false` 请求遇到同输入失败、未知或耗尽时返回原任务；`continueGeneration` 与 `refresh:false` 表示医生明确继续原任务，保留原模型、generation、成功步骤与剩余额度，同一继续意图重放不再次开放未知单元。`refresh:true` 是人工重新生成，采用当前资料、当前模型和新 generation 额度，与继续互斥。公开 `recovery` 返回阶段状态、累计次数、上限与 `canContinue`，未知和耗尽分别以 `MODEL_OUTCOME_UNKNOWN`、`MODEL_REQUEST_LIMIT` 说明。次数仅限制 ClinMesh 可观察请求，不是 Token、金额或供应商费用账本；DSH 原生会话和宿主内部不可见重试不在此范围。持久化见[模型执行恢复](storage.md#模型执行恢复)，取舍见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
+普通 `refresh:false` 请求遇到同输入失败、未知或耗尽时返回原任务；`continueGeneration` 与 `refresh:false` 表示医生明确继续原任务，保留原模型、generation、成功步骤与剩余额度，同一继续意图重放不再次授权。关闭自动重试后，医生仍可明确继续一个未完成步骤；待办因禁止重试而暂停时也可提供继续入口，停用、额度、权限和原次数上限继续生效。`refresh:true` 是人工重新生成，采用当前资料、当前模型和新 generation 额度，与继续互斥。公开 `recovery` 返回阶段状态、累计次数、上限与 `canContinue`，未知和耗尽分别以 `MODEL_OUTCOME_UNKNOWN`、`MODEL_REQUEST_LIMIT` 说明。次数仅限制 ClinMesh 可观察请求，不是 Token、金额或供应商费用账本；DSH 原生会话和宿主内部不可见重试不在此范围。持久化见[模型执行恢复](storage.md#模型执行恢复)，取舍见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
 
 可采纳候选先按真实目录固定名称、编码和所选检查来源，再由独立请求核对最终条目的条款支持、病例支持、适用性与限定语，核验后不替换临床身份；全部必要核验完成前候选只保存在私有步骤，合法否定结论正常结束，不触发格式修复或重做候选直至通过。处方进一步核对所选本院药品的实际规格与每个字段依据，无法证实的字段保持 `null`；目录默认值与允许值只用于执行映射。
 
