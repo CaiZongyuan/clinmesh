@@ -355,7 +355,7 @@ export async function runReferenceSync(options: ReferenceSyncOptions) {
       label: 'DRG reference',
       onProgress: options.onProgress,
       run: () => runDrgReferenceSync({
-        ...options.drgReference, databasePath, repositoryRoot, checkOnly: options.checkOnly,
+        ...options.drgReference, databasePath: resolve(options.databasePath), repositoryRoot, checkOnly: options.checkOnly,
         ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
       }),
     })
