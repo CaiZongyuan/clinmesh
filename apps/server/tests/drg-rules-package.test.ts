@@ -40,6 +40,7 @@ describe('DRG 规则数据包物化与加载', () => {
     const direct = buildDrgRules({
       groups, officialMembers: extractOfficialMembers(jsText),
       complicationTables: { cc: complicationTables.CC, mcc: complicationTables.MCC, cce: complicationTables.CCE },
+      rulesId: 'chs-drg-30-test', version: 'DRG-3.0-test',
     })
     expect(drgRulesSchema.parse(loaded)).toEqual(drgRulesSchema.parse(direct))
     expect(loaded.members).toContainEqual({ code: 'U07.000', adrgCode: 'EZ1' })

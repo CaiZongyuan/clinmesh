@@ -56,6 +56,7 @@ export function prepareDrgRulesPackage(input: {
     groups: input.groups, officialMembers,
     // 物化文件保留 OpenDRG 原始大写键；构建器合同为小写。
     complicationTables: { cc: input.complicationTables.CC, mcc: input.complicationTables.MCC, cce: input.complicationTables.CCE },
+    rulesId: input.releaseId, version: input.sourceVersion,
   })
   const memberRows = [
     ...Object.entries(officialMembers.medical).flatMap(([adrgCode, codes]) => codes.map(code => ({ adrgCode, chapter: 'medical', code }))),
@@ -120,5 +121,6 @@ export async function loadDrgRules(directory: string): Promise<DrgRules> {
     target[row.adrgCode] = [...(target[row.adrgCode] ?? []), row.code]
   }
   return drgRulesSchema.parse(buildDrgRules({ groups, officialMembers: { medical, surgical },
-    complicationTables: { cc: rawTables.CC, mcc: rawTables.MCC, cce: rawTables.CCE } }))
+    complicationTables: { cc: rawTables.CC, mcc: rawTables.MCC, cce: rawTables.CCE },
+    rulesId: manifest.releaseId, version: manifest.sourceVersion }))
 }

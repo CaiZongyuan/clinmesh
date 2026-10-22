@@ -47,6 +47,9 @@ export function buildDrgRules(input: {
   groups: unknown
   officialMembers: unknown
   complicationTables?: unknown
+  /** 规则身份：由数据包 manifest 透传（releaseId/sourceVersion），分组结果据此追溯。 */
+  rulesId: string
+  version: string
 }): DrgRules {
   const groups = z.array(groupRowSchema).parse(input.groups)
   const officialMembers = officialMembersSchema.parse(input.officialMembers)
@@ -95,8 +98,8 @@ export function buildDrgRules(input: {
   })
 
   const rules = drgRulesSchema.parse({
-    rulesId: 'drg-chs30-official-projection',
-    version: 'placeholder',
+    rulesId: input.rulesId,
+    version: input.version,
     mdcEntries,
     members,
     validOperations,
