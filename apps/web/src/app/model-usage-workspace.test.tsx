@@ -127,6 +127,14 @@ it('shows known usage separately from unknown values and reads historical reques
   const total = await screen.findByRole('region', { name: '已派发请求' })
   expect(total.textContent).toContain('3')
   expect(screen.getByRole('region', { name: '已知 Token' }).textContent).toContain('120')
+  expect(screen.getByRole('region', { name: '已知输入 Token' }).textContent).toContain('120')
+  expect(screen.getByRole('region', { name: '已知输出 Token' }).textContent).toContain('未知')
+  expect(screen.getByRole('region', { name: '已知输出 Token' }).textContent).toContain('2 次请求的此项用量不完整')
+  for (const name of ['调用趋势', '功能分布']) {
+    const table = screen.getByRole('table', { name })
+    expect(within(table).getByRole('columnheader', { name: '已知输入 Token' })).toBeTruthy()
+    expect(within(table).getByRole('columnheader', { name: '已知输出 Token' })).toBeTruthy()
+  }
   expect(screen.getByRole('region', { name: '人民币费用' }).textContent).toContain('未知')
   expect(screen.getByText(/已预占 Token: 200 \+ 1 次未决占用无可信上界/)).toBeTruthy()
   expect(screen.getByText(/已预占人民币: 0.12 \+ 1 次未决占用无可信上界/)).toBeTruthy()

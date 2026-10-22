@@ -15,7 +15,7 @@ import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { ModelUsageRecorder } from './model-usage-lifecycle.ts'
 import { ModelUsageControl, ModelUsageControlError, ModelUsagePolicyError } from './model-usage-control.ts'
 import { ModelUsageRetention } from './model-usage-retention.ts'
-import { combinedModelUsageSql, modelUsageTotalsSql } from './model-usage-summary.ts'
+import { combinedModelUsageSql, modelUsageTotalsSql, modelUsageTokenTotalsSql } from './model-usage-summary.ts'
 
 const rowSchema = z.object({ record_json: z.string() })
 function preservesKnownNumbers(previous: object, next: object): boolean {
@@ -25,6 +25,7 @@ function preservesKnownNumbers(previous: object, next: object): boolean {
 const summaryRowSchema = z.object({
   requests: z.number(), inFlight: z.number(), unknownRequests: z.number(),
   knownTokens: z.number(), unknownTokenRequests: z.number(),
+  knownInputTokens: z.number(), knownOutputTokens: z.number(), unknownInputTokenRequests: z.number(), unknownOutputTokenRequests: z.number(),
   cnyMicro: z.number().int().nonnegative().safe().nullable(), unpricedRequests: z.number(),
 })
 
@@ -140,11 +141,11 @@ export class ModelUsageService implements ModelUsageRecorder {
     this.#retention.compact(context.workspaceId)
     const query = this.#where(context, filter, false)
     const totals = summaryRowSchema.parse(this.database.driver.prepare(`${combinedModelUsageSql} SELECT ${modelUsageTotalsSql} FROM usage a WHERE ${query.sql}`).get(...query.args))
-    const trend = z.array(z.object({ date: z.string(), requests: z.number(), knownTokens: z.number() })).parse(this.database.driver.prepare(`
-      ${combinedModelUsageSql} SELECT date, SUM(requests) AS requests, COALESCE(SUM(knownTokens), 0) AS knownTokens
+    const trend = z.array(modelUsageOverviewSchema.shape.trend.element).parse(this.database.driver.prepare(`
+      ${combinedModelUsageSql} SELECT date, SUM(requests) AS requests, ${modelUsageTokenTotalsSql}
       FROM usage a WHERE ${query.sql} GROUP BY date ORDER BY date`).all(...query.args))
-    const features = z.array(z.object({ feature: modelUsageFeatureSchema, requests: z.number(), knownTokens: z.number() })).parse(this.database.driver.prepare(`
-      ${combinedModelUsageSql} SELECT feature, SUM(requests) AS requests, COALESCE(SUM(knownTokens), 0) AS knownTokens
+    const features = z.array(modelUsageOverviewSchema.shape.features.element).parse(this.database.driver.prepare(`
+      ${combinedModelUsageSql} SELECT feature, SUM(requests) AS requests, ${modelUsageTokenTotalsSql}
       FROM usage a WHERE ${query.sql} GROUP BY feature ORDER BY requests DESC, feature`).all(...query.args))
     const control = this.control(context.workspaceId)
     const { cnyMicro, ...visibleTotals } = totals

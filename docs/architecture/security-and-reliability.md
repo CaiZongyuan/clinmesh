@@ -126,6 +126,8 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 
 ### 模型用量查询
 
+总览接口的 `totals`、每日 `trend` 与功能 `features` 同时返回 `knownInputTokens`、`knownOutputTokens`、`unknownInputTokenRequests` 和 `unknownOutputTokenRequests`；日期、功能、Provider、模型、结果与病例筛选共同作用于这些指标。设置页分别展示已知输入和输出，分项不完整时保留提示；没有已知数量且存在缺失时显示未知，完整的零计数显示为零。计量与历史汇总口径由[明细保留与长期汇总](storage.md#明细保留与长期汇总)拥有。
+
 ClinMesh 设置中的模型用量页通过已认证 Session 读取 `/api/model-usage/overview`、`/api/model-usage/requests` 与单次请求详情。当前 Workspace 成员可读跨 Epoch 汇总；明细及计数共用服务端 SQL 授权条件，管理员可读本 Workspace 历史记录，普通医生只读活动 Epoch 内有 `outpatient_case_responsibility` 责任关系的临床请求。其他岗位不能借相同 Actor、猜测尝试 ID 或汇总下钻读取医生明细；行政人设和目录补全明细仅管理员可读。查询不接受客户端指定 Workspace、Epoch 或角色；无权和不存在的单次请求都返回 404。
 
 监控覆盖 Server 直接模型调用、经 DSH bridge 的调用和 Host 独立医生代问识别，不覆盖整个 DSH 原生聊天或其他插件。部署与 Workspace 默认启用，请求、Token、人民币额度分别无限，保留既有有界自动重试。成员通过 `/api/model-usage/control` 读取自身 Workspace 政策、各维度余量、生效开关与重试状态、控制拒绝和待办状态；普通成员的 `deployment` 为 `null`，不公开部署总上限及跨工作区累计量。当前选中管理员岗位可只读部署政策，并通过该路径的 `PUT` 修改本 Workspace 的开关、三项累计额度与自动重试；省略 `tokens` 或 `cny` 保留原值，显式 `null` 才切为无限。总览 `policy` 只投影自身 Workspace 上限。更新要求可信 Origin、幂等键和 `expectedVersion`，通过共享 Command 同事务写入审计和回执；请求不能指定其他 Workspace 或部署政策。部署维护者通过[部署配置](../deployment.md#模型用量)管理总限制，Workspace 无法放宽。

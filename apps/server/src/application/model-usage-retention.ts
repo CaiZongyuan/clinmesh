@@ -56,14 +56,20 @@ export class ModelUsageRetention {
       if (selected === 0) return
       this.database.driver.prepare(`INSERT INTO model_usage_daily
         (workspace_id, epoch, date, case_id, feature, provider, requested_model, actual_model, status,
-          requests, unknown_requests, known_tokens, unknown_token_requests, cny_micro, unpriced_requests)
+          requests, unknown_requests, known_tokens, known_input_tokens, known_output_tokens,
+          unknown_input_token_requests, unknown_output_token_requests, unknown_token_requests, cny_micro, unpriced_requests)
         SELECT workspace_id, epoch, date, COALESCE(case_id, ''), feature, provider, requested_model, COALESCE(actual_model, ''), status,
-          SUM(requests), SUM(unknownRequests), SUM(knownTokens), SUM(unknownTokenRequests), SUM(cnyMicro), SUM(unpricedRequests)
+          SUM(requests), SUM(unknownRequests), SUM(knownTokens), SUM(knownInputTokens), SUM(knownOutputTokens),
+          SUM(unknownInputTokenRequests), SUM(unknownOutputTokenRequests), SUM(unknownTokenRequests), SUM(cnyMicro), SUM(unpricedRequests)
         FROM (${liveModelUsageSql}) WHERE attempt_id IN (SELECT attempt_id FROM model_usage_expired_attempt)
         GROUP BY workspace_id, epoch, date, COALESCE(case_id, ''), feature, provider, requested_model, COALESCE(actual_model, ''), status
         ON CONFLICT DO UPDATE SET requests = requests + excluded.requests,
           unknown_requests = unknown_requests + excluded.unknown_requests,
           known_tokens = known_tokens + excluded.known_tokens,
+          known_input_tokens = known_input_tokens + excluded.known_input_tokens,
+          known_output_tokens = known_output_tokens + excluded.known_output_tokens,
+          unknown_input_token_requests = unknown_input_token_requests + excluded.unknown_input_token_requests,
+          unknown_output_token_requests = unknown_output_token_requests + excluded.unknown_output_token_requests,
           unknown_token_requests = unknown_token_requests + excluded.unknown_token_requests,
           cny_micro = CASE WHEN cny_micro IS NULL AND excluded.cny_micro IS NULL THEN NULL ELSE COALESCE(cny_micro, 0) + COALESCE(excluded.cny_micro, 0) END,
           unpriced_requests = unpriced_requests + excluded.unpriced_requests`).run()

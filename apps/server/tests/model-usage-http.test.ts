@@ -105,7 +105,8 @@ it('meters actual direct requests, keeps actual model across restart and restric
   const doctor = await signIn(fixture.runtime, 'doctor@demo.clinmesh.local')
   const read = async (path: string, cookie = admin) => fixture.runtime.app.request(path, { headers: { cookie } })
   const overview = modelUsageOverviewSchema.parse(await (await read('/api/model-usage/overview', doctor)).json())
-  expect(overview.totals).toMatchObject({ requests: 1, knownTokens: 120, unknownTokenRequests: 0, unpricedRequests: 1, cny: null })
+  const split = { knownInputTokens: 100, knownOutputTokens: 20, unknownInputTokenRequests: 0, unknownOutputTokenRequests: 0 }
+  expect(overview.totals).toMatchObject({ requests: 1, knownTokens: 120, unknownTokenRequests: 0, unpricedRequests: 1, cny: null, ...split })
   expect(dispatched).toBe(1)
   const records = modelUsageListSchema.parse(await (await read('/api/model-usage/requests')).json())
   expect(records.total).toBe(1)
@@ -129,7 +130,7 @@ it('meters actual direct requests, keeps actual model across restart and restric
     .run(midnightRecord.startedAt, JSON.stringify(midnightRecord), id)
   const localDay = modelUsageOverviewSchema.parse(await (await read('/api/model-usage/overview?from=2026-10-21&to=2026-10-21')).json())
   expect(localDay.totals.requests).toBe(1)
-  expect(localDay.trend).toEqual([{ date: '2026-10-21', requests: 1, knownTokens: 120 }])
+  expect(localDay.trend).toEqual([{ date: '2026-10-21', requests: 1, knownTokens: 120, ...split }])
   expect(modelUsageListSchema.parse(await (await read('/api/model-usage/requests?from=2026-10-20&to=2026-10-20')).json()).total).toBe(0)
 })
 
@@ -250,7 +251,8 @@ it('persists every DSH resend and repair through the real Host without double-co
     format: 'dsh', uncachedInputTokens: 100, outputTokens: 30, cacheReadTokens: 20, cacheWriteTokens: 5, reasoningTokens: 10, totalTokens: 155,
   })
   const overview = modelUsageOverviewSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/overview', { headers: { cookie } })).json())
-  expect(overview.totals).toMatchObject({ requests: 3, knownTokens: 310, unknownTokenRequests: 1 })
+  expect(overview.totals).toMatchObject({ requests: 3, knownTokens: 310, unknownTokenRequests: 1,
+    knownInputTokens: 250, knownOutputTokens: 60, unknownInputTokenRequests: 1, unknownOutputTokenRequests: 1 })
   await fixture.restart()
   const recovered = modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
   expect(recovered).toEqual(records)
@@ -271,7 +273,10 @@ it('retains partial DSH input evidence and includes its known lower bound withou
   expect(records.items[0]?.usage).toMatchObject({ inputTokens: null, outputTokens: 3, totalTokens: null,
     raw: { format: 'dsh', uncachedInputTokens: 12, outputTokens: 3, cacheReadTokens: null, cacheWriteTokens: null, totalTokens: null } })
   const overview = modelUsageOverviewSchema.parse(await (await read('/api/model-usage/overview')).json())
-  expect(overview.totals).toMatchObject({ requests: 1, knownTokens: 15, unknownTokenRequests: 1 })
+  expect(overview.totals).toMatchObject({ requests: 1, knownTokens: 15, unknownTokenRequests: 1,
+    knownInputTokens: 12, knownOutputTokens: 3, unknownInputTokenRequests: 1, unknownOutputTokenRequests: 0 })
+  expect(overview.features).toEqual([{ feature: 'patient_persona', requests: 1, knownTokens: 15,
+    knownInputTokens: 12, knownOutputTokens: 3, unknownInputTokenRequests: 1, unknownOutputTokenRequests: 0 }])
   await fixture.restart()
   expect(modelUsageListSchema.parse(await (await read('/api/model-usage/requests')).json())).toEqual(records)
 })

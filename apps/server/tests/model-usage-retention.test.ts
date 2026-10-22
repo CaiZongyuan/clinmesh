@@ -58,14 +58,22 @@ async function fixture(settings: { unpriced?: boolean; unknownUsage?: boolean; u
     configurePrices() { modelPricing = configuredPrices },
     async login(email: string) { cookie = await signIn(runtime, email) },
     async at(date: string) { vi.setSystemTime(new Date(date)); cookie = await signIn(runtime, 'admin@demo.clinmesh.local') },
-    async restart(legacy = false) {
+    async restart(legacy: boolean | 'token-breakdown' = false) {
       await runtime.close()
       if (legacy) {
         // The new migration only adds these tables. Preserve the real nonempty ledger and budgets
         // while materializing the exact schema immediately before this release.
         const old = openClinMeshDatabase({ databasePath: options.databasePath, busyTimeoutMs: 5000 })
-        try { old.driver.exec(`DROP TABLE model_usage_correction_audit; DROP TABLE model_usage_daily; DROP TABLE model_usage_retention;
-          DELETE FROM schema_migration WHERE migration_id = '0076_model-usage-retention.sql'`) } finally { old.close() }
+        try {
+          if (legacy === 'token-breakdown') old.driver.exec(`
+            ALTER TABLE model_usage_daily DROP COLUMN known_input_tokens;
+            ALTER TABLE model_usage_daily DROP COLUMN known_output_tokens;
+            ALTER TABLE model_usage_daily DROP COLUMN unknown_input_token_requests;
+            ALTER TABLE model_usage_daily DROP COLUMN unknown_output_token_requests;
+            DELETE FROM schema_migration WHERE migration_id = '0077_model-usage-token-breakdown.sql'`)
+          else old.driver.exec(`DROP TABLE model_usage_correction_audit; DROP TABLE model_usage_daily; DROP TABLE model_usage_retention;
+            DELETE FROM schema_migration WHERE migration_id IN ('0076_model-usage-retention.sql', '0077_model-usage-token-breakdown.sql')`)
+        } finally { old.close() }
       }
       runtime = await createClinMeshRuntime({ ...options, modelPricing }); cookie = await signIn(runtime, 'admin@demo.clinmesh.local')
     } }
@@ -102,8 +110,10 @@ it('expires at 90 real days, retains daily filtered totals and independent budge
   const before = modelUsageListSchema.parse(await (await f.request('/requests')).json())
   const attempt = before.items[0]!
   const overview = modelUsageOverviewSchema.parse(await (await f.request('/overview')).json())
-  expect(overview.totals).toMatchObject({ requests: 1, knownTokens: 15, cny: 0.2 })
-  expect(overview.trend).toEqual([{ date: '2026-01-02', requests: 1, knownTokens: 15 }])
+  const split = { knownInputTokens: 10, knownOutputTokens: 5, unknownInputTokenRequests: 0, unknownOutputTokenRequests: 0 }
+  expect(overview.totals).toMatchObject({ requests: 1, knownTokens: 15, cny: 0.2, ...split })
+  expect(overview.trend).toEqual([{ date: '2026-01-02', requests: 1, knownTokens: 15, ...split }])
+  expect(overview.features).toEqual([{ feature: 'patient_persona', requests: 1, knownTokens: 15, ...split }])
   const control = modelUsageControlSchema.parse(await (await f.request('/control')).json())
   await f.at('2026-04-01T15:59:59.999Z')
   expect(modelUsageListSchema.parse(await (await f.request('/requests')).json()).total).toBe(1)
@@ -182,7 +192,8 @@ it('retains unknown consumption and its independent reservations across expiry a
     WHERE operation = 'model-usage.reconcile' AND idempotency_key = ?`).get(key) as { response_json: string }
   expect(JSON.parse(receipt.response_json).data).toEqual({ attemptId: unknown.id, detailExpired: true })
   await f.restart()
-  expect(modelUsageOverviewSchema.parse(await (await f.request('/overview')).json()).totals).toMatchObject({ requests: 2, knownTokens: 35, unknownTokenRequests: 0, cny: 0.5, unpricedRequests: 0 })
+  expect(modelUsageOverviewSchema.parse(await (await f.request('/overview')).json()).totals).toMatchObject({ requests: 2, knownTokens: 35, unknownTokenRequests: 0, cny: 0.5, unpricedRequests: 0,
+    knownInputTokens: 10, knownOutputTokens: 5, unknownInputTokenRequests: 1, unknownOutputTokenRequests: 1 })
 })
 
 it.each([{ totalTokens: 20, cny: 0.3 }, { totalTokens: 0, cny: 0 }])('settles an unknown dispatch after full audited reconciliation and expires its detail (%j)', async values => {
@@ -298,6 +309,31 @@ it('preserves missing-price aggregates as incomplete and never offers expired de
   expect((await f.request(`/requests/${attempt.id}/reprice`, { expectedRevision: 0, evidence: 'synthetic-price-v1' })).status).toBe(404)
   expect(modelUsageOverviewSchema.parse(await (await f.request('/overview')).json()).totals).toMatchObject({ requests: 1, knownTokens: 15, cny: null, unpricedRequests: 1 })
   expect(modelUsageListSchema.parse(await (await f.request('/requests')).json()).total).toBe(0)
+})
+
+it('keeps legacy daily splits unknown and merges new known consumption without inventing historical input or output', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+  const f = await fixture()
+  await f.generatePersona()
+  await f.at('2026-04-02T00:00:00.000Z')
+  expect(modelUsageListSchema.parse(await (await f.request('/requests')).json()).total).toBe(0)
+  await f.restart('token-breakdown')
+  const legacySplit = { knownInputTokens: 0, knownOutputTokens: 0, unknownInputTokenRequests: 1, unknownOutputTokenRequests: 1 }
+  const legacy = modelUsageOverviewSchema.parse(await (await f.request('/overview')).json())
+  expect(legacy.totals).toMatchObject({ requests: 1, knownTokens: 15, ...legacySplit })
+  expect(legacy.trend).toEqual([{ date: '2026-01-01', requests: 1, knownTokens: 15, ...legacySplit }])
+  // Same grouping key exercises merging a new archive into an older daily aggregate.
+  await f.at('2026-01-01T00:00:00.000Z')
+  await f.generatePersona()
+  const mixed = modelUsageOverviewSchema.parse(await (await f.request('/overview')).json())
+  const mixedSplit = { ...legacySplit, knownInputTokens: 10, knownOutputTokens: 5 }
+  expect(mixed.totals).toMatchObject({ requests: 2, knownTokens: 30, ...mixedSplit })
+  expect(mixed.features).toEqual([{ feature: 'patient_persona', requests: 2, knownTokens: 30, ...mixedSplit }])
+  await f.at('2026-04-02T00:00:00.000Z')
+  expect(modelUsageListSchema.parse(await (await f.request('/requests')).json()).total).toBe(0)
+  await f.restart()
+  expect(modelUsageOverviewSchema.parse(await (await f.request('/overview')).json())).toEqual(mixed)
 })
 
 it('upgrades a nonempty pre-retention ledger without losing known totals, unknown evidence or independent budget starts', async () => {

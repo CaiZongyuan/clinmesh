@@ -29,6 +29,18 @@ function formatCount(value: number | null, locale: WorkspaceLocale, messages: Me
   return value === null ? messages.unknown : new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(value)
 }
 
+function formatKnownTokens(value: number, unknown: number, locale: WorkspaceLocale, messages: Messages) {
+  return formatCount(value === 0 && unknown > 0 ? null : value, locale, messages)
+}
+
+function TokenSummaryCell({ value, unknown, locale, messages }: {
+  value: number; unknown: number; locale: WorkspaceLocale; messages: Messages
+}) {
+  return <TableCell className="tabular-nums">{formatKnownTokens(value, unknown, locale, messages)}
+    {unknown > 0 ? <p className="text-xs text-muted-foreground">{formatCount(unknown, locale, messages)} {messages.incompleteTokenRequests}</p> : null}
+  </TableCell>
+}
+
 function Loading({ messages }: { messages: Messages }) {
   return <div role="status" className="flex flex-col gap-3"><span>{messages.loading}</span><Skeleton className="h-24 w-full" /></div>
 }
@@ -51,18 +63,23 @@ function Summary({ data, locale, messages }: { data: ModelUsageOverview; locale:
     { label: messages.dispatched, value: formatCount(totals.requests, locale, messages), description: messages.dispatchScope },
     { label: messages.knownTokens, value: formatCount(totals.knownTokens, locale, messages),
       description: `${formatCount(totals.unknownTokenRequests, locale, messages)} ${messages.unknownTokenRequests}` },
+    { label: messages.knownInputTokens, value: formatKnownTokens(totals.knownInputTokens, totals.unknownInputTokenRequests, locale, messages),
+      description: `${formatCount(totals.unknownInputTokenRequests, locale, messages)} ${messages.incompleteTokenRequests}` },
+    { label: messages.knownOutputTokens, value: formatKnownTokens(totals.knownOutputTokens, totals.unknownOutputTokenRequests, locale, messages),
+      description: `${formatCount(totals.unknownOutputTokenRequests, locale, messages)} ${messages.incompleteTokenRequests}` },
     { label: messages.cost, value: `${messages.knownCost}: ${formatCount(totals.cny, locale, messages)}`,
       description: `${formatCount(totals.unpricedRequests, locale, messages)} ${messages.unpricedRequests}` },
     { label: messages.outstanding, value: `${totals.inFlight} / ${totals.unknownRequests}`,
       description: `${messages.inFlight} / ${messages.unresolved}` },
   ]
-  return <div className="flex min-w-0 flex-col gap-3"><div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+  return <div className="flex min-w-0 flex-col gap-3"><div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
     {metrics.map(metric => <Card key={metric.label} aria-label={metric.label} role="region" size="sm">
       <CardHeader><CardTitle>{metric.label}</CardTitle></CardHeader>
       <CardContent className="flex flex-col gap-2"><p className="text-2xl font-semibold tabular-nums">{metric.value}</p>
         <p className="text-sm text-muted-foreground">{metric.description}</p></CardContent>
     </Card>)}
-  </div><p className="text-sm text-muted-foreground">{messages.tokensReserved}: {reservation(totals.reservedTokens, totals.tokensUnknownReservations)}
+  </div><p className="text-sm text-muted-foreground">{messages.splitExplanation}</p>
+    <p className="text-sm text-muted-foreground">{messages.tokensReserved}: {reservation(totals.reservedTokens, totals.tokensUnknownReservations)}
     {' · '}{messages.cnyReserved}: {reservation(totals.reservedCny, totals.cnyUnknownReservations)}</p>
     <p className="text-sm text-muted-foreground">{messages.reservations}</p></div>
 }
@@ -72,26 +89,34 @@ function UsageCharts({ data, locale, messages }: { data: ModelUsageOverview; loc
   const featureMaximum = Math.max(1, ...data.features.map(item => item.requests))
   return <div className="grid min-w-0 gap-4 xl:grid-cols-2">
     <Card className="min-w-0"><CardHeader><CardTitle>{messages.trend}</CardTitle>
-      <CardDescription>{messages.requestCount} / {messages.knownTokens}</CardDescription></CardHeader><CardContent>
+      <CardDescription>{messages.requestCount} / {messages.knownInputTokens} / {messages.knownOutputTokens} / {messages.knownTokens}</CardDescription></CardHeader><CardContent>
       {data.trend.length === 0 ? <NoRequests messages={messages} /> : <Table aria-label={messages.trend}>
         <TableHeader><TableRow><TableHead>{messages.date}</TableHead><TableHead>{messages.requestCount}</TableHead>
+          <TableHead>{messages.knownInputTokens}</TableHead><TableHead>{messages.knownOutputTokens}</TableHead>
           <TableHead>{messages.knownTokens}</TableHead></TableRow></TableHeader>
         <TableBody>{data.trend.map(item => <TableRow key={item.date}>
           <TableCell>{item.date}</TableCell><TableCell><div className="flex min-w-20 items-center gap-2">
             <span className="tabular-nums">{formatCount(item.requests, locale, messages)}</span>
             <div aria-hidden="true" className="h-2 flex-1 rounded bg-muted"><div className="h-2 rounded bg-primary" style={{ width: `${item.requests / maximum * 100}%` }} /></div>
-          </div></TableCell><TableCell className="tabular-nums">{formatCount(item.knownTokens, locale, messages)}</TableCell>
+          </div></TableCell>
+          <TokenSummaryCell value={item.knownInputTokens} unknown={item.unknownInputTokenRequests} locale={locale} messages={messages} />
+          <TokenSummaryCell value={item.knownOutputTokens} unknown={item.unknownOutputTokenRequests} locale={locale} messages={messages} />
+          <TableCell className="tabular-nums">{formatCount(item.knownTokens, locale, messages)}</TableCell>
         </TableRow>)}</TableBody></Table>}
     </CardContent></Card>
     <Card className="min-w-0"><CardHeader><CardTitle>{messages.distribution}</CardTitle>
-      <CardDescription>{messages.requestCount} / {messages.knownTokens}</CardDescription></CardHeader><CardContent>
+      <CardDescription>{messages.requestCount} / {messages.knownInputTokens} / {messages.knownOutputTokens} / {messages.knownTokens}</CardDescription></CardHeader><CardContent>
       {data.features.length === 0 ? <NoRequests messages={messages} /> : <Table aria-label={messages.distribution}>
-        <TableHeader><TableRow><TableHead>{messages.feature}</TableHead><TableHead>{messages.requestCount}</TableHead><TableHead>{messages.knownTokens}</TableHead></TableRow></TableHeader>
+        <TableHeader><TableRow><TableHead>{messages.feature}</TableHead><TableHead>{messages.requestCount}</TableHead>
+          <TableHead>{messages.knownInputTokens}</TableHead><TableHead>{messages.knownOutputTokens}</TableHead><TableHead>{messages.knownTokens}</TableHead></TableRow></TableHeader>
         <TableBody>{data.features.map(item => <TableRow key={item.feature}>
           <TableCell>{messages.featureLabel(item.feature)}</TableCell><TableCell><div className="flex min-w-20 items-center gap-2">
             <span className="tabular-nums">{formatCount(item.requests, locale, messages)}</span>
             <div aria-hidden="true" className="h-2 flex-1 rounded bg-muted"><div className="h-2 rounded bg-primary" style={{ width: `${item.requests / featureMaximum * 100}%` }} /></div>
-          </div></TableCell><TableCell className="tabular-nums">{formatCount(item.knownTokens, locale, messages)}</TableCell>
+          </div></TableCell>
+          <TokenSummaryCell value={item.knownInputTokens} unknown={item.unknownInputTokenRequests} locale={locale} messages={messages} />
+          <TokenSummaryCell value={item.knownOutputTokens} unknown={item.unknownOutputTokenRequests} locale={locale} messages={messages} />
+          <TableCell className="tabular-nums">{formatCount(item.knownTokens, locale, messages)}</TableCell>
         </TableRow>)}</TableBody></Table>}
     </CardContent></Card>
   </div>

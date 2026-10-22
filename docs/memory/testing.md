@@ -42,6 +42,8 @@
 
 ## 替身、异步屏障与断言
 
+- Testing Library 的 `getByRole` 使用字符串 `name` 时已按完整可访问名称匹配，不接受 Playwright 的 `exact` 选项；混用两者参数可能让 Vitest 运行通过而 TypeScript 检查失败。组件测试省略 `exact`，真实浏览器测试按 Playwright API 保留该选项。
+
 - 验证模型手动恢复时，逐个继续意图核对实际外部派发次数，并在下一次仍失败时证明自动重试没有被一并放开；同时覆盖重放、准入拒绝和重启。任务来源 `trigger: manual` 会延续到后续阶段，不能用它证明某一次请求已获得人工授权；恢复合同见[模型执行恢复](../architecture/storage.md#模型执行恢复)。
 
 - DSH Provider 开启用量账本后，合成 bridge 响应也须提供匹配 `attemptId` 的可信核算终态；只返回模型正文、HTTP 401/429/503 或 SDK 结束事件会进入结果未知保护，不能用来验证明确失败的重试。超时或断流的替身保留未知语义，先核对派发与核算合同再修改生产恢复逻辑；参考[建议 HTTP 回归](../../apps/server/tests/doctor-recommendations-http.test.ts)与[控制恢复合同](../../apps/server/tests/model-control-recovery-http.test.ts)。

@@ -44,6 +44,8 @@ for (const version of ['18', '19']) {
         await page.getByRole('menuitem', { name: zh ? '模型用量' : 'Model usage', exact: true }).click()
         await expect(page.getByRole('heading', { name: zh ? '模型用量' : 'Model usage', exact: true })).toBeVisible()
         await expect(page.getByRole('region', { name: zh ? '已派发请求' : 'Dispatched requests' })).toContainText('3')
+        await expect(page.getByRole('region', { name: zh ? '已知输入 Token' : 'Known input tokens', exact: true })).toContainText('120')
+        await expect(page.getByRole('region', { name: zh ? '已知输出 Token' : 'Known output tokens', exact: true })).toContainText(zh ? '未知' : 'Unknown')
         await expect(page.getByRole('region', { name: zh ? '人民币费用' : 'CNY cost' })).toContainText(zh ? '未知' : 'Unknown')
         const requests = page.getByRole('tab', { name: zh ? '请求明细' : 'Requests', exact: true })
         await page.getByRole('tab', { name: zh ? '用量总览' : 'Usage overview', exact: true }).focus()
