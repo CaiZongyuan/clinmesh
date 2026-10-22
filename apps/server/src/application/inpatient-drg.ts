@@ -233,7 +233,8 @@ export class InpatientDrg {
       prices: { medications: catalog.medications.map(item => [item.id, item.version, item.priceFen]),
         services: catalog.services.map(item => [item.id, item.version, item.priceFen]),
         procedures: surgeryCatalog.procedures.map(item => [item.id, item.version, item.chargeDefinition.priceFen]),
-        materials: surgeryCatalog.materials.map(item => [item.id, item.version, item.chargeDefinition.priceFen]) },
+        // 计价单位未确认的耗材无价格，指纹以 null 占位；补价后指纹随之变化即过期。
+        materials: surgeryCatalog.materials.map(item => [item.id, item.version, 'chargeDefinition' in item ? item.chargeDefinition.priceFen : null]) },
       rulesId: this.rules!.rulesId,
       rulesVersion: this.rules!.version,
     }
@@ -294,7 +295,7 @@ export class InpatientDrg {
       const admission = this.owner.orders.assertAdmitted(context, input.admissionId)
       const material = this.owner.surgery.catalog(context).materials
         .find(item => item.id === input.materialId && item.version === input.catalogVersion)
-      if (material === undefined) throw new InpatientError('CATALOG_CONFLICT', '耗材目录或版本无效')
+      if (material === undefined || !('chargeDefinition' in material)) throw new InpatientError('CATALOG_CONFLICT', '耗材目录、版本或计价单位不可用')
       if (input.requestId !== undefined) {
         const request = z.object({ status: z.string() }).optional().parse(this.owner.database.driver.prepare(
           'SELECT status FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
