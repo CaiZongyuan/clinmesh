@@ -21,6 +21,9 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write?: ReturnType<typeof useInpatientWriteIntent> }
 type Frozen = { kind: 'refund'; data: z.infer<typeof inpatientFinancialRefundPreviewResponseSchema>['data'] }
   | { kind: 'payment'; data: z.infer<typeof inpatientPaymentPreviewResponseSchema>['data'] }
+function FinancialWriteError({ locale, write }: { locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }) {
+  return write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null
+}
 function amountFen(value: string) {
   if (!/^(0|[1-9]\d*)(\.\d{1,2})?$/.test(value.trim())) return 0
   const [yuan = '0', fraction = ''] = value.trim().split('.')
