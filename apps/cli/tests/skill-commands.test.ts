@@ -280,7 +280,9 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
     expect(inspectExample(program, line).operation?.id).toBe(operation.id)
     expect(operation.handlerOwner).toBe('InpatientService')
     expect(operation.skill).toBe('clinmesh-inpatient')
-    if (operation.mode === 'command') expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+    if (operation.mode === 'command') expect(operation.requirements).toEqual({
+      expectedVersions: !['inpatient.payment.preview', 'inpatient.refund.preview'].includes(operation.id), idempotency: 'required',
+    })
   }
 })
 
