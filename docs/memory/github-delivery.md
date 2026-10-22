@@ -16,6 +16,8 @@
 
 - 本仓库 `ci.yml` 的 `push` 触发仅限 `main`/`master`；feature 分支的 CI 由 PR 的 `pull_request` 事件触发。push 后 `gh run list` 为空时先核对分支是否在 push 触发列表、PR 是否已创建（PR 不存在时无 run 属预期），再怀疑 GitHub 偶发丢失 push 事件；确认事件丢失才推送空提交重新触发，不把"推送完成"当作"CI 已启动"。
 
+- CI annotations 可能只列出部分失败，不能据此前几项判断完整修复范围。先读取失败步骤的全部测试报告，按文件与根因汇总；`gh run view --log` 无内容时可用 `gh api repos/<owner>/<repo>/actions/runs/<run>/logs` 下载 ZIP，检查失败步骤日志。不要输出下载重定向中的临时签名地址，修复后覆盖同根因的全部替身与合同。
+
 - Actions 的 `pull-requests:write` 不等于仓库允许机器人创建 PR；出现明确的创建权限错误时先核对仓库设置，不反复重试。没有管理员权限时，可按[持续升级故障恢复](../deployment.md#dsh-持续升级)验证已有候选 PR 的更新与验收，并单独保留首次创建权限限制。
 
 - `gh pr edit` 可能因 GitHub Classic Projects 的 GraphQL 字段废弃而失败。PR 正文更新可改用 REST：`gh api repos/<owner>/<repo>/pulls/<number> --method PATCH -f body=...`。

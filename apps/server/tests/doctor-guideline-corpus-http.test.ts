@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { doctorRecommendationStateSchema, generateDoctorRecommendationsResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
+import { unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import type { GuidelineDocument } from '../src/application/guideline-corpus.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
@@ -54,7 +55,9 @@ async function setup(chiefComplaint = '糖尿病复查。') {
       result = { items: payload.items.map(item => ({ id: item.id, guidelineSupported: true, caseSupported: true,
         applicable: true, qualifiersPreserved: true })) }
     } else throw new Error(`Unexpected synthetic schema ${input.schemaName}`)
-    return Response.json({ model: input.model, content: JSON.stringify(result) })
+    return Response.json({ model: input.model, content: JSON.stringify(result), accounting: {
+      attemptId: input.attemptId, status: 'succeeded', dispatch: 'dispatched', usage: unknownModelTokenUsage,
+    } })
   } })
   const options: Parameters<typeof createClinMeshRuntime>[0] = {
     databasePath: join(directory, 'hospital.sqlite'), guidelineDatabasePath: corpusPath,
