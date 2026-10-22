@@ -79,6 +79,8 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 `refund_transaction` 通过 `source_kind + source_id` 引用既有原款，`basis_id` 绑定业务 owner 提供的退费依据，`owner_kind + owner_id` 绑定就诊。原款成功状态、归属与依据额度由 owner 在同一 Command 事务验证；退款账不复制原款或增加第二套余额。`RefundLedger` 按成功结果扣除可退余额、按未知结果预占余额，追加的 `refund_resolution` 只保存确定结果。`refund_tender` 固定本次退款对原款方式的反向分配；成功和未知退款共同占用对应方式余额，拒付释放。依据额度同时扣除跨原款成功及未知退款；原款余额版本包含尝试和结果记录，防止竞争确认。门诊冲减保存原费用引用、原因与当时业务状态，原费用与支付行保留；所有反向资金、版本、回执与审计一起提交或回滚。
 
+住院后续财务更正保存在 `inpatient_financial_adjustment`，关联本次原费用及首次结算，按补计或冲减追加；原 ChargeItem、结算 JSON 及病案归档不改写。后续退款预览独立保存受信上下文、token hash、当前账目指纹和过期时间；退款仍进入共享 `refund_transaction`，使用更正 ID 作为依据。收款预览和尝试的 `adjustment_id` 区分首次与后续，成功和未知资金从不可覆盖的尝试及追加结果计算，不另持久化一套余额。首次资金及归档来源只包含首次链，当前财务差异由[财务更正 owner](clinical-workflows.md#结算后的财务更正)计算。
+
 #### 患者医保待遇记录
 
 `insurance_preview` 保存受信岗位摘要、token 摘要、真实时间期限及冻结费用、目录和年度账户预览。`insurance_event` 保存 Workspace/Epoch、Patient、年度、目标及不可覆盖的待遇快照和有符号影响；`reverses_id` 唯一引用原结算，撤销只追加逆向事件。账户余额、普通门诊和住院年度累计均由事件计算，不保存可编辑第二余额。原费用和现金支付表继续分别拥有应收与实收，待遇规则和失败边界见[医保模拟](clinical-workflows.md#86-医保模拟)。
