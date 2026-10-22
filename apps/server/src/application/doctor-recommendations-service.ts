@@ -1,9 +1,10 @@
 import { z } from 'zod'
 import {
-  doctorCaseEvidenceSchema, doctorRecommendationGenerationSchema, doctorRecommendationKindSchema,
-  doctorRecommendationStateSchema, type DoctorCaseEvidence, type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion,
+  considerationLabelKey, doctorCaseEvidenceSchema, doctorConsiderationDispositionStatusSchema, doctorRecommendationGenerationSchema,
+  doctorRecommendationKindSchema, doctorRecommendationStateSchema,
+  type DoctorCaseEvidence, type DoctorConsiderationDispositionKind, type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion,
   type DoctorRecommendationConsideration, type DoctorRecommendationNotice,
-  type GenerateDoctorRecommendationsRequest, type GuidelineEvidence,
+  type GenerateDoctorRecommendationsRequest, type GuidelineEvidence, type SetDoctorConsiderationDispositionRequest,
   confirmDoctorPreparationResponseSchema, type ConfirmDoctorPreparationRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
@@ -30,6 +31,9 @@ import type { GuidelineCorpus } from '../infrastructure/sqlite/guideline-corpus.
 const stateRowSchema = z.object({
   generation: z.number().int().positive(), input_fingerprint: z.string(),
   state_json: z.string(), status: z.string(), input_json: z.string(), actor_context_json: z.string(),
+})
+const dispositionRowSchema = z.object({
+  label_key: z.string(), status: doctorConsiderationDispositionStatusSchema, label: z.string(),
 })
 const actorContextSchema = z.object({
   workspaceId: z.string(), epoch: z.string(), actorId: z.string(), scenarioRunId: z.string(), roleCode: z.string(),
@@ -508,21 +512,54 @@ export class DoctorRecommendationsService {
       notices: [{ category: 'guideline', message }] }
   }
 
+  #considerationDispositions(context: ActorContext, caseId: string, kind: DoctorRecommendationKind) {
+    const rows = dispositionRowSchema.array().parse(this.options.database.driver.prepare(`
+      SELECT label_key, status, label FROM doctor_consideration_disposition
+      WHERE actor_id = ? AND case_id = ? AND kind = ? ORDER BY updated_at DESC, label_key
+    `).all(context.actorId, caseId, kind))
+    return rows.map(({ label_key: labelKey, status, label }) => ({ labelKey, status, label }))
+  }
+
+  // 思路处置不写入建议状态持久 JSON，读取时按当前医生合并返回，旧持久化行自然兼容；generate 响应同样合并，避免重新生成落库前已处理思路短暂重现。
+  #withDispositions(context: ActorContext, caseId: string, kind: DoctorRecommendationKind, state: DoctorRecommendationState) {
+    const dispositions = this.#considerationDispositions(context, caseId, kind)
+    return dispositions.length === 0 ? state : { ...state, considerationDispositions: dispositions }
+  }
+
   async read(context: ActorContext, caseId: string, kind: DoctorRecommendationKind) {
     const { snapshot, inputFingerprint } = await this.#input(context, caseId, kind)
     const row = this.#row(context, caseId, kind)
     if (row !== undefined) {
       const state = doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
       const execution = readDoctorRecommendationExecution(this.options.database, this.#executionIdentity(context, caseId, kind, row.generation))
-      return this.#withAvailableGuidelines({ ...state, inputFingerprint, encounterVersion: snapshot.encounter.versionId,
+      return this.#withDispositions(context, caseId, kind, this.#withAvailableGuidelines({ ...state, inputFingerprint, encounterVersion: snapshot.encounter.versionId,
         ...(execution === undefined ? {} : { recovery: { ...execution.status, canContinue: execution.status.canContinue && row.input_fingerprint === inputFingerprint } }),
-        stale: row.input_fingerprint !== inputFingerprint }, snapshot.guidelines)
+        stale: row.input_fingerprint !== inputFingerprint }, snapshot.guidelines))
     }
-    return doctorRecommendationStateSchema.parse({
+    return this.#withDispositions(context, caseId, kind, doctorRecommendationStateSchema.parse({
       caseId, kind, encounterId: snapshot.encounter.id, encounterVersion: snapshot.encounter.versionId,
       inputFingerprint, status: 'idle', generation: 0, stale: false, items: [],
       guidelines: [], caseEvidence: [], missingInformation: [],
-    })
+    }))
+  }
+
+  async setConsiderationDisposition(context: ActorContext, caseId: string, kind: DoctorConsiderationDispositionKind,
+    request: SetDoctorConsiderationDispositionRequest) {
+    this.#authorize(context, caseId)
+    const labelKey = considerationLabelKey(request.input.label)
+    if (request.input.status === 'clear') {
+      this.options.database.driver.prepare(`
+        DELETE FROM doctor_consideration_disposition WHERE actor_id = ? AND case_id = ? AND kind = ? AND label_key = ?
+      `).run(context.actorId, caseId, kind, labelKey)
+    } else {
+      this.options.database.driver.prepare(`
+        INSERT INTO doctor_consideration_disposition (actor_id, case_id, kind, label_key, status, label, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (actor_id, case_id, kind, label_key) DO UPDATE SET
+          status = excluded.status, label = excluded.label, updated_at = excluded.updated_at
+      `).run(context.actorId, caseId, kind, labelKey, request.input.status, request.input.label, new Date().toISOString())
+    }
+    return { dispositions: this.#considerationDispositions(context, caseId, kind) }
   }
 
   async generate(context: ActorContext, caseId: string, kind: DoctorRecommendationKind,
@@ -602,7 +639,7 @@ export class DoctorRecommendationsService {
       })
       return { data: state, effects: [{ kind: 'updated', reference: `DoctorRecommendations/${caseId}:${kind}`, versionId: String(generation) }] }
     })
-    return { ...response, data: this.#withAvailableGuidelines(response.data, snapshot.guidelines) }
+    return { ...response, data: this.#withDispositions(context, caseId, kind, this.#withAvailableGuidelines(response.data, snapshot.guidelines)) }
   }
 
   async confirm(context: ActorContext, caseId: string, kind: DoctorRecommendationKind,
