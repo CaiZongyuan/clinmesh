@@ -53,6 +53,10 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     ['clinmesh refund preview ', 'refund.preview', 1],
     ['clinmesh refund confirm ', 'refund.confirm', 1],
     ['clinmesh refund recover ', 'refund.recover', 1],
+    ['clinmesh insurance get ', 'insurance.get', 1],
+    ['clinmesh insurance preview ', 'insurance.preview', 1],
+    ['clinmesh insurance confirm ', 'insurance.confirm', 1],
+    ['clinmesh insurance cancel ', 'insurance.cancel', 1],
   ] as const) {
     const line = commandLines(skill).find(line => line.startsWith(prefix))!
     const operation = getHisOperation(id)
@@ -60,7 +64,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     expect(operation.version).toBe(version)
     expect(operation.skill).toBe('clinmesh-billing')
   }
-  for (const id of ['payment.confirm', 'payment.recover', 'refund.confirm', 'refund.recover']) {
+  for (const id of ['payment.confirm', 'payment.recover', 'refund.confirm', 'refund.recover', 'insurance.confirm', 'insurance.cancel']) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh command receipt get --operation-id ${id} `))!
     expect(inspectExample(program, line).operation?.id).toBe('command.receipt.get')
   }
@@ -68,6 +72,12 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     'expectedPaymentVersion', 'ambiguous-decline', 'ambiguous-pending', 'original Command receipt',
     'Recovery queries the channel without collecting again', 'only a fully paid charge',
     'Registration charges remain unpaid and read-only']) expect(skill).toContain(term)
+  for (const term of ['expectedBalanceVersion', 'INSURANCE_PREVIEW_STALE', 'not payment tenders',
+    'calendar year', 'preserves later transactions and clinical progress']) expect(skill).toContain(term)
+  const examples=[...skill.replaceAll('\r\n','\n').matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
+  for(const [index,operation] of ['insurance.preview','insurance.confirm','insurance.cancel'].entries()){
+    expect(getHisOperation(operation).input.safeParse(examples[index]).success).toBe(true)
+  }
 })
 
 it('keeps inpatient pharmacy and charge reads and receipts aligned with role-specific contracts', async () => {

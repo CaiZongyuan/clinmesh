@@ -32,6 +32,19 @@ describe('catalog-backed operation execution', () => {
     expect(request.headers['idempotency-key']).toBe('refund-recovery-1')
     expect(JSON.parse(stdout.value())).toMatchObject({ ok: true, operation: { id: 'refund.recover' }, data: { data: { outcome: 'declined' } } })
   })
+  it.each(['confirm','cancel'] as const)('binds insurance %s to its target path and preserves the original reviewed input',async action=>{
+    const stdout=captureStream(),stderr=captureStream()
+    const fetch=vi.fn().mockResolvedValue(Response.json({auditId:'audit-1',effects:[],requestId:'request-1',warnings:[],data:{target:{kind:'outpatient',id:'case-1'},balance:{patientId:'patient-1',year:'2026',version:2,accountFen:0,eligibleFen:0,fundFen:0,outpatientEligibleFen:0,outpatientFundFen:0,inpatientEligibleFen:0,inpatientFundFen:0},activeSettlements:[],history:[]}}))
+    const execute=createHttpExecutor({baseUrl:'http://127.0.0.1:51868',credential:{kind:'agent',token:'cma_synthetic'},fetch})
+    const flags=action==='confirm'?['--preview-id','preview-1','--commit-token','synthetic-commit-token-1']:['--settlement-id','settlement-1','--expected-balance-version','1']
+    expect(await runCli(['insurance',action,'--kind','outpatient','--id','case-1',...flags,'--idempotency-key','original-insurance-key'],{stdout:stdout.stream,stderr:stderr.stream},{authMode:'agent',execute})).toBe(0)
+    expect(stderr.value()).toBe('')
+    const [url,request]=fetch.mock.calls[0]!
+    expect(String(url)).toBe(`http://127.0.0.1:51868/api/his/v1/insurance/outpatient/case-1/${action}`)
+    expect(request.headers).toMatchObject({'idempotency-key':'original-insurance-key'})
+    expect(JSON.parse(request.body)).toEqual({expectedVersions:{},input:action==='confirm'?{previewId:'preview-1',commitToken:'synthetic-commit-token-1'}:{settlementId:'settlement-1',expectedBalanceVersion:1}})
+  })
+
   it('reads a unified bill through the cashier command without forwarding the case as a query parameter', async () => {
     const stdout = captureStream()
     const stderr = captureStream()
