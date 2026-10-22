@@ -18,7 +18,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 
 type FrozenRefund = { preview: z.infer<typeof refundPreviewResponseSchema>['data']; chargeVersion: number }
 type Correction = { chargeItemId: string; chargeVersion: number; amountFen: number; reason: string; key: string }
-function RefundWriteError({ error, locale }: { error: unknown; locale: WorkspaceLocale }) {
+function RefundWriteError({ error, locale }: { error: Error | null; locale: WorkspaceLocale }) {
   const messages = getWorkspaceMessages(locale)
   return error == null ? null : <Alert variant="destructive"><AlertTitle>{messages.operationFailed}</AlertTitle><AlertDescription>{getWorkspaceErrorMessage(error, messages)}</AlertDescription></Alert>
 }
