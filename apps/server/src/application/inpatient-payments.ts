@@ -63,8 +63,10 @@ export class InpatientPayments {
     const refundedFen = refunds.filter(refund => refund.outcome === 'success').reduce((sum, refund) => sum + refund.amountFen, 0)
     const depositFen = sources.filter(source => source.kind === 'inpatient-deposit').reduce((sum, source) => sum + source.amountFen, 0)
     const supplementFen = sources.filter(source => source.kind === 'inpatient-supplement').reduce((sum, source) => sum + source.amountFen, 0)
+    const settlement = this.owner.discharge.snapshot(context, admissionId)
+    const patientFen = settlement.insurance?.patientFen ?? settlement.chargesFen
     return inpatientPaymentsSchema.parse({ admissionId, payments,
-      depositFen, supplementFen, refundedFen, remainingFen: this.owner.orders.chargeFacts(context, admissionId).chargesFen - depositFen - supplementFen + refundedFen,
+      depositFen, supplementFen, refundedFen, remainingFen: patientFen - depositFen - supplementFen + refundedFen,
       sources, refunds, pendingCount: payments.filter(payment => payment.outcome === 'ambiguous').length + refunds.filter(refund => refund.outcome === 'ambiguous').length })
   }
   firstRefunds(context: ActorContext, admissionId: string) { return this.refunds.attempts(context, 'inpatient', admissionId).filter(attempt => attempt.basisId === firstSettlementBasis(admissionId)) }
