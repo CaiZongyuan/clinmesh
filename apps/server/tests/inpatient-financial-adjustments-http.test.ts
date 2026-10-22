@@ -50,6 +50,45 @@ async function setup() {
 }
 
 describe('首次结算后的财务更正公共 HTTP', () => {
+  it('追加费用补计后只补收差额，未知原收款重启恢复且首次结算不变', async () => {
+    const s = await setup()
+    const before = await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json()
+    const adjusted = await s.request(s.cashier, `${s.path}/financial-adjustments`, { chargeId: before.charges[0].chargeId,
+      direction: 'increase', amountFen: 1500, expectedFingerprint: before.fingerprint, reason: '合成床日费补计更正' })
+    expect(adjusted.status).toBe(200)
+    const bill = (await adjusted.json()).data
+    expect(bill).toMatchObject({ frozenChargesFen: 5000, currentChargesFen: 6500, remainingCollectFen: 1500, remainingRefundFen: 0 })
+    const preview = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/preview`, {
+      adjustmentId: bill.adjustments[0].adjustmentId, amountFen: 1500, expectedFingerprint: bill.fingerprint,
+      tenders: [{ method: 'cash', amountFen: 1000 }, { method: 'bank-card', amountFen: 500 }], simulatorRule: 'ambiguous' })
+    expect(preview.status).toBe(200)
+    const reviewed = (await preview.json()).data
+    const confirmation = { previewId: reviewed.previewId, commitToken: reviewed.commitToken }, key = randomUUID()
+    const response = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/confirm`, confirmation, key)
+    expect(response.status).toBe(200)
+    const receipt = await response.json()
+    expect(receipt.data).toMatchObject({ outcome: 'ambiguous', amountFen: 1500 })
+    const pending = await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json()
+    expect(pending).toMatchObject({ currentFundsFen: 5000, reservedCollectFen: 1500 })
+    expect(pending.adjustments[0].status).toBe('unknown')
+    expect((await s.request(s.cashier, `${s.path}/financial-adjustments/payments/preview`, {
+      adjustmentId: bill.adjustments[0].adjustmentId, amountFen: 1, expectedFingerprint: pending.fingerprint,
+      tenders: [{ method: 'cash', amountFen: 1 }], simulatorRule: 'success' })).status).toBe(409)
+    await s.restart()
+    expect(await (await s.request(s.cashier, `${s.path}/financial-adjustments/payments/confirm`, confirmation, key)).json()).toEqual(receipt)
+    const recovery = { paymentId: receipt.data.paymentId, expectedPaymentVersion: 1 }, recoveryKey = randomUUID()
+    const recovered = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/recover`, recovery, recoveryKey)
+    expect(recovered.status).toBe(200)
+    expect((await recovered.json()).data).toMatchObject({ outcome: 'success', version: 2 })
+    expect((await s.request(s.cashier, `${s.path}/financial-adjustments/payments/recover`, recovery, recoveryKey)).status).toBe(200)
+    const current = await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json()
+    expect(current).toMatchObject({ currentFundsFen: 6500, currentChargesFen: 6500, remainingCollectFen: 0, reservedCollectFen: 0 })
+    expect(current.payments).toHaveLength(1)
+    expect(current.adjustments[0].status).toBe('completed')
+    const frozen = await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json()
+    expect(frozen.transactions).toEqual(s.settled.transactions)
+    expect(frozen.settlement).toEqual(s.settled.settlement)
+  })
   it('后续未知退款只挂起调整，重启查询原尝试后结清差额且不改变首次冻结资金', async () => {
     const s = await setup()
     const before = await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json()
