@@ -2,10 +2,20 @@ import { z } from 'zod'
 import { commandResponseSchema, paymentSimulatorRuleSchema, paymentTendersSchema } from './his.ts'
 import { inpatientPaymentSchema } from './inpatient-discharge.ts'
 import { refundAttemptSchema, refundSourceKindSchema } from './refunds.ts'
+import { insuranceBalanceSchema, insuranceSettlementSchema } from './insurance.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.:-]{1,128}$/)
 const fen = z.number().int().nonnegative().safe()
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/)
+const insuranceAdjustmentBinding = { admissionId: id, adjustmentId: id }
+export const inpatientFinancialInsuranceCancelInputSchema = z.object({ ...insuranceAdjustmentBinding, settlementId: id,
+  expectedBalanceVersion: z.number().int().nonnegative(), expectedFingerprint: fingerprint }).strict()
+export const inpatientFinancialInsurancePreviewInputSchema = z.object({ ...insuranceAdjustmentBinding, expectedFingerprint: fingerprint }).strict()
+export const inpatientFinancialInsuranceConfirmInputSchema = z.object({ ...insuranceAdjustmentBinding,
+  previewId: id, commitToken: z.string().min(16).max(256) }).strict()
+export const inpatientFinancialInsuranceSchema = z.object({ original: insuranceSettlementSchema, active: insuranceSettlementSchema.optional(),
+  balance: insuranceBalanceSchema, sourceFingerprint: fingerprint, ready: z.boolean(),
+  cycles: z.array(z.object({ adjustmentId: id, originalSettlementId: id, compensationId: id, replacementSettlementId: id.optional() }).strict()) }).strict()
 export const inpatientFinancialAdjustmentInputSchema = z.object({ admissionId: id, chargeId: id, direction: z.enum(['increase', 'decrease']).default('decrease'),
   amountFen: fen.positive().max(1_000_000_000), expectedFingerprint: fingerprint, reason: z.string().trim().min(5).max(1000) }).strict()
 export const inpatientFinancialRefundPreviewInputSchema = z.object({ admissionId: id, adjustmentId: id,
@@ -27,6 +37,7 @@ export const inpatientFinancialSchema = z.object({
   sources: z.array(z.object({ sourceKind: refundSourceKindSchema.exclude(['outpatient-payment']), sourceId: id, amountFen: fen,
     refundedFen: fen, reservedFen: fen, refundableFen: fen, version: z.number().int().positive() }).strict()),
   refunds: z.array(refundAttemptSchema), payments: z.array(inpatientPaymentSchema.extend({ adjustmentId: id })), frozenChargesFen: fen, currentChargesFen: fen,
+  insurance: inpatientFinancialInsuranceSchema.optional(),
   frozenFundsFen: fen, currentFundsFen: fen, remainingRefundFen: fen, remainingCollectFen: fen, reservedFen: fen, reservedCollectFen: fen, fingerprint,
 }).strict()
 export const inpatientFinancialResponseSchema = commandResponseSchema(inpatientFinancialSchema)

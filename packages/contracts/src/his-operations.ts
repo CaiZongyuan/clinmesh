@@ -1,4 +1,6 @@
 import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
+import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema,
+  inpatientFinancialInsuranceConfirmInputSchema, inpatientFinancialResponseSchema } from './inpatient-finance.ts'
 import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewInputSchema, refundPreviewResponseSchema,
   refundConfirmInputSchema, refundRecoverInputSchema, refundResponseSchema } from './refunds.ts'
 import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
@@ -2578,6 +2580,24 @@ const operationDefinitions = [
     summary: 'Search one supported FHIR R5 resource type with declared parameters',
     version: 1,
   },
+  { cliPath: ['inpatient','financial-insurance','cancel'], id: 'inpatient.financial.insurance.cancel',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/:adjustmentId/insurance/cancel',
+      encodeBody: raw => { const { admissionId: _admission, adjustmentId: _adjustment, ...input } = inpatientFinancialInsuranceCancelInputSchema.parse(raw); return { input } } },
+    input: inpatientFinancialInsuranceCancelInputSchema, output: inpatientFinancialResponseSchema, mode: 'command',
+    requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'],
+    summary: '在当前财务调整下追加原待遇精确补偿，保留首次结算及其他就诊年度影响；响应丢失查原Command回执', version: 1 },
+  { cliPath: ['inpatient','financial-insurance','preview'], id: 'inpatient.financial.insurance.preview',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/:adjustmentId/insurance/preview',
+      encodeBody: raw => { const { admissionId: _admission, adjustmentId: _adjustment, ...input } = inpatientFinancialInsurancePreviewInputSchema.parse(raw); return { input } } },
+    input: inpatientFinancialInsurancePreviewInputSchema, output: insurancePreviewResponseSchema, mode: 'command',
+    requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'write', roles: ['cashier'],
+    summary: '按原年度方案、权威更正费用与实时患者累计预览替代待遇，必须重新审阅', version: 1 },
+  { cliPath: ['inpatient','financial-insurance','confirm'], id: 'inpatient.financial.insurance.confirm',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/:adjustmentId/insurance/confirm',
+      encodeBody: raw => { const { admissionId: _admission, adjustmentId: _adjustment, ...input } = inpatientFinancialInsuranceConfirmInputSchema.parse(raw); return { input } } },
+    input: inpatientFinancialInsuranceConfirmInputSchema, output: inpatientFinancialResponseSchema, mode: 'command',
+    requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'],
+    summary: '确认已审阅且原年度余额仍有效的新待遇，追加关联后按患者现金差额办理收退；失效须重新预览，响应丢失查原Command回执', version: 1 },
   { cliPath:['inpatient','record'],id:'inpatient.record.read',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/record'},input:z.object({admissionId:z.string().min(1)}).strict(),output:inpatientRecordSchema,
     mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','ward-nurse','medical-records'],summary:'读取首页核心字段、当前来源指纹、修订审核或不可变归档',version:1 },
   { cliPath:['inpatient','submit-record'],id:'inpatient.record.submit',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/record/submit',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientRecordSubmitInputSchema.parse(raw);return {input}}},input:inpatientRecordSubmitInputSchema,output:inpatientRecordResponseSchema,
@@ -2966,6 +2986,7 @@ export const hisOperationCatalog: readonly HisOperationDefinition[] = operationD
       || operation.id === 'inpatient.financial.refund.confirm'
       || operation.id === 'inpatient.financial.payment.confirm'
       || operation.id === 'inpatient.payment.confirm' || operation.id === 'inpatient.refund.confirm'
+      || operation.id === 'inpatient.financial.insurance.confirm'
       ? 'required' as const
       : 'none' as const,
     skill,

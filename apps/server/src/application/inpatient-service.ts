@@ -9,6 +9,7 @@ import { InpatientInvestigations } from './inpatient-investigations.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.ts'
+import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
@@ -40,6 +41,7 @@ const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records
 export class InpatientService {
   readonly billing: InpatientBilling
   readonly financialAdjustments: InpatientFinancialAdjustments
+  readonly insuranceAdjustments: InpatientInsuranceAdjustments
   readonly orders: InpatientOrders
   readonly surgery: InpatientSurgery
   readonly records: InpatientRecords
@@ -52,6 +54,7 @@ export class InpatientService {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.financialAdjustments = new InpatientFinancialAdjustments(this)
+    this.insuranceAdjustments = new InpatientInsuranceAdjustments(this)
     this.orders = new InpatientOrders(this)
     this.surgery = new InpatientSurgery(this)
     this.records = new InpatientRecords(this)

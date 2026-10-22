@@ -22,14 +22,14 @@ export class InpatientFinancialAdjustments {
   readonly ledger: RefundLedger
   constructor(readonly owner: InpatientService) { this.ledger = new RefundLedger(owner.database) }
 
-  #authorize(context: ActorContext) {
+  authorize(context: ActorContext) {
     this.owner.assertReadRole(context, ['cashier'])
     const run = z.object({ status: z.enum(['active', 'completed', 'closed']) }).parse(this.owner.database.driver.prepare(
       'SELECT status FROM scenario_run WHERE workspace_id=? AND epoch=? AND scenario_run_id=?').get(context.workspaceId, context.epoch, context.scenarioRunId))
     if (run.status === 'closed' || (run.status === 'completed' && context.agentGrantId !== undefined))
       throw new InpatientError('INPATIENT_FINANCIAL_CONTEXT_FORBIDDEN', '当前场景不允许新的财务更正', 403)
   }
-  #snapshot(context: ActorContext, admissionId: string) {
+  snapshot(context: ActorContext, admissionId: string): z.infer<typeof inpatientFinancialSchema> {
     const admission = this.owner.readAdmissionBinding(context, admissionId)
     if (admission.financialStatus !== 'settled' || !['departed', 'cleared'].includes(admission.status))
       throw new InpatientError('INPATIENT_FINANCIAL_SETTLEMENT_REQUIRED', '首次结算完成后才能办理后续财务更正')
@@ -48,7 +48,9 @@ export class InpatientFinancialAdjustments {
       return { ...row, ...balance, collectedFen, reservedCollectFen, offsetFen: 0, remainingFen: row.amountFen - balance.refundedFen - collectedFen,
         status: 'pending' as 'pending' | 'unknown' | 'completed' }
     })
-    // Opposing corrections offset outstanding charges; unresolved channel money stays reserved.
+    const insurance = this.owner.insuranceAdjustments.projection(context, admissionId)
+    // Uninsured opposing corrections offset outstanding charges; unresolved money stays reserved.
+    if (!insurance) {
     for (const decrease of adjustments.filter(row => row.direction === 'decrease')) {
       for (const increase of adjustments.filter(row => row.direction === 'increase')) {
         const offset = Math.min(decrease.remainingFen - decrease.reservedFen, increase.remainingFen - increase.reservedCollectFen)
@@ -57,6 +59,7 @@ export class InpatientFinancialAdjustments {
       }
     }
     for (const row of adjustments) row.status = row.reservedFen + row.reservedCollectFen > 0 ? 'unknown' : row.remainingFen === 0 ? 'completed' : 'pending'
+    }
     const charges = frozen.charges.map(charge => {
       const adjustedFen = rows.filter(row => row.chargeId === charge.id && row.direction === 'decrease').reduce((sum, row) => sum + row.amountFen, 0)
       const addedFen = rows.filter(row => row.chargeId === charge.id && row.direction === 'increase').reduce((sum, row) => sum + row.amountFen, 0)
@@ -70,22 +73,32 @@ export class InpatientFinancialAdjustments {
     const collectedFen = payments.filter(payment => payment.outcome === 'success').reduce((sum, payment) => sum + payment.amountFen, 0)
     const reservedCollectFen = payments.filter(payment => payment.outcome === 'ambiguous').reduce((sum, payment) => sum + payment.amountFen, 0)
     const currentFundsFen = frozenFundsFen + collectedFen - refundedFen
+    const patientFen = insurance ? insurance.active?.patientFen ?? frozen.insurance!.patientFen : currentChargesFen
+    const remainingRefundFen = insurance && !insurance.ready ? 0 : Math.max(0, currentFundsFen - patientFen)
+    const remainingCollectFen = insurance && !insurance.ready ? 0 : Math.max(0, patientFen - currentFundsFen)
+    if (insurance) for (const row of adjustments) {
+      const latest = row === adjustments.at(-1)
+      row.remainingFen = latest ? remainingRefundFen + remainingCollectFen : 0
+      row.status = row.reservedFen + row.reservedCollectFen > 0 ? 'unknown' : latest && (!insurance.ready || row.remainingFen > 0) ? 'pending' : 'completed'
+    }
     const data = { admissionId, status: admission.status, recordStatus: admission.row.record_status, firstSettlement: frozen.settlement,
       charges, adjustments, sources, refunds, payments, frozenChargesFen: frozen.settlement.chargesFen, currentChargesFen,
-      frozenFundsFen, currentFundsFen, remainingRefundFen: Math.max(0, currentFundsFen - currentChargesFen), remainingCollectFen: Math.max(0, currentChargesFen - currentFundsFen), reservedFen, reservedCollectFen }
+      ...(insurance ? { insurance } : {}), frozenFundsFen, currentFundsFen, remainingRefundFen, remainingCollectFen, reservedFen, reservedCollectFen }
     return inpatientFinancialSchema.parse({ ...data, fingerprint: hash(data) })
   }
   read(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['cashier', 'medical-records'])
     this.owner.database.driver.exec('BEGIN')
-    try { const result = this.#snapshot(context, admissionId); this.owner.database.driver.exec('COMMIT'); return result }
+    try { const result = this.snapshot(context, admissionId); this.owner.database.driver.exec('COMMIT'); return result }
     catch (error) { if (this.owner.database.driver.inTransaction) this.owner.database.driver.exec('ROLLBACK'); throw error }
   }
   adjust(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientFinancialAdjustmentInputSchema.parse(raw)
     return this.owner.commands.execute({ context, contextRequirement: 'current', input, idempotencyKey, operation: 'inpatient.financial.adjust',
-      expectedVersions: {}, dataSchema: inpatientFinancialResponseSchema.shape.data, authorize: () => this.#authorize(context) }, () => {
-      const snapshot = this.#snapshot(context, input.admissionId)
+      expectedVersions: {}, dataSchema: inpatientFinancialResponseSchema.shape.data, authorize: () => this.authorize(context) }, () => {
+      const snapshot = this.snapshot(context, input.admissionId)
+      if (snapshot.insurance && (!snapshot.insurance.ready || snapshot.remainingCollectFen + snapshot.remainingRefundFen + snapshot.reservedCollectFen + snapshot.reservedFen > 0))
+        throw new InpatientError('INPATIENT_INSURANCE_CORRECTION_PENDING', '请先完成当前医保更正和患者资金差额')
       if (snapshot.fingerprint !== input.expectedFingerprint) throw new InpatientError('INPATIENT_FINANCIAL_PREVIEW_STALE', '账目或资金已变化，请重新审阅财务差异')
       const charge = snapshot.charges.find(item => item.chargeId === input.chargeId)
       const facts = this.owner.orders.chargeFacts(context, input.admissionId)
@@ -95,15 +108,15 @@ export class InpatientFinancialAdjustments {
       this.owner.database.driver.prepare('INSERT INTO inpatient_financial_adjustment VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, id, input.admissionId, input.chargeId, snapshot.firstSettlement.id, input.amountFen, input.direction, input.reason,
           context.actorId, context.practitionerRoleId, this.owner.virtualTime(context))
-      return { data: this.#snapshot(context, input.admissionId), effects: [{ kind: 'created' as const, reference: `InpatientFinancialAdjustment/${id}`, versionId: '1' }] }
+      return { data: this.snapshot(context, input.admissionId), effects: [{ kind: 'created' as const, reference: `InpatientFinancialAdjustment/${id}`, versionId: '1' }] }
     })
   }
   #collectBasis(context: ActorContext, input: z.infer<typeof inpatientFinancialPaymentPreviewInputSchema>) {
-    const snapshot = this.#snapshot(context, input.admissionId)
+    const snapshot = this.snapshot(context, input.admissionId)
     if (snapshot.fingerprint !== input.expectedFingerprint) throw new InpatientError('INPATIENT_FINANCIAL_PREVIEW_STALE', '账目或资金已变化，请重新审阅财务差异')
     const adjustment = snapshot.adjustments.find(item => item.adjustmentId === input.adjustmentId)
-    if (!adjustment || adjustment.direction !== 'increase' || snapshot.reservedFen > 0
-      || input.amountFen > adjustment.remainingFen - adjustment.reservedCollectFen
+    if (!adjustment || (snapshot.insurance ? !snapshot.insurance.ready || snapshot.adjustments.at(-1)?.adjustmentId !== adjustment.adjustmentId : adjustment.direction !== 'increase') || snapshot.reservedFen > 0
+      || (!snapshot.insurance && input.amountFen > adjustment.remainingFen - adjustment.reservedCollectFen)
       || input.amountFen > snapshot.remainingCollectFen - snapshot.reservedCollectFen)
       throw new InpatientError('INPATIENT_FINANCIAL_AMOUNT_CONFLICT', '补收超过本次费用补计依据或当前待收差额')
     return snapshot
@@ -111,7 +124,7 @@ export class InpatientFinancialAdjustments {
   paymentPreview(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientFinancialPaymentPreviewInputSchema.parse(raw)
     return this.owner.commands.execute({ context, contextRequirement: 'current', input, idempotencyKey, operation: 'inpatient.financial.payment.preview',
-      expectedVersions: {}, dataSchema: inpatientPaymentPreviewResponseSchema.shape.data, authorize: () => this.#authorize(context) }, () => {
+      expectedVersions: {}, dataSchema: inpatientPaymentPreviewResponseSchema.shape.data, authorize: () => this.authorize(context) }, () => {
       this.#collectBasis(context, input)
       const data = this.owner.payments.recordPreview(context, { ...input, kind: 'supplement', fingerprint: input.expectedFingerprint })
       return { data, effects: [{ kind: 'created' as const, reference: `InpatientPaymentPreview/${data.previewId}`, versionId: '1' }] }
@@ -120,7 +133,7 @@ export class InpatientFinancialAdjustments {
   paymentConfirm(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientPaymentConfirmInputSchema.parse(raw)
     return this.owner.commands.execute({ context, contextRequirement: 'current', input, idempotencyKey, operation: 'inpatient.financial.payment.confirm',
-      expectedVersions: {}, dataSchema: inpatientPaymentResponseSchema.shape.data, authorize: () => this.#authorize(context) }, () => {
+      expectedVersions: {}, dataSchema: inpatientPaymentResponseSchema.shape.data, authorize: () => this.authorize(context) }, () => {
       const preview = this.owner.payments.reviewedPreview(context, input.previewId, input.commitToken)
       if (preview.admission_id !== input.admissionId || preview.adjustment_id === null || preview.kind !== 'supplement')
         throw new InpatientError('INPATIENT_FINANCIAL_PREVIEW_STALE', '原补收预览不属于本次后续财务更正')
@@ -134,8 +147,8 @@ export class InpatientFinancialAdjustments {
   paymentRecover(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientPaymentRecoverInputSchema.parse(raw)
     return this.owner.commands.execute({ context, contextRequirement: 'current', input, idempotencyKey, operation: 'inpatient.financial.payment.recover',
-      expectedVersions: {}, dataSchema: inpatientPaymentResponseSchema.shape.data, authorize: () => this.#authorize(context) }, () => {
-      this.#snapshot(context, input.admissionId)
+      expectedVersions: {}, dataSchema: inpatientPaymentResponseSchema.shape.data, authorize: () => this.authorize(context) }, () => {
+      this.snapshot(context, input.admissionId)
       const original = this.owner.payments.attempt(context, input.paymentId)
       if (!original || original.admissionId !== input.admissionId || original.adjustment_id === null)
         throw new InpatientError('INPATIENT_FINANCIAL_SOURCE_CONFLICT', '原补收不属于本次后续财务更正')
@@ -144,14 +157,14 @@ export class InpatientFinancialAdjustments {
     })
   }
   #refundBasis(context: ActorContext, input: z.infer<typeof inpatientFinancialRefundPreviewInputSchema>) {
-    const snapshot = this.#snapshot(context, input.admissionId)
+    const snapshot = this.snapshot(context, input.admissionId)
     if (snapshot.fingerprint !== input.expectedFingerprint) throw new InpatientError('INPATIENT_FINANCIAL_PREVIEW_STALE', '账目或资金已变化，请重新审阅财务差异')
     const adjustment = snapshot.adjustments.find(item => item.adjustmentId === input.adjustmentId)
     const source = this.owner.payments.sources(context, input.admissionId).find(item => item.kind === input.sourceKind && item.id === input.sourceId)
-    if (!adjustment || adjustment.direction !== 'decrease' || !source) throw new InpatientError('INPATIENT_FINANCIAL_SOURCE_CONFLICT', '退款须关联本次住院的原费用冲减和原交易')
+    if (!adjustment || (snapshot.insurance ? !snapshot.insurance.ready || snapshot.adjustments.at(-1)?.adjustmentId !== adjustment.adjustmentId : adjustment.direction !== 'decrease') || !source) throw new InpatientError('INPATIENT_FINANCIAL_SOURCE_CONFLICT', '退款须关联本次住院的有效更正和原交易')
     const balance = this.ledger.balance(context, source)
     if (balance.version !== input.expectedSourceVersion || input.amountFen > balance.refundableFen
-      || input.amountFen > adjustment.remainingFen - adjustment.reservedFen
+      || (!snapshot.insurance && input.amountFen > adjustment.remainingFen - adjustment.reservedFen)
       || snapshot.reservedCollectFen > 0 || input.amountFen > snapshot.remainingRefundFen - snapshot.reservedFen)
       throw new InpatientError('INPATIENT_FINANCIAL_AMOUNT_CONFLICT', '退款超过当前更正依据、待退金额或原交易可退余额')
     return source
@@ -159,7 +172,7 @@ export class InpatientFinancialAdjustments {
   refundPreview(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientFinancialRefundPreviewInputSchema.parse(raw)
     return this.owner.commands.execute({ context, contextRequirement: 'current', input, idempotencyKey, operation: 'inpatient.financial.refund.preview',
-      expectedVersions: {}, dataSchema: inpatientFinancialRefundPreviewResponseSchema.shape.data, authorize: () => this.#authorize(context) }, () => {
+      expectedVersions: {}, dataSchema: inpatientFinancialRefundPreviewResponseSchema.shape.data, authorize: () => this.authorize(context) }, () => {
       this.#refundBasis(context, input)
       const previewId = uuidv7(), commitToken = randomUUID(), expiresAt = new Date(Date.now() + 300_000).toISOString()
       const plan = paymentChannelPlan(this.owner.database, context, input.simulatorRule)
@@ -173,7 +186,7 @@ export class InpatientFinancialAdjustments {
   refundConfirm(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientFinancialRefundConfirmInputSchema.parse(raw)
     return this.owner.commands.execute({ context, contextRequirement: 'current', input, idempotencyKey, operation: 'inpatient.financial.refund.confirm',
-      expectedVersions: {}, dataSchema: refundResponseSchema.shape.data, authorize: () => this.#authorize(context) }, () => {
+      expectedVersions: {}, dataSchema: refundResponseSchema.shape.data, authorize: () => this.authorize(context) }, () => {
       const preview = z.object({ admission_id: z.string(), input_json: z.string(), token_hash: z.string(), actor_hash: z.string(),
         expires_at: z.string(), consumed_at: z.string().nullable() }).optional().parse(this.owner.database.driver.prepare(
         'SELECT * FROM inpatient_financial_refund_preview WHERE workspace_id=? AND epoch=? AND preview_id=?').get(context.workspaceId, context.epoch, input.previewId))
@@ -192,7 +205,7 @@ export class InpatientFinancialAdjustments {
   refundRecover(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientFinancialRefundRecoverInputSchema.parse(raw)
     return this.owner.commands.execute({ context, contextRequirement: 'current', input, idempotencyKey, operation: 'inpatient.financial.refund.recover',
-      expectedVersions: {}, dataSchema: refundResponseSchema.shape.data, authorize: () => this.#authorize(context) }, () => {
+      expectedVersions: {}, dataSchema: refundResponseSchema.shape.data, authorize: () => this.authorize(context) }, () => {
       this.owner.readAdmissionBinding(context, input.admissionId)
       const original = this.ledger.attempt(context, input.refundId)
       const basis = this.owner.database.driver.prepare('SELECT 1 FROM inpatient_financial_adjustment WHERE workspace_id=? AND epoch=? AND admission_id=? AND adjustment_id=?')
