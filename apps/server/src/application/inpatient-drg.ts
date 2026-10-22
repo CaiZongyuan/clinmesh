@@ -36,6 +36,17 @@ function genderOf(rawGender: string | undefined): 'male' | 'female' | 'unknown' 
   return rawGender === 'male' ? 'male' : rawGender === 'female' ? 'female' : 'unknown'
 }
 
+/** 离院时点口径的人口与住院属性：年龄、出院方式与住院天数（缺时点记 0 天）。 */
+function stayDemographics(birthDate: string, admittedAt: string | undefined, departedAt: string | undefined, dischargeMode: string) {
+  return {
+    ...ageAt(birthDate, departedAt ?? admittedAt),
+    birthWeightGrams: null,
+    dischargeMode,
+    inpatientDays: admittedAt === undefined || departedAt === undefined ? 0
+      : Math.min(3650, Math.max(0, Math.floor((new Date(departedAt).getTime() - new Date(admittedAt).getTime()) / 86_400_000))),
+  }
+}
+
 /**
  * DRG 评估域：预分组（冻结首页快照）与处方推演（在院 live 事实 + 草稿对照），
  * 以及后续治疗预留的生命周期。只读评估不落库；预留替换经手术执行的业务引用完成，不重复计费。
@@ -49,16 +60,21 @@ export class InpatientDrg {
     if (record.archive !== undefined) return this.#frozenArchive(context, admissionId).frozen
     if (this.rules === null) throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法预分组', 409)
     if (record.revision === undefined) throw new InpatientError('DRG_RECORD_NOT_SUBMITTED', '病案首页尚未提交修订，无法预分组', 409)
-    const input = this.#snapshotGroupingInput(record.revision.snapshot)
+    return this.#groupedResult(admissionId, record.revision.revision, false,
+      this.#snapshotGroupingInput(record.revision.snapshot))
+  }
+
+  /** 规则已就绪前提下的完整预分组结果：调用方自行保证 this.rules 非 null。 */
+  #groupedResult(admissionId: string, recordRevision: number, frozen: boolean, input: DrgGroupingInput): InpatientDrgPregroupResult {
     return inpatientDrgPregroupResultSchema.parse({
       admissionId,
-      recordRevision: record.revision.revision,
-      rulesId: this.rules.rulesId,
-      rulesVersion: this.rules.version,
+      recordRevision,
+      rulesId: this.rules!.rulesId,
+      rulesVersion: this.rules!.version,
       inputCoding: 'nhc-icd10-clinical@2022.r4',
       codingNote: clinicalCodingNote,
-      frozen: false,
-      result: groupDrgCase(this.rules, input),
+      frozen,
+      result: groupDrgCase(this.rules!, input),
     })
   }
 
@@ -78,33 +94,19 @@ export class InpatientDrg {
   /** 归档事务内冻结分组：与首页快照同事务落盘；规则包未配置时返回 null，归档不带冻结结果。 */
   freezeForArchive(recordRevision: number, snapshot: z.infer<typeof inpatientRecordSnapshotSchema>): string | null {
     if (this.rules === null) return null
-    return JSON.stringify(inpatientDrgPregroupResultSchema.parse({
-      admissionId: snapshot.stay.admissionId,
-      recordRevision,
-      rulesId: this.rules.rulesId,
-      rulesVersion: this.rules.version,
-      inputCoding: 'nhc-icd10-clinical@2022.r4',
-      codingNote: clinicalCodingNote,
-      frozen: true,
-      result: groupDrgCase(this.rules, this.#snapshotGroupingInput(snapshot)),
-    }))
+    return JSON.stringify(this.#groupedResult(snapshot.stay.admissionId, recordRevision, true,
+      this.#snapshotGroupingInput(snapshot)))
   }
 
   #snapshotGroupingInput(snapshot: z.infer<typeof inpatientRecordSnapshotSchema>): DrgGroupingInput {
     const { patient, stay, clinical } = snapshot
-    const admittedAt = stay.admittedAt
-    const departedAt = stay.departedAt
     return {
       diagnoses: clinical.diagnosis.entries.map(entry => ({
         code: entry.coding.code, role: entry.role === 'primary' ? 'main' as const : 'secondary' as const })),
       operations: clinical.operations.map(operation => ({
         code: operation.actualProcedure.coding.code, primary: operation.primary })),
       gender: genderOf(patient.gender),
-      ...ageAt(patient.birthDate, departedAt ?? admittedAt),
-      birthWeightGrams: null,
-      dischargeMode: stay.departureMethod ?? 'unknown',
-      inpatientDays: admittedAt === undefined || departedAt === undefined ? 0
-        : Math.min(3650, Math.max(0, Math.floor((new Date(departedAt).getTime() - new Date(admittedAt).getTime()) / 86_400_000))),
+      ...stayDemographics(patient.birthDate, stay.admittedAt, stay.departedAt, stay.departureMethod ?? 'unknown'),
     }
   }
 
@@ -254,11 +256,7 @@ export class InpatientDrg {
         code: entry.coding.code, role: entry.role === 'primary' ? 'main' as const : 'secondary' as const })),
       operations: executions.map(item => ({ code: item.actualProcedure.coding.code, primary: item.id === mainProcedureExecutionId })),
       gender: genderOf(identity.gender),
-      ...ageAt(identity.birthDate ?? '', departedAt ?? admittedAt),
-      birthWeightGrams: null,
-      dischargeMode: departure?.departureMethod ?? 'unknown',
-      inpatientDays: admittedAt === undefined || departedAt === undefined ? 0
-        : Math.min(3650, Math.max(0, Math.floor((new Date(departedAt).getTime() - new Date(admittedAt).getTime()) / 86_400_000))),
+      ...stayDemographics(identity.birthDate ?? '', admittedAt, departedAt, departure?.departureMethod ?? 'unknown'),
     }
   }
 

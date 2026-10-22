@@ -1,5 +1,4 @@
 import { z } from 'zod'
-import { drgGroupingResultSchema } from './drg'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const stamp = z.iso.datetime({ offset: true })
@@ -44,14 +43,3 @@ export const inpatientDrgPayerReviewListSchema = z.object({
   admissionId: id,
   reviews: z.array(inpatientDrgPayerReviewSchema),
 }).strict()
-
-/** 模拟核定输入：归档冻结分组（不可变），参数身份随结果落盘可追溯。 */
-export const inpatientDrgFrozenResultSchema = z.object({
-  admissionId: id,
-  recordRevision: z.number().int().positive(),
-  rulesId: text,
-  rulesVersion: text,
-  result: drgGroupingResultSchema,
-}).strict()
-
-export type InpatientDrgFrozenResult = z.infer<typeof inpatientDrgFrozenResultSchema>
