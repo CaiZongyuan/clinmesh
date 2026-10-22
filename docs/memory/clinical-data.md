@@ -22,7 +22,7 @@
 
 - SQLite 连接在构造成功后设置 PRAGMA 仍可能因文件损坏而抛错。打开函数须在失败分支关闭原始连接，否则上层尚未拿到连接就无法释放，Windows 会在清理损坏备份时持续报 `EBUSY`；沿用数据库恢复回归验证活动库不变、恢复目标不创建且临时文件可清理。
 
-- 新增 SQLite migration 后，先核对 `database.ts` 的文件名筛选与 `schema_migration` 中的实际应用记录；文件存在不代表启动时会被发现。描述部分误用下划线会被当前筛选忽略，表现为新接口缺少列的 500；修正文件名并通过公开 HTTP 验证，不以启动成功代替迁移证据。
+- 新增 SQLite migration 后，先核对 `database.ts` 的文件名筛选与 `schema_migration` 中的实际应用记录；文件存在不代表启动时会被发现。描述部分误用下划线会被当前筛选忽略，表现为新接口缺少列的 500；修正文件名并通过公开 HTTP 验证，不以启动成功代替迁移证据。跨包测试调用默认迁移目录时还须核对工作目录：从 DSH 包运行会把 `apps/server/drizzle` 拼到包内，测试应显式传入迁移目录；排障时可从仓库根用 DSH 的 Vitest 配置复核原用例，区分路径错误与业务失败。
 
 - 新增默认 SQLite 迁移后，同步默认完整升级入口的版本断言，但保留显式历史 migrationDirectory 的固定版本。用当前 runtime 构造旧库时，仅复制旧版能表达的岗位、成员及会话关联，并同时排除后来新增的环境 FHIR current/history/Search 投影；否则会先触发旧 CHECK、外键或重复 seed 冲突，无法验证真正的业务记录升级。回归见[开发库准备](../../apps/server/tests/development-database-prepare.test.ts)与[存量记录升级](../../apps/server/tests/consultation-auto-record-http.test.ts)。
 
