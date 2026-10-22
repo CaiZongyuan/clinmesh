@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { offlineReferenceInventoryListSchema } from '@clinmesh/contracts/reference-data'
+import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { openReferenceDatabase } from '../src/infrastructure/sqlite/reference-database.ts'
 
@@ -97,7 +98,19 @@ describe('offline reference inventory maintenance CLI', () => {
         expect(response.status).toBe(role === 'admin' ? 200 : 403)
         if (role === 'admin') expect(offlineReferenceInventoryListSchema.parse(await response.json()))
           .toMatchObject({ items: [], page: 2, pageSize: 1, total: 1 })
-        if (role === 'admin') expect((await runtime.app.request(`${url}?pageSize=51`, { headers })).status).toBe(400)
+        if (role === 'admin') {
+          expect((await runtime.app.request(`${url}?pageSize=51`, { headers })).status).toBe(400)
+          const auditResponse = await runtime.app.request('/fhir/R5/AuditEvent?_count=100', { headers })
+          expect(auditResponse.status).toBe(200)
+          const audits = fhirBundleSchema.parse(await auditResponse.json())
+          expect(audits.entry?.map(entry => entry.resource)).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+              action: 'R',
+              code: expect.objectContaining({ text: 'reference.offline-inventories.read' }),
+              outcome: expect.objectContaining({ code: expect.objectContaining({ code: '8' }) }),
+            }),
+          ]))
+        }
       }
     } finally {
       await runtime.close()
