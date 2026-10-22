@@ -69,6 +69,8 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 新增 FHIR-native 辅助索引时必须可由权威资源重建；新增无法重建的事实时必须明确成为 domain aggregate，不能同时由 FHIR JSON 和领域表双向拥有。
 
+住院医保后续更正由 `inpatient_insurance_adjustment` 关联财务调整、原待遇、补偿与替代待遇，复合外键固定同一 Workspace/Epoch。每个财务调整只有一个医保更正链，每个有效待遇只补偿一次；预览关联表绑定本次调整与受信 Actor 的不可变审阅预览。年度与账户权威继续来自共享 `insurance_event`，不新增可编辑余额。首次结算及病案保存原医保结果，后续分摊和现金状态归当前财务读模型，流程见[住院医保](clinical-workflows.md#住院医保与首次冻结账)。
+
 #### 门诊收款记录
 
 支付历史通过 Workspace/Epoch、case、创建时间及 payment ID 的复合索引按页读取；当前页的支付方式使用一次批量查询。恢复 Command 按受信作用域及原 payment ID 查询单条尝试与追加结果，不加载整次就诊历史或支付方式，事务内读取次数不随历史条数增长。

@@ -73,7 +73,7 @@ export class InpatientFinancialAdjustments {
     const collectedFen = payments.filter(payment => payment.outcome === 'success').reduce((sum, payment) => sum + payment.amountFen, 0)
     const reservedCollectFen = payments.filter(payment => payment.outcome === 'ambiguous').reduce((sum, payment) => sum + payment.amountFen, 0)
     const currentFundsFen = frozenFundsFen + collectedFen - refundedFen
-    const patientFen = insurance ? insurance.active?.patientFen ?? frozen.insurance!.patientFen : currentChargesFen
+    const patientFen = insurance?.active?.patientFen ?? insurance?.original.patientFen ?? currentChargesFen
     const remainingRefundFen = insurance && !insurance.ready ? 0 : Math.max(0, currentFundsFen - patientFen)
     const remainingCollectFen = insurance && !insurance.ready ? 0 : Math.max(0, patientFen - currentFundsFen)
     if (insurance) for (const row of adjustments) {

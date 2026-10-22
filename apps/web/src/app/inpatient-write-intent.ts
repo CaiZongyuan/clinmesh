@@ -1,4 +1,5 @@
 import { insuranceTargetSchema } from '@clinmesh/contracts/insurance'
+import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema, inpatientFinancialInsuranceConfirmInputSchema } from '@clinmesh/contracts/inpatient-finance'
 import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from '@clinmesh/contracts/inpatient-finance'
 import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema,
@@ -18,6 +19,9 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('inpatient.financial.insurance.cancel'), input: inpatientFinancialInsuranceCancelInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.financial.insurance.preview'), input: inpatientFinancialInsurancePreviewInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.financial.insurance.confirm'), input: inpatientFinancialInsuranceConfirmInputSchema }).strict(),
   z.object({operation:z.literal('insurance.confirm'),input:insuranceTargetSchema.extend({previewId:z.string().min(1),commitToken:z.string().min(16).max(256)})}).strict(),
   z.object({operation:z.literal('insurance.cancel'),input:insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()})}).strict(),
   z.object({ operation: z.literal('inpatient.financial.adjust'), input: inpatientFinancialAdjustmentInputSchema }).strict(),
@@ -173,7 +177,8 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         } else {
           const definition = getHisOperation(intent.command.operation)
           const input = intent.command.input
-          const path = 'admissionId' in input ? definition.http.path.replace(':admissionId', encodeURIComponent(input.admissionId)) : 'kind' in input && 'id' in input ? definition.http.path.replace(':kind', input.kind).replace(':id', encodeURIComponent(input.id)) : definition.http.path
+          let path = 'admissionId' in input ? definition.http.path.replace(':admissionId', encodeURIComponent(input.admissionId)) : 'kind' in input && 'id' in input ? definition.http.path.replace(':kind', input.kind).replace(':id', encodeURIComponent(input.id)) : definition.http.path
+          if ('adjustmentId' in input) path = path.replace(':adjustmentId', encodeURIComponent(input.adjustmentId))
           response = await apiMutation(path, definition.output, definition.http.encodeBody!(input), { idempotencyKey: intent.idempotencyKey })
         }
         clear()

@@ -8,6 +8,8 @@
 
 ## 范围、快照与资源争用
 
+- 新增 Operation Catalog 路径参数时，同时核对真实 UI 的持久化意图发送器：只替换已有 `admissionId` 的 adapter 不会自动绑定新的 `adjustmentId`。公开 HTTP 直接调用正确路径仍可全部通过，须从真实按钮验证请求路径及丢回执后的原意图恢复；回归见[后续医保更正入口](../../apps/web/e2e/inpatient-insurance-adjustments.spec.ts)与 React 18/19 Surface 合同。
+
 - 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)。
 
 - 待开具项目的操作文案会随异步核验状态从“调整”变为“核对”；验证重开详情时，使用包含项目名称的稳定“查看待开具”入口，并继续断言编辑值、焦点和正式确认结果。只定位“调整”会在核验状态晚到时超时，不能用增加超时或固定等待规避；对应回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。

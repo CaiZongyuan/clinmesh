@@ -170,6 +170,18 @@ describe('结算后医保更正公开 HTTP', () => {
     expect(frozen.insurance).toEqual(s.settled.insurance)
     expect(frozen.transactions).toEqual(s.settled.transactions)
     expect(frozen.settlement).toEqual(s.settled.settlement)
+    const nextAdjustment = inpatientFinancialResponseSchema.parse(await (await s.request('cashier', `${s.path}/financial-adjustments`, {
+      chargeId: final.charges[0]!.chargeId, direction: 'increase', amountFen: 1000, expectedFingerprint: final.fingerprint, reason: '合成续次床日费核对补计',
+    })).json()).data
+    const nextId = nextAdjustment.adjustments.at(-1)!.adjustmentId, nextPrefix = `${s.path}/financial-adjustments/${nextId}/insurance`
+    const nextCancel = inpatientFinancialResponseSchema.parse(await (await s.request('cashier', `${nextPrefix}/cancel`, {
+      settlementId: bill.insurance!.active!.id, expectedBalanceVersion: nextAdjustment.insurance!.balance.version, expectedFingerprint: nextAdjustment.fingerprint,
+    })).json()).data
+    const nextPreview = insurancePreviewResponseSchema.parse(await (await s.request('cashier', `${nextPrefix}/preview`, { expectedFingerprint: nextCancel.fingerprint })).json()).data
+    const next = inpatientFinancialResponseSchema.parse(await (await s.request('cashier', `${nextPrefix}/confirm`, { previewId: nextPreview.previewId, commitToken: nextPreview.commitToken })).json()).data
+    expect(next.insurance!.cycles[1]).toMatchObject({ adjustmentId: nextId, originalSettlementId: bill.insurance!.active!.id, replacementSettlementId: next.insurance!.active!.id })
+    expect(next.insurance!.original.id).toBe(s.original.id)
+    expect(next.remainingCollectFen).toBe(200)
   })
   it('追加原待遇补偿和更正后新待遇，按患者差额退200分并保留首次结算', async () => {
     const s = await setup()

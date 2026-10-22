@@ -17,6 +17,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { InpatientFinancialInsurance } from './inpatient-financial-insurance.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write?: ReturnType<typeof useInpatientWriteIntent> }
 type Frozen = { kind: 'refund'; data: z.infer<typeof inpatientFinancialRefundPreviewResponseSchema>['data'] }
@@ -46,6 +47,7 @@ export function InpatientFinancialAdjustments({ admission, session, locale, writ
       <p>{t('未知补收', 'Unknown collection')} {formatFen(bill.data.reservedCollectFen, locale)} · {t('未知退款', 'Unknown refund')} {formatFen(bill.data.reservedFen, locale)}</p>
       <p className="text-sm text-muted-foreground">{t('更正以追加记录核对当前差异，首次结算与归档快照继续保留。', 'Appended corrections explain current differences while preserving the first settlement and archived record.')}</p>
       {bill.data.adjustments.map(item => <p className="break-all" key={item.adjustmentId}>{item.direction === 'decrease' ? t('冲减', 'Decrease') : t('补计', 'Increase')} {formatFen(item.amountFen, locale)} · {item.reason} · {item.status === 'unknown' ? t('资金结果未知', 'Funds unknown') : item.status === 'completed' ? t('调整完成', 'Completed') : t('待处理', 'Pending')} · {item.adjustmentId}</p>)}
+      <InpatientFinancialInsurance bill={bill.data} locale={locale} write={write} fetching={bill.isFetching} />
       {write && session.actor.roleCode === 'cashier' ? <FinancialActions key={admission.id} bill={bill.data} admission={admission} locale={locale} write={write} fetching={bill.isFetching} /> : null}
     </> : null}
   </section>
@@ -72,6 +74,9 @@ function FinancialActions({ bill, admission, locale, write, fetching }: { bill: 
   const adjustment = bill.adjustments.find(item => item.adjustmentId === adjustmentId) ?? bill.adjustments.find(item => item.status === 'pending')
   const source = bill.sources.find(item => item.sourceId === sourceId) ?? bill.sources.find(item => item.refundableFen > 0)
   const value = amountFen(money), cardValue = amountFen(card), delta = amountFen(amount), busy = write.blocked || fetching
+  const collecting = bill.insurance ? bill.remainingCollectFen > 0 : adjustment?.direction === 'increase'
+  const insurancePending = bill.insurance && !bill.insurance.ready
+  const correctionPending = bill.insurance && (insurancePending || bill.remainingCollectFen + bill.remainingRefundFen + bill.reservedFen + bill.reservedCollectFen > 0)
   const tenders = [{ method: 'cash' as const, amountFen: value - cardValue }, { method: 'bank-card' as const, amountFen: cardValue }].filter(item => item.amountFen > 0)
   const outcome = (value: string) => value === 'ambiguous' ? t('结果未知', 'Unknown') : value === 'declined' ? t('已拒绝', 'Declined') : t('成功', 'Succeeded')
   return <>
@@ -81,22 +86,22 @@ function FinancialActions({ bill, admission, locale, write, fetching }: { bill: 
       <Field><FieldLabel htmlFor="financial-amount">{t('更正金额（元）', 'Correction (CNY)')}</FieldLabel><Input id="financial-amount" inputMode="decimal" value={amount} onChange={event => setAmount(event.target.value)} /></Field>
       <Field><FieldLabel htmlFor="financial-reason">{t('财务更正原因', 'Reason for correction')}</FieldLabel><Input id="financial-reason" value={reason} maxLength={1000} onChange={event => setReason(event.target.value)} /></Field>
     </FieldGroup>
-    <Button variant="outline" disabled={busy || !charge || !delta || reason.trim().length < 5} onClick={() => { if (charge) setCorrection({ admissionId: admission.id, chargeId: charge.chargeId, direction, amountFen: delta, reason: reason.trim(), expectedFingerprint: bill.fingerprint }) }}>{t('审阅财务更正', 'Review financial correction')}</Button>
+    <Button variant="outline" disabled={busy || !!correctionPending || !charge || !delta || reason.trim().length < 5} onClick={() => { if (charge) setCorrection({ admissionId: admission.id, chargeId: charge.chargeId, direction, amountFen: delta, reason: reason.trim(), expectedFingerprint: bill.fingerprint }) }}>{t('审阅财务更正', 'Review financial correction')}</Button>
     {bill.adjustments.length ? <>
       <FieldGroup>
         <Field><FieldLabel htmlFor="financial-basis">{t('收退款更正依据', 'Adjustment for collection or refund')}</FieldLabel><WorkspaceSelect id="financial-basis" value={adjustment?.adjustmentId ?? null} items={bill.adjustments.map(item => ({ value: item.adjustmentId, label: `${item.direction === 'decrease' ? t('冲减', 'Decrease') : t('补计', 'Increase')} · ${item.reason} · ${formatFen(item.remainingFen, locale)}` }))} onValueChange={setAdjustmentId} /></Field>
-        {adjustment?.direction === 'decrease' ? <Field><FieldLabel htmlFor="financial-source">{t('退款原交易', 'Original payment to refund')}</FieldLabel><WorkspaceSelect id="financial-source" value={source?.sourceId ?? null} items={bill.sources.map(item => ({ value: item.sourceId, label: `${item.sourceId} · ${formatFen(item.refundableFen, locale)}` }))} onValueChange={setSourceId} /></Field> : null}
+        {!collecting ? <Field><FieldLabel htmlFor="financial-source">{t('退款原交易', 'Original payment to refund')}</FieldLabel><WorkspaceSelect id="financial-source" value={source?.sourceId ?? null} items={bill.sources.map(item => ({ value: item.sourceId, label: `${item.sourceId} · ${formatFen(item.refundableFen, locale)}` }))} onValueChange={setSourceId} /></Field> : null}
         <Field><FieldLabel htmlFor="financial-money">{t('本次收退金额（元）', 'Collection or refund (CNY)')}</FieldLabel><Input id="financial-money" inputMode="decimal" value={money} onChange={event => setMoney(event.target.value)} /></Field>
-        {adjustment?.direction === 'increase' ? <Field><FieldLabel htmlFor="financial-card">{t('其中银行卡（元，其余现金）', 'Bank card portion (CNY; remainder in cash)')}</FieldLabel><Input id="financial-card" inputMode="decimal" value={card} onChange={event => setCard(event.target.value)} /></Field> : null}
+        {collecting ? <Field><FieldLabel htmlFor="financial-card">{t('其中银行卡（元，其余现金）', 'Bank card portion (CNY; remainder in cash)')}</FieldLabel><Input id="financial-card" inputMode="decimal" value={card} onChange={event => setCard(event.target.value)} /></Field> : null}
         <Field><FieldLabel htmlFor="financial-rule">{t('合成渠道结果', 'Synthetic channel result')}</FieldLabel><WorkspaceSelect id="financial-rule" value={rule} onValueChange={value => { if (value) setRule(value) }} items={[
           { value: 'success', label: t('成功', 'Success') }, { value: 'decline', label: t('拒绝', 'Declined') }, { value: 'ambiguous', label: t('未知，查询成功', 'Unknown, resolves succeeded') }, { value: 'ambiguous-decline', label: t('未知，查询拒绝', 'Unknown, resolves declined') }, { value: 'ambiguous-pending', label: t('持续未知', 'Remains unknown') },
         ]} /></Field>
       </FieldGroup>
-      <Button disabled={busy || !adjustment || !value || (adjustment.direction === 'increase' ? cardValue > value || (card.trim() !== '' && card.trim() !== '0' && !cardValue) : !source)} onClick={() => {
+      <Button disabled={busy || !!insurancePending || !adjustment || !value || (collecting ? cardValue > value || (card.trim() !== '' && card.trim() !== '0' && !cardValue) : !source)} onClick={() => {
         if (!adjustment) return
-        if (adjustment.direction === 'increase') write.mutation.mutate({ operation: 'inpatient.financial.payment.preview', input: { admissionId: admission.id, adjustmentId: adjustment.adjustmentId, amountFen: value, tenders, expectedFingerprint: bill.fingerprint, simulatorRule: rule } })
+        if (collecting) write.mutation.mutate({ operation: 'inpatient.financial.payment.preview', input: { admissionId: admission.id, adjustmentId: adjustment.adjustmentId, amountFen: value, tenders, expectedFingerprint: bill.fingerprint, simulatorRule: rule } })
         else if (source) write.mutation.mutate({ operation: 'inpatient.financial.refund.preview', input: { admissionId: admission.id, adjustmentId: adjustment.adjustmentId, sourceKind: source.sourceKind, sourceId: source.sourceId, amountFen: value, expectedSourceVersion: source.version, expectedFingerprint: bill.fingerprint, simulatorRule: rule } })
-      }}>{adjustment?.direction === 'increase' ? t('预览后续补收', 'Preview later collection') : t('预览后续退款', 'Preview later refund')}</Button>
+      }}>{collecting ? t('预览后续补收', 'Preview later collection') : t('预览后续退款', 'Preview later refund')}</Button>
     </> : null}
     {bill.payments.map(item => <div className="flex flex-col gap-2" key={item.paymentId}><p className="break-all">{t('后续补收', 'Later collection')} {formatFen(item.amountFen, locale)} · {outcome(item.outcome)} · {item.paymentId}</p>{item.outcome === 'ambiguous' ? <Button variant="outline" disabled={busy} onClick={() => write.mutation.mutate({ operation: 'inpatient.financial.payment.recover', input: { admissionId: admission.id, paymentId: item.paymentId, expectedPaymentVersion: item.version } })}>{t('查询原补收结果', 'Query original collection')}</Button> : null}</div>)}
     {bill.refunds.map(item => <div className="flex flex-col gap-2" key={item.refundId}><p className="break-all">{t('后续退款', 'Later refund')} {formatFen(item.amountFen, locale)} · {outcome(item.outcome)} · {item.refundId}</p>{item.outcome === 'ambiguous' ? <Button variant="outline" disabled={busy} onClick={() => write.mutation.mutate({ operation: 'inpatient.financial.refund.recover', input: { admissionId: admission.id, refundId: item.refundId, expectedRefundVersion: item.version } })}>{t('查询原后续退款结果', 'Query original later refund')}</Button> : null}</div>)}
