@@ -1,4 +1,5 @@
 import { inpatientDischargeEventsSchema, inpatientSettlementPreviewSchema, type inpatientDepartureMethodSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.tsx'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import type { z } from 'zod'
@@ -51,7 +52,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
   const preview = useQuery({ queryKey: ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId,admission.id,'settlement-preview'], enabled: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/discharge/preview`, inpatientSettlementPreviewSchema, signal) })
   const data = preview.data
-  if (admission.financialStatus === 'settled') return <p>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</p>
+  if (admission.financialStatus === 'settled') return <><p>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</p><InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} /></>
   return <section aria-label={t('住院结算','Inpatient settlement')} className="flex flex-col gap-3">
     <h3>{t('住院结算','Inpatient settlement')}</h3>
     <Button variant="outline" disabled={write.blocked || preview.isFetching} onClick={() => { void preview.refetch() }}>{data ? t('重新预览结算','Refresh settlement preview') : t('预览结算','Preview settlement')}</Button>
