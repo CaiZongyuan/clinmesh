@@ -23,6 +23,7 @@
     "./imaging": "./src/imaging.ts",
     "./pathology": "./src/pathology.ts",
     "./reference-data": "./src/reference-data.ts",
+    "./drg": "./src/drg.ts",
     "./agent": "./src/agent.ts",
     "./scenario": "./src/scenario.ts"
   },
