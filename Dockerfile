@@ -13,8 +13,8 @@ RUN corepack enable && corepack prepare pnpm@11.17.0 --activate
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @clinmesh/web build && pnpm --filter @clinmesh/server build
-RUN pnpm --filter @clinmesh/server deploy --prod --legacy /opt/clinmesh
-RUN pnpm reference:sync --database /opt/clinmesh/reference-data.sqlite
+RUN pnpm --filter @clinmesh/server deploy --prod --legacy --config.auto-install-peers=false /opt/clinmesh
+RUN node node_modules/tsx/dist/cli.mjs apps/server/src/reference-sync.ts --database /opt/clinmesh/reference-data.sqlite
 RUN cd /opt/clinmesh && node --input-type=module -e "import Database from 'better-sqlite3'; const db = new Database('reference-data.sqlite'); db.pragma('wal_checkpoint(TRUNCATE)'); db.pragma('journal_mode=DELETE'); db.close()"
 RUN cp reference-data.lock.json /opt/clinmesh/reference-data.lock.json
 

@@ -64,6 +64,10 @@
 
 - 生产 Docker build 不能假设 `better-sqlite3` 一定有预编译件。Build stage 保留 `python3`、`make` 和 `g++` 供 `node-gyp` 回退编译，runtime stage 不携带工具链；升级 Node.js 或 `better-sqlite3` 后必须用实际 Docker build 和健康启动验证。
 
+- pnpm 11 的 `deploy --prod --legacy` 会重新解析 workspace 的 peer，即使只 filter Server，也可能请求未发布的 DSH 本地 peer。部署命令局部关闭 `auto-install-peers`，不修改整个 workspace 的 peer 合同；legacy 不保留 frozen-lockfile 语义，部署后仍需核对实际生产依赖与容器启动。deploy 后在源码 workspace 继续运行 pnpm script 可能触发依赖修复并要求非交互安装；已完成 frozen install 的构建步骤直接使用固定包内 JS launcher 运行资料同步。
+
+- 把已写入的 SQLite 固化到只读镜像前，先 checkpoint 并切换 `journal_mode=DELETE`。仅关闭 WAL 库的连接通常不会改变文件头模式；只读查询仍可能尝试创建 `-shm`，在只读根文件系统上失败。验收时关闭容器网络并使用只读根文件系统，从健康接口和管理员查询确认预检与实际 runtime 均可读取。
+
 - `scripts/dev-lan.ts` 的进程生命周期覆盖完整子树。POSIX 上 Server 和 Web 必须使用独立进程组；任一分支退出或收到终止信号时，向两个完整进程组转发原信号。只终止顶层 `pnpm` 会遗留 Turbo、Vite 或 `tsx watch` 子进程，并在下次启动时产生错误的端口占用。
 
 - POSIX 上进程组 kill 已生效后，孤儿进程在被收养方收尸前仍处于僵尸/退出中状态，`kill(pid, 0)` 会把它探测为存活。判定幸存者必须在断言前轮询等待全部不可探测（如 50ms 间隔、数秒上限），超时仍存活才上报失败；Windows 无僵尸进程，本地全绿不能证明 Linux 无竞态。探测只把 `ESRCH` 视为已死、其余错误如实抛出，并拒绝非正整数 pid（`Number` 解析出的 NaN 会被强转为 pid 0，探测到探测方自身进程组）。
