@@ -16,10 +16,10 @@ const fixture: DrgRules = drgRulesSchema.parse({
     { codePrefix: 'A00', mdcCode: 'MDCA' },
   ],
   members: [
-    { code: 'I21.000x001', adrgCode: 'C11', chapter: 'medical' },
-    { code: 'A00.900x002', adrgCode: 'A01', chapter: 'medical' },
+    { code: 'I21.000x001', adrgCode: 'C11' },
+    { code: 'A00.900x002', adrgCode: 'A01' },
     // 官方组合成员形态「主诊断+星号副诊断」：主诊断与指定次诊断同时出现才命中。
-    { code: 'A00.900x002+J99.0*', adrgCode: 'A02', chapter: 'medical' },
+    { code: 'A00.900x002+J99.0*', adrgCode: 'A02' },
   ],
   validOperations: [
     { code: '36.0700x001', adrgCode: 'C12' },

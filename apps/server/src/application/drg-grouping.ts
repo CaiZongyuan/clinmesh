@@ -69,10 +69,9 @@ function comboMemberMatches(input: DrgGroupingInput, entryCode: string, mainCode
 
 /** 内科成员查找：组合成员更特异，优先于普通成员。 */
 function findMedicalMember(rules: DrgRules, input: DrgGroupingInput, mainCode: string): DrgRules['members'][number] | undefined {
-  const combo = rules.members.find(entry => entry.chapter === 'medical' && entry.code.includes('+')
-    && comboMemberMatches(input, entry.code, mainCode))
+  const combo = rules.members.find(entry => entry.code.includes('+') && comboMemberMatches(input, entry.code, mainCode))
   if (combo !== undefined) return combo
-  return rules.members.find(entry => entry.chapter === 'medical' && !entry.code.includes('+') && entry.code === mainCode)
+  return rules.members.find(entry => !entry.code.includes('+') && entry.code === mainCode)
 }
 
 /**

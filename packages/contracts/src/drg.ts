@@ -66,11 +66,10 @@ export const drgValidOperationSchema = z.object({
   adrgCode: z.string().min(1).max(32),
 }).strict()
 
-/** 诊断→ADRG 成员条目：内科组以主诊断命中；外科组经有效操作表进入。 */
+/** 诊断→ADRG 内科成员条目：主诊断命中（含「主诊断+星号副诊断」组合形态）；外科入口经有效操作表。 */
 export const drgMemberSchema = z.object({
   code,
   adrgCode: z.string().min(1).max(32),
-  chapter: z.enum(['medical', 'surgical']),
 }).strict()
 
 /** ADRG → MDC 归属：MDC 前缀表缺失时，按 ADRG 归属回填 MDC 判定。 */

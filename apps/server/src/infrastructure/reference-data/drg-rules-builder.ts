@@ -9,28 +9,11 @@ const groupRowSchema = z.object({
   parentCode: z.string().nullable(),
 })
 
-/** rule-members.jsonl 投影行（宽松读取：真实行按章节缺省无关字段，统一归一化）。 */
-const memberRowSchema = z.object({
-  id: z.string().min(1),
-  code: z.string().min(1),
-  nameText: z.string(),
-  chapter: z.string().min(1),
-  subsection: z.string().nullish(),
-  adrgCode: z.string().nullish(),
-  exclusionTable: z.string().nullish(),
-  conditionRole: z.string().nullish(),
-  memberId: z.string().nullish(),
-}).transform(row => ({
-  id: row.id,
-  code: row.code,
-  nameText: row.nameText,
-  chapter: row.chapter,
-  subsection: row.subsection ?? null,
-  adrgCode: row.adrgCode ?? null,
-  exclusionTable: row.exclusionTable ?? null,
-  conditionRole: row.conditionRole ?? null,
-  memberId: row.memberId ?? null,
-}))
+/** 官方分组器 JS 提取产物（extractOfficialMembers 输出）。 */
+const officialMembersSchema = z.object({
+  medical: z.record(z.string(), z.array(z.string().min(1))),
+  surgical: z.record(z.string(), z.array(z.string().min(1))),
+})
 
 /** OpenDRG chs_drg_30.json 三表（码 → 排除组号）。 */
 const complicationTablesSchema = z.object({
@@ -40,18 +23,8 @@ const complicationTablesSchema = z.object({
 })
 
 export type DrgGroupRow = z.infer<typeof groupRowSchema>
-export type DrgMemberRow = z.infer<typeof memberRowSchema>
+export type DrgOfficialMembers = z.infer<typeof officialMembersSchema>
 export type DrgComplicationTables = z.infer<typeof complicationTablesSchema>
-
-const surgicalRole = '包含以下主要手术或操作'
-const medicalRole = '包含以下主要诊断'
-
-/** r3 排除表号（如 '6-5-141'）→ 官方排除组号（'141'）。 */
-function groupRefOfTable(exclusionTable: string | null): string {
-  if (exclusionTable === null) return ''
-  const tail = exclusionTable.split('-').at(-1)
-  return tail === undefined || tail === '' ? '' : tail
-}
 
 const requiresWeight = { 'mcc': 0, 'mcc-or-cc': 1, 'any': 2 } as const
 
@@ -65,58 +38,47 @@ function terminalPredicate(name: string): { requires: 'mcc' | 'mcc-or-cc' | 'any
 }
 
 /**
- * 官方 PDF 投影（groups + rule-members）+ OpenDRG 三表 → 固定版本分组规则集。
+ * 官方层级投影（groups）+ 官方成员提取产物 + OpenDRG 三表 → 固定版本分组规则集。
+ * 成员归属以官方分组器提取为准（r3 rule-members 投影的 ADRG 归属存在错位，不进参数表）；
  * 排除语义与官方分组器同构：主诊断查排除组表（CCE）得组号，次诊断与主诊断同组号时不计。
- * 并发症与排除组以 OpenDRG 三表为准（携带组号）；未提供时 r3 子组行降级入库、排除行只计数。
- * 特殊子组规则（高危妊娠、机器人辅助）与人口学 MDC 规则不在首版参数表内，保持缺口而不是虚构覆盖。
+ * 「主要手术或操作+其他手术或操作」等条件型判定不在首版参数表内，由提取器 stats 如实报告缺口。
  */
-export function buildDrgRules(input: { groups: unknown, members: unknown, complicationTables?: unknown }): {
-  rules: DrgRules, stats: { skippedExclusions: number },
-} {
+export function buildDrgRules(input: {
+  groups: unknown
+  officialMembers: unknown
+  complicationTables?: unknown
+}): DrgRules {
   const groups = z.array(groupRowSchema).parse(input.groups)
-  const rows = z.array(memberRowSchema).parse(input.members)
+  const officialMembers = officialMembersSchema.parse(input.officialMembers)
   const tables = input.complicationTables === undefined
     ? null : complicationTablesSchema.parse(input.complicationTables)
 
-  const members: DrgRules['members'] = []
-  const validOperations: DrgRules['validOperations'] = []
-  const mdcEntries: DrgRules['mdcEntries'] = []
   const adrgMdc = new Map<string, string>()
   for (const row of groups) {
     if (row.level === 'ADRG' && row.parentCode !== null) adrgMdc.set(row.code, row.parentCode)
   }
-  let skippedExclusions = 0
-  const complicationsList: DrgRules['complications'] = []
+  if (adrgMdc.size === 0) throw new Error('groups 层级中没有任何 ADRG→MDC 归属')
 
-  for (const row of rows) {
-    if (row.chapter === 'core_group_rules') {
-      const adrgCode = row.adrgCode
-      if (adrgCode === null) continue
-      if (row.conditionRole !== null && row.conditionRole.includes(surgicalRole)) {
-        validOperations.push({ code: row.code, adrgCode })
-      } else if (row.conditionRole !== null && row.conditionRole.includes(medicalRole)) {
-        members.push({ code: row.code, adrgCode, chapter: 'medical' })
-        const mdcCode = adrgMdc.get(adrgCode)
-        if (mdcCode !== undefined) mdcEntries.push({ codePrefix: row.code, mdcCode })
+  const members: DrgRules['members'] = []
+  const validOperations: DrgRules['validOperations'] = []
+  const mdcEntries: DrgRules['mdcEntries'] = []
+  const collect = (source: Record<string, string[]>, chapter: 'medical' | 'surgical'): void => {
+    for (const [adrgCode, codes] of Object.entries(source)) {
+      if (!adrgMdc.has(adrgCode)) throw new Error(`官方成员表的 ADRG ${adrgCode} 不在 groups 层级中`)
+      for (const memberCode of codes) {
+        if (chapter === 'medical') {
+          members.push({ code: memberCode, adrgCode })
+          mdcEntries.push({ codePrefix: memberCode, mdcCode: adrgMdc.get(adrgCode)! })
+        } else {
+          validOperations.push({ code: memberCode, adrgCode })
+        }
       }
-      continue
-    }
-    if (row.chapter !== 'subgroup_rules') continue
-    if (row.subsection?.includes('（CC）')) {
-      if (tables === null) {
-        complicationsList.push({ code: row.code, severity: 1, groupRef: groupRefOfTable(row.exclusionTable) })
-      }
-    } else if (row.subsection?.includes('（MCC）')) {
-      if (tables === null) {
-        complicationsList.push({ code: row.code, severity: 2, groupRef: groupRefOfTable(row.exclusionTable) })
-      }
-    } else if (row.subsection?.includes('排除列表')) {
-      // 排除方向以 OpenDRG CCE 为主诊断→组号表；r3 排除行只作对照计数，不转换。
-      skippedExclusions += 1
     }
   }
+  collect(officialMembers.medical, 'medical')
+  collect(officialMembers.surgical, 'surgical')
 
-  const complications: DrgRules['complications'] = tables === null ? complicationsList : [
+  const complications: DrgRules['complications'] = tables === null ? [] : [
     ...Object.entries(tables.mcc).map(([entryCode, groupRef]) => ({ code: entryCode, severity: 2 as const, groupRef })),
     ...Object.entries(tables.cc).map(([entryCode, groupRef]) => ({ code: entryCode, severity: 1 as const, groupRef })),
   ]
@@ -143,5 +105,5 @@ export function buildDrgRules(input: { groups: unknown, members: unknown, compli
     adrgMdcEntries: [...adrgMdc].map(([adrgCode, mdcCode]) => ({ adrgCode, mdcCode })),
     terminalGroups,
   })
-  return { rules, stats: { skippedExclusions } }
+  return rules
 }
