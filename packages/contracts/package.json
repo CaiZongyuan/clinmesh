@@ -25,6 +25,7 @@
     "./reference-data": "./src/reference-data.ts",
     "./drg": "./src/drg.ts",
     "./inpatient-drg": "./src/inpatient-drg.ts",
+    "./inpatient-drg-simulation": "./src/inpatient-drg-simulation.ts",
     "./agent": "./src/agent.ts",
     "./scenario": "./src/scenario.ts"
   },

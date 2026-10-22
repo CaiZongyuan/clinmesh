@@ -12,7 +12,7 @@ import { businessDate } from './inpatient-orders.ts'
 export class InpatientSurgery {
   constructor(readonly owner: InpatientService) {}
   catalog(context: ActorContext) {
-    this.owner.assertRole(context, ['inpatient-doctor','ward-nurse'])
+    this.owner.assertRole(context, ['inpatient-doctor','ward-nurse','medical-records'])
     const rows = z.array(z.object({ kind: z.enum(['procedure','material']), snapshot_json: z.string() })).parse(this.owner.database.driver.prepare(
       'SELECT kind,snapshot_json FROM inpatient_surgery_catalog WHERE workspace_id=? AND epoch=? ORDER BY item_id').all(context.workspaceId, context.epoch))
     return inpatientSurgeryCatalogSchema.parse({ procedures: rows.filter(row => row.kind === 'procedure').map(row => JSON.parse(row.snapshot_json)),
@@ -107,11 +107,29 @@ export class InpatientSurgery {
         if (!item) throw new InpatientError('CATALOG_CONFLICT', '耗材目录或版本无效')
         return { id: uuidv7(), item, quantity: selection.quantity, amountFen: z.number().int().safe().parse(item.chargeDefinition.priceFen * selection.quantity) }
       })
+      // 预留替换：执行前服务端重验预留状态与耗材数量，替换以业务引用落地，不重复计费。
+      for (const selection of input.materials) {
+        if (selection.reservationId === undefined) continue
+        const row = z.object({ status: z.string(), material_id: z.string(), quantity: z.number() }).optional().parse(this.owner.database.driver.prepare(
+          'SELECT status, material_id, quantity FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
+          .get(context.workspaceId, context.epoch, admission.id, selection.reservationId))
+        if (row === undefined) throw new InpatientError('INPATIENT_RESERVATION_NOT_FOUND', '未找到本次住院的耗材预留', 404)
+        if (row.status !== 'reserved') throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '耗材预留已被替换或释放，请刷新预留列表')
+        if (row.material_id !== selection.materialId || row.quantity !== selection.quantity)
+          throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '实际使用与预留的耗材或数量不一致，须按预留原样替换')
+      }
       const id = uuidv7(), now = this.owner.virtualTime(context), effects: InpatientEffects = []
       this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_execution VALUES(?,?,?,?,?,?,?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, id, row.request_id, admission.id, JSON.stringify(actual), now, context.actorId, context.practitionerRoleId!, admission.organizationId, input.note)
       for (const material of materials) this.owner.database.driver.prepare('INSERT INTO inpatient_surgery_material VALUES(?,?,?,?,?,?,?)')
         .run(context.workspaceId, context.epoch, material.id, id, JSON.stringify(material.item), material.quantity, material.amountFen)
+      for (const [index, selection] of input.materials.entries()) {
+        if (selection.reservationId === undefined) continue
+        const replaced = this.owner.database.driver.prepare(
+          "UPDATE inpatient_material_reservation SET status='replaced', material_use_id=? WHERE workspace_id=? AND epoch=? AND reservation_id=? AND status='reserved'")
+          .run(materials[index]!.id, context.workspaceId, context.epoch, selection.reservationId)
+        if (replaced.changes !== 1) throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '耗材预留状态已变化，替换未生效')
+      }
       this.owner.fhir.createProjection(context, { resourceType: 'Procedure', id, status: 'completed', code: { coding: [clinicalCoding(actual.coding)], text: actual.coding.display },
         subject: { reference: `Patient/${admission.patientId}` }, encounter: { reference: `Encounter/${admission.id}` }, basedOn: [{ reference: `ServiceRequest/${row.request_id}` }],
         occurrenceDateTime: now, recorded: now, performer: [{ actor: { reference: `PractitionerRole/${context.practitionerRoleId}` }, onBehalfOf: { reference: `Organization/${admission.organizationId}` } }], note: [{ text: input.note }] })

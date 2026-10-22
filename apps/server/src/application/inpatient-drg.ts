@@ -1,11 +1,23 @@
+import { z } from 'zod'
+import { v7 as uuidv7 } from 'uuid'
 import { groupDrgCase } from './drg-grouping.ts'
-import type { DrgRules } from '@clinmesh/contracts/drg'
+import type { DrgGroupingInput, DrgRules } from '@clinmesh/contracts/drg'
 import { inpatientDrgPregroupResultSchema, type InpatientDrgPregroupResult } from '@clinmesh/contracts/inpatient-drg'
+import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema,
+  inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema,
+  type InpatientDrgSimulation, type InpatientDrgSimulationInput, type InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { ActorContext } from './command-executor.ts'
+import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 
 const clinicalCodingNote = '病案首页为临床版编码（nhc-icd10-clinical@2022.r4），分组规则字典为医保版口径；'
   + '两套码同码直通，未同码的诊断/操作如实报告为无法入组，不做名称模糊映射。'
+
+const coverageNote = '已覆盖成本=已发生收费净额占推演总额的比例；缺成本与支付参数，'
+  + '参考额差额不构成完整盈亏结论，费用提示不自动调整治疗。'
+
+const projectedNote = 'projected 为「若计划手术按当前计划实施」的推演分组，不构成临床事实或正式病组；'
+  + '草稿与预留只参与计价对照，不改变分组。'
 
 /** 年龄：以离院时点（无离院用入院时点）计算整岁与天龄余数。 */
 function ageAt(birthDate: string, at: string | undefined): { ageYears: number, ageDays: number | null } {
@@ -16,9 +28,13 @@ function ageAt(birthDate: string, at: string | undefined): { ageYears: number, a
   return { ageYears: Math.min(150, Math.floor(days / 365.25)), ageDays: days < 365 ? days : null }
 }
 
+function genderOf(rawGender: string | undefined): 'male' | 'female' | 'unknown' {
+  return rawGender === 'male' ? 'male' : rawGender === 'female' ? 'female' : 'unknown'
+}
+
 /**
- * DRG 预分组：从已提交病案首页修订快照（临床版编码）推导分组输入，调用 CHS-DRG 3.0 内核。
- * 只读计算，不落库、不改变病案状态；首页快照冻结的编码经同码直通进入医保版口径的规则集。
+ * DRG 评估域：预分组（冻结首页快照）与处方推演（在院 live 事实 + 草稿对照），
+ * 以及后续治疗预留的生命周期。只读评估不落库；预留替换经手术执行的业务引用完成，不重复计费。
  */
 export class InpatientDrg {
   constructor(private readonly owner: InpatientService, private readonly rules: DrgRules | null) {}
@@ -29,18 +45,19 @@ export class InpatientDrg {
     if (record.revision === undefined) throw new InpatientError('DRG_RECORD_NOT_SUBMITTED', '病案首页尚未提交修订，无法预分组', 409)
     const snapshot = record.revision.snapshot
     const { patient, stay, clinical } = snapshot
-    const input = {
+    const admittedAt = stay.admittedAt
+    const departedAt = stay.departedAt
+    const input: DrgGroupingInput = {
       diagnoses: clinical.diagnosis.entries.map(entry => ({
         code: entry.coding.code, role: entry.role === 'primary' ? 'main' as const : 'secondary' as const })),
       operations: clinical.operations.map(operation => ({
         code: operation.actualProcedure.coding.code, primary: operation.primary })),
-      gender: patient.gender === 'male' ? 'male' as const : patient.gender === 'female' ? 'female' as const : 'unknown' as const,
-      ...ageAt(patient.birthDate, stay.departedAt ?? stay.admittedAt),
+      gender: genderOf(patient.gender),
+      ...ageAt(patient.birthDate, departedAt ?? admittedAt),
       birthWeightGrams: null,
       dischargeMode: stay.departureMethod ?? 'unknown',
-      inpatientDays: stay.admittedAt === undefined || stay.departedAt === undefined ? 0
-        : Math.min(3650, Math.max(0, Math.floor((new Date(stay.departedAt).getTime()
-          - new Date(stay.admittedAt).getTime()) / 86_400_000))),
+      inpatientDays: admittedAt === undefined || departedAt === undefined ? 0
+        : Math.min(3650, Math.max(0, Math.floor((new Date(departedAt).getTime() - new Date(admittedAt).getTime()) / 86_400_000))),
     }
     return inpatientDrgPregroupResultSchema.parse({
       admissionId,
@@ -50,6 +67,230 @@ export class InpatientDrg {
       inputCoding: 'nhc-icd10-clinical@2022.r4',
       codingNote: clinicalCodingNote,
       result: groupDrgCase(this.rules, input),
+    })
+  }
+
+  /**
+   * 处方推演：正式收费、未记费承诺、治疗预留与草稿逐项计量对照，附依赖指纹与双口径分组。
+   * 草稿只参与计价，不落库、不改变临床事实；评估过期由调用方比对 fingerprint 隔离。
+   */
+  simulate(context: ActorContext, admissionId: string, draft: InpatientDrgSimulationInput | undefined): InpatientDrgSimulation {
+    if (this.rules === null) throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法推演', 409)
+    this.owner.assertReadRole(context, ['inpatient-doctor', 'medical-records'])
+    const admission = this.owner.readAdmissionBinding(context, admissionId)
+    const facts = this.owner.orders.facts(context, admissionId)
+    const dependencies = this.#dependencies(context, admissionId, facts.charges)
+    const input = this.#liveGroupingInput(context, admission)
+    const formal = groupDrgCase(this.rules, input)
+    const requests = this.owner.surgery.read(context, admissionId).requests
+      .filter(request => request.status === 'requested' || request.status === 'ready')
+    const plannedOperations = requests.map(request => ({ code: request.plannedProcedure.coding.code, primary: true as const }))
+    const projected = plannedOperations.length > 0
+      ? groupDrgCase(this.rules, { ...input, operations: [...input.operations, ...plannedOperations] }) : null
+
+    const chargesFen = facts.charges.reduce((sum, charge) => sum + charge.amountFen, 0)
+    const pendingOrders = z.array(z.object({ order_id: z.string(), kind: z.string(), display: z.string(),
+      dose_quantity: z.number(), price_fen: z.number(), pending_executions: z.number() })).parse(this.owner.database.driver.prepare(`
+      SELECT o.order_id, o.kind, o.display, o.dose_quantity, o.price_fen,
+        (SELECT COUNT(*) FROM inpatient_execution e WHERE e.workspace_id=o.workspace_id AND e.epoch=o.epoch
+          AND e.order_id=o.order_id AND e.status='pending') AS pending_executions
+      FROM inpatient_order o WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? AND o.state NOT IN ('stopped','completed')
+      ORDER BY o.order_id`).all(context.workspaceId, context.epoch, admissionId))
+    const committed = [
+      // 已有排程按待执行次数计；已签署尚未物化执行单的按「待排程的下一剂量」计 1 次，已计费的发药/执行不计入。
+      ...pendingOrders.map(row => ({
+        kind: row.kind as 'medication' | 'service', id: row.order_id, display: row.display,
+        quantity: Math.max(row.pending_executions, 1),
+        estimatedFen: Math.max(row.pending_executions, 1) * row.dose_quantity * row.price_fen })),
+      ...requests.map(request => ({
+        kind: 'surgery' as const, id: request.id, display: request.plannedProcedure.coding.display, quantity: 1,
+        estimatedFen: request.plannedProcedure.chargeDefinition.priceFen })),
+    ]
+    const reserved = z.array(z.object({ reservation_id: z.string(), material_display: z.string(),
+      quantity: z.number(), price_fen: z.number() })).parse(this.owner.database.driver.prepare(
+      "SELECT reservation_id, material_display, quantity, price_fen FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND status='reserved' ORDER BY created_at,reservation_id")
+      .all(context.workspaceId, context.epoch, admissionId))
+      .map(row => ({ kind: 'material' as const, id: row.reservation_id, display: row.material_display,
+        quantity: row.quantity, estimatedFen: row.price_fen * row.quantity }))
+    const draftGroups = this.#priceDraft(context, draft)
+
+    const estimatedAdditionalFen = [...committed, ...reserved, ...draftGroups.items]
+      .reduce((sum, item) => sum + (item.estimatedFen ?? 0), 0)
+    const estimatedTotalFen = chargesFen + estimatedAdditionalFen
+    return inpatientDrgSimulationSchema.parse({
+      admissionId,
+      evaluatedAt: this.owner.virtualTime(context),
+      fingerprint: canonicalJsonHash({ ...dependencies, draft: draft ?? null }),
+      rulesId: this.rules.rulesId,
+      rulesVersion: this.rules.version,
+      formal: { chargesFen, items: facts.charges.map(charge => ({
+        kind: charge.kind as 'medication' | 'service' | 'surgery' | 'material' | 'bed' | 'laboratory' | 'imaging',
+        id: charge.id, display: charge.label, quantity: 1, estimatedFen: charge.amountFen })) },
+      committed: { items: committed },
+      reserved: { items: reserved },
+      draft: draftGroups,
+      coverage: { coveredFen: chargesFen, estimatedTotalFen,
+        coveredRatioBp: estimatedTotalFen > 0 ? Math.max(0, Math.min(10_000, Math.round(chargesFen / estimatedTotalFen * 10_000))) : null,
+        note: coverageNote },
+      grouping: { formal, projected, note: projectedNote },
+      incompleteness: { costMissing: true, paymentReferenceMissing: true },
+    })
+  }
+
+  /** 草稿计价：按目录 id+版本定位，未命中显式列出不完整，不以零值或跨版本价格填充。 */
+  #priceDraft(context: ActorContext, draft: InpatientDrgSimulationInput | undefined): InpatientDrgSimulation['draft'] {
+    const items: InpatientDrgSimulation['draft']['items'] = []
+    const missing: InpatientDrgSimulation['draft']['missing'] = []
+    if (draft !== undefined) {
+      const catalog = this.owner.orders.medicationsAndServices(context)
+      for (const entry of draft.medications) {
+        const medication = catalog.medications.find(item => item.id === entry.catalogItemId && item.version === entry.catalogVersion)
+        if (medication === undefined) { missing.push({ kind: 'medication', id: entry.catalogItemId }); continue }
+        items.push({ kind: 'medication', id: entry.catalogItemId, display: `${medication.display} ${entry.doseText} ${entry.frequencyCode}`,
+          quantity: entry.doseQuantity, estimatedFen: medication.priceFen * entry.doseQuantity })
+      }
+      for (const entry of draft.services) {
+        const service = catalog.services.find(item => item.id === entry.serviceId && item.version === entry.serviceVersion)
+        if (service === undefined) { missing.push({ kind: 'service', id: entry.serviceId }); continue }
+        items.push({ kind: 'service', id: entry.serviceId, display: service.display,
+          quantity: entry.quantity, estimatedFen: service.priceFen * entry.quantity })
+      }
+    }
+    return { items, missing }
+  }
+
+  /** 依赖指纹：临床、医嘱、费用、手术、预留、目录价格与规则版本任一变化即过期。 */
+  #dependencies(context: ActorContext, admissionId: string, charges: { id: string, version: number, amountFen: number }[]) {
+    const diagnosis = this.owner.orders.diagnosis(context, admissionId)
+    const executions = z.array(z.object({ execution_id: z.string(), version: z.number(), status: z.string() })).parse(this.owner.database.driver.prepare(`
+      SELECT e.execution_id, e.version, e.status FROM inpatient_execution e JOIN inpatient_order o
+        ON o.workspace_id=e.workspace_id AND o.epoch=e.epoch AND o.order_id=e.order_id
+      WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? ORDER BY e.execution_id`)
+      .all(context.workspaceId, context.epoch, admissionId))
+    const requests = z.array(z.object({ request_id: z.string(), version: z.number(), status: z.string() })).parse(this.owner.database.driver.prepare(
+      'SELECT request_id, version, status FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY request_id')
+      .all(context.workspaceId, context.epoch, admissionId))
+    const surgeryExecutions = z.array(z.object({ execution_id: z.string() })).parse(this.owner.database.driver.prepare(
+      'SELECT execution_id FROM inpatient_surgery_execution WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY execution_id')
+      .all(context.workspaceId, context.epoch, admissionId))
+    const reservations = z.array(z.object({ reservation_id: z.string(), status: z.string(), quantity: z.number() })).parse(this.owner.database.driver.prepare(
+      'SELECT reservation_id, status, quantity FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY reservation_id')
+      .all(context.workspaceId, context.epoch, admissionId))
+    const catalog = this.owner.orders.medicationsAndServices(context)
+    const surgeryCatalog = this.owner.surgery.catalog(context)
+    return {
+      encounter: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
+      diagnosisRevision: diagnosis.revision,
+      orders: z.array(z.object({ order_id: z.string(), version: z.number(), state: z.string() })).parse(this.owner.database.driver.prepare(
+        'SELECT order_id, version, state FROM inpatient_order WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY order_id')
+        .all(context.workspaceId, context.epoch, admissionId)),
+      executions, requests, surgeryExecutions, reservations,
+      charges: charges.map(charge => ({ id: charge.id, version: charge.version, amountFen: charge.amountFen })),
+      prices: { medications: catalog.medications.map(item => [item.id, item.version, item.priceFen]),
+        services: catalog.services.map(item => [item.id, item.version, item.priceFen]),
+        procedures: surgeryCatalog.procedures.map(item => [item.id, item.version, item.chargeDefinition.priceFen]),
+        materials: surgeryCatalog.materials.map(item => [item.id, item.version, item.chargeDefinition.priceFen]) },
+      rulesId: this.rules!.rulesId,
+      rulesVersion: this.rules!.version,
+    }
+  }
+
+  /** 在院 live 分组输入：正式诊断与已实施操作；主操作以已提交首页修订的选择为准，未提交时无主操作。 */
+  #liveGroupingInput(context: ActorContext, admission: { id: string, patientId: string, row: { admitted_at: string | null } }): DrgGroupingInput {
+    const diagnosis = this.owner.orders.diagnosis(context, admission.id)
+    const executions = this.owner.surgery.executedForAdmission(context, admission.id)
+    const revisionRow = z.object({ snapshot_json: z.string() }).optional().parse(this.owner.database.driver.prepare(
+      'SELECT snapshot_json FROM inpatient_record_revision WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY revision DESC LIMIT 1')
+      .get(context.workspaceId, context.epoch, admission.id))
+    const mainProcedureExecutionId = revisionRow === undefined ? null
+      : z.object({ clinical: z.object({ mainProcedureExecutionId: z.string().nullable() }) }).parse(JSON.parse(revisionRow.snapshot_json)).clinical.mainProcedureExecutionId
+    const patient = this.owner.fhir.read(context, 'Patient', admission.patientId)
+    const identity = z.object({ gender: z.string().optional(), birthDate: z.string().optional() }).parse(patient)
+    const events = this.owner.discharge.events(context, admission.id)
+    const reversed = new Set(events.filter(event => event.kind === 'recall').map(event => event.reversesEventId))
+    const departure = events.filter(event => event.kind === 'depart' && !reversed.has(event.id)).at(-1)
+    const admittedAt = admission.row.admitted_at ?? undefined
+    const departedAt = departure?.virtualTime
+    return {
+      diagnoses: diagnosis.entries.map(entry => ({
+        code: entry.coding.code, role: entry.role === 'primary' ? 'main' as const : 'secondary' as const })),
+      operations: executions.map(item => ({ code: item.actualProcedure.coding.code, primary: item.id === mainProcedureExecutionId })),
+      gender: genderOf(identity.gender),
+      ...ageAt(identity.birthDate ?? '', departedAt ?? admittedAt),
+      birthWeightGrams: null,
+      dischargeMode: departure?.departureMethod ?? 'unknown',
+      inpatientDays: admittedAt === undefined || departedAt === undefined ? 0
+        : Math.min(3650, Math.max(0, Math.floor((new Date(departedAt).getTime() - new Date(admittedAt).getTime()) / 86_400_000))),
+    }
+  }
+
+  reservations(context: ActorContext, admissionId: string): InpatientMaterialReservationList {
+    this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records'])
+    this.owner.readAdmissionBinding(context, admissionId)
+    const rows = z.array(z.object({ reservation_id: z.string(), request_id: z.string().nullable(), material_id: z.string(),
+      material_display: z.string(), quantity: z.number(), price_fen: z.number(), status: z.string(),
+      material_use_id: z.string().nullable(), reason: z.string(), created_at: z.string() })).parse(this.owner.database.driver.prepare(
+      'SELECT * FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY created_at,reservation_id')
+      .all(context.workspaceId, context.epoch, admissionId))
+    return inpatientMaterialReservationListSchema.parse({
+      admissionId,
+      encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
+      reservations: rows.map(row => ({
+        id: row.reservation_id, admissionId, materialId: row.material_id, materialDisplay: row.material_display,
+        quantity: row.quantity, priceFen: row.price_fen, status: row.status as 'reserved' | 'replaced' | 'released',
+        reason: row.reason, createdAt: row.created_at,
+        ...(row.request_id === null ? {} : { requestId: row.request_id }),
+        ...(row.material_use_id === null ? {} : { replacedByMaterialUseId: row.material_use_id }),
+      })),
+    })
+  }
+
+  createReservation(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientMaterialReservationCreateInputSchema.parse(raw)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.reservation.create',
+      expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion },
+      dataSchema: inpatientMaterialReservationListSchema,
+      authorize: () => this.owner.assertRole(context, ['inpatient-doctor']) }, () => {
+      this.owner.assertNotArchived(context, input.admissionId)
+      const admission = this.owner.orders.assertAdmitted(context, input.admissionId)
+      const material = this.owner.surgery.catalog(context).materials
+        .find(item => item.id === input.materialId && item.version === input.catalogVersion)
+      if (material === undefined) throw new InpatientError('CATALOG_CONFLICT', '耗材目录或版本无效')
+      if (input.requestId !== undefined) {
+        const request = z.object({ status: z.string() }).optional().parse(this.owner.database.driver.prepare(
+          'SELECT status FROM inpatient_surgery_request WHERE workspace_id=? AND epoch=? AND admission_id=? AND request_id=?')
+          .get(context.workspaceId, context.epoch, input.admissionId, input.requestId))
+        if (request === undefined || !['requested', 'ready'].includes(request.status))
+          throw new InpatientError('INPATIENT_SURGERY_NOT_FOUND', '预留须引用本次住院未实施或未取消的手术申请', 404)
+      }
+      const id = uuidv7()
+      this.owner.database.driver.prepare(`INSERT INTO inpatient_material_reservation
+        (workspace_id,epoch,reservation_id,admission_id,request_id,material_id,catalog_version,material_display,price_fen,quantity,status,reason,actor_id,practitioner_role_id,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,'reserved',?,?,?,?)`)
+        .run(context.workspaceId, context.epoch, id, admission.id, input.requestId ?? null, input.materialId, input.catalogVersion,
+          material.display, material.chargeDefinition.priceFen, input.quantity, input.reason, context.actorId, context.practitionerRoleId, this.owner.virtualTime(context))
+      return { data: this.reservations(context, input.admissionId),
+        effects: [{ kind: 'created' as const, reference: `InpatientMaterialReservation/${id}`, versionId: '1' }] }
+    })
+  }
+
+  releaseReservation(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientMaterialReservationReleaseInputSchema.parse(raw)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.reservation.release',
+      expectedVersions: {}, dataSchema: inpatientMaterialReservationListSchema,
+      authorize: () => this.owner.assertRole(context, ['inpatient-doctor']) }, () => {
+      const row = z.object({ status: z.string() }).optional().parse(this.owner.database.driver.prepare(
+        'SELECT status FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
+        .get(context.workspaceId, context.epoch, input.admissionId, input.reservationId))
+      if (row === undefined) throw new InpatientError('INPATIENT_RESERVATION_NOT_FOUND', '未找到本次住院的耗材预留', 404)
+      if (row.status !== 'reserved') throw new InpatientError('INPATIENT_RESERVATION_CONFLICT', '仅预留中的耗材可以释放')
+      this.owner.assertNotArchived(context, input.admissionId)
+      this.owner.orders.assertAdmitted(context, input.admissionId)
+      this.owner.database.driver.prepare(
+        "UPDATE inpatient_material_reservation SET status='released' WHERE workspace_id=? AND epoch=? AND reservation_id=? AND status='reserved'")
+        .run(context.workspaceId, context.epoch, input.reservationId)
+      return { data: this.reservations(context, input.admissionId),
+        effects: [{ kind: 'updated' as const, reference: `InpatientMaterialReservation/${input.reservationId}`, versionId: '2' }] }
     })
   }
 }
