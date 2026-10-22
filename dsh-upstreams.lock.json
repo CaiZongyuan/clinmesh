@@ -38,7 +38,7 @@
       "source": "https://github.com/CaiZongyuan/dsh-react-surface.git",
       "owner": "https://github.com/CaiZongyuan/dsh-react-surface",
       "role": "React runtime、Surface 生命周期、布局和构建工具",
-      "commit": "ab6092e6c063b653a0c78630ae31c584c21e4b00",
+      "commit": "7db43def0f73532e3f10e39fc372258003f27b81",
       "requires": [
         "@deepseek-ai/dsh",
         "dsh-ag-ui"
