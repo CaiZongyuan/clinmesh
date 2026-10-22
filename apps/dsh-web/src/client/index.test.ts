@@ -7,7 +7,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import * as application from '@clinmesh/web/application'
 import type { WebRuntimeOptions } from '@clinmesh/web/runtime'
-import { apply, createDefinition } from './index.tsx'
+import { apply, createDefinition, upgradeLegacyMirrorLayout } from './index.tsx'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
 import { createFontSizePreference, registerFontSizeSettings } from './font-size-settings.tsx'
 
@@ -63,6 +63,105 @@ describe('ClinMesh React Surface definition', () => {
       vi.unstubAllGlobals()
     }
     expect(listeners.size).toBe(0)
+  })
+
+  it('exposes the queue rail presentation under every surface layout', async () => {
+    const ctx = { get(name: string) {
+      if (name === 'sessions') return { binding: () => ({ session: { getSnapshot: () => ({ sessionId: 'session-1', pendingSubmissions: [] }), subscribe: () => () => {} } }) }
+      if (name === 'uiSession') return { adapter: { current: { getSnapshot: () => ({ key: 'session-1' }), subscribe: () => () => {} } } }
+      if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
+      if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
+      return {}
+    }, on: () => () => {} }
+    const render = vi.spyOn(application, 'WebApp').mockImplementation(() => createElement('div'))
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const definition = createDefinition(ctx as unknown as ClientContext)
+    const containers: Array<HTMLElement> = []
+    try {
+      for (const [layout, expected] of [
+        ['workspace', 'rail'],
+        ['full-frame', 'rail'],
+      ] as const) {
+        let runtime: WebRuntimeOptions | undefined
+        render.mockImplementation(props => { runtime = props?.runtime; return createElement('div') })
+        const container = document.createElement('div')
+        document.body.append(container)
+        containers.push(container)
+        const root = createRoot(container)
+        await act(() => root.render(createElement(definition.component, {
+          active: true, conversationCollapsed: false, agent: { register: () => () => {} },
+          capabilities: { agent: { available: false, status: 'unavailable' } },
+          close() {}, layout, location: '/', navigate() {},
+        })))
+        expect(runtime?.surfaceDisplay?.queuePresentation).toBe(expected)
+      }
+    } finally {
+      containers.forEach(container => container.remove())
+      render.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('upgrades the retired mirror preference to the workspace default after registration', () => {
+    const buildRegistry = (layout: string) => ({
+      getSnapshot: () => ({ surfaces: [{ definition: { id: 'clinmesh.his' }, layout }] }),
+      setLayout: vi.fn(),
+    })
+
+    const legacy = buildRegistry('workspace-mirror') as unknown as Parameters<typeof upgradeLegacyMirrorLayout>[0]
+    upgradeLegacyMirrorLayout(legacy)
+    expect(legacy.setLayout).toHaveBeenCalledWith('clinmesh.his', 'workspace')
+
+    for (const kept of ['workspace', 'full-frame', 'center']) {
+      const registry = buildRegistry(kept) as unknown as Parameters<typeof upgradeLegacyMirrorLayout>[0]
+      upgradeLegacyMirrorLayout(registry)
+      expect(registry.setLayout).not.toHaveBeenCalled()
+    }
+
+    const empty = {
+      getSnapshot: () => ({ surfaces: [] }),
+      setLayout: vi.fn(),
+    } as unknown as Parameters<typeof upgradeLegacyMirrorLayout>[0]
+    upgradeLegacyMirrorLayout(empty)
+    expect(empty.setLayout).not.toHaveBeenCalled()
+  })
+
+  it('returns to the layout chosen before full-frame when exiting fullscreen', async () => {
+    const setLayout = vi.fn()
+    const ctx = { get(name: string) {
+      if (name === 'uiSession') return { adapter: { current: { getSnapshot: () => ({ key: 'session-1' }), subscribe: () => () => {} } } }
+      if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
+      if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
+      if (name === 'reactSurfaces') return { setLayout }
+      return {}
+    }, on: () => () => {} }
+    const render = vi.spyOn(application, 'WebApp').mockImplementation(() => createElement('div'))
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const definition = createDefinition(ctx as unknown as ClientContext)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+      const baseProps = {
+        active: true, conversationCollapsed: false, agent: { register: () => () => {} },
+        capabilities: { agent: { available: false, status: 'unavailable' as const } },
+        close() {}, location: '/', navigate() {},
+      }
+      let runtime: WebRuntimeOptions | undefined
+      render.mockImplementation(props => { runtime = props?.runtime; return createElement('div') })
+      // workspace 进入全屏再退出，应回到 workspace。
+      await act(() => root.render(createElement(definition.component, { ...baseProps, layout: 'workspace' })))
+      runtime!.surfaceDisplay!.toggle()
+      expect(setLayout).toHaveBeenLastCalledWith('clinmesh.his', 'full-frame')
+      await act(() => root.render(createElement(definition.component, { ...baseProps, layout: 'full-frame' })))
+      runtime!.surfaceDisplay!.toggle()
+      expect(setLayout).toHaveBeenLastCalledWith('clinmesh.his', 'workspace')
+    } finally {
+      await act(() => root.unmount())
+      container.remove()
+      render.mockRestore()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('updates workspace routes, settings and launcher through the same host locale event', async () => {
@@ -259,18 +358,25 @@ describe('ClinMesh React Surface definition', () => {
     let registered = false
     const surfacesListeners = new Set<() => void>()
     let surfacesSnapshot: { activeId: string | null; surfaces: unknown[] } = { activeId: null, surfaces: [] }
+    const surfacesRegistry = {
+      getSnapshot: () => surfacesSnapshot,
+      subscribe: (listener: () => void) => {
+        surfacesListeners.add(listener)
+        return () => {
+          surfacesListeners.delete(listener)
+        }
+      },
+      register: () => {
+        registered = true
+        return () => {
+          registered = false
+        }
+      },
+    }
     const ctx = {
       get: (name: string) => {
         if (name === 'reactSurfaces') {
-          return {
-            getSnapshot: () => surfacesSnapshot,
-            subscribe: (listener: () => void) => {
-              surfacesListeners.add(listener)
-              return () => {
-                surfacesListeners.delete(listener)
-              }
-            },
-          }
+          return surfacesRegistry
         }
         if (name === 'sidebarRightTabs') {
           return { register: () => () => {} }
@@ -281,14 +387,7 @@ describe('ClinMesh React Surface definition', () => {
           adapter: { current: { getSnapshot: () => ({ key: undefined }), subscribe: () => () => {} } },
         }
       },
-      reactSurfaces: {
-        register: () => {
-          registered = true
-          return () => {
-            registered = false
-          }
-        },
-      },
+      reactSurfaces: surfacesRegistry,
       effect: (callback: () => () => void) => {
         disposers.push(callback())
       },
@@ -337,12 +436,15 @@ describe('ClinMesh React Surface definition', () => {
       get: () => sessions,
     } as unknown as ClientContext) as unknown as {
       branding: { shell: string; tokens?: Record<string, string> }
-      layout: { fallback: string; supported: string[] }
+      layout: { default: string; fallback: string; supported: string[] }
     }
 
     expect(definition.branding.shell).toBe('preserve')
     expect(definition.branding.tokens).toBeUndefined()
     expect(definition.layout.fallback).toBe('shrink')
-    expect(definition.layout.supported).toEqual(['workspace', 'full-frame'])
+    expect(definition.layout.default).toBe('workspace')
+    // workspace-mirror 必须留在 supported：注册表只恢复受支持的存量布局，
+    // 升级函数依赖快照读出 workspace-mirror 才能落盘覆盖为 workspace。
+    expect(definition.layout.supported).toEqual(['workspace', 'workspace-mirror', 'full-frame'])
   })
 })

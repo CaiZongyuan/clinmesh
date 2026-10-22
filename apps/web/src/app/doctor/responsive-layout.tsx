@@ -22,7 +22,7 @@ export function DoctorWorkspaceLayout({
   detailLabel: string
   /** 右侧建议栈：宽容器显示为第三栏，窄容器折叠为抽屉。断点全部由容器查询驱动。 */
   suggestions?: { label: string; node: ReactNode } | undefined
-  /** DSH 镜像布局的队列回落形态：提供时不再渲染队列列，由浮层贴内容区左缘承载队列。 */
+  /** DSH Surface 的队列浮层形态：提供时不再渲染队列列，由浮层贴内容区左缘承载队列。 */
   queueFloating?: ReactNode
 }) {
   const floatingQueue = queueFloating !== undefined

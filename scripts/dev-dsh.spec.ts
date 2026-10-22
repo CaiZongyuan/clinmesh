@@ -161,6 +161,8 @@ describe('createDshDevelopmentPlan', () => {
           CLINMESH_AI_SOURCE: 'dsh',
           CLINMESH_DSH_MODEL_ORIGIN: 'http://127.0.0.1:3080',
           CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value',
+          NO_PROXY: '127.0.0.1,localhost',
+          no_proxy: '127.0.0.1,localhost',
           CLINMESH_DATABASE_PATH: resolve('/repo/.data/clinmesh.sqlite'),
           CLINMESH_REFERENCE_DATABASE_PATH: resolve('/repo/.data/clinmesh-reference.sqlite'),
           CLINMESH_GUIDELINE_DATABASE_PATH: resolve('/repo/.data/clinmesh-guidelines.sqlite'),
@@ -177,11 +179,28 @@ describe('createDshDevelopmentPlan', () => {
           DSHVM_BIN_DIR: paths.binDir,
           DSH_HOME: paths.dshHome,
           CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value',
+          CLINMESH_DSH_UPSTREAM_ORIGIN: 'http://127.0.0.1:51869',
+          NO_PROXY: '127.0.0.1,localhost',
+          no_proxy: '127.0.0.1,localhost',
         },
         output: { prefix: '[DSH]' },
       },
     ])
     expect(plan.urls).toEqual(['http://127.0.0.1:51869/api/health'])
+  })
+
+  it('keeps existing no_proxy entries ahead of the loopback additions', () => {
+    const plan = createDshDevelopmentPlan({
+      paths,
+      bridgeSecret: 'bridge-secret-value',
+      trustedOrigins: 'http://127.0.0.1:51868,http://127.0.0.1:3080',
+      repositoryRoot: '/repo',
+      environment: { NO_PROXY: 'foo.example,127.0.0.1,localhost,bar.example' },
+    })
+
+    const expected = 'foo.example,127.0.0.1,localhost,bar.example'
+    expect(plan.processes[0]!.environment.NO_PROXY).toBe(expected)
+    expect(plan.processes[1]!.environment.no_proxy).toBe(expected)
   })
 
   it('omits server path overrides that the environment does not define', () => {
@@ -194,7 +213,9 @@ describe('createDshDevelopmentPlan', () => {
     })
 
     const server = plan.processes[0]!
-    expect(server.environment).toEqual({ CLINMESH_TRUSTED_ORIGINS: 'http://127.0.0.1:51868,http://127.0.0.1:3080', CLINMESH_AI_SOURCE: 'dsh', CLINMESH_DSH_MODEL_ORIGIN: 'http://127.0.0.1:3080', CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value' })
+    expect(server.environment).toEqual({ CLINMESH_TRUSTED_ORIGINS: 'http://127.0.0.1:51868,http://127.0.0.1:3080', CLINMESH_AI_SOURCE: 'dsh', CLINMESH_DSH_MODEL_ORIGIN: 'http://127.0.0.1:3080', CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value', NO_PROXY: '127.0.0.1,localhost', no_proxy: '127.0.0.1,localhost' })
+    expect(plan.processes[1]!.environment.CLINMESH_DSH_UPSTREAM_ORIGIN).toBe('http://127.0.0.1:51868')
+    expect(plan.processes[1]!.environment.NO_PROXY).toBe('127.0.0.1,localhost')
   })
 })
 
