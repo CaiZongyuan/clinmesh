@@ -52,7 +52,7 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 新整理快照固定句子引用协议，模型只返回事实文字与句子编号，服务端恢复原始来源身份和逐字完整引文后复用既有程序校验与质控来源上下文；旧快照继续按原协议恢复，未变化事实沿用保留索引。编号映射和格式修复均计入完整输入预算，超限保留来源和失败。协议、句界、快照隔离及体积比较见[句子编号决策](../decisions/implemented/architecture/2026-10-19-recording-sentence-references.md)。
 
-病例 Query 的 `consultationRecording` 返回持久控制版本、暂停／待补录／处理中／失败状态、已整理和剩余来源数量、来源及草稿保存事实。常规失败保留来源和失败状态，不自动重跑；只有服务关闭中断在剩余 outbox 尝试预算内恢复。`failures` 返回安全错误码、来源与重试状态，预算和恢复规则见[低延迟记录规格](../spec/2026-10-15-low-latency-document-recording.md)。任务、来源和应用状态在 SQLite 持久化，重启复用模型绑定，旧 Epoch 结果不得写入当前病例。暂停只停止整理，回答继续保存；恢复与失败重试按序补录未完成来源，既有病例首次补录须医生明确点击。兼容 verification 计数固定为零、issues 为空，不代表语义通过；旧核对任务只退役，不驱动重试。控制 Command 推进任务代次，迟到结果不得越过暂停或新代次，完成回答不重置；顺序与模型绑定见[记录恢复决策](../decisions/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
+病例 Query 的 `consultationRecording` 返回持久控制版本、暂停／待补录／处理中／失败状态、已整理和剩余来源数量、来源及草稿保存事实。常规失败保留来源和失败状态，不自动重跑；服务关闭后仅安全接续可确认没有未决派发的任务或复用已持久成功步骤，在途结果未知须由医生明确重试。`failures` 返回安全错误码、来源与重试状态，预算和恢复规则见[低延迟记录规格](../spec/2026-10-15-low-latency-document-recording.md)。任务、来源和应用状态在 SQLite 持久化，重启复用模型绑定，旧 Epoch 结果不得写入当前病例。暂停只停止整理，回答继续保存；恢复与失败重试按序补录未完成来源，既有病例首次补录须医生明确点击。兼容 verification 计数固定为零、issues 为空，不代表语义通过；旧核对任务只退役，不驱动重试。控制 Command 推进任务代次，迟到结果不得越过暂停或新代次，完成回答不重置；顺序与模型绑定见[记录恢复决策](../decisions/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
 
 自动记录没有医生确认状态，签署不要求逐条核对或问诊遗漏勾选。预览仍固定完整正文、草稿版本、负责身份、Encounter 版本与 Consultation/来源快照；准备推进提取代次，迟到结果失效，已签文书不可变。取消恢复未完成任务并保留暂停和失败；冻结与恢复见[签署准备决策](../decisions/implemented/architecture/2026-10-10-consultation-signing-preparation.md)。正式签署与 Agent 高风险提案批准沿用原授权。
 
