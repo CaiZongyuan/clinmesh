@@ -1,6 +1,7 @@
 import { insuranceTargetSchema } from '@clinmesh/contracts/insurance'
 import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from '@clinmesh/contracts/inpatient-finance'
+import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema, inpatientFinancialInsuranceConfirmInputSchema } from '@clinmesh/contracts/inpatient-finance'
 import { inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -17,6 +18,9 @@ import { useEffect, useRef, useState } from 'react'
 import { ApiClientError, apiGet, apiMutation, getSession, newIdempotencyKey } from './api-client.ts'
 
 const commandSchema = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('inpatient.financial.insurance.cancel'), input: inpatientFinancialInsuranceCancelInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.financial.insurance.preview'), input: inpatientFinancialInsurancePreviewInputSchema }).strict(),
+  z.object({ operation: z.literal('inpatient.financial.insurance.confirm'), input: inpatientFinancialInsuranceConfirmInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.financial.adjust'), input: inpatientFinancialAdjustmentInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.financial.refund.preview'), input: inpatientFinancialRefundPreviewInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.financial.refund.confirm'), input: inpatientFinancialRefundConfirmInputSchema }).strict(),
