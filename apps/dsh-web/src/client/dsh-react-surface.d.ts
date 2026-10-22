@@ -26,7 +26,7 @@ declare module 'dsh-react-surface/client' {
       }
     }
     close(): void
-    layout: 'workspace' | 'full-frame' | 'center' | 'right-panel' | 'bottom-panel'
+    layout: 'workspace' | 'workspace-mirror' | 'full-frame' | 'center' | 'right-panel' | 'bottom-panel'
     location: string
     navigate(location: string): void
   }

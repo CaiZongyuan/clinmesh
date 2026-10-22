@@ -240,6 +240,12 @@ export class CommandExecutor {
     this.#workspaces = new WorkspaceRepository(database)
   }
 
+  auditRead(context: ActorContext, operation: string, input: unknown, outcome: 'failed' | 'success'): void {
+    this.#database.driver.transaction(() => {
+      this.#appendAudit(context, operation, hashJson(input), uuidv7(), this.#now().toISOString(), outcome, [], 'R')
+    }).immediate()
+  }
+
   execute<Input, Data>(
     invocation: CommandInvocation<Input, Data>,
     handler: (transaction: CommandTransaction) => CommandHandlerResult<Data>,
@@ -474,6 +480,7 @@ export class CommandExecutor {
     timestamp: string,
     outcome: 'failed' | 'success',
     effects: CommandEffect[],
+    action: 'E' | 'R' = 'E',
   ): void {
     const head = this.#database.driver.prepare(`
       SELECT sequence, hash FROM audit_head WHERE workspace_id = ? AND epoch = ?
@@ -529,7 +536,7 @@ export class CommandExecutor {
         }],
         text: operation,
       },
-      action: 'E',
+      action,
       severity: outcome === 'success' ? 'notice' : 'error',
       recorded: timestamp,
       outcome: {

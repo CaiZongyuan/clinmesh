@@ -14,6 +14,11 @@ import {
   type AgentPageContextClaim,
 } from '@clinmesh/contracts/agent'
 import { afterEach, describe, expect, it } from 'vitest'
+import {
+  createPatientResponseSchema,
+  registrationCatalogSchema,
+  registrationResponseSchema,
+} from '@clinmesh/contracts/his'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
 describe('DSH Agent Page Context HTTP contract', () => {
@@ -115,6 +120,97 @@ describe('DSH Agent Page Context HTTP contract', () => {
     })
     expect(binding.snapshot.allowedOperationIds).toContain('registration.patient.search')
     expect(binding.snapshot.allowedOperationIds).not.toContain('outpatient.case.read')
+  })
+
+  it('keeps payment recovery on the selected ambiguous charge and permits declined payments to be previewed again', async () => {
+    const { cookie, password, runtime } = await setup()
+    const headers = { 'content-type': 'application/json', cookie, origin: 'http://localhost' }
+    const patientResponse = await runtime.app.request('/api/his/v1/patients', {
+      method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions: {}, input: {
+        birthDate: '1992-02-02', gender: 'female', identifier: 'CM-AGENT-BILLING-001', name: '合成收费患者',
+      } }),
+    })
+    expect(patientResponse.status).toBe(200)
+    const patient = createPatientResponseSchema.parse(await patientResponse.json()).data.patient
+    const catalog = registrationCatalogSchema.parse(await (await runtime.app.request('/api/his/v1/catalogs/registration', {
+      headers: { cookie },
+    })).json())
+    const registrationResponse = await runtime.app.request('/api/his/v1/registrations/actions/register', {
+      method: 'POST', headers: { ...headers, 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions: { [`Patient/${patient.id}`]: patient.versionId }, input: {
+        departmentId: catalog.departments[0]!.id, locationId: catalog.locations[0]!.id,
+        patientId: patient.id, visitDate: catalog.virtualDate, visitTypeId: catalog.visitTypes[0]!.id,
+      } }),
+    })
+    expect(registrationResponse.status).toBe(200)
+    const chargeItemId = registrationResponseSchema.parse(await registrationResponse.json()).data.chargeItemId
+    const signIn = await runtime.app.request('/api/auth/sign-in/email', {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' },
+      body: JSON.stringify({ email: 'cashier@demo.clinmesh.local', password }),
+    })
+    expect(signIn.status).toBe(200)
+    const cashierCookie = signIn.headers.get('set-cookie')?.split(';', 1)[0] ?? ''
+    const billingClaim = {
+      activeSection: 'laboratory:ambiguous',
+      selection: { id: chargeItemId, kind: 'billing-item' as const, version: '1' },
+      ui: { status: 'ready' as const }, version: 1 as const,
+      viewId: 'billing' as const, viewRevision: 'billing-ambiguous',
+    }
+    runtime.database.driver.prepare(`
+      UPDATE charge_record SET category = 'laboratory', status = 'ambiguous'
+      WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND charge_item_id = ?
+    `).run(chargeItemId)
+    const contextResponse = await createContext(runtime, cashierCookie, billingClaim)
+    expect(contextResponse.status).toBe(201)
+    const ambiguous = agentPageContextBindingSchema.parse(await contextResponse.json())
+    expect(ambiguous.snapshot.allowedOperationIds).toContain('billing.case.read')
+    expect(ambiguous.snapshot.allowedOperationIds).toContain('billing.payment.recover.propose')
+    expect(ambiguous.snapshot.allowedOperationIds).not.toContain('billing.payment.preview')
+    expect(ambiguous.snapshot.allowedOperationIds).not.toContain('billing.payment.confirm.propose')
+
+    const proof = executionProof({
+      callId: 'call-payment-recovery', contextId: ambiguous.snapshot.id,
+      pageRevision: agentPageBindingRevision(ambiguous.snapshot.claim), dshSessionId: ambiguous.snapshot.dshSessionId,
+      scopeKey: ambiguous.snapshot.scopeKey, toolName: 'clinmesh_prepare_recover_payment',
+    })
+    const authorizeRecovery = (input: unknown) => runtime.app.request('/api/agent/v1/tool-calls', {
+      method: 'POST', headers: { ...headers, cookie: cashierCookie },
+      body: JSON.stringify({ contextToken: ambiguous.token, executionProof: proof,
+        input, operationId: 'billing.payment.recover.propose' }),
+    })
+    expect((await authorizeRecovery({ paymentId: 'other-payment' })).status).toBe(400)
+    expect((await authorizeRecovery({})).status).toBe(201)
+
+    for (const [category, status, visibleStatus, version, canPreview] of [
+      ['laboratory', 'declined', 'declined', '2', true],
+      ['medication', 'billable', 'pending', '3', true],
+      ['medication', 'paid', 'paid', '4', false],
+      ['registration', 'billable', 'pending', '5', false],
+    ] as const) {
+      runtime.database.driver.prepare(`
+        UPDATE charge_record SET category = ?, status = ?, version = version + 1
+        WHERE workspace_id = 'workspace-demo' AND epoch = 'epoch-1' AND charge_item_id = ?
+      `).run(category, status, chargeItemId)
+      const stale = await createContext(runtime, cashierCookie, billingClaim)
+      expect(stale.status).toBe(409)
+      const response = await createContext(runtime, cashierCookie, {
+        ...billingClaim, activeSection: `${category}:${visibleStatus}`,
+        selection: { ...billingClaim.selection, version }, viewRevision: `billing-${category}-${status}`,
+      })
+      expect(response.status).toBe(201)
+      const current = agentPageContextBindingSchema.parse(await response.json())
+      expect(current.snapshot.allowedOperationIds).toContain('billing.case.read')
+      expect(current.snapshot.allowedOperationIds.includes('billing.payment.preview')).toBe(canPreview)
+      expect(current.snapshot.allowedOperationIds.includes('billing.payment.confirm.propose')).toBe(canPreview)
+      expect(current.snapshot.allowedOperationIds).not.toContain('billing.payment.recover.propose')
+    }
+    const unselected = await createContext(runtime, cashierCookie, {
+      ...billingClaim, selection: undefined, viewRevision: 'billing-unselected',
+    })
+    const empty = agentPageContextBindingSchema.parse(await unselected.json())
+    expect(empty.snapshot.allowedOperationIds).not.toContain('billing.case.read')
+    expect(empty.snapshot.allowedOperationIds).not.toContain('billing.payment.recover.propose')
   })
 
   it('rejects forged and stale resource references before signing Page Context', async () => {

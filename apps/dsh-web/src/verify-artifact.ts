@@ -101,7 +101,7 @@ const surfaceRuntimeFile = Bun.file(join(
 ))
 if (await surfaceRuntimeFile.exists()) {
   const surfaceRuntime = await surfaceRuntimeFile.text()
-  const surfaceRuntimeMarkers = ['fullFrameKeepDetails'] as const
+  const surfaceRuntimeMarkers = ['fullFrameKeepDetails', 'workspaceMirror'] as const
   const missingMarkers = surfaceRuntimeMarkers.filter(marker => !surfaceRuntime.includes(marker))
   if (missingMarkers.length > 0) {
     throw new Error(

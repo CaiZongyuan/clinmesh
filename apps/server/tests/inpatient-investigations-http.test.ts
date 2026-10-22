@@ -369,7 +369,12 @@ describe('住院检查检验 HTTP 合同', () => {
       database.driver.pragma('foreign_keys=OFF'); database.driver.prepare('ATTACH DATABASE ? AS captured').run(join(s.directory, 'clinmesh.sqlite'))
       const tables = z.array(z.object({ name: z.string() })).parse(database.driver.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name<>'schema_migration' ORDER BY name").all())
       database.driver.exec('BEGIN')
-      for (const { name } of tables) database.driver.exec(`INSERT OR REPLACE INTO "${name}" SELECT * FROM captured."${name}"`)
+      for (const { name } of tables) {
+        const quoted = `"${name.replaceAll('"', '""')}"`
+        const columns = z.array(z.object({ name: z.string() })).parse(database.driver.pragma(`table_info(${quoted})`))
+        const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(',')
+        database.driver.exec(`INSERT OR REPLACE INTO ${quoted}(${list}) SELECT ${list} FROM captured.${quoted}`)
+      }
       database.driver.exec('COMMIT'); database.driver.exec('DETACH DATABASE captured'); database.driver.pragma('foreign_keys=ON')
       const before = tables.map(({ name }) => ({ name, rows: database.driver.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all() }))
       const file = '0071_inpatient-investigations-transfer.sql', sql = await readFile(join('drizzle', file), 'utf8')
