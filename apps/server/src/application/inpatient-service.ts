@@ -35,7 +35,7 @@ const rowSchema = z.object({ admission_id: z.string(), patient_id: z.string(), i
   registered_at: z.string(), admitted_at: z.string().nullable() })
 const sumSchema = z.object({ amount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) })
 const clinicalRoles = ['inpatient-doctor', 'ward-nurse']
-const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier']
+const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance', 'cashier']
 
 export class InpatientService {
   readonly billing: InpatientBilling

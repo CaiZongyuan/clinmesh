@@ -7,9 +7,12 @@ import { inpatientRecordSnapshotSchema } from '@clinmesh/contracts/inpatient-rec
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema,
   inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema,
   type InpatientDrgSimulation, type InpatientDrgSimulationInput, type InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema, inpatientDrgPayerReviewSchema,
+  type InpatientDrgPayerReviewList } from '@clinmesh/contracts/inpatient-drg-payer'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { ActorContext } from './command-executor.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import { syntheticDrgPaymentParameters } from './scenario-data/drg-payment-parameters.ts'
 
 const clinicalCodingNote = '病案首页为临床版编码（nhc-icd10-clinical@2022.r4），分组规则字典为医保版口径；'
   + '两套码同码直通，未同码的诊断/操作如实报告为无法入组，不做名称模糊映射。'
@@ -43,18 +46,10 @@ export class InpatientDrg {
   pregroup(context: ActorContext, admissionId: string): InpatientDrgPregroupResult {
     const record = this.owner.records.read(context, admissionId)
     // 归档病例回看冻结结果不依赖当前规则包；未归档病例保持规则未配置优先报错。
-    if (record.archive === undefined && this.rules === null)
-      throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法预分组', 409)
-    if (record.revision === undefined && record.archive === undefined)
-      throw new InpatientError('DRG_RECORD_NOT_SUBMITTED', '病案首页尚未提交修订，无法预分组', 409)
-    if (record.archive !== undefined) {
-      const row = z.object({ drg_result_json: z.string().nullable() }).parse(this.owner.database.driver.prepare(
-        'SELECT drg_result_json FROM inpatient_record_archive WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY archive_id DESC LIMIT 1')
-        .get(context.workspaceId, context.epoch, admissionId))
-      if (row.drg_result_json === null) throw new InpatientError('DRG_FROZEN_RESULT_MISSING', '归档时未形成冻结分组（规则包未配置）', 409)
-      return inpatientDrgPregroupResultSchema.parse(JSON.parse(row.drg_result_json))
-    }
-    const input = this.#snapshotGroupingInput(record.revision!.snapshot)
+    if (record.archive !== undefined) return this.#frozenArchive(context, admissionId).frozen
+    if (this.rules === null) throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法预分组', 409)
+    if (record.revision === undefined) throw new InpatientError('DRG_RECORD_NOT_SUBMITTED', '病案首页尚未提交修订，无法预分组', 409)
+    const input = this.#snapshotGroupingInput(record.revision.snapshot)
     return inpatientDrgPregroupResultSchema.parse({
       admissionId,
       recordRevision: record.revision.revision,
@@ -65,6 +60,19 @@ export class InpatientDrg {
       frozen: false,
       result: groupDrgCase(this.rules, input),
     })
+  }
+
+  /** 归档冻结读取：冻结分组、归档来源哈希与归档快照正式收费净额；未归档或缺冻结明确报错。 */
+  #frozenArchive(context: ActorContext, admissionId: string) {
+    const row = z.object({ drg_result_json: z.string().nullable(), sources_hash: z.string(), snapshot_json: z.string() }).optional().parse(
+      this.owner.database.driver.prepare(
+        'SELECT drg_result_json, sources_hash, snapshot_json FROM inpatient_record_archive WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY archive_id DESC LIMIT 1')
+        .get(context.workspaceId, context.epoch, admissionId))
+    if (row === undefined) throw new InpatientError('INPATIENT_DRG_NOT_ARCHIVED', '病案归档后才能读取冻结分组', 409)
+    if (row.drg_result_json === null) throw new InpatientError('DRG_FROZEN_RESULT_MISSING', '归档时未形成冻结分组（规则包未配置）', 409)
+    const snapshot = inpatientRecordSnapshotSchema.parse(JSON.parse(row.snapshot_json))
+    return { frozen: inpatientDrgPregroupResultSchema.parse(JSON.parse(row.drg_result_json)),
+      sourcesHash: row.sources_hash, chargesFen: snapshot.fees.chargesFen }
   }
 
   /** 归档事务内冻结分组：与首页快照同事务落盘；规则包未配置时返回 null，归档不带冻结结果。 */
@@ -82,7 +90,7 @@ export class InpatientDrg {
     }))
   }
 
-  #snapshotGroupingInput(snapshot: InpatientRecordSnapshot): DrgGroupingInput {
+  #snapshotGroupingInput(snapshot: z.infer<typeof inpatientRecordSnapshotSchema>): DrgGroupingInput {
     const { patient, stay, clinical } = snapshot
     const admittedAt = stay.admittedAt
     const departedAt = stay.departedAt
@@ -322,5 +330,55 @@ export class InpatientDrg {
       return { data: this.reservations(context, input.admissionId),
         effects: [{ kind: 'updated' as const, reference: `InpatientMaterialReservation/${input.reservationId}`, versionId: '2' }] }
     })
+  }
+
+  /** 医保办模拟核定：归档冻结分组 × 固定版本合成支付参数的受控仿真，追加落盘可追溯。 */
+  payerReview(context: ActorContext, raw: unknown, idempotencyKey: string) {
+    const input = inpatientDrgPayerReviewCreateInputSchema.parse(raw)
+    return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.payer.review',
+      expectedVersions: {}, dataSchema: inpatientDrgPayerReviewListSchema,
+      authorize: () => this.owner.assertRole(context, ['medical-insurance']) }, () => {
+      const { frozen, sourcesHash, chargesFen } = this.#frozenArchive(context, input.admissionId)
+      if (frozen.result.status !== 'grouped' || frozen.result.drgCode === null)
+        throw new InpatientError('DRG_FROZEN_UNGROUPED', '归档冻结分组未确定病组，无法模拟核定', 409)
+      const drgCode = frozen.result.drgCode
+      const weightBp = syntheticDrgPaymentParameters.weightsBp[drgCode]
+      if (weightBp === undefined)
+        throw new InpatientError('DRG_PAYMENT_PARAMETER_MISSING', `病组 ${drgCode} 不在合成支付参数覆盖范围内`, 409)
+      const simulatedPaymentFen = Math.round(syntheticDrgPaymentParameters.baseRateFen * weightBp / 10_000)
+      const id = uuidv7()
+      this.owner.database.driver.prepare(`INSERT INTO inpatient_drg_payer_review
+        (workspace_id,epoch,review_id,admission_id,archive_sources_hash,record_revision,frozen_rules_id,frozen_rules_version,frozen_result_hash,drg_code,parameter_set_id,parameter_version,simulated_payment_fen,hospital_charges_fen,difference_fen,reason,actor_id,practitioner_role_id,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(context.workspaceId, context.epoch, id, input.admissionId, sourcesHash, frozen.recordRevision,
+          frozen.rulesId, frozen.rulesVersion, canonicalJsonHash(frozen), drgCode,
+          syntheticDrgPaymentParameters.parameterSetId, syntheticDrgPaymentParameters.version,
+          simulatedPaymentFen, chargesFen, simulatedPaymentFen - chargesFen,
+          input.reason, context.actorId, context.practitionerRoleId, this.owner.virtualTime(context))
+      return { data: this.#payerReviews(context, input.admissionId),
+        effects: [{ kind: 'created' as const, reference: `InpatientDrgPayerReview/${id}`, versionId: '1' }] }
+    })
+  }
+
+  /** 复核记录读取：医保办与病案人员可回查，其他岗位越界拒绝。 */
+  payerReviews(context: ActorContext, admissionId: string): InpatientDrgPayerReviewList {
+    this.owner.assertRole(context, ['medical-insurance', 'medical-records'])
+    this.owner.admissionBinding(context, admissionId)
+    return this.#payerReviews(context, admissionId)
+  }
+
+  #payerReviews(context: ActorContext, admissionId: string): InpatientDrgPayerReviewList {
+    const rows = z.array(z.object({ review_id: z.string(), archive_sources_hash: z.string(), record_revision: z.number(),
+      frozen_rules_id: z.string(), frozen_rules_version: z.string(), frozen_result_hash: z.string(), drg_code: z.string(),
+      parameter_set_id: z.string(), parameter_version: z.string(), simulated_payment_fen: z.number(), hospital_charges_fen: z.number(),
+      difference_fen: z.number(), reason: z.string(), created_at: z.string() })).parse(this.owner.database.driver.prepare(
+      'SELECT * FROM inpatient_drg_payer_review WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY created_at,review_id')
+      .all(context.workspaceId, context.epoch, admissionId))
+    return inpatientDrgPayerReviewListSchema.parse({ admissionId, reviews: rows.map(row => inpatientDrgPayerReviewSchema.parse({
+      id: row.review_id, admissionId, archiveSourcesHash: row.archive_sources_hash, recordRevision: row.record_revision,
+      frozenRulesId: row.frozen_rules_id, frozenRulesVersion: row.frozen_rules_version, frozenResultHash: row.frozen_result_hash,
+      drgCode: row.drg_code, parameterSetId: row.parameter_set_id, parameterVersion: row.parameter_version,
+      simulatedPaymentFen: row.simulated_payment_fen, hospitalChargesFen: row.hospital_charges_fen,
+      differenceFen: row.difference_fen, note: syntheticDrgPaymentParameters.note, reason: row.reason, reviewedAt: row.created_at })) })
   }
 }

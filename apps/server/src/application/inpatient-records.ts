@@ -6,7 +6,7 @@ import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 const rowSchema = z.record(z.string(), z.union([z.string(), z.number(), z.null()]))
-const readers = ['inpatient-doctor', 'ward-nurse', 'medical-records']
+const readers = ['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance']
 /** 首页只引用正式事实；首页工作流本身不改变 Encounter 或来源指纹。 */
 export class InpatientRecords {
   constructor(readonly owner: InpatientService) { }

@@ -26,6 +26,7 @@
     "./drg": "./src/drg.ts",
     "./inpatient-drg": "./src/inpatient-drg.ts",
     "./inpatient-drg-simulation": "./src/inpatient-drg-simulation.ts",
+    "./inpatient-drg-payer": "./src/inpatient-drg-payer.ts",
     "./agent": "./src/agent.ts",
     "./scenario": "./src/scenario.ts"
   },
