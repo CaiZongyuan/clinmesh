@@ -17,6 +17,31 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('keeps unified billing and recorded payment recovery examples aligned with the cashier catalog', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-billing/SKILL.md'), 'utf8')
+  for (const [prefix, id, version] of [
+    ['clinmesh billing case get ', 'billing.case.get', 2],
+    ['clinmesh payment preview ', 'payment.preview', 2],
+    ['clinmesh payment confirm ', 'payment.confirm', 2],
+    ['clinmesh payment recover ', 'payment.recover', 1],
+  ] as const) {
+    const line = commandLines(skill).find(line => line.startsWith(prefix))!
+    const operation = getHisOperation(id)
+    expect(inspectExample(program, line).operation?.id).toBe(id)
+    expect(operation.version).toBe(version)
+    expect(operation.skill).toBe('clinmesh-billing')
+  }
+  for (const id of ['payment.confirm', 'payment.recover']) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh command receipt get --operation-id ${id} `))!
+    expect(inspectExample(program, line).operation?.id).toBe('command.receipt.get')
+  }
+  for (const term of ['paymentsPagination', '--page-size', 'tenders', 'cash', 'bank-card', 'mobile', 'positive integer fen',
+    'expectedPaymentVersion', 'ambiguous-decline', 'ambiguous-pending', 'original Command receipt',
+    'Recovery queries the channel without collecting again', 'only a fully paid charge',
+    'Registration charges remain unpaid and read-only']) expect(skill).toContain(term)
+})
+
 it('keeps inpatient pharmacy and charge reads and receipts aligned with role-specific contracts', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')

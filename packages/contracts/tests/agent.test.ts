@@ -16,6 +16,26 @@ import {
 } from '../src/agent.ts'
 
 describe('ClinMesh DSH Agent contracts', () => {
+  it('binds bill reads and payment recovery proposals to the current cashier selection', () => {
+    const cashierTools = agentToolsForContext('cashier', 'billing')
+    expect(cashierTools).toContainEqual(expect.objectContaining({
+      operationId: 'billing.case.read', mode: 'query', risk: 'read-only',
+    }))
+    expect(cashierTools).toContainEqual(expect.objectContaining({
+      operationId: 'billing.payment.recover.propose', mode: 'proposal', risk: 'human-review',
+    }))
+    for (const operation of ['billing.case.read', 'billing.payment.recover.propose'] as const) {
+      expect(parseAgentToolInput(operation, {})).toEqual({})
+      expect(() => parseAgentToolInput(operation, { paymentId: 'other-payment' })).toThrow()
+      expect(() => parseAgentToolInput(operation, { caseId: 'other-case' })).toThrow()
+      expect(agentToolsForContext('registrar', 'registration').map(tool => tool.operationId))
+        .not.toContain(operation)
+    }
+    expect(parseAgentToolInput('billing.case.read', { page: 2 })).toEqual({ page: 2 })
+    expect(() => parseAgentToolInput('billing.case.read', { page: 0 })).toThrow()
+    expect(() => parseAgentToolInput('billing.payment.recover.propose', { page: 2 })).toThrow()
+  })
+
   it('accepts saved source attribution for an Agent clinical draft without inventing clinical evidence', () => {
     const document = { assessment: '', chiefComplaint: '头晕一天。', disposition: '', followUp: '', physicalExamination: '', historyOfPresentIllness: '' }
     const agentFacts = [{ field: 'chiefComplaint', text: '头晕一天。', sources: [{ sourceTurnId: 'saved-source', quote: '我头晕一天了。' }] }]

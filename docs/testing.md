@@ -40,6 +40,8 @@ E2E 从真实入口执行，并从外部观察结果：重新读取资源、数�
 
 `pnpm test:e2e` 使用 Playwright 从 standalone Web 的生产构建运行登录、岗位切换、窄屏外观设置和问诊自动记录旅程。每个测试使用独立的真实 Hono listener、临时 file-backed SQLite 和浏览器 context；Web 构建由同一 worker 复用。端口由系统分配，账户、密码、Auth secret 与数据库均由 fixture 创建并清理，不读取开发 `.env`、已有会话、真实影像或模型配置。页面断言与受 schema 验证的 HTTP 会话查询共同证明保存和刷新后的状态；此集合不替代原生 DSH Session 验收。
 
+门诊收款的完整余额、组合方式、拒付/未知、原尝试查询、并发幂等、权限、重启及检验/药房全额放行矩阵由 `outpatient-workflow-http.test.ts` 通过公开 HTTP 与文件 SQLite 验证；`payment-ledger-migration.test.ts` 验证历史事实保留、零价兼容及归属歧义时原子回滚。`billing-payments.spec.ts` 从真实收费入口验证分次、组合、未知刷新与原支付恢复，React 18/19 的 `billing-payments.browser.test.ts` 复用生产收费组件和真实 HTTP，覆盖 ShadowRoot 审阅、焦点、键盘取消及窄宽度；浏览器并发合同另在网络边界延迟响应，验证进行中选择保护和迟到回调隔离。
+
 四项病历质控的完整输入矩阵由 `clinical-document-quality-http.test.ts` 通过公开 HTTP、真实 SQLite 和 DSH Provider 网络边界验证，包含辅助检查或可选字段伪缺项的拒绝、分诊记录与患者自述的语境核对、来源不能核验的解释、说明变更与旧缓存失效；大量既往资料不进入实时输入，本次来源仍完整检查，本次正文实际超限仍返回不完整。`doctor-document-quality.spec.ts` 与共享旅程验证未保存编辑不写入草稿、待补充仅在详情展示及逐条依据入口隐藏、两类问题的具体影响与处理建议、直接修改后重新检查、无逐条确认或保留写请求及签署汇总；`document-quality.browser.test.ts` 覆盖 React 18/19 ShadowRoot、键盘、文字边界和迟到响应，组件测试保留旧处理记录的只读展示。`pnpm exec tsx scripts/smoke-dsh-consultation.ts --quality-only` 从原生 DSH 入口运行同一旅程并验证实际 Agent 草稿 Tool 和模型 schema 白名单；默认仅使用合成模型；加 `--live` 后在新合成病例中通过当前配置的真实模型核对未保存、保存及第二客户端的同输入复用，分别记录持久任务和实际模型调用数量。真实样本不代表临床准确性；入口及证据字段见[部署教程](deployment.md#问诊自动记录原生验收)。
 
 问诊组合旅程由 `apps/web/e2e/consultation-recording-journey.ts` 同时驱动 CI Web 与原生 Surface，覆盖生成后正文直接更新、无来源入口及独立核对提示、局部人工保护、未保存编辑、患者更正与矛盾记录、暂停补录、失败重试、签署准备冻结、取消恢复和人工签署。自动记录的 Web 与 React 18/19 ShadowRoot 回归还验证失败文字不常驻、重复错误合并为按需说明、原文保存和恢复入口。HTTP/SQLite 测试继续拥有完整业务输入矩阵。`pnpm smoke:consultation:native` 使用锁定的真实宿主与合成 `LlmAdapter`，额外执行真实 Session browser Tool 草稿保存与签署 proposal，并关联 Command 回执、审计和 Trace；`pnpm smoke:consultation:live` 再为一个新合成病例调用真实模型。后者验证成功输出及逐字来源约束，不代表医学语义质量评估。两种 smoke 均显式运行，不进入常规 CI；前置配置见[部署教程](deployment.md#问诊自动记录原生验收)，分层取舍见[组合验收决策](decisions/implemented/testing/2026-10-10-native-consultation-recording-journey.md)。
@@ -122,6 +124,8 @@ pnpm docs:check
 用户界面修改默认使用 Playwright 在 standalone Web 与受影响的 DSH Surface 真实入口验证；`agent-browser` 按探索或现有会话接管需要选用。布局需要覆盖长中文文本、窄宽度、缩放和空/错误/加载状态；DSH `workspace` 在缩放和原生右栏开关时保持左右分屏，并验证手动全屏往返恢复侧栏及分栏偏好、保留病例和草稿。容器缩放与动画卸载使用真实浏览器帧和有界状态等待。用户要求演示时再录制绑定精确 commit 的原生 WebM，成片使用 3–4 倍速、步骤字幕和真实点击高亮，在临床文字仍可读的前提下压缩体积。WebM 不替代自动回归测试。Desktop 进入实际开发后再增加真实 renderer 证据。
 
 `playwright.config.ts` 的 `contracts` project 拥有 `*.browser.test.ts`，Vitest 排除这些文件；`web` project 拥有 `apps/web/e2e/*.spec.ts`。合同保留现有 Vite/Tailwind 生产构建、React 18/19、ShadowRoot、布局和合成 canvas 断言。Playwright 在 worker 内复用 Chromium，每个测试有独立 context/page；默认两 worker、零重试，runner 限时等待 fixture 的结果信号，不用 Chrome DOM 导出取得结果。字号合同断言 standalone computed font-size、布局尺寸、Desktop 默认 token、Surface 字号和宿主隔离。
+
+Playwright 的 Node 宿主固定使用 `NODE_ENV=test`，避免同一 worker 中的 Vite 构建改变后续服务端模块的生产默认值。浏览器合同显式定义生产 bundle；Web E2E 仅在 Vite 构建期间切换到 `production`，无论构建成功或失败都先恢复宿主环境，再启动真实 HTTP fixture。认证的 origin 与 CSRF 校验继续保持开启。
 
 首次安装依赖后安装与锁定 Playwright 版本匹配的 Chromium；CI 同时安装系统依赖：
 

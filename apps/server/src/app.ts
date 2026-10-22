@@ -16,6 +16,8 @@ import {
 } from '@clinmesh/contracts/agent'
 import {
   resetScenarioRequestSchema,
+  paymentTendersSchema,
+  paymentSimulatorRuleSchema,
   doctorQueueViewSchema,
   acknowledgeImagingReportRequestSchema,
   acknowledgePathologyReportRequestSchema,
@@ -2783,6 +2785,17 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/his/v1/billing/cases/:caseId', async (context) => {
+      try {
+        const query = z.object({
+          page: z.coerce.number().int().min(1).default(1),
+          pageSize: z.coerce.number().int().min(1).max(100).default(20),
+        }).parse(context.req.query())
+        return context.json(workflow.billingCase({ context: await actor(context), caseId: context.req.param('caseId'), ...query }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
     app.get('/api/his/v1/billing/queue', async (context) => {
       try {
         const query = z.object({
@@ -2885,7 +2898,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           input: z.object({
             caseId: z.string().min(1),
             category: z.enum(['laboratory', 'medication']),
-            simulatorRule: z.enum(['ambiguous', 'decline', 'success']),
+            simulatorRule: paymentSimulatorRuleSchema,
+            tenders: paymentTendersSchema.optional(),
           }),
         }).parse(await context.req.json())
         return context.json(workflow.previewPayment({
@@ -2893,6 +2907,21 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           context: await actor(context),
           expectedVersions: body.expectedVersions,
           idempotencyKey: idempotencyKey(context),
+        }))
+      } catch (error) {
+        return apiErrorResponse(context, error)
+      }
+    })
+    app.post('/api/his/v1/payments/:paymentId/actions/recover', async (context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({
+          expectedVersions: z.record(z.string(), z.string()),
+          input: z.object({ expectedPaymentVersion: z.number().int().positive() }).strict(),
+        }).strict().parse(await context.req.json())
+        return context.json(workflow.recoverPayment({
+          ...body.input, context: await actor(context), expectedVersions: body.expectedVersions,
+          idempotencyKey: idempotencyKey(context), paymentId: context.req.param('paymentId'),
         }))
       } catch (error) {
         return apiErrorResponse(context, error)

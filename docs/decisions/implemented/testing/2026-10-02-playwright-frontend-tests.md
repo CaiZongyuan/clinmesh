@@ -16,6 +16,8 @@ Agent 操作反馈的保持与淡出合同以固定的 Date 时钟逐步推进�
 
 Web E2E 每 worker 构建一次 Web，每测试创建真实 Hono listener、file-backed SQLite、合成账户和随机凭证；系统分配端口，fixture 完成后关闭 listener/runtime 并删除临时文件。登录、岗位切换和窄屏设置通过页面与正式 HTTP 会话查询验证，不读取开发配置或调用真实 provider。
 
+测试宿主与浏览器产物分别选择运行环境：宿主固定为 `test`，生产 Web 构建只在调用期间切换环境并在 `finally` 恢复，合同 bundle 显式定义生产模式。Vite 会在环境未设时写入 `production`；复用 worker 后，后加载的 Better Auth 会因此开启生产注册限流，使合成账户初始化依赖文件顺序。隔离构建环境可保留生产前端行为，也保持现有认证 origin 与 CSRF 校验。
+
 日常 UI 回归与真实入口验证默认使用 Playwright；`agent-browser` 用于按需探索或接管已有会话。常规自动测试不生成截图、视频或 trace；真实影像仍只允许文字与聚合统计。原生 DSH Session/browser Tool 验收独立保留。
 
 ## Alternatives considered
@@ -26,6 +28,7 @@ Web E2E 每 worker 构建一次 Web，每测试创建真实 Hono listener、file
 - 强制每次 UI 验证录屏：会把媒体成本加入普通迭代；用户需要演示时再录制绑定 commit 的 WebM。
 - 扩大检验目录交互测试的超时：会把 fixture 冷构建与浏览器行为混在同一预算中；分开准备与交互保留各自的超时信号。
 - 延长产品的动效保持时间或放宽透明度阈值以消除测试失败：改变了产品合同且没有消除真实时间采样的调度漂移。
+- 调整生产认证限流或为合成注册增加等待：会让测试准备迁就构建造成的宿主环境污染，仍无法保证其他模块的默认行为与文件顺序无关。
 
 ## Consequences
 
