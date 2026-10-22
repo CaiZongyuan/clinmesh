@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { doctorRecommendationStateSchema, setDoctorConsiderationDispositionResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
@@ -28,10 +29,14 @@ async function setup() {
     chatCompletionsProvider: new DshModelProvider({ ...bridge, fetch: async (_url, init) => {
       const input = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
       if (input.operation === 'resolve') return Response.json({ model: route })
-      if (input.schemaName === 'patient_persona') return Response.json({ content: JSON.stringify(persona), model: input.model })
+      // 带 attemptId 的请求要求回执 accounting，否则视为结果不可信。
+      const completed = (result: { content: string }) => Response.json({ ...result, model: input.model,
+        ...(input.attemptId === undefined ? {} : { accounting: { attemptId: input.attemptId,
+          status: 'succeeded', dispatch: 'dispatched', usage: unknownModelTokenUsage } }) })
+      if (input.schemaName === 'patient_persona') return completed({ content: JSON.stringify(persona) })
       if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
         const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
-        return Response.json({ content: JSON.stringify({ issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }), model: input.model })
+        return completed({ content: JSON.stringify({ issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }) })
       }
       throw new Error('This read must not generate suggestions')
     } }),
