@@ -5,7 +5,10 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import { patientPersonaJobSchema } from '@clinmesh/contracts/scenario'
+import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
+import { modelUsageListSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
@@ -69,21 +72,37 @@ it('runs an independent persona job while an earlier repair waits, then resumes 
   expect(sent).toBe(3)
 })
 
-it.each(['usage-ledger', 'task-journal', 'result-checkpoint'])('recovers only safely undispatched persona work across a %s failure and restart', async failure => {
+it.each(['usage-ledger', 'task-journal', 'result-checkpoint', 'usage-settlement', 'bridge-usage-settlement'])('recovers only safely undispatched persona work across a %s failure and restart', async failure => {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-control-recovery-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))
   let sent = 0
+  const settlementFailure = failure === 'usage-settlement' || failure === 'bridge-usage-settlement'
+  const model = failure === 'bridge-usage-settlement' ? encodeModelRoute({ provider: 'synthetic', model: 'synthetic' }) : 'synthetic'
   const options = {
     authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
     cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'test.sqlite'),
     demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply' as const,
-    trustedOrigins: ['http://localhost'], syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'synthetic',
-    chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
-      fetch: async () => { sent++; return Response.json({ choices: [{ message: { content: JSON.stringify(persona) } }] }) } }),
+    trustedOrigins: ['http://localhost'], syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: model,
+    chatCompletionsProvider: failure === 'bridge-usage-settlement'
+      ? new DshModelProvider({ origin: 'http://127.0.0.1:12345', secret: 'synthetic', timeoutMs: 2000, maxResponseBytes: 16_384,
+        fetch: async (_url, init) => {
+          sent++
+          const { attemptId } = z.object({ attemptId: z.uuid() }).parse(JSON.parse(String(init?.body)))
+          return Response.json({ model, content: JSON.stringify(persona), accounting: { attemptId,
+            status: 'succeeded', dispatch: 'dispatched', usage: { ...unknownModelTokenUsage,
+              inputTokens: 3, outputTokens: 2, totalTokens: 5, mapping: 'dsh-v1' } } })
+        } })
+      : new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => { sent++; return Response.json({ choices: [{ message: { content: JSON.stringify(persona) } }],
+        usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } }) } }),
   }
   let runtime = await createClinMeshRuntime(options)
   cleanup.push(() => runtime.close())
   const cookie = await signIn(runtime, 'admin@demo.clinmesh.local')
+  if (settlementFailure) {
+    await setModelControl(runtime, cookie, { enabled: true, requests: null, automaticRetries: true, tokens: 100 })
+    await setModelControl(runtime, cookie, { enabled: true, requests: null, automaticRetries: true, tokens: null })
+  }
   const headers = { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }
   const generated = await runtime.app.request('/api/sim/v1/scenario-generation-jobs', { method: 'POST', headers,
     body: JSON.stringify({ name: '控制恢复合成患者', population: { count: 1, age: { minimum: 18, maximum: 65 }, gender: 'any' },
@@ -97,21 +116,36 @@ it.each(['usage-ledger', 'task-journal', 'result-checkpoint'])('recovers only sa
   expect(queued.status).toBe(200)
   const body = await queued.json() as { data: { jobId: string } }
   const read = () => runtime.app.request(`/api/sim/v1/patient-persona-jobs/${body.data.jobId}`, { headers: { cookie } })
-  runtime.database.driver.exec(failure === 'result-checkpoint'
+  const dispatched = failure === 'result-checkpoint' || settlementFailure
+  runtime.database.driver.exec(settlementFailure
+    ? `CREATE TRIGGER synthetic_ledger_unavailable BEFORE UPDATE ON model_usage_dimension WHEN NEW.used > OLD.used
+      BEGIN SELECT RAISE(ABORT, 'synthetic unavailable'); END`
+    : failure === 'result-checkpoint'
     ? `CREATE TRIGGER synthetic_ledger_unavailable BEFORE UPDATE ON model_task_step WHEN NEW.status = 'succeeded'
       BEGIN SELECT RAISE(ABORT, 'synthetic unavailable'); END`
     : `CREATE TRIGGER synthetic_ledger_unavailable BEFORE INSERT ON ${failure === 'usage-ledger' ? 'model_usage_attempt' : 'model_task_step'}
       BEGIN SELECT RAISE(ABORT, 'synthetic unavailable'); END`)
   await runtime.patientPersona.processNext()
-  expect(sent).toBe(failure === 'result-checkpoint' ? 1 : 0)
-  expect(await (await read()).json()).toMatchObject(failure === 'result-checkpoint'
+  expect(sent).toBe(dispatched ? 1 : 0)
+  expect(await (await read()).json()).toMatchObject(dispatched
     ? { status: 'failed', error: { code: 'MODEL_OUTCOME_UNKNOWN' } } : { status: 'queued' })
+  if (settlementFailure) {
+    runtime.database.driver.exec('DROP TRIGGER synthetic_ledger_unavailable')
+    await runtime.dispatchPending()
+    await runtime.patientPersona.processNext()
+    expect(sent).toBe(1)
+  }
   await runtime.close()
   runtime = await createClinMeshRuntime(options)
-  runtime.database.driver.exec('DROP TRIGGER synthetic_ledger_unavailable')
+  if (!settlementFailure) runtime.database.driver.exec('DROP TRIGGER synthetic_ledger_unavailable')
   await runtime.dispatchPending()
   await runtime.patientPersona.processNext()
-  expect(await (await read()).json()).toMatchObject(failure === 'result-checkpoint'
+  expect(await (await read()).json()).toMatchObject(dispatched
     ? { status: 'failed', error: { code: 'MODEL_OUTCOME_UNKNOWN' } } : { status: 'succeeded', resultRevision: 1 })
   expect(sent).toBe(1)
+  if (settlementFailure) {
+    const attempts = modelUsageListSchema.parse(await (await runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
+    expect(attempts.items).toMatchObject([{ status: 'unknown' }])
+    expect(attempts.total).toBe(1)
+  }
 })

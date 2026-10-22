@@ -161,11 +161,11 @@ export class DshModelProvider implements JsonChatCompletionsProvider {
           if (accounting !== undefined) knownUsage = mergeModelTokenUsage(knownUsage, accounting.usage)
           if (observation.dispatch !== 'dispatched') observation.dispatch = accounting?.dispatch ?? observation.dispatch
           const unknownResult = accounting?.status === 'unknown' || accounting?.status === 'cancelled'
-          if (!unknownResult) invokeChatCompletionRequestControl(control?.onRequestComplete)
           settled = true
           if (control !== undefined) settleChatCompletionUsage(control, attemptId, accounting === undefined
             ? { ...knownConfiguration, status: responseStatus >= 400 ? 'failed' : 'succeeded', dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus }
             : { ...knownConfiguration, ...withoutAttemptIdentity(accounting), dispatch: observation.dispatch, usage: knownUsage, httpStatus: responseStatus })
+          if (!unknownResult) invokeChatCompletionRequestControl(control?.onRequestComplete)
           if (unknownResult) throw new ChatCompletionsError(failure.success && failure.data.error === 'MODEL_TIMEOUT'
             ? 'AI_TIMEOUT' : 'AI_REQUEST_FAILED', 'The DSH model request outcome is unknown')
           if (responseStatus >= 400) {

@@ -124,7 +124,7 @@ export interface JsonChatCompletionInput {
   onBeforeRequest?: () => void
   /** Owning task recovery keeps its original attempt envelope in the same admission transaction. */
   onBeforeUsageRequest?: (metadata: { kind: 'initial' | 'format-repair' | 'rate-limit-retry' }) => void
-  /** A complete transport outcome arrived; headers alone do not establish this. */
+  /** A complete transport outcome arrived and its usage settlement committed, when accounting is enabled. */
   onRequestComplete?: () => void
   maxAttempts?: 1 | 2
   /** Serialized request limit, including schema and every format-repair prompt. */
@@ -289,11 +289,11 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
         input.onResponse?.()
         const content = await readBoundedResponse(response, this.#maxResponseBytes)
         responseContents.set(response, content)
-        invokeChatCompletionRequestControl(input.onRequestComplete)
         let value: unknown
         try { value = JSON.parse(content) } catch { /* Only validated metadata reaches the ledger. */ }
         settled = true
         settleChatCompletionUsage(input, attemptId, openAIOutcome(response, value))
+        invokeChatCompletionRequestControl(input.onRequestComplete)
         return response
       } catch (error) {
         if (!settled) settleChatCompletionUsage(input, attemptId, {

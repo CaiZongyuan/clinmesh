@@ -108,6 +108,8 @@
 
 - 验证流式用量的崩溃持久性时，在用量帧已解析、终态仍被屏障阻塞期间用 SQLite backup 取得快照，再从该快照重启并查询公开账本。正常完成后把状态改成在途无法覆盖“已收到用量但尚未结算”的丢失窗口；复用[模型用量 HTTP 回归](../../apps/server/tests/model-usage-http.test.ts)。
 
+- 模型恢复的数据库故障注入须覆盖实际请求返回后的用量结算，不能只测派发前账本创建与任务结果检查点。使用临时 SQLite 的结算 UPDATE trigger，恢复写入后分别在原进程和重启后调度，经公开任务／账本查询及合成网络请求次数确认没有重发；复用[控制恢复回归](../../apps/server/tests/model-control-recovery-http.test.ts)。
+
 - 更新增量病史输入后，同时运行 `pnpm smoke:consultation:native`：共享 Web 旅程通过不证明原生合成 Adapter 匹配。Fixture 需沿用[增量记录合同](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)的短引用与取消信号，不能依赖自动片段必有重复正文，也不能等待已取消请求正常返回。
 
 - HTTP 上传取消回归须等原生存储实际读取第一个数据块后再断开，并等清理完成后验证重试；固定短延迟可能在路由安装取消监听器前结束请求，使测试通过却没有验证取消路径。
