@@ -31,8 +31,7 @@ export class InsuranceService {
   #history(context: ActorContext, target: InsuranceTarget) {
     return z.array(z.object({ data_json: z.string() })).parse(this.database.driver.prepare('SELECT data_json FROM insurance_event WHERE workspace_id=? AND epoch=? AND target_kind=? AND target_id=? ORDER BY rowid').all(context.workspaceId, context.epoch, target.kind, target.id)).map(row => insuranceSettlementSchema.parse(JSON.parse(row.data_json)))
   }
-  balance(context: ActorContext, patientId: string) {
-    const year = this.#year(context)
+  balance(context: ActorContext, patientId: string, year = this.#year(context)) {
     const rows = z.array(z.object({ plan_code: z.enum(['employee-v1','resident-v1']), target_kind: z.enum(['outpatient','inpatient']), eligible_delta: z.number().int(), fund_delta: z.number().int(), account_delta: z.number().int() })).parse(this.database.driver.prepare('SELECT * FROM insurance_event WHERE workspace_id=? AND epoch=? AND patient_id=? AND year=? ORDER BY rowid').all(context.workspaceId, context.epoch, patientId, year))
     const planCode = rows[0]?.plan_code
     const total = (field: 'eligible_delta' | 'fund_delta' | 'account_delta', kind?: InsuranceTarget['kind']) => rows.reduce((sum,row) => sum + (kind === undefined || row.target_kind === kind ? row[field] : 0), 0)
@@ -67,9 +66,18 @@ export class InsuranceService {
       if(this.activeSettlements(context,input.target).some(row=>row.allocations.some(item=>source.charges.some(charge=>charge.reference===item.reference))))throw new InsuranceError('INSURANCE_ALREADY_SETTLED','请先撤销原待遇后重新结算')
       if(balance.planCode!==undefined&&balance.planCode!==input.planCode)throw new InsuranceError('INSURANCE_PLAN_CONFLICT','本年度已固定合成方案，不可切换待遇账户')
       this.options.assertChangeAllowed?.(context,source,'settle')
-      const plan=insurancePlans[input.planCode], parameters=plan[input.target.kind]
-      let deductible=Math.max(0,parameters.deductibleFen-(input.target.kind==='outpatient'?balance.outpatientEligibleFen:balance.inpatientEligibleFen))
-      let cap=Math.max(0,parameters.capFen-(input.target.kind==='outpatient'?balance.outpatientFundFen:balance.inpatientFundFen))
+      const data=this.previewForSource(context,source,input.planCode,balance.year)
+      return {data,effects:[{kind:'created' as const,reference:`InsurancePreview/${data.previewId}`,versionId:'1'}]}
+    })
+  }
+  /** Trusted callers compose this primitive inside their authorized Command transaction. */
+  previewForSource(context:ActorContext,source:InsuranceSource,planCode:Settlement['planCode'],year:string) {
+    if(!this.database.driver.inTransaction)throw new InsuranceError('INSURANCE_TRANSACTION_REQUIRED','待遇预览必须处于 Command 事务')
+    const balance=this.balance(context,source.patientId,year)
+    if(balance.planCode!==undefined&&balance.planCode!==planCode)throw new InsuranceError('INSURANCE_PLAN_CONFLICT','原年度合成方案不可切换')
+      const plan=insurancePlans[planCode], parameters=plan[source.target.kind]
+      let deductible=Math.max(0,parameters.deductibleFen-(source.target.kind==='outpatient'?balance.outpatientEligibleFen:balance.inpatientEligibleFen))
+      let cap=Math.max(0,parameters.capFen-(source.target.kind==='outpatient'?balance.outpatientFundFen:balance.inpatientFundFen))
       let account=balance.planCode===undefined?plan.initialAccountFen:balance.accountFen
       const allocations=source.charges.map(charge=>{
         const outsideFen=charge.coverage.included?0:charge.amountFen
@@ -83,12 +91,21 @@ export class InsuranceService {
       })
       const sum=(field:'amountFen'|'fundFen'|'accountFen'|'patientFen'|'eligibleFen'|'deductibleFen')=>allocations.reduce((value,row)=>value+row[field],0)
       const previewId=randomUUID(),commitToken=randomUUID()+randomUUID(),now=this.options.now?.()??new Date()
-      const settlement=insuranceSettlementSchema.parse({id:randomUUID(),target:input.target,planCode:input.planCode,year:balance.year,source,sourceFingerprint:hash(source),allocations,totalFen:sum('amountFen'),fundFen:sum('fundFen'),accountFen:sum('accountFen'),patientFen:sum('patientFen'),eligibleFen:sum('eligibleFen'),deductibleFen:sum('deductibleFen'),balanceVersion:balance.version,createdAt:now.toISOString()})
+      const settlement=insuranceSettlementSchema.parse({id:randomUUID(),target:source.target,planCode:planCode,year:balance.year,source,sourceFingerprint:hash(source),allocations,totalFen:sum('amountFen'),fundFen:sum('fundFen'),accountFen:sum('accountFen'),patientFen:sum('patientFen'),eligibleFen:sum('eligibleFen'),deductibleFen:sum('deductibleFen'),balanceVersion:balance.version,createdAt:now.toISOString()})
       const data={previewId,commitToken,expiresAt:new Date(now.getTime()+300000).toISOString(),settlement,balance}
       this.database.driver.prepare('INSERT INTO insurance_preview VALUES(?,?,?,?,?,?,?)').run(context.workspaceId,context.epoch,previewId,this.#actor(context),hash(commitToken),data.expiresAt,JSON.stringify(data))
-      return {data,effects:[{kind:'created' as const,reference:`InsurancePreview/${previewId}`,versionId:'1'}]}
-    })
+    return insurancePreviewSchema.parse(data)
   }
+  reviewedPreview(context:ActorContext,previewId:string,commitToken:string) {
+    const row=z.object({actor_hash:z.string(),token_hash:z.string(),expires_at:z.string(),data_json:z.string()}).optional().parse(this.database.driver.prepare('SELECT * FROM insurance_preview WHERE workspace_id=? AND epoch=? AND preview_id=?').get(context.workspaceId,context.epoch,previewId))
+    if(row===undefined||row.actor_hash!==this.#actor(context)||row.token_hash!==hash(commitToken)||Date.parse(row.expires_at)<=(this.options.now?.()??new Date()).getTime())throw new InsuranceError('INSURANCE_PREVIEW_INVALID','预览已失效，请重新预览并审阅')
+    return insurancePreviewSchema.parse(JSON.parse(row.data_json))
+  }
+  recordSettlement(context:ActorContext,settlement:Settlement,effects:CommandEffect[]) {
+    if(!this.database.driver.inTransaction)throw new InsuranceError('INSURANCE_TRANSACTION_REQUIRED','待遇确认必须处于 Command 事务')
+    this.#append(context,settlement,1,effects)
+  }
+
   #append(context:ActorContext,settlement:Settlement,sign:1|-1,effects:CommandEffect[]) {
     this.database.driver.prepare('INSERT INTO insurance_event VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)').run(context.workspaceId,context.epoch,settlement.id,settlement.source.patientId,settlement.year,settlement.planCode,settlement.target.kind,settlement.target.id,sign*settlement.eligibleFen,sign*settlement.fundFen,-sign*settlement.accountFen,settlement.reversesId??null,JSON.stringify(settlement))
     effects.push({kind:'created',reference:`InsuranceSettlement/${settlement.id}`,versionId:'1'})
@@ -96,9 +113,7 @@ export class InsuranceService {
   confirm(context:ActorContext,raw:unknown,idempotencyKey:string) {
     const input=insuranceConfirmInputSchema.parse(raw)
     return this.commands.execute({context,input,idempotencyKey,operation:'insurance.confirm',expectedVersions:{},dataSchema:insuranceResponseSchema.shape.data,authorize:()=>this.#authorize(context)},transaction=>{
-      const row=z.object({actor_hash:z.string(),token_hash:z.string(),expires_at:z.string(),data_json:z.string()}).optional().parse(this.database.driver.prepare('SELECT * FROM insurance_preview WHERE workspace_id=? AND epoch=? AND preview_id=?').get(context.workspaceId,context.epoch,input.previewId))
-      if(row===undefined||row.actor_hash!==this.#actor(context)||row.token_hash!==hash(input.commitToken)||Date.parse(row.expires_at)<=(this.options.now?.()??new Date()).getTime())throw new InsuranceError('INSURANCE_PREVIEW_INVALID','预览已失效，请重新预览并审阅')
-      const preview=insurancePreviewSchema.parse(JSON.parse(row.data_json)),settlement=preview.settlement
+      const preview=this.reviewedPreview(context,input.previewId,input.commitToken),settlement=preview.settlement
       const source=insuranceSourceSchema.parse(this.options.readSource(context,input.target)),balance=this.balance(context,source.patientId)
       if(hash(input.target)!==hash(settlement.target)||hash(source)!==settlement.sourceFingerprint||balance.year!==settlement.year||balance.version!==settlement.balanceVersion||this.activeSettlements(context,input.target).some(row=>row.allocations.some(item=>source.charges.some(charge=>charge.reference===item.reference))))throw new InsuranceError('INSURANCE_PREVIEW_STALE','费用或患者年度余额已变化，请重新预览')
       this.options.assertChangeAllowed?.(context,source,'settle')

@@ -1,7 +1,7 @@
 import { insuranceTargetSchema, insurancePreviewInputSchema, insuranceConfirmInputSchema, insuranceCancelInputSchema } from '@clinmesh/contracts/insurance'
 import { InsuranceError } from './application/insurance-service.ts'
 import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
-import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from '@clinmesh/contracts/inpatient-finance'
+import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema, inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema, inpatientFinancialInsuranceConfirmInputSchema } from '@clinmesh/contracts/inpatient-finance'
 import { inpatientDischargeInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema,
   inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
@@ -1379,6 +1379,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments', async context => {
       try { return context.json(inpatient.financialAdjustments.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
+    const financialInsurance = (action: 'cancel' | 'preview' | 'confirm') => async (context: Context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const schema = action === 'cancel' ? inpatientFinancialInsuranceCancelInputSchema.omit({ admissionId: true, adjustmentId: true })
+          : action === 'preview' ? inpatientFinancialInsurancePreviewInputSchema.omit({ admissionId: true, adjustmentId: true }) : inpatientFinancialInsuranceConfirmInputSchema.omit({ admissionId: true, adjustmentId: true })
+        const body = z.object({ input: schema }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId'), adjustmentId: context.req.param('adjustmentId') }
+        const currentActor = await actor(context), key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(inpatient.insuranceAdjustments[action](currentActor, input, key))
+      } catch (error) { return apiErrorResponse(context, error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/:adjustmentId/insurance/cancel', financialInsurance('cancel'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/:adjustmentId/insurance/preview', financialInsurance('preview'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/:adjustmentId/insurance/confirm', financialInsurance('confirm'))
     const financialRefund = (action: 'preview' | 'confirm' | 'recover') => async (context: Context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)

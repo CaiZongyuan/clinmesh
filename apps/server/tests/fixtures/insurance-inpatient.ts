@@ -16,7 +16,7 @@ export async function inpatientInsuranceFixture() {
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'hospital.sqlite'),
     demoPassword: password, migrationMode: 'apply' as const, trustedOrigins: ['http://localhost'],
   }
-  const runtime = await createClinMeshRuntime(options)
+  let runtime = await createClinMeshRuntime(options)
   const cookies = new Map<string, string>()
   async function login(name: string) {
     const existing = cookies.get(name)
@@ -79,7 +79,8 @@ export async function inpatientInsuranceFixture() {
     expect(departure.status).toBe(200)
     return inpatientDischargeResponseSchema.parse(await departure.json()).data.admission
   }
-  return { runtime, options, patient, request, insurance, login, admit, depart, close: async () => {
+  return { get runtime() { return runtime }, options, patient, request, insurance, login, admit, depart,
+    restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) }, close: async () => {
     await runtime.close()
     await rm(directory, { recursive: true })
   } }
