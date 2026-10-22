@@ -7,7 +7,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import * as application from '@clinmesh/web/application'
 import type { WebRuntimeOptions } from '@clinmesh/web/runtime'
-import { apply, createDefinition } from './index.tsx'
+import { apply, createDefinition, upgradeLegacyWorkspaceLayout } from './index.tsx'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
 import { createFontSizePreference, registerFontSizeSettings } from './font-size-settings.tsx'
 
@@ -101,6 +101,30 @@ describe('ClinMesh React Surface definition', () => {
       render.mockRestore()
       vi.unstubAllGlobals()
     }
+  })
+
+  it('upgrades the legacy workspace preference to the mirror default after registration', () => {
+    const buildRegistry = (layout: string) => ({
+      getSnapshot: () => ({ surfaces: [{ definition: { id: 'clinmesh.his' }, layout }] }),
+      setLayout: vi.fn(),
+    })
+
+    const legacy = buildRegistry('workspace') as unknown as Parameters<typeof upgradeLegacyWorkspaceLayout>[0]
+    upgradeLegacyWorkspaceLayout(legacy)
+    expect(legacy.setLayout).toHaveBeenCalledWith('clinmesh.his', 'workspace-mirror')
+
+    for (const kept of ['workspace-mirror', 'full-frame', 'center']) {
+      const registry = buildRegistry(kept) as unknown as Parameters<typeof upgradeLegacyWorkspaceLayout>[0]
+      upgradeLegacyWorkspaceLayout(registry)
+      expect(registry.setLayout).not.toHaveBeenCalled()
+    }
+
+    const empty = {
+      getSnapshot: () => ({ surfaces: [] }),
+      setLayout: vi.fn(),
+    } as unknown as Parameters<typeof upgradeLegacyWorkspaceLayout>[0]
+    upgradeLegacyWorkspaceLayout(empty)
+    expect(empty.setLayout).not.toHaveBeenCalled()
   })
 
   it('returns to the layout chosen before full-frame when exiting fullscreen', async () => {
@@ -342,18 +366,25 @@ describe('ClinMesh React Surface definition', () => {
     let registered = false
     const surfacesListeners = new Set<() => void>()
     let surfacesSnapshot: { activeId: string | null; surfaces: unknown[] } = { activeId: null, surfaces: [] }
+    const surfacesRegistry = {
+      getSnapshot: () => surfacesSnapshot,
+      subscribe: (listener: () => void) => {
+        surfacesListeners.add(listener)
+        return () => {
+          surfacesListeners.delete(listener)
+        }
+      },
+      register: () => {
+        registered = true
+        return () => {
+          registered = false
+        }
+      },
+    }
     const ctx = {
       get: (name: string) => {
         if (name === 'reactSurfaces') {
-          return {
-            getSnapshot: () => surfacesSnapshot,
-            subscribe: (listener: () => void) => {
-              surfacesListeners.add(listener)
-              return () => {
-                surfacesListeners.delete(listener)
-              }
-            },
-          }
+          return surfacesRegistry
         }
         if (name === 'sidebarRightTabs') {
           return { register: () => () => {} }
@@ -364,14 +395,7 @@ describe('ClinMesh React Surface definition', () => {
           adapter: { current: { getSnapshot: () => ({ key: undefined }), subscribe: () => () => {} } },
         }
       },
-      reactSurfaces: {
-        register: () => {
-          registered = true
-          return () => {
-            registered = false
-          }
-        },
-      },
+      reactSurfaces: surfacesRegistry,
       effect: (callback: () => () => void) => {
         disposers.push(callback())
       },

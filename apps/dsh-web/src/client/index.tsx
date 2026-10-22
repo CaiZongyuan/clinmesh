@@ -183,13 +183,26 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => registerFontSizeSettings(ctx, fontSize), 'clinmesh-dsh-web: register font size setting')
   ctx.effect(() => registerWorkspaceNavigation(ctx, navigation), 'clinmesh-dsh-web: register hospital navigation')
   const definition = createDefinition(ctx, navigation, fontSize)
-  const reactSurfaces = (ctx as ClientContext & {
-    reactSurfaces: {
-      register(value: typeof definition): () => void
-    }
-  }).reactSurfaces
+  const reactSurfaces = ctx.get('reactSurfaces') as unknown as ReactSurfaceRegistry
   ctx.effect(
-    () => reactSurfaces.register(definition),
+    () => {
+      const dispose = reactSurfaces.register(definition)
+      // 注册时恢复的存量偏好可能仍是旧默认 workspace，会在持久化下一直覆盖镜像默认值。
+      upgradeLegacyWorkspaceLayout(reactSurfaces)
+      return dispose
+    },
     'clinmesh-dsh-web: register application Surface',
   )
+}
+
+/**
+ * 镜像成为默认形态前，退出全屏等路径会把旧默认 workspace 写进持久化偏好并一直
+ * 覆盖新默认。注册完成后把存量 workspace 视为未选择、升级到镜像：setLayout 即落盘，
+ * 升级只发生一次，此后为 no-op；full-frame 等其他布局不受影响。
+ */
+export function upgradeLegacyWorkspaceLayout(registry: ReactSurfaceRegistry): void {
+  const surface = registry
+    .getSnapshot()
+    .surfaces.find(({ definition }) => definition.id === 'clinmesh.his')
+  if (surface?.layout === 'workspace') registry.setLayout('clinmesh.his', 'workspace-mirror')
 }
