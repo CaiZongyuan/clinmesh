@@ -249,6 +249,11 @@ export class ModelUsageService implements ModelUsageRecorder {
         if (cost.cny === null) throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
         cny = cost.cny
       } else {
+        if (!('totalTokens' in input && input.totalTokens !== undefined) && !('cny' in input && input.cny !== undefined) && (previous.dispatch !== 'unknown'
+          || current.accounting?.totalTokens == null || current.accounting.cny === null
+          || previous.corrections.some(correction => correction.kind === 'reconcile'))) {
+          throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
+        }
         if ('totalTokens' in input && input.totalTokens !== undefined) {
           if (current.accounting?.totalTokens !== null) throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
           totalTokens = input.totalTokens

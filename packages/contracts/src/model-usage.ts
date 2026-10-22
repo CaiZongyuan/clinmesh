@@ -22,7 +22,7 @@ export const modelUsageCorrectionSchema = z.object({
 export const modelUsageReconcileSchema = z.object({
   expectedRevision: z.number().int().nonnegative().safe(), evidence: identifier,
   totalTokens: z.number().int().nonnegative().safe().optional(), cny: money.unwrap().optional(),
-}).strict().refine(input => input.totalTokens !== undefined || input.cny !== undefined, 'At least one verified dimension is required')
+}).strict()
 export const modelUsageRepriceSchema = z.object({ expectedRevision: z.number().int().nonnegative().safe(), evidence: identifier }).strict()
 export const modelUsageFeatureSchema = z.enum(['patient_persona', 'patient_dialogue_reply',
   'consultation_history_increment', 'consultation_history_summary', 'investigation_result',

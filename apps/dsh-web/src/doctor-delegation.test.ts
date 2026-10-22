@@ -7,6 +7,30 @@ import { hostDoctorUsageAdmissionSchema, hostDoctorUsageObservationSchema } from
 
 afterEach(() => { vi.useRealTimers() })
 
+it.each(['{', '{"intent":"invalid","evidence":""}', '{"intent":"delegate","evidence":"伪造的委托"}'])(
+  'settles a complete Host response while rejecting an invalid decision: %s', async content => {
+    const reports: unknown[] = []
+    let streams = 0
+    const ctx = { llm: syntheticRecognitionLlm(async function* () {
+      streams++
+      yield { type: 'usage', usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12 } }
+      yield { type: 'text-delta', index: 0, text: content }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }) }
+    await expect(isDoctorDelegation(ctx as unknown as Parameters<typeof isDoctorDelegation>[0],
+      { provider: 'synthetic', model: 'classifier' }, '替我问清头晕的诱因。', new AbortController().signal,
+      { ...syntheticHostUsageControl, secret: 'synthetic-only-host-secret',
+        permit: 'synthetic-only-input-permit-at-least-32-characters', fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (new URL(String(input)).pathname.endsWith('/observe')) reports.push(hostDoctorUsageObservationSchema.parse(JSON.parse(String(init?.body))))
+        return syntheticHostUsageControl.fetch(input, init)
+      }) as typeof fetch })).rejects.toThrow()
+    expect(streams).toBe(1)
+    expect(reports).toMatchObject([
+      { phase: 'progress', outcome: { status: 'unknown', usage: { totalTokens: 12 } } },
+      { phase: 'terminal', outcome: { status: 'succeeded', dispatch: 'dispatched', usage: { totalTokens: 12 } } },
+    ])
+  })
+
 it.each(['lost-response', 'duplicate-admission', 'malformed-control'] as const)('never resends an ambiguous Host admission: %s', async failure => {
   let admissions = 0
   let streams = 0

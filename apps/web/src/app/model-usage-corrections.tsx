@@ -43,8 +43,10 @@ function CorrectionDialog({ item, mode, locale, saved }: {
           ...(mode === 'reconcile' && unknownTokens && tokens.trim() !== '' ? { totalTokens: Number(tokens) } : {}),
           ...(mode === 'reconcile' && unknownCny && cny.trim() !== '' ? { cny: Number(cny) } : {}) }
         const parsed = mode === 'reconcile' ? modelUsageReconcileSchema.safeParse(input) : modelUsageRepriceSchema.safeParse(input)
-        setInvalid(!parsed.success)
-        if (parsed.success) mutation.mutate(parsed.data)
+        const missingDimension = mode === 'reconcile' && (unknownTokens || unknownCny)
+          && !('totalTokens' in input) && !('cny' in input)
+        setInvalid(!parsed.success || missingDimension)
+        if (parsed.success && !missingDimension) mutation.mutate(parsed.data)
       }}>
         <FieldGroup className="min-h-0 overflow-y-auto p-4">
           <Field data-invalid={invalid} data-disabled={mutation.isPending}><FieldLabel htmlFor={`usage-${mode}-evidence`}>{messages.evidence}</FieldLabel>
@@ -96,7 +98,8 @@ export function ModelUsageCorrections({ item, locale, administrator, saved }: {
       {item.reservationBoundary.reason === null ? null : <p>{item.reservationBoundary.reason === 'output-limit-unbounded'
         ? messages.reservationUnbounded : messages.reservationUnavailable}</p>}</div>}
     {canCorrect ? <div className="flex flex-wrap gap-2">
-      {totalTokens === null || cny === null ? <CorrectionDialog item={item} mode="reconcile" locale={locale} saved={saved} /> : null}
+      {totalTokens === null || cny === null || item.dispatch === 'unknown' && !item.corrections.some(correction => correction.kind === 'reconcile')
+        ? <CorrectionDialog item={item} mode="reconcile" locale={locale} saved={saved} /> : null}
       {canReprice ? <CorrectionDialog item={item} mode="reprice" locale={locale} saved={saved} /> : null}
     </div> : null}
     <h3 className="font-medium">{messages.corrections}</h3>

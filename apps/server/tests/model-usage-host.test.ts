@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { createHmac, randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
 import { agentPageContextBindingSchema } from '@clinmesh/contracts/agent'
-import { modelUsageControlSchema, modelUsageListSchema, unknownModelTokenUsage, type ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
+import { modelUsageAttemptSchema, modelUsageOverviewSchema, modelUsageControlSchema, modelUsageListSchema, unknownModelTokenUsage, type ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
 import type { ModelPricingConfig } from '@clinmesh/contracts/model-pricing'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
@@ -87,6 +87,64 @@ async function fixture(account = 'doctor@demo.clinmesh.local', deployment?: Mode
       runtime = await createClinMeshRuntime(modelUsageControl === undefined ? options : { ...options, modelUsageControl })
     } }
 }
+
+it('confirms unknown dispatch with evidence alone when consumption is known, then expires its detail', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'))
+  const f = await fixture(undefined, { enabled: true, requests: 5, automaticRetries: true }, { prices: [
+    { provider: 'synthetic-host', model: 'classifier', version: 'synthetic-v1', currency: 'CNY', rates: { input: 10000, output: 20000 } },
+  ], exchangeRates: [] })
+  await f.policy({ requests: 5 })
+  let admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  const request = (path: string, body?: unknown, key = randomUUID()) => f.runtime.app.request(`/api/model-usage${path}`,
+    body === undefined ? { headers: { cookie: admin } } : { method: path === '/retention' ? 'PUT' : 'POST',
+      headers: { cookie: admin, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(body) })
+  await request('/retention', { days: null, expectedVersion: 1 })
+  const grant = await (await f.post('/api/model-usage/host/doctor-delegation/admit', {
+    permit: await f.permit(), provider: 'synthetic-host', model: 'classifier' })).json() as { attemptId: string; receipt: string }
+  const input = { expectedRevision: 0, evidence: 'synthetic-complete-consumption-receipt' }
+  expect((await request(`/requests/${grant.attemptId}/reconcile`, input)).status).toBe(409)
+  expect((await f.runtime.app.request(`/api/model-usage/requests/${grant.attemptId}/reconcile`, {
+    method: 'POST', headers: { cookie: f.doctor, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify(input),
+  })).status).toBe(403)
+  expect((await f.post('/api/model-usage/host/doctor-delegation/observe', {
+    ...grant, outcome: { status: 'unknown', dispatch: 'unknown', usage: unknownModelTokenUsage },
+  })).status).toBe(200)
+  expect((await request(`/requests/${grant.attemptId}/reconcile`, input)).status).toBe(409)
+  const usage = { ...unknownModelTokenUsage, inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+  expect((await f.post('/api/model-usage/host/doctor-delegation/observe', {
+    ...grant, outcome: { status: 'unknown', dispatch: 'unknown', usage },
+  })).status).toBe(200)
+  await f.restart()
+  const original = modelUsageAttemptSchema.parse(await (await request(`/requests/${grant.attemptId}`)).json())
+  expect(original).toMatchObject({ dispatch: 'unknown', accounting: { totalTokens: 15, cny: 0.2 } })
+  const before = await f.control(admin)
+  expect((await request(`/requests/${original.id}/reconcile`, { ...input, totalTokens: 15 })).status).toBe(409)
+  const key = randomUUID()
+  const corrected = await request(`/requests/${original.id}/reconcile`, input, key)
+  expect(corrected.status).toBe(200)
+  expect(modelUsageAttemptSchema.parse(await corrected.json())).toMatchObject({ status: 'unknown', dispatch: 'unknown',
+    usage: original.usage, cost: original.cost, priceSnapshot: original.priceSnapshot, accounting: original.accounting,
+    corrections: [{ kind: 'reconcile', totalTokens: null, cny: null }] })
+  expect((await request(`/requests/${original.id}/reconcile`, input, key)).status).toBe(200)
+  expect((await request(`/requests/${original.id}/reconcile`, { ...input, expectedRevision: 1 })).status).toBe(409)
+  const settled = await f.control(admin)
+  for (const scope of ['workspace', 'deployment'] as const) expect(settled[scope]).toMatchObject({
+    used: before[scope]!.used + 1, reserved: before[scope]!.reserved - 1, remaining: before[scope]!.remaining,
+  })
+  await f.restart()
+  expect(await f.control(admin)).toEqual(settled)
+  vi.setSystemTime(new Date('2026-04-02T00:00:00.000Z'))
+  admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  await request('/retention', { days: 90, expectedVersion: 2 })
+  expect((await request(`/requests/${original.id}`)).status).toBe(404)
+  const overview = modelUsageOverviewSchema.parse(await (await request('/overview')).json())
+  expect(overview.totals).toMatchObject({ unknownRequests: 1, knownTokens: 15, cny: 0.2 })
+  const audit = f.runtime.database.driver.prepare('SELECT evidence_json FROM model_usage_correction_audit WHERE attempt_id = ?').get(original.id) as { evidence_json: string }
+  expect(JSON.parse(audit.evidence_json)).toMatchObject({ dispatch: 'unknown', usage: original.usage,
+    corrections: [{ kind: 'reconcile', totalTokens: null, cny: null, evidence: input.evidence }] })
+})
 
 it.each([
   { enabled: false, requests: null, code: 'MODEL_DISABLED', scope: 'workspace' },

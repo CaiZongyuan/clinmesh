@@ -9,7 +9,7 @@ import { usageAttempt, usageControl, usageOverview, usagePricing, usageSession }
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
-function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | 'conflict' | 'known-usage' | 'compacted' = 'normal', administrator = false) {
+function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | 'conflict' | 'known-usage' | 'known-consumption' | 'compacted' = 'normal', administrator = false) {
   const requests: URL[] = []
   const writes: RequestInit[] = []
   let control = structuredClone(usageControl)
@@ -17,6 +17,11 @@ function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | '
     lastCompactedAt: mode === 'compacted' ? '2026-10-21T01:00:00.000Z' : null }
   let attempt = structuredClone(usageAttempt)
   if (mode === 'known-usage') attempt.usage.totalTokens = 150
+  if (mode === 'known-consumption') {
+    attempt.dispatch = 'unknown'
+    attempt.usage.totalTokens = 150
+    attempt.cost = { status: 'priced', currency: 'CNY', original: 0.2, cny: 0.2, originalMicro: 200000, cnyMicro: 200000 }
+  }
   if (!administrator) control.deployment = null
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://localhost')
@@ -53,7 +58,7 @@ function setup(total = 1, mode: 'normal' | 'empty' | 'error' | 'deny-detail' | '
       const snapshot = cost === null ? null : { provider: usagePricing.prices[0].provider, model: usagePricing.prices[0].model,
         price: { version: 'prices-v2', currency: 'USD', rates: usagePricing.prices[0].rates }, exchangeRate: { version: 'fx-v2', cnyPerUnit: 7 } }
       attempt = { ...attempt, accounting: { totalTokens: body.totalTokens ?? attempt.accounting?.totalTokens ?? attempt.usage.totalTokens,
-        cny: body.cny ?? cost?.cny ?? attempt.accounting?.cny ?? null }, ...(cost === null ? {} : { effectiveCost: cost }),
+        cny: body.cny ?? cost?.cny ?? attempt.accounting?.cny ?? attempt.cost.cny }, ...(cost === null ? {} : { effectiveCost: cost }),
         corrections: [...attempt.corrections, { revision: body.expectedRevision + 1, at: '2026-10-21T01:00:00.000Z', actorId: 'synthetic-admin',
           evidence: body.evidence, kind: cost === null ? 'reconcile' : 'reprice', totalTokens: body.totalTokens ?? null,
           cny: body.cny ?? cost?.cny ?? null, cost, priceSnapshot: snapshot }] }
@@ -231,6 +236,21 @@ it('reconciles unknown dimensions separately with evidence and preserves origina
   expect(within(detail).getByText('bill:synthetic-2')).toBeTruthy()
   expect(within(detail).queryByRole('button', { name: '核对待确认用量' })).toBeNull()
   expect(within(detail).getByText('服务商原始 Token 计数').parentElement?.textContent).toContain('未知')
+})
+
+it('confirms an unknown dispatch with evidence alone when its consumption is already known', async () => {
+  const { user, writes } = setup(1, 'known-consumption', true)
+  await user.click(await screen.findByRole('button', { name: '查看请求详情' }))
+  await user.click(screen.getByRole('button', { name: '核对待确认用量' }))
+  const dialog = screen.getByRole('dialog', { name: '核对待确认用量' })
+  expect(within(dialog).queryByLabelText('总 Token')).toBeNull()
+  expect(within(dialog).queryByLabelText('人民币费用')).toBeNull()
+  await user.type(within(dialog).getByLabelText('依据引用'), 'bill:known-consumption')
+  await user.click(within(dialog).getByRole('button', { name: '确认核对' }))
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  expect(JSON.parse(String(writes[0]?.body))).toEqual({ expectedRevision: 0, evidence: 'bill:known-consumption' })
+  expect(screen.queryByRole('button', { name: '核对待确认用量' })).toBeNull()
+  expect(screen.getByText('bill:known-consumption')).toBeTruthy()
 })
 
 it('shows a read-only versioned price table and explicitly reprices a retained request', async () => {

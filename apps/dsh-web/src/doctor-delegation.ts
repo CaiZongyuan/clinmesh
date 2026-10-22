@@ -163,10 +163,10 @@ export async function isDoctorDelegation(
     }
     signal.throwIfAborted()
     if (!finished) throw new Error('CLINMESH_DELEGATION_UNCONFIRMED')
-    const result = decisionSchema.parse(JSON.parse(content.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1')))
-    if (result.intent === 'delegate' && (result.evidence.trim() === '' || !text.includes(result.evidence))) throw new Error('CLINMESH_DELEGATION_UNCONFIRMED')
     await observe('succeeded')
     settled = true
+    const result = decisionSchema.parse(JSON.parse(content.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, '$1')))
+    if (result.intent === 'delegate' && (result.evidence.trim() === '' || !text.includes(result.evidence))) throw new Error('CLINMESH_DELEGATION_UNCONFIRMED')
     return result.intent === 'delegate'
   } finally {
     stopPolling.abort()

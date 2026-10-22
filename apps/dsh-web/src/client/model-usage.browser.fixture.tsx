@@ -27,6 +27,11 @@ let retention = { days: 90 as number | null, version: 1, compactedRequests: comp
 if (compacted) control.workspace = { ...control.workspace, requests: 10, used: 3, remaining: 7,
   requestsStartedAt: '2026-06-01T00:00:00.000Z', tokensUsed: 120 }
 if (document.documentElement.dataset.usageKnown === 'true') attempt.usage.totalTokens = 150
+if (document.documentElement.dataset.usageKnownConsumption === 'true') {
+  attempt.dispatch = 'unknown'
+  attempt.usage.totalTokens = 150
+  attempt.cost = { status: 'priced', currency: 'CNY', original: 0.2, cny: 0.2, originalMicro: 200000, cnyMicro: 200000 }
+}
 async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit) {
   const url = new URL(String(input), 'http://synthetic.test')
   if (url.pathname === '/clinmesh/api/auth/context') return Response.json(document.documentElement.dataset.usageAdministrator === 'true'
@@ -78,7 +83,7 @@ async function fixtureFetch(input: RequestInfo | URL, init?: RequestInit) {
     document.documentElement.dataset.usageIdempotency = new Headers(init?.headers).get('idempotency-key') ?? ''
     const cost = reprice ? { status: 'priced' as const, currency: 'USD', original: 0.00042, cny: 0.00294, originalMicro: 420, cnyMicro: 2940 } : null
     attempt = { ...attempt, accounting: { totalTokens: totalTokens ?? attempt.accounting?.totalTokens ?? attempt.usage.totalTokens,
-      cny: cny ?? cost?.cny ?? attempt.accounting?.cny ?? null }, ...(cost === null ? {} : { effectiveCost: cost }),
+      cny: cny ?? cost?.cny ?? attempt.accounting?.cny ?? attempt.cost.cny }, ...(cost === null ? {} : { effectiveCost: cost }),
       corrections: [...attempt.corrections, { revision: body.expectedRevision + 1, evidence: body.evidence,
         at: '2026-10-21T01:00:00.000Z', actorId: 'synthetic-admin', kind: reprice ? 'reprice' : 'reconcile',
         totalTokens: totalTokens ?? null, cny: cny ?? cost?.cny ?? null, cost, priceSnapshot: cost === null ? null : {
