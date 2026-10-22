@@ -72,6 +72,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged }: {
       chargeItemId: originalCharge.chargeItemId, chargeVersion: originalCharge.chargeVersion } })
   }
   const busy = write.blocked || preview.isPending
+  const requestPending = write.mutation.isPending || preview.isPending
   const error = write.storageFailure ?? [ledger, preview, write.mutation].find(item => item.isError)?.error
   const pendingCommand = write.pending?.command
   const ownPending = pendingCommand?.operation === 'billing.charge.adjust' ? pendingCommand.input.caseId === bill.caseId
@@ -125,17 +126,17 @@ export function BillingRefundPanel({ bill, session, locale, onChanged }: {
       </div>)}
     </>}
     {feedback}
-    <AlertDialog open={correction !== undefined} onOpenChange={open => { if (!open && !busy) setCorrection(undefined) }}>
+    <AlertDialog open={correction !== undefined} onOpenChange={open => { if (!open && !requestPending) setCorrection(undefined) }}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{text('确认费用更正', 'Confirm fee correction')}</AlertDialogTitle><AlertDialogDescription>{text('核对冲减金额及原因。本次操作不退款、不撤销临床执行。', 'Review the reduction and reason. Money and clinical execution are separate.')}</AlertDialogDescription></AlertDialogHeader>
-        <p>{formatFen(correction?.amountFen ?? 0, locale)} · {correction?.reason}</p>{feedback}<AlertDialogFooter><AlertDialogCancel disabled={busy}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (correction !== undefined) write.mutation.mutate({ operation: 'billing.charge.adjust', input: { ...correction, caseId: bill.caseId } }) }}>{text('确认费用更正', 'Confirm fee correction')}</Button></AlertDialogFooter></AlertDialogContent>
+        <p>{formatFen(correction?.amountFen ?? 0, locale)} · {correction?.reason}</p>{feedback}<AlertDialogFooter><AlertDialogCancel disabled={requestPending}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (correction !== undefined) write.mutation.mutate({ operation: 'billing.charge.adjust', input: { ...correction, caseId: bill.caseId } }) }}>{text('确认费用更正', 'Confirm fee correction')}</Button></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
-    <AlertDialog open={frozen !== undefined} onOpenChange={open => { if (!open && !busy) setFrozen(undefined) }}>
+    <AlertDialog open={frozen !== undefined} onOpenChange={open => { if (!open && !requestPending) setFrozen(undefined) }}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{text('确认退款', 'Confirm refund')}</AlertDialogTitle><AlertDialogDescription>{text('按本次冻结预览退款。未知结果需查询原尝试。', 'Submit the frozen refund. Query the original attempt if its result is unknown.')}</AlertDialogDescription></AlertDialogHeader>
-        <p className="break-all">{frozen?.preview.sourceId} · {formatFen(frozen?.preview.amountFen ?? 0, locale)}</p>{feedback}<AlertDialogFooter><AlertDialogCancel disabled={busy}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (frozen !== undefined) write.mutation.mutate({ operation: 'refund.confirm', caseId: bill.caseId, input: { previewId: frozen.preview.previewId, commitToken: frozen.preview.commitToken, chargeItemId: frozen.preview.chargeItemId, chargeVersion: frozen.chargeVersion } }) }}>{text('提交退款', 'Submit refund')}</Button></AlertDialogFooter></AlertDialogContent>
+        <p className="break-all">{frozen?.preview.sourceId} · {formatFen(frozen?.preview.amountFen ?? 0, locale)}</p>{feedback}<AlertDialogFooter><AlertDialogCancel disabled={requestPending}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (frozen !== undefined) write.mutation.mutate({ operation: 'refund.confirm', caseId: bill.caseId, input: { previewId: frozen.preview.previewId, commitToken: frozen.preview.commitToken, chargeItemId: frozen.preview.chargeItemId, chargeVersion: frozen.chargeVersion } }) }}>{text('提交退款', 'Submit refund')}</Button></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
-    <AlertDialog open={recoverId !== undefined} onOpenChange={open => { if (!open && !busy) setRecoverId(undefined) }}>
+    <AlertDialog open={recoverId !== undefined} onOpenChange={open => { if (!open && !requestPending) setRecoverId(undefined) }}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{text('查询原退款结果', 'Query original refund')}</AlertDialogTitle><AlertDialogDescription>{text('只查询已记录的退款，不另发退款。', 'Query this recorded refund without sending another refund.')}</AlertDialogDescription></AlertDialogHeader>
-        <p className="break-all">{recovery?.refundId} · {formatFen(recovery?.amountFen ?? 0, locale)}</p>{feedback}<AlertDialogFooter><AlertDialogCancel disabled={busy}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (recoverId !== undefined) recover(recoverId) }}>{text('查询原退款结果', 'Query original refund')}</Button></AlertDialogFooter></AlertDialogContent>
+        <p className="break-all">{recovery?.refundId} · {formatFen(recovery?.amountFen ?? 0, locale)}</p>{feedback}<AlertDialogFooter><AlertDialogCancel disabled={requestPending}>{messages.cancel}</AlertDialogCancel><Button disabled={busy} onClick={() => { if (recoverId !== undefined) recover(recoverId) }}>{text('查询原退款结果', 'Query original refund')}</Button></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
   </section>
 }
