@@ -113,6 +113,7 @@ import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { PaymentLedger } from './payment-ledger.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
+import { paymentChannelPlan } from './payment-channel.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { PathologyRequestService } from './pathology-request-service.ts'
 import { ConsultationRecordingService } from './consultation-recording-service.ts'
@@ -8272,10 +8273,8 @@ export class WorkflowService {
         ))
       ORDER BY created_at, charge_id
     `).all(...scope)).map(charge => {
-      const { paidFen: collectedFen } = ledger.balance(input.context, charge.chargeItemId)
+      const { paidFen } = ledger.balance(input.context, charge.chargeItemId)
       const amountFen = charge.amountFen - this.refunds.adjustmentFen(input.context, charge.chargeItemId)
-      const refundedFen = this.refunds.ledger.basisBalance(input.context, `outpatient-charge:${charge.chargeItemId}`).refundedFen
-      const paidFen = collectedFen - refundedFen
       return { ...charge, amountFen, paidFen, remainingFen: Math.max(0, amountFen - paidFen) }
     })
     const { items: payments, ...paymentsPagination } = ledger.attempts(input.context, input.caseId, input.page, input.pageSize)
@@ -9098,7 +9097,9 @@ export class WorkflowService {
       this.#assertRole(input.context, ['cashier'])
       const charge = paymentChargeRowSchema.optional().parse(
         this.#database.driver.prepare(`
-          SELECT charge.charge_id, charge.charge_item_id, charge.total_fen,
+          SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
+            FROM financial_charge_adjustment adjustment WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
+              AND adjustment.charge_item_id=charge.charge_item_id),0) AS total_fen,
             charge.version, charge.status, outpatient_case.status AS case_status,
             outpatient_case.encounter_id,
             prescription.status AS prescription_status,
@@ -9140,13 +9141,7 @@ export class WorkflowService {
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
       }
-      const rule = this.#database.driver.prepare(`
-        SELECT outcome FROM scenario_simulator_rule
-        WHERE workspace_id = ? AND epoch = ? AND simulator = 'payment' AND rule_code = ?
-      `).get(input.context.workspaceId, input.context.epoch, input.simulatorRule.startsWith('ambiguous') ? 'ambiguous' : input.simulatorRule) as {
-        outcome: 'ambiguous' | 'declined' | 'success'
-      } | undefined
-      if (rule === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The payment simulator rule is unavailable')
+      const rule = paymentChannelPlan(this.#database, input.context, input.simulatorRule)
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(previewId)}`
       const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
@@ -9201,7 +9196,9 @@ export class WorkflowService {
         this.#database.driver.prepare(`
           SELECT preview.*, charge.charge_id, charge.charge_item_id,
             charge.status AS charge_status, charge.version AS charge_version,
-            charge.total_fen AS current_amount_fen,
+            charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen) FROM financial_charge_adjustment adjustment
+              WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
+                AND adjustment.charge_item_id=charge.charge_item_id),0) AS current_amount_fen,
             outpatient_case.patient_id, outpatient_case.encounter_id,
             outpatient_case.account_id, outpatient_case.service_request_id,
             outpatient_case.prescription_id, outpatient_case.status AS case_status,
@@ -9283,13 +9280,7 @@ export class WorkflowService {
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
       }
-      const rule = this.#database.driver.prepare(`
-        SELECT outcome FROM scenario_simulator_rule
-        WHERE workspace_id = ? AND epoch = ? AND simulator = 'payment' AND rule_code = ?
-      `).get(input.context.workspaceId, input.context.epoch, preview.simulator_rule.startsWith('ambiguous') ? 'ambiguous' : preview.simulator_rule) as {
-        outcome: 'ambiguous' | 'declined' | 'success'
-      } | undefined
-      if (rule === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The payment simulator rule is unavailable')
+      const rule = paymentChannelPlan(this.#database, input.context, paymentSimulatorRuleSchema.parse(preview.simulator_rule))
       if (balance.unresolved > 0) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
       }
@@ -9316,8 +9307,7 @@ export class WorkflowService {
         `sim-${paymentId}`,
         input.previewId,
         now,
-        preview.simulator_rule === 'ambiguous' ? 'success'
-          : preview.simulator_rule === 'ambiguous-decline' ? 'declined' : 'ambiguous',
+        rule.recoveryOutcome,
       )
       ledger.allocate(input.context, paymentId, preview.charge_item_id, tenders)
       this.#database.driver.prepare(`

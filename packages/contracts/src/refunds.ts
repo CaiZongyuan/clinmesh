@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { commandResponseSchema, paymentSimulatorRuleSchema } from './his.ts'
+import { commandResponseSchema, paymentSimulatorRuleSchema, paymentTendersSchema } from './his.ts'
 
 const id = z.string().min(1)
 const fen = z.number().int().nonnegative().safe()
@@ -10,6 +10,7 @@ export const refundAttemptSchema = z.object({
   ownerKind: z.enum(['outpatient', 'inpatient']), ownerId: id, amountFen: positiveFen,
   initialOutcome: z.enum(['success', 'declined', 'ambiguous']), outcome: z.enum(['success', 'declined', 'ambiguous']),
   correlationId: id, createdAt: id, resolvedAt: id.nullable(), version: z.number().int().positive(),
+  tenders: paymentTendersSchema.optional(),
 }).strict()
 export const refundResponseSchema = commandResponseSchema(refundAttemptSchema)
 export const chargeAdjustmentInputSchema = z.object({ chargeItemId: id, amountFen: positiveFen, reason: z.string().trim().min(5).max(1000) }).strict()

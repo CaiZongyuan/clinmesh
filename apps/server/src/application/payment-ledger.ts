@@ -49,14 +49,19 @@ export class PaymentLedger {
     return z.object({ paidFen: z.number().int().nonnegative(), unresolved: z.number().int().nonnegative() }).parse(
       this.database.driver.prepare(`
         SELECT COALESCE(SUM(CASE WHEN COALESCE(resolution.outcome, payment.outcome) = 'success'
-          THEN allocation.amount_fen ELSE 0 END), 0) AS paidFen,
+          THEN allocation.amount_fen ELSE 0 END), 0) - (
+          SELECT COALESCE(SUM(refund.amount_fen),0) FROM refund_transaction refund
+          LEFT JOIN refund_resolution result USING(workspace_id,epoch,refund_id)
+          WHERE refund.workspace_id=? AND refund.epoch=? AND refund.basis_id=?
+            AND COALESCE(result.outcome,refund.outcome)='success'
+        ) AS paidFen,
           COALESCE(SUM(CASE WHEN COALESCE(resolution.outcome, payment.outcome) = 'ambiguous'
           THEN 1 ELSE 0 END), 0) AS unresolved
         FROM payment_allocation AS allocation
         JOIN payment_transaction AS payment USING (workspace_id, epoch, payment_id)
         LEFT JOIN payment_resolution AS resolution USING (workspace_id, epoch, payment_id)
         WHERE allocation.workspace_id = ? AND allocation.epoch = ? AND allocation.charge_item_id = ?
-      `).get(context.workspaceId, context.epoch, chargeItemId),
+      `).get(context.workspaceId, context.epoch, `outpatient-charge:${chargeItemId}`, context.workspaceId, context.epoch, chargeItemId),
     )
   }
 

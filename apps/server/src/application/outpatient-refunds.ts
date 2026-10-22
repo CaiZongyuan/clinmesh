@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
+import { paymentTendersSchema } from '@clinmesh/contracts/his'
 import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundConfirmInputSchema,
   refundPreviewInputSchema, refundPreviewResponseSchema, refundRecoverInputSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
@@ -35,8 +36,10 @@ export class OutpatientRefunds {
   }
   #source(context: ActorContext, paymentId: string) {
     const attempt = new PaymentLedger(this.database).attempt(context, paymentId)
-    if (attempt === undefined || attempt.outcome !== 'success') throw new WorkflowError('WORKFLOW_CONFLICT', '退款必须关联已确定成功的原交易')
-    return { attempt, source: { kind: 'outpatient-payment' as const, id: paymentId, amountFen: attempt.amountFen }, charge: this.#charge(context, attempt.chargeItemId) }
+    if (attempt === undefined || attempt.outcome !== 'success' || attempt.amountFen === 0) throw new WorkflowError('WORKFLOW_CONFLICT', '退款必须关联已确定成功且有余额的原交易')
+    const tenders = paymentTendersSchema.parse(this.database.driver.prepare('SELECT method,amount_fen AS amountFen FROM payment_tender WHERE workspace_id=? AND epoch=? AND payment_id=? ORDER BY position')
+      .all(context.workspaceId, context.epoch, paymentId))
+    return { attempt, source: { kind: 'outpatient-payment' as const, id: paymentId, amountFen: attempt.amountFen, tenders }, charge: this.#charge(context, attempt.chargeItemId) }
   }
   #allowance(context: ActorContext, chargeItemId: string) {
     const basis = this.ledger.basisBalance(context, `outpatient-charge:${chargeItemId}`)
@@ -53,7 +56,7 @@ export class OutpatientRefunds {
         WHERE a.workspace_id=? AND a.epoch=? AND c.case_id=? ORDER BY a.created_at,a.adjustment_id`).all(context.workspaceId, context.epoch, caseId))
     const sources = z.array(z.object({ paymentId: z.string() })).parse(this.database.driver.prepare(`SELECT p.payment_id AS paymentId
       FROM payment_transaction p LEFT JOIN payment_resolution r USING(workspace_id,epoch,payment_id)
-      WHERE p.workspace_id=? AND p.epoch=? AND p.case_id=? AND COALESCE(r.outcome,p.outcome)='success' ORDER BY p.created_at,p.payment_id`).all(context.workspaceId, context.epoch, caseId))
+      WHERE p.workspace_id=? AND p.epoch=? AND p.case_id=? AND p.amount_fen>0 AND COALESCE(r.outcome,p.outcome)='success' ORDER BY p.created_at,p.payment_id`).all(context.workspaceId, context.epoch, caseId))
       .map(({ paymentId }) => { const { source, attempt } = this.#source(context, paymentId); const balance = this.ledger.balance(context, source)
         return { sourceId: paymentId, chargeItemId: attempt.chargeItemId, amountFen: source.amountFen, ...balance,
           refundableFen: Math.min(balance.refundableFen, this.#allowance(context, attempt.chargeItemId)) } })

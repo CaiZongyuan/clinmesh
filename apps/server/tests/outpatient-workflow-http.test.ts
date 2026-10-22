@@ -1,4 +1,5 @@
 import { inpatientReferralResponseSchema } from '@clinmesh/contracts/inpatient'
+import { refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -1443,6 +1444,108 @@ describe('outpatient workflow HTTP contract', () => {
     const caseResponse = await runtime.app.request(`/api/his/v1/doctor/cases/${testCase.caseId}`, { headers: { cookie: testCase.doctorCookie } })
     expect(doctorCaseDetailSchema.parse(await caseResponse.json()).status).toBe('awaiting-lis')
     await expectCommandAudit(runtime, testCase.cashierCookie, refund.auditId, 'refund.confirm')
+  })
+
+  it.each(['ambiguous', 'ambiguous-decline', 'ambiguous-pending', 'decline'] as const)('reserves %s refunds across original payments and restores only the recorded attempt after restart', async rule => {
+    const setup = await paymentTestRuntime()
+    let runtime = setup.runtime
+    const testCase = await createLabOrderedCase(runtime, setup.password)
+    let cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', setup.password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version: string, key = randomUUID(), actor = cookie) => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(actor, key), body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }),
+    })
+    const read = async () => refundCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}/refunds`, { headers: { cookie } })).json())
+    const pay = async (amountFen: number, version: string) => {
+      const preview = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+        caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success', tenders: [{ method: 'cash', amountFen }],
+      }, version)).json()).data
+      return paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, { commitToken: preview.commitToken }, version)).json()).data
+    }
+    const first = await pay(3000, '1'), second = await pay(3800, '2')
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, { chargeItemId, amountFen: 2000, reason: '合成收费错误，经核准冲减。' }, '3')).status).toBe(200)
+    const preview = async (paymentId: string, simulatorRule = rule, amountFen = 1500) => write('/api/his/v1/refunds/actions/preview', { paymentId, amountFen, expectedSourceVersion: 1, simulatorRule }, '4')
+    const frozen = refundPreviewResponseSchema.parse(await (await preview(first.paymentId)).json()).data
+    const competitor = refundPreviewResponseSchema.parse(await (await preview(second.paymentId)).json()).data
+    const key = randomUUID()
+    const confirm = () => write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, { commitToken: frozen.commitToken }, '4', key)
+    const initialResponse = await confirm()
+    expect(initialResponse.status).toBe(200)
+    const initial = refundResponseSchema.parse(await initialResponse.json())
+    expect(refundResponseSchema.parse(await (await confirm()).json())).toEqual(initial)
+    expect((await write(`/api/his/v1/refunds/${competitor.previewId}/actions/confirm`, { commitToken: competitor.commitToken }, '4')).status).toBe(rule === 'decline' ? 200 : 409)
+    const beforeRestart = await read()
+    expect(beforeRestart.refundedFen).toBe(0)
+    expect(beforeRestart.reservedFen).toBe(rule === 'decline' ? 0 : 1500)
+    expect((await preview(second.paymentId, rule, 2500)).status).toBe(409)
+    expect((await write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, { commitToken: frozen.commitToken }, '4', randomUUID(), testCase.doctorCookie)).status).toBe(403)
+    if (rule === 'ambiguous') {
+      runtime.close()
+      runtimes.splice(runtimes.indexOf(runtime), 1)
+      runtime = await createClinMeshRuntime(setup.options)
+      runtimes.push(runtime)
+      cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', setup.password)
+    }
+    expect(await read()).toEqual(beforeRestart)
+    const recoveryKey = randomUUID()
+    const recover = () => write(`/api/his/v1/refunds/${initial.data.refundId}/actions/recover`, { expectedRefundVersion: 1 }, '4', recoveryKey)
+    const recovered = refundResponseSchema.parse(await (await recover()).json())
+    expect(refundResponseSchema.parse(await (await recover()).json())).toEqual(recovered)
+    expect(recovered.data).toMatchObject({ refundId: initial.data.refundId, outcome: rule === 'ambiguous' ? 'success' : rule === 'ambiguous-pending' ? 'ambiguous' : 'declined' })
+    expect((await read()).refunds.filter(item => item.sourceId === first.paymentId)).toHaveLength(1)
+    expect((await read()).reservedFen).toBe(rule === 'ambiguous-pending' ? 1500 : 0)
+  })
+
+  it('reconciles partial refunds against each frozen tender without repeating a channel allocation', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version: string) => runtime.app.request(path, { method: 'POST', headers: commandHeaders(cookie),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }) })
+    const preview = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+      caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success',
+      tenders: [{ method: 'cash', amountFen: 1000 }, { method: 'bank-card', amountFen: 2000 }, { method: 'mobile', amountFen: 3800 }],
+    }, '1')).json()).data
+    const payment = paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, { commitToken: preview.commitToken }, '1')).json()).data
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, { chargeItemId, amountFen: 3000, reason: '合成组合支付费用错误，核准冲减。' }, '2')).status).toBe(200)
+    const refund = async (amountFen: number, expectedSourceVersion: number) => {
+      const frozen = refundPreviewResponseSchema.parse(await (await write('/api/his/v1/refunds/actions/preview', {
+        paymentId: payment.paymentId, amountFen, expectedSourceVersion, simulatorRule: 'success',
+      }, '3')).json()).data
+      const result = await write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, { commitToken: frozen.commitToken }, '3')
+      expect(result.status).toBe(200)
+      return refundResponseSchema.parse(await result.json()).data
+    }
+    expect((await refund(2500, 1)).tenders).toEqual([{ method: 'cash', amountFen: 1000 }, { method: 'bank-card', amountFen: 1500 }])
+    const frozen = await Promise.all([0, 1].map(async () => refundPreviewResponseSchema.parse(await (await write('/api/his/v1/refunds/actions/preview', {
+      paymentId: payment.paymentId, amountFen: 500, expectedSourceVersion: 2, simulatorRule: 'success',
+    }, '3')).json()).data))
+    const competing = await Promise.all(frozen.map(value => write(`/api/his/v1/refunds/${value.previewId}/actions/confirm`, { commitToken: value.commitToken }, '3')))
+    expect(competing.map(response => response.status).sort()).toEqual([200, 409])
+    expect(refundResponseSchema.parse(await competing.find(response => response.status === 200)!.json()).data.tenders).toEqual([{ method: 'bank-card', amountFen: 500 }])
+    const ledger = refundCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}/refunds`, { headers: { cookie } })).json())
+    expect(ledger).toMatchObject({ refundedFen: 3000, reservedFen: 0, sources: [{ sourceId: payment.paymentId, refundableFen: 0 }] })
+  })
+
+  it('collects only the corrected receivable after a fee reduction on a partially paid charge', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version: string) => runtime.app.request(path, { method: 'POST', headers: commandHeaders(cookie),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }) })
+    const preview = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+      caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success', tenders: [{ method: 'cash', amountFen: 3000 }],
+    }, '1')).json()).data
+    expect((await write(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, { commitToken: preview.commitToken }, '1')).status).toBe(200)
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, { chargeItemId, amountFen: 1000, reason: '合成录入错误，核准冲减10元。' }, '2')).status).toBe(200)
+    const remaining = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+      caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success',
+    }, '3')).json()).data
+    expect(remaining).toMatchObject({ amountFen: 2800, remainingFen: 2800, paidFen: 3000 })
+    const collected = paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${remaining.previewId}/actions/confirm`, { commitToken: remaining.commitToken }, '3')).json()).data
+    expect(collected).toMatchObject({ amountFen: 2800, outcome: 'success', status: 'awaiting-lis' })
   })
 
   it('keeps doctor queue pagination and case details readable when an active case has no triage record', async () => {
