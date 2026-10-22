@@ -440,6 +440,10 @@ for (const version of ['18', '19']) {
     await page.getByRole('region', { name: '诊断列表', exact: true }).getByRole('button', { name: new RegExp(diagnosisName) }).click()
     await expect(edit).toBeHidden()
     await expect(page.getByRole('region', { name: '诊断详情', exact: true }).getByRole('heading', { name: diagnosisName, exact: true })).toBeFocused()
+    // 资料刷新会把“调整”改为“核对”，通过稳定的条目入口重开详情。
+    await page.evaluate(() => window.dispatchEvent(new Event('diagnosis-prescription-change-evidence')))
+    await panel.getByRole('button', { name: '刷新', exact: true }).click()
+    await expect(panel.getByRole('button', { name: '核对', exact: true }).first()).toBeVisible()
     await openPendingDiagnosis.click()
     await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
     await expect(panel.getByRole('button', { name: /^确认选中诊断/ })).toHaveCount(0)
