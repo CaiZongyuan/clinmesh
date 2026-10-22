@@ -124,8 +124,10 @@ export async function ensureDataSourcesReady(
   dependencies: DataSourceReadinessDependencies,
 ): Promise<void> {
   await ensureReferenceDatabase(dependencies)
-  await dependencies.runDrgReferenceSync()
-  writeStatus(dependencies, 'ok', 'DRG 参考资料已就绪。')
+  if (dependencies.environment.CLINMESH_REFERENCE_DATABASE_PATH !== undefined) {
+    await dependencies.runDrgReferenceSync()
+    writeStatus(dependencies, 'ok', 'DRG 参考资料已就绪。')
+  }
   await ensureSyntheaProvider(dependencies)
 }
 

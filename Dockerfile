@@ -15,6 +15,7 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @clinmesh/web build && pnpm --filter @clinmesh/server build
 RUN pnpm --filter @clinmesh/server deploy --prod --legacy /opt/clinmesh
 RUN pnpm reference:sync --database /opt/clinmesh/reference-data.sqlite
+RUN cd /opt/clinmesh && node --input-type=module -e "import Database from 'better-sqlite3'; const db = new Database('reference-data.sqlite'); db.pragma('wal_checkpoint(TRUNCATE)'); db.pragma('journal_mode=DELETE'); db.close()"
 RUN cp reference-data.lock.json /opt/clinmesh/reference-data.lock.json
 
 FROM node:22.19.0-bookworm-slim AS runtime

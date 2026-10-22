@@ -38,10 +38,10 @@ export async function prepareDevelopmentEnvironment(input: {
   onProgress?: (line: string) => void
 }) {
   const result = await prepareDevelopmentDatabases(input)
+  if (input.referenceDatabasePath === undefined) return result
   const repositoryRoot = resolve(input.repositoryRoot ?? join(import.meta.dirname, '../../..'))
-  const databasePath = resolve(input.referenceDatabasePath ?? join(repositoryRoot, '.data/clinmesh-reference.sqlite'))
-  if (input.referenceDatabasePath !== undefined
-    && !referenceDatabaseIsReady(databasePath, repositoryRoot, input.referenceReleaseId)) {
+  const databasePath = resolve(input.referenceDatabasePath)
+  if (!referenceDatabaseIsReady(databasePath, repositoryRoot, input.referenceReleaseId)) {
     await runReferenceSync({
       checkOnly: false,
       databasePath,

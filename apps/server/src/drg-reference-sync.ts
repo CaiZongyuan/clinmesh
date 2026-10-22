@@ -144,6 +144,7 @@ export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Pro
   const backup = join(staging, 'previous')
   let replaced = false
   let installed = false
+  let cleanupStaging = true
   try {
     const archivePath = join(staging, 'reference.tar.gz')
     options.onProgress?.(`下载固定 DRG 资料包：${lock.inventoryId} (${(distribution.artifact.sizeBytes / 1_000_000).toFixed(1)} MB)`)
@@ -182,11 +183,18 @@ export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Pro
     options.onProgress?.(`DRG 资料准备完成：${result.inventoryId}`)
     return result
   } catch (error) {
-    if (installed) await rm(installedRoot, { recursive: true, force: true })
-    if (replaced) await rename(backup, installedRoot)
+    try {
+      if (installed) await rm(installedRoot, { recursive: true, force: true })
+      if (replaced) await rename(backup, installedRoot)
+    } catch (recoveryError) {
+      cleanupStaging = false
+      throw new Error(`DRG recovery failed; ${replaced ? `backup preserved at ${backup}` : `staging preserved at ${staging}`}`, {
+        cause: new AggregateError([error, recoveryError]),
+      })
+    }
     throw error
   } finally {
-    await rm(staging, { recursive: true, force: true })
+    if (cleanupStaging) await rm(staging, { recursive: true, force: true })
   }
 }
 
@@ -197,8 +205,13 @@ async function main(): Promise<void> {
     'input-root': { type: 'string' }, check: { type: 'boolean', default: false },
   } })
   const environment = readServerEnvironment(process.env)
+  const databasePath = values.database ?? environment.CLINMESH_REFERENCE_DATABASE_PATH
+  if (databasePath === undefined) {
+    process.stderr.write('未配置参考数据库，保留合成 fixture 模式，跳过 DRG 准备。维护时请指定 --database。\n')
+    return
+  }
   const result = await runDrgReferenceSync({
-    databasePath: values.database ?? environment.CLINMESH_REFERENCE_DATABASE_PATH ?? join(defaultRepositoryRoot, '.data/clinmesh-reference.sqlite'),
+    databasePath,
     ...(values['install-directory'] === undefined ? {} : { installDirectory: values['install-directory'] }),
     ...(values.manifest === undefined ? {} : { lockPath: values.manifest }),
     ...(values.distribution === undefined ? {} : { distributionPath: values.distribution }),

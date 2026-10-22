@@ -100,6 +100,17 @@ describe('development database preparation', () => {
       .toMatchObject({ items: [{ inventoryId: 'synthetic-inventory-v1', runtimeEnabled: false }] })
   })
 
+  it('keeps explicitly unconfigured fixture mode free of unused reference downloads', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-fixture-'))
+    temporaryDirectories.push(directory)
+    await expect(prepareDevelopmentEnvironment({
+      databasePath: join(directory, 'operational.sqlite'), repositoryRoot: directory,
+      drgReference: { lockPath: join(directory, 'absent-lock.json') },
+    })).resolves.toMatchObject({ reference: null })
+    expect(await readdir(directory)).not.toContain('drg-reference')
+    expect(await readdir(directory)).not.toContain('reference.sqlite')
+  })
+
   it('attempts full reference acquisition for a new deployment and stops when acquisition fails', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-acquisition-'))
     temporaryDirectories.push(directory)

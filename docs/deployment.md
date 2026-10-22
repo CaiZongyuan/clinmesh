@@ -8,7 +8,7 @@
 
 | 目标 | 需要的工具 |
 | --- | --- |
-| 基础运行（步骤 1–2、5） | Node.js `^22.19.0` 或 `>=24.0.0`、pnpm `11.17.0`、Git |
+| 基础运行（步骤 1–2、5） | Node.js `^22.19.0` 或 `>=24.0.0`、pnpm `11.17.0`、Git，首次启动可访问 cn-health Registry 与 GitHub Release |
 | 完整参考目录（步骤 3） | 同上，加可访问 cn-health Registry 的网络 |
 | 患者档案与就诊闭环（步骤 4） | 同上，加一个 OpenAI-compatible Provider 及 API key，或 DSH 已配置的 Provider |
 | Synthea 患者生成（步骤 6） | x86-64 主机上的 Docker Engine 与 `docker compose` |
@@ -37,11 +37,11 @@ cp .env.example .env
 
 已有 `.env` 时不要覆盖。Server 与数据库 CLI 自动读取仓库根 `.env`，显式 shell 环境变量优先级更高。`.env.example` 已包含全部必填项：`CLINMESH_AUTH_SECRET`、`CLINMESH_CURSOR_SECRET`、`CLINMESH_DATABASE_PATH` 和 `CLINMESH_DEMO_PASSWORD`；默认 Server 监听 `127.0.0.1:51868`，Web 开发入口为 `51888`。在 git worktree 中运行时，`.env` 必须位于该 worktree 根目录。
 
-## 3. 同步参考目录（推荐）
+## 3. 参考目录自动准备与维护
 
 默认同步诊断（ICD-10）、药品和 `laboratory-cn` 三个数据集，并自动准备完整 DRG 固定资料；独立 LOINC 目录不进入默认 lock。参考数据保存在独立 Reference SQLite；Server 启动时自动将 laboratory-cn 单项和组合的可开服务快照写入 HIS operational SQLite。仓库提交的 `reference-data.lock.json` 固定每个 Dataset Release 与 Manifest hash；同步只在开发、构建或运维阶段访问 Registry，Server 运行时不执行 `cn-health`，也不访问 GitHub 或 Registry。
 
-先运行 check-only，它按 lock materialize 每个精确 Release 并交叉验证签名、身份、hash、SQLite 和表不变量，不写正式数据库。三个 Dataset 的 materialize 并行执行，stderr 逐阶段输出进度与耗时（stdout 的 JSON 结果不受影响）：
+`pnpm dev:server` 等正常开发入口会自动准备参考目录；维护者需要提前核对时，可运行 check-only。它按 lock materialize 每个精确 Release 并交叉验证签名、身份、hash、SQLite 和表不变量，不写正式数据库。三个 Dataset 的 materialize 并行执行，stderr 逐阶段输出进度与耗时（stdout 的 JSON 结果不受影响）：
 
 ```sh
 pnpm reference:sync -- --check
@@ -53,11 +53,13 @@ pnpm reference:sync -- --check
 pnpm reference:sync
 ```
 
-正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。`.env.example` 已默认启用 `CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite`；当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`（lock 升级后自动跟随），仅覆盖 `CLINMESH_REFERENCE_RELEASE_ID` 时才需要手动维护。同步不会修改 `.env`，也不会热切换已启动的 Server。库中缺少当前 Release 时 Server 启动失败关闭（`REFERENCE_RELEASE_NOT_FOUND`），错误消息指引重跑 `pnpm reference:sync`。跳过本步时 Server 使用内置合成 fixture（`clinmesh-hospital-reference-fixture-2026-08-28`）：诊断与检验目录为空，药品目录只有 3 条合成产品，医生无法下诊断或开检验。
+正式同步写入 `.data/clinmesh-reference.sqlite`，相同 lock 重复执行返回幂等成功。`.env.example` 已默认启用 `CLINMESH_REFERENCE_DATABASE_PATH=.data/clinmesh-reference.sqlite`；当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`（lock 升级后自动跟随），仅覆盖 `CLINMESH_REFERENCE_RELEASE_ID` 时才需要手动维护。同步不会修改 `.env`，也不会热切换已启动的 Server。绕过准备入口直接启动 Server 时，库中缺少当前 Release 会失败关闭（`REFERENCE_RELEASE_NOT_FOUND`），错误消息指引重跑 `pnpm reference:sync`。只有显式移除参考数据库配置时，Server 才使用内置合成 fixture（`clinmesh-hospital-reference-fixture-2026-08-28`）：诊断与检验目录为空，药品目录只有 3 条合成产品，医生无法下诊断或开检验。
 
 ### 离线 DRG 资料核对
 
 新用户无需复制资料目录或单独导入。`pnpm dev:server`、`pnpm dsh:setup` / `pnpm dev:dsh` 和 `pnpm dev:lan` 的启动准备自动取得并核验完整五目录 r3 与 OpenDRG 2026-10-20 快照；`pnpm reference:sync` 同样包含这一步。首次准备需要访问 GitHub Release；固定压缩包约 60.7 MB，解包后共 2,335 文件、约 665.6 MB。Docker 构建时自动准备并将资料及参考库放入镜像，冷启动离线复用，不从个人电脑寻找资料。
+
+自动启动准备使用 `.env.example` 中的参考数据库配置。显式移除 `CLINMESH_REFERENCE_DATABASE_PATH` 时保留合成 fixture 模式，不下载 DRG，也不报告 DRG 已就绪；维护 CLI 显式指定 `--database` 仍可准备目标库。
 
 内容身份由[离线清单](../apps/server/reference-data/drg-offline.lock.json)固定，下载地址、压缩包哈希及解包规模由[分发锁](../apps/server/reference-data/drg-distribution.lock.json)固定。自动安装目录位于参考数据库同级的 `drg-reference/`，默认是 `.data/drg-reference/`，每个锁版本单独保存。已有 `.data/reference-prepared/r3` 和 `.data/exports/opendrg-2026-10-20` 两个完整本地目录时，直接核验并复用，不再下载。
 

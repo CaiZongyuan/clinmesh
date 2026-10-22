@@ -1,18 +1,22 @@
 import { createServer, type Server } from 'node:http'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import * as filesystem from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { create } from 'tar'
 import { runDrgReferenceSync } from '../src/drg-reference-sync.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createDrgReferenceFixture, sha256 } from './fixtures/drg-reference.ts'
 
+vi.mock('node:fs/promises', { spy: true })
+
 describe('DRG reference installation', () => {
   const roots: string[] = []
   const servers: Server[] = []
   afterEach(async () => {
+    vi.mocked(filesystem.rename).mockRestore()
     await Promise.all(servers.splice(0).map(server => new Promise<void>((resolve, reject) => {
       server.closeAllConnections()
       server.close(error => error === undefined ? resolve() : reject(error))
@@ -117,6 +121,24 @@ describe('DRG reference installation', () => {
     await expect(runDrgReferenceSync(input.options)).rejects.toThrow(/does not match/)
     expect(input.requests()).toBe(0)
     await expect(stat(input.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
+  it('preserves the previous files when both installation and rollback renames fail', async () => {
+    const input = await downloadable()
+    const first = await runDrgReferenceSync(input.options)
+    await writeFile(join(first.inputRoot, input.packageRoot, 'services/records.jsonl'), 'previous-files')
+    const rename = (await vi.importActual<typeof filesystem>('node:fs/promises')).rename
+    let calls = 0
+    vi.mocked(filesystem.rename).mockImplementation(async (from, to) => {
+      calls += 1
+      if (calls > 1) throw new Error('synthetic filesystem rename failure')
+      return rename(from, to)
+    })
+    await expect(runDrgReferenceSync(input.options)).rejects.toThrow(/backup preserved at/)
+    const staging = (await readdir(input.installDirectory)).find(name => name.startsWith('.clinmesh-drg-'))
+    expect(staging).toBeDefined()
+    expect(await readFile(join(input.installDirectory, staging!, 'previous', input.packageRoot, 'services/records.jsonl'), 'utf8'))
+      .toBe('previous-files')
   })
 
   it.each([

@@ -286,10 +286,13 @@ describe('ensureDataSourcesReady', () => {
 
   it('warns without blocking when no reference database is configured', async () => {
     const write = vi.fn()
-    await expect(ensureDataSourcesReady(createDependencies({ write }))).resolves.toBeUndefined()
+    const runDrgReferenceSync = vi.fn()
+    await expect(ensureDataSourcesReady(createDependencies({ write, runDrgReferenceSync }))).resolves.toBeUndefined()
 
     expect(write).toHaveBeenCalledWith(expect.stringContaining('未配置 CLINMESH_REFERENCE_DATABASE_PATH'))
     expect(write).toHaveBeenCalledWith(expect.stringContaining('内置合成 fixture'))
+    expect(runDrgReferenceSync).not.toHaveBeenCalled()
+    expect(write).not.toHaveBeenCalledWith(expect.stringContaining('DRG 参考资料已就绪'))
   })
 
   it('reports a healthy configured provider without starting Synthea', async () => {
