@@ -747,7 +747,7 @@ describe('HIS operation catalog', () => {
       'clinmesh-billing': 14,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 71,
+      'clinmesh-inpatient': 74,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,
       'clinmesh-shared': 1,
@@ -769,6 +769,7 @@ describe('HIS operation catalog', () => {
     expect(listHisOperations()
       .filter(operation => operation.previewToken === 'required')
       .map(operation => operation.id)).toEqual([
+      'inpatient.financial.insurance.confirm',
       'inpatient.financial.refund.confirm',
       'inpatient.financial.payment.confirm',
       clinicalDocumentOperationIds.sign,

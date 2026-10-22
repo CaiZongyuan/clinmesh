@@ -14,7 +14,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { apiGet } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, yuanToFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { InpatientFinancialInsurance } from './inpatient-financial-insurance.tsx'
@@ -26,10 +26,10 @@ function FinancialWriteError({ locale, write }: { locale: WorkspaceLocale; write
   return write.mutation.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null
 }
 function amountFen(value: string) {
-  if (!/^(0|[1-9]\d*)(\.\d{1,2})?$/.test(value.trim())) return 0
-  const [yuan = '0', fraction = ''] = value.trim().split('.')
-  const amount = Number(yuan) * 100 + Number(fraction.padEnd(2, '0'))
-  return Number.isSafeInteger(amount) && amount > 0 && amount <= 1_000_000_000 ? amount : 0
+  const input = value.trim()
+  if (!/^(0|[1-9]\d*)(\.\d{1,2})?$/.test(input)) return 0
+  const amount = yuanToFen(input)
+  return amount !== undefined && amount > 0 && amount <= 1_000_000_000 ? amount : 0
 }
 
 export function InpatientFinancialAdjustments({ admission, session, locale, write }: Props): React.JSX.Element {
