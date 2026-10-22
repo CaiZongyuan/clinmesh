@@ -28,10 +28,10 @@ function ScopeSummary({ scope, locale, messages }: {
       : new Date(scope.requestsStartedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
     [messages.tokenLimit, count(scope.tokens)], [messages.tokensUsed, count(scope.tokensUsed)],
     [messages.tokensReserved, reservation(scope.tokensReserved, scope.tokensUnknownReservations)], [messages.tokensRemaining, remaining(scope.tokensRemaining, scope.tokens)],
-    [messages.tokensStartedAt, scope.tokensStartedAt === null ? messages.noStart : new Date(scope.tokensStartedAt).toLocaleString(locale)],
+    [messages.tokensStartedAt, scope.tokensStartedAt === null ? messages.noStart : new Date(scope.tokensStartedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
     [messages.costLimit, count(scope.cny)], [messages.cnyUsed, count(scope.cnyUsed)],
     [messages.cnyReserved, reservation(scope.cnyReserved, scope.cnyUnknownReservations)], [messages.cnyRemaining, remaining(scope.cnyRemaining, scope.cny)],
-    [messages.cnyStartedAt, scope.cnyStartedAt === null ? messages.noStart : new Date(scope.cnyStartedAt).toLocaleString(locale)]]
+    [messages.cnyStartedAt, scope.cnyStartedAt === null ? messages.noStart : new Date(scope.cnyStartedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })]]
   return <div className="flex flex-col gap-4"><Badge variant={scope.enabled ? 'secondary' : 'destructive'}>{scope.enabled ? messages.enabled : messages.disabled}</Badge>
     <dl className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">{facts.map(([label, value]) => <div key={label} className="min-w-0">
       <dt className="text-muted-foreground">{label}</dt><dd>{value}</dd></div>)}</dl></div>
