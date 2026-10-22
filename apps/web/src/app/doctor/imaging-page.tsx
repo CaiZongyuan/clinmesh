@@ -1,3 +1,4 @@
+import { imagingIndicationSchema } from '@clinmesh/contracts/his'
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
 import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
@@ -5,13 +6,15 @@ import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
-import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@clinmesh/ui/components/dialog'
+import { Empty, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
+import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { PlusIcon } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   acknowledgeImagingReport,
   cancelImagingRequest,
@@ -338,6 +341,110 @@ export function ImagingRequestList({ actions, active = true, locale, readOnly, r
   )
 }
 
+interface ImagingComposerTarget {
+  indication: string
+  serviceId: string | null
+}
+
+/** 三页签统一弹窗合同（放射）：目录选项目与指征在同一次弹窗内完成，点「保存草稿」落单这一条并关闭；未确认关闭即弃置弹窗内输入。 */
+function ImagingComposerDialog({ draftPending, existingServiceId, locale, onConfirm, onOpenChange, open, services, target }: {
+  draftPending: boolean
+  existingServiceId?: string | undefined
+  locale: WorkspaceLocale
+  onConfirm: (input: { indication: string; serviceId: string }) => void
+  onOpenChange: (open: boolean) => void
+  open: boolean
+  services: Array<{ available: boolean; service: ImagingServiceSnapshot }> | undefined
+  target?: ImagingComposerTarget | undefined
+}): React.JSX.Element {
+  const zh = locale === 'zh-CN'
+  const targetRef = useRef(target)
+  targetRef.current = target
+  const openingRef = useRef(open)
+  const [serviceId, setServiceId] = useState<string | null>(null)
+  const [indication, setIndication] = useState('')
+  const [conflict, setConflict] = useState(false)
+  const [query, setQuery] = useState('')
+  useEffect(() => {
+    if (open && !openingRef.current) {
+      setServiceId(targetRef.current?.serviceId ?? null)
+      setIndication(targetRef.current?.indication ?? '')
+      setConflict(false)
+      setQuery('')
+    }
+    openingRef.current = open
+  }, [open])
+  const terms = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean)
+  const visible = (services ?? []).filter(item => terms.every(term => (
+    `${item.service.name} ${item.service.code} ${item.service.bodySite} ${item.service.method}`.toLocaleLowerCase().includes(term)
+  )))
+  const selected = (services ?? []).find(item => item.service.id === serviceId)
+  const select = (item: { available: boolean; service: ImagingServiceSnapshot }) => {
+    if (existingServiceId !== undefined && item.service.id !== existingServiceId) {
+      setConflict(true)
+      return
+    }
+    setConflict(false)
+    setServiceId(item.service.id)
+  }
+  const confirm = () => {
+    if (serviceId === null || !imagingIndicationSchema.safeParse(indication).success) return
+    onConfirm({ indication, serviceId })
+    onOpenChange(false)
+  }
+  return (
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="flex h-[min(680px,calc(100svh-2rem))] flex-col sm:max-w-4xl" data-agent-catalog="imaging">
+        <DialogHeader>
+          <DialogTitle>{target?.serviceId != null ? (zh ? '编辑放射检查' : 'Edit examination') : (zh ? '选择放射检查' : 'Select an examination')}</DialogTitle>
+          <DialogDescription>{zh
+            ? '在目录中选择检查项目并填写检查指征，一次弹窗确认一条检查申请。'
+            : 'Pick an examination and enter the indication; one dialog confirms one imaging request.'}</DialogDescription>
+        </DialogHeader>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
+          <Input aria-label={zh ? '搜索放射目录' : 'Search imaging catalog'} maxLength={128}
+            onChange={event => setQuery(event.target.value)}
+            placeholder={zh ? '名称、编号、部位或方式' : 'Name, code, body site, or method'} value={query} />
+          <div className="max-h-[12.5rem] overflow-y-auto border-y">
+            {visible.length === 0 ? <Empty role="status"><EmptyHeader><EmptyTitle>{zh ? '没有匹配的放射检查' : 'No matching imaging examinations'}</EmptyTitle></EmptyHeader></Empty> : (
+              <ul className="divide-y">
+                {visible.map(({ available, service }) => (
+                  <li className="flex min-w-0 items-center justify-between gap-2 px-3 py-2" key={service.id}>
+                    <Button aria-pressed={serviceId === service.id} className="h-auto min-w-0 flex-1 items-center justify-between gap-2 whitespace-normal px-1 py-2 text-left" disabled={!available || draftPending} onClick={() => select({ available, service })} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
+                      <span className="min-w-0 truncate" title={available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{service.bodySite} · {service.method}</span>
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+        {selected === undefined ? null : (
+          <div className="flex min-w-0 flex-col gap-3 border-t pt-3">
+            <dl className="flex flex-col gap-2 text-sm">
+              <div><dt className="text-xs text-muted-foreground">{zh ? '检查项目' : 'Examination'}</dt><dd>{selected.service.name}</dd></div>
+              <div><dt className="text-xs text-muted-foreground">{zh ? '部位与方式' : 'Body site and method'}</dt><dd>{selected.service.bodySite} · {selected.service.method}</dd></div>
+              <div><dt className="text-xs text-muted-foreground">{zh ? '适用条件' : 'Applicability'}</dt><dd>{selected.service.applicability}</dd></div>
+            </dl>
+            <Field>
+              <FieldLabel htmlFor="imaging-composer-indication">{zh ? '检查指征' : 'Indication'}</FieldLabel>
+              <Textarea disabled={draftPending} id="imaging-composer-indication" maxLength={500} onChange={event => setIndication(event.target.value)} value={indication} />
+            </Field>
+          </div>
+        )}
+        {conflict ? <p className="text-sm text-destructive" role="alert">{zh ? '已有保存的放射申请草稿，请先开具或删除后再更换检查项目。' : 'Issue or delete the saved imaging draft before choosing another examination.'}</p> : null}
+        <DialogFooter>
+          <DialogClose render={<Button type="button" variant="outline" />}>{zh ? '取消' : 'Cancel'}</DialogClose>
+          <Button disabled={serviceId === null || !imagingIndicationSchema.safeParse(indication).success || draftPending} onClick={confirm} type="button">
+            {zh ? '保存草稿' : 'Save draft'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 /** 放射目录与申请管理复用同一表单；报告与阅片只展示当前选中的正式申请。 */
 export function ImagingPage({
   actions, active = true, caseId, elementId, encounter, locale, readOnly, recommendationRevision, recommendationScope,
@@ -363,10 +470,7 @@ export function ImagingPage({
   const messages = getWorkspaceMessages(locale)
   const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
   const [indication, setIndication] = useState(state?.draft?.indication ?? '')
-  const [search, setSearch] = useState('')
-  const [catalogOpen, setCatalogOpen] = useState(false)
-  const catalogToggleRef = useRef<HTMLButtonElement>(null)
-  const hasRequests = (state?.requests.length ?? 0) > 0
+  const [composerOpen, setComposerOpen] = useState(false)
   const [localSelectedRequestId, setLocalSelectedRequestId] = useState<string>()
   const selectRequest = (id: string): void => {
     setLocalSelectedRequestId(id)
@@ -382,17 +486,18 @@ export function ImagingPage({
   const draftVersion = state?.draftVersion ?? 0
   const encounterVersion = { encounterId: encounter.id, encounterVersion: encounter.versionId }
   const draftAction = useMutation({
-    mutationFn: async (kind: 'delete' | 'save'): Promise<void> => {
-      if (kind === 'delete') {
+    // 保存值随确认一次性传入：弹窗内点「保存草稿」时页面状态尚未提交。
+    mutationFn: async (action: { kind: 'delete' } | { indication: string; kind: 'save'; serviceId: string }): Promise<void> => {
+      if (action.kind === 'delete') {
         await deleteImagingRequestDraft({ ...encounterVersion, expectedDraftVersion: draftVersion }, newIdempotencyKey())
         return
       }
       await saveImagingRequestDraft({
-        ...encounterVersion, expectedDraftVersion: draftVersion, indication, serviceId: serviceId!,
+        ...encounterVersion, expectedDraftVersion: draftVersion, indication: action.indication, serviceId: action.serviceId,
       }, newIdempotencyKey())
     },
     onSettled: () => onChanged(),
-    onSuccess: (_result, kind) => { if (kind === 'delete') { setServiceId(null); setIndication('') } },
+    onSuccess: (_result, action) => { if (action.kind === 'delete') { setServiceId(null); setIndication('') } },
   })
   const draftInput = agentToolInputSchemas['outpatient.imaging.draft.set'].safeParse({ serviceId, indication: indication.trim() })
   useRegisterAgentForm({
@@ -408,10 +513,8 @@ export function ImagingPage({
       }).success) return messages.recommendationRequestTargetUnavailable
     return undefined
   }
-  const visibleServices = services.data?.items.filter(item => search.trim().toLocaleLowerCase().split(/\s+/).every(term => (
-    `${item.service.name} ${item.service.code} ${item.service.bodySite} ${item.service.method}`.toLocaleLowerCase().includes(term)
-  ))) ?? []
-  const formReady = draftInput.success
+  // 三页签统一结构（放射）：左主列为入口与草稿卡片，目录检索与指征在同一次弹窗内完成。
+  const composerTarget = useMemo<ImagingComposerTarget>(() => ({ indication, serviceId }), [indication, serviceId])
   const editor = readOnly ? null : services.isPending ? <Skeleton className="mt-3 h-24 w-full" /> : services.isError ? (
     <Alert className="mt-3" variant="destructive">
       <AlertTitle>{zh ? '无法加载放射服务' : 'Unable to load imaging services'}</AlertTitle>
@@ -420,66 +523,67 @@ export function ImagingPage({
       </AlertDescription>
     </Alert>
   ) : (
-    <section aria-label={zh ? '开具放射申请' : 'Prepare imaging request'} className="@container/imaging-editor">
-      <div className="flex min-w-0 flex-col gap-4 rounded-lg border p-4">
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor={`${elementId}-search`}>{zh ? '搜索放射目录' : 'Search imaging catalog'}</FieldLabel>
-            <Input id={`${elementId}-search`} onFocus={() => { if (hasRequests) setCatalogOpen(true) }} maxLength={128} onChange={event => { setSearch(event.target.value); if (hasRequests) setCatalogOpen(true) }} value={search} />
-          </Field>
-          {hasRequests ? <Button aria-controls={`${elementId}-catalog-results`} aria-expanded={catalogOpen} ref={catalogToggleRef} onClick={() => setCatalogOpen(open => !open)} size="sm" type="button" variant="ghost">{zh ? catalogOpen ? '收起目录' : '展开目录' : catalogOpen ? 'Hide catalog' : 'Show catalog'}</Button> : null}
-          <div hidden={hasRequests && !catalogOpen} id={`${elementId}-catalog-results`}>
-            {visibleServices.length === 0 ? <Empty role="status"><EmptyHeader><EmptyTitle>{zh ? '没有匹配的放射检查' : 'No matching imaging examinations'}</EmptyTitle></EmptyHeader></Empty> : (
-              <ul className="flex flex-col gap-2">
-                {visibleServices.map(({ available, service }) => <li key={service.id}>
-                  <Button aria-pressed={serviceId === service.id} className="h-auto w-full justify-start whitespace-normal" disabled={!available || draftAction.isPending || (state?.draft !== undefined && state.draft.service.id !== service.id)} onClick={() => { setServiceId(service.id); setCatalogOpen(false); if (hasRequests) catalogToggleRef.current?.focus() }} type="button" variant={serviceId === service.id ? 'secondary' : 'outline'}>
-                    <span className="flex min-w-0 flex-col items-start gap-1 text-left">
-                      <span>{available ? service.name : zh ? `${service.name}：本院当前未开展` : `${service.name}: not currently available`}</span>
-                      <span>{service.bodySite} · {service.method}</span>
-                    </span>
-                  </Button>
-                </li>)}
-              </ul>
-            )}
-          </div>
-        </FieldGroup>
-        <FieldGroup>
-          {selectedService === undefined ? <Empty><EmptyHeader><EmptyTitle>{zh ? '选择放射检查' : 'Select an examination'}</EmptyTitle><EmptyDescription>{zh ? '选择检查项目后填写申请信息' : 'Select an examination to enter request information'}</EmptyDescription></EmptyHeader></Empty> : (
-            <>
-              <dl className="flex flex-col gap-2 text-sm">
-                <div><dt className="text-xs text-muted-foreground">{zh ? '检查项目' : 'Examination'}</dt><dd>{selectedService.service.name}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">{zh ? '部位与方式' : 'Body site and method'}</dt><dd>{selectedService.service.bodySite} · {selectedService.service.method}</dd></div>
-                <div><dt className="text-xs text-muted-foreground">{zh ? '适用条件' : 'Applicability'}</dt><dd>{selectedService.service.applicability}</dd></div>
-              </dl>
-              <Field>
-                <FieldLabel htmlFor={`${elementId}-indication`}>{zh ? '检查指征' : 'Indication'}</FieldLabel>
-                <Textarea disabled={draftAction.isPending} id={`${elementId}-indication`} maxLength={500} onChange={event => setIndication(event.target.value)} value={indication} />
-              </Field>
-            </>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            <Button disabled={!formReady || draftAction.isPending} onClick={() => draftAction.mutate('save')} size="sm" variant="outline">
-              {zh ? '保存草稿' : 'Save draft'}
+    <section aria-label={zh ? '开具放射申请' : 'Prepare imaging request'} className="flex min-w-0 flex-col gap-3">
+      {serviceId === null ? (
+        <>
+          <div>
+            <Button data-agent-catalog-trigger="imaging" disabled={draftAction.isPending} onClick={() => setComposerOpen(true)} type="button">
+              <PlusIcon data-icon="inline-start" />{zh ? '添加放射检查' : 'Add examination'}
             </Button>
-            {state?.draft === undefined ? null : (
-              <>
-                <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate('delete')} size="sm" variant="outline">
-                  {zh ? '删除草稿' : 'Delete draft'}
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  {zh ? `已保存草稿：${state.draft.service.name}` : `Saved draft: ${state.draft.service.name}`}
-                </span>
-              </>
-            )}
           </div>
-          {draftAction.isError ? (
-            <Alert variant="destructive">
-              <AlertTitle>{draftAction.variables === 'delete' ? zh ? '草稿未移除' : 'Draft was not removed' : zh ? '放射申请未提交' : 'The imaging request was not submitted'}</AlertTitle>
-              <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
-            </Alert>
-          ) : null}
-        </FieldGroup>
+          <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+            {zh ? '在弹窗中检索放射目录，选择检查项目并填写指征。' : 'Search the imaging catalog in the dialog, pick an examination and enter the indication.'}
+          </p>
+        </>
+      ) : (
+        <Button
+          aria-label={`${zh ? '编辑放射申请' : 'Edit imaging request'} ${selectedService?.service.name ?? state?.draft?.service.name ?? serviceId}`}
+          className="h-auto w-full min-w-0 items-start justify-start gap-2 whitespace-normal p-3 text-left"
+          onClick={() => setComposerOpen(true)}
+          type="button"
+          variant="outline"
+        >
+          <span className="min-w-0 flex-1">
+            <strong className="block truncate text-sm">{selectedService?.service.name ?? state?.draft?.service.name ?? serviceId}</strong>
+            {selectedService === undefined ? null : (
+              <span className="mt-1 block text-xs text-muted-foreground">{selectedService.service.bodySite} · {selectedService.service.method}</span>
+            )}
+            <span className="mt-1 block text-xs text-muted-foreground">{zh ? '指征：' : 'Indication: '}{indication.trim() === '' ? '—' : indication}</span>
+          </span>
+        </Button>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {state?.draft === undefined ? null : (
+          <>
+            <Button disabled={draftAction.isPending} onClick={() => draftAction.mutate({ kind: 'delete' })} size="sm" variant="outline">
+              {zh ? '删除草稿' : 'Delete draft'}
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              {zh ? `已保存草稿：${state.draft.service.name}` : `Saved draft: ${state.draft.service.name}`}
+            </span>
+          </>
+        )}
       </div>
+      {draftAction.isError ? (
+        <Alert variant="destructive">
+          <AlertTitle>{draftAction.variables?.kind === 'delete' ? zh ? '草稿未移除' : 'Draft was not removed' : zh ? '放射申请未提交' : 'The imaging request was not submitted'}</AlertTitle>
+          <AlertDescription>{getWorkspaceErrorMessage(draftAction.error, messages)}</AlertDescription>
+        </Alert>
+      ) : null}
+      <ImagingComposerDialog
+        draftPending={draftAction.isPending}
+        existingServiceId={state?.draft?.service.id}
+        locale={locale}
+        onConfirm={({ indication: nextIndication, serviceId: nextServiceId }) => {
+          setServiceId(nextServiceId)
+          setIndication(nextIndication)
+          draftAction.mutate({ indication: nextIndication, kind: 'save', serviceId: nextServiceId })
+        }}
+        onOpenChange={setComposerOpen}
+        open={composerOpen}
+        services={services.data?.items}
+        target={composerTarget}
+      />
     </section>
   )
   const pending = (
@@ -506,7 +610,7 @@ export function ImagingPage({
         if (!values.some(value => value.source === 'manual' && value.kind === 'imaging' && value.serviceId === serviceId && value.indication.trim() === indication.trim())) return
         setServiceId(null); setIndication('')
       }}
-      onManualRemove={value => { if (value.kind !== 'imaging' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate('delete'); else { setServiceId(null); setIndication('') } }}
+      onManualRemove={value => { if (value.kind !== 'imaging' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate({ kind: 'delete' }); else { setServiceId(null); setIndication('') } }}
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
     />

@@ -63,6 +63,11 @@ export const syntheticAccounts = [
     practitionerId: 'practitioner-pharmacist',
     roleCode: 'pharmacist',
   },
+  ...(['inpatient-doctor', 'ward-nurse', 'medical-records'] as const).map(roleCode => ({
+    actorId: `actor-${roleCode}`, email: `${roleCode}@demo.clinmesh.local`,
+    name: ({ 'inpatient-doctor': '合成住院医生', 'ward-nurse': '合成病区护士', 'medical-records': '合成病案人员' })[roleCode],
+    practitionerId: `practitioner-${roleCode}`, roleCode,
+  })),
   {
     actorId: 'actor-administrator',
     email: 'admin@demo.clinmesh.local',
@@ -89,6 +94,7 @@ const roleRowSchema = z.object({
   actor_id: z.string().min(1),
   epoch: z.string().min(1),
   location_id: z.string().min(1),
+  location_name: z.string().min(1).nullable(),
   membership_id: z.string().min(1),
   organization_id: z.string().min(1),
   practitioner_id: z.string().min(1),
@@ -779,8 +785,10 @@ export class IdentityService {
         INSERT OR IGNORE INTO practitioner_role_binding (
           workspace_id, practitioner_role_id, practitioner_id, role_code,
           organization_id, location_id, active
-        ) VALUES (?, ?, ?, ?, 'organization-clinmesh', ?, 1)
-      `).run(input.workspaceId, roleId, account.practitionerId, account.roleCode, `location-${account.roleCode}`)
+        ) VALUES (?, ?, ?, ?, ?, ?, 1)
+      `).run(input.workspaceId, roleId, account.practitionerId, account.roleCode,
+        ['inpatient-doctor', 'ward-nurse'].includes(account.roleCode) ? 'organization-inpatient-medicine' : 'organization-clinmesh',
+        ['inpatient-doctor', 'ward-nurse'].includes(account.roleCode) ? 'ward-general' : `location-${account.roleCode}`)
       this.#database.driver.prepare(`
         INSERT OR IGNORE INTO workspace_membership (
           membership_id, workspace_id, user_id, actor_id, status, created_at
@@ -818,6 +826,13 @@ export class IdentityService {
         JOIN practitioner_role_binding AS role
           ON role.workspace_id = granted.workspace_id
          AND role.practitioner_role_id = granted.practitioner_role_id
+        JOIN workspace ON workspace.workspace_id = membership.workspace_id
+        JOIN fhir_resource AS current_role
+          ON current_role.workspace_id = role.workspace_id
+         AND current_role.epoch = workspace.active_epoch
+         AND current_role.resource_type = 'PractitionerRole'
+         AND current_role.resource_id = role.practitioner_role_id
+         AND current_role.deleted = 0
         WHERE membership.user_id = ?
           AND membership.status = 'active'
           AND granted.practitioner_role_id = ?
@@ -858,6 +873,7 @@ export class IdentityService {
         role.role_code,
         role.organization_id,
         role.location_id,
+        json_extract(location.content_json, '$.name') AS location_name,
         run.scenario_run_id
       FROM workspace_membership AS membership
       JOIN workspace ON workspace.workspace_id = membership.workspace_id
@@ -867,12 +883,24 @@ export class IdentityService {
       JOIN practitioner_role_binding AS role
         ON role.workspace_id = granted.workspace_id
        AND role.practitioner_role_id = granted.practitioner_role_id
+      JOIN fhir_resource AS current_role
+        ON current_role.workspace_id = role.workspace_id
+       AND current_role.epoch = workspace.active_epoch
+       AND current_role.resource_type = 'PractitionerRole'
+       AND current_role.resource_id = role.practitioner_role_id
+       AND current_role.deleted = 0
       JOIN fhir_resource AS practitioner
         ON practitioner.workspace_id = role.workspace_id
        AND practitioner.epoch = workspace.active_epoch
        AND practitioner.resource_type = 'Practitioner'
        AND practitioner.resource_id = role.practitioner_id
        AND practitioner.deleted = 0
+      LEFT JOIN fhir_resource AS location
+        ON location.workspace_id = role.workspace_id
+       AND location.epoch = workspace.active_epoch
+       AND location.resource_type = 'Location'
+       AND location.resource_id = role.location_id
+       AND location.deleted = 0
       JOIN scenario_run AS run
         ON run.workspace_id = workspace.workspace_id
        AND run.epoch = workspace.active_epoch
@@ -904,6 +932,7 @@ export class IdentityService {
           code: role.role_code,
           id: role.practitioner_role_id,
           locationId: role.location_id,
+          ...(role.location_name === null ? {} : { locationName: role.location_name }),
           organizationId: role.organization_id,
           practitionerId: role.practitioner_id,
           practitionerName: role.practitioner_name,

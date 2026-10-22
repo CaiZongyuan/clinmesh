@@ -1,5 +1,13 @@
 import { z } from 'zod'
 
+export {
+  offlineReferenceInventoryListSchema, offlineReferenceInventorySchema,
+  offlineReferenceInventoryQuerySchema,
+  offlineReferenceLockSchema, offlineReferenceQuarantineReasonSchema,
+  type OfflineReferenceInventory, type OfflineReferenceLock,
+  type OfflineReferenceInventoryQuery, type OfflineReferenceInventoryList,
+} from './offline-reference.ts'
+
 export const referenceDataItemIdSchema = z.string().min(1).max(256)
 export const referenceLaboratorySourceDatasetSchema = z.enum(['laboratory-cn', 'loinc-zh-cn'])
 

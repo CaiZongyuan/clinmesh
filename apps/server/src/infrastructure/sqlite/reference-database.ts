@@ -33,6 +33,7 @@ import Database from 'better-sqlite3'
 import { z } from 'zod'
 import { matchesMigrationChecksum, migrationChecksum } from './migration-checksum.ts'
 import { parseReferenceSourceArtifact } from '../reference-data/reference-source-importers.ts'
+import { verifyOfflineInventories } from '../reference-data/offline-reference-inventory.ts'
 import {
   parseCnHealthCandidateReferenceArtifact,
 } from '../reference-data/cn-health-candidate-importer.ts'
@@ -1539,6 +1540,7 @@ export function verifyReferenceDatabase(database: ReferenceDatabase): ReferenceD
       `Reference database foreign key check failed: ${violation.table}->${violation.parent}`,
     )
   }
+  verifyOfflineInventories(database)
   const releases = readReferenceDataReleases(database)
   for (const release of releases.items) {
     referenceDataReleaseSummarySchema.parse(release)

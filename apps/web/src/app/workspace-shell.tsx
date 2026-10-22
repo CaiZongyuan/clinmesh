@@ -2,6 +2,8 @@ import { ResponsiveSidebarProvider } from './responsive-sidebar.tsx'
 import { SurfaceDisplayButton, SurfaceConversationButton } from './surface-display-control.tsx'
 import { Avatar, AvatarFallback } from '@clinmesh/ui/components/avatar'
 import { Button } from '@clinmesh/ui/components/button'
+import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
+import { WorkspaceSelect } from './workspace-select.tsx'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,6 +70,7 @@ export const workspaceRoutes = [
   { key: 'consultation', path: '/consultation', icon: StethoscopeIcon },
   { key: 'billing', path: '/billing', icon: ReceiptTextIcon },
   { key: 'pharmacy', path: '/pharmacy', icon: PillIcon },
+  { key: 'inpatient', path: '/inpatient', icon: HeartPulseIcon },
 ] as const
 
 export type WorkspaceSection = (typeof workspaceRoutes)[number]['key']
@@ -112,6 +115,9 @@ export const roleSections: Record<SessionContext['actor']['roleCode'], Workspace
   administrator: 'scenarioData',
   cashier: 'billing',
   'outpatient-doctor': 'consultation',
+  'inpatient-doctor': 'inpatient',
+  'ward-nurse': 'inpatient',
+  'medical-records': 'inpatient',
   pharmacist: 'pharmacy',
   registrar: 'registration',
   'triage-nurse': 'triage',
@@ -139,6 +145,9 @@ const roleMessageKeys: Record<SessionContext['actor']['roleCode'], WorkspaceMess
   administrator: 'role_administrator',
   cashier: 'role_cashier',
   'outpatient-doctor': 'role_outpatientDoctor',
+  'inpatient-doctor': 'role_inpatientDoctor',
+  'ward-nurse': 'role_wardNurse',
+  'medical-records': 'role_medicalRecords',
   pharmacist: 'role_pharmacist',
   registrar: 'role_registrar',
   'triage-nurse': 'role_triageNurse',
@@ -148,7 +157,9 @@ function actingPractitionerLabel(
   role: SessionContext['availableRoles'][number],
   messages: ReturnType<typeof getWorkspaceMessages>,
 ): string {
-  return `${messages[roleMessageKeys[role.code]]} · ${clinicalDisplayName(role.practitionerName)}`
+  const roleLabel = messages[roleMessageKeys[role.code]]
+  const practitionerName = clinicalDisplayName(role.practitionerName)
+  return practitionerName === roleLabel ? roleLabel : `${roleLabel} · ${practitionerName}`
 }
 
 function clinicalDisplayName(value: string): string {
@@ -274,6 +285,11 @@ function UserMenu({
 }): React.JSX.Element {
   const runtime = useWebRuntime()
   const activeRole = session.availableRoles.find(role => role.id === session.actor.practitionerRoleId)
+  const people = new Map<string, SessionContext['availableRoles'][number]>()
+  for (const role of session.availableRoles) {
+    const key = `${role.practitionerId}/${role.code}`
+    if (!people.has(key) || role.id === session.actor.practitionerRoleId) people.set(key, role)
+  }
   const activeRoleLabel = activeRole === undefined
     ? messages[roleMessageKeys[session.actor.roleCode]]
     : actingPractitionerLabel(activeRole, messages)
@@ -313,7 +329,7 @@ function UserMenu({
             onValueChange={onRoleChange}
             value={session.actor.practitionerRoleId}
           >
-            {session.availableRoles.map(role => (
+            {[...people.values()].map(role => (
               <DropdownMenuRadioItem
                 disabled={roleChangePending}
                 key={role.id}
@@ -406,6 +422,8 @@ export function WorkspaceShell({
     })
   }, [activeSection, locale, messages, navigate, runtime.mode, runtime.surfaceNavigation, visibleRoutes])
   const settingsMode = isSettingsSection(activeSection)
+  const workingRoles = session.availableRoles.filter(role => role.practitionerId === session.actor.practitionerId
+    && role.code === session.actor.roleCode)
   const activeIcon = [...workspaceRoutes, ...settingsRoutes].find(route => route.key === activeSection)?.icon ?? LayoutDashboardIcon
   const navigationLabel = settingsMode ? messages.settingsNavigation : messages.navigationLabel
   const mobileDescription = settingsMode
@@ -438,12 +456,25 @@ export function WorkspaceShell({
         </div>
       </header>
       <div
-        className={activeSection === 'consultation'
+        className={activeSection === 'consultation' || activeSection === 'inpatient'
           ? 'flex min-h-0 flex-1 flex-col overflow-hidden bg-background outline-none'
           : 'flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto bg-muted/40 p-4 outline-none sm:p-5'}
         data-clinmesh-workspace-panel=""
         tabIndex={-1}
       >
+        {/* 住院工作台先绑定会话的单一病区，不展示工作病区切换；其他岗位保留工作地点选择。 */}
+        {!settingsMode && workingRoles.length > 1 && activeSection !== 'inpatient' ? (
+          <FieldSet className="shrink-0 border-b p-3" disabled={roleChangePending}>
+            <FieldGroup className="max-w-sm">
+              <Field>
+                <FieldLabel htmlFor="workspace-working-location">{messages.workingLocation}</FieldLabel>
+                <WorkspaceSelect id="workspace-working-location" value={session.actor.practitionerRoleId ?? null}
+                  items={workingRoles.map(role => ({ value: role.id, label: clinicalDisplayName(role.locationName ?? role.locationId) }))}
+                  onValueChange={value => { if (value !== null) onRoleChange(value) }} />
+              </Field>
+            </FieldGroup>
+          </FieldSet>
+        ) : null}
         {children}
       </div>
     </>
@@ -462,7 +493,8 @@ export function WorkspaceShell({
   return (
     <TooltipProvider>
       <ResponsiveSidebarProvider
-        className={activeSection === 'consultation' ? 'h-svh overflow-hidden' : undefined}
+        className={['consultation', 'inpatient', 'registration', 'billing', 'pharmacy'].includes(activeSection)
+          ? 'h-svh overflow-hidden' : undefined}
         heightMode="viewport"
         style={{
           '--sidebar-width': '13.75rem',

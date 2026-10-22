@@ -44,7 +44,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 - `GET /fhir/R5/{ResourceType}/{id}/_history`
 - `GET /fhir/R5/{ResourceType}?search-params`
 
-资源能力注册表中的每种资源只声明 `read`、`vread`、`history-instance` 和 `search-type`。当前注册 Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense、Composition、Bundle、Provenance、InventoryItem、AuditEvent 和 ImagingStudy。
+资源能力注册表中的每种资源只声明 `read`、`vread`、`history-instance` 和 `search-type`。当前注册 Patient、AllergyIntolerance、Organization、Location、Practitioner、PractitionerRole、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、Condition、Medication、MedicationRequest、MedicationDispense、MedicationAdministration、Procedure、Composition、Bundle、Provenance、InventoryItem、AuditEvent 和 ImagingStudy。
 
 逐资源 SearchParameter 白名单见 [5.5 节](fhir-and-commands.md#55-fhir-search-最小实现)。所有资源共享 `_count`、`_cursor` 和 `_total=none|accurate` 三个结果控制参数。
 
@@ -90,7 +90,7 @@ Canonical URL 是定义身份，不要求该地址承担运行中 API。`Capabil
 | 过敏 | `AllergyIntolerance` | 不作为普通 Observation |
 | 生命体征/检验结果 | `Observation` | 数值、单位和参考范围必须结构化 |
 | 报告 | `DiagnosticReport` | result 引用 Observation |
-| 操作/治疗执行 | `Procedure` | 与 ServiceRequest 关联 |
+| 操作/治疗执行 | `Procedure` | 本次住院实际实施事实的只读 domain projection，basedOn 引用 ServiceRequest；仅声明 patient/encounter Search，不混入来源 R4 既往操作 |
 | 检查、检验、治疗医嘱 | `ServiceRequest` | 业务校对由 Task/Operation 表达 |
 | 药品医嘱 | `MedicationRequest` | 一种药一个资源 |
 | 本次请求编排 | `RequestOrchestration` | 表达一组请求或建议之间的组合、选择、条件和顺序；intent/status 与所引用请求一致，不等同组套模板或处方单据 |
@@ -160,6 +160,12 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
+离线 DRG 资料清单使用 `apps/server/reference-data/drg-offline.lock.json`，通过现有 `reference-db` 运维入口准备和查询，运行方式见[部署指南](../deployment.md#离线-drg-资料核对)。`reference_offline_inventory` 保存不可变摘要及内容哈希，不进入 `reference_release` 或临床编码目录；Server 继续只读 Reference SQLite。准备一次性验证所有包后，在事务中发布整个清单及本地审计，失败保留原清单；`verify` 同时检查已存摘要的身份和哈希。
+
+清单用途固定为 `offline-review`，`validationScope=integrity-only`、`runtimeEnabled=false`。五目录逐文件验证 SHA-256、JSONL 格式及行数，保留各来源的原件哈希、来源发表核验状态与原文计价单位；`unitStatus=source-only-unverified` 不表示包装换算或本院计价已确认。没有来源单位时返回空列表，不以包装列补齐。OpenDRG 验证固定 Manifest 与全部 checksum 项，并重新统计数据集覆盖；CHS-DRG 3.0 支付表标为 `selected-scheme`，其他支付表标为 `excluded-other-scheme`，字典只作来源核对。缺权重或参考费用的病组逐码列入 `missingParameterCodes`，不补零或借用其他方案参数。公开清单的内容哈希绑定全部来源与隔离状态，绝对本地路径及资料正文不出现在 HTTP 响应中。
+
+来源参考、临床／医保编码兼容、使用条件、当前适用性、医院支付参数及算法正确性分别核验。名称、前缀和字面相同都不生成临床编码映射；通用 3.0 与浙江零散参数不组成浙江结算方案。包内程序只参与字节哈希，准备和运行期均不执行；完整性通过不能作为分组算法对照验证证据。读取 `GET /api/sim/v1/reference-data/offline-inventories` 仅向管理员开放，并复用共享 Command 的审计实现追加读取结果，不新增临床写操作或 Agent 任意写工具。清单列表使用有硬上限的分页；数据库完整验证分批遍历全部历史清单，不受公开查询默认页范围限制。
+
 独立 Reference SQLite 通过 `reference-data.lock.json` 和 `pnpm reference:sync` 获取、验证并导入版本固定的疾病、药品与检验来源。项目内锁固定 `cn-health` 版本、Registry URL、Ed25519 信任根、Dataset Release、Manifest hash 和复合 Release 身份；`cn-health dataset materialize` 只在显式同步时访问 Registry，并把签名已验证的 Manifest、SQLite 和 receipt 原子交给 ClinMesh。ClinMesh 再校验 receipt、hash、SQLite、Schema 和 canonical 表不变量。check-only 使用临时 Reference SQLite，正式同步失败不留下部分 Release，也不切换 Server 当前 Release。运行中的 Server 只读 ClinMesh Reference SQLite，不调用 `cn-health`、GitHub 或 Registry。
 
 每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、materialization provenance、记录数、导入诊断和 content hash。`loinc-zh-cn` Dataset Schema v2 把完整 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边保存在同一不可变 Release，Class Type 1 进入 laboratory domain，其他 Class Type 进入 `other`。`laboratory-cn` Schema v2 在同一 Release 中保存 WS/T 886 原子项目、全部成人参考规则、项目整理 panel 和有序成员边；首个锁定 Release 的四张表分别有 84、96、15 和 88 条记录。Server 使用索引和 FTS 提供有界分页查询，不把全国目录复制进 Workspace、Epoch 或 operational SQLite。
@@ -214,10 +220,11 @@ Simulator 对每个冻结报告叶子先复用编码、值类型和单位兼容�
 
 - Patient `name`：NFKC 归一化、小写化后的前缀匹配。
 - Patient `identifier`：归一化后的精确匹配。
-- `patient` 精确引用匹配：AllergyIntolerance、Condition、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、MedicationRequest、MedicationDispense、Composition 和 ImagingStudy。
-- `encounter` 精确引用匹配：Condition、ChargeItem、Observation、ServiceRequest、DiagnosticReport、MedicationRequest、MedicationDispense、Composition 和 ImagingStudy。
-- Task `focus`：接受 Encounter 或 ServiceRequest 引用。
+- `patient` 精确引用匹配：AllergyIntolerance、Condition、Encounter、Task、Account、ChargeItem、Observation、ServiceRequest、Specimen、DiagnosticReport、MedicationRequest、MedicationDispense、MedicationAdministration、Procedure、Composition 和 ImagingStudy。
+- `encounter` 精确引用匹配：Condition、ChargeItem、Observation、ServiceRequest、DiagnosticReport、MedicationRequest、MedicationDispense、MedicationAdministration、Procedure、Composition 和 ImagingStudy。
+- Task `focus`：接受 Encounter、ServiceRequest 或 MedicationRequest 引用。
 - MedicationDispense `prescription`：只接受 MedicationRequest 引用。
+- MedicationAdministration `request`：只接受 MedicationRequest 引用；`patient` 与 `encounter` 分别索引 subject、encounter。R5 5.0.0 正式字段为 `occurenceDateTime`，medication 与 performer.actor 使用 CodeableReference；partOf 引用本次实际 MedicationDispense。
 - Provenance `target`：接受 Bundle、Composition、Condition、DiagnosticReport、Encounter、Observation、ServiceRequest、Specimen 或 Task 引用。
 
 reference 参数只索引本地相对引用。资源写入时 Repository 按 registry 中的路径和 target 校验引用格式、目标资源类型以及当前 Workspace/Epoch 中的目标存在性；任一引用失败会使包含它的 Command 整体回滚。
@@ -425,10 +432,16 @@ Web mutation、outbox dispatcher 和模拟器处理都可能重试。CommandExec
 
 Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIATE` 事务，成功时在提交前变为 `completed`。相同 key 和相同 hash 读取并返回第一次完整响应；相同 key 和不同 hash 返回稳定冲突。事务失败时业务事实、FHIR、receipt、审计、Action Trace 和 outbox 一起回滚，失败尝试另写不包含请求正文的审计记录。
 
+住院登记额外要求原意图的 `expectedEpoch`：它是 Command 事务中对受信 Epoch 的乐观前置断言，不参与 Workspace/Epoch 选择或授权。Scenario 重放可能复用 Patient logical id 与版本，单独的 Patient expected version 不能阻止旧人类 Cookie 请求在新 Epoch 登记收款；不匹配返回 `INPATIENT_EPOCH_CONFLICT` 且不创建住院和资金事实。登记 Catalog version 2 与运行时 Skill 同步声明该字段。
+
 外部模拟工作不复用 Command receipt 状态机。持久 outbox 独立使用 `queued`、`claimed`、`completed`、`failed`、`ambiguous` 和 `abandoned`；claim 带 owner、lease version、过期时间、attempt 和 correlation ID。可重试失败在达到最大尝试前按 `next_attempt_at` 重新领取，结果未知保持 `ambiguous`，Epoch 关闭变为 `abandoned`。结果未知不得当作普通失败盲目重做。
 
 ### 6.6 预览与提交
 
-当前临床文书签署和支付使用预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；支付预览绑定 Charge Item。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
+临床文书签署和门诊支付使用带时效 token 的预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；门诊支付预览绑定 Charge Item。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
 
-提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、退款、医保、库存调拨、出院和病案归档不属于当前能力，也不宣称已有预览协议。
+提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、门诊退费、医保和库存调拨不属于当前能力，也不宣称已有预览协议。
+
+住院结算使用独立的逐项账目指纹预览：提交校验原预览指纹、Encounter 版本与预期金额，不使用上述五分钟 `commitToken`。住院结算包含补缴或关联原入金的退款，与医生出院医嘱、护士出区和清床分别执行；状态门禁及原意图恢复合同见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
+
+病案首页通过 `inpatient.record.read/submit/review/archive` 共享 Query/Command 暴露四组核心字段及独立修订、审核和不可变快照，不新增未实现的通用FHIR病历写能力。提交显式携带本次实际主操作选择或空值，提交、审核与归档均绑定 `expectedRevision` 与 `expectedSourcesHash`；`INPATIENT_RECORD_STALE` 要求重新审阅来源并由医生重新提交，不能静默刷新hash后重做。归档新写返回 `INPATIENT_RECORD_ARCHIVED`，旧receipt优先重放；岗位和门禁见[病案首页与归档](clinical-workflows.md#病案首页与归档)。

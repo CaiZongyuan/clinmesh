@@ -1,4 +1,8 @@
 import {
+  offlineReferenceInventoryListSchema,
+  offlineReferenceInventoryQuerySchema,
+  type OfflineReferenceInventoryList,
+  type OfflineReferenceInventoryQuery,
   referenceDiagnosisCatalogSearchSchema,
   referenceDataProvenanceSchema,
   referenceDataReleaseListSchema,
@@ -24,6 +28,7 @@ const BUILTIN_RELEASE_CONTENT_HASH = 'bc1e7ca7e11e31851acd651705ab627b45ff459c79
 const BUILTIN_RELEASE_ID = 'clinmesh-hospital-reference-fixture-2026-08-28'
 
 export interface ReferenceDataReader {
+  offlineInventories?(input: OfflineReferenceInventoryQuery): OfflineReferenceInventoryList
   conceptById?(
     releaseId: string,
     domain: 'diagnosis' | 'laboratory',
@@ -148,13 +153,30 @@ function builtinReferenceData(): ReferenceDataReleaseList {
 export class ReferenceDataService {
   readonly #activeReleaseId: string | undefined
   readonly #reader: ReferenceDataReader | undefined
+  readonly #auditInventoryRead: ((context: ActorContext, outcome: 'success' | 'failed', inventoryIds: string[]) => void) | undefined
 
   constructor(
     reader?: ReferenceDataReader,
     activeReleaseId?: string,
+    auditInventoryRead?: (context: ActorContext, outcome: 'success' | 'failed', inventoryIds: string[]) => void,
   ) {
     this.#activeReleaseId = activeReleaseId
     this.#reader = reader
+    this.#auditInventoryRead = auditInventoryRead
+  }
+
+  offlineInventories(context: ActorContext, input: unknown) {
+    let result: OfflineReferenceInventoryList
+    try {
+      if (context.roleCode !== 'administrator') throw new ReferenceDataError('ROLE_NOT_ALLOWED', 'Only an administrator can read offline reference inventories')
+      const query = offlineReferenceInventoryQuerySchema.parse(input)
+      result = offlineReferenceInventoryListSchema.parse(this.#reader?.offlineInventories?.(query) ?? { items: [], ...query, total: 0 })
+    } catch (error) {
+      this.#auditInventoryRead?.(context, 'failed', [])
+      throw error
+    }
+    this.#auditInventoryRead?.(context, 'success', result.items.map(item => item.inventoryId))
+    return result
   }
 
   list(context: ActorContext): ReferenceDataReleaseList {
@@ -183,7 +205,7 @@ export class ReferenceDataService {
     context: ActorContext,
     input: { page: number; pageSize: number; query?: string },
   ) {
-    this.#assertCatalogReader(context)
+    this.#assertDiagnosisReader(context)
     const release = this.#catalogRelease()
     const result = this.#reader?.searchConcepts === undefined
       ? { items: [], total: 0 }
@@ -281,10 +303,15 @@ export class ReferenceDataService {
   }
 
   diagnosisById(context: ActorContext, conceptId: string): ReferenceConcept | undefined {
-    this.#assertCatalogReader(context)
+    this.#assertDiagnosisReader(context)
     const release = this.#catalogRelease()
     const concept = this.#reader?.conceptById?.(release.releaseId, 'diagnosis', conceptId)
     return concept?.status === 'active' ? concept : undefined
+  }
+
+  /** 病案审核按确认时冻结的 Release 核验，不随当前启用目录切换。 */
+  diagnosisInRelease(releaseId:string, conceptId:string): ReferenceConcept | undefined {
+    return this.#reader?.conceptById?.(releaseId,'diagnosis',conceptId)
   }
 
   laboratoryById(context: ActorContext, conceptId: string): ReferenceConcept | undefined {
@@ -304,6 +331,11 @@ export class ReferenceDataService {
       ? syntheticNhsaMedicationProductSnapshot.find(item => item.id === productId)
       : this.#reader.medicationProductById(release.releaseId, productId)
     return product?.status === 'active' ? product : undefined
+  }
+
+  #assertDiagnosisReader(context: ActorContext) {
+    if (context.roleCode === 'inpatient-doctor') return
+    this.#assertCatalogReader(context)
   }
 
   #assertCatalogReader(context: ActorContext): void {

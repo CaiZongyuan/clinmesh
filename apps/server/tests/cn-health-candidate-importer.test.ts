@@ -839,7 +839,7 @@ describe('cn-health Candidate importer', () => {
     database.close()
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 10 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 11 })
   })
 
   it('validates and converts diagnosis, medication and LOINC Candidate SQLite artifacts', async () => {
@@ -989,7 +989,7 @@ describe('cn-health Candidate importer', () => {
     await expect(runReferenceDatabaseCli(['verify', '--database', databasePath])).resolves.toMatchObject({
       integrity: 'ok',
       releaseCount: 1,
-      schemaVersion: 10,
+      schemaVersion: 11,
     })
     const published = new Database(databasePath, { readonly: true })
     expect(JSON.parse((published.prepare(`

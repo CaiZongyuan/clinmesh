@@ -1,4 +1,5 @@
 import type {
+  OfflineReferenceInventoryQuery,
   ReferenceConcept,
   ReferenceDataReleaseList,
   ReferenceMedicalService,
@@ -6,6 +7,7 @@ import type {
   ReferenceValueSetEntry,
 } from '@clinmesh/contracts/reference-data'
 import type { ReferenceDataReader } from '../../application/reference-data-service.ts'
+import { listOfflineInventories } from '../reference-data/offline-reference-inventory.ts'
 import {
   listReferenceDataReleases,
   listReferenceConcepts,
@@ -31,6 +33,10 @@ export class SqliteReferenceDataRepository implements ReferenceDataReader {
 
   list(): ReferenceDataReleaseList {
     return listReferenceDataReleases(this.#database)
+  }
+
+  offlineInventories(input: OfflineReferenceInventoryQuery) {
+    return listOfflineInventories(this.#database, input)
   }
 
   concepts(

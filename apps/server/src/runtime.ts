@@ -1,4 +1,5 @@
 import { ModelTaskRecovery, modelControlWaitingCount } from './application/model-task-recovery.ts'
+import { InpatientService } from './application/inpatient-service.ts'
 import { createApp } from './app.ts'
 import { ModelUsageService } from './application/model-usage-service.ts'
 import type { ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
@@ -218,6 +219,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const referenceData = new ReferenceDataService(
       referenceDatabase === undefined ? undefined : new SqliteReferenceDataRepository(referenceDatabase),
       options.activeReferenceReleaseId,
+      (context, outcome, inventoryIds) => commands.auditRead(context, 'reference.offline-inventories.read', { inventoryIds }, outcome),
     )
     const generationJobs = new ScenarioGenerationJobRepository(database)
     const syntheticPatientProfiles = new SyntheticPatientProfileRepository(database)
@@ -272,6 +274,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       referenceData,
       tokenSecret: options.cursorSecret,
     })
+    const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
       canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
       contextStatus: context => identity.modelTaskContextStatus(context, ['admin.laboratory-services.publish']),
@@ -400,6 +403,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workspaceId: 'workspace-demo',
     })
     laboratoryServicePublisher.ensureDefaultServices()
+    laboratoryServicePublisher.ensureInpatientPrices()
     workflow.imaging.ensureServices()
     workflow.pathology.ensureServices()
     const identity = new IdentityService(database, {
@@ -759,6 +763,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const app = createApp({
       modelUsage,
       ...(options.dshBridgeSecret === undefined ? {} : { dshBridgeSecret: options.dshBridgeSecret }),
+      inpatient,
       commandEvents: commands,
       recordingUpdatesSignal: generationAbort.signal,
       doctorRecommendations,

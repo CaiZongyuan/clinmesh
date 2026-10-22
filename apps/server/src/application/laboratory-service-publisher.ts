@@ -31,6 +31,20 @@ import type { ReferenceDataService } from './reference-data-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
 
+function inpatientLaboratoryBilling(snapshot: LaboratoryServiceSnapshot, existingInpatientPrice: boolean) {
+  const coding=snapshot.referenceConcept
+  const key=`${coding.system}#${coding.version}#${coding.code}`
+  const prices:Record<string,number>={
+    'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026#2026#0100101A':800,
+    'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/wst-886-2026#2026#0100501A':800,
+    'https://caizongyuan.github.io/clinmesh/fhir/CodeSystem/laboratory-panel-cn#2026-09-01#CN-LAB-CBC':2500,
+  }
+  const priceFen=existingInpatientPrice&&snapshot.priceFen>0?snapshot.priceFen:prices[key]
+  if(priceFen===undefined)return undefined
+  return {id:`inpatient-charge-definition-${snapshot.id}`,version:1,display:snapshot.nameZh,priceFen,currency:'CNY' as const,trigger:'execution-completed' as const,
+    source:existingInpatientPrice&&snapshot.priceFen>0?'published-hospital-price':'synthetic-hospital-basic-laboratory-2026',availableScopes:['inpatient'],effectiveOn:'2026-08-24'}
+}
+
 const promptVersion = 'laboratory-service-enrichment-v1'
 const laboratoryCnPublicationPolicyVersion = 'clinmesh-laboratory-defaults-v1'
 const laboratoryCnConclusion = '本报告为 ClinMesh 合成检验结果，仅用于仿真。'
@@ -148,6 +162,21 @@ export class LaboratoryServicePublisher {
     this.#provider = input.provider
     this.#publications = input.publications
     this.#referenceData = input.referenceData
+  }
+
+  ensureInpatientPrices(): void {
+    const rows=z.array(z.object({workspace_id:z.string(),epoch:z.string(),service_id:z.string(),config_json:z.string()})).parse(this.#database.driver.prepare(`
+      SELECT h.* FROM hospital_service_catalog h JOIN workspace w ON w.workspace_id=h.workspace_id AND w.active_epoch=h.epoch
+      WHERE h.active=1 AND json_type(h.config_json,'$.laboratoryService')='object'
+        AND json_type(h.config_json,'$.inpatientInvestigationBilling') IS NULL`).all())
+    const update=this.#database.driver.prepare("UPDATE hospital_service_catalog SET config_json=json_set(config_json,'$.inpatientInvestigationBilling',json(?),'$.availableScopes',json(?)) WHERE workspace_id=? AND epoch=? AND service_id=?")
+    this.#database.driver.transaction(()=>{
+      for(const row of rows) {
+        const config=z.object({laboratoryService:laboratoryServiceSnapshotSchema,availableScopes:z.array(z.string())}).parse(JSON.parse(row.config_json))
+        const billing=inpatientLaboratoryBilling(config.laboratoryService,config.availableScopes.includes('inpatient'))
+        if(billing!==undefined)update.run(JSON.stringify(billing),JSON.stringify([...new Set([...config.availableScopes,'inpatient'])]),row.workspace_id,row.epoch,row.service_id)
+      }
+    })()
   }
 
   ensureDefaultServices(): void {
@@ -1013,7 +1042,8 @@ export class LaboratoryServicePublisher {
       const version = (current?.version ?? 0) + 1
       const snapshot = laboratoryServiceSnapshotSchema.parse({ ...item.draft, version })
       const config = JSON.stringify({
-        availableScopes: ['outpatient'],
+        availableScopes: ['outpatient', 'inpatient'],
+        inpatientInvestigationBilling: inpatientLaboratoryBilling(snapshot,true),
         billingUnit: {
           code: 'ITEM',
           display: '项目',

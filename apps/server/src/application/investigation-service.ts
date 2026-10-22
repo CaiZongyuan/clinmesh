@@ -87,7 +87,7 @@ const serviceAgentOutputSchema = z.object({
 }).strict()
 
 const requestRowSchema = z.object({
-  outpatient_case_id: z.string().min(1),
+  clinical_case_id: z.string().min(1),
   authored_at: z.iso.datetime({ offset: true }),
   catalog_item_id: z.string().min(1),
   encounter_id: z.string().min(1),
@@ -426,9 +426,8 @@ export class InvestigationService {
   ): InvestigationGenerationCapability {
     const materialization = caseMaterializationRowSchema.optional().parse(
       this.#database.driver.prepare(`
-        SELECT case_id AS synthetic_case_id
-        FROM synthetic_case_materialization
-        WHERE workspace_id = ? AND epoch = ? AND outpatient_case_id = ?
+        SELECT synthetic_case_id FROM clinical_request_source
+        WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND synthetic_case_id IS NOT NULL
       `).get(workspaceId, epoch, outpatientCaseId),
     )
     if (materialization === undefined) {
@@ -476,19 +475,11 @@ export class InvestigationService {
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
-        outpatient_case.encounter_id, outpatient_case.patient_id, outpatient_case.case_id AS outpatient_case_id,
-        materialization.case_id AS synthetic_case_id,
-        materialization.case_revision AS synthetic_case_revision,
-        materialization.profile_id, materialization.profile_revision
+        source.case_id AS clinical_case_id, source.encounter_id, source.patient_id, source.synthetic_case_id,
+        source.synthetic_case_revision, source.profile_id, source.profile_revision
       FROM laboratory_request AS request
-      LEFT JOIN synthetic_case_materialization AS materialization
-        ON materialization.workspace_id = request.workspace_id
-       AND materialization.epoch = request.epoch
-       AND materialization.outpatient_case_id = request.case_id
-      JOIN outpatient_case
-        ON outpatient_case.workspace_id = request.workspace_id
-       AND outpatient_case.epoch = request.epoch
-       AND outpatient_case.case_id = request.case_id
+      JOIN clinical_request_source source ON source.workspace_id=request.workspace_id
+        AND source.epoch=request.epoch AND source.case_id=request.case_id
       WHERE request.workspace_id = ? AND request.epoch = ? AND request.request_id = ?
         AND request.request_kind = 'laboratory'
     `).get(workspaceId, epoch, requestId))
@@ -585,7 +576,7 @@ export class InvestigationService {
     const inputHash = canonicalJsonHash(payload)
     const completion = await this.#provider.completeJson({
       onBeforeRequest: () => this.#assertRequestCurrent(workspaceId, epoch, requestId),
-      usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: materializedRow.outpatient_case_id,
+      usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: materializedRow.clinical_case_id,
         encounterId: materializedRow.encounter_id, stage: 'investigation', trigger: generationAttempt === undefined ? 'automatic' : 'recovery',
         sources: [{ kind: 'report', id: requestId, relationship: 'trigger' }] },
       jsonSchema: z.toJSONSchema(agentOutputSchema) as Record<string, unknown>,
@@ -785,7 +776,7 @@ export class InvestigationService {
     if (existing !== undefined) return existing
     const completion = await this.#provider.completeJson({
       onBeforeRequest: () => this.#assertRequestCurrent(workspaceId, epoch, requestId),
-      usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: row.outpatient_case_id,
+      usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: row.clinical_case_id,
         encounterId: row.encounter_id, stage: 'investigation-service', trigger: 'automatic',
         sources: [{ kind: 'report', id: requestId, relationship: 'trigger' }] },
       jsonSchema: z.toJSONSchema(serviceAgentOutputSchema) as Record<string, unknown>,

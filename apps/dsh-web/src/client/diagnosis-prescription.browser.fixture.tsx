@@ -50,6 +50,49 @@ const medication: ReferenceMedicationProduct = {
 }
 const products = [medication, { ...medication, id: 'synthetic-product-2', code: 'SYN-M2', packageDescription: '20片/盒' },
   { ...medication, id: 'synthetic-product-3', code: 'SYN-M3', genericName: '合成第二药品', packageDescription: '30片/盒' }]
+const laboratoryReferenceConcept = {
+  code: 'SYN-LAB', display: '合成检验项目', id: 'synthetic-reference', sourceLocator: 'synthetic:test',
+  system: 'urn:synthetic:laboratory', version: '1',
+}
+const laboratoryServices = [{
+  allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
+  executingDepartmentId: 'synthetic-laboratory', id: 'synthetic-lab', localCode: 'SYN-LAB',
+  nameEn: 'Synthetic complete laboratory panel with extended indicator names',
+  nameZh: '合成完整检验组合与扩展指标名称', priceFen: 2500, referenceConcept: laboratoryReferenceConcept,
+  referenceReleaseId: 'synthetic-release', reportDefinition: {
+    conclusionTemplate: '合成检验结论', results: [{
+      alternateCodings: [], referenceConcept: laboratoryReferenceConcept, referenceRange: { low: 0, high: 10, text: '0–10' },
+      unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' }, valueType: 'quantity',
+    }],
+  }, specimen: { code: 'blood', display: '合成静脉血标本' }, serviceKind: 'laboratory', tatMinutes: 180, version: 1,
+}, {
+  allowedIndicationCodes: ['clinical-evaluation', 'fever'], componentServiceIds: [], doctorOrderable: true,
+  executingDepartmentId: 'synthetic-laboratory', id: 'synthetic-lab-second', localCode: 'SYN-SECOND',
+  nameEn: 'Synthetic second laboratory test', nameZh: '合成第二检验项目', priceFen: 1800,
+  referenceConcept: { ...laboratoryReferenceConcept, id: 'synthetic-second-reference', code: 'SYN-SECOND' },
+  referenceReleaseId: 'synthetic-release', reportDefinition: {
+    conclusionTemplate: '合成检验结论', results: [{
+      alternateCodings: [], referenceConcept: laboratoryReferenceConcept, referenceRange: { low: 0, high: 10, text: '0–10' },
+      unit: { code: 'mg/L', display: 'mg/L', system: 'http://unitsofmeasure.org' }, valueType: 'quantity',
+    }],
+  }, specimen: { code: 'blood', display: '合成静脉血标本' }, serviceKind: 'laboratory', tatMinutes: 240, version: 1,
+}]
+const imagingService = {
+  applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
+  department: '放射科', examCode: 'chest-ct-plain', id: 'imaging-chest-ct-plain',
+  method: '平扫（不使用造影剂）', modality: 'CT', name: '胸部 CT 平扫',
+  reportSections: ['technique', 'findings', 'impression'], version: 1,
+}
+const pathologyService = {
+  applicability: '既往乳腺手术切除标本切片的会诊复核', bodySite: '乳腺', code: 'PATH-BREAST-SLIDE-CONSULT',
+  department: '病理科', examCode: 'breast-slide-consultation', id: 'pathology-breast-slide-consultation',
+  name: '乳腺切片病理会诊', reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'],
+  specimenType: '既往手术切除标本的石蜡切片', stain: 'HE', version: 1,
+}
+const sourceProcedures = [
+  { code: '392021009', display: '乳房肿块切除术', performedAt: '2022-04-01T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-0' },
+  { code: '392023007', display: '乳腺病灶切除术', performedAt: '2023-01-05T08:00:00+08:00', sourceReference: 'urn:uuid:procedure-1' },
+]
 const recommendationsMode = document.documentElement.dataset.fixtureMode === 'recommendations'
 const retryDisabledMode = document.documentElement.dataset.fixtureMode === 'retry-disabled'
 const recoveryMode = document.documentElement.dataset.fixtureMode === 'recovery' || retryDisabledMode
@@ -293,6 +336,13 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
     const items = directory.filter(item => ('display' in item ? item.display : `${item.genericName} ${item.manufacturer}`).includes(query))
     return Response.json({ items, page: 1, pageSize: 20, total: items.length, releaseId: 'synthetic-release' })
   }
+  if (path.endsWith('/reference-catalogs/laboratory')) {
+    const query = url.searchParams.get('query') ?? ''
+    const items = laboratoryServices.filter(item => `${item.nameZh} ${item.nameEn}`.includes(query))
+    return Response.json({ items, page: 1, pageSize: 20, total: items.length })
+  }
+  if (path.endsWith('/imaging-services')) return Response.json({ items: [{ available: true, service: imagingService }] })
+  if (path.endsWith('/pathology-services')) return Response.json({ items: [{ available: true, service: pathologyService, sourceProcedures }] })
   if (path.endsWith('/diagnosis/draft')) {
     const saved = saveDiagnosisDraftRequestSchema.parse(JSON.parse(String(init?.body))).input
     const draftVersion = (detail.diagnosis?.draftVersion ?? 0) + 1

@@ -74,8 +74,9 @@ describe('Reference Data database CLI', () => {
         '0008_laboratory-metadata.sql',
         '0009_laboratory-reference-relationships.sql',
         '0010_structured-laboratory-definition.sql',
+        '0011_offline-reference-inventory.sql',
       ],
-      schemaVersion: 10,
+      schemaVersion: 11,
     })
     const imported = await runReferenceDatabaseCli([
       'import', '--database', databasePath, '--manifest', manifestPath,
@@ -89,7 +90,7 @@ describe('Reference Data database CLI', () => {
     expect(imported).toHaveProperty('contentHash', expect.stringMatching(/^[a-f0-9]{64}$/))
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 10 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 11 })
     await expect(runReferenceDatabaseCli([
       'list', '--database', databasePath,
     ])).resolves.toEqual({ items: [expect.objectContaining({
@@ -257,7 +258,7 @@ describe('Reference Data database CLI', () => {
     })
     await expect(runReferenceDatabaseCli([
       'verify', '--database', databasePath,
-    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 10 })
+    ])).resolves.toMatchObject({ integrity: 'ok', releaseCount: 1, schemaVersion: 11 })
 
     const tampered = openReferenceDatabase({ busyTimeoutMs: 5_000, databasePath })
     tampered.driver.prepare(`
@@ -402,6 +403,14 @@ describe('Reference Data database CLI', () => {
       applied: ['0010_structured-laboratory-definition.sql'],
       schemaVersion: 10,
     })
+    await copyFile(
+      join(sourceMigrationDirectory, '0011_offline-reference-inventory.sql'),
+      join(migrationDirectory, '0011_offline-reference-inventory.sql'),
+    )
+    expect(applyReferenceMigrations(database, migrationDirectory)).toEqual({
+      applied: ['0011_offline-reference-inventory.sql'],
+      schemaVersion: 11,
+    })
     expect(database.driver.pragma('foreign_key_check')).toEqual([])
     for (const table of [
       'reference_concept',
@@ -419,7 +428,7 @@ describe('Reference Data database CLI', () => {
     expect(verifyReferenceDatabase(database)).toEqual({
       integrity: 'ok',
       releaseCount: 1,
-      schemaVersion: 10,
+      schemaVersion: 11,
     })
     expect(listReferenceDataReleases(database).items[0]).toMatchObject({
       contentHash: oldContentHash,
