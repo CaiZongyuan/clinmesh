@@ -83,7 +83,7 @@ function SurfaceAgentBinding({
   navigate,
   session,
 }: {
-  activeSection: AppSection
+  activeSection: Exclude<AppSection, 'modelUsage'>
   navigate: ReturnType<typeof useNavigate>
   session: SessionContext
 }): null {
@@ -196,11 +196,11 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       signOutPending={signOutRequest.isPending}
       theme={preferences.theme}
     >
-      <SurfaceAgentBinding
+      {effectiveSection === 'modelUsage' ? null : <SurfaceAgentBinding
         activeSection={effectiveSection}
         navigate={navigate}
         session={session.data}
-      />
+      />}
       {roleChange.isError ? (
         <Alert variant="destructive">
           <CircleAlertIcon aria-hidden="true" />
@@ -218,6 +218,7 @@ function WorkspacePage({ activeSection }: { activeSection: AppSection }): React.
       {isSettingsSection(effectiveSection) ? (
         <SettingsWorkspace
           activeSection={effectiveSection}
+          session={session.data}
           fontSize={preferences.fontSize}
           locale={preferences.locale}
           onFontSizeChange={fontSize => setPreferences(current => ({ ...current, fontSize }))}

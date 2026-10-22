@@ -10,7 +10,7 @@ import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './f
 import type { JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { z } from 'zod'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
-import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
+import { encodeModelRoute, modelBridgeErrorSchema, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import type { JsonChatCompletionResult } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
@@ -18,12 +18,14 @@ import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
 import { installSyntheticPathologySlides } from './fixtures/pathology-catalog.ts'
 import { breastCaseBundle } from './fixtures/pathology-scenario.ts'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
+import { modelUsageControlSchema, modelUsageListSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
+import { setModelControl } from './fixtures/model-control.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
 
 type Complete = (input: Parameters<JsonChatCompletionsProvider['completeJson']>[0]) => Promise<JsonChatCompletionResult | Response>
-async function setup(complete?: Complete, options: { syntheaProvider?: StubSyntheaProvider; route?: () => string; timeoutMs?: number; referenceDiagnoses?: boolean } = {}) {
+async function setup(complete?: Complete, options: { syntheaProvider?: StubSyntheaProvider; route?: () => string; timeoutMs?: number; referenceDiagnoses?: boolean; deploymentAutomaticRetries?: boolean } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-recommendations-'))
   disposals.push(() => rm(directory, { recursive: true, force: true }))
   const bridge = { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: options.timeoutMs ?? 1000, maxResponseBytes: 256 * 1024 }
@@ -35,20 +37,31 @@ async function setup(complete?: Complete, options: { syntheaProvider?: StubSynth
     ...(referenceDatabasePath === undefined ? {} : { referenceDatabasePath }),
     databasePath: join(directory, 'clinmesh.sqlite'), demoPassword: 'Synthetic-Demo-Password-2026!',
     migrationMode: 'apply', outboxRetryDelayMs: 0,
+    ...(options.deploymentAutomaticRetries === undefined ? {} : {
+      modelUsageControl: { enabled: true, requests: null, automaticRetries: options.deploymentAutomaticRetries },
+    }),
     imagingAssetDirectory: join(directory, 'imaging-assets'), imagingCatalogDirectory: join(directory, 'imaging-catalog'),
     pathologyAssetDirectory: join(directory, 'pathology-assets'), pathologyCatalogDirectory: join(directory, 'pathology-catalog'),
     dshModelBridge: bridge,
     chatCompletionsProvider: new DshModelProvider({ ...bridge, fetch: async (_url, init) => {
         const input = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
         if (input.operation === 'resolve') return Response.json({ model: options.route?.() ?? route })
-        if (input.schemaName === 'patient_persona') return Response.json({ content: JSON.stringify(persona), model: input.model })
+        const completed = (result: JsonChatCompletionResult) => Response.json({ ...result, model: input.model,
+          ...(input.attemptId === undefined ? {} : { accounting: { attemptId: input.attemptId,
+            status: 'succeeded', dispatch: 'dispatched', usage: unknownModelTokenUsage } }) })
+        if (input.schemaName === 'patient_persona') return completed({ content: JSON.stringify(persona), model: input.model })
         if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {
           const payload = z.object({ agentFacts: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
-          return Response.json({ content: JSON.stringify({ issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }), model: input.model })
+          return completed({ content: JSON.stringify({ issues: [], agentFactChecks: payload.agentFacts.map(fact => ({ id: fact.id, supported: true })) }), model: input.model })
         }
         if (complete !== undefined) {
           const result = await complete({ ...input, ...(init?.signal == null ? {} : { signal: init.signal }) })
-          return result instanceof Response ? result : Response.json({ ...result, model: input.model })
+          if (!(result instanceof Response)) return completed(result)
+          const failure = modelBridgeErrorSchema.parse(await result.json())
+          return Response.json({ ...failure, ...(input.attemptId === undefined ? {} : {
+            accounting: { attemptId: input.attemptId, status: failure.error === 'MODEL_TIMEOUT' ? 'unknown' : 'failed',
+              dispatch: 'dispatched', usage: unknownModelTokenUsage },
+          }) }, { status: result.status })
         }
         throw new Error('This read must not generate suggestions')
       } }),
@@ -72,10 +85,10 @@ async function setup(complete?: Complete, options: { syntheaProvider?: StubSynth
     expect(response.status, JSON.stringify(body)).toBe(200)
     return doctorRecommendationStateSchema.parse(body)
   }
-  const generate = async (kind = 'diagnosis', refresh = false, continueGeneration?: number) => {
+  const generate = async (kind = 'diagnosis', refresh = false, continueGeneration?: number, intentKey = randomUUID()) => {
     const state = await read(kind)
     return runtime.app.request(`${path(kind)}/actions/generate`, {
-      method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': intentKey },
       body: JSON.stringify({ expectedVersions: { [`Encounter/${state.encounterId}`]: state.encounterVersion },
         input: { expectedInputFingerprint: state.inputFingerprint, refresh,
           ...(continueGeneration === undefined ? {} : { continueGeneration }) } }),
@@ -171,6 +184,180 @@ function verificationOutput(input: Parameters<JsonChatCompletionsProvider['compl
     guidelineSupported: true, caseSupported: true, applicable: true, qualifiersPreserved: true,
   })) }
 }
+
+it('preserves a blocked format-repair kind and its spent request across restart', async () => {
+  let disableRetries = async () => {}
+  let generationRequests = 0
+  let verificationRequests = 0
+  const f = await setup(async input => {
+    if (input.schemaName === 'doctor_recommendations') {
+      if (++generationRequests === 1) {
+        await disableRetries()
+        return { model: input.model, content: '{}' }
+      }
+      return { model: input.model, content: JSON.stringify(diagnosisOutput(input)) }
+    }
+    verificationRequests++
+    return { model: input.model, content: JSON.stringify(verificationOutput(input)) }
+  })
+  await f.runtime.dispatchPending()
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  disableRetries = async () => { await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false }) }
+  expect((await f.generate()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'pending', recovery: { requestCount: 1 } })
+  await f.restart()
+  await f.runtime.dispatchPending()
+  expect({ generationRequests, verificationRequests }).toEqual({ generationRequests: 1, verificationRequests: 0 })
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: true })
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', recovery: { requestCount: 3, extraRequestCount: 1 } })
+  expect({ generationRequests, verificationRequests }).toEqual({ generationRequests: 2, verificationRequests: 1 })
+})
+
+it.each(['workspace', 'deployment'] as const)('allows one explicit continuation with %s automatic retries disabled and retains the original request budget', async scope => {
+  let generations = 0
+  let verifications = 0
+  const f = await setup(async input => {
+    if (input.schemaName === 'doctor_recommendations') {
+      generations++
+      return { model: input.model, content: generations === 1 ? '{}' : JSON.stringify(diagnosisOutput(input)) }
+    }
+    verifications++
+    return { model: input.model, content: JSON.stringify(verificationOutput(input)) }
+  }, { deploymentAutomaticRetries: scope !== 'deployment' })
+  await f.runtime.dispatchPending()
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: scope !== 'workspace' })
+  expect((await f.generate()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  const first = await f.read()
+  expect(first).toMatchObject({ status: 'pending', recovery: { requestCount: 1, canContinue: true } })
+  expect(generations).toBe(1)
+  const waiting = async () => modelUsageControlSchema.parse(await (await f.runtime.app.request('/api/model-usage/control',
+    { headers: { cookie: admin } })).json()).waiting
+  expect(await waiting()).toBe(1)
+  expect((await f.generate('diagnosis', false, first.generation)).status).toBe(200)
+  await f.restart()
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ generation: first.generation, status: 'ready',
+    recovery: { requestCount: 3, extraRequestCount: 1 } })
+  expect({ generations, verifications }).toEqual({ generations: 2, verifications: 1 })
+  expect(await waiting()).toBe(0)
+  const ledger = modelUsageListSchema.parse(await (await f.runtime.app.request('/api/model-usage/requests?feature=doctor_recommendations',
+    { headers: { cookie: admin } })).json())
+  expect(ledger.items.map(item => item.kind).toSorted()).toEqual(['format-repair', 'initial'])
+})
+
+it.each(['disabled', 'quota'] as const)('keeps an unused continuation across a %s refusal, duplicate intent and restart', async refusal => {
+  let generations = 0
+  const f = await setup(async input => ({ model: input.model, content: input.schemaName === 'doctor_recommendations'
+    ? ++generations <= 2 ? '{}' : JSON.stringify(diagnosisOutput(input)) : JSON.stringify(verificationOutput(input)) }))
+  await f.runtime.dispatchPending()
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await f.generate()
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'pending', recovery: { requestCount: 1, canContinue: true } })
+  const intent = randomUUID()
+  expect((await f.generate('diagnosis', false, 1, intent)).status).toBe(200)
+  await setModelControl(f.runtime, admin, { enabled: refusal !== 'disabled', requests: refusal === 'quota' ? 0 : null, automaticRetries: false })
+  await f.runtime.dispatchPending()
+  expect(generations).toBe(1)
+  expect(await f.read()).toMatchObject({ recovery: { requestCount: 1, canContinue: false } })
+  await f.restart()
+  expect((await f.generate('diagnosis', false, 1, intent)).status).toBe(200)
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await f.runtime.dispatchPending()
+  expect(generations).toBe(2)
+  expect(await f.read()).toMatchObject({ generation: 1, status: 'pending', recovery: { requestCount: 2, extraRequestCount: 1, canContinue: true } })
+  expect((await f.generate('diagnosis', false, 1, intent)).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(generations).toBe(2)
+})
+
+it('continues an unknown format repair with retries off without resetting its spent budget', async () => {
+  let generations = 0
+  const f = await setup(async input => {
+    if (input.schemaName === 'doctor_recommendations') {
+      generations++
+      if (generations === 2) throw new TypeError('Synthetic repair transport disconnected')
+      return { model: input.model, content: generations === 1 ? '{}' : JSON.stringify(diagnosisOutput(input)) }
+    }
+    throw new Error('The original per-unit budget must stop verification')
+  })
+  await f.runtime.dispatchPending()
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  const policy = await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: true })
+  await setModelControl(f.runtime, admin, { enabled: true, requests: policy.workspace.used + 1, automaticRetries: true })
+  await f.generate()
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'pending', recovery: { requestCount: 1 } })
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: true })
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'failed', recovery: { status: 'unknown', requestCount: 2, canContinue: true } })
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  expect((await f.generate('diagnosis', false, 1)).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(generations).toBe(3)
+  expect(await f.read()).toMatchObject({ generation: 1, errorCode: 'MODEL_REQUEST_LIMIT',
+    recovery: { status: 'exhausted', requestCount: 3, extraRequestCount: 2, canContinue: false,
+      units: expect.arrayContaining([expect.objectContaining({ stage: 'generation', status: 'succeeded', requestCount: 3 })]) } })
+})
+
+it('resumes an authorized batch after quota recovery while its sibling remains unknown', async () => {
+  let failing = true
+  let sent = 0
+  const f = await setup(async input => {
+    expect(input.schemaName).toBe('doctor_recommendation_history_selection')
+    sent++
+    if (failing) throw new TypeError('Synthetic concurrent selection disconnected')
+    return { model: input.model, content: JSON.stringify({ complete: true, selectedEvidenceIds: [] }) }
+  }, { syntheaProvider: heavyRequiredHistory({ procedures: 0, observations: 30, keepRepeat: 2200 }) })
+  await f.runtime.dispatchPending()
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await f.generate()
+  await f.runtime.dispatchPending()
+  expect(sent).toBe(2)
+  expect((await f.read()).recovery?.units.filter(unit => unit.status === 'unknown')).toHaveLength(2)
+  expect((await f.generate('diagnosis', false, 1)).status).toBe(200)
+  await setModelControl(f.runtime, admin, { enabled: true, requests: 0, automaticRetries: false })
+  await f.runtime.dispatchPending()
+  expect(sent).toBe(2)
+  expect((await f.read()).recovery).toMatchObject({ requestCount: 2, canContinue: false })
+  await f.restart()
+  failing = false
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await f.runtime.dispatchPending()
+  const resumed = (await f.read()).recovery!
+  expect(sent).toBe(3)
+  expect(resumed).toMatchObject({ status: 'unknown', requestCount: 3, extraRequestCount: 1, canContinue: true })
+  expect(resumed.units.filter(unit => unit.status === 'succeeded')).toHaveLength(1)
+  expect(resumed.units.filter(unit => unit.status === 'unknown')).toHaveLength(1)
+})
+
+it('resumes a quota-blocked verification after restart without repeating a successful generation when automatic retries are off', async () => {
+  const stages: string[] = []
+  const f = await setup(async input => {
+    stages.push(input.schemaName)
+    return { model: input.model, content: JSON.stringify(input.schemaName === 'doctor_recommendations'
+      ? diagnosisOutput(input) : verificationOutput(input)) }
+  })
+  await f.runtime.dispatchPending()
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  const policy = await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await setModelControl(f.runtime, admin, { enabled: true, requests: policy.workspace.used + 1, automaticRetries: false })
+  expect((await f.generate()).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'pending', recovery: { requestCount: 1 } })
+  expect(stages).toEqual(['doctor_recommendations'])
+  await f.restart()
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready', recovery: { requestCount: 2, extraRequestCount: 0 } })
+  expect(stages).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+})
 
 it('keeps a case-supported diagnostic direction read-only when only guideline support is absent', async () => {
   const fixture = await setup(async input => ({ model: input.model, content: JSON.stringify(input.schemaName === 'doctor_recommendations'
@@ -997,11 +1184,16 @@ it.each(['missing', 'duplicate', 'wrong-id', 'missing-prescription-fields'])('re
     recovery: { status: 'exhausted', requestCount: 4, extraRequestCount: 2, canContinue: false,
       units: [expect.objectContaining({ stage: 'generation', status: 'succeeded', requestCount: 1 }),
         expect.objectContaining({ stage: 'verification', status: 'failed', requestCount: 3 })] } })
+  const usage = modelUsageListSchema.parse(await (await fixture.runtime.app.request(
+    '/api/model-usage/requests?feature=doctor_recommendation_verification', { headers: { cookie: fixture.cookie } },
+  )).json()).items.toReversed()
+  expect(usage.map(attempt => attempt.kind)).toEqual(['initial', 'format-repair', 'format-repair'])
+  expect(new Set(usage.map(attempt => attempt.context.taskId)).size).toBe(1)
 })
 
 it.each([
   ['MODEL_AUTH_FAILED', 401, 'MODEL_AUTH_FAILED', 1],
-  ['MODEL_TIMEOUT', 504, 'MODEL_TIMEOUT', 1],
+  ['MODEL_TIMEOUT', 504, 'MODEL_OUTCOME_UNKNOWN', 1],
   ['MODEL_UNAVAILABLE', 503, 'MODEL_REQUEST_LIMIT', 3],
 ] as const)('settles a host %s failure within its budget and requires explicit regeneration for a new generation', async (code, status, errorCode, attempts) => {
   let failing = true
@@ -1015,7 +1207,7 @@ it.each([
   expect((await fixture.generate()).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect(await fixture.read()).toMatchObject({ generation: 1, status: 'failed', errorCode, items: [],
-    recovery: { status: attempts === 3 ? 'exhausted' : 'failed', requestCount: attempts,
+    recovery: { status: attempts === 3 ? 'exhausted' : code === 'MODEL_TIMEOUT' ? 'unknown' : 'failed', requestCount: attempts,
       extraRequestCount: attempts - 1, canContinue: attempts < 3 } })
   expect(generationRequests).toBe(attempts)
   failing = false
@@ -1049,6 +1241,11 @@ it('keeps one pinned model during automatic retries and binds the current model 
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).status).toBe('ready')
   expect(models).toEqual([first, first, first, second, second])
+  const usage = modelUsageListSchema.parse(await (await fixture.runtime.app.request(
+    '/api/model-usage/requests?limit=100', { headers: { cookie: fixture.cookie } },
+  )).json()).items.filter(attempt => attempt.feature === 'doctor_recommendations' || attempt.feature === 'doctor_recommendation_verification')
+  expect(usage.filter(attempt => attempt.requestedModel === first).map(attempt => attempt.context.trigger)).toEqual(['automatic', 'automatic', 'automatic'])
+  expect(usage.filter(attempt => attempt.requestedModel === second).map(attempt => attempt.context.trigger)).toEqual(['manual', 'manual'])
 })
 
 it('restores queued recommendations from file-backed SQLite after runtime restart', async () => {
@@ -1092,9 +1289,22 @@ it('requires explicit continuation after an in-flight shutdown and keeps the ori
   await fixture.runtime.dispatchPending()
   expect(models).toEqual([first])
   expect((await fixture.generate('diagnosis', false, 1)).status).toBe(200)
+  await fixture.restart()
   await fixture.runtime.dispatchPending()
   expect(await fixture.read()).toMatchObject({ status: 'ready', generation: 1 })
   expect(models).toEqual([first, first, first])
+  const usageResponse = await fixture.runtime.app.request('/api/model-usage/requests?limit=100', { headers: { cookie: fixture.cookie } })
+  expect(usageResponse.status).toBe(200)
+  const attempts = modelUsageListSchema.parse(await usageResponse.json()).items
+    .filter(attempt => attempt.feature === 'doctor_recommendations' || attempt.feature === 'doctor_recommendation_verification')
+  expect(attempts).toHaveLength(3)
+  expect(attempts.filter(attempt => attempt.context.trigger === 'automatic')).toHaveLength(1)
+  const continued = attempts.filter(attempt => attempt.context.trigger === 'manual')
+  expect(continued).toHaveLength(2)
+  expect(new Set(attempts.map(attempt => attempt.context.taskId)).size).toBe(1)
+  const jobs = continued.map(attempt => attempt.context.sources.find(source => source.kind === 'job' && source.relationship === 'trigger')?.id)
+  expect(jobs[0]).toBeTypeOf('string')
+  expect(jobs[1]).toBe(jobs[0])
 })
 
 it('marks old suggestions stale when the actual diagnosis catalog changes and rejects the previous fingerprint', async () => {
@@ -1648,8 +1858,8 @@ it.each(['incomplete', 'foreign-id', 'provider-error', 'timeout'])('does not gen
   await fixture.runtime.dispatchPending()
   expect(await fixture.read()).toMatchObject(failure === 'incomplete'
     ? { status: 'missing-evidence', items: [], missingInformation: [expect.stringContaining('完整读取')] }
-    : { status: 'failed', items: [], errorCode: failure === 'timeout' ? 'MODEL_TIMEOUT' : 'MODEL_REQUEST_LIMIT',
-      recovery: { status: failure === 'timeout' ? 'failed' : 'exhausted' } })
+    : { status: 'failed', items: [], errorCode: failure === 'timeout' ? 'MODEL_OUTCOME_UNKNOWN' : 'MODEL_REQUEST_LIMIT',
+      recovery: { status: failure === 'timeout' ? 'unknown' : 'exhausted' } })
   expect(requests.length).toBeGreaterThan(0)
   expect(requests.every(name => name === 'doctor_recommendation_history_selection')).toBe(true)
   expect(await fixture.readCase()).toEqual(before)
@@ -1672,6 +1882,10 @@ it('exhausts the shared request budget on rate limits and preserves clinical dra
   await fixture.runtime.dispatchPending()
   expect(requests).toBe(3)
   expect(await fixture.readCase()).toEqual(before)
+  const usage = modelUsageListSchema.parse(await (await fixture.runtime.app.request(
+    '/api/model-usage/requests?feature=doctor_recommendations', { headers: { cookie: fixture.cookie } },
+  )).json()).items.toReversed()
+  expect(usage.map(attempt => attempt.kind)).toEqual(['initial', 'rate-limit-retry', 'rate-limit-retry'])
 })
 
 it.each(['legacy-format', 'foreign-case-reference'] as const)('independently checks read-only case reasoning with the supplied reference schema when no guideline is acquired (%s)', async failure => {

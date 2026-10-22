@@ -1,6 +1,6 @@
 import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { serviceCatalogSearchSchema } from '@clinmesh/contracts/his'
-import { applyMigrations, canonicalStateHash, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
+import { applyMigrations, canonicalStateHash, expectedSchemaVersion, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { dispenseResponseSchema, prescriptionReviewResponseSchema, pharmacyQueueSchema, registrationResponseSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
 import { inpatientPharmacySchema, inpatientPharmacyListSchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
@@ -517,7 +517,13 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       }
       legacy.driver.exec('COMMIT');legacy.driver.exec('DETACH DATABASE captured');legacy.driver.pragma('foreign_keys = ON')
       expect(legacy.driver.pragma('foreign_key_check')).toEqual([])
-      expect(applyMigrations(legacy)).toMatchObject({applied:['0069_registration-numbering.sql','0070_doctor-recommendation-consolidation-stage.sql','0070_inpatient-orders.sql','0071_inpatient-investigations-transfer.sql','0071_payment-installments.sql','0072_inpatient-surgery.sql','0072_payment-history-pagination.sql','0073_inpatient-discharge.sql','0074_inpatient-record.sql'],schemaVersion:86})
+      expect(applyMigrations(legacy)).toMatchObject({applied:[
+        '0069_registration-numbering.sql', '0070_doctor-recommendation-consolidation-stage.sql', '0070_inpatient-orders.sql',
+        '0071_inpatient-investigations-transfer.sql', '0071_model-usage.sql', '0071_payment-installments.sql',
+        '0072_inpatient-surgery.sql', '0072_model-usage-control.sql', '0072_payment-history-pagination.sql',
+        '0073_inpatient-discharge.sql', '0073_model-task-recovery.sql', '0074_host-model-waiting.sql', '0074_inpatient-record.sql',
+        '0075_model-usage-dimensions.sql', '0076_model-usage-retention.sql', '0077_model-usage-token-breakdown.sql',
+      ],schemaVersion:expectedSchemaVersion()})
       expect(legacy.driver.prepare('SELECT prescription_id,inpatient_dispense_id,quantity FROM inventory_movement WHERE movement_id=?').get('legacy-movement')).toEqual({prescription_id:outpatient.id,inpatient_dispense_id:null,quantity:3})
       expect(legacy.driver.prepare('SELECT amount_fen FROM inpatient_charge WHERE admission_id=?').get(s.admission.id)).toEqual({amount_fen:5000})
       expect(legacy.driver.prepare("SELECT COUNT(*) count FROM fhir_history WHERE resource_type='MedicationRequest' AND resource_id='synthetic-outpatient-medication-request'").get()).toEqual({count:1})

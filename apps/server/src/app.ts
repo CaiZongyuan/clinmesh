@@ -7,6 +7,10 @@ import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema,
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
+import { installHostModelUsageRoutes } from './model-usage-host-routes.ts'
+import { modelUsageFilterSchema, modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema, modelUsageRetentionUpdateSchema } from '@clinmesh/contracts/model-usage'
+import { ModelUsagePolicyError } from './application/model-usage-control.ts'
+import type { ModelUsageService } from './application/model-usage-service.ts'
 import { extname } from 'node:path'
 import type { HealthResponse } from '@clinmesh/contracts/health'
 import { syntheticCaseRegistrationListInputSchema } from '@clinmesh/contracts/his-operations'
@@ -148,6 +152,8 @@ interface FhirRuntime {
 }
 
 export interface CreateAppOptions {
+  dshBridgeSecret?: string
+  modelUsage?: ModelUsageService
   inpatient?: InpatientService
   commandEvents?: Pick<CommandExecutor, 'subscribe'>
   recordingUpdatesSignal?: AbortSignal
@@ -236,8 +242,9 @@ function apiErrorResponse(
     return invalidInputResponse(context, invalidInputMessage)
   }
     if (
-      error instanceof InpatientError
-      || error instanceof IdentityError
+      error instanceof IdentityError
+      || error instanceof ModelUsagePolicyError
+      || error instanceof InpatientError
       || error instanceof AgentIntegrationError
       || error instanceof ConsultationDialogueError
       || error instanceof LaboratoryServicePublisherError
@@ -397,8 +404,79 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     return context.json(response)
   })
 
+  if (options.modelUsage !== undefined && options.agentIntegration !== undefined && options.dshBridgeSecret !== undefined) {
+    installHostModelUsageRoutes(app, options.modelUsage, options.agentIntegration, options.dshBridgeSecret)
+  }
+
   if (options.identity !== undefined) {
     const identity = options.identity
+    if (options.modelUsage !== undefined) {
+      const usage = options.modelUsage
+      app.get('/api/model-usage/retention', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.retention(session.actor.workspaceId))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.put('/api/model-usage/retention', async context => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.updateRetention(session.actor, modelUsageRetentionUpdateSchema.parse(await context.req.json()), requestIdempotencyKey(context)))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.get('/api/model-usage/pricing', async context => {
+        try {
+          await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.pricing())
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      for (const operation of ['reconcile', 'reprice'] as const) {
+        app.post(`/api/model-usage/requests/:attemptId/${operation}`, async context => {
+          try {
+            identity.assertTrustedMutation(context.req.raw.headers)
+            const session = await identity.resolveSessionContext(context.req.raw.headers)
+            const id = z.uuid().parse(context.req.param('attemptId'))
+            const body: unknown = await context.req.json()
+            return context.json(operation === 'reconcile'
+              ? usage.reconcile(session.actor, id, modelUsageReconcileSchema.parse(body), requestIdempotencyKey(context))
+              : usage.reprice(session.actor, id, modelUsageRepriceSchema.parse(body), requestIdempotencyKey(context)))
+          } catch (error) { return apiErrorResponse(context, error) }
+        })
+      }
+      app.get('/api/model-usage/control', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.controlFor(session.actor))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.put('/api/model-usage/control', async context => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.updateControl(session.actor, modelUsageControlUpdateSchema.parse(await context.req.json()), requestIdempotencyKey(context)))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.get('/api/model-usage/overview', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.overview(session.actor, modelUsageFilterSchema.parse(context.req.query())))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.get('/api/model-usage/requests', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          return context.json(usage.list(session.actor, modelUsageFilterSchema.parse(context.req.query())))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.get('/api/model-usage/requests/:attemptId', async context => {
+        try {
+          const session = await identity.resolveSessionContext(context.req.raw.headers)
+          const record = usage.detail(session.actor, z.string().uuid().parse(context.req.param('attemptId')))
+          return record === undefined ? context.json(apiErrorBody(context, 'NOT_FOUND', 'The model request was not found'), 404) : context.json(record)
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+    }
     app.post('/api/auth/sign-up/email', context => context.json(apiErrorBody(
       context,
       'PUBLIC_SIGN_UP_DISABLED',

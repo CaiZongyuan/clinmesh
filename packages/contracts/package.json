@@ -8,6 +8,8 @@
     "./fhir": "./src/fhir.ts",
     "./health": "./src/health.ts",
     "./model-bridge": "./src/model-bridge.ts",
+    "./model-usage": "./src/model-usage.ts",
+    "./model-pricing": "./src/model-pricing.ts",
     "./doctor-recommendations": "./src/doctor-recommendations.ts",
     "./his": "./src/his.ts",
     "./inpatient-record": "./src/inpatient-record.ts",

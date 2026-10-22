@@ -8,6 +8,7 @@ import { WebApp, type WebRuntimeOptions } from './web-app.tsx'
 import { agentToolsForContext } from '@clinmesh/contracts/agent'
 import { getRegistrationQueue } from './api-client.ts'
 import type { WebSurfaceAgentController, WebSurfaceAgentTool, WebSurfaceNavigationState } from './web-runtime.tsx'
+import { usageOverview } from './model-usage.test-fixture.ts'
 
 const registrarSession = {
   actor: {
@@ -181,6 +182,28 @@ describe('Web application shell', () => {
     expect(screen.queryByRole('img', { name: 'Clinmesh' })).toBeNull()
   })
 
+  it('opens model usage from Settings and registers the same entry for the Surface', async () => {
+    const initialFetch = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async input => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/model-usage/overview') return Response.json(usageOverview)
+      if (path === '/api/model-usage/requests') return Response.json({ items: [], total: 0 })
+      return initialFetch(input)
+    })
+    const user = userEvent.setup()
+    const rendered = await renderWebApp({ history: createMemoryHistory({ initialEntries: ['/settings'] }) })
+    await user.click(screen.getByRole('link', { name: '模型用量' }))
+    await screen.findByRole('heading', { name: '模型用量', level: 1 })
+    expect(screen.getByRole('tab', { name: '用量总览' }).getAttribute('aria-selected')).toBe('true')
+    rendered.unmount()
+    const register = vi.fn((_state: WebSurfaceNavigationState) => vi.fn())
+    await renderWebApp({ history: createMemoryHistory({ initialEntries: ['/settings/model-usage'] }),
+      runtime: { mode: 'surface', surfaceNavigation: { register } } })
+    await screen.findByRole('region', { name: '已派发请求' })
+    expect(register.mock.lastCall?.[0].items).toContainEqual({ label: '模型用量', path: '/settings/model-usage' })
+    expect(register.mock.lastCall?.[0].activePath).toBe('/settings/model-usage')
+  })
+
   it('places the Surface display control in the existing header without an inner sidebar', async () => {
     const toggle = vi.fn()
     const user = userEvent.setup()
@@ -244,7 +267,7 @@ describe('Web application shell', () => {
     await waitFor(() => expect(register).toHaveBeenCalled())
     const navigation = register.mock.lastCall?.[0]
     if (!navigation) throw new Error('Missing host navigation')
-    expect(navigation.items.map(item => item.label)).toEqual(['门诊挂号', 'UI 组件'])
+    expect(navigation.items.map(item => item.label)).toEqual(['门诊挂号', '模型用量', 'UI 组件'])
     expect(navigation.activePath).toBe('/registration')
     await act(() => navigation.navigate('/settings'))
     expect(history.location.pathname).toBe('/registration')
@@ -310,13 +333,13 @@ describe('Web application shell', () => {
       runtime: { mode: 'surface', surfaceNavigation: { register } },
     })
     expect(register.mock.lastCall?.[0].items.map(item => item.path)).toEqual([
-      '/scenario-data', '/settings/developer/components',
+      '/scenario-data', '/settings/model-usage', '/settings/developer/components',
     ])
     await user.click(screen.getByRole('button', { name: '用户菜单' }))
     await user.click(await screen.findByRole('menuitemradio', { name: '挂号员' }))
     await screen.findByRole('heading', { name: '门诊挂号', level: 1 })
     expect(register.mock.lastCall?.[0].items.map(item => item.path)).toEqual([
-      '/registration', '/settings/developer/components',
+      '/registration', '/settings/model-usage', '/settings/developer/components',
     ])
     const latestRelease = register.mock.results.at(-1)?.value
     await user.click(screen.getByRole('button', { name: '用户菜单' }))

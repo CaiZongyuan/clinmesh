@@ -6,7 +6,7 @@ import type { PostToolDecision, ToolExecution, ToolExecutionResult } from '@deep
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseAgentExecutionProof, signAgentExecutionProof } from './execution-proof.ts'
 import { installAgentProofBridge } from './agent-proof-bridge.ts'
-import { doctorInputPermit } from './doctor-input-fixture.ts'
+import { doctorInputPermit, syntheticHostUsageControl, syntheticRecognitionLlm } from './doctor-input-fixture.ts'
 
 const secret = 'test-bridge-secret-with-at-least-32-characters'
 const original = { scopeKey: 'scope', pageRevision: '["record",null]' }
@@ -38,15 +38,15 @@ function fixture(timeoutMs = 30_000, initial = original) {
     },
     effect: (factory: () => (() => void)) => { disposers.push(factory()) },
     tools: { get: (name: string) => schemas.find(tool => tool.name === name), schemas: () => schemas },
-    llm: { async *stream() {
-      yield { type: 'text-delta', text: '{"intent":"discuss","evidence":""}' }
+    llm: syntheticRecognitionLlm(async function* () {
+      yield { type: 'text-delta', index: 0, text: '{"intent":"discuss","evidence":""}' }
       yield { type: 'finish', reason: { kind: 'stop' } }
-    } },
+    }),
     webServer: { register: (route: { path: string; handler: HostRoute }) => {
       routes.set(route.path, route.handler); return () => { routes.delete(route.path) }
     } },
   }
-  installAgentProofBridge(ctx as unknown as Context, secret, { handoffTimeoutMs: timeoutMs })
+  installAgentProofBridge(ctx as unknown as Context, secret, { ...syntheticHostUsageControl, handoffTimeoutMs: timeoutMs })
   function startRequest(path: string, body: unknown) {
     const route = routes.get(path)
     expect(route, `registered ${path}`).toBeDefined()

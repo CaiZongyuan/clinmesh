@@ -1,5 +1,9 @@
+import { ModelTaskRecovery, modelControlWaitingCount } from './application/model-task-recovery.ts'
 import { InpatientService } from './application/inpatient-service.ts'
 import { createApp } from './app.ts'
+import { ModelUsageService } from './application/model-usage-service.ts'
+import type { ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
+import type { ModelPricingConfig } from '@clinmesh/contracts/model-pricing'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
 import { ScenarioService } from './application/scenario-service.ts'
@@ -121,6 +125,8 @@ function pathologyActorContext(event: {
 }
 
 export interface CreateClinMeshRuntimeOptions {
+  modelUsageControl?: ModelUsagePolicyConfig
+  modelPricing?: ModelPricingConfig
   dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   activeReferenceReleaseId?: string
   ai?: {
@@ -221,7 +227,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const patientPersonas = new PatientPersonaRepository(database, syntheticCases)
     const investigationResults = new InvestigationResultRepository(database)
     const laboratoryServicePublications = new LaboratoryServicePublicationRepository(database)
-    const chatCompletions = options.chatCompletionsProvider
+    const modelUsage = new ModelUsageService(database, commands, options.modelUsageControl, options.modelPricing)
+    const unaccountedChatCompletions: JsonChatCompletionsProvider | undefined = options.chatCompletionsProvider
       ?? (options.dshModelBridge === undefined ? undefined : new DshModelProvider(options.dshModelBridge))
       ?? (options.ai === undefined
         ? undefined
@@ -231,6 +238,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
             maxResponseBytes: options.ai.maxResponseBytes,
             timeoutMs: options.ai.timeoutMs,
           }))
+    const chatCompletions: JsonChatCompletionsProvider | undefined = unaccountedChatCompletions === undefined ? undefined : {
+      ...(unaccountedChatCompletions.supportsUsageAccounting === undefined ? {} : { supportsUsageAccounting: unaccountedChatCompletions.supportsUsageAccounting }),
+      ...(unaccountedChatCompletions.supportsRequestControl === undefined ? {} : { supportsRequestControl: unaccountedChatCompletions.supportsRequestControl }),
+      ...(unaccountedChatCompletions.resolveModel === undefined ? {} : { resolveModel: (model, signal) => unaccountedChatCompletions.resolveModel!(model, signal) }),
+      completeJson: input => modelUsage.run(input.usageContext?.workspaceId ?? 'workspace-demo', input.signal,
+        signal => unaccountedChatCompletions.completeJson({ ...input, signal, usageRecorder: modelUsage })),
+    }
+    const modelTasks = new ModelTaskRecovery(database, modelUsage, unaccountedChatCompletions instanceof DshModelProvider)
+    const recoverableChatCompletions = chatCompletions === undefined ? undefined : modelTasks.provider(chatCompletions)
     const hostModel = options.dshModelBridge === undefined ? undefined : dshDefaultModel
     const models = new GenerationModelBinding(database, chatCompletions)
     const patientPersonaModel = hostModel ?? options.patientPersonaModel ?? options.ai?.briefModel
@@ -245,7 +261,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       database,
       ...(investigationModel === undefined ? {} : { model: investigationModel }),
       profiles: syntheticPatientProfiles,
-      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
       results: investigationResults,
     })
     const workflow = new WorkflowService(database, fhir, commands, {
@@ -260,11 +276,13 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
+      canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
+      contextStatus: context => identity.modelTaskContextStatus(context, ['admin.laboratory-services.publish']),
       models,
       commands,
       database,
       ...(catalogEnrichmentModel === undefined ? {} : { model: catalogEnrichmentModel }),
-      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
       publications: laboratoryServicePublications,
       referenceData,
     })
@@ -294,13 +312,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     patientPersonas.requeueInterrupted(new Date().toISOString())
     laboratoryServicePublications.requeueInterrupted(new Date().toISOString())
     const patientPersona = new PatientPersonaService({
+      canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
+      contextStatus: context => identity.modelTaskContextStatus(context),
       models,
       briefs: patientPersonas,
       cases: syntheticCases,
       commands,
       ...(patientPersonaModel === undefined ? {} : { model: patientPersonaModel }),
       profiles: syntheticPatientProfiles,
-      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
     })
     const imagingLibrary = new ImagingAssetLibrary({
       assetDirectory: options.imagingAssetDirectory,
@@ -366,13 +386,15 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workflow,
     })
     const consultationDialogue = new ConsultationDialogueService({
+      canResume: (workspaceId, taskId) => modelTasks.ready(workspaceId, taskId),
+      contextStatus: context => identity.modelTaskContextStatus(context, ['consultation.ask-question', 'consultation.reply.retry']),
       database,
       models,
       cases: syntheticCases,
       commands,
       fhir,
       ...(consultationModel === undefined ? {} : { model: consultationModel }),
-      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
       workflow,
     })
     scenario.ensureInitialEpoch({
@@ -402,6 +424,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           ...clockOptions,
           secret: options.dshBridgeSecret,
         })
+    modelUsage.setWaitingCount(workspaceId => modelControlWaitingCount(database, workspaceId)
+      + (agentIntegration?.hostModelWaiting.count(workspaceId) ?? 0))
     const lisPayloadSchema = z.object({
       caseId: z.string().min(1),
       encounterId: z.string().min(1),
@@ -422,6 +446,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const recommendationTimeoutMs = 2 * aiTimeoutMs
     const recommendationModel = consultationModel ?? investigationModel ?? patientPersonaModel
     const doctorRecommendations = new DoctorRecommendationsService({
+      recovery: modelTasks, automaticRetries: workspaceId => modelUsage.automaticRetries(workspaceId),
       database, workflow, commands, models, referenceData,
       ...(guidelineCorpus === undefined ? {} : { guidelines: guidelineCorpus }),
       contextStatus: context => identity.consultationRecordingContextStatus(context),
@@ -435,17 +460,17 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     })
     workflow.consultationRecording.recoverQueued()
     const recordHistory = (event: Parameters<typeof workflow.consultationRecording.process>[0], timeoutMs: number) => workflow.consultationRecording.process(event, {
-      models, shutdownSignal: generationAbort.signal,
+      models, shutdownSignal: generationAbort.signal, recovery: modelTasks,
       ...(recordingModel === undefined ? {} : { model: recordingModel }),
-      ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+      ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
       signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(timeoutMs)]),
     })
     const dispatcher = new OutboxDispatcher(database, {
       handlers: {
         'clinical-document.check-quality': event => workflow.qualityControl.process(event, {
-          models, shutdownSignal: generationAbort.signal,
+          models, shutdownSignal: generationAbort.signal, recovery: modelTasks, automaticRetries: workspaceId => modelUsage.automaticRetries(workspaceId),
           ...(recommendationModel === undefined ? {} : { model: recommendationModel }),
-          ...(chatCompletions === undefined ? {} : { provider: chatCompletions }),
+          ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
           signal: AbortSignal.any([generationAbort.signal, AbortSignal.timeout(recommendationTimeoutMs)]),
         }),
         'doctor.generate-recommendations': event => doctorRecommendations.process(event,
@@ -474,12 +499,18 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
         'laboratory.report-request': async event => {
           const payload = laboratoryRequestPayloadSchema.parse(event.payload)
           const context = lisActorContext(event)
+          const current = () => database.driver.prepare(`SELECT 1 FROM laboratory_request r
+            JOIN workspace w ON w.workspace_id = r.workspace_id AND w.active_epoch = r.epoch
+            JOIN workspace_epoch e ON e.workspace_id = w.workspace_id AND e.epoch = w.active_epoch AND e.state = 'active'
+            WHERE r.workspace_id = ? AND r.epoch = ? AND r.request_id = ? AND r.status = 'in-progress'`)
+            .get(event.workspaceId, event.epoch, payload.requestId) !== undefined
+          if (!current()) return { status: 'completed' }
           try {
             const snapshot = await investigation.resolveForRequest(
               event.workspaceId,
               event.epoch,
               payload.requestId,
-              AbortSignal.timeout(aiTimeoutMs),
+              AbortSignal.any([generationAbort.signal, AbortSignal.timeout(aiTimeoutMs)]),
               payload.generationAttempt,
             )
             workflow.reportLaboratoryRequest({
@@ -501,10 +532,18 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
                   }),
             })
           } catch (error) {
+            if (!current()) return { status: 'completed' }
+            const deferred = modelTasks.defer(event, error)
+            if (deferred?.status === 'ambiguous') workflow.failLaboratoryResultGeneration({
+              context, eventId: event.eventId, requestId: payload.requestId,
+              error: { code: 'MODEL_OUTCOME_UNKNOWN', message: '模型请求结果未知，已停止自动重发。' },
+            })
+            if (deferred !== undefined) return deferred
             const failure = investigationFailure(error)
             // 无底账或精确真值不兼容均无法通过自动重试恢复。
             if (failure.code !== 'INVESTIGATION_UNSUPPORTED'
-              && failure.code !== 'INVESTIGATION_TRUTH_INCOMPATIBLE' && event.attempt < 3) {
+              && failure.code !== 'INVESTIGATION_TRUTH_INCOMPATIBLE' && event.attempt < 3
+              && modelUsage.automaticRetries(event.workspaceId)) {
               return { status: 'retryable-failed' }
             }
             workflow.failLaboratoryResultGeneration({
@@ -641,11 +680,14 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       return cycle
     }
     const dispatchPending = async (): Promise<void> => {
+      modelTasks.wake()
+      const dialogueRecovery = consultationDialogue.resumePending()
       for (let round = 0; !closed && round < 100; round += 1) {
         const counts = await Promise.all(lanes.map(lane => Promise.all(Array.from(
           { length: lane.concurrency }, (_, slot) => pumpSlot(lane, slot)))))
         if (counts.every(lane => lane.every(count => count === 0))) break
       }
+      await dialogueRecovery
     }
     const dispatchScenarioGenerationJobs = (): Promise<void> => {
       if (closed) return Promise.resolve()
@@ -679,9 +721,17 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       })
       return laboratoryServicePublicationCycle
     }
+    const unsubscribeModelRecovery = modelUsage.subscribe(() => {
+      modelTasks.wake()
+      void dispatchPending().catch(error => reportRuntimeError({ error, scope: 'outbox-dispatch' }))
+      void dispatchPatientPersonaJobs().catch(error => reportRuntimeError({ error, scope: 'patient-brief-dispatch' }))
+      void dispatchLaboratoryServicePublicationJobs().catch(error => reportRuntimeError({ error, scope: 'laboratory-service-publication-dispatch' }))
+    })
     const dispatchTimer = options.autoDispatchIntervalMs === undefined
       ? undefined
       : setInterval(() => {
+          modelTasks.wake()
+          void consultationDialogue.resumePending().catch(error => reportRuntimeError({ error, scope: 'outbox-dispatch' }))
           for (const lane of lanes) for (let slot = 0; slot < lane.concurrency; slot++) {
             if (dispatchCycles.has(`${lane.id}:${slot}`)) continue
             void pumpSlot(lane, slot).catch(error => {
@@ -711,6 +761,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({
+      modelUsage,
+      ...(options.dshBridgeSecret === undefined ? {} : { dshBridgeSecret: options.dshBridgeSecret }),
       inpatient,
       commandEvents: commands,
       recordingUpdatesSignal: generationAbort.signal,
@@ -753,11 +805,16 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workflow,
       ...(options.webRoot === undefined ? {} : { webRoot: options.webRoot }),
     })
+    const modelUsageRetentionTimer = setInterval(() => {
+      try { modelUsage.compactUsage() } catch (error) { reportRuntimeError({ error, scope: 'model-usage-retention' }) }
+    }, 60 * 60 * 1000)
+    modelUsageRetentionTimer.unref()
     return {
       app,
       close: (): Promise<void> => {
         if (closePromise !== undefined) return closePromise
         closed = true
+        clearInterval(modelUsageRetentionTimer)
         if (dispatchTimer !== undefined) clearInterval(dispatchTimer)
         if (generationTimer !== undefined) clearInterval(generationTimer)
         if (patientPersonaTimer !== undefined) clearInterval(patientPersonaTimer)
@@ -765,6 +822,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           clearInterval(laboratoryServicePublicationTimer)
         }
         generationAbort.abort()
+        unsubscribeModelRecovery()
         doctorRecommendations.close()
         closePromise = (async () => {
           await Promise.all([

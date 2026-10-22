@@ -1,3 +1,4 @@
+import type { ModelTaskRecovery } from './model-task-recovery.ts'
 import {
   clinicalDocumentDraftContentSchema,
   consultationHistoryAdditionSchema,
@@ -32,6 +33,7 @@ const contextSchema = z.object({
 }))
 const jobSchema = z.object({
   case_id: z.string(), encounter_id: z.string(), actor_context_json: z.string(),
+  lane: z.enum(['realtime', 'backfill']).default('realtime'),
   status: z.enum(['queued', 'completed', 'failed']),
   generation: z.number().int().positive(),
 })
@@ -741,10 +743,10 @@ export class ConsultationRecordingService {
   }
 
   async process(event: OutboxHandlerInput, model: {
-    models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider; signal: AbortSignal; shutdownSignal?: AbortSignal
+    models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider; signal: AbortSignal; shutdownSignal?: AbortSignal; recovery?: ModelTaskRecovery
   }): Promise<OutboxHandlerResult> {
     const { turnId, generation } = z.object({ turnId: z.string().min(1), generation: z.number().int().positive().default(1) }).strict().parse(event.payload)
-    const job = jobSchema.optional().parse(this.#database.driver.prepare(`SELECT case_id, encounter_id,
+    const job = jobSchema.optional().parse(this.#database.driver.prepare(`SELECT case_id, encounter_id, lane,
       actor_context_json, status, generation FROM consultation_recording_job WHERE workspace_id = ? AND epoch = ? AND turn_id = ?
     `).get(event.workspaceId, event.epoch, turnId))
     if (job === undefined || job.status !== 'queued' || job.generation !== generation) return { status: 'completed' }
@@ -806,7 +808,18 @@ export class ConsultationRecordingService {
       const pinned = await model.models.bind(context.workspaceId, `recording:${event.eventId}`, model.model, signal)
       const evidence = historyEvidence(this.#rows(context, job.case_id))
       const result = await model.provider.completeJson({
+        usageContext: { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId,
+          taskId: event.eventId, caseId: job.case_id, encounterId: job.encounter_id,
+          stage: job.lane === 'backfill' ? 'recording-backfill' : 'recording',
+          trigger: event.attempt > 1 || job.generation > 1 ? 'recovery' : job.lane === 'backfill' ? 'manual' : 'automatic',
+          sources: batch.sources.map(source => ({ kind: 'recording-source', id: source.id,
+            relationship: batch.members.some(member => member.id === source.id) ? 'trigger' : 'evidence' })) },
         ...request,
+        onBeforeRequest: () => {
+          signal.throwIfAborted()
+          if (!this.#current(context, turnId, job) || this.#contextStatus(context) !== 'active'
+            || !this.#assertAccess(context, job.encounter_id).editable) throw new Error('The original recording task context changed')
+        },
         maxAttempts: 2,
         maxInputBytes: 128 * 1024,
         onResponse: () => { firstResponseMs ??= performance.now() - started },
@@ -829,9 +842,11 @@ export class ConsultationRecordingService {
           validationMs: performance.now() - modelCompleted })
       return { status: 'completed' }
     } catch (error) {
-      if (!this.#current(context, turnId, job)) return { status: 'completed' }
+      if (!this.#current(context, turnId, job) || this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
+      const deferred = model.recovery?.defer(event, error)
+      if (deferred?.status === 'ambiguous') this.#finish(context, event, turnId, job, 'failed', 'MODEL_OUTCOME_UNKNOWN')
+      if (deferred !== undefined) return deferred
       if (model.shutdownSignal?.aborted && event.attempt < 3) return { status: 'retryable-failed' }
-      if (this.#stopIfInactive(context, event, turnId, job)) return { status: 'completed' }
       const code = model.shutdownSignal?.aborted ? 'CONSULTATION_RECORDING_FAILED'
         : obsolete.signal.aborted ? 'CONSULTATION_RECORDING_NOT_EDITABLE'
         : model.signal.aborted ? 'AI_TIMEOUT' : error instanceof ChatCompletionsError ? error.code

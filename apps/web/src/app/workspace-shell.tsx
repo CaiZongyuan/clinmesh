@@ -36,6 +36,7 @@ import { Link, useNavigate } from '@tanstack/react-router'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import {
   BellIcon,
+  ChartNoAxesCombinedIcon,
   ClipboardPlusIcon,
   ChevronDownIcon,
   ComponentIcon,
@@ -76,6 +77,7 @@ export type WorkspaceSection = (typeof workspaceRoutes)[number]['key']
 
 export const settingsRoutes = [
   { key: 'settingsGeneral', path: '/settings', icon: SlidersHorizontalIcon },
+  { key: 'modelUsage', path: '/settings/model-usage', icon: ChartNoAxesCombinedIcon },
   { key: 'uiComponents', path: '/settings/developer/components', icon: ComponentIcon },
 ] as const
 
@@ -519,7 +521,7 @@ export function WorkspaceShell({
                   <SidebarGroupLabel>{messages.settings}</SidebarGroupLabel>
                   <SidebarGroupContent>
                     <SidebarMenu>
-                      {settingsRoutes.slice(0, 1).map(item => (
+                      {settingsRoutes.filter(item => item.key !== 'uiComponents').map(item => (
                         <SidebarMenuItem key={item.key}>
                           <SidebarMenuButton
                             aria-current={item.key === activeSection ? 'page' : undefined}
@@ -539,7 +541,7 @@ export function WorkspaceShell({
                   <SidebarGroupLabel>{messages.developer}</SidebarGroupLabel>
                   <SidebarGroupContent>
                     <SidebarMenu>
-                      {settingsRoutes.slice(1).map(item => (
+                      {settingsRoutes.filter(item => item.key === 'uiComponents').map(item => (
                         <SidebarMenuItem key={item.key}>
                           <SidebarMenuButton
                             aria-current={item.key === activeSection ? 'page' : undefined}
