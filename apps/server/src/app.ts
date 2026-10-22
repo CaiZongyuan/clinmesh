@@ -1,7 +1,10 @@
 import { insuranceTargetSchema, insurancePreviewInputSchema, insuranceConfirmInputSchema, insuranceCancelInputSchema } from '@clinmesh/contracts/insurance'
 import { InsuranceError } from './application/insurance-service.ts'
 import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
-import { inpatientDischargeInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from '@clinmesh/contracts/inpatient-finance'
+import { inpatientDischargeInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema,
+  inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
+  inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema } from '@clinmesh/contracts/inpatient-investigations'
@@ -9,6 +12,7 @@ import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema,
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
+import { chargeAdjustmentInputSchema, refundConfirmInputSchema, refundPreviewInputSchema, refundRecoverInputSchema } from '@clinmesh/contracts/refunds'
 import { installHostModelUsageRoutes } from './model-usage-host-routes.ts'
 import { modelUsageFilterSchema, modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema, modelUsageRetentionUpdateSchema } from '@clinmesh/contracts/model-usage'
 import { ModelUsagePolicyError } from './application/model-usage-control.ts'
@@ -1300,6 +1304,45 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const identity = options.identity
     const inpatient = options.inpatient
     const actor = (context: Context) => identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/payments', async context => {
+      try { return context.json(inpatient.payments.read(await actor(context), context.req.param('admissionId'))) } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/payments/preview', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: z.object(inpatientPaymentInputSchema.shape).omit({ admissionId: true }).strict() }).strict().parse(await context.req.json())
+        return context.json(inpatient.payments.preview(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/payments/confirm', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientPaymentConfirmInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.payments.confirm(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/payments/recover', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientPaymentRecoverInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.payments.recover(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/refunds/preview', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientRefundInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.payments.refundPreview(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/refunds/confirm', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientRefundConfirmInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.payments.refundConfirm(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/refunds/recover', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientRefundRecoverInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.payments.refundRecover(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/record', async context => {
       try { return context.json(inpatient.records.read(await actor(context), context.req.param('admissionId'))) } catch(error) { return apiErrorResponse(context,error) }
     })
@@ -1333,6 +1376,44 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.post('/api/his/v1/inpatient/admissions/:admissionId/discharge/depart', dischargeAction('depart'))
     app.post('/api/his/v1/inpatient/admissions/:admissionId/discharge/recall', dischargeAction('recall'))
     app.post('/api/his/v1/inpatient/admissions/:admissionId/discharge/clear', dischargeAction('clear'))
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments', async context => {
+      try { return context.json(inpatient.financialAdjustments.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    const financialRefund = (action: 'preview' | 'confirm' | 'recover') => async (context: Context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const schema = action === 'preview' ? inpatientFinancialRefundPreviewInputSchema : action === 'confirm' ? inpatientFinancialRefundConfirmInputSchema : inpatientFinancialRefundRecoverInputSchema
+        const body = z.object({ input: schema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }, currentActor = await actor(context)
+        const key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(action === 'preview' ? inpatient.financialAdjustments.refundPreview(currentActor, input, key)
+          : action === 'confirm' ? inpatient.financialAdjustments.refundConfirm(currentActor, input, key) : inpatient.financialAdjustments.refundRecover(currentActor, input, key))
+      } catch (error) { return apiErrorResponse(context, error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/refunds/preview', financialRefund('preview'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/refunds/confirm', financialRefund('confirm'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/refunds/recover', financialRefund('recover'))
+    const financialPayment = (action: 'preview' | 'confirm' | 'recover') => async (context: Context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const schema = action === 'preview' ? inpatientFinancialPaymentPreviewInputSchema : action === 'confirm' ? inpatientPaymentConfirmInputSchema : inpatientPaymentRecoverInputSchema
+        const body = z.object({ input: schema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }, currentActor = await actor(context)
+        const key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(action === 'preview' ? inpatient.financialAdjustments.paymentPreview(currentActor, input, key)
+          : action === 'confirm' ? inpatient.financialAdjustments.paymentConfirm(currentActor, input, key) : inpatient.financialAdjustments.paymentRecover(currentActor, input, key))
+      } catch (error) { return apiErrorResponse(context, error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/payments/preview', financialPayment('preview'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/payments/confirm', financialPayment('confirm'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/payments/recover', financialPayment('recover'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ input: inpatientFinancialAdjustmentInputSchema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        return context.json(inpatient.financialAdjustments.adjust(await actor(context), { ...body.input, admissionId: context.req.param('admissionId') }, z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/discharge/preview', async context => {
       try { return context.json(inpatient.discharge.preview(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
@@ -3009,6 +3090,38 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch (error) {
         return apiErrorResponse(context, error)
       }
+    })
+    app.get('/api/his/v1/billing/cases/:caseId/refunds', async context => {
+      try { return context.json(workflow.refunds.read(await actor(context), context.req.param('caseId'))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/billing/cases/:caseId/adjustments', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: chargeAdjustmentInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.refunds.adjust(await actor(context), context.req.param('caseId'), body.input, body.expectedVersions, idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/refunds/actions/preview', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: refundPreviewInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.refunds.preview(await actor(context), body.input, body.expectedVersions, idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/refunds/:previewId/actions/confirm', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: refundConfirmInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.refunds.confirm(await actor(context), context.req.param('previewId'), body.input, body.expectedVersions, idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/refunds/:refundId/actions/recover', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: refundRecoverInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.refunds.recover(await actor(context), context.req.param('refundId'), body.input, body.expectedVersions, idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/payments/:paymentId/actions/recover', async (context) => {
       try {

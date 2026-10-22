@@ -1,5 +1,6 @@
 import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
 import { InpatientRecords } from './inpatient-records.ts'
+import { InpatientPayments } from './inpatient-payments.ts'
 import { InpatientDischarge } from './inpatient-discharge.ts'
 import { InpatientSurgery } from './inpatient-surgery.ts'
 import { InpatientTransfers } from './inpatient-transfers.ts'
@@ -7,6 +8,7 @@ import type { WorkflowService } from './workflow-service.ts'
 import { InpatientInvestigations } from './inpatient-investigations.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
+import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
@@ -37,9 +39,11 @@ const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records
 
 export class InpatientService {
   readonly billing: InpatientBilling
+  readonly financialAdjustments: InpatientFinancialAdjustments
   readonly orders: InpatientOrders
   readonly surgery: InpatientSurgery
   readonly records: InpatientRecords
+  readonly payments: InpatientPayments
   readonly discharge: InpatientDischarge
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
@@ -47,9 +51,11 @@ export class InpatientService {
   constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService) {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
+    this.financialAdjustments = new InpatientFinancialAdjustments(this)
     this.orders = new InpatientOrders(this)
     this.surgery = new InpatientSurgery(this)
     this.records = new InpatientRecords(this)
+    this.payments = new InpatientPayments(this)
     this.discharge = new InpatientDischarge(this)
     this.investigations = new InpatientInvestigations(this,workflow)
     this.transfers = new InpatientTransfers(this)
