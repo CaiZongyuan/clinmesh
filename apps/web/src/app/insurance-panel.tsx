@@ -90,6 +90,26 @@ export function InsurancePanel({
   const cancellationSettlement = state.data?.activeSettlements.find(
     (item) => item.id === cancellation?.settlementId,
   )
+  const feedback = <>
+    {error === null ? null : (
+      <Alert variant="destructive">
+        <AlertTitle>{zh ? '医保操作未完成' : 'Benefits operation incomplete'}</AlertTitle>
+        <AlertDescription>{error instanceof Error ? error.message : String(error)}</AlertDescription>
+      </Alert>
+    )}
+    {write.pending === null ? null : (
+      <Alert>
+        <AlertTitle>{zh ? '原操作结果待确认' : 'Original result unconfirmed'}</AlertTitle>
+        <AlertDescription>
+          {ownPending ? (
+            <Button disabled={write.mutation.isPending} onClick={() => write.mutation.mutate(undefined)} variant="outline">
+              {zh ? '恢复原医保操作' : 'Recover original benefits operation'}
+            </Button>
+          ) : <p>{zh ? '请回到原患者及岗位恢复待确认操作。' : 'Return to the original patient and workspace to recover the pending operation.'}</p>}
+        </AlertDescription>
+      </Alert>
+    )}
+  </>
   return (
     <section
       aria-label={zh ? '患者医保待遇' : 'Patient insurance benefits'}
@@ -240,36 +260,7 @@ export function InsurancePanel({
               </details>
             </>
           )}
-          {error === null ? null : (
-            <Alert variant="destructive">
-              <AlertTitle>{zh ? '医保操作未完成' : 'Benefits operation incomplete'}</AlertTitle>
-              <AlertDescription>
-                {error instanceof Error ? error.message : String(error)}
-              </AlertDescription>
-            </Alert>
-          )}
-          {write.pending === null ? null : (
-            <Alert>
-              <AlertTitle>{zh ? '原操作结果待确认' : 'Original result unconfirmed'}</AlertTitle>
-              <AlertDescription>
-                {ownPending ? (
-                  <Button
-                    disabled={write.mutation.isPending}
-                    onClick={() => write.mutation.mutate(undefined)}
-                    variant="outline"
-                  >
-                    {zh ? '恢复原医保操作' : 'Recover original benefits operation'}
-                  </Button>
-                ) : (
-                  <p>
-                    {zh
-                      ? '请回到原患者及岗位恢复待确认操作。'
-                      : 'Return to the original patient and workspace to recover the pending operation.'}
-                  </p>
-                )}
-              </AlertDescription>
-            </Alert>
-          )}
+          {review === null ? feedback : null}
           <AlertDialog
             open={review !== null}
             onOpenChange={(open) => {
@@ -299,6 +290,7 @@ export function InsurancePanel({
               {review === 'cancel' && cancellationSettlement !== undefined ? (
                 <InsuranceAmounts settlement={cancellationSettlement} locale={locale} />
               ) : null}
+              {feedback}
               <AlertDialogFooter>
                 <AlertDialogCancel disabled={write.mutation.isPending}>
                   {zh ? '返回核对' : 'Back'}

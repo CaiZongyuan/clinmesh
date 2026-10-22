@@ -26,4 +26,4 @@ Status: implemented
 
 待遇与现金可以独立核对，原费用、分配和补偿可追溯。公开待遇查询保留成功与拒绝的读取审计；Command 内部返回投影沿用原事务及动作审计。共享账户版本使竞争的预览明确失效；费用与目录映射缺失时拒绝计算，不自动推测地区政策。当前是两套固定合成参数，不宣称地区医保平台申报或院方 DRG/DIP 支付。
 
-详细合同由[医保模拟](../../../architecture/clinical-workflows.md#86-医保模拟)、[待遇存储](../../../architecture/storage.md#患者医保待遇记录)和[预览与提交](../../../architecture/fhir-and-commands.md#66-预览与提交)拥有。验证使用合成 Provider、公开 HTTP 和文件 SQLite，覆盖整数分、年度限额、幂等竞争、两阶段费用及放行后补收，并由真实收费页面及 React 18/19 ShadowRoot 审阅弹窗验证入口。
+详细合同由[医保模拟](../../../architecture/clinical-workflows.md#86-医保模拟)、[待遇存储](../../../architecture/storage.md#患者医保待遇记录)和[预览与提交](../../../architecture/fhir-and-commands.md#66-预览与提交)拥有。验证使用合成 Provider、公开 HTTP 和文件 SQLite，覆盖整数分、年度限额、幂等竞争、两阶段费用及放行后补收；住院目录适配矩阵通过真实计费 owner 准备合成费用，独立核对药品与影像先付、目录外耗材和两方案封顶。真实收费页面及 React 18/19 ShadowRoot 审阅弹窗验证入口，写入失败、预览过期和原操作恢复在当前模态框内可见。

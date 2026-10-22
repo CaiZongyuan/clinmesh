@@ -116,7 +116,20 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
       await panel.getByRole('button',{name:'审阅医保结算',exact:true}).click()
       const review=page.getByRole('alertdialog',{name:'确认医保结算',exact:true})
       await expectShadowDialog(page,review)
+      // The HTTP matrix owns staleness semantics; this boundary checks visible modal feedback.
+      const confirmPath=`**/api/his/v1/insurance/outpatient/${server.caseId}/confirm`
+      await page.route(confirmPath,route=>route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({
+        error:{code:'INSURANCE_PREVIEW_STALE',message:'费用或患者年度余额已变化，请重新预览',type:'conflict',outcome:'definitely_not_sent',retryable:false},
+      })}),{times:1})
       await review.getByRole('button',{name:'提交医保结算',exact:true}).click()
+      await expect(review.getByRole('alert')).toContainText('费用或患者年度余额已变化')
+      await review.getByRole('button',{name:'返回核对',exact:true}).click()
+      await panel.getByRole('button',{name:'预览医保待遇',exact:true}).click()
+      await panel.getByRole('button',{name:'审阅医保结算',exact:true}).click()
+      await page.route(confirmPath,async route=>{expect((await route.fetch()).status()).toBe(200);await route.abort('failed')},{times:1})
+      await review.getByRole('button',{name:'提交医保结算',exact:true}).click()
+      await expect(review.getByRole('alert').filter({hasText:'原操作结果待确认'})).toBeVisible()
+      await review.getByRole('button',{name:'恢复原医保操作',exact:true}).click()
       await expect(review).toHaveCount(0)
       await panel.getByRole('button',{name:'撤销原待遇',exact:true}).click()
       const cancel=page.getByRole('alertdialog',{name:'确认撤销医保',exact:true})
