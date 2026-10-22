@@ -426,6 +426,7 @@ describe('ClinMesh React Surface definition', () => {
     expect(definition.branding.shell).toBe('preserve')
     expect(definition.branding.tokens).toBeUndefined()
     expect(definition.layout.fallback).toBe('shrink')
+    expect(definition.layout.default).toBe('workspace-mirror')
     expect(definition.layout.supported).toEqual(['workspace', 'workspace-mirror', 'full-frame'])
   })
 })

@@ -119,8 +119,8 @@ export function createDefinition(
       () => theme.getTheme().active.colorScheme,
       () => theme.getTheme().active.colorScheme,
     )
-    // 退出全屏回到进入前的布局，镜像等非默认布局不因全屏往返丢失。
-    const lastWorkspaceLayout = useRef<ReactSurfaceProps['layout']>('workspace')
+    // 退出全屏回到进入前的布局，不因全屏往返丢失镜像等非全屏形态。
+    const lastWorkspaceLayout = useRef<ReactSurfaceProps['layout']>('workspace-mirror')
     if (props.layout !== 'full-frame') lastWorkspaceLayout.current = props.layout
     return (
       <ClinMeshSurface
@@ -157,7 +157,8 @@ export function createDefinition(
   id: 'clinmesh.his',
   initialLocation: '/',
   layout: {
-    default: 'workspace',
+    // 镜像为默认形态：原生会话列位于内容区左侧，无需用户切换（2026-10-22 用户确认）。
+    default: 'workspace-mirror',
     fallback: 'shrink',
     fullFrameKeepDetails: true,
     minSurfaceWidth: 360,
