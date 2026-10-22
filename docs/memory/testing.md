@@ -8,6 +8,8 @@
 
 ## 范围、快照与资源争用
 
+- 跨包测试调用 Server 迁移时，显式用测试文件的 `import.meta.url` 解析 `apps/server/drizzle/` 并传给 `applyMigrations`。默认目录只覆盖 Server 包或仓库根目录；从仓库根运行测试可能通过，而 Turbo 在其他包目录执行时会报 `ENOENT`。用 `pnpm --filter <package> exec vitest run <file>` 复核实际 CI 工作目录，参见 `apps/dsh-web/src/model-bridge.test.ts`。
+
 - 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)。
 
 - 待开具项目的操作文案会随异步核验状态从“调整”变为“核对”；验证重开详情时，使用包含项目名称的稳定“查看待开具”入口，并继续断言编辑值、焦点和正式确认结果。只定位“调整”会在核验状态晚到时超时，不能用增加超时或固定等待规避；对应回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
