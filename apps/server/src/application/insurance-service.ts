@@ -56,6 +56,20 @@ export class InsuranceService {
     return rows.reduce((sum,row) => sum + insuranceSettlementSchema.parse(JSON.parse(row.data_json)).allocations.filter(a=>a.reference===reference).reduce((subtotal,a)=>subtotal+a.fundFen+a.accountFen,0),0)
   }
   state(context: ActorContext, target: InsuranceTarget) {
+    // Commands already own their transaction and audit for the returned projection.
+    if (this.database.driver.inTransaction) return this.#state(context, target)
+    let result: z.infer<typeof insuranceStateSchema>
+    try {
+      result = this.#state(context, target)
+    } catch (error) {
+      try { this.commands.auditRead(context, 'insurance.get', target, 'failed') }
+      catch { /* Keep the original rejection when audit storage is unavailable. */ }
+      throw error
+    }
+    this.commands.auditRead(context, 'insurance.get', target, 'success')
+    return result
+  }
+  #state(context: ActorContext, target: InsuranceTarget) {
     this.#authorize(context)
     const source = insuranceSourceSchema.parse(this.options.readSource(context, target))
     const history = this.#history(context, target), activeSettlements = activeFromHistory(history), active = activeSettlements.at(-1)
