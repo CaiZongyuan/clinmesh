@@ -18,7 +18,7 @@ export const drgGroupingInputSchema = z.object({
   diagnoses: z.array(drgDiagnosisSchema).max(200),
   operations: z.array(drgOperationSchema).max(200),
   gender: z.enum(['male', 'female', 'unknown']),
-  /** 年龄岁数；新生儿用 ageDays 与 birthWeightGrams 表达。 */
+  /** 年龄岁数；新生儿分组预留给 ageDays 与 birthWeightGrams，当前内核不消费，非新生儿输入恒为 null。 */
   ageYears: z.number().int().min(0).max(150),
   ageDays: z.number().int().min(0).max(365).nullable(),
   birthWeightGrams: z.number().int().min(0).max(10_000).nullable(),

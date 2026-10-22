@@ -36,6 +36,11 @@ function genderOf(rawGender: string | undefined): 'male' | 'female' | 'unknown' 
   return rawGender === 'male' ? 'male' : rawGender === 'female' ? 'female' : 'unknown'
 }
 
+/** 首页快照与在院 live 诊断共用的分组入口映射：primary→main，其余→secondary。 */
+function groupingDiagnoses(entries: ReadonlyArray<{ coding: { code: string }, role: string }>) {
+  return entries.map(entry => ({ code: entry.coding.code, role: entry.role === 'primary' ? 'main' as const : 'secondary' as const }))
+}
+
 /** 离院时点口径的人口与住院属性：年龄、出院方式与住院天数（缺时点记 0 天）。 */
 function stayDemographics(birthDate: string, admittedAt: string | undefined, departedAt: string | undefined, dischargeMode: string) {
   return {
@@ -101,8 +106,7 @@ export class InpatientDrg {
   #snapshotGroupingInput(snapshot: z.infer<typeof inpatientRecordSnapshotSchema>): DrgGroupingInput {
     const { patient, stay, clinical } = snapshot
     return {
-      diagnoses: clinical.diagnosis.entries.map(entry => ({
-        code: entry.coding.code, role: entry.role === 'primary' ? 'main' as const : 'secondary' as const })),
+      diagnoses: groupingDiagnoses(clinical.diagnosis.entries),
       operations: clinical.operations.map(operation => ({
         code: operation.actualProcedure.coding.code, primary: operation.primary })),
       gender: genderOf(patient.gender),
@@ -252,8 +256,7 @@ export class InpatientDrg {
     const admittedAt = admission.row.admitted_at ?? undefined
     const departedAt = departure?.virtualTime
     return {
-      diagnoses: diagnosis.entries.map(entry => ({
-        code: entry.coding.code, role: entry.role === 'primary' ? 'main' as const : 'secondary' as const })),
+      diagnoses: groupingDiagnoses(diagnosis.entries),
       operations: executions.map(item => ({ code: item.actualProcedure.coding.code, primary: item.id === mainProcedureExecutionId })),
       gender: genderOf(identity.gender),
       ...stayDemographics(identity.birthDate ?? '', admittedAt, departedAt, departure?.departureMethod ?? 'unknown'),

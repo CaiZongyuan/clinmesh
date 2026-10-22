@@ -1321,7 +1321,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try { return context.json(inpatient.drg.pregroup(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/simulation', async context => {
-      try { const body = z.object({ input: inpatientDrgSimulationInputSchema.optional() }).strict().parse(await context.req.json().catch(() => ({})))
+      try { identity.assertTrustedMutation(context.req.raw.headers); const body = z.object({ input: inpatientDrgSimulationInputSchema.optional() }).strict().parse(await context.req.json().catch(() => ({})))
         return context.json(inpatient.drg.simulate(await actor(context), context.req.param('admissionId'), body.input)) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations', async context => {

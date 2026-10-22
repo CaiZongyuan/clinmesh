@@ -1,4 +1,4 @@
-import { drgGroupingInputSchema, drgRulesSchema,
+import { drgGroupingInputSchema,
   type DrgGroupingInput, type DrgGroupingResult, type DrgRules } from '@clinmesh/contracts/drg'
 
 interface Step {
@@ -79,8 +79,8 @@ function findMedicalMember(rules: DrgRules, input: DrgGroupingInput, mainCode: s
  * 输入口径为医保版编码；规则集必须为固定版本，分组结果可追溯到 rulesId/version。
  */
 export function groupDrgCase(rules: DrgRules, rawInput: DrgGroupingInput): DrgGroupingResult {
+  // 规则集已在 loadDrgRules 装载期经 drgRulesSchema 校验，此处只校验调用方拼装的分组输入。
   const input = drgGroupingInputSchema.parse(rawInput)
-  drgRulesSchema.parse(rules)
   const steps: Step[] = []
   const main = input.diagnoses.find(entry => entry.role === 'main')
   if (main === undefined) {
