@@ -398,6 +398,8 @@ it('recovers a crash snapshot taken after a usage frame but before terminal sett
     yield { type: 'finish', reason: { kind: 'stop' } }
   }, true, 4096)
   const fixture = await setup({ syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: encodeModelRoute(bridgeRoute),
+    modelPricing: { prices: [{ provider: bridgeRoute.provider, model: encodeModelRoute(bridgeRoute),
+      version: 'synthetic-v1', currency: 'CNY', rates: { input: 2, output: 4 } }], exchangeRates: [] },
     chatCompletionsProvider: new DshModelProvider({ ...bridge, fetch: async (url, init) => {
       const response = await fetch(url, init)
       return new Response(response.body!.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -406,6 +408,13 @@ it('recovers a crash snapshot taken after a usage frame but before terminal sett
     } }),
   })
   const cookie = await signIn(fixture.runtime, 'admin@demo.clinmesh.local')
+  for (const [index, limits] of [{ tokens: 100, cny: 1 }, { tokens: null, cny: null }].entries()) {
+    expect((await fixture.runtime.app.request('/api/model-usage/control', { method: 'PUT',
+      headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersion: index + 1, enabled: true, requests: 10, automaticRetries: true, ...limits }),
+    })).status).toBe(200)
+  }
+  const control = async () => modelUsageControlSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/control', { headers: { cookie } })).json())
   const running = startConsultationCase(fixture.runtime)
   void running.catch(() => {})
   try {
@@ -413,6 +422,7 @@ it('recovers a crash snapshot taken after a usage frame but before terminal sett
     const read = async () => modelUsageListSchema.parse(await (await fixture.runtime.app.request('/api/model-usage/requests', { headers: { cookie } })).json())
     const inFlight = await read()
     expect(inFlight.items[0]).toMatchObject({ status: 'in-flight', endedAt: null, outputLimit: 4096 })
+    expect((await control()).workspace).toMatchObject({ tokensUsed: 0, cnyUsed: 0, tokensUnknownReservations: 1, cnyUnknownReservations: 1 })
     // Restore only bytes durable while the stream is still open; no terminal/catch can populate this snapshot.
     const snapshot = join(fixture.directory, 'crash-snapshot.sqlite')
     await fixture.runtime.database.driver.backup(snapshot)
@@ -421,7 +431,14 @@ it('recovers a crash snapshot taken after a usage frame but before terminal sett
     await fixture.restart(snapshot)
     const recovered = await read()
     expect(recovered.items[0]).toMatchObject({ id: inFlight.items[0]!.id, status: 'unknown', dispatch: 'dispatched',
-      outputLimit: 4096, usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 } })
+      outputLimit: 4096, usage: { inputTokens: 12, outputTokens: 3, totalTokens: 15 }, accounting: { totalTokens: 15, cny: 0.000036 } })
+    const settled = { used: 1, reserved: 0, tokensUsed: 15, cnyUsed: 0.000036, tokensReserved: 0, cnyReserved: 0,
+      tokensUnknownReservations: 0, cnyUnknownReservations: 0 }
+    expect((await control()).workspace).toMatchObject(settled)
+    expect(await fixture.runtime.patientPersona.processNext()).toMatchObject({ status: 'failed', error: { code: 'MODEL_OUTCOME_UNKNOWN' } })
+    await fixture.restart(snapshot)
+    expect((await control()).workspace).toMatchObject(settled)
+    expect((await read()).items[0]).toEqual(recovered.items[0])
     expect(dispatched).toBe(1)
   } finally { release(); await running.catch(() => {}) }
 })

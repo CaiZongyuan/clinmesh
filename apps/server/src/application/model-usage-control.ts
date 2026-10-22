@@ -148,7 +148,7 @@ export class ModelUsageControl {
     })
   }
 
-  settleDimensions(attemptId: string, values: DimensionValues, notDispatched: boolean): void {
+  settleDimensions(attemptId: string, values: DimensionValues, notDispatched: boolean, replaceKnown = false): void {
     this.#atomic('workspace', () => {
       dimensionValues.parse(values)
       const reservations = z.array(dimensionReservation).parse(this.database.driver.prepare(
@@ -156,8 +156,9 @@ export class ModelUsageControl {
       for (const reservation of reservations) {
         const value = values[reservation.dimension]
         if (reservation.state === 'used') {
-          if (notDispatched || value !== null && value !== reservation.amount) throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
-          continue
+          if (notDispatched) throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
+          if (value === reservation.amount || value === null && !replaceKnown) continue
+          if (!replaceKnown) throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
         }
         if (reservation.state === 'released') {
           if (!notDispatched && value !== null && value !== 0) throw new ModelUsagePolicyError('MODEL_USAGE_CORRECTION_INVALID', 409)
@@ -166,13 +167,16 @@ export class ModelUsageControl {
         if (notDispatched) {
           this.database.driver.prepare(`UPDATE model_usage_dimension_reservation SET state = 'released'
             WHERE attempt_id = ? AND scope_id = ? AND dimension = ?`).run(attemptId, reservation.scope_id, reservation.dimension)
-        } else if (value !== null) {
+        } else if (value !== null || reservation.state === 'used') {
           const dimension = this.#dimensions(reservation.scope_id).find(row => row.dimension === reservation.dimension)!
-          const used = this.#sum(dimension.used, value)
+          const previous = reservation.state === 'used' ? persistedCount.parse(reservation.amount) : 0
+          // Incomplete late evidence restores unknown occupancy instead of declaring zero consumption.
+          const used = this.#sum(persistedCount.parse(dimension.used - previous), value ?? 0)
           this.database.driver.prepare('UPDATE model_usage_dimension SET used = ? WHERE scope_id = ? AND dimension = ?')
             .run(used, reservation.scope_id, reservation.dimension)
-          this.database.driver.prepare(`UPDATE model_usage_dimension_reservation SET state = 'used', amount = ?
-            WHERE attempt_id = ? AND scope_id = ? AND dimension = ?`).run(value, attemptId, reservation.scope_id, reservation.dimension)
+          this.database.driver.prepare(`UPDATE model_usage_dimension_reservation SET state = ?, amount = ?
+            WHERE attempt_id = ? AND scope_id = ? AND dimension = ?`)
+            .run(value === null ? 'reserved' : 'used', value, attemptId, reservation.scope_id, reservation.dimension)
         }
       }
     })

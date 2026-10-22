@@ -9,6 +9,7 @@ import type { ModelPricingConfig } from '@clinmesh/contracts/model-pricing'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { isDoctorDelegation } from '../../dsh-web/src/doctor-delegation.ts'
+import { dshTokenUsage } from '../../dsh-web/src/dsh-token-usage.ts'
 import { syntheticRecognitionLlm } from '../../dsh-web/src/doctor-input-fixture.ts'
 import { installAgentProofBridge } from '../../dsh-web/src/agent-proof-bridge.ts'
 import { agentPageBindingRevision } from '@clinmesh/contracts/agent'
@@ -439,6 +440,146 @@ it('settles only the admitted Host attempt, retaining raw usage after a failed t
   const records = await f.list()
   expect(records.total).toBe(1)
   expect(records.items[0]).toMatchObject({ id: grant.attemptId, status: 'succeeded', usage })
+})
+
+it.each(['restart', 'timeout', 'legacy-unknown', 'settlement-write'] as const)('settles checkpointed Host consumption after %s without resolving or readmitting the original task', async recovery => {
+  const f = await fixture(undefined, { enabled: true, requests: 10, tokens: 100, cny: 1, automaticRetries: true }, {
+    prices: [{ provider: 'synthetic-host', model: 'classifier-v1', version: 'synthetic-v1', currency: 'CNY', rates: { input: 2, output: 4 } }],
+    exchangeRates: [],
+  })
+  await f.policy({ requests: 10, tokens: 100, cny: 1 })
+  const admission = { permit: await f.permit(), provider: 'synthetic-host', model: 'classifier-v1',
+    reservationBoundary: { adapter: 'dsh-host', version: 'synthetic-bounded-v1', inputTokens: 40, outputTokens: 20, reason: null } }
+  const admitted = await f.post('/api/model-usage/host/doctor-delegation/admit', admission)
+  expect(admitted.status).toBe(201)
+  const grant = await admitted.json() as { attemptId: string; receipt: string }
+  const usage = dshTokenUsage({ inputTokens: 10, outputTokens: 5, totalTokens: 15 })
+  expect((await f.post('/api/model-usage/host/doctor-delegation/observe', {
+    ...grant, phase: 'progress', outcome: { status: 'unknown', dispatch: 'dispatched', usage },
+  })).status).toBe(200)
+  expect((await f.list()).items[0]).toMatchObject({ status: 'in-flight', endedAt: null, usage })
+  expect((await f.control()).workspace).toMatchObject({ used: 1, tokensUsed: 0, tokensReserved: 60, cnyUsed: 0, cnyReserved: 0.00016 })
+
+  if (recovery === 'timeout' || recovery === 'settlement-write') {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(Date.now() + 30_001)
+    if (recovery === 'settlement-write') {
+      f.runtime.database.driver.exec(`CREATE TRIGGER synthetic_recovery_failure BEFORE UPDATE ON model_usage_attempt
+        WHEN NEW.status = 'unknown' BEGIN SELECT RAISE(ABORT, 'synthetic recovery write failure'); END`)
+      expect((await f.post('/api/model-usage/host/doctor-delegation/status', grant)).status).toBe(503)
+      const unchanged = await f.control()
+      expect(unchanged.inFlight).toBe(1)
+      expect(unchanged.workspace).toMatchObject({ tokensUsed: 0, tokensReserved: 60, cnyUsed: 0, cnyReserved: 0.00016 })
+      expect(unchanged.deployment).toMatchObject({ tokensUsed: 0, tokensReserved: 60, cnyUsed: 0, cnyReserved: 0.00016 })
+      f.runtime.database.driver.exec('DROP TRIGGER synthetic_recovery_failure')
+    }
+  } else {
+    if (recovery === 'legacy-unknown') {
+      // Materialize the prior release's recovery result, including its unsettled reservations.
+      f.runtime.database.driver.prepare(`UPDATE model_usage_attempt SET status = 'unknown',
+        record_json = json_set(record_json, '$.status', 'unknown', '$.endedAt', ?) WHERE attempt_id = ?`)
+        .run(new Date().toISOString(), grant.attemptId)
+    }
+    await f.restart()
+  }
+  const recovered = (await f.list()).items[0]!
+  expect(recovered).toMatchObject({ id: grant.attemptId, status: 'unknown', dispatch: 'dispatched', usage,
+    accounting: { totalTokens: 15, cny: 0.00004 }, corrections: [] })
+  expect(recovered.endedAt).not.toBeNull()
+  const settled = { used: 1, reserved: 0, tokensUsed: 15, tokensReserved: 0, tokensRemaining: 85,
+    cnyUsed: 0.00004, cnyReserved: 0, cnyRemaining: 0.99996, tokensUnknownReservations: 0, cnyUnknownReservations: 0 }
+  const control = await f.control()
+  expect(control.workspace).toMatchObject(settled)
+  expect(control.deployment).toMatchObject(settled)
+  expect((await f.post('/api/model-usage/host/doctor-delegation/admit', admission)).status).toBe(409)
+  await f.restart()
+  expect((await f.list()).items[0]).toEqual(recovered)
+  expect((await f.control()).workspace).toMatchObject(settled)
+  expect((await f.control()).deployment).toMatchObject(settled)
+  const disputedUsage = dshTokenUsage({ inputTokens: 10, outputTokens: 8, cacheReadTokens: 2 })
+  expect((await f.post('/api/model-usage/host/doctor-delegation/observe', {
+    ...grant, phase: 'progress', outcome: { status: 'unknown', dispatch: 'dispatched', usage: disputedUsage },
+  })).status).toBe(200)
+  expect((await f.list()).items[0]).toMatchObject({ status: 'unknown', usage: {
+    inputTokens: null, outputTokens: 8, cachedInputTokens: null, totalTokens: null,
+  }, accounting: { totalTokens: null, cny: null } })
+  const disputed = { ...settled, tokensUsed: 0, tokensRemaining: null, tokensUnknownReservations: 1,
+    cnyUsed: 0, cnyRemaining: null, cnyUnknownReservations: 1 }
+  const disputedControl = await f.control()
+  expect(disputedControl.workspace).toMatchObject(disputed)
+  expect(disputedControl.deployment).toMatchObject(disputed)
+  const blocked = await f.post('/api/model-usage/host/doctor-delegation/admit', { ...admission, permit: await f.permit() })
+  expect(blocked.status).toBe(409)
+  expect(await blocked.json()).toMatchObject({ error: { code: 'MODEL_METERING_UNAVAILABLE' } })
+  const continuedUsage = dshTokenUsage({ inputTokens: 10, outputTokens: 8, totalTokens: 18,
+    cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 })
+  expect((await f.post('/api/model-usage/host/doctor-delegation/observe', {
+    ...grant, phase: 'progress', outcome: { status: 'unknown', dispatch: 'dispatched', usage: continuedUsage },
+  })).status).toBe(200)
+  const continued = (await f.list()).items[0]!
+  expect(continued).toMatchObject({ status: 'unknown', endedAt: recovered.endedAt, usage: continuedUsage,
+    accounting: { totalTokens: 18, cny: 0.000052 } })
+  const finalUsage = dshTokenUsage({ inputTokens: 10, outputTokens: 10, totalTokens: 20,
+    cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 })
+  const finalOutcome = { status: 'succeeded', dispatch: 'dispatched', usage: finalUsage }
+  const report = (outcome: unknown) => f.post('/api/model-usage/host/doctor-delegation/observe', { ...grant, outcome })
+  if (recovery === 'settlement-write') {
+    f.runtime.database.driver.exec(`CREATE TRIGGER synthetic_late_settlement_failure BEFORE UPDATE ON model_usage_attempt
+      WHEN NEW.status = 'succeeded' BEGIN SELECT RAISE(ABORT, 'synthetic late settlement write failure'); END`)
+    expect((await report(finalOutcome)).status).toBe(503)
+    expect((await f.list()).items[0]).toEqual(continued)
+    const unchanged = await f.control()
+    expect(unchanged.workspace).toMatchObject({ tokensUsed: 18, cnyUsed: 0.000052 })
+    expect(unchanged.deployment).toMatchObject({ tokensUsed: 18, cnyUsed: 0.000052 })
+    f.runtime.database.driver.exec('DROP TRIGGER synthetic_late_settlement_failure')
+  }
+  expect((await report(finalOutcome)).status).toBe(200)
+  const finalRecord = (await f.list()).items[0]!
+  expect(finalRecord).toMatchObject({ id: grant.attemptId, status: 'succeeded', usage: finalUsage,
+    accounting: { totalTokens: 20, cny: 0.00006 }, corrections: [] })
+  expect((await report(finalOutcome)).status).toBe(200)
+  expect((await report({ ...finalOutcome, usage: { ...finalUsage, outputTokens: 15, totalTokens: 25,
+    raw: { ...finalUsage.raw, outputTokens: 15, totalTokens: 25 } } })).status).toBe(200)
+  await f.restart()
+  expect((await f.list()).items[0]).toEqual(finalRecord)
+  const finalControl = await f.control()
+  const finalSettled = { ...settled, tokensUsed: 20, tokensRemaining: 80, cnyUsed: 0.00006, cnyRemaining: 0.99994 }
+  expect(finalControl.workspace).toMatchObject(finalSettled)
+  expect(finalControl.deployment).toMatchObject(finalSettled)
+  expect((await f.post('/api/model-usage/host/doctor-delegation/admit', { ...admission, permit: await f.permit() })).status).toBe(201)
+})
+
+it('settles recovered known Token consumption while preserving an unknown amount for later reconciliation', async () => {
+  const f = await fixture()
+  await f.policy({ tokens: 100, cny: 1 })
+  await f.policy({ tokens: null, cny: null })
+  const admitted = await f.post('/api/model-usage/host/doctor-delegation/admit', {
+    permit: await f.permit(), provider: 'synthetic-host', model: 'unpriced-classifier' })
+  expect(admitted.status).toBe(201)
+  const grant = await admitted.json() as { attemptId: string; receipt: string }
+  const usage = { ...unknownModelTokenUsage, inputTokens: 10, outputTokens: 5, totalTokens: 15 }
+  expect((await f.post('/api/model-usage/host/doctor-delegation/observe', {
+    ...grant, phase: 'progress', outcome: { status: 'unknown', dispatch: 'dispatched', usage },
+  })).status).toBe(200)
+  await f.restart()
+  expect((await f.control()).workspace).toMatchObject({ tokensUsed: 15, tokensReserved: 0, tokensUnknownReservations: 0,
+    cnyUsed: 0, cnyUnknownReservations: 1 })
+  expect((await f.list()).items[0]).toMatchObject({ status: 'unknown', dispatch: 'dispatched', usage,
+    accounting: { totalTokens: 15, cny: null }, corrections: [] })
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  const corrected = await f.runtime.app.request(`/api/model-usage/requests/${grant.attemptId}/reconcile`, {
+    method: 'POST', headers: { cookie: admin, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedRevision: 0, cny: 0.00004, evidence: 'synthetic-receipt' }),
+  })
+  expect(corrected.status).toBe(200)
+  expect((await f.control(admin)).workspace).toMatchObject({ tokensUsed: 15, cnyUsed: 0.00004, cnyUnknownReservations: 0 })
+  const finalUsage = { ...usage, outputTokens: 10, totalTokens: 20 }
+  expect((await f.post('/api/model-usage/host/doctor-delegation/observe', {
+    ...grant, outcome: { status: 'succeeded', dispatch: 'dispatched', usage: finalUsage },
+  })).status).toBe(200)
+  expect((await f.list()).items[0]).toMatchObject({ status: 'succeeded', usage: finalUsage,
+    accounting: { totalTokens: 20, cny: 0.00004 }, corrections: [{ kind: 'reconcile', cny: 0.00004 }] })
+  expect((await f.control(admin)).workspace).toMatchObject({ tokensUsed: 20, cnyUsed: 0.00004, cnyUnknownReservations: 0 })
 })
 
 it('preserves an unpriced successful Host terminal when its acknowledgement is lost and conflicting reports arrive', async () => {

@@ -38,10 +38,9 @@ export class ModelUsageService implements ModelUsageRecorder {
     this.#pricing = modelPricingConfigSchema.parse(pricing)
     this.#control = new ModelUsageControl(database, commands, deployment)
     this.#retention = new ModelUsageRetention(database, commands)
-    // A previous writer cannot prove whether its in-flight requests reached the Provider.
-    this.database.driver.prepare(`UPDATE model_usage_attempt SET status = 'unknown',
-      record_json = json_set(record_json, '$.status', 'unknown', '$.endedAt', ?)
-      WHERE status = 'in-flight'`).run(new Date().toISOString())
+    this.#recoverAttempts(`status = 'in-flight' OR (status = 'unknown' AND (
+      EXISTS (SELECT 1 FROM model_usage_request_reservation r WHERE r.attempt_id = a.attempt_id AND r.state = 'reserved')
+      OR EXISTS (SELECT 1 FROM model_usage_dimension_reservation r WHERE r.attempt_id = a.attempt_id AND r.state = 'reserved')))`)
     this.compactUsage()
   }
 
@@ -132,7 +131,7 @@ export class ModelUsageService implements ModelUsageRecorder {
         endedAt: outcome.status === undefined ? previous.endedAt : new Date().toISOString(),
       }
       const record = modelUsageAttemptSchema.parse({ ...updated, usage, dispatch, cost, priceSnapshot })
-      this.#save(this.#account(record))
+      this.#save(this.#account(record, previous.status === 'unknown'))
     })()
   }
 
@@ -267,7 +266,7 @@ export class ModelUsageService implements ModelUsageRecorder {
     }).data
   }
 
-  #account(record: ModelUsageAttempt): ModelUsageAttempt {
+  #account(record: ModelUsageAttempt, replaceKnown = false): ModelUsageAttempt {
     let effectiveCost = record.cost
     let totalTokens = record.dispatch === 'not-dispatched' ? 0 : record.usage.totalTokens
     for (const correction of record.corrections) {
@@ -280,7 +279,8 @@ export class ModelUsageService implements ModelUsageRecorder {
       && record.corrections.some(correction => correction.kind === 'reconcile')
     // Full consumption reconciliation consumes one request without rewriting dispatch evidence.
     this.#control.settle(record.id, record.dispatch === 'unknown' && reconciled ? 'dispatched' : record.dispatch)
-    if (record.status !== 'in-flight') this.#control.settleDimensions(record.id, { tokens: totalTokens, cny: effectiveCost.cnyMicro }, record.dispatch === 'not-dispatched')
+    if (record.status !== 'in-flight') this.#control.settleDimensions(record.id,
+      { tokens: totalTokens, cny: effectiveCost.cnyMicro }, record.dispatch === 'not-dispatched', replaceKnown)
     return { ...record, effectiveCost, accounting: { totalTokens, cny: effectiveCost.cny } }
   }
 
@@ -289,14 +289,24 @@ export class ModelUsageService implements ModelUsageRecorder {
       .run(record.actualModel, record.status, JSON.stringify(record), record.id)
   }
 
+  #recoverAttempts(condition: string, args: string[] = []): void {
+    this.database.driver.transaction(() => {
+      const now = new Date().toISOString()
+      const rows = z.array(rowSchema).parse(this.database.driver.prepare(
+        `SELECT record_json FROM model_usage_attempt a WHERE ${condition}`).all(...args))
+      for (const row of rows) {
+        const previous = modelUsageAttemptSchema.parse(JSON.parse(row.record_json))
+        // Unknown business results do not erase trustworthy consumption or authorize a resend.
+        const recovered: ModelUsageAttempt = previous.status === 'in-flight'
+          ? { ...previous, status: 'unknown', endedAt: now } : previous
+        this.#save(this.#account(recovered))
+      }
+    })()
+  }
+
   #expireHostAttempts(): void {
-    const now = new Date()
-    // Reading or reporting after Host loss converges the durable attempt without
-    // releasing consumption, renewing the deadline, or granting another dispatch.
-    this.database.driver.prepare(`UPDATE model_usage_attempt SET status = 'unknown',
-      record_json = json_set(record_json, '$.status', 'unknown', '$.endedAt', ?)
-      WHERE feature = 'doctor_delegation' AND status = 'in-flight' AND started_at <= ?`)
-      .run(now.toISOString(), new Date(now.getTime() - hostDoctorRecognitionTimeoutMs).toISOString())
+    this.#recoverAttempts("feature = 'doctor_delegation' AND status = 'in-flight' AND started_at <= ?",
+      [new Date(Date.now() - hostDoctorRecognitionTimeoutMs).toISOString()])
   }
 
   #where(context: ActorContext, filter: ModelUsageFilter, details: boolean) {
