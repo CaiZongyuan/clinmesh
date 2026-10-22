@@ -114,3 +114,17 @@ describe('DoctorWorkspaceLayout', () => {
     expect(screen.getAllByText('完诊还差 2 项')).toHaveLength(1)
   })
 })
+
+it('renders the floating queue rail in place of the queue column when provided', () => {
+  render(<DoctorWorkspaceLayout
+    detailLabel="病例详情"
+    queue={() => <button>选择患者</button>}
+    queueFloating={<button>候诊队列 · 3 例</button>}
+    queueLabel="候诊队列"
+  ><p>病例内容</p></DoctorWorkspaceLayout>)
+  expect(document.querySelector('[data-doctor-region="queue"]')).toBeNull()
+  expect(document.querySelector('[data-doctor-region="queue-rail"]')).not.toBeNull()
+  expect(screen.queryByRole('group', { name: '候诊队列' })).toBeNull()
+  expect(screen.getByRole('button', { name: '候诊队列 · 3 例' })).toBeTruthy()
+  expect(screen.getByText('病例内容')).toBeTruthy()
+})

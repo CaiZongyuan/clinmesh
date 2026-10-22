@@ -3,6 +3,8 @@ import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-prepar
 import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
 import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
+import { DoctorQueueRail } from './doctor-queue-rail.tsx'
+import { useOptionalWebRuntime } from '../web-runtime.tsx'
 import { DoctorSuggestionStack } from './doctor-suggestion-stack.tsx'
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { mergeDocumentText } from '@clinmesh/core/document-text'
@@ -365,6 +367,8 @@ function DoctorCaseController({
   session,
 }: DoctorCaseControllerProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  // DSH 镜像布局把队列收进贴内容区左缘的浮层卡片；独立 Web 与 workspace 布局保持队列列。
+  const queueRail = useOptionalWebRuntime()?.surfaceDisplay?.queuePresentation === 'rail'
   const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = useMemo(() => [session.actor.workspaceId, session.actor.epoch] as const,
@@ -2650,7 +2654,22 @@ function DoctorCaseController({
         queueError={visibleQueue.error}
         queuePending={visibleQueue.isPending}
       />
-      )}>
+      )}
+      {...(queueRail ? {
+        queueFloating: (
+          <DoctorQueueRail
+            activeCaseId={activeCaseId}
+            messages={messages}
+            navigation={navigation}
+            onQueuePageChange={nextPage => { setPage(nextPage); onSelectedCaseIdChange(undefined) }}
+            onSelectCase={caseId => onSelectedCaseIdChange(caseId)}
+            queueData={visibleQueue.data}
+            queueError={visibleQueue.error}
+            queuePending={visibleQueue.isPending}
+            queueView={queueView}
+          />
+        ),
+      } : {})}>
       <DoctorCaseDetailRegion containerRef={caseDetailRoot} labelledBy="case-detail-heading">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
         {detail.data ? <InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session} /> : null}
