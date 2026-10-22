@@ -103,6 +103,51 @@ describe('ClinMesh React Surface definition', () => {
     }
   })
 
+  it('returns to the layout chosen before full-frame when exiting fullscreen', async () => {
+    const setLayout = vi.fn()
+    const ctx = { get(name: string) {
+      if (name === 'uiSession') return { adapter: { current: { getSnapshot: () => ({ key: 'session-1' }), subscribe: () => () => {} } } }
+      if (name === 'theme') return { getTheme: () => ({ active: { colorScheme: 'light' } }) }
+      if (name === 'locale') return { getLocale: () => ({ active: 'zh-CN' }), subscribe: () => () => {} }
+      if (name === 'reactSurfaces') return { setLayout }
+      return {}
+    }, on: () => () => {} }
+    const render = vi.spyOn(application, 'WebApp').mockImplementation(() => createElement('div'))
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+    const definition = createDefinition(ctx as unknown as ClientContext)
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+      const baseProps = {
+        active: true, conversationCollapsed: false, agent: { register: () => () => {} },
+        capabilities: { agent: { available: false, status: 'unavailable' as const } },
+        close() {}, location: '/', navigate() {},
+      }
+      let runtime: WebRuntimeOptions | undefined
+      render.mockImplementation(props => { runtime = props?.runtime; return createElement('div') })
+      // 镜像布局进入全屏再退出，应回到 workspace-mirror 而非默认 workspace。
+      await act(() => root.render(createElement(definition.component, { ...baseProps, layout: 'workspace-mirror' })))
+      runtime!.surfaceDisplay!.toggle()
+      expect(setLayout).toHaveBeenLastCalledWith('clinmesh.his', 'full-frame')
+      await act(() => root.render(createElement(definition.component, { ...baseProps, layout: 'full-frame' })))
+      runtime!.surfaceDisplay!.toggle()
+      expect(setLayout).toHaveBeenLastCalledWith('clinmesh.his', 'workspace-mirror')
+      // 默认 workspace 的往返行为保持不变。
+      await act(() => root.render(createElement(definition.component, { ...baseProps, layout: 'workspace' })))
+      runtime!.surfaceDisplay!.toggle()
+      expect(setLayout).toHaveBeenLastCalledWith('clinmesh.his', 'full-frame')
+      await act(() => root.render(createElement(definition.component, { ...baseProps, layout: 'full-frame' })))
+      runtime!.surfaceDisplay!.toggle()
+      expect(setLayout).toHaveBeenLastCalledWith('clinmesh.his', 'workspace')
+    } finally {
+      await act(() => root.unmount())
+      container.remove()
+      render.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('updates workspace routes, settings and launcher through the same host locale event', async () => {
     const listeners = new Set<() => void>()
     let language = 'zh-CN'

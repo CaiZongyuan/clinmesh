@@ -119,6 +119,9 @@ export function createDefinition(
       () => theme.getTheme().active.colorScheme,
       () => theme.getTheme().active.colorScheme,
     )
+    // 退出全屏回到进入前的布局，镜像等非默认布局不因全屏往返丢失。
+    const lastWorkspaceLayout = useRef<ReactSurfaceProps['layout']>('workspace')
+    if (props.layout !== 'full-frame') lastWorkspaceLayout.current = props.layout
     return (
       <ClinMeshSurface
         {...props}
@@ -130,7 +133,7 @@ export function createDefinition(
           fullscreenKeepsDetails: true,
           // 镜像布局收起宿主会话列右侧的内容队列，队列改由内容区左缘卡片承担。
           queuePresentation: props.layout === 'workspace-mirror' ? 'rail' : 'column',
-          toggle: () => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? 'workspace' : 'full-frame'),
+          toggle: () => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? lastWorkspaceLayout.current : 'full-frame'),
           conversation: {
             collapsed: props.conversationCollapsed,
             toggle: () => surfaces.setConversationCollapsed('clinmesh.his', !props.conversationCollapsed),
