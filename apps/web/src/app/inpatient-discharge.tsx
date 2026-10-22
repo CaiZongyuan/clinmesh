@@ -1,4 +1,4 @@
-import { inpatientDischargeEventsSchema, inpatientSettlementPreviewSchema, type inpatientDepartureMethodSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientDischargeEventsSchema, inpatientSettlementPreviewSchema, inpatientPaymentsSchema, type inpatientDepartureMethodSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.tsx'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -15,6 +15,7 @@ import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InsurancePanel } from './insurance-panel.tsx'
+import { InpatientFunding } from './inpatient-funding.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
 export function InpatientDischarge({ admission, session, locale, write }: Props): React.JSX.Element {
@@ -54,6 +55,8 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
   const insuranceChanged = useCallback(() => client.invalidateQueries({
     queryKey: ['inpatient', workspaceId, epoch, practitionerRoleId],
   }), [client, workspaceId, epoch, practitionerRoleId])
+  const funds = useQuery({ queryKey: ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId,admission.id,'payments'],
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/payments`, inpatientPaymentsSchema, signal) })
   // 收费员显式获取预览；后台失效或账目刷新不能替换已经看过的金额与指纹。
   const preview = useQuery({ queryKey: ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId,admission.id,'settlement-preview'], enabled: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/discharge/preview`, inpatientSettlementPreviewSchema, signal) })
@@ -64,6 +67,8 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
     <InsurancePanel key={JSON.stringify({ accountId: session.user.id, actor: session.actor, admissionId: admission.id })}
       target={{ kind: 'inpatient', id: admission.id }} session={session} locale={locale}
       disabled={write.blocked || admission.status !== 'departed'} onChanged={insuranceChanged} />
+    {funds.error ? <p role="alert">{getWorkspaceErrorMessage(funds.error,getWorkspaceMessages(locale))}</p> : null}
+    {funds.data ? <InpatientFunding admission={admission} locale={locale} write={write} statement={funds.data} /> : null}
     <Button variant="outline" disabled={write.blocked || preview.isFetching} onClick={() => { void preview.refetch() }}>{data ? t('重新预览结算','Refresh settlement preview') : t('预览结算','Preview settlement')}</Button>
     {preview.error ? <p role="alert">{getWorkspaceErrorMessage(preview.error,getWorkspaceMessages(locale))}</p> : null}
     {data ? <>
@@ -76,7 +81,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       </dl>
       <p>{t('原预交金：','Original deposit: ')}{formatFen(data.depositFen,locale)}</p>
       <p data-testid="settlement-refund">{data.balanceFen < 0 ? t('应退：','Refund: ') : data.balanceFen > 0 ? t('应补缴：','Supplement: ') : t('无补退：','No balance: ')}{formatFen(Math.abs(data.balanceFen),locale)}</p>
-      <Button disabled={write.blocked || preview.isFetching || admission.status !== 'departed' || data.status !== 'departed'} onClick={() => write.mutation.mutate({ operation:'inpatient.discharge.settle',input:{
+      <Button disabled={write.blocked || preview.isFetching || admission.status !== 'departed' || data.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0} onClick={() => write.mutation.mutate({ operation:'inpatient.discharge.settle',input:{
         admissionId:admission.id,encounterVersion:data.encounterVersion,fingerprint:data.fingerprint,expectedChargesFen:data.chargesFen,expectedBalanceFen:data.balanceFen,
       } })}>{t('确认结算','Confirm settlement')}</Button>
     </> : null}

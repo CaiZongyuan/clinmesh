@@ -6,6 +6,8 @@
 
 ## 布局、滚动与像素聚合
 
+- 窄屏与 CSS zoom 组合验证前，按 `viewport / zoom` 核有效 CSS 宽度，并读取全局 `body` 的 computed `min-width`；低于产品最小宽度会使 Portal 等空容器也表现为横向溢出。组件验收分别覆盖受支持窄屏和缩放，用 DOM 尺寸区分全局宽度下限与组件溢出；不要为局部回归改写全站宽度合同。住院收款入口的文字与聚合尺寸证据见 [真实入口测试](../../apps/web/e2e/inpatient-discharge.spec.ts)。
+
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。浏览器回归验证真实指针命中，不能只检查文本可见。
 
 - 浏览器高光坐标测试应比较目标的可见部分；headless Chrome 的默认视口可能裁掉目标底部，不能把完整 `getBoundingClientRect()` 与已按视口裁剪的边框直接比较。保留裁剪断言，不通过放大窗口掩盖差异。

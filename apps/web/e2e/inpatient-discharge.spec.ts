@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test'
 import { expect, test } from './fixtures.ts'
 import { createPatientResponseSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
-import { inpatientSettlementResponseSchema, inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientSettlementResponseSchema, inpatientSettlementPreviewSchema, inpatientPaymentsSchema, inpatientPaymentResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
 
 async function setup(page: Page, app: { origin: string; password: string }, withCharge = false) {
   let first = true, activeRole = ''
@@ -147,4 +147,77 @@ test('真实清床后费用更正与未知退款丢回执恢复，保留首次�
   const after = await (await page.request.get(`${browserApp.origin}${s.path}/discharge/preview`)).json()
   expect(after).toEqual(frozen)
   await expect(page.getByText('已结算并清床', { exact: true })).toBeVisible()
+})
+
+test('真实收费员组合预交金丢回执刷新恢复原意图，渠道未知再查询原收款只入账一次', async ({ page, browserApp }) => {
+  const s = await setup(page,browserApp)
+  await page.setViewportSize({width:390,height:900})
+  await page.getByLabel('现金金额（元）',{exact:true}).fill('40')
+  await page.getByLabel('移动支付金额（元）',{exact:true}).fill('60')
+  await page.getByRole('button',{name:'未知后查明成功',exact:true}).click()
+  await page.getByRole('button',{name:'预览收款',exact:true}).click()
+  await expect(page.getByText(/已冻结收款预览/)).toContainText('100.00')
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
+  await page.setViewportSize({width:480,height:900})
+  await page.evaluate(()=>{document.documentElement.style.zoom='1.25'})
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)
+  let posts = 0
+  await page.route(`**${s.path}/payments/confirm`,async route=> {
+    posts+=1
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    expect(inpatientPaymentResponseSchema.parse(await response.json()).data.outcome).toBe('ambiguous')
+    await route.abort('failed')
+  })
+  await page.getByRole('button',{name:'确认已审阅收款',exact:true}).click()
+  await expect(page.getByRole('alert')).toContainText('无法连接科灵脉智服务')
+  await page.reload()
+  await s.select()
+  await page.getByRole('button',{name:'恢复原住院操作',exact:true}).click()
+  await expect(page.getByRole('button',{name:'查询原收款',exact:true})).toBeVisible()
+  expect(posts).toBe(1)
+  await page.getByRole('button',{name:'查询原收款',exact:true}).click()
+  await expect(page.getByRole('button',{name:'查询原收款',exact:true})).toHaveCount(0)
+  const statement = inpatientPaymentsSchema.parse(await (await page.request.get(`${browserApp.origin}${s.path}/payments`)).json())
+  expect(statement.depositFen).toBe(110000)
+  expect(statement.payments).toHaveLength(1)
+  expect(statement.payments[0]).toMatchObject({outcome:'success',version:2,tenders:[{method:'cash',amountFen:4000},{method:'mobile',amountFen:6000}]})
+})
+
+test('真实收费员退款未知刷新后查询原退款，护士不能提前清床，确定资金后重新封账再清床', async ({ page, browserApp }) => {
+  const s = await setup(page,browserApp)
+  await page.getByRole('button',{name:'预览结算',exact:true}).click()
+  await page.getByRole('button',{name:'未知后查明成功',exact:true}).click()
+  await page.getByLabel('原入金',{exact:true}).click()
+  await page.getByRole('option',{name:/预交金/}).click()
+  await page.getByLabel('退款金额（元）',{exact:true}).fill('1000')
+  await page.getByRole('button',{name:'预览退款',exact:true}).click()
+  await expect(page.getByText(/已冻结退款预览/)).toContainText('1,000.00')
+  await page.getByRole('button',{name:'确认已审阅退款',exact:true}).click()
+  await expect(page.getByRole('button',{name:'确认结算',exact:true})).toBeDisabled()
+  await page.reload()
+  await s.select()
+  await expect(page.getByRole('button',{name:'查询原退款',exact:true})).toBeVisible()
+  await s.login('ward-nurse')
+  await s.select()
+  await page.getByLabel('出院处理说明',{exact:true}).fill('合成未知资金不得清床')
+  await expect(page.getByRole('button',{name:'清床',exact:true})).toBeDisabled()
+  await s.login('cashier')
+  await s.select()
+  await page.getByRole('button',{name:'查询原退款',exact:true}).click()
+  await expect(page.getByRole('button',{name:'查询原退款',exact:true})).toHaveCount(0)
+  await expect(page.getByTestId('inpatient-funding-balance')).toContainText('0.00')
+  await page.getByRole('button',{name:'预览结算',exact:true}).click()
+  await page.getByRole('button',{name:'确认结算',exact:true}).click()
+  await expect(page.getByText('已结算，等待病区清床',{exact:true})).toBeVisible()
+  const statement = inpatientPaymentsSchema.parse(await (await page.request.get(`${browserApp.origin}${s.path}/payments`)).json())
+  expect(statement.refunds).toHaveLength(1)
+  expect(statement.refunds[0]).toMatchObject({outcome:'success',version:2,amountFen:100000})
+  const frozen = inpatientSettlementPreviewSchema.parse(await (await page.request.get(`${browserApp.origin}${s.path}/discharge/preview`)).json())
+  expect(frozen.transactions.filter(item=>item.kind==='refund')).toMatchObject([{id:statement.refunds[0]!.refundId,amountFen:-100000}])
+  await s.login('ward-nurse')
+  await s.select()
+  await page.getByLabel('出院处理说明',{exact:true}).fill('合成资金查明后完成清床')
+  await page.getByRole('button',{name:'清床',exact:true}).click()
+  await expect(page.getByText('未分床',{exact:false})).toBeVisible()
 })

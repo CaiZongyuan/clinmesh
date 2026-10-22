@@ -17,6 +17,10 @@ const paymentSelect = `SELECT a.payment_id AS paymentId,a.admission_id AS admiss
   FROM inpatient_payment_attempt a LEFT JOIN inpatient_payment_resolution r USING(workspace_id,epoch,payment_id)
   WHERE a.workspace_id=? AND a.epoch=?`
 const rowSchema = inpatientPaymentSchema.omit({ tenders: true }).extend({ tenders_json: z.string(), recovery_outcome: z.enum(['success','declined','ambiguous']), adjustment_id: z.string().nullable() })
+function publicAttempt(raw: z.infer<typeof rowSchema>) {
+  const { tenders_json, recovery_outcome: _recovery, adjustment_id: _adjustment, ...row } = raw
+  return inpatientPaymentSchema.parse({ ...row, tenders: JSON.parse(tenders_json) })
+}
 const previewSchema = z.object({ admission_id: z.string(), kind: inpatientPaymentSchema.shape.kind, amount_fen: z.number(), tenders_json: z.string(),
   simulator_rule: inpatientPaymentInputSchema.shape.simulatorRule, fingerprint: z.string(), token_hash: z.string(), actor_hash: z.string(), expires_at: z.string(), consumed_at: z.string().nullable(), adjustment_id: z.string().nullable() })
 export const firstSettlementBasis = (admissionId: string) => `first-settlement:${admissionId}`
@@ -25,25 +29,24 @@ export const firstSettlementBasis = (admissionId: string) => `first-settlement:$
 export class InpatientPayments {
   readonly refunds: RefundLedger
   constructor(readonly owner: InpatientService) { this.refunds = new RefundLedger(owner.database) }
+  #rows(context: ActorContext, admissionId: string, firstOnly = false) {
+    return z.array(rowSchema).parse(this.owner.database.driver.prepare(`${paymentSelect} AND a.admission_id=? ${firstOnly ? 'AND a.adjustment_id IS NULL' : ''} ORDER BY a.created_at,a.payment_id`)
+      .all(context.workspaceId, context.epoch, admissionId))
+  }
   #attempts(context: ActorContext, admissionId: string, firstOnly = false) {
-    return this.owner.database.driver.prepare(`${paymentSelect} AND a.admission_id=? ${firstOnly ? 'AND a.adjustment_id IS NULL' : ''} ORDER BY a.created_at,a.payment_id`)
-      .all(context.workspaceId, context.epoch, admissionId).map(raw => {
-        const { tenders_json, recovery_outcome: _recovery, adjustment_id: _adjustment, ...row } = rowSchema.parse(raw)
-        return inpatientPaymentSchema.parse({ ...row, tenders: JSON.parse(tenders_json) })
-      })
+    return this.#rows(context, admissionId, firstOnly).map(publicAttempt)
   }
   adjustmentAttempts(context: ActorContext, admissionId: string) {
-    return this.#attempts(context, admissionId).flatMap(payment => {
-      const adjustmentId = this.attempt(context, payment.paymentId)!.adjustment_id
-      return adjustmentId === null ? [] : [{ ...payment, adjustmentId }]
+    return this.#rows(context, admissionId).flatMap(row => {
+      return row.adjustment_id === null ? [] : [{ ...publicAttempt(row), adjustmentId: row.adjustment_id }]
     })
   }
   sources(context: ActorContext, admissionId: string): Array<RefundSource & { createdAt: string }> {
-    const attempts = this.#attempts(context, admissionId)
+    const attempts = this.#attempts(context, admissionId), tenders = new Map(attempts.map(attempt => [attempt.paymentId, attempt.tenders]))
     const deposits = z.array(z.object({ id: z.string(), amountFen: z.number().int().positive().safe(), createdAt: z.string() })).parse(
       this.owner.database.driver.prepare('SELECT transaction_id AS id,amount_fen AS amountFen,virtual_time AS createdAt FROM inpatient_deposit WHERE workspace_id=? AND epoch=? AND admission_id=?')
         .all(context.workspaceId, context.epoch, admissionId)).map(row => ({ ...row, kind: 'inpatient-deposit' as const,
-          ...(attempts.find(attempt => attempt.paymentId === row.id)?.tenders ? { tenders: attempts.find(attempt => attempt.paymentId === row.id)!.tenders } : {}) }))
+          ...(tenders.has(row.id) ? { tenders: tenders.get(row.id)! } : {}) }))
     const supplements = new Map<string, RefundSource & { createdAt: string }>()
     for (const payment of attempts) if (payment.kind === 'supplement' && payment.outcome === 'success')
       supplements.set(payment.paymentId, { kind: 'inpatient-supplement', id: payment.paymentId, amountFen: payment.amountFen, createdAt: payment.createdAt, tenders: payment.tenders })
@@ -55,8 +58,8 @@ export class InpatientPayments {
   read(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['cashier'])
     this.owner.readAdmissionBinding(context, admissionId)
-    const payments = this.#attempts(context, admissionId, true), allPayments = this.#attempts(context, admissionId)
-    const laterIds = new Set(allPayments.filter(payment => !payments.some(first => first.paymentId === payment.paymentId)).map(payment => payment.paymentId))
+    const rows = this.#rows(context, admissionId), payments = rows.filter(row => row.adjustment_id === null).map(publicAttempt)
+    const laterIds = new Set(rows.filter(row => row.adjustment_id !== null).map(row => row.paymentId))
     const sources = this.sources(context, admissionId).filter(source => !laterIds.has(source.id))
       .map(source => ({ ...source, ...this.refunds.balance(context, source) }))
     const refunds = this.firstRefunds(context, admissionId)
@@ -112,7 +115,7 @@ export class InpatientPayments {
       .run(context.workspaceId, context.epoch, id, input.admissionId, input.previewId, input.kind, input.amountFen, JSON.stringify(input.tenders), plan.outcome, plan.recoveryOutcome, `sim-inpatient-${id}`, now, input.adjustmentId ?? null)
     this.owner.database.driver.prepare('UPDATE inpatient_payment_preview SET consumed_at=? WHERE workspace_id=? AND epoch=? AND preview_id=? AND consumed_at IS NULL').run(now, context.workspaceId, context.epoch, input.previewId)
     if (plan.outcome === 'success' && input.kind === 'deposit') this.#recordDeposit(context, id, input.admissionId, input.amountFen, now)
-    return this.#attempts(context, input.admissionId).find(payment => payment.paymentId === id)!
+    return publicAttempt(this.attempt(context, id)!)
   }
   preview(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientPaymentInputSchema.parse(raw)
@@ -169,7 +172,7 @@ export class InpatientPayments {
           this.#recordDeposit(context, paymentId, attempt.admissionId, attempt.amountFen, now)
         }
       }
-      return this.#attempts(context, attempt.admissionId).find(payment => payment.paymentId === paymentId)!
+      return publicAttempt(this.attempt(context, paymentId)!)
   }
   #refundSource(context: ActorContext, admissionId: string, sourceId: string) {
     const source = this.sources(context, admissionId).find(item => item.id === sourceId)

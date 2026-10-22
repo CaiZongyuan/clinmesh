@@ -744,10 +744,10 @@ describe('HIS operation catalog', () => {
 
     expect(counts).toEqual({
       'clinmesh-administrator': 3,
-      'clinmesh-billing': 10,
+      'clinmesh-billing': 14,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 64,
+      'clinmesh-inpatient': 71,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,
       'clinmesh-shared': 1,
@@ -769,11 +769,14 @@ describe('HIS operation catalog', () => {
     expect(listHisOperations()
       .filter(operation => operation.previewToken === 'required')
       .map(operation => operation.id)).toEqual([
+      'insurance.confirm',
       'inpatient.financial.refund.confirm',
       'inpatient.financial.payment.confirm',
       clinicalDocumentOperationIds.sign,
       'refund.confirm',
       'payment.confirm',
+      'inpatient.payment.confirm',
+      'inpatient.refund.confirm',
     ])
     expect(getHisOperation('reference.diagnoses.search').handlerOwner).toBe('ReferenceDataService')
     expect(getHisOperation('registration.synthetic-case.start').handlerOwner)

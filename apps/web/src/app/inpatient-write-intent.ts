@@ -1,8 +1,9 @@
 import { insuranceTargetSchema } from '@clinmesh/contracts/insurance'
 import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from '@clinmesh/contracts/inpatient-finance'
-import { inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema,
+  inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
+  inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema,inpatientInvestigationAcknowledgeInputSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
@@ -26,6 +27,12 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.financial.payment.preview'), input: inpatientFinancialPaymentPreviewInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.financial.payment.confirm'), input: inpatientPaymentConfirmInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.financial.payment.recover'), input: inpatientPaymentRecoverInputSchema }).strict(),
+  z.object({operation:z.literal('inpatient.payment.preview'),input:inpatientPaymentInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.payment.confirm'),input:inpatientPaymentConfirmInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.payment.recover'),input:inpatientPaymentRecoverInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.refund.preview'),input:inpatientRefundInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.refund.confirm'),input:inpatientRefundConfirmInputSchema}).strict(),
+  z.object({operation:z.literal('inpatient.refund.recover'),input:inpatientRefundRecoverInputSchema}).strict(),
   z.object({operation:z.literal('inpatient.record.submit'),input:inpatientRecordSubmitInputSchema}).strict(),
   z.object({operation:z.literal('inpatient.record.review'),input:inpatientRecordReviewInputSchema}).strict(),
   z.object({operation:z.literal('inpatient.record.archive'),input:inpatientRecordArchiveInputSchema}).strict(),
