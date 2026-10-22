@@ -56,6 +56,20 @@ export class InpatientPayments {
     return [...deposits, ...supplements.values()]
   }
   read(context: ActorContext, admissionId: string) {
+    // Commands use this calculation within their existing business transaction.
+    if (this.owner.database.driver.inTransaction) return this.#statement(context, admissionId)
+    let result: z.infer<typeof inpatientPaymentsSchema>
+    try {
+      result = this.#statement(context, admissionId)
+    } catch (error) {
+      try { this.owner.commands.auditRead(context, 'inpatient.payment.read', { admissionId }, 'failed') }
+      catch { /* Preserve the original read rejection if its audit cannot be stored. */ }
+      throw error
+    }
+    this.owner.commands.auditRead(context, 'inpatient.payment.read', { admissionId }, 'success')
+    return result
+  }
+  #statement(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['cashier'])
     this.owner.readAdmissionBinding(context, admissionId)
     const rows = this.#rows(context, admissionId), payments = rows.filter(row => row.adjustment_id === null).map(publicAttempt)

@@ -76,10 +76,20 @@ export class InpatientFinancialAdjustments {
     return inpatientFinancialSchema.parse({ ...data, fingerprint: hash(data) })
   }
   read(context: ActorContext, admissionId: string) {
-    this.owner.assertReadRole(context, ['cashier', 'medical-records'])
-    this.owner.database.driver.exec('BEGIN')
-    try { const result = this.#snapshot(context, admissionId); this.owner.database.driver.exec('COMMIT'); return result }
-    catch (error) { if (this.owner.database.driver.inTransaction) this.owner.database.driver.exec('ROLLBACK'); throw error }
+    let result: z.infer<typeof inpatientFinancialSchema>
+    try {
+      this.owner.assertReadRole(context, ['cashier', 'medical-records'])
+      this.owner.database.driver.exec('BEGIN')
+      result = this.#snapshot(context, admissionId)
+      this.owner.database.driver.exec('COMMIT')
+    } catch (error) {
+      if (this.owner.database.driver.inTransaction) this.owner.database.driver.exec('ROLLBACK')
+      try { this.owner.commands.auditRead(context, 'inpatient.financial.read', { admissionId }, 'failed') }
+      catch { /* Preserve the original read rejection if its audit cannot be stored. */ }
+      throw error
+    }
+    this.owner.commands.auditRead(context, 'inpatient.financial.read', { admissionId }, 'success')
+    return result
   }
   adjust(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientFinancialAdjustmentInputSchema.parse(raw)
