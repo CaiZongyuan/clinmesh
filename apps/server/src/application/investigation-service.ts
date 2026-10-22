@@ -471,7 +471,6 @@ export class InvestigationService {
   ): Promise<InvestigationResultSnapshot | undefined> {
     const modelTaskId = `investigation:${epoch}:${requestId}`
       + (generationAttempt === undefined ? '' : `:retry:${generationAttempt}`)
-    this.#assertRequestCurrent(workspaceId, epoch, requestId)
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
@@ -498,6 +497,7 @@ export class InvestigationService {
     }
     const materializedRow = materializedRequestRowSchema.parse(row)
     if (materializedRow.service_snapshot_json !== null) {
+      this.#assertRequestCurrent(workspaceId, epoch, requestId)
       return this.#resolvePublishedService(
         workspaceId,
         epoch,
@@ -514,6 +514,7 @@ export class InvestigationService {
       materializedRow.catalog_item_id,
     )
     if (existing !== undefined) return existing
+    this.#assertRequestCurrent(workspaceId, epoch, requestId)
     const requestedConcept = referenceConceptSnapshotSchema.parse(JSON.parse(materializedRow.reference_json))
     const syntheticCase = this.#cases.get(workspaceId, materializedRow.synthetic_case_id)
     const truth = this.#cases.getTruthForSimulator(workspaceId, materializedRow.synthetic_case_id)
@@ -574,6 +575,14 @@ export class InvestigationService {
       }),
     }
     const inputHash = canonicalJsonHash(payload)
+    const validateInterpretation = (output: z.infer<typeof agentOutputSchema>) => {
+      if (output.interpretation !== interpretationFor(output.value, referenceRange)) {
+        throw new InvestigationGenerationError(
+          'INVESTIGATION_OUTPUT_INVALID',
+          'The Investigation Agent interpretation conflicts with the reference range',
+        )
+      }
+    }
     const completion = await this.#provider.completeJson({
       onBeforeRequest: () => this.#assertRequestCurrent(workspaceId, epoch, requestId),
       usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: materializedRow.clinical_case_id,
@@ -585,15 +594,19 @@ export class InvestigationService {
       ...(signal === undefined ? {} : { signal }),
       systemPrompt,
       userPayload: payload,
-      validate: value => agentOutputSchema.safeParse(value).success,
+      validate: value => {
+        const parsed = agentOutputSchema.safeParse(value)
+        if (!parsed.success) return false
+        validateInterpretation(parsed.data)
+        return true
+      },
+    }).catch((error: unknown) => {
+      if (error instanceof ChatCompletionsError && error.code === 'AI_RESPONSE_INVALID'
+        && error.cause instanceof InvestigationGenerationError && error.cause.code === 'INVESTIGATION_OUTPUT_INVALID') throw error.cause
+      throw error
     })
     const output = agentOutputSchema.parse(JSON.parse(completion.content))
-    if (output.interpretation !== interpretationFor(output.value, referenceRange)) {
-      throw new InvestigationGenerationError(
-        'INVESTIGATION_OUTPUT_INVALID',
-        'The Investigation Agent interpretation conflicts with the reference range',
-      )
-    }
+    validateInterpretation(output)
     const content = investigationResultContentSchema.parse({
       conclusion: output.conclusion,
       results: [{
