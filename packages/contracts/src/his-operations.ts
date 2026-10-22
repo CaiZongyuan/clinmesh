@@ -1,3 +1,5 @@
+import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewInputSchema, refundPreviewResponseSchema,
+  refundConfirmInputSchema, refundRecoverInputSchema, refundResponseSchema } from './refunds.ts'
 import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
 import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema, inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema, inpatientDischargeEventsSchema } from './inpatient-discharge.ts'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from './inpatient-surgery.ts'
@@ -558,6 +560,11 @@ const billingQueueInputSchema = paginationInputSchema.extend({
 }).strict()
 
 const billingCaseInputSchema = paginationInputSchema.extend({ caseId: z.string().min(1) }).strict()
+const refundChargeVersionShape = { chargeVersion: z.number().int().positive() }
+const chargeAdjustmentOperationInputSchema = chargeAdjustmentInputSchema.extend({ caseId: z.string().min(1), ...refundChargeVersionShape }).strict()
+const refundPreviewOperationInputSchema = refundPreviewInputSchema.extend({ chargeItemId: z.string().min(1), ...refundChargeVersionShape }).strict()
+const refundConfirmOperationInputSchema = refundConfirmInputSchema.extend({ previewId: z.string().min(1), chargeItemId: z.string().min(1), ...refundChargeVersionShape }).strict()
+const refundRecoverOperationInputSchema = refundRecoverInputSchema.extend({ refundId: z.string().min(1), chargeItemId: z.string().min(1), ...refundChargeVersionShape }).strict()
 
 const paymentPreviewOperationInputSchema = z.object({
   caseId: z.string().min(1),
@@ -2262,6 +2269,49 @@ const operationDefinitions = [
     version: 2,
   },
   {
+    cliPath: ['billing', 'refunds', 'get'], id: 'billing.refunds.get', mode: 'query', version: 1,
+    http: { method: 'GET', path: '/api/his/v1/billing/cases/:caseId/refunds' },
+    input: z.object({ caseId: z.string().min(1) }).strict(), output: refundCaseSchema,
+    roles: ['cashier'], risk: 'read', requirements: { expectedVersions: false, idempotency: 'none' },
+    summary: 'Read original successful payments, fee corrections, refund reservations and channel history',
+  },
+  {
+    cliPath: ['billing', 'charge', 'adjust'], id: 'billing.charge.adjust', mode: 'command', version: 1,
+    http: { method: 'POST', path: '/api/his/v1/billing/cases/:caseId/adjustments', encodeBody: raw => {
+      const { caseId: _caseId, chargeVersion, ...input } = chargeAdjustmentOperationInputSchema.parse(raw)
+      return { expectedVersions: { [`ChargeItem/${input.chargeItemId}`]: String(chargeVersion) }, input }
+    } }, input: chargeAdjustmentOperationInputSchema, output: chargeAdjustmentResponseSchema,
+    roles: ['cashier'], risk: 'high-risk-write', requirements: { expectedVersions: true, idempotency: 'required' },
+    summary: 'Append a reasoned correction to the original charge without reversing clinical execution',
+  },
+  {
+    cliPath: ['refund', 'preview'], id: 'refund.preview', mode: 'preview', version: 1,
+    http: { method: 'POST', path: '/api/his/v1/refunds/actions/preview', encodeBody: raw => {
+      const { chargeItemId, chargeVersion, ...input } = refundPreviewOperationInputSchema.parse(raw)
+      return { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }
+    } }, input: refundPreviewOperationInputSchema, output: refundPreviewResponseSchema,
+    roles: ['cashier'], risk: 'write', requirements: { expectedVersions: true, idempotency: 'required' },
+    summary: 'Freeze a partial refund against the original successful payment and recorded fee correction',
+  },
+  {
+    cliPath: ['refund', 'confirm'], id: 'refund.confirm', mode: 'command', version: 1,
+    http: { method: 'POST', path: '/api/his/v1/refunds/:previewId/actions/confirm', encodeBody: raw => {
+      const { chargeItemId, chargeVersion, previewId: _previewId, ...input } = refundConfirmOperationInputSchema.parse(raw)
+      return { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }
+    } }, input: refundConfirmOperationInputSchema, output: refundResponseSchema,
+    roles: ['cashier'], risk: 'high-risk-write', requirements: { expectedVersions: true, idempotency: 'required' },
+    summary: 'Confirm the reviewed refund; an ambiguous result reserves original funds and correction allowance',
+  },
+  {
+    cliPath: ['refund', 'recover'], id: 'refund.recover', mode: 'command', version: 1,
+    http: { method: 'POST', path: '/api/his/v1/refunds/:refundId/actions/recover', encodeBody: raw => {
+      const { chargeItemId, chargeVersion, refundId: _refundId, ...input } = refundRecoverOperationInputSchema.parse(raw)
+      return { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }
+    } }, input: refundRecoverOperationInputSchema, output: refundResponseSchema,
+    roles: ['cashier'], risk: 'high-risk-write', requirements: { expectedVersions: true, idempotency: 'required' },
+    summary: 'Query the original refund attempt without sending another refund; definite decline releases its reservation',
+  },
+  {
     cliPath: ['payment', 'preview'],
     http: {
       method: 'POST',
@@ -2806,6 +2856,11 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'payment.confirm': 'clinmesh-billing',
   'payment.preview': 'clinmesh-billing',
   'payment.recover': 'clinmesh-billing',
+  'billing.refunds.get': 'clinmesh-billing',
+  'billing.charge.adjust': 'clinmesh-billing',
+  'refund.preview': 'clinmesh-billing',
+  'refund.confirm': 'clinmesh-billing',
+  'refund.recover': 'clinmesh-billing',
   'pharmacy.queue.list': 'clinmesh-pharmacy',
   'prescription.dispense': 'clinmesh-pharmacy',
   'prescription.review': 'clinmesh-pharmacy',
@@ -2851,6 +2906,7 @@ export const hisOperationCatalog: readonly HisOperationDefinition[] = operationD
     identities: hisOperationIdentitySchema.options,
     previewToken: operation.id === clinicalDocumentOperationIds.sign
       || operation.id === 'payment.confirm'
+      || operation.id === 'refund.confirm'
       ? 'required' as const
       : 'none' as const,
     skill,

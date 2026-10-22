@@ -1,3 +1,5 @@
+import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
+  type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
 import {
   acknowledgeImagingReportResponseSchema,
   caseImagingServiceCatalogSchema,
@@ -1935,6 +1937,26 @@ export function confirmPayment(input: {
 
 export function getBillingCase(caseId: string, signal?: AbortSignal, page = 1) {
   return apiGet(`/api/his/v1/billing/cases/${encodeURIComponent(caseId)}?page=${page}&pageSize=20`, billingCaseSchema, signal)
+}
+
+export function getRefundCase(caseId: string, signal?: AbortSignal) {
+  return apiGet(`/api/his/v1/billing/cases/${encodeURIComponent(caseId)}/refunds`, refundCaseSchema, signal)
+}
+export function adjustBillingCharge(caseId: string, input: z.infer<typeof chargeAdjustmentInputSchema>, chargeVersion: number, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/billing/cases/${encodeURIComponent(caseId)}/adjustments`, chargeAdjustmentResponseSchema,
+    { expectedVersions: { [`ChargeItem/${input.chargeItemId}`]: String(chargeVersion) }, input }, { idempotencyKey })
+}
+export function previewRefund(input: z.infer<typeof refundPreviewInputSchema>, chargeItemId: string, chargeVersion: number, idempotencyKey: string) {
+  return apiMutation('/api/his/v1/refunds/actions/preview', refundPreviewResponseSchema,
+    { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }, { idempotencyKey })
+}
+export function confirmRefund(previewId: string, commitToken: string, chargeItemId: string, chargeVersion: number, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/refunds/${encodeURIComponent(previewId)}/actions/confirm`, refundResponseSchema,
+    { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input: { commitToken } }, { idempotencyKey })
+}
+export function recoverRefund(refundId: string, expectedRefundVersion: number, chargeItemId: string, chargeVersion: number, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/refunds/${encodeURIComponent(refundId)}/actions/recover`, refundResponseSchema,
+    { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input: { expectedRefundVersion } }, { idempotencyKey })
 }
 
 export function recoverPayment(input: {

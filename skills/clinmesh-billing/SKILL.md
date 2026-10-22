@@ -1,6 +1,6 @@
 ---
 name: clinmesh-billing
-description: ClinMesh cashier CLI workflow for reading unified bills, previewing combined or partial payments, confirming laboratory or medication charges, and recovering recorded ambiguous payment attempts.
+description: ClinMesh cashier CLI workflow for reading bills, collecting combined or partial payments, correcting fees, refunding original transactions, and recovering unknown payment or refund attempts.
 ---
 
 # ClinMesh Billing
@@ -34,5 +34,23 @@ clinmesh operations schema payment.recover
 clinmesh payment recover --input @payment-recover.json --idempotency-key <recovery-key>
 clinmesh command receipt get --operation-id payment.recover --idempotency-key <recovery-key>
 ```
+
+## Fee corrections and original-payment refunds
+
+Read `billing.refunds.get` before correcting fees or refunding. Each successful source reports its `version`, `refundedFen`, `reservedFen` and `refundableFen`. The current bill subtracts recorded fee corrections from receivables and successful refunds from collections; original charges, payment attempts and clinical execution remain in their original history.
+
+`billing.charge.adjust` records a positive integer fen reduction with the original ChargeItem version and a specific financial-error reason. It creates refund allowance but sends no money. Refund only an original successful payment, bounded by both its remaining funds and the unconsumed correction allowance across every original payment for that charge. Refunds consume the original frozen tender order and remaining amount per method; do not choose a new refund method. Unknown refunds reserve these amounts; definite decline releases the reservation.
+
+```bash
+clinmesh billing refunds get --case-id <case-id>
+clinmesh billing charge adjust --input @charge-adjustment.json --idempotency-key <adjustment-key>
+clinmesh refund preview --input @refund-preview.json --idempotency-key <refund-preview-key>
+clinmesh refund confirm --input @refund-confirm.json --idempotency-key <refund-confirm-key>
+clinmesh command receipt get --operation-id refund.confirm --idempotency-key <refund-confirm-key>
+clinmesh refund recover --input @refund-recover.json --idempotency-key <refund-recovery-key>
+clinmesh command receipt get --operation-id refund.recover --idempotency-key <refund-recovery-key>
+```
+
+Preview input binds `paymentId`, `amountFen`, `expectedSourceVersion`, `chargeItemId`, `chargeVersion` and `simulatorRule`; confirm preserves its `previewId`, `commitToken` and original ChargeItem version. Query recovery uses the original `refundId`, `expectedRefundVersion` and latest ChargeItem version. Never supply an outcome to recovery or replace an unknown refund with a fresh refund. After response loss inspect the original Command receipt and reuse the original key and payload. A stale preview requires explicit review of a new preview. These outpatient operations require an active Scenario Run; they do not authorize post-settlement or archived-account correction.
 
 Payment does not complete the clinical Encounter. Confirm the bill's remaining amounts and queue state before handing off a fully paid medication charge to a pharmacist Grant or continuing the applicable laboratory workflow.
