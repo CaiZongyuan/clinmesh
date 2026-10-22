@@ -1,5 +1,6 @@
 import { ModelTaskRecovery, modelControlWaitingCount } from './application/model-task-recovery.ts'
 import { InpatientService } from './application/inpatient-service.ts'
+import { InpatientInsuranceSource } from './application/inpatient-insurance-source.ts'
 import { createApp } from './app.ts'
 import { ModelUsageService } from './application/model-usage-service.ts'
 import type { ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
@@ -264,7 +265,12 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       ...(recoverableChatCompletions === undefined ? {} : { provider: recoverableChatCompletions }),
       results: investigationResults,
     })
-    const workflow = new WorkflowService(database, fhir, commands, {
+    const workflow: WorkflowService = new WorkflowService(database, fhir, commands, {
+      readInpatientInsuranceSource: (context, target) => {
+        if (target.kind !== 'inpatient') throw new Error('Expected an inpatient insurance source')
+        return inpatientInsurance.read(context, { kind: 'inpatient', id: target.id })
+      },
+      assertInpatientInsuranceChangeAllowed: (context, source) => inpatientInsurance.assertFirstSettlementWritable(context, source.target.id),
       consultationRecordingEnabled: options.dshModelBridge !== undefined,
       qualityModelAvailable: chatCompletions !== undefined && (consultationModel ?? investigationModel ?? patientPersonaModel) !== undefined,
       qualityContextStatus: context => identity.clinicalDocumentQualityContextStatus(context),
@@ -275,6 +281,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       tokenSecret: options.cursorSecret,
     })
     const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow)
+    const inpatientInsurance = new InpatientInsuranceSource(inpatient)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
       canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
       contextStatus: context => identity.modelTaskContextStatus(context, ['admin.laboratory-services.publish']),

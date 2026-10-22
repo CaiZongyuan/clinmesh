@@ -2,6 +2,7 @@ import { z } from 'zod'
 import { commandResponseSchema } from './his.ts'
 import { inpatientDetailSchema, inpatientAdmissionSchema } from './inpatient.ts'
 import { inpatientChargeSchema } from './inpatient-clinical.ts'
+import { insuranceSettlementSchema } from './insurance.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const fen = z.number().int().nonnegative().safe()
@@ -18,6 +19,7 @@ export const inpatientSettlementPreviewSchema = z.object({ admissionId: id, enco
   status: inpatientAdmissionSchema.shape.status, financialStatus: inpatientAdmissionSchema.shape.financialStatus,
   charges: z.array(inpatientChargeSchema), chargesFen: fen, depositFen: fen, balanceFen: z.number().int().safe(),
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/), transactions: z.array(financialTransaction), settlement: settlement.optional(),
+  insurance: insuranceSettlementSchema.optional(),
 }).strict()
 export const inpatientSettleInputSchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/),
   fingerprint: inpatientSettlementPreviewSchema.shape.fingerprint, expectedChargesFen: fen, expectedBalanceFen: z.number().int().safe() }).strict()
