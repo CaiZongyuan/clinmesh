@@ -229,12 +229,16 @@ it('saves a multi-fragment batch with one summary request and no independent sem
 it.each(['overlong-fact', 'dangling-index'])('records an independent source and only fails the source with an invalid %s candidate', async invalid => {
   let summaries = 0
   const model = 'dsh:{"provider":"synthetic","model":"recording"}'
+  let attemptId: string | undefined
   const response = (value?: unknown) => new Response(JSON.stringify({ model,
-    ...(value === undefined ? {} : { content: JSON.stringify(value) }) }), { headers: { 'content-type': 'application/json' } })
+    ...(value === undefined ? {} : { content: JSON.stringify(value) }),
+    ...(attemptId === undefined ? {} : { accounting: { attemptId, status: 'succeeded', dispatch: 'dispatched',
+      usage: unknownModelTokenUsage } }) }), { headers: { 'content-type': 'application/json' } })
   const provider = new DshModelProvider({ origin: 'http://127.0.0.1:1', secret, timeoutMs: 2_000, maxResponseBytes: 8192,
     async fetch(_url, init) {
       const input = z.object({ operation: z.enum(['resolve', 'complete']), schemaName: z.string().optional(),
-        userPayload: z.unknown().optional() }).parse(JSON.parse(String(init?.body)))
+        userPayload: z.unknown().optional(), attemptId: z.string().uuid().optional() }).parse(JSON.parse(String(init?.body)))
+      attemptId = input.attemptId
       if (input.operation === 'resolve') return response()
       if (input.schemaName === 'consultation_history_verification') return response({
         additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
@@ -284,12 +288,16 @@ it('saves equivalent formatted updates once and keeps their source recorded', as
   let summaries = 0
   let verifications = 0
   const model = 'dsh:{"provider":"synthetic","model":"recording"}'
+  let attemptId: string | undefined
   const response = (value?: unknown) => Response.json({ model,
-    ...(value === undefined ? {} : { content: JSON.stringify(value) }) })
+    ...(value === undefined ? {} : { content: JSON.stringify(value) }),
+    ...(attemptId === undefined ? {} : { accounting: { attemptId, status: 'succeeded', dispatch: 'dispatched',
+      usage: unknownModelTokenUsage } }) })
   const provider = new DshModelProvider({ origin: 'http://127.0.0.1:1', secret, timeoutMs: 2_000, maxResponseBytes: 8192,
     async fetch(_url, init) {
       const input = z.object({ operation: z.enum(['resolve', 'complete']), schemaName: z.string().optional(),
-        userPayload: z.unknown().optional() }).parse(JSON.parse(String(init?.body)))
+        userPayload: z.unknown().optional(), attemptId: z.string().uuid().optional() }).parse(JSON.parse(String(init?.body)))
+      attemptId = input.attemptId
       if (input.operation === 'resolve') return response()
       if (input.schemaName === 'consultation_history_verification') {
         verifications++

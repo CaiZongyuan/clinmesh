@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
+import { unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { clinicalDocumentDraftContentSchema, clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
@@ -42,7 +43,9 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
           : input.schemaName === 'patient_dialogue_reply' ? { reply }
             : complete === undefined ? { issues: [], agentFactChecks: [] } : await complete(input)
       if (payload instanceof Response) return payload
-      return Response.json({ content: JSON.stringify(payload), model: input.model })
+      return Response.json({ content: JSON.stringify(payload), model: input.model,
+        ...(input.attemptId === undefined ? {} : { accounting: { attemptId: input.attemptId,
+          status: 'succeeded', dispatch: 'dispatched', usage: unknownModelTokenUsage } }) })
     } }),
   }
   let runtime = await createClinMeshRuntime(options)
