@@ -106,11 +106,16 @@ function EvidenceContent({ source, locale }: { source: DoctorCaseEvidence; local
     }
     if ('entries' in parsed && Array.isArray((parsed as { entries: unknown }).entries)) return <ul className="flex list-inside list-disc flex-col gap-1">
       {(parsed as { entries: unknown[] }).entries.map((entry, index) => {
-        const item = entry as { entryId?: unknown; clinicalDate?: unknown; title?: unknown; fieldPath?: unknown }
+        const item = entry as { entryId?: unknown; clinicalDate?: unknown; title?: unknown; fieldPath?: unknown; record?: unknown }
+        const record = typeof item.record === 'object' && item.record !== null ? item.record as Record<string, unknown> : undefined
+        const date = typeof item.clinicalDate === 'string' ? item.clinicalDate : typeof record?.completedAt === 'string' ? record.completedAt : undefined
         const key = `${typeof item.entryId === 'string' ? item.entryId : index}:${typeof item.fieldPath === 'string' ? item.fieldPath : ''}`
         const title = [typeof item.title === 'string' && item.title.length > 0 ? item.title : undefined,
           typeof item.fieldPath === 'string' ? item.fieldPath : undefined].find(value => value !== undefined) ?? (typeof item.entryId === 'string' ? item.entryId : `${index + 1}`)
-        return <li key={key}>{typeof item.clinicalDate === 'string' ? <span className="text-muted-foreground">{formatClinicalDateTime(item.clinicalDate, locale)} · </span> : null}<span>{title}</span></li>
+        return <li key={key}>{date === undefined ? null : <span className="text-muted-foreground">{formatClinicalDateTime(date, locale)} · </span>}<span>{title}</span>
+          {record === undefined ? null : <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看完整记录' : 'View full record'}</summary>
+            <p className="font-mono text-xs whitespace-pre-wrap break-all">{JSON.stringify(record, null, 2)}</p></details>}
+        </li>
       })}
     </ul>
     return <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看原始数据' : 'View raw data'}</summary>

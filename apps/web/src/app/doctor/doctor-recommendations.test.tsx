@@ -982,6 +982,22 @@ it('renders packed visible-history evidence as readable entries instead of a raw
   expect(dialog.textContent).not.toContain('missingFieldMeaning')
 })
 
+it('keeps local-completed history records inspectable behind a per-entry disclosure', async () => {
+  const text = JSON.stringify({ source: 'local-completed', resourceType: 'Encounter', entries: [
+    { entryId: 'case-past-1', record: { caseId: 'case-past-1', completedAt: '2026-09-01T10:00:00+08:00',
+      clinicalDocuments: [{ chiefComplaint: '合成既往主诉：咽痛三天。' }] } },
+  ] })
+  const current = state({ caseEvidence: [{ id: 'patient-statement-fever', kind: 'history', label: '本院完诊记录 / Encounter / 1条', text }] })
+  stubRequests(() => current); mount(props())
+  await screen.findByText('发热，未特指')
+  await details()
+  const dialog = screen.getByRole('dialog')
+  const summary = within(dialog).getByText('查看完整记录')
+  expect(summary.closest('details')?.textContent).toContain('合成既往主诉：咽痛三天。')
+  expect(summary.closest('details')).toHaveProperty('open', false)
+  expect(within(dialog).getByText(/2026年9月1日/)).toBeTruthy()
+})
+
 it('collapses unrecognized JSON evidence behind a raw-data disclosure', async () => {
   const current = state({ caseEvidence: [{ id: 'patient-statement-fever', kind: 'presentation', label: '当前主诉与体征',
     text: JSON.stringify({ presentation: { summary: '发热三天。' }, triage: { acuityCode: 'level-3' } }) }] })
