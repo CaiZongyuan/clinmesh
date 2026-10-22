@@ -27,7 +27,7 @@ it.each([
     for (const [kind, amountFen] of [
       ['medication', 10003], ['imaging', 20007], ['material', 30011], ['service', 2000000], ['bed', 5000],
     ] as const) billing.record(context, {
-      admissionId: admission.id, organizationId: actor.organizationId, kind, amountFen,
+      admissionId: admission.id, organizationId: admission.organizationId, kind, amountFen,
       sourceId: randomUUID(), serviceDate: '2026-08-24', virtualTime: '2026-08-24T09:00:00+08:00', label: `合成医保目录 ${kind}`,
     }, [])
   })()
