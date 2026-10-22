@@ -69,11 +69,13 @@ cp .env.example .env
 pnpm dev:server
 ```
 
-子模块初始化必须在 `pnpm install` 之前：`apps/dsh-web` 以 `file:` 依赖 `vendor/dsh-react-surface`，缺失时安装失败。`pnpm dev:server` 会自动构建 Web、迁移 SQLite、seed 演示账号并监听 http://127.0.0.1:51868/ ；需要热更新开发入口时另开终端运行 `pnpm dev:web`（http://127.0.0.1:51888/ ）。
+子模块初始化必须在 `pnpm install` 之前：`apps/dsh-web` 以 `file:` 依赖 `vendor/dsh-react-surface`，缺失时安装失败。`pnpm dev:server` 会自动构建 Web、迁移 SQLite、准备参考资料、seed 演示账号并监听 http://127.0.0.1:51868/ ；需要热更新开发入口时另开终端运行 `pnpm dev:web`（http://127.0.0.1:51888/ ）。
 
 打开 http://127.0.0.1:51868/ ，以 `doctor@demo.clinmesh.local` 和 `.env` 中的 `CLINMESH_DEMO_PASSWORD`（从 `.env.example` 复制时默认为 `ClinMesh-demo-password-2026!`）登录。全部合成岗位账号与密码约定见 [部署指南](docs/deployment.md)。
 
-此最小路径使用内置合成 fixture 参考目录（诊断与检验为空、药品仅 3 条）。完整的参考目录同步、AI Provider、Synthea 患者生成、Docker、局域网与 DSH Web 入口按顺序见 [部署指南](docs/deployment.md)。
+默认环境首次启动需要联网，自动同步疾病、药品与检验目录，并取得固定版本的五目录 r3 和 OpenDRG 2026-10-20 完整 DRG 资料；无需人工复制目录或另跑导入。后续启动复用已核验资料，缺失或损坏时重新获取，失败保留既有资料并停止准备。DRG 资料仍仅用于离线核对，患者分组和支付计算尚未启用。
+
+`pnpm dsh:setup`、`pnpm dev:dsh` 和 `pnpm dev:lan` 同样自动准备 DRG 资料。Docker 在镜像构建时取得完整参考资料，容器可离线启动。独立 Node.js 生产部署与其他配置步骤见 [部署指南](docs/deployment.md)。
 
 ## Agent CLI
 

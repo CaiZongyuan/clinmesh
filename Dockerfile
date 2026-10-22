@@ -14,10 +14,13 @@ COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @clinmesh/web build && pnpm --filter @clinmesh/server build
 RUN pnpm --filter @clinmesh/server deploy --prod --legacy /opt/clinmesh
+RUN pnpm reference:sync --database /opt/clinmesh/reference-data.sqlite
+RUN cp reference-data.lock.json /opt/clinmesh/reference-data.lock.json
 
 FROM node:22.19.0-bookworm-slim AS runtime
 
 ENV CLINMESH_DATABASE_PATH=/var/lib/clinmesh/clinmesh.sqlite
+ENV CLINMESH_REFERENCE_DATABASE_PATH=/opt/clinmesh/reference-data.sqlite
 ENV CLINMESH_HOST=0.0.0.0
 ENV CLINMESH_PORT=51868
 ENV CLINMESH_WEB_ROOT=/opt/clinmesh/web
