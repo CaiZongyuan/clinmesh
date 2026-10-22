@@ -36,8 +36,11 @@ export function modelControlWaitingCount(database: ClinMeshDatabase, workspaceId
 
 /** Owns only private execution results; authorization and publishing stay with each business service. */
 export class ModelTaskRecovery {
+  // Scheduling hints only: a restart permits one safe recheck of the durable refusal.
+  readonly #blockedPolicy = new Map<string, string>()
   constructor(private readonly database: ClinMeshDatabase, private readonly control: {
     canDispatch(workspaceId: string): boolean; automaticRetries(workspaceId: string): boolean
+    recoveryState(workspaceId: string): string
   }, private readonly dsh = false) {
     database.driver.prepare("UPDATE model_task_step SET status = 'unknown' WHERE status = 'dispatching'").run()
   }
@@ -65,10 +68,27 @@ export class ModelTaskRecovery {
   }
 
   ready(workspaceId: string, taskId: string): boolean {
-    if (!this.control.canDispatch(workspaceId)) return false
+    if (!this.#ready(workspaceId, `task:${taskId}`)) return false
     const retry = this.database.driver.prepare(`SELECT 1 FROM model_task_step WHERE workspace_id = ? AND task_id = ?
       AND status = 'blocked' AND blocked_code = 'MODEL_RETRY_DISABLED'`).get(workspaceId, taskId)
     return retry === undefined || this.control.automaticRetries(workspaceId)
+  }
+
+  #ready(workspaceId: string, task: string): boolean {
+    try {
+      if (!this.control.canDispatch(workspaceId)) return false
+      const blocked = this.#blockedPolicy.get(JSON.stringify([workspaceId, task]))
+      return blocked === undefined || blocked !== this.control.recoveryState(workspaceId)
+    } catch { return false }
+  }
+
+  #block(workspaceId: string, task: string, failure: ModelUsageControlError): void {
+    if (failure.recoveryState === undefined) return
+    const key = JSON.stringify([workspaceId, task])
+    this.#blockedPolicy.delete(key)
+    // Expired/superseded work can disappear outside this service; evicting a hint only permits a safe recheck.
+    if (this.#blockedPolicy.size >= 4096) this.#blockedPolicy.delete(this.#blockedPolicy.keys().next().value!)
+    this.#blockedPolicy.set(key, failure.recoveryState)
   }
 
   async #complete(provider: JsonChatCompletionsProvider, input: JsonChatCompletionInput) {
@@ -126,6 +146,7 @@ export class ModelTaskRecovery {
       checkpointPending = true
       this.database.driver.prepare(`UPDATE model_task_step SET status = 'succeeded', result_json = ?, blocked_code = NULL
         WHERE workspace_id = ? AND epoch = ? AND task_id = ? AND step_key = ?`).run(JSON.stringify(checkpoint), ...key)
+      this.#blockedPolicy.delete(JSON.stringify([context.workspaceId, `task:${context.taskId}`]))
       return result
     } catch (error) {
       if (provider.supportsRequestControl !== true && error instanceof ChatCompletionsError && error.code !== 'AI_TIMEOUT'
@@ -144,6 +165,7 @@ export class ModelTaskRecovery {
         WHERE workspace_id = ? AND epoch = ? AND task_id = ? AND step_key = ?`)
         .run(blocked === undefined ? 'pending' : 'blocked', attemptedKind,
           blocked?.code ?? null, ...key)
+      if (blocked !== undefined) this.#block(context.workspaceId, `task:${context.taskId}`, blocked)
       throw error
     }
   }
@@ -155,6 +177,7 @@ export class ModelTaskRecovery {
     this.database.driver.prepare(`INSERT INTO model_task_wait(workspace_id, epoch, event_id, reason) VALUES (?, ?, ?, ?)
       ON CONFLICT(workspace_id, epoch, event_id) DO UPDATE SET reason = excluded.reason`)
       .run(event.workspaceId, event.epoch, event.eventId, failure.code)
+    this.#block(event.workspaceId, `event:${event.eventId}`, failure)
     return { status: 'model-blocked' }
   }
 
@@ -169,7 +192,7 @@ export class ModelTaskRecovery {
       if (rows.length === 0) break
       for (const row of rows) {
         position = row.position
-        if (!this.control.canDispatch(row.workspace_id)
+        if (!this.#ready(row.workspace_id, `event:${row.event_id}`)
           || row.reason === 'MODEL_RETRY_DISABLED' && !this.control.automaticRetries(row.workspace_id)) continue
         const changed = this.database.driver.prepare(`UPDATE outbox_event SET next_attempt_at = ?
           WHERE workspace_id = ? AND epoch = ? AND event_id = ? AND status = 'failed'`)
@@ -180,6 +203,7 @@ export class ModelTaskRecovery {
           .get(row.workspace_id, row.epoch, row.event_id) !== undefined) continue
         this.database.driver.prepare('DELETE FROM model_task_wait WHERE workspace_id = ? AND epoch = ? AND event_id = ?')
           .run(row.workspace_id, row.epoch, row.event_id)
+        this.#blockedPolicy.delete(JSON.stringify([row.workspace_id, `event:${row.event_id}`]))
       }
     }
   }

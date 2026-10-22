@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
 import { afterEach, expect, it } from 'vitest'
 import { ModelUsageControl, ModelUsageControlError } from '../src/application/model-usage-control.ts'
+import { ModelTaskRecovery } from '../src/application/model-task-recovery.ts'
 import { CommandExecutor, type ActorContext } from '../src/application/command-executor.ts'
 import { applyMigrations, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
@@ -61,6 +62,30 @@ it('reserves both dimensions together and releases unused bounds on settlement',
   expect(fixture.control.read(fixture.context.workspaceId).workspace).toMatchObject({
     tokensUsed: 30, tokensReserved: 0, tokensRemaining: 70, cnyUsed: 0.2, cnyReserved: 0, cnyRemaining: 0.8,
   })
+})
+
+it.each([false, true])('结算释放预占后恢复有界任务，即使拒绝尚未传回（%s）', async releaseBeforePropagation => {
+  const fixture = setup()
+  fixture.update({ tokens: 100, cny: 0 })
+  const first = fixture.attempt()
+  fixture.control.reserve(fixture.context.workspaceId, first, 'initial', { tokens: 70, cny: 0 })
+  const next = fixture.attempt()
+  const recovery = new ModelTaskRecovery(fixture.database, fixture.control)
+  const provider = recovery.provider({ supportsRequestControl: true, completeJson: async input => {
+    try { fixture.control.reserve(fixture.context.workspaceId, next, 'initial', { tokens: 50, cny: 0 }) }
+    finally { if (releaseBeforePropagation) fixture.control.settleDimensions(first, { tokens: 10, cny: 0 }, false) }
+    input.onBeforeRequest?.()
+    input.onRequestComplete?.()
+    return { content: '{}', model: 'synthetic' }
+  } })
+  const input = { model: 'synthetic', schemaName: 'patient_persona', jsonSchema: {}, systemPrompt: 'synthetic', userPayload: {},
+    usageContext: { workspaceId: fixture.context.workspaceId, epoch: fixture.context.epoch, taskId: 'bounded-task',
+      stage: 'synthetic', trigger: 'automatic' as const, sources: [] } }
+  await expect(provider.completeJson(input)).rejects.toMatchObject({ code: 'MODEL_TOKEN_LIMIT' })
+  expect(recovery.ready(fixture.context.workspaceId, 'bounded-task')).toBe(releaseBeforePropagation)
+  if (!releaseBeforePropagation) fixture.control.settleDimensions(first, { tokens: 10, cny: 0 }, false)
+  expect(recovery.ready(fixture.context.workspaceId, 'bounded-task')).toBe(true)
+  await expect(provider.completeJson(input)).resolves.toEqual({ content: '{}', model: 'synthetic' })
 })
 
 it('starts each dimension independently and preserves consumption during unlimited periods and restart', () => {

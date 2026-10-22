@@ -18,7 +18,7 @@ import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
 import { installSyntheticPathologySlides } from './fixtures/pathology-catalog.ts'
 import { breastCaseBundle } from './fixtures/pathology-scenario.ts'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
-import { modelUsageListSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
+import { modelUsageControlSchema, modelUsageListSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { setModelControl } from './fixtures/model-control.ts'
 
 const disposals: Array<() => Promise<void>> = []
@@ -234,12 +234,16 @@ it.each(['workspace', 'deployment'] as const)('allows one explicit continuation 
   const first = await f.read()
   expect(first).toMatchObject({ status: 'pending', recovery: { requestCount: 1, canContinue: true } })
   expect(generations).toBe(1)
+  const waiting = async () => modelUsageControlSchema.parse(await (await f.runtime.app.request('/api/model-usage/control',
+    { headers: { cookie: admin } })).json()).waiting
+  expect(await waiting()).toBe(1)
   expect((await f.generate('diagnosis', false, first.generation)).status).toBe(200)
   await f.restart()
   await f.runtime.dispatchPending()
   expect(await f.read()).toMatchObject({ generation: first.generation, status: 'ready',
     recovery: { requestCount: 3, extraRequestCount: 1 } })
   expect({ generations, verifications }).toEqual({ generations: 2, verifications: 1 })
+  expect(await waiting()).toBe(0)
   const ledger = modelUsageListSchema.parse(await (await f.runtime.app.request('/api/model-usage/requests?feature=doctor_recommendations',
     { headers: { cookie: admin } })).json())
   expect(ledger.items.map(item => item.kind).toSorted()).toEqual(['format-repair', 'initial'])

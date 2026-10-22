@@ -476,6 +476,16 @@ export class DoctorRecommendationsService {
     return [context.workspaceId, context.epoch, context.actorId, canonicalJsonHash(context), caseId, kind] as const
   }
 
+  #clearSupersededWaits(context: ActorContext, caseId: string, kind: DoctorRecommendationKind): void {
+    this.options.database.driver.prepare(`DELETE FROM model_task_wait AS wait WHERE EXISTS (
+      SELECT 1 FROM outbox_event event WHERE event.workspace_id = wait.workspace_id AND event.epoch = wait.epoch
+      AND event.event_id = wait.event_id AND event.kind = 'doctor.generate-recommendations'
+      AND event.workspace_id = ? AND event.epoch = ? AND json_extract(event.payload_json, '$.actorId') = ?
+      AND json_extract(event.payload_json, '$.contextKey') = ? AND json_extract(event.payload_json, '$.caseId') = ?
+      AND json_extract(event.payload_json, '$.kind') = ?)`)
+      .run(...this.#key(context, caseId, kind))
+  }
+
   #executionIdentity(context: ActorContext, caseId: string, kind: DoctorRecommendationKind, generation: number) {
     return { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId,
       contextKey: canonicalJsonHash(context), caseId, kind, generation }
@@ -574,6 +584,7 @@ export class DoctorRecommendationsService {
         })
         const manualIntentKey = canonicalJsonHash({ actorId: context.actorId, idempotencyKey })
         execution.continue(manualIntentKey)
+        this.#clearSupersededWaits(context, caseId, kind)
         const { errorCode: _errorCode, ...original } = doctorRecommendationStateSchema.parse(JSON.parse(previous.state_json))
         const state: DoctorRecommendationState = { ...original, status: 'pending', missingInformation: [], notices: [], recovery: execution.status() }
         this.options.database.driver.prepare(`UPDATE doctor_recommendation_state SET state_json = ?, status = 'pending', updated_at = ?
@@ -587,6 +598,7 @@ export class DoctorRecommendationsService {
         return { data: doctorRecommendationStateSchema.parse(JSON.parse(previous.state_json)), effects: [] }
       }
       const generation = (previous?.generation ?? 0) + 1
+      this.#clearSupersededWaits(context, caseId, kind)
       const state: DoctorRecommendationState = {
         caseId, kind, encounterId: snapshot.encounter.id, encounterVersion: snapshot.encounter.versionId,
         inputFingerprint, generation, status: 'pending', stale: false, items: [], guidelines: [], caseEvidence: [], missingInformation: [],

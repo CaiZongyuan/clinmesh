@@ -18,6 +18,40 @@ import { setModelControl } from './fixtures/model-control.ts'
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close() })
 
+it.each(['tokens', 'cny'] as const)('计量条件未变化时不反复领取 %s 受限的人设待办，解除后恢复原任务', async dimension => {
+  const directory = await mkdtemp(join(tmpdir(), 'clinmesh-dimensional-recovery-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  let sent = 0
+  const runtime = await createClinMeshRuntime({
+    authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
+    cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'test.sqlite'),
+    demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply', trustedOrigins: ['http://localhost'],
+    syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'synthetic',
+    chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => { sent++; return Response.json({ choices: [{ message: { content: JSON.stringify(persona) } }] }) } }),
+  })
+  cleanup.push(() => runtime.close())
+  const cookie = await signIn(runtime, 'admin@demo.clinmesh.local')
+  await setModelControl(runtime, cookie, { enabled: true, requests: null, automaticRetries: true, [dimension]: 100 })
+  const headers = () => ({ cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() })
+  expect((await runtime.app.request('/api/sim/v1/scenario-generation-jobs', { method: 'POST', headers: headers(),
+    body: JSON.stringify({ name: '合成额度待办患者', population: { count: 1, age: { minimum: 18, maximum: 65 }, gender: 'any' },
+      providerId: 'synthea', seeds: { clinical: 7331, population: 4242 }, timeRange: { start: '2020-01-01', end: '2026-08-01' }, timeZone: 'Asia/Shanghai' }) })).status).toBe(200)
+  const scenario = await runtime.scenarioData.processNextGenerationJob()
+  const queued = await runtime.app.request(`/api/sim/v1/synthetic-cases/${scenario!.caseIds[0]!}/patient-persona-jobs`, {
+    method: 'POST', headers: headers(), body: '{}' })
+  expect(queued.status).toBe(200)
+  const { data: { jobId } } = z.object({ data: z.object({ jobId: z.string() }) }).parse(await queued.json())
+  expect(await runtime.patientPersona.processNext()).toMatchObject({ jobId, status: 'queued' })
+  expect(await runtime.patientPersona.processNext()).toBeUndefined()
+  expect(await runtime.patientPersona.processNext()).toBeUndefined()
+  expect(sent).toBe(0)
+  await setModelControl(runtime, cookie, { enabled: true, requests: null, automaticRetries: true, [dimension]: null })
+  await expect.poll(async () => patientPersonaJobSchema.parse(await (await runtime.app.request(
+    `/api/sim/v1/patient-persona-jobs/${jobId}`, { headers: { cookie } })).json()).status).toBe('succeeded')
+  expect(sent).toBe(1)
+})
+
 it.each([408, 504])('does not automatically resend a quality request after HTTP %s or restart', async status => {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-gateway-timeout-'))
   cleanup.push(() => rm(directory, { recursive: true, force: true }))

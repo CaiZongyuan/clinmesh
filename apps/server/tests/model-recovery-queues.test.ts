@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { ConsultationDialogueService } from '../src/application/consultation-dialogue-service.ts'
 import { ModelTaskRecovery } from '../src/application/model-task-recovery.ts'
+import { ModelUsageControlError } from '../src/application/model-usage-control.ts'
 import { WorkflowService } from '../src/application/workflow-service.ts'
 import { openClinMeshDatabase, type ClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
@@ -16,7 +17,8 @@ function queueDatabase() {
   // Scheduling collaborators own business validity; this fixture keeps only their private queue projection.
   database.driver.exec(`
     CREATE TABLE model_task_step (status TEXT);
-    CREATE TABLE model_task_wait (workspace_id TEXT, epoch TEXT, event_id TEXT, reason TEXT);
+    CREATE TABLE model_task_wait (workspace_id TEXT, epoch TEXT, event_id TEXT, reason TEXT,
+      PRIMARY KEY (workspace_id, epoch, event_id));
     CREATE TABLE outbox_event (workspace_id TEXT, epoch TEXT, event_id TEXT, status TEXT, next_attempt_at TEXT);
     CREATE TABLE model_reply_wait (workspace_id TEXT, epoch TEXT, attempt_id TEXT, deadline_at TEXT, input_json TEXT);
     CREATE TABLE consultation_reply_attempt (workspace_id TEXT, epoch TEXT, attempt_id TEXT, doctor_turn_id TEXT,
@@ -31,6 +33,7 @@ it('wakes an eligible outbox task behind a page of disabled-workspace waits', ()
   const database = queueDatabase()
   const recovery = new ModelTaskRecovery(database, {
     canDispatch: workspaceId => workspaceId === 'enabled', automaticRetries: () => true,
+    recoveryState: () => 'synthetic-policy',
   })
   const future = '9999-12-31T23:59:59.999Z'
   for (let index = 0; index <= 100; index++) {
@@ -44,6 +47,49 @@ it('wakes an eligible outbox task behind a page of disabled-workspace waits', ()
   expect(database.driver.prepare("SELECT next_attempt_at FROM outbox_event WHERE workspace_id = 'enabled'").get())
     .toEqual({ next_attempt_at: expect.not.stringMatching(/^9999-/u) })
   expect(database.driver.prepare('SELECT count(*) AS count FROM model_task_wait').get()).toEqual({ count: 100 })
+})
+
+it.each(['MODEL_TOKEN_LIMIT', 'MODEL_CNY_LIMIT', 'MODEL_METERING_UNAVAILABLE'] as const)('keeps %s outbox work deferred until its quota state changes', reason => {
+  const database = queueDatabase()
+  let state = 'synthetic-blocked-quota'
+  const recovery = new ModelTaskRecovery(database, {
+    canDispatch: () => true, automaticRetries: () => true, recoveryState: () => state,
+  })
+  const future = '9999-12-31T23:59:59.999Z'
+  database.driver.prepare('INSERT INTO outbox_event VALUES (?, ?, ?, ?, ?)').run('workspace', 'epoch', 'event', 'failed', future)
+  expect(recovery.defer({ workspaceId: 'workspace', epoch: 'epoch', eventId: 'event', attempt: 1,
+    correlationId: 'synthetic', scenarioRunId: 'synthetic', payload: {} }, new ModelUsageControlError(reason, 'workspace', null, null, null, state)))
+    .toEqual({ status: 'model-blocked' })
+  recovery.wake()
+  recovery.wake()
+  expect(database.driver.prepare('SELECT next_attempt_at FROM outbox_event').get()).toEqual({ next_attempt_at: future })
+  state = 'synthetic-released-reservation'
+  recovery.wake()
+  expect(database.driver.prepare('SELECT next_attempt_at FROM outbox_event').get())
+    .toEqual({ next_attempt_at: expect.not.stringMatching(/^9999-/u) })
+})
+
+it('keeps an unreadable quota wait deferred without stopping another workspace, then recovers after repair', () => {
+  const database = queueDatabase()
+  let unreadable = true
+  const recovery = new ModelTaskRecovery(database, {
+    canDispatch: () => true, automaticRetries: () => true, recoveryState: workspaceId => {
+      if (workspaceId === 'damaged' && unreadable) throw new ModelUsageControlError('MODEL_LEDGER_UNAVAILABLE', 'workspace')
+      return 'released'
+    },
+  })
+  const future = '9999-12-31T23:59:59.999Z'
+  for (const workspaceId of ['damaged', 'healthy']) {
+    database.driver.prepare('INSERT INTO outbox_event VALUES (?, ?, ?, ?, ?)').run(workspaceId, 'epoch', 'event', 'failed', future)
+    recovery.defer({ workspaceId, epoch: 'epoch', eventId: 'event', attempt: 1,
+      correlationId: 'synthetic', scenarioRunId: 'synthetic', payload: {} },
+    new ModelUsageControlError('MODEL_TOKEN_LIMIT', 'workspace', null, null, null, 'blocked'))
+  }
+  recovery.wake()
+  expect(database.driver.prepare('SELECT workspace_id FROM model_task_wait').all()).toEqual([{ workspace_id: 'damaged' }])
+  unreadable = false
+  recovery.wake()
+  expect(database.driver.prepare('SELECT COUNT(*) AS count FROM model_task_wait').get()).toEqual({ count: 0 })
 })
 
 it('completes an answered reply behind a page of disabled-workspace waits without changing its deadline', async () => {

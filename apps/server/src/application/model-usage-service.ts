@@ -55,6 +55,7 @@ export class ModelUsageService implements ModelUsageRecorder {
   updateRetention(context: ActorContext, input: ModelUsageRetentionUpdate, key: string) { return this.#retention.update(context, input, key) }
   compactUsage() { this.#retention.compactAll() }
   canDispatch(workspaceId: string) { return this.#control.canDispatch(workspaceId) }
+  recoveryState(workspaceId: string) { return this.#control.recoveryState(workspaceId) }
   automaticRetries(workspaceId: string) { return this.#control.automaticRetries(workspaceId) }
   subscribe(listener: () => void) { return this.#control.subscribe(listener) }
   setWaitingCount(read: (workspaceId: string) => number) { this.#control.setWaitingCount(read) }
@@ -69,7 +70,8 @@ export class ModelUsageService implements ModelUsageRecorder {
     const bounds = boundary ?? { inputTokens: null, outputTokens: null }
     const reservation = priceModelReservation(priceSnapshot, bounds)
     const tokenBound = bounds.inputTokens === null || bounds.outputTokens === null ? null : bounds.inputTokens + bounds.outputTokens
-    if (tokenBound !== null && !Number.isSafeInteger(tokenBound)) throw new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', 'workspace', 'tokens')
+    if (tokenBound !== null && !Number.isSafeInteger(tokenBound)) throw new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', 'workspace', 'tokens',
+      null, null, this.recoveryState(context.workspaceId))
     const record = modelUsageAttemptSchema.parse({
       id: uuidv7(), context, feature: modelUsageFeatureSchema.parse(input.feature),
       provider: input.provider, requestedModel: input.model, actualModel: null,

@@ -10,7 +10,8 @@ export class ModelUsageControlError extends Error {
   readonly status = 409
   constructor(readonly code: z.infer<typeof modelUsageControlCodeSchema>,
     readonly scope: 'workspace' | 'deployment', readonly dimension: 'requests' | 'tokens' | 'cny' | null = null,
-    readonly remaining: number | null = null, readonly required: number | null = null) {
+    readonly remaining: number | null = null, readonly required: number | null = null,
+    readonly recoveryState?: string) {
     super('The model request is waiting for its execution policy')
     this.name = 'ModelUsageControlError'
   }
@@ -109,9 +110,9 @@ export class ModelUsageControl {
         if (dimension.limit_value !== null) {
           const remaining = Math.max(0, dimension.limit_value - this.#sum(dimension.used, summary.reserved))
           if (bound === null || summary.unknown > 0) throw new ModelUsageControlError('MODEL_METERING_UNAVAILABLE', scope,
-            dimension.dimension, externalValue(dimension.dimension, remaining), externalValue(dimension.dimension, bound))
+            dimension.dimension, externalValue(dimension.dimension, remaining), externalValue(dimension.dimension, bound), this.recoveryState(workspaceId))
           if (bound > remaining) throw new ModelUsageControlError(dimension.dimension === 'tokens' ? 'MODEL_TOKEN_LIMIT' : 'MODEL_CNY_LIMIT',
-            scope, dimension.dimension, externalValue(dimension.dimension, remaining), externalValue(dimension.dimension, bound))
+            scope, dimension.dimension, externalValue(dimension.dimension, remaining), externalValue(dimension.dimension, bound), this.recoveryState(workspaceId))
         }
         if (dimension.started_at !== null && bound !== null) this.#sum(dimension.used, summary.reserved, bound)
       }
@@ -191,6 +192,11 @@ export class ModelUsageControl {
 
   automaticRetries(workspaceId: string): boolean {
     return this.#atomic('workspace', () => !!(this.#workspace(workspaceId).automatic_retries && this.#row('deployment').automatic_retries))
+  }
+  recoveryState(workspaceId: string): string {
+    return this.#atomic('workspace', () => JSON.stringify([
+      this.#scope(this.#workspace(workspaceId)), this.#scope(this.#row('deployment')),
+    ]))
   }
   canDispatch(workspaceId: string): boolean {
     try {
