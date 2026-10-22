@@ -1,4 +1,7 @@
 import {
+  offlineReferenceInventoryListSchema,
+  type OfflineReferenceInventoryList,
+  type OfflineReferenceInventoryQuery,
   referenceDiagnosisCatalogSearchSchema,
   referenceDataProvenanceSchema,
   referenceDataReleaseListSchema,
@@ -24,6 +27,7 @@ const BUILTIN_RELEASE_CONTENT_HASH = 'bc1e7ca7e11e31851acd651705ab627b45ff459c79
 const BUILTIN_RELEASE_ID = 'clinmesh-hospital-reference-fixture-2026-08-28'
 
 export interface ReferenceDataReader {
+  offlineInventories?(input: OfflineReferenceInventoryQuery): OfflineReferenceInventoryList
   conceptById?(
     releaseId: string,
     domain: 'diagnosis' | 'laboratory',
@@ -148,13 +152,29 @@ function builtinReferenceData(): ReferenceDataReleaseList {
 export class ReferenceDataService {
   readonly #activeReleaseId: string | undefined
   readonly #reader: ReferenceDataReader | undefined
+  readonly #auditInventoryRead: ((context: ActorContext, outcome: 'success' | 'failed', inventoryIds: string[]) => void) | undefined
 
   constructor(
     reader?: ReferenceDataReader,
     activeReleaseId?: string,
+    auditInventoryRead?: (context: ActorContext, outcome: 'success' | 'failed', inventoryIds: string[]) => void,
   ) {
     this.#activeReleaseId = activeReleaseId
     this.#reader = reader
+    this.#auditInventoryRead = auditInventoryRead
+  }
+
+  offlineInventories(context: ActorContext, input: OfflineReferenceInventoryQuery) {
+    let result: OfflineReferenceInventoryList
+    try {
+      if (context.roleCode !== 'administrator') throw new ReferenceDataError('ROLE_NOT_ALLOWED', 'Only an administrator can read offline reference inventories')
+      result = offlineReferenceInventoryListSchema.parse(this.#reader?.offlineInventories?.(input) ?? { items: [], ...input, total: 0 })
+    } catch (error) {
+      this.#auditInventoryRead?.(context, 'failed', [])
+      throw error
+    }
+    this.#auditInventoryRead?.(context, 'success', result.items.map(item => item.inventoryId))
+    return result
   }
 
   list(context: ActorContext): ReferenceDataReleaseList {
