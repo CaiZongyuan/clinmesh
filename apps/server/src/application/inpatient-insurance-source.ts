@@ -52,5 +52,8 @@ export class InpatientInsuranceSource {
     if (row.status !== 'departed' || row.financial_status !== 'open' || row.record_status === 'archived') {
       throw new InpatientError('INSURANCE_INPATIENT_STATE_CONFLICT', '仅已出区且首次财务尚未完成的住院可办理本次医保结算或撤销')
     }
+    if (this.owner.payments.pendingCount(context, admissionId) > 0) {
+      throw new InpatientError('INPATIENT_FUNDS_PENDING', '请先查明原收退款结果，再撤销或重审医保待遇')
+    }
   }
 }

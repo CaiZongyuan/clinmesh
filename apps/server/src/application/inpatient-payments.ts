@@ -70,6 +70,10 @@ export class InpatientPayments {
       sources, refunds, pendingCount: payments.filter(payment => payment.outcome === 'ambiguous').length + refunds.filter(refund => refund.outcome === 'ambiguous').length })
   }
   firstRefunds(context: ActorContext, admissionId: string) { return this.refunds.attempts(context, 'inpatient', admissionId).filter(attempt => attempt.basisId === firstSettlementBasis(admissionId)) }
+  pendingCount(context: ActorContext, admissionId: string) {
+    return this.#attempts(context, admissionId, true).filter(payment => payment.outcome === 'ambiguous').length
+      + this.firstRefunds(context, admissionId).filter(refund => refund.outcome === 'ambiguous').length
+  }
   fundingFingerprint(context: ActorContext, admissionId: string) {
     const payments = this.#attempts(context, admissionId, true), refunds = this.firstRefunds(context, admissionId)
     return payments.length === 0 && refunds.length === 0 ? undefined : hash({ payments, refunds })

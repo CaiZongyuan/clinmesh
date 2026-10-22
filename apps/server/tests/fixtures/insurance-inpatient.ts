@@ -37,6 +37,13 @@ export async function inpatientInsuranceFixture() {
       ...(input === undefined ? {} : { body: JSON.stringify({ input }) }),
     })
   }
+  async function insurance(admissionId: string, action: string, input: unknown, key = randomUUID()) {
+    return runtime.app.request(`/api/his/v1/insurance/inpatient/${admissionId}/${action}`, {
+      method: 'POST', headers: { cookie: await login('cashier'), origin: 'http://localhost',
+        'content-type': 'application/json', 'idempotency-key': key },
+      body: JSON.stringify({ input, expectedVersions: {} }),
+    })
+  }
   const created = await runtime.app.request('/api/his/v1/patients', {
     method: 'POST', headers: { cookie: await login('registrar'), origin: 'http://localhost',
       'content-type': 'application/json', 'idempotency-key': randomUUID() },
@@ -72,7 +79,7 @@ export async function inpatientInsuranceFixture() {
     expect(departure.status).toBe(200)
     return inpatientDischargeResponseSchema.parse(await departure.json()).data.admission
   }
-  return { runtime, options, patient, request, login, admit, depart, close: async () => {
+  return { runtime, options, patient, request, insurance, login, admit, depart, close: async () => {
     await runtime.close()
     await rm(directory, { recursive: true })
   } }
