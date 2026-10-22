@@ -17,6 +17,10 @@ export interface InsuranceOptions {
 }
 const hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 type Settlement = z.infer<typeof insuranceSettlementSchema>
+function activeFromHistory(history: Settlement[]) {
+  const reversed = new Set(history.flatMap(row => row.reversesId === undefined ? [] : [row.reversesId]))
+  return history.filter(row => row.reversesId === undefined && !reversed.has(row.id))
+}
 export class InsuranceService {
   constructor(readonly database: ClinMeshDatabase, readonly commands: CommandExecutor, readonly options: InsuranceOptions) {}
   #authorize(context: ActorContext) {
@@ -38,16 +42,14 @@ export class InsuranceService {
     return insuranceBalanceSchema.parse({ patientId, year, version: rows.length, ...(planCode === undefined ? {} : {planCode}), accountFen: (planCode === undefined ? 0 : insurancePlans[planCode].initialAccountFen) + total('account_delta'), eligibleFen: total('eligible_delta'), fundFen: total('fund_delta'), outpatientEligibleFen: total('eligible_delta','outpatient'), outpatientFundFen: total('fund_delta','outpatient'), inpatientEligibleFen: total('eligible_delta','inpatient'), inpatientFundFen: total('fund_delta','inpatient') })
   }
   activeSettlements(context: ActorContext, target: InsuranceTarget) {
-    const history=this.#history(context,target), reversed=new Set(history.flatMap(row=>row.reversesId===undefined?[]:[row.reversesId]))
-    return history.filter(row=>row.reversesId===undefined&&!reversed.has(row.id))
+    return activeFromHistory(this.#history(context, target))
   }
   hadCompensation(context: ActorContext, reference: string) {
     const rows=z.array(z.object({data_json:z.string()})).parse(this.database.driver.prepare('SELECT data_json FROM insurance_event WHERE workspace_id=? AND epoch=? AND reverses_id IS NOT NULL').all(context.workspaceId,context.epoch))
     return rows.some(row=>insuranceSettlementSchema.parse(JSON.parse(row.data_json)).allocations.some(item=>item.reference===reference))
   }
   validAllocation(context: ActorContext, target: InsuranceTarget) {
-    const history = this.#history(context,target), reversed = new Set(history.flatMap(row => row.reversesId === undefined ? [] : [row.reversesId]))
-    return history.findLast(row => row.reversesId === undefined && !reversed.has(row.id))
+    return this.activeSettlements(context, target).at(-1)
   }
   coverage(context: ActorContext, reference: string) {
     const rows = z.array(z.object({data_json:z.string()})).parse(this.database.driver.prepare('SELECT data_json FROM insurance_event e WHERE workspace_id=? AND epoch=? AND reverses_id IS NULL AND NOT EXISTS(SELECT 1 FROM insurance_event r WHERE r.workspace_id=e.workspace_id AND r.epoch=e.epoch AND r.reverses_id=e.event_id)').all(context.workspaceId,context.epoch))
@@ -55,8 +57,12 @@ export class InsuranceService {
   }
   state(context: ActorContext, target: InsuranceTarget) {
     this.#authorize(context)
-    const source = insuranceSourceSchema.parse(this.options.readSource(context,target)), active=this.validAllocation(context,target)
-    return insuranceStateSchema.parse({target,balance:this.balance(context,source.patientId),history:this.#history(context,target),activeSettlements:this.activeSettlements(context,target),...(active===undefined?{}:{active})})
+    const source = insuranceSourceSchema.parse(this.options.readSource(context, target))
+    const history = this.#history(context, target), activeSettlements = activeFromHistory(history), active = activeSettlements.at(-1)
+    const balance = this.balance(context, source.patientId)
+    const years = [...new Set([...history.map(row => row.year), balance.year])].sort()
+    const annualBalances = years.map(year => year === balance.year ? balance : this.balance(context, source.patientId, year))
+    return insuranceStateSchema.parse({ target, balance, annualBalances, history, activeSettlements, ...(active === undefined ? {} : { active }) })
   }
   preview(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input=insurancePreviewInputSchema.parse(raw)
@@ -139,7 +145,7 @@ export class InsuranceService {
     return this.commands.execute({context,input,idempotencyKey,operation:'insurance.cancel',expectedVersions:{},dataSchema:insuranceResponseSchema.shape.data,authorize:()=>this.#authorize(context)},transaction=>{
       const liveSource=insuranceSourceSchema.parse(this.options.readSource(context,input.target)),active=this.activeSettlements(context,input.target).find(item=>item.id===input.settlementId)
       const source=active?.source??liveSource
-      if(active?.id!==input.settlementId||this.balance(context,source.patientId).version!==input.expectedBalanceVersion)throw new InsuranceError('INSURANCE_BALANCE_CONFLICT','待遇或年度余额已变化，请刷新后办理撤销')
+      if(active?.id!==input.settlementId||this.balance(context,source.patientId,active.year).version!==input.expectedBalanceVersion)throw new InsuranceError('INSURANCE_BALANCE_CONFLICT','待遇或原年度余额已变化，请刷新后办理撤销')
       this.options.assertChangeAllowed?.(context,source,'cancel')
       const effects:CommandEffect[]=[];this.compensate(context,active.id,effects)
       this.options.onAllocationChanged?.(context,source,transaction,effects)

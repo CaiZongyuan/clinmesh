@@ -1,6 +1,6 @@
 import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
 import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema,
-  inpatientFinancialInsuranceConfirmInputSchema, inpatientFinancialResponseSchema } from './inpatient-finance.ts'
+  inpatientFinancialInsuranceConfirmInputSchema } from './inpatient-finance.ts'
 import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewInputSchema, refundPreviewResponseSchema,
   refundConfirmInputSchema, refundRecoverInputSchema, refundResponseSchema } from './refunds.ts'
 import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
@@ -2294,7 +2294,7 @@ const operationDefinitions = [
   },
   {
     cliPath:['insurance','get'],id:'insurance.get',http:{method:'GET',path:'/api/his/v1/insurance/:kind/:id'},
-    input:insuranceTargetSchema,output:insuranceStateSchema,mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['cashier'],summary:'Read synthetic patient benefits, annual balances and immutable settlement/compensation history',version:1,
+    input:insuranceTargetSchema,output:insuranceStateSchema,mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['cashier'],summary:'Read synthetic patient benefits, current balance, annualBalances for original settlement years and immutable settlement/compensation history',version:1,
   },
   {
     cliPath:['insurance','preview'],id:'insurance.preview',http:{method:'POST',path:'/api/his/v1/insurance/:kind/:id/preview',encodeBody:raw=>{const {kind:_kind,id:_id,...input}=insuranceTargetSchema.extend({planCode:insurancePlanCodeSchema}).parse(raw);return {input,expectedVersions:{}}}},
@@ -2306,7 +2306,7 @@ const operationDefinitions = [
   },
   {
     cliPath:['insurance','cancel'],id:'insurance.cancel',http:{method:'POST',path:'/api/his/v1/insurance/:kind/:id/cancel',encodeBody:raw=>{const {kind:_kind,id:_id,...input}=insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()}).parse(raw);return {input,expectedVersions:{}}}},
-    input:insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()}),output:insuranceResponseSchema,mode:'command',requirements:{expectedVersions:false,idempotency:'required'},risk:'high-risk-write',roles:['cashier'],summary:'Append compensation for original benefits before collection/release; never reset later encounters annual or account balances',version:1,
+    input:insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()}),output:insuranceResponseSchema,mode:'command',requirements:{expectedVersions:false,idempotency:'required'},risk:'high-risk-write',roles:['cashier'],summary:'Append compensation using expectedBalanceVersion from annualBalances for the original settlement year; preserve later encounters annual and account balances',version:1,
   },
   {
     cliPath: ['billing', 'refunds', 'get'], id: 'billing.refunds.get', mode: 'query', version: 1,

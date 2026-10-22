@@ -57,7 +57,7 @@ Payment does not complete the clinical Encounter. Confirm the bill's remaining a
 
 ## Synthetic patient insurance
 
-Read benefits before collecting patient funds. `insurance.get` returns the patient's current annual balance, active settlements and append-only settlement/compensation history. `insurance.preview` reviews real charge references and versions, synthetic coverage, prior self pay, deductible, fund, personal account and patient cash due. Fund and personal account allocations reduce the receivable; they are not payment tenders and do not create cash receipts. Registration is outside synthetic coverage.
+Read benefits before collecting patient funds. `insurance.get` returns the patient's current annual balance, `annualBalances` for original settlement years, active settlements and append-only settlement/compensation history. Cancellation uses `expectedBalanceVersion` from the entry matching the selected settlement's `year`, even when the current calendar year differs. `insurance.preview` reviews real charge references and versions, synthetic coverage, prior self pay, deductible, fund, personal account and patient cash due. Fund and personal account allocations reduce the receivable; they are not payment tenders and do not create cash receipts. Registration is outside synthetic coverage.
 
 ```bash
 clinmesh insurance get --kind outpatient --id <case-id>

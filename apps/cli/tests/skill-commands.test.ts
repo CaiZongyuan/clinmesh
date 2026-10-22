@@ -92,7 +92,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     'expectedPaymentVersion', 'ambiguous-decline', 'ambiguous-pending', 'original Command receipt',
     'Recovery queries the channel without collecting again', 'only a fully paid charge',
     'Registration charges remain unpaid and read-only']) expect(skill).toContain(term)
-  for (const term of ['expectedBalanceVersion', 'INSURANCE_PREVIEW_STALE', 'not payment tenders',
+  for (const term of ['expectedBalanceVersion', 'annualBalances', 'INSURANCE_PREVIEW_STALE', 'not payment tenders',
     'calendar year', 'preserves later transactions and clinical progress']) expect(skill).toContain(term)
   const examples=[...skill.matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
   for(const [index,operation] of ['insurance.preview','insurance.confirm','insurance.cancel'].entries()){

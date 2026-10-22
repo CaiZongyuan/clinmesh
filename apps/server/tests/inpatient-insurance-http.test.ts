@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { insurancePreviewResponseSchema, insuranceResponseSchema } from '@clinmesh/contracts/insurance'
+import { insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { inpatientPaymentPreviewResponseSchema, inpatientPaymentResponseSchema, inpatientPaymentsSchema,
   inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -9,6 +9,31 @@ const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of cleanups.splice(0)) await close() })
 
 describe('普通住院合成医保公共 HTTP', () => {
+  it('跨年撤销核对原年度余额并保留当年账户', async () => {
+    const s = await inpatientInsuranceFixture()
+    cleanups.push(s.close)
+    const admission = await s.admit()
+    expect((await s.request('admin', '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+      expectedVirtualTime: '2026-08-24T09:00:00+08:00', targetVirtualTime: '2026-08-27T00:00:00+08:00',
+    })).status).toBe(200)
+    await s.depart(admission)
+    const preview = insurancePreviewResponseSchema.parse(await (await s.insurance(admission.id, 'preview', { planCode: 'employee-v1' })).json()).data
+    const original = insuranceResponseSchema.parse(await (await s.insurance(admission.id, 'confirm', {
+      previewId: preview.previewId, commitToken: preview.commitToken,
+    })).json()).data
+    expect((await s.request('admin', '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+      expectedVirtualTime: '2026-08-27T00:00:00+08:00', targetVirtualTime: '2027-01-01T00:00:00+08:00',
+    })).status).toBe(200)
+    const cancelled = await s.insurance(admission.id, 'cancel', {
+      settlementId: original.active!.id, expectedBalanceVersion: original.balance.version,
+    })
+    expect(cancelled.status).toBe(200)
+    const result = insuranceResponseSchema.parse(await cancelled.json()).data
+    expect(result.balance).toMatchObject({ year: '2027', version: 0, accountFen: 0 })
+    expect(result.history.at(-1)).toMatchObject({ year: '2026', reversesId: original.active!.id })
+    const read = insuranceStateSchema.parse(await (await s.request('cashier', `/api/his/v1/insurance/inpatient/${admission.id}`)).json())
+    expect(read).toMatchObject({ annualBalances: [{ year: '2026', version: 2, accountFen: 2000 }, { year: '2027', version: 0 }] })
+  })
   it('未知组合补缴阻止待遇撤销及首次结算，原尝试恢复后可补偿重审且只收一次', async () => {
     const s = await inpatientInsuranceFixture()
     cleanups.push(s.close)

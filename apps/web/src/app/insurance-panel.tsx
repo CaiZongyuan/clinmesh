@@ -196,9 +196,10 @@ export function InsurancePanel({
                   <Button
                     disabled={busy}
                     onClick={() => {
+                        const balance = state.data.annualBalances.find(row => row.year === settlement.year) ?? state.data.balance
                       setCancellation({
                         settlementId: settlement.id,
-                        expectedBalanceVersion: state.data.balance.version,
+                          expectedBalanceVersion: balance.version,
                       })
                       setReview('cancel')
                     }}
