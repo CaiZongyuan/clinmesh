@@ -105,7 +105,9 @@ function openAIOutcome(response: Response, value: unknown): ModelUsageOutcome {
   const cached = counts?.prompt_tokens_details?.cached_tokens ?? counts?.prompt_cache_hit_tokens ?? null
   const reasoning = counts?.completion_tokens_details?.reasoning_tokens ?? null
   const derivedTotal = inputTokens !== null && outputTokens !== null && Number.isSafeInteger(inputTokens + outputTokens) ? inputTokens + outputTokens : null
-  return { status: response.ok ? 'succeeded' : 'failed', dispatch: 'dispatched', httpStatus: response.status,
+  // A gateway timeout cannot prove that the upstream generation has stopped.
+  const status = response.status === 408 || response.status === 504 ? 'unknown' : response.ok ? 'succeeded' : 'failed'
+  return { status, dispatch: 'dispatched', httpStatus: response.status,
     ...(actualModel.success && actualModel.data !== undefined ? { actualModel: actualModel.data } : {}),
     ...(providerRequestId.success && providerRequestId.data !== undefined ? { providerRequestId: providerRequestId.data } : {}),
     usage: counts === undefined ? unknownModelTokenUsage : { inputTokens, outputTokens,
@@ -294,9 +296,10 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
         responseContents.set(response, content)
         let value: unknown
         try { value = JSON.parse(content) } catch { /* Only validated metadata reaches the ledger. */ }
+        const outcome = openAIOutcome(response, value)
         settled = true
-        settleChatCompletionUsage(input, attemptId, openAIOutcome(response, value))
-        invokeChatCompletionRequestControl(input.onRequestComplete)
+        settleChatCompletionUsage(input, attemptId, outcome)
+        if (outcome.status !== 'unknown') invokeChatCompletionRequestControl(input.onRequestComplete)
         return response
       } catch (error) {
         if (!settled) settleChatCompletionUsage(input, attemptId, {

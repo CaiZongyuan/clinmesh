@@ -7,15 +7,74 @@ import { z } from 'zod'
 import { patientPersonaJobSchema } from '@clinmesh/contracts/scenario'
 import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
 import { modelUsageListSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
+import { clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
-import { persona, signIn, StubSyntheaProvider } from './fixtures/consultation.ts'
+import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import { setModelControl } from './fixtures/model-control.ts'
 
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close() })
+
+it.each([408, 504])('does not automatically resend a quality request after HTTP %s or restart', async status => {
+  const directory = await mkdtemp(join(tmpdir(), 'clinmesh-gateway-timeout-'))
+  cleanup.push(() => rm(directory, { recursive: true, force: true }))
+  let qualityRequests = 0
+  const options = {
+    authBaseUrl: 'http://localhost', authSecret: 'synthetic-auth-secret-at-least-32-characters',
+    cursorSecret: 'synthetic-cursor-secret-at-least-32-characters', databasePath: join(directory, 'test.sqlite'),
+    demoPassword: 'Synthetic-Demo-Password-2026!', migrationMode: 'apply' as const,
+    trustedOrigins: ['http://localhost'], syntheaProvider: new StubSyntheaProvider(),
+    patientPersonaModel: 'synthetic', consultationModel: 'synthetic', outboxRetryDelayMs: 0,
+    chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+      fetch: async (_url, init) => {
+        const request = z.object({ response_format: z.object({ json_schema: z.object({ name: z.string() }) }) })
+          .parse(JSON.parse(String(init?.body)))
+        if (request.response_format.json_schema.name === 'patient_persona') {
+          return Response.json({ choices: [{ message: { content: JSON.stringify(persona) } }] })
+        }
+        qualityRequests++
+        return Response.json({ error: { code: 'synthetic_gateway_timeout' }, usage: { prompt_tokens: 3 } }, { status })
+      } }),
+  }
+  let runtime = await createClinMeshRuntime(options)
+  cleanup.push(() => runtime.close())
+  const started = await startConsultationCase(runtime)
+  const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+  const headers = () => ({ cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() })
+  const claimed = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/start-first-visit`, {
+    method: 'POST', headers: headers(), body: JSON.stringify({ expectedVersions: {
+      [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1',
+    }, input: {} }),
+  })
+  expect(claimed.status).toBe(200)
+  const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}`,
+    { headers: { cookie } })).json())
+  const path = `/api/his/v1/doctor/cases/${started.outpatientCaseId}/document-quality-control`
+  const checked = await runtime.app.request(`${path}/actions/check`, {
+    method: 'POST', headers: headers(), body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: detail.encounter.versionId },
+      input: { expectedDraftVersion: 0 } }),
+  })
+  expect(checked.status).toBe(200)
+  const read = async () => clinicalDocumentQualityControlStateSchema.parse(await (await runtime.app.request(path, { headers: { cookie } })).json())
+  await runtime.dispatchPending()
+  expect(qualityRequests).toBe(1)
+  expect(await read()).toMatchObject({ status: 'incomplete', errorCode: 'MODEL_TIMEOUT', failure: { reason: 'timeout' } })
+  await runtime.close()
+  runtime = await createClinMeshRuntime(options)
+  const admin = await signIn(runtime, 'admin@demo.clinmesh.local')
+  await setModelControl(runtime, admin, { enabled: true, requests: null, automaticRetries: true })
+  await runtime.dispatchPending()
+  expect(qualityRequests).toBe(1)
+  expect(await read()).toMatchObject({ status: 'incomplete', errorCode: 'MODEL_TIMEOUT' })
+  const attempts = modelUsageListSchema.parse(await (await runtime.app.request('/api/model-usage/requests?feature=clinical_document_quality',
+    { headers: { cookie: admin } })).json())
+  expect(attempts.total).toBe(1)
+  expect(attempts.items).toMatchObject([{ status: 'unknown', dispatch: 'dispatched', httpStatus: status,
+    usage: { inputTokens: 3, outputTokens: null, totalTokens: null } }])
+})
 
 it('runs an independent persona job while an earlier repair waits, then resumes the original job', async () => {
   class DistinctPatients extends StubSyntheaProvider {

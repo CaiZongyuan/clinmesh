@@ -64,7 +64,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 #### 模型执行恢复
 
-`consultation_reply_attempt` 保存受信 Workspace/Epoch、Encounter、待回答医生轮次、固定期限和执行终态；局部唯一索引保证每个医生轮次只有一个 `executing` 尝试。`consultation_reply_intent` 按 Actor、operation 与幂等键持久关联该尝试，各调用者仍独立授权和完成原 Command 回执。控制阻塞在持久执行上保留 `MODEL_CONTROL_BLOCKED` 并投影为 `blocked`，`model_reply_wait` 保存原期限及受信恢复输入；仅明确未派发且仍有效时自动接续。其他遗留执行启动转为 `unknown`；缺少派发证据的旧未答轮次迁移为未知，不自动补答。读取时已保存患者回答优先于尝试状态，响应丢失不触发重复推理。
+`consultation_reply_attempt` 保存受信 Workspace/Epoch、Encounter、待回答医生轮次、固定期限和执行终态；局部唯一索引保证每个医生轮次只有一个 `executing` 尝试。`consultation_reply_intent` 按 Actor、operation 与幂等键持久关联该尝试，各调用者仍独立授权和完成原 Command 回执。控制阻塞在同一短事务内保存 `MODEL_CONTROL_BLOCKED` 标记和 `model_reply_wait` 的原期限及受信恢复输入，并投影为 `blocked`；仅明确未派发且仍有效时自动接续。恢复输入保存失败时回滚阻塞写入，再尽力以同一事务撤销已有待办并将尝试结束为 `unknown`；启动时，缺少匹配待办的遗留阻塞尝试与其他遗留执行一并转为 `unknown`，仅允许医生明确的新补答意图继续。缺少派发证据的旧未答轮次迁移为未知，不自动补答。读取时已保存患者回答优先于尝试状态，响应丢失不触发重复推理。
 
 `doctor_recommendation_execution`、`doctor_recommendation_execution_plan`、`doctor_recommendation_execution_unit` 与 `doctor_recommendation_execution_continue` 分别保存绑定及累计额外次数、稳定阶段计划、批次依赖及成功结果、人工继续意图。四表以 Workspace/Epoch 开头的复合主键、外键隔离，删除使用 `RESTRICT`。执行键由 Workspace/Epoch、Actor/context、病例、建议类型与 generation 身份派生，完整绑定另含输入指纹、模型和策略；持久 JSON、键与完整绑定在运行时验证，计划与单元哈希不允许恢复时改组。筛选成功步骤只有完整来源上下文、请求与受信作用域均相同时可跨任务复用，生成和核验只属于原执行。
 

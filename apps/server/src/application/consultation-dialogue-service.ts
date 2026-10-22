@@ -317,10 +317,21 @@ export class ConsultationDialogueService {
           ? consultationReplyErrorCodeSchema.safeParse(error.code) : undefined
         const safeCode = code?.success === true ? code.data : 'CONSULTATION_REPLY_UNAVAILABLE'
         if (safeCode === 'MODEL_CONTROL_BLOCKED') {
-          this.#attempts.finish(input.context, attempt.attempt_id, 'blocked', safeCode)
-          this.#database.driver.prepare(`INSERT INTO model_reply_wait(workspace_id, epoch, attempt_id, deadline_at, input_json)
-            VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, epoch, attempt_id) DO NOTHING`)
-            .run(input.context.workspaceId, input.context.epoch, attempt.attempt_id, attempt.deadline_at, JSON.stringify(input))
+          try {
+            this.#database.driver.transaction(() => {
+              this.#attempts.finish(input.context, attempt.attempt_id, 'blocked', safeCode)
+              this.#database.driver.prepare(`INSERT INTO model_reply_wait(workspace_id, epoch, attempt_id, deadline_at, input_json)
+                VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, epoch, attempt_id) DO NOTHING`)
+                .run(input.context.workspaceId, input.context.epoch, attempt.attempt_id, attempt.deadline_at, JSON.stringify(input))
+            })()
+          } catch (persistenceError) {
+            // Retire an existing waiter with the attempt so recovery cannot restart an unknown reply.
+            this.#database.driver.transaction(() => {
+              this.#deleteWait(input.context, attempt.attempt_id)
+              this.#attempts.finish(input.context, attempt.attempt_id, 'unknown', 'CONSULTATION_REPLY_UNKNOWN')
+            })()
+            throw persistenceError
+          }
           throw error
         }
         this.#deleteWait(input.context, attempt.attempt_id)

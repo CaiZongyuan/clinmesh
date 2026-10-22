@@ -33,9 +33,12 @@ export class ConsultationReplyAttempts {
             ORDER BY reply.sequence LIMIT 1) = 'patient'
       )`).run()
     // There is no provider result lookup: interrupted executions cannot be resumed implicitly.
-    database.driver.prepare(`UPDATE consultation_reply_attempt
+    database.driver.prepare(`UPDATE consultation_reply_attempt AS a
       SET status = 'unknown', error_code = 'CONSULTATION_REPLY_UNKNOWN' WHERE status = 'executing'
-        AND COALESCE(error_code, '') <> 'MODEL_CONTROL_BLOCKED'`).run()
+        AND (COALESCE(error_code, '') <> 'MODEL_CONTROL_BLOCKED' OR NOT EXISTS (
+          SELECT 1 FROM model_reply_wait w WHERE w.workspace_id = a.workspace_id
+            AND w.epoch = a.epoch AND w.attempt_id = a.attempt_id
+        ))`).run()
   }
 
   accept(input: {

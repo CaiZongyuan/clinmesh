@@ -116,6 +116,8 @@
 
 - 模型恢复的数据库故障注入须覆盖实际请求返回后的用量结算，不能只测派发前账本创建与任务结果检查点。使用临时 SQLite 的结算 UPDATE trigger，恢复写入后分别在原进程和重启后调度，经公开任务／账本查询及合成网络请求次数确认没有重发；复用[控制恢复回归](../../apps/server/tests/model-control-recovery-http.test.ts)。
 
+- 模型超时回归同时覆盖网络异常和真实 HTTP 408／504 响应，经公开后台任务、账本及合成网络次数确认调度与重启后均不重发；只测试本地 AbortSignal 会漏掉网关超时。控制阻塞持久化则分别在首次等待和已有待办恢复时注入 INSERT 失败，并构造缺少恢复输入的旧阻塞状态，经公开病例读取、新补答和合成网络次数证明不会永久等待或重启未知尝试；复用[控制恢复回归](../../apps/server/tests/model-control-recovery-http.test.ts)与[患者回答合同](../../apps/server/tests/consultation-dialogue-http.test.ts)。
+
 - 后台 Agent 权限回归须从带授权的真实 HTTP 入队走到任务领取，并验证派发前撤销授权会阻止模型调用。只直接检查身份服务会漏掉持久上下文 strict schema 拒绝或丢失 `agentGrantId`，以及运行时漏传操作范围的问题；复用[检验目录发布回归](../../apps/server/tests/laboratory-service-publisher-http.test.ts)。
 
 - 更新增量病史输入后，同时运行 `pnpm smoke:consultation:native`：共享 Web 旅程通过不证明原生合成 Adapter 匹配。Fixture 需沿用[增量记录合同](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)的短引用与取消信号，不能依赖自动片段必有重复正文，也不能等待已取消请求正常返回。
