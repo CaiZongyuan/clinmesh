@@ -12,6 +12,7 @@
     "./model-pricing": "./src/model-pricing.ts",
     "./doctor-recommendations": "./src/doctor-recommendations.ts",
     "./his": "./src/his.ts",
+    "./refunds": "./src/refunds.ts",
     "./inpatient-record": "./src/inpatient-record.ts",
     "./inpatient-discharge": "./src/inpatient-discharge.ts",
     "./inpatient": "./src/inpatient.ts",

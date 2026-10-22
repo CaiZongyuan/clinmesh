@@ -112,6 +112,7 @@ import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction }
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { PaymentLedger } from './payment-ledger.ts'
+import { OutpatientRefunds } from './outpatient-refunds.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { PathologyRequestService } from './pathology-request-service.ts'
 import { ConsultationRecordingService } from './consultation-recording-service.ts'
@@ -1161,6 +1162,7 @@ interface InvestigationCapabilityResolver {
 }
 
 export class WorkflowService {
+  readonly refunds: OutpatientRefunds
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
@@ -1202,6 +1204,7 @@ export class WorkflowService {
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
+    this.refunds = new OutpatientRefunds(database, fhir, commands, { now: this.#now, virtualTime: context => this.#virtualTime(context), tokenSecret: options.tokenSecret })
     this.qualityControl = new ClinicalDocumentQualityControl({
       database, commands, modelAvailable: options.qualityModelAvailable === true,
       contextStatus: options.qualityContextStatus ?? (() => 'active'),
@@ -8269,8 +8272,11 @@ export class WorkflowService {
         ))
       ORDER BY created_at, charge_id
     `).all(...scope)).map(charge => {
-      const { paidFen } = ledger.balance(input.context, charge.chargeItemId)
-      return { ...charge, paidFen, remainingFen: charge.amountFen - paidFen }
+      const { paidFen: collectedFen } = ledger.balance(input.context, charge.chargeItemId)
+      const amountFen = charge.amountFen - this.refunds.adjustmentFen(input.context, charge.chargeItemId)
+      const refundedFen = this.refunds.ledger.basisBalance(input.context, `outpatient-charge:${charge.chargeItemId}`).refundedFen
+      const paidFen = collectedFen - refundedFen
+      return { ...charge, amountFen, paidFen, remainingFen: Math.max(0, amountFen - paidFen) }
     })
     const { items: payments, ...paymentsPagination } = ledger.attempts(input.context, input.caseId, input.page, input.pageSize)
     return billingCaseSchema.parse({

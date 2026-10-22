@@ -1410,6 +1410,41 @@ describe('outpatient workflow HTTP contract', () => {
     return { runtime, password, options }
   }
 
+  it('refunds only a recorded fee correction against the original payment without undoing clinical release', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createPaidLabCase(runtime, password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version = '2', key = randomUUID()) => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(testCase.cashierCookie, key),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }),
+    })
+    const adjusted = await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, {
+      chargeItemId, amountFen: 2000, reason: '合成费用录入错误，核准冲减20元。',
+    })
+    expect(adjusted.status).toBe(200)
+    const adjustment = await adjusted.json()
+    expect(adjustment.data).toMatchObject({ chargeItemId, adjustedFen: 2000 })
+    const preview = await write('/api/his/v1/refunds/actions/preview', {
+      paymentId: testCase.payment.paymentId, amountFen: 1000, expectedSourceVersion: 1, simulatorRule: 'success',
+    }, '3')
+    expect(preview.status).toBe(200)
+    const frozen = (await preview.json()).data
+    const key = randomUUID()
+    const confirm = () => write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, { commitToken: frozen.commitToken }, '3', key)
+    const response = await confirm()
+    expect(response.status).toBe(200)
+    const refund = await response.json()
+    expect(refund.data).toMatchObject({ amountFen: 1000, outcome: 'success', sourceId: testCase.payment.paymentId })
+    expect(await (await confirm()).json()).toEqual(refund)
+    const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}`, {
+      headers: { cookie: testCase.cashierCookie },
+    })).json())
+    expect(bill.charges.find(charge => charge.chargeItemId === chargeItemId)).toMatchObject({ amountFen: 4800, paidFen: 5800, remainingFen: 0, status: 'paid' })
+    const caseResponse = await runtime.app.request(`/api/his/v1/doctor/cases/${testCase.caseId}`, { headers: { cookie: testCase.doctorCookie } })
+    expect(doctorCaseDetailSchema.parse(await caseResponse.json()).status).toBe('awaiting-lis')
+    await expectCommandAudit(runtime, testCase.cashierCookie, refund.auditId, 'refund.confirm')
+  })
+
   it('keeps doctor queue pagination and case details readable when an active case has no triage record', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-doctor-queue-filter-'))
     temporaryDirectories.push(directory)

@@ -7,6 +7,7 @@ import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema,
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
+import { chargeAdjustmentInputSchema, refundConfirmInputSchema, refundPreviewInputSchema, refundRecoverInputSchema } from '@clinmesh/contracts/refunds'
 import { installHostModelUsageRoutes } from './model-usage-host-routes.ts'
 import { modelUsageFilterSchema, modelUsageControlUpdateSchema, modelUsageReconcileSchema, modelUsageRepriceSchema, modelUsageRetentionUpdateSchema } from '@clinmesh/contracts/model-usage'
 import { ModelUsagePolicyError } from './application/model-usage-control.ts'
@@ -2989,6 +2990,38 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch (error) {
         return apiErrorResponse(context, error)
       }
+    })
+    app.get('/api/his/v1/billing/cases/:caseId/refunds', async context => {
+      try { return context.json(workflow.refunds.read(await actor(context), context.req.param('caseId'))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/billing/cases/:caseId/adjustments', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: chargeAdjustmentInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.refunds.adjust(await actor(context), context.req.param('caseId'), body.input, body.expectedVersions, idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/refunds/actions/preview', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: refundPreviewInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.refunds.preview(await actor(context), body.input, body.expectedVersions, idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/refunds/:previewId/actions/confirm', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: refundConfirmInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.refunds.confirm(await actor(context), context.req.param('previewId'), body.input, body.expectedVersions, idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/refunds/:refundId/actions/recover', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = z.object({ expectedVersions: z.record(z.string(), z.string()), input: refundRecoverInputSchema }).strict().parse(await context.req.json())
+        return context.json(workflow.refunds.recover(await actor(context), context.req.param('refundId'), body.input, body.expectedVersions, idempotencyKey(context)))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/payments/:paymentId/actions/recover', async (context) => {
       try {
