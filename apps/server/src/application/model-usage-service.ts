@@ -47,7 +47,10 @@ export class ModelUsageService implements ModelUsageRecorder {
   control(workspaceId: string) { return this.#control.read(workspaceId) }
   controlFor(context: ActorContext) {
     const state = this.control(context.workspaceId)
-    return { ...state, deployment: context.roleCode === 'administrator' ? state.deployment : null }
+    if (context.roleCode === 'administrator') return state
+    return { ...state, deployment: null,
+      lastRejection: state.lastRejection?.scope === 'deployment'
+        ? { ...state.lastRejection, remaining: null, required: null } : state.lastRejection }
   }
   updateControl(context: ActorContext, input: ModelUsageControlUpdate, key: string) { return this.#control.update(context, input, key) }
   pricing() { return this.#pricing }

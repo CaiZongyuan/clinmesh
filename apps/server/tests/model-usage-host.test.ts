@@ -163,6 +163,45 @@ it.each([
   expect((await f.control()).lastRejection).toMatchObject({ code: input.code, scope: input.scope })
 })
 
+it.each([
+  { scope: 'deployment', dimension: 'requests', code: 'MODEL_REQUEST_LIMIT', remaining: 0, required: 1 },
+  { scope: 'deployment', dimension: 'tokens', code: 'MODEL_TOKEN_LIMIT', remaining: 100, required: 120 },
+  { scope: 'deployment', dimension: 'cny', code: 'MODEL_CNY_LIMIT', remaining: 1, required: 1.2 },
+  { scope: 'workspace', dimension: 'requests', code: 'MODEL_REQUEST_LIMIT', remaining: 0, required: 1 },
+  { scope: 'workspace', dimension: 'tokens', code: 'MODEL_TOKEN_LIMIT', remaining: 100, required: 120 },
+  { scope: 'workspace', dimension: 'cny', code: 'MODEL_CNY_LIMIT', remaining: 1, required: 1.2 },
+] as const)('只向管理员公开部署拒绝数值，保留工作区拒绝数值：$scope/$dimension', async input => {
+  const policy = { enabled: true, requests: input.dimension === 'requests' ? 0 : null,
+    tokens: input.dimension === 'tokens' ? 100 : null, cny: input.dimension === 'cny' ? 1 : null, automaticRetries: true }
+  const f = await fixture(undefined, input.scope === 'deployment' ? policy : undefined, {
+    prices: [{ provider: 'synthetic-host', model: 'classifier', version: 'synthetic-v1', currency: 'CNY', rates: { input: 10000, output: 10000 } }],
+    exchangeRates: [],
+  })
+  if (input.scope === 'workspace') await f.policy(policy)
+  const rejected = await f.post('/api/model-usage/host/doctor-delegation/admit', {
+    permit: await f.permit(), provider: 'synthetic-host', model: 'classifier',
+    reservationBoundary: { adapter: 'dsh-host', version: 'synthetic-bounded-v1', inputTokens: 100, outputTokens: 20, reason: null },
+  })
+  expect(rejected.status).toBe(409)
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  const privileged = await f.control(admin)
+  expect(privileged.deployment).not.toBeNull()
+  expect(privileged.lastRejection).toMatchObject({ code: input.code, scope: input.scope, dimension: input.dimension,
+    remaining: input.remaining, required: input.required })
+  const member = await f.control(f.doctor)
+  expect(member.deployment).toBeNull()
+  expect(member.workspace).toEqual(privileged.workspace)
+  expect(member.lastRejection).toEqual({ ...privileged.lastRejection,
+    remaining: input.scope === 'deployment' ? null : input.remaining,
+    required: input.scope === 'deployment' ? null : input.required })
+  const selectRole = (practitionerRoleId: string) => f.runtime.app.request('/api/auth/role', { method: 'POST',
+    headers: { cookie: admin, origin: 'http://localhost', 'content-type': 'application/json' }, body: JSON.stringify({ practitionerRoleId }) })
+  expect((await selectRole('practitioner-role-outpatient-doctor')).status).toBe(200)
+  expect(await f.control(admin)).toEqual(member)
+  expect((await selectRole('practitioner-role-administrator')).status).toBe(200)
+  expect(await f.control(admin)).toEqual(privileged)
+})
+
 it('blocks unmetered Host streams under finite dimensions and retains their boundary in unlimited mode', async () => {
   const f = await fixture()
   let streams = 0
