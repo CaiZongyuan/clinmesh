@@ -19,12 +19,12 @@ const groups = [
 ]
 const jsText = 'return ["I10.x09"].includes(x.zdList[0])){Q("符合RA1入组条件，匹配规则：主诊断匹配");}'
 
-async function writeRulesPackage(): Promise<string> {
+async function writeRulesPackage(releaseId = 'chs-drg-pregroup-test', sourceVersion = 'CHS-DRG-3.0-pregroup-test'): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-drg-pregroup-'))
   cleanups.push(async () => { await rm(directory, { recursive: true, force: true }) })
   const files = prepareDrgRulesPackage({ groups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
     input: { openDrgJsSha256: 'a'.repeat(64), openDrgTablesSha256: 'b'.repeat(64), r3GroupsSha256: 'c'.repeat(64) },
-    releaseId: 'chs-drg-pregroup-test', sourceVersion: 'CHS-DRG-3.0-pregroup-test' })
+    releaseId, sourceVersion })
   for (const [path, content] of Object.entries(files)) await writeFile(join(directory, path), content, 'utf8')
   return directory
 }
@@ -47,8 +47,15 @@ async function setup(drgRulesDirectory?: string) {
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'hospital.sqlite'),
     referenceDatabasePath, activeReferenceReleaseId: 'synthetic-clinical-2022', demoPassword: password,
     migrationMode: 'apply', trustedOrigins: ['http://localhost'], ...(drgRulesDirectory === undefined ? {} : { drgRulesDirectory }) }
-  const runtime = await createClinMeshRuntime(options)
+  let runtime = await createClinMeshRuntime(options)
   cleanups.push(async () => { await runtime.close() })
+  /** 以新的规则包目录重启同一数据库，用于验证归档冻结结果不随规则升级变化。 */
+  const reopen = async (nextRulesDirectory?: string) => {
+    await runtime.close()
+    cleanups.pop()
+    runtime = await createClinMeshRuntime({ ...options, ...(nextRulesDirectory === undefined ? {} : { drgRulesDirectory: nextRulesDirectory }) })
+    cleanups.push(async () => { await runtime.close() })
+  }
   async function login(name: string) {
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' },
       body: JSON.stringify({ email: `${name}@demo.clinmesh.local`, password }) })
@@ -70,7 +77,7 @@ async function setup(drgRulesDirectory?: string) {
   const admission = (await (await request(nurse, `/api/his/v1/inpatient/admissions/${registered.id}/receive`, {
     encounterVersion: registered.versionId, bedId: 'bed-general-1'
   })).json()).data.admission
-  return { runtime, request, login, patient, admission, doctor, nurse, cashier, registrar, path: `/api/his/v1/inpatient/admissions/${admission.id}` }
+  return { runtime, reopen, request, login, patient, admission, doctor, nurse, cashier, registrar, path: `/api/his/v1/inpatient/admissions/${admission.id}` }
 }
 
 async function confirmPrimary(s: Awaited<ReturnType<typeof setup>>) {
@@ -115,5 +122,40 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     const unconfigured = await bare.request(bare.doctor, `${bare.path}/drg/pregroup`)
     expect(unconfigured.status).toBe(409)
     expect((await unconfigured.json()).error.code).toBe('DRG_RULES_NOT_CONFIGURED')
+    // 规则包未配置不阻塞归档；归档病例预分组明确报告缺冻结结果。
+    expect((await confirmPrimary(bare)).status).toBe(200)
+    await finish(bare)
+    const bareDraft = await (await bare.request(bare.doctor, `${bare.path}/record`)).json()
+    expect((await bare.request(bare.doctor, `${bare.path}/record/submit`, { expectedRevision: 0, expectedSourcesHash: bareDraft.sourcesHash, mainProcedureExecutionId: null })).status).toBe(200)
+    const bareCoder = await bare.login('medical-records')
+    const bareReviewed = await (await bare.request(bare.doctor, `${bare.path}/record`)).json()
+    expect((await bare.request(bareCoder, `${bare.path}/record/review`, { expectedRevision: 1, expectedSourcesHash: bareReviewed.sourcesHash,
+      outcome: 'approved', reason: '合成编码审核通过' })).status).toBe(200)
+    const bareCurrent = await (await bare.request(bare.doctor, `${bare.path}/record`)).json()
+    expect((await bare.request(bareCoder, `${bare.path}/record/archive`, { expectedRevision: 1, expectedSourcesHash: bareCurrent.sourcesHash })).status).toBe(200)
+    const bareFrozen = await bare.request(bare.doctor, `${bare.path}/drg/pregroup`)
+    expect(bareFrozen.status).toBe(409)
+    expect((await bareFrozen.json()).error.code).toBe('DRG_FROZEN_RESULT_MISSING')
+  })
+
+  it('归档冻结分组：结果绑定归档时规则版本，更换规则包后预分组不再变化', async () => {
+    const s = await setup(await writeRulesPackage())
+    expect((await confirmPrimary(s)).status).toBe(200)
+    await finish(s)
+    const submitted = await (await s.request(s.doctor, `${s.path}/record`)).json()
+    expect((await s.request(s.doctor, `${s.path}/record/submit`, { expectedRevision: 0, expectedSourcesHash: submitted.sourcesHash, mainProcedureExecutionId: null })).status).toBe(200)
+    const coder = await s.login('medical-records')
+    const reviewed = await (await s.request(s.doctor, `${s.path}/record`)).json()
+    expect((await s.request(coder, `${s.path}/record/review`, { expectedRevision: 1, expectedSourcesHash: reviewed.sourcesHash,
+      outcome: 'approved', reason: '合成编码审核通过' })).status).toBe(200)
+    const current = await (await s.request(s.doctor, `${s.path}/record`)).json()
+    expect((await s.request(coder, `${s.path}/record/archive`, { expectedRevision: 1, expectedSourcesHash: current.sourcesHash })).status).toBe(200)
+    const frozen = await (await s.request(s.doctor, `${s.path}/drg/pregroup`)).json()
+    expect(frozen).toMatchObject({ frozen: true, recordRevision: 1, rulesId: 'chs-drg-pregroup-test', rulesVersion: 'CHS-DRG-3.0-pregroup-test',
+      result: { status: 'grouped', drgCode: 'RA15' } })
+    // 升级规则包重启后，归档病例仍返回归档时的冻结结果与规则身份。
+    await s.reopen(await writeRulesPackage('chs-drg-pregroup-test-v2', 'CHS-DRG-3.0-pregroup-test-v2'))
+    const afterUpgrade = await (await s.request(s.doctor, `${s.path}/drg/pregroup`)).json()
+    expect(afterUpgrade).toEqual(frozen)
   })
 })

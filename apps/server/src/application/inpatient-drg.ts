@@ -3,6 +3,7 @@ import { v7 as uuidv7 } from 'uuid'
 import { groupDrgCase } from './drg-grouping.ts'
 import type { DrgGroupingInput, DrgRules } from '@clinmesh/contracts/drg'
 import { inpatientDrgPregroupResultSchema, type InpatientDrgPregroupResult } from '@clinmesh/contracts/inpatient-drg'
+import { inpatientRecordSnapshotSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema,
   inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema,
   type InpatientDrgSimulation, type InpatientDrgSimulationInput, type InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
@@ -40,14 +41,52 @@ export class InpatientDrg {
   constructor(private readonly owner: InpatientService, private readonly rules: DrgRules | null) {}
 
   pregroup(context: ActorContext, admissionId: string): InpatientDrgPregroupResult {
-    if (this.rules === null) throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法预分组', 409)
     const record = this.owner.records.read(context, admissionId)
-    if (record.revision === undefined) throw new InpatientError('DRG_RECORD_NOT_SUBMITTED', '病案首页尚未提交修订，无法预分组', 409)
-    const snapshot = record.revision.snapshot
+    // 归档病例回看冻结结果不依赖当前规则包；未归档病例保持规则未配置优先报错。
+    if (record.archive === undefined && this.rules === null)
+      throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法预分组', 409)
+    if (record.revision === undefined && record.archive === undefined)
+      throw new InpatientError('DRG_RECORD_NOT_SUBMITTED', '病案首页尚未提交修订，无法预分组', 409)
+    if (record.archive !== undefined) {
+      const row = z.object({ drg_result_json: z.string().nullable() }).parse(this.owner.database.driver.prepare(
+        'SELECT drg_result_json FROM inpatient_record_archive WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY archive_id DESC LIMIT 1')
+        .get(context.workspaceId, context.epoch, admissionId))
+      if (row.drg_result_json === null) throw new InpatientError('DRG_FROZEN_RESULT_MISSING', '归档时未形成冻结分组（规则包未配置）', 409)
+      return inpatientDrgPregroupResultSchema.parse(JSON.parse(row.drg_result_json))
+    }
+    const input = this.#snapshotGroupingInput(record.revision!.snapshot)
+    return inpatientDrgPregroupResultSchema.parse({
+      admissionId,
+      recordRevision: record.revision.revision,
+      rulesId: this.rules.rulesId,
+      rulesVersion: this.rules.version,
+      inputCoding: 'nhc-icd10-clinical@2022.r4',
+      codingNote: clinicalCodingNote,
+      frozen: false,
+      result: groupDrgCase(this.rules, input),
+    })
+  }
+
+  /** 归档事务内冻结分组：与首页快照同事务落盘；规则包未配置时返回 null，归档不带冻结结果。 */
+  freezeForArchive(recordRevision: number, snapshot: z.infer<typeof inpatientRecordSnapshotSchema>): string | null {
+    if (this.rules === null) return null
+    return JSON.stringify(inpatientDrgPregroupResultSchema.parse({
+      admissionId: snapshot.stay.admissionId,
+      recordRevision,
+      rulesId: this.rules.rulesId,
+      rulesVersion: this.rules.version,
+      inputCoding: 'nhc-icd10-clinical@2022.r4',
+      codingNote: clinicalCodingNote,
+      frozen: true,
+      result: groupDrgCase(this.rules, this.#snapshotGroupingInput(snapshot)),
+    }))
+  }
+
+  #snapshotGroupingInput(snapshot: InpatientRecordSnapshot): DrgGroupingInput {
     const { patient, stay, clinical } = snapshot
     const admittedAt = stay.admittedAt
     const departedAt = stay.departedAt
-    const input: DrgGroupingInput = {
+    return {
       diagnoses: clinical.diagnosis.entries.map(entry => ({
         code: entry.coding.code, role: entry.role === 'primary' ? 'main' as const : 'secondary' as const })),
       operations: clinical.operations.map(operation => ({
@@ -59,15 +98,6 @@ export class InpatientDrg {
       inpatientDays: admittedAt === undefined || departedAt === undefined ? 0
         : Math.min(3650, Math.max(0, Math.floor((new Date(departedAt).getTime() - new Date(admittedAt).getTime()) / 86_400_000))),
     }
-    return inpatientDrgPregroupResultSchema.parse({
-      admissionId,
-      recordRevision: record.revision.revision,
-      rulesId: this.rules.rulesId,
-      rulesVersion: this.rules.version,
-      inputCoding: 'nhc-icd10-clinical@2022.r4',
-      codingNote: clinicalCodingNote,
-      result: groupDrgCase(this.rules, input),
-    })
   }
 
   /**

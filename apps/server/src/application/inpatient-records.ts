@@ -177,7 +177,9 @@ export class InpatientRecords {
       if (fees.settlement?.chargesFen !== fees.chargesFen || fees.transactions.reduce((sum, item) => sum + item.amountFen, 0) !== fees.chargesFen)
         throw new InpatientError('INPATIENT_RECORD_FINANCIAL_CONFLICT', '当前费用与结算资金不一致')
       const id = uuidv7(), review = current.reviews.at(-1)!
-      this.owner.database.driver.prepare('INSERT INTO inpatient_record_archive VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, input.admissionId, id, input.expectedRevision, review.id, input.expectedSourcesHash, JSON.stringify(current.revision.snapshot), context.actorId, context.practitionerRoleId, this.owner.virtualTime(context))
+      // 归档冻结分组与首页快照同事务落盘；规则包未配置时为 null，归档不受 DRG 仿真可用性阻塞。
+      const drgResultJson = this.owner.drg.freezeForArchive(input.expectedRevision, current.revision.snapshot)
+      this.owner.database.driver.prepare('INSERT INTO inpatient_record_archive VALUES(?,?,?,?,?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, input.admissionId, id, input.expectedRevision, review.id, input.expectedSourcesHash, JSON.stringify(current.revision.snapshot), context.actorId, context.practitionerRoleId, this.owner.virtualTime(context), drgResultJson)
       this.owner.database.driver.prepare("UPDATE inpatient_admission SET record_status='archived' WHERE workspace_id=? AND epoch=? AND admission_id=?").run(context.workspaceId, context.epoch, input.admissionId)
       return { data: this.#read(context, input.admissionId), effects: [{ kind: 'created' as const, reference: `InpatientRecordArchive/${id}`, versionId: '1' }] }
     })
