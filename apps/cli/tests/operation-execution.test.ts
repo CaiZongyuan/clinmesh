@@ -138,7 +138,7 @@ describe('catalog-backed operation execution', () => {
       operation: {
         id: 'reference.diagnoses.search',
         mode: 'query',
-        version: 1,
+        version: 2,
       },
       schemaVersion: 1,
     })

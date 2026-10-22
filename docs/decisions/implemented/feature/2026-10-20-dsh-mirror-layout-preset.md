@@ -21,3 +21,5 @@ AI 原生医生工作台的"中病例 + 右建议栈"内容区布局要求助手
 ## Consequences
 
 `workspace-mirror` 进入 `VALID_LAYOUTS`；ClinMesh 侧桥接的 supported 声明、`ReactSurfaceLayout` 类型与 `verify-artifact` 产物 marker 守卫随 `dsh-upstreams.lock.json` 推进在同一 diff 更新，不在上游 PR 中先行合入（旧构建产物的本机会被 marker 守卫正确拦截）。DSH 宿主集成验收（第三步）在锁定升级后执行；后续 DSH 上游若提供官方镜像预设，迁移路径为替换预设名，ClinMesh 内容区无感。
+
+第三步按上游依赖拆分推进：队列回落卡片（`DoctorQueueRail` 组件与 `surfaceDisplay.queuePresentation: 'rail'`）不依赖上游，先行交付并由 `apps/dsh-web` browser 合同覆盖（ShadowRoot、React 18/19、容器查询、双主题三档字号）；`workspace-mirror` 的三类桥接守卫与 `apps/dsh-web` 布局声明、传值切换仍随 `dsh-upstreams.lock.json` 推进在同一 diff 更新（上游预设 PR 需单独授权推送，预设实现保存在本地 `feat/mirror-preset` 分支）。镜像布局生效前的 `dev:dsh` 真实宿主手工验收（镜像几何、队列卡片实位、双主题）随锁定升级后执行。

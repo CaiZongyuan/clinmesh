@@ -1,13 +1,14 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { expect } from '@playwright/test'
 import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase } from '../../server/tests/fixtures/consultation.ts'
-import { test as base, expect } from './fixtures.ts'
+import { test as base } from './fixtures.ts'
 import { createRecommendationGuidelineDatabase, recommendationFixture, RecommendationSyntheaProvider } from './doctor-recommendations-fixture.ts'
-import { runRecommendationJourney } from './doctor-recommendations-journey.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
+import { runRecommendationJourney } from './doctor-recommendations-journey.ts'
 
 const test = base.extend<{ recommendationCase: Awaited<ReturnType<typeof startConsultationCase>> }>({
   browserApp: async ({ webRoot }, use) => {
@@ -29,6 +30,7 @@ const test = base.extend<{ recommendationCase: Awaited<ReturnType<typeof startCo
     await use(await startConsultationCase(browserApp.runtime, browserApp.password, browserApp.origin))
   },
 })
+
 
 for (const width of [1280, 390]) test(`prepares in the background and directly confirms or issues selected verified items at ${width}px`, async ({ page, browserApp, recommendationCase }) => {
   const errors: string[] = []

@@ -238,6 +238,7 @@ export function applyMigrations(
   database: ClinMeshDatabase,
   migrationDirectory = defaultMigrationDirectory(),
 ): MigrationResult {
+  if (database.driver.inTransaction) throw new Error('Migrations require a connection without an active transaction')
   database.driver.exec(`
     CREATE TABLE IF NOT EXISTS schema_migration (
       migration_id TEXT PRIMARY KEY,
@@ -269,17 +270,24 @@ export function applyMigrations(
       continue
     }
 
-    database.driver.exec('BEGIN IMMEDIATE')
+    const rebuildReferences = ['0069_inpatient-admission.sql', '0071_inpatient-investigations-transfer.sql'].includes(migrationFile)
+    if (rebuildReferences) database.driver.pragma('foreign_keys = OFF')
     try {
+      database.driver.exec('BEGIN IMMEDIATE')
       prepareIncrementalRecordingContextMigration(database.driver, migrationFile)
       database.driver.exec(sql)
+      if (rebuildReferences && (database.driver.pragma('foreign_key_check') as unknown[]).length > 0) {
+        throw new Error('Migration violated foreign keys')
+      }
       if (migrationFile === '0069_registration-numbering.sql') initializeRegistrationNumbering(database)
       record.run(migrationFile, checksum, new Date().toISOString())
       database.driver.exec('COMMIT')
       applied.push(migrationFile)
     } catch (error) {
-      database.driver.exec('ROLLBACK')
+      if (database.driver.inTransaction) database.driver.exec('ROLLBACK')
       throw error
+    } finally {
+      if (rebuildReferences) database.driver.pragma('foreign_keys = ON')
     }
   }
 

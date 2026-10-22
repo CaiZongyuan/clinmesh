@@ -76,8 +76,12 @@
 
 - 隔离验证实例须覆盖仓库 `.env` 中的 `CLINMESH_PUBLIC_ORIGIN` 与 `CLINMESH_TRUSTED_ORIGINS`，否则登录返回 `INVALID_ORIGIN`；数据库迁移从 `apps/server` 目录运行。没有配置 `CLINMESH_AI_*` 时 Persona 任务无法完成，合成病例不能开始就诊。
 
+- worktree 首次跑 `pnpm dev:dsh` 前先补齐两类 gitignored 环境：从主工作区复制 `.env`，再运行 `pnpm reference:sync` 物化参考数据；缺后者时 Server 在 runtime 初始化抛 `REFERENCE_RELEASE_NOT_FOUND`。`.env` 的 `CLINMESH_REFERENCE_RELEASE_ID` 落后于 lock release 也会同样报错——主工作区可能因 `.data` 库里残留旧 release 而侥幸可用，新 worktree 的全新库只会暴露它；发现配置漂移时两侧一起更新，不要只修 worktree 掩盖主工作区的雷。端口语义：DSH Web 3080 被残留进程占用时脚本拒绝启动（防 trusted origin 与登录校验错位，不要绕过）；Server 51868 的残留须手动 kill（只停 `pnpm` 包装层不杀子进程）；Synthea 51878 由 Docker 容器幂等复用，跨启动存活是正常现象。
+
 ## 文档构建
 
 - GitHub 与 VitePress 对数字章节生成的锚点不同，例如 `8.1 门诊闭环` 分别为 `81-门诊闭环` 与 `_8-1-门诊闭环`。搬迁章节时同时核对仓库链接和构建后的 HTML；实际被引用的 GitHub 锚点可用显式 HTML `id` 保持两端可达。`verify:docs` 只证明文件目标存在，不能证明章节存在；用 Playwright 核对真实页面中的目标元素。归属与迁移要求见[文档整理决策](../decisions/implemented/process/2026-10-19-documentation-ownership.md)。
 
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。
+
+- 文档站构建与全仓 lint 顺序执行：VitePress 会短暂创建并删除 `.vitepress/config.ts.timestamp-*.mjs`，并行 oxlint 可能在扫描后读取到已删除文件而报 `Failed to open file`。先确认构建结束，再原样重跑 lint，不扩大忽略范围掩盖源码错误。

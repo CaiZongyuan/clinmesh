@@ -1,7 +1,10 @@
+import { InpatientReferral } from '../inpatient-referral.tsx'
 import { DoctorPreparationProvider, useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { DoctorPreparationDetailsDialog, DoctorRecommendationDetails } from './doctor-recommendations.tsx'
 import { DocumentQualityCompact, DocumentQualityDetails, locateDocumentQualityIssue, useDocumentQualityControl, type QualityIssue } from './document-quality-control.tsx'
 import { DoctorWorkspaceLayout, DoctorCaseLayout, DoctorCasePanel, DoctorCaseDetailRegion } from './responsive-layout.tsx'
+import { DoctorQueueRail } from './doctor-queue-rail.tsx'
+import { useOptionalWebRuntime } from '../web-runtime.tsx'
 import { DoctorSuggestionStack } from './doctor-suggestion-stack.tsx'
 import { agentToolInputSchemas, doctorCaseSectionSchema, type DoctorCaseSection } from '@clinmesh/contracts/agent'
 import { mergeDocumentText } from '@clinmesh/core/document-text'
@@ -48,7 +51,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { Textarea } from '@clinmesh/ui/components/textarea'
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { ArrowRightIcon, CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
+import { CheckCircleIcon, CheckIcon, CircleAlertIcon, ClipboardCheckIcon, ClipboardListIcon, ClipboardPenIcon, FileSignatureIcon, MessagesSquareIcon, PillIcon, PlusIcon, RefreshCwIcon, StethoscopeIcon, TestTubesIcon, Trash2Icon } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   acknowledgeImagingReport,
@@ -115,7 +118,7 @@ import {
 } from '../workspace-error.ts'
 import { formatFen } from '../workspace-format.ts'
 import { WorkspaceSelect } from '../workspace-select.tsx'
-import { EncounterCompletionProgress } from './completion-checklist.tsx'
+import { EncounterCompletionChecklist, EncounterCompletionProgress } from './completion-checklist.tsx'
 import type { ReferenceCatalogSearches } from './catalog-picker-dialogs.tsx'
 import {
   ClinicalDocumentPage,
@@ -364,6 +367,8 @@ function DoctorCaseController({
   session,
 }: DoctorCaseControllerProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+  // DSH 镜像布局把队列收进贴内容区左缘的浮层卡片；独立 Web 与 workspace 布局保持队列列。
+  const queueRail = useOptionalWebRuntime()?.surfaceDisplay?.queuePresentation === 'rail'
   const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = useMemo(() => [session.actor.workspaceId, session.actor.epoch] as const,
@@ -375,6 +380,14 @@ function DoctorCaseController({
     setPage(1)
   }
   const [activeCaseSection, setActiveCaseSection] = useState<DoctorCaseSection>('record')
+  const [completionNavigate, setCompletionNavigate] = useState<((target: EncounterCompletionTarget) => void) | undefined>()
+  const setCompletionNavigateStable = useCallback(
+    (navigate: (target: EncounterCompletionTarget) => void) => {
+      setCompletionNavigate((current: ((target: EncounterCompletionTarget) => void) | undefined) =>
+        current === navigate ? current : navigate)
+    },
+    [],
+  )
   const caseDetailRoot = useRef<HTMLElement>(null)
   const [diagnosisReferenceSearch, setDiagnosisReferenceSearch] = useState<ReferenceCatalogSearchParameters>({
     enabled: false,
@@ -880,19 +893,21 @@ function DoctorCaseController({
     onSuccess: async (_response, variables) => refreshCaseById(variables.caseId),
   })
   const saveLaboratoryRequest = useMutation({
-    mutationFn: ({ caseId }: { caseId: string }) => {
+    mutationFn: ({ caseId, override }: { caseId: string; override?: { catalogItemId: string; indicationCode: string } }) => {
       const current = detail.data
+      const catalogItemId = override?.catalogItemId ?? resolvedLaboratoryItemId
+      const indicationCode = override?.indicationCode ?? resolvedIndicationCode
       if (current?.caseId !== caseId
-        || !isLaboratoryRequestCatalogItemId(resolvedLaboratoryItemId)
-        || resolvedIndicationCode.length === 0) {
+        || !isLaboratoryRequestCatalogItemId(catalogItemId)
+        || indicationCode.length === 0) {
         throw new Error(messages.consultationUnavailable)
       }
       return saveLaboratoryRequestDraft({
-        catalogItemId: resolvedLaboratoryItemId,
+        catalogItemId,
         encounterId: current.encounter.id,
         encounterVersion: current.encounter.versionId,
         expectedDraftVersion: current.laboratoryRequests?.draftVersion ?? 0,
-        indicationCode: resolvedIndicationCode,
+        indicationCode,
       }, newIdempotencyKey())
     },
     onError: async (_error, variables) => refreshCaseById(variables.caseId),
@@ -2621,7 +2636,8 @@ function DoctorCaseController({
       suggestions={{
         label: messages.suggestionStackTitle,
         node: <DoctorSuggestionStack completion={completion} detail={detailUnavailable ? undefined : detail.data}
-          clinicalDocument={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope} />,
+          clinicalDocument={currentClinicalDocument} locale={locale} messages={messages} scope={pageScope}
+          {...(completionNavigate === undefined ? {} : { onNavigateToCompletionTarget: completionNavigate })} />,
       }}
       queue={showDetail => (
       <DoctorQueueModule
@@ -2638,9 +2654,25 @@ function DoctorCaseController({
         queueError={visibleQueue.error}
         queuePending={visibleQueue.isPending}
       />
-      )}>
+      )}
+      {...(queueRail ? {
+        queueFloating: (
+          <DoctorQueueRail
+            activeCaseId={activeCaseId}
+            messages={messages}
+            navigation={navigation}
+            onQueuePageChange={nextPage => { setPage(nextPage); onSelectedCaseIdChange(undefined) }}
+            onSelectCase={caseId => onSelectedCaseIdChange(caseId)}
+            queueData={visibleQueue.data}
+            queueError={visibleQueue.error}
+            queuePending={visibleQueue.isPending}
+            queueView={queueView}
+          />
+        ),
+      } : {})}>
       <DoctorCaseDetailRegion containerRef={caseDetailRoot} labelledBy="case-detail-heading">
         <h2 className="sr-only" id="case-detail-heading">{messages.caseDetail}</h2>
+        {detail.data ? <InpatientReferral key={detail.data.encounter.id} encounterId={detail.data.encounter.id} encounterVersion={detail.data.encounter.versionId} locale={locale} session={session} /> : null}
         {issueOrder.isSuccess && issueOrder.variables.caseId === activeCaseId ? (
           <Alert className="shrink-0">
             <CheckIcon aria-hidden="true" />
@@ -2664,6 +2696,7 @@ function DoctorCaseController({
         ) : (
           <CaseDetail
             clinicalDocumentUpdates={clinicalDocumentUpdates}
+            onCompletionNavigateChange={setCompletionNavigateStable}
             recommendationScope={pageScope}
             recommendationRevision={recommendationRevision}
             agentDraftHydrationRevisions={agentDraftHydrationRevisions[detail.data.caseId]
@@ -2948,7 +2981,7 @@ function DoctorCaseController({
                 error: saveLaboratoryRequest.variables?.caseId === detail.data.caseId
                   ? saveLaboratoryRequest.error
                   : null,
-                onSubmit: () => saveLaboratoryRequest.mutate({ caseId: detail.data.caseId }),
+                onSubmit: override => saveLaboratoryRequest.mutate({ caseId: detail.data.caseId, ...(override === undefined ? {} : { override }) }),
                 pending: saveLaboratoryRequest.isPending
                   && saveLaboratoryRequest.variables?.caseId === detail.data.caseId,
               },
@@ -3084,6 +3117,7 @@ function DoctorCaseController({
 
 function CaseDetail({
   clinicalDocumentUpdates,
+  onCompletionNavigateChange,
   agentDraftHydrationRevisions,
   recommendationScope,
   recommendationRevision,
@@ -3148,6 +3182,7 @@ function CaseDetail({
   clinicalDocumentActions: ClinicalDocumentPageActions
   completion: UseQueryResult<EncounterCompletionPreview, Error>
   completionAction: EncounterCompletionAction
+  onCompletionNavigateChange?: (navigate: (target: EncounterCompletionTarget) => void) => void
   consultationAction: ConsultationPageAction
   correctionTarget: CompletedCaseCorrectionTarget | undefined
   detail: DoctorCaseDetail
@@ -3279,11 +3314,14 @@ function CaseDetail({
     onActiveSectionChange(activeSection)
   }, [activeSection, onActiveSectionChange])
 
-  const navigateToCompletionTarget = (target: EncounterCompletionTarget): void => {
+  const navigateToCompletionTarget = useCallback((target: EncounterCompletionTarget): void => {
     navigateInvestigationTarget(target)
     setActiveSection(caseDetailSectionByCompletionTarget[target])
     setPendingNavigation({ source: 'checklist', target })
-  }
+  }, [navigateInvestigationTarget])
+  useEffect(() => {
+    onCompletionNavigateChange?.(navigateToCompletionTarget)
+  }, [navigateToCompletionTarget, onCompletionNavigateChange])
 
   const overviewWorkflow = readOnly ? null : detail.status === 'awaiting-doctor' ? (
     <div className="flex flex-col items-start gap-3">
@@ -3501,6 +3539,7 @@ function CaseDetail({
                 completionAction: (
                   <EncounterCompletionPanel
                     action={completionAction}
+                    locale={locale}
                     messages={messages}
                     onNavigate={navigateToCompletionTarget}
                     preview={completion}
@@ -3741,9 +3780,10 @@ function CaseDetail({
   )
 }
 
-function EncounterCompletionPanel({ action, messages, onNavigate, preview }: {
+function EncounterCompletionPanel({ action, messages, locale, onNavigate, preview }: {
   action: EncounterCompletionAction
   messages: ReturnType<typeof getWorkspaceMessages>
+  locale: WorkspaceLocale
   onNavigate: (target: EncounterCompletionTarget) => void
   preview: UseQueryResult<EncounterCompletionPreview, Error>
 }): React.JSX.Element {
@@ -3751,7 +3791,6 @@ function EncounterCompletionPanel({ action, messages, onNavigate, preview }: {
   useEffect(() => {
     if (action.success) setOpen(false)
   }, [action.success])
-  const incompleteItems = preview.data?.items.filter(item => item.status !== 'complete') ?? []
 
   return (
     <AlertDialog onOpenChange={setOpen} open={open}>
@@ -3779,30 +3818,12 @@ function EncounterCompletionPanel({ action, messages, onNavigate, preview }: {
             message={getWorkspaceErrorMessage(preview.error, messages)}
             title={getWorkspaceErrorTitle(preview.error, messages, messages.encounterCompletionUnavailable)}
           />
-        ) : incompleteItems.length === 0 ? null : (
-          <ul className="grid gap-2">
-            {incompleteItems.map(item => {
-              const navigationLabel = messages.encounterCompletionTarget.replace('{status}', item.statusText)
-              return (
-                <li className="flex items-center justify-between gap-3 rounded-md border px-3 py-2" key={item.code}>
-                  <span className="text-sm">{item.statusText}</span>
-                  <Button
-                    aria-label={navigationLabel}
-                    onClick={() => {
-                      setOpen(false)
-                      onNavigate(item.target)
-                    }}
-                    size="icon-sm"
-                    title={navigationLabel}
-                    type="button"
-                    variant="ghost"
-                  >
-                    <ArrowRightIcon />
-                  </Button>
-                </li>
-              )
-            })}
-          </ul>
+        ) : preview.data === undefined ? null : (
+          <EncounterCompletionChecklist completion={preview.data} locale={locale} messages={messages}
+            onNavigate={target => {
+              setOpen(false)
+              onNavigate(target)
+            }} />
         )}
         {action.error === null ? null : (
           <ErrorAlert

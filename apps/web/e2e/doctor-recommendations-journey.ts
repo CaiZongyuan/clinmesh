@@ -110,11 +110,10 @@ export async function runRecommendationJourney({ page, read }: { page: Page; rea
   await expect(edit.getByRole('spinbutton', { name: '疗程（天）', exact: true })).toHaveValue('30')
   await expect(edit.getByRole('spinbutton', { name: '数量', exact: true })).toHaveValue('30')
   await edit.getByRole('button', { name: '保留本次调整', exact: true }).click()
-  const medicationForm = page.getByRole('region', { name: '填写处方', exact: true })
-  await expect(medicationForm.getByLabel('剂量', { exact: true })).toContainText('5 mg')
-  await expect(medicationForm.getByLabel('疗程', { exact: true })).toContainText('30')
-  await expect(medicationForm.getByLabel('数量', { exact: true })).toContainText('30')
-  await expect(medicationForm.getByRole('button', { name: '正式开具处方', exact: true })).toHaveCount(0)
+  // 弹窗合同下草稿值在入口草稿卡片呈现，且不提供独立的正式开具入口。
+  const medicationEntry = page.getByRole('button', { name: /^编辑药品 / })
+  await expect(medicationEntry).toContainText('5 mg · QD · 30 天 · 数量 30')
+  await expect(page.getByRole('button', { name: '正式开具处方', exact: true })).toHaveCount(0)
   await expect.poll(async () => (await read()).medicationConclusion?.draft?.items).toEqual([{
     catalogItemId: 'medication-amlodipine', doseText: '5 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30,
   }])

@@ -1,3 +1,4 @@
+import { inpatientReferralResponseSchema } from '@clinmesh/contracts/inpatient'
 import { useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -11663,7 +11664,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(fhirBundleSchema.parse(await dispenseSearch.json())).toMatchObject({ total: 2 })
   })
 
-  it('dispenses a paid prescription once, decrements the selected lot, and completes only the Scenario Run', async () => {
+  it.each([false,true])('dispenses a paid prescription once and completes the Scenario only without a pending referral (%s)', async pendingReferral => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-dispense-http-'))
     temporaryDirectories.push(directory)
     const password = `Test-${randomUUID()}-Aa1!`
@@ -11683,6 +11684,12 @@ describe('outpatient workflow HTTP contract', () => {
     })
     runtimes.push(runtime)
     const testCase = await createPaidMedicationCase(runtime, password)
+    if(pendingReferral) {
+      const response=await runtime.app.request('/api/his/v1/inpatient/referrals',{method:'POST',headers:commandHeaders(testCase.doctorCookie),body:JSON.stringify({input:{encounterId:testCase.registration.encounterId,encounterVersion:'7',wardId:'ward-general',reason:'合成患者仍需住院治疗'}})})
+      expect(response.status).toBe(200)
+      expect(inpatientReferralResponseSchema.parse(await response.json()).data.referral.status).toBe('issued')
+    }
+
     const pharmacistCookie = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
     const queueResponse = await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
       headers: { cookie: pharmacistCookie },
@@ -11752,7 +11759,7 @@ describe('outpatient workflow HTTP contract', () => {
     expect(result.data).toMatchObject({
       prescriptionId: prescription.prescriptionId,
       prescriptionVersion: 5,
-      scenarioStatus: 'completed',
+      scenarioStatus: pendingReferral ? 'active' : 'completed',
       status: 'completed',
     })
     expect(dispenseResponseSchema.parse(await (await dispense()).json())).toEqual(result)
@@ -11814,6 +11821,6 @@ describe('outpatient workflow HTTP contract', () => {
     const scenarioResponse = await runtime.app.request('/api/sim/v1/scenario-runs/current', {
       headers: { cookie: pharmacistCookie },
     })
-    expect(scenarioStateSchema.parse(await scenarioResponse.json())).toMatchObject({ status: 'completed' })
+    expect(scenarioStateSchema.parse(await scenarioResponse.json())).toMatchObject({ status: pendingReferral ? 'active' : 'completed' })
   })
 })

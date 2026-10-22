@@ -27,7 +27,7 @@ standalone Web、DSH Surface 和 Desktop 都运行 DOM/React UI，因此共享�
 
 Web application 接受可注入的 API base、Router history、Portal container、appearance root、退出动作和 Surface Agent controller。standalone 默认使用 Browser History、document theme 和默认 API base；平台差异不进入岗位页面或 Command 调用。
 
-Web HTTP adapter 为 fetch、完整响应体读取和 schema 校验设置 30 秒统一期限，并把 network、timeout、caller cancellation、非 JSON 和 schema mismatch 转换为 `ApiClientError`。岗位页面只从受控错误 code 和 conflict 字段生成本地化反馈，不显示未分类异常原文。应用根 Error Boundary 捕获渲染异常并提供重新挂载入口；它不复制 TanStack Query 状态，也不自动重试可能已经到达 Server 的写操作。
+Web HTTP adapter 为 fetch、完整响应体读取和 schema 校验设置 30 秒统一期限，并把 network、timeout、caller cancellation、非 JSON 和 schema mismatch 转换为 `ApiClientError`。岗位页面只从受控错误 code 和 conflict 字段生成本地化反馈，不显示未分类异常原文。住院写入使用[绑定原意图的恢复](decisions/implemented/bug-fix/2026-10-20-inpatient-command-intent-recovery.md)，在结果未确认时保留原输入、预期版本和幂等键，并锁定新意图。应用根 Error Boundary 捕获渲染异常并提供重新挂载入口；它不复制 TanStack Query 状态，也不自动重试可能已经到达 Server 的写操作。
 
 ### DSH Web
 

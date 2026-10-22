@@ -3,6 +3,28 @@ import { copyFile, mkdir, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { applyMigrations, openClinMeshDatabase } from '../../src/infrastructure/sqlite/database.ts'
 
+const legacyPractitionerRoles = "role_code IN ('registrar', 'triage-nurse', 'outpatient-doctor', 'cashier', 'pharmacist', 'administrator')"
+
+// 旧版本不包含住院环境、岗位及其成员、会话关联。
+export function preInpatientRows(table: string): string {
+  if (table === 'practitioner_role_binding') return ` WHERE ${legacyPractitionerRoles}`
+  if (table === 'membership_practitioner_role') return ` WHERE (workspace_id, practitioner_role_id) IN (
+    SELECT workspace_id, practitioner_role_id FROM captured.practitioner_role_binding WHERE ${legacyPractitionerRoles})`
+  if (table === 'auth_session_context') return ` WHERE (membership_id, practitioner_role_id) IN (
+    SELECT membership_id, practitioner_role_id FROM captured.membership_practitioner_role
+    WHERE (workspace_id, practitioner_role_id) IN (
+      SELECT workspace_id, practitioner_role_id FROM captured.practitioner_role_binding WHERE ${legacyPractitionerRoles}))`
+  if (['fhir_resource', 'fhir_history', 'fhir_sp_string'].includes(table)) return ` WHERE (resource_type, resource_id) NOT IN (
+    SELECT 'Organization', organization_id FROM captured.inpatient_ward
+    UNION SELECT 'Location', ward_id FROM captured.inpatient_ward
+    UNION SELECT 'Location', room_id FROM captured.inpatient_bed
+    UNION SELECT 'Location', bed_id FROM captured.inpatient_bed
+    UNION SELECT 'Practitioner', practitioner_id FROM captured.practitioner_role_binding WHERE NOT (${legacyPractitionerRoles})
+    UNION SELECT 'PractitionerRole', practitioner_role_id FROM captured.practitioner_role_binding WHERE NOT (${legacyPractitionerRoles})
+    UNION SELECT 'Location', location_id FROM captured.practitioner_role_binding WHERE NOT (${legacyPractitionerRoles}))`
+  return ''
+}
+
 // Keep HTTP-produced facts, but persist only columns that existed before 0061.
 // The subsequent runtime startup must perform the real legacy schema upgrade.
 export async function replaceWithPreSourceDatabase(databasePath: string): Promise<void> {
@@ -43,7 +65,7 @@ async function replaceWithRecordingDatabase(databasePath: string, branch: 'pre-s
       const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(', ')
       const legacyRows = name === 'outbox_event' ? ` WHERE kind NOT IN (${branch === 'quality'
         ? "'consultation.verify-history'" : branch === 'incremental'
-          ? "'clinical-document.check-quality'" : "'clinical-document.check-quality', 'consultation.verify-history'"})` : ''
+          ? "'clinical-document.check-quality'" : "'clinical-document.check-quality', 'consultation.verify-history'"})` : preInpatientRows(name)
       legacy.driver.exec(`INSERT OR REPLACE INTO ${quoted} (${list}) SELECT ${list} FROM captured.${quoted}${legacyRows}`)
     }
     legacy.driver.exec('COMMIT')

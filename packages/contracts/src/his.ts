@@ -17,6 +17,9 @@ export const roleCodeSchema = z.enum([
   'administrator',
   'cashier',
   'outpatient-doctor',
+  'inpatient-doctor',
+  'ward-nurse',
+  'medical-records',
   'pharmacist',
   'registrar',
   'triage-nurse',
@@ -126,6 +129,7 @@ export const sessionContextSchema = z.object({
     code: roleCodeSchema,
     id: z.string().min(1),
     locationId: z.string().min(1),
+    locationName: z.string().min(1).optional(),
     organizationId: z.string().min(1),
     practitionerId: z.string().min(1),
     practitionerName: z.string().min(1),
@@ -1718,7 +1722,8 @@ export const caseImagingServiceCatalogSchema = z.object({
   }).strict()),
 }).strict()
 
-const imagingIndicationSchema = z.string().trim().min(2).max(500)
+/** 检查指征。弹窗确认与草稿保存共用同一值域。 */
+export const imagingIndicationSchema = z.string().trim().min(2).max(500)
 
 export const saveImagingRequestDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,
@@ -1842,7 +1847,8 @@ export const casePathologyServiceCatalogSchema = z.object({
   }).strict()),
 }).strict()
 
-const pathologyPurposeSchema = z.string().trim().min(2).max(500)
+/** 会诊目的。弹窗确认与草稿保存共用同一值域。 */
+export const pathologyPurposeSchema = z.string().trim().min(2).max(500)
 
 export const savePathologyRequestDraftRequestSchema = z.object({
   expectedVersions: fhirExpectedVersionsSchema,

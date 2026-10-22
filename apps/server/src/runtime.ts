@@ -1,3 +1,4 @@
+import { InpatientService } from './application/inpatient-service.ts'
 import { createApp } from './app.ts'
 import { IdentityService } from './application/identity-service.ts'
 import { CommandExecutor, type ActorContext } from './application/command-executor.ts'
@@ -256,6 +257,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       referenceData,
       tokenSecret: options.cursorSecret,
     })
+    const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
       models,
       commands,
@@ -378,6 +380,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       workspaceId: 'workspace-demo',
     })
     laboratoryServicePublisher.ensureDefaultServices()
+    laboratoryServicePublisher.ensureInpatientPrices()
     workflow.imaging.ensureServices()
     workflow.pathology.ensureServices()
     const identity = new IdentityService(database, {
@@ -707,6 +710,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
           })
         }, options.autoDispatchIntervalMs)
     const app = createApp({
+      inpatient,
       commandEvents: commands,
       recordingUpdatesSignal: generationAbort.signal,
       doctorRecommendations,

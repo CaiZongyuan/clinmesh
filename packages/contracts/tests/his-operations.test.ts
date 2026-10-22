@@ -20,6 +20,14 @@ const clinicalDocumentOperationIds = {
 } as const
 
 describe('HIS operation catalog', () => {
+  it('declares available inpatient investigations only with an explicit positive hospital price', () => {
+    const item = { id: 'synthetic-investigation', kind: 'laboratory', display: '合成检验', version: 1, indicationCodes: ['clinical-assessment'] }
+    const schema = getHisOperation('inpatient.investigation.catalog').output
+    expect(schema.safeParse({ items: [{ ...item, available: true }] }).success).toBe(false)
+    expect(schema.safeParse({ items: [{ ...item, available: false, unavailableReason: 'unpriced' }] }).success).toBe(true)
+    expect(schema.safeParse({ items: [{ ...item, available: true, priceFen: 800 }] }).success).toBe(true)
+  })
+
   it('publishes correlation IDs in the shared structured error contract', () => {
     const error = getHisOperation('patient.create').error.parse({
       code: 'ambiguous_outcome',
@@ -70,8 +78,8 @@ describe('HIS operation catalog', () => {
       },
       id: 'reference.diagnoses.search',
       mode: 'query',
-      roles: ['administrator', 'outpatient-doctor'],
-      version: 1,
+      roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
+      version: 2,
     })
     expect(operation.input.parse({ page: 1, pageSize: 20, query: '糖尿病' })).toEqual({
       page: 1,
@@ -94,7 +102,7 @@ describe('HIS operation catalog', () => {
       {
         cliPath: 'reference diagnoses search',
         id: 'reference.diagnoses.search',
-        roles: ['administrator', 'outpatient-doctor'],
+        roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
       },
       {
         cliPath: 'reference medications search',
@@ -730,6 +738,7 @@ describe('HIS operation catalog', () => {
       'clinmesh-billing': 5,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
+      'clinmesh-inpatient': 56,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,
       'clinmesh-shared': 1,

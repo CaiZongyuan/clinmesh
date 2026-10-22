@@ -124,7 +124,13 @@ describe('payment ledger migration', () => {
     const original = originalAttempts(database)
     const originalCharges = database.driver.prepare('SELECT * FROM charge_record ORDER BY charge_id').all()
 
-    expect(applyMigrations(database).applied).toEqual([migration, '0072_payment-history-pagination.sql'])
+    expect(applyMigrations(database).applied).toEqual([
+      migration,
+      '0072_inpatient-surgery.sql',
+      '0072_payment-history-pagination.sql',
+      '0073_inpatient-discharge.sql',
+      '0074_inpatient-record.sql',
+    ])
 
     expect(originalAttempts(database)).toEqual(original)
     expect(database.driver.prepare('SELECT * FROM charge_record ORDER BY charge_id').all()).toEqual(originalCharges)

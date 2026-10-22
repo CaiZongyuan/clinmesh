@@ -13,6 +13,7 @@ export function DoctorWorkspaceLayout({
   queueLabel,
   detailLabel,
   suggestions,
+  queueFloating,
 }: {
   children: ReactNode
   queue: (showDetail: () => void) => ReactNode
@@ -21,7 +22,10 @@ export function DoctorWorkspaceLayout({
   detailLabel: string
   /** 右侧建议栈：宽容器显示为第三栏，窄容器折叠为抽屉。断点全部由容器查询驱动。 */
   suggestions?: { label: string; node: ReactNode } | undefined
+  /** DSH 镜像布局的队列回落形态：提供时不再渲染队列列，由浮层贴内容区左缘承载队列。 */
+  queueFloating?: ReactNode
 }) {
+  const floatingQueue = queueFloating !== undefined
   const [showQueue, setShowQueue] = useState(selectedCaseId === undefined)
   const [suggestionsOpen, setSuggestionsOpen] = useState(false)
   useEffect(() => setShowQueue(selectedCaseId === undefined), [selectedCaseId])
@@ -31,40 +35,55 @@ export function DoctorWorkspaceLayout({
   const queueClearance = suggestions !== undefined ? '@max-[720px]/doctor-workspace:pb-14' : undefined
   return (
     <div className="@container/doctor-workspace relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-      <div className="@min-[720px]/doctor-workspace:hidden flex gap-2 border-b p-2" role="group" aria-label={queueLabel}>
-        <Button
-          aria-pressed={showQueue}
-          onClick={() => setShowQueue(true)}
-          size="sm"
-          variant={showQueue ? 'secondary' : 'ghost'}
-        >
-          {queueLabel}
-        </Button>
-        <Button
-          aria-pressed={!showQueue}
-          onClick={() => setShowQueue(false)}
-          size="sm"
-          variant={!showQueue ? 'secondary' : 'ghost'}
-        >
-          {detailLabel}
-        </Button>
-      </div>
+      {!floatingQueue ? (
+        <div className="@min-[720px]/doctor-workspace:hidden flex gap-2 border-b p-2" role="group" aria-label={queueLabel}>
+          <Button
+            aria-pressed={showQueue}
+            onClick={() => setShowQueue(true)}
+            size="sm"
+            variant={showQueue ? 'secondary' : 'ghost'}
+          >
+            {queueLabel}
+          </Button>
+          <Button
+            aria-pressed={!showQueue}
+            onClick={() => setShowQueue(false)}
+            size="sm"
+            variant={!showQueue ? 'secondary' : 'ghost'}
+          >
+            {detailLabel}
+          </Button>
+        </div>
+      ) : null}
       <div
         className={cn(
           'grid min-h-0 min-w-0 flex-1',
-          '@min-[720px]/doctor-workspace:grid-cols-[200px_minmax(0,1fr)]',
-          suggestions !== undefined && '@min-[1080px]/doctor-workspace:grid-cols-[200px_minmax(0,1fr)_280px]',
+          floatingQueue
+            ? cn(
+                'grid-cols-[minmax(0,1fr)]',
+                suggestions !== undefined && '@min-[1080px]/doctor-workspace:grid-cols-[minmax(0,1fr)_280px]',
+              )
+            : cn(
+                '@min-[720px]/doctor-workspace:grid-cols-[200px_minmax(0,1fr)]',
+                suggestions !== undefined && '@min-[1080px]/doctor-workspace:grid-cols-[200px_minmax(0,1fr)_280px]',
+              ),
         )}
       >
-        <div
-          data-doctor-region="queue"
-          className={cn('min-h-0 min-w-0 overflow-y-auto border-r', !showQueue && compactHidden, queueClearance)}
-        >
-          {queue(() => setShowQueue(false))}
-        </div>
+        {floatingQueue ? (
+          <div data-doctor-region="queue-rail" className="pointer-events-none absolute inset-y-0 left-0 z-20">
+            {queueFloating}
+          </div>
+        ) : (
+          <div
+            data-doctor-region="queue"
+            className={cn('min-h-0 min-w-0 overflow-y-auto border-r', !showQueue && compactHidden, queueClearance)}
+          >
+            {queue(() => setShowQueue(false))}
+          </div>
+        )}
         <div
           data-doctor-region="detail"
-          className={cn('@container/case-detail min-h-0 min-w-0 overflow-hidden', showQueue && compactHidden, detailClearance)}
+          className={cn('@container/case-detail min-h-0 min-w-0 overflow-hidden', !floatingQueue && showQueue && compactHidden, detailClearance)}
         >
           {children}
         </div>

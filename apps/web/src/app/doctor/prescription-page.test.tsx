@@ -221,6 +221,12 @@ function medicationForm(): ReturnType<typeof within> {
   return within(screen.getByRole('region', { name: '填写处方' }))
 }
 
+// 弹窗合同统一入口：点「添加药品」打开弹窗，目录检索与用药表单都在弹窗内完成。
+async function openComposer(user: ReturnType<typeof userEvent.setup>, name: string | RegExp = '添加药品'): Promise<ReturnType<typeof within>> {
+  await user.click(screen.getByRole('button', { name }))
+  return within(screen.getByRole('dialog'))
+}
+
 describe('PrescriptionPage', () => {
   it('keeps the actionable rejection visible when a concurrent no-medication record removes editing access', () => {
     const mounted = renderPage()
@@ -239,13 +245,21 @@ describe('PrescriptionPage', () => {
     expect(screen.getByText(/已记录"无需用药"，不能再开具处方/)).toBeTruthy()
   })
 
-  it('keeps the medication catalog and directions inline beside the prepared prescription', async () => {
+  it('adds a medication through the composer dialog and lands it in the tab list', async () => {
     renderPage()
-    expect(screen.getByRole('textbox', { name: '搜索药品目录' })).toBeTruthy()
-    await userEvent.setup().click(screen.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
-    expect(screen.getByLabelText('剂量')).toBeTruthy()
+    const user = userEvent.setup()
+    // 填写前左主列只有选择入口，目录在弹窗内呈现。
+    expect(screen.queryByRole('textbox', { name: '搜索药品目录' })).toBeNull()
+    const dialog = await openComposer(user)
+    expect(dialog.getByRole('textbox', { name: '搜索药品目录' })).toBeTruthy()
+    await user.click(dialog.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
+    // 点选目录行后弹窗内展开用药表单，本院药默认值来自目录。
+    expect(within(dialog.getByRole('combobox', { name: '剂量' })).getByText('500 mg')).toBeTruthy()
+    await user.click(dialog.getByRole('button', { name: '加入处方' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // 弹窗关闭后这一条落在页签列表，右列待开具面板同步出现。
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText('1. 合成对乙酰氨基酚')).toBeTruthy()
     expect(screen.getByRole('region', { name: '待开具处方' })).toBeTruthy()
-    expect(screen.queryByRole('dialog', { name: '添加药品' })).toBeNull()
   })
   it('issues two automatic medications in one prescription and keeps the remaining draft beside both issued records', async () => {
     const catalog = [medication, { ...medication, id: 'medication-b', nameZh: '合成第二药品' },
@@ -278,7 +292,8 @@ describe('PrescriptionPage', () => {
         ...item, display: index === 0 ? medication.nameZh : '合成第二药品', doseText: index === 0 ? '500 mg' : '1 g',
       })) },
     } }} />)
-    expect(screen.getByRole('textbox', { name: '搜索药品目录' })).toBeTruthy()
+    expect(screen.getByText(/本次就诊已有有效处方/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '添加药品' })).toBeNull()
     expect(panel.getByRole('checkbox', { name: '选择合成第三药品' })).toBeTruthy()
     expect(panel.queryByRole('checkbox', { name: '选择合成对乙酰氨基酚' })).toBeNull()
     expect(panel.queryByRole('checkbox', { name: '选择合成第二药品' })).toBeNull()
@@ -289,22 +304,31 @@ describe('PrescriptionPage', () => {
     expect(confirmations).toHaveLength(1)
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
   })
-  it('retains the selected medication package while editing directions in the inline form', async () => {
+  it('retains the selected medication package while entering directions in the composer', async () => {
     const search: ReferenceCatalogSearches['medications'] = {
       data: { items: [{ ...referenceProduct, id: 'reference-10', packageDescription: '10粒/盒' },
         { ...referenceProduct, id: 'reference-12', packageDescription: '12粒/盒' }], page: 1, pageSize: 20, total: 2, releaseId: 'synthetic' },
       error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
     }
-    renderPage({ referenceSearch: search })
+    const mounted = renderPage({ referenceSearch: search })
     const user = userEvent.setup()
-    const form = medicationForm()
-    await user.click(form.getByRole('combobox', { name: /^包装 / }))
-    await user.click(screen.getByRole('option', { name: '12粒/盒' }))
-    expect(screen.getByRole('textbox', { name: '搜索药品目录' })).toBeTruthy()
-    expect(search.onSearch).toHaveBeenCalledTimes(1)
-    const reopened = medicationForm()
-    expect(within(reopened.getByRole('combobox', { name: /^包装 / })).getByText('12粒/盒')).toBeTruthy()
-    expect(search.onSearch).toHaveBeenCalledTimes(1)
+    const dialog = await openComposer(user)
+    const combo = dialog.getByRole('combobox', { name: /^包装 / })
+    await user.click(combo)
+    await user.click(await screen.findByRole('option', { name: '12粒/盒' }))
+    expect(within(dialog.getByRole('combobox', { name: /^包装 / })).getByText('12粒/盒')).toBeTruthy()
+    await user.click(dialog.getByRole('button', { name: /^选择 合成参考药品/ }))
+    // 填写用药信息期间包装选择保持不变。
+    await user.type(dialog.getByRole('textbox', { name: '剂量' }), '75 mg')
+    await user.type(dialog.getByRole('textbox', { name: '频次' }), 'BID')
+    expect(within(dialog.getByRole('combobox', { name: /^包装 / })).getByText('12粒/盒')).toBeTruthy()
+    await user.click(dialog.getByRole('button', { name: '加入处方' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText('1. 合成参考药品')).toBeTruthy()
+    await waitFor(() => expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([
+      expect.objectContaining({ catalogItemId: 'reference-12', courseDays: 3, doseText: '75 mg', frequencyCode: 'BID', quantity: 1,
+        referenceProduct: expect.objectContaining({ id: 'reference-12' }) }),
+    ]), { timeout: 2000 })
   })
   it.each(['list', 'manual form'] as const)('deletes a saved prescription draft when its final medication is explicitly removed from the %s', async origin => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
@@ -336,8 +360,9 @@ describe('PrescriptionPage', () => {
       deleteDraft: { ...mounted.props.actions.deleteDraft, error: new Error('Synthetic deletion failure') },
     }} />)
     expect(panel.getByRole('checkbox', { name: '选择合成对乙酰氨基酚' })).toBeTruthy()
-    const form = medicationForm()
-    expect(within(form.getByRole('combobox', { name: '剂量' })).getByText('500 mg')).toBeTruthy()
+    // 草稿条目保留在页签列表里，方向原样可见。
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText('1. 合成对乙酰氨基酚')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText('500 mg · PRN · 3 天 · 数量 6')).toBeTruthy()
     expect(screen.getByText(mounted.props.messages.operationFailed)).toBeTruthy()
     await user.click(panel.getByRole('button', { name: /^移除/ }))
     expect(mounted.props.actions.deleteDraft.onSubmit).toHaveBeenCalledTimes(2)
@@ -367,10 +392,16 @@ describe('PrescriptionPage', () => {
     expect(medicationForm().queryByRole('combobox', { name: '剂量' })).toBeNull()
   })
   it('keeps reference product fields synchronized between list adjustment and manual entry', async () => {
-    const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
-      draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct,
-        courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] },
-    } } })
+    const mounted = renderPage({
+      detail: { ...detail, medicationConclusion: {
+        draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct,
+          courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] },
+      } },
+      referenceSearch: {
+        data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+        error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
+      },
+    })
     const user = userEvent.setup()
     const panel = within(screen.getByRole('region', { name: '待开具处方' }))
     await user.click(panel.getByRole('button', { name: '调整' }))
@@ -378,10 +409,17 @@ describe('PrescriptionPage', () => {
     await user.clear(adjustment.getByRole('textbox', { name: '每次剂量' }))
     await user.type(adjustment.getByRole('textbox', { name: '每次剂量' }), '150 mg')
     await user.click(adjustment.getByRole('button', { name: '保留本次调整' }))
+    // 页签列表行同步显示调整后的方向。
     const form = medicationForm()
-    expect(form.getByRole('textbox', { name: '剂量' })).toHaveProperty('value', '150 mg')
-    expect(form.getByText('12粒/盒')).toBeTruthy()
-    await user.type(form.getByRole('textbox', { name: '剂量' }), ' 合成追加')
+    expect(form.getByText(/150 mg · BID/)).toBeTruthy()
+    // 列表条目点击重开同一弹窗编辑，输入双向同步。
+    await user.click(form.getByRole('button', { name: /^编辑药品 合成参考药品/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByRole('textbox', { name: '剂量' })).toHaveProperty('value', '150 mg')
+    expect(within(dialog.getByRole('combobox', { name: /^包装 / })).getByText('12粒/盒')).toBeTruthy()
+    await user.type(dialog.getByRole('textbox', { name: '剂量' }), ' 合成追加')
+    await user.click(dialog.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     await user.click(panel.getByRole('button', { name: '调整' }))
     expect(screen.getByRole('textbox', { name: '每次剂量' })).toHaveProperty('value', '150 mg 合成追加')
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
@@ -398,23 +436,23 @@ describe('PrescriptionPage', () => {
     await user.type(adjustment.getByRole('textbox', { name: '每次剂量' }), '500 mg')
     await user.click(adjustment.getByRole('button', { name: '保留本次调整' }))
     const form = medicationForm()
-    expect(within(form.getByRole('combobox', { name: '剂量' })).getByText('500 mg')).toBeTruthy()
-    expect(form.getByRole('group', { name: '已选药品' }).querySelectorAll('button')).toHaveLength(1)
+    expect(form.getByText(/500 mg · BID/)).toBeTruthy()
+    expect(form.getAllByRole('button', { name: /^编辑药品 / })).toHaveLength(1)
     expect(panel.getAllByRole('checkbox')).toHaveLength(1)
     await user.click(panel.getByRole('button', { name: /^移除/ }))
     expect(panel.queryByRole('checkbox')).toBeNull()
-    expect(medicationForm().queryByRole('combobox', { name: '剂量' })).toBeNull()
+    expect(medicationForm().queryByRole('button', { name: /^编辑药品 / })).toBeNull()
   })
-  it('adds manual medication inline to the unified list without another issuance button', async () => {
+  it('adds manual medication through the composer without another issuance button', async () => {
     const mounted = renderPage()
-    expect(screen.getByRole('textbox', { name: '搜索药品目录' })).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '搜索药品目录' })).toBeNull()
     const user = userEvent.setup()
-    const dialog = medicationForm()
+    const dialog = await openComposer(user)
     await user.click(dialog.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
     expect(dialog.getByRole('combobox', { name: '剂量' })).toBeTruthy()
     expect(dialog.queryByRole('button', { name: '正式开具处方' })).toBeNull()
+    await user.click(dialog.getByRole('button', { name: '加入处方' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(screen.getByRole('combobox', { name: '剂量' })).toBeTruthy()
     const panel = within(screen.getByRole('region', { name: '待开具处方' }))
     expect(panel.getByRole('checkbox', { name: '选择合成对乙酰氨基酚' })).toBeTruthy()
     expect(panel.getAllByRole('button', { name: /^开具处方/ })).toHaveLength(1)
@@ -440,8 +478,13 @@ describe('PrescriptionPage', () => {
     } } })
     const user = userEvent.setup()
     medicationForm()
-    await user.click(screen.getByRole('combobox', { name: '剂量' }))
+    // 通过列表条目重开弹窗修改剂量，确认后落到同一份草稿。
+    await user.click(screen.getByRole('button', { name: /^编辑药品 合成对乙酰氨基酚/ }))
+    const composer = within(screen.getByRole('dialog'))
+    await user.click(composer.getByRole('combobox', { name: '剂量' }))
     await user.click(await screen.findByRole('option', { name: '1 g' }))
+    await user.click(composer.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const panel = within(screen.getByRole('region', { name: '待开具处方' }))
     await panel.findByRole('checkbox', { name: '选择合成第二药品' })
     expect(panel.getByRole('checkbox', { name: '选择合成对乙酰氨基酚' }).getAttribute('aria-checked')).toBe('true')
@@ -489,20 +532,27 @@ describe('PrescriptionPage', () => {
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
   })
 
-  it('keeps a cleared manual prescription dose incomplete in the prepared list without restoring a default', async () => {
+  it('keeps an incomplete manual prescription dose in the prepared list without restoring a default', async () => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
       draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct,
-        doseText: '75 mg', frequencyCode: 'BID', courseDays: 5, quantity: 10 }] },
+        doseText: '', frequencyCode: 'BID', courseDays: 5, quantity: 10 }] },
     } } })
-    medicationForm()
-    await userEvent.setup().clear(screen.getByRole('textbox', { name: '剂量' }))
+    const form = medicationForm()
+    // 列表行保留空剂量，不用目录默认值补齐。
+    expect(form.getByText(/^— · BID/)).toBeTruthy()
     const panel = within(screen.getByRole('region', { name: '待开具处方' }))
     const choice = panel.getByRole('checkbox', { name: '选择合成参考药品' })
     expect(choice.getAttribute('aria-checked')).toBe('false')
     expect(choice.getAttribute('aria-disabled')).toBe('true')
     expect(panel.getByRole('button', { name: /^开具处方/ })).toHaveProperty('disabled', true)
-    medicationForm()
-    expect(screen.getByRole('textbox', { name: '剂量' })).toHaveProperty('value', '')
+    const user = userEvent.setup()
+    // 重开弹窗时字段保持为空，补全前「保存修改」保持禁用。
+    await user.click(form.getByRole('button', { name: /^编辑药品 合成参考药品/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByRole('textbox', { name: '剂量' })).toHaveProperty('value', '')
+    expect(dialog.getByRole('button', { name: '保存修改' })).toHaveProperty('disabled', true)
+    await user.click(dialog.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(mounted.readAgentState()).toEqual({ forms: { prescription: { mode: 'prescription', items: [{
       catalogItemId: referenceProduct.id, courseDays: 5, doseText: '', frequencyCode: 'BID', quantity: 10,
     }] } } })
@@ -525,7 +575,8 @@ describe('PrescriptionPage', () => {
     }]} />)
     expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
     fireEvent.click(confirmPrepared)
-    expect(screen.queryByRole('group', { name: '已选药品' })).toBeNull()
+    // 建议被拦截时草稿不发生变化：页签列表保持空态入口。
+    expect(within(screen.getByRole('region', { name: '填写处方' })).queryByRole('button', { name: /^编辑药品 / })).toBeNull()
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
 
@@ -542,8 +593,7 @@ describe('PrescriptionPage', () => {
     const confirmPrepared = within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: /^开具处方/ })
     expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
     fireEvent.click(confirmPrepared)
-    medicationForm()
-    expect(within(screen.getByRole('group', { name: '已选药品' })).getAllByRole('button')).toHaveLength(1)
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getAllByRole('button', { name: /^编辑药品 / })).toHaveLength(1)
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
 
@@ -559,8 +609,7 @@ describe('PrescriptionPage', () => {
     const confirmPrepared = within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: /^开具处方/ })
     expect(confirmPrepared.hasAttribute('disabled')).toBe(true)
     fireEvent.click(confirmPrepared)
-    medicationForm()
-    expect(within(screen.getByRole('group', { name: '已选药品' })).getAllByRole('button')).toHaveLength(8)
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getAllByRole('button', { name: /^编辑药品 / })).toHaveLength(8)
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
   })
 
@@ -574,7 +623,14 @@ describe('PrescriptionPage', () => {
     if (status === 'withdrawn') expect(panel.getByRole('checkbox', { name: '选择合成第二药品' })).toBeTruthy()
     else expect(panel.queryByRole('checkbox', { name: '选择合成第二药品' })).toBeNull()
     expect(panel.getByRole('button', { name: /^开具处方/ })).toHaveProperty('disabled', true)
-    expect(screen.getByRole('textbox', { name: '搜索药品目录' })).toBeTruthy()
+    // 开具终态左主列不提供常驻目录；未开具候选只在右列待开具面板。
+    expect(screen.queryByRole('textbox', { name: '搜索药品目录' })).toBeNull()
+    if (status === 'withdrawn') {
+      expect(screen.queryByRole('button', { name: '添加药品' })).toBeNull()
+      expect(screen.queryByText(/本次就诊已有有效处方/)).toBeNull()
+    } else {
+      expect(screen.getByText(/本次就诊已有有效处方/)).toBeTruthy()
+    }
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
   })
@@ -598,16 +654,20 @@ describe('PrescriptionPage', () => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
       draftVersion: 1, draft: { items: [{ catalogItemId: referenceProduct.id, referenceProduct, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10 }] },
     } } })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /^编辑药品 合成参考药品/ }))
     medicationForm()
     vi.useFakeTimers()
+    // 弹窗内改剂量并确认；确认落单后立即进入无需用药模式，自动保存不得发生。
     fireEvent.change(screen.getByRole('textbox', { name: '剂量' }), { target: { value: '150 mg' } })
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '保存修改' }))
     fireEvent.click(screen.getByRole('button', { name: '无需用药' }))
     expect(screen.queryByRole('region', { name: '待开具处方' })).toBeNull()
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '开具处方' }))
-    medicationForm()
-    expect(screen.getByRole('textbox', { name: '剂量' })).toHaveProperty('value', '150 mg')
+    // 切回处方模式后，弹窗里改过的剂量保留在页签列表里并照常自动保存。
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText(/150 mg · BID/)).toBeTruthy()
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(mounted.props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([{
       catalogItemId: referenceProduct.id, referenceProduct, courseDays: 5, doseText: '150 mg', frequencyCode: 'BID', quantity: 10,
@@ -620,9 +680,12 @@ describe('PrescriptionPage', () => {
       draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10, referenceProduct }] },
       draftVersion: 1,
     } } })
-    medicationForm()
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: /^编辑药品 合成参考药品/ }))
     vi.useFakeTimers()
+    // 弹窗内确认落单后立即转只读，待触发的自动保存必须取消。
     fireEvent.change(screen.getByRole('textbox', { name: '剂量' }), { target: { value: '150 mg' } })
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '保存修改' }))
     mounted.rerender(<PrescriptionPage {...mounted.props} readOnly />)
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(mounted.props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
@@ -637,8 +700,13 @@ describe('PrescriptionPage', () => {
     } } })
     const user = userEvent.setup()
     medicationForm()
-    await user.click(screen.getByRole('combobox', { name: '剂量' }))
+    // 列表条目重开弹窗把剂量改为 500 mg；修订刷新不回滚已确认的手动方向。
+    await user.click(screen.getByRole('button', { name: /^编辑药品 合成第二药品/ }))
+    const composer = within(screen.getByRole('dialog'))
+    await user.click(composer.getByRole('combobox', { name: '剂量' }))
     await user.click(await screen.findByRole('option', { name: '500 mg' }))
+    await user.click(composer.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     state = { ...initial, inputFingerprint: '2'.repeat(64), generation: 2,
       items: [{ ...recommendation, doseText: '1 g', rationale: '更新后的合成建议依据' }],
     }
@@ -647,9 +715,8 @@ describe('PrescriptionPage', () => {
     await screen.findByText('更新后的合成建议依据')
     await user.keyboard('{Escape}')
     expect(within(screen.getByRole('region', { name: '待开具处方' })).getAllByRole('checkbox')).toHaveLength(1)
-    medicationForm()
-    expect(within(screen.getByRole('combobox', { name: '剂量' })).getByText('500 mg')).toBeTruthy()
-    expect(within(screen.getByRole('group', { name: '已选药品' })).getAllByRole('button')).toHaveLength(1)
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText(/500 mg · BID/)).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getAllByRole('button', { name: /^编辑药品 / })).toHaveLength(1)
     expect(mounted.props.actions.issue.onSubmit).not.toHaveBeenCalled()
   })
 
@@ -664,24 +731,30 @@ describe('PrescriptionPage', () => {
     await user.click(within(screen.getByRole('alertdialog', { name: '确认删除处方草稿' })).getByRole('button', { name: '确认删除' }))
     expect(pageActions.deleteDraft.onSubmit).toHaveBeenCalledOnce()
 
-    medicationForm()
+    // 删除请求已发出，但草稿条目仍可通过弹窗继续编辑。
+    await user.click(screen.getByRole('button', { name: /^编辑药品 合成参考药品/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    await user.clear(dialog.getByRole('textbox', { name: '剂量' }))
+    await user.type(dialog.getByRole('textbox', { name: '剂量' }), '150 mg')
+    await user.click(dialog.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText(/150 mg/)).toBeTruthy()
     vi.useFakeTimers()
-    fireEvent.change(screen.getByLabelText('剂量'), { target: { value: '150 mg' } })
     const pendingActions = { ...pageActions, deleteDraft: { ...pageActions.deleteDraft, pending: true } }
     mounted.rerender(<PrescriptionPage {...mounted.props} actions={pendingActions} />)
-    expect(screen.getByLabelText('剂量').closest('fieldset[disabled]')).toBeTruthy()
-    fireEvent.change(screen.getByLabelText('剂量'), { target: { value: '300 mg' } })
-    expect(screen.getByLabelText('剂量')).toHaveProperty('value', '150 mg')
+    // 删除挂起期间编辑入口禁用。
+    expect(screen.getByRole('button', { name: '添加药品' })).toHaveProperty('disabled', true)
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(pageActions.saveDraft.onSubmit).not.toHaveBeenCalled()
     const deletion = { caseId: detail.caseId, draftVersion: 2 }
     const completedActions = { ...pageActions, deleteDraft: { ...pageActions.deleteDraft, data: deletion } }
     mounted.rerender(<PrescriptionPage {...mounted.props} actions={completedActions} />)
-    expect(screen.getByLabelText('剂量').getAttribute('value')).toBe('150 mg')
+    // 未保存进服务端的编辑在删除回执后仍保留。
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText(/150 mg/)).toBeTruthy()
 
     const refreshedDetail = { ...detail, medicationConclusion: { draftVersion: 2 } }
     mounted.rerender(<PrescriptionPage {...mounted.props} actions={completedActions} detail={refreshedDetail} />)
-    expect(screen.getByLabelText('剂量').getAttribute('value')).toBe('150 mg')
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText(/150 mg/)).toBeTruthy()
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(pageActions.saveDraft.onSubmit).toHaveBeenLastCalledWith([{
       catalogItemId: referenceProduct.id, courseDays: 5, doseText: '150 mg', frequencyCode: 'BID', quantity: 10, referenceProduct,
@@ -693,15 +766,17 @@ describe('PrescriptionPage', () => {
     const pageActions = createActions()
     pageActions.deleteDraft.data = deletion
     const mounted = renderPage({ actions: pageActions, detail: { ...detail, medicationConclusion: { draftVersion: 1 } } })
-    medicationForm()
-    await userEvent.setup().click(screen.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
+    const user = userEvent.setup()
+    const dialog = await openComposer(user)
+    await user.click(dialog.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
+    await user.click(dialog.getByRole('button', { name: '加入处方' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     const savedActions = { ...pageActions, saveDraft: { ...pageActions.saveDraft, success: true,
       savedRevision: JSON.stringify([{ catalogItemId: medication.id, courseDays: 3, doseText: '500 mg', frequencyCode: 'PRN', quantity: 6 }]),
     } }
     mounted.rerender(<PrescriptionPage {...mounted.props} actions={savedActions} />)
     mounted.rerender(<PrescriptionPage {...mounted.props} actions={savedActions} detail={{ ...detail, medicationConclusion: { draftVersion: 2 } }} />)
-    expect(screen.getByRole('combobox', { name: '剂量' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '合成对乙酰氨基酚' })).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText('1. 合成对乙酰氨基酚')).toBeTruthy()
   })
 
   it('keeps a new draft when a previous deletion receipt is recreated during a refresh', async () => {
@@ -709,27 +784,28 @@ describe('PrescriptionPage', () => {
     const pageActions = createActions()
     pageActions.deleteDraft.data = deletion
     const mounted = renderPage({ actions: pageActions, detail: { ...detail, medicationConclusion: { draftVersion: 2 } } })
-    medicationForm()
-    await userEvent.setup().click(screen.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
+    const user = userEvent.setup()
+    const dialog = await openComposer(user)
+    await user.click(dialog.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
+    await user.click(dialog.getByRole('button', { name: '加入处方' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     mounted.rerender(<PrescriptionPage {...mounted.props} actions={{ ...pageActions, deleteDraft: { ...pageActions.deleteDraft, data: { ...deletion } } }} />)
-    expect(screen.getByRole('combobox', { name: '剂量' })).toBeTruthy()
-    expect(screen.getByRole('button', { name: '合成对乙酰氨基酚' })).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText('1. 合成对乙酰氨基酚')).toBeTruthy()
   })
-  it('adds medication from the on-demand catalog and opens its only dosage editor', async () => {
+  it('adds medication from the on-demand catalog and lands one composer confirm per dialog', async () => {
     const user = userEvent.setup()
     renderPage()
 
-    medicationForm()
-    expect(screen.getByLabelText('搜索药品目录')).toBeTruthy()
+    // 弹窗打开前既没有目录也没有用药表单。
+    expect(screen.queryByLabelText('搜索药品目录')).toBeNull()
     expect(screen.queryByLabelText('剂量')).toBeNull()
-    await user.click(screen.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
-
-    const editor = screen.getByRole('region', { name: '药品详情' })
-    expect(within(editor).getByLabelText('剂量')).toBeTruthy()
-    expect(within(editor).getByLabelText('频次')).toBeTruthy()
-    expect(within(editor).getByLabelText('疗程')).toBeTruthy()
-    expect(within(editor).getByLabelText('数量')).toBeTruthy()
-    expect(screen.queryByRole('dialog', { name: '添加药品' })).toBeNull()
+    const dialog = await openComposer(user)
+    await user.click(dialog.getByRole('button', { name: '选择 合成对乙酰氨基酚' }))
+    // 点选后弹窗内展开四个用药字段。
+    for (const label of ['剂量', '频次', '疗程', '数量']) expect(dialog.getByLabelText(label)).toBeTruthy()
+    await user.click(dialog.getByRole('button', { name: '加入处方' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText('1. 合成对乙酰氨基酚')).toBeTruthy()
   })
 
   it('searches issued medication records and returns to the list without changing the prescription', async () => {
@@ -774,8 +850,8 @@ describe('PrescriptionPage', () => {
     await user.click(within(confirmation).getByRole('button', { name: '取消' }))
     expect(props.actions.confirmNoMedication.onSubmit).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '开具处方' }))
-    medicationForm()
-    expect(screen.getByLabelText('剂量')).toBeTruthy()
+    // 切回处方模式后草稿原样保留在页签列表。
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText('1. 合成对乙酰氨基酚')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: '无需用药' }))
     await user.click(screen.getByRole('button', { name: '确认无需用药' }))
     await user.click(within(screen.getByRole('alertdialog', { name: '确认无需用药' })).getByRole('button', { name: '确认无需用药' }))
@@ -794,12 +870,16 @@ describe('PrescriptionPage', () => {
       } },
     })
 
-    medicationForm()
-    const editor = screen.getByRole('region', { name: '药品详情' })
-    expect(within(editor).getByText('12粒/盒')).toBeTruthy()
-    await user.clear(within(editor).getByLabelText('剂量'))
-    await user.type(within(editor).getByLabelText('剂量'), '150 mg')
-    expect(within(editor).getByDisplayValue('150 mg')).toBeTruthy()
+    const form = medicationForm()
+    // 规格与厂家等注册信息保留在弹窗条目头中。
+    await user.click(form.getByRole('button', { name: /^编辑药品 合成参考药品/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getAllByText(/12粒\/盒/).length).toBeGreaterThan(0)
+    await user.clear(dialog.getByRole('textbox', { name: '剂量' }))
+    await user.type(dialog.getByRole('textbox', { name: '剂量' }), '150 mg')
+    await user.click(dialog.getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText(/150 mg/)).toBeTruthy()
     expect(screen.queryByRole('button', { name: '正式开具处方' })).toBeNull()
     await user.click(screen.getByRole('button', { name: '重试保存' }))
     expect(actions.saveDraft.onSubmit).toHaveBeenLastCalledWith([{
@@ -810,35 +890,40 @@ describe('PrescriptionPage', () => {
       quantity: 10,
       referenceProduct,
     }])
-    expect(within(editor).getByDisplayValue('150 mg')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '填写处方' })).getByText(/150 mg/)).toBeTruthy()
   })
 
   it('marks invalid reference directions and prevents saving or issuing until they are corrected', async () => {
     vi.useFakeTimers()
     const { props } = renderPage({ detail: { ...detail, medicationConclusion: {
-      draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10, referenceProduct }] },
+      draft: { items: [{ catalogItemId: referenceProduct.id, courseDays: 31, doseText: '75 mg', frequencyCode: 'BID', quantity: 1001, referenceProduct }] },
       draftVersion: 1,
     } } })
 
-    medicationForm()
-    fireEvent.change(screen.getByLabelText('疗程'), { target: { value: '31' } })
-    fireEvent.change(screen.getByLabelText('数量'), { target: { value: '1001' } })
-    expect(screen.getByLabelText('疗程').getAttribute('aria-invalid')).toBe('true')
-    expect(screen.getByLabelText('数量').getAttribute('aria-invalid')).toBe('true')
+    // 未完成条目在页签列表里提示补全，整单不可保存或开具。
+    const form = medicationForm()
+    expect(form.getByText('存在未完成的药品信息，点击对应条目补全后才能开具。')).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: /^开具处方/ })).toHaveProperty('disabled', true)
-    medicationForm()
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(props.actions.saveDraft.onSubmit).not.toHaveBeenCalled()
 
-    fireEvent.change(screen.getByLabelText('疗程'), { target: { value: '5' } })
-    fireEvent.change(screen.getByLabelText('数量'), { target: { value: '10' } })
+    // 弹窗内标记非法字段并禁用确认，修正后才能保存修改。
+    fireEvent.click(form.getByRole('button', { name: /^编辑药品 合成参考药品/ }))
+    const dialog = within(screen.getByRole('dialog'))
+    expect(dialog.getByLabelText('疗程').getAttribute('aria-invalid')).toBe('true')
+    expect(dialog.getByLabelText('数量').getAttribute('aria-invalid')).toBe('true')
+    expect(dialog.getByRole('button', { name: '保存修改' })).toHaveProperty('disabled', true)
+    fireEvent.change(dialog.getByLabelText('疗程'), { target: { value: '5' } })
+    fireEvent.change(dialog.getByLabelText('数量'), { target: { value: '10' } })
+    expect(dialog.getByRole('button', { name: '保存修改' })).toHaveProperty('disabled', false)
+    fireEvent.click(dialog.getByRole('button', { name: '保存修改' }))
     await act(async () => { await vi.advanceTimersByTimeAsync(900) })
     expect(props.actions.saveDraft.onSubmit).toHaveBeenCalledWith([{
       catalogItemId: referenceProduct.id, courseDays: 5, doseText: '75 mg', frequencyCode: 'BID', quantity: 10, referenceProduct,
     }])
   })
 
-  it('switches the only medication editor while retaining each line’s directions', async () => {
+  it('keeps each line’s directions when its composer is reopened', async () => {
     const user = userEvent.setup()
     const secondMedication: Medication = { ...medication, allowedCombinationIds: [medication.id], id: 'medication-b', nameEn: 'Synthetic second medication', nameZh: '合成第二药品' }
     renderPage({ catalog: [medication, secondMedication], detail: { ...detail, medicationConclusion: {
@@ -849,37 +934,42 @@ describe('PrescriptionPage', () => {
       draftVersion: 1,
     } } })
 
-    medicationForm()
-    const selected = screen.getByRole('group', { name: '已选药品' })
-    await user.click(within(selected).getByRole('button', { name: '合成第二药品' }))
-    expect(screen.queryByLabelText('剂量')).toBeNull()
-    act(() => screen.getByLabelText('剂量 2').focus())
-    await user.keyboard('{Enter}')
-    await user.click(await screen.findByRole('option', { name: '1 g' }))
-    await user.click(within(selected).getByRole('button', { name: '合成对乙酰氨基酚' }))
-    expect(within(screen.getByLabelText('剂量')).getByText('500 mg')).toBeTruthy()
-    await user.click(within(selected).getByRole('button', { name: '合成第二药品' }))
-    expect(within(screen.getByLabelText('剂量 2')).getByText('1 g')).toBeTruthy()
-    expect(screen.getAllByRole('combobox')).toHaveLength(4)
+    // 第一条：PRN · 3 天 · 6。
+    const form = medicationForm()
+    await user.click(form.getByRole('button', { name: /^编辑药品 合成对乙酰氨基酚/ }))
+    let dialog = within(screen.getByRole('dialog', { name: '编辑药品' }))
+    expect(within(dialog.getByRole('combobox', { name: '剂量' })).getByText('500 mg')).toBeTruthy()
+    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('PRN')).toBeTruthy()
+    await user.click(dialog.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // 第二条保留自己的 BID · 5 天 · 10。
+    await user.click(form.getByRole('button', { name: /^编辑药品 合成第二药品/ }))
+    dialog = within(screen.getByRole('dialog', { name: '编辑药品' }))
+    expect(within(dialog.getByRole('combobox', { name: '频次' })).getByText('BID')).toBeTruthy()
+    await user.click(dialog.getByRole('button', { name: '取消' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(form.getAllByRole('button', { name: /^编辑药品 / })).toHaveLength(2)
   })
 
-  it('keeps the eight medication limit and hides incompatible local combinations', () => {
+  it('keeps the eight medication limit and hides incompatible local combinations', async () => {
+    const user = userEvent.setup()
     const ids = Array.from({ length: 9 }, (_, index) => `medication-${index + 1}`)
     const catalog = ids.map((id, index) => ({ ...medication, allowedCombinationIds: ids, id, nameZh: `合成药品 ${index + 1}` }))
     const { unmount } = renderPage({ catalog, detail: { ...detail, medicationConclusion: {
       draft: { items: catalog.slice(0, 8).map(item => ({ catalogItemId: item.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 })) },
       draftVersion: 1,
     } } })
-    medicationForm()
-    expect(screen.getByRole('button', { name: '选择 合成药品 9' }).hasAttribute('disabled')).toBe(true)
+    // 八条封顶：入口在满额时禁用。
+    expect(screen.getByRole('button', { name: '添加药品' })).toHaveProperty('disabled', true)
     unmount()
 
     renderPage({ catalog: [medication, { ...medication, id: 'incompatible', nameZh: '合成不兼容药品', allowedCombinationIds: [] }], detail: { ...detail, medicationConclusion: {
       draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
       draftVersion: 1,
     } } })
-    medicationForm()
-    expect(screen.queryByRole('button', { name: '选择 合成不兼容药品' })).toBeNull()
+    const dialog = await openComposer(user)
+    // 弹窗内不兼容的本院药品不进入目录行。
+    expect(dialog.queryByRole('button', { name: '选择 合成不兼容药品' })).toBeNull()
   })
 
   it.each(['signed', 'paid', 'dispensed', 'withdrawn'] as const)('keeps %s prescription records available without ordinary writes in a read-only case', status => {
@@ -895,5 +985,153 @@ describe('PrescriptionPage', () => {
     for (const name of ['正式开具处方', '删除处方草稿', '撤回处方', '确认无需用药']) {
       expect(screen.queryByRole('button', { name })).toBeNull()
     }
+  })
+})
+
+describe('处方页签布局整理', () => {
+  it('将「用药结论方式」放到左主列顶部，右辅助列只保留待开具面板', () => {
+    renderPage()
+    const entry = document.querySelector('[data-order-entry]')
+    expect(entry).not.toBeNull()
+    const mode = within(entry as HTMLElement).getByRole('group', { name: '用药结论方式' })
+    // 结论方式先于目录+表单卡出现，也先于右辅助列的待开具区域。
+    expect(mode.compareDocumentPosition(screen.getByRole('region', { name: '填写处方' }))
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(mode.compareDocumentPosition(screen.getByRole('region', { name: '待开具处方' }))
+      & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(screen.getAllByRole('group', { name: '用药结论方式' })).toHaveLength(1)
+  })
+
+  it('无需用药结论在左主列内替换目录与表单卡', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(screen.getByRole('button', { name: '无需用药' }))
+    const entry = document.querySelector('[data-order-entry]')
+    expect(entry).not.toBeNull()
+    const panel = within(entry as HTMLElement).getByRole('region', { name: '确认无需用药' })
+    expect(within(panel).getByText('记录本次就诊无需用药，不生成药品医嘱或处方。')).toBeTruthy()
+    // 目录与表单卡被整块替换，不再同时出现填写处方区。
+    expect(screen.queryByRole('region', { name: '填写处方' })).toBeNull()
+  })
+
+  it('药品目录空态用左对齐紧凑引导替代居中悬空提示', () => {
+    renderPage()
+    // 填写前没有常驻目录/详情卡；空态引导在左主列入口下方。
+    expect(screen.queryByRole('region', { name: '药品详情' })).toBeNull()
+    const entry = document.querySelector('[data-order-entry]')
+    expect(entry?.querySelector('[data-slot="empty"]')).toBeNull()
+    expect(within(entry as HTMLElement).getByText('选择药品，填写用法')).toBeTruthy()
+    expect(within(entry as HTMLElement).getByText('在弹窗中检索药品目录，选择包装后填写用药信息。')).toBeTruthy()
+  })
+
+  it('有草稿时自动保存状态与删除入口跟随表单区，右辅助列不再放置草稿工具', () => {
+    renderPage({ detail: { ...detail, medicationConclusion: {
+      draftVersion: 1, draft: { items: [{ catalogItemId: medication.id, doseText: '500 mg', frequencyCode: 'PRN', courseDays: 3, quantity: 6 }] },
+    } } })
+    const form = screen.getByRole('region', { name: '填写处方' })
+    const tools = form.querySelector('[data-draft-tools]')
+    expect(tools).not.toBeNull()
+    expect(within(tools as HTMLElement).getByRole('button', { name: '删除处方草稿' })).toBeTruthy()
+    expect(within(tools as HTMLElement).getByText('草稿已自动保存')).toBeTruthy()
+    const aside = screen.getByRole('region', { name: '待开具处方' }).parentElement
+    expect(aside?.querySelector('[data-draft-tools]')).toBeNull()
+  })
+
+  it('无草稿时不渲染空草稿工具块', () => {
+    renderPage()
+    expect(screen.queryByRole('button', { name: '删除处方草稿' })).toBeNull()
+    expect(screen.queryByText('草稿已自动保存')).toBeNull()
+  })
+
+  it('目录条目的包装信息只保留最小事实，工艺细节进入悬停提示', async () => {
+    const craft = { ...referenceProduct, packageDescription: '本品采用五层共挤输液用三室袋、氧指示剂和高阻隔外包装袋。；14袋/盒' }
+    renderPage({ referenceSearch: {
+      data: { items: [craft], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+      error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
+    } })
+    await openComposer(userEvent.setup())
+    const combo = within(screen.getByRole('dialog')).getByRole('combobox', { name: /^包装 / })
+    const shown = within(combo).getByText('14袋/盒')
+    expect(within(combo).queryByText(/五层共挤/)).toBeNull()
+    expect(shown.getAttribute('title')).toContain('五层共挤')
+  })
+
+  it('开具记录行的包装摘要同样降噪并保留悬停全文', () => {
+    const craft = { ...referenceProduct, id: 'reference-craft', packageDescription: '本品采用五层共挤输液用三室袋、氧指示剂和高阻隔外包装袋。；14袋/盒' }
+    renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: {
+      ...issuedPrescription,
+      items: [{ catalogItemId: craft.id, courseDays: 3, display: craft.genericName, doseText: '75 mg', frequencyCode: 'BID',
+        medicationRequestId: 'request-craft', medicationRequestVersion: '1', quantity: 10, referenceProduct: craft }],
+    } } } })
+    const record = screen.getByRole('button', { name: '查看药品 合成参考药品' })
+    expect(within(record).getByText('75 mg · 14袋/盒')).toBeTruthy()
+    expect(within(record).queryByText(/五层共挤/)).toBeNull()
+    expect(record.querySelector('span[title*="五层共挤"]')).not.toBeNull()
+  })
+
+  it('待开具卡片状态为主行，工具按钮收纳为紧凑图标动作', () => {
+    renderPage()
+    const panel = screen.getByRole('region', { name: '待开具处方' })
+    expect(within(panel).getByRole('status').className).toContain('font-medium')
+    for (const name of ['刷新', '依据与说明']) {
+      const button = within(panel).getByRole('button', { name })
+      expect(button.getAttribute('title')).toBe(name)
+    }
+  })
+
+  it('开具后状态收敛为单行徽章与元信息，不再重复两处状态文案', () => {
+    const { container } = renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: issuedPrescription } } })
+    const statusRow = container.querySelector('[data-prescription-status]')
+    expect(statusRow).not.toBeNull()
+    expect(within(statusRow as HTMLElement).getByText('已支付')).toBeTruthy()
+    expect(screen.getAllByText('已支付')).toHaveLength(1)
+    expect(within(statusRow as HTMLElement).getByText(/处方号 RX-SYNTHETIC-1 ·/)).toBeTruthy()
+    expect(within(statusRow as HTMLElement).getByText(/已开具处方不可直接编辑/)).toBeTruthy()
+    expect(within(statusRow as HTMLElement).getByRole('button', { name: '撤回处方' })).toBeTruthy()
+    expect(screen.getByRole('list', { name: '处方进度' })).toBeTruthy()
+  })
+
+  it('撤回终态在一个分组里保留明细与退款说明', () => {
+    renderPage({ detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: {
+      ...issuedPrescription, status: 'withdrawn', withdrawal: {
+        id: 'withdrawal-1', prescriptionId: issuedPrescription.id, version: 2,
+        withdrawnAt: '2026-10-11T08:00:00+08:00', withdrawnByActorId: 'actor-synthetic', withdrawnByPractitionerRoleId: 'role-doctor',
+      },
+    } } } })
+    expect(screen.getAllByText('已撤回')).toHaveLength(1)
+    expect(screen.getByText(/原处方明细保留，已支付记录不会自动退款/)).toBeTruthy()
+  })
+
+  it('药品目录行为单行紧凑行，弹窗目录列表可见高度封顶五条', async () => {
+    renderPage({ referenceSearch: {
+      data: { items: [referenceProduct], page: 1, pageSize: 20, total: 1, releaseId: 'synthetic' },
+      error: null, isError: false, isFetching: false, isPending: false, onSearch: vi.fn(),
+    } })
+    // 弹窗打开前不渲染目录。
+    expect(document.querySelector('[data-agent-catalog="medication"]')).toBeNull()
+    await userEvent.setup().click(screen.getByRole('button', { name: '添加药品' }))
+    const card = within(screen.getByRole('dialog')).getByRole('button', { name: /^选择 合成参考药品/ }).closest('li')
+    // 单行紧凑行：名称截断、整行收紧为 px-3 py-2，注册信息移出平铺文本。
+    expect(card?.className).toContain('px-3 py-2')
+    expect(card?.className).toContain('items-center')
+    expect(card?.querySelector('strong')?.className).toContain('truncate')
+    // 目录列表可见高度封顶五条（12.5rem），超出内部滚动；锁定具体值防止回退到旧八条封顶。
+    expect(document.querySelector('[data-agent-catalog="medication"] div[class*="max-h-[12.5rem]"]')).not.toBeNull()
+  })
+
+  it('新增呈现提供英文文案（草稿态与开具态）', () => {
+    renderPage({ locale: 'en-US', messages: getWorkspaceMessages('en-US') })
+    expect(screen.getByText('Select medication and enter directions')).toBeTruthy()
+    expect(screen.getByRole('group', { name: 'Medication conclusion mode' })).toBeTruthy()
+
+    renderPage({
+      detail: { ...detail, medicationConclusion: { draftVersion: 2, prescription: issuedPrescription } },
+      locale: 'en-US',
+      messages: getWorkspaceMessages('en-US'),
+    })
+    const statusRow = document.querySelector('[data-prescription-status]')
+    expect(statusRow).not.toBeNull()
+    expect(within(statusRow as HTMLElement).getByText('Paid')).toBeTruthy()
+    expect(within(statusRow as HTMLElement).getByRole('button', { name: 'Withdraw prescription' })).toBeTruthy()
   })
 })
