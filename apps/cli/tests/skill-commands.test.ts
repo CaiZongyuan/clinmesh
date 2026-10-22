@@ -17,6 +17,22 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('keeps later inpatient insurance compensation and reviewed replacement commands aligned', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const action of ['cancel', 'preview', 'confirm']) {
+    const id = `inpatient.financial.insurance.${action}`
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient financial-insurance ${action} `))!
+    const operation = getHisOperation(id)
+    expect(inspectExample(program, line).operation?.id).toBe(id)
+    expect(operation.roles).toEqual(['cashier'])
+    expect(operation.commandOperation).toBe(id)
+    expect(operation.skill).toBe('clinmesh-inpatient')
+    expect(operation.previewToken).toBe(action === 'confirm' ? 'required' : 'none')
+  }
+  for (const term of ['INPATIENT_INSURANCE_PREVIEW_STALE', 'insurance.ready', 'remainingCollectFen/remainingRefundFen', '原年度']) expect(skill).toContain(term)
+})
+
 it('结算后更正示例绑定原费用、当前账目与原资金尝试', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = (await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')).replaceAll('\r\n', '\n')
