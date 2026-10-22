@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { apiErrorSchema } from '@clinmesh/contracts/his'
+import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -39,6 +41,60 @@ async function setup() {
 }
 
 describe('住院手术公共 HTTP 与真实 SQLite', () => {
+  it('手术目录保留231条心血管来源、表价及未知单位，不伪造可收费定义', async () => {
+    const s = await setup()
+    const response = await s.request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')
+    expect(response.status).toBe(200)
+    const catalog = inpatientSurgeryCatalogSchema.parse(await response.json())
+    expect(catalog.procedures).toHaveLength(8)
+    expect(catalog.materials).toHaveLength(233)
+    const imported = catalog.materials.filter((item: { reference?: unknown }) => item.reference !== undefined)
+    expect(imported).toHaveLength(231)
+    expect(imported.filter(item => 'chargeDefinition' in item)).toHaveLength(52)
+    expect(imported.filter(item => 'unavailableReason' in item && item.unavailableReason === 'unit-unconfirmed')).toHaveLength(179)
+    expect(imported.find((item: { id: string }) => item.id === 'hospital-material-cv-8')).toMatchObject({
+      chargeDefinition: { priceFen: 1199000, unit: '台', synthetic: true },
+      reference: { category: '常规起搏类', specification: null, unit: '台', priceFen: 1199000,
+        effectiveFrom: '2026-08-01', effectiveThrough: null, sourceId: 'HN-PACING-2026',
+        workbookSha256: '76147edf46552c906750bb2a8697596cd47acf3450c322168f92a5b8e2348cc3', row: 8,
+        original: { '中选价格（元）': '11990', '原表计价单位': '台' },
+        source: { '原件 SHA-256': '20ff7320ba7c7f657a1bfa644e081e7f16c65be1885953da8c566c25dc53eee8' } },
+    })
+    const unknownUnit = imported.find((item: { id: string }) => item.id === 'hospital-material-cv-60')
+    expect(unknownUnit).toMatchObject({ unavailableReason: 'unit-unconfirmed', reference: {
+      unit: null, specification: null, priceFen: 20000, effectiveFrom: '2023-04-15', sourceId: 'TJ2023-1',
+      applicability: '历史参考；原通知规定到期未接续品种继续执行，具体品种后续接续和现行状态未核实',
+    } })
+    expect(unknownUnit).not.toHaveProperty('chargeDefinition')
+    expect(imported.find((item: { id: string }) => item.id === 'hospital-material-cv-238')).toMatchObject({
+      reference: { priceFen: 84600, effectiveThrough: '2025-12-31', sourceId: 'ZJ-STENT-2' },
+    })
+    expect(imported.find((item: { id: string }) => item.id === 'hospital-material-cv-19')).toMatchObject({
+      chargeDefinition: { priceFen: 3200000 }, reference: { priceFen: 3200000, baseSupplyPriceFen: 2880000 },
+    })
+    expect(imported.find((item: { id: string }) => item.id === 'hospital-material-cv-108')).toMatchObject({ reference: { priceFen: 31740 } })
+    expect(imported.find((item: { id: string }) => item.id === 'hospital-material-cv-120')).toMatchObject({ reference: { priceFen: 54720 } })
+  })
+
+  it('缺计价单位耗材拒绝实际使用且不产生Procedure或费用，明确单位按表价计费', async () => {
+    const s = await setup(), prepared = await readySurgery(s, false), row = prepared.requests[0]
+    const input = { requestId: row.id, expectedRequestVersion: row.version, procedureId: 'hospital-surgery-4', catalogVersion: 1,
+      note: '按已确认表价记录合成耗材使用', materials: [{ materialId: 'hospital-material-cv-60', catalogVersion: 1, quantity: 2 }] }
+    const rejected = await s.request(s.doctor, `${s.path}/surgeries/execute`, input)
+    expect(rejected.status).toBe(409)
+    expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('CATALOG_CONFLICT')
+    expect(inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())).toEqual(prepared)
+    expect((await (await s.request(s.doctor, `/fhir/R5/Procedure?encounter=Encounter/${s.admission.id}&_total=accurate`)).json()).total).toBe(0)
+    expect((await (await s.request(s.cashier, `${s.path}/charges`)).json()).charges).toEqual([])
+    const executed = await s.request(s.doctor, `${s.path}/surgeries/execute`, { ...input,
+      materials: [{ materialId: 'hospital-material-cv-8', catalogVersion: 1, quantity: 2 }] })
+    expect(executed.status).toBe(200)
+    expect(inpatientSurgeryResponseSchema.parse(await executed.json()).data.executions[0]!.materials[0]).toMatchObject({ quantity: 2, amountFen: 2398000,
+      item: { id: 'hospital-material-cv-8', chargeDefinition: { priceFen: 1199000, unit: '台' }, reference: { sourceId: 'HN-PACING-2026' } } })
+    const charges = (await (await s.request(s.cashier, `${s.path}/charges`)).json()).charges
+    expect(charges.map((item: { amountFen: number }) => item.amountFen)).toEqual([200000, 2398000])
+  })
+
   it.each(['request','check-preop','confirm-consent','cancel','execute'])('手术%s拒绝缺失或恶意Origin且不写入，可信Origin正常', async action => {
     const s = await setup(), cookie = action === 'check-preop' ? s.nurse : s.doctor
     let input: Record<string,unknown> = { encounterVersion:s.admission.versionId,procedureId:'hospital-surgery-4',catalogVersion:1,
@@ -147,7 +203,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(catalog.procedures.map((item: { coding: { code: string } }) => item.coding.code)).toContain('00.6600x008')
     const planned = catalog.procedures.find((item: { coding: { code: string } }) => item.coding.code === '47.0100')
     const actual = catalog.procedures.find((item: { coding: { code: string } }) => item.coding.code === '51.2300')
-    const material = catalog.materials[0]
+    const material = catalog.materials.find((item: { id: string }) => item.id === 'hospital-material-suture')
     const requested = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: s.admission.versionId,
       procedureId: planned.id, catalogVersion: planned.version, plannedFor: '2026-08-25T01:00:00.000Z', reason: '合成示教手术申请' })
     expect(requested.status).toBe(200)
@@ -281,8 +337,39 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(response.status).toBe(200)
     const catalog = await response.json()
     expect(catalog.procedures).toHaveLength(8)
-    expect(catalog.materials).toHaveLength(2)
+    expect(catalog.materials).toHaveLength(233)
     expect(catalog.procedures.find((item: { id: string }) => item.id === 'hospital-surgery-4').chargeDefinition.priceFen).toBe(123456)
+  })
+
+  it('心血管目录重启补缺不调旧价，旧耗材实施快照与原receipt仍可恢复，新Epoch重新安装全量', async () => {
+    const s = await setup(), prepared = await readySurgery(s, false), key = randomUUID()
+    const input = { requestId: prepared.requests[0].id, expectedRequestVersion: 3, procedureId: 'hospital-surgery-4', catalogVersion: 1,
+      note: '保留旧格式耗材实施', materials: [{ materialId: 'hospital-material-suture', catalogVersion: 1, quantity: 2 }] }
+    const completed = await s.request(s.doctor, `${s.path}/surgeries/execute`, input, key)
+    expect(completed.status).toBe(200)
+    const original = inpatientSurgeryResponseSchema.parse(await completed.json()), admin = await s.login('admin')
+    expect(original.data.executions[0]!.materials[0]!.item).not.toHaveProperty('reference')
+    s.runtime.database.driver.prepare("DELETE FROM inpatient_surgery_catalog WHERE item_id='hospital-material-cv-238'").run()
+    s.runtime.database.driver.prepare("UPDATE inpatient_surgery_catalog SET snapshot_json=json_set(snapshot_json,'$.chargeDefinition.priceFen',123) WHERE item_id='hospital-material-cv-8'").run()
+    await s.runtime.close()
+    const reopened = await createClinMeshRuntime(s.options)
+    cleanups.push(() => reopened.close())
+    const request = (cookie: string, path: string, body?: unknown, idempotencyKey = randomUUID()) => reopened.app.request(path, {
+      method: body === undefined ? 'GET' : 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': idempotencyKey },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    })
+    const catalog = inpatientSurgeryCatalogSchema.parse(await (await request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
+    expect(catalog.materials).toHaveLength(233)
+    expect(new Set(catalog.materials.map((item: { id: string }) => item.id)).size).toBe(233)
+    const retained = catalog.materials.find(item => item.id === 'hospital-material-cv-8')!
+    expect('chargeDefinition' in retained && retained.chargeDefinition.priceFen).toBe(123)
+    expect(inpatientSurgeryResponseSchema.parse(await (await request(s.doctor, `${s.path}/surgeries/execute`, { input }, key)).json())).toEqual(original)
+    expect(inpatientSurgerySchema.parse(await (await request(s.doctor, `${s.path}/surgeries`)).json())).toEqual(original.data)
+    expect((await request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', {})).status).toBe(200)
+    const resetCatalog = inpatientSurgeryCatalogSchema.parse(await (await request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
+    expect(resetCatalog.materials).toHaveLength(233)
+    const installed = resetCatalog.materials.find(item => item.id === 'hospital-material-cv-8')!
+    expect('chargeDefinition' in installed && installed.chargeDefinition.priceFen).toBe(1199000)
   })
 
   it('术后医嘱只接受本次已实施事实并仍须护士校对', async () => {

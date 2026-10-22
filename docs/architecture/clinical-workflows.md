@@ -201,6 +201,8 @@ InpatientService.surgery 拥有申请、准备、取消及实际实施事实。�
 
 Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价目，启动只补缺失项。临床编码保留完整代码、类别、3.0来源版本、项目摘录Release、来源URL/哈希/单元格；来源与限制见[编码依据](../research/2026-10-20-inpatient-record-coding-and-recall.md#手术操作固定子集的来源)。分类编码、院内手术ID与ChargeDefinition分开，价格标为合成演示价；耗材只记录实际使用与收费，不包含库存、采购或批号供应链。
 
+耗材目录包含原两项合成材料与固定心血管参考表的231条记录。归一化来源快照保留原字段、企业、原编码/注册证、规格及单位缺项、价格类型、地区、起止日、适用性和7组附件来源及哈希；原工作簿不进入仓库。中选价按元规范为整数分，独立的基准品拟供应价不覆盖中选价。52条明确单位的记录按中选价作为合成本院演示收费，另179条保存 `reference.unit=null`、`unavailableReason=unit-unconfirmed`，保留参考价但没有收费定义，实际实施拒绝选择；规格不推测。来源含历史采购价及地区限制，不代表真实医院现行价格，也不自动扩展起搏术式。目录 query operation v2 返回完整来源，Web只为选中的可收费耗材展开用量；每次最多20类。当前及新Epoch沿用幂等补缺安装，既有项和实施、receipt不被覆盖，取舍见[Agent Note](../decisions/implemented/architecture/2026-10-22-cardiovascular-material-catalog.md)。
+
 实际实施可选择与计划不同的术式，server 按实际目录及版本冻结术式、实施岗位、虚拟时间、说明、耗材数量和安全整数分价格。同一事务保存唯一 Procedure、耗材、手术与耗材逐项费用、申请完成和审计；投影或费用失败则全部回滚。账目归属实施时当前科室，申请原作者保留。首页只从 executedForAdmission 读取实际事实；出院与转科 Command 在自身事务调用 assertNoPending，未实施且未取消申请阻断出院、交接及接收。该内部门禁由调用方先校验当前业务权限；目标病区接收前尚未拥有原科普通详情权限。
 
 术后医嘱沿普通签发流程附本次 surgeryExecutionId，在原医嘱 Command 内验证它属于当前 Workspace/Epoch/Admission 且已完成；保存引用并分别投影 MedicationRequest.supportingInformation 或 ServiceRequest.supportingInfo。申请、已取消计划、其他住院和既往来源 Procedure 均不能代替本次实施。关联后仍需护士校对，药品仍需实际发药后才能给药。Web 与 CLI 共用原预期版本、完整输入、幂等键及 receipt 恢复合同。
