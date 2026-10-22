@@ -165,7 +165,9 @@ export function createDefinition(
     minSurfaceWidth: 360,
     persist: true,
     resizable: true,
-    supported: ['workspace', 'full-frame'],
+    // workspace-mirror 必须留在 supported：注册表只恢复受支持的存量布局，
+    // upgradeLegacyMirrorLayout 依赖快照读出它才能落盘覆盖为默认值。
+    supported: ['workspace', 'workspace-mirror', 'full-frame'],
   },
   lifecycle: { mount: 'lazy', retention: 'keep-alive' },
   order: 10,

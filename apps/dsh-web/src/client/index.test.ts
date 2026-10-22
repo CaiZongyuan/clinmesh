@@ -443,6 +443,8 @@ describe('ClinMesh React Surface definition', () => {
     expect(definition.branding.tokens).toBeUndefined()
     expect(definition.layout.fallback).toBe('shrink')
     expect(definition.layout.default).toBe('workspace')
-    expect(definition.layout.supported).toEqual(['workspace', 'full-frame'])
+    // workspace-mirror 必须留在 supported：注册表只恢复受支持的存量布局，
+    // 升级函数依赖快照读出 workspace-mirror 才能落盘覆盖为 workspace。
+    expect(definition.layout.supported).toEqual(['workspace', 'workspace-mirror', 'full-frame'])
   })
 })

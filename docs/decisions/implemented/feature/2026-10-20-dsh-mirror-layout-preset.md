@@ -26,4 +26,4 @@ AI 原生医生工作台的"中病例 + 右建议栈"内容区布局要求助手
 
 2026-10-22 集成验收补充决定：集成宿主不提供布局切换入口——#153 的「医院工作台」导航以同 slot 同 id 替换了上游启动器（含布局下拉），镜像预设因此没有用户可见的切换路径。经确认（用户 2026-10-22），镜像布局直接作为 ClinMesh 表面的默认形态（注册声明 `default: 'workspace-mirror'`），不新增切换入口；`supported` 保留 `workspace` 供持久化偏好回落。宿主侧栏保持默认收起、所有权不变；「侧栏改造为会话助手」仍属路线 B（会话嵌入）候选，需上游会话列注入接口立项评估，不随本线交付。
 
-2026-10-22 回退决定：用户实机体验后确认会话列保持宿主右侧原生位置，镜像左列形态回退。ClinMesh 声明回到 `default: 'workspace'`，`supported` 移除 `workspace-mirror`（预设本身保留在上游桥接仓库）；短暂镜像默认期写入的存量 `workspace-mirror` 偏好在 Surface 注册时由 `upgradeLegacyMirrorLayout` 自动升级回 `workspace`（setLayout 即落盘，仅发生一次）。队列折叠卡片不再与镜像绑定：`queuePresentation: 'rail'` 成为 DSH 面所有布局的统一队列形态，贴内容区左缘、默认收起、展开含在诊/待诊/完诊页签（用户确认保留该折叠形态）。
+2026-10-22 回退决定：用户实机体验后确认会话列保持宿主右侧原生位置，镜像左列形态回退。ClinMesh 声明回到 `default: 'workspace'`；`supported` 保留 `workspace-mirror`——注册表只恢复受支持的存量布局，升级函数依赖快照读出它（移出 supported 会让恢复阶段静默净化、落盘永不愈合）；预设本身保留在上游桥接仓库。短暂镜像默认期写入的存量 `workspace-mirror` 偏好在 Surface 注册时由 `upgradeLegacyMirrorLayout` 自动升级回 `workspace`（setLayout 即落盘，仅发生一次）。队列折叠卡片不再与镜像绑定：`queuePresentation: 'rail'` 成为 DSH 面所有布局的统一队列形态，贴内容区左缘、默认收起、展开含在诊/待诊/完诊页签（用户确认保留该折叠形态）。
