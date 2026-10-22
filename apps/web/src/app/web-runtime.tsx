@@ -71,7 +71,7 @@ export interface WebSurfaceDisplay {
   fullscreen: boolean
   /** 宿主全屏(full-frame)保留右栏(details)时声明:右栏标签在全屏下仍可见可交互。 */
   fullscreenKeepsDetails?: boolean
-  /** DSH 镜像布局（workspace-mirror）下队列改为贴内容区左缘的收起卡片；缺省为队列列。 */
+  /** DSH Surface 下队列统一为贴内容区左缘的收起卡片（2026-10-22 用户确认保留）；缺省为队列列。 */
   queuePresentation?: 'column' | 'rail'
   toggle(): void
 }

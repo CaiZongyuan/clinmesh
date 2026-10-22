@@ -119,8 +119,8 @@ export function createDefinition(
       () => theme.getTheme().active.colorScheme,
       () => theme.getTheme().active.colorScheme,
     )
-    // 退出全屏回到进入前的布局，不因全屏往返丢失镜像等非全屏形态。
-    const lastWorkspaceLayout = useRef<ReactSurfaceProps['layout']>('workspace-mirror')
+    // 退出全屏回到进入前的布局，不因全屏往返丢失非全屏形态。
+    const lastWorkspaceLayout = useRef<ReactSurfaceProps['layout']>('workspace')
     if (props.layout !== 'full-frame') lastWorkspaceLayout.current = props.layout
     return (
       <ClinMeshSurface
@@ -131,8 +131,8 @@ export function createDefinition(
           fullscreen: props.layout === 'full-frame',
           // 全屏保留宿主会话文件等原生右栏内容。
           fullscreenKeepsDetails: true,
-          // 镜像布局收起宿主会话列右侧的内容队列，队列改由内容区左缘卡片承担。
-          queuePresentation: props.layout === 'workspace-mirror' ? 'rail' : 'column',
+          // DSH 面队列统一收进贴内容区左缘的折叠卡片（2026-10-22 用户确认保留该形态）。
+          queuePresentation: 'rail',
           toggle: () => surfaces.setLayout('clinmesh.his', props.layout === 'full-frame' ? lastWorkspaceLayout.current : 'full-frame'),
           conversation: {
             collapsed: props.conversationCollapsed,
@@ -157,14 +157,15 @@ export function createDefinition(
   id: 'clinmesh.his',
   initialLocation: '/',
   layout: {
-    // 镜像为默认形态：原生会话列位于内容区左侧，无需用户切换（2026-10-22 用户确认）。
-    default: 'workspace-mirror',
+    // 会话列保持宿主右侧原生位置（2026-10-22 用户确认镜像左列形态回退）；
+    // 短暂默认期写入的存量镜像偏好由 upgradeLegacyMirrorLayout 升级回本默认值。
+    default: 'workspace',
     fallback: 'shrink',
     fullFrameKeepDetails: true,
     minSurfaceWidth: 360,
     persist: true,
     resizable: true,
-    supported: ['workspace', 'workspace-mirror', 'full-frame'],
+    supported: ['workspace', 'full-frame'],
   },
   lifecycle: { mount: 'lazy', retention: 'keep-alive' },
   order: 10,
@@ -187,8 +188,8 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(
     () => {
       const dispose = reactSurfaces.register(definition)
-      // 注册时恢复的存量偏好可能仍是旧默认 workspace，会在持久化下一直覆盖镜像默认值。
-      upgradeLegacyWorkspaceLayout(reactSurfaces)
+      // 注册时恢复的存量偏好可能仍指向已退役的镜像布局，会在持久化下一直覆盖默认值。
+      upgradeLegacyMirrorLayout(reactSurfaces)
       return dispose
     },
     'clinmesh-dsh-web: register application Surface',
@@ -196,13 +197,13 @@ export function apply(ctx: ClientContext): void {
 }
 
 /**
- * 镜像成为默认形态前，退出全屏等路径会把旧默认 workspace 写进持久化偏好并一直
- * 覆盖新默认。注册完成后把存量 workspace 视为未选择、升级到镜像：setLayout 即落盘，
- * 升级只发生一次，此后为 no-op；full-frame 等其他布局不受影响。
+ * 会话列回到宿主右侧后，短暂镜像默认期写入的存量 workspace-mirror 偏好会被当作
+ * 明确选择而一直覆盖默认。注册完成后把它视为未选择、升级回 workspace：setLayout
+ * 即落盘，升级只发生一次，此后为 no-op；full-frame 等其他布局不受影响。
  */
-export function upgradeLegacyWorkspaceLayout(registry: ReactSurfaceRegistry): void {
+export function upgradeLegacyMirrorLayout(registry: ReactSurfaceRegistry): void {
   const surface = registry
     .getSnapshot()
     .surfaces.find(({ definition }) => definition.id === 'clinmesh.his')
-  if (surface?.layout === 'workspace') registry.setLayout('clinmesh.his', 'workspace-mirror')
+  if (surface?.layout === 'workspace-mirror') registry.setLayout('clinmesh.his', 'workspace')
 }

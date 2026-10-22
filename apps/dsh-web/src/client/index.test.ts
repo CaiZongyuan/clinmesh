@@ -7,7 +7,7 @@ import { createRoot } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import * as application from '@clinmesh/web/application'
 import type { WebRuntimeOptions } from '@clinmesh/web/runtime'
-import { apply, createDefinition, upgradeLegacyWorkspaceLayout } from './index.tsx'
+import { apply, createDefinition, upgradeLegacyMirrorLayout } from './index.tsx'
 import { createWorkspaceNavigation, registerWorkspaceNavigation } from './workspace-navigation.tsx'
 import { createFontSizePreference, registerFontSizeSettings } from './font-size-settings.tsx'
 
@@ -65,7 +65,7 @@ describe('ClinMesh React Surface definition', () => {
     expect(listeners.size).toBe(0)
   })
 
-  it('exposes the queue rail presentation only under the workspace-mirror layout', async () => {
+  it('exposes the queue rail presentation under every surface layout', async () => {
     const ctx = { get(name: string) {
       if (name === 'sessions') return { binding: () => ({ session: { getSnapshot: () => ({ sessionId: 'session-1', pendingSubmissions: [] }), subscribe: () => () => {} } }) }
       if (name === 'uiSession') return { adapter: { current: { getSnapshot: () => ({ key: 'session-1' }), subscribe: () => () => {} } } }
@@ -79,9 +79,8 @@ describe('ClinMesh React Surface definition', () => {
     const containers: Array<HTMLElement> = []
     try {
       for (const [layout, expected] of [
-        ['workspace-mirror', 'rail'],
-        ['workspace', 'column'],
-        ['full-frame', 'column'],
+        ['workspace', 'rail'],
+        ['full-frame', 'rail'],
       ] as const) {
         let runtime: WebRuntimeOptions | undefined
         render.mockImplementation(props => { runtime = props?.runtime; return createElement('div') })
@@ -103,27 +102,27 @@ describe('ClinMesh React Surface definition', () => {
     }
   })
 
-  it('upgrades the legacy workspace preference to the mirror default after registration', () => {
+  it('upgrades the retired mirror preference to the workspace default after registration', () => {
     const buildRegistry = (layout: string) => ({
       getSnapshot: () => ({ surfaces: [{ definition: { id: 'clinmesh.his' }, layout }] }),
       setLayout: vi.fn(),
     })
 
-    const legacy = buildRegistry('workspace') as unknown as Parameters<typeof upgradeLegacyWorkspaceLayout>[0]
-    upgradeLegacyWorkspaceLayout(legacy)
-    expect(legacy.setLayout).toHaveBeenCalledWith('clinmesh.his', 'workspace-mirror')
+    const legacy = buildRegistry('workspace-mirror') as unknown as Parameters<typeof upgradeLegacyMirrorLayout>[0]
+    upgradeLegacyMirrorLayout(legacy)
+    expect(legacy.setLayout).toHaveBeenCalledWith('clinmesh.his', 'workspace')
 
-    for (const kept of ['workspace-mirror', 'full-frame', 'center']) {
-      const registry = buildRegistry(kept) as unknown as Parameters<typeof upgradeLegacyWorkspaceLayout>[0]
-      upgradeLegacyWorkspaceLayout(registry)
+    for (const kept of ['workspace', 'full-frame', 'center']) {
+      const registry = buildRegistry(kept) as unknown as Parameters<typeof upgradeLegacyMirrorLayout>[0]
+      upgradeLegacyMirrorLayout(registry)
       expect(registry.setLayout).not.toHaveBeenCalled()
     }
 
     const empty = {
       getSnapshot: () => ({ surfaces: [] }),
       setLayout: vi.fn(),
-    } as unknown as Parameters<typeof upgradeLegacyWorkspaceLayout>[0]
-    upgradeLegacyWorkspaceLayout(empty)
+    } as unknown as Parameters<typeof upgradeLegacyMirrorLayout>[0]
+    upgradeLegacyMirrorLayout(empty)
     expect(empty.setLayout).not.toHaveBeenCalled()
   })
 
@@ -150,14 +149,7 @@ describe('ClinMesh React Surface definition', () => {
       }
       let runtime: WebRuntimeOptions | undefined
       render.mockImplementation(props => { runtime = props?.runtime; return createElement('div') })
-      // 镜像布局进入全屏再退出，应回到 workspace-mirror 而非默认 workspace。
-      await act(() => root.render(createElement(definition.component, { ...baseProps, layout: 'workspace-mirror' })))
-      runtime!.surfaceDisplay!.toggle()
-      expect(setLayout).toHaveBeenLastCalledWith('clinmesh.his', 'full-frame')
-      await act(() => root.render(createElement(definition.component, { ...baseProps, layout: 'full-frame' })))
-      runtime!.surfaceDisplay!.toggle()
-      expect(setLayout).toHaveBeenLastCalledWith('clinmesh.his', 'workspace-mirror')
-      // 默认 workspace 的往返行为保持不变。
+      // workspace 进入全屏再退出，应回到 workspace。
       await act(() => root.render(createElement(definition.component, { ...baseProps, layout: 'workspace' })))
       runtime!.surfaceDisplay!.toggle()
       expect(setLayout).toHaveBeenLastCalledWith('clinmesh.his', 'full-frame')
@@ -450,7 +442,7 @@ describe('ClinMesh React Surface definition', () => {
     expect(definition.branding.shell).toBe('preserve')
     expect(definition.branding.tokens).toBeUndefined()
     expect(definition.layout.fallback).toBe('shrink')
-    expect(definition.layout.default).toBe('workspace-mirror')
-    expect(definition.layout.supported).toEqual(['workspace', 'workspace-mirror', 'full-frame'])
+    expect(definition.layout.default).toBe('workspace')
+    expect(definition.layout.supported).toEqual(['workspace', 'full-frame'])
   })
 })
