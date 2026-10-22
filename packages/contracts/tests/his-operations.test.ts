@@ -579,7 +579,9 @@ describe('HIS operation catalog', () => {
       roles: ['cashier'],
       skill: 'clinmesh-billing',
     })
-    expect(operation.input.parse({ caseId: 'case-1' })).toEqual({ caseId: 'case-1' })
+    expect(operation.input.parse({ caseId: 'case-1' })).toEqual({ caseId: 'case-1', page: 1, pageSize: 20 })
+    expect(operation.input.parse({ caseId: 'case-1', page: 2, pageSize: 1 })).toEqual({ caseId: 'case-1', page: 2, pageSize: 1 })
+    expect(operation.input.safeParse({ caseId: 'case-1', pageSize: 101 }).success).toBe(false)
     expect(operation.input.safeParse({ caseId: 'case-1', patientId: 'other-patient' }).success).toBe(false)
     expect(operation.summary).toContain('registration')
     expect(operation.summary).toContain('unpaid')

@@ -3,6 +3,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from 'lucide-react'
 import type { WorkspaceMessages } from './workspace-i18n.ts'
 
 interface PaginationControlsProps {
+  ariaLabel?: string
   disabled?: boolean
   messages: WorkspaceMessages
   onPageChange: (page: number) => void
@@ -12,6 +13,7 @@ interface PaginationControlsProps {
 }
 
 export function PaginationControls({
+  ariaLabel,
   disabled = false,
   messages,
   onPageChange,
@@ -23,7 +25,7 @@ export function PaginationControls({
   if (pageCount === 1) return null
   return (
     <nav
-      aria-label={messages.paginationLabel}
+      aria-label={ariaLabel ?? messages.paginationLabel}
       className="flex min-h-8 items-center justify-end gap-2"
     >
       <Button

@@ -124,7 +124,7 @@ describe('payment ledger migration', () => {
     const original = originalAttempts(database)
     const originalCharges = database.driver.prepare('SELECT * FROM charge_record ORDER BY charge_id').all()
 
-    expect(applyMigrations(database).applied).toEqual([migration])
+    expect(applyMigrations(database).applied).toEqual([migration, '0072_payment-history-pagination.sql'])
 
     expect(originalAttempts(database)).toEqual(original)
     expect(database.driver.prepare('SELECT * FROM charge_record ORDER BY charge_id').all()).toEqual(originalCharges)
@@ -132,7 +132,7 @@ describe('payment ledger migration', () => {
     for (const [name, outcome] of [
       ['success', 'success'], ['declined', 'declined'], ['unknown', 'ambiguous'],
     ] as const) {
-      expect(ledger.attempts(context, `case-${name}`)).toEqual([{
+      expect(ledger.attempts(context, `case-${name}`).items).toEqual([{
         amountFen: 6800,
         chargeItemId: `item-${name}`,
         correlationId: `sim-payment-${name}`,
@@ -166,7 +166,7 @@ describe('payment ledger migration', () => {
     applyMigrations(database)
 
     const ledger = new PaymentLedger(database)
-    expect(ledger.attempts(context, 'case-zero')).toEqual([{
+    expect(ledger.attempts(context, 'case-zero').items).toEqual([{
       amountFen: 0,
       chargeItemId: 'item-zero',
       correlationId: 'sim-payment-zero',

@@ -1933,8 +1933,8 @@ export function confirmPayment(input: {
   )
 }
 
-export function getBillingCase(caseId: string, signal?: AbortSignal) {
-  return apiGet(`/api/his/v1/billing/cases/${encodeURIComponent(caseId)}`, billingCaseSchema, signal)
+export function getBillingCase(caseId: string, signal?: AbortSignal, page = 1) {
+  return apiGet(`/api/his/v1/billing/cases/${encodeURIComponent(caseId)}?page=${page}&pageSize=20`, billingCaseSchema, signal)
 }
 
 export function recoverPayment(input: {

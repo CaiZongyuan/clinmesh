@@ -8232,7 +8232,7 @@ export class WorkflowService {
     })
   }
 
-  billingCase(input: { context: ActorContext; caseId: string }) {
+  billingCase(input: { context: ActorContext; caseId: string; page: number; pageSize: number }) {
     this.#assertRole(input.context, ['cashier'])
     const scope = [input.context.workspaceId, input.context.epoch, input.caseId]
     const row = z.object({ account_id: z.string(), encounter_id: z.string(), patient_json: z.string() }).optional().parse(
@@ -8264,10 +8264,11 @@ export class WorkflowService {
       const { paidFen } = ledger.balance(input.context, charge.chargeItemId)
       return { ...charge, paidFen, remainingFen: charge.amountFen - paidFen }
     })
+    const { items: payments, ...paymentsPagination } = ledger.attempts(input.context, input.caseId, input.page, input.pageSize)
     return billingCaseSchema.parse({
       accountId: row.account_id, caseId: input.caseId, encounterId: row.encounter_id,
       patient: patientSummary(parseStoredFhirResource(row.patient_json)), charges,
-      payments: ledger.attempts(input.context, input.caseId),
+      payments, paymentsPagination,
       totalFen: charges.reduce((sum, charge) => sum + charge.amountFen, 0),
       paidFen: charges.reduce((sum, charge) => sum + charge.paidFen, 0),
       remainingFen: charges.reduce((sum, charge) => sum + charge.remainingFen, 0),
@@ -9339,19 +9340,14 @@ export class WorkflowService {
       operation: 'payment.recover',
     }, transaction => {
       this.#assertRole(input.context, ['cashier'])
-      const payment = z.object({ case_id: z.string(), preview_id: z.string(), recovery_outcome: z.enum(['ambiguous', 'declined', 'success']) }).optional().parse(
-        this.#database.driver.prepare(`SELECT case_id, preview_id, recovery_outcome FROM payment_transaction
-          WHERE workspace_id = ? AND epoch = ? AND payment_id = ?
-        `).get(input.context.workspaceId, input.context.epoch, input.paymentId),
-      )
-      if (payment === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment attempt is unavailable')
-      const attempt = this.#payments.attempts(input.context, payment.case_id).find(item => item.paymentId === input.paymentId)
-      const preview = this.#readPaymentPreview(input.context, payment.preview_id)
-      if (attempt === undefined || preview === undefined || attempt.version !== input.expectedPaymentVersion) {
+      const attempt = this.#payments.attempt(input.context, input.paymentId)
+      if (attempt === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment attempt is unavailable')
+      const preview = this.#readPaymentPreview(input.context, attempt.previewId)
+      if (preview === undefined || attempt.version !== input.expectedPaymentVersion) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original payment version has changed; refresh the bill')
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${attempt.chargeItemId}`])
-      if (attempt.outcome !== 'ambiguous' || payment.recovery_outcome === 'ambiguous') {
+      if (attempt.outcome !== 'ambiguous' || attempt.recoveryOutcome === 'ambiguous') {
         return { data: { amountFen: attempt.amountFen, outcome: attempt.outcome, paymentId: input.paymentId, status: preview.case_status }, effects: [] }
       }
       if (preview.charge_status !== 'ambiguous'
@@ -9362,10 +9358,10 @@ export class WorkflowService {
       }
       this.#database.driver.prepare(`INSERT INTO payment_resolution
         (workspace_id, epoch, payment_id, outcome, resolved_at) VALUES (?, ?, ?, ?, ?)
-      `).run(input.context.workspaceId, input.context.epoch, input.paymentId, payment.recovery_outcome, this.#virtualTime(input.context))
+      `).run(input.context.workspaceId, input.context.epoch, input.paymentId, attempt.recoveryOutcome, this.#virtualTime(input.context))
       const effects: CommandEffect[] = [{ kind: 'created', reference: `PaymentResolution/${input.paymentId}`, versionId: '1' }]
-      const status = this.#applyPaymentOutcome(transaction, input.context, preview, payment.recovery_outcome, effects)
-      return { data: { amountFen: attempt.amountFen, outcome: payment.recovery_outcome, paymentId: input.paymentId, status }, effects }
+      const status = this.#applyPaymentOutcome(transaction, input.context, preview, attempt.recoveryOutcome, effects)
+      return { data: { amountFen: attempt.amountFen, outcome: attempt.recoveryOutcome, paymentId: input.paymentId, status }, effects }
     })
   }
 

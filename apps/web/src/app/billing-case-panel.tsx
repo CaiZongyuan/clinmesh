@@ -6,6 +6,7 @@ import { Button } from '@clinmesh/ui/components/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useState } from 'react'
 import { formatFen } from './workspace-format.ts'
+import { PaginationControls } from './pagination-controls.tsx'
 import type { getWorkspaceMessages, WorkspaceLocale } from './workspace-i18n.ts'
 
 type Messages = ReturnType<typeof getWorkspaceMessages>
@@ -14,10 +15,11 @@ export function paymentMethodLabel(method: 'cash' | 'bank-card' | 'mobile', mess
   return method === 'cash' ? messages.tenderCash : method === 'bank-card' ? messages.tenderCard : messages.tenderMobile
 }
 
-export function BillingCasePanel({ bill, locale, messages, onRecover, onRefresh, recovering }: {
+export function BillingCasePanel({ bill, locale, messages, onPageChange, onRecover, onRefresh, recovering }: {
   bill: z.infer<typeof billingCaseSchema>
   locale: WorkspaceLocale
   messages: Messages
+  onPageChange: (page: number) => void
   onRecover: (paymentId: string) => Promise<unknown>
   onRefresh: () => unknown
   recovering: boolean
@@ -78,6 +80,7 @@ export function BillingCasePanel({ bill, locale, messages, onRecover, onRefresh,
           </div>
         ))}</div>
       )}
+      <PaginationControls ariaLabel={messages.paymentHistory} disabled={recovering} messages={messages} onPageChange={onPageChange} {...bill.paymentsPagination} />
     </section>
   )
 }

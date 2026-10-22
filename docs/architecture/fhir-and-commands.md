@@ -435,4 +435,4 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、退款、医保、库存调拨、出院和病案归档不属于当前能力，也不宣称已有预览协议。
 
-门诊账单 GET 仅向收费员返回当前作用域内一次门诊的应收、余额与原支付历史。`payment.recover` 是审阅后的窄 Command，要求幂等键、`input.expectedPaymentVersion` 和原应收的 ChargeItem expected version；没有任意金额或 outcome 输入，也不重用预览 token。未解决支付版本为 1，追加确定结果后为 2；终态查询返回既有结果，继续未知不改变版本。HTTP、Operation Catalog、CLI 和 Surface 共用此 owner，业务与恢复边界见[收费与支付](clinical-workflows.md#85-收费支付与退款)。
+门诊账单 GET（`billing.case.get` v2）仅向收费员返回当前作用域内一次门诊的完整应收与余额，以及一页原支付历史。HTTP 与 CLI 使用 `page`、`pageSize`，默认 1、20，单页最多 100；`paymentsPagination` 返回页码、页大小与历史总条数，`payments` 按创建时间及 payment ID 倒序排列。Surface 的 `billing.case.read` 只绑定当前就诊，可选 `page` 读取并显示每页 20 条的历史，供人工审阅恢复；不接受其他病例 ID。`payment.recover` 是审阅后的窄 Command，要求幂等键、`input.expectedPaymentVersion` 和原应收的 ChargeItem expected version；没有任意金额或 outcome 输入，也不重用预览 token。未解决支付版本为 1，追加确定结果后为 2；终态查询返回既有结果，继续未知不改变版本。HTTP、Operation Catalog、CLI 和 Surface 共用此 owner，业务与恢复边界见[收费与支付](clinical-workflows.md#85-收费支付与退款)。

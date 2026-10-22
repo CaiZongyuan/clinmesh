@@ -22,18 +22,18 @@ describe('catalog-backed operation execution', () => {
       charges: [{ amountFen: 1000, category: 'registration', chargeItemId: 'charge-registration',
         chargeVersion: 1, descriptionEn: 'Registration', descriptionZh: '挂号费',
         paidFen: 0, remainingFen: 1000, status: 'billable' }],
-      paidFen: 0, remainingFen: 1000, totalFen: 1000, payments: [],
+      paidFen: 0, remainingFen: 1000, totalFen: 1000, payments: [], paymentsPagination: { page: 2, pageSize: 10, total: 0 },
       patient: { id: 'patient-1', identifier: 'CM-SYNTHETIC-1', name: '合成收费患者', synthetic: true, versionId: '1' },
     }))
     const execute = createHttpExecutor({
       baseUrl: 'http://127.0.0.1:51868', credential: { kind: 'agent', token: 'cma_synthetic' }, fetch,
     })
-    const exitCode = await runCli(['billing', 'case', 'get', '--case-id', 'case-1'], {
+    const exitCode = await runCli(['billing', 'case', 'get', '--case-id', 'case-1', '--page', '2', '--page-size', '10'], {
       stdout: stdout.stream, stderr: stderr.stream,
     }, { authMode: 'agent', execute })
     expect(exitCode).toBe(0)
     expect(stderr.value()).toBe('')
-    expect(String(fetch.mock.calls[0]![0])).toBe('http://127.0.0.1:51868/api/his/v1/billing/cases/case-1')
+    expect(String(fetch.mock.calls[0]![0])).toBe('http://127.0.0.1:51868/api/his/v1/billing/cases/case-1?page=2&pageSize=10')
     expect(JSON.parse(stdout.value())).toMatchObject({
       ok: true, data: { paidFen: 0, remainingFen: 1000, charges: [{ category: 'registration', status: 'billable' }] },
     })

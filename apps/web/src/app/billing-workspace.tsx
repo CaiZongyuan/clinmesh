@@ -1,4 +1,5 @@
 import type { BillingQueueItem, SessionContext } from '@clinmesh/contracts/his'
+import { parseAgentToolInput } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
   AlertDialog,
@@ -50,6 +51,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const [category, setCategory] = useState<BillingCategory>('laboratory')
   const [status, setStatus] = useState<BillingStatus>('pending')
   const [page, setPage] = useState(1)
+  const [historyPage, setHistoryPage] = useState({ caseKey: '', page: 1 })
+  const historyRevision = useRef(0)
+  const paymentInFlight = useRef(false)
   const [paymentConfirmationOpen, setPaymentConfirmationOpen] = useState(false)
   const [simulatorRule, setSimulatorRule] = useState<SimulatorRule>('success')
   const [selectedChargeId, setSelectedChargeId] = useState<string>()
@@ -69,12 +73,15 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const selectedCharge = queue.data?.items.find(item => item.chargeItemId === selectedChargeId)
     ?? queue.data?.items[0]
   const caseId = selectedCharge?.caseId
+  const caseKey = agentViewRevision({ scope, caseId })
+  const paymentPage = historyPage.caseKey === caseKey ? historyPage.page : 1
+  if (historyPage.caseKey !== caseKey) setHistoryPage({ caseKey, page: 1 })
   const bill = useQuery({
     enabled: caseId !== undefined,
-    queryKey: ['billing-case', ...scope, caseId],
+    queryKey: ['billing-case', ...scope, caseId, paymentPage],
     queryFn: ({ signal }) => {
       if (caseId === undefined) throw new Error(messages.paymentUnavailable)
-      return getBillingCase(caseId, signal)
+      return getBillingCase(caseId, signal, paymentPage)
     },
   })
   const selectionRevision = useRef(0)
@@ -101,6 +108,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   }
   const recover = useMutation({
     onMutate: (paymentId: string) => {
+      historyRevision.current += 1
       const attempt = bill.data?.payments.find(item => item.paymentId === paymentId)
       const charge = bill.data?.charges.find(item => item.chargeItemId === attempt?.chargeItemId)
       const context = { ...paymentMutationContext(), chargeItemId: charge?.chargeItemId, category: charge?.category }
@@ -117,8 +125,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       if (!ownsPaymentResult(context)) return
       setSelectedChargeId(context?.chargeItemId)
       if (context?.category === 'laboratory' || context?.category === 'medication') setCategory(context.category)
-      setPage(1)
-      setStatus(paymentQueueStatus(response.data))
+      const nextStatus = paymentQueueStatus(response.data)
+      if (nextStatus !== status || (context.category !== undefined && context.category !== category)) setPage(1)
+      setStatus(nextStatus)
     },
     onSettled: refreshBilling,
   })
@@ -127,6 +136,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     : locale === 'zh-CN' ? selectedCharge.descriptionZh : selectedCharge.descriptionEn
   const preview = useMutation({
     onMutate: () => {
+      historyRevision.current += 1
       const context = paymentMutationContext()
       paymentContexts.current.preview = context
       return context
@@ -145,6 +155,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   })
   const confirm = useMutation({
     onMutate: () => {
+      historyRevision.current += 1
       const context = paymentMutationContext()
       paymentContexts.current.confirm = context
       return context
@@ -162,14 +173,17 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       if (!ownsPaymentResult(context)) return
       setPaymentConfirmationOpen(false)
       setSelectedChargeId(context?.chargeItemId)
-      setPage(1)
-      setStatus(paymentQueueStatus(response.data))
+      setHistoryPage({ caseKey, page: 1 })
+      const nextStatus = paymentQueueStatus(response.data)
+      if (nextStatus !== status) setPage(1)
+      setStatus(nextStatus)
       setTenderAmounts({})
       preview.reset()
     },
     onSettled: refreshBilling,
   })
   const clearPayment = () => {
+    historyRevision.current += 1
     selectionRevision.current += 1
     setPaymentConfirmationOpen(false)
     preview.reset()
@@ -198,6 +212,12 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   }
   const unknownAttempt = bill.data?.payments.find(payment => payment.chargeItemId === selectedCharge?.chargeItemId && payment.outcome === 'ambiguous')
   const paymentPending = preview.isPending || confirm.isPending || recover.isPending
+  paymentInFlight.current = paymentPending
+  const changeHistoryPage = (page: number) => {
+    if (paymentInFlight.current) return
+    historyRevision.current += 1
+    setHistoryPage({ caseKey, page })
+  }
 
   const agentPage = useMemo(() => ({
     actions: {
@@ -207,12 +227,21 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         execute: (_raw: unknown, signal: AbortSignal) => getBillingQueue(category, status, signal, page),
       },
       'billing.case.read': {
-        description: 'Read the selected encounter bill and its original payment attempts.',
-        enabled: selectedCharge !== undefined,
-        parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
-        execute: (_raw: unknown, signal: AbortSignal) => {
-          if (selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
-          return getBillingCase(selectedCharge.caseId, signal)
+        description: 'Read the selected bill with complete balances and display a payment history page (20 attempts per page).',
+        enabled: !paymentPending && selectedCharge !== undefined,
+        parameters: { type: 'object' as const, properties: { page: { type: 'integer', minimum: 1 } }, additionalProperties: false },
+        execute: async (raw: unknown, signal: AbortSignal) => {
+          if (paymentInFlight.current || selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
+          const { page: requestedPage = paymentPage } = parseAgentToolInput('billing.case.read', raw)
+          const context = paymentMutationContext()
+          const revision = ++historyRevision.current
+          const result = await getBillingCase(selectedCharge.caseId, signal, requestedPage)
+          const pageCount = Math.max(1, Math.ceil(result.paymentsPagination.total / result.paymentsPagination.pageSize))
+          if (requestedPage > pageCount) throw new Error(`Payment history has ${pageCount} page(s); choose a page from 1 to ${pageCount}`)
+          if (!signal.aborted && !paymentInFlight.current && ownsPaymentResult(context) && revision === historyRevision.current) {
+            setHistoryPage({ caseKey, page: requestedPage })
+          }
+          return result
         },
       },
       'billing.payment.recover.propose': {
@@ -281,6 +310,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       viewRevision: agentViewRevision({
         category,
         page,
+        paymentPage,
         previewId: preview.data?.data.previewId,
         selectedChargeId: selectedCharge?.chargeItemId,
         simulatorRule,
@@ -325,6 +355,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     locale,
     messages,
     page,
+    caseKey,
+    paymentPage,
     preview.data,
     preview.mutateAsync,
     preview.reset,
@@ -415,7 +447,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             {bill.isPending ? <Skeleton className="h-24 w-full" /> : bill.isError ? (
               <PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} />
             ) : bill.data === undefined ? null : (
-              <BillingCasePanel bill={bill.data} locale={locale} messages={messages} onRecover={paymentId => recover.mutateAsync(paymentId)} onRefresh={() => bill.refetch()} recovering={paymentPending} />
+              <BillingCasePanel key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={paymentId => recover.mutateAsync(paymentId)} onRefresh={() => bill.refetch()} recovering={paymentPending} />
             )}
             <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
               <div><div className="text-lg font-semibold">{selectedCharge.patient.name}</div><div className="text-sm text-muted-foreground">{selectedChargeDescription}</div></div>

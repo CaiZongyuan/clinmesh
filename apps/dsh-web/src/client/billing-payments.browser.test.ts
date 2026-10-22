@@ -91,7 +91,7 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
         const projected = billingQueueSchema.parse({ ...queue, items: replaceQueue ? [second] : [original, second], page: 1, pageSize: 2, total: 4 })
         await route.fulfill({ response, json: projected })
       })
-      await page.route('**/api/his/v1/billing/cases/synthetic-case-b', async route => {
+      await page.route('**/api/his/v1/billing/cases/synthetic-case-b?**', async route => {
         const response = await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}`)
         const original = billingCaseSchema.parse(await response.json())
         const charge = original.charges.find(item => item.chargeItemId === server.chargeItemId)!
@@ -213,6 +213,136 @@ for (const version of ['18', '19']) test.describe(`billing dialogs on React ${ve
       await expect(bill).toContainText('原结果未知')
       await page.evaluate(() => window.dispatchEvent(new Event('billing-payments-errors')))
       expect(z.object({ errors: z.array(z.string()) }).parse(JSON.parse(Buffer.from(await page.title(), 'base64').toString('utf8'))).errors).toEqual([])
+    } finally { await server.close() }
+  })
+})
+
+for (const version of ['18', '19']) test.describe(`billing pagination on React ${version}`, () => {
+  test.beforeAll(async () => { await buildFixture(version) })
+  test('reads older payment history and recovers the original attempt on that page', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    let delayHistoryRead = false
+    let releaseHistoryRead = () => {}
+    let historyReadStarted = () => {}
+    const released = new Promise<void>(resolve => { releaseHistoryRead = resolve })
+    const started = new Promise<void>(resolve => { historyReadStarted = resolve })
+    try {
+      await page.route('**/api/his/v1/billing/queue?**', async route => {
+        const response = await route.fetch()
+        const queue = billingQueueSchema.parse(await response.json())
+        const original = queue.items[0]
+        if (original === undefined) return route.fulfill({ response })
+        await route.fulfill({ response, json: billingQueueSchema.parse({ ...queue, total: 2,
+          items: [original, { ...original, chargeItemId: 'synthetic-charge-b', caseId: 'synthetic-case-b',
+            patient: { ...original.patient, name: '合成患者 B' } }] }) })
+      })
+      await mountBilling(page, version, server)
+      // The older history is projected; the unknown attempt and its recovery use real HTTP and SQLite.
+      await page.route('**/api/his/v1/billing/cases/**', async route => {
+        const source = new URL(route.request().url())
+        source.searchParams.set('page', '1')
+        const otherCase = source.pathname.endsWith('/synthetic-case-b')
+        if (otherCase) source.pathname = `/api/his/v1/billing/cases/${server.caseId}`
+        const response = await route.fetch({ url: source.toString() })
+        const bill = billingCaseSchema.parse(await response.json())
+        if (otherCase) return route.fulfill({ response, json: billingCaseSchema.parse({ ...bill,
+          caseId: 'synthetic-case-b', patient: { ...bill.patient, name: '合成患者 B' }, payments: [],
+          paymentsPagination: { page: 1, pageSize: 20, total: 0 } }) })
+        const original = bill.payments[0]
+        if (original === undefined) return route.fulfill({ response })
+        const historyPage = Number(new URL(route.request().url()).searchParams.get('page') ?? '1')
+        const payments = historyPage === 2 ? [original] : Array.from({ length: 20 }, (_, index) => ({
+          ...original, paymentId: `synthetic-history-${index}`, initialOutcome: 'declined', outcome: 'declined',
+        }))
+        if (delayHistoryRead && historyPage === 2) {
+          delayHistoryRead = false
+          historyReadStarted()
+          const timer = setTimeout(releaseHistoryRead, 10_000)
+          try { await released } finally { clearTimeout(timer) }
+        }
+        await route.fulfill({ response, json: billingCaseSchema.parse({ ...bill, payments,
+          paymentsPagination: { page: historyPage, pageSize: 20, total: 21 } }) })
+      })
+      await page.getByLabel('支付处理结果', { exact: true }).click()
+      await page.getByRole('option', { name: '结果未知', exact: true }).click()
+      await page.getByLabel('合成现金', { exact: true }).fill('20')
+      const payment = await submitPayment(page)
+      expect(payment.outcome).toBe('ambiguous')
+      const bill = page.getByRole('region', { name: '本次就诊账单', exact: true })
+      const history = bill.getByRole('navigation', { name: '支付尝试记录', exact: true })
+      await expect(bill.getByRole('button', { name: '查询原支付结果', exact: true })).toHaveCount(0)
+      await history.getByRole('button', { name: '下一页', exact: true }).click()
+      await expect(bill).toContainText(payment.paymentId)
+      await page.locator('[data-agent-selection="synthetic-charge-b"]').click()
+      await expect(bill.getByRole('navigation')).toHaveCount(0)
+      await page.locator(`[data-agent-selection="${server.chargeItemId}"]`).click()
+      await expect(history).toContainText('1 / 2')
+      delayHistoryRead = true
+      const agentRead = page.evaluate(() => new Promise(resolve => {
+        window.addEventListener('billing-payments-agent-result', event => {
+          if (event instanceof CustomEvent) resolve(event.detail)
+        }, { once: true })
+        window.dispatchEvent(new CustomEvent('billing-payments-agent-read', { detail: { page: 2 } }))
+      }))
+      await started
+      await history.getByRole('button', { name: '下一页', exact: true }).click()
+      await expect(history).toContainText('2 / 2')
+      await history.getByRole('button', { name: '上一页', exact: true }).click()
+      await expect(history).toContainText('1 / 2')
+      releaseHistoryRead()
+      expect(z.object({ result: billingCaseSchema }).parse(await agentRead).result.paymentsPagination.page).toBe(2)
+      await expect(history).toContainText('1 / 2')
+      await history.getByRole('button', { name: '下一页', exact: true }).click()
+      await bill.getByRole('button', { name: '查询原支付结果', exact: true }).click()
+      const review = page.getByRole('alertdialog', { name: '查询原支付结果', exact: true })
+      const recovered = page.waitForResponse(response => response.request().method() === 'POST'
+        && new URL(response.url()).pathname.endsWith(`/payments/${payment.paymentId}/actions/recover`))
+      await review.getByRole('button', { name: '查询原支付结果', exact: true }).click()
+      expect((await recovered).status()).toBe(200)
+      await expect(review).toHaveCount(0)
+      await expect(bill).toContainText('¥20.00')
+      expect((await readBill(page, server)).paidFen).toBe(2000)
+    } finally { releaseHistoryRead(); await server.close() }
+  })
+
+  test('keeps the partially collected bill selected on page two', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await page.route('**/api/his/v1/billing/queue?**', async route => {
+        const source = new URL(route.request().url())
+        const requestedPage = Number(source.searchParams.get('page') ?? '1')
+        source.searchParams.set('page', '1')
+        const response = await page.request.get(source.toString())
+        const queue = billingQueueSchema.parse(await response.json())
+        const original = queue.items.find(item => item.chargeItemId === server.chargeItemId)
+        if (original === undefined) throw new Error('Missing real receivable')
+        const other = { ...original, chargeItemId: 'synthetic-charge-b', caseId: 'synthetic-case-b',
+          descriptionZh: 'Synthetic charge B', descriptionEn: 'Synthetic charge B',
+          patient: { ...original.patient, name: 'Synthetic patient B' } }
+        await route.fulfill({ json: billingQueueSchema.parse({ ...queue,
+          items: [requestedPage === 2 ? original : other], page: requestedPage, pageSize: 1, total: 2 }) })
+      })
+      await page.route('**/api/his/v1/billing/cases/synthetic-case-b?**', async route => {
+        const response = await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}`)
+        const original = billingCaseSchema.parse(await response.json())
+        const charge = original.charges.find(item => item.chargeItemId === server.chargeItemId)!
+        await route.fulfill({ json: billingCaseSchema.parse({ ...original, caseId: 'synthetic-case-b',
+          patient: { ...original.patient, name: 'Synthetic patient B' }, charges: [{ ...charge,
+            chargeItemId: 'synthetic-charge-b', descriptionZh: 'Synthetic charge B', paidFen: 0,
+            remainingFen: charge.amountFen }], payments: [], paidFen: 0,
+          remainingFen: charge.amountFen, totalFen: charge.amountFen }) })
+      })
+      await mountBilling(page, version, server)
+      await expect(page.locator('[data-agent-selection="synthetic-charge-b"]')).toBeVisible()
+      await page.getByRole('button', { name: '下一页', exact: true }).click()
+      const original = page.locator(`[data-agent-selection="${server.chargeItemId}"]`)
+      await expect(original).toBeVisible()
+      await page.getByLabel('合成现金', { exact: true }).fill('20')
+      const result = await submitPayment(page)
+      expect(result.outcome).toBe('success')
+      expect((await readBill(page, server)).paidFen).toBe(2000)
+      await expect(page.getByRole('button', { name: '预览支付', exact: true })).toBeEnabled()
+      await expect(original).toBeVisible()
     } finally { await server.close() }
   })
 })

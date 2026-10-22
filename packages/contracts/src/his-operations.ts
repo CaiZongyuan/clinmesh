@@ -544,7 +544,7 @@ const billingQueueInputSchema = paginationInputSchema.extend({
   status: z.enum(['ambiguous', 'declined', 'paid', 'pending']),
 }).strict()
 
-const billingCaseInputSchema = z.object({ caseId: z.string().min(1) }).strict()
+const billingCaseInputSchema = paginationInputSchema.extend({ caseId: z.string().min(1) }).strict()
 
 const paymentPreviewOperationInputSchema = z.object({
   caseId: z.string().min(1),
@@ -2245,8 +2245,8 @@ const operationDefinitions = [
     },
     risk: 'read',
     roles: ['cashier'],
-    summary: 'Read one unified bill with payment attempts and unpaid registration charges; registration remains read-only',
-    version: 1,
+    summary: 'Read one unified bill with complete balances, paged payment attempts and unpaid registration charges; registration remains read-only',
+    version: 2,
   },
   {
     cliPath: ['payment', 'preview'],

@@ -11,14 +11,20 @@ import { AgentPageRegistryProvider, useAgentPageRegistration } from '../../../we
 function AgentSelectionProbe() {
   const registration = useAgentPageRegistration()
   React.useEffect(() => {
-    const select = (event: Event) => {
+    const execute = (operationId: 'billing.item.select' | 'billing.case.read', event: Event) => {
       if (!(event instanceof CustomEvent)) return
-      void Promise.resolve().then(() => registration?.actions['billing.item.select']?.execute(event.detail, new AbortController().signal))
+      void Promise.resolve().then(() => registration?.actions[operationId]?.execute(event.detail, new AbortController().signal))
         .then(result => window.dispatchEvent(new CustomEvent('billing-payments-agent-result', { detail: { result } })))
         .catch(error => window.dispatchEvent(new CustomEvent('billing-payments-agent-result', { detail: { error: String(error) } })))
     }
+    const select = (event: Event) => execute('billing.item.select', event)
+    const read = (event: Event) => execute('billing.case.read', event)
     window.addEventListener('billing-payments-agent-select', select)
-    return () => window.removeEventListener('billing-payments-agent-select', select)
+    window.addEventListener('billing-payments-agent-read', read)
+    return () => {
+      window.removeEventListener('billing-payments-agent-select', select)
+      window.removeEventListener('billing-payments-agent-read', read)
+    }
   }, [registration])
   return null
 }

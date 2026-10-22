@@ -9,11 +9,14 @@ Read [`../clinmesh-shared/SKILL.md`](../clinmesh-shared/SKILL.md) first.
 
 Read the queue, then the selected case's unified bill. The bill includes registration, laboratory and medication charges, their paid and remaining amounts, and payment attempts with their current versions. Registration charges remain unpaid and read-only in this workflow.
 
+`billing.case.get` returns complete bill balances and one page of `payments`, newest first by creation time and payment ID. Use `paymentsPagination` (`page`, `pageSize`, `total`) to request further pages; the default page size is 20 and the hard maximum is 100. A missing attempt on one page does not mean it never existed. Find the original unknown attempt before recovery; never replace it with a new collection. The Surface bill read accepts `page` and displays that history page for human review.
+
 Payment uses preview then confirm. Optional `tenders` combine `cash`, `bank-card` and `mobile` amounts in positive integer fen; omitted tenders use the default full remaining amount. Keep the preview ID, commit token, ChargeItem version and each command's idempotency key together. Confirm freezes the previewed tenders. A successful partial payment leaves a balance; only a fully paid charge advances clinical fulfillment.
 
 ```bash
 clinmesh billing queue list --category laboratory --status pending
-clinmesh billing case get --case-id <case-id>
+clinmesh billing case get --case-id <case-id> --page 1 --page-size 20
+clinmesh billing case get --case-id <case-id> --page 2 --page-size 20
 clinmesh operations schema payment.preview
 clinmesh payment preview --input @payment-preview.json --idempotency-key <key>
 clinmesh payment confirm --input @payment-confirm.json --idempotency-key <key>

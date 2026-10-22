@@ -31,6 +31,9 @@ describe('ClinMesh DSH Agent contracts', () => {
       expect(agentToolsForContext('registrar', 'registration').map(tool => tool.operationId))
         .not.toContain(operation)
     }
+    expect(parseAgentToolInput('billing.case.read', { page: 2 })).toEqual({ page: 2 })
+    expect(() => parseAgentToolInput('billing.case.read', { page: 0 })).toThrow()
+    expect(() => parseAgentToolInput('billing.payment.recover.propose', { page: 2 })).toThrow()
   })
 
   it('accepts saved source attribution for an Agent clinical draft without inventing clinical evidence', () => {

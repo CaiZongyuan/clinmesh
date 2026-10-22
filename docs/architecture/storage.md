@@ -64,6 +64,8 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 
 #### 门诊收款记录
 
+支付历史通过 Workspace/Epoch、case、创建时间及 payment ID 的复合索引按页读取；当前页的支付方式使用一次批量查询。恢复 Command 按受信作用域及原 payment ID 查询单条尝试与追加结果，不加载整次就诊历史或支付方式，事务内读取次数不随历史条数增长。
+
 `payment_preview` 保存冻结金额、组合方式 JSON、费用版本、真实时间期限和岗位上下文摘要；旧预览缺少绑定时须重新预览。`payment_transaction` 保存不可覆盖的原始 outcome、correlation ID 及冻结查询计划；`payment_allocation` 用外键关联原尝试与 Charge Record，`payment_tender` 按顺序保存各方式金额。`payment_resolution` 以原 payment ID 唯一保存确定查询结果，原未知 outcome 不被改写。账单通过成功的有效 outcome 汇总实收，不持久保存第二套可编辑余额。
 
 收款、分配、方式、费用/FHIR 版本、审计与临床 outbox 在同一个 Command 事务提交。查询恢复使用支付版本及 ChargeItem expected version；重复请求复用 Command 回执，不创建第二条收款或重复放行。历史迁移只在 case/category 唯一匹配原费用时回填分配及现金方式，缺失或多匹配使迁移整体回滚；保留原始费用、交易及未知结果。业务放行规则见[收费与支付](clinical-workflows.md#85-收费支付与退款)。

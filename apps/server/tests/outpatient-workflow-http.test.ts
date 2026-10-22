@@ -68,6 +68,7 @@ import { z } from 'zod'
 import { AuditQuery } from '../src/application/audit-query.ts'
 import { WorkspaceContextError } from '../src/infrastructure/sqlite/workspace-repository.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import type { SqlitePerformanceObserver } from '../src/infrastructure/sqlite/performance-observer.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 import type {
   ScenarioGenerationProvider,
@@ -1390,7 +1391,7 @@ describe('outpatient workflow HTTP contract', () => {
   const runtimes: Array<Awaited<ReturnType<typeof createClinMeshRuntime>>> = []
   const temporaryDirectories: string[] = []
 
-  async function paymentTestRuntime(now?: () => Date) {
+  async function paymentTestRuntime(now?: () => Date, performanceObserver?: SqlitePerformanceObserver) {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-payment-boundary-'))
     temporaryDirectories.push(directory)
     const password = `Test-${randomUUID()}-Aa1!`
@@ -1401,6 +1402,7 @@ describe('outpatient workflow HTTP contract', () => {
       chatCompletionsProvider: new QueuePersonaProvider(), consultationModel: 'fake-consultation-model',
       investigationModel: 'fake-investigation-model', patientPersonaModel: 'fake-persona-model', syntheaProvider: new StubSyntheaProvider(),
       ...(now === undefined ? {} : { now }),
+      ...(performanceObserver === undefined ? {} : { performanceObserver }),
     }
     const runtime = await createClinMeshRuntime(options)
     runtimes.push(runtime)
@@ -7171,8 +7173,67 @@ describe('outpatient workflow HTTP contract', () => {
     const bill = await readBill()
     expect(bill.paidFen).toBe(6800)
     expect(bill.payments).toHaveLength(2)
-    expect(bill.payments[1]?.tenders).toEqual([{ method: 'bank-card', amountFen: 3000 }, { method: 'mobile', amountFen: 1800 }])
+    expect(bill.payments.find(payment => payment.amountFen === 4800)?.tenders).toEqual([{ method: 'bank-card', amountFen: 3000 }, { method: 'mobile', amountFen: 1800 }])
     expect(bill.charges.find(charge => charge.category === 'laboratory')).toMatchObject({ paidFen: 6800, remainingFen: 0, status: 'paid' })
+  })
+
+  it('pages payment history with complete balances and recovers a hidden attempt without reading other tenders', async () => {
+    const queries: string[] = []
+    const { runtime, password } = await paymentTestRuntime(undefined, {
+      observeStatement: measurement => { if (measurement.kind === 'query') queries.push(measurement.sql) },
+      observeTransaction: () => {},
+    })
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const paymentIds: string[] = []
+    for (const [index, rule] of ['decline', 'decline', 'success', 'ambiguous'].entries()) {
+      const expectedVersions = { [`ChargeItem/${testCase.order.chargeItemId}`]: String(index + 1) }
+      const previewResponse = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+        method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input: {
+          caseId: testCase.caseId, category: 'laboratory', simulatorRule: rule,
+          tenders: [{ method: 'bank-card', amountFen: 1000 }, { method: 'mobile', amountFen: 1000 }],
+        } }),
+      })
+      expect(previewResponse.status).toBe(200)
+      const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
+      const response = await runtime.app.request(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, {
+        method: 'POST', headers: commandHeaders(cookie),
+        body: JSON.stringify({ expectedVersions, input: { commitToken: preview.commitToken } }),
+      })
+      expect(response.status).toBe(200)
+      paymentIds.push(paymentResponseSchema.parse(await response.json()).data.paymentId)
+    }
+    const readPage = async (page: number) => {
+      queries.length = 0
+      const response = await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}?page=${page}&pageSize=2`, { headers: { cookie } })
+      expect(response.status).toBe(200)
+      const bill = billingCaseSchema.parse(await response.json())
+      expect(bill.payments).toHaveLength(2)
+      expect(bill).toMatchObject({ paymentsPagination: { page, pageSize: 2, total: 4 }, paidFen: 2000, remainingFen: 6800, totalFen: 8800 })
+      expect(bill.payments.every(payment => payment.tenders.length === 2)).toBe(true)
+      expect(queries.filter(sql => /FROM payment_tender\b/u.test(sql))).toHaveLength(1)
+      return bill
+    }
+    const first = await readPage(1)
+    const second = await readPage(2)
+    expect(new Set([...first.payments, ...second.payments].map(payment => payment.paymentId))).toEqual(new Set(paymentIds))
+    for (const query of ['page=0', 'pageSize=101', 'pageSize=1.5']) {
+      expect((await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}?${query}`, { headers: { cookie } })).status).toBe(400)
+    }
+    queries.length = 0
+    const recoveredResponse = await runtime.app.request(`/api/his/v1/payments/${paymentIds[3]}/actions/recover`, {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '5' }, input: { expectedPaymentVersion: 1 },
+      }),
+    })
+    expect(recoveredResponse.status).toBe(200)
+    expect(paymentResponseSchema.parse(await recoveredResponse.json()).data).toMatchObject({ paymentId: paymentIds[3], outcome: 'success', status: 'awaiting-lab-payment' })
+    expect(queries.filter(sql => /FROM payment_tender\b/u.test(sql))).toHaveLength(0)
+    expect(queries.filter(sql => /FROM payment_transaction AS payment/u.test(sql) && /payment\.payment_id = \?/u.test(sql))).toHaveLength(1)
+    const billResponse = await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}?pageSize=1`, { headers: { cookie } })
+    const bill = billingCaseSchema.parse(await billResponse.json())
+    expect(bill).toMatchObject({ paidFen: 4000, remainingFen: 4800, paymentsPagination: { page: 1, pageSize: 1, total: 4 } })
+    expect(bill.payments).toHaveLength(1)
   })
 
   it.each([

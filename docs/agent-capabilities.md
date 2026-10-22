@@ -106,7 +106,7 @@
 | `outpatient.record.revise.propose` | 存在已签署文书 | 人工审阅文书更正 |
 | `outpatient.encounter.complete.propose` | 就诊进行中；提交时重验完成条件 | 人工审阅完成就诊 |
 | `billing.item.select` | 费用在当前收费队列页中，且无支付请求进行中 | 选择目标费用记录 |
-| `billing.case.read` | 已选当前作用域费用 | 读取本次就诊账单、余额和原支付尝试；挂号应收只读 |
+| `billing.case.read` | 已选当前作用域费用 | 读取完整账单余额及一页原支付尝试，可用 `page` 显示历史页；挂号应收只读，分页协议见 [Command 协议](architecture/fhir-and-commands.md#66-预览与提交) |
 | `billing.payment.preview` | 已选可收款的检验或药品费用，状态为 billable 或 declined | 按当前分次金额和组合方式生成缴费预览；强调缴费详情区 |
 | `billing.payment.confirm.propose` | 已有当前检验或药品费用的有效预览 | 人工审阅本次金额及方式后缴费；页面展示成功、拒付或未知 |
 | `billing.payment.recover.propose` | 当前检验或药品应收为 ambiguous，且原未知尝试可用 | 人工审阅查询原支付结果；不新增收款，未查明前禁止再次收取 |
