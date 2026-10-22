@@ -151,12 +151,24 @@ export function dshvmEnvironmentFor(paths: Pick<DshSandboxPaths, 'versionsDir' |
   }
 }
 
+/**
+ * NODE_USE_ENV_PROXY=1 时环回请求也会交给 http_proxy，而 no_proxy 的 `127.*`
+ * 通配在 Node 的 env-proxy 匹配中不生效；显式补精确主机名，保证本机服务直连。
+ */
+export function withLoopbackNoProxy(value: string | undefined): string {
+  const entries = (value ?? '').split(',').map(entry => entry.trim()).filter(entry => entry.length > 0)
+  return [...new Set([...entries, '127.0.0.1', 'localhost'])].join(',')
+}
+
 export function createDshDevelopmentPlan(input: DshDevelopmentPlanInput): DshDevelopmentPlan {
+  const loopbackNoProxy = withLoopbackNoProxy(input.environment.NO_PROXY)
   const serverEnvironment: Record<string, string> = {
     CLINMESH_TRUSTED_ORIGINS: input.trustedOrigins,
     CLINMESH_AI_SOURCE: 'dsh',
     CLINMESH_DSH_MODEL_ORIGIN: `http://127.0.0.1:${dshWebPort}`,
     CLINMESH_DSH_BRIDGE_SECRET: input.bridgeSecret,
+    NO_PROXY: loopbackNoProxy,
+    no_proxy: loopbackNoProxy,
   }
   for (const name of serverResolvedEnvironmentKeys) {
     const value = input.environment[name]
@@ -183,6 +195,8 @@ export function createDshDevelopmentPlan(input: DshDevelopmentPlanInput): DshDev
           CLINMESH_DSH_BRIDGE_SECRET: input.bridgeSecret,
           // cordis.patch.yml 按此变量解析 /clinmesh-api 代理上游，缺省 51868；显式传入，端口配置漂移时不静默失联。
           CLINMESH_DSH_UPSTREAM_ORIGIN: `http://127.0.0.1:${input.environment.CLINMESH_PORT ?? '51868'}`,
+          NO_PROXY: loopbackNoProxy,
+          no_proxy: loopbackNoProxy,
         },
         output: { prefix: '[DSH]', onText: input.onHostText },
       },
