@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { apiErrorSchema } from '@clinmesh/contracts/his'
+import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
+import { inpatientChargesSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 
@@ -84,15 +86,15 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(rejected.status).toBe(409)
     expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('CATALOG_CONFLICT')
     expect(inpatientSurgerySchema.parse(await (await s.request(s.doctor, `${s.path}/surgeries`)).json())).toEqual(prepared)
-    expect((await (await s.request(s.doctor, `/fhir/R5/Procedure?encounter=Encounter/${s.admission.id}&_total=accurate`)).json()).total).toBe(0)
-    expect((await (await s.request(s.cashier, `${s.path}/charges`)).json()).charges).toEqual([])
+    expect(fhirBundleSchema.parse(await (await s.request(s.doctor, `/fhir/R5/Procedure?encounter=Encounter/${s.admission.id}&_total=accurate`)).json()).total).toBe(0)
+    expect(inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json()).charges).toEqual([])
     const executed = await s.request(s.doctor, `${s.path}/surgeries/execute`, { ...input,
       materials: [{ materialId: 'hospital-material-cv-8', catalogVersion: 1, quantity: 2 }] })
     expect(executed.status).toBe(200)
     expect(inpatientSurgeryResponseSchema.parse(await executed.json()).data.executions[0]!.materials[0]).toMatchObject({ quantity: 2, amountFen: 2398000,
       item: { id: 'hospital-material-cv-8', chargeDefinition: { priceFen: 1199000, unit: '台' }, reference: { sourceId: 'HN-PACING-2026' } } })
-    const charges = (await (await s.request(s.cashier, `${s.path}/charges`)).json()).charges
-    expect(charges.map((item: { amountFen: number }) => item.amountFen)).toEqual([200000, 2398000])
+    const charges = inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json()).charges
+    expect(charges.map(item => item.amountFen)).toEqual([200000, 2398000])
   })
 
   it.each(['request','check-preop','confirm-consent','cancel','execute'])('手术%s拒绝缺失或恶意Origin且不写入，可信Origin正常', async action => {

@@ -48,7 +48,7 @@ describe('clinmesh process entrypoint', () => {
       expect.objectContaining({ id: 'doctor.document-quality.get' }),
       expect.objectContaining({ id: 'doctor.document-quality.check' }),
       expect.objectContaining({ id: 'doctor.document-quality.retain' }),
-      expect.objectContaining({ id: 'inpatient.surgery.catalog', version: 1 }),
+      expect.objectContaining({ id: 'inpatient.surgery.catalog', version: 2 }),
       expect.objectContaining({ id: 'inpatient.surgery.read', version: 1 }),
       expect.objectContaining({ id: 'inpatient.surgery.request', version: 1 }),
       expect.objectContaining({ id: 'inpatient.surgery.check-preop', version: 1 }),
