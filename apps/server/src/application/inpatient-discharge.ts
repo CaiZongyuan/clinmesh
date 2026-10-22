@@ -94,6 +94,10 @@ export class InpatientDischarge {
         this.owner.database.driver.prepare('SELECT * FROM inpatient_settlement_transaction WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY transaction_id').all(context.workspaceId, context.epoch, admissionId))
         .map(row => ({ id: row.transaction_id, kind: row.kind, amountFen: row.amount_fen, virtualTime: row.virtual_time,
           ...(row.source_deposit_id === null ? {} : { sourceDepositId: row.source_deposit_id }) })),
+      ...z.array(z.object({ refund_id: z.string(), source_payment_id: z.string(), amount_fen: z.number().int().negative().safe(), virtual_time: z.string() })).parse(
+        this.owner.database.driver.prepare('SELECT * FROM inpatient_settlement_supplement_refund WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY refund_id')
+          .all(context.workspaceId, context.epoch, admissionId)).map(row => ({ id: row.refund_id, kind: 'refund' as const, amountFen: row.amount_fen,
+            virtualTime: row.virtual_time, sourceSupplementId: row.source_payment_id })),
     ]
     const stored = z.object({ settlement_id: z.string(), preview_json: z.string(), settled_at: z.string() }).optional().parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_settlement WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId, context.epoch, admissionId))
@@ -102,7 +106,9 @@ export class InpatientDischarge {
       transactions, ...(stored === undefined || settledPreview === undefined ? {} : { settlement: { id: stored.settlement_id, fingerprint: settledPreview.fingerprint,
         chargesFen: settledPreview.chargesFen, depositFen: settledPreview.depositFen, balanceFen: settledPreview.balanceFen, settledAt: stored.settled_at } }) }
     const accountVersion = this.owner.fhir.read(context, 'Account', admissionId).meta!.versionId!
-    return inpatientSettlementPreviewSchema.parse({ ...data, fingerprint: createHash('sha256').update(JSON.stringify({ ...data, accountVersion })).digest('hex') })
+    return inpatientSettlementPreviewSchema.parse({ ...data, fingerprint: createHash('sha256').update(JSON.stringify({ ...data, accountVersion,
+      ...(admission.financialStatus === 'open' && this.owner.payments.fundingFingerprint(context, admissionId) !== undefined
+        ? { fundingFingerprint: this.owner.payments.fundingFingerprint(context, admissionId) } : {}) })).digest('hex') })
   }
   settle(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientSettleInputSchema.parse(raw)
@@ -117,27 +123,26 @@ export class InpatientDischarge {
       if (preview.fingerprint !== input.fingerprint || preview.chargesFen !== input.expectedChargesFen || preview.balanceFen !== input.expectedBalanceFen) {
         throw new InpatientError('INPATIENT_SETTLEMENT_PREVIEW_STALE', '账目或资金已变化，请明确重新预览后结算')
       }
+      this.owner.payments.prepareFirstSettlement(context, input.admissionId)
       const changed = this.owner.database.driver.prepare("UPDATE inpatient_admission SET financial_status='settled' WHERE workspace_id=? AND epoch=? AND admission_id=? AND status='departed' AND financial_status='open'")
         .run(context.workspaceId, context.epoch, input.admissionId)
       if (changed.changes !== 1) throw new InpatientError('INPATIENT_STATE_CONFLICT', '出区或财务状态已变化')
       const id = uuidv7(), now = this.owner.virtualTime(context)
       this.owner.database.driver.prepare('INSERT INTO inpatient_settlement VALUES(?,?,?,?,?,?)').run(context.workspaceId, context.epoch, id, input.admissionId, JSON.stringify(preview), now)
       const effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = [{ kind: 'created', reference: `InpatientSettlement/${id}`, versionId: '1' }]
-      const addTransaction = (kind: 'supplement' | 'refund', amount: number, sourceId: string | null) => {
-        const transactionId = uuidv7()
+      const funding = this.owner.payments.read(context, input.admissionId)
+      for (const payment of funding.payments.filter(payment => payment.kind === 'supplement' && payment.outcome === 'success')) {
         this.owner.database.driver.prepare('INSERT INTO inpatient_settlement_transaction VALUES(?,?,?,?,?,?,?,?,?)')
-          .run(context.workspaceId, context.epoch, transactionId, input.admissionId, id, kind, amount, sourceId, now)
-        effects.push({ kind: 'created', reference: `InpatientSettlementTransaction/${transactionId}`, versionId: '1' })
+          .run(context.workspaceId, context.epoch, payment.paymentId, input.admissionId, id, 'supplement', payment.amountFen, null, payment.createdAt)
+        effects.push({ kind: 'created', reference: `InpatientSettlementTransaction/${payment.paymentId}`, versionId: '1' })
       }
-      if (preview.balanceFen > 0) addTransaction('supplement', preview.balanceFen, null)
-      else if (preview.balanceFen < 0) {
-        let remaining = -preview.balanceFen
-        for (const deposit of preview.transactions.filter(transaction => transaction.kind === 'deposit')) {
-          const refund = Math.min(remaining, deposit.amountFen)
-          if (refund > 0) addTransaction('refund', -refund, deposit.id)
-          remaining -= refund
-        }
-        if (remaining !== 0) throw new InpatientError('INPATIENT_SETTLEMENT_FUNDS_CONFLICT', '退款无法关联足额原预交金')
+      for (const refund of funding.refunds.filter(refund => refund.outcome === 'success')) {
+        if (refund.sourceKind === 'inpatient-deposit') {
+          this.owner.database.driver.prepare('INSERT INTO inpatient_settlement_transaction VALUES(?,?,?,?,?,?,?,?,?)')
+            .run(context.workspaceId, context.epoch, refund.refundId, input.admissionId, id, 'refund', -refund.amountFen, refund.sourceId, refund.createdAt)
+        } else this.owner.database.driver.prepare('INSERT INTO inpatient_settlement_supplement_refund VALUES(?,?,?,?,?,?,?,?)')
+          .run(context.workspaceId, context.epoch, refund.refundId, input.admissionId, id, refund.sourceId, -refund.amountFen, refund.createdAt)
+        effects.push({ kind: 'created', reference: `InpatientSettlementTransaction/${refund.refundId}`, versionId: '1' })
       }
       const account = this.owner.fhir.read(context, 'Account', input.admissionId)
       const updatedAccount = this.owner.fhir.update(context, { ...account, status: 'inactive' }, account.meta!.versionId!)

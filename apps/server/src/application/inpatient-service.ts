@@ -1,5 +1,6 @@
 import { assertInpatientRecordWritable } from './inpatient-record-lock.ts'
 import { InpatientRecords } from './inpatient-records.ts'
+import { InpatientPayments } from './inpatient-payments.ts'
 import { InpatientDischarge } from './inpatient-discharge.ts'
 import { InpatientSurgery } from './inpatient-surgery.ts'
 import { InpatientTransfers } from './inpatient-transfers.ts'
@@ -42,6 +43,7 @@ export class InpatientService {
   readonly orders: InpatientOrders
   readonly surgery: InpatientSurgery
   readonly records: InpatientRecords
+  readonly payments: InpatientPayments
   readonly discharge: InpatientDischarge
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
@@ -53,6 +55,7 @@ export class InpatientService {
     this.orders = new InpatientOrders(this)
     this.surgery = new InpatientSurgery(this)
     this.records = new InpatientRecords(this)
+    this.payments = new InpatientPayments(this)
     this.discharge = new InpatientDischarge(this)
     this.investigations = new InpatientInvestigations(this,workflow)
     this.transfers = new InpatientTransfers(this)

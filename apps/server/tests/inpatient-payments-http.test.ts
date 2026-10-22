@@ -60,4 +60,58 @@ describe('住院共享资金公共 HTTP', () => {
     expect(statement.payments).toHaveLength(1)
     expect(statement.payments[0].tenders).toEqual(input.tenders)
   })
+  it('预交金未知跨重启保留，查询原尝试后唯一入账；未查明前不能重收或封账', async () => {
+    const s = await setup()
+    const input = { kind: 'deposit', amountFen: 2000, tenders: [{ method: 'cash', amountFen: 2000 }], simulatorRule: 'ambiguous' }
+    const reviewed = (await (await s.request(s.cashier, `${s.path}/payments/preview`, input)).json()).data
+    const first = await s.request(s.cashier, `${s.path}/payments/confirm`, { previewId: reviewed.previewId, commitToken: reviewed.commitToken })
+    expect(first.status).toBe(200)
+    const attempt = (await first.json()).data
+    expect(attempt.outcome).toBe('ambiguous')
+    expect((await s.request(s.cashier, `${s.path}/payments/preview`, input)).status).toBe(409)
+    const received = (await (await s.request(s.nurse, `${s.path}/receive`, { encounterVersion: s.admission.versionId, bedId: 'bed-general-1' })).json()).data.admission
+    const issued = (await (await s.request(s.doctor, `${s.path}/discharge/issue`, { encounterVersion: received.versionId, reason: '合成临床出院' })).json()).data.admission
+    expect((await s.request(s.nurse, `${s.path}/discharge/depart`, { encounterVersion: issued.versionId, reason: '合成出区', departureMethod: 'home' })).status).toBe(200)
+    const preview = (await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json())
+    const blocked = await s.request(s.cashier, `${s.path}/discharge/settle`, { encounterVersion: preview.encounterVersion, fingerprint: preview.fingerprint, expectedChargesFen: 0, expectedBalanceFen: -1000 })
+    expect(blocked.status).toBe(409)
+    expect((await blocked.json()).error.code).toBe('INPATIENT_FUNDS_PENDING')
+    await s.restart()
+    const key = randomUUID(), recovery = { paymentId: attempt.paymentId, expectedPaymentVersion: 1 }
+    const recovered = await s.request(s.cashier, `${s.path}/payments/recover`, recovery, key)
+    expect(recovered.status).toBe(200)
+    expect((await recovered.clone().json()).data).toMatchObject({ outcome: 'success', version: 2 })
+    expect(await (await s.request(s.cashier, `${s.path}/payments/recover`, recovery, key)).json()).toEqual(await recovered.json())
+    expect((await (await s.request(s.cashier, s.path)).json()).admission.depositFen).toBe(3000)
+  })
+  it('首次退款未知阻止封账和清床，查询原退款后保留冻结账且不重复退', async () => {
+    const s = await setup()
+    const received = (await (await s.request(s.nurse, `${s.path}/receive`, { encounterVersion: s.admission.versionId, bedId: 'bed-general-1' })).json()).data.admission
+    const issued = (await (await s.request(s.doctor, `${s.path}/discharge/issue`, { encounterVersion: received.versionId, reason: '合成出院' })).json()).data.admission
+    await s.request(s.nurse, `${s.path}/discharge/depart`, { encounterVersion: issued.versionId, reason: '合成出区', departureMethod: 'home' })
+    const statement = await (await s.request(s.cashier, `${s.path}/payments`)).json()
+    const reviewedResponse = await s.request(s.cashier, `${s.path}/refunds/preview`, { sourceId: statement.sources[0].id, amountFen: 1000, simulatorRule: 'ambiguous' })
+    expect(reviewedResponse.status).toBe(200)
+    const reviewed = (await reviewedResponse.json()).data
+    const refund = (await (await s.request(s.cashier, `${s.path}/refunds/confirm`, { previewId: reviewed.previewId, commitToken: reviewed.commitToken })).json()).data
+    expect(refund.outcome).toBe('ambiguous')
+    const preview = await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json()
+    const settle = { encounterVersion: preview.encounterVersion, fingerprint: preview.fingerprint, expectedChargesFen: 0, expectedBalanceFen: -1000 }
+    expect((await s.request(s.cashier, `${s.path}/discharge/settle`, settle)).status).toBe(409)
+    expect((await s.request(s.nurse, `${s.path}/discharge/clear`, { encounterVersion: preview.encounterVersion, reason: '不得清床' })).status).toBe(409)
+    expect((await s.request(s.cashier, `${s.path}/refunds/preview`, { sourceId: statement.sources[0].id, amountFen: 1, simulatorRule: 'success' })).status).toBe(409)
+    const recovery = { refundId: refund.refundId, expectedRefundVersion: 1 }, key = randomUUID()
+    const recovered = await s.request(s.cashier, `${s.path}/refunds/recover`, recovery, key)
+    expect(recovered.status).toBe(200)
+    expect((await recovered.clone().json()).data).toMatchObject({ refundId: refund.refundId, outcome: 'success', version: 2 })
+    expect(await (await s.request(s.cashier, `${s.path}/refunds/recover`, recovery, key)).json()).toEqual(await recovered.json())
+    expect((await s.request(s.cashier, `${s.path}/discharge/settle`, settle)).status).toBe(409)
+    const fresh = await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json()
+    const frozen = await s.request(s.cashier, `${s.path}/discharge/settle`, { encounterVersion: fresh.encounterVersion, fingerprint: fresh.fingerprint, expectedChargesFen: 0, expectedBalanceFen: -1000 })
+    expect(frozen.status).toBe(200)
+    const result = (await frozen.json()).data
+    expect(result.transactions).toHaveLength(2)
+    expect(result.transactions.find((item: {kind:string}) => item.kind === 'refund')).toMatchObject({ id: refund.refundId, sourceDepositId: statement.sources[0].id, amountFen: -1000 })
+    expect((await s.request(s.nurse, `${s.path}/discharge/clear`, { encounterVersion: result.encounterVersion, reason: '资金确定后清床' })).status).toBe(200)
+  })
 })
