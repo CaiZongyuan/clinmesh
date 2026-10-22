@@ -145,6 +145,7 @@ export const hisOperationHandlerOwnerSchema = z.enum([
   'ReferenceDataService',
   'SyntheticCaseVisitService',
   'WorkflowService',
+  'InsuranceService',
   'InpatientService',
 ])
 export const hisOperationSkillSchema = z.enum([
