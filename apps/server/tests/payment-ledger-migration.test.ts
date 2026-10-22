@@ -127,9 +127,15 @@ describe('payment ledger migration', () => {
     expect(applyMigrations(database).applied).toEqual([
       migration,
       '0072_inpatient-surgery.sql',
+      '0072_model-usage-control.sql',
       '0072_payment-history-pagination.sql',
       '0073_inpatient-discharge.sql',
+      '0073_model-task-recovery.sql',
+      '0074_host-model-waiting.sql',
       '0074_inpatient-record.sql',
+      '0075_model-usage-dimensions.sql',
+      '0076_model-usage-retention.sql',
+      '0077_model-usage-token-breakdown.sql',
     ])
 
     expect(originalAttempts(database)).toEqual(original)
