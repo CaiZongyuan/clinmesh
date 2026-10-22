@@ -2903,6 +2903,11 @@ export const excludedHisRoutes = [
   },
   {
     method: 'POST',
+    path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/considerations/disposition',
+    reason: '医生页面的待核实思路已核实与忽略处置，只接受医生 Session 且不改变临床事实；不提供独立 CLI 或 Agent tool 授权。',
+  },
+  {
+    method: 'POST',
     path: '/api/his/v1/encounters/:encounterId/actions/start-first-visit',
     reason: 'Legacy first-visit compatibility entrypoint',
   },

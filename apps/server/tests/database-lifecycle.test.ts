@@ -271,6 +271,7 @@ describe('SQLite lifecycle', () => {
         '0076_model-usage-retention.sql',
         '0077_model-usage-token-breakdown.sql',
         '0078_model-task-invalid-code.sql',
+        '0079_doctor-consideration-disposition.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -416,6 +417,7 @@ describe('SQLite lifecycle', () => {
         '0076_model-usage-retention.sql',
         '0077_model-usage-token-breakdown.sql',
         '0078_model-task-invalid-code.sql',
+        '0079_doctor-consideration-disposition.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -2069,6 +2071,7 @@ describe('SQLite lifecycle', () => {
       '0076_model-usage-retention.sql',
       '0077_model-usage-token-breakdown.sql',
       '0078_model-task-invalid-code.sql',
+      '0079_doctor-consideration-disposition.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([

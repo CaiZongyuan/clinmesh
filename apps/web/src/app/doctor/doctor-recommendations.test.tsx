@@ -55,18 +55,35 @@ function deferredResponse() {
   const response = new Promise<Response>(resolve => { complete = resolve })
   return { response, complete }
 }
-function stubRequests(get: () => DoctorRecommendationState = () => state(), confirm: () => Promise<Response> | Response = () => receipt(get().kind), generate?: () => Promise<Response> | Response) {
+function stubRequests(get: () => DoctorRecommendationState = () => state(), confirm: () => Promise<Response> | Response = () => receipt(get().kind), generate?: () => Promise<Response> | Response, disposition?: (body: unknown) => Promise<Response> | Response) {
   const calls: Array<{ path: string; method: string; body: unknown; key: string | null }> = []
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = new URL(String(input), 'http://localhost').pathname
     calls.push({ path, method: init?.method ?? 'GET', body: init?.body === undefined ? undefined : JSON.parse(String(init.body)), key: new Headers(init?.headers).get('idempotency-key') })
     if (path.endsWith('/actions/confirm')) return confirm()
+    if (path.endsWith('/considerations/disposition')) return disposition === undefined ? Response.json({ dispositions: [] }) : disposition(JSON.parse(String(init?.body)))
     if (path.endsWith('/actions/generate')) return generate?.() ?? Response.json({ data: get(), auditId: 'audit-generate', requestId: 'request-generate', effects: [], warnings: [] })
     return Response.json(get())
   }))
   return calls
 }
 const clients: QueryClient[] = []
+// 测试内重演服务端 upsert/clear 语义：按归一化标题（此处仅 trim）覆盖或移除处置。
+function dispositionStore(initial: DoctorRecommendationState) {
+  const ref = { current: initial }
+  return {
+    state: () => ref.current,
+    respond: (body: unknown) => {
+      const input = (body as { input: { label: string; status: 'verified' | 'dismissed' | 'clear' } }).input
+      const labelKey = input.label.trim()
+      const rest = (ref.current.considerationDispositions ?? []).filter(entry => entry.labelKey !== labelKey)
+      ref.current = input.status === 'clear'
+        ? { ...ref.current, considerationDispositions: rest.length > 0 ? rest : undefined }
+        : { ...ref.current, considerationDispositions: [...rest, { labelKey, status: input.status, label: input.label }] }
+      return Response.json({ dispositions: ref.current.considerationDispositions ?? [] })
+    },
+  }
+}
 function SubmissionProbe() {
   const preparation = useDoctorPreparation()
   return <><p data-testid="submitting">{preparation?.submitting('diagnosis') ? '提交中' : '空闲'}</p><p data-testid="confirmed-revision">{preparation?.confirmedRevision('diagnosis') ?? 0}</p></>
@@ -843,14 +860,75 @@ it('marks the Provider busy for the complete lifetime of a formal confirmation r
   await act(async () => { delayed.complete(receipt()) }); await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
   expect(screen.getByTestId('submitting').textContent).toBe('空闲')
 })
-it.each(['diagnosis', 'laboratory', 'imaging', 'pathology'] as const)('keeps unguided %s considerations read-only inside details', async kind => {
+it.each(['diagnosis', 'laboratory', 'imaging', 'pathology'] as const)('keeps unguided %s considerations outside formal confirmation with verify and dismiss actions', async kind => {
   const thought = { id: 'thought', label: '核对流感方向', rationale: '合成推测仅供核对。', supportingInformation: [], opposingInformation: [], missingInformation: [], caseEvidenceIds: ['patient-statement-fever'] }
   const current = state({ kind, status: 'missing-evidence', items: [], guidelines: [], considerations: [thought] })
   const calls = stubRequests(() => current); mount(props({ kind })); await waitFor(() => expect(confirmButton()).toHaveProperty('disabled', true))
   expect(screen.queryByText(thought.label)).toBeNull()
   const dialog = await details(); const article = within(dialog.getByRole('article', { name: thought.label }))
-  expect(article.getByText(thought.rationale)).toBeTruthy(); expect(article.queryByRole('button')).toBeNull()
+  expect(article.getByText(thought.rationale)).toBeTruthy()
+  expect(article.queryByRole('button', { name: /确认选中|开具|Confirm selected|Issue/ })).toBeNull()
+  expect(article.getByRole('button', { name: `已核实：${thought.label}` })).toBeTruthy()
+  expect(article.getByRole('button', { name: `忽略：${thought.label}` })).toBeTruthy()
   expect(calls.filter(call => call.path.endsWith('/actions/confirm'))).toHaveLength(0)
+})
+it('maps raw evidence references in reasoning text to readable source labels', async () => {
+  const hash = 'e'.repeat(64)
+  const thought = { id: 'thought', label: '核对流感方向', rationale: `合成推测仅供核对，见 evidence:${hash}。`, supportingInformation: [`evidence:${hash}`], opposingInformation: [], missingInformation: [], caseEvidenceIds: [hash] }
+  const current = state({ status: 'missing-evidence', items: [], guidelines: [], considerations: [thought],
+    caseEvidence: [{ id: hash, kind: 'consultation', label: '合成患者回答', text: '合成患者自述发热伴咳嗽三天，近期接触流感病例，尚无病原学结果。' }] })
+  stubRequests(() => current); mount(props())
+  const dialog = await details(); const article = dialog.getByRole('article', { name: thought.label })
+  expect(article.textContent).not.toContain(`evidence:${hash}`)
+  expect(article.textContent).toContain('合成患者回答')
+})
+it('summarizes packed history evidence as a record count and expands readable entries', async () => {
+  const current = state({ status: 'missing-evidence', items: [], guidelines: [],
+    caseEvidence: [{ id: 'synthetic-allergies', kind: 'history', label: '已记录过敏信息',
+      text: JSON.stringify([{ code: 'A1', display: '合成青霉素过敏' }, { code: 'A2', display: '合成磺胺过敏' }]) }],
+    considerations: [{ id: 'thought', label: '核对流感方向', rationale: '合成推测仅供核对。', supportingInformation: [], opposingInformation: [], missingInformation: [], caseEvidenceIds: ['synthetic-allergies'] }] })
+  stubRequests(() => current); mount(props())
+  const dialog = await details(); const article = dialog.getByRole('article', { name: '核对流感方向' })
+  expect(article.textContent).toContain('已记录过敏信息 · 2 条记录')
+  await within(article).getByText('已记录过敏信息').click()
+  expect(article.textContent).toContain('合成青霉素过敏')
+  expect(article.textContent).toContain('合成磺胺过敏')
+})
+it('records a verified disposition, hides the consideration, excludes it from the count and lets the doctor undo it', async () => {
+  const thought = { id: 'thought', label: '核对流感方向', rationale: '合成推测仅供核对。', supportingInformation: [], opposingInformation: [], missingInformation: [], caseEvidenceIds: ['patient-statement-fever'] }
+  const store = dispositionStore(state({ status: 'ready', items: [], guidelines: [], considerations: [thought] }))
+  const calls = stubRequests(store.state, undefined, undefined, store.respond)
+  const mounted = mount(props())
+  await screen.findByText('本轮仅有待核实思路，见“依据与说明”。')
+  const dialog = await details()
+  expect(dialog.getByText('独立核验后发布 0 项，另有 1 项待核实思路。')).toBeTruthy()
+  await userEvent.setup().click(within(dialog.getByRole('article', { name: thought.label })).getByRole('button', { name: `已核实：${thought.label}` }))
+  await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+  await waitFor(() => expect(screen.queryByRole('article', { name: thought.label })).toBeNull())
+  await waitFor(() => expect(dialog.getByText('独立核验后发布 0 项，另有 0 项待核实思路。')).toBeTruthy())
+  expect(calls.filter(call => call.path.endsWith('/considerations/disposition'))).toHaveLength(1)
+  const processed = dialog.getByText('已处理思路（1）').closest('details')!
+  expect(processed.textContent).toContain(thought.label)
+  await userEvent.setup().click(within(processed).getByRole('button', { name: `撤销：${thought.label}` }))
+  await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+  await waitFor(() => expect(screen.getByRole('article', { name: thought.label })).toBeTruthy())
+  expect(dialog.queryByText('已处理思路（1）')).toBeNull()
+  expect(calls.filter(call => call.path.endsWith('/considerations/disposition'))).toHaveLength(2)
+})
+it('records a dismissed disposition and keeps the thought out of the active list', async () => {
+  const thought = { id: 'thought', label: '核对流感方向', rationale: '合成推测仅供核对。', supportingInformation: [], opposingInformation: [], missingInformation: [], caseEvidenceIds: ['patient-statement-fever'] }
+  const store = dispositionStore(state({ status: 'ready', items: [], guidelines: [], considerations: [thought] }))
+  const calls = stubRequests(store.state, undefined, undefined, store.respond)
+  const mounted = mount(props())
+  await screen.findByText('暂无可直接确认或开具的项目。')
+  const dialog = await details()
+  await userEvent.setup().click(within(dialog.getByRole('article', { name: thought.label })).getByRole('button', { name: `忽略：${thought.label}` }))
+  await waitFor(() => expect(mounted.client.isMutating()).toBe(0))
+  await waitFor(() => expect(screen.queryByRole('article', { name: thought.label })).toBeNull())
+  const sent = calls.find(call => call.path.endsWith('/considerations/disposition'))
+  expect(sent?.body).toEqual({ input: { label: thought.label, status: 'dismissed' } })
+  const processed = dialog.getByText('已处理思路（1）').closest('details')!
+  expect(processed.textContent).toContain('已忽略')
 })
 it('labels legacy unclassified notes without treating them as missing patient facts', async () => {
   const current = state({ items: [], status: 'missing-evidence', missingInformation: ['旧版未分类说明。'] })
