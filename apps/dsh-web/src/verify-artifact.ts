@@ -7,7 +7,7 @@ const clientFile = Bun.file(clientPath)
 if (!(await clientFile.exists())) throw new Error('Missing ClinMesh DSH client artifact')
 
 const client = await clientFile.text()
-const expectedPrefix = 'window.__ModuleLoader__.load({\n  id: "@clinmesh/dsh-web"'
+const expectedPrefix = 'window.__ModuleLoader__.load({id:"@clinmesh/dsh-web",factory:(require)=>{'
 if (!client.startsWith(expectedPrefix)) throw new Error('Invalid DSH lazy-CJS wrapper')
 if (/^\s*import\s/m.test(client)) throw new Error('DSH client contains an ESM import')
 if (client.includes('import.meta')) throw new Error('DSH client contains import.meta in lazy-CJS')
