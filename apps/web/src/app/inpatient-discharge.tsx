@@ -66,7 +66,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
     <h3>{t('住院结算','Inpatient settlement')}</h3>
     <InsurancePanel key={JSON.stringify({ accountId: session.user.id, actor: session.actor, admissionId: admission.id })}
       target={{ kind: 'inpatient', id: admission.id }} session={session} locale={locale}
-      disabled={write.blocked || admission.status !== 'departed'} onChanged={insuranceChanged} />
+      disabled={write.blocked || admission.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0} onChanged={insuranceChanged} />
     {funds.error ? <p role="alert">{getWorkspaceErrorMessage(funds.error,getWorkspaceMessages(locale))}</p> : null}
     {funds.data ? <InpatientFunding admission={admission} locale={locale} write={write} statement={funds.data} /> : null}
     <Button variant="outline" disabled={write.blocked || preview.isFetching} onClick={() => { void preview.refetch() }}>{data ? t('重新预览结算','Refresh settlement preview') : t('预览结算','Preview settlement')}</Button>

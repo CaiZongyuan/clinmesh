@@ -90,3 +90,28 @@ Balances bind workspace, epoch, patient and virtual calendar year. The first set
 Previews expire after five minutes and bind the actor, target, exact charge and coverage versions, calendar year and annual balance version. `INSURANCE_PREVIEW_STALE` requires a fresh preview and human review. Never reuse a commit token with changed intent. Cancellation appends an inverse event referencing the original settlement, restores only its annual impact and preserves later transactions and clinical progress. Collect any resulting balance through a fresh payment preview; do not repeat clinical release.
 
 For lost insurance responses, inspect the original Command receipt with the original operation ID and idempotency key before replay. A definitive business rejection permits a new reviewed intent; an unknown result keeps the original intent and key pending. Refresh the bill and benefits after a completed receipt.
+
+### Inpatient benefits and first settlement
+
+Use the same insurance commands with `kind=inpatient` and the actual admission ID. Review benefits after departure and before the first financial settlement. Unknown collections or refunds must be resolved before changing benefits. Employee v1 uses a 5000-fen inpatient annual deductible, 80% fund rate and 1000000-fen cap; resident v1 uses 10000 fen, 60% and 500000 fen. Coverage and personal-account availability come from the preview.
+
+```bash
+clinmesh insurance get --kind inpatient --id <admission-id>
+clinmesh insurance preview --input @inpatient-insurance-preview.json --idempotency-key <preview-key>
+clinmesh insurance confirm --input @inpatient-insurance-confirm.json --idempotency-key <confirm-key>
+clinmesh insurance cancel --input @inpatient-insurance-cancel.json --idempotency-key <cancel-key>
+```
+
+```json
+{"kind":"inpatient","id":"<admission-id>","planCode":"employee-v1"}
+```
+
+```json
+{"kind":"inpatient","id":"<admission-id>","previewId":"<preview-id>","commitToken":"<commit-token-from-preview>"}
+```
+
+```json
+{"kind":"inpatient","id":"<admission-id>","settlementId":"<settlement-id>","expectedBalanceVersion":1}
+```
+
+Read the [inpatient funding and settlement workflow](../clinmesh-inpatient/SKILL.md#出院结算清床与召回) for deposit offsets, combined supplements and original-payment refunds. Patient funds cover `patientFen`; fund and personal-account benefits do not create cash receipts. Re-preview the first settlement after any benefit or funding change. Once settled, use the controlled later financial workflow rather than ordinary insurance cancellation.

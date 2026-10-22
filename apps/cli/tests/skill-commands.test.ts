@@ -1,9 +1,13 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile as readTextFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { getHisOperation, listHisOperations } from '@clinmesh/contracts/his-operations'
 import { type Command, type Option } from 'commander'
 import { createCliProgram } from '../src/cli.ts'
+
+async function readFile(path: string, encoding: 'utf8') {
+  return (await readTextFile(path, encoding)).replaceAll('\r\n', '\n')
+}
 
 const expectedSkills = [
   'clinmesh-administrator',
@@ -19,7 +23,7 @@ const expectedSkills = [
 
 it('结算后更正示例绑定原费用、当前账目与原资金尝试', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
-  const skill = (await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')).replaceAll('\r\n', '\n')
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   for (const [path, id] of [
     ['financial-adjustments', 'read'], ['adjust-finance', 'adjust'], ['preview-financial-refund', 'refund.preview'], ['confirm-financial-refund', 'refund.confirm'],
     ['recover-financial-refund', 'refund.recover'], ['preview-financial-payment', 'payment.preview'], ['confirm-financial-payment', 'payment.confirm'], ['recover-financial-payment', 'payment.recover'],
@@ -74,9 +78,10 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     'Registration charges remain unpaid and read-only']) expect(skill).toContain(term)
   for (const term of ['expectedBalanceVersion', 'INSURANCE_PREVIEW_STALE', 'not payment tenders',
     'calendar year', 'preserves later transactions and clinical progress']) expect(skill).toContain(term)
-  const examples=[...skill.replaceAll('\r\n','\n').matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
+  const examples=[...skill.matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
   for(const [index,operation] of ['insurance.preview','insurance.confirm','insurance.cancel'].entries()){
     expect(getHisOperation(operation).input.safeParse(examples[index]).success).toBe(true)
+    expect(getHisOperation(operation).input.parse(examples[index + 3])).toMatchObject({ kind: 'inpatient' })
   }
 })
 

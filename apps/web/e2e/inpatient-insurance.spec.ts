@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
-import { inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientPaymentsSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { expect, test } from './fixtures.ts'
 
@@ -75,6 +75,37 @@ for (const scenario of [
     await page.getByRole('button', { name: '预览结算', exact: true }).click()
     await expect(page.getByTestId('settlement-net')).toContainText('150.00')
     await expect(page.getByTestId('settlement-refund')).toContainText(scenario.balance)
+    const funding = page.getByRole('region', { name: '住院收退款', exact: true })
+    await funding.getByRole('button', { name: '未知后查明成功', exact: true }).click()
+    if (scenario.plan === 'employee-v1') {
+      await funding.getByRole('button', { name: '出区补缴', exact: true }).click()
+      await funding.getByLabel('现金金额（元）', { exact: true }).fill('10')
+      await funding.getByLabel('银行卡金额（元）', { exact: true }).fill('30')
+      await funding.getByRole('button', { name: '预览收款', exact: true }).click()
+      await funding.getByRole('button', { name: '确认已审阅收款', exact: true }).click()
+    } else {
+      await funding.getByLabel('原入金', { exact: true }).click()
+      await page.getByRole('option', { name: /预交金/ }).click()
+      await funding.getByLabel('退款金额（元）', { exact: true }).fill('80')
+      await funding.getByRole('button', { name: '预览退款', exact: true }).click()
+      await funding.getByRole('button', { name: '确认已审阅退款', exact: true }).click()
+    }
+    await expect(page.getByRole('button', { name: '确认结算', exact: true })).toBeDisabled()
+    await expect(panel.getByRole('button', { name: '撤销原待遇', exact: true })).toBeDisabled()
+    await page.reload()
+    await page.getByRole('tab', { name: '住院费用', exact: true }).click()
+    await page.getByRole('button', { name: '查看合成医保住院患者', exact: true }).click()
+    await funding.getByRole('button', { name: scenario.plan === 'employee-v1' ? '查询原收款' : '查询原退款', exact: true }).click()
+    await expect(funding.getByTestId('inpatient-funding-balance')).toContainText('0.00')
+    const funds = inpatientPaymentsSchema.parse(await (await page.request.get(`${origin}${path}/payments`)).json())
+    expect(funds.pendingCount).toBe(0)
+    if (scenario.plan === 'employee-v1') {
+      expect(funds.payments).toMatchObject([{ outcome: 'success', version: 2, amountFen: 4000,
+        tenders: [{ method: 'cash', amountFen: 1000 }, { method: 'bank-card', amountFen: 3000 }] }])
+    } else {
+      expect(funds.refunds).toMatchObject([{ outcome: 'success', version: 2, amountFen: 8000 }])
+    }
+    await page.getByRole('button', { name: '预览结算', exact: true }).click()
     await page.getByRole('button', { name: '确认结算', exact: true }).click()
     await expect(page.getByText('已结算，等待病区清床', { exact: true })).toBeVisible()
     const frozen = inpatientSettlementPreviewSchema.parse(await (await page.request.get(`${origin}${path}/discharge/preview`)).json())
