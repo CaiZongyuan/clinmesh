@@ -769,13 +769,13 @@ describe('HIS operation catalog', () => {
     expect(listHisOperations()
       .filter(operation => operation.previewToken === 'required')
       .map(operation => operation.id)).toEqual([
-      'inpatient.financial.insurance.confirm',
       'inpatient.financial.refund.confirm',
       'inpatient.financial.payment.confirm',
       clinicalDocumentOperationIds.sign,
       'insurance.confirm',
       'refund.confirm',
       'payment.confirm',
+      'inpatient.financial.insurance.confirm',
       'inpatient.payment.confirm',
       'inpatient.refund.confirm',
     ])
