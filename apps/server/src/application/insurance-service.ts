@@ -38,6 +38,14 @@ export class InsuranceService {
     const total = (field: 'eligible_delta' | 'fund_delta' | 'account_delta', kind?: InsuranceTarget['kind']) => rows.reduce((sum,row) => sum + (kind === undefined || row.target_kind === kind ? row[field] : 0), 0)
     return insuranceBalanceSchema.parse({ patientId, year, version: rows.length, ...(planCode === undefined ? {} : {planCode}), accountFen: (planCode === undefined ? 0 : insurancePlans[planCode].initialAccountFen) + total('account_delta'), eligibleFen: total('eligible_delta'), fundFen: total('fund_delta'), outpatientEligibleFen: total('eligible_delta','outpatient'), outpatientFundFen: total('fund_delta','outpatient'), inpatientEligibleFen: total('eligible_delta','inpatient'), inpatientFundFen: total('fund_delta','inpatient') })
   }
+  activeSettlements(context: ActorContext, target: InsuranceTarget) {
+    const history=this.#history(context,target), reversed=new Set(history.flatMap(row=>row.reversesId===undefined?[]:[row.reversesId]))
+    return history.filter(row=>row.reversesId===undefined&&!reversed.has(row.id))
+  }
+  hadCompensation(context: ActorContext, reference: string) {
+    const rows=z.array(z.object({data_json:z.string()})).parse(this.database.driver.prepare('SELECT data_json FROM insurance_event WHERE workspace_id=? AND epoch=? AND reverses_id IS NOT NULL').all(context.workspaceId,context.epoch))
+    return rows.some(row=>insuranceSettlementSchema.parse(JSON.parse(row.data_json)).allocations.some(item=>item.reference===reference))
+  }
   validAllocation(context: ActorContext, target: InsuranceTarget) {
     const history = this.#history(context,target), reversed = new Set(history.flatMap(row => row.reversesId === undefined ? [] : [row.reversesId]))
     return history.findLast(row => row.reversesId === undefined && !reversed.has(row.id))
@@ -49,14 +57,14 @@ export class InsuranceService {
   state(context: ActorContext, target: InsuranceTarget) {
     this.#authorize(context)
     const source = insuranceSourceSchema.parse(this.options.readSource(context,target)), active=this.validAllocation(context,target)
-    return insuranceStateSchema.parse({target,balance:this.balance(context,source.patientId),history:this.#history(context,target),...(active===undefined?{}:{active})})
+    return insuranceStateSchema.parse({target,balance:this.balance(context,source.patientId),history:this.#history(context,target),activeSettlements:this.activeSettlements(context,target),...(active===undefined?{}:{active})})
   }
   preview(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input=insurancePreviewInputSchema.parse(raw)
     return this.commands.execute({ context,input,idempotencyKey,operation:'insurance.preview',expectedVersions:{},dataSchema:insurancePreviewSchema,authorize:()=>this.#authorize(context) }, () => {
       const source=insuranceSourceSchema.parse(this.options.readSource(context,input.target)), balance=this.balance(context,source.patientId)
       if(source.charges.length===0)throw new InsuranceError('INSURANCE_NO_CHARGES','当前没有可结算费用')
-      if(this.validAllocation(context,input.target)!==undefined)throw new InsuranceError('INSURANCE_ALREADY_SETTLED','请先撤销原待遇后重新结算')
+      if(this.activeSettlements(context,input.target).some(row=>row.allocations.some(item=>source.charges.some(charge=>charge.reference===item.reference))))throw new InsuranceError('INSURANCE_ALREADY_SETTLED','请先撤销原待遇后重新结算')
       if(balance.planCode!==undefined&&balance.planCode!==input.planCode)throw new InsuranceError('INSURANCE_PLAN_CONFLICT','本年度已固定合成方案，不可切换待遇账户')
       this.options.assertChangeAllowed?.(context,source,'settle')
       const plan=insurancePlans[input.planCode], parameters=plan[input.target.kind]
@@ -91,8 +99,8 @@ export class InsuranceService {
       const row=z.object({actor_hash:z.string(),token_hash:z.string(),expires_at:z.string(),data_json:z.string()}).optional().parse(this.database.driver.prepare('SELECT * FROM insurance_preview WHERE workspace_id=? AND epoch=? AND preview_id=?').get(context.workspaceId,context.epoch,input.previewId))
       if(row===undefined||row.actor_hash!==this.#actor(context)||row.token_hash!==hash(input.commitToken)||Date.parse(row.expires_at)<=(this.options.now?.()??new Date()).getTime())throw new InsuranceError('INSURANCE_PREVIEW_INVALID','预览已失效，请重新预览并审阅')
       const preview=insurancePreviewSchema.parse(JSON.parse(row.data_json)),settlement=preview.settlement
-      const source=insuranceSourceSchema.parse(this.options.readSource(context,input.target))
-      if(hash(input.target)!==hash(settlement.target)||hash(source)!==settlement.sourceFingerprint||this.balance(context,source.patientId).version!==settlement.balanceVersion||this.validAllocation(context,input.target)!==undefined)throw new InsuranceError('INSURANCE_PREVIEW_STALE','费用或患者年度余额已变化，请重新预览')
+      const source=insuranceSourceSchema.parse(this.options.readSource(context,input.target)),balance=this.balance(context,source.patientId)
+      if(hash(input.target)!==hash(settlement.target)||hash(source)!==settlement.sourceFingerprint||balance.year!==settlement.year||balance.version!==settlement.balanceVersion||this.activeSettlements(context,input.target).some(row=>row.allocations.some(item=>source.charges.some(charge=>charge.reference===item.reference))))throw new InsuranceError('INSURANCE_PREVIEW_STALE','费用或患者年度余额已变化，请重新预览')
       this.options.assertChangeAllowed?.(context,source,'settle')
       const effects:CommandEffect[]=[];this.#append(context,settlement,1,effects)
       this.options.onAllocationChanged?.(context,source,transaction,effects)
@@ -114,7 +122,8 @@ export class InsuranceService {
   cancel(context:ActorContext,raw:unknown,idempotencyKey:string) {
     const input=insuranceCancelInputSchema.parse(raw)
     return this.commands.execute({context,input,idempotencyKey,operation:'insurance.cancel',expectedVersions:{},dataSchema:insuranceResponseSchema.shape.data,authorize:()=>this.#authorize(context)},transaction=>{
-      const source=insuranceSourceSchema.parse(this.options.readSource(context,input.target)),active=this.validAllocation(context,input.target)
+      const liveSource=insuranceSourceSchema.parse(this.options.readSource(context,input.target)),active=this.activeSettlements(context,input.target).find(item=>item.id===input.settlementId)
+      const source=active?.source??liveSource
       if(active?.id!==input.settlementId||this.balance(context,source.patientId).version!==input.expectedBalanceVersion)throw new InsuranceError('INSURANCE_BALANCE_CONFLICT','待遇或年度余额已变化，请刷新后办理撤销')
       this.options.assertChangeAllowed?.(context,source,'cancel')
       const effects:CommandEffect[]=[];this.compensate(context,active.id,effects)

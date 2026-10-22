@@ -1220,7 +1220,7 @@ export class WorkflowService {
         for(const charge of source.charges){
           const row=z.object({status:z.string()}).parse(database.driver.prepare('SELECT status FROM charge_record WHERE workspace_id=? AND epoch=? AND charge_item_id=?').get(context.workspaceId,context.epoch,charge.reference.slice(11)))
           const balance=this.#payments.balance(context,charge.reference.slice(11))
-          if(balance.unresolved>0||row.status==='paid'||balance.paidFen>0)throw new InsuranceError('INSURANCE_FUNDS_CONFLICT','请在收款及临床放行前办理待遇；已有资金需通过财务更正处理')
+          if(balance.unresolved>0||(action==='settle'&&(row.status==='paid'||balance.paidFen>0)))throw new InsuranceError('INSURANCE_FUNDS_CONFLICT','请在收款及临床放行前办理待遇；已有资金需通过财务更正处理')
         }
       },
       onAllocationChanged: (context,source,transaction,effects) => {
@@ -9164,10 +9164,10 @@ export class WorkflowService {
       if (amountFen > remainingFen) throw new WorkflowError('WORKFLOW_CONFLICT', 'Payment exceeds the remaining receivable')
       const encounter = this.#fhir.read(input.context, 'Encounter', charge.encounter_id)
       if (
-        (input.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment')
+        (input.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment' && !this.insurance.hadCompensation(input.context, `ChargeItem/${charge.charge_item_id}`))
         || (input.category === 'medication'
           && (encounter.status !== 'completed'
-            || charge.prescription_status !== 'signed'
+            || (charge.prescription_status !== 'signed' && !this.insurance.hadCompensation(input.context, `ChargeItem/${charge.charge_item_id}`))
             || charge.withdrawal_id !== null))
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
@@ -9303,10 +9303,10 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment preview no longer matches the charge')
       }
       if (
-        (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment')
+        (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`))
         || (preview.category === 'medication'
           && (transaction.fhir.read(input.context, 'Encounter', preview.encounter_id).status !== 'completed'
-            || preview.prescription_status !== 'signed'
+            || (preview.prescription_status !== 'signed' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`))
             || preview.withdrawal_id !== null))
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
@@ -9390,8 +9390,8 @@ export class WorkflowService {
         return { data: { amountFen: attempt.amountFen, outcome: attempt.outcome, paymentId: input.paymentId, status: preview.case_status }, effects: [] }
       }
       if (preview.charge_status !== 'ambiguous'
-        || (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment')
-        || (preview.category === 'medication' && (preview.prescription_status !== 'signed' || preview.withdrawal_id !== null
+        || (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`))
+        || (preview.category === 'medication' && ((preview.prescription_status !== 'signed' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`)) || preview.withdrawal_id !== null
           || transaction.fhir.read(input.context, 'Encounter', preview.encounter_id).status !== 'completed'))) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original receivable is no longer recoverable')
       }
@@ -9421,6 +9421,8 @@ export class WorkflowService {
       WHERE workspace_id = ? AND epoch = ? AND charge_id = ?
     `).run(fullyPaid ? 'paid' : outcome === 'success' ? 'billable' : outcome, context.workspaceId, context.epoch, charge.charge_id)
     if (!fullyPaid) return charge.case_status
+    if (charge.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment') return charge.case_status
+    if (charge.category === 'medication' && charge.case_status !== 'awaiting-medication-payment') return charge.case_status
     const status = charge.category === 'laboratory' ? 'awaiting-lis' : 'awaiting-dispense'
     this.#database.driver.prepare(`
       UPDATE outpatient_case SET status = ?, version = version + 1, updated_at = ?
