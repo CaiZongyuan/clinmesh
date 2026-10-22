@@ -1,6 +1,45 @@
 import { paymentResponseSchema } from '@clinmesh/contracts/his'
 import { expect, test } from './fixtures.ts'
 import { expectBillingFits, readBill, signInCashier, startBillingBrowserServer, submitPayment } from './billing-payments.fixture.ts'
+import { refundCaseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
+
+test('cashier records a fee correction and recovers the same partial refund after refresh', async ({ page, webRoot }) => {
+  const server = await startBillingBrowserServer(webRoot)
+  try {
+    await signInCashier(page, server)
+    await submitPayment(page)
+    const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
+    await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
+    await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
+    await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
+    const adjustmentReview = page.getByRole('alertdialog', { name: '确认费用更正', exact: true })
+    await adjustmentReview.getByRole('button', { name: '确认费用更正', exact: true }).click()
+    await expect(adjustmentReview).toHaveCount(0)
+    await expect(panel).toContainText('¥20.00')
+    await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
+    await panel.getByLabel('退款处理结果', { exact: true }).click()
+    await page.getByRole('option', { name: '结果未知', exact: true }).click()
+    await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+    const review = page.getByRole('alertdialog', { name: '确认退款', exact: true })
+    await expect(review).toContainText('¥10.00')
+    const received = page.waitForResponse(response => response.request().method() === 'POST' && /\/refunds\/[^/]+\/actions\/confirm$/.test(new URL(response.url()).pathname))
+    await review.getByRole('button', { name: '提交退款', exact: true }).click()
+    const result = refundResponseSchema.parse(await (await received).json()).data
+    expect(result.outcome).toBe('ambiguous')
+    await page.reload()
+    await page.getByRole('tab', { name: '已缴', exact: true }).click()
+    await expect(panel).toContainText(result.refundId)
+    await panel.getByRole('button', { name: '查询原退款结果', exact: true }).click()
+    const recoveryReview = page.getByRole('alertdialog', { name: '查询原退款结果', exact: true })
+    await recoveryReview.getByRole('button', { name: '查询原退款结果', exact: true }).click()
+    await expect(recoveryReview).toHaveCount(0)
+    const response = await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)
+    const ledger = refundCaseSchema.parse(await response.json())
+    expect(ledger).toMatchObject({ adjustedFen: 2000, refundedFen: 1000, reservedFen: 0, refunds: [{ refundId: result.refundId, outcome: 'success' }] })
+    expect((await readBill(page, server)).charges.find(charge => charge.chargeItemId === server.chargeItemId)).toMatchObject({ amountFen: 4800, paidFen: 5800, remainingFen: 0 })
+    await expectBillingFits(page)
+  } finally { await server.close() }
+})
 
 test('collects installments and combined tenders, then recovers the original unknown attempt after refresh', async ({ page, webRoot }) => {
   const server = await startBillingBrowserServer(webRoot)

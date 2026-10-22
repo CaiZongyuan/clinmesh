@@ -14,6 +14,24 @@ function captureStream() {
 }
 
 describe('catalog-backed operation execution', () => {
+  it('queries the original refund with its reviewed version and never forwards a new amount or outcome', async () => {
+    const stdout = captureStream(), stderr = captureStream()
+    const fetch = vi.fn().mockResolvedValue(Response.json({ auditId: 'audit-refund', effects: [], requestId: 'request-refund', warnings: [],
+      data: { refundId: 'refund-1', sourceKind: 'outpatient-payment', sourceId: 'payment-1', basisId: 'outpatient-charge:charge-1',
+        ownerKind: 'outpatient', ownerId: 'case-1', amountFen: 300, initialOutcome: 'ambiguous', outcome: 'declined',
+        correlationId: 'sim-refund-1', createdAt: '2026-10-22T00:00:00Z', resolvedAt: '2026-10-22T00:01:00Z', version: 2 } }))
+    const execute = createHttpExecutor({ baseUrl: 'http://127.0.0.1:51868', credential: { kind: 'agent', token: 'cma_synthetic' }, fetch })
+    const result = await runCli(['refund', 'recover', '--refund-id', 'refund-1', '--expected-refund-version', '1',
+      '--charge-item-id', 'charge-1', '--charge-version', '4', '--idempotency-key', 'refund-recovery-1'],
+    { stdout: stdout.stream, stderr: stderr.stream }, { authMode: 'agent', execute })
+    expect(result).toBe(0)
+    expect(stderr.value()).toBe('')
+    const [url, request] = fetch.mock.calls[0]!
+    expect(String(url)).toBe('http://127.0.0.1:51868/api/his/v1/refunds/refund-1/actions/recover')
+    expect(JSON.parse(request.body)).toEqual({ expectedVersions: { 'ChargeItem/charge-1': '4' }, input: { expectedRefundVersion: 1 } })
+    expect(request.headers['idempotency-key']).toBe('refund-recovery-1')
+    expect(JSON.parse(stdout.value())).toMatchObject({ ok: true, operation: { id: 'refund.recover' }, data: { data: { outcome: 'declined' } } })
+  })
   it('reads a unified bill through the cashier command without forwarding the case as a query parameter', async () => {
     const stdout = captureStream()
     const stderr = captureStream()

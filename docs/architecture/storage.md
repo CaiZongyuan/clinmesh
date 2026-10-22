@@ -59,7 +59,7 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 - 身份与岗位：Better Auth 的 user/session/account，加 Workspace Actor、Human Membership、Agent Client/Capability Grant、Practitioner Role binding 和当前 session context。
 - 门诊：Consultation、append-only Consultation Record、目录、outpatient case、Registration、分诊记录、临床草稿、诊断草稿状态与确认分组、检查申请草稿状态、正式检查申请、处方草稿状态、Prescription 与处方项目、无需用药结论和处方撤回事实。
 - 住院：独立 Admission、住院证、病区与床位目录、带时间段的床位占用、预交金、逐项费用及关联冲正、诊断确认与编码快照、医嘱、校对、执行计划和实际发药关联，出院/出区/召回/清床事件、不可覆盖的结算预览快照与关联原预交金的补退款交易，以及独立手术申请、两个准备确认、唯一实际实施、耗材使用和术后医嘱引用。运行事实均绑定 Workspace/Epoch，住院合成来源以可空复合外键固定；院内手术与耗材目录由 Scenario 补缺式安装，临床分类身份与收费定义分别冻结。
-- 门诊账务：Charge Record、Payment Preview、Payment Transaction、Payment Allocation、Payment Tender 和 append-only Payment Resolution。金额以整数分保存；当前没有门诊退款、医保或收费员交账表。住院结算快照、补缴及关联原入金的退款由上述住院表保存，流程见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
+- 门诊账务：Charge Record、Payment Preview、Payment Transaction、Payment Allocation、Payment Tender、append-only Payment Resolution、Financial Charge Adjustment，以及共享的 Refund Transaction、Refund Tender、Refund Resolution 与门诊 Refund Preview。金额以整数分保存；医保和收费员交账尚未实现。住院结算快照、补缴及关联原入金的退款由上述住院表保存，流程见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
 - 库存与发药：Inventory Lot、append-only Inventory Movement 和 Dispense。库存余额始终归 Inventory Lot；每次库存移动恰好关联门诊处方或住院实际发药单，不能同时关联两种来源，旧门诊来源和外键保留。当前不实现预占、追溯码、盘点或调拨。
 - 文书：结构化 Clinical Document Draft、结构化与兼容 Clinical Sign Preview、Signed Clinical Document 关联和修订父链；签署的 Composition、document Bundle 和 Provenance 正文仍由 FHIR store 权威保存。
 - 模型执行：患者回答尝试及请求意图关联、建议稳定阶段计划、单元成功步骤与累计请求计数；这些是私有执行状态，不是临床结论。
@@ -76,6 +76,8 @@ fhir_sp_string(workspace_id, epoch, resource_type, resource_id, param, normalize
 `payment_preview` 保存冻结金额、组合方式 JSON、费用版本、真实时间期限和岗位上下文摘要；旧预览缺少绑定时须重新预览。`payment_transaction` 保存不可覆盖的原始 outcome、correlation ID 及冻结查询计划；`payment_allocation` 用外键关联原尝试与 Charge Record，`payment_tender` 按顺序保存各方式金额。`payment_resolution` 以原 payment ID 唯一保存确定查询结果，原未知 outcome 不被改写。账单通过成功的有效 outcome 汇总实收，不持久保存第二套可编辑余额。
 
 收款、分配、方式、费用/FHIR 版本、审计与临床 outbox 在同一个 Command 事务提交。查询恢复使用支付版本及 ChargeItem expected version；重复请求复用 Command 回执，不创建第二条收款或重复放行。历史迁移只在 case/category 唯一匹配原费用时回填分配及现金方式，缺失或多匹配使迁移整体回滚；保留原始费用、交易及未知结果。业务放行规则见[收费与支付](clinical-workflows.md#85-收费支付与退款)。
+
+`refund_transaction` 通过 `source_kind + source_id` 引用既有原款，`basis_id` 绑定业务 owner 提供的退费依据，`owner_kind + owner_id` 绑定就诊。原款成功状态、归属与依据额度由 owner 在同一 Command 事务验证；退款账不复制原款或增加第二套余额。`RefundLedger` 按成功结果扣除可退余额、按未知结果预占余额，追加的 `refund_resolution` 只保存确定结果。`refund_tender` 固定本次退款对原款方式的反向分配；成功和未知退款共同占用对应方式余额，拒付释放。依据额度同时扣除跨原款成功及未知退款；原款余额版本包含尝试和结果记录，防止竞争确认。门诊冲减保存原费用引用、原因与当时业务状态，原费用与支付行保留；所有反向资金、版本、回执与审计一起提交或回滚。
 
 #### 模型执行恢复
 
