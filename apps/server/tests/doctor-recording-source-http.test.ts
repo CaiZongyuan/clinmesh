@@ -6,9 +6,11 @@ import { afterEach, expect, it } from 'vitest'
 import { agentPageContextBindingSchema, doctorRecordingSourceResponseSchema } from '@clinmesh/contracts/agent'
 import { createPatientResponseSchema, doctorCaseDetailSchema, doctorQueueSchema, registrationResponseSchema,
   startVisitResponseSchema, triageResponseSchema, consultationHistoryFieldSchema } from '@clinmesh/contracts/his'
+import { modelUsageListSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
-import type { JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { beginChatCompletionUsage, settleChatCompletionUsage,
+  type JsonChatCompletionsProvider } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import { z } from 'zod'
 import { sentenceReferenceFixtureResponse } from './fixtures/consultation-history.ts'
@@ -103,7 +105,7 @@ async function fixture(provider?: JsonChatCompletionsProvider, modelTimeoutMs?: 
 }
 
 it('retains unchanged facts from the pinned batch without asking the model to repeat their evidence', async () => {
-  const provider: JsonChatCompletionsProvider = { async completeJson(input) {
+  const provider: JsonChatCompletionsProvider = { supportsUsageAccounting: true, supportsRequestControl: true, async completeJson(input) {
     if (input.schemaName === 'consultation_history_verification') return { content: JSON.stringify({
       additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
     }), model: 'synthetic' }
@@ -111,15 +113,20 @@ it('retains unchanged facts from the pinned batch without asking the model to re
       history: z.array(z.object({ id: z.string() })) }).parse(input.userPayload)
     const source = payload.turns.at(-1)!
     const target = payload.history[0]
-    return { content: JSON.stringify({ additions: [{ field: 'physicalExamination',
+    const attempt = beginChatCompletionUsage(input, { provider: 'synthetic', model: input.model, outputLimit: null, kind: 'initial' })
+    const result = { content: JSON.stringify({ additions: [{ field: 'physicalExamination',
       relation: target === undefined ? 'addition' : 'update',
       ...(target === undefined ? {} : { targetAdditionId: target.id, retainedFactIndexes: [0] }),
       facts: [{ text: source.messageText.slice(0, -1), sources: [{ sourceTurnId: source.id, quote: source.messageText }] }],
     }] }), model: 'synthetic' }
+    settleChatCompletionUsage(input, attempt, { status: 'succeeded', dispatch: 'dispatched', actualModel: 'synthetic',
+      usage: { ...unknownModelTokenUsage, inputTokens: 20, outputTokens: 10, totalTokens: 30, mapping: 'openai-v1' } })
+    input.onRequestComplete?.()
+    return result
   } }
   const f = await fixture(provider)
   const binding = await f.context()
-  const saved = []
+  const saved: string[] = []
   for (const [index, text] of ['双肺呼吸音清。', '心律齐。'].entries()) {
     const input = await f.source(binding, text, `retain-rpc-${index}`, `retain-message-${index}`)
     saved.push(doctorRecordingSourceResponseSchema.parse(await (await f.record(binding, input)).json()).data.sourceId)
@@ -130,12 +137,31 @@ it('retains unchanged facts from the pinned batch without asking the model to re
   expect(detail.consultationRecording?.additions.filter(item => item.status === 'applied')).toHaveLength(1)
   expect(detail.consultationRecording?.additions.find(item => item.status === 'applied')?.facts?.flatMap(fact => fact.sources)
     .map(source => source.sourceTurnId)).toEqual(saved)
+  const response = await f.runtime.app.request('/api/model-usage/requests?feature=consultation_history_summary', {
+    headers: { cookie: f.doctor },
+  })
+  expect(response.status).toBe(200)
+  const usage = modelUsageListSchema.parse(await response.json())
+  expect(usage.total).toBe(2)
+  const first = usage.items.find(item => item.context.sources.some(source => source.id === saved[0] && source.relationship === 'trigger'))!
+  const second = usage.items.find(item => item.context.sources.some(source => source.id === saved[1] && source.relationship === 'trigger'))!
+  expect(first.context.sources).toEqual([{ kind: 'recording-source', id: saved[0], relationship: 'trigger' }])
+  expect(second.context.sources).toEqual([
+    { kind: 'recording-source', id: saved[0], relationship: 'evidence' },
+    { kind: 'recording-source', id: saved[1], relationship: 'trigger' },
+  ])
+  for (const attempt of [first, second]) expect(attempt).toMatchObject({ status: 'succeeded',
+    context: { workspaceId: 'workspace-demo', epoch: 'epoch-1', caseId: f.caseId, encounterId: f.encounterId,
+      stage: 'recording', trigger: 'automatic', taskId: expect.any(String) },
+  })
+  expect(first.context.taskId).not.toBe(second.context.taskId)
 })
 
 it('saves a multi-fragment batch with one summary request and no independent semantic requests', async () => {
   let summaries = 0
   let verifications = 0
   const provider: JsonChatCompletionsProvider = {
+    supportsUsageAccounting: true, supportsRequestControl: true,
     async completeJson(input) {
       if (input.schemaName === 'consultation_history_verification') {
         verifications += 1
@@ -143,8 +169,13 @@ it('saves a multi-fragment batch with one summary request and no independent sem
       }
       summaries += 1
       const { turns } = z.object({ turns: z.array(z.object({ id: z.string(), messageText: z.string() })) }).parse(input.userPayload)
-      return { content: JSON.stringify({ additions: turns.map(turn => ({ field: 'physicalExamination', relation: 'addition',
+      const attempt = beginChatCompletionUsage(input, { provider: 'synthetic', model: input.model, outputLimit: null, kind: 'initial' })
+      const result = { content: JSON.stringify({ additions: turns.map(turn => ({ field: 'physicalExamination', relation: 'addition',
         facts: [{ text: turn.messageText.slice(0, -1), sources: [{ sourceTurnId: turn.id, quote: turn.messageText }] }] })) }), model: 'synthetic' }
+      settleChatCompletionUsage(input, attempt, { status: 'succeeded', dispatch: 'dispatched', actualModel: 'synthetic',
+        usage: { ...unknownModelTokenUsage, inputTokens: 20, outputTokens: 10, totalTokens: 30, mapping: 'openai-v1' } })
+      input.onRequestComplete?.()
+      return result
     },
   }
   const f = await fixture(provider)
@@ -152,9 +183,12 @@ it('saves a multi-fragment batch with one summary request and no independent sem
     `/api/his/v1/doctor/cases/${f.caseId}/recording-events`, { headers: { cookie: f.doctor } })).json()).revision
   const initialRevision = await revision()
   const binding = await f.context()
+  const saved: string[] = []
   for (const [index, text] of ['双肺呼吸音清。', '心律齐。'].entries()) {
     const input = await f.source(binding, text, `batch-rpc-${index}`, `batch-message-${index}`)
-    expect((await f.record(binding, input)).status).toBe(200)
+    const response = await f.record(binding, input)
+    expect(response.status).toBe(200)
+    saved.push(doctorRecordingSourceResponseSchema.parse(await response.json()).data.sourceId)
   }
   await f.runtime.dispatcher.dispatchOnce()
   const recorded = await f.read()
@@ -165,24 +199,45 @@ it('saves a multi-fragment batch with one summary request and no independent sem
     verification: { pendingCount: 0, flaggedCount: 0, failedCount: 0, issues: [] } })
   const recordedRevision = await revision()
   expect(recordedRevision).not.toBe(initialRevision)
+  const readUsage = async () => {
+    const response = await f.runtime.app.request('/api/model-usage/requests?feature=consultation_history_summary', {
+      headers: { cookie: f.doctor },
+    })
+    expect(response.status).toBe(200)
+    return modelUsageListSchema.parse(await response.json())
+  }
+  const usage = await readUsage()
+  expect(usage.total).toBe(1)
+  expect(usage.items[0]).toMatchObject({ status: 'succeeded',
+    context: { workspaceId: 'workspace-demo', epoch: 'epoch-1', caseId: f.caseId, encounterId: f.encounterId,
+      stage: 'recording', trigger: 'automatic', taskId: expect.any(String) },
+  })
+  expect(usage.items[0]!.context.sources).toEqual([
+    { kind: 'recording-source', id: saved[0], relationship: 'trigger' },
+    { kind: 'recording-source', id: saved[1], relationship: 'trigger' },
+  ])
   await f.runtime.dispatchPending()
   const checked = await f.read()
   expect(checked.consultationRecording).toMatchObject({ verification: { pendingCount: 0, flaggedCount: 0, failedCount: 0, issues: [] } })
   expect(checked.clinicalDocument?.draft).toEqual(recorded.clinicalDocument?.draft)
   expect(await revision()).toBe(recordedRevision)
   expect({ summaries, verifications }).toEqual({ summaries: 1, verifications: 0 })
+  expect(await readUsage()).toEqual(usage)
   expect(f.runtime.database.driver.prepare('SELECT count(*) AS count FROM consultation_recording_verification').get()).toEqual({ count: 0 })
 })
 
 it.each(['overlong-fact', 'dangling-index'])('records an independent source and only fails the source with an invalid %s candidate', async invalid => {
   let summaries = 0
   const model = 'dsh:{"provider":"synthetic","model":"recording"}'
-  const response = (value?: unknown) => new Response(JSON.stringify({ model,
-    ...(value === undefined ? {} : { content: JSON.stringify(value) }) }), { headers: { 'content-type': 'application/json' } })
   const provider = new DshModelProvider({ origin: 'http://127.0.0.1:1', secret, timeoutMs: 2_000, maxResponseBytes: 8192,
     async fetch(_url, init) {
       const input = z.object({ operation: z.enum(['resolve', 'complete']), schemaName: z.string().optional(),
-        userPayload: z.unknown().optional() }).parse(JSON.parse(String(init?.body)))
+        userPayload: z.unknown().optional(), attemptId: z.string().uuid().optional() }).parse(JSON.parse(String(init?.body)))
+      const response = (value?: unknown) => Response.json({ model,
+        ...(value === undefined ? {} : { content: JSON.stringify(value) }),
+        ...(input.attemptId === undefined ? {} : { accounting: { attemptId: input.attemptId,
+          status: 'succeeded', dispatch: 'dispatched', usage: unknownModelTokenUsage } }),
+      })
       if (input.operation === 'resolve') return response()
       if (input.schemaName === 'consultation_history_verification') return response({
         additions: [{ index: 0, faithful: true, complete: true, relationValid: true }],
@@ -232,12 +287,15 @@ it('saves equivalent formatted updates once and keeps their source recorded', as
   let summaries = 0
   let verifications = 0
   const model = 'dsh:{"provider":"synthetic","model":"recording"}'
-  const response = (value?: unknown) => Response.json({ model,
-    ...(value === undefined ? {} : { content: JSON.stringify(value) }) })
   const provider = new DshModelProvider({ origin: 'http://127.0.0.1:1', secret, timeoutMs: 2_000, maxResponseBytes: 8192,
     async fetch(_url, init) {
       const input = z.object({ operation: z.enum(['resolve', 'complete']), schemaName: z.string().optional(),
-        userPayload: z.unknown().optional() }).parse(JSON.parse(String(init?.body)))
+        userPayload: z.unknown().optional(), attemptId: z.string().uuid().optional() }).parse(JSON.parse(String(init?.body)))
+      const response = (value?: unknown) => Response.json({ model,
+        ...(value === undefined ? {} : { content: JSON.stringify(value) }),
+        ...(input.attemptId === undefined ? {} : { accounting: { attemptId: input.attemptId,
+          status: 'succeeded', dispatch: 'dispatched', usage: unknownModelTokenUsage } }),
+      })
       if (input.operation === 'resolve') return response()
       if (input.schemaName === 'consultation_history_verification') {
         verifications++
@@ -555,7 +613,7 @@ it('persists a valid recording returned after six seconds within the normal mode
   expect((await f.read()).consultationRecording).toMatchObject({ processedCount: 1, failedCount: 0 })
 })
 
-it('cancels a timed out recording once and preserves its failure without blocking the next source', async () => {
+it('cancels a timed out recording once and preserves its unknown outcome without blocking the next source', async () => {
   let calls = 0
   let cancelled = false
   const provider: JsonChatCompletionsProvider = { async completeJson(input) {
@@ -572,12 +630,13 @@ it('cancels a timed out recording once and preserves its failure without blockin
   await f.runtime.dispatchPending()
   expect(cancelled).toBe(true)
   expect(calls).toBe(1)
-  expect((await f.read()).consultationRecording).toMatchObject({ failures: [{ code: 'AI_TIMEOUT', retrying: false }] })
+  expect((await f.read()).consultationRecording).toMatchObject({ failures: [{ code: 'MODEL_OUTCOME_UNKNOWN', retrying: false }] })
   const timing = z.object({ timings_json: z.string() }).parse(f.runtime.database.driver.prepare(
     'SELECT timings_json FROM consultation_recording_batch').get())
-  expect(JSON.parse(timing.timings_json)).toMatchObject({ errorCode: 'AI_TIMEOUT', stage: 'summary', sourceCount: 1,
-    aggregationMs: 0, schedulingMs: expect.any(Number), modelMs: expect.any(Number), validationMs: 0,
-    persistenceMs: expect.any(Number), firstResponseMs: null, firstTextMs: null })
+  expect(JSON.parse(timing.timings_json)).toMatchObject({ errorCode: 'MODEL_OUTCOME_UNKNOWN', sourceCount: 1,
+    aggregationMs: 0, persistenceMs: expect.any(Number) })
+  await f.runtime.dispatchPending()
+  expect(calls).toBe(1)
   await f.record(binding, await f.source(binding, '没有新增记录。', 'after-timeout-rpc', 'after-timeout-message'))
   await f.runtime.dispatchPending()
   expect(calls).toBe(2)

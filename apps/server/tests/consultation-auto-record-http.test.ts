@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
+import { unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { expectedSchemaVersion } from '../src/infrastructure/sqlite/database.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
@@ -114,6 +115,7 @@ async function setup(options: {
   failFirstReply?: boolean
   reply?: string | (() => string)
   extract?: (input: JsonChatCompletionInput) => Promise<unknown> | unknown
+  extractProvider?: JsonChatCompletionsProvider
   resolveModel?: JsonChatCompletionsProvider['resolveModel']
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-auto-record-'))
@@ -121,6 +123,8 @@ async function setup(options: {
   const requests: JsonChatCompletionInput[] = []
   let replyCalls = 0
   const provider: JsonChatCompletionsProvider = {
+    ...(options.extractProvider?.supportsRequestControl === undefined ? {} : { supportsRequestControl: options.extractProvider.supportsRequestControl }),
+    ...(options.extractProvider?.supportsUsageAccounting === undefined ? {} : { supportsUsageAccounting: options.extractProvider.supportsUsageAccounting }),
     ...(options.resolveModel === undefined ? {} : { resolveModel: options.resolveModel }),
     async completeJson(input) {
       requests.push(input)
@@ -129,6 +133,7 @@ async function setup(options: {
         if (options.failFirstReply && replyCalls++ === 0) throw new Error('Synthetic reply failure')
         return { content: JSON.stringify({ reply: typeof options.reply === 'function' ? options.reply() : options.reply ?? '头晕一周了，站起来时更明显。' }), model: 'synthetic' }
       }
+      if (options.extractProvider !== undefined) return options.extractProvider.completeJson(input)
       if (options.extract !== undefined) return { content: JSON.stringify(await options.extract(input)), model: 'synthetic' }
       const payload = input.userPayload as { turns: Array<{ id: string; speaker: string; messageText: string }> }
       const answer = payload.turns.findLast(turn => turn.speaker === 'patient')!
@@ -1124,7 +1129,8 @@ it.each(['AI_TIMEOUT', 'AI_AUTH_FAILED', 'AI_RESPONSE_INVALID'] as const)(
       const detail = await fixture.read()
     expect(detail.clinicalDocument?.draft).toBeUndefined()
     expect(detail.consultationRecording).toMatchObject({ status: 'failed', failedCount: 1, remainingCount: 1, additions: [],
-      failures: [{ sourceTurnId: detail.consultation?.turns.at(-1)?.id, code, retrying: false }] })
+      failures: [{ sourceTurnId: detail.consultation?.turns.at(-1)?.id,
+        code: code === 'AI_TIMEOUT' ? 'MODEL_OUTCOME_UNKNOWN' : code, retrying: false }] })
     expect(detail.consultation?.turns).toHaveLength(3)
     expect(JSON.stringify(detail)).not.toContain('private-provider-credential-and-prompt')
     expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toHaveLength(1)
@@ -1149,7 +1155,7 @@ it.each(['AI_TIMEOUT', 'AI_AUTH_FAILED', 'AI_RESPONSE_INVALID'] as const)(
 it('exposes transient failure while retrying and clears it after a validated update', async () => {
   let failed = false
   const fixture = await setup({ extract: input => {
-    if (!failed) { failed = true; throw new ChatCompletionsError('AI_REQUEST_FAILED', 'private-network-error') }
+    if (!failed) { failed = true; throw new ChatCompletionsError('AI_REQUEST_FAILED', 'Synthetic HTTP failure', { httpStatus: 503 }) }
     const turns = (input.userPayload as { turns: Array<{ id: string }> }).turns
     return { additions: [{ field: 'historyOfPresentIllness', sourceTurnId: turns.at(-1)!.id,
       quote: '头晕一周了，站起来时更明显。', relation: 'addition' }] }
@@ -1158,9 +1164,12 @@ it('exposes transient failure while retrying and clears it after a validated upd
   await fixture.runtime.dispatcher.dispatchOnce()
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'failed',
     failures: [{ code: 'AI_REQUEST_FAILED', retrying: false }] })
+  await fixture.runtime.dispatchPending()
+  expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toHaveLength(1)
   expect((await fixture.control('retry')).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', failures: [] })
+  expect(fixture.requests.filter(request => request.schemaName === 'consultation_history_increment')).toHaveLength(2)
 })
 
 it.each([0, 2])('settles an extraction cancelled by Server shutdown after %s earlier failures', async earlierFailures => {
@@ -1169,7 +1178,7 @@ it.each([0, 2])('settles an extraction cancelled by Server shutdown after %s ear
   let cancelled = false
   let calls = 0
   const fixture = await setup({ extract: async input => {
-    if (calls++ < earlierFailures) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'Synthetic transient failure')
+    if (calls++ < earlierFailures) throw new ChatCompletionsError('AI_REQUEST_FAILED', 'Synthetic HTTP failure', { httpStatus: 503 })
     if (!cancelled) {
       entered()
       await new Promise<void>((_resolve, reject) => input.signal!.addEventListener('abort', () => {
@@ -1190,10 +1199,20 @@ it.each([0, 2])('settles an extraction cancelled by Server shutdown after %s ear
   await extracting
   await fixture.restart()
   await processing
-  expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'processing', failures: [] })
+  const interrupted = await fixture.read()
+  expect(interrupted.consultationRecording).toMatchObject({ status: 'failed', remainingCount: 1,
+    failures: [{ code: 'MODEL_OUTCOME_UNKNOWN', retrying: false }] })
+  expect(interrupted.consultation?.turns).toHaveLength(3)
+  expect(interrupted.clinicalDocument?.draft).toBeUndefined()
+  expect(calls).toBe(earlierFailures + 1)
+  await fixture.runtime.dispatchPending()
+  expect((await fixture.read()).consultationRecording).toEqual(interrupted.consultationRecording)
+  expect(calls).toBe(earlierFailures + 1)
+  expect((await fixture.control('retry')).status).toBe(200)
   await fixture.runtime.dispatchPending()
   expect((await fixture.read()).consultationRecording).toMatchObject({ status: 'updated', failures: [] })
   expect((await fixture.read()).clinicalDocument?.draft?.historyOfPresentIllness).toBe('患者自述：头晕一周了，站起来时更明显。')
+  expect(calls).toBe(earlierFailures + 2)
 })
 
 it.each(['没有胸痛。', '之前没有胸痛。后来也没有胸痛。'])('rejects a quote that removes the patient negation instead of recording chest pain (%s)', async reply => {
@@ -1234,8 +1253,9 @@ it.each([false, true])('repairs malformed output once within each recording atte
     origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters',
     timeoutMs: 2000, maxResponseBytes: 8192,
     fetch: async (_url, init) => {
-      const request = JSON.parse(String(init?.body)) as { model: string; systemPrompt: string;
-        userPayload: { turns: Array<{ id: string }> } }
+      const request = z.object({ model: z.string(), systemPrompt: z.string(), attemptId: z.string().uuid().optional(),
+        userPayload: z.object({ turns: z.array(z.object({ id: z.string() })) }),
+      }).parse(JSON.parse(String(init?.body)))
       prompts.push(request.systemPrompt)
       const repaired = request.systemPrompt.includes('previous response failed validation')
       const valid = repaired && (!manualRetry || retryEnabled)
@@ -1243,12 +1263,14 @@ it.each([false, true])('repairs malformed output once within each recording atte
         field: 'historyOfPresentIllness', relation: 'addition',
         sourceTurnId: valid ? request.userPayload.turns.at(-1)!.id : undefined,
         quote: valid ? confirmed : uncertain,
-      }] }) })
+      }] }), accounting: { attemptId: request.attemptId, status: 'succeeded', dispatch: 'dispatched',
+        usage: unknownModelTokenUsage } })
     },
   })
-  const fixture = await setup({ reply: `${uncertain}${confirmed}`, extract: async input => {
-    const result = await provider.completeJson({ ...input, model: 'dsh:{"provider":"synthetic","model":"synthetic"}' })
-    return JSON.parse(result.content)
+  const fixture = await setup({ reply: `${uncertain}${confirmed}`, extractProvider: {
+    supportsRequestControl: provider.supportsRequestControl,
+    supportsUsageAccounting: provider.supportsUsageAccounting,
+    completeJson: input => provider.completeJson({ ...input, model: 'dsh:{"provider":"synthetic","model":"synthetic"}' }),
   } })
   expect((await fixture.ask()).status).toBe(200)
   await fixture.runtime.dispatchPending()

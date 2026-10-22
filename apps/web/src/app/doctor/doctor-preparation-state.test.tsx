@@ -28,7 +28,7 @@ function Job({ revision = '1' }: { revision?: string }) {
     <p>保留：{job.previous?.items.map(item => item.label).join('、') || '无'}</p>
     {job.error === null ? null : <p role="alert">{job.error.message}</p>}
     <button disabled={!job.ready}>确认建议</button>
-    <button onClick={job.refresh}>刷新</button><button onClick={job.continueOriginal}>继续原任务</button></>
+    <button onClick={job.refresh}>刷新</button><button disabled={job.pending || !job.state?.recovery?.canContinue} onClick={job.continueOriginal}>继续原任务</button></>
 }
 function SubmissionControls() {
   const preparation = useDoctorPreparation()!
@@ -76,9 +76,9 @@ describe('background clinical preparation', () => {
     await screen.findByText('已结束')
   })
 
-  it('polls a manually continued generation until completion without automatically retrying its unknown state', async () => {
+  it.each(['failed', 'pending'] as const)('polls a manually continued %s generation until completion without automatically retrying it', async status => {
     const held = deferred()
-    let current = state({ status: 'failed', items: [], recovery: { status: 'unknown', requestCount: 2, extraRequestCount: 0,
+    let current = state({ status, items: [], recovery: { status: status === 'failed' ? 'unknown' : 'pending', requestCount: 2, extraRequestCount: 0,
       maxRequestsPerUnit: 3, maxExtraRequests: 4, canContinue: true, units: [] } })
     const posts: unknown[] = []
     let resumedReads = 0

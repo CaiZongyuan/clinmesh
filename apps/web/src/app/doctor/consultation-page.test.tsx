@@ -7,7 +7,7 @@ import { ConsultationPage } from './consultation-page.tsx'
 
 afterEach(cleanup)
 
-it.each(['executing', 'failed', 'unknown'] as const)('shows a persisted %s patient reply after returning to the page', status => {
+it.each(['executing', 'blocked', 'failed', 'unknown'] as const)('shows a persisted %s patient reply after returning to the page', status => {
   render(<ConsultationPage action={{ error: null, pending: false, onAsk: vi.fn(), onRetry: vi.fn() }}
     consultation={{ turns: [{
       actorId: 'synthetic-doctor', practitionerId: 'synthetic-practitioner', id: 'synthetic-doctor-turn',
@@ -16,12 +16,15 @@ it.each(['executing', 'failed', 'unknown'] as const)('shows a persisted %s patie
     }], version: 3, replyAttempt: {
       doctorTurnId: 'synthetic-doctor-turn', status,
       startedAt: '2026-10-20T00:00:00.000Z', deadlineAt: '2026-10-20T00:00:30.000Z',
-      ...(status === 'executing' ? {} : { errorCode: status === 'unknown' ? 'CONSULTATION_REPLY_UNKNOWN' : 'AI_AUTH_FAILED' }),
+      ...(status === 'executing' ? {} : { errorCode: status === 'blocked' ? 'MODEL_CONTROL_BLOCKED' : status === 'unknown' ? 'CONSULTATION_REPLY_UNKNOWN' : 'AI_AUTH_FAILED' }),
     } }} locale="zh-CN" messages={getWorkspaceMessages('zh-CN')} patientName="合成患者" readOnly={false} />)
   if (status === 'executing') {
     expect(screen.getByRole('status').textContent).toBe('患者正在输入…')
     expect(screen.getByRole('button', { name: '等待当前回答' })).toBeDefined()
     expect(screen.getByText('患者回答仍在生成，等待将复用本次回答。')).toBeDefined()
+  } else if (status === 'blocked') {
+    expect(screen.getByRole('button', { name: '等待模型控制恢复' })).toHaveProperty('disabled', true)
+    expect(screen.getByText('医生问题已保存，模型控制恢复且本次回答期限仍有效时将自动接续。')).toBeDefined()
   } else {
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.getByRole('button', { name: '重试患者回答' })).toBeDefined()

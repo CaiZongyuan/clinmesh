@@ -13,8 +13,18 @@ import { CommandReceiptNotFoundError, type ActorContext, type CommandExecutor } 
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import { ConsultationReplyAttempts, type ConsultationReplyAttempt } from './consultation-reply-attempts.ts'
 import { hasHiddenDiagnosisLeak, type PersonaResource } from './patient-persona-service.ts'
-import type { WorkflowService } from './workflow-service.ts'
+import { WorkflowError, type WorkflowService } from './workflow-service.ts'
 import type { GenerationModelBinding } from './generation-model-binding.ts'
+import { modelUsageControlFailure } from './model-usage-control.ts'
+import { modelTaskOutcomeUnknown } from './model-task-recovery.ts'
+
+const resumeInputSchema = z.object({
+  context: z.object({ actorId: z.string(), workspaceId: z.string(), epoch: z.string(), scenarioRunId: z.string(), roleCode: z.string(),
+    practitionerId: z.string().optional(), practitionerRoleId: z.string().optional(), organizationId: z.string().optional(),
+    locationId: z.string().optional(), agentGrantId: z.string().optional() }).strict(),
+  encounterId: z.string(), doctorSequence: z.number().int(), doctorTurnId: z.string(), intentKey: z.string(),
+  operation: z.enum(['ask', 'retry']), previouslyAccepted: z.boolean(), idempotencyKey: z.string(),
+}).strict()
 
 const dialogueSystemPrompt = [
   '你在一次中国公立医院普通门诊问诊中扮演患者本人。',
@@ -46,14 +56,16 @@ type ConsultationDialogueErrorCode =
   | 'CONSULTATION_REPLY_PENDING'
   | 'CONSULTATION_REPLY_UNAVAILABLE'
   | 'CONSULTATION_REPLY_UNKNOWN'
+  | 'MODEL_CONTROL_BLOCKED'
 
 export class ConsultationDialogueError extends Error {
   readonly code: ConsultationDialogueErrorCode
   readonly status: 404 | 409 | 503
-  readonly replyOutcome: 'failed' | 'unknown'
+  readonly replyOutcome: 'failed' | 'unknown' | 'blocked'
 
   constructor(code: ConsultationDialogueErrorCode, message: string,
-    replyOutcome: 'failed' | 'unknown' = code === 'AI_TIMEOUT' || code === 'CONSULTATION_REPLY_UNKNOWN' ? 'unknown' : 'failed') {
+    replyOutcome: 'failed' | 'unknown' | 'blocked' = code === 'MODEL_CONTROL_BLOCKED' ? 'blocked'
+      : code === 'AI_TIMEOUT' || code === 'CONSULTATION_REPLY_UNKNOWN' ? 'unknown' : 'failed') {
     super(message)
     this.name = 'ConsultationDialogueError'
     this.code = code
@@ -75,6 +87,9 @@ export class ConsultationDialogueService {
   readonly #inflight = new Map<string, Promise<ReturnType<WorkflowService['appendPatientConsultationTurn']>['data']>>()
   readonly #attempts: ConsultationReplyAttempts
   readonly #shutdown = new AbortController()
+  readonly #database: ClinMeshDatabase
+  readonly #canResume: (workspaceId: string, taskId: string) => boolean
+  readonly #contextStatus: (context: ActorContext) => string
 
   constructor(input: {
     database: ClinMeshDatabase
@@ -85,7 +100,12 @@ export class ConsultationDialogueService {
     models?: GenerationModelBinding
     provider?: JsonChatCompletionsProvider
     workflow: WorkflowService
+    canResume?: (workspaceId: string, taskId: string) => boolean
+    contextStatus?: (context: ActorContext) => string
   }) {
+    this.#database = input.database
+    this.#canResume = input.canResume ?? (() => true)
+    this.#contextStatus = input.contextStatus ?? (() => 'active')
     this.#commands = input.commands
     this.#fhir = input.fhir
     this.#cases = input.cases
@@ -103,6 +123,58 @@ export class ConsultationDialogueService {
   async close(): Promise<void> {
     this.#shutdown.abort()
     await Promise.allSettled(this.#inflight.values())
+  }
+
+  /** Only proven, pre-dispatch control refusals are candidates for automatic continuation. */
+  async resumePending(): Promise<void> {
+    if (this.#shutdown.signal.aborted) return
+    // Page across the original queue, including refused rows, without chasing new arrivals.
+    const end = z.object({ position: z.number().nullable() }).parse(this.#database.driver.prepare(
+      'SELECT MAX(rowid) AS position FROM model_reply_wait').get()).position ?? 0
+    let position = 0
+    while (position < end && !this.#shutdown.signal.aborted) {
+      const rows = z.array(z.object({ position: z.number(), workspace_id: z.string(), epoch: z.string(), attempt_id: z.string(), deadline_at: z.string(), input_json: z.string() }))
+        .parse(this.#database.driver.prepare('SELECT rowid AS position, * FROM model_reply_wait WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 100')
+          .all(position, end))
+      if (rows.length === 0) break
+      for (const row of rows) {
+        position = row.position
+        const parsed = resumeInputSchema.parse(JSON.parse(row.input_json))
+        const { agentGrantId, locationId, organizationId, practitionerId, practitionerRoleId, ...required } = parsed.context
+        const context: ActorContext = { ...required, ...(agentGrantId === undefined ? {} : { agentGrantId }),
+          ...(locationId === undefined ? {} : { locationId }), ...(organizationId === undefined ? {} : { organizationId }),
+          ...(practitionerId === undefined ? {} : { practitionerId }), ...(practitionerRoleId === undefined ? {} : { practitionerRoleId }) }
+        const input = { ...parsed, context }
+        if (Date.parse(row.deadline_at) <= Date.now() || this.#contextStatus(context) !== 'active') {
+          this.#attempts.finish(context, row.attempt_id, 'failed', 'AI_TIMEOUT')
+          this.#deleteWait(context, row.attempt_id)
+          continue
+        }
+        try {
+          if (this.#workflow.patientTurnAfter(context, input.encounterId, input.doctorSequence) !== undefined) {
+            this.#attempts.finish(context, row.attempt_id, 'succeeded', null)
+            this.#deleteWait(context, row.attempt_id)
+            continue
+          }
+          this.#workflow.authorizeConsultation(context, input.encounterId, input.doctorSequence)
+        } catch (error) {
+          if (!(error instanceof WorkflowError)) throw error
+          this.#attempts.finish(context, row.attempt_id, 'failed', 'CONSULTATION_REPLY_UNAVAILABLE')
+          this.#deleteWait(context, row.attempt_id)
+          continue
+        }
+        if (!this.#canResume(row.workspace_id, row.attempt_id) || this.#inflight.has(row.attempt_id)) continue
+        const attempt: ConsultationReplyAttempt = { attempt_id: row.attempt_id, doctor_turn_id: input.doctorTurnId,
+          encounter_id: input.encounterId, status: 'executing', started_at: new Date().toISOString(), deadline_at: row.deadline_at,
+          error_code: 'MODEL_CONTROL_BLOCKED' }
+        await this.#startPatientTurn(input, attempt).catch(() => undefined)
+      }
+    }
+  }
+
+  #deleteWait(context: ActorContext, attemptId: string): void {
+    this.#database.driver.prepare('DELETE FROM model_reply_wait WHERE workspace_id = ? AND epoch = ? AND attempt_id = ?')
+      .run(context.workspaceId, context.epoch, attemptId)
   }
 
   #previouslyAccepted(context: ActorContext, operation: string, key: string): boolean {
@@ -228,17 +300,41 @@ export class ConsultationDialogueService {
     if (!start) {
       throw this.#attemptError(attempt.error_code ?? 'CONSULTATION_REPLY_UNKNOWN')
     }
+    return this.#startPatientTurn(input, attempt)
+  }
+
+  #startPatientTurn(input: z.infer<typeof resumeInputSchema> & { context: ActorContext }, attempt: ConsultationReplyAttempt) {
     const signal = AbortSignal.any([
       this.#shutdown.signal, AbortSignal.timeout(Math.max(0, Date.parse(attempt.deadline_at) - Date.now())),
     ])
     const execution = this.#executePatientTurn(input, attempt, signal)
       .then(result => {
         this.#attempts.finish(input.context, attempt.attempt_id, 'succeeded', null)
+        this.#deleteWait(input.context, attempt.attempt_id)
         return result
       }, error => {
         const code = error instanceof ConsultationDialogueError
           ? consultationReplyErrorCodeSchema.safeParse(error.code) : undefined
         const safeCode = code?.success === true ? code.data : 'CONSULTATION_REPLY_UNAVAILABLE'
+        if (safeCode === 'MODEL_CONTROL_BLOCKED') {
+          try {
+            this.#database.driver.transaction(() => {
+              this.#attempts.finish(input.context, attempt.attempt_id, 'blocked', safeCode)
+              this.#database.driver.prepare(`INSERT INTO model_reply_wait(workspace_id, epoch, attempt_id, deadline_at, input_json)
+                VALUES (?, ?, ?, ?, ?) ON CONFLICT(workspace_id, epoch, attempt_id) DO NOTHING`)
+                .run(input.context.workspaceId, input.context.epoch, attempt.attempt_id, attempt.deadline_at, JSON.stringify(input))
+            })()
+          } catch (persistenceError) {
+            // Retire an existing waiter with the attempt so recovery cannot restart an unknown reply.
+            this.#database.driver.transaction(() => {
+              this.#deleteWait(input.context, attempt.attempt_id)
+              this.#attempts.finish(input.context, attempt.attempt_id, 'unknown', 'CONSULTATION_REPLY_UNKNOWN')
+            })()
+            throw persistenceError
+          }
+          throw error
+        }
+        this.#deleteWait(input.context, attempt.attempt_id)
         const unknown = signal.aborted || !(error instanceof ConsultationDialogueError) || error.replyOutcome === 'unknown'
         this.#attempts.finish(input.context, attempt.attempt_id, unknown ? 'unknown' : 'failed', safeCode)
         throw error instanceof ConsultationDialogueError ? error : this.#attemptError(safeCode)
@@ -248,7 +344,8 @@ export class ConsultationDialogueService {
   }
 
   #attemptError(code: z.infer<typeof consultationReplyErrorCodeSchema>) {
-    return new ConsultationDialogueError(code, code === 'CONSULTATION_REPLY_UNKNOWN'
+    return new ConsultationDialogueError(code, code === 'MODEL_CONTROL_BLOCKED'
+      ? 'The patient reply is waiting for model control recovery' : code === 'CONSULTATION_REPLY_UNKNOWN'
       ? 'The patient reply outcome is unknown; explicitly retry to start a new reply'
       : 'Patient reply generation failed; explicitly retry to start a new reply')
   }
@@ -287,9 +384,21 @@ export class ConsultationDialogueService {
       const model = await this.#untilAborted(signal, () => this.#models?.bind(input.context.workspaceId, taskId, defaultModel, signal)
         ?? Promise.resolve(defaultModel))
       signal.throwIfAborted()
-      reply = await this.#composeReply(input.context, caseId, binding.syntheticCaseId, persona, model, signal, input.doctorSequence)
+      reply = await this.#composeReply(input.context, caseId, binding.syntheticCaseId, persona, model, signal, input.doctorSequence, attempt.attempt_id)
     } catch (error) {
       if (error instanceof ConsultationDialogueError) throw error
+      if (!modelTaskOutcomeUnknown(error) && modelUsageControlFailure(error) !== undefined) {
+        throw new ConsultationDialogueError('MODEL_CONTROL_BLOCKED', 'The saved doctor question is waiting for model control recovery')
+      }
+      if (modelTaskOutcomeUnknown(error)) {
+        let cause: unknown = error
+        const seen = new Set<unknown>()
+        while (cause instanceof Error && !seen.has(cause)) {
+          if (cause instanceof ChatCompletionsError) throw new ConsultationDialogueError(cause.code, 'Patient reply generation outcome is unknown', 'unknown')
+          seen.add(cause)
+          cause = cause.cause
+        }
+      }
       if (error instanceof ChatCompletionsError) {
         const unknown = error.code === 'AI_TIMEOUT' || (error.code === 'AI_REQUEST_FAILED' && error.httpStatus === undefined)
         throw new ConsultationDialogueError(error.code, 'Patient reply generation failed; check the ClinMesh model settings and retry',
@@ -332,6 +441,7 @@ export class ConsultationDialogueService {
     model: string,
     signal: AbortSignal,
     doctorSequence: number,
+    attemptId: string,
   ): Promise<string> {
     const detail = this.#workflow.doctorCaseDetail(context, caseId)
     const turns = (detail.consultation?.turns ?? []).slice(-dialogueContextTurnLimit)
@@ -394,9 +504,17 @@ export class ConsultationDialogueService {
         },
       },
     }
-    const generate = async (systemPrompt: string) => {
+    const generate = async (systemPrompt: string, usageKind: 'initial' | 'format-repair' = 'initial') => {
       this.#workflow.authorizeConsultation(context, detail.encounter.id, doctorSequence)
       const result = await this.#untilAborted(signal, () => this.#provider!.completeJson({
+        onBeforeRequest: () => {
+          signal.throwIfAborted()
+          this.#workflow.authorizeConsultation(context, detail.encounter.id, doctorSequence)
+        },
+        usageKind,
+        usageContext: { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId,
+          taskId: attemptId, caseId, encounterId: detail.encounter.id, stage: 'reply', trigger: 'manual',
+          sources: [{ kind: 'turn', id: `${detail.encounter.id}:${doctorSequence}`, relationship: 'trigger' }] },
         signal, jsonSchema: z.toJSONSchema(replyOutputSchema) as Record<string, unknown>,
         model, schemaName: 'patient_dialogue_reply', systemPrompt, userPayload: payload,
         validate: value => replyOutputSchema.safeParse(value).success,
@@ -405,7 +523,7 @@ export class ConsultationDialogueService {
     }
     const reply = await generate(dialogueSystemPrompt)
     if (!this.#leaksHiddenDiagnosis(context, syntheticCaseId, reply)) return reply
-    const retried = await generate(`${dialogueSystemPrompt}\n不要使用任何疾病名称或医学术语描述自己的病情。`)
+    const retried = await generate(`${dialogueSystemPrompt}\n不要使用任何疾病名称或医学术语描述自己的病情。`, 'format-repair')
     return this.#leaksHiddenDiagnosis(context, syntheticCaseId, retried) ? safeFallbackReply : retried
   }
 

@@ -20,6 +20,7 @@ import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic
 import type { SyntheticPatientProfileRepository } from '../infrastructure/sqlite/synthetic-patient-profile-repository.ts'
 import {
   ChatCompletionsError,
+  StructuredOutputValidationError,
   type JsonChatCompletionsProvider,
 } from '../infrastructure/ai/openai-chat-completions.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
@@ -87,6 +88,7 @@ const serviceAgentOutputSchema = z.object({
 }).strict()
 
 const requestRowSchema = z.object({
+  clinical_case_id: z.string().min(1),
   authored_at: z.iso.datetime({ offset: true }),
   catalog_item_id: z.string().min(1),
   encounter_id: z.string().min(1),
@@ -161,6 +163,25 @@ export function investigationFailure(error: unknown): { code: string; message: s
     code: 'INVESTIGATION_GENERATION_FAILED',
     message: 'Investigation result generation failed',
   }
+}
+
+const invalidOutputMarker = 'investigation_output'
+
+/**
+ * The safe domain marker survives request budget exhaustion through the recovery's persisted
+ * classification; only this service's own whitelisted marker is replayed as a clinical failure.
+ */
+function replayedInvalidOutput(error: unknown): InvestigationGenerationError | undefined {
+  const seen = new Set<unknown>()
+  while (error instanceof Error && !seen.has(error)) {
+    if (error instanceof ChatCompletionsError && error.code === 'AI_RESPONSE_INVALID'
+      && (error.validationIssues?.some(issue => issue.code === invalidOutputMarker) === true
+        || error.cause instanceof StructuredOutputValidationError && error.cause.code === invalidOutputMarker)) {
+      return new InvestigationGenerationError('INVESTIGATION_OUTPUT_INVALID', 'The Investigation Agent returned an invalid result')
+    }
+    seen.add(error); error = error.cause
+  }
+  return undefined
 }
 
 function conceptCodings(resource: Resource) {
@@ -452,6 +473,15 @@ export class InvestigationService {
     return this.#agentGenerationPlan(concept).capability
   }
 
+  #assertRequestCurrent(workspaceId: string, epoch: string, requestId: string): void {
+    const current = this.#database.driver.prepare(`SELECT 1 FROM laboratory_request r
+      JOIN workspace w ON w.workspace_id = r.workspace_id AND w.active_epoch = r.epoch
+      JOIN workspace_epoch e ON e.workspace_id = w.workspace_id AND e.epoch = w.active_epoch AND e.state = 'active'
+      WHERE r.workspace_id = ? AND r.epoch = ? AND r.request_id = ? AND r.status = 'in-progress'`)
+      .get(workspaceId, epoch, requestId)
+    if (current === undefined) throw new InvestigationGenerationError('INVESTIGATION_UNSUPPORTED', 'The original laboratory request is no longer active')
+  }
+
   async resolveForRequest(
     workspaceId: string,
     epoch: string,
@@ -464,7 +494,7 @@ export class InvestigationService {
     const row = requestRowSchema.optional().parse(this.#database.driver.prepare(`
       SELECT request.authored_at, request.catalog_item_id, request.reference_json,
         request.result_snapshot_id, request.service_snapshot_json,
-        source.encounter_id, source.patient_id, source.synthetic_case_id,
+        source.case_id AS clinical_case_id, source.encounter_id, source.patient_id, source.synthetic_case_id,
         source.synthetic_case_revision, source.profile_id, source.profile_revision
       FROM laboratory_request AS request
       JOIN clinical_request_source source ON source.workspace_id=request.workspace_id
@@ -487,12 +517,14 @@ export class InvestigationService {
     }
     const materializedRow = materializedRequestRowSchema.parse(row)
     if (materializedRow.service_snapshot_json !== null) {
+      this.#assertRequestCurrent(workspaceId, epoch, requestId)
       return this.#resolvePublishedService(
         workspaceId,
         epoch,
         materializedRow,
         laboratoryServiceSnapshotSchema.parse(JSON.parse(materializedRow.service_snapshot_json)),
         modelTaskId,
+        requestId,
         signal,
       )
     }
@@ -502,6 +534,7 @@ export class InvestigationService {
       materializedRow.catalog_item_id,
     )
     if (existing !== undefined) return existing
+    this.#assertRequestCurrent(workspaceId, epoch, requestId)
     const requestedConcept = referenceConceptSnapshotSchema.parse(JSON.parse(materializedRow.reference_json))
     const syntheticCase = this.#cases.get(workspaceId, materializedRow.synthetic_case_id)
     const truth = this.#cases.getTruthForSimulator(workspaceId, materializedRow.synthetic_case_id)
@@ -562,22 +595,39 @@ export class InvestigationService {
       }),
     }
     const inputHash = canonicalJsonHash(payload)
+    const validateInterpretation = (output: z.infer<typeof agentOutputSchema>) => {
+      if (output.interpretation !== interpretationFor(output.value, referenceRange)) {
+        throw new InvestigationGenerationError(
+          'INVESTIGATION_OUTPUT_INVALID',
+          'The Investigation Agent interpretation conflicts with the reference range',
+        )
+      }
+    }
     const completion = await this.#provider.completeJson({
+      onBeforeRequest: () => this.#assertRequestCurrent(workspaceId, epoch, requestId),
+      usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: materializedRow.clinical_case_id,
+        encounterId: materializedRow.encounter_id, stage: 'investigation', trigger: generationAttempt === undefined ? 'automatic' : 'recovery',
+        sources: [{ kind: 'report', id: requestId, relationship: 'trigger' }] },
       jsonSchema: z.toJSONSchema(agentOutputSchema) as Record<string, unknown>,
       model: await this.#models?.bind(workspaceId, modelTaskId, this.#model, signal) ?? this.#model,
       schemaName: 'investigation_result',
       ...(signal === undefined ? {} : { signal }),
       systemPrompt,
       userPayload: payload,
-      validate: value => agentOutputSchema.safeParse(value).success,
+      validate: value => {
+        const parsed = agentOutputSchema.safeParse(value)
+        if (!parsed.success) return false
+        try { validateInterpretation(parsed.data) } catch {
+          // 领域无效走安全固定码，请求预算耗尽后恢复层才能持久并回放同一分类。
+          throw new StructuredOutputValidationError(invalidOutputMarker, '')
+        }
+        return true
+      },
+    }).catch((error: unknown) => {
+      throw replayedInvalidOutput(error) ?? error
     })
     const output = agentOutputSchema.parse(JSON.parse(completion.content))
-    if (output.interpretation !== interpretationFor(output.value, referenceRange)) {
-      throw new InvestigationGenerationError(
-        'INVESTIGATION_OUTPUT_INVALID',
-        'The Investigation Agent interpretation conflicts with the reference range',
-      )
-    }
+    validateInterpretation(output)
     const content = investigationResultContentSchema.parse({
       conclusion: output.conclusion,
       results: [{
@@ -609,6 +659,7 @@ export class InvestigationService {
     row: RequestRow,
     service: LaboratoryServiceSnapshot,
     modelTaskId: string,
+    requestId: string,
     signal?: AbortSignal,
   ): Promise<InvestigationResultSnapshot> {
     const syntheticCase = this.#cases.get(workspaceId, row.synthetic_case_id)
@@ -758,31 +809,31 @@ export class InvestigationService {
     )
     if (existing !== undefined) return existing
     const completion = await this.#provider.completeJson({
+      onBeforeRequest: () => this.#assertRequestCurrent(workspaceId, epoch, requestId),
+      usageContext: { workspaceId, epoch, taskId: modelTaskId, caseId: row.clinical_case_id,
+        encounterId: row.encounter_id, stage: 'investigation-service', trigger: 'automatic',
+        sources: [{ kind: 'report', id: requestId, relationship: 'trigger' }] },
       jsonSchema: z.toJSONSchema(serviceAgentOutputSchema) as Record<string, unknown>,
       model: await this.#models?.bind(workspaceId, modelTaskId, this.#model, signal) ?? this.#model,
       schemaName: 'investigation_service_result',
       ...(signal === undefined ? {} : { signal }),
       systemPrompt: serviceSystemPrompt,
       userPayload: payload,
-      validate: value => serviceAgentOutputSchema.safeParse(value).success,
+      validate: value => {
+        const parsed = serviceAgentOutputSchema.safeParse(value)
+        if (!parsed.success) return false
+        try { this.#validatedServiceAgentResults(parsed.data, agentMissing) } catch (error) {
+          if (!(error instanceof InvestigationGenerationError)) throw error
+          // 与单指标路径一致：临床无效在 validate 内用安全固定码拒绝，避免坏正文成功 checkpoint。
+          throw new StructuredOutputValidationError(invalidOutputMarker, '')
+        }
+        return true
+      },
+    }).catch((error: unknown) => {
+      throw replayedInvalidOutput(error) ?? error
     })
     const output = serviceAgentOutputSchema.parse(JSON.parse(completion.content))
-    const outputByCode = new Map(output.results.map(result => [result.code, result]))
-    if (outputByCode.size !== output.results.length
-      || output.results.length !== agentMissing.length
-      || agentMissing.some(definition => !outputByCode.has(definition.referenceConcept.code))) {
-      throw new InvestigationGenerationError(
-        'INVESTIGATION_OUTPUT_INVALID',
-        'The Investigation Agent changed the requested report closure',
-      )
-    }
-    const generatedResults = new Map(agentMissing.map((definition) => {
-      const generated = outputByCode.get(definition.referenceConcept.code)!
-      return [definition.referenceConcept.code, this.#validatedServiceAgentResult(
-        definition,
-        generated,
-      )] as const
-    }))
+    const generatedResults = this.#validatedServiceAgentResults(output, agentMissing)
     const baselineResults = new Map(missing.flatMap((definition) => {
       const rule = adultRules.get(definition.referenceConcept.id)
       return rule === undefined
@@ -914,6 +965,32 @@ export class InvestigationService {
       ...(generated.unit === undefined ? {} : { unit: generated.unit }),
       value: generated.value,
     })
+  }
+
+  /**
+   * 项目闭合与逐项确定性校验同时服务 validate 门禁和 Provider 返回后的后置门禁；
+   * validate 失败由调用方转换为安全固定码，后置门禁保留原错误分类。
+   */
+  #validatedServiceAgentResults(
+    output: z.infer<typeof serviceAgentOutputSchema>,
+    agentMissing: ServiceResultDefinition[],
+  ): Map<string, InvestigationResultContent['results'][number]> {
+    const outputByCode = new Map(output.results.map(result => [result.code, result]))
+    if (outputByCode.size !== output.results.length
+      || output.results.length !== agentMissing.length
+      || agentMissing.some(definition => !outputByCode.has(definition.referenceConcept.code))) {
+      throw new InvestigationGenerationError(
+        'INVESTIGATION_OUTPUT_INVALID',
+        'The Investigation Agent changed the requested report closure',
+      )
+    }
+    return new Map(agentMissing.map((definition) => {
+      const generated = outputByCode.get(definition.referenceConcept.code)!
+      return [definition.referenceConcept.code, this.#validatedServiceAgentResult(
+        definition,
+        generated,
+      )] as const
+    }))
   }
 
   #formalEvidence(

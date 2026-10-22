@@ -71,6 +71,8 @@ export function sentenceReferenceFixtureResponse(value: unknown, payload: unknow
 export function recordingFixtureProvider(provider: JsonChatCompletionsProvider,
   quality?: JsonChatCompletionsProvider['completeJson']): JsonChatCompletionsProvider {
   return {
+    ...(provider.supportsRequestControl === undefined ? {} : { supportsRequestControl: provider.supportsRequestControl }),
+    ...(provider.supportsUsageAccounting === undefined ? {} : { supportsUsageAccounting: provider.supportsUsageAccounting }),
     ...(provider.resolveModel === undefined ? {} : { resolveModel: provider.resolveModel.bind(provider) }),
     async completeJson(input) {
       if (input.schemaName === 'clinical_document_quality' || input.schemaName === 'clinical_document_quality_verification') {

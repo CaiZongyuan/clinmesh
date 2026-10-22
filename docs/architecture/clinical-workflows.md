@@ -40,7 +40,7 @@ Consultation 是病例级领域聚合，Consultation Record 保存 append-only �
 
 未回答的医生发言阻止追加下一条医生发言。检验报告 final 或更正时，系统追加引用固定 DiagnosticReport 版本的报告卡片；卡片不充当文本回答，不阻断正在生成的回答。回答执行按受信 Workspace/Epoch 与待回答医生轮次协调，ask、同键重发及重叠补答共同等待一次生成，各请求独立执行授权、输入冲突检查与自身回执。持久意图关联原回答尝试；相同 key 的成功回放优先返回已保存回答，失败或未知回放原终态，不重新推理。档案绑定缺失的 `CONSULTATION_CASE_NOT_FOUND`（404）与旧版档案的 `CONSULTATION_PERSONA_OUTDATED`（409）同样保存并保留原分类重放；恢复有效档案绑定后，仍须明确使用新补答意图。公开 Command 回执仍按原 operation 和幂等键查询；已接受而尚未完成的回执为 `executing`，包含已保存发言。
 
-病例 `consultation.replyAttempt` 返回医生轮次、开始与截止时间、`executing`、`succeeded`、`failed` 或 `unknown` 及安全错误码。客户端刷新病例和原回执后，在原尝试仍执行时继续等待；新 retry key 也加入原尝试，不切模型或延长期限。原尝试终止且问题仍待答时，只有医生明确的新补答意图与新 key 才开始采用当前模型的新尝试，不重新提交医生问题。页面或 HTTP 断开不取消已接受的回答；runtime 关闭主动取消并等待执行收束，重启把遗留执行标为未知且不自动补答。`AI_TIMEOUT` 和 `CONSULTATION_REPLY_UNKNOWN` 表示无法确认完整结果；原成功回答及回执继续可重放。持久归属见[模型执行恢复](storage.md#模型执行恢复)，理由见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
+病例 `consultation.replyAttempt` 返回医生轮次、开始与截止时间、`executing`、`blocked`、`succeeded`、`failed` 或 `unknown` 及安全错误码。控制或账本阻塞返回 `MODEL_CONTROL_BLOCKED`（409）并保留已保存问题；恢复后仅在原期限内、授权和病例仍有效时接续。客户端刷新病例和原回执后，在原尝试仍执行或等待控制时继续等待；新 retry key 也加入原尝试，不切模型或延长期限。原尝试终止且问题仍待答时，只有医生明确的新补答意图与新 key 才开始采用当前模型的新尝试，不重新提交医生问题。页面或 HTTP 断开不取消已接受的回答；runtime 关闭主动取消并等待执行收束，重启把已派发而结果不明的遗留执行标为未知且不自动补答，明确未派发的有效待办保留原期限恢复。`AI_TIMEOUT` 和 `CONSULTATION_REPLY_UNKNOWN` 表示无法确认完整结果；原成功回答及回执继续可重放。持久归属见[模型执行恢复](storage.md#模型执行恢复)，理由见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
 
 复诊延续同一条对话；完诊只读。Reset 重放保留病例与档案事实，重新生成的措辞可以不同。Canonical hash 的覆盖范围与限制见[确定性与故障注入](simulation.md#104-确定性与故障注入)。
 
@@ -52,7 +52,7 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 新整理快照固定句子引用协议，模型只返回事实文字与句子编号，服务端恢复原始来源身份和逐字完整引文后复用既有程序校验与质控来源上下文；旧快照继续按原协议恢复，未变化事实沿用保留索引。编号映射和格式修复均计入完整输入预算，超限保留来源和失败。协议、句界、快照隔离及体积比较见[句子编号决策](../decisions/implemented/architecture/2026-10-19-recording-sentence-references.md)。
 
-病例 Query 的 `consultationRecording` 返回持久控制版本、暂停／待补录／处理中／失败状态、已整理和剩余来源数量、来源及草稿保存事实。常规失败保留来源和失败状态，不自动重跑；只有服务关闭中断在剩余 outbox 尝试预算内恢复。`failures` 返回安全错误码、来源与重试状态，预算和恢复规则见[低延迟记录规格](../spec/2026-10-15-low-latency-document-recording.md)。任务、来源和应用状态在 SQLite 持久化，重启复用模型绑定，旧 Epoch 结果不得写入当前病例。暂停只停止整理，回答继续保存；恢复与失败重试按序补录未完成来源，既有病例首次补录须医生明确点击。兼容 verification 计数固定为零、issues 为空，不代表语义通过；旧核对任务只退役，不驱动重试。控制 Command 推进任务代次，迟到结果不得越过暂停或新代次，完成回答不重置；顺序与模型绑定见[记录恢复决策](../decisions/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
+病例 Query 的 `consultationRecording` 返回持久控制版本、暂停／待补录／处理中／失败状态、已整理和剩余来源数量、来源及草稿保存事实。常规失败保留来源和失败状态，不自动重跑；服务关闭后仅安全接续可确认没有未决派发的任务或复用已持久成功步骤，在途结果未知须由医生明确重试。`failures` 返回安全错误码、来源与重试状态，预算和恢复规则见[低延迟记录规格](../spec/2026-10-15-low-latency-document-recording.md)。任务、来源和应用状态在 SQLite 持久化，重启复用模型绑定，旧 Epoch 结果不得写入当前病例。暂停只停止整理，回答继续保存；恢复与失败重试按序补录未完成来源，既有病例首次补录须医生明确点击。兼容 verification 计数固定为零、issues 为空，不代表语义通过；旧核对任务只退役，不驱动重试。控制 Command 推进任务代次，迟到结果不得越过暂停或新代次，完成回答不重置；顺序与模型绑定见[记录恢复决策](../decisions/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
 
 自动记录没有医生确认状态，签署不要求逐条核对或问诊遗漏勾选。预览仍固定完整正文、草稿版本、负责身份、Encounter 版本与 Consultation/来源快照；准备推进提取代次，迟到结果失效，已签文书不可变。取消恢复未完成任务并保留暂停和失败；冻结与恢复见[签署准备决策](../decisions/implemented/architecture/2026-10-10-consultation-signing-preparation.md)。正式签署与 Agent 高风险提案批准沿用原授权。
 
@@ -78,7 +78,7 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 建议按资料筛选、目录筛选、生成和核验的稳定计划保存私有成功步骤；后段技术失败或重启恢复只处理未完成单元。同一阶段批次含首次最多三次真实模型请求，同一 generation 的所有批次合计最多四次额外请求；限流重发、格式修复、自动恢复和人工继续共享派发前原子预占的持久计数。任一上限耗尽即停止所有新派发，outbox 重新领取不增加额度。明确可恢复技术失败在剩余额度内恢复；已发出但未获得完整结果的超时、断流、关停及无法证明未派发的崩溃窗口为未知，保留次数且不自动重发。
 
-普通 `refresh:false` 请求遇到同输入失败、未知或耗尽时返回原任务；`continueGeneration` 与 `refresh:false` 表示医生明确继续原任务，保留原模型、generation、成功步骤与剩余额度，同一继续意图重放不再次开放未知单元。`refresh:true` 是人工重新生成，采用当前资料、当前模型和新 generation 额度，与继续互斥。公开 `recovery` 返回阶段状态、累计次数、上限与 `canContinue`，未知和耗尽分别以 `MODEL_OUTCOME_UNKNOWN`、`MODEL_REQUEST_LIMIT` 说明。次数仅限制 ClinMesh 可观察请求，不是 Token、金额或供应商费用账本；DSH 原生会话和宿主内部不可见重试不在此范围。持久化见[模型执行恢复](storage.md#模型执行恢复)，取舍见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
+普通 `refresh:false` 请求遇到同输入失败、未知或耗尽时返回原任务；`continueGeneration` 与 `refresh:false` 表示医生明确继续原任务，保留原模型、generation、成功步骤与剩余额度，同一继续意图重放不再次授权。关闭自动重试后，医生仍可明确继续一个未完成步骤；待办因禁止重试而暂停时也可提供继续入口，停用、额度、权限和原次数上限继续生效。`refresh:true` 是人工重新生成，采用当前资料、当前模型和新 generation 额度，与继续互斥。公开 `recovery` 返回阶段状态、累计次数、上限与 `canContinue`，未知和耗尽分别以 `MODEL_OUTCOME_UNKNOWN`、`MODEL_REQUEST_LIMIT` 说明。次数仅限制 ClinMesh 可观察请求，不是 Token、金额或供应商费用账本；DSH 原生会话和宿主内部不可见重试不在此范围。持久化见[模型执行恢复](storage.md#模型执行恢复)，取舍见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
 
 可采纳候选先按真实目录固定名称、编码和所选检查来源，再由独立请求核对最终条目的条款支持、病例支持、适用性与限定语，核验后不替换临床身份；全部必要核验完成前候选只保存在私有步骤，合法否定结论正常结束，不触发格式修复或重做候选直至通过。处方进一步核对所选本院药品的实际规格与每个字段依据，无法证实的字段保持 `null`；目录默认值与允许值只用于执行映射。
 
@@ -200,6 +200,8 @@ Admission request
 InpatientService.surgery 拥有申请、准备、取消及实际实施事实。申请生成 ServiceRequest，保存计划术式及虚拟时间；requested/ready 可以取消，completed 保留实际事实，不以计划到时自动执行。护士记录术前检查核对，医生确认知情同意书已签署，两项分别保存责任人、时间、说明与审计；均完成后为 ready，执行前在同一 Command 事务重新检查岗位、当前住院责任、在院状态与申请版本。这是对已签署同意的确认，不是电子签名系统。
 
 Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价目，启动只补缺失项。临床编码保留完整代码、类别、3.0来源版本、项目摘录Release、来源URL/哈希/单元格；来源与限制见[编码依据](../research/2026-10-20-inpatient-record-coding-and-recall.md#手术操作固定子集的来源)。分类编码、院内手术ID与ChargeDefinition分开，价格标为合成演示价；耗材只记录实际使用与收费，不包含库存、采购或批号供应链。
+
+耗材目录包含原两项合成材料与固定心血管参考表的231条记录。归一化来源快照保留原字段、企业、原编码/注册证、规格及单位缺项、价格类型、地区、起止日、适用性和7组附件来源及哈希；原工作簿不进入仓库。中选价按元规范为整数分，独立的基准品拟供应价不覆盖中选价。52条明确单位的记录按中选价作为合成本院演示收费，另179条保存 `reference.unit=null`、`unavailableReason=unit-unconfirmed`，保留参考价但没有收费定义，实际实施拒绝选择；规格不推测。来源含历史采购价及地区限制，不代表真实医院现行价格，也不自动扩展起搏术式。目录 query operation v2 返回完整来源，Web只为选中的可收费耗材展开用量；每次最多20类。当前及新Epoch沿用幂等补缺安装，既有项和实施、receipt不被覆盖，取舍见[Agent Note](../decisions/implemented/architecture/2026-10-22-cardiovascular-material-catalog.md)。
 
 实际实施可选择与计划不同的术式，server 按实际目录及版本冻结术式、实施岗位、虚拟时间、说明、耗材数量和安全整数分价格。同一事务保存唯一 Procedure、耗材、手术与耗材逐项费用、申请完成和审计；投影或费用失败则全部回滚。账目归属实施时当前科室，申请原作者保留。首页只从 executedForAdmission 读取实际事实；出院与转科 Command 在自身事务调用 assertNoPending，未实施且未取消申请阻断出院、交接及接收。该内部门禁由调用方先校验当前业务权限；目标病区接收前尚未拥有原科普通详情权限。
 

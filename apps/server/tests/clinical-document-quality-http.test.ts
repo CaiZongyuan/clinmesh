@@ -6,7 +6,8 @@ import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
-import { encodeModelRoute, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
+import { encodeModelRoute, modelBridgeRequestSchema, modelBridgeResponseSchema } from '@clinmesh/contracts/model-bridge'
+import { unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { clinicalDocumentDraftContentSchema, clinicalDocumentQualityControlStateSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
@@ -14,6 +15,7 @@ import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts
 import type { SqlitePerformanceObserver } from '../src/infrastructure/sqlite/performance-observer.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { recordingBatchSchema } from '../src/application/consultation-recording-batch.ts'
+import { setModelControl } from './fixtures/model-control.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -40,8 +42,11 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
         : input.schemaName === 'consultation_history_summary' ? { additions: [] }
           : input.schemaName === 'patient_dialogue_reply' ? { reply }
             : complete === undefined ? { issues: [], agentFactChecks: [] } : await complete(input)
-      if (payload instanceof Response) return payload
-      return Response.json({ content: JSON.stringify(payload), model: input.model })
+      const result = payload instanceof Response ? modelBridgeResponseSchema.parse(await payload.json())
+        : { content: JSON.stringify(payload), model: input.model }
+      return Response.json({ ...result, accounting: { attemptId: input.attemptId,
+        status: 'succeeded', dispatch: 'dispatched', usage: unknownModelTokenUsage,
+      } }, { status: payload instanceof Response ? payload.status : 200 })
     } }),
   }
   let runtime = await createClinMeshRuntime(options)
@@ -92,6 +97,28 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
       runtime = await createClinMeshRuntime(withoutModel)
     } }
 }
+
+it('continues only the quota-blocked verification after restart with automatic retries disabled', async () => {
+  const stages: string[] = []
+  const f = await setup(input => {
+    stages.push(input.schemaName)
+    if (input.schemaName === 'clinical_document_quality_verification') return { issues: [{ index: 0, supported: true }], agentFactChecks: [] }
+    return { issues: [{ kind: 'missing-field', field: 'assessment', message: '尚未填写评估。', sourceQuotes: [],
+      explanation: { impact: '评估尚未记录。', suggestion: '记录已完成的评估。' } }], agentFactChecks: [] }
+  })
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  const policy = await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await setModelControl(f.runtime, admin, { enabled: true, requests: policy.workspace.used + 1, automaticRetries: false })
+  expect((await f.mutate('check', { expectedDraftVersion: 0 })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'pending' })
+  expect(stages).toEqual(['clinical_document_quality'])
+  await f.restart()
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready' })
+  expect(stages).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+})
 
 it('shows applicable empty template fields without requiring auxiliary tests or repeating encounter metadata', async () => {
   const f = await setup()

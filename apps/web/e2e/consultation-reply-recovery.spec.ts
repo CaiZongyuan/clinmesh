@@ -1,8 +1,10 @@
 import { doctorCaseDetailSchema, sendConsultationMessageResponseSchema } from '@clinmesh/contracts/his'
 import type { Page } from '@playwright/test'
-import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
+import { randomUUID } from 'node:crypto'
+import { modelUsageControlSchema } from '@clinmesh/contracts/model-usage'
+import { ChatCompletionsError, OpenAIChatCompletionsClient } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
-import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
+import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { expect, test } from './fixtures.ts'
 
 async function openConsultation(page: Page, server: Awaited<ReturnType<typeof startBrowserServer>>) {
@@ -17,6 +19,54 @@ async function openConsultation(page: Page, server: Awaited<ReturnType<typeof st
   await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
   await expect(page.getByRole('tab', { name: '问诊记录', exact: true })).toHaveAttribute('aria-selected', 'true')
 }
+
+test('preserves a control-blocked question across reload and resumes the original reply when enabled', async ({ page, webRoot }) => {
+  let replyRequests = 0
+  const server = await startBrowserServer(webRoot, {
+    dshModelBridge: { origin: 'http://127.0.0.1:1', secret: 'synthetic-bridge-secret-at-least-32-characters', timeoutMs: 2000, maxResponseBytes: 8192 },
+    syntheaProvider: new StubSyntheaProvider(),
+    chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid',
+      fetch: async (_url, init) => {
+        const name = JSON.parse(String(init?.body)).response_format.json_schema.name
+        if (name === 'patient_dialogue_reply') replyRequests++
+        return Response.json({ choices: [{ message: { content: JSON.stringify(name === 'patient_persona' ? persona : { reply: '起身时会晕。' }) } }] })
+      },
+    }),
+  })
+  try {
+    const started = await startConsultationCase(server.runtime, server.password, server.origin)
+    const admin = await signIn(server.runtime, 'admin@demo.clinmesh.local', server.password, server.origin)
+    const setEnabled = async (enabled: boolean) => {
+      const current = modelUsageControlSchema.parse(await (await server.runtime.app.request('/api/model-usage/control', { headers: { cookie: admin } })).json())
+      const response = await server.runtime.app.request('/api/model-usage/control', { method: 'PUT',
+        headers: { cookie: admin, origin: server.origin, 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+        body: JSON.stringify({ enabled, requests: null, automaticRetries: false, expectedVersion: current.workspace.version }) })
+      expect(response.status).toBe(200)
+    }
+    await setEnabled(false)
+    await openConsultation(page, server)
+    const panel = page.getByRole('tabpanel', { name: '问诊记录', exact: true })
+    await panel.getByRole('textbox', { name: '向患者提问', exact: true }).fill('什么时候会晕？')
+    await panel.getByRole('button', { name: '向患者提问', exact: true }).click()
+    const waiting = panel.getByRole('button', { name: '等待模型控制恢复', exact: true })
+    await expect(waiting).toBeDisabled()
+    const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
+      `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
+    const original = (await read()).consultation?.replyAttempt
+    expect(original?.status).toBe('blocked')
+    expect(replyRequests).toBe(0)
+    await page.reload()
+    await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
+    await expect(waiting).toBeDisabled()
+    await expect(panel.getByText('医生问题已保存，模型控制恢复且本次回答期限仍有效时将自动接续。', { exact: true })).toBeVisible()
+    expect((await read()).consultation?.replyAttempt).toEqual(original)
+    await setEnabled(true)
+    await expect(panel.getByText('起身时会晕。', { exact: true })).toBeVisible()
+    await expect(panel.getByText('什么时候会晕？', { exact: true })).toHaveCount(1)
+    expect((await read()).consultation?.replyAttempt).toMatchObject({ status: 'succeeded', deadlineAt: original!.deadlineAt })
+    expect(replyRequests).toBe(1)
+  } finally { await server.close() }
+})
 
 test('keeps an accepted patient answer running after reload and joins it from the real waiting control', async ({ page, webRoot }) => {
   let replyRequests = 0

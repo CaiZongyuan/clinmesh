@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import type { ModelTaskRecovery } from './model-task-recovery.ts'
 import {
   considerationLabelKey, doctorCaseEvidenceSchema, doctorConsiderationDispositionStatusSchema, doctorRecommendationGenerationSchema,
   doctorRecommendationKindSchema, doctorRecommendationStateSchema,
@@ -149,6 +150,8 @@ export class DoctorRecommendationsService {
   constructor(private readonly options: {
     database: ClinMeshDatabase; workflow: WorkflowService; commands: CommandExecutor; referenceData: ReferenceDataService
     models: GenerationModelBinding; model?: string; provider?: JsonChatCompletionsProvider
+    recovery?: ModelTaskRecovery
+    automaticRetries?: (workspaceId: string) => boolean
     guidelines?: GuidelineCorpus
     contextStatus: (context: ActorContext) => 'active' | 'inactive' | 'superseded'
     investigationCatalogs: (context: ActorContext, caseId: string, kind: DoctorRecommendationKind) => Promise<DoctorInvestigationRecommendationCatalogs>
@@ -477,6 +480,16 @@ export class DoctorRecommendationsService {
     return [context.workspaceId, context.epoch, context.actorId, canonicalJsonHash(context), caseId, kind] as const
   }
 
+  #clearSupersededWaits(context: ActorContext, caseId: string, kind: DoctorRecommendationKind): void {
+    this.options.database.driver.prepare(`DELETE FROM model_task_wait AS wait WHERE EXISTS (
+      SELECT 1 FROM outbox_event event WHERE event.workspace_id = wait.workspace_id AND event.epoch = wait.epoch
+      AND event.event_id = wait.event_id AND event.kind = 'doctor.generate-recommendations'
+      AND event.workspace_id = ? AND event.epoch = ? AND json_extract(event.payload_json, '$.actorId') = ?
+      AND json_extract(event.payload_json, '$.contextKey') = ? AND json_extract(event.payload_json, '$.caseId') = ?
+      AND json_extract(event.payload_json, '$.kind') = ?)`)
+      .run(...this.#key(context, caseId, kind))
+  }
+
   #executionIdentity(context: ActorContext, caseId: string, kind: DoctorRecommendationKind, generation: number) {
     return { workspaceId: context.workspaceId, epoch: context.epoch, actorId: context.actorId,
       contextKey: canonicalJsonHash(context), caseId, kind, generation }
@@ -597,6 +610,7 @@ export class DoctorRecommendationsService {
         }
         const execution = new DoctorRecommendationExecution({ database: this.options.database, identity,
           inputFingerprint, model: stored.model, policyVersion: stored.policyVersion, provider: this.options.provider,
+          automaticRetries: () => this.options.automaticRetries?.(context.workspaceId) !== false,
           assertCurrent: () => {
             this.#authorize(context, caseId)
             if (this.#row(context, caseId, kind)?.generation !== previous.generation
@@ -605,20 +619,23 @@ export class DoctorRecommendationsService {
             }
           },
         })
-        execution.continue(canonicalJsonHash({ actorId: context.actorId, idempotencyKey }))
+        const manualIntentKey = canonicalJsonHash({ actorId: context.actorId, idempotencyKey })
+        execution.continue(manualIntentKey)
+        this.#clearSupersededWaits(context, caseId, kind)
         const { errorCode: _errorCode, ...original } = doctorRecommendationStateSchema.parse(JSON.parse(previous.state_json))
         const state: DoctorRecommendationState = { ...original, status: 'pending', missingInformation: [], notices: [], recovery: execution.status() }
         this.options.database.driver.prepare(`UPDATE doctor_recommendation_state SET state_json = ?, status = 'pending', updated_at = ?
           WHERE workspace_id = ? AND epoch = ? AND actor_id = ? AND context_key = ? AND case_id = ? AND kind = ? AND generation = ?
         `).run(JSON.stringify(state), new Date().toISOString(), ...this.#key(context, caseId, kind), previous.generation)
         transaction.enqueue({ kind: 'doctor.generate-recommendations', dedupKey: `doctor-recommendations:continue:${canonicalJsonHash({ identity, idempotencyKey })}`,
-          payload: { actorId: context.actorId, contextKey: identity.contextKey, caseId, kind, generation: previous.generation } })
+          payload: { actorId: context.actorId, contextKey: identity.contextKey, caseId, kind, generation: previous.generation, manualIntentKey } })
         return { data: state, effects: [{ kind: 'updated', reference: `DoctorRecommendations/${caseId}:${kind}`, versionId: String(previous.generation) }] }
       }
       if (!request.input.refresh && previous?.input_fingerprint === inputFingerprint) {
         return { data: doctorRecommendationStateSchema.parse(JSON.parse(previous.state_json)), effects: [] }
       }
       const generation = (previous?.generation ?? 0) + 1
+      this.#clearSupersededWaits(context, caseId, kind)
       const state: DoctorRecommendationState = {
         caseId, kind, encounterId: snapshot.encounter.id, encounterVersion: snapshot.encounter.versionId,
         inputFingerprint, generation, status: 'pending', stale: false, items: [], guidelines: [], caseEvidence: [], missingInformation: [],
@@ -635,7 +652,8 @@ export class DoctorRecommendationsService {
       `).run(...key, generation, inputFingerprint, JSON.stringify(context), JSON.stringify(snapshot), JSON.stringify(state), new Date().toISOString())
       transaction.enqueue({ kind: 'doctor.generate-recommendations',
         dedupKey: `doctor-recommendations:${key[3]}:${caseId}:${kind}:${generation}`,
-        payload: { actorId: context.actorId, contextKey: key[3], caseId, kind, generation },
+        payload: { actorId: context.actorId, contextKey: key[3], caseId, kind, generation,
+          ...(request.input.refresh ? { manualIntentKey: canonicalJsonHash({ actorId: context.actorId, idempotencyKey }) } : {}) },
       })
       return { data: state, effects: [{ kind: 'updated', reference: `DoctorRecommendations/${caseId}:${kind}`, versionId: String(generation) }] }
     })
@@ -788,7 +806,8 @@ export class DoctorRecommendationsService {
 
   async process(event: OutboxHandlerInput, callerSignal: AbortSignal, shutdownSignal: AbortSignal): Promise<OutboxHandlerResult> {
     const payload = z.object({ actorId: z.string(), contextKey: z.string(), caseId: z.string(),
-      kind: doctorRecommendationKindSchema, generation: z.number().int().positive() }).strict().parse(event.payload)
+      kind: doctorRecommendationKindSchema, generation: z.number().int().positive(),
+      manualIntentKey: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict().parse(event.payload)
     const raw = z.object({ actor_context_json: z.string() }).optional().parse(this.options.database.driver.prepare(`
       SELECT actor_context_json FROM doctor_recommendation_state WHERE workspace_id = ? AND epoch = ?
       AND actor_id = ? AND context_key = ? AND case_id = ? AND kind = ?
@@ -879,7 +898,10 @@ export class DoctorRecommendationsService {
       const model = stored?.model ?? await this.options.models.bind(context.workspaceId,
         `recommendations:${context.epoch}:${payload.contextKey}:${payload.caseId}:${payload.kind}:${payload.generation}`, this.options.model, signal)
       execution = new DoctorRecommendationExecution({ database: this.options.database, identity,
-        inputFingerprint, model, policyVersion: 'recommendation-stages-v1', provider: this.options.provider, assertCurrent })
+        inputFingerprint, model, policyVersion: 'recommendation-stages-v1', provider: this.options.provider, assertCurrent,
+        automaticRetries: () => this.options.automaticRetries?.(context.workspaceId) !== false,
+        usageContext: { trigger: payload.manualIntentKey === undefined ? 'automatic' : 'manual',
+          sources: [{ kind: 'job', id: event.eventId, relationship: 'trigger' }] } })
       if (recommendationInputFingerprint(this.#snapshot(context, payload.caseId, payload.kind, snapshot.catalogs)) !== row.input_fingerprint) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The recommendation input changed during model selection')
       }
@@ -1100,6 +1122,8 @@ export class DoctorRecommendationsService {
       return { status: 'completed' }
     } catch (caught) {
       if (!current() || this.options.contextStatus(context) === 'superseded') return { status: 'completed' }
+      const deferred = this.options.recovery?.defer(event, caught)
+      if (deferred !== undefined) return deferred
       let error: unknown = controller.signal.reason instanceof WorkflowError ? controller.signal.reason : caught
       if (!(error instanceof WorkflowError) && execution?.status().status === 'exhausted') {
         error = new DoctorRecommendationExecutionError('exhausted', { cause: error })

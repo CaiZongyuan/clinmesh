@@ -87,8 +87,9 @@ it('keeps laboratory failure recovery instructions aligned with the command cata
     expect(inspectExample(program, line).operation?.id).toBe(`laboratory-request.${path}`)
   }
   const retry = getHisOperation('laboratory-request.retry-generation')
-  expect(retry.version).toBe(3)
+  expect(retry.version).toBe(4)
   expect(retry.summary).toContain('INVESTIGATION_TRUTH_INCOMPATIBLE')
+  expect(retry.summary).toContain('MODEL_OUTCOME_UNKNOWN')
   expect(skill).toContain('INVESTIGATION_TRUTH_INCOMPATIBLE')
   expect(getHisOperation('laboratory-request.cancel').summary).toContain('generation-failed')
 })
@@ -101,20 +102,23 @@ it('keeps consultation recovery examples aligned with durable attempt semantics'
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh encounter consultation ${path} `))!
     const operation = getHisOperation(id)
     expect(inspectExample(program, line).operation?.id).toBe(id)
-    expect(operation.version).toBe(4)
+    expect(operation.version).toBe(5)
     expect(operation.summary).toContain('deadline')
     expect(operation.summary).toContain('failed or unknown')
     expect(operation.summary).toContain('without new inference')
-    for (const code of ['CONSULTATION_CASE_NOT_FOUND', 'CONSULTATION_PERSONA_OUTDATED']) {
+    for (const code of ['MODEL_CONTROL_BLOCKED', 'CONSULTATION_CASE_NOT_FOUND', 'CONSULTATION_PERSONA_OUTDATED']) {
       expect(operation.summary).toContain(code)
       expect(skill).toContain(code)
     }
     expect(operation.input.safeParse({ encounterId: 'synthetic', arbitraryPayload: {} }).success).toBe(false)
   }
-  expect(getHisOperation('doctor.case.get').version).toBe(14)
+  expect(getHisOperation('doctor.case.get').version).toBe(15)
   expect(getHisOperation('doctor.case.get').summary).toContain('consultation.replyAttempt')
   expect(skill).toContain('consultation.replyAttempt')
   expect(skill).toContain('same ask/retry key')
+  expect(skill).toContain('`blocked` reply can resume')
+  expect(reference).toContain('MODEL_CONTROL_BLOCKED')
+  expect(reference).toContain('never automatically resends an `unknown` request')
   expect(reference).toContain('original `deadlineAt` and model')
   expect(reference).toContain('restart does not automatically answer')
   expect(reference).toContain('Never resend the doctor message as a new intent')
@@ -315,12 +319,14 @@ describe('ClinMesh CLI Agent Skills', () => {
     expect(operation.input.safeParse({ encounterId: 'synthetic-encounter', encounterVersion: '3', action: 'resume', document: {} }).success).toBe(false)
     expect(skill).toContain('processedCount')
     expect(skill).toContain('explicitly starts it')
-    expect(operation.version).toBe(5)
+    expect(operation.version).toBe(6)
     expect(operation.summary).toContain('backfill requires an existing Consultation')
     expect(operation.summary).toContain('WORKFLOW_CONFLICT')
     expect(operation.summary).toContain('retired semantic checks cannot be retried')
+    expect(operation.summary).toContain('MODEL_OUTCOME_UNKNOWN')
+    expect(skill).toContain('`MODEL_OUTCOME_UNKNOWN` stops automatic resending')
     const read = getHisOperation('doctor.case.get')
-    expect(read.version).toBe(14)
+    expect(read.version).toBe(15)
     expect(read.summary).toContain('sourceResults')
     expect(read.summary).toContain('legacy verification counts are zero and issues empty')
     expect(skill).toContain('Retry actual recording failures')
@@ -362,7 +368,7 @@ describe('ClinMesh CLI Agent Skills', () => {
     ), 'utf8')
     for (const id of ['doctor.queue.list', 'doctor.case.get']) {
       const operation = getHisOperation(id)
-      expect(operation.version).toBe(id === 'doctor.case.get' ? 14 : 3)
+      expect(operation.version).toBe(id === 'doctor.case.get' ? 15 : 3)
       expect(operation.summary).toContain('presentation')
       expect(operation.summary).toContain('registrationNumber')
       const line = commandLines(doctorSkill).find(line => line.startsWith(id === 'doctor.case.get' ? 'clinmesh doctor case get ' : 'clinmesh doctor queue list'))!
@@ -496,6 +502,10 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   expect(getHisOperation('inpatient.order.issue').version).toBe(2)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
+  expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)
+  expect(getHisOperation('inpatient.surgery.catalog').summary).toContain('unit-unconfirmed')
+  expect(skill).toContain('unavailableReason=unit-unconfirmed')
+  expect(skill).toContain('baseSupplyPriceFen')
 })
 
 it('keeps inpatient investigation and transfer examples bound to narrow versioned commands', async () => {

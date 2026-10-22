@@ -52,6 +52,8 @@
 
 - DSH 页面未显示前端修改时，区分磁盘产物、宿主按 revision 实际提供的 `/plugins` 脚本与浏览器已加载的页面；不能只凭独立 Web 通过就声明当前 DSH 已生效。Surface 布局复现应使用宿主的 ShadowRoot 基础样式（尤其 `contain: strict` 与内容容器），并断言弹层文字没有超出 Surface 边界。
 
+- DSH SDK 会把适配器迭代时抛出的普通异常归一化为 `finish:error/UNKNOWN`；测试直接抛错的简化 stream 会绕过这个转换，掩盖把网络中断当作明确失败的问题。通过真实 `LlmAdapter` 注入合成断流，核对未知结算、已知用量、任务重建不重发与人工继续；恢复分类由[模型控制恢复决策](../decisions/implemented/architecture/2026-10-21-model-request-control-recovery.md)拥有。
+
 ## Profile、构建与桥接升级
 
 - DSH 产物体积受 Bun 编译器版本影响；本地或 CI 超标时，先用 CI 的精确 Bun 版本构建同一源码和锁定依赖再比较，不能直接归因于依赖漂移或放宽预算。已验证版本与体积依据见[病理阅片引擎 Agent Note](../decisions/implemented/architecture/2026-10-02-slide-pyramid-engine.md)。
@@ -109,6 +111,10 @@
 - 原生 DSH 验收的临时插件也须在 manifest 中声明非空 `name` 和 `version`。官方 DeepSeek 的插件清单扩展会检查全部 active package；缺少版本时真实模型请求在发出 HTTP 前失败为 `REQUEST_EXTENSION`，合成 adapter 不经过这条扩展，不能证明真实 Provider 可用。
 
 ## 模型桥与诊断日志
+
+- 验证桥接派发与调用配置时，至少一条回归使用真实 Cordis/DSH SDK 与合成 `LlmAdapter`；直接替换 `llm.stream` 会跳过 SDK 能力预检和默认配置，掩盖零派发却计数及历史策略遗漏。对照 adapter 实际收到的配置、公开账本和用量帧后、终态前的重启快照，复用[模型桥回归](../../apps/dsh-web/src/model-bridge.test.ts)和[账本 HTTP 回归](../../apps/server/tests/model-usage-http.test.ts)；当前合同见[模型账本](../architecture/storage.md#910-模型调用账本)。
+
+- 独立 Server 测试导入 Host handler 后，Server 编译不会自动经过插件 `index.ts` 的类型增强入口。Host 模块依赖 `Context.webServer`、会话投影或用户问题服务时，在该模块显式保留相应 `import type {}`，不依赖其他入口的导入顺序；同时运行全仓类型检查和 `tsconfig.browser.json`，仅 Host 包编译通过不足以证明跨入口类型完整。
 
 - 多个 worktree 共用 `CLINMESH_DSH_SANDBOX` 时，Profile 中的 `plugins/clinmesh` 与 `plugins/react-surface` 是可变共享链接；只确认 Server 的 cwd 和健康检查不足以证明 Surface 来自同一分支。需要隔离时，先正常停止宿主，再复制独立 Profile 以保留 Provider 与会话，并使用独立 sandbox。通过符号链接复用锁定的版本槽时，`dshvm exec` 可能按真实槽路径重新选择旧隔离目录，覆盖传入的 `DSH_HOME`；可直接运行锁定的宿主 CLI 并显式传入独立 `DSH_HOME`。核对运行中宿主的实际 `DSH_HOME`、两层插件链接、实际返回的客户端合同及真实登录结果，业务数据库仍沿用各 worktree 已确认的数据副本。
 

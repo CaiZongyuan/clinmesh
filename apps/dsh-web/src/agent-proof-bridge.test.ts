@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { installAgentProofBridge } from './agent-proof-bridge.ts'
-import { doctorInputPermit } from './doctor-input-fixture.ts'
+import { doctorInputPermit, syntheticHostUsageControl, syntheticRecognitionLlm } from './doctor-input-fixture.ts'
 
 const disposers: Array<() => void> = []
 afterEach(() => { for (const dispose of disposers.splice(0).reverse()) dispose() })
@@ -23,11 +23,11 @@ function bridge() {
     webServer: { register: (route: { path: string; handler: (request: IncomingMessage, response: ServerResponse) => Promise<void> }) => {
       routes.set(route.path, route.handler); return () => routes.delete(route.path)
     } },
-    llm: { async *stream() {
-      yield { type: 'text-delta', text: '{"intent":"discuss","evidence":""}' }
+    llm: syntheticRecognitionLlm(async function* () {
+      yield { type: 'text-delta', index: 0, text: '{"intent":"discuss","evidence":""}' }
       yield { type: 'finish', reason: { kind: 'stop' } }
-    } },
-  } as unknown as Context, secret, { handoffTimeoutMs: 30 })
+    }),
+  } as unknown as Context, secret, { handoffTimeoutMs: 30, ...syntheticHostUsageControl })
   const before = on.mock.calls.find(([name]) => name === 'tools/pre-execute')![1] as (
     execution: ToolExecution, next: () => Promise<{ kind: 'allow' }>,
   ) => Promise<{ kind: string; reason?: string }>

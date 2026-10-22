@@ -11,6 +11,7 @@ import { z } from 'zod'
 import type { ActorContext } from '../../application/command-executor.ts'
 import type { ClinMeshDatabase } from './database.ts'
 import type { SyntheticCaseRepository } from './synthetic-case-repository.ts'
+import { QueuedJobScan } from './queued-job-scan.ts'
 
 const actorContextSchema = z.object({
   actorId: z.string().min(1),
@@ -88,10 +89,12 @@ export interface ClaimedPatientPersonaJob extends PatientPersonaJob {
 export class PatientPersonaRepository {
   readonly #cases: SyntheticCaseRepository
   readonly #database: ClinMeshDatabase
+  readonly #queue: QueuedJobScan<z.infer<typeof jobRowSchema>>
 
   constructor(database: ClinMeshDatabase, cases: SyntheticCaseRepository) {
     this.#cases = cases
     this.#database = database
+    this.#queue = new QueuedJobScan(database, selectJob, row => jobRowSchema.parse(row))
   }
 
   create(job: PatientPersonaJob, context: ActorContext, model: string): void {
@@ -128,15 +131,10 @@ export class PatientPersonaRepository {
     `).run(now).changes
   }
 
-  claimNext(now: string): ClaimedPatientPersonaJob | undefined {
+  claimNext(now: string, canResume: (workspaceId: string, taskId: string) => boolean = () => true): ClaimedPatientPersonaJob | undefined {
     return this.#database.driver.transaction(() => {
-      const row = this.#database.driver.prepare(`${selectJob}
-        WHERE status = 'queued'
-        ORDER BY created_at, job_id
-        LIMIT 1
-      `).get()
-      if (row === undefined) return undefined
-      const candidate = jobRowSchema.parse(row)
+      const candidate = this.#queue.next(canResume)
+      if (candidate === undefined) return undefined
       const updated = this.#database.driver.prepare(`
         UPDATE patient_persona_job
         SET status = 'running', started_at = ?, updated_at = ?

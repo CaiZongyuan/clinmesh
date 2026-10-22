@@ -35,7 +35,7 @@
 | 规格 | 状态 |
 | --- | --- |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
-| [模型调用停用、预算与用量监控](2026-10-19-model-usage-control.md) | `draft` |
+| [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
 
 ### 已验收与已取代
@@ -45,6 +45,7 @@
 | 规格 | 状态 |
 | --- | --- |
 | [诊疗建议待核实思路的已核实与忽略](2026-10-22-doctor-consideration-disposition.md) | `implemented` |
+| [心血管手术耗材目录](2026-10-22-cardiovascular-surgical-materials.md) | `implemented` |
 | [住院闭环](2026-10-20-inpatient-closed-loop.md) | `implemented` |
 | [门诊号按日期持久发号与一致展示](2026-10-20-registration-numbering.md) | `implemented` |
 | [医生主诉展示同步与分诊差异质控优化](2026-10-20-current-chief-complaint.md) | `implemented` |

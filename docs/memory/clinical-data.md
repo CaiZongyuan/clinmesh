@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 嵌套 SQLite transaction 的内层 catch 写入仍属于外层事务；外层抛错时，拒绝原因等诊断记录也会回滚。需要保留拒绝证据时，在最外层准入回滚后写入，并从公开控制接口验证最近拒绝原因；不要只断言 HTTP 错误码。回归入口见[Host 用量测试](../../apps/server/tests/model-usage-host.test.ts)。
+
 - 构造门诊号迁移的旧库 fixture 时，使用真实 CommandExecutor 生成审计和初始 FHIR 历史；仅手写合法业务行、伪造 audit hash 或漏掉 AuditEvent 投影会被发行历史证明拒绝。业务行最大号是下界，不能用它修复缺失发号状态；旧 reset 的重放 effects 缺口与受控恢复退休边界见[发行完整性决策](../decisions/implemented/architecture/2026-10-20-registration-numbering-integrity.md)。
 
 - 新增迁移后，搜索回归中对“升级到当前版本”的 schema 数量断言，并使用 `expectedSchemaVersion()`，避免迁移成功却因旧数字失败。整合并行分支时，同时核对从历史 fixture 到当前目标的完整待执行文件列表；没有文本冲突的断言也可能遗漏另一分支新增的迁移。真正固定历史分支的 fixture 仍保留其历史迁移数量，不能一并改成当前目标；升级验证继续核对原业务行、回执、审计、来源和外键。
@@ -58,6 +60,8 @@
 
 - 校验持久后台任务的 Grant 时，覆盖同一业务结果的所有公开触发路径，尤其失败后的显式重试、暂停恢复和取消签署；不能只检查主入口操作权限。失效回归保留原 Grant 撤销后同一 Client 仍有其他有效 Grant 的场景，防止借用另一授权继续旧任务。 同岗位的不同后台任务可以共享身份基础校验，但保留各自操作白名单，避免为新任务放宽旧任务权限。
 
+- 后台任务回归需要第二位参与者时，建立真实的合成 User Account、活动 Workspace Membership 和岗位授权；只替换 context 的 Actor ID 会被持久身份校验拒绝。保留不同 Actor 使用同一幂等键的原断言，不为旧夹具放宽生产权限；示例见[DSH 模型集成测试](../../apps/server/tests/dsh-model-integration.test.ts)。
+
 - 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../decisions/implemented/architecture/2026-10-08-consultation-history-increments.md)。
 
 - 预填与后台文本合并的回归须覆盖首次自动更新同一个未保存字段，以及其他字段已有自动草稿时该字段才首次更新；同时断言编辑框、保存后的服务端正文和刷新结果，防止界面丢弃新增后又通过保存删掉服务端已应用的内容。当前合并基线见[片段归属决策](../decisions/implemented/architecture/2026-10-08-consultation-history-ownership.md)。
@@ -83,6 +87,8 @@
 - 排查 Agent 代问后病历未更新时，用 Tool 回执的 `patientTurn.id` 关联实际病例、记录任务与增量，并对照控制 Command 的时间；先确认人工提问和 Agent 提问是否发生在同一病例及相同记录状态。`outbox_event.status=completed` 只证明事件已结束，病史整理可能已经失败，须同时核对 `consultation_recording_job` 和失败 Command。暂停会重置未完成任务的当前错误码，既往失败应从 Command 记录追溯。耗时诊断同时核对排队、outbox 的真实创建／完成时间、尝试次数和失败回执；患者来源的 `recorded_at` 可能是虚拟时间，不能据此计算真实等待，后续来源的事件也可能直到前一任务结束才创建。启用、补录与恢复合同见[问诊自动记录规格](../spec/2026-10-08-consultation-auto-record.md)。
 
 ## 模型、来源与后台任务
+
+- 模型成功步骤缓存启用后，确定性临床约束（如检验值、参考区间与高低解释的一致性）须进入 Provider 的 `validate`，不能只在缓存返回后拒绝结果，否则结构合法但临床矛盾的正文会被持久标为成功并反复复用。保留后置门禁及原安全错误码，通过异常 `cause` 精确还原自身领域错误；替身也须执行 `validate`。回归核对无效结果未进入成功检查点、未生成报告和原实际请求次数，参见[检验生成回归](../../apps/server/tests/synthetic-case-http.test.ts)。
 
 - 模型任务失效后丢弃迟到结果，不等于取消实际 Provider 请求。把失效信号贯通模型绑定、生成与格式修复，并在任务结束后释放状态订阅；回归须在放行受控 Provider 前断言取消，再检查未完成来源与恢复处理。自动记录机制见[常规模型等待决策](../decisions/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
 
@@ -135,6 +141,8 @@
 - 按内容哈希去重前，先用完整业务 schema 规范化有效候选；首尾空格和 JSON 字段顺序不能制造竞争替换。不合格候选仍参与共享目标冲突判断，不能为去重先过滤掉坏候选而破坏原子拒绝；自动记录的归属与回归由[增量记录决策](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)拥有。
 
 - 模型传输引用的编号差异不能直接当作业务内容差异；回归同时覆盖同来源重复原句、不同来源同文和多个无效编号，验证解码后的等价去重、来源独立性及失败归属。句子引用的当前规则由[句子引用决策](../decisions/implemented/architecture/2026-10-19-recording-sentence-references.md)拥有。
+
+- 测试包装实际模型 Provider 时必须透传 `supportsRequestControl` 与 `supportsUsageAccounting` 能力，或直接注入实际 Provider；只包装 `completeJson` 却转发底层 hook 会让兼容层和底层重复预占同一次请求。格式修复回归应同时断言请求次数与业务结果，避免误判为输出校验失败。
 
 ## 参考目录、Synthea 与影像素材
 

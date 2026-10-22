@@ -6,6 +6,7 @@ import {
   readdirSync,
 } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import {
   link,
   rm,
@@ -106,6 +107,9 @@ export class ClinMeshDatabase {
 }
 
 function defaultMigrationDirectory(): string {
+  // 先按本模块自身位置解析，调用方在任何 cwd（如 turbo 从 apps/dsh-web 跑测试）都能找到迁移目录。
+  const moduleDirectory = resolve(dirname(fileURLToPath(import.meta.url)), '../../../drizzle')
+  if (existsSync(moduleDirectory)) return moduleDirectory
   const packageDirectory = resolve(process.cwd(), 'drizzle')
   if (existsSync(packageDirectory)) return packageDirectory
   return resolve(process.cwd(), 'apps/server/drizzle')
