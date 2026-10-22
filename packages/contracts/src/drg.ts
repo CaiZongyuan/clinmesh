@@ -44,20 +44,20 @@ export const drgGroupingResultSchema = z.object({
   reason: text.nullable(),
 }).strict()
 
-/** CC/MCC/CCE 参数表条目：码 → 并发症级别；severity 1=CC 2=MCC。 */
+/**
+ * CC/MCC 参数表条目：码 → 并发症级别与所属排除组号；severity 1=CC 2=MCC。
+ * groupRef 为官方方案排除表组号（'1' 对应表 6-5-1）；空串表示该码不参与排除组。
+ */
 export const drgComplicationEntrySchema = z.object({
   code,
   severity: z.union([z.literal(1), z.literal(2)]),
+  groupRef: z.string().max(32),
 }).strict()
 
-/** 排除表条目：某 ADRG 下，某次诊断不作为 CC/MCC 计（对应官方方案按成员/组组织的排除表）。 */
-export const drgExclusionEntrySchema = z.object({
-  /** 排除表编号，对应官方方案表号（如 6-5-1）。 */
-  tableId: text,
-  /** 触发排除的 ADRG 标识。 */
-  ownerCode: code,
-  /** 被排除的次诊断码。 */
-  excludedCode: code,
+/** 主诊断排除组表：主诊断码 → 排除组号。与主诊断同组号的次诊断不按 CC/MCC 计。 */
+export const drgExclusionGroupSchema = z.object({
+  code,
+  groupRef: z.string().min(1).max(32),
 }).strict()
 
 /** 有效手术操作条目：主操作命中后进入手术 ADRG。 */
@@ -73,12 +73,23 @@ export const drgMemberSchema = z.object({
   chapter: z.enum(['medical', 'surgical']),
 }).strict()
 
-/** ADRG → DRG 三级组：伴严重并发症/伴并发症/不伴并发症。 */
+/** ADRG → MDC 归属：MDC 前缀表缺失时，按 ADRG 归属回填 MDC 判定。 */
+export const drgAdrgMdcSchema = z.object({
+  adrgCode: z.string().min(1).max(32),
+  mdcCode: z.string().min(1).max(32),
+}).strict()
+
+/**
+ * DRG 终端组入组谓词：与官方分组函数表同构，按列表顺序匹配首个满足的条目。
+ * 带年龄下限的变体组（官方 ≥70 岁，尾码 E/F/G）必须排在同 ADRG 无年龄条件组之前。
+ */
 export const drgTerminalGroupSchema = z.object({
   adrgCode: z.string().min(1).max(32),
-  withMccCode: z.string().min(1).max(32).nullable(),
-  withCcCode: z.string().min(1).max(32).nullable(),
-  withoutCode: z.string().min(1).max(32),
+  drgCode: z.string().min(1).max(32),
+  /** 并发症条件：mcc=有 MCC；mcc-or-cc=有 MCC 或 CC；any=无条件兜底。 */
+  requires: z.enum(['mcc', 'mcc-or-cc', 'any']),
+  /** 年龄下限；null=无年龄条件。 */
+  minAgeYears: z.number().int().min(0).max(150).nullable(),
 }).strict()
 
 /** MDC 判定条目：主诊断码（前缀）→ MDC；特殊 MDC 由人口属性规则另行声明。 */
@@ -96,7 +107,8 @@ export const drgRulesSchema = z.object({
   members: z.array(drgMemberSchema),
   validOperations: z.array(drgValidOperationSchema),
   complications: z.array(drgComplicationEntrySchema),
-  exclusions: z.array(drgExclusionEntrySchema),
+  exclusionGroups: z.array(drgExclusionGroupSchema),
+  adrgMdcEntries: z.array(drgAdrgMdcSchema),
   terminalGroups: z.array(drgTerminalGroupSchema),
 }).strict()
 
@@ -105,3 +117,4 @@ export type DrgOperation = z.infer<typeof drgOperationSchema>
 export type DrgGroupingInput = z.infer<typeof drgGroupingInputSchema>
 export type DrgGroupingResult = z.infer<typeof drgGroupingResultSchema>
 export type DrgRules = z.infer<typeof drgRulesSchema>
+export type DrgAdrgMdc = z.infer<typeof drgAdrgMdcSchema>

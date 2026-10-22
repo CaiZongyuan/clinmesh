@@ -19,26 +19,60 @@ function findMdc(rules: DrgRules, mainCode: string): { mdcCode: string | null, b
     : { mdcCode: best.mdcCode, basis: `主诊断前缀 ${best.prefix} 命中 MDC 规则` }
 }
 
-/** 次诊断的并发症分级：返回命中的最高级别（2=MCC，1=CC），被所在 ADRG 排除或未命中返回 null。 */
-function complicationSeverity(rules: DrgRules, adrgCode: string, secondaryCode: string): 1 | 2 | null {
-  const excluded = rules.exclusions.some(entry => entry.ownerCode === adrgCode && entry.excludedCode === secondaryCode)
-  if (excluded) return null
+/**
+ * 次诊断的并发症分级：返回命中的最高级别（2=MCC，1=CC），被主诊断排除或未命中返回 null。
+ * 排除语义与官方分组器同构：主诊断查排除组表得组号；次诊断与主诊断同组号时不计。
+ */
+function complicationSeverity(rules: DrgRules, mainCode: string, secondaryCode: string): 1 | 2 | null {
+  const mainGroup = rules.exclusionGroups.find(entry => entry.code === mainCode)?.groupRef ?? ''
   let severity: 1 | 2 | null = null
   for (const entry of rules.complications) {
     if (entry.code !== secondaryCode) continue
+    if (mainGroup !== '' && entry.groupRef === mainGroup) continue
     if (severity === null || entry.severity > severity) severity = entry.severity
   }
   return severity
 }
 
-function terminalCode(rules: DrgRules, adrgCode: string, severity: 1 | 2 | null): { code: string | null, basis: string } {
-  const group = rules.terminalGroups.find(entry => entry.adrgCode === adrgCode)
-  if (group === undefined) return { code: null, basis: `ADRG ${adrgCode} 缺少病组终端表` }
-  const selected = severity === 2 ? (group.withMccCode ?? group.withCcCode ?? group.withoutCode)
-    : severity === 1 ? (group.withCcCode ?? group.withoutCode)
-      : group.withoutCode
-  const level = severity === 2 ? '伴严重并发症' : severity === 1 ? '伴并发症' : '不伴并发症'
-  return { code: selected, basis: `按并发症级别「${level}」选择病组` }
+/**
+ * 终端病组选择：与官方函数表同构，按列表顺序取首个满足并发症与年龄条件的组。
+ * 「any」为无条件兜底（官方「无 MCC 和 CC」组谓词恒真，语义由匹配顺序保证）。
+ */
+function terminalCode(rules: DrgRules, adrgCode: string, severity: 1 | 2 | null, ageYears: number): { code: string | null, basis: string } {
+  const requiresLabel: Record<DrgRules['terminalGroups'][number]['requires'], string> = {
+    'mcc': '有严重并发症或合并症（MCC）',
+    'mcc-or-cc': '有并发症或合并症（MCC 或 CC）',
+    'any': '不伴并发症或合并症',
+  }
+  for (const group of rules.terminalGroups) {
+    if (group.adrgCode !== adrgCode) continue
+    const severityOk = group.requires === 'mcc' ? severity === 2
+      : group.requires === 'mcc-or-cc' ? severity !== null
+      : true
+    const ageOk = group.minAgeYears === null || ageYears >= group.minAgeYears
+    if (severityOk && ageOk) {
+      const ageLabel = group.minAgeYears === null ? '' : `，年龄 ≥ ${group.minAgeYears} 岁`
+      return { code: group.drgCode, basis: `按条件「${requiresLabel[group.requires]}${ageLabel}」选择病组` }
+    }
+  }
+  return { code: null, basis: `ADRG ${adrgCode} 没有满足病例条件的终端病组` }
+}
+
+/** 星号副诊断组合成员（「主诊断+副诊断*」）：主诊断与指定副诊断同时出现才命中。 */
+function comboMemberMatches(input: DrgGroupingInput, entryCode: string, mainCode: string): boolean {
+  const plus = entryCode.indexOf('+')
+  if (plus === -1) return entryCode === mainCode
+  if (entryCode.slice(0, plus) !== mainCode) return false
+  const companion = entryCode.slice(plus + 1).replace(/\*$/, '')
+  return input.diagnoses.some(diagnosis => diagnosis.role === 'secondary' && diagnosis.code === companion)
+}
+
+/** 内科成员查找：组合成员更特异，优先于普通成员。 */
+function findMedicalMember(rules: DrgRules, input: DrgGroupingInput, mainCode: string): DrgRules['members'][number] | undefined {
+  const combo = rules.members.find(entry => entry.chapter === 'medical' && entry.code.includes('+')
+    && comboMemberMatches(input, entry.code, mainCode))
+  if (combo !== undefined) return combo
+  return rules.members.find(entry => entry.chapter === 'medical' && !entry.code.includes('+') && entry.code === mainCode)
 }
 
 /**
@@ -56,11 +90,26 @@ export function groupDrgCase(rules: DrgRules, rawInput: DrgGroupingInput): DrgGr
   }
 
   const mdc = findMdc(rules, main.code)
-  if (mdc.mdcCode === null) {
-    return { status: 'ungroupable', drgCode: null, mdcCode: null, adrgCode: null,
-      steps, reason: mdc.basis }
+  let mdcCode = mdc.mdcCode
+  if (mdcCode === null) {
+    // MDC 前缀表缺失时的回填：先按主诊断内科成员或主操作定位候选 ADRG，再由 ADRG 归属得 MDC。
+    const memberAdrg = findMedicalMember(rules, input, main.code)?.adrgCode ?? null
+    const candidateAdrg = memberAdrg ?? [...new Set(input.operations.filter(operation => operation.primary)
+      .map(operation => rules.validOperations.find(entry => entry.code === operation.code)?.adrgCode)
+      .filter((value): value is string => value !== undefined))][0] ?? null
+    const backfilled = candidateAdrg === null
+      ? null : rules.adrgMdcEntries.find(entry => entry.adrgCode === candidateAdrg)?.mdcCode ?? null
+    if (backfilled === null) {
+      return { status: 'ungroupable', drgCode: null, mdcCode: null, adrgCode: null,
+        steps, reason: mdc.basis }
+    }
+    mdcCode = backfilled
+    steps.push({ stage: 'mdc', basis: `MDC 前缀表未命中，按候选 ADRG ${candidateAdrg} 归属回填`,
+      matchedCode: main.code, result: backfilled })
+  } else {
+    steps.push({ stage: 'mdc', basis: mdc.basis, matchedCode: main.code, result: mdcCode })
   }
-  steps.push({ stage: 'mdc', basis: mdc.basis, matchedCode: main.code, result: mdc.mdcCode })
+  const mdcResolved = mdcCode
 
   const primaryOperations = input.operations.filter(operation => operation.primary)
   const operationAdrgs = [...new Set(primaryOperations
@@ -68,16 +117,16 @@ export function groupDrgCase(rules: DrgRules, rawInput: DrgGroupingInput): DrgGr
     .filter((value): value is string => value !== undefined))]
   let adrgCode: string | null
   if (operationAdrgs.length > 1) {
-    return { status: 'ambiguous', drgCode: null, mdcCode: mdc.mdcCode, adrgCode: null,
+    return { status: 'ambiguous', drgCode: null, mdcCode: mdcResolved, adrgCode: null,
       steps, reason: `多个主操作命中不同 ADRG（${operationAdrgs.join('、')}），病案歧义` }
   }
   if (operationAdrgs.length === 1) {
     adrgCode = operationAdrgs[0]!
     steps.push({ stage: 'adrg', basis: `主操作命中有效操作表`, matchedCode: primaryOperations[0]!.code, result: adrgCode })
   } else {
-    const member = rules.members.find(entry => entry.code === main.code && entry.chapter === 'medical')
+    const member = findMedicalMember(rules, input, main.code)
     if (member === undefined) {
-      return { status: 'ungroupable', drgCode: null, mdcCode: mdc.mdcCode, adrgCode: null,
+      return { status: 'ungroupable', drgCode: null, mdcCode: mdcResolved, adrgCode: null,
         steps, reason: `主诊断 ${main.code} 不属于内科成员且无命中有效操作表的主操作` }
     }
     adrgCode = member.adrgCode
@@ -88,14 +137,14 @@ export function groupDrgCase(rules: DrgRules, rawInput: DrgGroupingInput): DrgGr
   const matchedSecondary: string[] = []
   for (const entry of input.diagnoses) {
     if (entry.role !== 'secondary') continue
-    const level = complicationSeverity(rules, adrgCode, entry.code)
+    const level = complicationSeverity(rules, main.code, entry.code)
     if (level === null) continue
     if (severity === null || level > severity) severity = level
     matchedSecondary.push(entry.code)
   }
-  const terminal = terminalCode(rules, adrgCode, severity)
+  const terminal = terminalCode(rules, adrgCode, severity, input.ageYears)
   if (terminal.code === null) {
-    return { status: 'ungroupable', drgCode: null, mdcCode: mdc.mdcCode, adrgCode,
+    return { status: 'ungroupable', drgCode: null, mdcCode: mdcResolved, adrgCode,
       steps, reason: terminal.basis }
   }
   steps.push({
@@ -105,5 +154,5 @@ export function groupDrgCase(rules: DrgRules, rawInput: DrgGroupingInput): DrgGr
     result: terminal.code,
   })
 
-  return { status: 'grouped', drgCode: terminal.code, mdcCode: mdc.mdcCode, adrgCode, steps, reason: null }
+  return { status: 'grouped', drgCode: terminal.code, mdcCode: mdcResolved, adrgCode, steps, reason: null }
 }
