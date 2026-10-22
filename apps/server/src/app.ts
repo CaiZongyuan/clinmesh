@@ -62,7 +62,7 @@ import {
   signClinicalDocumentRequestSchema,
   withdrawPrescriptionRequestSchema,
 } from '@clinmesh/contracts/his'
-import { offlineReferenceInventoryQuerySchema, referenceDataItemIdSchema } from '@clinmesh/contracts/reference-data'
+import { referenceDataItemIdSchema } from '@clinmesh/contracts/reference-data'
 import { serveStatic } from '@hono/node-server/serve-static'
 import { Hono, type Context } from 'hono'
 import { z } from 'zod'
@@ -686,7 +686,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/sim/v1/reference-data/offline-inventories', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
-        return context.json(referenceData.offlineInventories(session.actor, offlineReferenceInventoryQuerySchema.parse(context.req.query())))
+        return context.json(referenceData.offlineInventories(session.actor, context.req.query()))
       } catch (error) {
         return apiErrorResponse(context, error)
       }

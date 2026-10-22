@@ -1,5 +1,6 @@
 import {
   offlineReferenceInventoryListSchema,
+  offlineReferenceInventoryQuerySchema,
   type OfflineReferenceInventoryList,
   type OfflineReferenceInventoryQuery,
   referenceDiagnosisCatalogSearchSchema,
@@ -164,11 +165,12 @@ export class ReferenceDataService {
     this.#auditInventoryRead = auditInventoryRead
   }
 
-  offlineInventories(context: ActorContext, input: OfflineReferenceInventoryQuery) {
+  offlineInventories(context: ActorContext, input: unknown) {
     let result: OfflineReferenceInventoryList
     try {
       if (context.roleCode !== 'administrator') throw new ReferenceDataError('ROLE_NOT_ALLOWED', 'Only an administrator can read offline reference inventories')
-      result = offlineReferenceInventoryListSchema.parse(this.#reader?.offlineInventories?.(input) ?? { items: [], ...input, total: 0 })
+      const query = offlineReferenceInventoryQuerySchema.parse(input)
+      result = offlineReferenceInventoryListSchema.parse(this.#reader?.offlineInventories?.(query) ?? { items: [], ...query, total: 0 })
     } catch (error) {
       this.#auditInventoryRead?.(context, 'failed', [])
       throw error
