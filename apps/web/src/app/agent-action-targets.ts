@@ -45,6 +45,7 @@ const proposalLabels: Record<string, string> = {
   'outpatient.record.revise.propose': '更正临床文书',
   'outpatient.encounter.complete.propose': '完成就诊',
   'billing.payment.confirm.propose': '确认收费',
+  'billing.payment.recover.propose': '查询支付结果',
   'pharmacy.review.propose': '审核处方',
   'pharmacy.dispense.propose': '确认发药',
   'scenario.reset.propose': '重置仿真场景',
@@ -73,7 +74,7 @@ const englishLabels: Record<string, string> = {
   '开立处方': 'Issue prescription', '撤回处方': 'Withdraw prescription',
   '确认无需用药': 'Confirm no medication', '签署临床文书': 'Sign clinical document',
   '更正临床文书': 'Revise clinical document', '完成就诊': 'Complete encounter',
-  '确认收费': 'Confirm payment', '审核处方': 'Review prescription',
+  '确认收费': 'Confirm payment', '查询支付结果': 'Check payment result', '审核处方': 'Review prescription',
   '确认发药': 'Dispense medication', '重置仿真场景': 'Reset scenario',
 }
 

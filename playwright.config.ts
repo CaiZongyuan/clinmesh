@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test'
 
+// Vite builds must not enable production-only defaults in the test host.
+process.env.NODE_ENV = 'test'
+
 export default defineConfig({
   testDir: './apps',
   fullyParallel: true,

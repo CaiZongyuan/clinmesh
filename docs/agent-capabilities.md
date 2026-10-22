@@ -105,9 +105,11 @@
 | `outpatient.record.sign.propose` | 已有可签署草稿 | 生成预览，展示病历质控摘要并人工审阅签署；新增质控提示不阻断签署 |
 | `outpatient.record.revise.propose` | 存在已签署文书 | 人工审阅文书更正 |
 | `outpatient.encounter.complete.propose` | 就诊进行中；提交时重验完成条件 | 人工审阅完成就诊 |
-| `billing.item.select` | 费用在当前收费队列页中 | 选择目标费用记录 |
-| `billing.payment.preview` | 已选费用 | 生成缴费预览；强调缴费详情区 |
-| `billing.payment.confirm.propose` | 已有缴费预览 | 人工审阅缴费；页面展示成功、拒绝或结果不明 |
+| `billing.item.select` | 费用在当前收费队列页中，且无支付请求进行中 | 选择目标费用记录 |
+| `billing.case.read` | 已选当前作用域费用 | 读取完整账单余额及一页原支付尝试，可用 `page` 显示历史页；挂号应收只读，分页协议见 [Command 协议](architecture/fhir-and-commands.md#66-预览与提交) |
+| `billing.payment.preview` | 已选可收款的检验或药品费用，状态为 billable 或 declined | 按当前分次金额和组合方式生成缴费预览；强调缴费详情区 |
+| `billing.payment.confirm.propose` | 已有当前检验或药品费用的有效预览 | 人工审阅本次金额及方式后缴费；页面展示成功、拒付或未知 |
+| `billing.payment.recover.propose` | 当前检验或药品应收为 ambiguous，且原未知尝试可用 | 人工审阅查询原支付结果；不新增收款，未查明前禁止再次收取 |
 | `pharmacy.prescription.select` | 处方在当前药房队列页中 | 选择目标处方行 |
 | `pharmacy.review.draft.set` | 已选处方 | 填写审核意见；不完成审核 |
 | `pharmacy.dispense.draft.set` | 已选处方且批次属于其药品 | 填写批次和数量；不发药 |
@@ -115,7 +117,7 @@
 | `pharmacy.dispense.propose` | 当前处方满足调剂前提 | 人工审阅发药 |
 | `scenario.reset.propose` | 管理员场景页面 | 人工审阅重置；新 Epoch 清理旧反馈 |
 
-只读操作包括 `ui.context.read`、`triage.queue.read`、`outpatient.case.read`、`outpatient.history.search/read`、`billing.queue.read`、`pharmacy.queue.read`、`scenario.status.read`、`scenario.providers.read` 和 `scenario.generation.status.read`。它们读取授权范围内的页面或服务端结果，不显示执行边框，也不复制 Case Truth。
+只读操作包括 `ui.context.read`、`triage.queue.read`、`outpatient.case.read`、`outpatient.history.search/read`、`billing.queue.read`、`billing.case.read`、`pharmacy.queue.read`、`scenario.status.read`、`scenario.providers.read` 和 `scenario.generation.status.read`。它们读取授权范围内的页面或服务端结果，不显示执行边框，也不复制 Case Truth。收款及原尝试恢复的详细规则见[收费与支付](architecture/clinical-workflows.md#85-收费支付与退款)。
 
 医生页面的 `clinmesh_read_current_context` 在 `data.pageState.queue` 返回已加载的医生队列页；`clinmesh_read_doctor_context` 保留当前病例详情字段，并在 `data.queue` 返回当前 frame 已加载的同一队列页。`queue.items` 包含可用于切换的 `caseId`、患者身份和病例状态，`page`、`pageSize`、`total` 描述分页。该队列包含待诊与在诊病例，不等同于当前标签筛选后的列表；`queueCount` 保留为总数，不能据此推断已返回全部条目。队列尚未加载时 `queue` 为 `null`，空队列的 `items` 为 `[]`。选择工具只接受这份已加载队列中的病例，不提供任意患者查询、按姓名全库搜索或跨页选择；同名时应结合队列返回的身份字段消歧。
 

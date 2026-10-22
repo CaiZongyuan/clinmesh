@@ -160,6 +160,12 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
+离线 DRG 资料清单使用 `apps/server/reference-data/drg-offline.lock.json`，通过现有 `reference-db` 运维入口准备和查询，运行方式见[部署指南](../deployment.md#离线-drg-资料核对)。`reference_offline_inventory` 保存不可变摘要及内容哈希，不进入 `reference_release` 或临床编码目录；Server 继续只读 Reference SQLite。准备一次性验证所有包后，在事务中发布整个清单及本地审计，失败保留原清单；`verify` 同时检查已存摘要的身份和哈希。
+
+清单用途固定为 `offline-review`，`validationScope=integrity-only`、`runtimeEnabled=false`。五目录逐文件验证 SHA-256、JSONL 格式及行数，保留各来源的原件哈希、来源发表核验状态与原文计价单位；`unitStatus=source-only-unverified` 不表示包装换算或本院计价已确认。没有来源单位时返回空列表，不以包装列补齐。OpenDRG 验证固定 Manifest 与全部 checksum 项，并重新统计数据集覆盖；CHS-DRG 3.0 支付表标为 `selected-scheme`，其他支付表标为 `excluded-other-scheme`，字典只作来源核对。缺权重或参考费用的病组逐码列入 `missingParameterCodes`，不补零或借用其他方案参数。公开清单的内容哈希绑定全部来源与隔离状态，绝对本地路径及资料正文不出现在 HTTP 响应中。
+
+来源参考、临床／医保编码兼容、使用条件、当前适用性、医院支付参数及算法正确性分别核验。名称、前缀和字面相同都不生成临床编码映射；通用 3.0 与浙江零散参数不组成浙江结算方案。包内程序只参与字节哈希，准备和运行期均不执行；完整性通过不能作为分组算法对照验证证据。读取 `GET /api/sim/v1/reference-data/offline-inventories` 仅向管理员开放，并复用共享 Command 的审计实现追加读取结果，不新增临床写操作或 Agent 任意写工具。清单列表使用有硬上限的分页；数据库完整验证分批遍历全部历史清单，不受公开查询默认页范围限制。
+
 独立 Reference SQLite 通过 `reference-data.lock.json` 和 `pnpm reference:sync` 获取、验证并导入版本固定的疾病、药品与检验来源。项目内锁固定 `cn-health` 版本、Registry URL、Ed25519 信任根、Dataset Release、Manifest hash 和复合 Release 身份；`cn-health dataset materialize` 只在显式同步时访问 Registry，并把签名已验证的 Manifest、SQLite 和 receipt 原子交给 ClinMesh。ClinMesh 再校验 receipt、hash、SQLite、Schema 和 canonical 表不变量。check-only 使用临时 Reference SQLite，正式同步失败不留下部分 Release，也不切换 Server 当前 Release。运行中的 Server 只读 ClinMesh Reference SQLite，不调用 `cn-health`、GitHub 或 Registry。
 
 每个成功发布的 Reference Release 固定来源版本、许可、artifact checksum、materialization provenance、记录数、导入诊断和 content hash。`loinc-zh-cn` Dataset Schema v2 把完整 LOINC 主表、单位、SYSTEM 标本关系和 panel 成员边保存在同一不可变 Release，Class Type 1 进入 laboratory domain，其他 Class Type 进入 `other`。`laboratory-cn` Schema v2 在同一 Release 中保存 WS/T 886 原子项目、全部成人参考规则、项目整理 panel 和有序成员边；首个锁定 Release 的四张表分别有 84、96、15 和 88 条记录。Server 使用索引和 FTS 提供有界分页查询，不把全国目录复制进 Workspace、Epoch 或 operational SQLite。
@@ -355,6 +361,8 @@ POST /api/his/v1/encounters/{id}/actions/complete
 POST /api/his/v1/clinical-documents/{compositionId}/actions/revise
 POST /api/his/v1/payments/actions/preview
 POST /api/his/v1/payments/{previewId}/actions/confirm
+GET  /api/his/v1/billing/cases/{caseId}
+POST /api/his/v1/payments/{paymentId}/actions/recover
 POST /api/his/v1/prescriptions/{prescriptionId}/actions/withdraw
 POST /api/his/v1/prescriptions/{prescriptionId}/actions/dispense
 POST /api/sim/v1/scenario-runs/{id}/actions/reset
@@ -432,10 +440,11 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 ### 6.6 预览与提交
 
-临床文书签署和门诊支付使用带时效 token 的预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；门诊支付预览绑定 Charge Item。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
+临床文书签署和门诊支付使用带时效 token 的预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；门诊支付预览绑定岗位上下文、ChargeItem 版本、本次金额及组合方式。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
 
 提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、门诊退费、医保和库存调拨不属于当前能力，也不宣称已有预览协议。
 
+门诊账单 GET（`billing.case.get` v2）仅向收费员返回当前作用域内一次门诊的完整应收与余额，以及一页原支付历史。HTTP 与 CLI 使用 `page`、`pageSize`，默认 1、20，单页最多 100；`paymentsPagination` 返回页码、页大小与历史总条数，`payments` 按创建时间及 payment ID 倒序排列。Surface 的 `billing.case.read` 只绑定当前就诊，可选 `page` 读取并显示每页 20 条的历史，供人工审阅恢复；不接受其他病例 ID。`payment.recover` 是审阅后的窄 Command，要求幂等键、`input.expectedPaymentVersion` 和原应收的 ChargeItem expected version；没有任意金额或 outcome 输入，也不重用预览 token。未解决支付版本为 1，追加确定结果后为 2；终态查询返回既有结果，继续未知不改变版本。HTTP、Operation Catalog、CLI 和 Surface 共用此 owner，业务与恢复边界见[收费与支付](clinical-workflows.md#85-收费支付与退款)。
 住院结算使用独立的逐项账目指纹预览：提交校验原预览指纹、Encounter 版本与预期金额，不使用上述五分钟 `commitToken`。住院结算包含补缴或关联原入金的退款，与医生出院医嘱、护士出区和清床分别执行；状态门禁及原意图恢复合同见[住院出院与结算](clinical-workflows.md#住院出院与结算)。
 
 病案首页通过 `inpatient.record.read/submit/review/archive` 共享 Query/Command 暴露四组核心字段及独立修订、审核和不可变快照，不新增未实现的通用FHIR病历写能力。提交显式携带本次实际主操作选择或空值，提交、审核与归档均绑定 `expectedRevision` 与 `expectedSourcesHash`；`INPATIENT_RECORD_STALE` 要求重新审阅来源并由医生重新提交，不能静默刷新hash后重做。归档新写返回 `INPATIENT_RECORD_ARCHIVED`，旧receipt优先重放；岗位和门禁见[病案首页与归档](clinical-workflows.md#病案首页与归档)。

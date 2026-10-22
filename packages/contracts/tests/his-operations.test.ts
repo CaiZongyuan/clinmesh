@@ -534,8 +534,10 @@ describe('HIS operation catalog', () => {
   it('publishes cashier payment and pharmacist fulfillment operations', () => {
     const expected = [
       ['billing.queue.list', 'query', 'read', ['cashier']],
+      ['billing.case.get', 'query', 'read', ['cashier']],
       ['payment.preview', 'preview', 'write', ['cashier']],
       ['payment.confirm', 'command', 'high-risk-write', ['cashier']],
+      ['payment.recover', 'command', 'high-risk-write', ['cashier']],
       ['pharmacy.queue.list', 'query', 'read', ['pharmacist']],
       ['prescription.review', 'command', 'high-risk-write', ['pharmacist']],
       ['prescription.dispense', 'command', 'high-risk-write', ['pharmacist']],
@@ -544,6 +546,84 @@ describe('HIS operation catalog', () => {
       const operation = getHisOperation(id as string)
       return [operation.id, operation.mode, operation.risk, operation.roles]
     })).toEqual(expected)
+  })
+
+  it('recovers a recorded payment using both the payment and ChargeItem versions', () => {
+    const operation = getHisOperation('payment.recover')
+    const input = {
+      chargeItemId: 'charge-1',
+      chargeVersion: 3,
+      expectedPaymentVersion: 2,
+      paymentId: 'payment-1',
+    }
+    expect(operation).toMatchObject({
+      cliPath: ['payment', 'recover'],
+      commandOperation: 'payment.recover',
+      http: { method: 'POST', path: '/api/his/v1/payments/:paymentId/actions/recover' },
+      mode: 'command',
+      previewToken: 'none',
+      requirements: { expectedVersions: true, idempotency: 'required' },
+      risk: 'high-risk-write',
+      roles: ['cashier'],
+      skill: 'clinmesh-billing',
+    })
+    expect(operation.input.parse(input)).toEqual(input)
+    expect(operation.http.encodeBody?.(input)).toEqual({
+      expectedVersions: { 'ChargeItem/charge-1': '3' },
+      input: { expectedPaymentVersion: 2 },
+    })
+    expect(operation.input.safeParse({ ...input, expectedPaymentVersion: 0 }).success).toBe(false)
+    expect(operation.input.safeParse({ ...input, outcome: 'success' }).success).toBe(false)
+  })
+
+  it('reads one unified bill including unpaid registration charges', () => {
+    const operation = getHisOperation('billing.case.get')
+    expect(operation).toMatchObject({
+      cliPath: ['billing', 'case', 'get'],
+      http: { method: 'GET', path: '/api/his/v1/billing/cases/:caseId' },
+      mode: 'query',
+      requirements: { expectedVersions: false, idempotency: 'none' },
+      risk: 'read',
+      roles: ['cashier'],
+      skill: 'clinmesh-billing',
+    })
+    expect(operation.input.parse({ caseId: 'case-1' })).toEqual({ caseId: 'case-1', page: 1, pageSize: 20 })
+    expect(operation.input.parse({ caseId: 'case-1', page: 2, pageSize: 1 })).toEqual({ caseId: 'case-1', page: 2, pageSize: 1 })
+    expect(operation.input.safeParse({ caseId: 'case-1', pageSize: 101 }).success).toBe(false)
+    expect(operation.input.safeParse({ caseId: 'case-1', patientId: 'other-patient' }).success).toBe(false)
+    expect(operation.summary).toContain('registration')
+    expect(operation.summary).toContain('unpaid')
+  })
+
+  it('previews a bounded combination of payment methods and uncertain channel outcomes', () => {
+    const operation = getHisOperation('payment.preview')
+    const input = {
+      caseId: 'case-1',
+      category: 'laboratory',
+      chargeItemId: 'charge-1',
+      chargeVersion: 3,
+      simulatorRule: 'ambiguous-decline',
+      tenders: [{ method: 'cash', amountFen: 100 }, { method: 'mobile', amountFen: 200 }],
+    }
+    expect(operation.version).toBe(2)
+    expect(operation.input.parse(input)).toEqual(input)
+    expect(operation.http.encodeBody?.(input)).toEqual({
+      expectedVersions: { 'ChargeItem/charge-1': '3' },
+      input: {
+        caseId: 'case-1', category: 'laboratory', simulatorRule: 'ambiguous-decline',
+        tenders: [{ method: 'cash', amountFen: 100 }, { method: 'mobile', amountFen: 200 }],
+      },
+    })
+    expect(operation.input.safeParse({ ...input, simulatorRule: 'ambiguous-pending' }).success).toBe(true)
+    expect(operation.input.safeParse({ ...input, tenders: undefined }).success).toBe(true)
+    for (const tenders of [
+      [],
+      [{ method: 'cash', amountFen: 0 }],
+      [{ method: 'mobile', amountFen: 0.5 }],
+      [{ method: 'cash', amountFen: 100 }, { method: 'cash', amountFen: 200 }],
+      [{ method: 'arbitrary-channel', amountFen: 100 }],
+      [{ method: 'cash', amountFen: 100, url: 'https://example.com' }],
+    ]) expect(operation.input.safeParse({ ...input, tenders }).success).toBe(false)
   })
 
   it('publishes only the implemented FHIR R5 read surfaces', () => {
@@ -655,7 +735,7 @@ describe('HIS operation catalog', () => {
 
     expect(counts).toEqual({
       'clinmesh-administrator': 3,
-      'clinmesh-billing': 3,
+      'clinmesh-billing': 5,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
       'clinmesh-inpatient': 56,
