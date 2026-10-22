@@ -1382,8 +1382,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const financialRefund = (action: 'preview' | 'confirm' | 'recover') => async (context: Context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const schema = action === 'preview' ? inpatientFinancialRefundPreviewInputSchema : action === 'confirm' ? inpatientFinancialRefundConfirmInputSchema : inpatientFinancialRefundRecoverInputSchema
-        const body = z.object({ input: schema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const schema = action === 'preview' ? inpatientFinancialRefundPreviewInputSchema.omit({ admissionId: true }) : action === 'confirm' ? inpatientFinancialRefundConfirmInputSchema.omit({ admissionId: true }) : inpatientFinancialRefundRecoverInputSchema.omit({ admissionId: true })
+        const body = z.object({ input: schema }).strict().parse(await context.req.json())
         const input = { ...body.input, admissionId: context.req.param('admissionId') }, currentActor = await actor(context)
         const key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
         return context.json(action === 'preview' ? inpatient.financialAdjustments.refundPreview(currentActor, input, key)
@@ -1396,8 +1396,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const financialPayment = (action: 'preview' | 'confirm' | 'recover') => async (context: Context) => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
-        const schema = action === 'preview' ? inpatientFinancialPaymentPreviewInputSchema : action === 'confirm' ? inpatientPaymentConfirmInputSchema : inpatientPaymentRecoverInputSchema
-        const body = z.object({ input: schema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const schema = action === 'preview' ? z.object(inpatientFinancialPaymentPreviewInputSchema.shape).omit({ admissionId: true }).strict() : action === 'confirm' ? inpatientPaymentConfirmInputSchema.omit({ admissionId: true }) : inpatientPaymentRecoverInputSchema.omit({ admissionId: true })
+        const body = z.object({ input: schema }).strict().parse(await context.req.json())
         const input = { ...body.input, admissionId: context.req.param('admissionId') }, currentActor = await actor(context)
         const key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
         return context.json(action === 'preview' ? inpatient.financialAdjustments.paymentPreview(currentActor, input, key)

@@ -25,6 +25,11 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     ['clinmesh payment preview ', 'payment.preview', 2],
     ['clinmesh payment confirm ', 'payment.confirm', 2],
     ['clinmesh payment recover ', 'payment.recover', 1],
+    ['clinmesh billing refunds get ', 'billing.refunds.get', 1],
+    ['clinmesh billing charge adjust ', 'billing.charge.adjust', 1],
+    ['clinmesh refund preview ', 'refund.preview', 1],
+    ['clinmesh refund confirm ', 'refund.confirm', 1],
+    ['clinmesh refund recover ', 'refund.recover', 1],
   ] as const) {
     const line = commandLines(skill).find(line => line.startsWith(prefix))!
     const operation = getHisOperation(id)
@@ -32,7 +37,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     expect(operation.version).toBe(version)
     expect(operation.skill).toBe('clinmesh-billing')
   }
-  for (const id of ['payment.confirm', 'payment.recover']) {
+  for (const id of ['payment.confirm', 'payment.recover', 'refund.confirm', 'refund.recover']) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh command receipt get --operation-id ${id} `))!
     expect(inspectExample(program, line).operation?.id).toBe('command.receipt.get')
   }

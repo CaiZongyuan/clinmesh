@@ -4,6 +4,7 @@ import { build } from 'vite'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { z } from 'zod'
 import { billingCaseSchema, billingQueueSchema, paymentResponseSchema } from '@clinmesh/contracts/his'
+import { refundCaseSchema } from '@clinmesh/contracts/refunds'
 import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
 import { expectBillingFits, readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
@@ -73,6 +74,37 @@ async function mountBilling(page: Page, version: string, server: { origin: strin
 
 for (const version of ['18', '19']) test.describe(`billing asynchronous responses on React ${version}`, () => {
   test.beforeAll(async () => { await buildFixture(version) })
+  test('reviews original-payment refunds and recovery inside the Surface shadow root', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    try {
+      await mountBilling(page, version, server)
+      await submitPayment(page)
+      const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
+      await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
+      await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
+      await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
+      const correction = page.getByRole('alertdialog', { name: '确认费用更正', exact: true })
+      await expectShadowDialog(page, correction)
+      await correction.getByRole('button', { name: '确认费用更正', exact: true }).click()
+      await expect(correction).toHaveCount(0)
+      await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
+      await panel.getByLabel('退款处理结果', { exact: true }).click()
+      await page.getByRole('option', { name: '结果未知', exact: true }).click()
+      await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+      const review = page.getByRole('alertdialog', { name: '确认退款', exact: true })
+      await expectShadowDialog(page, review)
+      await review.getByRole('button', { name: '提交退款', exact: true }).click()
+      await expect(review).toHaveCount(0)
+      await panel.getByRole('button', { name: '查询原退款结果', exact: true }).click()
+      const recovery = page.getByRole('alertdialog', { name: '查询原退款结果', exact: true })
+      await expectShadowDialog(page, recovery)
+      await recovery.getByRole('button', { name: '查询原退款结果', exact: true }).click()
+      await expect(recovery).toHaveCount(0)
+      const response = await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)
+      expect(refundCaseSchema.parse(await response.json())).toMatchObject({ adjustedFen: 2000, refundedFen: 1000, reservedFen: 0,
+        refunds: [{ outcome: 'success', initialOutcome: 'ambiguous', tenders: [{ method: 'cash', amountFen: 1000 }] }] })
+    } finally { await server.close() }
+  })
   for (const replaceSelection of [false, true]) test(`binds a delayed real confirmation to its original selection (queue replacement: ${replaceSelection})`, async ({ page }) => {
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     let releaseResponse = () => {}
