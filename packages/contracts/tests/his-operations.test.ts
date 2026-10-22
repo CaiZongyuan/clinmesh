@@ -747,7 +747,7 @@ describe('HIS operation catalog', () => {
       'clinmesh-billing': 10,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 64,
+      'clinmesh-inpatient': 71,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,
       'clinmesh-shared': 1,
@@ -774,6 +774,8 @@ describe('HIS operation catalog', () => {
       clinicalDocumentOperationIds.sign,
       'refund.confirm',
       'payment.confirm',
+      'inpatient.payment.confirm',
+      'inpatient.refund.confirm',
     ])
     expect(getHisOperation('reference.diagnoses.search').handlerOwner).toBe('ReferenceDataService')
     expect(getHisOperation('registration.synthetic-case.start').handlerOwner)

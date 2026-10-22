@@ -195,6 +195,13 @@ clinmesh inpatient discharge-events --admission-id <admission-id>
 clinmesh inpatient issue-discharge --input @discharge.json --idempotency-key <key>
 clinmesh inpatient depart --input @departure.json --idempotency-key <key>
 clinmesh inpatient settlement-preview --admission-id <admission-id>
+clinmesh inpatient payments --admission-id <admission-id>
+clinmesh inpatient preview-payment --input @inpatient-payment.json --idempotency-key <key>
+clinmesh inpatient confirm-payment --input @inpatient-confirmation.json --idempotency-key <key>
+clinmesh inpatient recover-payment --input @inpatient-payment-recovery.json --idempotency-key <key>
+clinmesh inpatient preview-refund --input @inpatient-refund.json --idempotency-key <key>
+clinmesh inpatient confirm-refund --input @inpatient-confirmation.json --idempotency-key <key>
+clinmesh inpatient recover-refund --input @inpatient-refund-recovery.json --idempotency-key <key>
 clinmesh inpatient settle --input @settlement.json --idempotency-key <key>
 clinmesh inpatient clear-bed --input @discharge.json --idempotency-key <key>
 clinmesh inpatient recall --input @discharge.json --idempotency-key <key>
@@ -203,7 +210,23 @@ clinmesh command receipt get --operation-id inpatient.discharge.settle --idempot
 
 医生开出院医嘱只进入 `discharge-pending`，不出区、不结算、不释放床位。`discharge.json` 传 `admissionId/encounterVersion/reason`；护士出区使用相同字段，并显式选择 `departureMethod`：`home`医嘱离院、`transfer`医嘱转院、`against-advice`非医嘱离院、`death`死亡、`other`其他。这是本院仿真字段，不宣称国家上报编码。出院医嘱、出区及结算都重查未收口手术、检查检验和转科；检查已reported但未阅可放行，不套用门诊全已阅门禁。出区前医嘱须全部 stopped/completed，任务全部 completed/cancelled；待出院仍允许医生申请停嘱和护士核停，禁止新增、校对和执行医嘱。已发未给任务可核停取消，保留发药、库存和费用，不强迫补给药或自动退库存。尚未出区期间继续产生声明的床日费，实际出区后停止。
 
-收费员只能读取窄财务预览和结算回执，不能读取出院临床说明或离院方式。首次结算前读取 `settlement-preview`，保留其完整 `encounterVersion/fingerprint/chargesFen/balanceFen`；正 balanceFen 为补缴，负数为退款，零元不产生补退款交易。退款关联原预交金交易，原入金不改写。使用 `settlement.json` 提交：
+收费员只能读取窄财务和资金记录，不能读取出院临床说明或离院方式。`payments` 读取当前首次结算的原款、成功收退款、剩余差额及未知尝试。登记原预交金继续有效；追加预交金用 `kind=deposit`，已出区补缴用 `kind=supplement`，输入正整数分 `amountFen` 与合计相等的 `tenders`（cash、bank-card、mobile各最多一项）。合成渠道显式选 `simulatorRule`：success、decline、ambiguous、ambiguous-decline或ambiguous-pending。先预览，再将响应的 `admissionId/previewId/commitToken` 写入确认文件；确认只消费原预览，不能追加金额或方式。
+
+`inpatient-payment.json` 合成示例，首次提交前替换本次住院ID：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "kind": "deposit",
+  "amountFen": 10000,
+  "tenders": [{ "method": "cash", "amountFen": 4000 }, { "method": "mobile", "amountFen": 6000 }],
+  "simulatorRule": "success"
+}
+```
+
+退款预览传本次 `admissionId`、`payments.sources` 返回的原款 `sourceId`、正数 `amountFen` 与 `simulatorRule`；须在已出区、未封账窗口且不超过应退差额和原款可退余额。成功补缴也可作为原款，退款按冻结方式分配，保留原入金。收款恢复文件传 `admissionId/paymentId/expectedPaymentVersion`，退款恢复传 `admissionId/refundId/expectedRefundVersion`；恢复查询原尝试，不能换key重收退。`ambiguous` 不计成功资金，并占用退款原款；未知时 `INPATIENT_FUNDS_PENDING` 阻止新收退款和封账，但医生出院医嘱、护士出区仍按原临床条件办理。拒绝释放占用，持续未知保留原尝试继续查询。
+
+首次结算前读取 `settlement-preview`，保留完整 `encounterVersion/fingerprint/chargesFen/balanceFen`；该预览仍展示费用与原预交金的原始补退口径，实际尚应收退以 `payments.remainingFen` 为准。已有独立收退款尝试时，须先使剩余差额为零，再明确重新预览并封账；`INPATIENT_FUNDS_REQUIRED` 要求继续按差额收退。尚无独立尝试的旧结算调用保留人工审阅后默认现金结清兼容；已有拒绝或未知时不能走默认路径绕过。使用 `settlement.json` 提交：
 
 ```json
 {
@@ -215,7 +238,7 @@ clinmesh command receipt get --operation-id inpatient.discharge.settle --idempot
 }
 ```
 
-示例指纹不可用于真实提交；首次提交前用实际预览替换，重试保持原文件不变。server 在 Command 事务重读逐项费用、冲正、资金与状态，校验原指纹及金额；Encounter版本不变或费用净额相同也不证明明细未变。`INPATIENT_SETTLEMENT_PREVIEW_STALE` 表示原预览失效，须重新审阅新明细并显式取得新预览后开始新意图，不能自动刷新金额后盲重做。结果未知先查原 `inpatient.discharge.settle` receipt，继续原完整输入与原幂等键，不重复补缴或退款。已结算封账，禁止新增或冲正费用；只有护士清床才释放床位。
+示例指纹不可用于真实提交；首次提交前用实际预览替换，重试保持原文件不变。server 在 Command 事务重读逐项费用、冲正、资金与状态，校验原指纹及金额；Encounter版本不变或费用净额相同也不证明明细未变。`INPATIENT_SETTLEMENT_PREVIEW_STALE` 或 `INPATIENT_PAYMENT_PREVIEW_STALE` 要求重新审阅新明细并显式取得新预览后开始新意图。传输结果未知先查对应operation原receipt，继续原完整输入与原幂等键；渠道 `ambiguous` 则查询原资金尝试，两种恢复不能相互替代。已结算封账，普通新增或冲正费用拒绝；只有护士清床才释放床位。
 
 召回只允许当前负责住院医生在已出区、未结算、未清床且原床仍由本次住院保留时办理；与结算竞争仅一个成功。召回追加关联原出区的逆向事件与床位 period，保留原出区时间、离院方式和审计，不恢复旧医嘱。结算后再次收治通过新的 register 创建独立住院。
 

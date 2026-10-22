@@ -215,7 +215,11 @@ depart结束Encounter的实际床位period并设置discharged，保留领域床�
 
 收费员以独立窄DTO读取逐项费用、原预交金、资金和补退金额，不能读取临床出区说明。预览一致读计算稳定逐项fingerprint，涵盖费用ID、版本、金额、来源、科室、业务日、虚拟时间、冲正关系、原入金及资源版本。结算在Command写事务重读，并核对原fingerprint、expectedChargesFen和expectedBalanceFen；Encounter版本或净额未变仍可能因明细变化而拒绝。Web显式预览后冻结已展示金额与指纹，不随账目后台刷新更新；失效必须明确重新预览，丢回执恢复沿用原key、原版本、原指纹和原金额。
 
-正差额创建补缴，负差额创建关联原预交金的退款，零差额不创建资金记录；原入金、结算快照与补退均保留，退款不覆盖原交易。结算封账后InpatientBilling拒绝新增费用，冲正owner继续拒绝已结算账。投影、费用、资金、状态、receipt和审计一起提交或回滚；旧receipt无写重放不受新增费用门禁阻断。取舍见[Agent Note](../decisions/implemented/architecture/2026-10-21-inpatient-discharge-and-settlement.md)。
+InpatientPayments拥有首次封账前的追加预交金、出区补缴和退款Command，复用共享渠道计划及RefundLedger。登记时的正数预交金继续作为同一资金原款；现代预交金成功时按payment ID唯一投影入原inpatient_deposit，未知或拒绝不增加入金。补缴以独立成功尝试参与资金聚合，封账时按原ID投影入首次结算账。余额由同一正式费用账、去重原款和成功退款推导，不新增可编辑余额。组合现金、银行卡及移动支付冻结在原尝试；退款只能引用本次住院已成功预交金或补缴，不超过应退差额与共享可退余额，并沿原方式分配。未知退款保留原款占用，拒绝释放占用；查询原尝试追加唯一结果，原入金不改写。
+
+收退款预览绑定完整逐项费用及资金状态、岗位、金额、方式和过期时间；确认只提交previewId与token，状态、明细或资金变更须显式重审。未知资金不阻断医生出院医嘱和护士实际出区，但阻断新的收退款、首次封账和清床。首次settle在资金无未知且剩余差额为零时冻结原结算快照与唯一资金投影；为保留旧调用合同，从未有独立收退款尝试时，原人工审阅settle可在同一事务执行默认现金结清。出现独立拒绝或未知后不能回退默认路径，须明确补收退并重新预览。旧settlement-preview.balanceFen继续使用原费用减原预交金口径，资金入口remainingFen表示尚应收退，两者不重复入账。
+
+历史退款以稳定原ID适配进共享退款账，迁移不触发渠道、不改变原预交金、结算交易或存储JSON。补缴原款退回使用窄投影保留原结算表的预交金外键。结算封账后InpatientBilling与普通冲正入口继续拒绝新增费用或冲正，归档锁不因资金恢复放宽；投影、资金、状态、receipt和审计同一Command事务提交或回滚。取舍见[首次资金与冻结账决策](../decisions/implemented/architecture/2026-10-22-inpatient-funding-and-first-settlement.md)及[出院动作决策](../decisions/implemented/architecture/2026-10-21-inpatient-discharge-and-settlement.md)。
 
 #### 结算后的财务更正
 

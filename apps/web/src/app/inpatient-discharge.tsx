@@ -1,4 +1,4 @@
-import { inpatientDischargeEventsSchema, inpatientSettlementPreviewSchema, type inpatientDepartureMethodSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientDischargeEventsSchema, inpatientSettlementPreviewSchema, inpatientPaymentsSchema, type inpatientDepartureMethodSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.tsx'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
@@ -14,6 +14,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { InpatientFunding } from './inpatient-funding.tsx'
 
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
 export function InpatientDischarge({ admission, session, locale, write }: Props): React.JSX.Element {
@@ -48,6 +49,8 @@ export function InpatientDischarge({ admission, session, locale, write }: Props)
 
 export function InpatientSettlement({ admission, session, locale, write }: Props): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
+  const funds = useQuery({ queryKey: ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId,admission.id,'payments'],
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/payments`, inpatientPaymentsSchema, signal) })
   // 收费员显式获取预览；后台失效或账目刷新不能替换已经看过的金额与指纹。
   const preview = useQuery({ queryKey: ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId,admission.id,'settlement-preview'], enabled: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/discharge/preview`, inpatientSettlementPreviewSchema, signal) })
@@ -55,6 +58,8 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
   if (admission.financialStatus === 'settled') return <><p>{admission.status === 'cleared' ? t('已结算并清床','Settled and bed cleared') : t('已结算，等待病区清床','Settled; awaiting bed clearance')}</p><InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} write={write} /></>
   return <section aria-label={t('住院结算','Inpatient settlement')} className="flex flex-col gap-3">
     <h3>{t('住院结算','Inpatient settlement')}</h3>
+    {funds.error ? <p role="alert">{getWorkspaceErrorMessage(funds.error,getWorkspaceMessages(locale))}</p> : null}
+    {funds.data ? <InpatientFunding admission={admission} locale={locale} write={write} statement={funds.data} /> : null}
     <Button variant="outline" disabled={write.blocked || preview.isFetching} onClick={() => { void preview.refetch() }}>{data ? t('重新预览结算','Refresh settlement preview') : t('预览结算','Preview settlement')}</Button>
     {preview.error ? <p role="alert">{getWorkspaceErrorMessage(preview.error,getWorkspaceMessages(locale))}</p> : null}
     {data ? <>
@@ -62,7 +67,7 @@ export function InpatientSettlement({ admission, session, locale, write }: Props
       <p data-testid="settlement-net">{t('预览费用净额：','Preview net charges: ')}{formatFen(data.chargesFen,locale)}</p>
       <p>{t('原预交金：','Original deposit: ')}{formatFen(data.depositFen,locale)}</p>
       <p data-testid="settlement-refund">{data.balanceFen < 0 ? t('应退：','Refund: ') : data.balanceFen > 0 ? t('应补缴：','Supplement: ') : t('无补退：','No balance: ')}{formatFen(Math.abs(data.balanceFen),locale)}</p>
-      <Button disabled={write.blocked || preview.isFetching || admission.status !== 'departed' || data.status !== 'departed'} onClick={() => write.mutation.mutate({ operation:'inpatient.discharge.settle',input:{
+      <Button disabled={write.blocked || preview.isFetching || admission.status !== 'departed' || data.status !== 'departed' || (funds.data?.pendingCount ?? 0) > 0} onClick={() => write.mutation.mutate({ operation:'inpatient.discharge.settle',input:{
         admissionId:admission.id,encounterVersion:data.encounterVersion,fingerprint:data.fingerprint,expectedChargesFen:data.chargesFen,expectedBalanceFen:data.balanceFen,
       } })}>{t('确认结算','Confirm settlement')}</Button>
     </> : null}
