@@ -19,13 +19,14 @@ it.each([
   const actor = sessionContextSchema.parse(await (await s.runtime.app.request('/api/auth/context', {
     headers: { cookie: await s.login('cashier') },
   })).json()).actor
+  const context = { workspaceId: actor.workspaceId, epoch: actor.epoch, actorId: actor.actorId, roleCode: actor.roleCode, scenarioRunId: actor.scenarioRunId }
   // This adapter matrix arranges authoritative synthetic charges through the real billing owner.
   // Clinical issue/execution matrices own when those charges are created; no imaging pixels are needed.
   const billing = new InpatientBilling(s.runtime.database, s.runtime.fhir)
   s.runtime.database.driver.transaction(() => {
     for (const [kind, amountFen] of [
       ['medication', 10003], ['imaging', 20007], ['material', 30011], ['service', 2000000], ['bed', 5000],
-    ] as const) billing.record(actor, {
+    ] as const) billing.record(context, {
       admissionId: admission.id, organizationId: actor.organizationId, kind, amountFen,
       sourceId: randomUUID(), serviceDate: '2026-08-24', virtualTime: '2026-08-24T09:00:00+08:00', label: `合成医保目录 ${kind}`,
     }, [])

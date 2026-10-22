@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { createRequire } from 'node:module'
-import { fileURLToPath } from 'node:url'
-import { build } from 'vite'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
-import { buildSurfaceStyles } from '../surface-styles.ts'
 
-const require = createRequire(import.meta.url)
-for (const version of ['18', '19']) {
+import { buildInpatientFinanceFixture } from './inpatient-finance.browser.artifact.ts'
+for (const version of ['18', '19']) test.describe(`inpatient finance React ${version}`, () => {
+  let artifact: Awaited<ReturnType<typeof buildInpatientFinanceFixture>>
+  test.beforeAll(async () => { artifact = await buildInpatientFinanceFixture(version) })
   test(`结算后更正与退款审阅弹窗在 React ${version} 的 Surface ShadowRoot 内保持焦点和布局`, async ({ page, browserApp }) => {
     const errors: string[] = []
     page.on('pageerror', error => errors.push(error.message))
@@ -29,14 +27,8 @@ for (const version of ['18', '19']) {
     expect((await post(`${path}/discharge/settle`, { encounterVersion: preview.encounterVersion, fingerprint: preview.fingerprint, expectedChargesFen: preview.chargesFen, expectedBalanceFen: preview.balanceFen })).status()).toBe(200)
     await page.route(`${browserApp.origin}/finance-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
     await page.goto(`${browserApp.origin}/finance-contract`)
-    const react = version === '18' ? 'react18' : 'react', reactDom = version === '18' ? 'react-dom18' : 'react-dom'
-    const result = await build({ configFile: false, logLevel: 'silent', esbuild: { jsx: 'automatic', jsxDev: false }, define: { 'process.env.NODE_ENV': JSON.stringify('production') },
-      resolve: { alias: [{ find: /^react$/, replacement: require.resolve(react) }, { find: 'react/jsx-runtime', replacement: require.resolve(`${react}/jsx-runtime`) }, { find: 'react-dom/client', replacement: require.resolve(`${reactDom}/client`) }, { find: /^react-dom$/, replacement: require.resolve(reactDom) }] },
-      build: { write: false, lib: { entry: fileURLToPath(new URL('./inpatient-finance.browser.fixture.tsx', import.meta.url)), formats: ['iife'], name: 'InpatientFinance' } } })
-    const chunk = (Array.isArray(result) ? result : [result]).flatMap(item => 'output' in item ? item.output : []).find(item => item.type === 'chunk')
-    if (chunk?.type !== 'chunk') throw new Error('Missing inpatient finance fixture')
     await page.setViewportSize({ width: 390, height: 844 })
-    await page.setContent(`<!doctype html><html data-admission-id="${admission.id}"><head><style>${await buildSurfaceStyles()}</style></head><body><script>${chunk.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    await page.setContent(`<!doctype html><html data-admission-id="${admission.id}"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
     const panel = page.getByRole('region', { name: '后续财务更正', exact: true })
     await panel.getByLabel('更正金额（元）', { exact: true }).fill('20')
     await panel.getByLabel('财务更正原因', { exact: true }).fill('合成Surface床日费核对')
@@ -58,4 +50,4 @@ for (const version of ['18', '19']) {
     await expect(panel.getByTestId('financial-current')).toContainText('当前净资金 ¥30.00')
     expect(errors).toEqual([])
   })
-}
+})
