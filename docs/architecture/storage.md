@@ -189,7 +189,7 @@ queued/claimed    -> abandoned
 
 首期只有 SQLite Repository adapter。Drizzle schema 和迁移以 SQLite 为真实目标，不维护 D1 或 PostgreSQL 方言的虚假兼容层。Workspace 级 Profile、Case、Brief 和 Investigation Snapshot 使用稳定逻辑 key 和显式 revision，不依赖本地自增 ID。
 
-当前 Operational schema version 为 84，按完整迁移文件名及校验和识别已应用迁移，数字前缀不作为唯一身份。`0069_inpatient-admission.sql` 与 `0069_registration-numbering.sql`、`0070_inpatient-orders.sql` 与 `0070_doctor-recommendation-consolidation-stage.sql` 均保留原文件及已落库身份；从门诊发号版 78 升级只补六份住院迁移，从住院版 82 升级只补两份门诊发号与建议阶段迁移。两条路径保留原 FHIR current/history、领域事实、回执及已应用迁移记录；发号历史证据不足仍按[发行状态](#门诊号发行状态)拒绝迁移，不能用住院兼容绕过。理由见[迁移身份兼容决策](../decisions/implemented/bug-fix/2026-10-21-inpatient-main-migration-identity.md)。
+当前 Operational schema version 为 86，按完整迁移文件名及校验和识别已应用迁移，数字前缀不作为唯一身份。`0069_inpatient-admission.sql` 与 `0069_registration-numbering.sql`、`0070_inpatient-orders.sql` 与 `0070_doctor-recommendation-consolidation-stage.sql` 均保留原文件及已落库身份；从门诊发号版 78 升级补六份住院迁移及两份支付迁移，从住院版 82 升级补两份门诊发号与建议阶段迁移及两份支付迁移。支付迁移为 `0071_payment-installments.sql` 与 `0072_payment-history-pagination.sql`。两条路径保留原 FHIR current/history、领域事实、回执及已应用迁移记录；发号历史证据不足仍按[发行状态](#门诊号发行状态)拒绝迁移，不能用住院兼容绕过。理由见[迁移身份兼容决策](../decisions/implemented/bug-fix/2026-10-21-inpatient-main-migration-identity.md)。
 
 未来选择 D1、PostgreSQL 或 Supabase 时必须：
 
