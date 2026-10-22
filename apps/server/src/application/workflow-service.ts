@@ -1,3 +1,5 @@
+import { InsuranceService, InsuranceError, type InsuranceSource, type InsuranceTarget } from './insurance-service.ts'
+import { readOutpatientInsuranceSource } from './outpatient-insurance.ts'
 import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
 import { medicationDoseAndFrequencyAllowed } from './medication-rules.ts'
 import { CommandReceiptNotFoundError } from './command-executor.ts'
@@ -1166,6 +1168,7 @@ export class WorkflowService {
   readonly #fhir: FhirRepository
   readonly #investigation: InvestigationCapabilityResolver | undefined
   readonly #now: () => Date
+  readonly insurance: InsuranceService
   readonly #payments: PaymentLedger
   readonly #referenceData: ReferenceDataService | undefined
   readonly #requests: ClinicalRequestKernel
@@ -1191,6 +1194,9 @@ export class WorkflowService {
       now?: () => Date
       referenceData?: ReferenceDataService
       tokenSecret: string
+      readInpatientInsuranceSource?: (context: ActorContext, target: InsuranceTarget) => InsuranceSource
+      onInpatientInsuranceAllocationChanged?: (context: ActorContext, source: InsuranceSource, transaction: CommandTransaction, effects: CommandEffect[]) => void
+      assertInpatientInsuranceChangeAllowed?: (context: ActorContext, source: InsuranceSource, action: 'settle' | 'cancel') => void
     },
   ) {
     this.#commands = commands
@@ -1199,6 +1205,30 @@ export class WorkflowService {
     this.#investigation = options.investigation
     this.#now = options.now ?? (() => new Date())
     this.#payments = new PaymentLedger(database)
+    this.insurance = new InsuranceService(database, commands, {
+      now: this.#now,
+      readSource: (context,target) => {
+        if(target.kind==='outpatient')return readOutpatientInsuranceSource(database,context,target)
+        if(options.readInpatientInsuranceSource===undefined)throw new InsuranceError('INSURANCE_SOURCE_UNAVAILABLE','住院医保入口尚未启用')
+        return options.readInpatientInsuranceSource(context,target)
+      },
+      assertChangeAllowed: (context,source,action) => {
+        if(source.target.kind==='inpatient'){options.assertInpatientInsuranceChangeAllowed?.(context,source,action);return}
+        for(const charge of source.charges){
+          const row=z.object({status:z.string()}).parse(database.driver.prepare('SELECT status FROM charge_record WHERE workspace_id=? AND epoch=? AND charge_item_id=?').get(context.workspaceId,context.epoch,charge.reference.slice(11)))
+          const balance=this.#payments.balance(context,charge.reference.slice(11))
+          if(balance.unresolved>0||row.status==='paid'||balance.paidFen>0)throw new InsuranceError('INSURANCE_FUNDS_CONFLICT','请在收款及临床放行前办理待遇；已有资金需通过财务更正处理')
+        }
+      },
+      onAllocationChanged: (context,source,transaction,effects) => {
+        if(source.target.kind==='inpatient'){options.onInpatientInsuranceAllocationChanged?.(context,source,transaction,effects);return}
+        for(const charge of source.charges){
+          if(charge.coverage.included===false)continue
+          const facts=z.object({charge_id:z.string(),charge_item_id:z.string(),current_amount_fen:z.number(),charge_version:z.number(),category:z.enum(['laboratory','medication']),case_id:z.string(),case_status:paymentPreviewRowSchema.shape.case_status,patient_id:z.string(),encounter_id:z.string(),prescription_id:z.string().nullable(),service_request_id:z.string().nullable()}).parse(database.driver.prepare('SELECT c.charge_id,c.charge_item_id,c.total_fen AS current_amount_fen,c.version AS charge_version,c.category,o.case_id,o.status AS case_status,o.patient_id,o.encounter_id,o.prescription_id,o.service_request_id FROM charge_record c JOIN outpatient_case o USING(workspace_id,epoch,case_id) WHERE c.workspace_id=? AND c.epoch=? AND c.charge_item_id=?').get(context.workspaceId,context.epoch,charge.reference.slice(11)))
+          this.#applyPaymentOutcome(transaction,context,facts,'success',effects)
+        }
+      },
+    })
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
@@ -8270,7 +8300,8 @@ export class WorkflowService {
       ORDER BY created_at, charge_id
     `).all(...scope)).map(charge => {
       const { paidFen } = ledger.balance(input.context, charge.chargeItemId)
-      return { ...charge, paidFen, remainingFen: charge.amountFen - paidFen }
+      const insuranceFen = this.insurance.coverage(input.context, `ChargeItem/${charge.chargeItemId}`)
+      return { ...charge, paidFen, insuranceFen, remainingFen: charge.amountFen - paidFen - insuranceFen }
     })
     const { items: payments, ...paymentsPagination } = ledger.attempts(input.context, input.caseId, input.page, input.pageSize)
     return billingCaseSchema.parse({
@@ -9120,7 +9151,7 @@ export class WorkflowService {
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${charge.charge_item_id}`])
       const balance = this.#payments.balance(input.context, charge.charge_item_id)
       if (balance.unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
-      const remainingFen = charge.total_fen - balance.paidFen
+      const remainingFen = charge.total_fen - balance.paidFen - this.insurance.coverage(input.context, `ChargeItem/${charge.charge_item_id}`)
       const tenders = paymentRecordedTendersSchema.parse(input.tenders ?? [{ method: 'cash', amountFen: remainingFen }])
       const amountFen = tenders.reduce((sum, tender) => sum + tender.amountFen, 0)
       if (amountFen > remainingFen) throw new WorkflowError('WORKFLOW_CONFLICT', 'Payment exceeds the remaining receivable')
@@ -9264,7 +9295,7 @@ export class WorkflowService {
       const balance = ledger.balance(input.context, preview.charge_item_id)
       if (
         preview.charge_version !== preview.expected_charge_version
-        || preview.amount_fen > preview.current_amount_fen - balance.paidFen
+        || preview.amount_fen > preview.current_amount_fen - balance.paidFen - this.insurance.coverage(input.context, `ChargeItem/${preview.charge_item_id}`)
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment preview no longer matches the charge')
       }
@@ -9380,12 +9411,12 @@ export class WorkflowService {
   #applyPaymentOutcome(
     transaction: CommandTransaction,
     context: ActorContext,
-    charge: z.infer<typeof paymentPreviewRowSchema>,
+    charge: Pick<z.infer<typeof paymentPreviewRowSchema>, 'charge_id' | 'charge_item_id' | 'current_amount_fen' | 'charge_version' | 'category' | 'case_id' | 'case_status' | 'patient_id' | 'encounter_id' | 'prescription_id' | 'service_request_id'>,
     outcome: 'ambiguous' | 'declined' | 'success',
     effects: CommandEffect[],
   ): string {
     const paidFen = this.#payments.balance(context, charge.charge_item_id).paidFen
-    const fullyPaid = outcome === 'success' && paidFen === charge.current_amount_fen
+    const fullyPaid = outcome === 'success' && paidFen + this.insurance.coverage(context, `ChargeItem/${charge.charge_item_id}`) === charge.current_amount_fen
     const chargeItem = transaction.fhir.read(context, 'ChargeItem', charge.charge_item_id)
     const updated = transaction.fhir.update(context, { ...chargeItem, status: fullyPaid ? 'billed' : 'billable' }, chargeItem.meta?.versionId ?? '1')
     effects.push({ kind: 'updated', reference: `ChargeItem/${charge.charge_item_id}`, versionId: updated.meta?.versionId ?? String(charge.charge_version + 1) })
@@ -11637,7 +11668,7 @@ export class WorkflowService {
     )
     return charges.some(charge => {
       const balance = this.#payments.balance(context, charge.charge_item_id)
-      return balance.unresolved > 0 || (balance.paidFen > 0 && balance.paidFen < charge.total_fen)
+      return balance.unresolved > 0 || this.insurance.coverage(context, `ChargeItem/${charge.charge_item_id}`) > 0 || (balance.paidFen > 0 && balance.paidFen < charge.total_fen)
     })
   }
 

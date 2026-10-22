@@ -1,3 +1,5 @@
+import { insuranceTargetSchema, insurancePreviewInputSchema, insuranceConfirmInputSchema, insuranceCancelInputSchema } from '@clinmesh/contracts/insurance'
+import { InsuranceError } from './application/insurance-service.ts'
 import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientDischargeInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
@@ -244,6 +246,7 @@ function apiErrorResponse(
     if (
       error instanceof IdentityError
       || error instanceof ModelUsagePolicyError
+      || error instanceof InsuranceError
       || error instanceof InpatientError
       || error instanceof AgentIntegrationError
       || error instanceof ConsultationDialogueError
@@ -2863,6 +2866,23 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.get('/api/his/v1/insurance/:kind/:id', async context => {
+      try { return context.json(workflow.insurance.state(await actor(context),insuranceTargetSchema.parse({kind:context.req.param('kind'),id:context.req.param('id')}))) }
+      catch(error){return apiErrorResponse(context,error)}
+    })
+    for(const action of ['preview','confirm','cancel'] as const){
+      app.post('/api/his/v1/insurance/:kind/:id/'+action, async context => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          const body=z.object({input:z.record(z.string(),z.unknown()),expectedVersions:z.record(z.string(),z.string())}).strict().parse(await context.req.json())
+          const target=insuranceTargetSchema.parse({kind:context.req.param('kind'),id:context.req.param('id')})
+          const raw={...body.input,target},acting=await actor(context),key=idempotencyKey(context)
+          if(action==='preview')return context.json(workflow.insurance.preview(acting,insurancePreviewInputSchema.parse(raw),key))
+          if(action==='confirm')return context.json(workflow.insurance.confirm(acting,insuranceConfirmInputSchema.parse(raw),key))
+          return context.json(workflow.insurance.cancel(acting,insuranceCancelInputSchema.parse(raw),key))
+        }catch(error){return apiErrorResponse(context,error)}
+      })
+    }
     app.get('/api/his/v1/billing/cases/:caseId', async (context) => {
       try {
         const query = z.object({

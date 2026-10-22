@@ -9,7 +9,7 @@ export const insurancePlans = {
   'resident-v1': { label: '合成居民医保 v1', initialAccountFen: 0, outpatient: { deductibleFen: 2000, ratioBps: 5000, capFen: 50000 }, inpatient: { deductibleFen: 10000, ratioBps: 6000, capFen: 500000 } },
 } as const
 export const insuranceCoverageSchema = z.object({ code: z.string().min(1), version: z.string().min(1), included: z.boolean(), priorSelfPayBps: z.number().int().min(0).max(10000) }).strict()
-export const insuranceSourceSchema = z.object({ target: insuranceTargetSchema, patientId: z.string().min(1), accountId: z.string().min(1), encounterId: z.string().min(1), charges: z.array(z.object({ reference: z.string().min(1), version: z.string().min(1), amountFen: fen, coverage: insuranceCoverageSchema }).strict()) }).strict()
+export const insuranceSourceSchema = z.object({ target: insuranceTargetSchema, patientId: z.string().min(1), accountId: z.string().min(1), encounterId: z.string().min(1), charges: z.array(z.object({ reference: z.string().min(1), label: z.string().min(1), version: z.string().min(1), amountFen: fen, coverage: insuranceCoverageSchema }).strict()) }).strict()
 export type InsuranceSource = z.infer<typeof insuranceSourceSchema>
 export type InsuranceTarget = z.infer<typeof insuranceTargetSchema>
 export const insuranceBalanceSchema = z.object({ patientId: z.string(), year: z.string(), version: z.number().int().nonnegative(), planCode: insurancePlanCodeSchema.optional(), accountFen: fen, eligibleFen: fen, fundFen: fen, outpatientEligibleFen: fen, outpatientFundFen: fen, inpatientEligibleFen: fen, inpatientFundFen: fen }).strict()

@@ -7,7 +7,7 @@ import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-reposito
 export type { InsuranceSource, InsuranceTarget } from '@clinmesh/contracts/insurance'
 
 export class InsuranceError extends Error {
-  constructor(readonly code: string, message: string, readonly status = 409) { super(message) }
+  constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 409) { super(message) }
 }
 export interface InsuranceOptions {
   readSource: (context: ActorContext, target: InsuranceTarget) => InsuranceSource
@@ -24,8 +24,8 @@ export class InsuranceService {
     new WorkspaceRepository(this.database).assertCurrent(context, context.scenarioRunId)
   }
   #year(context: ActorContext) {
-    const row = z.object({ virtual_time: z.string() }).parse(this.database.driver.prepare('SELECT virtual_time FROM scenario_run WHERE workspace_id=? AND epoch=? AND scenario_run_id=?').get(context.workspaceId, context.epoch, context.scenarioRunId))
-    return row.virtual_time.slice(0, 4)
+    const row = z.object({ virtual_time: z.string() }).parse(this.database.driver.prepare('SELECT virtual_time FROM scenario_epoch_state WHERE workspace_id=? AND epoch=?').get(context.workspaceId, context.epoch))
+    return new Intl.DateTimeFormat('en', {timeZone:'Asia/Shanghai',year:'numeric'}).format(new Date(row.virtual_time))
   }
   #actor(context: ActorContext) { return hash([context.actorId, context.practitionerRoleId, context.workspaceId, context.epoch, context.scenarioRunId]) }
   #history(context: ActorContext, target: InsuranceTarget) {

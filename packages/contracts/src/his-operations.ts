@@ -1,3 +1,4 @@
+import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
 import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
 import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSettleInputSchema, inpatientDischargeResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema, inpatientDischargeEventsSchema } from './inpatient-discharge.ts'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from './inpatient-surgery.ts'
@@ -2262,6 +2263,22 @@ const operationDefinitions = [
     version: 2,
   },
   {
+    cliPath:['insurance','get'],id:'insurance.get',http:{method:'GET',path:'/api/his/v1/insurance/:kind/:id'},
+    input:insuranceTargetSchema,output:insuranceStateSchema,mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['cashier'],summary:'Read synthetic patient benefits, annual balances and immutable settlement/compensation history',version:1,
+  },
+  {
+    cliPath:['insurance','preview'],id:'insurance.preview',http:{method:'POST',path:'/api/his/v1/insurance/:kind/:id/preview',encodeBody:raw=>{const {kind:_kind,id:_id,...input}=insuranceTargetSchema.extend({planCode:insurancePlanCodeSchema}).parse(raw);return {input,expectedVersions:{}}}},
+    input:insuranceTargetSchema.extend({planCode:insurancePlanCodeSchema}),output:insurancePreviewResponseSchema,mode:'preview',requirements:{expectedVersions:false,idempotency:'required'},risk:'write',roles:['cashier'],summary:'Preview fixed synthetic employee/resident benefits bound to charge and patient annual balance versions',version:1,
+  },
+  {
+    cliPath:['insurance','confirm'],id:'insurance.confirm',http:{method:'POST',path:'/api/his/v1/insurance/:kind/:id/confirm',encodeBody:raw=>{const {kind:_kind,id:_id,...input}=insuranceTargetSchema.extend({previewId:z.string().min(1),commitToken:z.string().min(16).max(256)}).parse(raw);return {input,expectedVersions:{}}}},
+    input:insuranceTargetSchema.extend({previewId:z.string().min(1),commitToken:z.string().min(16).max(256)}),output:insuranceResponseSchema,mode:'command',requirements:{expectedVersions:false,idempotency:'required'},risk:'high-risk-write',roles:['cashier'],summary:'Confirm reviewed synthetic benefits; stale charges or patient annual balance require a new preview; INSURANCE_PREVIEW_STALE',version:1,
+  },
+  {
+    cliPath:['insurance','cancel'],id:'insurance.cancel',http:{method:'POST',path:'/api/his/v1/insurance/:kind/:id/cancel',encodeBody:raw=>{const {kind:_kind,id:_id,...input}=insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()}).parse(raw);return {input,expectedVersions:{}}}},
+    input:insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()}),output:insuranceResponseSchema,mode:'command',requirements:{expectedVersions:false,idempotency:'required'},risk:'high-risk-write',roles:['cashier'],summary:'Append compensation for original benefits before collection/release; never reset later encounters annual or account balances',version:1,
+  },
+  {
     cliPath: ['payment', 'preview'],
     http: {
       method: 'POST',
@@ -2803,6 +2820,10 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'laboratory-request.retry-generation': 'clinmesh-doctor',
   'patient.create': 'clinmesh-registration',
   'patient.search': 'clinmesh-registration',
+  'insurance.get': 'clinmesh-billing',
+  'insurance.preview': 'clinmesh-billing',
+  'insurance.confirm': 'clinmesh-billing',
+  'insurance.cancel': 'clinmesh-billing',
   'payment.confirm': 'clinmesh-billing',
   'payment.preview': 'clinmesh-billing',
   'payment.recover': 'clinmesh-billing',
@@ -2835,6 +2856,7 @@ function handlerOwnerFor(
   if (operation.http.path.startsWith('/api/his/v1/admin/laboratory-services/')) {
     return 'LaboratoryServicePublisher'
   }
+  if (operation.id.startsWith('insurance.')) return 'InsuranceService'
   if (operation.id.startsWith('registration.synthetic-case.')) return 'SyntheticCaseVisitService'
   return 'WorkflowService'
 }
@@ -2850,7 +2872,7 @@ export const hisOperationCatalog: readonly HisOperationDefinition[] = operationD
     handlerOwner: handlerOwnerFor(operation),
     identities: hisOperationIdentitySchema.options,
     previewToken: operation.id === clinicalDocumentOperationIds.sign
-      || operation.id === 'payment.confirm'
+      || operation.id === 'payment.confirm' || operation.id === 'insurance.confirm'
       ? 'required' as const
       : 'none' as const,
     skill,
