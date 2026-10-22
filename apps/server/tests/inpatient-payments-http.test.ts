@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createPatientResponseSchema } from '@clinmesh/contracts/his'
+import { apiErrorSchema, createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { advanceVirtualTimeResponseSchema, inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientChargesResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDischargeResponseSchema, inpatientPaymentPreviewResponseSchema, inpatientPaymentResponseSchema, inpatientPaymentsSchema, inpatientRefundPreviewResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
@@ -98,7 +98,7 @@ describe('住院共享资金公共 HTTP', () => {
     inpatientChargesResponseSchema.parse(await reversed.json())
     const rejected = await s.request(s.cashier, `${s.path}/payments/confirm`,{previewId:reviewed.previewId,commitToken:reviewed.commitToken})
     expect(rejected.status).toBe(409)
-    expect((await rejected.json()).error.code).toBe('INPATIENT_PAYMENT_PREVIEW_STALE')
+    expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('INPATIENT_PAYMENT_PREVIEW_STALE')
     const fresh = inpatientSettlementPreviewSchema.parse(await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json())
     expect(fresh.chargesFen).toBe(old.chargesFen)
     expect(fresh.fingerprint).not.toBe(old.fingerprint)
@@ -114,7 +114,7 @@ describe('住院共享资金公共 HTTP', () => {
     expect(inpatientPaymentResponseSchema.parse(await recovered.json()).data.outcome).toBe(outcome)
     const blocked = await settle(s)
     expect(blocked.status).toBe(409)
-    expect((await blocked.json()).error.code).toBe(error)
+    expect(apiErrorSchema.parse(await blocked.json()).error.code).toBe(error)
     const statement = inpatientPaymentsSchema.parse(await (await s.request(s.cashier, `${s.path}/payments`)).json())
     expect(statement).toMatchObject({depositFen:1000,supplementFen:0,remainingFen:4000})
   })
@@ -181,7 +181,7 @@ describe('住院共享资金公共 HTTP', () => {
     const preview = inpatientSettlementPreviewSchema.parse(await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json())
     const blocked = await s.request(s.cashier, `${s.path}/discharge/settle`, { encounterVersion: preview.encounterVersion, fingerprint: preview.fingerprint, expectedChargesFen: 0, expectedBalanceFen: -1000 })
     expect(blocked.status).toBe(409)
-    expect((await blocked.json()).error.code).toBe('INPATIENT_FUNDS_PENDING')
+    expect(apiErrorSchema.parse(await blocked.json()).error.code).toBe('INPATIENT_FUNDS_PENDING')
     await s.restart()
     const key = randomUUID(), recovery = { paymentId: attempt.paymentId, expectedPaymentVersion: 1 }
     const recovered = await s.request(s.cashier, `${s.path}/payments/recover`, recovery, key)
