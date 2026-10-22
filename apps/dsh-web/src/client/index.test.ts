@@ -420,7 +420,7 @@ describe('ClinMesh React Surface definition', () => {
       get: () => sessions,
     } as unknown as ClientContext) as unknown as {
       branding: { shell: string; tokens?: Record<string, string> }
-      layout: { fallback: string; supported: string[] }
+      layout: { default: string; fallback: string; supported: string[] }
     }
 
     expect(definition.branding.shell).toBe('preserve')
