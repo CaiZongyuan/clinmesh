@@ -1,2 +1,3 @@
 /imaging-assets/prompts/*.md text eol=lf
 /pathology-assets/prompts/*.md text eol=lf
+/apps/server/container-entrypoint.sh text eol=lf

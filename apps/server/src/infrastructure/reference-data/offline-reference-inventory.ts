@@ -189,17 +189,26 @@ export function auditOfflineInventory(database: ReferenceDatabase, input: {
     .run(new Date().toISOString(), `local:${userInfo().username}`, input.operation, input.outcome, input.inventoryId ?? null, input.contentHash ?? null)
 }
 
+async function inspectLock(lock: OfflineReferenceLock, inputRoot: string): Promise<OfflineReferenceInventory> {
+  const packages = []
+  for (const input of lock.packages) packages.push(await inspectPackage(inputRoot, input))
+  const basis = offlineReferenceInventorySchema.omit({ contentHash: true }).parse({
+    schemaVersion: lock.schemaVersion, inventoryId: lock.inventoryId, createdAt: lock.createdAt,
+    scheme: lock.scheme, validationScope: 'integrity-only', runtimeEnabled: false, packages,
+  })
+  return { ...basis, contentHash: digest(JSON.stringify(basis)) }
+}
+
+export async function inspectOfflineInventory(manifestPath: string, inputRoot: string): Promise<OfflineReferenceInventory> {
+  const lock = offlineReferenceLockSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
+  return inspectLock(lock, inputRoot)
+}
+
 export async function prepareOfflineInventory(database: ReferenceDatabase, manifestPath: string, inputRoot: string) {
   let lock: OfflineReferenceLock | undefined
   try {
     lock = offlineReferenceLockSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
-    const packages = []
-    for (const input of lock.packages) packages.push(await inspectPackage(inputRoot, input))
-    const basis = offlineReferenceInventorySchema.omit({ contentHash: true }).parse({
-      schemaVersion: lock.schemaVersion, inventoryId: lock.inventoryId, createdAt: lock.createdAt,
-      scheme: lock.scheme, validationScope: 'integrity-only', runtimeEnabled: false, packages,
-    })
-    const inventory: OfflineReferenceInventory = { ...basis, contentHash: digest(JSON.stringify(basis)) }
+    const inventory = await inspectLock(lock, inputRoot)
     const result = database.driver.transaction(() => {
       const existingRow = database.driver.prepare('SELECT * FROM reference_offline_inventory WHERE inventory_id = ?').get(inventory.inventoryId)
       const existing = existingRow === undefined ? undefined : readInventory(existingRow)

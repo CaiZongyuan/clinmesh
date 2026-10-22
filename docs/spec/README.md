@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [新安装自动准备完整 DRG 参考资料](2026-10-22-drg-reference-installation.md) | `approved` |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型调用停用、预算与用量监控](2026-10-19-model-usage-control.md) | `draft` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |

@@ -80,6 +80,8 @@
 
 ## 文档构建
 
+- Vite SSR 将带 CLI 守卫的模块内联到另一个入口后，`import.meta.filename` 会变成构建入口文件，单独比较 argv 路径可能误执行被导入模块的 CLI。库逻辑优先直接依赖 typed service；保留 CLI 的模块还要核对入口 basename，并用真正构建出的 JS 执行合成资料准备验证退出码和 JSON 输出。见[DRG 自动分发决策](../decisions/implemented/architecture/2026-10-22-drg-reference-distribution.md)。
+
 - GitHub 与 VitePress 对数字章节生成的锚点不同，例如 `8.1 门诊闭环` 分别为 `81-门诊闭环` 与 `_8-1-门诊闭环`。搬迁章节时同时核对仓库链接和构建后的 HTML；实际被引用的 GitHub 锚点可用显式 HTML `id` 保持两端可达。`verify:docs` 只证明文件目标存在，不能证明章节存在；用 Playwright 核对真实页面中的目标元素。归属与迁移要求见[文档整理决策](../decisions/implemented/process/2026-10-19-documentation-ownership.md)。
 
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。

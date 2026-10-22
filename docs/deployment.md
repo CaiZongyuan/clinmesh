@@ -39,7 +39,7 @@ cp .env.example .env
 
 ## 3. 同步参考目录（推荐）
 
-默认同步诊断（ICD-10）、药品和 `laboratory-cn` 三个数据集，独立 LOINC 目录不进入默认 lock。参考数据保存在独立 Reference SQLite；Server 启动时自动将 laboratory-cn 单项和组合的可开服务快照写入 HIS operational SQLite。仓库提交的 `reference-data.lock.json` 固定每个 Dataset Release 与 Manifest hash；同步只在开发、构建或运维阶段访问 Registry，Server 运行时不执行 `cn-health`，也不访问 GitHub 或 Registry。
+默认同步诊断（ICD-10）、药品和 `laboratory-cn` 三个数据集，并自动准备完整 DRG 固定资料；独立 LOINC 目录不进入默认 lock。参考数据保存在独立 Reference SQLite；Server 启动时自动将 laboratory-cn 单项和组合的可开服务快照写入 HIS operational SQLite。仓库提交的 `reference-data.lock.json` 固定每个 Dataset Release 与 Manifest hash；同步只在开发、构建或运维阶段访问 Registry，Server 运行时不执行 `cn-health`，也不访问 GitHub 或 Registry。
 
 先运行 check-only，它按 lock materialize 每个精确 Release 并交叉验证签名、身份、hash、SQLite 和表不变量，不写正式数据库。三个 Dataset 的 materialize 并行执行，stderr 逐阶段输出进度与耗时（stdout 的 JSON 结果不受影响）：
 
@@ -57,19 +57,23 @@ pnpm reference:sync
 
 ### 离线 DRG 资料核对
 
-资料维护者使用本地既有五目录 r3 和 OpenDRG 2026-10-20 包核对首期 CHS-DRG 3.0 来源。仓库只发布[固定清单](../apps/server/reference-data/drg-offline.lock.json)，原件、标准化文件及 SQLite 保留本地。先完成上面的参考库同步，再从仓库根目录运行：
+新用户无需复制资料目录或单独导入。`pnpm dev:server`、`pnpm dsh:setup` / `pnpm dev:dsh` 和 `pnpm dev:lan` 的启动准备自动取得并核验完整五目录 r3 与 OpenDRG 2026-10-20 快照；`pnpm reference:sync` 同样包含这一步。首次准备需要访问 GitHub Release；固定压缩包约 60.7 MB，解包后共 2,335 文件、约 665.6 MB。Docker 构建时自动准备并将资料及参考库放入镜像，冷启动离线复用，不从个人电脑寻找资料。
+
+内容身份由[离线清单](../apps/server/reference-data/drg-offline.lock.json)固定，下载地址、压缩包哈希及解包规模由[分发锁](../apps/server/reference-data/drg-distribution.lock.json)固定。自动安装目录位于参考数据库同级的 `drg-reference/`，默认是 `.data/drg-reference/`，每个锁版本单独保存。已有 `.data/reference-prepared/r3` 和 `.data/exports/opendrg-2026-10-20` 两个完整本地目录时，直接核验并复用，不再下载。
+
+正常准备完成后，维护者可从仓库根目录核对结果：
 
 ```sh
-pnpm --filter @clinmesh/server reference-db migrate --database ../../.data/clinmesh-reference.sqlite
-pnpm --filter @clinmesh/server reference-db prepare-inventory --database ../../.data/clinmesh-reference.sqlite --manifest reference-data/drg-offline.lock.json --input-root ../..
 pnpm --filter @clinmesh/server reference-db list-inventories --database ../../.data/clinmesh-reference.sqlite --page 1 --page-size 20
 pnpm --filter @clinmesh/server reference-db inventory-audit --database ../../.data/clinmesh-reference.sqlite
 pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinmesh-reference.sqlite
 ```
 
-`--input-root` 是锁定清单中各包路径的共同根，默认清单要求其中存在 `.data/reference-prepared/r3` 与 `.data/exports/opendrg-2026-10-20`；可指向已有资料所在的另一个仓库根，无需复制资料。`--database` 应与 Server 配置一致。迁移旧参考库后重启 Server；已有查询连接能读取后来原子发布的清单。
+自动准备失败时显示下载或校验错误，启动准备不宣告成功；网络恢复后重跑原启动命令即可。已安装资料完整时不访问分发源；缺失或损坏时重新下载到临时目录，整包及来源文件核验通过才替换安装版本，失败保留已有文件和清单。只想修复 DRG 而不重新同步临床目录时，可运行 `pnpm --filter @clinmesh/server drg:prepare`；它读取与 Server 相同的环境文件和参考库路径，支持 `--database`、`--install-directory`、`--manifest`、`--distribution`、`--input-root` 供维护及隔离验证使用。`--check` 在临时目录核验，不写正式资料目录、数据库或审计。自定义 `--database` 应与 Server 配置一致。
 
-重复准备会重新检查全部文件并返回 `created: false`。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径与重复文件均拒绝发布；同一 `inventoryId` 不能覆盖。修复输入后使用原命令重试；新资料或摘要提取结果修正需要新清单身份，不能直接修改既有发布内容。当前默认清单 `clinmesh-drg-offline-2026-10-22.r2` 保留 `sourceUnit` 中的来源计价单位；已有 r1 清单的资料维护者重新运行上述准备命令即可追加 r2，旧清单保持可查。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败；不记录原文。
+重复准备会重新检查全部文件，已有相同清单返回 `created: false`。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接与重复文件均拒绝发布；同一 `inventoryId` 不能覆盖。新资料或摘要提取结果修正需要新清单身份。当前清单 `clinmesh-drg-offline-2026-10-22.r2` 保留 `sourceUnit` 中的来源计价单位，旧清单保持可查；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
+
+维护者更新固定资料时，先在本地完成来源与内容核验，再运行 `pnpm --filter @clinmesh/server drg:package --input-root <资料所在仓库根> --manifest <离线清单路径> --output <归档路径>` 制作可复现包。工具只打包清单列出的文件，输出包 SHA-256、压缩及解包字节数、文件数与规范化清单摘要；新版本资产与分发锁必须一起更新，不能覆盖已发布快照。
 
 管理员可在登录会话下请求 `GET /api/sim/v1/reference-data/offline-inventories?page=1&pageSize=20`，回读来源、Manifest／文件哈希、版本、行数、来源单位、覆盖与隔离项。HTTP 与 CLI 清单列表均返回 `items/page/pageSize/total`，默认每页 20 条、最多 50 条，可按总数继续翻页。普通岗位访问被拒绝；成功和失败读取沿用 operational 审计链及 FHIR AuditEvent。查询与恢复依据见[参考数据合同](architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
 
