@@ -34,7 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
-| [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `draft` |
+| [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
 | [低延迟病历自动记录](2026-10-15-low-latency-document-recording.md) | `approved` |
 

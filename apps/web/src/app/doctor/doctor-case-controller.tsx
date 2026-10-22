@@ -367,7 +367,7 @@ function DoctorCaseController({
   session,
 }: DoctorCaseControllerProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
-  // DSH 镜像布局把队列收进贴内容区左缘的浮层卡片；独立 Web 与 workspace 布局保持队列列。
+  // DSH Surface 布局把队列收进贴内容区左缘的浮层卡片；独立 Web 保持队列列。
   const queueRail = useOptionalWebRuntime()?.surfaceDisplay?.queuePresentation === 'rail'
   const agentReview = useAgentReview()
   const queryClient = useQueryClient()
