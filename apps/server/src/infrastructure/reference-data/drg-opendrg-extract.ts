@@ -6,8 +6,6 @@ import { z } from 'zod'
  * 「主要手术或操作+其他手术或操作」等条件型判定不进参数表，按 ADRG 归并计数报告缺口。
  */
 
-const codeArray = '\\[((?:"[^"]+",?)+)\\]'
-
 /** 判定点形态：`…includes(x.zdList[0])){Q("符合X入组条件，匹配规则：主诊断匹配"` 或 `…includes(x.ssList[0])?(Q("符合X入组条件，匹配规则：主手术匹配"`。MDC 分区判定（组名 MDC 开头）不在此列。 */
 const memberPattern = /\[((?:"[^"]+",?\s*)+)\]\.includes\(x\.(zdList|ssList)\[0\]\)[)\s]*(?:\?\s*\(\s*)?\{?\s*Q\("符合((?!MDC)[A-Z0-9]+)入组条件，匹配规则：(主诊断|主手术)匹配"/g
 const comboPattern = /符合([A-Z0-9_]+)入组条件，匹配规则：主要手术或操作\+其他手术或操作/g

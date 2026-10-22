@@ -52,12 +52,6 @@ export function prepareDrgRulesPackage(input: {
   sourceVersion: string
 }): DrgRulesPackageFiles {
   const officialMembers = extractOfficialMembers(input.jsText)
-  const rules = buildDrgRules({
-    groups: input.groups, officialMembers,
-    // 物化文件保留 OpenDRG 原始大写键；构建器合同为小写。
-    complicationTables: { cc: input.complicationTables.CC, mcc: input.complicationTables.MCC, cce: input.complicationTables.CCE },
-    rulesId: input.releaseId, version: input.sourceVersion,
-  })
   const memberRows = [
     ...Object.entries(officialMembers.medical).flatMap(([adrgCode, codes]) => codes.map(code => ({ adrgCode, chapter: 'medical', code }))),
     ...Object.entries(officialMembers.surgical).flatMap(([adrgCode, codes]) => codes.map(code => ({ adrgCode, chapter: 'surgical', code }))),
