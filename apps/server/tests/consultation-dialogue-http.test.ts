@@ -13,6 +13,7 @@ import {
 } from '@clinmesh/contracts/scenario'
 import {
   ChatCompletionsError,
+  OpenAIChatCompletionsClient,
   type JsonChatCompletionInput,
   type JsonChatCompletionsProvider,
 } from '../src/infrastructure/ai/openai-chat-completions.ts'
@@ -21,6 +22,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { setModelControl } from './fixtures/model-control.ts'
+import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
 
 class ScriptedDialogueProvider implements JsonChatCompletionsProvider {
   readonly requests: JsonChatCompletionInput[] = []
@@ -69,7 +72,7 @@ async function createRuntime(dialogueOutputs: unknown[] = []) {
   return runtime
 }
 
-async function createRuntimeWithProvider(provider: JsonChatCompletionsProvider, databasePath?: string) {
+async function createRuntimeWithProvider(provider: JsonChatCompletionsProvider, databasePath?: string, syntheaProvider = new StubSyntheaProvider()) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-consultation-dialogue-'))
   directories.push(directory)
   const runtime = await createClinMeshRuntime({
@@ -84,7 +87,7 @@ async function createRuntimeWithProvider(provider: JsonChatCompletionsProvider, 
     migrationMode: 'apply',
     outboxRetryDelayMs: 0,
     patientPersonaModel: 'fake-persona-model',
-    syntheaProvider: new StubSyntheaProvider(),
+    syntheaProvider,
     trustedOrigins: ['http://localhost'],
   })
   runtimes.push(runtime)
@@ -94,6 +97,214 @@ async function createRuntimeWithProvider(provider: JsonChatCompletionsProvider, 
 const origin = 'http://localhost'
 
 describe('Consultation free dialogue HTTP contract', () => {
+  it('retires a reply whose case is unavailable and continues other valid waiting questions', async () => {
+    let sent = 0
+    const outputs = [persona, persona, { reply: '站起来更晕。' }]
+    const provider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => { sent++; return Response.json({ choices: [{ message: { content: JSON.stringify(outputs.shift()) } }] }) } })
+    const differentPatients = new class extends StubSyntheaProvider {
+      count = 0
+      override async generate() {
+        const corpus = await super.generate()
+        const patientId = `p${++this.count}`
+        return { ...corpus, sources: corpus.sources.map(source => {
+          const raw: unknown = JSON.parse(JSON.stringify(source.raw).replaceAll('"p1"', JSON.stringify(patientId)))
+          return { ...source, patientId, raw, hash: sourceArtifactHash(raw) }
+        }) }
+      }
+    }()
+    const runtime = await createRuntimeWithProvider(provider, undefined, differentPatients)
+    const cases = [await startConsultationCase(runtime), await startConsultationCase(runtime)]
+    const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const admin = await signIn(runtime, 'admin@demo.clinmesh.local')
+    await setModelControl(runtime, admin, { enabled: false, requests: null, automaticRetries: true })
+    for (const started of cases) {
+      const response = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+        method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+        body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
+          input: { expectedConsultationVersion: 2, message: '什么时候晕？' } }) })
+      expect(response.status).toBe(409)
+    }
+    // Controlled persistence fault: the first saved request no longer resolves to a case.
+    runtime.database.driver.prepare('UPDATE outpatient_case SET encounter_id = ? WHERE case_id = ?')
+      .run('synthetic-obsolete-encounter', cases[0]!.outpatientCaseId)
+    await setModelControl(runtime, admin, { enabled: true, requests: null, automaticRetries: true })
+    await runtime.dispatchPending()
+    const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${cases[1]!.outpatientCaseId}`, { headers: { cookie } })).json())
+    expect(detail.consultation?.turns.at(-1)?.messageText).toBe('站起来更晕。')
+    expect(sent).toBe(3)
+  })
+
+  it('never automatically resends an interrupted reply after restart or a policy change', async () => {
+    let sent = 0
+    const provider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => {
+        if (++sent > 1) throw new TypeError('Synthetic connection interrupted')
+        return Response.json({ choices: [{ message: { content: JSON.stringify(persona) } }] })
+      } })
+    const runtime = await createRuntimeWithProvider(provider)
+    const started = await startConsultationCase(runtime)
+    const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const admin = await signIn(runtime, 'admin@demo.clinmesh.local')
+    const path = `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`
+    const request = { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'idempotency-key': 'interrupted-question' },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
+        input: { expectedConsultationVersion: 2, message: '什么时候晕？' } }) }
+    expect((await runtime.app.request(path, request)).status).toBe(503)
+    const databasePath = runtime.database.driver.name
+    await runtime.close()
+    const restarted = await createRuntimeWithProvider(provider, databasePath)
+    await setModelControl(restarted, admin, { enabled: true, requests: null, automaticRetries: true })
+    await restarted.dispatchPending()
+    expect((await restarted.app.request(path, request)).status).toBe(503)
+    const detail = doctorCaseDetailSchema.parse(await (await restarted.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json())
+    expect(detail.consultation?.replyAttempt).toMatchObject({ status: 'unknown' })
+    expect(sent).toBe(2)
+  })
+
+  it.each(['deadline', 'authority', 'epoch'])('does not resume a control-blocked reply after its original %s becomes invalid', async invalidity => {
+    let sent = 0
+    const provider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => { sent++; return Response.json({ choices: [{ message: { content: JSON.stringify(persona) } }] }) } })
+    const runtime = await createRuntimeWithProvider(provider)
+    const started = await startConsultationCase(runtime)
+    const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const admin = await signIn(runtime, 'admin@demo.clinmesh.local')
+    const doctor = await runtime.identity.resolveSessionContext(new Headers({ cookie }))
+    await setModelControl(runtime, admin, { enabled: false, requests: null, automaticRetries: true })
+    const denied = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+      method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
+        input: { expectedConsultationVersion: 2, message: '什么时候晕？' } }) })
+    expect(denied.status).toBe(409)
+    if (invalidity === 'deadline') vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 31_000)
+    if (invalidity === 'authority') runtime.database.driver.prepare("UPDATE workspace_membership SET status = 'suspended' WHERE actor_id = ?")
+      .run(doctor.actor.actorId)
+    if (invalidity === 'epoch') runtime.database.driver.prepare("UPDATE workspace_epoch SET state = 'closed' WHERE workspace_id = ? AND epoch = ?")
+      .run(doctor.actor.workspaceId, doctor.actor.epoch)
+    if (invalidity !== 'epoch') await setModelControl(runtime, admin, { enabled: true, requests: null, automaticRetries: true })
+    await runtime.dispatchPending()
+    expect(sent).toBe(1)
+    if (invalidity === 'deadline') {
+      const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+        `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json())
+      expect(detail.consultation?.replyAttempt).toMatchObject({ status: 'failed', errorCode: 'AI_TIMEOUT' })
+    }
+  })
+
+  it('keeps a control-blocked question and resumes its original reply attempt after restart', async () => {
+    let sent = 0
+    const outputs = [persona, { reply: '站起来更晕。' }]
+    const provider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => { sent++; return Response.json({ choices: [{ message: { content: JSON.stringify(outputs.shift()) } }] }) } })
+    const runtime = await createRuntimeWithProvider(provider)
+    const started = await startConsultationCase(runtime)
+    const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const admin = await signIn(runtime, 'admin@demo.clinmesh.local')
+    await setModelControl(runtime, admin, { enabled: false, requests: null, automaticRetries: false })
+    const path = `/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`
+    const request = { method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'idempotency-key': 'blocked-question' },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
+        input: { expectedConsultationVersion: 2, message: '什么时候晕？' } }) }
+    const denied = await runtime.app.request(path, request)
+    expect(denied.status).toBe(409)
+    expect(await denied.json()).toMatchObject({ error: { code: 'MODEL_CONTROL_BLOCKED' } })
+    const read = async (active: typeof runtime) => doctorCaseDetailSchema.parse(await (await active.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json())
+    const blocked = await read(runtime)
+    expect(blocked.consultation?.replyAttempt).toMatchObject({ status: 'blocked' })
+    expect(sent).toBe(1)
+    const databasePath = runtime.database.driver.name
+    await runtime.close()
+    const restarted = await createRuntimeWithProvider(provider, databasePath)
+    await setModelControl(restarted, admin, { enabled: true, requests: null, automaticRetries: false })
+    await restarted.dispatchPending()
+    const completed = await read(restarted)
+    expect(completed.consultation?.replyAttempt).toEqual({ ...blocked.consultation!.replyAttempt, status: 'succeeded', errorCode: undefined })
+    expect(completed.consultation?.turns.at(-1)?.messageText).toBe('站起来更晕。')
+    expect(sent).toBe(2)
+    expect((await restarted.app.request(path, request)).status).toBe(200)
+    expect((await read(restarted)).consultation?.turns).toEqual(completed.consultation?.turns)
+  })
+
+  it.each(['initial', 'resume'])('allows only an explicit new reply when saving its %s control waiter fails', async phase => {
+    let sent = 0
+    const outputs = [persona, { reply: '站起来更晕。' }]
+    const provider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => { sent++; return Response.json({ choices: [{ message: { content: JSON.stringify(outputs.shift()) } }] }) } })
+    const runtime = await createRuntimeWithProvider(provider)
+    const started = await startConsultationCase(runtime)
+    const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const admin = await signIn(runtime, 'admin@demo.clinmesh.local')
+    await setModelControl(runtime, admin, { enabled: false, requests: null, automaticRetries: true })
+    const failWaitPersistence = () => runtime.database.driver.exec(`CREATE TRIGGER synthetic_reply_wait_unavailable BEFORE INSERT ON model_reply_wait
+      BEGIN SELECT RAISE(ABORT, 'synthetic wait persistence failure'); END`)
+    if (phase === 'initial') failWaitPersistence()
+    const failed = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+      method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'idempotency-key': 'wait-write-failure' },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
+        input: { expectedConsultationVersion: 2, message: '什么时候晕？' } }) })
+    expect(failed.status).toBe(phase === 'initial' ? 500 : 409)
+    if (phase === 'resume') {
+      failWaitPersistence()
+      // A finite token limit refuses this adapter before dispatch, even during recovery.
+      await setModelControl(runtime, admin, { enabled: true, requests: null, tokens: 1, automaticRetries: true })
+      await runtime.dispatchPending()
+    }
+    const read = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json())
+    expect((await read()).consultation?.replyAttempt).toMatchObject({ status: 'unknown', errorCode: 'CONSULTATION_REPLY_UNKNOWN' })
+    runtime.database.driver.exec('DROP TRIGGER synthetic_reply_wait_unavailable')
+    await setModelControl(runtime, admin, { enabled: true, requests: null, tokens: null, automaticRetries: true })
+    await runtime.dispatchPending()
+    expect(sent).toBe(1)
+    const retried = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/retry-consultation-reply`, {
+      method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'idempotency-key': 'retry-after-wait-write-failure' },
+      body: JSON.stringify({ expectedVersions: {}, input: { expectedConsultationVersion: 3 } }) })
+    expect(retried.status).toBe(200)
+    expect(retryConsultationReplyResponseSchema.parse(await retried.json()).data.patientTurn.messageText).toBe('站起来更晕。')
+    expect((await read()).consultation?.turns.map(turn => turn.messageText)).toEqual([persona.openingStatement, '什么时候晕？', '站起来更晕。'])
+    expect(sent).toBe(2)
+  })
+
+  it('retires an orphaned control-blocked reply after restart and permits a new explicit reply', async () => {
+    let sent = 0
+    const outputs = [persona, { reply: '重新补答成功。' }]
+    const provider = new OpenAIChatCompletionsClient({ apiKey: 'synthetic', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => { sent++; return Response.json({ choices: [{ message: { content: JSON.stringify(outputs.shift()) } }] }) } })
+    const runtime = await createRuntimeWithProvider(provider)
+    const started = await startConsultationCase(runtime)
+    const cookie = await signIn(runtime, 'doctor@demo.clinmesh.local')
+    const admin = await signIn(runtime, 'admin@demo.clinmesh.local')
+    await setModelControl(runtime, admin, { enabled: false, requests: null, automaticRetries: true })
+    const denied = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/ask-consultation-question`, {
+      method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'idempotency-key': 'orphaned-blocked-question' },
+      body: JSON.stringify({ expectedVersions: { [`Encounter/${started.encounterId}`]: started.encounterVersion, [`Task/${started.doctorTaskId}`]: '1' },
+        input: { expectedConsultationVersion: 2, message: '什么时候晕？' } }) })
+    expect(denied.status).toBe(409)
+    // Reproduce an older writer stopping after the blocked marker, without its recovery input.
+    runtime.database.driver.exec(`DELETE FROM model_reply_wait;
+      UPDATE consultation_reply_attempt SET deadline_at = '2020-01-01T00:00:00.000Z' WHERE error_code = 'MODEL_CONTROL_BLOCKED'`)
+    const databasePath = runtime.database.driver.name
+    await runtime.close()
+    const restarted = await createRuntimeWithProvider(provider, databasePath)
+    const read = async () => doctorCaseDetailSchema.parse(await (await restarted.app.request(
+      `/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json())
+    expect((await read()).consultation?.replyAttempt).toMatchObject({ status: 'unknown', errorCode: 'CONSULTATION_REPLY_UNKNOWN' })
+    await setModelControl(restarted, admin, { enabled: true, requests: null, automaticRetries: true })
+    await restarted.dispatchPending()
+    expect(sent).toBe(1)
+    const retried = await restarted.app.request(`/api/his/v1/encounters/${started.encounterId}/actions/retry-consultation-reply`, {
+      method: 'POST', headers: { cookie, origin, 'content-type': 'application/json', 'idempotency-key': 'retry-orphaned-blocked-question' },
+      body: JSON.stringify({ expectedVersions: {}, input: { expectedConsultationVersion: 3 } }) })
+    expect(retried.status).toBe(200)
+    expect(retryConsultationReplyResponseSchema.parse(await retried.json()).data.patientTurn.messageText).toBe('重新补答成功。')
+    expect((await read()).consultation?.turns.map(turn => turn.messageText)).toEqual([persona.openingStatement, '什么时候晕？', '重新补答成功。'])
+    expect(sent).toBe(2)
+  })
+
   it('joins overlapping ask retransmissions and retry intentions to one patient answer', async () => {
     let entered!: () => void
     const startedReply = new Promise<void>(resolve => { entered = resolve })

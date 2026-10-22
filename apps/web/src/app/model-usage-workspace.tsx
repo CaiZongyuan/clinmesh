@@ -1,0 +1,324 @@
+import { useEffect, useRef, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import type { SessionContext } from '@clinmesh/contracts/his'
+import { modelUsageFeatureSchema, modelUsageFilterSchema, modelUsageAttemptSchema,
+  type ModelUsageAttempt, type ModelUsageFilter, type ModelUsageOverview } from '@clinmesh/contracts/model-usage'
+import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
+import { Badge } from '@clinmesh/ui/components/badge'
+import { Button } from '@clinmesh/ui/components/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@clinmesh/ui/components/card'
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@clinmesh/ui/components/empty'
+import { Field, FieldGroup, FieldLabel } from '@clinmesh/ui/components/field'
+import { Input } from '@clinmesh/ui/components/input'
+import { Skeleton } from '@clinmesh/ui/components/skeleton'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
+import { getModelUsageControl, getModelUsageOverview, getModelUsagePricing, getModelUsageRequest, getModelUsageRequests, getModelUsageRetention } from './model-usage-api.ts'
+import { ModelUsagePolicy } from './model-usage-policy.tsx'
+import { ModelUsagePricing } from './model-usage-pricing.tsx'
+import { ModelUsageCorrections } from './model-usage-corrections.tsx'
+import { ModelUsageRetention, retentionPeriod } from './model-usage-retention.tsx'
+import { modelUsageMessages } from './model-usage-i18n.ts'
+import { WorkspaceSelect } from './workspace-select.tsx'
+import type { WorkspaceLocale } from './workspace-i18n.ts'
+
+type Messages = ReturnType<typeof modelUsageMessages>
+const initialFilters: ModelUsageFilter = { offset: 0, limit: 25 }
+
+function formatCount(value: number | null, locale: WorkspaceLocale, messages: Messages) {
+  return value === null ? messages.unknown : new Intl.NumberFormat(locale, { maximumFractionDigits: 6 }).format(value)
+}
+
+function formatKnownTokens(value: number, unknown: number, locale: WorkspaceLocale, messages: Messages) {
+  return formatCount(value === 0 && unknown > 0 ? null : value, locale, messages)
+}
+
+function TokenSummaryCell({ value, unknown, locale, messages }: {
+  value: number; unknown: number; locale: WorkspaceLocale; messages: Messages
+}) {
+  return <TableCell className="tabular-nums">{formatKnownTokens(value, unknown, locale, messages)}
+    {unknown > 0 ? <p className="text-xs text-muted-foreground">{formatCount(unknown, locale, messages)} {messages.incompleteTokenRequests}</p> : null}
+  </TableCell>
+}
+
+function Loading({ messages }: { messages: Messages }) {
+  return <div role="status" className="flex flex-col gap-3"><span>{messages.loading}</span><Skeleton className="h-24 w-full" /></div>
+}
+
+function ReadError({ title, messages, retry }: { title: string; messages: Messages; retry(): void }) {
+  return <Alert variant="destructive"><AlertTitle>{title}</AlertTitle><AlertDescription>
+    <Button onClick={retry} size="sm" variant="outline">{messages.retry}</Button>
+  </AlertDescription></Alert>
+}
+
+function NoRequests({ messages, historical = false }: { messages: Messages; historical?: boolean }) {
+  return <Empty><EmptyHeader><EmptyTitle>{historical ? messages.retainedEmpty : messages.empty}</EmptyTitle>
+    <EmptyDescription>{historical ? messages.retainedEmptyDescription : messages.emptyDescription}</EmptyDescription></EmptyHeader></Empty>
+}
+
+function Summary({ data, locale, messages }: { data: ModelUsageOverview; locale: WorkspaceLocale; messages: Messages }) {
+  const { totals } = data
+  const reservation = (known: number, unknown: number) => `${formatCount(known, locale, messages)}${unknown === 0 ? '' : ` + ${unknown} ${messages.unknownReservations}`}`
+  const metrics = [
+    { label: messages.dispatched, value: formatCount(totals.requests, locale, messages), description: messages.dispatchScope },
+    { label: messages.knownTokens, value: formatCount(totals.knownTokens, locale, messages),
+      description: `${formatCount(totals.unknownTokenRequests, locale, messages)} ${messages.unknownTokenRequests}` },
+    { label: messages.knownInputTokens, value: formatKnownTokens(totals.knownInputTokens, totals.unknownInputTokenRequests, locale, messages),
+      description: `${formatCount(totals.unknownInputTokenRequests, locale, messages)} ${messages.incompleteTokenRequests}` },
+    { label: messages.knownOutputTokens, value: formatKnownTokens(totals.knownOutputTokens, totals.unknownOutputTokenRequests, locale, messages),
+      description: `${formatCount(totals.unknownOutputTokenRequests, locale, messages)} ${messages.incompleteTokenRequests}` },
+    { label: messages.cost, value: `${messages.knownCost}: ${formatCount(totals.cny, locale, messages)}`,
+      description: `${formatCount(totals.unpricedRequests, locale, messages)} ${messages.unpricedRequests}` },
+    { label: messages.outstanding, value: `${totals.inFlight} / ${totals.unknownRequests}`,
+      description: `${messages.inFlight} / ${messages.unresolved}` },
+  ]
+  return <div className="flex min-w-0 flex-col gap-3"><div className="grid min-w-0 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+    {metrics.map(metric => <Card key={metric.label} aria-label={metric.label} role="region" size="sm">
+      <CardHeader><CardTitle>{metric.label}</CardTitle></CardHeader>
+      <CardContent className="flex flex-col gap-2"><p className="text-2xl font-semibold tabular-nums">{metric.value}</p>
+        <p className="text-sm text-muted-foreground">{metric.description}</p></CardContent>
+    </Card>)}
+  </div><p className="text-sm text-muted-foreground">{messages.splitExplanation}</p>
+    <p className="text-sm text-muted-foreground">{messages.tokensReserved}: {reservation(totals.reservedTokens, totals.tokensUnknownReservations)}
+    {' · '}{messages.cnyReserved}: {reservation(totals.reservedCny, totals.cnyUnknownReservations)}</p>
+    <p className="text-sm text-muted-foreground">{messages.reservations}</p></div>
+}
+
+function UsageCharts({ data, locale, messages }: { data: ModelUsageOverview; locale: WorkspaceLocale; messages: Messages }) {
+  const maximum = Math.max(1, ...data.trend.map(item => item.requests))
+  const featureMaximum = Math.max(1, ...data.features.map(item => item.requests))
+  return <div className="grid min-w-0 gap-4 xl:grid-cols-2">
+    <Card className="min-w-0"><CardHeader><CardTitle>{messages.trend}</CardTitle>
+      <CardDescription>{messages.requestCount} / {messages.knownInputTokens} / {messages.knownOutputTokens} / {messages.knownTokens}</CardDescription></CardHeader><CardContent>
+      {data.trend.length === 0 ? <NoRequests messages={messages} /> : <Table aria-label={messages.trend}>
+        <TableHeader><TableRow><TableHead>{messages.date}</TableHead><TableHead>{messages.requestCount}</TableHead>
+          <TableHead>{messages.knownInputTokens}</TableHead><TableHead>{messages.knownOutputTokens}</TableHead>
+          <TableHead>{messages.knownTokens}</TableHead></TableRow></TableHeader>
+        <TableBody>{data.trend.map(item => <TableRow key={item.date}>
+          <TableCell>{item.date}</TableCell><TableCell><div className="flex min-w-20 items-center gap-2">
+            <span className="tabular-nums">{formatCount(item.requests, locale, messages)}</span>
+            <div aria-hidden="true" className="h-2 flex-1 rounded bg-muted"><div className="h-2 rounded bg-primary" style={{ width: `${item.requests / maximum * 100}%` }} /></div>
+          </div></TableCell>
+          <TokenSummaryCell value={item.knownInputTokens} unknown={item.unknownInputTokenRequests} locale={locale} messages={messages} />
+          <TokenSummaryCell value={item.knownOutputTokens} unknown={item.unknownOutputTokenRequests} locale={locale} messages={messages} />
+          <TableCell className="tabular-nums">{formatCount(item.knownTokens, locale, messages)}</TableCell>
+        </TableRow>)}</TableBody></Table>}
+    </CardContent></Card>
+    <Card className="min-w-0"><CardHeader><CardTitle>{messages.distribution}</CardTitle>
+      <CardDescription>{messages.requestCount} / {messages.knownInputTokens} / {messages.knownOutputTokens} / {messages.knownTokens}</CardDescription></CardHeader><CardContent>
+      {data.features.length === 0 ? <NoRequests messages={messages} /> : <Table aria-label={messages.distribution}>
+        <TableHeader><TableRow><TableHead>{messages.feature}</TableHead><TableHead>{messages.requestCount}</TableHead>
+          <TableHead>{messages.knownInputTokens}</TableHead><TableHead>{messages.knownOutputTokens}</TableHead><TableHead>{messages.knownTokens}</TableHead></TableRow></TableHeader>
+        <TableBody>{data.features.map(item => <TableRow key={item.feature}>
+          <TableCell>{messages.featureLabel(item.feature)}</TableCell><TableCell><div className="flex min-w-20 items-center gap-2">
+            <span className="tabular-nums">{formatCount(item.requests, locale, messages)}</span>
+            <div aria-hidden="true" className="h-2 flex-1 rounded bg-muted"><div className="h-2 rounded bg-primary" style={{ width: `${item.requests / featureMaximum * 100}%` }} /></div>
+          </div></TableCell>
+          <TokenSummaryCell value={item.knownInputTokens} unknown={item.unknownInputTokenRequests} locale={locale} messages={messages} />
+          <TokenSummaryCell value={item.knownOutputTokens} unknown={item.unknownOutputTokenRequests} locale={locale} messages={messages} />
+          <TableCell className="tabular-nums">{formatCount(item.knownTokens, locale, messages)}</TableCell>
+        </TableRow>)}</TableBody></Table>}
+    </CardContent></Card>
+  </div>
+}
+
+function RequestTable({ items, locale, messages, historical, select }: {
+  items: ModelUsageAttempt[]; locale: WorkspaceLocale; messages: Messages; historical: boolean; select(id: string, trigger: HTMLButtonElement): void
+}) {
+  if (items.length === 0) return <NoRequests messages={messages} historical={historical} />
+  return <Table aria-label={messages.requests}><TableHeader><TableRow>
+    {[messages.requestTime, messages.feature, messages.provider, messages.actualModel, messages.result, messages.token, messages.cost, messages.detail]
+      .map(label => <TableHead key={label}>{label}</TableHead>)}
+  </TableRow></TableHeader><TableBody>{items.map(item => <TableRow key={item.id}>
+    <TableCell><time dateTime={item.startedAt}>{new Date(item.startedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })}</time></TableCell>
+    <TableCell>{messages.featureLabel(item.feature)}<p className="text-xs text-muted-foreground">{messages.kindLabel(item.kind)}</p></TableCell>
+    <TableCell>{item.provider}</TableCell>
+    <TableCell className="max-w-56 whitespace-normal break-all">{item.actualModel ?? messages.notReturned}</TableCell>
+    <TableCell><Badge variant={item.status === 'failed' ? 'destructive' : 'secondary'}>{messages.statusLabel(item.status)}</Badge></TableCell>
+    <TableCell className="tabular-nums">{formatCount(item.accounting?.totalTokens ?? item.usage.totalTokens, locale, messages)}</TableCell>
+    <TableCell>{formatCount(item.accounting?.cny ?? item.effectiveCost?.cny ?? item.cost.cny, locale, messages)}
+      <p className="text-xs text-muted-foreground">{messages.costStatusLabel((item.effectiveCost ?? item.cost).status)}</p></TableCell>
+    <TableCell><Button onClick={event => select(item.id, event.currentTarget)} size="sm" variant="outline">{messages.viewDetail}</Button></TableCell>
+  </TableRow>)}</TableBody></Table>
+}
+
+function RequestDetail({ item, locale, messages, administrator, saved, close }: {
+  item: ModelUsageAttempt; locale: WorkspaceLocale; messages: Messages; administrator: boolean; saved(item: ModelUsageAttempt): void; close(): void
+}) {
+  const region = useRef<HTMLElement>(null)
+  useEffect(() => { region.current?.focus() }, [item.id])
+  const facts = [
+    [messages.attemptId, item.id], [messages.result, messages.statusLabel(item.status)],
+    [messages.dispatchState, messages.dispatchLabel(item.dispatch)],
+    [messages.feature, messages.featureLabel(item.feature)], [messages.requestKind, messages.kindLabel(item.kind)],
+    [messages.task, item.context.taskId], [messages.stage, item.context.stage],
+    [messages.caseId, item.context.caseId ?? messages.notReturned], [messages.encounter, item.context.encounterId ?? messages.notReturned],
+    [messages.epoch, item.context.epoch], [messages.trigger, messages.triggerLabel(item.context.trigger)],
+    [messages.provider, item.provider], [messages.requestedModel, item.requestedModel],
+    [messages.actualModel, item.actualModel ?? messages.notReturned], [messages.reasoning, item.reasoningEffort ?? messages.notReturned],
+    [messages.outputLimit, formatCount(item.outputLimit, locale, messages)], [messages.providerRequest, item.providerRequestId ?? messages.notReturned],
+    [messages.startedAt, new Date(item.startedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
+    [messages.endedAt, item.endedAt === null ? messages.notReturned : new Date(item.endedAt).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
+    [messages.httpStatus, item.httpStatus ?? messages.notReturned], [messages.mapping, item.usage.mapping],
+    [messages.inputTokens, formatCount(item.usage.inputTokens, locale, messages)],
+    [messages.outputTokens, formatCount(item.usage.outputTokens, locale, messages)],
+    [messages.cachedTokens, formatCount(item.usage.cachedInputTokens, locale, messages)],
+    [messages.reasoningTokens, formatCount(item.usage.reasoningOutputTokens, locale, messages)],
+    [messages.totalTokens, formatCount(item.usage.totalTokens, locale, messages)],
+  ]
+  return <section ref={region} tabIndex={-1} aria-label={messages.detail} className="min-w-0 outline-none"><Card>
+    <CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle>{messages.detail}</CardTitle>
+      <Button size="sm" variant="ghost" onClick={close}>{messages.closeDetail}</Button></div>
+      <CardDescription>{messages.tokenExplanation}</CardDescription></CardHeader>
+    <CardContent className="flex flex-col gap-5"><dl className="grid min-w-0 gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-3">
+      {facts.map(([label, value]) => <div key={label} className="min-w-0"><dt className="text-muted-foreground">{label}</dt>
+        <dd className="break-all">{value}</dd></div>)}
+    </dl>
+      <ModelUsageCorrections item={item} locale={locale} administrator={administrator} saved={saved} />
+      {item.usage.raw === undefined ? null : <div><h3 className="mb-3 font-medium">{messages.rawUsage}</h3>
+        <dl className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{Object.entries(item.usage.raw).flatMap(([key, value]) =>
+          typeof value === 'string' ? [] : [<div key={key}><dt className="text-muted-foreground">{messages.rawCounterLabel(key)}</dt>
+            <dd>{formatCount(value, locale, messages)}</dd></div>])}</dl>
+      </div>}
+      <div className="flex flex-col gap-2"><h3 className="font-medium">{messages.sources}</h3><p className="text-muted-foreground">{messages.sourceDescription}</p>
+        {item.context.sources.length === 0 ? <p>{messages.noSources}</p> : <Table aria-label={messages.sources}>
+          <TableHeader><TableRow><TableHead>{messages.trigger}</TableHead><TableHead>{messages.sourceKind}</TableHead><TableHead>ID</TableHead></TableRow></TableHeader>
+          <TableBody>{item.context.sources.map((source, index) => <TableRow key={`${source.relationship}:${source.kind}:${source.id}:${index}`}>
+            <TableCell>{source.relationship === 'trigger' ? messages.triggerSources : messages.evidenceSources}</TableCell>
+            <TableCell>{source.kind}</TableCell><TableCell className="whitespace-normal break-all">{source.id}</TableCell>
+          </TableRow>)}</TableBody></Table>}
+      </div>
+    </CardContent>
+  </Card></section>
+}
+
+export function ModelUsageWorkspace({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }) {
+  const messages = modelUsageMessages(locale)
+  const queryClient = useQueryClient()
+  const detailTrigger = useRef<HTMLButtonElement>(null)
+  const [tab, setTab] = useState('overview')
+  const [filters, setFilters] = useState<ModelUsageFilter>(initialFilters)
+  const [selectedId, setSelectedId] = useState<string>()
+  const scope = [session.actor.workspaceId, session.actor.epoch, session.actor.actorId, session.actor.practitionerRoleId, session.actor.roleCode]
+  const overview = useQuery({ queryKey: ['model-usage', 'overview', ...scope, filters],
+    queryFn: ({ signal }) => getModelUsageOverview(filters, signal), retry: false })
+  const requestFilters = { ...filters, offset: tab === 'overview' ? 0 : filters.offset, limit: tab === 'overview' ? 5 : filters.limit }
+  const requests = useQuery({ queryKey: ['model-usage', 'requests', ...scope, requestFilters],
+    queryFn: ({ signal }) => getModelUsageRequests(requestFilters, signal), retry: false,
+    enabled: tab === 'overview' || tab === 'requests' })
+  const detail = useQuery({ queryKey: ['model-usage', 'detail', ...scope, selectedId],
+    queryFn: ({ signal }) => getModelUsageRequest(selectedId!, signal), retry: false, enabled: selectedId !== undefined })
+  const control = useQuery({ queryKey: ['model-usage', 'control', ...scope],
+    queryFn: ({ signal }) => getModelUsageControl(signal), retry: false, enabled: tab === 'policy' })
+  const pricing = useQuery({ queryKey: ['model-usage', 'pricing', ...scope],
+    queryFn: ({ signal }) => getModelUsagePricing(signal), retry: false, enabled: tab === 'pricing' })
+  const retention = useQuery({ queryKey: ['model-usage', 'retention', ...scope],
+    queryFn: ({ signal }) => getModelUsageRetention(signal), retry: false })
+  const requestContent = requests.isPending ? <Loading messages={messages} /> : requests.isError
+    ? <ReadError title={messages.loadError} messages={messages} retry={() => { void requests.refetch() }} />
+    : <RequestTable items={requests.data.items} locale={locale} messages={messages} historical={(overview.data?.totals.requests ?? 0) > 0} select={(id, trigger) => {
+      detailTrigger.current = trigger; setSelectedId(id)
+    }} />
+
+  return <section aria-label={locale === 'zh-CN' ? '模型用量' : 'Model usage'} className="flex min-w-0 flex-col gap-4">
+    <Alert role="note"><AlertTitle>{messages.coverage}</AlertTitle><AlertDescription>{messages.coverageDescription}</AlertDescription></Alert>
+    <Alert role="note"><AlertTitle>{messages.retentionNotice}</AlertTitle><AlertDescription>
+      <p>{messages.retentionNoticeDescription}</p>
+      {retention.isSuccess ? <p>{messages.currentRetention}: {retentionPeriod(retention.data, messages)} · {messages.compactedRequests}: {new Intl.NumberFormat(locale).format(retention.data.compactedRequests)}</p> : null}
+    </AlertDescription></Alert>
+    <div className="flex flex-wrap items-center justify-between gap-2"><p className="min-w-0 flex-1 text-sm text-muted-foreground">{messages.aggregateScope} {messages.memberScope}</p>
+      <Button size="sm" variant="outline" disabled={overview.isFetching || requests.isFetching || detail.isFetching || control.isFetching || pricing.isFetching || retention.isFetching}
+        onClick={() => { void queryClient.invalidateQueries({ queryKey: ['model-usage'] }) }}>{messages.refresh}</Button>
+    </div>
+    <Tabs value={tab} onValueChange={value => { setTab(String(value)); setSelectedId(undefined) }} className="min-w-0 gap-4">
+      <div className="max-w-full overflow-x-auto pb-1"><TabsList aria-label={locale === 'zh-CN' ? '模型用量页签' : 'Model usage tabs'} variant="line">
+        {(['overview', 'requests', 'policy', 'pricing'] as const).map(value => <TabsTrigger key={value} value={value}>{messages[value]}</TabsTrigger>)}
+      </TabsList></div>
+      {(tab === 'overview' || tab === 'requests') ? <details open={tab === 'requests'} className="rounded-lg border bg-card p-3">
+        <summary className="cursor-pointer text-sm font-medium">{messages.filters}</summary>
+        <UsageFilters key={JSON.stringify(filters)} filters={filters} messages={messages} onApply={value => {
+          setFilters(value); setSelectedId(undefined)
+        }} />
+      </details> : null}
+      <TabsContent value="overview" className="flex min-w-0 flex-col gap-4">
+        {overview.isPending ? <Loading messages={messages} /> : overview.isError
+          ? <ReadError title={messages.loadError} messages={messages} retry={() => { void overview.refetch() }} />
+          : <><Summary data={overview.data} locale={locale} messages={messages} /><UsageCharts data={overview.data} locale={locale} messages={messages} /></>}
+        <Card className="min-w-0"><CardHeader><div className="flex flex-wrap items-center justify-between gap-2"><CardTitle>{messages.recent}</CardTitle>
+          <Button size="sm" variant="ghost" onClick={() => { setTab('requests'); setSelectedId(undefined) }}>{messages.allRequests}</Button></div></CardHeader>
+          <CardContent>{requestContent}</CardContent></Card>
+      </TabsContent>
+      <TabsContent value="requests" className="flex min-w-0 flex-col gap-4"><Card className="min-w-0"><CardHeader><CardTitle>{messages.requests}</CardTitle></CardHeader>
+        <CardContent>{requestContent}</CardContent></Card>
+        {!requests.isSuccess ? null : <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm">{requests.data.total} {messages.total} · {messages.page} {Math.floor(filters.offset / filters.limit) + 1}</p>
+          <div className="flex gap-2"><Button size="sm" variant="outline" disabled={filters.offset === 0 || requests.isFetching}
+            onClick={() => { setFilters(current => ({ ...current, offset: Math.max(0, current.offset - current.limit) })); setSelectedId(undefined) }}>{messages.previous}</Button>
+          <Button size="sm" variant="outline" disabled={filters.offset + filters.limit >= requests.data.total || requests.isFetching}
+            onClick={() => { setFilters(current => ({ ...current, offset: current.offset + current.limit })); setSelectedId(undefined) }}>{messages.next}</Button></div>
+        </div>}
+      </TabsContent>
+      <TabsContent value="policy" className="flex min-w-0 flex-col gap-4">{control.isPending ? <Loading messages={messages} /> : control.isError
+        ? <ReadError title={messages.loadError} messages={messages} retry={() => { void control.refetch() }} />
+        : <ModelUsagePolicy data={control.data} locale={locale} administrator={session.actor.roleCode === 'administrator'} saved={data => {
+          queryClient.setQueryData(['model-usage', 'control', ...scope], data)
+          void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+        }} />}
+        {retention.isPending ? <Loading messages={messages} /> : retention.isError
+          ? <ReadError title={messages.retentionLoadError} messages={messages} retry={() => { void retention.refetch() }} />
+          : <ModelUsageRetention data={retention.data} locale={locale} administrator={session.actor.roleCode === 'administrator'} saved={data => {
+            queryClient.setQueryData(['model-usage', 'retention', ...scope], data)
+            void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+          }} />}
+      </TabsContent>
+      <TabsContent value="pricing">{pricing.isPending ? <Loading messages={messages} /> : pricing.isError
+        ? <ReadError title={messages.loadError} messages={messages} retry={() => { void pricing.refetch() }} />
+        : <ModelUsagePricing data={pricing.data} locale={locale} />}</TabsContent>
+    </Tabs>
+    {selectedId === undefined ? null : detail.isPending ? <Loading messages={messages} /> : detail.isError
+      ? <ReadError title={messages.detailError} messages={messages} retry={() => { void detail.refetch() }} />
+      : <RequestDetail item={detail.data} locale={locale} messages={messages} administrator={session.actor.roleCode === 'administrator'} saved={item => {
+        queryClient.setQueryData(['model-usage', 'detail', ...scope, item.id], item)
+        void queryClient.invalidateQueries({ queryKey: ['model-usage'] })
+      }} close={() => {
+        detailTrigger.current?.focus(); setSelectedId(undefined)
+      }} />}
+  </section>
+}
+
+function UsageFilters({ filters, messages, onApply }: { filters: ModelUsageFilter; messages: Messages; onApply(value: ModelUsageFilter): void }) {
+  const [feature, setFeature] = useState(filters.feature ?? '')
+  const [status, setStatus] = useState(filters.status ?? '')
+  const [error, setError] = useState(false)
+  return <form aria-label={messages.filters} className="flex flex-col gap-3 pt-3" onSubmit={event => {
+    event.preventDefault()
+    const form = new FormData(event.currentTarget)
+    const result = modelUsageFilterSchema.safeParse({ ...Object.fromEntries(
+      ['from', 'to', 'provider', 'model', 'caseId'].map(key => [key, String(form.get(key) ?? '').trim() || undefined])),
+    feature: feature || undefined, status: status || undefined, offset: 0, limit: filters.limit })
+    const validRange = result.success && !(result.data.from && result.data.to && result.data.from > result.data.to)
+    setError(!validRange)
+    if (result.success && validRange) onApply(result.data)
+  }}>
+    <FieldGroup className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {(['from', 'to', 'provider', 'model', 'caseId'] as const).map(key => <Field key={key}>
+        <FieldLabel htmlFor={`model-usage-${key}`}>{messages[key]}</FieldLabel>
+        <Input id={`model-usage-${key}`} name={key} type={key === 'from' || key === 'to' ? 'date' : 'text'}
+          defaultValue={filters[key] ?? ''} maxLength={key === 'model' ? 1024 : 256} />
+      </Field>)}
+      <Field><FieldLabel htmlFor="model-usage-feature">{messages.feature}</FieldLabel>
+        <WorkspaceSelect id="model-usage-feature" value={feature} onValueChange={value => setFeature(value ?? '')}
+          items={[{ value: '', label: messages.all }, ...modelUsageFeatureSchema.options.map(value => ({ value, label: messages.featureLabel(value) }))]} />
+      </Field>
+      <Field><FieldLabel htmlFor="model-usage-status">{messages.result}</FieldLabel>
+        <WorkspaceSelect id="model-usage-status" value={status} onValueChange={value => setStatus(value ?? '')}
+          items={[{ value: '', label: messages.all }, ...modelUsageAttemptSchema.shape.status.options.map(value => ({ value, label: messages.statusLabel(value) }))]} />
+      </Field>
+    </FieldGroup>
+    <div className="flex flex-wrap gap-2"><Button size="sm" type="submit">{messages.apply}</Button>
+      <Button size="sm" type="button" variant="outline" onClick={event => {
+        event.currentTarget.form?.reset(); setFeature(''); setStatus(''); setError(false); onApply(initialFilters)
+      }}>{messages.reset}</Button></div>
+    {error ? <p role="alert" className="text-sm text-destructive">{messages.invalidFilters}</p> : null}
+  </form>
+}

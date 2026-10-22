@@ -131,3 +131,23 @@ hash chain 只能提供防篡改线索，不能在单一管理员控制的 demo 
 成功 Command 响应返回 `requestId` 和 `auditId`，持久表通过 Workspace/Epoch、Scenario Run、idempotency key、Audit ID、Action Trace ID 和 outbox event ID 建立关联。Agent proposal 再通过 DSH Session/call ID、proposal ID、review decision 和同一 `requestId` 串联 Tool、Command、Audit 与 Trace。CLI 在结构化错误中保留服务端 correlation ID，但该 ID 不表示 Command 已经提交，写操作的恢复仍以 idempotency key、ambiguous outcome 和 receipt 为准。`/api/health` 只报告服务状态与 FHIR 版本。
 
 首期没有生产 metrics exporter、分布式 trace、成功 request log 或管理仪表盘，因此不宣称在线采集 API latency、SQLite busy/transaction duration、Search 规模或 outbox backlog 指标。独立 performance runner 可以在临时 sandbox 重复执行固定工作负载并输出分位数、SQL/存储和 Trace 指标，但不改变生产请求或持久化路径。运行诊断仍依赖 database CLI、correlation ID、结构化错误、失败日志和持久审计/outbox 状态；任何后续日志或指标都不得把患者姓名、身份信息、完整临床正文、token 或自由文本作为标签。
+
+### 模型用量查询
+
+总览接口的 `totals`、每日 `trend` 与功能 `features` 同时返回 `knownInputTokens`、`knownOutputTokens`、`unknownInputTokenRequests` 和 `unknownOutputTokenRequests`；日期、功能、Provider、模型、结果与病例筛选共同作用于这些指标。设置页分别展示已知输入和输出，分项不完整时保留提示；没有已知数量且存在缺失时显示未知，完整的零计数显示为零。计量与历史汇总口径由[明细保留与长期汇总](storage.md#明细保留与长期汇总)拥有。
+
+ClinMesh 设置中的模型用量页通过已认证 Session 读取 `/api/model-usage/overview`、`/api/model-usage/requests` 与单次请求详情。当前 Workspace 成员可读跨 Epoch 汇总；明细及计数共用服务端 SQL 授权条件，管理员可读本 Workspace 历史记录。门诊医生只读活动 Epoch 内有 `outpatient_case_responsibility` 责任关系的临床请求；住院医生和病区护士只读活动 Epoch 内当前责任科室与病区匹配的住院检验生成请求，转科或岗位切换后按当前住院归属重新授权。其他岗位不能借相同 Actor、猜测尝试 ID 或汇总下钻读取临床明细；行政人设和目录补全明细仅管理员可读。查询不接受客户端指定 Workspace、Epoch 或角色；无权和不存在的单次请求都返回 404。
+
+监控覆盖 Server 直接模型调用、经 DSH bridge 的调用和 Host 独立医生代问识别，不覆盖整个 DSH 原生聊天或其他插件。部署与 Workspace 默认启用，请求、Token、人民币额度分别无限，保留既有有界自动重试。成员通过 `/api/model-usage/control` 读取自身 Workspace 政策、各维度余量、生效开关与重试状态、控制拒绝和待办状态；普通成员的 `deployment` 为 `null`，不公开部署总上限及跨工作区累计量。当前选中管理员岗位可只读部署政策，并通过该路径的 `PUT` 修改本 Workspace 的开关、三项累计额度与自动重试；省略 `tokens` 或 `cny` 保留原值，显式 `null` 才切为无限。总览 `policy` 只投影自身 Workspace 上限。更新要求可信 Origin、幂等键和 `expectedVersion`，通过共享 Command 同事务写入审计和回执；请求不能指定其他 Workspace 或部署政策。部署维护者通过[部署配置](../deployment.md#模型用量)管理总限制，Workspace 无法放宽。
+
+三类实际派发均在准入前提供版本化计量边界；全部适用维度原子通过才发出外部请求。剩余量不足返回对应维度、剩余量与所需预占量；缺少可信边界或计价时返回 `MODEL_METERING_UNAVAILABLE`，不可核算的需要量为 `null`。不自动降低输出上限、截断输入或改变推理策略。目前三个入口都能限制请求次数；直接调用没有硬输出 Token 上限，DSH SDK 也未公开绑定实际 wire adapter 的可信计量保证，因此有限 Token 与非零金额保护会拒绝这些入口的新派发。明确全零人民币价表能给出金额上界零，仍须同时满足其他有限维度。SDK `contextWindow`、`maxTokens` 配置及字符启发式不能作为计量保证，具体原因与版本随尝试记录；能力与配置见[部署说明](../deployment.md#模型用量)。取消、失联、超时和崩溃不释放未知维度，不因期限到期恢复额度；持久累计、部分结算与原始证据见[存储合同](storage.md#910-模型调用账本)。
+
+所有当前 Workspace 成员可通过 `GET /api/model-usage/pricing` 查看部署统一价表与汇率，界面及 Workspace 接口均不提供价表写权限。费用是配置口径下的估算，总览分别显示已知金额、未知请求数与未决预占，不把已知部分当作完整账单。管理员可向 `/api/model-usage/requests/:attemptId/reconcile` 提交 `expectedRevision`、受限依据标识 `evidence` 及已核实的 `totalTokens`、`cny` 中至少一项；仅当请求已结束、派发未知、两项有效消费均已知且没有既有核对修订时，可只提交依据确认一次请求消费，或向同一请求的 `/reprice` 提交 `expectedRevision` 与 `evidence` 显式补算。两种 POST 均要求可信 Origin、幂等键、当前有效成员和当前选中的管理员岗位；只能处理自身 Workspace 的授权明细，管理员可处理旧 Epoch 请求。依据不得包含患者正文、凭证或自由格式账单正文。服务端校验修订版本、可处理状态及尚未知维度，同事务保存审计与回执；核对与补算不修改原始服务商用量、不覆盖调用时快照、不触发未知请求重发。
+
+当前 Workspace 成员可通过 `GET /api/model-usage/retention` 读取本工作区的 `days`、`version`、`compactedRequests` 和 `lastCompactedAt`；后两项分别表示已清理明细数量及最后一次实际清理时间。当前选中的管理员岗位可通过同一路径 `PUT` 提交正安全整数或 `null` 的 `days` 及 `expectedVersion`，要求可信 Origin、幂等键、当前有效成员和共享 Command 审计；普通成员不能修改，客户端不能指定其他 Workspace、Epoch 或部署策略。清理继续使用服务端 Workspace 隔离，跨 Epoch 汇总权限及留存明细的病例责任授权不变。已清理请求仅参与汇总，详情返回 404，旧核对／补算回执也不能重新返回完整明细；独立必要审计不开放为明细查询或恢复入口。保留期限、未结算保护及事务合同见[明细保留与长期汇总](storage.md#明细保留与长期汇总)，界面操作见[部署说明](../deployment.md#模型用量)。
+
+Host 自发识别先由 SDK 准备并绑定模型配置，再通过 `/api/model-usage/host/doctor-delegation/admit` 取得一次性准入，最后派发该准备句柄的 stream。接口拒绝浏览器 Origin，要求 Host bridge 凭证和已签发的医生输入来源证明；Workspace、Epoch、Actor、岗位、任务与病例从 Server 持久 Page Context 恢复，重新校验活动成员、岗位、病例权限与任务连续性。先查同 client 的最新绑定，再核对原身份，不能按旧身份过滤并忽略后续身份或岗位切换。同病例内容、栏目更新或续签保留原任务，切走再返回不恢复旧许可。模型路由来自受信 Host 的实际请求配置；请求不能声明功能、身份、病例、输出上限或任意生成正文。同一任务在账本事务中只能准入一次，账本故障或无有效准入响应时 stream 次数为零。
+
+准入响应中的回执仅能向 `/api/model-usage/host/doctor-delegation/observe` 为该尝试上报窄用量和终态，或通过 `/api/model-usage/host/doctor-delegation/status` 查询是否应取消原尝试，不能授权新生成或修改其他入口的记录。结算不依赖仍有效的临床岗位或输入许可期限，避免任务失权后丢失已发生的消耗；回执与 bridge 凭证不进入账本、日志或监控。Host 的用量帧和终态写入同一 Server 账本，Host 不维护独立余额或持久账本，也不因取消、失联、结算失败或 Server 重启自动重发未知请求。
+
+明确被控制拒绝的 Host 准入可在原期限内等待；`/api/model-usage/host/doctor-delegation/wait` 使用同样的 Host 凭证和原输入许可，仅维护或结束待办租约，每次维持重新验证上下文。该接口不建立模型尝试或放宽原期限；租约过期不释放任何已派发预占。Host 每 250 毫秒查询原尝试取消状态，查询失败时也尽力取消并保留未知结果。

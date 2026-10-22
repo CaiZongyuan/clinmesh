@@ -10,6 +10,8 @@
 
 ## 范围、快照与资源争用
 
+- 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)。
+
 - 待开具项目的操作文案会随异步核验状态从“调整”变为“核对”；验证重开详情时，使用包含项目名称的稳定“查看待开具”入口，并继续断言编辑值、焦点和正式确认结果。只定位“调整”会在核验状态晚到时超时，不能用增加超时或固定等待规避；对应回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
 
 - Web composition 测试若只有总时限超时，先分段计时区分停滞与累计交互成本；状态展示、报告已阅、取消冲突、草稿删除等可独立验收的流程使用同一初始化 helper、每例重新挂载，保留请求版本、人工确认和切换病例后的隔离断言。不要把多个独立流程串在一个用例后扩大默认时限；对应回归见 `apps/web/src/app/role-workspaces.test.tsx`。
@@ -55,6 +57,14 @@
 - 验证文件读取次数时，只替换 `node:fs` 中需要观测的函数并委托真实实现；整模块 `{ spy: true }` 会连带代理 `ReadStream` 等类，可能让真实流悬挂并触发超时。保留真实文件和流，仅在文件系统边界统计读取，复用 [DRG 安装回归](../../apps/server/tests/drg-reference-sync.test.ts)。
 
 - 安装资料的 check-only 回归先通过公开安装入口准备合成资料，再让分发源不可用；只放仓库本地资料会命中另一条复用路径，掩盖临时数据库路径改变资料查找位置的问题。通过公开入口核对 `source: installed`、默认与自定义安装目录，以及正式数据库和资料字节未变，见[参考同步回归](../../apps/server/tests/reference-sync.test.ts)。
+
+- Testing Library 的 `getByRole` 使用字符串 `name` 时已按完整可访问名称匹配，不接受 Playwright 的 `exact` 选项；混用两者参数可能让 Vitest 运行通过而 TypeScript 检查失败。组件测试省略 `exact`，真实浏览器测试按 Playwright API 保留该选项。
+
+- 验证模型手动恢复时，逐个继续意图核对实际外部派发次数，并在下一次仍失败时证明自动重试没有被一并放开；同时覆盖重放、准入拒绝和重启。任务来源 `trigger: manual` 会延续到后续阶段，不能用它证明某一次请求已获得人工授权；恢复合同见[模型执行恢复](../architecture/storage.md#模型执行恢复)。
+
+- DSH Provider 开启用量账本后，合成 bridge 响应也须提供匹配 `attemptId` 的可信核算终态；只返回模型正文、HTTP 401/429/503 或 SDK 结束事件会进入结果未知保护，不能用来验证明确失败的重试。超时或断流的替身保留未知语义，先核对派发与核算合同再修改生产恢复逻辑；参考[建议 HTTP 回归](../../apps/server/tests/doctor-recommendations-http.test.ts)与[控制恢复合同](../../apps/server/tests/model-control-recovery-http.test.ts)。
+
+- SQLite 队列扫描中的资格检查若会开启写事务，不要在尚未关闭的 `Statement.iterate()` 期间调用；事务提交可能被活动 reader 阻止，并被资格检查的安全回退表现为“始终不可恢复”。使用已完成读取的游标查询，再判断资格；回归同时验证跳过受限任务和恢复原任务，避免只证明后续任务能运行。
 
 - 医生工作台测试替身合同由建议栈决定：完诊预览 stub 必须恰好覆盖全部 7 个条目编码（schema superRefine 拒绝缺项，`items: []` 无效）；质控 GET 需为未声明病例返回干净的 ready 默认态而不是抛错。建议栈把查询失败显式渲染为"加载失败 + 重试" alert，旧替身里原本静默的坏 stub 会以可见失败暴露；替身报错时先核对 schema 完整性再怀疑组件。
 
@@ -112,13 +122,21 @@
 
 - `vendor/dsh-react-surface` 的 `lib/` 是未跟踪的生成目录。ClinMesh 的 Vitest 若直接导入由 DSH 注入的 `dsh-react-surface/client` external，必须通过显式测试 alias 解析到本地 stub；测试不能依赖开发机曾构建 submodule 后遗留的 `lib/client.js`。
 
-- 在独立 worktree 或干净克隆运行 DSH 浏览器合同前，先执行 `pnpm --filter ./apps/dsh-web build:styles` 生成 gitignored 的 `apps/dsh-web/src/client/styles.generated.ts`；缺失时相关 fixture 在 Vite 构建阶段报 `Could not resolve "./styles.generated.ts"`，表象是成批 dsh-web 合同失败而非单条断言失败。该文件不进入提交。
+- 在独立 worktree 或干净克隆运行 DSH 单元测试或浏览器合同前，先执行 `pnpm --filter ./apps/dsh-web build:styles` 生成 gitignored 的 `apps/dsh-web/src/client/styles.generated.ts`；缺失时相关入口在 Vite 加载或构建阶段报 `Failed to resolve import` 或 `Could not resolve "./styles.generated.ts"`，尚未执行测试断言。该文件不进入提交。
 
 - 浏览器合同从包级 runner 迁到根 runner 时，Vite 的 `resolve.dedupe` 会改用根目录解析 React；build 必须显式设置 owning app 的 `root`。动画回归同时保留“完成后仍保持高光”的阶段断言和有界卸载等待，固定 sleep 不能证明渲染帧已经执行。
 
 - 首诊浏览器旅程在点击“开始首诊”后，先等待“在诊”队列已选中，再切换问诊页签。Command 回执后的队列刷新可能重建详情；只等待点击完成会把旧详情上的页签选择丢失，最终超时在“向患者提问”输入框。
 
 - 合成 DSH 模型的异步生成器在 `yield finish` 后不保证再次恢复执行；测试完成标记放在终止事件之前，再以 outbox 无在途 claim 和公开业务状态确认消费结束。不要把终止事件后的日志缺失当作晚到写入或恢复失败。
+
+- 验证流式用量的崩溃持久性时，在用量帧已解析、终态仍被屏障阻塞期间用 SQLite backup 取得快照，再从该快照重启并查询公开账本。先经控制接口建立各维度累计起点，再验证已知消费转入已用、未知维度继续预占、重复恢复不重复累计；只断言用量仍在会漏掉额度永久悬挂。追加实际 SDK 归一化的迟到进度与终态，覆盖累计变化和缓存分项不完整导致的已知转未知，核对双层额度及有限准入，避免恢复结算冻结后续证据。正常完成后把状态改成在途无法覆盖“已收到用量但尚未结算”的丢失窗口；复用[模型用量 HTTP 回归](../../apps/server/tests/model-usage-http.test.ts)与[Host 超期、旧未知记录和写入回滚回归](../../apps/server/tests/model-usage-host.test.ts)。
+
+- 模型恢复的数据库故障注入须覆盖实际请求返回后的用量结算，不能只测派发前账本创建与任务结果检查点。使用临时 SQLite 的结算 UPDATE trigger，恢复写入后分别在原进程和重启后调度，经公开任务／账本查询及合成网络请求次数确认没有重发；复用[控制恢复回归](../../apps/server/tests/model-control-recovery-http.test.ts)。
+
+- 模型超时回归同时覆盖网络异常和真实 HTTP 408／504 响应，经公开后台任务、账本及合成网络次数确认调度与重启后均不重发；只测试本地 AbortSignal 会漏掉网关超时。控制阻塞持久化则分别在首次等待和已有待办恢复时注入 INSERT 失败，并构造缺少恢复输入的旧阻塞状态，经公开病例读取、新补答和合成网络次数证明不会永久等待或重启未知尝试；复用[控制恢复回归](../../apps/server/tests/model-control-recovery-http.test.ts)与[患者回答合同](../../apps/server/tests/consultation-dialogue-http.test.ts)。
+
+- 后台 Agent 权限回归须从带授权的真实 HTTP 入队走到任务领取，并验证派发前撤销授权会阻止模型调用。只直接检查身份服务会漏掉持久上下文 strict schema 拒绝或丢失 `agentGrantId`，以及运行时漏传操作范围的问题；复用[检验目录发布回归](../../apps/server/tests/laboratory-service-publisher-http.test.ts)。
 
 - 更新增量病史输入后，同时运行 `pnpm smoke:consultation:native`：共享 Web 旅程通过不证明原生合成 Adapter 匹配。Fixture 需沿用[增量记录合同](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)的短引用与取消信号，不能依赖自动片段必有重复正文，也不能等待已取消请求正常返回。
 

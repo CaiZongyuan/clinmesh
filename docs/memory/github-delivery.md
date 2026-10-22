@@ -26,6 +26,8 @@
 
 ## 范围、合并与分支清理
 
+- 继续已有集成分支时，最终验证前先 fetch 同名远端分支并比较完整提交集合；本地 `origin/<branch>` 只是上次同步的快照。普通 push 被拒为非快进时，先保留并集成远端新增提交，复查合并差异并重跑受影响检查，再正常 push，不用 force 覆盖既有修复。
+
 - GitHub 的 PR ref 或 commit API 能访问某个支持 SHA，不代表从上游仓库普通 clone 后可检出；该对象可能只在贡献者 fork 的分支上。验收必须用声明的 source 新建 clone 并执行精确 checkout，不能复用含额外对象的本地仓库作为公开来源证据。
 
 - PR 审查的 three-dot diff 以 merge-base 确定改动范围，合并冲突则以当前远端目标分支 tip 判断。PR 元数据中的 base SHA 与远端分支 tip 不一致时，用 `git ls-remote` 或远端 ref API 核对并 fetch 最新目标分支，再以 `git merge-tree --write-tree <target-tip> <head>` 验证；不能把旧 base 与 head 合并成功当作当前可合并的证据。

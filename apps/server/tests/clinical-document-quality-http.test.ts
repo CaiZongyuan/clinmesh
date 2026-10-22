@@ -14,6 +14,7 @@ import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts
 import type { SqlitePerformanceObserver } from '../src/infrastructure/sqlite/performance-observer.ts'
 import { canonicalJsonHash } from '../src/application/scenario-data/canonical-json.ts'
 import { recordingBatchSchema } from '../src/application/consultation-recording-batch.ts'
+import { setModelControl } from './fixtures/model-control.ts'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -92,6 +93,28 @@ async function setup(complete?: (input: ModelInput) => unknown | Promise<unknown
       runtime = await createClinMeshRuntime(withoutModel)
     } }
 }
+
+it('continues only the quota-blocked verification after restart with automatic retries disabled', async () => {
+  const stages: string[] = []
+  const f = await setup(input => {
+    stages.push(input.schemaName)
+    if (input.schemaName === 'clinical_document_quality_verification') return { issues: [{ index: 0, supported: true }], agentFactChecks: [] }
+    return { issues: [{ kind: 'missing-field', field: 'assessment', message: '尚未填写评估。', sourceQuotes: [],
+      explanation: { impact: '评估尚未记录。', suggestion: '记录已完成的评估。' } }], agentFactChecks: [] }
+  })
+  const admin = await signIn(f.runtime, 'admin@demo.clinmesh.local')
+  const policy = await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await setModelControl(f.runtime, admin, { enabled: true, requests: policy.workspace.used + 1, automaticRetries: false })
+  expect((await f.mutate('check', { expectedDraftVersion: 0 })).status).toBe(200)
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'pending' })
+  expect(stages).toEqual(['clinical_document_quality'])
+  await f.restart()
+  await setModelControl(f.runtime, admin, { enabled: true, requests: null, automaticRetries: false })
+  await f.runtime.dispatchPending()
+  expect(await f.read()).toMatchObject({ status: 'ready' })
+  expect(stages).toEqual(['clinical_document_quality', 'clinical_document_quality_verification'])
+})
 
 it('shows applicable empty template fields without requiring auxiliary tests or repeating encounter metadata', async () => {
   const f = await setup()
