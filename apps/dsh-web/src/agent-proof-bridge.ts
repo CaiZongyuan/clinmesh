@@ -4,6 +4,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { assertObjectJsonSchema, validateJsonSchemaValue, type ToolExecution } from '@deepseek-ai/dsh-tools'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-user-questions'
+import type {} from '@deepseek-ai/dsh-host-webserver'
+import type {} from '@deepseek-ai/dsh-session-projection'
 import { agentExecutionProofPayloadSchema, agentToolCatalog, isDoctorReadOperation } from '@clinmesh/contracts/agent'
 import { z } from 'zod'
 import { AgentExecutionProofIssuer, parseAgentExecutionProof, parseDoctorAgentTaskPermit, signDoctorRecordingSourceProof } from './execution-proof.ts'
@@ -72,7 +74,7 @@ interface PendingCall {
 }
 
 export function installAgentProofBridge(ctx: Context, secret: string,
-  options: { handoffTimeoutMs?: number } = {},
+  options: { handoffTimeoutMs?: number; upstreamOrigin?: string; fetch?: typeof fetch } = {},
 ): void {
   const issuer = new AgentExecutionProofIssuer({ secret })
   const pending = new Map<string, PendingCall>()
@@ -84,7 +86,7 @@ export function installAgentProofBridge(ctx: Context, secret: string,
   const sidebandTasks = new Map<string, ExecutionOrigin['task']>()
   const callSources = new Map<string, { arguments: unknown; origin: ExecutionOrigin }>()
   const turnCalls = new Map<string, Set<string>>()
-  const doctorTasks = new Map<string, { permit: ReturnType<typeof parseDoctorAgentTaskPermit>; timer: ReturnType<typeof setTimeout> }>()
+  const doctorTasks = new Map<string, { permit: ReturnType<typeof parseDoctorAgentTaskPermit>; token: string; timer: ReturnType<typeof setTimeout> }>()
   const usedDelegations = new Map<string, number>()
   const endedInputs = new Map<string, number>()
   const recordingInputs = new Map<string, { scopeKey: string; pageRevision: string; inputHash: string;
@@ -181,6 +183,7 @@ export function installAgentProofBridge(ctx: Context, secret: string,
       const signal = AbortSignal.any([execution.signal, lifetime.signal, AbortSignal.timeout(timeoutMs)])
       const key = `${execution.agent!.session.id}\u0000${task.rpcId}`
       let permit: ReturnType<typeof parseDoctorAgentTaskPermit> | undefined
+      let inputPermit: string | undefined
       await wait(call, () => {
         if (activeTasks.get(String(execution.agent!.session.id)) !== task) throw new Error('CLINMESH_TASK_CHANGED')
         const registered = doctorTasks.get(key)
@@ -188,6 +191,7 @@ export function installAgentProofBridge(ctx: Context, secret: string,
         clearTimeout(registered.timer)
         doctorTasks.delete(key)
         permit = registered.permit
+        inputPermit = registered.token
         if (Date.parse(permit.expiresAt) <= Date.now() || permit.scopeKey !== task.scopeKey
           || permit.pageRevision !== task.pageRevision
           || createHash('sha256').update(input.text).digest('hex') !== permit.inputHash) {
@@ -198,7 +202,14 @@ export function installAgentProofBridge(ctx: Context, secret: string,
       const config = execution.agent!.session.requestHeader()?.config
       if (config === undefined || permit === undefined) throw new Error('CLINMESH_CALL_SOURCE_REQUIRED')
       let delegated: boolean
-      try { delegated = !unselectedTasks.has(task) && await isDoctorDelegation(ctx, config, input.text, signal) }
+      try {
+        if (options.upstreamOrigin === undefined || inputPermit === undefined) throw new Error('CLINMESH_MODEL_ADMISSION_REQUIRED')
+        delegated = !unselectedTasks.has(task) && await isDoctorDelegation(ctx, config, input.text, signal, {
+          upstreamOrigin: options.upstreamOrigin, secret, permit: inputPermit,
+          isCurrent: () => activeTasks.get(String(execution.agent!.session.id)) === task,
+          ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+        })
+      }
       catch { throw new Error('CLINMESH_DELEGATION_UNCONFIRMED: 未能核实本次代问意图，尚未执行；请明确说明追问范围。') }
       signal.throwIfAborted()
       if (activeTasks.get(String(execution.agent!.session.id)) !== task) throw new Error('CLINMESH_TASK_CHANGED')
@@ -482,7 +493,7 @@ export function installAgentProofBridge(ctx: Context, secret: string,
         if (doctorTasks.has(key)) throw new Error('The doctor task request is already registered')
         usedDelegations.set(permit.taskId, Date.parse(permit.expiresAt))
         const timer = setTimeout(() => doctorTasks.delete(key), Math.max(0, Date.parse(permit.expiresAt) - Date.now()))
-        doctorTasks.set(key, { permit, timer })
+        doctorTasks.set(key, { permit, token: body.permit, timer })
         notify()
         writeJson(response, 200, { data: { registered: true } })
       } catch { writeError(response, 409, 'DOCTOR_TASK_INVALID', 'The doctor task cannot be registered') }

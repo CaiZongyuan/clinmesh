@@ -40,7 +40,7 @@ Consultation 是病例级领域聚合，Consultation Record 保存 append-only �
 
 未回答的医生发言阻止追加下一条医生发言。检验报告 final 或更正时，系统追加引用固定 DiagnosticReport 版本的报告卡片；卡片不充当文本回答，不阻断正在生成的回答。回答执行按受信 Workspace/Epoch 与待回答医生轮次协调，ask、同键重发及重叠补答共同等待一次生成，各请求独立执行授权、输入冲突检查与自身回执。持久意图关联原回答尝试；相同 key 的成功回放优先返回已保存回答，失败或未知回放原终态，不重新推理。档案绑定缺失的 `CONSULTATION_CASE_NOT_FOUND`（404）与旧版档案的 `CONSULTATION_PERSONA_OUTDATED`（409）同样保存并保留原分类重放；恢复有效档案绑定后，仍须明确使用新补答意图。公开 Command 回执仍按原 operation 和幂等键查询；已接受而尚未完成的回执为 `executing`，包含已保存发言。
 
-病例 `consultation.replyAttempt` 返回医生轮次、开始与截止时间、`executing`、`succeeded`、`failed` 或 `unknown` 及安全错误码。客户端刷新病例和原回执后，在原尝试仍执行时继续等待；新 retry key 也加入原尝试，不切模型或延长期限。原尝试终止且问题仍待答时，只有医生明确的新补答意图与新 key 才开始采用当前模型的新尝试，不重新提交医生问题。页面或 HTTP 断开不取消已接受的回答；runtime 关闭主动取消并等待执行收束，重启把遗留执行标为未知且不自动补答。`AI_TIMEOUT` 和 `CONSULTATION_REPLY_UNKNOWN` 表示无法确认完整结果；原成功回答及回执继续可重放。持久归属见[模型执行恢复](storage.md#模型执行恢复)，理由见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
+病例 `consultation.replyAttempt` 返回医生轮次、开始与截止时间、`executing`、`blocked`、`succeeded`、`failed` 或 `unknown` 及安全错误码。控制或账本阻塞返回 `MODEL_CONTROL_BLOCKED`（409）并保留已保存问题；恢复后仅在原期限内、授权和病例仍有效时接续。客户端刷新病例和原回执后，在原尝试仍执行或等待控制时继续等待；新 retry key 也加入原尝试，不切模型或延长期限。原尝试终止且问题仍待答时，只有医生明确的新补答意图与新 key 才开始采用当前模型的新尝试，不重新提交医生问题。页面或 HTTP 断开不取消已接受的回答；runtime 关闭主动取消并等待执行收束，重启把已派发而结果不明的遗留执行标为未知且不自动补答，明确未派发的有效待办保留原期限恢复。`AI_TIMEOUT` 和 `CONSULTATION_REPLY_UNKNOWN` 表示无法确认完整结果；原成功回答及回执继续可重放。持久归属见[模型执行恢复](storage.md#模型执行恢复)，理由见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
 
 复诊延续同一条对话；完诊只读。Reset 重放保留病例与档案事实，重新生成的措辞可以不同。Canonical hash 的覆盖范围与限制见[确定性与故障注入](simulation.md#104-确定性与故障注入)。
 
@@ -78,7 +78,7 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 建议按资料筛选、目录筛选、生成和核验的稳定计划保存私有成功步骤；后段技术失败或重启恢复只处理未完成单元。同一阶段批次含首次最多三次真实模型请求，同一 generation 的所有批次合计最多四次额外请求；限流重发、格式修复、自动恢复和人工继续共享派发前原子预占的持久计数。任一上限耗尽即停止所有新派发，outbox 重新领取不增加额度。明确可恢复技术失败在剩余额度内恢复；已发出但未获得完整结果的超时、断流、关停及无法证明未派发的崩溃窗口为未知，保留次数且不自动重发。
 
-普通 `refresh:false` 请求遇到同输入失败、未知或耗尽时返回原任务；`continueGeneration` 与 `refresh:false` 表示医生明确继续原任务，保留原模型、generation、成功步骤与剩余额度，同一继续意图重放不再次开放未知单元。`refresh:true` 是人工重新生成，采用当前资料、当前模型和新 generation 额度，与继续互斥。公开 `recovery` 返回阶段状态、累计次数、上限与 `canContinue`，未知和耗尽分别以 `MODEL_OUTCOME_UNKNOWN`、`MODEL_REQUEST_LIMIT` 说明。次数仅限制 ClinMesh 可观察请求，不是 Token、金额或供应商费用账本；DSH 原生会话和宿主内部不可见重试不在此范围。持久化见[模型执行恢复](storage.md#模型执行恢复)，取舍见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
+普通 `refresh:false` 请求遇到同输入失败、未知或耗尽时返回原任务；`continueGeneration` 与 `refresh:false` 表示医生明确继续原任务，保留原模型、generation、成功步骤与剩余额度，同一继续意图重放不再次授权。关闭自动重试后，医生仍可明确继续一个未完成步骤；待办因禁止重试而暂停时也可提供继续入口，停用、额度、权限和原次数上限继续生效。`refresh:true` 是人工重新生成，采用当前资料、当前模型和新 generation 额度，与继续互斥。公开 `recovery` 返回阶段状态、累计次数、上限与 `canContinue`，未知和耗尽分别以 `MODEL_OUTCOME_UNKNOWN`、`MODEL_REQUEST_LIMIT` 说明。次数仅限制 ClinMesh 可观察请求，不是 Token、金额或供应商费用账本；DSH 原生会话和宿主内部不可见重试不在此范围。持久化见[模型执行恢复](storage.md#模型执行恢复)，取舍见[请求复用与持久恢复决策](../decisions/implemented/architecture/2026-10-19-model-request-reuse-recovery.md)。
 
 可采纳候选先按真实目录固定名称、编码和所选检查来源，再由独立请求核对最终条目的条款支持、病例支持、适用性与限定语，核验后不替换临床身份；全部必要核验完成前候选只保存在私有步骤，合法否定结论正常结束，不触发格式修复或重做候选直至通过。处方进一步核对所选本院药品的实际规格与每个字段依据，无法证实的字段保持 `null`；目录默认值与允许值只用于执行映射。
 

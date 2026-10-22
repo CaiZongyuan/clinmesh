@@ -69,7 +69,7 @@ export function apply(ctx: Context, config: unknown): void {
     }),
     'clinmesh-dsh-web: application proxy',
   )
-  if (parsed.bridgeSecret !== undefined) installAgentProofBridge(ctx, parsed.bridgeSecret)
+  if (parsed.bridgeSecret !== undefined) installAgentProofBridge(ctx, parsed.bridgeSecret, { upstreamOrigin: parsed.upstreamOrigin })
   if (parsed.bridgeSecret !== undefined) {
     const secret = parsed.bridgeSecret
     ctx.inject(['llm', 'agentDefaultModel'], child => {

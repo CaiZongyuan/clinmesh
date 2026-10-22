@@ -14,11 +14,11 @@ import TokenMeter from '@deepseek-ai/dsh-token-meter'
 import Tools from '@deepseek-ai/dsh-tools'
 import UserQuestions, { UserQuestionError } from '@deepseek-ai/dsh-user-questions'
 import * as AskUser from '@deepseek-ai/dsh-tool-ask-user'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { installAgentProofBridge } from './agent-proof-bridge.ts'
 import { parseAgentExecutionProof } from './execution-proof.ts'
-import { doctorInputPermit } from './doctor-input-fixture.ts'
+import { doctorInputPermit, syntheticHostUsageControl } from './doctor-input-fixture.ts'
 import * as ClinMeshHost from './index.ts'
 import { doctorRecordingSourceProofPayloadSchema } from '@clinmesh/contracts/agent'
 
@@ -198,7 +198,7 @@ it.each(['input-first', 'permit-first', 'completed-first'] as const)('proves nat
     for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     const browser = browserChannel(ctx)
-    installAgentProofBridge(ctx, secret)
+    installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
     browser.publish(record, true)
     class NoToolModel extends LlmAdapter {
       override async resolveModel(provider: string, model: string) { return { provider, id: model, name: model } }
@@ -241,6 +241,7 @@ it('accepts a new explicit delegation from native assistant chat without a separ
   let browser: ReturnType<typeof browserChannel> | undefined
   const text = '替我问清起病时间和加重因素，问完告诉我。'
   const secret = 'synthetic-host-secret-with-at-least-32-characters'
+  const controlTransport = vi.spyOn(globalThis, 'fetch').mockImplementation(syntheticHostUsageControl.fetch)
   try {
     for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
@@ -280,7 +281,7 @@ it('accepts a new explicit delegation from native assistant chat without a separ
       delegationInputHash: createHash('sha256').update(text).digest('hex'),
     })
     expect((await browser.post('/clinmesh-doctor-task', { permit: doctorTaskPermit(text, 'explicit-chat-delegation', 'native-chat-rpc') })).status).toBe(409)
-  } finally { await browser?.drain(); await ctx.fiber.dispose() }
+  } finally { controlTransport.mockRestore(); await browser?.drain(); await ctx.fiber.dispose() }
 })
 
 it.each([
@@ -301,7 +302,7 @@ it.each([
     for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
-    installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', { handoffTimeoutMs: 100 })
+    installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', { handoffTimeoutMs: 100, ...syntheticHostUsageControl })
     browser.publish(consultation, true)
     const sessionId = 'chat-negative-' + crypto.randomUUID()
     if (admitted) expect((await browser.post('/clinmesh-doctor-task', { permit: doctorTaskPermit(text, sessionId) })).status).toBe(200)
@@ -338,7 +339,7 @@ it('waits for a matching native input admission that arrives after tool generati
     for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
-    installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters')
+    installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', syntheticHostUsageControl)
     browser.publish(consultation, true)
     const channel = browser
     class LateAdmissionModel extends LlmAdapter {
@@ -373,7 +374,7 @@ it('rejects hospital writes when the delegation decision cites text outside the 
     for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
-    installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters')
+    installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', syntheticHostUsageControl)
     browser.publish(firstVisit, true)
     expect((await browser.post('/clinmesh-doctor-task', { permit: doctorTaskPermit(text, sessionId, 'delegate-rpc', firstVisit) })).status).toBe(200)
     class InvalidDecisionModel extends LlmAdapter {
@@ -404,7 +405,7 @@ it.each(['marker', 'receipt', 'http', 'data-marker'] as const)(
       for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
       await ctx.plugin(AgentLoop, { agents: [] })
       browser = browserChannel(ctx, { uncertainAsk })
-      installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters')
+      installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', syntheticHostUsageControl)
       browser.publish(consultation, true)
       class ReplayingModel extends LlmAdapter {
         steps = 0
@@ -438,7 +439,7 @@ it('binds a native doctor read to its human input and original request after a r
     for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
-    installAgentProofBridge(ctx, secret)
+    installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
     browser.publish(record, true)
     const channel = browser
     class UpdatedReadModel extends LlmAdapter {
@@ -479,7 +480,7 @@ it('recovers a rejected question through an unbound read before asking exactly o
     for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
-    installAgentProofBridge(ctx, secret)
+    installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
     browser.publish(consultation, true)
     class RecoveringModel extends LlmAdapter {
       steps = 0
@@ -550,7 +551,7 @@ it('selects from an empty doctor page but requires a new human task before readi
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
     const secret = 'synthetic-host-secret-with-at-least-32-characters'
-    installAgentProofBridge(ctx, secret)
+    installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
     browser.publish(emptyDoctor)
     class SelectCaseModel extends LlmAdapter {
       steps = 0
@@ -593,7 +594,7 @@ it('keeps the original native task and call during one read proof recovery', asy
     for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx, { recoverRead: true })
-    installAgentProofBridge(ctx, secret)
+    installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
     browser.publish(record, true)
     class RecoverReadModel extends LlmAdapter {
       steps = 0
@@ -646,7 +647,7 @@ it.each([
     for (const plugin of [Sessions, SessionProjections, Llm, TokenMeter, Tools, SystemPrompt, Agents]) await ctx.plugin(plugin)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
-    installAgentProofBridge(ctx, secret, { handoffTimeoutMs: 100 })
+    installAgentProofBridge(ctx, secret, { handoffTimeoutMs: 100, ...syntheticHostUsageControl })
     browser.publish(mismatch === 'catalog' || mismatch?.startsWith('section') ? record : consultation, true)
     const channel = browser
     let inject = () => {}
@@ -725,7 +726,7 @@ it('preserves the original delegation for an actual continued user-question repl
       throw new UserQuestionError('Synthetic foreground question continued', 'ASK_TIMED_OUT')
     })
     browser = browserChannel(ctx)
-    installAgentProofBridge(ctx, secret)
+    installAgentProofBridge(ctx, secret, syntheticHostUsageControl)
     browser.publish(consultation, true)
     let answer = () => {}
     class ClarifyingModel extends LlmAdapter {
@@ -773,7 +774,7 @@ it('uses settled section and draft catalogs for every next native request in one
     await ctx.plugin(Agents)
     await ctx.plugin(AgentLoop, { agents: [] })
     browser = browserChannel(ctx)
-    installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters')
+    installAgentProofBridge(ctx, 'synthetic-host-secret-with-at-least-32-characters', syntheticHostUsageControl)
     browser.publish(record)
     const model = new OneTurnModel()
     ctx.llm.registerAdapter(['scripted'], model)

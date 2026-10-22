@@ -961,11 +961,12 @@ export const consultationReplyErrorCodeSchema = z.enum([
   'AI_AUTH_FAILED', 'AI_REQUEST_FAILED', 'AI_REQUEST_TOO_LARGE', 'AI_RESPONSE_INVALID',
   'AI_RESPONSE_TOO_LARGE', 'AI_TIMEOUT', 'CONSULTATION_REPLY_UNAVAILABLE', 'CONSULTATION_REPLY_UNKNOWN',
   'CONSULTATION_CASE_NOT_FOUND', 'CONSULTATION_PERSONA_OUTDATED',
+  'MODEL_CONTROL_BLOCKED',
 ])
 
 export const consultationReplyAttemptSchema = z.object({
   doctorTurnId: z.string().min(1),
-  status: z.enum(['executing', 'succeeded', 'failed', 'unknown']),
+  status: z.enum(['executing', 'succeeded', 'failed', 'unknown', 'blocked']),
   startedAt: z.iso.datetime(),
   deadlineAt: z.iso.datetime(),
   errorCode: consultationReplyErrorCodeSchema.optional(),
@@ -1067,7 +1068,7 @@ export const consultationHistoryAdditionSchema = z.object({
 
 export const consultationRecordingErrorCodeSchema = z.enum([
   'AI_AUTH_FAILED', 'AI_REQUEST_FAILED', 'AI_REQUEST_TOO_LARGE', 'AI_RESPONSE_INVALID',
-  'AI_RESPONSE_TOO_LARGE', 'AI_TIMEOUT', 'CONSULTATION_RECORDING_FAILED',
+  'AI_RESPONSE_TOO_LARGE', 'AI_TIMEOUT', 'MODEL_OUTCOME_UNKNOWN', 'CONSULTATION_RECORDING_FAILED',
   'CONSULTATION_RECORDING_OUTPUT_INVALID', 'CONSULTATION_RECORDING_SOURCE_INVALID',
   'CONSULTATION_RECORDING_NOT_EDITABLE', 'CONSULTATION_RECORDING_CONTEXT_INACTIVE',
 ])

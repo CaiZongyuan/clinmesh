@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 嵌套 SQLite transaction 的内层 catch 写入仍属于外层事务；外层抛错时，拒绝原因等诊断记录也会回滚。需要保留拒绝证据时，在最外层准入回滚后写入，并从公开控制接口验证最近拒绝原因；不要只断言 HTTP 错误码。回归入口见[Host 用量测试](../../apps/server/tests/model-usage-host.test.ts)。
+
 - 构造门诊号迁移的旧库 fixture 时，使用真实 CommandExecutor 生成审计和初始 FHIR 历史；仅手写合法业务行、伪造 audit hash 或漏掉 AuditEvent 投影会被发行历史证明拒绝。业务行最大号是下界，不能用它修复缺失发号状态；旧 reset 的重放 effects 缺口与受控恢复退休边界见[发行完整性决策](../decisions/implemented/architecture/2026-10-20-registration-numbering-integrity.md)。
 
 - 新增迁移后，搜索回归中对“升级到当前版本”的 schema 数量断言，并使用 `expectedSchemaVersion()`，避免迁移成功却因旧数字失败。整合并行分支时，同时核对从历史 fixture 到当前目标的完整待执行文件列表；没有文本冲突的断言也可能遗漏另一分支新增的迁移。真正固定历史分支的 fixture 仍保留其历史迁移数量，不能一并改成当前目标；升级验证继续核对原业务行、回执、审计、来源和外键。
@@ -57,6 +59,8 @@
 - 首次自动草稿从无到有时，不能将其未涉及字段的空值当作清空指令；页面预填值与人工输入都须覆盖回归。验证保留后还要保存、刷新，并主动清空再保存，避免修复变成永久恢复默认值。当前病史边界由[增量记录决策](../decisions/implemented/architecture/2026-10-08-consultation-history-increments.md)拥有。
 
 - 校验持久后台任务的 Grant 时，覆盖同一业务结果的所有公开触发路径，尤其失败后的显式重试、暂停恢复和取消签署；不能只检查主入口操作权限。失效回归保留原 Grant 撤销后同一 Client 仍有其他有效 Grant 的场景，防止借用另一授权继续旧任务。 同岗位的不同后台任务可以共享身份基础校验，但保留各自操作白名单，避免为新任务放宽旧任务权限。
+
+- 后台任务回归需要第二位参与者时，建立真实的合成 User Account、活动 Workspace Membership 和岗位授权；只替换 context 的 Actor ID 会被持久身份校验拒绝。保留不同 Actor 使用同一幂等键的原断言，不为旧夹具放宽生产权限；示例见[DSH 模型集成测试](../../apps/server/tests/dsh-model-integration.test.ts)。
 
 - 自动创建草稿的预填回归须覆盖人工保存前刷新、首次进入已有自动草稿，以及保存后主动清空。页面基线和版本号都不能证明是否曾显式保存；当前持久依据见[病史增量决策](../decisions/implemented/architecture/2026-10-08-consultation-history-increments.md)。
 
@@ -135,6 +139,8 @@
 - 按内容哈希去重前，先用完整业务 schema 规范化有效候选；首尾空格和 JSON 字段顺序不能制造竞争替换。不合格候选仍参与共享目标冲突判断，不能为去重先过滤掉坏候选而破坏原子拒绝；自动记录的归属与回归由[增量记录决策](../decisions/implemented/architecture/2026-10-15-low-latency-document-recording.md)拥有。
 
 - 模型传输引用的编号差异不能直接当作业务内容差异；回归同时覆盖同来源重复原句、不同来源同文和多个无效编号，验证解码后的等价去重、来源独立性及失败归属。句子引用的当前规则由[句子引用决策](../decisions/implemented/architecture/2026-10-19-recording-sentence-references.md)拥有。
+
+- 测试包装实际模型 Provider 时必须透传 `supportsRequestControl` 与 `supportsUsageAccounting` 能力，或直接注入实际 Provider；只包装 `completeJson` 却转发底层 hook 会让兼容层和底层重复预占同一次请求。格式修复回归应同时断言请求次数与业务结果，避免误判为输出校验失败。
 
 ## 参考目录、Synthea 与影像素材
 

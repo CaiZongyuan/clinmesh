@@ -1,4 +1,6 @@
 import { ComponentCatalog } from './component-catalog.tsx'
+import { ModelUsageWorkspace } from './model-usage-workspace.tsx'
+import type { SessionContext } from '@clinmesh/contracts/his'
 import { Field, FieldTitle } from '@clinmesh/ui/components/field'
 import { ToggleGroup, ToggleGroupItem } from '@clinmesh/ui/components/toggle-group'
 import {
@@ -57,6 +59,7 @@ function FontSizeControl({
 
 interface SettingsWorkspaceProps {
   activeSection: SettingsSection
+  session: SessionContext
   fontSize: FontSizePreference
   locale: WorkspaceLocale
   onFontSizeChange: (fontSize: FontSizePreference) => void
@@ -67,6 +70,7 @@ interface SettingsWorkspaceProps {
 
 export function SettingsWorkspace({
   activeSection,
+  session,
   fontSize,
   locale,
   onFontSizeChange,
@@ -75,6 +79,11 @@ export function SettingsWorkspace({
   theme,
 }: SettingsWorkspaceProps): React.JSX.Element {
   const messages = getWorkspaceMessages(locale)
+
+  if (activeSection === 'modelUsage') {
+    return <ModelUsageWorkspace key={`${session.actor.workspaceId}:${session.actor.epoch}:${session.actor.practitionerRoleId}`}
+      locale={locale} session={session} />
+  }
 
   if (activeSection === 'uiComponents') {
     return <ComponentCatalog embedded locale={locale} />

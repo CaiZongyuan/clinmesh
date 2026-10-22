@@ -3,7 +3,8 @@ import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
 import { doctorRecommendationKindSchema, doctorRecommendationStateSchema, type DoctorRecommendationKind } from '@clinmesh/contracts/doctor-recommendations'
 import { ChatCompletionsError } from '../../server/src/infrastructure/ai/openai-chat-completions.ts'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
-import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
+import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
+import { setModelControl } from '../../server/tests/fixtures/model-control.ts'
 import { recommendationFixture } from './doctor-recommendations-fixture.ts'
 import { expect, test } from './fixtures.ts'
 
@@ -73,7 +74,7 @@ test('saving identical text preserves all five automatic preparations and their 
   } finally { await app.close() }
 })
 
-test('recovers a lost continuation response, exposes exhaustion, and explicitly regenerates with new quota', async ({ page, webRoot }) => {
+test('continues with automatic retries disabled despite a lost response, then enforces exhaustion and explicit regeneration', async ({ page, webRoot }) => {
   const app = await startApp(webRoot, 'unknown')
   let releaseVerification = () => {}
   const verificationGate = new Promise<void>(resolve => { releaseVerification = resolve })
@@ -94,6 +95,8 @@ test('recovers a lost continuation response, exposes exhaustion, and explicitly 
     await expect(panel.getByText(/上次请求结果未知/)).toBeVisible()
     expect((await read()).items).toEqual([])
     expect(diagnosisCalls()).toEqual(['doctor_recommendations', 'doctor_recommendation_verification'])
+    const admin = await signIn(app.runtime, 'admin@demo.clinmesh.local', app.password, app.origin)
+    await setModelControl(app.runtime, admin, { enabled: true, requests: null, automaticRetries: false }, app.origin)
     app.setMode('success')
     app.setVerificationGate(verificationGate)
     let lostResponse = false
@@ -120,6 +123,7 @@ test('recovers a lost continuation response, exposes exhaustion, and explicitly 
     await expect(panel.getByRole('button', { name: /^确认选中诊断/ })).toBeEnabled()
     expect(await read()).toMatchObject({ generation: 1, status: 'ready', recovery: { requestCount: 3 } })
     expect(diagnosisCalls()).toEqual(['doctor_recommendations', 'doctor_recommendation_verification', 'doctor_recommendation_verification'])
+    await setModelControl(app.runtime, admin, { enabled: true, requests: null, automaticRetries: true }, app.origin)
     app.setMode('exhausted')
     await panel.getByRole('button', { name: '刷新', exact: true }).click()
     await expect(panel.getByText(/本次任务的请求次数已用完/)).toBeVisible()

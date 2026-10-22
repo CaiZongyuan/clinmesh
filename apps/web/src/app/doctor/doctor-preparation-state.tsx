@@ -88,7 +88,8 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
     && ['pending', 'ready', 'missing-evidence'].includes(state.status)
   const error = query.error ?? (generation.variables?.identity === identity && generation.variables.viewRevision === viewRevision
     && !continuationObserved ? generation.error : null)
-  const pending = enabled && (settling || query.isPending || query.isFetching || generating || state?.status === 'pending')
+  const pending = enabled && (settling || query.isPending || query.isFetching || generating
+    || state?.status === 'pending' && !state.recovery?.canContinue)
   return { state, previous, pending, error, paused,
     ready: enabled && !paused && !pending && !query.isFetching && error === null && state?.status === 'ready' && !state.stale,
     refresh: () => { if (!paused && !settling && state !== undefined) generation.mutate({ state, refresh: true, identity, viewRevision }) },

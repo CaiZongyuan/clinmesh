@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { modelUsageControlFailure } from './model-usage-control.ts'
+import { modelTaskOutcomeUnknown } from './model-task-recovery.ts'
 import {
   patientPersonaContentSchema,
   patientPersonaJobSchema,
@@ -199,18 +201,22 @@ function assertNoDiagnosisLeak(
 }
 
 export async function generatePatientPersona(input: {
+  usageContext?: import('@clinmesh/contracts/model-usage').ModelUsageContext
   hiddenResources: PersonaResource[]
   model: string
   payload: unknown
   provider: JsonChatCompletionsProvider
   signal?: AbortSignal
+  onBeforeRequest?: () => void
   visibleResources: PersonaResource[]
 }) {
   const completion = await input.provider.completeJson({
+    ...(input.usageContext === undefined ? {} : { usageContext: input.usageContext }),
     jsonSchema: z.toJSONSchema(patientPersonaContentSchema) as Record<string, unknown>,
     model: input.model,
     schemaName: 'patient_persona',
     ...(input.signal === undefined ? {} : { signal: input.signal }),
+    ...(input.onBeforeRequest === undefined ? {} : { onBeforeRequest: input.onBeforeRequest }),
     systemPrompt,
     userPayload: input.payload,
     validate: value => patientPersonaContentSchema.safeParse(value).success,
@@ -231,6 +237,8 @@ const manualPromptVersion = 'patient-persona-manual-edit-v1'
 const manualPromptHash = canonicalJsonHash({ promptVersion: manualPromptVersion })
 
 export class PatientPersonaService {
+  readonly #canResume: ((workspaceId: string, taskId: string) => boolean) | undefined
+  readonly #contextStatus: (context: ActorContext) => string
   readonly #briefs: PatientPersonaRepository
   readonly #cases: SyntheticCaseRepository
   readonly #commands: CommandExecutor
@@ -240,6 +248,8 @@ export class PatientPersonaService {
   readonly #provider: JsonChatCompletionsProvider | undefined
 
   constructor(input: {
+    canResume?: (workspaceId: string, taskId: string) => boolean
+    contextStatus?: (context: ActorContext) => string
     briefs: PatientPersonaRepository
     cases: SyntheticCaseRepository
     commands: CommandExecutor
@@ -248,6 +258,8 @@ export class PatientPersonaService {
     profiles: SyntheticPatientProfileRepository
     provider?: JsonChatCompletionsProvider
   }) {
+    this.#canResume = input.canResume
+    this.#contextStatus = input.contextStatus ?? (() => 'active')
     this.#briefs = input.briefs
     this.#cases = input.cases
     this.#commands = input.commands
@@ -430,18 +442,26 @@ export class PatientPersonaService {
   }
 
   async processNext(signal?: AbortSignal): Promise<PatientPersonaJob | undefined> {
-    const claimed = this.#briefs.claimNext(new Date().toISOString())
+    const claimed = this.#briefs.claimNext(new Date().toISOString(), this.#canResume)
     if (claimed === undefined) return undefined
     if (this.#provider === undefined) return this.#fail(claimed, {
       code: 'PROVIDER_NOT_AVAILABLE',
       message: 'Patient Persona generation is not configured',
     })
+    const assertCurrent = () => {
+      if (this.#contextStatus(claimed.actorContext) !== 'active') throw new PatientPersonaError('ROLE_NOT_ALLOWED', 'The original task context is no longer active')
+    }
     try {
+      assertCurrent()
       const generation = this.#generationInput({
         caseId: claimed.caseId,
         workspaceId: claimed.workspaceId,
       })
       const generated = await generatePatientPersona({
+        usageContext: { workspaceId: claimed.workspaceId, epoch: claimed.actorContext.epoch,
+          actorId: claimed.actorContext.actorId, taskId: claimed.jobId, stage: 'persona', trigger: 'manual',
+          sources: [{ kind: 'case', id: claimed.caseId, relationship: 'trigger' }, { kind: 'job', id: claimed.jobId, relationship: 'trigger' }] },
+        onBeforeRequest: assertCurrent,
         hiddenResources: generation.hiddenResources,
         model: claimed.model,
         payload: generation.payload,
@@ -449,6 +469,7 @@ export class PatientPersonaService {
         ...(signal === undefined ? {} : { signal }),
         visibleResources: generation.visibleResources,
       })
+      assertCurrent()
       return this.#commands.execute({
         context: claimed.actorContext,
         contextRequirement: 'known',
@@ -476,7 +497,10 @@ export class PatientPersonaService {
         }
       }).data
     } catch (error) {
-      if (signal?.aborted === true) {
+      if (modelTaskOutcomeUnknown(error)) return this.#fail(claimed, {
+        code: 'MODEL_OUTCOME_UNKNOWN', message: 'The model request outcome is unknown; automatic processing has stopped',
+      })
+      if (modelUsageControlFailure(error) !== undefined || signal?.aborted === true) {
         return this.#commands.execute({
           context: claimed.actorContext,
           contextRequirement: 'known',

@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { parseEnv } from 'node:util'
 import { z } from 'zod'
+import { modelUsagePolicyConfigSchema, type ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
+import { modelPricingConfigSchema, type ModelPricingConfig } from '@clinmesh/contracts/model-pricing'
 
 export const guidelineNonCommercialUseSchema = z.enum(['true', 'false']).default('false').transform(value => value === 'true')
 
@@ -11,6 +13,8 @@ const httpUrlSchema = z.url().refine((value) => {
 }, 'URL must use HTTP or HTTPS')
 
 const serverEnvironmentSchema = z.object({
+  CLINMESH_MODEL_CONTROL_PATH: z.string().trim().min(1).optional(),
+  CLINMESH_MODEL_PRICING_PATH: z.string().trim().min(1).optional(),
   CLINMESH_AI_API_KEY: z.string().min(1).optional(),
   CLINMESH_AI_SOURCE: z.enum(['openai', 'dsh']).default('openai'),
   CLINMESH_DSH_MODEL_ORIGIN: z.url().refine(value => {
@@ -76,6 +80,8 @@ const serverEnvironmentSchema = z.object({
 })
 
 export interface ServerConfig {
+  modelUsageControl?: ModelUsagePolicyConfig
+  modelPricing?: ModelPricingConfig
   consultationRecordingModel?: string
   dshModelBridge?: { origin: string; secret: string; timeoutMs: number; maxResponseBytes: number }
   ai?: {
@@ -165,6 +171,8 @@ export function readServerEnvironment(
   const environmentDirectory = dirname(environmentFile)
   for (const name of [
     'CLINMESH_DATABASE_PATH',
+    'CLINMESH_MODEL_CONTROL_PATH',
+    'CLINMESH_MODEL_PRICING_PATH',
     'CLINMESH_GUIDELINE_DATABASE_PATH',
     'CLINMESH_IMAGING_ASSET_DIRECTORY',
     'CLINMESH_IMAGING_CATALOG_DIRECTORY',
@@ -200,6 +208,12 @@ export function readServerConfig(
     : parsed.CLINMESH_TRUSTED_ORIGINS.split(',').map(origin => z.url().parse(origin.trim()))
 
   return {
+    ...(parsed.CLINMESH_MODEL_PRICING_PATH === undefined ? {} : {
+      modelPricing: modelPricingConfigSchema.parse(JSON.parse(readFileSync(resolve(startDirectory, parsed.CLINMESH_MODEL_PRICING_PATH), 'utf8'))),
+    }),
+    ...(parsed.CLINMESH_MODEL_CONTROL_PATH === undefined ? {} : {
+      modelUsageControl: modelUsagePolicyConfigSchema.parse(JSON.parse(readFileSync(resolve(startDirectory, parsed.CLINMESH_MODEL_CONTROL_PATH), 'utf8'))),
+    }),
     ...(parsed.CLINMESH_AI_RECORDING_MODEL === undefined ? {} : { consultationRecordingModel: parsed.CLINMESH_AI_RECORDING_MODEL }),
     ...(parsed.CLINMESH_AI_SOURCE === 'dsh' ? {
       dshModelBridge: {

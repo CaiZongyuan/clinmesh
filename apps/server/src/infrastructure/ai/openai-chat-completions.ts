@@ -1,5 +1,7 @@
 import { z } from 'zod'
 import { fromMarkdown } from 'mdast-util-from-markdown'
+import { modelUsageOutcomeSchema, unknownModelTokenUsage, type ModelUsageContext, type ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
+import type { ModelUsageRecorder } from '../../application/model-usage-lifecycle.ts'
 
 const providerMessageSchema = z.object({
   content: z.string().nullable().optional(),
@@ -56,7 +58,7 @@ export class StructuredOutputValidationError extends Error {
 
 /** Control failures must never become provider retry or format-repair failures. */
 export class ChatCompletionRequestControlError extends Error {
-  constructor(cause: unknown) {
+  constructor(cause: unknown, readonly requestKind?: 'initial' | 'format-repair' | 'rate-limit-retry') {
     super('The model request was stopped by its execution control', { cause })
     this.name = 'ChatCompletionRequestControlError'
   }
@@ -66,10 +68,68 @@ export function invokeChatCompletionRequestControl(hook: (() => void) | undefine
   try { hook?.() } catch (cause) { throw new ChatCompletionRequestControlError(cause) }
 }
 
+/** The ledger and the existing task gate share the recorder's reservation transaction. */
+export function beginChatCompletionUsage(input: Pick<JsonChatCompletionInput, 'usageContext' | 'usageRecorder' | 'onBeforeRequest' | 'onBeforeUsageRequest' | 'schemaName' | 'hasManualRetryAuthorization'>,
+  metadata: Omit<Parameters<ModelUsageRecorder['begin']>[0], 'context' | 'feature' | 'hasManualRetryAuthorization'>): string | undefined {
+  try {
+    const reserve = () => { input.onBeforeUsageRequest?.({ kind: metadata.kind }); input.onBeforeRequest?.() }
+    if (input.usageRecorder === undefined) { reserve(); return undefined }
+    if (input.usageContext === undefined) throw new Error('Trusted model usage context is required')
+    return input.usageRecorder.begin({ ...metadata, context: input.usageContext, feature: input.schemaName,
+      ...(input.hasManualRetryAuthorization === undefined ? {} : { hasManualRetryAuthorization: input.hasManualRetryAuthorization }) }, reserve)
+  } catch (cause) { throw new ChatCompletionRequestControlError(cause, metadata.kind) }
+}
+
+export function settleChatCompletionUsage(input: Pick<JsonChatCompletionInput, 'usageRecorder'>, attemptId: string | undefined,
+  outcome: ModelUsageOutcome): void {
+  if (attemptId === undefined) return
+  invokeChatCompletionRequestControl(() => input.usageRecorder!.settle(attemptId, outcome))
+}
+
+const usageCount = z.number().int().nonnegative().safe()
+const openAIUsageSchema = z.object({
+  prompt_tokens: usageCount.optional(), completion_tokens: usageCount.optional(), total_tokens: usageCount.optional(),
+  prompt_tokens_details: z.object({ cached_tokens: usageCount.optional() }).optional(),
+  completion_tokens_details: z.object({ reasoning_tokens: usageCount.optional() }).optional(),
+  prompt_cache_hit_tokens: usageCount.optional(),
+})
+function openAIOutcome(response: Response, value: unknown): ModelUsageOutcome {
+  const metadata = z.object({ model: z.unknown().optional(), id: z.unknown().optional(), usage: z.unknown().optional() }).safeParse(value)
+  const usage = openAIUsageSchema.safeParse(metadata.success ? metadata.data.usage : undefined)
+  const actualModel = modelUsageOutcomeSchema.shape.actualModel.safeParse(metadata.success ? metadata.data.model : undefined)
+  const providerRequestId = modelUsageOutcomeSchema.shape.providerRequestId.safeParse(
+    response.headers.get('x-request-id') ?? response.headers.get('request-id') ?? (metadata.success ? metadata.data.id : undefined))
+  const counts = usage.success ? usage.data : undefined
+  const inputTokens = counts?.prompt_tokens ?? null
+  const outputTokens = counts?.completion_tokens ?? null
+  const cached = counts?.prompt_tokens_details?.cached_tokens ?? counts?.prompt_cache_hit_tokens ?? null
+  const reasoning = counts?.completion_tokens_details?.reasoning_tokens ?? null
+  const derivedTotal = inputTokens !== null && outputTokens !== null && Number.isSafeInteger(inputTokens + outputTokens) ? inputTokens + outputTokens : null
+  // A gateway timeout cannot prove that the upstream generation has stopped.
+  const status = response.status === 408 || response.status === 504 ? 'unknown' : response.ok ? 'succeeded' : 'failed'
+  return { status, dispatch: 'dispatched', httpStatus: response.status,
+    ...(actualModel.success && actualModel.data !== undefined ? { actualModel: actualModel.data } : {}),
+    ...(providerRequestId.success && providerRequestId.data !== undefined ? { providerRequestId: providerRequestId.data } : {}),
+    usage: counts === undefined ? unknownModelTokenUsage : { inputTokens, outputTokens,
+      totalTokens: counts.total_tokens === undefined ? derivedTotal : derivedTotal === null || counts.total_tokens === derivedTotal ? counts.total_tokens : null,
+      cachedInputTokens: cached !== null && (inputTokens === null || cached <= inputTokens) ? cached : null,
+      reasoningOutputTokens: reasoning !== null && (outputTokens === null || reasoning <= outputTokens) ? reasoning : null,
+      mapping: 'openai-v1', raw: { format: 'openai', promptTokens: inputTokens, completionTokens: outputTokens,
+        cachedPromptTokens: cached, reasoningCompletionTokens: reasoning, totalTokens: counts.total_tokens ?? null } },
+  }
+}
+
 export interface JsonChatCompletionInput {
+  usageContext?: ModelUsageContext
+  usageRecorder?: ModelUsageRecorder
+  usageKind?: Parameters<ModelUsageRecorder['begin']>[0]['kind']
+  /** Server-owned one-use authorization; never supplied by a model or HTTP body. */
+  hasManualRetryAuthorization?: () => boolean
   /** Synchronous, atomic reservation immediately before each actual completion fetch. */
   onBeforeRequest?: () => void
-  /** A complete transport outcome arrived; headers alone do not establish this. */
+  /** Owning task recovery keeps its original attempt envelope in the same admission transaction. */
+  onBeforeUsageRequest?: (metadata: { kind: 'initial' | 'format-repair' | 'rate-limit-retry' }) => void
+  /** A complete transport outcome arrived and its usage settlement committed, when accounting is enabled. */
   onRequestComplete?: () => void
   maxAttempts?: 1 | 2
   /** Serialized request limit, including schema and every format-repair prompt. */
@@ -92,6 +152,7 @@ export interface JsonChatCompletionResult {
 }
 
 export interface JsonChatCompletionsProvider {
+  readonly supportsUsageAccounting?: boolean
   /** True only when every real completion fetch invokes the request lifecycle hooks. */
   readonly supportsRequestControl?: boolean
   resolveModel?(model: string, signal?: AbortSignal): Promise<string>
@@ -142,6 +203,7 @@ function singleJsonCodeBlock(value: string): string | undefined {
 
 export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider {
   readonly supportsRequestControl = true
+  readonly supportsUsageAccounting = true
   readonly #apiKey: string
   readonly #endpoint: URL
   readonly #fetch: typeof fetch
@@ -198,6 +260,7 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
       ? timeoutSignal
       : AbortSignal.any([input.signal, timeoutSignal])
     let attempts = 0
+    const responseContents = new WeakMap<Response, string>()
     const request = async (payload: unknown): Promise<Response> => {
       if (attempts >= (input.maxAttempts ?? 3)) {
         throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'The structured response attempt budget was exhausted')
@@ -210,7 +273,13 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           'The AI request exceeds the configured size limit',
         )
       }
-      invokeChatCompletionRequestControl(input.onBeforeRequest)
+      if (signal.aborted) throw new ChatCompletionsError('AI_TIMEOUT', 'The AI provider request was cancelled or timed out')
+      const attemptId = beginChatCompletionUsage(input, { provider: this.#endpoint.hostname, model: input.model,
+        outputLimit: null, kind: attempts === 1 ? input.usageKind ?? 'initial' : 'format-repair',
+        // The response byte guard cannot bound provider output or hidden reasoning tokens.
+        reservationBoundary: { adapter: 'openai-chat', version: 'openai-chat-v1', inputTokens: null,
+          outputTokens: null, reason: 'output-limit-unbounded' } })
+      let settled = false
       try {
         const response = await this.#fetch(this.#endpoint, {
           body,
@@ -223,8 +292,21 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
           signal,
         })
         input.onResponse?.()
+        const content = await readBoundedResponse(response, this.#maxResponseBytes)
+        responseContents.set(response, content)
+        let value: unknown
+        try { value = JSON.parse(content) } catch { /* Only validated metadata reaches the ledger. */ }
+        const outcome = openAIOutcome(response, value)
+        settled = true
+        settleChatCompletionUsage(input, attemptId, outcome)
+        if (outcome.status !== 'unknown') invokeChatCompletionRequestControl(input.onRequestComplete)
         return response
       } catch (error) {
+        if (!settled) settleChatCompletionUsage(input, attemptId, {
+          status: input.signal?.aborted ? 'cancelled' : 'unknown', dispatch: 'unknown', usage: unknownModelTokenUsage,
+        })
+        if (error instanceof ChatCompletionRequestControlError) throw error
+        if (error instanceof ChatCompletionsError) throw error
         if (signal.aborted) {
           throw new ChatCompletionsError('AI_TIMEOUT', 'The AI provider request timed out', {
             cause: error,
@@ -240,15 +322,13 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
     try {
       const parseResponse = async (value: Response) => {
         if (!value.ok) {
-          invokeChatCompletionRequestControl(input.onRequestComplete)
           throw new ChatCompletionsError(
             'AI_REQUEST_FAILED',
             `The AI provider returned HTTP ${value.status}`,
             { httpStatus: value.status },
           )
         }
-        const content = await readBoundedResponse(value, this.#maxResponseBytes)
-        invokeChatCompletionRequestControl(input.onRequestComplete)
+        const content = responseContents.get(value)!
         return providerResponseSchema.parse(JSON.parse(content))
       }
       const structuredJsonContent = (path: string, parsed: z.infer<typeof providerResponseSchema>) => {
@@ -291,8 +371,6 @@ export class OpenAIChatCompletionsClient implements JsonChatCompletionsProvider 
         if (response.status === 400) {
           this.#jsonSchemaRejectedModels.add(input.model)
           console.warn(`[ai-chat-completions] model ${input.model} rejected the JSON-schema request with HTTP 400; skipping it for future calls`)
-          await response.body?.cancel()
-          invokeChatCompletionRequestControl(input.onRequestComplete)
         } else {
           parsed = await parseResponse(response)
           contentPath = 'JSON-schema request'
