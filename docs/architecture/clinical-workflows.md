@@ -235,7 +235,13 @@ InpatientPayments拥有首次封账前的追加预交金、出区补缴和退款
 
 费用与资金分别确认。冲减退款须同时满足本更正剩余额度、全账待退净额及本次成功原交易可退余额；补计补收须同时满足本更正剩余额度与全账待收净额，组合方式金额合计须一致。相反方向的未处理更正先抵消差额，未知资金继续预占。原交易的成功及未知退款统一扣减余额和原方式额度，不能换依据、原交易或幂等键重复退；后续成功补收也可成为新的原退款来源。拒绝保留尝试并释放预占，未知只开放原尝试结果查询，恢复追加确定结果，不重新收退。
 
-后续预览绑定当前账目指纹、原交易余额版本、金额、渠道规则及岗位上下文，真实时间五分钟过期，确认在共享 Command 写事务内重验。响应丢失先查原 receipt，沿用原输入和 key。当前 Workspace/Epoch 内的人类收费会话可在 active/completed Run 执行这些窄财务 Command，closed Run 与失效 Agent Grant 不开放新写，原临床 Command 仍要求 active。后续未知只使本调整待处理，首次完成、清床和归档不倒退；医保撤销重结算由后续待遇 owner 承接。理由见[首次冻结与后续更正分离](../decisions/implemented/architecture/2026-10-22-inpatient-financial-adjustments.md)。
+后续预览绑定当前账目指纹、原交易余额版本、金额、渠道规则及岗位上下文，真实时间五分钟过期，确认在共享 Command 写事务内重验。响应丢失先查原 receipt，沿用原输入和 key。当前 Workspace/Epoch 内的人类收费会话可在 active/completed Run 执行这些窄财务 Command，closed Run 与失效 Agent Grant 不开放新写，原临床 Command 仍要求 active。后续未知只使本调整待处理，首次完成、清床和归档不倒退。理由见[首次冻结与后续更正分离](../decisions/implemented/architecture/2026-10-22-inpatient-financial-adjustments.md)。
+
+##### 后续医保补偿与重结算
+
+已投保住院的后续财务更正由 `InpatientInsuranceAdjustments` 在共享 Command 内串联费用调整、原待遇补偿和新待遇。收费员在 `financial-adjustments/:adjustmentId/insurance/cancel|preview|confirm` 依次办理，路径绑定当前住院最新调整。补偿精确逆转当前待遇的原年度影响；替代预览沿用首次方案、覆盖规则与原年度，按原费用及全部追加调整重建来源，并读取患者该年度实时累计，其他就诊的影响继续保留。确认校验原预览、Actor、有效期、费用来源及原年度余额版本；任何变化均须重新审阅。原待遇、补偿、新待遇以独立引用保留，详情由财务读模型的 `insurance.cycles` 返回。
+
+投保住院每次只允许一个未完成更正；新待遇尚未有效时不开放资金差额收退。确认后患者应负担减当前净现金决定补收或退款，不以费用调整方向或金额限制医保现金差额。未知收退占用原交易或待收额度，查原尝试恢复，当前调整保持 `unknown`；确定拒绝保留尝试并允许重新审阅。当前 Epoch 的人类收费会话可在 completed Run 办理此窄更正，closed Run、失效 Agent 与其他岗位不开放新写。首次结算、出区、床位及病案归档保持冻结；设计理由见[后续医保更正决策](../decisions/implemented/architecture/2026-10-22-inpatient-insurance-adjustments.md)。
 
 #### 病案首页与归档
 

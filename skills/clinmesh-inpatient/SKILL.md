@@ -315,13 +315,13 @@ clinmesh command receipt get --operation-id inpatient.financial.payment.confirm 
 {"admissionId":"synthetic-admission","chargeId":"synthetic-charge","direction":"decrease","amountFen":2000,"expectedFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","reason":"合成床日费核对冲减"}
 ```
 
-`financial-refund.json` 使用当前冲减的 `adjustmentId`、成功原交易与其余额版本。退款同时受该依据剩余额度、全账待退净额和原款可退余额约束；成功/未知退款共享同一原交易及原方式余额，不能换原交易绕过依据额度：
+未投保住院的 `financial-refund.json` 使用当前冲减的 `adjustmentId`、成功原交易与其余额版本。退款同时受该依据剩余额度、全账待退净额和原款可退余额约束；成功/未知退款共享同一原交易及原方式余额，不能换原交易绕过依据额度。投保住院先完成下述医保更正，再按患者现金差额办理：
 
 ```json
 {"admissionId":"synthetic-admission","adjustmentId":"synthetic-adjustment","sourceKind":"inpatient-deposit","sourceId":"synthetic-payment","amountFen":2000,"expectedSourceVersion":1,"expectedFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","simulatorRule":"ambiguous"}
 ```
 
-`financial-payment.json` 只关联 `increase` 补计依据，以当前待收净差额为上限，组合 `tenders` 合计须等于金额；示例中的依据与指纹需替换为实际读取结果：
+未投保住院的 `financial-payment.json` 只关联 `increase` 补计依据，以当前待收净差额为上限，组合 `tenders` 合计须等于金额；示例中的依据与指纹需替换为实际读取结果：
 
 ```json
 {"admissionId":"synthetic-admission","adjustmentId":"synthetic-adjustment","amountFen":1500,"tenders":[{"method":"cash","amountFen":1000},{"method":"bank-card","amountFen":500}],"expectedFingerprint":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","simulatorRule":"ambiguous"}
@@ -343,4 +343,20 @@ clinmesh command receipt get --operation-id inpatient.financial.payment.confirm 
 {"admissionId":"synthetic-admission","paymentId":"synthetic-payment","expectedPaymentVersion":1}
 ```
 
-成功、拒绝、未知分别保留原尝试和追加查询结果；未知金额预占，不得重收重退。确定拒绝后可按最新依据和差额重新预览。相反方向费用更正先抵消未处理差额，未知资金仍待查明。后续调整不改写原费用、首次结算及归档快照，不恢复床位、不撤销出区或解档；后续未知只使该调整待处理，首次财务完成与清床归档不倒退。
+成功、拒绝、未知分别保留原尝试和追加查询结果；未知金额预占，不得重收重退。确定拒绝后可按最新依据和差额重新预览。未投保住院的相反方向费用更正先抵消未处理差额，未知资金仍待查明。后续调整不改写原费用、首次结算及归档快照，不恢复床位、不撤销出区或解档；后续未知只使该调整待处理，首次财务完成与清床归档不倒退。
+
+### 后续患者医保更正
+
+首次结算含医保时，每次只办理一个未完成财务更正。追加费用调整后，读取 `financial-adjustments.insurance`，核对 `original` 首次待遇、当前 `active`、原年度 `balance` 和 `cycles` 的原待遇／补偿／新待遇引用。先补偿当前有效待遇，再按更正后权威费用、原年度及原方案预览并确认；不能通过普通 `insurance cancel/confirm` 绕开首次封账。
+
+```bash
+clinmesh inpatient financial-insurance cancel --input @insurance-compensation.json --idempotency-key <key>
+clinmesh inpatient financial-insurance preview --input @insurance-correction-preview.json --idempotency-key <key>
+clinmesh inpatient financial-insurance confirm --input @insurance-correction-confirm.json --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.financial.insurance.cancel --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.financial.insurance.confirm --idempotency-key <key>
+```
+
+三个输入均带 `admissionId/adjustmentId`。补偿另传当前 `settlementId/expectedBalanceVersion/expectedFingerprint`；预览传当前 `expectedFingerprint`；确认只传原预览的 `previewId/commitToken`。输入不接受患者、年度、方案或自行计算的费用。补偿恢复原待遇的精确影响，后来其他就诊的账户与统筹累计继续保留。跨年仍修正原待遇年度。
+
+原年度余额或更正费用变化导致 `INPATIENT_INSURANCE_PREVIEW_STALE` 时，重新读取并审阅新预览，保留原失败结果，不自动替换金额确认。响应丢失先查原 Command receipt，保持原输入和幂等键。`insurance.ready` 后，按 `remainingCollectFen/remainingRefundFen` 使用现有后续收退款命令；医保患者现金差额不受费用更正方向或金额限制，例如冲减费用后，其他就诊占用账户仍可产生补收。未知收退只使当前更正 `unknown`，查原尝试恢复后才可开始下一次更正。
