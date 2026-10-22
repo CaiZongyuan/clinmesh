@@ -177,6 +177,7 @@ describe('createDshDevelopmentPlan', () => {
           DSHVM_BIN_DIR: paths.binDir,
           DSH_HOME: paths.dshHome,
           CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value',
+          CLINMESH_DSH_UPSTREAM_ORIGIN: 'http://127.0.0.1:51869',
         },
         output: { prefix: '[DSH]' },
       },
@@ -195,6 +196,7 @@ describe('createDshDevelopmentPlan', () => {
 
     const server = plan.processes[0]!
     expect(server.environment).toEqual({ CLINMESH_TRUSTED_ORIGINS: 'http://127.0.0.1:51868,http://127.0.0.1:3080', CLINMESH_AI_SOURCE: 'dsh', CLINMESH_DSH_MODEL_ORIGIN: 'http://127.0.0.1:3080', CLINMESH_DSH_BRIDGE_SECRET: 'bridge-secret-value' })
+    expect(plan.processes[1]!.environment.CLINMESH_DSH_UPSTREAM_ORIGIN).toBe('http://127.0.0.1:51868')
   })
 })
 
