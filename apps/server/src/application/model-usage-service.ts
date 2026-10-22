@@ -320,6 +320,12 @@ export class ModelUsageService implements ModelUsageRecorder {
           SELECT 1 FROM outpatient_case_responsibility r WHERE r.workspace_id = a.workspace_id
           AND r.epoch = a.epoch AND r.case_id = a.case_id AND r.practitioner_role_id = ?)`)
         args.push(context.practitionerRoleId)
+      } else if ((context.roleCode === 'inpatient-doctor' || context.roleCode === 'ward-nurse')
+        && context.organizationId !== undefined && context.locationId !== undefined) {
+        clauses.push(`a.feature IN ('investigation_result', 'investigation_service_result') AND EXISTS (
+          SELECT 1 FROM inpatient_admission r WHERE r.workspace_id = a.workspace_id
+          AND r.epoch = a.epoch AND r.admission_id = a.case_id AND r.organization_id = ? AND r.ward_id = ?)`)
+        args.push(context.organizationId, context.locationId)
       } else clauses.push('0 = 1')
     }
     if (filter.from !== undefined) { clauses.push('a.started_at >= ?'); args.push(new Date(`${filter.from}T00:00:00.000+08:00`).toISOString()) }

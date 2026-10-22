@@ -4,7 +4,12 @@ import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { afterEach, expect, it } from 'vitest'
+import { z } from 'zod'
 import { modelUsageControlSchema, modelUsageListSchema, modelUsageOverviewSchema, unknownModelTokenUsage, type ModelTokenUsage } from '@clinmesh/contracts/model-usage'
+import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
+import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { OpenAIChatCompletionsClient } from '../src/infrastructure/ai/openai-chat-completions.ts'
 import { persona, signIn, startConsultationCase, StubSyntheaProvider } from './fixtures/consultation.ts'
@@ -12,6 +17,7 @@ import { WorkspaceRepository } from '../src/infrastructure/sqlite/workspace-repo
 import { createModelBridgeHandler } from '../../dsh-web/src/model-bridge.ts'
 import { encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
 import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
+import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 
 const dispose: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of dispose.splice(0).reverse()) await close() })
@@ -218,6 +224,88 @@ it('uses current case responsibility for details and isolates every query from o
   const overview = modelUsageOverviewSchema.parse(await (await runtime.app.request('/api/model-usage/overview', { headers: { cookie: doctor } })).json())
   expect(overview.totals.requests).toBe(2)
   expect((await runtime.app.request(`/api/model-usage/requests/${foreign.id}`, { headers: { cookie: admin } })).status).toBe(404)
+})
+
+it('按当前住院科室和病区授权模型明细，岗位切换和 Epoch 重置立即撤销访问', async () => {
+  const generated = { conclusion: '合成检查结果正常。', results: [{ code: 'synthetic-ip-result', value: 7,
+    interpretation: 'normal', referenceRange: { low: 4, high: 10, text: '4-10' },
+    unit: { system: 'http://unitsofmeasure.org', code: '1', display: '1' } }] }
+  let dispatched = 0
+  const { runtime } = await setup({ syntheaProvider: new StubSyntheaProvider(), patientPersonaModel: 'synthetic-model', investigationModel: 'synthetic-model',
+    chatCompletionsProvider: new OpenAIChatCompletionsClient({ apiKey: 'synthetic-only', baseUrl: 'https://synthetic.invalid',
+      fetch: async () => Response.json({ model: 'synthetic-model', choices: [{ message: {
+        content: JSON.stringify(++dispatched === 1 ? persona : generated),
+      } }] }),
+    }),
+  })
+  const started = await startConsultationCase(runtime)
+  await addSecondaryInpatientWard(runtime)
+  const admin = started.adminCookie
+  const registrar = await signIn(runtime, 'registrar@demo.clinmesh.local')
+  const doctor = await signIn(runtime, 'inpatient-doctor@demo.clinmesh.local')
+  const nurse = await signIn(runtime, 'ward-nurse@demo.clinmesh.local')
+  const outpatient = await signIn(runtime, 'doctor@demo.clinmesh.local')
+  const request = (cookie: string, path: string, input?: unknown) => runtime.app.request(path, input === undefined
+    ? { headers: { cookie } }
+    : { method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }, body: JSON.stringify({ input }) })
+  const encounter = z.object({ subject: z.object({ reference: z.string() }) }).parse(await (await request(admin, `/fhir/R5/Encounter/${started.encounterId}`)).json())
+  const patient = fhirResourceSchema.parse(await (await request(admin, `/fhir/R5/${encounter.subject.reference}`)).json())
+  const registered = inpatientCommandResponseSchema.parse(await (await request(registrar, '/api/his/v1/inpatient/admissions', {
+    expectedEpoch: 'epoch-1', patientId: patient.id, patientVersion: patient.meta!.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000,
+  })).json()).data.admission
+  const path = `/api/his/v1/inpatient/admissions/${registered.id}`
+  const admission = inpatientCommandResponseSchema.parse(await (await request(nurse, `${path}/receive`, {
+    encounterVersion: registered.versionId, bedId: 'bed-general-1',
+  })).json()).data.admission
+  const concept = { id: 'synthetic-ip-result', system: 'urn:synthetic:lab', code: 'synthetic-ip-result', display: '合成住院项目', version: '1', sourceLocator: 'synthetic:ip-result' }
+  const service = laboratoryServiceSnapshotSchema.parse({ id: 'synthetic-ip-lab', version: 1, serviceKind: 'laboratory', doctorOrderable: true,
+    localCode: 'SYN-IP-LAB', nameZh: '合成住院检验', referenceConcept: concept, referenceReleaseId: 'synthetic-release', componentServiceIds: [],
+    executingDepartmentId: 'department-laboratory', allowedIndicationCodes: ['clinical-assessment'], specimen: { code: '119297000', display: '血液标本' }, tatMinutes: 20, priceFen: 800,
+    reportDefinition: { conclusionTemplate: '合成检查结果。', results: [{ referenceConcept: concept, valueType: 'quantity', referenceRange: generated.results[0]!.referenceRange, unit: generated.results[0]!.unit }] },
+  })
+  runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
+    .run('workspace-demo', 'epoch-1', service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service,
+      availableScopes: ['inpatient'], chargeDefinition: { id: 'synthetic-ip-charge', currency: 'CNY', priceFen: 800 } }))
+  const issueResponse = await request(doctor, `${path}/investigations/issue`, {
+    encounterVersion: admission.versionId, catalogVersion: 1, selection: { kind: 'laboratory', catalogItemId: service.id, indicationCode: 'clinical-assessment' },
+  })
+  expect(issueResponse.status, await issueResponse.clone().text()).toBe(200)
+  const issued = inpatientInvestigationResponseSchema.parse(await issueResponse.json()).data.laboratoryRequests[0]!
+  expect((await request(nurse, `${path}/investigations/send`, { requestId: issued.id, expectedRequestVersion: issued.version,
+    serviceRequestVersion: issued.serviceRequestVersion, taskVersion: issued.taskVersion })).status).toBe(200)
+  while (await runtime.dispatcher.dispatchOnce() !== undefined) { /* drain synthetic outbox */ }
+  const reports = inpatientInvestigationsSchema.parse(await (await request(doctor, `${path}/investigations`)).json())
+  expect(reports.laboratoryRequests[0]).toMatchObject({ status: 'reported', report: { results: [{ value: 7 }] } })
+  const list = async (cookie: string) => modelUsageListSchema.parse(await (await request(cookie, '/api/model-usage/requests?limit=1')).json())
+  const adminList = await list(admin)
+  expect(adminList.total).toBe(2)
+  const id = adminList.items[0]!.id
+  expect(adminList.items[0]).toMatchObject({ feature: 'investigation_service_result', context: { caseId: admission.id } })
+  for (const cookie of [doctor, nurse]) {
+    expect(await list(cookie)).toMatchObject({ total: 1, items: [{ id }] })
+    expect((await request(cookie, `/api/model-usage/requests/${id}`)).status).toBe(200)
+  }
+  for (const cookie of [outpatient, registrar]) {
+    expect(await list(cookie)).toEqual({ total: 0, items: [] })
+    expect((await request(cookie, `/api/model-usage/requests/${id}`)).status).toBe(404)
+  }
+  const selectRole = (cookie: string, practitionerRoleId: string) => runtime.app.request('/api/auth/role', {
+    method: 'POST', headers: { cookie, origin: 'http://localhost', 'content-type': 'application/json' }, body: JSON.stringify({ practitionerRoleId }),
+  })
+  for (const [cookie, role] of [[doctor, 'inpatient-doctor'], [nurse, 'ward-nurse']] as const) {
+    expect((await selectRole(cookie, `practitioner-role-${role}-surgery`)).status).toBe(200)
+    expect(await list(cookie)).toEqual({ total: 0, items: [] })
+    expect((await request(cookie, `/api/model-usage/requests/${id}`)).status).toBe(404)
+    expect((await selectRole(cookie, `practitioner-role-${role}`)).status).toBe(200)
+  }
+  const reset = await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', { method: 'POST',
+    headers: { cookie: admin, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() }, body: '{}' })
+  expect(reset.status).toBe(200)
+  expect((await list(admin)).total).toBe(2)
+  for (const cookie of [doctor, nurse]) {
+    expect(await list(cookie)).toEqual({ total: 0, items: [] })
+    expect((await request(cookie, `/api/model-usage/requests/${id}`)).status).toBe(404)
+  }
 })
 
 it('persists every DSH resend and repair through the real Host without double-counting cache or reasoning', async () => {
