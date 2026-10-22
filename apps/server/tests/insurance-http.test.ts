@@ -13,6 +13,7 @@ import {
   issuePrescriptionResponseSchema,
   laboratoryOrderResponseSchema,
   paymentPreviewResponseSchema,
+  paymentResponseSchema,
   prescriptionDraftResponseSchema,
   startVisitResponseSchema,
 } from '@clinmesh/contracts/his'
@@ -22,6 +23,11 @@ import {
   insuranceResponseSchema,
   insuranceStateSchema,
 } from '@clinmesh/contracts/insurance'
+import {
+  chargeAdjustmentResponseSchema,
+  refundPreviewResponseSchema,
+  refundResponseSchema,
+} from '@clinmesh/contracts/refunds'
 import {
   persona,
   signIn,
@@ -266,7 +272,61 @@ async function settle(s: Awaited<ReturnType<typeof setup>>) {
   expect(response.status, await response.clone().text()).toBe(200)
   return insuranceResponseSchema.parse(await response.json()).data
 }
-async function pay(s: Awaited<ReturnType<typeof setup>>, category: 'laboratory' | 'medication') {
+
+it('未结算检验冲减后按净费用计算待遇，患者只支付净额中的个人负担', async () => {
+  const s = await setup()
+  await adjustLaboratory(s, 1000)
+  const state = await settle(s)
+  // 净费用5800：先行580、目录内5220、起付1000、基金2954、账户2000、患者846。
+  expect(state.active?.allocations.find(row => row.reference === `ChargeItem/${s.order.chargeItemId}`)).toMatchObject({
+    amountFen: 5800, priorSelfPayFen: 580, eligibleFen: 5220, deductibleFen: 1000,
+    fundFen: 2954, accountFen: 2000, patientFen: 846,
+  })
+  await pay(s, 'laboratory')
+  const bill = billingCaseSchema.parse(await (await s.runtime.app.request(
+    `/api/his/v1/billing/cases/${s.target.id}`, { headers: { cookie: s.cashier } },
+  )).json())
+  expect(bill.charges.find(row => row.chargeItemId === s.order.chargeItemId)).toMatchObject({
+    amountFen: 5800, insuranceFen: 4954, paidFen: 846, remainingFen: 0, status: 'paid',
+  })
+  expect((await s.runtime.dispatcher.dispatchOnce())?.status).toBe('completed')
+}, 30000)
+
+async function laboratoryCharge(s: Awaited<ReturnType<typeof setup>>) {
+  const bill = billingCaseSchema.parse(await (await s.runtime.app.request(
+    `/api/his/v1/billing/cases/${s.target.id}`, { headers: { cookie: s.cashier } },
+  )).json())
+  return bill.charges.find(row => row.chargeItemId === s.order.chargeItemId)!
+}
+
+async function adjustLaboratory(s: Awaited<ReturnType<typeof setup>>, amountFen: number) {
+  const charge = await laboratoryCharge(s)
+  const response = await s.write(
+    `/api/his/v1/billing/cases/${s.target.id}/adjustments`,
+    { chargeItemId: charge.chargeItemId, amountFen, reason: '合成检验费用错误，核准冲减。' },
+    s.cashier,
+    randomUUID(),
+    { [`ChargeItem/${charge.chargeItemId}`]: String(charge.chargeVersion) },
+  )
+  expect(response.status, await response.clone().text()).toBe(200)
+  return chargeAdjustmentResponseSchema.parse(await response.json()).data
+}
+
+it('冲减后个人账户全覆盖净费用时直接放行，不要求补交原价差额', async () => {
+  const s = await setup(2000)
+  await adjustLaboratory(s, 1000)
+  const state = await settle(s)
+  expect(state.active?.allocations.find(row => row.reference === `ChargeItem/${s.order.chargeItemId}`)).toMatchObject({
+    amountFen: 1000, fundFen: 0, accountFen: 1000, patientFen: 0,
+  })
+  expect(await laboratoryCharge(s)).toMatchObject({
+    amountFen: 1000, insuranceFen: 1000, paidFen: 0, remainingFen: 0, status: 'paid',
+  })
+  expect((await s.runtime.dispatcher.dispatchOnce())?.status).toBe('completed')
+  expect(await s.runtime.dispatcher.dispatchOnce()).toBeUndefined()
+}, 30000)
+
+async function pay(s: Awaited<ReturnType<typeof setup>>, category: 'laboratory' | 'medication', amountFen?: number) {
   const bill = billingCaseSchema.parse(
     await (
       await s.runtime.app.request(`/api/his/v1/billing/cases/${s.target.id}`, {
@@ -278,7 +338,7 @@ async function pay(s: Awaited<ReturnType<typeof setup>>, category: 'laboratory' 
   const expected = { [`ChargeItem/${charge.chargeItemId}`]: String(charge.chargeVersion) }
   const previewResponse = await s.write(
     '/api/his/v1/payments/actions/preview',
-    { caseId: s.target.id, category, simulatorRule: 'success' },
+    { caseId: s.target.id, category, simulatorRule: 'success', ...(amountFen === undefined ? {} : { tenders: [{ method: 'cash', amountFen }] }) },
     s.cashier,
     randomUUID(),
     expected,
@@ -293,7 +353,80 @@ async function pay(s: Awaited<ReturnType<typeof setup>>, category: 'laboratory' 
     expected,
   )
   expect(response.status, await response.clone().text()).toBe(200)
+  return paymentResponseSchema.parse(await response.json()).data
 }
+
+it('未知退款阻断新收款和费用更正，原退款恢复后按净余额继续收款', async () => {
+  const s = await setup()
+  const payment = await pay(s, 'laboratory', 3000)
+  await adjustLaboratory(s, 1000)
+  const charge = await laboratoryCharge(s)
+  const expected = { [`ChargeItem/${charge.chargeItemId}`]: String(charge.chargeVersion) }
+  const paymentInput = { caseId: s.target.id, category: 'laboratory', simulatorRule: 'success' }
+  const pendingPaymentResponse = await s.write('/api/his/v1/payments/actions/preview', paymentInput, s.cashier, randomUUID(), expected)
+  expect(pendingPaymentResponse.status, await pendingPaymentResponse.clone().text()).toBe(200)
+  const pendingPayment = paymentPreviewResponseSchema.parse(await pendingPaymentResponse.json()).data
+  const refundPreviewResponse = await s.write('/api/his/v1/refunds/actions/preview', {
+    paymentId: payment.paymentId, amountFen: 1000, expectedSourceVersion: 1, simulatorRule: 'ambiguous',
+  }, s.cashier, randomUUID(), expected)
+  expect(refundPreviewResponse.status, await refundPreviewResponse.clone().text()).toBe(200)
+  const refundPreview = refundPreviewResponseSchema.parse(await refundPreviewResponse.json()).data
+  const refundResponse = await s.write(`/api/his/v1/refunds/${refundPreview.previewId}/actions/confirm`, {
+    commitToken: refundPreview.commitToken,
+  }, s.cashier, randomUUID(), expected)
+  expect(refundResponse.status, await refundResponse.clone().text()).toBe(200)
+  const refund = refundResponseSchema.parse(await refundResponse.json()).data
+  expect(refund.outcome).toBe('ambiguous')
+  expect((await s.write(`/api/his/v1/payments/${pendingPayment.previewId}/actions/confirm`, {
+    commitToken: pendingPayment.commitToken,
+  }, s.cashier, randomUUID(), expected)).status).toBe(409)
+  expect((await s.write('/api/his/v1/payments/actions/preview', paymentInput, s.cashier, randomUUID(), expected)).status).toBe(409)
+  expect((await s.write(`/api/his/v1/billing/cases/${s.target.id}/adjustments`, {
+    chargeItemId: charge.chargeItemId, amountFen: 100, reason: '合成费用更正，须先查明原退款。',
+  }, s.cashier, randomUUID(), expected)).status).toBe(409)
+  const recoveredResponse = await s.write(`/api/his/v1/refunds/${refund.refundId}/actions/recover`, {
+    expectedRefundVersion: refund.version,
+  }, s.cashier, randomUUID(), expected)
+  expect(recoveredResponse.status, await recoveredResponse.clone().text()).toBe(200)
+  expect(refundResponseSchema.parse(await recoveredResponse.json()).data).toMatchObject({
+    refundId: refund.refundId, sourceId: payment.paymentId, outcome: 'success',
+  })
+  expect(await laboratoryCharge(s)).toMatchObject({ paidFen: 2000, remainingFen: 3800, status: 'billable' })
+  await pay(s, 'laboratory')
+  expect(await laboratoryCharge(s)).toMatchObject({ amountFen: 5800, paidFen: 5800, remainingFen: 0, status: 'paid' })
+  expect((await s.runtime.dispatcher.dispatchOnce())?.status).toBe('completed')
+}, 30000)
+
+it('有效医保费用先撤销待遇再冲减，保留原现金与待遇历史且不重复放行', async () => {
+  const s = await setup()
+  const state = await settle(s)
+  const payment = await pay(s, 'laboratory')
+  const charge = await laboratoryCharge(s)
+  const response = await s.write(`/api/his/v1/billing/cases/${s.target.id}/adjustments`, {
+    chargeItemId: charge.chargeItemId, amountFen: 1000, reason: '合成检验费用错误，核准冲减。',
+  }, s.cashier, randomUUID(), { [`ChargeItem/${charge.chargeItemId}`]: String(charge.chargeVersion) })
+  expect(response.status, await response.clone().text()).toBe(409)
+  expect(await laboratoryCharge(s)).toMatchObject({ amountFen: 6800, insuranceFen: 5584, paidFen: 1216, status: 'paid' })
+  const path = `/api/his/v1/insurance/outpatient/${s.target.id}`
+  const cancelledResponse = await s.write(path + '/cancel', {
+    settlementId: state.active!.id, expectedBalanceVersion: state.balance.version,
+  })
+  expect(cancelledResponse.status, await cancelledResponse.clone().text()).toBe(200)
+  const cancelled = insuranceResponseSchema.parse(await cancelledResponse.json()).data
+  expect(cancelled.history).toHaveLength(2)
+  expect(cancelled.history[1]?.reversesId).toBe(state.active!.id)
+  expect(cancelled.activeSettlements).toEqual([])
+  await adjustLaboratory(s, 1000)
+  expect(await laboratoryCharge(s)).toMatchObject({ amountFen: 5800, insuranceFen: 0, paidFen: 1216, remainingFen: 4584 })
+  await pay(s, 'laboratory')
+  const bill = billingCaseSchema.parse(await (await s.runtime.app.request(
+    `/api/his/v1/billing/cases/${s.target.id}`, { headers: { cookie: s.cashier } },
+  )).json())
+  expect(bill.payments.find(row => row.paymentId === payment.paymentId)).toMatchObject({ amountFen: 1216, outcome: 'success' })
+  expect(bill.charges.find(row => row.chargeItemId === charge.chargeItemId)).toMatchObject({ amountFen: 5800, paidFen: 5800, remainingFen: 0, status: 'paid' })
+  expect((await s.runtime.dispatcher.dispatchOnce())?.status).toBe('completed')
+  expect(await s.runtime.dispatcher.dispatchOnce()).toBeUndefined()
+}, 30000)
 
 it('检验已收患者额后新增处方可继续结算，原检验待遇仍有效', async () => {
   const s = await setup()

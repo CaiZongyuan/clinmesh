@@ -1220,14 +1220,23 @@ export class WorkflowService {
         for(const charge of source.charges){
           const row=z.object({status:z.string()}).parse(database.driver.prepare('SELECT status FROM charge_record WHERE workspace_id=? AND epoch=? AND charge_item_id=?').get(context.workspaceId,context.epoch,charge.reference.slice(11)))
           const balance=this.#payments.balance(context,charge.reference.slice(11))
-          if(balance.unresolved>0||(action==='settle'&&(row.status==='paid'||balance.paidFen>0)))throw new InsuranceError('INSURANCE_FUNDS_CONFLICT','请在收款及临床放行前办理待遇；已有资金需通过财务更正处理')
+          if(balance.unresolved>0||(action==='settle'&&(row.status==='paid'||balance.paidFen>0)))throw new InsuranceError('INSURANCE_FUNDS_CONFLICT','请先查明原收款或退款结果；已收款费用新增待遇须通过财务更正处理')
         }
       },
       onAllocationChanged: (context,source,transaction,effects) => {
         if(source.target.kind==='inpatient'){options.onInpatientInsuranceAllocationChanged?.(context,source,transaction,effects);return}
         for(const charge of source.charges){
           if(charge.coverage.included===false)continue
-          const facts=z.object({charge_id:z.string(),charge_item_id:z.string(),current_amount_fen:z.number(),charge_version:z.number(),category:z.enum(['laboratory','medication']),case_id:z.string(),case_status:paymentPreviewRowSchema.shape.case_status,patient_id:z.string(),encounter_id:z.string(),prescription_id:z.string().nullable(),service_request_id:z.string().nullable()}).parse(database.driver.prepare('SELECT c.charge_id,c.charge_item_id,c.total_fen AS current_amount_fen,c.version AS charge_version,c.category,o.case_id,o.status AS case_status,o.patient_id,o.encounter_id,o.prescription_id,o.service_request_id FROM charge_record c JOIN outpatient_case o USING(workspace_id,epoch,case_id) WHERE c.workspace_id=? AND c.epoch=? AND c.charge_item_id=?').get(context.workspaceId,context.epoch,charge.reference.slice(11)))
+          const facts=z.object({charge_id:z.string(),charge_item_id:z.string(),current_amount_fen:z.number(),charge_version:z.number(),category:z.enum(['laboratory','medication']),case_id:z.string(),case_status:paymentPreviewRowSchema.shape.case_status,patient_id:z.string(),encounter_id:z.string(),prescription_id:z.string().nullable(),service_request_id:z.string().nullable()}).parse(database.driver.prepare(`
+            SELECT c.charge_id,c.charge_item_id,c.total_fen - COALESCE((
+              SELECT SUM(adjustment.amount_fen) FROM financial_charge_adjustment adjustment
+              WHERE adjustment.workspace_id=c.workspace_id AND adjustment.epoch=c.epoch
+                AND adjustment.charge_item_id=c.charge_item_id
+            ),0) AS current_amount_fen,c.version AS charge_version,c.category,o.case_id,o.status AS case_status,
+              o.patient_id,o.encounter_id,o.prescription_id,o.service_request_id
+            FROM charge_record c JOIN outpatient_case o USING(workspace_id,epoch,case_id)
+            WHERE c.workspace_id=? AND c.epoch=? AND c.charge_item_id=?
+          `).get(context.workspaceId,context.epoch,charge.reference.slice(11)))
           this.#applyPaymentOutcome(transaction,context,facts,'success',effects)
         }
       },
@@ -9157,7 +9166,7 @@ export class WorkflowService {
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${charge.charge_item_id}`])
       const balance = this.#payments.balance(input.context, charge.charge_item_id)
-      if (balance.unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
+      if (balance.unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', 'Resolve the original unknown collection or refund before collecting again')
       const remainingFen = charge.total_fen - balance.paidFen - this.insurance.coverage(input.context, `ChargeItem/${charge.charge_item_id}`)
       const tenders = paymentRecordedTendersSchema.parse(input.tenders ?? [{ method: 'cash', amountFen: remainingFen }])
       const amountFen = tenders.reduce((sum, tender) => sum + tender.amountFen, 0)
@@ -9313,7 +9322,7 @@ export class WorkflowService {
       }
       const rule = paymentChannelPlan(this.#database, input.context, paymentSimulatorRuleSchema.parse(preview.simulator_rule))
       if (balance.unresolved > 0) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Resolve the original unknown collection or refund before collecting again')
       }
       const tenders = paymentRecordedTendersSchema.parse(preview.tenders_json === null
         ? [{ method: 'cash', amountFen: preview.amount_fen }] : JSON.parse(preview.tenders_json))

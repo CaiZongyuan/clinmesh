@@ -9,6 +9,7 @@ import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import { PaymentLedger } from './payment-ledger.ts'
+import { readOutpatientInsuranceAllocations } from './outpatient-insurance.ts'
 import { RefundLedger } from './refund-ledger.ts'
 import { WorkflowError } from './workflow-error.ts'
 
@@ -83,8 +84,11 @@ export class OutpatientRefunds {
       dataSchema: chargeAdjustmentResponseSchema.shape.data, authorize: () => this.#authorize(context) }, () => {
       const charge = this.#charge(context, input.chargeItemId, caseId)
       this.#expectedCharge(expectedVersions, input.chargeItemId)
+      if (readOutpatientInsuranceAllocations(this.database, context, caseId).has(`ChargeItem/${input.chargeItemId}`)) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '请先撤销本费用的有效医保待遇，再办理费用冲减')
+      }
       if (input.amountFen > charge.total_fen - this.adjustmentFen(context, input.chargeItemId)) throw new WorkflowError('WORKFLOW_CONFLICT', '冲减超过原费用剩余金额')
-      if (new PaymentLedger(this.database).balance(context, input.chargeItemId).unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', '请先查明原支付结果')
+      if (new PaymentLedger(this.database).balance(context, input.chargeItemId).unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', '请先查明原收款或退款结果')
       const id = uuidv7(), now = this.options.virtualTime(context)
       this.database.driver.prepare('INSERT INTO financial_charge_adjustment VALUES(?,?,?,?,?,?,?,?)').run(context.workspaceId, context.epoch, id, input.chargeItemId, input.amountFen, input.reason,
         JSON.stringify({ sourceReference: charge.source_reference, caseStatus: charge.case_status, chargeStatus: charge.status }), now)

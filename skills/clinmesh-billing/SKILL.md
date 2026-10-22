@@ -41,6 +41,8 @@ Read `billing.refunds.get` before correcting fees or refunding. Each successful 
 
 `billing.charge.adjust` records a positive integer fen reduction with the original ChargeItem version and a specific financial-error reason. It creates refund allowance but sends no money. Refund only an original successful payment, bounded by both its remaining funds and the unconsumed correction allowance across every original payment for that charge. Refunds consume the original frozen tender order and remaining amount per method; do not choose a new refund method. Unknown refunds reserve these amounts; definite decline releases the reservation.
 
+Cancel the charge's active insurance settlement before reducing its fee. Benefits, collections and clinical release use the fee after recorded reductions. Resolve the original unknown collection or refund before changing benefits, collecting again or correcting that charge; keep using the original recovery command while its result remains unknown.
+
 ```bash
 clinmesh billing refunds get --case-id <case-id>
 clinmesh billing charge adjust --input @charge-adjustment.json --idempotency-key <adjustment-key>

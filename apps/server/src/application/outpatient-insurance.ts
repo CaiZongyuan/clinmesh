@@ -14,6 +14,34 @@ const syntheticCoverage = {
   medication: { sourcePrefix: 'Prescription/', included: true, priorSelfPayBps: 2000 },
 } as const
 
+export function readOutpatientInsuranceAllocations(
+  database: ClinMeshDatabase,
+  context: ActorContext,
+  caseId: string,
+) {
+  const activeRows = z.array(z.object({ data_json: z.string() })).parse(
+    database.driver
+      .prepare(
+        `SELECT data_json FROM insurance_event e
+           WHERE workspace_id=? AND epoch=? AND target_kind='outpatient' AND target_id=?
+             AND reverses_id IS NULL
+             AND NOT EXISTS(
+               SELECT 1 FROM insurance_event r
+               WHERE r.workspace_id=e.workspace_id AND r.epoch=e.epoch
+                 AND r.reverses_id=e.event_id
+             )`,
+      )
+      .all(context.workspaceId, context.epoch, caseId),
+  )
+  return new Set(
+    activeRows.flatMap((row) =>
+      insuranceSettlementSchema
+        .parse(JSON.parse(row.data_json))
+        .allocations.map((item) => item.reference),
+    ),
+  )
+}
+
 /** 明确合成的普通门诊目录 v1：挂号目录外，检验先行10%，药品先行20%。 */
 export function readOutpatientInsuranceSource(
   database: ClinMeshDatabase,
@@ -35,7 +63,7 @@ export function readOutpatientInsuranceSource(
       z.object({
         charge_item_id: z.string(),
         version: z.number().int(),
-        total_fen: z.number().int(),
+        amount_fen: z.number().int().nonnegative(),
         description_zh: z.string(),
         category: z.enum(['registration', 'laboratory', 'medication']),
         source_reference: z.string(),
@@ -44,8 +72,12 @@ export function readOutpatientInsuranceSource(
     .parse(
       database.driver
         .prepare(
-          `SELECT * FROM charge_record c
-           WHERE workspace_id=? AND epoch=? AND case_id=?
+          `SELECT c.*, c.total_fen - COALESCE((
+             SELECT SUM(adjustment.amount_fen) FROM financial_charge_adjustment adjustment
+             WHERE adjustment.workspace_id=c.workspace_id AND adjustment.epoch=c.epoch
+               AND adjustment.charge_item_id=c.charge_item_id
+           ),0) AS amount_fen FROM charge_record c
+           WHERE c.workspace_id=? AND c.epoch=? AND c.case_id=?
              AND NOT EXISTS(
                SELECT 1 FROM prescription_withdrawal w
                WHERE w.workspace_id=c.workspace_id AND w.epoch=c.epoch
@@ -55,27 +87,7 @@ export function readOutpatientInsuranceSource(
         )
         .all(context.workspaceId, context.epoch, target.id),
     )
-  const activeRows = z.array(z.object({ data_json: z.string() })).parse(
-    database.driver
-      .prepare(
-        `SELECT data_json FROM insurance_event e
-           WHERE workspace_id=? AND epoch=? AND target_kind=? AND target_id=?
-             AND reverses_id IS NULL
-             AND NOT EXISTS(
-               SELECT 1 FROM insurance_event r
-               WHERE r.workspace_id=e.workspace_id AND r.epoch=e.epoch
-                 AND r.reverses_id=e.event_id
-             )`,
-      )
-      .all(context.workspaceId, context.epoch, target.kind, target.id),
-  )
-  const allocated = new Set(
-    activeRows.flatMap((row) =>
-      insuranceSettlementSchema
-        .parse(JSON.parse(row.data_json))
-        .allocations.map((item) => item.reference),
-    ),
-  )
+  const allocated = readOutpatientInsuranceAllocations(database, context, target.id)
   return {
     target,
     patientId: patient.patient_id,
@@ -94,7 +106,7 @@ export function readOutpatientInsuranceSource(
           reference: `ChargeItem/${charge.charge_item_id}`,
           label: charge.description_zh,
           version: String(charge.version),
-          amountFen: charge.total_fen,
+          amountFen: charge.amount_fen,
           coverage: {
             code: `synthetic-op-${charge.category}:${charge.source_reference}`,
             version: 'synthetic-op-directory-v1',
