@@ -348,6 +348,8 @@ describe('PrescriptionPage', () => {
       deleteDraft: { ...mounted.props.actions.deleteDraft, data: { caseId: detail.caseId, draftVersion: 2 } },
     }} detail={{ ...detail, medicationConclusion: { draftVersion: 2 } }} />)
     expect(within(screen.getByRole('region', { name: '待开具处方' })).queryByRole('checkbox')).toBeNull()
+    expect(medicationForm().getByText('选择药品，填写用法')).toBeTruthy()
+    expect(medicationForm().queryByText('存在未完成的药品信息，点击对应条目补全后才能开具。')).toBeNull()
   })
   it('keeps the final medication and its directions when draft deletion fails and retries its removal', async () => {
     const mounted = renderPage({ detail: { ...detail, medicationConclusion: {
@@ -1022,6 +1024,8 @@ describe('处方页签布局整理', () => {
     expect(entry?.querySelector('[data-slot="empty"]')).toBeNull()
     expect(within(entry as HTMLElement).getByText('选择药品，填写用法')).toBeTruthy()
     expect(within(entry as HTMLElement).getByText('在弹窗中检索药品目录，选择包装后填写用药信息。')).toBeTruthy()
+    expect(medicationForm().queryByRole('alert')).toBeNull()
+    expect(within(screen.getByRole('region', { name: '待开具处方' })).getByRole('button', { name: /^开具处方/ })).toHaveProperty('disabled', true)
   })
 
   it('有草稿时自动保存状态与删除入口跟随表单区，右辅助列不再放置草稿工具', () => {
