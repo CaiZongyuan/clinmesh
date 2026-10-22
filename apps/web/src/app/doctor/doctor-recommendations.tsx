@@ -1,5 +1,5 @@
 import {
-  doctorPreparationSelectionSchema, type DoctorPreparationSelection, type DoctorRecommendationConsideration,
+  doctorPreparationSelectionSchema, type DoctorCaseEvidence, type DoctorPreparationSelection, type DoctorRecommendationConsideration,
   type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion, type GuidelineEvidence, type DoctorRecommendationNotice,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
@@ -23,6 +23,7 @@ import { WorkspaceSelect } from '../workspace-select.tsx'
 import { ApiClientError, confirmDoctorPreparation, newIdempotencyKey } from '../api-client.ts'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
+import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { useDoctorPreparation, useDoctorPreparationJob, type DoctorPreparationJob, type DraftPreferences, type PreparationDraft } from './doctor-preparation-state.tsx'
 
 export type { PreparationDraft } from './doctor-preparation-state.tsx'
@@ -90,6 +91,38 @@ function reasoning(item: DoctorRecommendationConsideration, zh: boolean) {
   ]
   return <><p>{item.rationale}</p>{sections.map(({ label, values }) => values.length === 0 ? null : <div key={label}><p className="font-medium">{label}</p><ul className="list-inside list-disc">{values.map(value => <li key={value}>{value}</li>)}</ul></div>)}</>
 }
+// 证据文本复用模型的原始输入，结构化形状在此渲染为人读内容；识别不了的 JSON 折叠在原始数据里保持可审计。
+function EvidenceContent({ source, locale }: { source: DoctorCaseEvidence; locale: WorkspaceLocale }) {
+  const zh = locale === 'zh-CN'
+  let parsed: unknown
+  try { parsed = JSON.parse(source.text) } catch { /* 纯文本证据按原文展示。 */ }
+  if (typeof parsed === 'object' && parsed !== null) {
+    if ('speaker' in parsed && 'text' in parsed) {
+      const turn = parsed as { text: unknown; recordedAt?: unknown }
+      if (typeof turn.text === 'string') return <div className="flex min-w-0 flex-col gap-1">
+        <p className="whitespace-pre-wrap break-words">{turn.text}</p>
+        {typeof turn.recordedAt === 'string' ? <p className="text-xs text-muted-foreground">{formatClinicalDateTime(turn.recordedAt, locale)}</p> : null}
+      </div>
+    }
+    if ('entries' in parsed && Array.isArray((parsed as { entries: unknown }).entries)) return <ul className="flex list-inside list-disc flex-col gap-1">
+      {(parsed as { entries: unknown[] }).entries.map((entry, index) => {
+        const item = entry as { entryId?: unknown; clinicalDate?: unknown; title?: unknown; fieldPath?: unknown; record?: unknown }
+        const record = typeof item.record === 'object' && item.record !== null ? item.record as Record<string, unknown> : undefined
+        const date = typeof item.clinicalDate === 'string' ? item.clinicalDate : typeof record?.completedAt === 'string' ? record.completedAt : undefined
+        const key = `${typeof item.entryId === 'string' ? item.entryId : index}:${typeof item.fieldPath === 'string' ? item.fieldPath : ''}`
+        const title = [typeof item.title === 'string' && item.title.length > 0 ? item.title : undefined,
+          typeof item.fieldPath === 'string' ? item.fieldPath : undefined].find(value => value !== undefined) ?? (typeof item.entryId === 'string' ? item.entryId : `${index + 1}`)
+        return <li key={key}>{date === undefined ? null : <span className="text-muted-foreground">{formatClinicalDateTime(date, locale)} · </span>}<span>{title}</span>
+          {record === undefined ? null : <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看完整记录' : 'View full record'}</summary>
+            <p className="font-mono text-xs whitespace-pre-wrap break-all">{JSON.stringify(record, null, 2)}</p></details>}
+        </li>
+      })}
+    </ul>
+    return <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看原始数据' : 'View raw data'}</summary>
+      <p className="font-mono text-xs whitespace-pre-wrap break-all">{source.text}</p></details>
+  }
+  return <p className="whitespace-pre-wrap break-words">{source.text}</p>
+}
 function recoveryMessage(state: DoctorRecommendationState | undefined, zh: boolean) {
   if (state?.errorCode === 'MODEL_OUTCOME_UNKNOWN' || state?.recovery?.status === 'unknown') return zh
     ? state.recovery?.canContinue ? '上次请求结果未知，自动处理已停止。可继续原任务或重新生成。' : '上次请求结果未知，自动处理已停止。请明确重新生成。'
@@ -118,9 +151,9 @@ export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: Do
     {state?.items.map(item => <section className="flex min-w-0 flex-col gap-2" key={item.id}>
       <h4 className="font-medium">{item.label}</h4>{reasoning(item, zh)}
       {item.guidelineEvidenceIds.map(id => { const source = state.guidelines.find(source => source.id === id); return source === undefined ? null : <div key={id} className="flex flex-col gap-1"><Badge variant="secondary">{documentTypes[source.documentType][zh ? 0 : 1]}</Badge><a className="underline" href={source.url} rel="noreferrer noopener" target="_blank">{source.title} · {source.version} · {source.locator}</a><p className="text-xs text-muted-foreground">{source.publisher} · {source.scope}</p><p>{source.text}</p></div> })}
-      {item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <div key={id}><Badge variant="outline">{source.label}</Badge><p className="whitespace-pre-wrap break-words">{source.text}</p></div> })}<Separator />
+      {item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <div key={id}><Badge variant="outline">{source.label}</Badge><EvidenceContent source={source} locale={locale} /></div> })}<Separator />
     </section>)}
-    {state?.considerations?.length ? <section aria-label={zh ? '待核实思路' : 'Considerations'} className="flex flex-col gap-4"><h4 className="font-medium">{zh ? '待核实思路' : 'Considerations'}</h4>{state.considerations.map(item => <article aria-label={item.label} key={item.id} className="flex flex-col gap-2"><h5>{item.label}</h5>{reasoning(item, zh)}{item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <p className="whitespace-pre-wrap break-words" key={id}>{source.text}</p> })}</article>)}</section> : null}
+    {state?.considerations?.length ? <section aria-label={zh ? '待核实思路' : 'Considerations'} className="flex flex-col gap-4"><h4 className="font-medium">{zh ? '待核实思路' : 'Considerations'}</h4>{state.considerations.map(item => <article aria-label={item.label} key={item.id} className="flex flex-col gap-2"><h5>{item.label}</h5>{reasoning(item, zh)}{item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <div key={id}><EvidenceContent source={source} locale={locale} /></div> })}</article>)}</section> : null}
   </div>
 }
 

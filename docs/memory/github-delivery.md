@@ -40,6 +40,8 @@
 
 - 删除非 main 分支前先枚举本地 branches、remote heads 和占用它们的 worktrees。Assets 分支是已发布 PR 媒体的 owner，删除会使历史链接失效；用户仍明确要求只保留 `main` 时按要求删除并报告影响，不把媒体二进制转存到 `main`。
 
+- PR 交付在主工作目录切分支完成、事后切回 `main`，后续任务容易在 `main` 上直接 commit。提交前必须 `git branch --show-current` 确认分支，push 前核对目标分支输出；误提交本地 main 时用 `git reset --mixed HEAD~1` 撤下（保留工作区改动与他人 WIP），再落到工作分支提交推送。
+
 ## 媒体可达性与升级自动化
 
 - GitHub Raw 可能把包含 VP8/VP9 视频流的 `.webm` 响应标为 `audio/webm`。不要只按该 header 判定文件损坏；同时核对 HTTP 状态、字节数、校验和以及媒体流的 codec、尺寸和时长。

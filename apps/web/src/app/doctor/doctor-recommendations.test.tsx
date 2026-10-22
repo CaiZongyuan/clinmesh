@@ -955,6 +955,61 @@ it('keeps an unissued prescription candidate visible without returning issued me
   expect(confirmButton()).toHaveProperty('disabled', true)
 })
 
+it('renders consultation evidence as the readable statement instead of a raw JSON blob', async () => {
+  const current = state({ caseEvidence: [{ id: 'patient-statement-fever', kind: 'consultation', label: '患者问诊记录',
+    text: JSON.stringify({ speaker: 'patient', text: '合成患者自述发热伴咳嗽三天。', kind: 'text', recordedAt: '2026-08-24T09:00:00+08:00', reportReference: null }) }] })
+  stubRequests(() => current); mount(props())
+  await screen.findByText('发热，未特指')
+  await details()
+  const dialog = screen.getByRole('dialog')
+  expect(within(dialog).getByText('合成患者自述发热伴咳嗽三天。')).toBeTruthy()
+  expect(dialog.textContent).not.toContain('"speaker":"patient"')
+})
+
+it('renders packed visible-history evidence as readable entries instead of a raw JSON blob', async () => {
+  const text = JSON.stringify({ source: 'visible-source', resourceType: 'Condition', missingFieldMeaning: 'not-recorded', entries: [
+    { entryId: 'entry-a', clinicalDate: '2025-09-18T10:25:44+08:00', title: '牙龈炎（疾病）',
+      clinical: { code: { text: '牙龈炎（疾病）' }, clinicalStatus: { coding: [{ code: 'resolved' }] } } },
+    { entryId: 'entry-b', clinicalDate: '2013-07-11T09:00:00+08:00', title: '全职就业（临床所见）', clinical: {} },
+  ] })
+  const current = state({ caseEvidence: [{ id: 'patient-statement-fever', kind: 'history', label: '外部可见历史 / Condition / 2条', text }] })
+  stubRequests(() => current); mount(props())
+  await screen.findByText('发热，未特指')
+  await details()
+  const dialog = screen.getByRole('dialog')
+  expect(within(dialog).getByText('牙龈炎（疾病）')).toBeTruthy()
+  expect(within(dialog).getByText('全职就业（临床所见）')).toBeTruthy()
+  expect(dialog.textContent).not.toContain('missingFieldMeaning')
+})
+
+it('keeps local-completed history records inspectable behind a per-entry disclosure', async () => {
+  const text = JSON.stringify({ source: 'local-completed', resourceType: 'Encounter', entries: [
+    { entryId: 'case-past-1', record: { caseId: 'case-past-1', completedAt: '2026-09-01T10:00:00+08:00',
+      clinicalDocuments: [{ chiefComplaint: '合成既往主诉：咽痛三天。' }] } },
+  ] })
+  const current = state({ caseEvidence: [{ id: 'patient-statement-fever', kind: 'history', label: '本院完诊记录 / Encounter / 1条', text }] })
+  stubRequests(() => current); mount(props())
+  await screen.findByText('发热，未特指')
+  await details()
+  const dialog = screen.getByRole('dialog')
+  const summary = within(dialog).getByText('查看完整记录')
+  expect(summary.closest('details')?.textContent).toContain('合成既往主诉：咽痛三天。')
+  expect(summary.closest('details')).toHaveProperty('open', false)
+  expect(within(dialog).getByText(/2026年9月1日/)).toBeTruthy()
+})
+
+it('collapses unrecognized JSON evidence behind a raw-data disclosure', async () => {
+  const current = state({ caseEvidence: [{ id: 'patient-statement-fever', kind: 'presentation', label: '当前主诉与体征',
+    text: JSON.stringify({ presentation: { summary: '发热三天。' }, triage: { acuityCode: 'level-3' } }) }] })
+  stubRequests(() => current); mount(props())
+  await screen.findByText('发热，未特指')
+  await details()
+  const dialog = screen.getByRole('dialog')
+  const summary = within(dialog).getByText('查看原始数据')
+  expect(summary.closest('details')?.textContent).toContain('"presentation"')
+  expect(summary.closest('details')).toHaveProperty('open', false)
+})
+
 it('keeps a new manualItems edit visible while the confirmed case refresh is still pending', async () => {
   const read = deferredResponse(); const current = prescriptionState()
   stubRequests(() => current); const value = { source: 'manual' as const, kind: 'prescription' as const, catalogItemId: 'manual-medication', doseText: '10 mg', frequencyCode: 'QD', courseDays: 30, quantity: 30 }

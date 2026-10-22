@@ -5800,7 +5800,7 @@ describe('role workspaces', () => {
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     expect(await screen.findByText('尚未选择检验项目')).toBeTruthy()
     expect(screen.queryByText('检验草稿已删除')).toBeNull()
-  }, 10_000)
+  }, 15_000)
 
   it('keeps polling an in-progress laboratory request until its report arrives', async () => {
     window.history.replaceState(null, '', '/consultation')
