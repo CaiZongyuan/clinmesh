@@ -50,6 +50,9 @@ import {
   laboratoryOrderResponseSchema,
   laboratoryRequestDraftResponseSchema,
   paymentPreviewResponseSchema,
+  billingCaseSchema,
+  type paymentTendersSchema,
+  type paymentSimulatorRuleSchema,
   paymentResponseSchema,
   pharmacyQueueSchema,
   prescriptionDraftResponseSchema,
@@ -1894,7 +1897,8 @@ export function previewPayment(input: {
   category: 'laboratory' | 'medication'
   chargeItemId: string
   chargeVersion: number
-  simulatorRule: 'ambiguous' | 'decline' | 'success'
+  simulatorRule: z.infer<typeof paymentSimulatorRuleSchema>
+  tenders?: z.infer<typeof paymentTendersSchema> | undefined
 }, idempotencyKey: string) {
   return apiMutation(
     '/api/his/v1/payments/actions/preview',
@@ -1905,6 +1909,7 @@ export function previewPayment(input: {
         caseId: input.caseId,
         category: input.category,
         simulatorRule: input.simulatorRule,
+        ...(input.tenders === undefined ? {} : { tenders: input.tenders }),
       },
     },
     { idempotencyKey },
@@ -1926,6 +1931,22 @@ export function confirmPayment(input: {
     },
     { idempotencyKey },
   )
+}
+
+export function getBillingCase(caseId: string, signal?: AbortSignal, page = 1) {
+  return apiGet(`/api/his/v1/billing/cases/${encodeURIComponent(caseId)}?page=${page}&pageSize=20`, billingCaseSchema, signal)
+}
+
+export function recoverPayment(input: {
+  paymentId: string
+  expectedPaymentVersion: number
+  chargeItemId: string
+  chargeVersion: number
+}, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/payments/${encodeURIComponent(input.paymentId)}/actions/recover`, paymentResponseSchema, {
+    expectedVersions: { [`ChargeItem/${input.chargeItemId}`]: String(input.chargeVersion) },
+    input: { expectedPaymentVersion: input.expectedPaymentVersion },
+  }, { idempotencyKey })
 }
 
 export function getPharmacyQueue(

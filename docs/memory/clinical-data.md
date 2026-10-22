@@ -8,7 +8,7 @@
 
 - 构造门诊号迁移的旧库 fixture 时，使用真实 CommandExecutor 生成审计和初始 FHIR 历史；仅手写合法业务行、伪造 audit hash 或漏掉 AuditEvent 投影会被发行历史证明拒绝。业务行最大号是下界，不能用它修复缺失发号状态；旧 reset 的重放 effects 缺口与受控恢复退休边界见[发行完整性决策](../decisions/implemented/architecture/2026-10-20-registration-numbering-integrity.md)。
 
-- 新增迁移后，搜索回归中对“升级到当前版本”的 schema 数量断言，并使用 `expectedSchemaVersion()`，避免迁移成功却因旧数字失败。真正固定历史分支的 fixture 仍保留其历史迁移数量，不能一并改成当前目标；升级验证继续核对原业务行、回执、审计、来源和外键。
+- 新增迁移后，搜索回归中对“升级到当前版本”的 schema 数量断言，并使用 `expectedSchemaVersion()`，避免迁移成功却因旧数字失败。整合并行分支时，同时核对从历史 fixture 到当前目标的完整待执行文件列表；没有文本冲突的断言也可能遗漏另一分支新增的迁移。真正固定历史分支的 fixture 仍保留其历史迁移数量，不能一并改成当前目标；升级验证继续核对原业务行、回执、审计、来源和外键。
 
 - 新增持久错误白名单时，用同一幂等键对照首次失败、重放及公开状态，覆盖模型派发前的确定性业务错误；仅覆盖 Provider 错误会漏掉错误分类被兜底改写。患者回答的档案缺失与旧版档案回归见 [问诊 HTTP 测试](../../apps/server/tests/consultation-dialogue-http.test.ts)，当前合同由[临床流程](../architecture/clinical-workflows.md#81-门诊闭环)拥有。
 
@@ -137,6 +137,16 @@
 - 模型传输引用的编号差异不能直接当作业务内容差异；回归同时覆盖同来源重复原句、不同来源同文和多个无效编号，验证解码后的等价去重、来源独立性及失败归属。句子引用的当前规则由[句子引用决策](../decisions/implemented/architecture/2026-10-19-recording-sentence-references.md)拥有。
 
 ## 参考目录、Synthea 与影像素材
+
+- 离线清单的合成 fixture 要沿用真实来源字段名，并从公开准备与回读入口核对；只用自拟的通用 `unit` 字段会漏掉来源单位提取缺口。摘要提取修正后重新准备已有资料时，先核对清单身份，恢复方式见[离线 DRG 资料核对](../deployment.md#离线-drg-资料核对)，不要修改数据库绕过不可变校验。
+
+- 验证离线清单读取的失败审计时，用已认证管理员发送非法分页参数，再从公开 FHIR AuditEvent 回读失败事件；只断言 HTTP 400 会漏掉路由提前解析参数、绕过服务层审计的缺口。认证拒绝与进入受信读取边界后的参数拒绝分别验证，合同见[参考数据策略](../architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
+
+- 核验数十万行 JSONL 时，把可复用的 Zod schema 放在行循环之外；逐行新建递归 JSON schema 会增加大量 CPU 开销。性能改动仍须保留每行解析、原始字节哈希和行数校验，并通过真实运维入口复核整个包。
+
+- JSON 摘要若用 `JSON.stringify` 计算内容哈希，先按持久化 schema 规范化再哈希；Zod object 解析会按 schema 顺序重建字段。只测首次写入会漏掉“写入成功、再次读取哈希失配”，应覆盖每种来源的重复准备和公开回读。
+
+- 解析 OpenDRG 导出时，缺少分组程序的方案会以 `null` 表示 `grouperSourceUrl/groupDataPath`；先允许来源的缺失表示，再强制所选方案具有已锁定程序和参数。参数文件的 `SS_VALID` 是字符串数组，`CC/MCC/CCE` 是对象；合成 fixture 应覆盖这些真实形状。程序只核对字节哈希，不执行；当前用途边界见[参考数据策略](../architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
 
 - `pnpm reference:sync` 固定写入默认路径 `.data/clinmesh-reference.sqlite`，不读取 `.env` 的 `CLINMESH_REFERENCE_DATABASE_PATH`；`.env` 指向自定义路径时会与同步结果分叉，出现"诊断药品正常、检验目录为空"（旧 Release 不含 `laboratory-cn`）。排查时直接查库：`reference_release` 表按 `release_id` 看 `laboratory_definition_count`。当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`，不要在 `.env` 手抄该 ID 制造双事实来源；运行中 Server 不热切换参考库，修复后必须重启。
 

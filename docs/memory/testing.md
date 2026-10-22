@@ -1,10 +1,16 @@
 # 测试与验证排障
 
+- 分页队列上的写操作回归须包含第二页及操作后仍留在同一筛选状态的场景，核对页码、患者选择与金额刷新；只测第一页或晚到回执无法发现无条件跳回第一页。支付历史分页同时验证整单余额、跨页恢复入口，以及历史页切换不改变收费队列选择。
+
 选择验证范围、定位资源争用，或处理替身、时钟和异步断言时查阅。本文保存会影响证据有效性的操作经验；测试层级、必需检查和真实入口要求由[测试策略](../testing.md)拥有。业务专属回归另见[临床数据与模型任务排障](clinical-data.md)，宿主专属回归见[DSH 集成排障](dsh-integration.md)。
 
 其他操作经验见[工程记忆入口](memory.md)。
 
 ## 范围、快照与资源争用
+
+- 待开具项目的操作文案会随异步核验状态从“调整”变为“核对”；验证重开详情时，使用包含项目名称的稳定“查看待开具”入口，并继续断言编辑值、焦点和正式确认结果。只定位“调整”会在核验状态晚到时超时，不能用增加超时或固定等待规避；对应回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
+
+- Web composition 测试若只有总时限超时，先分段计时区分停滞与累计交互成本；状态展示、报告已阅、取消冲突、草稿删除等可独立验收的流程使用同一初始化 helper、每例重新挂载，保留请求版本、人工确认和切换病例后的隔离断言。不要把多个独立流程串在一个用例后扩大默认时限；对应回归见 `apps/web/src/app/role-workspaces.test.tsx`。
 
 - 当前 Web 交付使用 Node.js 真实入口即可证明运行时和数据库生命周期；没有明确容器验收条件时，不安装、不启动也不要求 Docker。
 
@@ -25,6 +31,8 @@
 - 资源争用也可能是内存超卖而非 CPU：小内存宿主（如 6.8 GB 的 WSL2）上 `@clinmesh/web` 的 jsdom 套件按 `os.availableParallelism()`（16）开满 worker 时会进入 swap 抖动，失败集合每次运行都不同且与 diff 无关。先看 `free -h` 的 swap 占用区分于 CPU 争用；单项复跑通过后，对同一套件用 `pnpm --filter @clinmesh/web exec vitest run --maxWorkers=4` 重取证据（已实际验证 624/624 通过），并照上一条的规则在验证记录中注明受限并发。
 
 - 浏览器动效的保持、淡出或 Canvas 卸载断言若在并行整组失败、单文件通过，可用 `pnpm exec playwright test --project=contracts --workers=1` 验证完整合同集合，保留原断言和超时。交付证据应区分串行集合通过与默认并行 `pnpm check` 未通过，不把单项重跑成功作为整组成功。 若点击日志停在 `performing click action`，元素已可见且稳定，先隔离其他 worktree 的构建、类型和浏览器重检查，再用原断言复现；worktree 不隔离 CPU 与内存资源。
+
+- 浏览器合同在单文件通过、完整集合却报合成账户初始化失败时，检查前一文件的 Vite 构建是否改变了 `NODE_ENV`。Better Auth 在首次导入时捕获生产默认值，可能只在复用 worker 时触发注册限流；按原文件顺序复现并核对宿主与 bundle 的环境边界，不修改生产认证或增加注册等待。隔离方式见[测试策略](../testing.md#用户界面验证)。
 
 - 长时间运行 `vitest run` 或 `pnpm check` 时固定被测快照。执行期间修改源码和回归可能让转换缓存与新读取的测试混用不同版本；这类结果不能作为最终提交证据，应固定代码后重跑受影响集合，只复用未被修改影响的成功检查。跨平台副本在启动最终检查前，核对任务的全部 tracked diff、新增文件清单及统一换行后的内容；只按增量复制不能证明快照完整。
 
@@ -47,6 +55,8 @@
 - 质控替身必须同时拦截 GET 轮询与 POST check 并在同一份 `qualityRevisions` 里回显 `clientId`/`clientRevision`：只拦 POST 时，1.5s `refetchInterval` 的 GET 因缺 clientId 触发 `DOCUMENT_QUALITY_INPUT_CHANGED` 错误路径，目标断言经由无关的 stale alert 变绿（假阳性，组件不改动测试也过）。新测试先跑一次确认无实现时确实为红，再实现转绿；`console.log` 在该 vitest 配置下不输出，取证用 `writeFileSync` 落盘 DOM 文本。
 
 - 恢复操作保留任务代次时，回归须覆盖“服务端已受理但回执丢失”、另一入口继续后的重新读取，以及完成后迟到的受理回执；只验证本地 mutation 成功会漏掉缓存停留失败和旧传输错误阻止确认。用受控请求屏障观察持续轮询与最终可确认状态，复用[建议恢复回归](../../apps/web/src/app/doctor/doctor-preparation-state.test.tsx)和[真实 Web 恢复入口](../../apps/web/e2e/doctor-recommendation-recovery.spec.ts)，业务合同见[临床流程](../architecture/clinical-workflows.md#81-门诊闭环)。
+
+- TanStack Mutation 的回调按选择归属提前返回，不会清除 `isSuccess`、`isError` 或 `data`。队列刷新自动选中另一患者时，结果提示与预览的渲染也须绑定原费用、作用域和选择代次；回归除核对未跳页外，还须断言新视图没有旧结果提示。复用[收费迟到响应合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)中的真实支付提交与延迟响应屏障。
 
 - 验证重叠请求共享一次模型执行时，先等待第二个请求的公开受理回执，再释放首个模型请求；`setImmediate` 或固定等待不能证明第二个请求已通过授权并加入执行，可能只验证到完成后的串行回放。共享执行和完成后回放分别保留断言。
 

@@ -13,12 +13,19 @@ export const test = base.extend<{
     const directory = await mkdtemp(join(tmpdir(), `clinmesh-e2e-${browserName}-`))
     const webRoot = join(directory, 'web')
     try {
-      await build({
-        root: fileURLToPath(new URL('../', import.meta.url)),
-        envDir: false,
-        logLevel: 'silent',
-        build: { outDir: webRoot, emptyOutDir: true },
-      })
+      const previousNodeEnv = process.env.NODE_ENV
+      try {
+        process.env.NODE_ENV = 'production'
+        await build({
+          root: fileURLToPath(new URL('../', import.meta.url)),
+          envDir: false,
+          logLevel: 'silent',
+          build: { outDir: webRoot, emptyOutDir: true },
+        })
+      } finally {
+        if (previousNodeEnv === undefined) delete process.env.NODE_ENV
+        else process.env.NODE_ENV = previousNodeEnv
+      }
       await use(webRoot)
     } finally {
       await rm(directory, { recursive: true, force: true })

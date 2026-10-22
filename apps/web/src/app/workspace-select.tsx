@@ -14,12 +14,14 @@ export interface WorkspaceSelectItem<Value extends string = string> {
 }
 
 export function WorkspaceSelect<Value extends string>({
+  disabled = false,
   id,
   items,
   onValueChange,
   placeholder,
   value,
 }: {
+  disabled?: boolean
   id: string
   items: readonly WorkspaceSelectItem<Value>[]
   onValueChange: (value: Value | null) => void
@@ -27,7 +29,7 @@ export function WorkspaceSelect<Value extends string>({
   value: Value | null
 }): React.JSX.Element {
   return (
-    <Select items={items} onValueChange={onValueChange} value={value}>
+    <Select disabled={disabled} items={items} onValueChange={onValueChange} value={value}>
       <SelectTrigger className="w-full" id={id}>
         <SelectValue {...(placeholder === undefined ? {} : { placeholder })} />
       </SelectTrigger>

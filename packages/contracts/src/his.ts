@@ -2191,6 +2191,60 @@ export const billingQueueSchema = z.object({
   ...paginationShape,
 })
 
+export const paymentTendersSchema = z.array(z.object({
+  amountFen: z.number().int().positive().max(1_000_000_000),
+  method: z.enum(['cash', 'bank-card', 'mobile']),
+}).strict()).min(1).max(3).refine(
+  tenders => new Set(tenders.map(tender => tender.method)).size === tenders.length,
+  'Payment methods must be unique',
+)
+
+export const paymentSimulatorRuleSchema = z.enum([
+  'success', 'decline', 'ambiguous', 'ambiguous-decline', 'ambiguous-pending',
+])
+
+// Historical zero-priced receivables remain readable; explicit new tenders stay positive.
+export const paymentRecordedTendersSchema = paymentTendersSchema.or(z.tuple([
+  z.object({ amountFen: z.literal(0), method: z.literal('cash') }).strict(),
+]))
+
+const paymentAttemptSchema = z.object({
+  amountFen: z.number().int().nonnegative(),
+  chargeItemId: z.string().min(1),
+  correlationId: z.string().min(1),
+  createdAt: z.string().min(1),
+  initialOutcome: z.enum(['ambiguous', 'declined', 'success']),
+  outcome: z.enum(['ambiguous', 'declined', 'success']),
+  paymentId: z.string().min(1),
+  previewId: z.string().min(1),
+  resolvedAt: z.string().min(1).nullable(),
+  tenders: paymentRecordedTendersSchema,
+  version: z.number().int().positive(),
+})
+
+export const billingCaseSchema = z.object({
+  accountId: z.string().min(1),
+  caseId: z.string().min(1),
+  encounterId: z.string().min(1),
+  patient: patientSummarySchema,
+  charges: z.array(z.object({
+    amountFen: z.number().int().nonnegative(),
+    category: z.enum(['registration', 'laboratory', 'medication']),
+    chargeItemId: z.string().min(1),
+    chargeVersion: z.number().int().positive(),
+    descriptionEn: z.string().min(1),
+    descriptionZh: z.string().min(1),
+    paidFen: z.number().int().nonnegative(),
+    remainingFen: z.number().int().nonnegative(),
+    status: z.string().min(1),
+  })),
+  payments: z.array(paymentAttemptSchema).max(100),
+  paymentsPagination: z.object(paginationShape),
+  paidFen: z.number().int().nonnegative(),
+  remainingFen: z.number().int().nonnegative(),
+  totalFen: z.number().int().nonnegative(),
+})
+
 export const paymentPreviewResponseSchema = commandResponseSchema(z.object({
   allocations: z.array(z.object({
     amountFen: z.number().int().nonnegative(),
@@ -2204,6 +2258,9 @@ export const paymentPreviewResponseSchema = commandResponseSchema(z.object({
   expectedOutcome: z.enum(['ambiguous', 'declined', 'success']),
   expiresAt: z.string().min(1),
   previewId: z.string().min(1),
+  tenders: paymentRecordedTendersSchema.optional(),
+  paidFen: z.number().int().nonnegative().optional(),
+  remainingFen: z.number().int().nonnegative().optional(),
 }))
 
 export const paymentResponseSchema = commandResponseSchema(z.object({
