@@ -1,3 +1,4 @@
+import { insuranceTargetSchema } from '@clinmesh/contracts/insurance'
 import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema, inpatientFinancialPaymentPreviewInputSchema } from '@clinmesh/contracts/inpatient-finance'
 import { inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema } from '@clinmesh/contracts/inpatient-discharge'
@@ -23,6 +24,8 @@ const commandSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('inpatient.financial.payment.preview'), input: inpatientFinancialPaymentPreviewInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.financial.payment.confirm'), input: inpatientPaymentConfirmInputSchema }).strict(),
   z.object({ operation: z.literal('inpatient.financial.payment.recover'), input: inpatientPaymentRecoverInputSchema }).strict(),
+  z.object({operation:z.literal('insurance.confirm'),input:insuranceTargetSchema.extend({previewId:z.string().min(1),commitToken:z.string().min(16).max(256)})}).strict(),
+  z.object({operation:z.literal('insurance.cancel'),input:insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()})}).strict(),
   z.object({operation:z.literal('inpatient.record.submit'),input:inpatientRecordSubmitInputSchema}).strict(),
   z.object({operation:z.literal('inpatient.record.review'),input:inpatientRecordReviewInputSchema}).strict(),
   z.object({operation:z.literal('inpatient.record.archive'),input:inpatientRecordArchiveInputSchema}).strict(),
@@ -163,7 +166,7 @@ export function useInpatientWriteIntent(session: SessionContext, onSuccess: (com
         } else {
           const definition = getHisOperation(intent.command.operation)
           const input = intent.command.input
-          const path = 'admissionId' in input ? definition.http.path.replace(':admissionId', encodeURIComponent(input.admissionId)) : definition.http.path
+          const path = 'admissionId' in input ? definition.http.path.replace(':admissionId', encodeURIComponent(input.admissionId)) : 'kind' in input && 'id' in input ? definition.http.path.replace(':kind', input.kind).replace(':id', encodeURIComponent(input.id)) : definition.http.path
           response = await apiMutation(path, definition.output, definition.http.encodeBody!(input), { idempotencyKey: intent.idempotencyKey })
         }
         clear()

@@ -105,6 +105,27 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
         refunds: [{ outcome: 'success', initialOutcome: 'ambiguous', tenders: [{ method: 'cash', amountFen: 1000 }] }] })
     } finally { await server.close() }
   })
+  test('reviews and compensates real insurance benefits inside the ShadowRoot',async({page})=>{
+    test.setTimeout(120000)
+    const server=await startBillingBrowserServer(fileURLToPath(new URL('../../../web/',import.meta.url)))
+    try{
+      await mountBilling(page,version,server)
+      const panel=page.getByRole('region',{name:'患者医保待遇',exact:true})
+      await panel.getByRole('button',{name:'患者医保待遇（合成）',exact:true}).click()
+      await panel.getByRole('button',{name:'预览医保待遇',exact:true}).click()
+      await panel.getByRole('button',{name:'审阅医保结算',exact:true}).click()
+      const review=page.getByRole('alertdialog',{name:'确认医保结算',exact:true})
+      await expectShadowDialog(page,review)
+      await review.getByRole('button',{name:'提交医保结算',exact:true}).click()
+      await expect(review).toHaveCount(0)
+      await panel.getByRole('button',{name:'撤销原待遇',exact:true}).click()
+      const cancel=page.getByRole('alertdialog',{name:'确认撤销医保',exact:true})
+      await expectShadowDialog(page,cancel)
+      await cancel.getByRole('button',{name:'提交撤销',exact:true}).click()
+      await expect(cancel).toHaveCount(0)
+      expect((await readBill(page,server)).charges.find(row=>row.chargeItemId===server.chargeItemId)?.remainingFen).toBe(6800)
+    }finally{await server.close()}
+  })
   for (const replaceSelection of [false, true]) test(`binds a delayed real confirmation to its original selection (queue replacement: ${replaceSelection})`, async ({ page }) => {
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     let releaseResponse = () => {}

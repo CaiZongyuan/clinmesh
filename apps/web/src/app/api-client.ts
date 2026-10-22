@@ -1,5 +1,6 @@
 import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
   type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
+import { insuranceStateSchema, insurancePreviewResponseSchema, insuranceResponseSchema, type InsuranceTarget } from '@clinmesh/contracts/insurance'
 import {
   acknowledgeImagingReportResponseSchema,
   caseImagingServiceCatalogSchema,
@@ -2044,4 +2045,17 @@ export function dispensePrescription(input: {
     },
     { idempotencyKey },
   )
+}
+
+export function getInsuranceState(target: InsuranceTarget, signal?: AbortSignal) {
+  return apiGet('/api/his/v1/insurance/'+target.kind+'/'+encodeURIComponent(target.id),insuranceStateSchema,signal)
+}
+export function previewInsurance(target: InsuranceTarget, planCode: 'employee-v1' | 'resident-v1', key: string) {
+  return apiMutation('/api/his/v1/insurance/'+target.kind+'/'+encodeURIComponent(target.id)+'/preview',insurancePreviewResponseSchema,{input:{planCode},expectedVersions:{}},{idempotencyKey:key})
+}
+export function confirmInsurance(target: InsuranceTarget, input: {previewId:string;commitToken:string}, key: string) {
+  return apiMutation('/api/his/v1/insurance/'+target.kind+'/'+encodeURIComponent(target.id)+'/confirm',insuranceResponseSchema,{input,expectedVersions:{}},{idempotencyKey:key})
+}
+export function cancelInsurance(target: InsuranceTarget, input: {settlementId:string;expectedBalanceVersion:number}, key: string) {
+  return apiMutation('/api/his/v1/insurance/'+target.kind+'/'+encodeURIComponent(target.id)+'/cancel',insuranceResponseSchema,{input,expectedVersions:{}},{idempotencyKey:key})
 }

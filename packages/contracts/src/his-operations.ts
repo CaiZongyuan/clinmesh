@@ -1,6 +1,6 @@
 import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
 import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema,
-  inpatientFinancialInsuranceConfirmInputSchema, inpatientFinancialResponseSchema } from './inpatient-finance.ts'
+  inpatientFinancialInsuranceConfirmInputSchema } from './inpatient-finance.ts'
 import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewInputSchema, refundPreviewResponseSchema,
   refundConfirmInputSchema, refundRecoverInputSchema, refundResponseSchema } from './refunds.ts'
 import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
