@@ -69,7 +69,7 @@ pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinme
 
 `--input-root` 是锁定清单中各包路径的共同根，默认清单要求其中存在 `.data/reference-prepared/r3` 与 `.data/exports/opendrg-2026-10-20`；可指向已有资料所在的另一个仓库根，无需复制资料。`--database` 应与 Server 配置一致。迁移旧参考库后重启 Server；已有查询连接能读取后来原子发布的清单。
 
-重复准备会重新检查全部文件并返回 `created: false`。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径与重复文件均拒绝发布；同一 `inventoryId` 不能覆盖。修复输入后使用原命令重试；新资料需要新版本及新身份，不能直接修改既有发布内容。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败；不记录原文。
+重复准备会重新检查全部文件并返回 `created: false`。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径与重复文件均拒绝发布；同一 `inventoryId` 不能覆盖。修复输入后使用原命令重试；新资料或摘要提取结果修正需要新清单身份，不能直接修改既有发布内容。当前默认清单 `clinmesh-drg-offline-2026-10-22.r2` 保留 `sourceUnit` 中的来源计价单位；已有 r1 清单的资料维护者重新运行上述准备命令即可追加 r2，旧清单保持可查。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败；不记录原文。
 
 管理员可在登录会话下请求 `GET /api/sim/v1/reference-data/offline-inventories?page=1&pageSize=20`，回读来源、Manifest／文件哈希、版本、行数、来源单位、覆盖与隔离项。HTTP 与 CLI 清单列表均返回 `items/page/pageSize/total`，默认每页 20 条、最多 50 条，可按总数继续翻页。普通岗位访问被拒绝；成功和失败读取沿用 operational 审计链及 FHIR AuditEvent。查询与恢复依据见[参考数据合同](architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
 

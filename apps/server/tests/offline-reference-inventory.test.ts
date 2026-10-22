@@ -17,11 +17,10 @@ describe('offline reference inventory maintenance CLI', () => {
     await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })))
   })
 
-  async function fixture() {
+  async function fixture(records = '{"code":"synthetic-service","unit":"次","runtimeEnabled":false}\n') {
     const root = await mkdtemp(join(tmpdir(), 'clinmesh-offline-inventory-'))
     directories.push(root)
     await mkdir(join(root, 'prepared/services'), { recursive: true })
-    const records = '{"code":"synthetic-service","unit":"次","runtimeEnabled":false}\n'
     await writeFile(join(root, 'prepared/services/records.jsonl'), records)
     const manifest = JSON.stringify({
       schemaVersion: 'clinmesh.prepared-catalogues.v1', releaseId: 'synthetic-prepared-v1',
@@ -58,6 +57,18 @@ describe('offline reference inventory maintenance CLI', () => {
     expect(await runReferenceDatabaseCli(['list-inventories', '--database', input.databasePath]))
       .toMatchObject({ items: [{ inventoryId: 'synthetic-inventory-v1', runtimeEnabled: false }] })
     expect(await runReferenceDatabaseCli(['list', '--database', input.databasePath])).toEqual({ items: [] })
+  })
+
+  it('preserves explicit source units on repeated preparation and inventory readback', async () => {
+    const input = await fixture('{"code":"synthetic-drug-payment-schedule","sourceUnit":"毫居","packageUnit":"盒"}\n')
+    const args = ['prepare-inventory', '--database', input.databasePath, '--manifest', input.lockPath, '--input-root', input.root]
+    await runReferenceDatabaseCli(args)
+    expect(await runReferenceDatabaseCli(args)).toMatchObject({ created: false })
+    const saved = offlineReferenceInventoryListSchema.parse(await runReferenceDatabaseCli(['list-inventories', '--database', input.databasePath]))
+    expect(saved.items[0]?.packages[0]).toMatchObject({
+      runtimeEnabled: false,
+      tables: [{ units: ['毫居'], unitStatus: 'source-only-unverified' }],
+    })
   })
 
   it('exposes the prepared inventory to administrators through the reference-data HTTP query and rejects clinical roles', async () => {

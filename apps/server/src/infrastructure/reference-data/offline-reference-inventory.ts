@@ -57,7 +57,7 @@ function sourceUnits(value: unknown, units: Set<string>): void {
     for (const entry of value) sourceUnits(entry, units)
   } else if (value !== null && typeof value === 'object') {
     for (const [key, entry] of Object.entries(value)) {
-      if (/^(unit|pricingUnit|billingUnit|计价单位|单位)$/.test(key) && typeof entry === 'string' && entry.trim() !== '') {
+      if (/^(unit|sourceUnit|pricingUnit|billingUnit|计价单位|单位)$/.test(key) && typeof entry === 'string' && entry.trim() !== '') {
         units.add(entry)
       } else if (entry !== null && typeof entry === 'object') sourceUnits(entry, units)
     }
