@@ -106,7 +106,7 @@ export function ModelUsageCorrections({ item, locale, administrator, saved }: {
     {item.corrections.length === 0 ? <p>{messages.noCorrections}</p> : <ol className="flex min-w-0 flex-col gap-3">{item.corrections.map(correction =>
       <li key={correction.revision} className="min-w-0"><p>{messages.revision} {correction.revision} · {correction.kind === 'reconcile' ? messages.reconcile : messages.reprice}</p>
         <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {[[messages.evidence, correction.evidence], [messages.operator, correction.actorId], [messages.date, new Date(correction.at).toLocaleString(locale)],
+          {[[messages.evidence, correction.evidence], [messages.operator, correction.actorId], [messages.date, new Date(correction.at).toLocaleString(locale, { timeZone: 'Asia/Shanghai' })],
             [messages.totalTokens, format(correction.totalTokens)], [messages.cost, format(correction.cny)],
             [messages.currency, correction.cost?.currency ?? messages.notReturned], [messages.originalAmount, format(correction.cost?.original ?? null)],
             [messages.priceVersion, correction.priceSnapshot?.price?.version ?? messages.notReturned],
