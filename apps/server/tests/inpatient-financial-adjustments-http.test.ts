@@ -50,6 +50,45 @@ async function setup() {
 }
 
 describe('首次结算后的财务更正公共 HTTP', () => {
+  it('后续未知退款只挂起调整，重启查询原尝试后结清差额且不改变首次冻结资金', async () => {
+    const s = await setup()
+    const before = await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json()
+    const adjusted = await s.request(s.cashier, `${s.path}/financial-adjustments`, { chargeId: before.charges[0].chargeId,
+      amountFen: 2000, expectedFingerprint: before.fingerprint, reason: '合成后续床日费冲减' })
+    expect(adjusted.status).toBe(200)
+    const bill = (await adjusted.json()).data, source = bill.sources[0]
+    const preview = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/preview`, {
+      adjustmentId: bill.adjustments[0].adjustmentId, sourceKind: source.sourceKind, sourceId: source.sourceId,
+      amountFen: 2000, expectedFingerprint: bill.fingerprint, expectedSourceVersion: source.version, simulatorRule: 'ambiguous' })
+    expect(preview.status).toBe(200)
+    const reviewed = (await preview.json()).data
+    const confirmation = { previewId: reviewed.previewId, commitToken: reviewed.commitToken }, key = randomUUID()
+    const response = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/confirm`, confirmation, key)
+    expect(response.status).toBe(200)
+    const receipt = await response.json()
+    expect(receipt.data).toMatchObject({ outcome: 'ambiguous', amountFen: 2000 })
+    const pending = await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json()
+    expect(pending).toMatchObject({ currentFundsFen: 5000, currentChargesFen: 3000, reservedFen: 2000 })
+    expect(pending.adjustments[0].status).toBe('unknown')
+    expect((await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/preview`, {
+      adjustmentId: bill.adjustments[0].adjustmentId, sourceKind: source.sourceKind, sourceId: source.sourceId,
+      amountFen: 1, expectedFingerprint: pending.fingerprint, expectedSourceVersion: pending.sources[0].version, simulatorRule: 'success' })).status).toBe(409)
+    await s.restart()
+    expect(await (await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/confirm`, confirmation, key)).json()).toEqual(receipt)
+    const recovery = { refundId: receipt.data.refundId, expectedRefundVersion: 1 }, recoveryKey = randomUUID()
+    const recovered = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/recover`, recovery, recoveryKey)
+    expect(recovered.status).toBe(200)
+    expect((await recovered.json()).data).toMatchObject({ outcome: 'success', version: 2 })
+    expect((await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/recover`, recovery, recoveryKey)).status).toBe(200)
+    const current = await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json()
+    expect(current).toMatchObject({ currentFundsFen: 3000, currentChargesFen: 3000, remainingRefundFen: 0, reservedFen: 0 })
+    expect(current.refunds).toHaveLength(1)
+    expect(current.adjustments[0].status).toBe('completed')
+    const frozen = await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json()
+    expect(frozen.transactions).toEqual(s.settled.transactions)
+    expect(frozen.settlement).toEqual(s.settled.settlement)
+    expect((await (await s.request(s.cashier, s.path)).json()).admission).toMatchObject({ status: 'cleared', financialStatus: 'settled' })
+  })
   it('追加原费用冲减保留首次结算与清床事实，旧key不重复更正且其他岗位拒绝', async () => {
     const s = await setup()
     const beforeResponse = await s.request(s.cashier, `${s.path}/financial-adjustments`)

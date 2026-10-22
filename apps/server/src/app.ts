@@ -1,6 +1,6 @@
 import { inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientDischargeInputSchema, inpatientSettleInputSchema, inpatientDepartInputSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { inpatientFinancialAdjustmentInputSchema } from '@clinmesh/contracts/inpatient-finance'
+import { inpatientFinancialAdjustmentInputSchema, inpatientFinancialRefundPreviewInputSchema, inpatientFinancialRefundConfirmInputSchema, inpatientFinancialRefundRecoverInputSchema } from '@clinmesh/contracts/inpatient-finance'
 import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema } from '@clinmesh/contracts/inpatient-investigations'
@@ -1335,6 +1335,20 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments', async context => {
       try { return context.json(inpatient.financialAdjustments.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
+    const financialRefund = (action: 'preview' | 'confirm' | 'recover') => async (context: Context) => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const schema = action === 'preview' ? inpatientFinancialRefundPreviewInputSchema : action === 'confirm' ? inpatientFinancialRefundConfirmInputSchema : inpatientFinancialRefundRecoverInputSchema
+        const body = z.object({ input: schema.omit({ admissionId: true }) }).strict().parse(await context.req.json())
+        const input = { ...body.input, admissionId: context.req.param('admissionId') }, currentActor = await actor(context)
+        const key = z.string().min(8).max(128).parse(context.req.header('idempotency-key'))
+        return context.json(action === 'preview' ? inpatient.financialAdjustments.refundPreview(currentActor, input, key)
+          : action === 'confirm' ? inpatient.financialAdjustments.refundConfirm(currentActor, input, key) : inpatient.financialAdjustments.refundRecover(currentActor, input, key))
+      } catch (error) { return apiErrorResponse(context, error) }
+    }
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/refunds/preview', financialRefund('preview'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/refunds/confirm', financialRefund('confirm'))
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/refunds/recover', financialRefund('recover'))
     app.post('/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments', async context => {
       try {
         identity.assertTrustedMutation(context.req.raw.headers)
