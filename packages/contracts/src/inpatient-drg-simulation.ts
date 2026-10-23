@@ -19,9 +19,10 @@ export const inpatientDrgSimulationInputSchema = z.object({
 
 export type InpatientDrgSimulationInput = z.infer<typeof inpatientDrgSimulationInputSchema>
 
-/** 推演条目：正式收费带净额，未记费承诺/预留/草稿为目录推算；estimatedFen=null 表示缺价，不以零值填充。 */
+/** 推演条目：正式收费带净额，未记费承诺/预留/草稿为目录推算；estimatedFen=null 表示缺价，不以零值填充。
+ *  kind 覆盖共享账务全部收费类别（含床位/检验/检查），formal 条目按费用来源如实透传。 */
 export const inpatientDrgSimulationItemSchema = z.object({
-  kind: z.enum(['medication', 'service', 'surgery', 'material']),
+  kind: z.enum(['bed', 'medication', 'service', 'surgery', 'material', 'laboratory', 'imaging']),
   id,
   display: z.string().min(1).max(500),
   quantity: z.number().int().positive(),

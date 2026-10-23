@@ -167,6 +167,13 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
       const version = (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests[0].version
       expect((await s.request(cookie, `${s.path}/surgeries/${action}`, { requestId: request.id, expectedRequestVersion: version, note: '合成准备完成' })).status).toBe(200)
     }
+    // 跨目录版本置换被拒：预留冻结的是 v1 目录价，须按预留原版本替换。
+    const stale = await s.request(s.doctor, `${s.path}/surgeries/execute`, { requestId: request.id,
+      expectedRequestVersion: (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests[0].version,
+      procedureId: procedure.id, catalogVersion: procedure.version, note: '跨版本置换验证',
+      materials: [{ materialId: material.id, catalogVersion: material.version + 1, quantity: 2, reservationId: reservation.id }] })
+    expect(stale.status).toBe(409)
+    expect((await stale.json()).error.code).toBe('INPATIENT_RESERVATION_CONFLICT')
     const executed = await s.request(s.doctor, `${s.path}/surgeries/execute`, { requestId: request.id,
       expectedRequestVersion: (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).requests[0].version,
       procedureId: procedure.id, catalogVersion: procedure.version, note: '合成实际实施完成', materials: [{ materialId: material.id, catalogVersion: material.version, quantity: 2, reservationId: reservation.id }] })
@@ -189,6 +196,19 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     expect((await released.json()).error.code).toBe('INPATIENT_RESERVATION_CONFLICT')
     expect((await s.request(s.cashier, `${s.path}/drg/reservations`, { encounterVersion: '1', materialId: material.id,
       catalogVersion: material.version, quantity: 1, reason: '越岗验证' })).status).toBe(403)
+  })
+
+  it('床位费等正式收费进入推演 formal 条目', async () => {
+    const s = await setup()
+    expect((await confirmPrimary(s)).status).toBe(200)
+    // 推进虚拟时钟跨上海时区午夜，按日产生床位费正式收费。
+    const admin = await s.login('admin')
+    const clock = await (await s.request(admin, '/api/sim/v1/scenario-runs/current')).json()
+    expect((await s.request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time',
+      { expectedVirtualTime: clock.virtualTime, targetVirtualTime: '2026-08-25T01:00:00.000Z' })).status).toBe(200)
+    const simulated = await (await s.request(s.doctor, `${s.path}/drg/simulation`, {})).json()
+    expect(simulated.formal.chargesFen).toBeGreaterThan(0)
+    expect(simulated.formal.items).toContainEqual(expect.objectContaining({ kind: 'bed', display: '住院床位费', quantity: 1 }))
   })
 
   it('execute 校验多项无预留耗材合法，重复引用同一预留仍被拒绝', () => {
