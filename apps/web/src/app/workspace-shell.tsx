@@ -54,7 +54,7 @@ import {
   SunIcon,
   UserRoundIcon,
 } from 'lucide-react'
-import { useEffect, useMemo, type ReactNode } from 'react'
+import { Fragment, useEffect, useMemo, type ReactNode } from 'react'
 import clinmeshMarkUrl from '../assets/clinmesh-mark.webp'
 import clinmeshWordmarkUrl from '../assets/clinmesh-wordmark.webp'
 import { useWebRuntime } from './web-runtime.tsx'
@@ -154,6 +154,25 @@ const roleMessageKeys: Record<SessionContext['actor']['roleCode'], WorkspaceMess
   registrar: 'role_registrar',
   'triage-nurse': 'role_triageNurse',
 }
+
+const roleGroups: Record<SessionContext['actor']['roleCode'], 'outpatient' | 'inpatient' | 'system'> = {
+  administrator: 'system',
+  cashier: 'outpatient',
+  'outpatient-doctor': 'outpatient',
+  'inpatient-doctor': 'inpatient',
+  'ward-nurse': 'inpatient',
+  'medical-records': 'inpatient',
+  'medical-insurance': 'inpatient',
+  pharmacist: 'outpatient',
+  registrar: 'outpatient',
+  'triage-nurse': 'outpatient',
+}
+
+const roleGroupSections = [
+  { key: 'outpatient', messageKey: 'roleGroupOutpatient' },
+  { key: 'inpatient', messageKey: 'roleGroupInpatient' },
+  { key: 'system', messageKey: 'roleGroupSystem' },
+] as const satisfies ReadonlyArray<{ key: 'outpatient' | 'inpatient' | 'system'; messageKey: WorkspaceMessageKey }>
 
 function actingPractitionerLabel(
   role: SessionContext['availableRoles'][number],
@@ -327,21 +346,33 @@ function UserMenu({
         <DropdownMenuSeparator />
         <DropdownMenuGroup>
           <DropdownMenuLabel>{messages.practitionerRole}</DropdownMenuLabel>
-          <DropdownMenuRadioGroup
-            onValueChange={onRoleChange}
-            value={session.actor.practitionerRoleId}
-          >
-            {[...people.values()].map(role => (
-              <DropdownMenuRadioItem
-                disabled={roleChangePending}
-                key={role.id}
-                value={role.id}
-              >
-                {actingPractitionerLabel(role, messages)}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
         </DropdownMenuGroup>
+        {roleGroupSections.map(section => {
+          const members = [...people.values()].filter(role => roleGroups[role.code] === section.key)
+          if (members.length === 0) return null
+          return (
+            <Fragment key={section.key}>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{messages[section.messageKey]}</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  onValueChange={onRoleChange}
+                  value={session.actor.practitionerRoleId}
+                >
+                  {members.map(role => (
+                    <DropdownMenuRadioItem
+                      disabled={roleChangePending}
+                      key={role.id}
+                      value={role.id}
+                    >
+                      {actingPractitionerLabel(role, messages)}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuGroup>
+            </Fragment>
+          )
+        })}
         {runtime.mode === 'standalone' ? (
           <>
             <DropdownMenuSeparator />
