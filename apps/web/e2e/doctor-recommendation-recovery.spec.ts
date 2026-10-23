@@ -43,6 +43,7 @@ test('saving identical text preserves all five automatic preparations and their 
     await page.getByRole('tab', { name: '待诊', exact: true }).click()
     await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     const read = async (kind: DoctorRecommendationKind) => doctorRecommendationStateSchema.parse(await (await page.request.get(
       `${app.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}/recommendations/${kind}`)).json())
     const readAll = () => Promise.all(doctorRecommendationKindSchema.options.map(read))
@@ -87,6 +88,7 @@ test('continues with automatic retries disabled despite a lost response, then en
     await page.getByRole('tab', { name: '待诊', exact: true }).click()
     await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     await page.getByRole('tab', { name: '诊断', exact: true }).click()
     const panel = page.getByRole('region', { name: '待确认诊断', exact: true })
     const read = async () => doctorRecommendationStateSchema.parse(await (await page.request.get(

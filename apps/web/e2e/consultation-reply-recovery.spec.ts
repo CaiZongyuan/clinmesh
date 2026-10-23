@@ -15,6 +15,7 @@ async function openConsultation(page: Page, server: Awaited<ReturnType<typeof st
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
   await page.getByText('张琴', { exact: true }).first().click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('button', { name: '开始首诊', exact: true })).toHaveCount(0)
   await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
   await expect(page.getByRole('tab', { name: '问诊记录', exact: true })).toHaveAttribute('aria-selected', 'true')
