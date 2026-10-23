@@ -14,18 +14,13 @@ import { ArrowLeftIcon } from 'lucide-react'
 import { useState } from 'react'
 import { apiGet, searchPatients } from './api-client.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
-import { formatFen } from './workspace-format.ts'
+import { formatFen, yuanToFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 
-export function yuanToFen(value: string): number | undefined {
-  const match = /^(\d{1,14})(?:\.(\d{1,2}))?$/.exec(value)
-  if (match === null) return undefined
-  const fen = BigInt(match[1]!) * 100n + BigInt((match[2] ?? '').padEnd(2, '0'))
-  return fen <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(fen) : undefined
-}
+export { yuanToFen } from './workspace-format.ts'
 
 export function InpatientWorkspace({ session, locale }: { session: SessionContext; locale: WorkspaceLocale }): React.JSX.Element {
   const zh = locale === 'zh-CN'

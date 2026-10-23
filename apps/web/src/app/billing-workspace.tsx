@@ -1,3 +1,4 @@
+import { InsurancePanel } from './insurance-panel.tsx'
 import type { BillingQueueItem, SessionContext } from '@clinmesh/contracts/his'
 import { parseAgentToolInput } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -22,9 +23,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
 import { BillingCasePanel, paymentMethodLabel } from './billing-case-panel.tsx'
+import { BillingRefundPanel } from './billing-refund-panel.tsx'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -99,13 +101,13 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const displaysPaymentResult = (context: ReturnType<typeof paymentMutationContext> | undefined) =>
     context?.chargeItemId !== undefined && context.chargeItemId === selectedCharge?.chargeItemId
       && context.scope === agentViewRevision({ scope }) && context.revision === selectionRevision.current
-  const refreshBilling = async () => {
+  const refreshBilling = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['billing-queue', ...scope] }),
       queryClient.invalidateQueries({ queryKey: ['billing-case', ...scope] }),
       queryClient.invalidateQueries({ queryKey: ['pharmacy-queue', ...scope] }),
     ])
-  }
+  },[queryClient,session.actor.workspaceId,session.actor.epoch])
   const recover = useMutation({
     onMutate: (paymentId: string) => {
       historyRevision.current += 1
@@ -182,7 +184,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     },
     onSettled: refreshBilling,
   })
-  const clearPayment = () => {
+  const clearPayment = useCallback(() => {
     historyRevision.current += 1
     selectionRevision.current += 1
     setPaymentConfirmationOpen(false)
@@ -190,7 +192,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     confirm.reset()
     recover.reset()
     setTenderAmounts({})
-  }
+  },[preview.reset,confirm.reset,recover.reset])
+  const insuranceChanged=useCallback(async()=>{clearPayment();await refreshBilling()},[clearPayment,refreshBilling])
   const changeCategory = (value: BillingCategory) => {
     if (paymentPending) return
     setCategory(value)
@@ -449,6 +452,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             ) : bill.data === undefined ? null : (
               <BillingCasePanel key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={paymentId => recover.mutateAsync(paymentId)} onRefresh={() => bill.refetch()} recovering={paymentPending} />
             )}
+            {bill.data === undefined ? null : <BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} onChanged={refreshBilling} />}
+            <InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/>
             <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
               <div><div className="text-lg font-semibold">{selectedCharge.patient.name}</div><div className="text-sm text-muted-foreground">{selectedChargeDescription}</div></div>
               <div className="text-right"><div className="text-xs text-muted-foreground">{messages.amount}</div><div className="text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</div></div>

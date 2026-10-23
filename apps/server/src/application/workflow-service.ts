@@ -1,3 +1,5 @@
+import { InsuranceService, InsuranceError, type InsuranceSource, type InsuranceTarget } from './insurance-service.ts'
+import { readOutpatientInsuranceAllocations, readOutpatientInsuranceSource } from './outpatient-insurance.ts'
 import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
 import { medicationDoseAndFrequencyAllowed } from './medication-rules.ts'
 import { CommandReceiptNotFoundError } from './command-executor.ts'
@@ -112,6 +114,8 @@ import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction }
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { PaymentLedger } from './payment-ledger.ts'
+import { OutpatientRefunds } from './outpatient-refunds.ts'
+import { paymentChannelPlan } from './payment-channel.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
 import { PathologyRequestService } from './pathology-request-service.ts'
 import { ConsultationRecordingService } from './consultation-recording-service.ts'
@@ -1161,11 +1165,13 @@ interface InvestigationCapabilityResolver {
 }
 
 export class WorkflowService {
+  readonly refunds: OutpatientRefunds
   readonly #commands: CommandExecutor
   readonly #database: ClinMeshDatabase
   readonly #fhir: FhirRepository
   readonly #investigation: InvestigationCapabilityResolver | undefined
   readonly #now: () => Date
+  readonly insurance: InsuranceService
   readonly #payments: PaymentLedger
   readonly #referenceData: ReferenceDataService | undefined
   readonly #requests: ClinicalRequestKernel
@@ -1191,6 +1197,9 @@ export class WorkflowService {
       now?: () => Date
       referenceData?: ReferenceDataService
       tokenSecret: string
+      readInpatientInsuranceSource?: (context: ActorContext, target: InsuranceTarget) => InsuranceSource
+      onInpatientInsuranceAllocationChanged?: (context: ActorContext, source: InsuranceSource, transaction: CommandTransaction, effects: CommandEffect[]) => void
+      assertInpatientInsuranceChangeAllowed?: (context: ActorContext, source: InsuranceSource, action: 'settle' | 'cancel') => void
     },
   ) {
     this.#commands = commands
@@ -1199,9 +1208,45 @@ export class WorkflowService {
     this.#investigation = options.investigation
     this.#now = options.now ?? (() => new Date())
     this.#payments = new PaymentLedger(database)
+    this.insurance = new InsuranceService(database, commands, {
+      now: this.#now,
+      readSource: (context,target) => {
+        if(target.kind==='outpatient')return readOutpatientInsuranceSource(database,context,target)
+        if(options.readInpatientInsuranceSource===undefined)throw new InsuranceError('INSURANCE_SOURCE_UNAVAILABLE','住院医保入口尚未启用')
+        return options.readInpatientInsuranceSource(context,target)
+      },
+      assertChangeAllowed: (context,source,action) => {
+        if(source.target.kind==='inpatient'){options.assertInpatientInsuranceChangeAllowed?.(context,source,action);return}
+        for(const charge of source.charges){
+          const row=z.object({status:z.string(),category:z.string()}).parse(database.driver.prepare('SELECT status,category FROM charge_record WHERE workspace_id=? AND epoch=? AND charge_item_id=?').get(context.workspaceId,context.epoch,charge.reference.slice(11)))
+          if(action==='settle'&&row.category==='medication'&&fhir.read(context,'Encounter',source.encounterId).status!=='completed')
+            throw new InsuranceError('INSURANCE_FUNDS_CONFLICT','处方须完诊后再预览或确认医保待遇')
+          const balance=this.#payments.balance(context,charge.reference.slice(11))
+          if(balance.unresolved>0||(action==='settle'&&(row.status==='paid'||balance.paidFen>0)))throw new InsuranceError('INSURANCE_FUNDS_CONFLICT','请先查明原收款或退款结果；已收款费用新增待遇须通过财务更正处理')
+        }
+      },
+      onAllocationChanged: (context,source,transaction,effects) => {
+        if(source.target.kind==='inpatient'){options.onInpatientInsuranceAllocationChanged?.(context,source,transaction,effects);return}
+        for(const charge of source.charges){
+          if(charge.coverage.included===false)continue
+          const facts=z.object({charge_id:z.string(),charge_item_id:z.string(),current_amount_fen:z.number(),charge_version:z.number(),category:z.enum(['laboratory','medication']),case_id:z.string(),case_status:paymentPreviewRowSchema.shape.case_status,patient_id:z.string(),encounter_id:z.string(),prescription_id:z.string().nullable(),service_request_id:z.string().nullable()}).parse(database.driver.prepare(`
+            SELECT c.charge_id,c.charge_item_id,c.total_fen - COALESCE((
+              SELECT SUM(adjustment.amount_fen) FROM financial_charge_adjustment adjustment
+              WHERE adjustment.workspace_id=c.workspace_id AND adjustment.epoch=c.epoch
+                AND adjustment.charge_item_id=c.charge_item_id
+            ),0) AS current_amount_fen,c.version AS charge_version,c.category,o.case_id,o.status AS case_status,
+              o.patient_id,o.encounter_id,o.prescription_id,o.service_request_id
+            FROM charge_record c JOIN outpatient_case o USING(workspace_id,epoch,case_id)
+            WHERE c.workspace_id=? AND c.epoch=? AND c.charge_item_id=?
+          `).get(context.workspaceId,context.epoch,charge.reference.slice(11)))
+          this.#applyPaymentOutcome(transaction,context,facts,'success',effects)
+        }
+      },
+    })
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
+    this.refunds = new OutpatientRefunds(database, fhir, commands, { now: this.#now, virtualTime: context => this.#virtualTime(context), tokenSecret: options.tokenSecret })
     this.qualityControl = new ClinicalDocumentQualityControl({
       database, commands, modelAvailable: options.qualityModelAvailable === true,
       contextStatus: options.qualityContextStatus ?? (() => 'active'),
@@ -4844,7 +4889,7 @@ export class WorkflowService {
       if (this.#prescriptionHasUnsettledFunds(input.context, input.prescriptionId)) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
-          'The prescription cannot be withdrawn while a payment is unresolved or partially collected',
+          'The prescription cannot be withdrawn with active insurance allocations or unresolved or partially collected payments; cancel its insurance settlement first',
         )
       }
       const items = z.array(prescriptionDispensingRowSchema).parse(
@@ -8270,7 +8315,9 @@ export class WorkflowService {
       ORDER BY created_at, charge_id
     `).all(...scope)).map(charge => {
       const { paidFen } = ledger.balance(input.context, charge.chargeItemId)
-      return { ...charge, paidFen, remainingFen: charge.amountFen - paidFen }
+      const insuranceFen = this.insurance.coverage(input.context, `ChargeItem/${charge.chargeItemId}`)
+      const amountFen = charge.amountFen - this.refunds.adjustmentFen(input.context, charge.chargeItemId)
+      return { ...charge, amountFen, paidFen, insuranceFen, remainingFen: Math.max(0, amountFen - paidFen - insuranceFen) }
     })
     const { items: payments, ...paymentsPagination } = ledger.attempts(input.context, input.caseId, input.page, input.pageSize)
     return billingCaseSchema.parse({
@@ -9092,7 +9139,9 @@ export class WorkflowService {
       this.#assertRole(input.context, ['cashier'])
       const charge = paymentChargeRowSchema.optional().parse(
         this.#database.driver.prepare(`
-          SELECT charge.charge_id, charge.charge_item_id, charge.total_fen,
+          SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
+            FROM financial_charge_adjustment adjustment WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
+              AND adjustment.charge_item_id=charge.charge_item_id),0) AS total_fen,
             charge.version, charge.status, outpatient_case.status AS case_status,
             outpatient_case.encounter_id,
             prescription.status AS prescription_status,
@@ -9119,28 +9168,22 @@ export class WorkflowService {
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${charge.charge_item_id}`])
       const balance = this.#payments.balance(input.context, charge.charge_item_id)
-      if (balance.unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
-      const remainingFen = charge.total_fen - balance.paidFen
+      if (balance.unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', 'Resolve the original unknown collection or refund before collecting again')
+      const remainingFen = charge.total_fen - balance.paidFen - this.insurance.coverage(input.context, `ChargeItem/${charge.charge_item_id}`)
       const tenders = paymentRecordedTendersSchema.parse(input.tenders ?? [{ method: 'cash', amountFen: remainingFen }])
       const amountFen = tenders.reduce((sum, tender) => sum + tender.amountFen, 0)
       if (amountFen > remainingFen) throw new WorkflowError('WORKFLOW_CONFLICT', 'Payment exceeds the remaining receivable')
       const encounter = this.#fhir.read(input.context, 'Encounter', charge.encounter_id)
       if (
-        (input.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment')
+        (input.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment' && !this.insurance.hadCompensation(input.context, `ChargeItem/${charge.charge_item_id}`))
         || (input.category === 'medication'
           && (encounter.status !== 'completed'
-            || charge.prescription_status !== 'signed'
+            || (charge.prescription_status !== 'signed' && !this.insurance.hadCompensation(input.context, `ChargeItem/${charge.charge_item_id}`))
             || charge.withdrawal_id !== null))
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
       }
-      const rule = this.#database.driver.prepare(`
-        SELECT outcome FROM scenario_simulator_rule
-        WHERE workspace_id = ? AND epoch = ? AND simulator = 'payment' AND rule_code = ?
-      `).get(input.context.workspaceId, input.context.epoch, input.simulatorRule.startsWith('ambiguous') ? 'ambiguous' : input.simulatorRule) as {
-        outcome: 'ambiguous' | 'declined' | 'success'
-      } | undefined
-      if (rule === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The payment simulator rule is unavailable')
+      const rule = paymentChannelPlan(this.#database, input.context, input.simulatorRule)
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(previewId)}`
       const expiresAt = new Date(this.#now().getTime() + 5 * 60_000).toISOString()
@@ -9195,7 +9238,9 @@ export class WorkflowService {
         this.#database.driver.prepare(`
           SELECT preview.*, charge.charge_id, charge.charge_item_id,
             charge.status AS charge_status, charge.version AS charge_version,
-            charge.total_fen AS current_amount_fen,
+            charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen) FROM financial_charge_adjustment adjustment
+              WHERE adjustment.workspace_id=charge.workspace_id AND adjustment.epoch=charge.epoch
+                AND adjustment.charge_item_id=charge.charge_item_id),0) AS current_amount_fen,
             outpatient_case.patient_id, outpatient_case.encounter_id,
             outpatient_case.account_id, outpatient_case.service_request_id,
             outpatient_case.prescription_id, outpatient_case.status AS case_status,
@@ -9264,28 +9309,22 @@ export class WorkflowService {
       const balance = ledger.balance(input.context, preview.charge_item_id)
       if (
         preview.charge_version !== preview.expected_charge_version
-        || preview.amount_fen > preview.current_amount_fen - balance.paidFen
+        || preview.amount_fen > preview.current_amount_fen - balance.paidFen - this.insurance.coverage(input.context, `ChargeItem/${preview.charge_item_id}`)
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment preview no longer matches the charge')
       }
       if (
-        (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment')
+        (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`))
         || (preview.category === 'medication'
           && (transaction.fhir.read(input.context, 'Encounter', preview.encounter_id).status !== 'completed'
-            || preview.prescription_status !== 'signed'
+            || (preview.prescription_status !== 'signed' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`))
             || preview.withdrawal_id !== null))
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
       }
-      const rule = this.#database.driver.prepare(`
-        SELECT outcome FROM scenario_simulator_rule
-        WHERE workspace_id = ? AND epoch = ? AND simulator = 'payment' AND rule_code = ?
-      `).get(input.context.workspaceId, input.context.epoch, preview.simulator_rule.startsWith('ambiguous') ? 'ambiguous' : preview.simulator_rule) as {
-        outcome: 'ambiguous' | 'declined' | 'success'
-      } | undefined
-      if (rule === undefined) throw new WorkflowError('CATALOG_CONFLICT', 'The payment simulator rule is unavailable')
+      const rule = paymentChannelPlan(this.#database, input.context, paymentSimulatorRuleSchema.parse(preview.simulator_rule))
       if (balance.unresolved > 0) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Resolve the original unknown collection or refund before collecting again')
       }
       const tenders = paymentRecordedTendersSchema.parse(preview.tenders_json === null
         ? [{ method: 'cash', amountFen: preview.amount_fen }] : JSON.parse(preview.tenders_json))
@@ -9310,8 +9349,7 @@ export class WorkflowService {
         `sim-${paymentId}`,
         input.previewId,
         now,
-        preview.simulator_rule === 'ambiguous' ? 'success'
-          : preview.simulator_rule === 'ambiguous-decline' ? 'declined' : 'ambiguous',
+        rule.recoveryOutcome,
       )
       ledger.allocate(input.context, paymentId, preview.charge_item_id, tenders)
       this.#database.driver.prepare(`
@@ -9363,8 +9401,8 @@ export class WorkflowService {
         return { data: { amountFen: attempt.amountFen, outcome: attempt.outcome, paymentId: input.paymentId, status: preview.case_status }, effects: [] }
       }
       if (preview.charge_status !== 'ambiguous'
-        || (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment')
-        || (preview.category === 'medication' && (preview.prescription_status !== 'signed' || preview.withdrawal_id !== null
+        || (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`))
+        || (preview.category === 'medication' && ((preview.prescription_status !== 'signed' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`)) || preview.withdrawal_id !== null
           || transaction.fhir.read(input.context, 'Encounter', preview.encounter_id).status !== 'completed'))) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original receivable is no longer recoverable')
       }
@@ -9380,12 +9418,12 @@ export class WorkflowService {
   #applyPaymentOutcome(
     transaction: CommandTransaction,
     context: ActorContext,
-    charge: z.infer<typeof paymentPreviewRowSchema>,
+    charge: Pick<z.infer<typeof paymentPreviewRowSchema>, 'charge_id' | 'charge_item_id' | 'current_amount_fen' | 'charge_version' | 'category' | 'case_id' | 'case_status' | 'patient_id' | 'encounter_id' | 'prescription_id' | 'service_request_id'>,
     outcome: 'ambiguous' | 'declined' | 'success',
     effects: CommandEffect[],
   ): string {
     const paidFen = this.#payments.balance(context, charge.charge_item_id).paidFen
-    const fullyPaid = outcome === 'success' && paidFen === charge.current_amount_fen
+    const fullyPaid = outcome === 'success' && paidFen + this.insurance.coverage(context, `ChargeItem/${charge.charge_item_id}`) === charge.current_amount_fen
     const chargeItem = transaction.fhir.read(context, 'ChargeItem', charge.charge_item_id)
     const updated = transaction.fhir.update(context, { ...chargeItem, status: fullyPaid ? 'billed' : 'billable' }, chargeItem.meta?.versionId ?? '1')
     effects.push({ kind: 'updated', reference: `ChargeItem/${charge.charge_item_id}`, versionId: updated.meta?.versionId ?? String(charge.charge_version + 1) })
@@ -9394,6 +9432,8 @@ export class WorkflowService {
       WHERE workspace_id = ? AND epoch = ? AND charge_id = ?
     `).run(fullyPaid ? 'paid' : outcome === 'success' ? 'billable' : outcome, context.workspaceId, context.epoch, charge.charge_id)
     if (!fullyPaid) return charge.case_status
+    if (charge.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment') return charge.case_status
+    if (charge.category === 'medication' && ['awaiting-dispense', 'completed'].includes(charge.case_status)) return charge.case_status
     const status = charge.category === 'laboratory' ? 'awaiting-lis' : 'awaiting-dispense'
     this.#database.driver.prepare(`
       UPDATE outpatient_case SET status = ?, version = version + 1, updated_at = ?
@@ -11629,15 +11669,19 @@ export class WorkflowService {
   }
 
   #prescriptionHasUnsettledFunds(context: ActorContext, prescriptionId: string): boolean {
-    const charges = z.array(z.object({ charge_item_id: z.string(), total_fen: z.number().int().nonnegative() })).parse(
+    const charges = z.array(z.object({ case_id: z.string(), charge_item_id: z.string(), total_fen: z.number().int().nonnegative() })).parse(
       this.#database.driver.prepare(`
-        SELECT charge_item_id, total_fen FROM charge_record
+        SELECT case_id, charge_item_id, total_fen FROM charge_record
         WHERE workspace_id = ? AND epoch = ? AND source_reference = ?
       `).all(context.workspaceId, context.epoch, `Prescription/${prescriptionId}`),
     )
+    const firstCharge = charges[0]
+    if (firstCharge === undefined) return false
+    const allocated = readOutpatientInsuranceAllocations(this.#database, context, firstCharge.case_id)
     return charges.some(charge => {
       const balance = this.#payments.balance(context, charge.charge_item_id)
-      return balance.unresolved > 0 || (balance.paidFen > 0 && balance.paidFen < charge.total_fen)
+      const amountFen = charge.total_fen - this.refunds.adjustmentFen(context, charge.charge_item_id)
+      return balance.unresolved > 0 || allocated.has(`ChargeItem/${charge.charge_item_id}`) || (balance.paidFen > 0 && balance.paidFen < amountFen)
     })
   }
 

@@ -1,9 +1,13 @@
-import { readdir, readFile } from 'node:fs/promises'
+import { readdir, readFile as readTextFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { getHisOperation, listHisOperations } from '@clinmesh/contracts/his-operations'
 import { type Command, type Option } from 'commander'
 import { createCliProgram } from '../src/cli.ts'
+
+async function readFile(path: string, encoding: 'utf8') {
+  return (await readTextFile(path, encoding)).replaceAll('\r\n', '\n')
+}
 
 const expectedSkills = [
   'clinmesh-administrator',
@@ -17,6 +21,73 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('住院退款示例及Catalog保留单笔一千万元上限', async () => {
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  const input = examples.find(value => value.sourceId && !value.adjustmentId)
+  const operation = getHisOperation('inpatient.refund.preview')
+  expect(operation.input.safeParse(input).success).toBe(true)
+  expect(input.amountFen).toBe(1_000_000_000)
+  expect(operation.input.safeParse({ ...input, amountFen: 1_000_000_001 }).success).toBe(false)
+  const response = { auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: {
+    admissionId: 'synthetic-admission', previewId: 'synthetic-preview', commitToken: 'synthetic-token', sourceId: 'synthetic-payment',
+    sourceKind: 'inpatient-deposit', amountFen: 1_000_000_000, expectedOutcome: 'success', expiresAt: '2026-10-23T08:00:00Z',
+  } }
+  expect(operation.output.safeParse(response).success).toBe(true)
+  expect(operation.output.safeParse({ ...response, data: { ...response.data, amountFen: 1_000_000_001 } }).success).toBe(false)
+  expect(operation.summary).toContain('单笔上限1000万元')
+  expect(skill).toContain('大额须分多次退')
+})
+
+it('keeps later inpatient insurance compensation and reviewed replacement commands aligned', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const action of ['cancel', 'preview', 'confirm']) {
+    const id = `inpatient.financial.insurance.${action}`
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient financial-insurance ${action} `))!
+    const operation = getHisOperation(id)
+    expect(inspectExample(program, line).operation?.id).toBe(id)
+    expect(operation.roles).toEqual(['cashier'])
+    expect(operation.commandOperation).toBe(id)
+    expect(operation.skill).toBe('clinmesh-inpatient')
+    expect(operation.previewToken).toBe(action === 'confirm' ? 'required' : 'none')
+  }
+  for (const term of ['INPATIENT_INSURANCE_PREVIEW_STALE', 'insurance.ready', 'remainingCollectFen/remainingRefundFen', '原年度']) expect(skill).toContain(term)
+})
+
+it('结算后更正示例绑定原费用、当前账目与原资金尝试', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  expect(skill).toContain('INPATIENT_FUNDS_PENDING')
+  for (const id of ['refund.preview', 'refund.confirm', 'payment.preview', 'payment.confirm']) {
+    expect(getHisOperation(`inpatient.financial.${id}`).summary).toContain('INPATIENT_FUNDS_PENDING')
+  }
+  for (const [path, id] of [
+    ['financial-adjustments', 'read'], ['adjust-finance', 'adjust'], ['preview-financial-refund', 'refund.preview'], ['confirm-financial-refund', 'refund.confirm'],
+    ['recover-financial-refund', 'refund.recover'], ['preview-financial-payment', 'payment.preview'], ['confirm-financial-payment', 'payment.confirm'], ['recover-financial-payment', 'payment.recover'],
+  ]) {
+    const operation = getHisOperation(`inpatient.financial.${id}`)
+    expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(operation.id)
+    expect(operation.roles).toEqual(id === 'read' ? ['cashier', 'medical-records'] : ['cashier'])
+    expect(operation.skill).toBe('clinmesh-inpatient')
+  }
+  const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  for (const [id, field] of [['adjust', 'direction'], ['refund.preview', 'expectedSourceVersion'], ['payment.preview', 'tenders'], ['refund.confirm', 'commitToken'], ['refund.recover', 'expectedRefundVersion'], ['payment.recover', 'expectedPaymentVersion']]) {
+    const example = examples.find(input => field! in input && (id !== 'payment.preview' || 'adjustmentId' in input))
+    const parsed = getHisOperation(`inpatient.financial.${id}`).input.safeParse(example)
+    expect(parsed.success, `${id}: ${parsed.success ? '' : parsed.error.message}`).toBe(true)
+  }
+  const adjustment = examples.find(input => input.direction === 'decrease')
+  expect(getHisOperation('inpatient.financial.adjust').input.safeParse({ ...adjustment, amountFen: -1 }).success).toBe(false)
+  expect(getHisOperation('inpatient.financial.adjust').input.safeParse({ ...adjustment, encounterId: 'untrusted' }).success).toBe(false)
+})
+
+it('处方撤回操作与技能保留零支付医保分配的撤销前置条件', async () => {
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  for (const term of ['WORKFLOW_CONFLICT', 'zero fund', 'clinmesh insurance cancel']) expect(skill).toContain(term)
+  for (const term of ['WORKFLOW_CONFLICT', 'zero-benefit', 'insurance.cancel']) expect(getHisOperation('prescription.withdraw').summary).toContain(term)
+})
+
 it('keeps unified billing and recorded payment recovery examples aligned with the cashier catalog', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-billing/SKILL.md'), 'utf8')
@@ -25,6 +96,15 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     ['clinmesh payment preview ', 'payment.preview', 2],
     ['clinmesh payment confirm ', 'payment.confirm', 2],
     ['clinmesh payment recover ', 'payment.recover', 1],
+    ['clinmesh billing refunds get ', 'billing.refunds.get', 1],
+    ['clinmesh billing charge adjust ', 'billing.charge.adjust', 1],
+    ['clinmesh refund preview ', 'refund.preview', 1],
+    ['clinmesh refund confirm ', 'refund.confirm', 1],
+    ['clinmesh refund recover ', 'refund.recover', 1],
+    ['clinmesh insurance get ', 'insurance.get', 1],
+    ['clinmesh insurance preview ', 'insurance.preview', 1],
+    ['clinmesh insurance confirm ', 'insurance.confirm', 1],
+    ['clinmesh insurance cancel ', 'insurance.cancel', 1],
   ] as const) {
     const line = commandLines(skill).find(line => line.startsWith(prefix))!
     const operation = getHisOperation(id)
@@ -32,7 +112,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     expect(operation.version).toBe(version)
     expect(operation.skill).toBe('clinmesh-billing')
   }
-  for (const id of ['payment.confirm', 'payment.recover']) {
+  for (const id of ['payment.confirm', 'payment.recover', 'refund.confirm', 'refund.recover', 'insurance.confirm', 'insurance.cancel']) {
     const line = commandLines(skill).find(line => line.startsWith(`clinmesh command receipt get --operation-id ${id} `))!
     expect(inspectExample(program, line).operation?.id).toBe('command.receipt.get')
   }
@@ -40,6 +120,14 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     'expectedPaymentVersion', 'ambiguous-decline', 'ambiguous-pending', 'original Command receipt',
     'Recovery queries the channel without collecting again', 'only a fully paid charge',
     'Registration charges remain unpaid and read-only']) expect(skill).toContain(term)
+  for (const term of ['expectedBalanceVersion', 'annualBalances', 'INSURANCE_PREVIEW_STALE', 'not payment tenders',
+    'calendar year', 'preserves later transactions and clinical progress', 'INSURANCE_FUNDS_CONFLICT', 'completed Encounter']) expect(skill).toContain(term)
+  for (const id of ['insurance.preview', 'insurance.confirm']) expect(getHisOperation(id).summary).toContain('INSURANCE_FUNDS_CONFLICT')
+  const examples=[...skill.matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
+  for(const [index,operation] of ['insurance.preview','insurance.confirm','insurance.cancel'].entries()){
+    expect(getHisOperation(operation).input.safeParse(examples[index]).success).toBe(true)
+    expect(getHisOperation(operation).input.parse(examples[index + 3])).toMatchObject({ kind: 'inpatient' })
+  }
 })
 
 it('keeps inpatient pharmacy and charge reads and receipts aligned with role-specific contracts', async () => {
@@ -252,7 +340,9 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
     expect(inspectExample(program, line).operation?.id).toBe(operation.id)
     expect(operation.handlerOwner).toBe('InpatientService')
     expect(operation.skill).toBe('clinmesh-inpatient')
-    if (operation.mode === 'command') expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+    if (operation.mode === 'command') expect(operation.requirements).toEqual({
+      expectedVersions: !operation.id.startsWith('inpatient.financial.insurance.'), idempotency: 'required',
+    })
   }
 })
 

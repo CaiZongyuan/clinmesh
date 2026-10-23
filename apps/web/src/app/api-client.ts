@@ -1,3 +1,6 @@
+import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema,
+  type chargeAdjustmentInputSchema, type refundPreviewInputSchema } from '@clinmesh/contracts/refunds'
+import { insuranceStateSchema, insurancePreviewResponseSchema, insuranceResponseSchema, type InsuranceTarget } from '@clinmesh/contracts/insurance'
 import {
   acknowledgeImagingReportResponseSchema,
   caseImagingServiceCatalogSchema,
@@ -1947,6 +1950,26 @@ export function getBillingCase(caseId: string, signal?: AbortSignal, page = 1) {
   return apiGet(`/api/his/v1/billing/cases/${encodeURIComponent(caseId)}?page=${page}&pageSize=20`, billingCaseSchema, signal)
 }
 
+export function getRefundCase(caseId: string, signal?: AbortSignal) {
+  return apiGet(`/api/his/v1/billing/cases/${encodeURIComponent(caseId)}/refunds`, refundCaseSchema, signal)
+}
+export function adjustBillingCharge(caseId: string, input: z.infer<typeof chargeAdjustmentInputSchema>, chargeVersion: number, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/billing/cases/${encodeURIComponent(caseId)}/adjustments`, chargeAdjustmentResponseSchema,
+    { expectedVersions: { [`ChargeItem/${input.chargeItemId}`]: String(chargeVersion) }, input }, { idempotencyKey })
+}
+export function previewRefund(input: z.infer<typeof refundPreviewInputSchema>, chargeItemId: string, chargeVersion: number, idempotencyKey: string) {
+  return apiMutation('/api/his/v1/refunds/actions/preview', refundPreviewResponseSchema,
+    { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }, { idempotencyKey })
+}
+export function confirmRefund(previewId: string, commitToken: string, chargeItemId: string, chargeVersion: number, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/refunds/${encodeURIComponent(previewId)}/actions/confirm`, refundResponseSchema,
+    { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input: { commitToken } }, { idempotencyKey })
+}
+export function recoverRefund(refundId: string, expectedRefundVersion: number, chargeItemId: string, chargeVersion: number, idempotencyKey: string) {
+  return apiMutation(`/api/his/v1/refunds/${encodeURIComponent(refundId)}/actions/recover`, refundResponseSchema,
+    { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input: { expectedRefundVersion } }, { idempotencyKey })
+}
+
 export function recoverPayment(input: {
   paymentId: string
   expectedPaymentVersion: number
@@ -2032,4 +2055,17 @@ export function dispensePrescription(input: {
     },
     { idempotencyKey },
   )
+}
+
+export function getInsuranceState(target: InsuranceTarget, signal?: AbortSignal) {
+  return apiGet('/api/his/v1/insurance/'+target.kind+'/'+encodeURIComponent(target.id),insuranceStateSchema,signal)
+}
+export function previewInsurance(target: InsuranceTarget, planCode: 'employee-v1' | 'resident-v1', key: string) {
+  return apiMutation('/api/his/v1/insurance/'+target.kind+'/'+encodeURIComponent(target.id)+'/preview',insurancePreviewResponseSchema,{input:{planCode},expectedVersions:{}},{idempotencyKey:key})
+}
+export function confirmInsurance(target: InsuranceTarget, input: {previewId:string;commitToken:string}, key: string) {
+  return apiMutation('/api/his/v1/insurance/'+target.kind+'/'+encodeURIComponent(target.id)+'/confirm',insuranceResponseSchema,{input,expectedVersions:{}},{idempotencyKey:key})
+}
+export function cancelInsurance(target: InsuranceTarget, input: {settlementId:string;expectedBalanceVersion:number}, key: string) {
+  return apiMutation('/api/his/v1/insurance/'+target.kind+'/'+encodeURIComponent(target.id)+'/cancel',insuranceResponseSchema,{input,expectedVersions:{}},{idempotencyKey:key})
 }

@@ -42,6 +42,49 @@ it('缺少回执时只用原输入和原key重发，未确认期间拒绝新输�
   expect(sessionStorage.length).toBe(0)
 })
 
+const outpatientRefundResponse = { auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: {
+  refundId: 'synthetic-refund', sourceKind: 'outpatient-payment', sourceId: 'synthetic-payment', basisId: 'synthetic-charge',
+  ownerKind: 'outpatient', ownerId: 'synthetic-case', amountFen: 1000, initialOutcome: 'ambiguous', outcome: 'success',
+  correlationId: 'synthetic-correlation', createdAt: '2026-10-22T09:00:00+08:00', resolvedAt: '2026-10-22T09:01:00+08:00', version: 2,
+} }
+const outpatientCommands = [
+  { command: { operation: 'billing.charge.adjust', input: { caseId: 'synthetic-case', chargeItemId: 'synthetic-charge', chargeVersion: 3, amountFen: 2000, reason: '合成费用更正原因' } },
+    path: '/api/his/v1/billing/cases/synthetic-case/adjustments', input: { chargeItemId: 'synthetic-charge', amountFen: 2000, reason: '合成费用更正原因' },
+    response: { ...outpatientRefundResponse, data: { adjustmentId: 'synthetic-adjustment', chargeItemId: 'synthetic-charge', adjustedFen: 2000, chargeVersion: 4 } } },
+  { command: { operation: 'refund.confirm', caseId: 'synthetic-case', input: { previewId: 'synthetic-preview', chargeItemId: 'synthetic-charge', chargeVersion: 3, commitToken: 'synthetic-frozen-token' } },
+    path: '/api/his/v1/refunds/synthetic-preview/actions/confirm', input: { commitToken: 'synthetic-frozen-token' }, response: outpatientRefundResponse },
+  { command: { operation: 'refund.recover', caseId: 'synthetic-case', input: { refundId: 'synthetic-refund', chargeItemId: 'synthetic-charge', chargeVersion: 3, expectedRefundVersion: 1 } },
+    path: '/api/his/v1/refunds/synthetic-refund/actions/recover', input: { expectedRefundVersion: 1 }, response: outpatientRefundResponse },
+] as const
+
+it.each(outpatientCommands)('$command.operation 刷新后保留完整目标和输入，只有缺少回执才按原键重放', async ({ command: original, path: endpoint, input, response: output }) => {
+  const posts: Array<{ path: string; key: string | null; body: unknown }> = []
+  const requests: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (path: string, init: RequestInit) => {
+    requests.push(path)
+    if (path === '/api/auth/context') return Response.json(session)
+    if (path.startsWith('/api/his/v1/command-receipts?')) return Response.json({ error: { code: 'COMMAND_RECEIPT_NOT_FOUND', message: 'synthetic missing' } }, { status: 404 })
+    posts.push({ path, key: new Headers(init.headers).get('idempotency-key'), body: JSON.parse(String(init.body)) })
+    if (posts.length === 1) throw new TypeError('synthetic response loss')
+    return Response.json(output)
+  }))
+  const first = createHook()
+  await act(async () => { await expect(first.result.current.mutation.mutateAsync(original)).rejects.toMatchObject({ code: 'NETWORK_ERROR' }) })
+  first.unmount()
+  const restored = createHook()
+  expect(restored.result.current.pending?.command).toEqual(original)
+  expect(restored.result.current.pending?.binding).toEqual({ accountId: session.user.id, actor: session.actor })
+  await act(async () => { await restored.result.current.mutation.mutateAsync(undefined) })
+  expect(posts).toHaveLength(2)
+  expect(posts[0]).toMatchObject({ path: endpoint, body: { expectedVersions: { 'ChargeItem/synthetic-charge': '3' }, input } })
+  expect(posts[1]).toEqual(posts[0])
+  const receipt = requests.findIndex(path => path.startsWith('/api/his/v1/command-receipts?'))
+  expect(receipt).toBeGreaterThan(0)
+  expect(new URL(requests[receipt]!, 'https://synthetic.clinmesh.local').searchParams.get('operationId')).toBe(original.operation)
+  expect(requests.lastIndexOf(endpoint)).toBeGreaterThan(receipt)
+  expect(restored.result.current.pending).toBeNull()
+})
+
 it('恢复先核对真实Session，旧Epoch输入保持原值且不能发送到新Epoch', async () => {
   let currentSession = session
   const writes = vi.fn(async () => { throw new TypeError('synthetic response loss') })

@@ -134,7 +134,11 @@ describe('payment ledger migration', () => {
       '0074_host-model-waiting.sql',
       '0074_inpatient-record.sql',
       '0075_model-usage-dimensions.sql',
+      '0075_payment-refunds.sql',
+      '0075_refund-tenders.sql',
+      '0076_inpatient-payments.sql',
       '0076_model-usage-retention.sql',
+      '0077_inpatient-financial-adjustments.sql',
       '0077_model-usage-token-breakdown.sql',
       '0078_inpatient-material-reservation.sql',
       '0078_model-task-invalid-code.sql',
@@ -142,6 +146,8 @@ describe('payment ledger migration', () => {
       '0080_inpatient-record-archive-drg.sql',
       '0081_inpatient-drg-payer-review.sql',
       '0082_practitioner-role-medical-insurance.sql',
+      '0090_insurance-benefits.sql',
+      '0091_inpatient-insurance-adjustments.sql',
     ])
 
     expect(originalAttempts(database)).toEqual(original)

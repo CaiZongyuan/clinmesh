@@ -2237,6 +2237,7 @@ export const billingCaseSchema = z.object({
     descriptionEn: z.string().min(1),
     descriptionZh: z.string().min(1),
     paidFen: z.number().int().nonnegative(),
+    insuranceFen: z.number().int().nonnegative().default(0),
     remainingFen: z.number().int().nonnegative(),
     status: z.string().min(1),
   })),

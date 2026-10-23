@@ -113,6 +113,11 @@ export function getWorkspaceErrorMessage(
   if (error.status === 403 || ['CSRF_FAILED', 'ROLE_NOT_ALLOWED'].includes(error.code)) {
     return messages.permissionDeniedDescription
   }
+  if (error.code === 'INSURANCE_PREVIEW_INVALID' || error.code === 'INSURANCE_PREVIEW_STALE') {
+    return messages.insurancePreviewStaleDescription
+  }
+  if (error.code === 'INSURANCE_SOURCE_STALE') return messages.insuranceSourceStaleDescription
+  if (error.code === 'INSURANCE_BALANCE_CONFLICT') return messages.insuranceBalanceConflictDescription
   const inpatientMessages: Record<string, string> = {
     INPATIENT_INVESTIGATION_NOT_FOUND: messages.inpatientInvestigationConflictDescription,
     INPATIENT_INVESTIGATION_VERSION_CONFLICT: messages.inpatientInvestigationConflictDescription,
@@ -147,6 +152,11 @@ export function getWorkspaceErrorMessage(
     INPATIENT_DISCHARGE_PENDING_ORDERS: messages.inpatientDischargeOrdersDescription,
     INPATIENT_SETTLEMENT_PREVIEW_STALE: messages.inpatientSettlementStaleDescription,
     INPATIENT_SETTLEMENT_FUNDS_CONFLICT: messages.inpatientSettlementStaleDescription,
+    INPATIENT_FUNDS_PENDING: messages.inpatientFundsPendingDescription,
+    INPATIENT_FUNDS_REQUIRED: messages.inpatientFundsRequiredDescription,
+    INPATIENT_PAYMENT_PREVIEW_STALE: messages.inpatientPaymentStaleDescription,
+    INPATIENT_PAYMENT_CONFLICT: messages.inpatientFundsConflictDescription,
+    INPATIENT_FUNDS_CONFLICT: messages.inpatientFundsConflictDescription,
     INPATIENT_RECALL_WINDOW_CLOSED: messages.inpatientRecallClosedDescription,
     INPATIENT_RECORD_STALE: messages.inpatientRecordStaleDescription,
     INPATIENT_RECORD_CODING_UNSUPPORTED: messages.inpatientRecordCodingDescription,

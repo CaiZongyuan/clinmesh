@@ -10,6 +10,16 @@
 
 ## 范围、快照与资源争用
 
+- file-backed SQLite 测试的清理按资源注册的逆序执行：先关闭 Runtime／数据库连接，再删除临时目录。Linux 可删除仍打开的文件，Windows 会以 `EBUSY` 拒绝；不要用重试删除或放宽断言掩盖未关闭的句柄。
+
+- `perf:ci` 的数据库增长意外超限时，先分别核对主文件、WAL、SHM 大小与 `page_count`，区分持久页面增长和初始化 WAL 的延迟刷盘；不要直接提高预算。Scenario 生命周期的采样边界由[性能合同](../testing.md#性能合同)拥有。
+
+- HIS 路由与 Operation Catalog 的覆盖检查从源码提取完整路由字面量。共享处理器可用工厂复用，但每个公开路由须显式注册；循环拼接路径会使运行时可用的路由在覆盖检查中变成不完整路径。新增或调整注册后运行 `his-operation-catalog.test.ts`，避免只用请求成功证明目录已同步。
+
+- CLI Skill 示例漂移测试读取 Markdown 后统一将 CRLF 转为 LF，再解析代码块；否则 Windows checkout 的有效 JSON 示例会被仅匹配 `\n` 的正则漏掉。统一在读取 helper 归一化，不批量改产品文档换行或放宽业务 schema。
+
+- 新增 Operation Catalog 路径参数时，同时核对真实 UI 的持久化意图发送器：只替换已有 `admissionId` 的 adapter 不会自动绑定新的 `adjustmentId`。公开 HTTP 直接调用正确路径仍可全部通过，须从真实按钮验证请求路径及丢回执后的原意图恢复；回归见[后续医保更正入口](../../apps/web/e2e/inpatient-insurance-adjustments.spec.ts)与 React 18/19 Surface 合同。
+
 - 跨包测试调用 Server 迁移时，显式用测试文件的 `import.meta.url` 解析 `apps/server/drizzle/` 并传给 `applyMigrations`。默认目录只覆盖 Server 包或仓库根目录；从仓库根运行测试可能通过，而 Turbo 在其他包目录执行时会报 `ENOENT`。用 `pnpm --filter <package> exec vitest run <file>` 复核实际 CI 工作目录，参见 `apps/dsh-web/src/model-bridge.test.ts`。
 
 - 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)。
@@ -27,6 +37,8 @@
 - 资源竞争使既有测试超时时，可在验证进程用 `VITEST_MAX_WORKERS=1` 收窄单元测试并发，不扩大超时或削弱断言。Turbo strict 环境会过滤此变量，通过 Turbo 的验证同时使用 `TURBO_ENV_MODE=loose` 才能把 worker 设置传给 Vitest；仅设置前者不证明实际并发已经收窄。不同包仍可并行，需要进一步隔离时用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行完成包级测试，再由 `pnpm check` 复用有效缓存并继续其他阶段。预验证与后续检查须保持相同的 Turbo 环境模式；strict 与 loose 使用不同任务缓存，切回默认模式可能让包级测试再次并行运行。
 
 - 定向 Vitest 回归使用 `pnpm --filter <package> exec vitest run <file> -t <pattern>`，并核对实际文件和用例计数。当前 pnpm/Vitest 组合中，`pnpm --filter <package> test -- <file>` 把额外 `--` 传给 Vitest 后仍运行完整包，不能仅凭命令文本认定已限制范围。
+
+- 收费真实入口和 Surface 浏览器合同从仓库根运行 Playwright，并沿用根配置。收费 HTTP fixture 以当前工作目录定位 `apps/server/drizzle`；从 `apps/web` 启动会错误查找 `apps/web/apps/server/drizzle`，尚未执行业务断言。根 runner 的 `--project=web` 与 `--project=contracts` 分别选择真实入口和组件合同。
 
 - WSL 全仓验证的较多 Vitest worker 可能使宿主导航和长 SQLite HTTP 测试触及原有超时。先用原断言聚焦复现并区分功能失败与资源争用；核对 `taskset -pc $$` 的可用 CPU 后，可限制整个检查进程树的 CPU affinity，已实际验证 `taskset -c 0-3 pnpm check`。不通过扩大超时或改变业务时序掩盖失败。
 
@@ -55,6 +67,8 @@
 - 全仓测试因并发争用触发既有交互超时时，先用原断言及原超时串行复现；本机需要限制 Vitest worker 时可使用 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1 pnpm check`。Turbo 严格环境模式会过滤未声明的 `VITEST_MAX_WORKERS`，单独设置该变量不影响其子任务；可用 dry-run 的 envMode 确认实际传递，不通过扩大超时或跳过用例制造通过。
 
 ## 替身、异步屏障与断言
+
+- Playwright 只投影某个详情响应时，路由拦截按完整 pathname 匹配，将分页 query 留给处理器读取；`cases/**` 一类宽匹配会把新增 `/refunds` 等子资源也送进详情 schema。新增子资源后复查已有投影拦截，保留该子资源的真实 HTTP 行为，参考[收费分页合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
 
 - 验证文件读取次数时，只替换 `node:fs` 中需要观测的函数并委托真实实现；整模块 `{ spy: true }` 会连带代理 `ReadStream` 等类，可能让真实流悬挂并触发超时。保留真实文件和流，仅在文件系统边界统计读取，复用 [DRG 安装回归](../../apps/server/tests/drg-reference-sync.test.ts)。
 

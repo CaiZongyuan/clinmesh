@@ -38,7 +38,7 @@ clinmesh reference diagnoses search --query 高血压 --page 1 --page-size 20
 
 ## Clinical conclusions
 
-Diagnosis and medication conclusions are independent. Save a controlled diagnosis draft and confirm it only when exactly one entry is primary. When a diagnosis is already confirmed, saving and confirming a new draft creates a new revision; re-read the case before downstream medication or completion decisions. Then either issue a valid prescription or explicitly confirm no medication. A signed, undispensed prescription may be withdrawn through its own command.
+Diagnosis and medication conclusions are independent. Save a controlled diagnosis draft and confirm it only when exactly one entry is primary. When a diagnosis is already confirmed, saving and confirming a new draft creates a new revision; re-read the case before downstream medication or completion decisions. Then either issue a valid prescription or explicitly confirm no medication. A signed, undispensed prescription may be withdrawn through its own command. Active insurance allocations block withdrawal with `WORKFLOW_CONFLICT`, including zero fund and personal-account benefits that still affect annual deductible accrual. Have the cashier cancel the original insurance settlement through `clinmesh insurance cancel` in the billing skill, then reread current prescription and MedicationRequest versions before withdrawal.
 
 ```bash
 clinmesh encounter diagnosis draft set --input @diagnosis.json --idempotency-key <key>

@@ -641,8 +641,10 @@ async function runScenarioLifecycle(directory: string): Promise<PerformanceWorkl
   const databasePath = join(directory, 'scenario-lifecycle.sqlite')
   const runtime = await createRuntime(databasePath, probe)
   try {
-    probe.reset()
+    // 两端都清空 WAL，避免把初始化数据的延迟 checkpoint 计入场景增长。
+    runtime.database.driver.pragma('wal_checkpoint(TRUNCATE)')
     const beforeBytes = await databaseBytes(databasePath)
+    probe.reset()
     const latenciesMs: number[] = []
     let context = administratorContext()
     let errorCount = 0
@@ -671,6 +673,7 @@ async function runScenarioLifecycle(directory: string): Promise<PerformanceWorkl
     }
     const elapsedMs = performance.now() - startedAt
     const snapshot = probe.snapshot()
+    runtime.database.driver.pragma('wal_checkpoint(TRUNCATE)')
     return workloadResult({
       afterBytes: await databaseBytes(databasePath),
       beforeBytes,

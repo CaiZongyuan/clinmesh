@@ -318,9 +318,21 @@ _Avoid_: Invoice, PaymentReconciliation
 引用原 Payment Transaction 的反向资金交易。
 _Avoid_: Delete payment, invoice reversal
 
+**Financial Adjustment**:
+对既有费用、收付或医保结算作出的关联更正事实，保留原始事实及更正关系。它不同于撤回临床请求、重新入院或病案解档。
+_Avoid_: Delete transaction, clinical withdrawal, unarchive
+
 **Insurance Settlement**:
-医保对一组申报费用作出的结算业务事实及基金分配结果。
+医保对一组申报费用作出的结算业务事实及基金分配结果，可区分基金、个人账户和患者自付。患者待遇结算不同于医院侧 DRG 付费。
 _Avoid_: Insurance API call, person query, Payment Transaction
+
+**DRG Grouping**:
+按一套适用的疾病诊断相关分组方案，将一次住院的主次诊断、实际操作及所需患者和住院属性归入病组的结果。它不表达患者报销金额或医院已经收到的资金。
+_Avoid_: Disease-name lookup, insurance reimbursement, Payment Transaction
+
+**DRG Payment Estimate**:
+依据住院分组结果与适用付费方案推算的医院侧支付参考。它不同于患者医保待遇、实际收费、医保最终核定结果或医院完整收入。
+_Avoid_: Patient reimbursement, charge limit, confirmed revenue, profit
 
 **Fiscal Electronic Receipt**:
 财政电子票据平台开具、红冲或换开的法定票据及其号码和状态。
