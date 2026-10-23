@@ -4,3 +4,10 @@
 **/dist
 **/node_modules
 references
+.data
+.env
+.env.*
+!.env.example
+.agent
+.agents
+.claude

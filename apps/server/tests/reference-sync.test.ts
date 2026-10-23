@@ -4,13 +4,17 @@ import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cnHealthInvocation, runReferenceSync } from '../src/reference-sync.ts'
+import { createDrgReferencePackage } from '../src/drg-reference-package.ts'
+import { runDrgReferenceSync } from '../src/drg-reference-sync.ts'
 import { listReferenceDataReleases, openReferenceDatabase } from '../src/infrastructure/sqlite/reference-database.ts'
+import { createDrgReferenceFixture } from './fixtures/drg-reference.ts'
 
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(temporaryDirectories.splice(0).map(async path => {
     const { rm } = await import('node:fs/promises')
     await rm(path, { recursive: true })
@@ -92,7 +96,8 @@ interface FakeDatasetPlan {
 }
 
 async function createFakeCli(directory: string, plans: FakeDatasetPlan[]) {
-  const cliPath = join(directory, 'cn-health')
+  const cliPath = join(directory, 'node_modules/cn-health/bin/cn-health.js')
+  await mkdir(join(directory, 'node_modules/cn-health/bin'), { recursive: true })
   const markers = join(directory, 'markers')
   await mkdir(markers)
   const candidates = Object.fromEntries(await Promise.all(plans.map(async plan => [
@@ -139,7 +144,6 @@ writeFileSync(output + '/materialization.json', JSON.stringify(receipt) + '\\n')
 process.stdout.write(JSON.stringify(receipt) + '\\n')
 `)
   await chmod(cliPath, 0o755)
-  return cliPath
 }
 
 async function createLock(
@@ -221,25 +225,72 @@ describe('cn-health CLI invocation', () => {
       lockPath,
       repositoryRoot: directory,
       runtimeDataDirectory: join(directory, 'runtime'),
-    })).rejects.toThrow(/node_modules\/cn-health\/bin\/cn-health\.js/)
+    })).rejects.toThrow(/node_modules[\\/]cn-health[\\/]bin[\\/]cn-health\.js/)
   })
 })
 
 describe('reference sync', () => {
+  it.each(['default', 'custom'])('reuses the %s DRG installation during check-only when the distribution is unavailable', async installation => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-sync-installed-'))
+    temporaryDirectories.push(directory)
+    const candidate = await createCandidate(directory)
+    await createFakeCli(directory, [
+      { candidate, datasetId: 'laboratory-cn', releaseId: 'laboratory-cn@fixture.r1' },
+    ])
+    const lockPath = await createLock(directory, candidate.manifestSha256)
+    const databasePath = join(directory, 'formal-reference.sqlite')
+    const sourceRoot = join(directory, 'source')
+    const fixture = await createDrgReferenceFixture(sourceRoot)
+    const archivePath = join(directory, 'drg.tar.gz')
+    const { offlineLockSha256, inventoryId, ...artifact } = await createDrgReferencePackage({
+      repositoryRoot: sourceRoot, lockPath: fixture.lockPath, outputPath: archivePath,
+    })
+    const distributionPath = join(directory, 'distribution.json')
+    await writeFile(distributionPath, JSON.stringify({
+      schemaVersion: 1, inventoryId, offlineLockSha256,
+      artifact: { ...artifact, url: 'https://example.test/drg.tar.gz' },
+    }))
+    const download = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(new Uint8Array(await readFile(archivePath))))
+    const drgReference = {
+      lockPath: fixture.lockPath, distributionPath,
+      ...(installation === 'custom' ? { installDirectory: join(directory, 'custom-drg') } : {}),
+    }
+    const installed = await runDrgReferenceSync({
+      ...drgReference, databasePath, repositoryRoot: directory,
+    })
+    expect(installed.source).toBe('download')
+    download.mockRejectedValue(new Error('DRG distribution unavailable'))
+    const before = await readFile(databasePath)
+
+    await expect(runReferenceSync({
+      checkOnly: true, databasePath, lockPath, drgReference,
+      repositoryRoot: directory, runtimeDataDirectory: join(directory, 'runtime'),
+    })).resolves.toMatchObject({
+      checkOnly: true,
+      drg: { source: 'installed', inventoryId: 'synthetic-inventory-v1' },
+      release: { conceptCount: 1, created: true, releaseId: 'clinmesh-reference-sync-fixture' },
+    })
+    expect(await readFile(databasePath)).toEqual(before)
+    expect(await readFile(join(installed.inputRoot, fixture.packageRoot, 'services/records.jsonl'), 'utf8'))
+      .toBe(fixture.records)
+  })
+
   it('checks without writing the formal database and imports the same lock idempotently', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-sync-'))
     temporaryDirectories.push(directory)
     const candidate = await createCandidate(directory)
-    const cliPath = await createFakeCli(directory, [
+    await createFakeCli(directory, [
       { candidate, datasetId: 'laboratory-cn', releaseId: 'laboratory-cn@fixture.r1' },
     ])
     const lockPath = await createLock(directory, candidate.manifestSha256)
     const databasePath = join(directory, 'formal-reference.sqlite')
 
     const options = {
-      cliPath,
       databasePath,
       lockPath,
+      repositoryRoot: directory,
+      drgReference: { lockPath: (await createDrgReferenceFixture(directory)).lockPath },
       runtimeDataDirectory: join(directory, 'runtime'),
     }
     await expect(runReferenceSync({ ...options, checkOnly: true }))
@@ -276,6 +327,8 @@ describe('reference sync', () => {
         },
       }],
     }])
+    expect(await (await import('../src/reference-database-cli.ts')).runReferenceDatabaseCli(['list-inventories', '--database', databasePath]))
+      .toMatchObject({ total: 1, items: [{ inventoryId: 'synthetic-inventory-v1', runtimeEnabled: false }] })
     database.close()
   })
 
@@ -283,7 +336,7 @@ describe('reference sync', () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-sync-progress-'))
     temporaryDirectories.push(directory)
     const candidate = await createCandidate(directory)
-    const cliPath = await createFakeCli(directory, [
+    await createFakeCli(directory, [
       { candidate, datasetId: 'laboratory-cn', releaseId: 'laboratory-cn@fixture.r1' },
     ])
     const lockPath = await createLock(directory, candidate.manifestSha256)
@@ -291,10 +344,11 @@ describe('reference sync', () => {
 
     await runReferenceSync({
       checkOnly: true,
-      cliPath,
       databasePath: join(directory, 'formal-reference.sqlite'),
       lockPath,
       onProgress: line => lines.push(line),
+      repositoryRoot: directory,
+      drgReference: { lockPath: (await createDrgReferenceFixture(directory)).lockPath },
       runtimeDataDirectory: join(directory, 'runtime'),
     })
 
@@ -311,7 +365,7 @@ describe('reference sync', () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-sync-parallel-'))
     temporaryDirectories.push(directory)
     const candidate = await createCandidate(directory)
-    const cliPath = await createFakeCli(directory, [
+    await createFakeCli(directory, [
       { candidate, datasetId: 'laboratory-cn', releaseId: 'laboratory-cn@fixture.r1' },
       { candidate, datasetId: 'nhsa-drugs', failExitCode: 7, releaseId: 'nhsa-drugs@fixture.r1' },
     ])
@@ -322,9 +376,9 @@ describe('reference sync', () => {
 
     const error = await runReferenceSync({
       checkOnly: false,
-      cliPath,
       databasePath,
       lockPath,
+      repositoryRoot: directory,
       runtimeDataDirectory: join(directory, 'runtime'),
     }).then(() => undefined, captured => captured)
 
@@ -340,7 +394,7 @@ describe('reference sync', () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-reference-sync-invalid-'))
     temporaryDirectories.push(directory)
     const candidate = await createCandidate(directory)
-    const cliPath = await createFakeCli(directory, [
+    await createFakeCli(directory, [
       { candidate, datasetId: 'laboratory-cn', releaseId: 'laboratory-cn@fixture.r1' },
     ])
     const lockPath = await createLock(directory, 'f'.repeat(64))
@@ -348,9 +402,9 @@ describe('reference sync', () => {
 
     await expect(runReferenceSync({
       checkOnly: false,
-      cliPath,
       databasePath,
       lockPath,
+      repositoryRoot: directory,
       runtimeDataDirectory: join(directory, 'runtime'),
     }))
       .rejects.toThrow('Manifest SHA256 does not match lock')

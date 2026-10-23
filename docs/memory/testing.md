@@ -1,5 +1,7 @@
 # 测试与验证排障
 
+- `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。
+
 - 分页队列上的写操作回归须包含第二页及操作后仍留在同一筛选状态的场景，核对页码、患者选择与金额刷新；只测第一页或晚到回执无法发现无条件跳回第一页。支付历史分页同时验证整单余额、跨页恢复入口，以及历史页切换不改变收费队列选择。
 
 选择验证范围、定位资源争用，或处理替身、时钟和异步断言时查阅。本文保存会影响证据有效性的操作经验；测试层级、必需检查和真实入口要求由[测试策略](../testing.md)拥有。业务专属回归另见[临床数据与模型任务排障](clinical-data.md)，宿主专属回归见[DSH 集成排障](dsh-integration.md)。
@@ -63,6 +65,10 @@
 ## 替身、异步屏障与断言
 
 - Playwright 只投影某个详情响应时，路由拦截按完整 pathname 匹配，将分页 query 留给处理器读取；`cases/**` 一类宽匹配会把新增 `/refunds` 等子资源也送进详情 schema。新增子资源后复查已有投影拦截，保留该子资源的真实 HTTP 行为，参考[收费分页合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
+
+- 验证文件读取次数时，只替换 `node:fs` 中需要观测的函数并委托真实实现；整模块 `{ spy: true }` 会连带代理 `ReadStream` 等类，可能让真实流悬挂并触发超时。保留真实文件和流，仅在文件系统边界统计读取，复用 [DRG 安装回归](../../apps/server/tests/drg-reference-sync.test.ts)。
+
+- 安装资料的 check-only 回归先通过公开安装入口准备合成资料，再让分发源不可用；只放仓库本地资料会命中另一条复用路径，掩盖临时数据库路径改变资料查找位置的问题。通过公开入口核对 `source: installed`、默认与自定义安装目录，以及正式数据库和资料字节未变，见[参考同步回归](../../apps/server/tests/reference-sync.test.ts)。
 
 - Testing Library 的 `getByRole` 使用字符串 `name` 时已按完整可访问名称匹配，不接受 Playwright 的 `exact` 选项；混用两者参数可能让 Vitest 运行通过而 TypeScript 检查失败。组件测试省略 `exact`，真实浏览器测试按 Playwright API 保留该选项。
 

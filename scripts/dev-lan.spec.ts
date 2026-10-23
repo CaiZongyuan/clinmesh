@@ -112,7 +112,7 @@ describe('createLanDevelopmentPlan', () => {
       ],
       processes: [
         {
-          args: ['dev:server'],
+          args: ['--filter', '@clinmesh/server', 'dev:prepared'],
           environment: {
             CLINMESH_TRUSTED_ORIGINS: 'http://127.0.0.1:51868,http://127.0.0.1:51888,http://localhost:51888,http://192.168.1.23:51888',
           },
@@ -136,6 +136,23 @@ describe('createLanDevelopmentPlan', () => {
     expect(createLanDevelopmentPlan(['192.168.1.23']).origins).toContain(
       'http://localhost:51888',
     )
+  })
+
+  it('starts Server against the same absolute data paths prepared from the repository root', () => {
+    const repositoryRoot = resolve(import.meta.dirname, '..')
+    const plan = createLanDevelopmentPlan(['192.168.1.23'], {
+      CLINMESH_DATABASE_PATH: '.data/clinmesh.sqlite',
+      CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite',
+      CLINMESH_GUIDELINE_DATABASE_PATH: '.data/clinmesh-guidelines.sqlite',
+      CLINMESH_WEB_ROOT: 'apps/web/dist',
+    })
+
+    expect(plan.processes[0]?.environment).toMatchObject({
+      CLINMESH_DATABASE_PATH: join(repositoryRoot, '.data/clinmesh.sqlite'),
+      CLINMESH_REFERENCE_DATABASE_PATH: join(repositoryRoot, '.data/clinmesh-reference.sqlite'),
+      CLINMESH_GUIDELINE_DATABASE_PATH: join(repositoryRoot, '.data/clinmesh-guidelines.sqlite'),
+      CLINMESH_WEB_ROOT: join(repositoryRoot, 'apps/web/dist'),
+    })
   })
 })
 
@@ -203,6 +220,7 @@ describe('ensureDataSourcesReady', () => {
       runReferenceSync: async () => {
         throw new Error('reference sync should not run in this test')
       },
+      runDrgReferenceSync: async () => {},
       runSyntheaUp: async () => {
         throw new Error('synthea up should not run in this test')
       },
@@ -225,16 +243,48 @@ describe('ensureDataSourcesReady', () => {
     expect(write).toHaveBeenCalledWith(expect.stringContaining('参考目录数据库已就绪'))
   })
 
+  it('prepares DRG data even when the clinical reference release is already available', async () => {
+    const runDrgReferenceSync = vi.fn().mockResolvedValue(undefined)
+    const write = vi.fn()
+    await ensureDataSourcesReady(createDependencies({
+      environment: { CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite' },
+      referenceDatabaseReady: () => true,
+      runDrgReferenceSync,
+      write,
+    }))
+
+    expect(runDrgReferenceSync).toHaveBeenCalledTimes(1)
+    expect(write).toHaveBeenCalledWith(expect.stringContaining('DRG 参考资料已就绪'))
+  })
+
+  it('rejects failed DRG preparation without announcing readiness or starting optional providers', async () => {
+    const write = vi.fn()
+    const readProviderHealth = vi.fn()
+    await expect(ensureDataSourcesReady(createDependencies({
+      environment: { CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite' },
+      referenceDatabaseReady: () => true,
+      runDrgReferenceSync: async () => { throw new Error('DRG archive checksum mismatch') },
+      readProviderHealth,
+      write,
+    }))).rejects.toThrow('DRG archive checksum mismatch')
+
+    expect(readProviderHealth).not.toHaveBeenCalled()
+    expect(write).not.toHaveBeenCalledWith(expect.stringContaining('DRG 参考资料已就绪'))
+  })
+
   it('runs reference sync automatically when the database file is missing', async () => {
     const runReferenceSync = vi.fn()
+    const runDrgReferenceSync = vi.fn()
     const write = vi.fn()
     await expect(ensureDataSourcesReady(createDependencies({
       environment: { CLINMESH_REFERENCE_DATABASE_PATH: '.data/clinmesh-reference.sqlite' },
       runReferenceSync,
+      runDrgReferenceSync,
       write,
     }))).resolves.toBeUndefined()
 
     expect(runReferenceSync).toHaveBeenCalledTimes(1)
+    expect(runDrgReferenceSync).not.toHaveBeenCalled()
     expect(write).toHaveBeenCalledWith(expect.stringContaining('自动执行 pnpm reference:sync'))
     expect(write).toHaveBeenCalledWith(expect.stringContaining('参考目录数据库同步完成'))
   })
@@ -256,10 +306,13 @@ describe('ensureDataSourcesReady', () => {
 
   it('warns without blocking when no reference database is configured', async () => {
     const write = vi.fn()
-    await expect(ensureDataSourcesReady(createDependencies({ write }))).resolves.toBeUndefined()
+    const runDrgReferenceSync = vi.fn()
+    await expect(ensureDataSourcesReady(createDependencies({ write, runDrgReferenceSync }))).resolves.toBeUndefined()
 
     expect(write).toHaveBeenCalledWith(expect.stringContaining('未配置 CLINMESH_REFERENCE_DATABASE_PATH'))
     expect(write).toHaveBeenCalledWith(expect.stringContaining('内置合成 fixture'))
+    expect(runDrgReferenceSync).not.toHaveBeenCalled()
+    expect(write).not.toHaveBeenCalledWith(expect.stringContaining('DRG 参考资料已就绪'))
   })
 
   it('reports a healthy configured provider without starting Synthea', async () => {
@@ -376,8 +429,8 @@ describe.skipIf(process.platform === 'win32')('pnpm dev:lan process supervision'
 const { spawn } = require('node:child_process')
 const { writeFileSync } = require('node:fs')
 
-const role = process.argv[2]
-if (role === 'reference:sync') process.exit(0)
+const role = process.argv.includes('dev:prepared') ? 'dev:server' : process.argv[2]
+if (role === 'reference:sync' || process.argv.includes('drg:prepare')) process.exit(0)
 const pidPathPrefix = process.env.CLINMESH_TEST_GRANDCHILD_PID_PREFIX
 if (pidPathPrefix === undefined) process.exit(2)
 
@@ -454,7 +507,8 @@ setInterval(() => {}, 1000)
 const { spawn } = require('node:child_process')
 const { existsSync, writeFileSync } = require('node:fs')
 
-const role = process.argv[2]
+const role = process.argv.includes('dev:prepared') ? 'dev:server' : process.argv[2]
+if (role === 'reference:sync' || process.argv.includes('drg:prepare')) process.exit(0)
 const pidPath = process.env.CLINMESH_TEST_GRANDCHILD_PID_FILE
 if (pidPath === undefined) process.exit(2)
 

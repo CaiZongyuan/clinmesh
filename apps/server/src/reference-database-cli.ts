@@ -1,4 +1,4 @@
-import { resolve } from 'node:path'
+import { basename, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { offlineReferenceInventoryQuerySchema } from '@clinmesh/contracts/reference-data'
@@ -73,7 +73,8 @@ export async function runReferenceDatabaseCli(arguments_: string[]): Promise<unk
 }
 
 const entrypoint = process.argv[1]
-if (entrypoint !== undefined && resolve(entrypoint) === fileURLToPath(import.meta.url)) {
+if (entrypoint !== undefined && /^reference-database-cli\.(ts|js)$/.test(basename(entrypoint))
+  && resolve(entrypoint) === fileURLToPath(import.meta.url)) {
   runReferenceDatabaseCli(process.argv.slice(2))
     .then(result => console.info(JSON.stringify(result)))
     .catch((error: unknown) => {

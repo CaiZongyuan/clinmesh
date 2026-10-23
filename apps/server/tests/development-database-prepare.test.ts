@@ -1,8 +1,11 @@
-import { copyFile, mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { prepareDevelopmentDatabases } from '../src/development-database-prepare.ts'
+import { prepareDevelopmentDatabases, prepareDevelopmentEnvironment } from '../src/development-database-prepare.ts'
+import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
+import { createDrgReferenceFixture } from './fixtures/drg-reference.ts'
 import {
   expectedSchemaVersion,
   openClinMeshDatabase,
@@ -65,5 +68,101 @@ describe('development database preparation', () => {
       scripts: Record<string, string>
     }
     expect(packageJson.scripts.dev).toContain('pnpm db:prepare')
+    expect(packageJson.scripts['dev:prepared']).toContain('pnpm db:prepare --migrations-only')
+  })
+
+  it('prepares DRG materials during normal startup with an existing clinical reference release', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-references-'))
+    temporaryDirectories.push(directory)
+    const fixture = await createDrgReferenceFixture(directory)
+    const databasePath = join(directory, 'operational.sqlite')
+    const referenceDatabasePath = join(directory, 'reference.sqlite')
+    await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
+    const artifact = JSON.stringify({ schemaVersion: '1', concepts: [], valueSetEntries: [] })
+    await writeFile(join(directory, 'clinical.json'), artifact)
+    await writeFile(join(directory, 'clinical-release.json'), JSON.stringify({
+      createdAt: '2026-10-22T00:00:00.000Z', releaseId: 'synthetic-clinical-reference', schemaVersion: '1',
+      sources: [{ acquisitionMethod: 'generated', artifactPath: 'clinical.json',
+        checksum: createHash('sha256').update(artifact).digest('hex'), licenseId: 'LicenseRef-Synthetic-Test',
+        retrievedAt: '2026-10-22T00:00:00.000Z', sourceId: 'synthetic-clinical-reference',
+        sourceUrl: 'https://example.test/synthetic-clinical-reference', upstreamVersion: 'synthetic-v1' }],
+    }))
+    await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'clinical-release.json')])
+
+    await prepareDevelopmentEnvironment({
+      databasePath,
+      referenceDatabasePath,
+      referenceReleaseId: 'synthetic-clinical-reference',
+      repositoryRoot: directory,
+      drgReference: { lockPath: fixture.lockPath },
+    })
+
+    expect(await runReferenceDatabaseCli(['list-inventories', '--database', referenceDatabasePath]))
+      .toMatchObject({ items: [{ inventoryId: 'synthetic-inventory-v1', runtimeEnabled: false }] })
+  })
+
+  it('keeps explicitly unconfigured fixture mode free of unused reference downloads', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-fixture-'))
+    temporaryDirectories.push(directory)
+    await expect(prepareDevelopmentEnvironment({
+      databasePath: join(directory, 'operational.sqlite'), repositoryRoot: directory,
+      drgReference: { lockPath: join(directory, 'absent-lock.json') },
+    })).resolves.toMatchObject({ reference: null })
+    expect(await readdir(directory)).not.toContain('drg-reference')
+    expect(await readdir(directory)).not.toContain('reference.sqlite')
+  })
+
+  it('only migrates databases when the launcher has already prepared reference materials', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-prepared-'))
+    temporaryDirectories.push(directory)
+    const referenceDatabasePath = join(directory, 'reference.sqlite')
+
+    await expect(prepareDevelopmentEnvironment({
+      databasePath: join(directory, 'operational.sqlite'),
+      referenceDatabasePath,
+      repositoryRoot: directory,
+      drgReference: { lockPath: join(directory, 'absent-lock.json') },
+      migrationsOnly: true,
+    })).resolves.toMatchObject({
+      operational: { schemaVersion: expectedSchemaVersion() },
+      reference: { schemaVersion: 11 },
+    })
+    expect(await runReferenceDatabaseCli(['list-inventories', '--database', referenceDatabasePath]))
+      .toMatchObject({ items: [], total: 0 })
+    expect(await readdir(directory)).not.toContain('drg-reference')
+  })
+
+  it('attempts full reference acquisition for a new deployment and stops when acquisition fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-development-acquisition-'))
+    temporaryDirectories.push(directory)
+    const launcherDirectory = join(directory, 'node_modules/cn-health/bin')
+    await mkdir(launcherDirectory, { recursive: true })
+    const markerPath = join(directory, 'acquisition-requested')
+    await writeFile(join(launcherDirectory, 'cn-health.js'),
+      `require('node:fs').writeFileSync(${JSON.stringify(markerPath)}, 'requested'); process.exit(1)\n`)
+    const publicKey = Buffer.alloc(32)
+    const publicKeySha256 = createHash('sha256').update(publicKey).digest('hex')
+    await writeFile(join(directory, 'reference-data.lock.json'), JSON.stringify({
+      schemaVersion: 1, retrievedAt: '2026-10-22T00:00:00.000Z',
+      cli: { package: 'cn-health', version: '0.5.2' },
+      compositeRelease: { createdAt: '2026-10-22T00:00:00.000Z', releaseId: 'synthetic-clinical-reference', schemaVersion: '1' },
+      registry: { keyId: publicKeySha256.slice(0, 16), publicKeyHex: publicKey.toString('hex'),
+        publicKeySha256, url: 'https://example.test/synthetic-registry' },
+      datasets: [{ datasetId: 'laboratory-cn', datasetSchemaVersion: 1, licenseId: 'LicenseRef-Synthetic-Test',
+        manifestSha256: '0'.repeat(64), releaseId: 'laboratory-cn@synthetic-v1',
+        sourceId: 'synthetic-laboratory-cn', sourceUrl: 'https://example.test/synthetic-laboratory' }],
+    }))
+    const referenceDatabasePath = join(directory, 'reference.sqlite')
+
+    await expect(prepareDevelopmentEnvironment({
+      databasePath: join(directory, 'operational.sqlite'),
+      referenceDatabasePath,
+      repositoryRoot: directory,
+    })).rejects.toThrow('materialize 失败')
+
+    expect(await readFile(markerPath, 'utf8')).toBe('requested')
+    expect(await runReferenceDatabaseCli(['list', '--database', referenceDatabasePath])).toEqual({ items: [] })
+    expect(await runReferenceDatabaseCli(['list-inventories', '--database', referenceDatabasePath]))
+      .toMatchObject({ items: [], total: 0 })
   })
 })
