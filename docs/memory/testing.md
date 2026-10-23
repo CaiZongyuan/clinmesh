@@ -72,6 +72,8 @@
 
 - 持久写意图的浏览器旅程在确认后刷新或切换岗位前，先等待反映响应已处理的可观察状态；原本就禁用的结算按钮不能作为完成屏障。服务端已提交但浏览器尚未处理响应时刷新，会保留原确认意图并要求先恢复原操作。用真实响应屏障区分正常刷新和丢回执分支，参考[住院出院旅程](../../apps/web/e2e/inpatient-discharge.spec.ts)。
 
+- 丢回执时，审阅弹窗可同时显示原意图待确认与操作失败两个 `alert`。断言失败响应已处理时，按失败标题筛选并核对错误文案，同时保留待确认提示断言；裸 `alert` 可见既可能过早匹配待确认提示，也可能因两个提示同时存在而违反严格匹配。参考[Surface 收费恢复合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
+
 - Playwright 只投影某个详情响应时，路由拦截按完整 pathname 匹配，将分页 query 留给处理器读取；`cases/**` 一类宽匹配会把新增 `/refunds` 等子资源也送进详情 schema。新增子资源后复查已有投影拦截，保留该子资源的真实 HTTP 行为，参考[收费分页合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
 
 - 验证文件读取次数时，只替换 `node:fs` 中需要观测的函数并委托真实实现；整模块 `{ spy: true }` 会连带代理 `ReadStream` 等类，可能让真实流悬挂并触发超时。保留真实文件和流，仅在文件系统边界统计读取，复用 [DRG 安装回归](../../apps/server/tests/drg-reference-sync.test.ts)。
