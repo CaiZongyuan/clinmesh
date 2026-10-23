@@ -70,16 +70,16 @@
     },
     "scenario-install-reset-application": {
       "maximumBusyCount": 0,
-      "maximumDatabaseGrowthBytes": 4194304,
+      "maximumDatabaseGrowthBytes": 5308416,
       "maximumErrorCount": 0,
       "maximumQueriesPerIteration": 137,
       "maximumRetryCount": 0,
-      "maximumRowsWrittenPerIteration": 391,
+      "maximumRowsWrittenPerIteration": 397,
       "maximumStatementsPerIteration": 602,
       "maximumTraceBytesPerIteration": 256,
       "maximumTraceRowsPerIteration": 1,
       "maximumWritesPerIteration": 497,
-      "minimumRowsWrittenPerIteration": 391
+      "minimumRowsWrittenPerIteration": 397
     },
     "trace-control-sqlite": {
       "maximumBusyCount": 0,

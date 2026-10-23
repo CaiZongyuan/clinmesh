@@ -4,6 +4,8 @@ import { inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, 
 import { inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientDrgSimulationInputSchema, inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { inpatientDrgPayerReviewCreateInputSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
@@ -1314,6 +1316,34 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientRecordArchiveInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
         return context.json(inpatient.records.archive(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
       } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/pregroup', async context => {
+      try { return context.json(inpatient.drg.pregroup(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/simulation', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers); const body = z.object({ input: inpatientDrgSimulationInputSchema.optional() }).strict().parse(await context.req.json().catch(() => ({})))
+        return context.json(inpatient.drg.simulate(await actor(context), context.req.param('admissionId'), body.input)) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations', async context => {
+      try { return context.json(inpatient.drg.reservations(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientMaterialReservationCreateInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.drg.createReservation(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations/:reservationId/release', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientMaterialReservationReleaseInputSchema.omit({admissionId:true,reservationId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.drg.releaseReservation(await actor(context),{...body.input,admissionId:context.req.param('admissionId'),reservationId:context.req.param('reservationId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/payer-review', async context => {
+      try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientDrgPayerReviewCreateInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
+        return context.json(inpatient.drg.payerReview(await actor(context),{...body.input,admissionId:context.req.param('admissionId')},z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch(error) { return apiErrorResponse(context,error) }
+    })
+    app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/payer-reviews', async context => {
+      try { return context.json(inpatient.drg.payerReviews(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/discharge', async context => {
       try { return context.json(inpatient.discharge.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }

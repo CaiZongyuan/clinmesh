@@ -8,6 +8,7 @@ import { InpatientInvestigations } from './inpatient-investigations.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
+import { InpatientDrg } from './inpatient-drg.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import {
@@ -18,6 +19,7 @@ import {
   inpatientCatalogSchema, inpatientReferralSchema, inpatientReferralInputSchema,
   inpatientReferralListSchema, inpatientReferralResponseSchema,
 } from '@clinmesh/contracts/inpatient'
+import type { DrgRules } from '@clinmesh/contracts/drg'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
@@ -33,7 +35,7 @@ const rowSchema = z.object({ admission_id: z.string(), patient_id: z.string(), i
   registered_at: z.string(), admitted_at: z.string().nullable() })
 const sumSchema = z.object({ amount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER) })
 const clinicalRoles = ['inpatient-doctor', 'ward-nurse']
-const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'cashier']
+const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance', 'cashier']
 
 export class InpatientService {
   readonly billing: InpatientBilling
@@ -43,8 +45,9 @@ export class InpatientService {
   readonly discharge: InpatientDischarge
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
-  readonly #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, workflow: WorkflowService) {
+  readonly drg: InpatientDrg
+  #workspaces: WorkspaceRepository
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, workflow: WorkflowService, drgRules: DrgRules | null = null) {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.orders = new InpatientOrders(this)
@@ -53,6 +56,7 @@ export class InpatientService {
     this.discharge = new InpatientDischarge(this)
     this.investigations = new InpatientInvestigations(this,workflow)
     this.transfers = new InpatientTransfers(this)
+    this.drg = new InpatientDrg(this, drgRules)
   }
   assertRole(context: ActorContext, roles: readonly string[]) {
     if (!roles.includes(context.roleCode)) throw new InpatientError('INPATIENT_ROLE_FORBIDDEN', '当前岗位不能办理该住院业务', 403)

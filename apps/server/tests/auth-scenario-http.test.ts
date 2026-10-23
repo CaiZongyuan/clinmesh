@@ -367,6 +367,9 @@ describe('trusted session and Scenario HTTP contract', () => {
       code: 'inpatient-doctor', id: 'practitioner-role-inpatient-doctor', locationId: 'ward-general', locationName: '住院病区',
       organizationId: 'organization-inpatient-medicine', practitionerId: 'practitioner-inpatient-doctor', practitionerName: '合成住院医生',
     }, {
+      code: 'medical-insurance', id: 'practitioner-role-medical-insurance', locationId: 'location-medical-insurance', locationName: '合成医保办人员工作区',
+      organizationId: 'organization-clinmesh', practitionerId: 'practitioner-medical-insurance', practitionerName: '合成医保办人员',
+    }, {
       code: 'medical-records', id: 'practitioner-role-medical-records', locationId: 'location-medical-records', locationName: '合成病案人员工作区',
       organizationId: 'organization-clinmesh', practitionerId: 'practitioner-medical-records', practitionerName: '合成病案人员',
     }, {
@@ -853,9 +856,9 @@ describe('trusted session and Scenario HTTP contract', () => {
 
     for (const [resourceType, total] of [
       ['Organization', 2],
-      ['Location', 14],
-      ['Practitioner', 9],
-      ['PractitionerRole', 9],
+      ['Location', 15],
+      ['Practitioner', 10],
+      ['PractitionerRole', 10],
       ['Medication', 4],
     ] as const) {
       const response = await runtime.app.request(

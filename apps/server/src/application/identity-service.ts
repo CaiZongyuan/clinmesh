@@ -63,9 +63,10 @@ export const syntheticAccounts = [
     practitionerId: 'practitioner-pharmacist',
     roleCode: 'pharmacist',
   },
-  ...(['inpatient-doctor', 'ward-nurse', 'medical-records'] as const).map(roleCode => ({
+  ...(['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance'] as const).map(roleCode => ({
     actorId: `actor-${roleCode}`, email: `${roleCode}@demo.clinmesh.local`,
-    name: ({ 'inpatient-doctor': '合成住院医生', 'ward-nurse': '合成病区护士', 'medical-records': '合成病案人员' })[roleCode],
+    name: ({ 'inpatient-doctor': '合成住院医生', 'ward-nurse': '合成病区护士', 'medical-records': '合成病案人员',
+      'medical-insurance': '合成医保办人员' })[roleCode],
     practitionerId: `practitioner-${roleCode}`, roleCode,
   })),
   {
