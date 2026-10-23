@@ -1,5 +1,6 @@
 import { ModelTaskRecovery, modelControlWaitingCount } from './application/model-task-recovery.ts'
 import { InpatientService } from './application/inpatient-service.ts'
+import { loadDrgRules } from './infrastructure/reference-data/drg-rules-package.ts'
 import { createApp } from './app.ts'
 import { ModelUsageService } from './application/model-usage-service.ts'
 import type { ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
@@ -144,6 +145,8 @@ export interface CreateClinMeshRuntimeOptions {
   autoDispatchIntervalMs?: number
   cursorSecret: string
   databasePath: string
+  /** DRG 规则数据包目录（含 manifest.json）；缺省时住院 DRG 预分组返回未配置错误。 */
+  drgRulesDirectory?: string
   guidelineDatabasePath?: string
   guidelineNonCommercialUse?: boolean
   demoPassword: string
@@ -274,7 +277,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       referenceData,
       tokenSecret: options.cursorSecret,
     })
-    const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow)
+    const drgRules = options.drgRulesDirectory === undefined ? null : await loadDrgRules(options.drgRulesDirectory)
+    const inpatient = new InpatientService(database, fhir, commands, referenceData, workflow, drgRules)
     const laboratoryServicePublisher = new LaboratoryServicePublisher({
       canResume: (workspaceId, taskId) => modelTasks.claimable(workspaceId, taskId),
       contextStatus: context => identity.modelTaskContextStatus(context, ['admin.laboratory-services.publish']),

@@ -140,8 +140,12 @@ describe('payment ledger migration', () => {
       '0076_model-usage-retention.sql',
       '0077_inpatient-financial-adjustments.sql',
       '0077_model-usage-token-breakdown.sql',
+      '0078_inpatient-material-reservation.sql',
       '0078_model-task-invalid-code.sql',
       '0079_doctor-consideration-disposition.sql',
+      '0080_inpatient-record-archive-drg.sql',
+      '0081_inpatient-drg-payer-review.sql',
+      '0082_practitioner-role-medical-insurance.sql',
     ])
 
     expect(originalAttempts(database)).toEqual(original)

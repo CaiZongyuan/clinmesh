@@ -80,7 +80,7 @@ Status: implemented
 
 ## 范围外
 
-- DRG 分组引擎、预分组提示与支付、成本、盈亏分析：住院闭环完善后另行讨论。
+- DRG 分组引擎、在院预分组、处方推演、归档冻结分组与医保办模拟核定：由[门诊住院共享支付与 DRG 一体化](https://github.com/CaiZongyuan/clinmesh/blob/e322fef689b009cc0175931b4070b8713c8dedff/docs/spec/2026-10-15-drg-prescription-budget.md)规格承载，决策口径见 [Agent Note](../decisions/implemented/feature/2026-10-23-drg-inpatient-simulation-chain.md)；支付参数对接、成本、盈亏分析另行讨论。
 - 急诊收住院入口与急诊闭环。
 - 医保结算清单、地方支付参数与实际结算比对。
 - 体温单与完整护理文书体系。

@@ -1,5 +1,7 @@
 # 测试与验证排障
 
+- 短性能门禁的数据库增长包含主文件、WAL 和 SHM，新增表或索引会改变页分配，不能只用业务写入行数判断存储回归。调整存储基线前保存完整 workload 结果，核对 statement/query/write、行数、Trace 和错误预算；仅对已解释的增长按现有 64 KiB 粒度向上取整。`performance-cli.ts` 在基线断言通过后才输出 JSON，失败日志没有实际值时，可通过同一 runner 保存结果后调用原断言取证，不能凭报错估算或直接放宽预算。
+
 - `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。
 
 - 分页队列上的写操作回归须包含第二页及操作后仍留在同一筛选状态的场景，核对页码、患者选择与金额刷新；只测第一页或晚到回执无法发现无条件跳回第一页。支付历史分页同时验证整单余额、跨页恢复入口，以及历史页切换不改变收费队列选择。
@@ -14,7 +16,7 @@
 
 - 跨包测试调用 Server 迁移时，显式用测试文件的 `import.meta.url` 解析 `apps/server/drizzle/` 并传给 `applyMigrations`。默认目录只覆盖 Server 包或仓库根目录；从仓库根运行测试可能通过，而 Turbo 在其他包目录执行时会报 `ENOENT`。用 `pnpm --filter <package> exec vitest run <file>` 复核实际 CI 工作目录，参见 `apps/dsh-web/src/model-bridge.test.ts`。
 
-- 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)。
+- 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。构造单项迁移前的业务行时显式列出列名，让其他已应用迁移的可空列保持默认值，避免新增列使位置插入先于目标迁移报错。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)与[住院资金迁移](../../apps/server/tests/inpatient-payments-migration.test.ts)。
 
 - 待开具项目的操作文案会随异步核验状态从“调整”变为“核对”；验证重开详情时，使用包含项目名称的稳定“查看待开具”入口，并继续断言编辑值、焦点和正式确认结果。只定位“调整”会在核验状态晚到时超时，不能用增加超时或固定等待规避；对应回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
 

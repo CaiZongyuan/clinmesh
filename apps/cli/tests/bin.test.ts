@@ -43,7 +43,7 @@ describe('clinmesh process entrypoint', () => {
     expect(result.stderr).toBe('')
     const envelope = JSON.parse(result.stdout)
     expect(envelope).toMatchObject({ ok: true, schemaVersion: 1 })
-    expect(envelope.data.operations).toHaveLength(157)
+    expect(envelope.data.operations).toHaveLength(164)
     expect(envelope.data.operations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'billing.case.get' }),
       expect.objectContaining({ id: 'payment.recover' }),

@@ -20,6 +20,7 @@ export const roleCodeSchema = z.enum([
   'inpatient-doctor',
   'ward-nurse',
   'medical-records',
+  'medical-insurance',
   'pharmacist',
   'registrar',
   'triage-nurse',

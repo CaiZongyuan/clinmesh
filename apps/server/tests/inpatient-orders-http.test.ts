@@ -513,8 +513,12 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
       legacy.driver.exec('BEGIN')
       for(const {name} of tables) {
         const quoted=`"${name.replaceAll('"','""')}"`,columns=z.array(z.object({name:z.string()})).parse(legacy.driver.pragma(`table_info(${quoted})`)),list=columns.map(column=>`"${column.name.replaceAll('"','""')}"`).join(',')
-        legacy.driver.exec(`INSERT OR REPLACE INTO ${quoted}(${list}) SELECT ${list} FROM captured.${quoted}`)
+        // 医保办岗位是 81 迁移新增，77 旧枚举不容纳；升级回归只搬 77 已有岗位行。
+        const source=name==='practitioner_role_binding'?"(SELECT * FROM captured.practitioner_role_binding WHERE role_code NOT IN ('medical-insurance'))":`captured.${quoted}`
+        legacy.driver.exec(`INSERT OR REPLACE INTO ${quoted}(${list}) SELECT ${list} FROM ${source}`)
       }
+      // 成员引用跟着岗位走：清掉指向未搬入岗位（81 新增枚举外）的成员行，保持旧库引用完整。
+      legacy.driver.prepare(`DELETE FROM membership_practitioner_role WHERE (workspace_id,practitioner_role_id) NOT IN (SELECT workspace_id,practitioner_role_id FROM practitioner_role_binding)`).run()
       legacy.driver.exec('COMMIT');legacy.driver.exec('DETACH DATABASE captured');legacy.driver.pragma('foreign_keys = ON')
       expect(legacy.driver.pragma('foreign_key_check')).toEqual([])
       expect(applyMigrations(legacy)).toMatchObject({applied:[
@@ -525,7 +529,9 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
         '0075_model-usage-dimensions.sql', '0075_payment-refunds.sql', '0075_refund-tenders.sql',
         '0076_inpatient-payments.sql', '0076_model-usage-retention.sql',
         '0077_inpatient-financial-adjustments.sql', '0077_model-usage-token-breakdown.sql',
-        '0078_model-task-invalid-code.sql', '0079_doctor-consideration-disposition.sql',
+        '0078_inpatient-material-reservation.sql', '0078_model-task-invalid-code.sql',
+        '0079_doctor-consideration-disposition.sql', '0080_inpatient-record-archive-drg.sql',
+        '0081_inpatient-drg-payer-review.sql', '0082_practitioner-role-medical-insurance.sql',
       ],schemaVersion:expectedSchemaVersion()})
       expect(legacy.driver.prepare('SELECT prescription_id,inpatient_dispense_id,quantity FROM inventory_movement WHERE movement_id=?').get('legacy-movement')).toEqual({prescription_id:outpatient.id,inpatient_dispense_id:null,quantity:3})
       expect(legacy.driver.prepare('SELECT amount_fen FROM inpatient_charge WHERE admission_id=?').get(s.admission.id)).toEqual({amount_fen:5000})

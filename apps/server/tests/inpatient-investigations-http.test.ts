@@ -373,8 +373,12 @@ describe('住院检查检验 HTTP 合同', () => {
         const quoted = `"${name.replaceAll('"', '""')}"`
         const columns = z.array(z.object({ name: z.string() })).parse(database.driver.pragma(`table_info(${quoted})`))
         const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(',')
-        database.driver.exec(`INSERT OR REPLACE INTO ${quoted}(${list}) SELECT ${list} FROM captured.${quoted}`)
+        // 医保办岗位是 81 迁移新增，78 旧枚举不容纳；升级回归只搬 78 已有岗位行。
+        const source = name === 'practitioner_role_binding' ? "(SELECT * FROM captured.practitioner_role_binding WHERE role_code NOT IN ('medical-insurance'))" : `captured.${quoted}`
+        database.driver.exec(`INSERT OR REPLACE INTO ${quoted}(${list}) SELECT ${list} FROM ${source}`)
       }
+      // 成员引用跟着岗位走：清掉指向未搬入岗位（81 新增枚举外）的成员行，保持旧库引用完整。
+      database.driver.prepare(`DELETE FROM membership_practitioner_role WHERE (workspace_id,practitioner_role_id) NOT IN (SELECT workspace_id,practitioner_role_id FROM practitioner_role_binding)`).run()
       database.driver.exec('COMMIT'); database.driver.exec('DETACH DATABASE captured'); database.driver.pragma('foreign_keys=ON')
       const before = tables.map(({ name }) => ({ name, rows: database.driver.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all() }))
       const file = '0071_inpatient-investigations-transfer.sql', sql = await readFile(join('drizzle', file), 'utf8')
