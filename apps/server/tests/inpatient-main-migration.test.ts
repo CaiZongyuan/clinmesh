@@ -12,10 +12,11 @@ import { WorkspaceRepository } from '../src/infrastructure/sqlite/workspace-repo
 const mainMigrations = ['0069_registration-numbering.sql', '0070_doctor-recommendation-consolidation-stage.sql']
 const inpatientMigrations = ['0069_inpatient-admission.sql', '0070_inpatient-orders.sql', '0071_inpatient-investigations-transfer.sql',
   '0072_inpatient-surgery.sql', '0073_inpatient-discharge.sql', '0074_inpatient-record.sql', '0078_inpatient-material-reservation.sql',
-  '0079_inpatient-record-archive-drg.sql', '0080_inpatient-drg-payer-review.sql', '0081_practitioner-role-medical-insurance.sql']
+  '0080_inpatient-record-archive-drg.sql', '0081_inpatient-drg-payer-review.sql', '0082_practitioner-role-medical-insurance.sql']
 const modelUsageMigrations = ['0071_model-usage.sql', '0072_model-usage-control.sql', '0073_model-task-recovery.sql',
   '0074_host-model-waiting.sql', '0075_model-usage-dimensions.sql', '0076_model-usage-retention.sql', '0077_model-usage-token-breakdown.sql',
   '0078_model-task-invalid-code.sql']
+const considerationMigrations = ['0079_doctor-consideration-disposition.sql']
 const paymentMigrations = ['0071_payment-installments.sql', '0072_payment-history-pagination.sql']
 const directories: string[] = [], databases: ClinMeshDatabase[] = []
 afterEach(async () => {
@@ -28,7 +29,7 @@ async function legacy(kind: 'main' | 'inpatient') {
   directories.push(directory)
   const migrations = join(directory, 'migrations')
   await mkdir(migrations)
-  const pending = [...(kind === 'main' ? inpatientMigrations : mainMigrations), ...modelUsageMigrations, ...paymentMigrations].sort()
+  const pending = [...(kind === 'main' ? inpatientMigrations : mainMigrations), ...modelUsageMigrations, ...considerationMigrations, ...paymentMigrations].sort()
   const files = (await readdir('drizzle')).filter(file => file.endsWith('.sql') && !pending.includes(file))
   await Promise.all(files.map(file => copyFile(join('drizzle', file), join(migrations, file))))
   const database = openClinMeshDatabase({ databasePath: join(directory, 'legacy.sqlite'), busyTimeoutMs: 5000 })

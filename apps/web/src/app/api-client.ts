@@ -150,8 +150,10 @@ import {
   confirmDoctorPreparationResponseSchema,
   type DoctorPreparationSelection,
   generateDoctorRecommendationsResponseSchema,
+  setDoctorConsiderationDispositionResponseSchema,
   type DoctorRecommendationKind,
   type DoctorRecommendationState,
+  type SetDoctorConsiderationDispositionRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 
 export const sessionQueryKey = ['session-context'] as const
@@ -1314,6 +1316,14 @@ export async function confirmDoctorPreparation(state: {
     confirmDoctorPreparationResponseSchema, body, { idempotencyKey },
   )
   return response.data
+}
+
+export async function setConsiderationDisposition(state: { caseId: string; kind: DoctorRecommendationKind }, label: string,
+  status: SetDoctorConsiderationDispositionRequest['input']['status']) {
+  return apiMutation(
+    `/api/his/v1/doctor/cases/${encodeURIComponent(state.caseId)}/recommendations/${state.kind}/considerations/disposition`,
+    setDoctorConsiderationDispositionResponseSchema, { input: { label, status } },
+  )
 }
 
 export function getEncounterCompletion(encounterId: string, signal?: AbortSignal) {

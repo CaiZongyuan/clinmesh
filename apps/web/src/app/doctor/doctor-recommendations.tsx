@@ -1,6 +1,7 @@
 import {
-  doctorPreparationSelectionSchema, type DoctorCaseEvidence, type DoctorPreparationSelection, type DoctorRecommendationConsideration,
+  considerationLabelKey, doctorPreparationSelectionSchema, type DoctorCaseEvidence, type DoctorPreparationSelection, type DoctorRecommendationConsideration,
   type DoctorRecommendationKind, type DoctorRecommendationState, type DoctorRecommendationSuggestion, type GuidelineEvidence, type DoctorRecommendationNotice,
+  type SetDoctorConsiderationDispositionRequest,
 } from '@clinmesh/contracts/doctor-recommendations'
 import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -20,7 +21,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useOrderDetails } from './doctor-order-workspace.tsx'
 import { WorkspaceSelect } from '../workspace-select.tsx'
-import { ApiClientError, confirmDoctorPreparation, newIdempotencyKey } from '../api-client.ts'
+import { ApiClientError, confirmDoctorPreparation, newIdempotencyKey, setConsiderationDisposition } from '../api-client.ts'
 import { getWorkspaceErrorMessage } from '../workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
@@ -83,13 +84,20 @@ function summary(item: PreparationDraft, zh: boolean) {
   if (item.kind === 'laboratory') return indicationLabel(item.indicationCode, zh)
   return item.kind === 'imaging' ? item.indication : item.purpose
 }
-function reasoning(item: DoctorRecommendationConsideration, zh: boolean) {
+function reasoning(item: DoctorRecommendationConsideration, zh: boolean, evidenceLabels?: ReadonlyMap<string, string>) {
+  // 叙述文本中的证据 id 引用映射为人读来源；未命中的文本原样保留。
+  const readable = (value: string) => {
+    if (evidenceLabels === undefined) return value
+    let text = value
+    for (const [id, label] of [...evidenceLabels].toSorted(([left], [right]) => right.length - left.length)) text = text.split(id).join(label)
+    return text
+  }
   const sections = [
     { label: zh ? '支持信息' : 'Supporting information', values: item.supportingInformation },
     { label: zh ? '反对信息' : 'Information against', values: item.opposingInformation },
     { label: zh ? '待核实事项' : 'Clarifications', values: item.missingInformation },
   ]
-  return <><p>{item.rationale}</p>{sections.map(({ label, values }) => values.length === 0 ? null : <div key={label}><p className="font-medium">{label}</p><ul className="list-inside list-disc">{values.map(value => <li key={value}>{value}</li>)}</ul></div>)}</>
+  return <><p>{readable(item.rationale)}</p>{sections.map(({ label, values }) => values.length === 0 ? null : <div key={label}><p className="font-medium">{label}</p><ul className="list-inside list-disc">{values.map(value => <li key={value}>{readable(value)}</li>)}</ul></div>)}</>
 }
 // 证据文本复用模型的原始输入，结构化形状在此渲染为人读内容；识别不了的 JSON 折叠在原始数据里保持可审计。
 function EvidenceContent({ source, locale }: { source: DoctorCaseEvidence; locale: WorkspaceLocale }) {
@@ -118,10 +126,39 @@ function EvidenceContent({ source, locale }: { source: DoctorCaseEvidence; local
         </li>
       })}
     </ul>
+    if (Array.isArray(parsed)) return <ul className="flex list-inside list-disc flex-col gap-1">
+      {(parsed as unknown[]).map((entry, index) => {
+        const item = typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : undefined
+        const date = typeof item?.recordedDate === 'string' ? item.recordedDate : undefined
+        const display = typeof item?.display === 'string' ? item.display : item === undefined ? (typeof entry === 'string' ? entry : JSON.stringify(entry)) : JSON.stringify(entry)
+        return <li key={index}>{date === undefined ? null : <span className="text-muted-foreground">{formatClinicalDateTime(date, locale)} · </span>}<span className="break-words">{display}</span></li>
+      })}
+    </ul>
     return <details><summary className="cursor-pointer text-xs text-muted-foreground">{zh ? '查看原始数据' : 'View raw data'}</summary>
       <p className="font-mono text-xs whitespace-pre-wrap break-all">{source.text}</p></details>
   }
   return <p className="whitespace-pre-wrap break-words">{source.text}</p>
+}
+// 证据默认折叠为一行来源摘要（问诊附时间、历史附条数），展开才铺开原文，避免长文与多思路重复引用淹没弹窗。
+function evidenceSummary(source: DoctorCaseEvidence, locale: WorkspaceLocale) {
+  const zh = locale === 'zh-CN'
+  try {
+    const parsed: unknown = JSON.parse(source.text)
+    if (typeof parsed === 'object' && parsed !== null) {
+      const shape = parsed as { recordedAt?: unknown; entries?: unknown }
+      if (typeof shape.recordedAt === 'string') return formatClinicalDateTime(shape.recordedAt, locale)
+      if (Array.isArray(shape.entries)) return zh ? `${shape.entries.length} 条记录` : `${shape.entries.length} records`
+      if (Array.isArray(parsed)) return zh ? `${parsed.length} 条记录` : `${parsed.length} records`
+    }
+  } catch { /* 纯文本证据不加摘要。 */ }
+  return undefined
+}
+function EvidenceDisclosure({ source, locale }: { source: DoctorCaseEvidence; locale: WorkspaceLocale }) {
+  const summary = evidenceSummary(source, locale)
+  return <details className="min-w-0">
+    <summary className="cursor-pointer text-xs text-muted-foreground break-words">{source.label}{summary === undefined ? null : <span> · {summary}</span>}</summary>
+    <div className="pt-1"><EvidenceContent source={source} locale={locale} /></div>
+  </details>
 }
 function recoveryMessage(state: DoctorRecommendationState | undefined, zh: boolean) {
   if (state?.errorCode === 'MODEL_OUTCOME_UNKNOWN' || state?.recovery?.status === 'unknown') return zh
@@ -133,6 +170,19 @@ function recoveryMessage(state: DoctorRecommendationState | undefined, zh: boole
 export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: DoctorPreparationJob; locale?: WorkspaceLocale }) {
   const zh = locale === 'zh-CN', state = job.state ?? job.previous
   const recovery = recoveryMessage(state, zh)
+  const client = useQueryClient()
+  const evidenceLabels = new Map((state?.caseEvidence ?? []).map(source => [source.id, source.label] as const))
+  const dispositions = state?.considerationDispositions ?? []
+  const dispositionByKey = new Map(dispositions.map(entry => [entry.labelKey, entry] as const))
+  const activeConsiderations = (state?.considerations ?? []).filter(item => !dispositionByKey.has(considerationLabelKey(item.label)))
+  const disposition = useMutation({
+    mutationFn: async (input: SetDoctorConsiderationDispositionRequest['input']) => {
+      if (state === undefined) throw new Error(zh ? '当前病例建议状态不可用。' : 'The recommendation state is unavailable.')
+      return setConsiderationDisposition({ caseId: state.caseId, kind: state.kind }, input.label, input.status)
+    },
+    onSuccess: () => { void client.invalidateQueries({ predicate: query =>
+      query.queryKey[0] === 'doctor-recommendations' && query.queryKey.includes(state?.caseId) && query.queryKey.includes(state?.kind) }) },
+  })
   return <div className="flex min-w-0 flex-col gap-4 text-sm">
     <p role="status">{job.paused ? zh ? '自动准备已暂停；已启动的核对仍可完成。' : 'Automatic preparation is paused; work already started may finish.'
       : recovery !== undefined ? recovery
@@ -144,16 +194,29 @@ export function DoctorRecommendationDetails({ job, locale = 'zh-CN' }: { job: Do
       <h4 className="font-medium">{state.generation === 0 ? zh ? '尚未开始准备' : 'Preparation has not started' : zh ? `第 ${state.generation} 轮准备` : `Preparation ${state.generation}`}</h4>
       {state.stale ? <p>{zh ? '资料或目录已更新，本轮结果等待重新核对。' : 'Information or catalog changed; this result needs another check.'}</p> : null}
       <p>{zh ? `已读取 ${state.caseEvidence.length} 份病例依据、${state.guidelines.length} 条指南依据。` : `${state.caseEvidence.length} case sources and ${state.guidelines.length} guideline sources available.`}</p>
-      {state.status === 'ready' && !state.stale ? <p>{zh ? `独立核验后发布 ${state.items.length} 项，另有 ${state.considerations?.length ?? 0} 项待核实思路。` : `${state.items.length} verified items published; ${state.considerations?.length ?? 0} considerations.`}</p> : null}
+      {state.status === 'ready' && !state.stale ? <p>{zh ? `独立核验后发布 ${state.items.length} 项，另有 ${activeConsiderations.length} 项待核实思路。` : `${state.items.length} verified items published; ${activeConsiderations.length} considerations.`}</p> : null}
     </section>}
     {state?.notices?.map((notice, index) => <Alert aria-label={noticeTitles[notice.category][zh ? 0 : 1]} key={`${notice.category}:${index}`}><AlertTitle>{noticeTitles[notice.category][zh ? 0 : 1]}</AlertTitle><AlertDescription>{notice.message}</AlertDescription></Alert>)}
     {!state?.notices?.length && state?.missingInformation.length ? <Alert aria-label={zh ? '补充说明' : 'Additional notes'}><AlertTitle>{zh ? '补充说明' : 'Additional notes'}</AlertTitle><AlertDescription>{state.missingInformation.map(note => <p key={note}>{note}</p>)}</AlertDescription></Alert> : null}
     {state?.items.map(item => <section className="flex min-w-0 flex-col gap-2" key={item.id}>
-      <h4 className="font-medium">{item.label}</h4>{reasoning(item, zh)}
+      <h4 className="font-medium">{item.label}</h4>{reasoning(item, zh, evidenceLabels)}
       {item.guidelineEvidenceIds.map(id => { const source = state.guidelines.find(source => source.id === id); return source === undefined ? null : <div key={id} className="flex flex-col gap-1"><Badge variant="secondary">{documentTypes[source.documentType][zh ? 0 : 1]}</Badge><a className="underline" href={source.url} rel="noreferrer noopener" target="_blank">{source.title} · {source.version} · {source.locator}</a><p className="text-xs text-muted-foreground">{source.publisher} · {source.scope}</p><p>{source.text}</p></div> })}
-      {item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <div key={id}><Badge variant="outline">{source.label}</Badge><EvidenceContent source={source} locale={locale} /></div> })}<Separator />
+      {item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <EvidenceDisclosure key={id} source={source} locale={locale} /> })}<Separator />
     </section>)}
-    {state?.considerations?.length ? <section aria-label={zh ? '待核实思路' : 'Considerations'} className="flex flex-col gap-4"><h4 className="font-medium">{zh ? '待核实思路' : 'Considerations'}</h4>{state.considerations.map(item => <article aria-label={item.label} key={item.id} className="flex flex-col gap-2"><h5>{item.label}</h5>{reasoning(item, zh)}{item.caseEvidenceIds.map(id => { const source = state.caseEvidence.find(source => source.id === id); return source === undefined ? null : <div key={id}><EvidenceContent source={source} locale={locale} /></div> })}</article>)}</section> : null}
+    {activeConsiderations.length > 0 ? <section aria-label={zh ? '待核实思路' : 'Considerations'} className="flex flex-col gap-4"><h4 className="font-medium">{zh ? '待核实思路' : 'Considerations'}</h4>{activeConsiderations.map(item => <article aria-label={item.label} key={item.id} className="flex flex-col gap-2"><h5>{item.label}</h5>{reasoning(item, zh, evidenceLabels)}{item.caseEvidenceIds.map(id => { const source = state?.caseEvidence.find(source => source.id === id); return source === undefined ? null : <EvidenceDisclosure key={id} source={source} locale={locale} /> })}
+      <div className="flex flex-wrap gap-2">
+        <Button aria-label={`${zh ? '已核实' : 'Verified'}：${item.label}`} disabled={disposition.isPending} onClick={() => disposition.mutate({ label: item.label, status: 'verified' })} size="sm" type="button" variant="outline">{zh ? '已核实' : 'Verified'}</Button>
+        <Button aria-label={`${zh ? '忽略' : 'Dismiss'}：${item.label}`} disabled={disposition.isPending} onClick={() => disposition.mutate({ label: item.label, status: 'dismissed' })} size="sm" type="button" variant="ghost">{zh ? '忽略' : 'Dismiss'}</Button>
+      </div>
+    </article>)}</section> : null}
+    {dispositions.length > 0 ? <details aria-label={zh ? '已处理思路' : 'Processed considerations'} className="min-w-0">
+      <summary className="cursor-pointer text-xs text-muted-foreground">{zh ? `已处理思路（${dispositions.length}）` : `Processed considerations (${dispositions.length})`}</summary>
+      <ul className="flex list-inside list-disc flex-col gap-1 pt-1">{dispositions.map(entry => <li className="flex min-w-0 flex-wrap items-center gap-2" key={entry.labelKey}>
+        <span className="break-words">{entry.label}</span>
+        <Badge variant="outline">{entry.status === 'verified' ? zh ? '已核实' : 'Verified' : zh ? '已忽略' : 'Dismissed'}</Badge>
+        <Button aria-label={`${zh ? '撤销' : 'Undo'}：${entry.label}`} disabled={disposition.isPending} onClick={() => disposition.mutate({ label: entry.label, status: 'clear' })} size="sm" type="button" variant="ghost">{zh ? '撤销' : 'Undo'}</Button>
+      </li>)}</ul>
+    </details> : null}
   </div>
 }
 
