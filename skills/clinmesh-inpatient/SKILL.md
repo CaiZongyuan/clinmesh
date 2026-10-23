@@ -214,6 +214,14 @@ clinmesh command receipt get --operation-id inpatient.discharge.settle --idempot
 
 收费员只能读取窄财务和资金记录，不能读取出院临床说明或离院方式。`payments` 读取当前首次结算的原款、成功收退款、剩余差额及未知尝试。登记原预交金继续有效；追加预交金用 `kind=deposit`，已出区补缴用 `kind=supplement`，输入正整数分 `amountFen` 与合计相等的 `tenders`（cash、bank-card、mobile各最多一项）。合成渠道显式选 `simulatorRule`：success、decline、ambiguous、ambiguous-decline或ambiguous-pending。先预览，再将响应的 `admissionId/previewId/commitToken` 写入确认文件；确认只消费原预览，不能追加金额或方式。
 
+单笔退款上限为 `1_000_000_000` 分（1000万元），超限请求在预览时拒绝，大额须分多次退。每次重新读取剩余应退差额及原款余额，再预览、审阅并确认；未知结果先恢复原尝试。默认现金结清的差额超过该单笔上限时返回 `INPATIENT_FUNDS_REQUIRED`，先分次办理收退款再重新预览结算。
+
+`inpatient-refund.json` 为单笔上限示例，首次提交前替换实际住院及原款ID：
+
+```json
+{"admissionId":"synthetic-admission","sourceId":"synthetic-payment","amountFen":1000000000,"simulatorRule":"success"}
+```
+
 `inpatient-payment.json` 合成示例，首次提交前替换本次住院ID：
 
 ```json

@@ -59,12 +59,14 @@ export class RefundLedger {
     return rows.map(({ recoveryOutcome: _recovery, ...attempt }) => ({ ...attempt, ...(tenders.has(attempt.refundId) ? { tenders: tenders.get(attempt.refundId)! } : {}) }))
   }
   create(context: RepositoryContext, input: { source: RefundSource; basisId: string; ownerKind: 'outpatient' | 'inpatient'; ownerId: string; amountFen: number; simulatorRule: z.infer<typeof paymentSimulatorRuleSchema>; createdAt: string }) {
-    const amount = z.number().int().positive().safe().parse(input.amountFen)
+    const amount = refundAttemptSchema.shape.amountFen.parse(input.amountFen)
     if (amount > this.balance(context, input.source).refundableFen) throw new WorkflowError('WORKFLOW_CONFLICT', '退款超过原交易可退余额')
     const { outcome, recoveryOutcome: recovery } = paymentChannelPlan(this.database, context, input.simulatorRule)
-    const originalTenders = paymentTendersSchema.parse(input.source.tenders ?? [{ method: 'cash', amountFen: input.source.amountFen }])
+    const originalTenders = input.source.tenders === undefined
+      ? [{ method: 'cash' as const, amountFen: input.source.amountFen }]
+      : paymentTendersSchema.parse(input.source.tenders)
     if (originalTenders.reduce((sum, item) => sum + item.amountFen, 0) !== input.source.amountFen) throw new WorkflowError('WORKFLOW_CONFLICT', '原交易方式金额不一致')
-    const used = z.array(paymentTendersSchema.element).parse(this.database.driver.prepare(`SELECT tender.method,SUM(tender.amount_fen) AS amountFen
+    const used = z.array(paymentTendersSchema.element.extend({ amountFen: z.number().int().positive().safe() })).parse(this.database.driver.prepare(`SELECT tender.method,SUM(tender.amount_fen) AS amountFen
       FROM refund_tender tender JOIN refund_transaction refund USING(workspace_id,epoch,refund_id)
       LEFT JOIN refund_resolution resolution USING(workspace_id,epoch,refund_id)
       WHERE refund.workspace_id=? AND refund.epoch=? AND refund.source_kind=? AND refund.source_id=?

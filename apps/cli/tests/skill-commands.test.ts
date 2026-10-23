@@ -21,6 +21,24 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('住院退款示例及Catalog保留单笔一千万元上限', async () => {
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  const input = examples.find(value => value.sourceId && !value.adjustmentId)
+  const operation = getHisOperation('inpatient.refund.preview')
+  expect(operation.input.safeParse(input).success).toBe(true)
+  expect(input.amountFen).toBe(1_000_000_000)
+  expect(operation.input.safeParse({ ...input, amountFen: 1_000_000_001 }).success).toBe(false)
+  const response = { auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data: {
+    admissionId: 'synthetic-admission', previewId: 'synthetic-preview', commitToken: 'synthetic-token', sourceId: 'synthetic-payment',
+    sourceKind: 'inpatient-deposit', amountFen: 1_000_000_000, expectedOutcome: 'success', expiresAt: '2026-10-23T08:00:00Z',
+  } }
+  expect(operation.output.safeParse(response).success).toBe(true)
+  expect(operation.output.safeParse({ ...response, data: { ...response.data, amountFen: 1_000_000_001 } }).success).toBe(false)
+  expect(operation.summary).toContain('单笔上限1000万元')
+  expect(skill).toContain('大额须分多次退')
+})
+
 it('keeps later inpatient insurance compensation and reviewed replacement commands aligned', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')

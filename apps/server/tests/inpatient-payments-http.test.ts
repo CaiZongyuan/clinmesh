@@ -13,7 +13,7 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
 
-async function setup() {
+async function setup(depositFen = 1000) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-inpatient-payments-'))
   const password = `Test-${randomUUID()}-Aa1!`
   const options = { authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
@@ -38,7 +38,7 @@ async function setup() {
   expect(created.status).toBe(200)
   const patient = createPatientResponseSchema.parse(await created.json()).data.patient
   const registered = await request(registrar, '/api/his/v1/inpatient/admissions', { expectedEpoch: 'epoch-1', patientId: patient.id,
-    patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 1000 })
+    patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen })
   expect(registered.status).toBe(200)
   const admission = inpatientCommandResponseSchema.parse(await registered.json()).data.admission
   const path = `/api/his/v1/inpatient/admissions/${admission.id}`
@@ -68,6 +68,78 @@ async function settle(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院共享资金公共 HTTP', () => {
+  it('默认现金补缴超限时先分次收款，结清后才能封账', async () => {
+    const s = await setup()
+    s.runtime().database.driver.prepare("UPDATE inpatient_bed SET daily_price_fen=? WHERE bed_id='bed-general-1'").run(2_000_001_000)
+    await depart(s, true)
+    const blocked = await settle(s)
+    expect(blocked.status).toBe(409)
+    expect(apiErrorSchema.parse(await blocked.json()).error.code).toBe('INPATIENT_FUNDS_REQUIRED')
+    expect(inpatientPaymentsSchema.parse(await (await s.request(s.cashier, `${s.path}/payments`)).json()).payments).toHaveLength(0)
+    for (let index = 0; index < 2; index += 1) {
+      const preview = inpatientPaymentPreviewResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/payments/preview`, {
+        kind: 'supplement', amountFen: 1_000_000_000, tenders: [{ method: 'cash', amountFen: 1_000_000_000 }], simulatorRule: 'success',
+      })).json()).data
+      const response = await s.request(s.cashier, `${s.path}/payments/confirm`, { previewId: preview.previewId, commitToken: preview.commitToken })
+      expect(response.status, await response.clone().text()).toBe(200)
+      inpatientPaymentResponseSchema.parse(await response.json())
+    }
+    const response = await settle(s)
+    expect(response.status, await response.clone().text()).toBe(200)
+    const frozen = inpatientSettlementResponseSchema.parse(await response.json()).data
+    expect(frozen.transactions.filter(item => item.kind === 'supplement')).toHaveLength(2)
+    expect(frozen.transactions.reduce((sum, item) => sum + item.amountFen, 0)).toBe(2_000_001_000)
+  })
+  it('历史大额现金须分笔退回，默认结清不生成超限交易且累计退款仍可核对', async () => {
+    const s = await setup(2_000_000_001)
+    await depart(s)
+    const read = async () => inpatientPaymentsSchema.parse(await (await s.request(s.cashier, `${s.path}/payments`)).json())
+    const before = await read(), sourceId = before.sources[0]!.id
+    const blocked = await settle(s)
+    expect(blocked.status).toBe(409)
+    expect(apiErrorSchema.parse(await blocked.json()).error.code).toBe('INPATIENT_FUNDS_REQUIRED')
+    expect(await read()).toEqual(before)
+    for (const amountFen of [1_000_000_000, 1_000_000_000, 1]) {
+      const preview = inpatientRefundPreviewResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/refunds/preview`, { sourceId, amountFen, simulatorRule: 'success' })).json()).data
+      const response = await s.request(s.cashier, `${s.path}/refunds/confirm`, { previewId: preview.previewId, commitToken: preview.commitToken })
+      expect(response.status, await response.clone().text()).toBe(200)
+      expect(refundResponseSchema.parse(await response.json()).data).toMatchObject({ amountFen, tenders: [{ method: 'cash', amountFen }] })
+    }
+    const frozen = await settle(s)
+    expect(frozen.status, await frozen.clone().text()).toBe(200)
+    expect(inpatientSettlementResponseSchema.parse(await frozen.json()).data.transactions.reduce((sum, item) => sum + item.amountFen, 0)).toBe(0)
+    const statement = await read()
+    expect(statement.refunds).toHaveLength(3)
+    expect(statement.sources[0]).toMatchObject({ refundableFen: 0, refundedFen: 2_000_000_001 })
+    await s.restart()
+    expect(await read()).toEqual(statement)
+  })
+  it('组合大额原款提前拒绝超限预览，并按单笔一千万元分次退款', async () => {
+    const s = await setup()
+    const reviewed = inpatientPaymentPreviewResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/payments/preview`, {
+      kind: 'deposit', amountFen: 2_000_000_000, tenders: [{ method: 'cash', amountFen: 1_000_000_000 }, { method: 'bank-card', amountFen: 1_000_000_000 }], simulatorRule: 'success',
+    })).json()).data
+    const payment = inpatientPaymentResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/payments/confirm`, { previewId: reviewed.previewId, commitToken: reviewed.commitToken })).json()).data
+    await depart(s)
+    const read = async () => inpatientPaymentsSchema.parse(await (await s.request(s.cashier, `${s.path}/payments`)).json())
+    const before = await read()
+    const oversized = await s.request(s.cashier, `${s.path}/refunds/preview`, { sourceId: payment.paymentId, amountFen: 1_000_000_001, simulatorRule: 'success' })
+    expect(oversized.status).toBe(400)
+    expect(apiErrorSchema.parse(await oversized.json()).error.code).toBe('INVALID_INPUT')
+    expect(await read()).toEqual(before)
+    for (const method of ['cash', 'bank-card']) {
+      const preview = inpatientRefundPreviewResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/refunds/preview`, { sourceId: payment.paymentId, amountFen: 1_000_000_000, simulatorRule: 'success' })).json()).data
+      const key = randomUUID(), input = { previewId: preview.previewId, commitToken: preview.commitToken }
+      const response = await s.request(s.cashier, `${s.path}/refunds/confirm`, input, key)
+      expect(response.status, await response.clone().text()).toBe(200)
+      const refund = refundResponseSchema.parse(await response.json())
+      expect(refund.data).toMatchObject({ amountFen: 1_000_000_000, tenders: [{ method, amountFen: 1_000_000_000 }] })
+      expect(refundResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/refunds/confirm`, input, key)).json())).toEqual(refund)
+    }
+    const statement = await read()
+    expect(statement.refunds).toHaveLength(2)
+    expect(statement.sources.find(source => source.id === payment.paymentId)).toMatchObject({ refundedFen: 2_000_000_000, refundableFen: 0 })
+  })
   it('收款窄合同隔离岗位、拒绝篡改金额，并发确认仅一个唯一尝试', async () => {
     const s = await setup(), input = {kind:'deposit',amountFen:100,tenders:[{method:'cash',amountFen:100}],simulatorRule:'success'}
     for (const cookie of [s.doctor,s.nurse,s.registrar]) {

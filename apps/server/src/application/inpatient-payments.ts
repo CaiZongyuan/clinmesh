@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientPaymentSchema, inpatientPaymentResponseSchema, inpatientPaymentPreviewResponseSchema, inpatientPaymentsSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema, inpatientRefundPreviewResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { refundResponseSchema } from '@clinmesh/contracts/refunds'
+import { refundAttemptSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { paymentChannelPlan } from './payment-channel.ts'
@@ -221,7 +221,7 @@ export class InpatientPayments {
     const input = inpatientRefundConfirmInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.refund.confirm', expectedVersions: {},
       dataSchema: refundResponseSchema.shape.data, authorize: () => this.owner.assertRole(context, ['cashier']) }, () => {
-      const preview = z.object({ admission_id: z.string(), source_id: z.string(), amount_fen: z.number(), simulator_rule: inpatientRefundInputSchema.shape.simulatorRule,
+      const preview = z.object({ admission_id: z.string(), source_id: z.string(), amount_fen: inpatientRefundInputSchema.shape.amountFen, simulator_rule: inpatientRefundInputSchema.shape.simulatorRule,
         fingerprint: z.string(), token_hash: z.string(), actor_hash: z.string(), expires_at: z.string(), consumed_at: z.string().nullable() }).optional().parse(
           this.owner.database.driver.prepare('SELECT * FROM inpatient_refund_preview WHERE workspace_id=? AND epoch=? AND preview_id=?').get(context.workspaceId, context.epoch, input.previewId))
       if (!preview || preview.admission_id !== input.admissionId || preview.consumed_at !== null || preview.token_hash !== hash(input.commitToken)
@@ -253,6 +253,8 @@ export class InpatientPayments {
     const statement = this.read(context, admissionId)
     if (statement.pendingCount > 0) throw new InpatientError('INPATIENT_FUNDS_PENDING', '资金结果未查明，不能封账或清床')
     if (statement.payments.length === 0 && statement.refunds.length === 0 && statement.remainingFen !== 0) {
+      if (!refundAttemptSchema.shape.amountFen.safeParse(Math.abs(statement.remainingFen)).success)
+        throw new InpatientError('INPATIENT_FUNDS_REQUIRED', '默认现金结清超过单笔1000万元上限，请分次办理收退款后重新预览结算')
       if (statement.remainingFen > 0) {
         const input = { admissionId, kind: 'supplement' as const, amountFen: statement.remainingFen,
           tenders: [{ method: 'cash' as const, amountFen: statement.remainingFen }], simulatorRule: 'success' as const }

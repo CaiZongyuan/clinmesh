@@ -24,11 +24,11 @@ export const inpatientPaymentsSchema = z.object({ admissionId: id, payments: z.a
   depositFen: fen, supplementFen: fen, pendingCount: fen, refundedFen: fen, remainingFen: z.number().int().safe(),
   refunds: z.array(refundAttemptSchema), sources: z.array(z.object({ id, kind: refundSourceKindSchema, amountFen: fen, createdAt: z.string(), tenders: paymentTendersSchema.optional(),
     refundableFen: fen, refundedFen: fen, reservedFen: fen, version: z.number().int().positive() }).strict()) }).strict()
-export const inpatientRefundInputSchema = z.object({ admissionId: id, sourceId: id, amountFen: fen.positive(), simulatorRule: paymentSimulatorRuleSchema }).strict()
+export const inpatientRefundInputSchema = z.object({ admissionId: id, sourceId: id, amountFen: refundAttemptSchema.shape.amountFen, simulatorRule: paymentSimulatorRuleSchema }).strict()
 export const inpatientRefundConfirmInputSchema = inpatientPaymentConfirmInputSchema
 export const inpatientRefundRecoverInputSchema = z.object({ admissionId: id, refundId: id, expectedRefundVersion: z.number().int().positive() }).strict()
 export const inpatientRefundPreviewResponseSchema = commandResponseSchema(z.object({ admissionId: id, previewId: id, commitToken: z.string(), sourceId: id,
-  sourceKind: refundSourceKindSchema, amountFen: fen.positive(), expectedOutcome: outcome, expiresAt: z.string() }).strict())
+  sourceKind: refundSourceKindSchema, amountFen: refundAttemptSchema.shape.amountFen, expectedOutcome: outcome, expiresAt: z.string() }).strict())
 export const inpatientDischargeInputSchema = z.object({ admissionId: id, encounterVersion: z.string().regex(/^\d+$/), reason: z.string().trim().min(1).max(2000) }).strict()
 const transaction = z.object({ id, virtualTime: z.iso.datetime({ offset: true }) })
 const financialTransaction = z.discriminatedUnion('kind', [
