@@ -10,6 +10,8 @@
 
 ## 范围、快照与资源争用
 
+- `perf:ci` 的数据库增长意外超限时，先分别核对主文件、WAL、SHM 大小与 `page_count`，区分持久页面增长和初始化 WAL 的延迟刷盘；不要直接提高预算。Scenario 生命周期的采样边界由[性能合同](../testing.md#性能合同)拥有。
+
 - HIS 路由与 Operation Catalog 的覆盖检查从源码提取完整路由字面量。共享处理器可用工厂复用，但每个公开路由须显式注册；循环拼接路径会使运行时可用的路由在覆盖检查中变成不完整路径。新增或调整注册后运行 `his-operation-catalog.test.ts`，避免只用请求成功证明目录已同步。
 
 - CLI Skill 示例漂移测试读取 Markdown 后统一将 CRLF 转为 LF，再解析代码块；否则 Windows checkout 的有效 JSON 示例会被仅匹配 `\n` 的正则漏掉。统一在读取 helper 归一化，不批量改产品文档换行或放宽业务 schema。
