@@ -67,7 +67,10 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
   for (const term of ['paymentsPagination', '--page-size', 'tenders', 'cash', 'bank-card', 'mobile', 'positive integer fen',
     'expectedPaymentVersion', 'ambiguous-decline', 'ambiguous-pending', 'original Command receipt',
     'Recovery queries the channel without collecting again', 'only a fully paid charge',
-    'Registration charges remain unpaid and read-only']) expect(skill).toContain(term)
+    'Registration charges remain unpaid and read-only', 'Unknown refunds block new payment previews and confirms',
+    'Unknown collections or refunds also block new refund previews and confirms',
+    'Only a human cashier in the current Workspace/Epoch', 'Agent Grants still require an active Run',
+    'AGENT_TOKEN_INVALID', 'CONTEXT_INACTIVE']) expect(skill).toContain(term)
 })
 
 it('keeps inpatient pharmacy and charge reads and receipts aligned with role-specific contracts', async () => {

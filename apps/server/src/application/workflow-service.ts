@@ -9126,7 +9126,7 @@ export class WorkflowService {
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${charge.charge_item_id}`])
       const balance = this.#payments.balance(input.context, charge.charge_item_id)
-      if (balance.unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
+      if (balance.unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment or refund before collecting again')
       const remainingFen = charge.total_fen - balance.paidFen
       const tenders = paymentRecordedTendersSchema.parse(input.tenders ?? [{ method: 'cash', amountFen: remainingFen }])
       const amountFen = tenders.reduce((sum, tender) => sum + tender.amountFen, 0)
@@ -9282,7 +9282,7 @@ export class WorkflowService {
       }
       const rule = paymentChannelPlan(this.#database, input.context, paymentSimulatorRuleSchema.parse(preview.simulator_rule))
       if (balance.unresolved > 0) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment before collecting again')
+        throw new WorkflowError('WORKFLOW_CONFLICT', 'Query the original unknown payment or refund before collecting again')
       }
       const tenders = paymentRecordedTendersSchema.parse(preview.tenders_json === null
         ? [{ method: 'cash', amountFen: preview.amount_fen }] : JSON.parse(preview.tenders_json))
@@ -9380,8 +9380,8 @@ export class WorkflowService {
     outcome: 'ambiguous' | 'declined' | 'success',
     effects: CommandEffect[],
   ): string {
-    const paidFen = this.#payments.balance(context, charge.charge_item_id).paidFen
-    const fullyPaid = outcome === 'success' && paidFen === charge.current_amount_fen
+    const balance = this.#payments.balance(context, charge.charge_item_id)
+    const fullyPaid = outcome === 'success' && balance.unresolved === 0 && balance.paidFen === charge.current_amount_fen
     const chargeItem = transaction.fhir.read(context, 'ChargeItem', charge.charge_item_id)
     const updated = transaction.fhir.update(context, { ...chargeItem, status: fullyPaid ? 'billed' : 'billable' }, chargeItem.meta?.versionId ?? '1')
     effects.push({ kind: 'updated', reference: `ChargeItem/${charge.charge_item_id}`, versionId: updated.meta?.versionId ?? String(charge.charge_version + 1) })
@@ -11633,7 +11633,8 @@ export class WorkflowService {
     )
     return charges.some(charge => {
       const balance = this.#payments.balance(context, charge.charge_item_id)
-      return balance.unresolved > 0 || (balance.paidFen > 0 && balance.paidFen < charge.total_fen)
+      const receivableFen = charge.total_fen - this.refunds.adjustmentFen(context, charge.charge_item_id)
+      return balance.unresolved > 0 || (balance.paidFen > 0 && balance.paidFen < receivableFen)
     })
   }
 

@@ -2311,7 +2311,7 @@ const operationDefinitions = [
       return { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }
     } }, input: refundPreviewOperationInputSchema, output: refundPreviewResponseSchema,
     roles: ['cashier'], risk: 'write', requirements: { expectedVersions: true, idempotency: 'required' },
-    summary: 'Freeze a partial refund against the original successful payment and recorded fee correction',
+    summary: 'Freeze a partial refund against the original successful payment and recorded fee correction; unknown collections or refunds on the same charge block new previews and confirms',
   },
   {
     cliPath: ['refund', 'confirm'], id: 'refund.confirm', mode: 'command', version: 1,
@@ -2329,7 +2329,7 @@ const operationDefinitions = [
       return { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }
     } }, input: refundRecoverOperationInputSchema, output: refundResponseSchema,
     roles: ['cashier'], risk: 'high-risk-write', requirements: { expectedVersions: true, idempotency: 'required' },
-    summary: 'Query the original refund attempt without sending another refund; definite decline releases its reservation',
+    summary: 'Query the original refund attempt without sending another refund; definite decline releases its reservation; a human cashier in the current Epoch may also recover in a completed Scenario, while closed Scenarios and Agent Grants remain restricted',
   },
   {
     cliPath: ['payment', 'preview'],

@@ -4,7 +4,7 @@ import { build } from 'vite'
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { z } from 'zod'
 import { billingCaseSchema, billingQueueSchema, paymentResponseSchema } from '@clinmesh/contracts/his'
-import { refundCaseSchema } from '@clinmesh/contracts/refunds'
+import { refundCaseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
 import { expectBillingFits, readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
@@ -74,6 +74,75 @@ async function mountBilling(page: Page, version: string, server: { origin: strin
 
 for (const version of ['18', '19']) test.describe(`billing asynchronous responses on React ${version}`, () => {
   test.beforeAll(async () => { await buildFixture(version) })
+  test('restores a lost refund receipt after remount while another case is selected', async ({ page }) => {
+    const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
+    let originalItem: z.infer<typeof billingQueueSchema>['items'][number] | undefined
+    try {
+      // Only B's queue and read projections are synthetic; A's writes, receipt and ledger use real HTTP and SQLite.
+      await page.route('**/api/his/v1/billing/queue?**', async route => {
+        const response = await route.fetch()
+        const queue = billingQueueSchema.parse(await response.json())
+        originalItem = queue.items.find(item => item.chargeItemId === server.chargeItemId) ?? originalItem
+        if (originalItem === undefined) return route.fulfill({ response })
+        const second = { ...originalItem, chargeItemId: 'synthetic-charge-b', caseId: 'synthetic-case-b',
+          patient: { ...originalItem.patient, name: '合成患者 B' } }
+        await route.fulfill({ response, json: billingQueueSchema.parse({ ...queue, items: [originalItem, second], total: 2 }) })
+      })
+      await page.route('**/api/his/v1/billing/cases/synthetic-case-b?**', async route => {
+        const response = await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}`)
+        const bill = billingCaseSchema.parse(await response.json())
+        const charge = bill.charges.find(item => item.chargeItemId === server.chargeItemId)!
+        await route.fulfill({ json: billingCaseSchema.parse({ ...bill, caseId: 'synthetic-case-b',
+          patient: { ...bill.patient, name: '合成患者 B' }, charges: [{ ...charge, chargeItemId: 'synthetic-charge-b', descriptionZh: '合成费用 B',
+            paidFen: 0, remainingFen: charge.amountFen }], paidFen: 0, remainingFen: charge.amountFen,
+          payments: [], paymentsPagination: { page: 1, pageSize: 20, total: 0 } }) })
+      })
+      await page.route('**/api/his/v1/billing/cases/synthetic-case-b/refunds', route => route.fulfill({ json: refundCaseSchema.parse({
+        caseId: 'synthetic-case-b', adjustments: [], refunds: [], sources: [], adjustedFen: 0, refundedFen: 0, reservedFen: 0,
+      }) }))
+      await mountBilling(page, version, server)
+      await submitPayment(page)
+      const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
+      await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
+      await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
+      await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
+      await page.getByRole('alertdialog', { name: '确认费用更正', exact: true }).getByRole('button', { name: '确认费用更正', exact: true }).click()
+      await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
+      await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+      const review = page.getByRole('alertdialog', { name: '确认退款', exact: true })
+      await expectShadowDialog(page, review)
+      let originalRefund: string | undefined
+      let originalKey: string | undefined
+      await page.route('**/api/his/v1/refunds/*/actions/confirm', async route => {
+        originalKey = route.request().headers()['idempotency-key']
+        const response = await route.fetch()
+        expect(response.status()).toBe(200)
+        originalRefund = refundResponseSchema.parse(await response.json()).data.refundId
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'SYNTHETIC_RESPONSE_LOST', message: 'Synthetic response lost' } }) })
+      }, { times: 1 })
+      await review.getByRole('button', { name: '提交退款', exact: true }).click()
+      await expect(review.getByRole('alert')).toBeVisible()
+      await review.getByRole('button', { name: '取消', exact: true }).click()
+      await mountBilling(page, version, server)
+      await page.locator('[data-agent-selection="synthetic-charge-b"]').click()
+      await expect(page.getByRole('region', { name: '本次就诊账单', exact: true })).toContainText('合成费用 B')
+      await expect(page.getByRole('button', { name: '预览支付', exact: true })).toBeDisabled()
+      await expect(panel.getByRole('button', { name: '记录费用更正', exact: true })).toBeDisabled()
+      await expect(page.getByRole('button', { name: '恢复原费用操作', exact: true })).toBeVisible()
+      const receipt = page.waitForResponse(response => new URL(response.url()).pathname === '/api/his/v1/command-receipts')
+      await page.getByRole('button', { name: '恢复原费用操作', exact: true }).click()
+      const recovered = await receipt
+      expect(recovered.status()).toBe(200)
+      expect(new URL(recovered.url()).searchParams.get('idempotencyKey')).toBe(originalKey)
+      expect(new URL(recovered.url()).searchParams.get('operationId')).toBe('refund.confirm')
+      await expect(page.getByRole('button', { name: '恢复原费用操作', exact: true })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '预览支付', exact: true })).toBeEnabled()
+      await expect(panel).not.toContainText(originalRefund!)
+      const response = await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)
+      expect(refundCaseSchema.parse(await response.json())).toMatchObject({ adjustedFen: 2000, refundedFen: 1000,
+        refunds: [{ refundId: originalRefund, outcome: 'success' }] })
+    } finally { await server.close() }
+  })
   test('reviews original-payment refunds and recovery inside the Surface shadow root', async ({ page }) => {
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {
@@ -288,7 +357,7 @@ for (const version of ['18', '19']) test.describe(`billing pagination on React $
       })
       await mountBilling(page, version, server)
       // The older history is projected; the unknown attempt and its recovery use real HTTP and SQLite.
-      await page.route('**/api/his/v1/billing/cases/**', async route => {
+      await page.route(url => /^\/api\/his\/v1\/billing\/cases\/[^/]+$/.test(url.pathname), async route => {
         const source = new URL(route.request().url())
         source.searchParams.set('page', '1')
         const otherCase = source.pathname.endsWith('/synthetic-case-b')

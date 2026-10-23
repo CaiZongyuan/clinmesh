@@ -29,7 +29,7 @@ AND route/command role allowlist
 AND workflow state and target references
 ```
 
-住院新增业务写入默认要求 active Scenario Run；当前 Workspace/Epoch 内的人类收费会话可在 completed Run 通过[结算后的财务更正](clinical-workflows.md#结算后的财务更正)执行窄财务 Command，closed Run 拒绝新写。当前 Epoch 的人类会话可在 Run 完成后读取住院归档及其工作台依赖查询，保留原岗位、科室、病区授权和各岗位字段隔离，具体只读入口见[病案归档合同](clinical-workflows.md#病案首页与归档)。Agent Capability Grant 仍要求 active Run，不因这些人类会话例外放宽。既有 Command receipt 依照[幂等合同](fhir-and-commands.md#65-idempotency)无写重放，不重新执行业务状态变更。
+新增业务写入默认要求 active Scenario Run；当前 Workspace/Epoch 内的人类收费会话可在 completed Run 通过[结算后的财务更正](clinical-workflows.md#结算后的财务更正)执行窄财务 Command，也可按[门诊退款合同](clinical-workflows.md#85-收费支付与退款)查询恢复已有退款；门诊新冲减、新退款仍要求 active Run，closed Run 拒绝新写。当前 Epoch 的人类会话可在 Run 完成后读取住院归档及其工作台依赖查询，保留原岗位、科室、病区授权和各岗位字段隔离，具体只读入口见[病案归档合同](clinical-workflows.md#病案首页与归档)。Agent Capability Grant 仍要求 active Run，不因这些人类会话例外放宽。既有 Command receipt 依照[幂等合同](fhir-and-commands.md#65-idempotency)无写重放，不重新执行业务状态变更。
 
 当前没有 SMART/resource scope、标准 Patient compartment 或通用字段策略引擎。Agent Capability Grant 是 ClinMesh task authority，不等同于通用 delegation grant；未来引入标准 scope 或字段策略时只能继续收窄以上权限。
 
