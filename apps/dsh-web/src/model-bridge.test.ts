@@ -7,6 +7,7 @@ import { DshModelProvider } from '../../server/src/infrastructure/ai/dsh-model-p
 import { createModelBridgeHandler } from './model-bridge.ts'
 import { setTimeout as delay } from 'node:timers/promises'
 import { randomUUID } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import type { ModelUsageOutcome } from '@clinmesh/contracts/model-usage'
 import { applyMigrations, openClinMeshDatabase } from '../../server/src/infrastructure/sqlite/database.ts'
 import { DoctorRecommendationExecution, recommendationRequestHash } from '../../server/src/application/doctor-recommendation-execution.ts'
@@ -145,7 +146,7 @@ it('keeps an SDK-normalized network interruption unknown until an explicit recom
   const { provider, model } = await sdkHost(new InterruptedModel())
   const database = openClinMeshDatabase({ databasePath: ':memory:', busyTimeoutMs: 5000 })
   cleanup.push(async () => { database.close() })
-  applyMigrations(database)
+  applyMigrations(database, fileURLToPath(new URL('../../server/drizzle/', import.meta.url)))
   database.driver.prepare("INSERT INTO workspace (workspace_id, name, created_at) VALUES ('synthetic', 'Synthetic', '2026-10-21T00:00:00.000Z')").run()
   database.driver.prepare(`INSERT INTO workspace_epoch (workspace_id, epoch, state, scenario_id, created_at)
     VALUES ('synthetic', 'synthetic', 'active', 'synthetic', '2026-10-21T00:00:00.000Z')`).run()

@@ -21,7 +21,8 @@ import {
   type SessionContext,
 } from '@clinmesh/contracts/his'
 import {
-  confirmDoctorPreparationRequestSchema, doctorRecommendationKindSchema, doctorRecommendationStateSchema, generateDoctorRecommendationsRequestSchema,
+  considerationLabelKey, confirmDoctorPreparationRequestSchema, doctorRecommendationKindSchema, doctorRecommendationStateSchema,
+  generateDoctorRecommendationsRequestSchema, setDoctorConsiderationDispositionRequestSchema,
   type DoctorRecommendationState, type DoctorRecommendationSuggestion,
 } from '@clinmesh/contracts/doctor-recommendations'
 import { WebApp } from '../../../web/src/app/web-app.tsx'
@@ -211,6 +212,18 @@ const fixtureFetch = async (input: RequestInfo | URL, init?: RequestInit): Promi
       } else throw new Error('Unexpected prepared investigation kind')
     }
     return command({ kind, draftVersion, encounterVersion: detail.encounter.versionId, recordIds })
+  }
+  const disposition = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/([^/]+)\/considerations\/disposition$/.exec(path)
+  if (disposition !== null) {
+    const kind = doctorRecommendationKindSchema.parse(disposition[1])
+    const input = setDoctorConsiderationDispositionRequestSchema.parse(JSON.parse(String(init?.body))).input
+    const state = recommendationStates.get(kind)
+    if (state === undefined) return Response.json({ error: { code: 'NOT_FOUND', message: '合成病例无该类建议。' } }, { status: 404 })
+    const labelKey = considerationLabelKey(input.label)
+    const rest = (state.considerationDispositions ?? []).filter(entry => entry.labelKey !== labelKey)
+    const dispositions = input.status === 'clear' ? rest : [...rest, { labelKey, status: input.status, label: input.label }]
+    recommendationStates.set(kind, { ...state, considerationDispositions: dispositions.length > 0 ? dispositions : undefined })
+    return Response.json({ dispositions })
   }
   const recommendation = /^\/api\/his\/v1\/doctor\/cases\/synthetic-case\/recommendations\/([^/]+)(\/actions\/generate)?$/.exec(path)
   if (recommendation !== null) {

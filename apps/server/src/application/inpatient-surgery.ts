@@ -8,6 +8,7 @@ import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { ActorContext } from './command-executor.ts'
 import type { InpatientEffects } from './inpatient-billing.ts'
 import { businessDate } from './inpatient-orders.ts'
+import { readMaterialSnapshot } from './scenario-data/cardiovascular-materials.ts'
 
 export class InpatientSurgery {
   constructor(readonly owner: InpatientService) {}
@@ -16,7 +17,7 @@ export class InpatientSurgery {
     const rows = z.array(z.object({ kind: z.enum(['procedure','material']), snapshot_json: z.string() })).parse(this.owner.database.driver.prepare(
       'SELECT kind,snapshot_json FROM inpatient_surgery_catalog WHERE workspace_id=? AND epoch=? ORDER BY item_id').all(context.workspaceId, context.epoch))
     return inpatientSurgeryCatalogSchema.parse({ procedures: rows.filter(row => row.kind === 'procedure').map(row => JSON.parse(row.snapshot_json)),
-      materials: rows.filter(row => row.kind === 'material').map(row => JSON.parse(row.snapshot_json)) })
+      materials: rows.filter(row => row.kind === 'material').map(row => readMaterialSnapshot(JSON.parse(row.snapshot_json))) })
   }
   read(context: ActorContext, admissionId: string) {
     this.owner.assertRole(context, ['inpatient-doctor','ward-nurse','medical-records'])
@@ -104,7 +105,7 @@ export class InpatientSurgery {
       const actual = this.procedure(context, input.procedureId, input.catalogVersion), catalog = this.catalog(context)
       const materials = input.materials.map(selection => {
         const item = catalog.materials.find(item => item.id === selection.materialId && item.version === selection.catalogVersion)
-        if (!item) throw new InpatientError('CATALOG_CONFLICT', '耗材目录或版本无效')
+        if (!item || !('chargeDefinition' in item)) throw new InpatientError('CATALOG_CONFLICT', '耗材目录、版本或计价单位不可用')
         return { id: uuidv7(), item, quantity: selection.quantity, amountFen: z.number().int().safe().parse(item.chargeDefinition.priceFen * selection.quantity) }
       })
       const id = uuidv7(), now = this.owner.virtualTime(context), effects: InpatientEffects = []
