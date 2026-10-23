@@ -58,6 +58,8 @@
 
 ## 进程、容器与服务启动
 
+- 启动器在仓库根准备数据库、再通过 `pnpm --filter` 启动 Server 时，子进程的工作目录会切到 `apps/server`。向子进程传递 `.env` 路径前，以仓库根解析为绝对路径；否则父子进程可能访问不同的数据库。取消子进程重复准备时，用默认相对路径回归此边界，不能只测绝对路径。
+
 - CI 中容器健康接口持续拒绝连接时，先核对启动进程是否已因依赖未就绪而退出；重试端口不能重新启动进程。容器依赖顺序与清理前保留日志见[Synthea 运行时决策](../decisions/implemented/architecture/2026-09-03-one-command-synthea-runtime.md)。
 
 - Windows 进程树测试必须在启动器自身仍存活时检查后代退出；只在启动器退出后检查，可能被 Node 的进程清理掩盖。用 `.cmd` 中间层和 detached 后代覆盖实际包管理器链路，并保留无关进程存活断言。
@@ -65,6 +67,10 @@
 - Docker 跨架构兼容性核验以当前 Compose 锁定 digest 的 manifest/index 与运行 config 的 `os`、`architecture` 为准，逐个确认依赖；index 中 `unknown/unknown` 的 attestation 是证明材料。分别报告原生发行、模拟运行和目标主机验收，本机 amd64 smoke 只提供其架构的生成证据。示例见[macOS 兼容性核验](../research/2026-10-13-synthea-macos-compatibility.md)。
 
 - 生产 Docker build 不能假设 `better-sqlite3` 一定有预编译件。Build stage 保留 `python3`、`make` 和 `g++` 供 `node-gyp` 回退编译，runtime stage 不携带工具链；升级 Node.js 或 `better-sqlite3` 后必须用实际 Docker build 和健康启动验证。
+
+- pnpm 11 的 `deploy --prod --legacy` 会重新解析 workspace 的 peer，即使只 filter Server，也可能请求未发布的 DSH 本地 peer。部署命令局部关闭 `auto-install-peers`，不修改整个 workspace 的 peer 合同；legacy 不保留 frozen-lockfile 语义，部署后仍需核对实际生产依赖与容器启动。deploy 后在源码 workspace 继续运行 pnpm script 可能触发依赖修复并要求非交互安装；已完成 frozen install 的构建步骤直接使用固定包内 JS launcher 运行资料同步。
+
+- 把已写入的 SQLite 固化到只读镜像前，先 checkpoint 并切换 `journal_mode=DELETE`。仅关闭 WAL 库的连接通常不会改变文件头模式；只读查询仍可能尝试创建 `-shm`，在只读根文件系统上失败。验收时关闭容器网络并使用只读根文件系统，从健康接口和管理员查询确认预检与实际 runtime 均可读取。
 
 - `scripts/dev-lan.ts` 的进程生命周期覆盖完整子树。POSIX 上 Server 和 Web 必须使用独立进程组；任一分支退出或收到终止信号时，向两个完整进程组转发原信号。只终止顶层 `pnpm` 会遗留 Turbo、Vite 或 `tsx watch` 子进程，并在下次启动时产生错误的端口占用。
 
@@ -81,6 +87,8 @@
 - worktree 首次跑 `pnpm dev:dsh` 前先补齐两类 gitignored 环境：从主工作区复制 `.env`，再运行 `pnpm reference:sync` 物化参考数据；缺后者时 Server 在 runtime 初始化抛 `REFERENCE_RELEASE_NOT_FOUND`。`.env` 的 `CLINMESH_REFERENCE_RELEASE_ID` 落后于 lock release 也会同样报错——主工作区可能因 `.data` 库里残留旧 release 而侥幸可用，新 worktree 的全新库只会暴露它；发现配置漂移时两侧一起更新，不要只修 worktree 掩盖主工作区的雷。端口语义：DSH Web 3080 被残留进程占用时脚本拒绝启动（防 trusted origin 与登录校验错位，不要绕过）；Server 51868 的残留须手动 kill（只停 `pnpm` 包装层不杀子进程）；Synthea 51878 由 Docker 容器幂等复用，跨启动存活是正常现象。
 
 ## 文档构建
+
+- Vite SSR 将带 CLI 守卫的模块内联到另一个入口后，`import.meta.filename` 会变成构建入口文件，单独比较 argv 路径可能误执行被导入模块的 CLI。库逻辑优先直接依赖 typed service；保留 CLI 的模块还要核对入口 basename，并用真正构建出的 JS 执行合成资料准备验证退出码和 JSON 输出。见[DRG 自动分发决策](../decisions/implemented/architecture/2026-10-22-drg-reference-distribution.md)。
 
 - GitHub 与 VitePress 对数字章节生成的锚点不同，例如 `8.1 门诊闭环` 分别为 `81-门诊闭环` 与 `_8-1-门诊闭环`。搬迁章节时同时核对仓库链接和构建后的 HTML；实际被引用的 GitHub 锚点可用显式 HTML `id` 保持两端可达。`verify:docs` 只证明文件目标存在，不能证明章节存在；用 Playwright 核对真实页面中的目标元素。归属与迁移要求见[文档整理决策](../decisions/implemented/process/2026-10-19-documentation-ownership.md)。
 

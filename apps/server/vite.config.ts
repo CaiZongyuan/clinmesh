@@ -10,6 +10,7 @@ export default defineConfig({
       external: ['better-sqlite3'],
       input: {
         'database-cli': 'src/database-cli.ts',
+        'drg-reference-sync': 'src/drg-reference-sync.ts',
         index: 'src/index.ts',
       },
       output: {

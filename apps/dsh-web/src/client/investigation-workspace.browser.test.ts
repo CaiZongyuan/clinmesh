@@ -187,9 +187,10 @@ for (const version of ['18', '19']) {
         const details = page.getByRole('dialog', { name: '依据与说明', exact: true })
         expect(await details.evaluate(element => element.getRootNode() instanceof ShadowRoot)).toBe(true)
         const thoughts = details.getByRole('region', { name: '待核实思路', exact: true })
+        await thoughts.getByText('合成病例来源', { exact: true }).click()
         await expect(thoughts.getByText('合成病例依据：来源与当前病例绑定，不代表已开立检查。', { exact: true })).toBeVisible()
         await expect(thoughts.getByText('仅在核实症状与具体情境后，再判断本项检查是否改变处置。', { exact: true })).toBeVisible()
-        await expect(thoughts.getByRole('button')).toHaveCount(0)
+        await expect(thoughts.getByRole('button', { name: /^(已核实|忽略)：/ })).toHaveCount(2)
         await expect(thoughts.getByRole('link')).toHaveCount(0)
         for (const message of ['当前接入指南未支持本项合成思路。', '本项合成思路尚无对应的本院可执行目录身份。',
           '另一合成候选因限定语不成立而未发布。', '合成处理限制示例：本轮未能完整处理额外来源资料。']) {
@@ -257,6 +258,25 @@ for (const version of ['18', '19']) {
         await expectNoFixtureErrors(page)
       })
     }
+
+    test(`verifies and restores a consideration on React ${version}`, async ({ page }) => {
+      await mount(page, version, 'recommendations')
+      await page.getByRole('tab', { name: '检验 0', exact: true }).click()
+      const panel = page.getByRole('region', { name: '待开具检验', exact: true })
+      await panel.getByRole('button', { name: '依据与说明', exact: true }).click()
+      const details = page.getByRole('dialog', { name: '依据与说明', exact: true })
+      const thoughts = details.getByRole('region', { name: '待核实思路', exact: true })
+      await expect(thoughts.getByRole('article')).toHaveCount(1)
+      await thoughts.getByRole('button', { name: '已核实：合成当前病例待核实检查方向', exact: true }).click()
+      await expect(thoughts.getByRole('article')).toHaveCount(0)
+      const processed = details.getByLabel('已处理思路', { exact: true })
+      await processed.locator('summary').click()
+      await expect(processed.getByText('合成当前病例待核实检查方向', { exact: true })).toBeVisible()
+      await processed.getByRole('button', { name: '撤销：合成当前病例待核实检查方向', exact: true }).click()
+      await expect(thoughts.getByRole('article')).toHaveCount(1)
+      await expect(processed).toHaveCount(0)
+      await expectNoFixtureErrors(page)
+    })
 
     test(`adds manual investigations, issues from one list and appends through the Surface on React ${version}`, async ({ page }) => {
       await mount(page, version, 'empty')

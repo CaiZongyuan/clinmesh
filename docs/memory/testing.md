@@ -1,5 +1,7 @@
 # 测试与验证排障
 
+- `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。
+
 - 分页队列上的写操作回归须包含第二页及操作后仍留在同一筛选状态的场景，核对页码、患者选择与金额刷新；只测第一页或晚到回执无法发现无条件跳回第一页。支付历史分页同时验证整单余额、跨页恢复入口，以及历史页切换不改变收费队列选择。
 
 选择验证范围、定位资源争用，或处理替身、时钟和异步断言时查阅。本文保存会影响证据有效性的操作经验；测试层级、必需检查和真实入口要求由[测试策略](../testing.md)拥有。业务专属回归另见[临床数据与模型任务排障](clinical-data.md)，宿主专属回归见[DSH 集成排障](dsh-integration.md)。
@@ -9,6 +11,8 @@
 ## 范围、快照与资源争用
 
 - 编写手工验收步骤前，核对测试 setup 是否经过当前产品入口。收费 E2E 的[前置数据](../../apps/web/e2e/billing-payments.fixture.ts)使用兼容检验命令生成应收，不能据此推断医生当前独立开单入口已经接通收费；先按[收费流程合同](../architecture/clinical-workflows.md#85-收费支付与退款)确认可验收范围，再提供页面操作步骤。
+
+- 跨包测试调用 Server 迁移时，显式用测试文件的 `import.meta.url` 解析 `apps/server/drizzle/` 并传给 `applyMigrations`。默认目录只覆盖 Server 包或仓库根目录；从仓库根运行测试可能通过，而 Turbo 在其他包目录执行时会报 `ENOENT`。用 `pnpm --filter <package> exec vitest run <file>` 复核实际 CI 工作目录，参见 `apps/dsh-web/src/model-bridge.test.ts`。
 
 - 合并含独立迁移的分支时，非空旧库测试必须显式排除该历史基线尚不存在的全部迁移，不能只排除原分支待应用的文件，否则新迁移会混入旧库夹具。保留旧库固定版本、迁移完整身份和事实不变断言，当前目标版本使用 `expectedSchemaVersion()`；先验证合并前夹具失败的原因，再核对迁移顺序、重开及回滚。先例见[住院与主分支旧库迁移](../../apps/server/tests/inpatient-main-migration.test.ts)。
 
@@ -56,11 +60,15 @@
 
 ## 替身、异步屏障与断言
 
+- 验证文件读取次数时，只替换 `node:fs` 中需要观测的函数并委托真实实现；整模块 `{ spy: true }` 会连带代理 `ReadStream` 等类，可能让真实流悬挂并触发超时。保留真实文件和流，仅在文件系统边界统计读取，复用 [DRG 安装回归](../../apps/server/tests/drg-reference-sync.test.ts)。
+
+- 安装资料的 check-only 回归先通过公开安装入口准备合成资料，再让分发源不可用；只放仓库本地资料会命中另一条复用路径，掩盖临时数据库路径改变资料查找位置的问题。通过公开入口核对 `source: installed`、默认与自定义安装目录，以及正式数据库和资料字节未变，见[参考同步回归](../../apps/server/tests/reference-sync.test.ts)。
+
 - Testing Library 的 `getByRole` 使用字符串 `name` 时已按完整可访问名称匹配，不接受 Playwright 的 `exact` 选项；混用两者参数可能让 Vitest 运行通过而 TypeScript 检查失败。组件测试省略 `exact`，真实浏览器测试按 Playwright API 保留该选项。
 
 - 验证模型手动恢复时，逐个继续意图核对实际外部派发次数，并在下一次仍失败时证明自动重试没有被一并放开；同时覆盖重放、准入拒绝和重启。任务来源 `trigger: manual` 会延续到后续阶段，不能用它证明某一次请求已获得人工授权；恢复合同见[模型执行恢复](../architecture/storage.md#模型执行恢复)。
 
-- DSH Provider 开启用量账本后，合成 bridge 响应也须提供匹配 `attemptId` 的可信核算终态；只返回模型正文、HTTP 401/429/503 或 SDK 结束事件会进入结果未知保护，不能用来验证明确失败的重试。超时或断流的替身保留未知语义，先核对派发与核算合同再修改生产恢复逻辑；参考[建议 HTTP 回归](../../apps/server/tests/doctor-recommendations-http.test.ts)与[控制恢复合同](../../apps/server/tests/model-control-recovery-http.test.ts)。
+- DSH Provider 开启用量账本后，合成 bridge 响应也须提供匹配 `attemptId`、明确 dispatch 与终态的可信核算回执；只返回模型正文、HTTP 401/429/503 或 SDK 结束事件会进入结果未知保护，不能用来验证明确失败的重试。`Persona generation failed` 时先核对任务错误码，`MODEL_OUTCOME_UNKNOWN` 可能是旧 fetch 替身缺回执；未知用量使用 `unknownModelTokenUsage`，无效 JSON 仍保留固定模型路由。超时或断流的替身保留未知语义，先核对派发与核算合同再修改生产恢复逻辑；参考[建议 HTTP 回归](../../apps/server/tests/doctor-recommendations-http.test.ts)、[控制恢复合同](../../apps/server/tests/model-control-recovery-http.test.ts)与[旧任务恢复回归](../../apps/server/tests/agent-usage-risks-reproduction.test.ts)。
 
 - SQLite 队列扫描中的资格检查若会开启写事务，不要在尚未关闭的 `Statement.iterate()` 期间调用；事务提交可能被活动 reader 阻止，并被资格检查的安全回退表现为“始终不可恢复”。使用已完成读取的游标查询，再判断资格；回归同时验证跳过受限任务和恢复原任务，避免只证明后续任务能运行。
 

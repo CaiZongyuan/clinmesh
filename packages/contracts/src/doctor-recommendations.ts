@@ -48,6 +48,19 @@ const common = { ...caseReasoning, guidelineEvidenceIds: ids }
 
 export const doctorRecommendationConsiderationSchema = z.object(caseReasoning).strict()
 export type DoctorRecommendationConsideration = z.infer<typeof doctorRecommendationConsiderationSchema>
+export const doctorConsiderationDispositionStatusSchema = z.enum(['verified', 'dismissed'])
+export type DoctorConsiderationDispositionStatus = z.infer<typeof doctorConsiderationDispositionStatusSchema>
+export const doctorConsiderationDispositionSchema = z.object({
+  labelKey: text,
+  status: doctorConsiderationDispositionStatusSchema,
+  label: text,
+}).strict()
+export type DoctorConsiderationDisposition = z.infer<typeof doctorConsiderationDispositionSchema>
+// 处方类没有待核实思路通道，处置不开放。
+export const doctorConsiderationDispositionKindSchema = doctorRecommendationKindSchema.exclude(['prescription'])
+export type DoctorConsiderationDispositionKind = z.infer<typeof doctorConsiderationDispositionKindSchema>
+// 思路处置按归一化标题字面匹配；重新生成后标题不同即视为新思路，不做语义模糊匹配。
+export const considerationLabelKey = (label: string) => label.trim().replace(/\s+/g, ' ')
 export const doctorRecommendationNoticeSchema = z.object({
   category: z.enum(['guideline', 'catalog', 'verification', 'processing']),
   message: z.string().trim().min(1).max(6_000),
@@ -108,6 +121,7 @@ export const doctorRecommendationStateSchema = z.object({
   hidePreviousResults: z.literal(true).optional(),
   items: z.array(doctorRecommendationSuggestionSchema).max(8),
   considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
+  considerationDispositions: z.array(doctorConsiderationDispositionSchema).max(64).optional(),
   notices: z.array(doctorRecommendationNoticeSchema).max(12).optional(),
   guidelines: z.array(guidelineEvidenceSchema).max(64),
   caseEvidence: z.array(doctorCaseEvidenceSchema).max(100),
@@ -204,3 +218,16 @@ export const confirmDoctorPreparationResponseSchema = commandResponseSchema(z.ob
   recordIds: z.array(identity).min(1).max(8),
 }).strict())
 export type ConfirmDoctorPreparationResponse = z.infer<typeof confirmDoctorPreparationResponseSchema>
+
+// 思路处置不改变 Encounter 与临床事实，只按医生授权做幂等 upsert，不要求版本或幂等键。
+export const setDoctorConsiderationDispositionRequestSchema = z.object({
+  input: z.object({
+    label: text,
+    status: z.enum(['verified', 'dismissed', 'clear']),
+  }).strict(),
+}).strict()
+export type SetDoctorConsiderationDispositionRequest = z.infer<typeof setDoctorConsiderationDispositionRequestSchema>
+export const setDoctorConsiderationDispositionResponseSchema = z.object({
+  dispositions: z.array(doctorConsiderationDispositionSchema).max(64),
+}).strict()
+export type SetDoctorConsiderationDispositionResponse = z.infer<typeof setDoctorConsiderationDispositionResponseSchema>

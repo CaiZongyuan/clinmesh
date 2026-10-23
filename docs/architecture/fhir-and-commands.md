@@ -160,7 +160,7 @@ FHIR `Basic` 不是默认逃生口。只有概念确实没有资源、无需复�
 
 ### 5.4 中国术语与参考数据策略
 
-离线 DRG 资料清单使用 `apps/server/reference-data/drg-offline.lock.json`，通过现有 `reference-db` 运维入口准备和查询，运行方式见[部署指南](../deployment.md#离线-drg-资料核对)。`reference_offline_inventory` 保存不可变摘要及内容哈希，不进入 `reference_release` 或临床编码目录；Server 继续只读 Reference SQLite。准备一次性验证所有包后，在事务中发布整个清单及本地审计，失败保留原清单；`verify` 同时检查已存摘要的身份和哈希。
+离线 DRG 资料清单使用 `apps/server/reference-data/drg-offline.lock.json`，正常安装准备自动获取完整固定快照，`reference-db` 保留运维查询入口，运行方式见[部署指南](../deployment.md#离线-drg-资料核对)。分发锁 `drg-distribution.lock.json` 固定 Release 下载地址、压缩包 SHA-256、文件数和解包规模；安装先复用经完整核验的本地或已安装版本，否则暂存下载、限制解包并完整检查后原子安装，理由见[自动分发决策](../decisions/implemented/architecture/2026-10-22-drg-reference-distribution.md)。`reference_offline_inventory` 保存不可变摘要及内容哈希，不进入 `reference_release` 或临床编码目录；Server 继续只读 Reference SQLite。准备一次性验证所有包后，在事务中发布整个清单及本地审计，失败保留原清单；`verify` 同时检查已存摘要的身份和哈希。
 
 清单用途固定为 `offline-review`，`validationScope=integrity-only`、`runtimeEnabled=false`。五目录逐文件验证 SHA-256、JSONL 格式及行数，保留各来源的原件哈希、来源发表核验状态与原文计价单位；`unitStatus=source-only-unverified` 不表示包装换算或本院计价已确认。没有来源单位时返回空列表，不以包装列补齐。OpenDRG 验证固定 Manifest 与全部 checksum 项，并重新统计数据集覆盖；CHS-DRG 3.0 支付表标为 `selected-scheme`，其他支付表标为 `excluded-other-scheme`，字典只作来源核对。缺权重或参考费用的病组逐码列入 `missingParameterCodes`，不补零或借用其他方案参数。公开清单的内容哈希绑定全部来源与隔离状态，绝对本地路径及资料正文不出现在 HTTP 响应中。
 

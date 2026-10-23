@@ -40,7 +40,7 @@ import {
   triageResponseSchema,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
-import { encodeModelRoute } from '@clinmesh/contracts/model-bridge'
+import { dshDefaultModel, encodeModelRoute, modelBridgeAccountingMediaType, modelBridgeRequestSchema } from '@clinmesh/contracts/model-bridge'
 import type {
   ScenarioGenerationProvider,
   SourcePatientCorpus,
@@ -50,6 +50,7 @@ import { createClinMeshRuntime } from '../src/runtime.ts'
 import { OutboxRepository } from '../src/infrastructure/sqlite/outbox-repository.ts'
 import { CommandExecutor } from '../src/application/command-executor.ts'
 import { ChatCompletionsError } from '../src/infrastructure/ai/openai-chat-completions.ts'
+import { DshModelProvider } from '../src/infrastructure/ai/dsh-model-provider.ts'
 import type {
   JsonChatCompletionInput,
   JsonChatCompletionsProvider,
@@ -285,7 +286,20 @@ class ControlledBriefProvider implements JsonChatCompletionsProvider {
     const output = this.#outputs.shift()
     if (output === undefined) throw new Error('No fake Patient Brief output remains')
     if (output instanceof Error) throw output
+    try {
+      if (input.validate?.(output) === false) throw new Error('Synthetic structured output failed validation')
+    } catch (cause) {
+      throw new ChatCompletionsError('AI_RESPONSE_INVALID', 'Synthetic structured output failed validation', { cause })
+    }
     return { content: JSON.stringify(output), model: this.resolveModel === undefined ? 'resolved-fake-brief-model' : input.model }
+  }
+}
+
+async function startLaboratoryRequest(runtime: Awaited<ReturnType<typeof createClinMeshRuntime>>, requestId: string) {
+  for (const kind of ['laboratory.accept-request', 'laboratory.start-request']) {
+    expect(await runtime.dispatcher.dispatchOnce({ kinds: [kind] })).toMatchObject({
+      kind, payload: { requestId }, status: 'completed',
+    })
   }
 }
 
@@ -320,8 +334,8 @@ describe('Synthetic Case generation HTTP contract', () => {
         ? {}
         : {
             chatCompletionsProvider: briefProvider,
-            investigationModel: 'fake-investigation-model',
-            patientPersonaModel: 'fake-brief-model',
+            investigationModel: briefProvider instanceof DshModelProvider ? dshDefaultModel : 'fake-investigation-model',
+            patientPersonaModel: briefProvider instanceof DshModelProvider ? dshDefaultModel : 'fake-brief-model',
           }),
       syntheaProvider: provider,
       trustedOrigins: ['http://localhost'],
@@ -1475,7 +1489,9 @@ describe('Synthetic Case generation HTTP contract', () => {
         },
       )
       expect(response.status).toBe(200)
-      return issueLaboratoryRequestResponseSchema.parse(await response.json()).data
+      const issued = issueLaboratoryRequestResponseSchema.parse(await response.json()).data
+      await startLaboratoryRequest(runtime, issued.request.id)
+      return issued
     }
 
     const exactDraft = await saveLaboratoryDraft('lab-cbc', 0)
@@ -1608,6 +1624,8 @@ describe('Synthetic Case generation HTTP contract', () => {
       WHERE workspace_id = ? AND case_id = ? AND catalog_item_id = 'lab-crp'
     `).get('workspace-demo', caseId)).toEqual({ count: 0 })
     expect(briefProvider.requests).toHaveLength(6)
+    expect(runtime.database.driver.prepare(`SELECT COUNT(*) AS count FROM model_task_step
+      WHERE task_id = ? AND status = 'succeeded'`).get(`investigation:epoch-1:${agentRequest.id}`)).toEqual({ count: 0 })
     const firstAgentPayload = briefProvider.requests.at(-1)?.userPayload as {
       privateCaseEvidence: Array<{ clinicalTime?: string; resourceType: string }>
       visibleHistory: Array<{ title: string }>
@@ -2739,6 +2757,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     const replayAdultRequest = issueLaboratoryRequestResponseSchema.parse(
       await replayAdultIssueResponse.json(),
     ).data.request
+    await startLaboratoryRequest(runtime, replayAdultRequest.id)
     await expect(runtime.investigation.resolveForRequest(
       'workspace-demo',
       'epoch-2',
@@ -2764,7 +2783,9 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(publicArtifacts).not.toMatch(/privateEpisodeEvidence|index-condition|hiddenResourceReferences/)
   }, 30_000)
 
-  async function prepareUnitConversionCase(observations: Array<Record<string, unknown>>, investigationOutputs: unknown[] = []) {
+  async function prepareUnitConversionCase(observations: Array<Record<string, unknown>>, investigationOutputs: unknown[] = [],
+    makeProvider?: (briefProvider: ControlledBriefProvider) => JsonChatCompletionsProvider,
+    options: { databasePath?: string } = {}) {
     const safeBrief: PatientPersonaContent = {
       chiefComplaint: '咽痛两天',
       knownHistorySummary: '既往体健。',
@@ -2779,7 +2800,7 @@ describe('Synthetic Case generation HTTP contract', () => {
       symptomExperience: '两天前嗓子开始疼，吞口水更疼，喝了点热水没管用。',
     }
     const briefProvider = new ControlledBriefProvider([safeBrief, ...investigationOutputs])
-    const runtime = await createRuntime(new RetryingSyntheaProvider(1, false, observations), briefProvider)
+    const runtime = await createRuntime(new RetryingSyntheaProvider(1, false, observations), makeProvider?.(briefProvider) ?? briefProvider, options)
     const cookie = await signIn(runtime)
     await enqueue(runtime, cookie)
     const generation = await runtime.scenarioData.processNextGenerationJob()
@@ -2908,9 +2929,11 @@ describe('Synthetic Case generation HTTP contract', () => {
         },
       )
       expect(response.status).toBe(200)
-      return issueLaboratoryRequestResponseSchema.parse(await response.json()).data
+      const issued = issueLaboratoryRequestResponseSchema.parse(await response.json()).data
+      await startLaboratoryRequest(runtime, issued.request.id)
+      return issued
     }
-    return { runtime, doctorCookie, caseId, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory }
+    return { runtime, briefProvider, doctorCookie, caseId, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory }
   }
 
   function unitObservation(code: string, unitCode: string, value: number) {
@@ -3112,7 +3135,29 @@ describe('Synthetic Case generation HTTP contract', () => {
     })
     expect(cancelled.status).toBe(200)
     expect(laboratoryRequestActionResponseSchema.parse(await cancelled.json()).data.request).toMatchObject({ status: 'cancelled' })
+    await expect(runtime.investigation.resolveForRequest('workspace-demo', 'epoch-1', failed.id))
+      .rejects.toMatchObject({ code: 'INVESTIGATION_UNSUPPORTED' })
   }, 30_000)
+
+  it('does not generate a new laboratory result for an inactive epoch', async () => {
+    const { runtime, briefProvider, caseId, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase([])
+    const service = unitService('synthetic-inactive-epoch', '1988-5', 'mg/L')
+    publishUnitService(runtime, service)
+    const draft = await saveLaboratoryDraft(service.id, 0)
+    const request = (await issueLaboratory(draft.draftVersion)).request
+    const cookie = await signIn(runtime)
+    const reset = await runtime.app.request('/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', {
+      body: '{}', method: 'POST', headers: {
+        'content-type': 'application/json', cookie, 'idempotency-key': randomUUID(), origin: 'http://localhost',
+      },
+    })
+    expect(reset.status).toBe(200)
+    await expect(runtime.investigation.resolveForRequest('workspace-demo', 'epoch-1', request.id))
+      .rejects.toMatchObject({ code: 'INVESTIGATION_UNSUPPORTED' })
+    expect(briefProvider.requests).toHaveLength(1)
+    expect(runtime.database.driver.prepare(`SELECT COUNT(*) AS count FROM investigation_result_snapshot
+      WHERE workspace_id = 'workspace-demo' AND case_id = ?`).get(caseId)).toEqual({ count: 0 })
+  })
 
   it('recovers a legacy OUTPUT_INVALID request using its unchanged frozen service and truth', async () => {
     const { runtime, doctorCookie, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase([
@@ -3122,10 +3167,6 @@ describe('Synthetic Case generation HTTP contract', () => {
     publishUnitService(runtime, service)
     const draft = await saveLaboratoryDraft(service.id, 0)
     const request = (await issueLaboratory(draft.draftVersion)).request
-    for (let index = 0; index < 20; index += 1) {
-      const event = await runtime.dispatcher.dispatchOnce()
-      if (event?.kind === 'laboratory.start-request') break
-    }
     // 复原升级前已完成的失败尝试；通过共享失败 Command 保留 Task 与申请的一致状态。
     const outbox = new OutboxRepository(runtime.database)
     const claim = outbox.claimNext({ leaseDurationMs: 60_000, leaseOwner: 'legacy-unit-fixture', now: new Date() })
@@ -3159,17 +3200,117 @@ describe('Synthetic Case generation HTTP contract', () => {
     expect(recovered?.generationError).toBeUndefined()
   }, 30_000)
 
+  it('repairs a clinically invalid published service response with the next legal opportunity', async () => {
+    const service = unitService('synthetic-service-repair', '6690-2', 'mg/L')
+    const definition = service.reportDefinition.results[0]!
+    const invalid = { conclusion: '合成 C 反应蛋白升高', results: [{
+      code: '6690-2', interpretation: 'normal', referenceRange: definition.referenceRange, unit: definition.unit, value: 24,
+    }] }
+    const corrected = { ...invalid, results: [{ ...invalid.results[0]!, interpretation: 'high' }] }
+    const { runtime, briefProvider, caseId, doctorCookie, startedCommand, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase(
+      [], [invalid, corrected],
+    )
+    publishUnitService(runtime, service)
+    const draft = await saveLaboratoryDraft(service.id, 0)
+    const request = (await issueLaboratory(draft.draftVersion)).request
+    await runtime.dispatchPending()
+    const generationRequests = () => briefProvider.requests.filter(item => item.schemaName === 'investigation_service_result')
+    // 临床无效正文不能成功 checkpoint：自动重领必须能请求并消费下一次合法纠正响应。
+    expect(generationRequests()).toHaveLength(2)
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM model_task_step WHERE workspace_id = ? AND status = 'succeeded' AND result_json LIKE ?
+    `).get('workspace-demo', '"interpretation\\":\\"normal\\"%')).toEqual({ count: 0 })
+    const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
+      `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`, { headers: { cookie: doctorCookie } },
+    )).json())
+    expect(detail.laboratoryRequests?.requests.find(item => item.id === request.id)).toMatchObject({
+      status: 'reported', report: { results: [{ code: '6690-2', value: 24, interpretation: 'high' }] },
+    })
+    expect(runtime.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM investigation_result_snapshot WHERE workspace_id = ? AND case_id = ?
+    `).get('workspace-demo', caseId)).toEqual({ count: 1 })
+  }, 30_000)
+
+  it('keeps the clinical investigation code when the real provider budget is exhausted across restarts', async () => {
+    const service = unitService('synthetic-service-budget', '6690-2', 'mg/L')
+    const definition = service.reportDefinition.results[0]!
+    const invalid = { conclusion: '合成 C 反应蛋白升高', results: [{
+      code: '6690-2', interpretation: 'normal', referenceRange: definition.referenceRange, unit: definition.unit, value: 24,
+    }] }
+    const route = encodeModelRoute({ provider: 'synthetic', model: 'synthetic-crp' })
+    const usage = { inputTokens: 15, outputTokens: 3, cachedInputTokens: 0, reasoningOutputTokens: 0,
+      totalTokens: 18, mapping: 'dsh-v1' }
+    let completions = 0
+    const makeProvider = (briefProvider: ControlledBriefProvider) => new DshModelProvider({
+      origin: 'http://127.0.0.1:1', secret: 'synthetic-only', timeoutMs: 2000, maxResponseBytes: 65536,
+      fetch: async (_url, init) => {
+        const request = modelBridgeRequestSchema.parse(JSON.parse(String(init?.body)))
+        if (request.operation === 'resolve') return Response.json({ model: route })
+        const { attemptId } = request
+        if (attemptId === undefined) throw new Error('Expected an accounted synthetic completion')
+        let content: string
+        if (request.schemaName === 'patient_persona') {
+          content = (await briefProvider.completeJson({
+            jsonSchema: request.jsonSchema, model: request.model, schemaName: request.schemaName,
+            systemPrompt: request.systemPrompt, userPayload: request.userPayload,
+          })).content
+        } else {
+          completions += 1
+          content = JSON.stringify(invalid)
+        }
+        return new Response([
+          { type: 'usage', attemptId, usage },
+          { type: 'result', attemptId, result: { model: route, content, accounting: {
+            attemptId, status: 'succeeded', dispatch: 'dispatched', usage,
+          } } },
+        ].map(frame => JSON.stringify(frame)).join('\n'), { headers: { 'content-type': modelBridgeAccountingMediaType } })
+      },
+    })
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-pr287-restart-'))
+    temporaryDirectories.push(directory)
+    const databasePath = join(directory, 'clinmesh.sqlite')
+    const first = await prepareUnitConversionCase([], [], makeProvider, { databasePath })
+    publishUnitService(first.runtime, service)
+    const draft = await first.saveLaboratoryDraft(service.id, 0)
+    const request = (await first.issueLaboratory(draft.draftVersion)).request
+    for (let index = 0; index < 20; index += 1) {
+      const event = await first.runtime.dispatcher.dispatchOnce()
+      if (event === undefined) break
+      if (event.kind === 'laboratory.report-request' && (event.payload as { requestId: string }).requestId === request.id) {
+        expect(event).toMatchObject({ attempt: 1, status: 'failed' })
+        break
+      }
+    }
+    expect(completions).toBe(2)
+    // 重启的 runtime 会重扫 active 目录；本测试的合成目录项未登记住院计费，置为 inactive。
+    first.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET active = 0 WHERE service_id = ?`).run(service.id)
+    await first.runtime.close()
+    // 重启恢复层后不再派发请求；持久安全分类必须让原临床错误码跨 outbox 与重启保留。
+    const restarted = await createRuntime(new RetryingSyntheaProvider(1, false, []), makeProvider(first.briefProvider), { databasePath })
+    await restarted.dispatchPending()
+    expect(completions).toBe(2)
+    const detail = doctorCaseDetailSchema.parse(await (await restarted.app.request(
+      `/api/his/v1/doctor/cases/${first.startedCommand.data.outpatientCaseId}`, { headers: { cookie: first.doctorCookie } },
+    )).json())
+    expect(detail.laboratoryRequests?.requests.find(item => item.id === request.id)).toMatchObject({
+      status: 'generation-failed', generationError: { code: 'INVESTIGATION_OUTPUT_INVALID' },
+    })
+    expect(restarted.database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM investigation_result_snapshot WHERE workspace_id = ? AND case_id = ?
+    `).get('workspace-demo', first.caseId)).toEqual({ count: 0 })
+  }, 30_000)
+
   it.each([
     new ChatCompletionsError('AI_TIMEOUT', 'Synthetic timeout'),
     new ChatCompletionsError('AI_REQUEST_FAILED', 'Synthetic connection failure'),
-  ])('keeps automatic and manual retries for $code', async (failure) => {
+  ])('stops automatic retries for an unknown $code outcome and generates again only after explicit retry', async (failure) => {
     const service = unitService(`synthetic-retry-${failure.code}`, '1988-5', 'mg/L')
     const definition = service.reportDefinition.results[0]!
     const output = { conclusion: '合成 C 反应蛋白升高', results: [{
       code: '1988-5', interpretation: 'high', referenceRange: definition.referenceRange, unit: definition.unit, value: 24,
     }] }
-    const { runtime, doctorCookie, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase(
-      [], [failure, failure, failure, output],
+    const { runtime, briefProvider, doctorCookie, startedCommand, commandHeaders, saveLaboratoryDraft, issueLaboratory } = await prepareUnitConversionCase(
+      [], [failure, output],
     )
     publishUnitService(runtime, service)
     const draft = await saveLaboratoryDraft(service.id, 0)
@@ -3180,12 +3321,17 @@ describe('Synthetic Case generation HTTP contract', () => {
       if (event === undefined) break
       if (event.kind === 'laboratory.report-request') attempts.push({ attempt: event.attempt, status: event.status })
     }
-    expect(attempts).toEqual([{ attempt: 1, status: 'failed' }, { attempt: 2, status: 'failed' }, { attempt: 3, status: 'completed' }])
+    expect(attempts).toEqual([{ attempt: 1, status: 'ambiguous' }])
     const readDetail = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${startedCommand.data.outpatientCaseId}`, { headers: { cookie: doctorCookie } },
     )).json())
     const failed = (await readDetail()).laboratoryRequests?.requests.find(item => item.id === request.id)
-    expect(failed).toMatchObject({ status: 'generation-failed', generationError: { code: failure.code } })
+    expect(failed).toMatchObject({ status: 'generation-failed', generationError: { code: 'MODEL_OUTCOME_UNKNOWN' } })
+    expect(failed?.report).toBeUndefined()
+    const generationRequests = () => briefProvider.requests.filter(request => request.schemaName === 'investigation_service_result')
+    expect(generationRequests()).toHaveLength(1)
+    await runtime.dispatchPending()
+    expect(generationRequests()).toHaveLength(1)
     if (failed === undefined) throw new Error('The recoverable request was not found')
     const retried = await runtime.app.request(`/api/his/v1/laboratory-requests/${failed.id}/actions/retry-generation`, {
       body: JSON.stringify({ expectedVersions: { [`Task/${failed.taskId}`]: failed.taskVersion }, input: { expectedRequestVersion: failed.version } }),
@@ -3193,6 +3339,7 @@ describe('Synthetic Case generation HTTP contract', () => {
     })
     expect(retried.status).toBe(200)
     await runtime.dispatchPending()
+    expect(generationRequests()).toHaveLength(2)
     expect((await readDetail()).laboratoryRequests?.requests.find(item => item.id === request.id)).toMatchObject({
       status: 'reported', report: { results: [{ code: '1988-5', value: 24, interpretation: 'high' }] },
     })

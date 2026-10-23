@@ -20,6 +20,8 @@
 - [冠心病单病例 DRG 质控：官方规则依据](2026-10-15-drg-official-evidence.md)
 - [DRG 运营分析前置条件与建设路径](2026-10-20-drg-operations-prerequisites.md)
 - [住院病案首页、编码目录与召回边界](2026-10-20-inpatient-record-coding-and-recall.md)
+- [住院流程数据缺口核查](2026-10-22-inpatient-data-gaps.md)
+- [Issue #225 与关联住院任务的数据覆盖核查](2026-10-22-issue-225-data-coverage.md)
 - [通用门诊病历缺项的官方依据与适用边界](2026-10-15-outpatient-record-quality-rules.md)
 
 ## Agent 接入与协议
