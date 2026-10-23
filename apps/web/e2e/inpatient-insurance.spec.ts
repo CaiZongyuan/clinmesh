@@ -6,10 +6,10 @@ import { insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { expect, test } from './fixtures.ts'
 
 for (const scenario of [
-  { plan: 'employee-v1', option: '合成职工 v1', depositFen: 1000, fundFen: 8000, accountFen: 2000, patientFen: 5000, balance: '40.00' },
-  { plan: 'resident-v1', option: '合成居民 v1', depositFen: 20000, fundFen: 3000, accountFen: 0, patientFen: 12000, balance: '80.00' },
+  { plan: 'employee-v1', option: '合成职工 v1', depositFen: 1000, fundFen: 4000, accountFen: 2000, patientFen: 4000, balance: '40.00', extraRefund: '10' },
+  { plan: 'resident-v1', option: '合成居民 v1', depositFen: 20000, fundFen: 0, accountFen: 0, patientFen: 10000, balance: '80.00', extraRefund: '20' },
 ] as const) {
-  test(`真实住院收费入口核对 ${scenario.plan}、撤销补偿及预交金多退少补`, async ({ page, browserApp }) => {
+  test(`真实住院收费入口在费用冲正后恢复 ${scenario.plan} 未知资金、重审待遇并结清`, async ({ page, browserApp }) => {
     const { origin, password } = browserApp
     const signIn = async (role: string) => {
       expect((await page.request.post(`${origin}/api/auth/sign-in/email`, { headers: { origin },
@@ -92,11 +92,18 @@ for (const scenario of [
     }
     await expect(page.getByRole('button', { name: '确认结算', exact: true })).toBeDisabled()
     await expect(panel.getByRole('button', { name: '撤销原待遇', exact: true })).toBeDisabled()
+    const beforeCorrection = inpatientSettlementPreviewSchema.parse(await (await page.request.get(`${origin}${path}/discharge/preview`)).json())
+    const charge = beforeCorrection.charges[0]!
+    expect((await command(`${path}/charges/reverse`, {
+      chargeId: charge.id, expectedChargeVersion: charge.version, reason: '合成床日费用冲正',
+    })).status()).toBe(200)
     await page.reload()
     await page.getByRole('tab', { name: '住院费用', exact: true }).click()
     await page.getByRole('button', { name: '查看合成医保住院患者', exact: true }).click()
+    await expect(funding.getByRole('button', { name: '预览收款', exact: true })).toBeDisabled()
     await funding.getByRole('button', { name: scenario.plan === 'employee-v1' ? '查询原收款' : '查询原退款', exact: true }).click()
-    await expect(funding.getByTestId('inpatient-funding-balance')).toContainText('0.00')
+    await expect(funding.getByRole('button', { name: scenario.plan === 'employee-v1' ? '查询原收款' : '查询原退款', exact: true })).toHaveCount(0)
+    await expect(funding.getByTestId('inpatient-funding-balance')).toContainText('¥0.00')
     const funds = inpatientPaymentsSchema.parse(await (await page.request.get(`${origin}${path}/payments`)).json())
     expect(funds.pendingCount).toBe(0)
     if (scenario.plan === 'employee-v1') {
@@ -106,15 +113,31 @@ for (const scenario of [
       expect(funds.refunds).toMatchObject([{ outcome: 'success', version: 2, amountFen: 8000 }])
     }
     await page.getByRole('button', { name: '预览结算', exact: true }).click()
+    await expect(page.getByRole('alert').filter({ hasText: '住院费用已变化。请先查询未确定的原收退款' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '确认结算', exact: true })).toHaveCount(0)
+    await panel.getByRole('button', { name: '患者医保待遇（合成）', exact: true }).click()
+    await panel.getByRole('button', { name: '撤销原待遇', exact: true }).click()
+    await cancellation.getByRole('button', { name: '提交撤销', exact: true }).click()
+    await expect(cancellation).toHaveCount(0)
+    await settleBenefits()
+    await expect(funding.getByTestId('inpatient-funding-balance')).toContainText(`${scenario.extraRefund}.00`)
+    await funding.getByRole('button', { name: '成功', exact: true }).click()
+    await funding.getByLabel('原入金', { exact: true }).click()
+    await page.getByRole('option', { name: /预交金/ }).click()
+    await funding.getByLabel('退款金额（元）', { exact: true }).fill(scenario.extraRefund)
+    await funding.getByRole('button', { name: '预览退款', exact: true }).click()
+    await funding.getByRole('button', { name: '确认已审阅退款', exact: true }).click()
+    await expect(funding.getByTestId('inpatient-funding-balance')).toContainText('¥0.00')
+    await page.getByRole('button', { name: '预览结算', exact: true }).click()
     await page.getByRole('button', { name: '确认结算', exact: true }).click()
     await expect(page.getByText('已结算，等待病区清床', { exact: true })).toBeVisible()
     const frozen = inpatientSettlementPreviewSchema.parse(await (await page.request.get(`${origin}${path}/discharge/preview`)).json())
-    expect(frozen).toMatchObject({ chargesFen: 15000, insurance: {
+    expect(frozen).toMatchObject({ chargesFen: 10000, insurance: {
       fundFen: scenario.fundFen, accountFen: scenario.accountFen, patientFen: scenario.patientFen,
     } })
     expect(frozen.transactions.reduce((sum, transaction) => sum + transaction.amountFen, 0)).toBe(scenario.patientFen)
     const finalInsurance = insuranceStateSchema.parse(await (await page.request.get(insurancePath)).json())
-    expect(finalInsurance.history).toHaveLength(3)
-    expect(finalInsurance.balance).toMatchObject({ inpatientEligibleFen: 15000, inpatientFundFen: scenario.fundFen, accountFen: 0 })
+    expect(finalInsurance.history).toHaveLength(5)
+    expect(finalInsurance.balance).toMatchObject({ inpatientEligibleFen: 10000, inpatientFundFen: scenario.fundFen, accountFen: 0 })
   })
 }

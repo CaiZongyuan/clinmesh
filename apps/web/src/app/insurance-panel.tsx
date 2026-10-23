@@ -32,7 +32,8 @@ import { getInsuranceState, newIdempotencyKey, previewInsurance } from './api-cl
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
-import type { WorkspaceLocale } from './workspace-i18n.ts'
+import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 
 /** Key by session and target at the owning workspace so previews cannot cross patients. */
 export function InsurancePanel({
@@ -94,7 +95,7 @@ export function InsurancePanel({
     {error === null ? null : (
       <Alert variant="destructive">
         <AlertTitle>{zh ? '医保操作未完成' : 'Benefits operation incomplete'}</AlertTitle>
-        <AlertDescription>{error instanceof Error ? error.message : String(error)}</AlertDescription>
+        <AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription>
       </Alert>
     )}
     {write.pending === null ? null : (

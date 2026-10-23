@@ -13,6 +13,7 @@ import {
   diagnosisDraftResponseSchema,
   doctorQueueSchema,
   doctorCaseDetailSchema,
+  doctorCompletedCaseDetailSchema,
   encounterCompletionResponseSchema,
   firstVisitDraftResponseSchema,
   issuePrescriptionResponseSchema,
@@ -559,6 +560,48 @@ it('未完诊处方即使可由个人账户全额覆盖，也拒绝医保预览�
   expect(await read()).toEqual(before)
   const queue = pharmacyQueueSchema.parse(await (await s.runtime.app.request('/api/his/v1/pharmacy/queue?status=pending&pageSize=20', { headers: { cookie: await signIn(s.runtime, 'pharmacist@demo.clinmesh.local', 'Synthetic-Demo-Password-2026!') } })).json())
   expect(queue.items.some(item => item.prescriptionId === signed.prescription.id)).toBe(false)
+}, 60000)
+
+it('冲减后的处方按净费用判断部分收款，净额收齐且未发药时允许撤方', async () => {
+  const s = await setup(0)
+  await settle(s)
+  const signed = await issueMedication(s)
+  await completeMedicationEncounter(s)
+  const readBill = async () => billingCaseSchema.parse(await (await s.runtime.app.request(
+    `/api/his/v1/billing/cases/${s.target.id}`, { headers: { cookie: s.cashier } },
+  )).json())
+  const readPrescription = async () => doctorCompletedCaseDetailSchema.parse(await (await s.runtime.app.request(
+    `/api/his/v1/doctor/completed-cases/${s.target.id}`, { headers: { cookie: s.doctor } },
+  )).json()).medicationConclusion!.prescription!
+  const withdraw = async () => {
+    const prescription = await readPrescription()
+    return s.write(`/api/his/v1/prescriptions/${signed.prescription.id}/actions/withdraw`, {
+      expectedPrescriptionVersion: prescription.version,
+    }, s.doctor, randomUUID(), Object.fromEntries(prescription.items.map(item => [
+      `MedicationRequest/${item.medicationRequestId}`, item.medicationRequestVersion,
+    ])))
+  }
+  const charge = (await readBill()).charges.find(row => row.category === 'medication')!
+  expect(charge.amountFen).toBe(7600)
+  const adjusted = await s.write(`/api/his/v1/billing/cases/${s.target.id}/adjustments`, {
+    chargeItemId: charge.chargeItemId, amountFen: 1000, reason: '合成处方费用核准冲减。',
+  }, s.cashier, randomUUID(), { [`ChargeItem/${charge.chargeItemId}`]: String(charge.chargeVersion) })
+  expect(adjusted.status, await adjusted.clone().text()).toBe(200)
+  chargeAdjustmentResponseSchema.parse(await adjusted.json())
+  await pay(s, 'medication', 3000)
+  expect((await readPrescription()).withdrawalSupported).toBe(false)
+  const partial = await withdraw()
+  expect(partial.status, await partial.clone().text()).toBe(409)
+  await pay(s, 'medication')
+  const paidBill = await readBill()
+  expect(paidBill.charges.find(row => row.chargeItemId === charge.chargeItemId)).toMatchObject({
+    amountFen: 6600, paidFen: 6600, remainingFen: 0, status: 'paid',
+  })
+  expect((await readPrescription()).withdrawalSupported).toBe(true)
+  const withdrawn = await withdraw()
+  expect(withdrawn.status, await withdrawn.clone().text()).toBe(200)
+  expect(withdrawPrescriptionResponseSchema.parse(await withdrawn.json()).data.status).toBe('withdrawn')
+  expect((await readBill()).charges).toEqual(paidBill.charges)
 }, 60000)
 
 it('零基金和账户支付的处方须先撤销待遇，补偿年度累计后才能撤方', async () => {

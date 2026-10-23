@@ -14,6 +14,26 @@ function signedConflict(owner: 'clinical-document' | 'prescription') {
 }
 
 describe('workspace conflict messages', () => {
+  it.each([
+    ['zh-CN', '医保预览已失效，请刷新费用与年度余额，重新预览并核对待遇。'],
+    ['en-US', 'The benefits preview is no longer valid. Refresh charges and annual balances, then preview and review benefits again.'],
+  ] as const)('explains stale insurance previews in %s without exposing server details', (locale, expected) => {
+    for (const code of ['INSURANCE_PREVIEW_INVALID', 'INSURANCE_PREVIEW_STALE']) {
+      expect(getWorkspaceErrorMessage(new ApiClientError(409, code, 'private insurance detail'), getWorkspaceMessages(locale)))
+        .toBe(expected)
+    }
+  })
+
+  it.each([
+    ['zh-CN', 'INSURANCE_SOURCE_STALE', '住院费用已变化。请先查询未确定的原收退款，再撤销原待遇并重新预览。'],
+    ['en-US', 'INSURANCE_SOURCE_STALE', 'Admission charges changed. Resolve any unknown original collection or refund, then cancel the original benefits and preview again.'],
+    ['zh-CN', 'INSURANCE_BALANCE_CONFLICT', '原待遇或年度余额已变化，请刷新医保信息后重新核对撤销操作。'],
+    ['en-US', 'INSURANCE_BALANCE_CONFLICT', 'The original benefits or annual balance changed. Refresh benefits and review the cancellation again.'],
+  ] as const)('explains insurance recovery in %s for %s', (locale, code, expected) => {
+    expect(getWorkspaceErrorMessage(new ApiClientError(409, code, 'private insurance detail'), getWorkspaceMessages(locale)))
+      .toBe(expected)
+  })
+
   it.each(['zh-CN', 'en-US'] as const)('explains model failures in %s without exposing Provider details', locale => {
     const messages = getWorkspaceMessages(locale)
     for (const [code, expected] of [

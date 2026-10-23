@@ -103,7 +103,8 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
         error:{code:'INSURANCE_PREVIEW_STALE',message:'费用或患者年度余额已变化，请重新预览',type:'conflict',outcome:'definitely_not_sent',retryable:false},
       })}),{times:1})
       await review.getByRole('button',{name:'提交医保结算',exact:true}).click()
-      await expect(review.getByRole('alert')).toContainText('费用或患者年度余额已变化')
+      await expect(review.getByRole('alert')).toContainText('医保预览已失效，请刷新费用与年度余额，重新预览并核对待遇。')
+      await expect(review.getByRole('alert')).not.toContainText('费用或患者年度余额已变化')
       await review.getByRole('button',{name:'返回核对',exact:true}).click()
       await panel.getByRole('button',{name:'预览医保待遇',exact:true}).click()
       await panel.getByRole('button',{name:'审阅医保结算',exact:true}).click()
@@ -289,7 +290,7 @@ for (const version of ['18', '19']) test.describe(`billing pagination on React $
       })
       await mountBilling(page, version, server)
       // The older history is projected; the unknown attempt and its recovery use real HTTP and SQLite.
-      await page.route('**/api/his/v1/billing/cases/**', async route => {
+      await page.route(url => /^\/api\/his\/v1\/billing\/cases\/[^/]+$/.test(url.pathname), async route => {
         const source = new URL(route.request().url())
         source.searchParams.set('page', '1')
         const otherCase = source.pathname.endsWith('/synthetic-case-b')

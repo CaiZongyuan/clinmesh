@@ -11680,7 +11680,8 @@ export class WorkflowService {
     const allocated = readOutpatientInsuranceAllocations(this.#database, context, firstCharge.case_id)
     return charges.some(charge => {
       const balance = this.#payments.balance(context, charge.charge_item_id)
-      return balance.unresolved > 0 || allocated.has(`ChargeItem/${charge.charge_item_id}`) || (balance.paidFen > 0 && balance.paidFen < charge.total_fen)
+      const amountFen = charge.total_fen - this.refunds.adjustmentFen(context, charge.charge_item_id)
+      return balance.unresolved > 0 || allocated.has(`ChargeItem/${charge.charge_item_id}`) || (balance.paidFen > 0 && balance.paidFen < amountFen)
     })
   }
 

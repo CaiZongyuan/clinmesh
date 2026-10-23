@@ -113,6 +113,11 @@ export function getWorkspaceErrorMessage(
   if (error.status === 403 || ['CSRF_FAILED', 'ROLE_NOT_ALLOWED'].includes(error.code)) {
     return messages.permissionDeniedDescription
   }
+  if (error.code === 'INSURANCE_PREVIEW_INVALID' || error.code === 'INSURANCE_PREVIEW_STALE') {
+    return messages.insurancePreviewStaleDescription
+  }
+  if (error.code === 'INSURANCE_SOURCE_STALE') return messages.insuranceSourceStaleDescription
+  if (error.code === 'INSURANCE_BALANCE_CONFLICT') return messages.insuranceBalanceConflictDescription
   const inpatientMessages: Record<string, string> = {
     INPATIENT_INVESTIGATION_NOT_FOUND: messages.inpatientInvestigationConflictDescription,
     INPATIENT_INVESTIGATION_VERSION_CONFLICT: messages.inpatientInvestigationConflictDescription,

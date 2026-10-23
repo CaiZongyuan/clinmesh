@@ -62,6 +62,8 @@
 
 ## 替身、异步屏障与断言
 
+- Playwright 只投影某个详情响应时，路由拦截按完整 pathname 匹配，将分页 query 留给处理器读取；`cases/**` 一类宽匹配会把新增 `/refunds` 等子资源也送进详情 schema。新增子资源后复查已有投影拦截，保留该子资源的真实 HTTP 行为，参考[收费分页合同](../../apps/dsh-web/src/client/billing-payments.browser.test.ts)。
+
 - Testing Library 的 `getByRole` 使用字符串 `name` 时已按完整可访问名称匹配，不接受 Playwright 的 `exact` 选项；混用两者参数可能让 Vitest 运行通过而 TypeScript 检查失败。组件测试省略 `exact`，真实浏览器测试按 Playwright API 保留该选项。
 
 - 验证模型手动恢复时，逐个继续意图核对实际外部派发次数，并在下一次仍失败时证明自动重试没有被一并放开；同时覆盖重放、准入拒绝和重启。任务来源 `trigger: manual` 会延续到后续阶段，不能用它证明某一次请求已获得人工授权；恢复合同见[模型执行恢复](../architecture/storage.md#模型执行恢复)。

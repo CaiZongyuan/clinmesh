@@ -71,7 +71,7 @@ export class InpatientPayments {
   }
   #statement(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['cashier'])
-    this.owner.readAdmissionBinding(context, admissionId)
+    const admission = this.owner.readAdmissionBinding(context, admissionId)
     const rows = this.#rows(context, admissionId), payments = rows.filter(row => row.adjustment_id === null).map(publicAttempt)
     const laterIds = new Set(rows.filter(row => row.adjustment_id !== null).map(row => row.paymentId))
     const sources = this.sources(context, admissionId).filter(source => !laterIds.has(source.id))
@@ -80,8 +80,13 @@ export class InpatientPayments {
     const refundedFen = refunds.filter(refund => refund.outcome === 'success').reduce((sum, refund) => sum + refund.amountFen, 0)
     const depositFen = sources.filter(source => source.kind === 'inpatient-deposit').reduce((sum, source) => sum + source.amountFen, 0)
     const supplementFen = sources.filter(source => source.kind === 'inpatient-supplement').reduce((sum, source) => sum + source.amountFen, 0)
-    const settlement = this.owner.discharge.snapshot(context, admissionId)
-    const patientFen = settlement.insurance?.patientFen ?? settlement.chargesFen
+    // Keep original attempts readable while a changed insurance source awaits review.
+    // New funding still validates the full settlement snapshot in fingerprint().
+    const settled = admission.financialStatus === 'settled' ? this.owner.discharge.snapshot(context, admissionId) : undefined
+    const patientFen = settled === undefined
+      ? this.owner.workflow.insurance.validAllocation(context, { kind: 'inpatient', id: admissionId })?.patientFen
+        ?? this.owner.orders.chargeFacts(context, admissionId).chargesFen
+      : settled.insurance?.patientFen ?? settled.chargesFen
     return inpatientPaymentsSchema.parse({ admissionId, payments,
       depositFen, supplementFen, refundedFen, remainingFen: patientFen - depositFen - supplementFen + refundedFen,
       sources, refunds, pendingCount: payments.filter(payment => payment.outcome === 'ambiguous').length + refunds.filter(refund => refund.outcome === 'ambiguous').length })

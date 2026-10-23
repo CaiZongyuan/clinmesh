@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { inpatientPaymentPreviewResponseSchema, inpatientPaymentResponseSchema, inpatientPaymentsSchema,
-  inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
+  inpatientRefundPreviewResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { afterEach, describe, expect, it } from 'vitest'
 import { inpatientInsuranceFixture } from './fixtures/insurance-inpatient.ts'
 
@@ -9,6 +10,76 @@ const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const close of cleanups.splice(0)) await close() })
 
 describe('普通住院合成医保公共 HTTP', () => {
+  it.each(['payment', 'refund'] as const)('费用冲正后仍可读取并恢复未知%s，重审待遇前继续阻止新增资金及封账', async kind => {
+    const s = await inpatientInsuranceFixture()
+    cleanups.push(s.close)
+    const admission = await s.admit(kind === 'refund' ? 10000 : 0)
+    expect((await s.request('admin', '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+      expectedVirtualTime: '2026-08-24T09:00:00+08:00', targetVirtualTime: '2026-08-27T00:00:00+08:00',
+    })).status).toBe(200)
+    await s.depart(admission)
+    const path = `/api/his/v1/inpatient/admissions/${admission.id}`
+    const insurancePreview = insurancePreviewResponseSchema.parse(await (await s.insurance(admission.id, 'preview', { planCode: 'employee-v1' })).json()).data
+    const allocation = insuranceResponseSchema.parse(await (await s.insurance(admission.id, 'confirm', {
+      previewId: insurancePreview.previewId, commitToken: insurancePreview.commitToken,
+    })).json()).data
+    const original = inpatientSettlementPreviewSchema.parse(await (await s.request('cashier', `${path}/discharge/preview`)).json())
+    const before = inpatientPaymentsSchema.parse(await (await s.request('cashier', `${path}/payments`)).json())
+    const reviewed = kind === 'payment'
+      ? inpatientPaymentPreviewResponseSchema.parse(await (await s.request('cashier', `${path}/payments/preview`, {
+        kind: 'supplement', amountFen: 5000, tenders: [{ method: 'cash', amountFen: 5000 }], simulatorRule: 'ambiguous',
+      })).json()).data
+      : inpatientRefundPreviewResponseSchema.parse(await (await s.request('cashier', `${path}/refunds/preview`, {
+        sourceId: before.sources[0]!.id, amountFen: 5000, simulatorRule: 'ambiguous',
+      })).json()).data
+    const prefix = kind === 'payment' ? 'payments' : 'refunds'
+    const attempted = await s.request('cashier', `${path}/${prefix}/confirm`, { previewId: reviewed.previewId, commitToken: reviewed.commitToken })
+    expect(attempted.status).toBe(200)
+    const firstCharge = original.charges[0]!
+    expect((await s.request('cashier', `${path}/charges/reverse`, {
+      chargeId: firstCharge.id, expectedChargeVersion: firstCharge.version, reason: '合成医保费用冲正',
+    })).status).toBe(200)
+    await s.restart()
+    const statementResponse = await s.request('cashier', `${path}/payments`)
+    expect(statementResponse.status, await statementResponse.clone().text()).toBe(200)
+    const statement = inpatientPaymentsSchema.parse(await statementResponse.json())
+    expect(statement.pendingCount).toBe(1)
+    const blocked = await s.request('cashier', `${path}/payments/preview`, {
+      kind: 'deposit', amountFen: 100, tenders: [{ method: 'cash', amountFen: 100 }], simulatorRule: 'success',
+    })
+    expect(blocked.status).toBe(409)
+    expect(await blocked.json()).toMatchObject({ error: { code: 'INPATIENT_FUNDS_PENDING' } })
+    const cancelInput = { settlementId: allocation.active!.id, expectedBalanceVersion: allocation.balance.version }
+    const cancelBlocked = await s.insurance(admission.id, 'cancel', cancelInput)
+    expect(cancelBlocked.status).toBe(409)
+    expect(await cancelBlocked.json()).toMatchObject({ error: { code: 'INPATIENT_FUNDS_PENDING' } })
+    const attempt = kind === 'payment' ? statement.payments[0]! : statement.refunds[0]!
+    const recovery = 'paymentId' in attempt
+      ? { paymentId: attempt.paymentId, expectedPaymentVersion: attempt.version }
+      : { refundId: attempt.refundId, expectedRefundVersion: attempt.version }
+    const key = randomUUID()
+    const response = await s.request('cashier', `${path}/${prefix}/recover`, recovery, key)
+    expect(response.status).toBe(200)
+    const recovered = kind === 'payment'
+      ? inpatientPaymentResponseSchema.parse(await response.json())
+      : refundResponseSchema.parse(await response.json())
+    expect(recovered.data).toMatchObject({ outcome: 'success', version: 2 })
+    expect(await (await s.request('cashier', `${path}/${prefix}/recover`, recovery, key)).json()).toEqual(recovered)
+    const stale = await s.request('cashier', `${path}/discharge/preview`)
+    expect(stale.status).toBe(409)
+    expect(await stale.json()).toMatchObject({ error: { code: 'INSURANCE_SOURCE_STALE' } })
+    const staleCollection = await s.request('cashier', `${path}/payments/preview`, {
+      kind: 'deposit', amountFen: 100, tenders: [{ method: 'cash', amountFen: 100 }], simulatorRule: 'success',
+    })
+    expect(staleCollection.status).toBe(409)
+    expect(await staleCollection.json()).toMatchObject({ error: { code: 'INSURANCE_SOURCE_STALE' } })
+    expect((await s.insurance(admission.id, 'cancel', cancelInput)).status).toBe(200)
+    const replacement = insurancePreviewResponseSchema.parse(await (await s.insurance(admission.id, 'preview', { planCode: 'employee-v1' })).json()).data
+    expect((await s.insurance(admission.id, 'confirm', { previewId: replacement.previewId, commitToken: replacement.commitToken })).status).toBe(200)
+    const resolved = inpatientPaymentsSchema.parse(await (await s.request('cashier', `${path}/payments`)).json())
+    expect(resolved).toMatchObject({ pendingCount: 0, remainingFen: -1000 })
+    expect(kind === 'payment' ? resolved.payments : resolved.refunds).toHaveLength(1)
+  })
   it('跨年撤销核对原年度余额并保留当年账户', async () => {
     const s = await inpatientInsuranceFixture()
     cleanups.push(s.close)

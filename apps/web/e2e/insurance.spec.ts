@@ -79,6 +79,20 @@ for (const [plan, option, patientFen] of [
         remainingFen: 0,
       })
       expect(bill.payments).toHaveLength(1)
+      if (plan === 'employee-v1') {
+        await page.goto(`${server.origin}/settings`)
+        await page.getByRole('button', { name: 'English', exact: true }).click()
+        await page.goto(`${server.origin}/billing`)
+        await page.getByRole('tab', { name: 'Paid', exact: true }).click()
+        const englishPanel = page.getByRole('region', { name: 'Patient insurance benefits', exact: true })
+        await englishPanel.getByRole('button', { name: 'Synthetic patient insurance benefits', exact: true }).click()
+        await page.route(`**${path}/preview`, route => route.fulfill({ status: 409, json: {
+          error: { code: 'INSURANCE_PREVIEW_STALE', message: '费用或患者年度余额已变化，请重新预览', type: 'conflict', outcome: 'definitely_not_sent', retryable: false },
+        } }), { times: 1 })
+        await englishPanel.getByRole('button', { name: 'Preview benefits', exact: true }).click()
+        await expect(englishPanel.getByRole('alert')).toContainText('The benefits preview is no longer valid. Refresh charges and annual balances, then preview and review benefits again.')
+        await expect(englishPanel.getByRole('alert')).not.toContainText('费用或患者年度余额已变化')
+      }
     } finally {
       await server.close()
     }
