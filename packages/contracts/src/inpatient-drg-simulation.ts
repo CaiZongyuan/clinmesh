@@ -97,6 +97,7 @@ export const inpatientMaterialReservationCreateInputSchema = z.object({
 
 export const inpatientMaterialReservationReleaseInputSchema = z.object({
   admissionId: id,
+  encounterVersion: z.string().regex(/^\d+$/),
   reservationId: id,
   reason: z.string().trim().min(1).max(2000),
 }).strict()

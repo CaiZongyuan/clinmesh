@@ -183,7 +183,7 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     expect(simulated.formal.items.filter((item: { kind: string }) => item.kind === 'material')).toEqual([
       { kind: 'material', id: expect.any(String), display: material.display, quantity: 1, estimatedFen: material.chargeDefinition.priceFen * 2 }])
     expect(simulated.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'RA25' })
-    const released = await s.request(s.doctor, `${s.path}/drg/reservations/${reservation.id}/release`, { reason: '重复释放重验' })
+    const released = await s.request(s.doctor, `${s.path}/drg/reservations/${reservation.id}/release`, { encounterVersion: (await (await s.request(s.doctor, s.path)).json()).admission.versionId, reason: '重复释放重验' })
     expect(released.status).toBe(409)
     expect((await released.json()).error.code).toBe('INPATIENT_RESERVATION_CONFLICT')
     expect((await s.request(s.cashier, `${s.path}/drg/reservations`, { encounterVersion: '1', materialId: material.id,

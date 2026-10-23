@@ -32,6 +32,7 @@ export type InpatientDrgPayerReview = z.infer<typeof inpatientDrgPayerReviewSche
 
 export const inpatientDrgPayerReviewCreateInputSchema = z.object({
   admissionId: id,
+  encounterVersion: z.string().regex(/^\d+$/),
   reason: z.string().trim().min(1).max(2000),
 }).strict()
 

@@ -115,13 +115,14 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     const s = await setup()
     expect((await confirmPrimary(s)).status).toBe(200)
     await finish(s)
+    const version = (await (await s.request(s.doctor, s.path)).json()).admission.versionId
     // 未归档病例不能模拟核定。
-    expect((await s.request(s.insurance, `${s.path}/drg/payer-review`, { reason: '未归档验证' })).status).toBe(409)
+    expect((await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '未归档验证' })).status).toBe(409)
     const { sourcesHash } = await submitReviewArchive(s, null)
     // 越岗边界：医生与收费员不能发起核定，医生不能读取复核记录。
-    expect((await s.request(s.doctor, `${s.path}/drg/payer-review`, { reason: '越岗验证' })).status).toBe(403)
-    expect((await s.request(s.cashier, `${s.path}/drg/payer-review`, { reason: '越岗验证' })).status).toBe(403)
-    const reviewed = await (await s.request(s.insurance, `${s.path}/drg/payer-review`, { reason: '合成医保办复核' })).json()
+    expect((await s.request(s.doctor, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '越岗验证' })).status).toBe(403)
+    expect((await s.request(s.cashier, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '越岗验证' })).status).toBe(403)
+    const reviewed = await (await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '合成医保办复核' })).json()
     const archived = await (await s.request(s.doctor, `${s.path}/record`)).json()
     const chargesFen = archived.archive.snapshot.fees.chargesFen
     // 合成参数：基础费率 500000 分 × RA15 权重 6000bp = 300000 分。
@@ -136,7 +137,7 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     expect((await (await s.request(s.insurance, `${s.path}/drg/pregroup`)).json())).toMatchObject({ frozen: true,
       result: { status: 'grouped', drgCode: 'RA15' } })
     // 追加复核保留原记录，病案可读，医生越岗读取被拒。
-    expect((await s.request(s.insurance, `${s.path}/drg/payer-review`, { reason: '第二次复核' })).status).toBe(200)
+    expect((await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, reason: '第二次复核' })).status).toBe(200)
     const list = await (await s.request(s.insurance, `${s.path}/drg/payer-reviews`)).json()
     expect(list.reviews.map((row: { reason: string }) => row.reason)).toEqual(['合成医保办复核', '第二次复核'])
     expect((await (await s.request(await s.login('medical-records'), `${s.path}/drg/payer-reviews`)).status)).toBe(200)
@@ -164,8 +165,9 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     const execution = (await (await s.request(s.doctor, `${s.path}/surgeries`)).json()).executions[0]
     await finish(s)
     await submitReviewArchive(s, execution.id)
+    const missingVersion = (await (await s.request(s.doctor, s.path)).json()).admission.versionId
     // RA25 不在合成参数覆盖范围：核定按参数缺口明确报告，不产生记录。
-    const missing = await s.request(s.insurance, `${s.path}/drg/payer-review`, { reason: '参数缺口验证' })
+    const missing = await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: missingVersion, reason: '参数缺口验证' })
     expect(missing.status).toBe(409)
     expect((await missing.json()).error.code).toBe('DRG_PAYMENT_PARAMETER_MISSING')
     expect((await (await s.request(s.insurance, `${s.path}/drg/payer-reviews`)).json()).reviews).toEqual([])

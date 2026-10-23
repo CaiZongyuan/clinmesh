@@ -317,7 +317,7 @@ export class InpatientDrg {
   releaseReservation(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientMaterialReservationReleaseInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.reservation.release',
-      expectedVersions: {}, dataSchema: inpatientMaterialReservationListSchema,
+      expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientMaterialReservationListSchema,
       authorize: () => this.owner.assertRole(context, ['inpatient-doctor']) }, () => {
       const row = z.object({ status: z.string() }).optional().parse(this.owner.database.driver.prepare(
         'SELECT status FROM inpatient_material_reservation WHERE workspace_id=? AND epoch=? AND admission_id=? AND reservation_id=?')
@@ -338,7 +338,7 @@ export class InpatientDrg {
   payerReview(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientDrgPayerReviewCreateInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.payer.review',
-      expectedVersions: {}, dataSchema: inpatientDrgPayerReviewListSchema,
+      expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientDrgPayerReviewListSchema,
       authorize: () => this.owner.assertRole(context, ['medical-insurance']) }, () => {
       const { frozen, sourcesHash, chargesFen } = this.#frozenArchive(context, input.admissionId)
       if (frozen.result.status !== 'grouped' || frozen.result.drgCode === null)
