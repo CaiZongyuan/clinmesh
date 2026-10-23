@@ -348,6 +348,52 @@ describe('Web application shell', () => {
     expect(latestRelease).toHaveBeenCalled()
   })
 
+  it('groups the role menu into outpatient, inpatient, and system sections', async () => {
+    const initialFetch = vi.mocked(fetch).getMockImplementation()!
+    vi.mocked(fetch).mockImplementation(async input => {
+      const path = new URL(String(input), 'http://localhost').pathname
+      if (path === '/api/auth/context') {
+        return Response.json({
+          ...registrarSession,
+          availableRoles: [
+            registrarSession.availableRoles[0],
+            { ...registrarSession.availableRoles[0], id: 'practitioner-role-outpatient-doctor', code: 'outpatient-doctor', practitionerId: 'practitioner-outpatient-doctor', practitionerName: '合成门诊医生' },
+            { ...registrarSession.availableRoles[0], id: 'practitioner-role-pharmacist', code: 'pharmacist', practitionerId: 'practitioner-pharmacist', practitionerName: '合成药师' },
+            { ...registrarSession.availableRoles[0], id: 'practitioner-role-inpatient-doctor', code: 'inpatient-doctor', practitionerId: 'practitioner-inpatient-doctor', practitionerName: '合成住院医生' },
+            { ...registrarSession.availableRoles[0], id: 'practitioner-role-ward-nurse', code: 'ward-nurse', practitionerId: 'practitioner-ward-nurse', practitionerName: '合成病区护士' },
+            { ...registrarSession.availableRoles[0], id: 'practitioner-role-administrator', code: 'administrator', practitionerId: 'practitioner-administrator', practitionerName: '合成管理员' },
+          ],
+        })
+      }
+      return initialFetch(input)
+    })
+    const user = userEvent.setup()
+    await renderWebApp()
+
+    await user.click(screen.getByRole('button', { name: '用户菜单' }))
+    expect(await screen.findByText('门诊')).toBeTruthy()
+    expect(screen.getByText('住院')).toBeTruthy()
+    expect(screen.getByText('系统')).toBeTruthy()
+
+    const groupText = (label: string): string => (
+      screen.getByText(label).closest('[data-slot="dropdown-menu-group"]')?.textContent ?? ''
+    )
+    const outpatient = groupText('门诊')
+    expect(outpatient).toContain('挂号员')
+    expect(outpatient).toContain('门诊医生')
+    expect(outpatient).toContain('药师')
+    expect(outpatient).not.toContain('住院医生')
+    expect(outpatient).not.toContain('管理员')
+    const inpatient = groupText('住院')
+    expect(inpatient).toContain('住院医生')
+    expect(inpatient).toContain('病区护士')
+    expect(inpatient).not.toContain('挂号员')
+    const system = groupText('系统')
+    expect(system).toContain('管理员')
+    expect(system).not.toContain('门诊医生')
+    expect(screen.getByRole('menuitemradio', { name: '挂号员' }).getAttribute('aria-checked')).toBe('true')
+  })
+
   it('retracts host navigation when a business request reports an expired session', async () => {
     const initialFetch = vi.mocked(fetch).getMockImplementation()!
     const register = vi.fn((_state: WebSurfaceNavigationState) => vi.fn())
