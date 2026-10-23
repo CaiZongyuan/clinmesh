@@ -77,12 +77,15 @@ export async function verifyRefundWriteRecovery(
   let previewPosts = 0
   let previewKey = ''
   let originalPreviewId = ''
+  let originalPreviewToken = ''
   await page.route('**/api/his/v1/refunds/actions/preview', async route => {
     previewPosts += 1
     previewKey = route.request().headers()['idempotency-key'] ?? ''
     const response = await route.fetch()
     expect(response.status()).toBe(200)
-    originalPreviewId = refundPreviewResponseSchema.parse(await response.json()).data.previewId
+    const preview = refundPreviewResponseSchema.parse(await response.json()).data
+    originalPreviewId = preview.previewId
+    originalPreviewToken = preview.commitToken
     await route.abort('failed')
   })
   await panel.getByRole('button', { name: '预览退款', exact: true }).click()
@@ -94,7 +97,7 @@ export async function verifyRefundWriteRecovery(
     return url.pathname === '/api/his/v1/command-receipts'
       && url.searchParams.get('operationId') === 'refund.preview' && url.searchParams.get('idempotencyKey') === previewKey
   })
-  await panel.getByRole('button', { name: '恢复原费用更正或退款', exact: true }).click()
+  await page.getByRole('button', { name: '恢复原费用操作', exact: true }).click()
   const previewResponse = await previewReceipt
   expect(previewResponse.status()).toBe(200)
   const previewLookup = commandReceiptLookupSchema.parse(await previewResponse.json())
@@ -103,8 +106,12 @@ export async function verifyRefundWriteRecovery(
   expect(refundPreviewResponseSchema.parse(previewLookup.response).data.previewId).toBe(originalPreviewId)
   expect(previewPosts).toBe(1)
   await expect(page.getByRole('alertdialog', { name: '确认退款', exact: true })).toBeVisible()
+  const confirmation = page.waitForRequest(request => request.method() === 'POST'
+    && new URL(request.url()).pathname === `/api/his/v1/refunds/${originalPreviewId}/actions/confirm`)
   const refund = await loseAndRestore('refund.confirm', '**/api/his/v1/refunds/*/actions/confirm',
     refundResponseSchema, page.getByRole('alertdialog', { name: '确认退款', exact: true }), '提交退款')
+  expect((await confirmation).postDataJSON().input).toEqual({ commitToken: originalPreviewToken })
+  expect(previewPosts).toBe(1)
   expect(await read()).toMatchObject({ refundedFen: 0, reservedFen: 1000, refunds: [{ refundId: refund.data.refundId, outcome: 'ambiguous' }] })
 
   await panel.getByRole('button', { name: '查询原退款结果', exact: true }).click()

@@ -12,7 +12,7 @@ Status: implemented
 
 仅 `refund.recover` 使用当前 Workspace/Epoch 的人类收费员 completed Run 例外，查询原退款并追加冻结结果；新冲减、新退款及其他业务写入继续要求 active Run，closed Run 和 completed Agent Grant 不获放行。无写 receipt 重放保持原合同。这补充[原款退款决策](../architecture/2026-10-22-original-payment-refunds.md)的恢复生命周期；当前权限与操作由[收费支付与退款](../../../architecture/clinical-workflows.md#85-收费支付与退款)拥有。
 
-浏览器在发送前保存绑定账户和完整 Actor context 的原写入意图。人工恢复先读取原 receipt，仅缺少回执时按原参数和原键重发；未决期间阻断相关资金写入，切病例不改变原操作归属。选择会话级存储保留刷新恢复能力，不把账户切换后的旧意图当作当前操作。
+浏览器在发送前保存绑定账户和完整 Actor context 的原写入意图。人工恢复先读取原 receipt，仅缺少回执时按原参数和原键重发；未决期间阻断相关资金写入，切病例不改变原操作归属。选择会话级存储保留刷新恢复能力，不把账户切换后的旧意图当作当前操作。退款预览的原 token 与费用版本由收费工作台按完整会话和病例保存为内存审阅状态，病例内及全局恢复共用这一份状态；切病例后恢复仍可回到原病例继续确认。
 
 ## Alternatives considered
 
@@ -20,6 +20,7 @@ Status: implemented
 - completed 场景放开全部退款与更正：扩大新交易权限，超出查询原尝试所需范围。
 - 继续按原价判断处方资金：退款成功会让净实收低于原价，错误阻止已结清且尚未调剂的处方撤回。
 - 只在组件内保留原参数或响应丢失后生成新键：刷新和切病例会丢失原意图，新键也失去原 Command 的幂等保护。
+- 全局恢复只刷新账目查询：退款预览不在账目查询投影中，丢弃原回执会失去已冻结的 token，迫使操作者另行预览。
 
 ## Consequences
 

@@ -1,5 +1,6 @@
 import { InsurancePanel } from './insurance-panel.tsx'
 import type { BillingQueueItem, SessionContext } from '@clinmesh/contracts/his'
+import { refundPreviewResponseSchema } from '@clinmesh/contracts/refunds'
 import { parseAgentToolInput } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import {
@@ -26,7 +27,7 @@ import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } fro
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
 import { BillingCasePanel, paymentMethodLabel } from './billing-case-panel.tsx'
-import { BillingRefundPanel } from './billing-refund-panel.tsx'
+import { BillingRefundPanel, type FrozenRefund } from './billing-refund-panel.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
@@ -51,6 +52,16 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const agentReview = useAgentReview()
   const queryClient = useQueryClient()
   const scope = [session.actor.workspaceId, session.actor.epoch] as const
+  const refundScope = agentViewRevision({ accountId: session.user.id, actor: session.actor })
+  const [refundPreviews, setRefundPreviews] = useState({ scope: refundScope, cases: new Map<string, FrozenRefund>() })
+  const setRefundPreview = (targetCaseId: string, frozen?: FrozenRefund) => {
+    setRefundPreviews(current => {
+      const cases = current.scope === refundScope ? new Map(current.cases) : new Map<string, FrozenRefund>()
+      if (frozen === undefined) cases.delete(targetCaseId)
+      else cases.set(targetCaseId, frozen)
+      return { scope: refundScope, cases }
+    })
+  }
   const [category, setCategory] = useState<BillingCategory>('laboratory')
   const [status, setStatus] = useState<BillingStatus>('pending')
   const [page, setPage] = useState(1)
@@ -109,7 +120,12 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       queryClient.invalidateQueries({ queryKey: ['pharmacy-queue', ...scope] }),
     ])
   },[queryClient,session.actor.workspaceId,session.actor.epoch])
-  const refundWrite = useInpatientWriteIntent(session, async () => {
+  const refundWrite = useInpatientWriteIntent(session, async (command, response) => {
+    if (command.operation === 'refund.preview') setRefundPreview(command.caseId, {
+      preview: refundPreviewResponseSchema.parse(response).data, chargeVersion: command.input.chargeVersion,
+    })
+    if (command.operation === 'billing.charge.adjust') setRefundPreview(command.input.caseId)
+    if (command.operation === 'refund.confirm') setRefundPreview(command.caseId)
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['billing-refunds', ...scope] }),
       refreshBilling(),
@@ -472,7 +488,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             ) : bill.data === undefined ? null : (
               <BillingCasePanel key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={paymentId => recover.mutateAsync(paymentId)} onRefresh={() => bill.refetch()} recovering={paymentPending} />
             )}
-            {bill.data === undefined ? null : <BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling} />}
+            {bill.data === undefined ? null : <BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling}
+              frozen={refundPreviews.scope === refundScope ? refundPreviews.cases.get(bill.data.caseId) : undefined} onFrozenChange={setRefundPreview} />}
             <InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/>
             <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
               <div><div className="text-lg font-semibold">{selectedCharge.patient.name}</div><div className="text-sm text-muted-foreground">{selectedChargeDescription}</div></div>

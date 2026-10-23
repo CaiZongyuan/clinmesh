@@ -119,7 +119,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     ['clinmesh billing charge adjust ', 'billing.charge.adjust', 1],
     ['clinmesh refund preview ', 'refund.preview', 1],
     ['clinmesh refund confirm ', 'refund.confirm', 1],
-    ['clinmesh refund recover ', 'refund.recover', 1],
+    ['clinmesh refund recover ', 'refund.recover', 2],
     ['clinmesh insurance get ', 'insurance.get', 1],
     ['clinmesh insurance preview ', 'insurance.preview', 1],
     ['clinmesh insurance confirm ', 'insurance.confirm', 1],
@@ -142,6 +142,8 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
   for (const term of ['expectedBalanceVersion', 'annualBalances', 'INSURANCE_PREVIEW_STALE', 'not payment tenders',
     'calendar year', 'preserves later transactions and clinical progress', 'INSURANCE_FUNDS_CONFLICT', 'completed Encounter']) expect(skill).toContain(term)
   for (const id of ['insurance.preview', 'insurance.confirm']) expect(getHisOperation(id).summary).toContain('INSURANCE_FUNDS_CONFLICT')
+  for (const term of ['current-Epoch human cashier', 'completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(skill).toContain(term)
+  for (const term of ['current-Epoch human cashier', 'active/completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(getHisOperation('refund.recover').summary).toContain(term)
   const examples=[...skill.matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
   for(const [index,operation] of ['insurance.preview','insurance.confirm','insurance.cancel'].entries()){
     expect(getHisOperation(operation).input.safeParse(examples[index]).success).toBe(true)

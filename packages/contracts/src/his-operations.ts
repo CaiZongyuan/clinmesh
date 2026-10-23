@@ -2349,13 +2349,13 @@ const operationDefinitions = [
     summary: 'Confirm the reviewed refund; an ambiguous result reserves original funds and correction allowance',
   },
   {
-    cliPath: ['refund', 'recover'], id: 'refund.recover', mode: 'command', version: 1,
+    cliPath: ['refund', 'recover'], id: 'refund.recover', mode: 'command', version: 2,
     http: { method: 'POST', path: '/api/his/v1/refunds/:refundId/actions/recover', encodeBody: raw => {
       const { chargeItemId, chargeVersion, refundId: _refundId, ...input } = refundRecoverOperationInputSchema.parse(raw)
       return { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }
     } }, input: refundRecoverOperationInputSchema, output: refundResponseSchema,
     roles: ['cashier'], risk: 'high-risk-write', requirements: { expectedVersions: true, idempotency: 'required' },
-    summary: 'Query the original refund attempt without sending another refund; definite decline releases its reservation',
+    summary: 'Query the original refund without resending; current-Epoch human cashier may recover in active/completed Scenario Run; closed Run and completed Agent Grant are rejected',
   },
   {
     cliPath: ['payment', 'preview'],

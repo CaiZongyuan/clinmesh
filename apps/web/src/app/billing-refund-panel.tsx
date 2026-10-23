@@ -17,7 +17,7 @@ import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 
-type FrozenRefund = { preview: z.infer<typeof refundPreviewResponseSchema>['data']; chargeVersion: number }
+export type FrozenRefund = { preview: z.infer<typeof refundPreviewResponseSchema>['data']; chargeVersion: number }
 type Correction = { chargeItemId: string; chargeVersion: number; amountFen: number; reason: string }
 function inputFen(value: string) {
   if (!/^(0|[1-9]\d*)(\.\d{1,2})?$/.test(value.trim())) throw new Error('请输入正数金额，最多两位小数 / Enter a positive amount with at most two decimals')
@@ -27,8 +27,9 @@ function inputFen(value: string) {
   return amount
 }
 
-export function BillingRefundPanel({ bill, session, locale, onChanged, disabled }: {
+export function BillingRefundPanel({ bill, session, locale, onChanged, disabled, frozen, onFrozenChange }: {
   bill: z.infer<typeof billingCaseSchema>; session: SessionContext; locale: WorkspaceLocale; onChanged: () => Promise<unknown>; disabled: boolean
+  frozen: FrozenRefund | undefined; onFrozenChange: (caseId: string, frozen?: FrozenRefund) => void
 }) {
   const text = (zh: string, en: string) => locale === 'zh-CN' ? zh : en
   const messages = getWorkspaceMessages(locale)
@@ -46,7 +47,7 @@ export function BillingRefundPanel({ bill, session, locale, onChanged, disabled 
   const source = ledger.data?.sources.find(item => item.sourceId === paymentId) ?? ledger.data?.sources[0]
   const [refundAmount, setRefundAmount] = useState('')
   const [rule, setRule] = useState<z.infer<typeof paymentSimulatorRuleSchema>>('success')
-  const [frozen, setFrozen] = useState<FrozenRefund>()
+  const setFrozen = (value?: FrozenRefund) => onFrozenChange(bill.caseId, value)
   const [recoverId, setRecoverId] = useState<string>()
   const [inputError, setInputError] = useState<string>()
   const refresh = async () => { await Promise.all([queryClient.invalidateQueries({ queryKey }), onChanged()]) }
