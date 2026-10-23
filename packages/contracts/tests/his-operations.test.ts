@@ -744,10 +744,10 @@ describe('HIS operation catalog', () => {
 
     expect(counts).toEqual({
       'clinmesh-administrator': 3,
-      'clinmesh-billing': 10,
+      'clinmesh-billing': 14,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 78,
+      'clinmesh-inpatient': 81,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,
       'clinmesh-shared': 1,
@@ -772,8 +772,10 @@ describe('HIS operation catalog', () => {
       'inpatient.financial.refund.confirm',
       'inpatient.financial.payment.confirm',
       clinicalDocumentOperationIds.sign,
+      'insurance.confirm',
       'refund.confirm',
       'payment.confirm',
+      'inpatient.financial.insurance.confirm',
       'inpatient.payment.confirm',
       'inpatient.refund.confirm',
     ])

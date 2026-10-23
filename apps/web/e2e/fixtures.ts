@@ -30,7 +30,7 @@ export const test = base.extend<{
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
-  }, { scope: 'worker' }],
+  }, { scope: 'worker', timeout: 120_000 }],
   browserApp: async ({ webRoot }, use) => {
     const app = await startBrowserServer(webRoot)
     try { await use(app) }

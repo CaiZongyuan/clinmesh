@@ -18,6 +18,7 @@ const modelUsageMigrations = ['0071_model-usage.sql', '0072_model-usage-control.
   '0078_model-task-invalid-code.sql']
 const considerationMigrations = ['0079_doctor-consideration-disposition.sql']
 const paymentMigrations = ['0071_payment-installments.sql', '0072_payment-history-pagination.sql', '0075_payment-refunds.sql', '0075_refund-tenders.sql', '0076_inpatient-payments.sql', '0077_inpatient-financial-adjustments.sql']
+const insuranceMigrations = ['0090_insurance-benefits.sql', '0091_inpatient-insurance-adjustments.sql']
 const directories: string[] = [], databases: ClinMeshDatabase[] = []
 afterEach(async () => {
   for (const database of databases.splice(0)) database.close()
@@ -29,7 +30,7 @@ async function legacy(kind: 'main' | 'inpatient') {
   directories.push(directory)
   const migrations = join(directory, 'migrations')
   await mkdir(migrations)
-  const pending = [...(kind === 'main' ? inpatientMigrations : mainMigrations), ...modelUsageMigrations, ...considerationMigrations, ...paymentMigrations].sort()
+  const pending = [...(kind === 'main' ? inpatientMigrations : mainMigrations), ...modelUsageMigrations, ...considerationMigrations, ...paymentMigrations, ...insuranceMigrations].sort()
   const files = (await readdir('drizzle')).filter(file => file.endsWith('.sql') && !pending.includes(file))
   await Promise.all(files.map(file => copyFile(join('drizzle', file), join(migrations, file))))
   const database = openClinMeshDatabase({ databasePath: join(directory, 'legacy.sqlite'), busyTimeoutMs: 5000 })

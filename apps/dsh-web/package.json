@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "build:styles": "tsx src/build-styles.ts",
-    "build": "pnpm run build:styles && bun node_modules/dsh-react-surface-build/src/cli.ts . && bun src/compact-artifact.ts && bun src/verify-artifact.ts",
+    "build": "pnpm run build:styles && bun node_modules/dsh-react-surface-build/src/cli.ts . && bun src/compact-client.ts && bun src/verify-artifact.ts",
     "typecheck": "pnpm run build:styles && tsc --noEmit",
     "test": "vitest run",
     "clean": "rm -rf lib coverage"

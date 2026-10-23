@@ -1,6 +1,6 @@
 ---
 name: clinmesh-billing
-description: ClinMesh cashier CLI workflow for reading bills, collecting combined or partial payments, correcting fees, refunding original transactions, and recovering unknown payment or refund attempts.
+description: ClinMesh cashier CLI workflow for reading bills, reviewing synthetic patient insurance benefits, collecting combined or partial payments, correcting fees, refunding original transactions, and recovering unknown payment or refund attempts.
 ---
 
 # ClinMesh Billing
@@ -41,6 +41,8 @@ Read `billing.refunds.get` before correcting fees or refunding. Each successful 
 
 `billing.charge.adjust` records a positive integer fen reduction with the original ChargeItem version and a specific financial-error reason. It creates refund allowance but sends no money. Refund only an original successful payment, bounded by both its remaining funds and the unconsumed correction allowance across every original payment for that charge. Refunds consume the original frozen tender order and remaining amount per method; do not choose a new refund method. Unknown refunds reserve these amounts; definite decline releases the reservation.
 
+Cancel the charge's active insurance settlement before reducing its fee. Benefits, collections and clinical release use the fee after recorded reductions. Resolve the original unknown collection or refund before changing benefits, collecting again or correcting that charge; keep using the original recovery command while its result remains unknown.
+
 ```bash
 clinmesh billing refunds get --case-id <case-id>
 clinmesh billing charge adjust --input @charge-adjustment.json --idempotency-key <adjustment-key>
@@ -51,8 +53,67 @@ clinmesh refund recover --input @refund-recover.json --idempotency-key <refund-r
 clinmesh command receipt get --operation-id refund.recover --idempotency-key <refund-recovery-key>
 ```
 
-Preview input binds `paymentId`, `amountFen`, `expectedSourceVersion`, `chargeItemId`, `chargeVersion` and `simulatorRule`; confirm preserves its `previewId`, `commitToken` and original ChargeItem version. Query recovery uses the original `refundId`, `expectedRefundVersion` and latest ChargeItem version. Never supply an outcome to recovery or replace an unknown refund with a fresh refund. After response loss inspect the original Command receipt and reuse the original key and payload. A stale preview requires explicit review of a new preview. Unknown refunds block new payment previews and confirms for the same charge until resolved. Unknown collections or refunds also block new refund previews and confirms for that charge; recover the existing attempts first.
-
-New fee corrections and refunds require an active Scenario Run. Only a human cashier in the current Workspace/Epoch may recover an existing refund after the Run is completed; closed Runs reject new recovery writes. Agent Grants still require an active Run, including `refund.recover`; an inactive Grant returns `AGENT_TOKEN_INVALID`. `CONTEXT_INACTIVE` does not authorize a replacement refund or another role. This exception does not authorize new transactions or post-settlement or archived-account correction. See the [outpatient billing contract](../../docs/architecture/clinical-workflows.md#85-收费支付与退款).
+Preview input binds `paymentId`, `amountFen`, `expectedSourceVersion`, `chargeItemId`, `chargeVersion` and `simulatorRule`; confirm preserves its `previewId`, `commitToken` and original ChargeItem version. Query recovery uses the original `refundId`, `expectedRefundVersion` and latest ChargeItem version. Never supply an outcome to recovery or replace an unknown refund with a fresh refund. After response loss inspect the original Command receipt and reuse the original key and payload. A stale preview requires explicit review of a new preview. These outpatient operations require an active Scenario Run; they do not authorize post-settlement or archived-account correction.
 
 Payment does not complete the clinical Encounter. Confirm the bill's remaining amounts and queue state before handing off a fully paid medication charge to a pharmacist Grant or continuing the applicable laboratory workflow.
+
+## Synthetic patient insurance
+
+Read benefits before collecting patient funds. `insurance.get` returns the patient's current annual balance, `annualBalances` for original settlement years, active settlements and append-only settlement/compensation history. Cancellation uses `expectedBalanceVersion` from the entry matching the selected settlement's `year`, even when the current calendar year differs. `insurance.preview` reviews real charge references and versions, synthetic coverage, prior self pay, deductible, fund, personal account and patient cash due. Fund and personal account allocations reduce the receivable; they are not payment tenders and do not create cash receipts. Registration is outside synthetic coverage.
+
+```bash
+clinmesh insurance get --kind outpatient --id <case-id>
+clinmesh operations schema insurance.preview
+clinmesh insurance preview --input @insurance-preview.json --idempotency-key <preview-key>
+clinmesh insurance confirm --input @insurance-confirm.json --idempotency-key <confirm-key>
+clinmesh command receipt get --operation-id insurance.confirm --idempotency-key <confirm-key>
+clinmesh insurance cancel --input @insurance-cancel.json --idempotency-key <cancel-key>
+clinmesh command receipt get --operation-id insurance.cancel --idempotency-key <cancel-key>
+```
+
+The input files have these shapes. Copy `previewId`, `commitToken`, settlement ID and balance version from the actual responses; a human must review the amounts before confirm or cancellation.
+
+```json
+{"kind":"outpatient","id":"<case-id>","planCode":"employee-v1"}
+```
+
+```json
+{"kind":"outpatient","id":"<case-id>","previewId":"<preview-id>","commitToken":"<commit-token-from-preview>"}
+```
+
+```json
+{"kind":"outpatient","id":"<case-id>","settlementId":"<settlement-id>","expectedBalanceVersion":1}
+```
+
+Two fixed synthetic plans are available. Ordinary outpatient employee v1 uses a 1000-fen annual deductible, 70% fund rate, 100000-fen annual fund cap and 2000-fen initial personal account; resident v1 uses 2000 fen, 50%, 50000 fen and no personal account. Laboratory charges require 10% prior self pay and medication 20%. All arithmetic uses integer fen. These are simulation parameters, not local reimbursement policy.
+
+Balances bind workspace, epoch, patient and virtual calendar year. The first settlement fixes that year's plan even after cancellation; ordinary outpatient and inpatient deductible/fund accumulators are separate, while the personal account is shared. New medication charges can receive their own settlement after the laboratory payment; existing allocations stay valid. Medication benefits require a completed Encounter for both preview and confirmation, including full personal-account coverage; `INSURANCE_FUNDS_CONFLICT` means the doctor must complete the Encounter before a new preview. Original settlement cancellation remains available. Charges already collected require the financial correction workflow before a new benefits settlement.
+
+Previews expire after five minutes and bind the actor, target, exact charge and coverage versions, calendar year and annual balance version. `INSURANCE_PREVIEW_STALE` requires a fresh preview and human review. Never reuse a commit token with changed intent. Cancellation appends an inverse event referencing the original settlement, restores only its annual impact and preserves later transactions and clinical progress. Collect any resulting balance through a fresh payment preview; do not repeat clinical release.
+
+For lost insurance responses, inspect the original Command receipt with the original operation ID and idempotency key before replay. A definitive business rejection permits a new reviewed intent; an unknown result keeps the original intent and key pending. Refresh the bill and benefits after a completed receipt.
+
+### Inpatient benefits and first settlement
+
+Use the same insurance commands with `kind=inpatient` and the actual admission ID. Review benefits after departure and before the first financial settlement. Unknown collections or refunds must be resolved before changing benefits. Employee v1 uses a 5000-fen inpatient annual deductible, 80% fund rate and 1000000-fen cap; resident v1 uses 10000 fen, 60% and 500000 fen. Coverage and personal-account availability come from the preview.
+
+```bash
+clinmesh insurance get --kind inpatient --id <admission-id>
+clinmesh insurance preview --input @inpatient-insurance-preview.json --idempotency-key <preview-key>
+clinmesh insurance confirm --input @inpatient-insurance-confirm.json --idempotency-key <confirm-key>
+clinmesh insurance cancel --input @inpatient-insurance-cancel.json --idempotency-key <cancel-key>
+```
+
+```json
+{"kind":"inpatient","id":"<admission-id>","planCode":"employee-v1"}
+```
+
+```json
+{"kind":"inpatient","id":"<admission-id>","previewId":"<preview-id>","commitToken":"<commit-token-from-preview>"}
+```
+
+```json
+{"kind":"inpatient","id":"<admission-id>","settlementId":"<settlement-id>","expectedBalanceVersion":1}
+```
+
+Read the [inpatient funding and settlement workflow](../clinmesh-inpatient/SKILL.md#出院结算清床与召回) for deposit offsets, combined supplements and original-payment refunds. Patient funds cover `patientFen`; fund and personal-account benefits do not create cash receipts. Re-preview the first settlement after any benefit or funding change. Once settled, use the controlled later financial workflow rather than ordinary insurance cancellation.

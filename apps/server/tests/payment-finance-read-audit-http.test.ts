@@ -10,6 +10,7 @@ import { refundCaseSchema } from '@clinmesh/contracts/refunds'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientPaymentsSchema, inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFinancialSchema } from '@clinmesh/contracts/inpatient-finance'
+import { insuranceStateSchema } from '@clinmesh/contracts/insurance'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -50,6 +51,41 @@ async function setup() {
 }
 
 describe('财务读取公共 HTTP 审计', () => {
+  it.each(['outpatient', 'inpatient'] as const)('%s 医保读取和越岗拒绝保留审计且不改变待遇余额', async kind => {
+    const s = await setup()
+    let targetId: string
+    if (kind === 'inpatient') {
+      const response = await s.request(s.registrar, '/api/his/v1/inpatient/admissions', {
+        expectedEpoch: 'epoch-1', patientId: s.patient.id, patientVersion: s.patient.versionId,
+        admissionRoute: 'direct', wardId: 'ward-general', depositFen: 0,
+      })
+      expect(response.status).toBe(200)
+      targetId = inpatientCommandResponseSchema.parse(await response.json()).data.admission.id
+    } else {
+      const response = await s.request(s.registrar, '/api/his/v1/registrations/actions/register', {
+        departmentId: 'department-general-medicine', locationId: 'location-outpatient', patientId: s.patient.id,
+        visitDate: '2026-08-24', visitTypeId: 'visit-general',
+      }, { [`Patient/${s.patient.id}`]: s.patient.versionId })
+      expect(response.status).toBe(200)
+      const registration = registrationResponseSchema.parse(await response.json()).data
+      const queue = registrationQueueSchema.parse(await (await s.request(s.registrar, '/api/his/v1/registrations?pageSize=20')).json())
+      targetId = queue.items.find(item => item.encounterId === registration.encounterId)!.caseId
+    }
+    const path = `/api/his/v1/insurance/${kind}/${targetId}`
+    const response = await s.request(s.cashier, path)
+    expect(response.status).toBe(200)
+    const before = insuranceStateSchema.parse(await response.json())
+    expect(before.history).toEqual([])
+    const denied = await s.request(s.doctor, path)
+    expect(denied.status).toBe(403)
+    expect(apiErrorSchema.parse(await denied.json()).error.code).toBe('INSURANCE_ROLE_FORBIDDEN')
+    expect(await s.audits('insurance.get')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: 'R', outcome: { code: { code: '0' } } }),
+      expect.objectContaining({ action: 'R', outcome: { code: { code: '8' } } }),
+    ]))
+    expect(insuranceStateSchema.parse(await (await s.request(s.cashier, path)).json())).toEqual(before)
+  })
+
   it('门诊退款读取成功和越岗拒绝均可审计，读取不更改账目', async () => {
     const s = await setup()
     const registered = await s.request(s.registrar, '/api/his/v1/registrations/actions/register', {
@@ -135,12 +171,13 @@ describe('财务读取公共 HTTP 审计', () => {
     const s = await setup()
     // 只注入审计存储故障；认证、owner 授权和 HTTP 错误映射继续使用真实实现。
     s.runtime.database.driver.exec(`CREATE TEMP TRIGGER reject_finance_read_audit BEFORE INSERT ON audit_log
-      WHEN NEW.operation IN ('billing.refunds.get','inpatient.payment.read','inpatient.financial.read')
+      WHEN NEW.operation IN ('billing.refunds.get','inpatient.payment.read','inpatient.financial.read','insurance.get')
       BEGIN SELECT RAISE(ABORT,'synthetic read audit unavailable'); END`)
     const reads = [
       { path: '/api/his/v1/billing/cases/nonexistent/refunds', code: 'ROLE_NOT_ALLOWED' },
       { path: '/api/his/v1/inpatient/admissions/nonexistent/payments', code: 'INPATIENT_ROLE_FORBIDDEN' },
       { path: '/api/his/v1/inpatient/admissions/nonexistent/financial-adjustments', code: 'INPATIENT_ROLE_FORBIDDEN' },
+      { path: '/api/his/v1/insurance/inpatient/nonexistent', code: 'INSURANCE_ROLE_FORBIDDEN' },
     ]
     for (const { path, code } of reads) {
       const response = await s.request(s.doctor, path)

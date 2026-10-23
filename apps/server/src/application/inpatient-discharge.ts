@@ -102,13 +102,29 @@ export class InpatientDischarge {
     const stored = z.object({ settlement_id: z.string(), preview_json: z.string(), settled_at: z.string() }).optional().parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_settlement WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId, context.epoch, admissionId))
     const settledPreview = stored === undefined ? undefined : inpatientSettlementPreviewSchema.parse(JSON.parse(stored.preview_json))
-    const data = { admissionId, encounterVersion, status: admission.status, financialStatus: admission.financialStatus, ...facts, depositFen, balanceFen: facts.chargesFen - depositFen,
+    // Once settled, records keep the exact original allocation even after later compensation.
+    const insurance = settledPreview === undefined ? this.#currentInsurance(context, admissionId) : settledPreview.insurance
+    const patientFen = insurance?.patientFen ?? facts.chargesFen
+    const data = { admissionId, encounterVersion, status: admission.status, financialStatus: admission.financialStatus, ...facts, depositFen, balanceFen: patientFen - depositFen,
+      ...(insurance === undefined ? {} : { insurance }),
       transactions, ...(stored === undefined || settledPreview === undefined ? {} : { settlement: { id: stored.settlement_id, fingerprint: settledPreview.fingerprint,
         chargesFen: settledPreview.chargesFen, depositFen: settledPreview.depositFen, balanceFen: settledPreview.balanceFen, settledAt: stored.settled_at } }) }
     const accountVersion = this.owner.fhir.read(context, 'Account', admissionId).meta!.versionId!
     return inpatientSettlementPreviewSchema.parse({ ...data, fingerprint: createHash('sha256').update(JSON.stringify({ ...data, accountVersion,
       ...(admission.financialStatus === 'open' && this.owner.payments.fundingFingerprint(context, admissionId) !== undefined
         ? { fundingFingerprint: this.owner.payments.fundingFingerprint(context, admissionId) } : {}) })).digest('hex') })
+  }
+  #currentInsurance(context: ActorContext, admissionId: string) {
+    const target = { kind: 'inpatient' as const, id: admissionId }
+    const insurance = this.owner.workflow.insurance
+    const active = insurance.validAllocation(context, target)
+    if (active !== undefined) {
+      const source = insurance.options.readSource(context, target)
+      const fingerprint = createHash('sha256').update(JSON.stringify(source)).digest('hex')
+      if (fingerprint !== active.sourceFingerprint)
+        throw new InpatientError('INSURANCE_SOURCE_STALE', '住院费用已变化，请撤销原待遇并重新审阅医保分配')
+    }
+    return active
   }
   settle(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientSettleInputSchema.parse(raw)

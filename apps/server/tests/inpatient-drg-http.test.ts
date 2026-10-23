@@ -10,7 +10,7 @@ import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scena
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 
 const groups = [
   { level: 'MDC', code: 'MDCA', name: '合成循环系统疾病', parentCode: null },
@@ -52,9 +52,7 @@ async function setup(drgRulesDirectory?: string) {
   /** 以新的规则包目录重启同一数据库，用于验证归档冻结结果不随规则升级变化。 */
   const reopen = async (nextRulesDirectory?: string) => {
     await runtime.close()
-    cleanups.pop()
     runtime = await createClinMeshRuntime({ ...options, ...(nextRulesDirectory === undefined ? {} : { drgRulesDirectory: nextRulesDirectory }) })
-    cleanups.push(async () => { await runtime.close() })
   }
   async function login(name: string) {
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' },

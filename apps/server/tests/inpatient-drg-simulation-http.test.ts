@@ -11,7 +11,7 @@ import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from
 import { inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 
 async function setup() {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-inpatient-drg-sim-'))

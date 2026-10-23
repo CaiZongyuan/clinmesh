@@ -1,4 +1,5 @@
 import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
+import { insurancePreviewResponseSchema, insuranceResponseSchema } from '@clinmesh/contracts/insurance'
 import { inpatientChargesSchema, inpatientPharmacyListSchema, inpatientPharmacySchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientReferralListSchema } from '@clinmesh/contracts/inpatient'
 import { FhirRepository } from '../src/infrastructure/sqlite/fhir-repository.ts'
@@ -66,6 +67,23 @@ async function setup(depositFen = 100000, withReference = false) {
   return { runtime, options, request, login, patient, admission, doctor, nurse, cashier, registrar, path: `/api/his/v1/inpatient/admissions/${admission.id}` }
 }
 describe('住院病案首页公共 HTTP', () => {
+  it('医保基金、个人账户与患者现金共同核对首次冻结账，清床后可归档', async () => {
+    const s = await setup(100000, true), coder = await s.login('medical-records')
+    expect((await s.request(await s.login('admin'), '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+      expectedVirtualTime: '2026-08-24T09:00:00+08:00', targetVirtualTime: '2026-08-27T00:00:00+08:00',
+    })).status).toBe(200)
+    await finish(s, true)
+    expect((await confirm(s)).status).toBe(200)
+    const draft = await (await s.request(s.doctor, `${s.path}/record`)).json()
+    expect(draft.snapshot.fees.insurance).toMatchObject({ totalFen: 15000, fundFen: 8000, accountFen: 2000, patientFen: 5000 })
+    expect(draft.snapshot.fees.transactions.reduce((sum: number, item: { amountFen: number }) => sum + item.amountFen, 0)).toBe(5000)
+    expect((await s.request(s.doctor, `${s.path}/record/submit`, { expectedRevision: 0, expectedSourcesHash: draft.sourcesHash, mainProcedureExecutionId: null })).status).toBe(200)
+    const expected = { expectedRevision: 1, expectedSourcesHash: draft.sourcesHash }
+    expect((await s.request(coder, `${s.path}/record/review`, { ...expected, outcome: 'approved' })).status).toBe(200)
+    const archived = await s.request(coder, `${s.path}/record/archive`, expected)
+    expect(archived.status).toBe(200)
+    expect((await archived.json()).data.archive.snapshot.fees.insurance).toEqual(draft.snapshot.fees.insurance)
+  })
   it('旧病区的手术费用、病案归档与原岗位receipt重启后保真，默认病区不能越权读取', async () => {
     const s = await setup(100000, true)
     await addSecondaryInpatientWard(s.runtime)
@@ -337,10 +355,23 @@ async function confirm(s: Awaited<ReturnType<typeof setup>>, note = '本次正�
   const clinical = await (await s.request(s.doctor, `${s.path}/clinical`)).json()
   return s.request(s.doctor, `${s.path}/diagnoses/confirm`, { encounterVersion: clinical.encounterVersion, expectedRevision: clinical.diagnosis.revision, entries: [{ catalogItemId: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', role: 'primary', admissionCondition: '1', note }] })
 }
-async function finish(s: Awaited<ReturnType<typeof setup>>) {
+async function finish(s: Awaited<ReturnType<typeof setup>>, withInsurance = false) {
   const issued = await (await s.request(s.doctor, `${s.path}/discharge/issue`, { encounterVersion: s.admission.versionId, reason: '治疗完成' })).json()
   expect(issued.data).toBeDefined()
   expect((await s.request(s.nurse, `${s.path}/discharge/depart`, { encounterVersion: issued.data.admission.versionId, reason: '已核对', departureMethod: 'home' })).status).toBe(200)
+  if (withInsurance) {
+    const insurancePath = `/api/his/v1/insurance/inpatient/${s.admission.id}`
+    const command = (action: string, input: unknown) => s.runtime.app.request(`${insurancePath}/${action}`, {
+      method: 'POST', headers: { cookie: s.cashier, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ input, expectedVersions: {} }),
+    })
+    const response = await command('preview', { planCode: 'employee-v1' })
+    expect(response.status).toBe(200)
+    const preview = insurancePreviewResponseSchema.parse(await response.json()).data
+    const confirmation = await command('confirm', { previewId: preview.previewId, commitToken: preview.commitToken })
+    expect(confirmation.status).toBe(200)
+    insuranceResponseSchema.parse(await confirmation.json())
+  }
   const p = await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json()
   const settled = await (await s.request(s.cashier, `${s.path}/discharge/settle`, { encounterVersion: p.encounterVersion, fingerprint: p.fingerprint, expectedChargesFen: p.chargesFen, expectedBalanceFen: p.balanceFen })).json()
   expect((await s.request(s.nurse, `${s.path}/discharge/clear`, { encounterVersion: settled.data.encounterVersion, reason: '床单位已清洁' })).status).toBe(200)

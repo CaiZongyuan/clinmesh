@@ -32,7 +32,8 @@ it('非空住院资金迁移适配旧退款，原入金、冻结账、归档JSON
       database.driver.prepare('INSERT INTO inpatient_settlement_transaction VALUES(?,?,?,?,?,?,?,?,?)').run(scope.workspaceId,scope.epoch,'legacy-refund','legacy','legacy-settlement','refund',-6000,'legacy-deposit','2026-10-02T00:00:00Z')
       database.driver.prepare('INSERT INTO inpatient_record_revision VALUES(?,?,?,?,?,?,?,?,?,?)').run(scope.workspaceId,scope.epoch,'legacy',1,'original-hash',oldJson,'{}','doctor','doctor-role','2026-10-02T00:00:00Z')
       database.driver.prepare('INSERT INTO inpatient_record_review VALUES(?,?,?,?,?,?,?,?,?,?,?)').run(scope.workspaceId,scope.epoch,'legacy','review',1,'original-hash','approved',null,'records','records-role','2026-10-02T00:00:00Z')
-      database.driver.prepare(`INSERT INTO inpatient_record_archive(workspace_id,epoch,admission_id,archive_id,revision,review_id,sources_hash,snapshot_json,actor_id,practitioner_role_id,recorded_at)
+      database.driver.prepare(`INSERT INTO inpatient_record_archive
+        (workspace_id,epoch,admission_id,archive_id,revision,review_id,sources_hash,snapshot_json,actor_id,practitioner_role_id,recorded_at)
         VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(scope.workspaceId,scope.epoch,'legacy','archive',1,'review','original-hash',oldJson,'records','records-role','2026-10-02T00:00:00Z')
       return {data:{admissionId:'legacy'},effects:[]}
     })

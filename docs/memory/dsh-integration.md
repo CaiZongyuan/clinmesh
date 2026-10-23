@@ -74,7 +74,7 @@
 
 - DSH React Surface Client 以 classic lazy-CJS 加载；任何构建后仍存在的 `import.meta` 都会在模块执行前触发语法错误，即使该分支在运行时不可达。开发标记使用可被构建器静态消除的 `process.env.NODE_ENV`，artifact verifier 必须拒绝残留 `import.meta`。
 
-- Surface 上游构建器会把已压缩的依赖重新排版；ClinMesh 构建还会执行本地空白压缩，实际增量应比较完整构建后的 `lib/client.js`，不能按第三方压缩文件大小估算。排查打印开销时分别保留上游输出和最终输出；不要用第二次 `Bun.build` 代替本地打印步骤，它会将 factory 的 `require` 重命名，使只匹配原名的白名单检查漏检。当前方案与验证边界见[产物压缩决策](../decisions/implemented/architecture/2026-10-22-dsh-client-whitespace-compaction.md)。第三方压缩入口没有类型声明时，在 `apps/web` 放环境模块声明并在 `apps/dsh-web/tsconfig.json` 的 `include` 中列出；oxlint 不允许三斜线引用。
+- Surface 上游构建器会把已压缩的依赖重新排版；ClinMesh 构建还会执行本地空白压缩，实际增量应比较完整构建后的 `lib/client.js`，不能按第三方压缩文件大小估算。排查打印开销时分别保留上游输出和最终输出；不要用第二次 `Bun.build` 代替本地打印步骤，它会将 factory 的 `require` 重命名，使只匹配原名的白名单检查漏检。当前方案与验证边界见[产物压缩决策](../decisions/implemented/testing/2026-10-22-dsh-client-whitespace-compaction.md)。第三方压缩入口没有类型声明时，在 `apps/web` 放环境模块声明并在 `apps/dsh-web/tsconfig.json` 的 `include` 中列出；oxlint 不允许三斜线引用。
 
 - 独立 worktree 不包含 `vendor/dsh-react-surface/packages/runtime/lib/`；运行原生 DSH 验收前按锁定 commit 构建 Runtime 并核对 `index.js`、`client.js`，只构建 ClinMesh Surface 不能满足这项前置。临时 Profile 的首次入口先等待并选择工作区，再等待医院菜单；验收使用与断言一致的浏览器 locale，避免把尚未出现的菜单或默认英文误判为业务失败。部署顺序见[DSH 原生入口](../deployment.md#dsh-web-原生入口)。
 

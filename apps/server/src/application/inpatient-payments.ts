@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { inpatientPaymentInputSchema, inpatientPaymentConfirmInputSchema, inpatientPaymentRecoverInputSchema,
   inpatientPaymentSchema, inpatientPaymentResponseSchema, inpatientPaymentPreviewResponseSchema, inpatientPaymentsSchema,
   inpatientRefundInputSchema, inpatientRefundConfirmInputSchema, inpatientRefundRecoverInputSchema, inpatientRefundPreviewResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
-import { refundResponseSchema } from '@clinmesh/contracts/refunds'
+import { refundAttemptSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { paymentChannelPlan } from './payment-channel.ts'
@@ -71,7 +71,7 @@ export class InpatientPayments {
   }
   #statement(context: ActorContext, admissionId: string) {
     this.owner.assertReadRole(context, ['cashier'])
-    this.owner.readAdmissionBinding(context, admissionId)
+    const admission = this.owner.readAdmissionBinding(context, admissionId)
     const rows = this.#rows(context, admissionId), payments = rows.filter(row => row.adjustment_id === null).map(publicAttempt)
     const laterIds = new Set(rows.filter(row => row.adjustment_id !== null).map(row => row.paymentId))
     const sources = this.sources(context, admissionId).filter(source => !laterIds.has(source.id))
@@ -80,11 +80,22 @@ export class InpatientPayments {
     const refundedFen = refunds.filter(refund => refund.outcome === 'success').reduce((sum, refund) => sum + refund.amountFen, 0)
     const depositFen = sources.filter(source => source.kind === 'inpatient-deposit').reduce((sum, source) => sum + source.amountFen, 0)
     const supplementFen = sources.filter(source => source.kind === 'inpatient-supplement').reduce((sum, source) => sum + source.amountFen, 0)
+    // Keep original attempts readable while a changed insurance source awaits review.
+    // New funding still validates the full settlement snapshot in fingerprint().
+    const settled = admission.financialStatus === 'settled' ? this.owner.discharge.snapshot(context, admissionId) : undefined
+    const patientFen = settled === undefined
+      ? this.owner.workflow.insurance.validAllocation(context, { kind: 'inpatient', id: admissionId })?.patientFen
+        ?? this.owner.orders.chargeFacts(context, admissionId).chargesFen
+      : settled.insurance?.patientFen ?? settled.chargesFen
     return inpatientPaymentsSchema.parse({ admissionId, payments,
-      depositFen, supplementFen, refundedFen, remainingFen: this.owner.orders.chargeFacts(context, admissionId).chargesFen - depositFen - supplementFen + refundedFen,
+      depositFen, supplementFen, refundedFen, remainingFen: patientFen - depositFen - supplementFen + refundedFen,
       sources, refunds, pendingCount: payments.filter(payment => payment.outcome === 'ambiguous').length + refunds.filter(refund => refund.outcome === 'ambiguous').length })
   }
   firstRefunds(context: ActorContext, admissionId: string) { return this.refunds.attempts(context, 'inpatient', admissionId).filter(attempt => attempt.basisId === firstSettlementBasis(admissionId)) }
+  pendingCount(context: ActorContext, admissionId: string) {
+    return this.#attempts(context, admissionId, true).filter(payment => payment.outcome === 'ambiguous').length
+      + this.firstRefunds(context, admissionId).filter(refund => refund.outcome === 'ambiguous').length
+  }
   fundingFingerprint(context: ActorContext, admissionId: string) {
     const payments = this.#attempts(context, admissionId, true), refunds = this.firstRefunds(context, admissionId)
     return payments.length === 0 && refunds.length === 0 ? undefined : hash({ payments, refunds })
@@ -210,7 +221,7 @@ export class InpatientPayments {
     const input = inpatientRefundConfirmInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.refund.confirm', expectedVersions: {},
       dataSchema: refundResponseSchema.shape.data, authorize: () => this.owner.assertRole(context, ['cashier']) }, () => {
-      const preview = z.object({ admission_id: z.string(), source_id: z.string(), amount_fen: z.number(), simulator_rule: inpatientRefundInputSchema.shape.simulatorRule,
+      const preview = z.object({ admission_id: z.string(), source_id: z.string(), amount_fen: inpatientRefundInputSchema.shape.amountFen, simulator_rule: inpatientRefundInputSchema.shape.simulatorRule,
         fingerprint: z.string(), token_hash: z.string(), actor_hash: z.string(), expires_at: z.string(), consumed_at: z.string().nullable() }).optional().parse(
           this.owner.database.driver.prepare('SELECT * FROM inpatient_refund_preview WHERE workspace_id=? AND epoch=? AND preview_id=?').get(context.workspaceId, context.epoch, input.previewId))
       if (!preview || preview.admission_id !== input.admissionId || preview.consumed_at !== null || preview.token_hash !== hash(input.commitToken)
@@ -242,6 +253,8 @@ export class InpatientPayments {
     const statement = this.read(context, admissionId)
     if (statement.pendingCount > 0) throw new InpatientError('INPATIENT_FUNDS_PENDING', '资金结果未查明，不能封账或清床')
     if (statement.payments.length === 0 && statement.refunds.length === 0 && statement.remainingFen !== 0) {
+      if (!refundAttemptSchema.shape.amountFen.safeParse(Math.abs(statement.remainingFen)).success)
+        throw new InpatientError('INPATIENT_FUNDS_REQUIRED', '默认现金结清超过单笔1000万元上限，请分次办理收退款后重新预览结算')
       if (statement.remainingFen > 0) {
         const input = { admissionId, kind: 'supplement' as const, amountFen: statement.remainingFen,
           tenders: [{ method: 'cash' as const, amountFen: statement.remainingFen }], simulatorRule: 'success' as const }

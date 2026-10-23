@@ -1,3 +1,6 @@
+import { insuranceTargetSchema, insurancePlanCodeSchema, insurancePreviewResponseSchema, insuranceResponseSchema, insuranceStateSchema } from './insurance.ts'
+import { inpatientFinancialInsuranceCancelInputSchema, inpatientFinancialInsurancePreviewInputSchema,
+  inpatientFinancialInsuranceConfirmInputSchema } from './inpatient-finance.ts'
 import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewInputSchema, refundPreviewResponseSchema,
   refundConfirmInputSchema, refundRecoverInputSchema, refundResponseSchema } from './refunds.ts'
 import { inpatientRecordSchema, inpatientRecordSubmitInputSchema, inpatientRecordReviewInputSchema, inpatientRecordArchiveInputSchema, inpatientRecordResponseSchema } from './inpatient-record.ts'
@@ -155,6 +158,7 @@ export const hisOperationHandlerOwnerSchema = z.enum([
   'ReferenceDataService',
   'SyntheticCaseVisitService',
   'WorkflowService',
+  'InsuranceService',
   'InpatientService',
 ])
 export const hisOperationSkillSchema = z.enum([
@@ -1019,15 +1023,15 @@ const operationDefinitions = [
   { cliPath: ['inpatient', 'adjust-finance'], id: 'inpatient.financial.adjust', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientFinancialAdjustmentInputSchema.parse(raw); return { input } } },
     input: inpatientFinancialAdjustmentInputSchema, output: inpatientFinancialResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '审阅当前账目指纹后追加关联原费用的冲减或补计，保留首次冻结事实', version: 2 },
   { cliPath: ['inpatient', 'preview-financial-refund'], id: 'inpatient.financial.refund.preview', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/refunds/preview', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientFinancialRefundPreviewInputSchema.parse(raw); return { input } } },
-    input: inpatientFinancialRefundPreviewInputSchema, output: inpatientFinancialRefundPreviewResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['cashier'], summary: '冻结费用冲减依据、当前待退及原交易余额供人工审阅', version: 1 },
+    input: inpatientFinancialRefundPreviewInputSchema, output: inpatientFinancialRefundPreviewResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['cashier'], summary: '冻结费用冲减依据、当前待退及原交易余额供人工审阅; INPATIENT_FUNDS_PENDING: query the original unknown payment/refund before a new preview or confirmation', version: 1 },
   { cliPath: ['inpatient', 'confirm-financial-refund'], id: 'inpatient.financial.refund.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/refunds/confirm', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientFinancialRefundConfirmInputSchema.parse(raw); return { input } } },
-    input: inpatientFinancialRefundConfirmInputSchema, output: refundResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '按已审阅预览办理后续原款退款，未知保留原尝试', version: 2 },
+    input: inpatientFinancialRefundConfirmInputSchema, output: refundResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '按已审阅预览办理后续原款退款，未知保留原尝试; INPATIENT_FUNDS_PENDING: query the original unknown payment/refund before a new preview or confirmation', version: 2 },
   { cliPath: ['inpatient', 'recover-financial-refund'], id: 'inpatient.financial.refund.recover', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/refunds/recover', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientFinancialRefundRecoverInputSchema.parse(raw); return { input } } },
     input: inpatientFinancialRefundRecoverInputSchema, output: refundResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '只查询本次后续退款原尝试，不重复退款或倒退清床归档', version: 2 },
   { cliPath: ['inpatient', 'preview-financial-payment'], id: 'inpatient.financial.payment.preview', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/payments/preview', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientFinancialPaymentPreviewInputSchema.parse(raw); return { input } } },
-    input: inpatientFinancialPaymentPreviewInputSchema, output: inpatientPaymentPreviewResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['cashier'], summary: '冻结补计依据和组合补收差额供人工审阅', version: 1 },
+    input: inpatientFinancialPaymentPreviewInputSchema, output: inpatientPaymentPreviewResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['cashier'], summary: '冻结补计依据和组合补收差额供人工审阅; INPATIENT_FUNDS_PENDING: query the original unknown payment/refund before a new preview or confirmation', version: 1 },
   { cliPath: ['inpatient', 'confirm-financial-payment'], id: 'inpatient.financial.payment.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/payments/confirm', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientPaymentConfirmInputSchema.parse(raw); return { input } } },
-    input: inpatientPaymentConfirmInputSchema, output: inpatientPaymentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '确认结算后费用补收，保留原预览及首次结算', version: 2 },
+    input: inpatientPaymentConfirmInputSchema, output: inpatientPaymentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '确认结算后费用补收，保留原预览及首次结算; INPATIENT_FUNDS_PENDING: query the original unknown payment/refund before a new preview or confirmation', version: 2 },
   { cliPath: ['inpatient', 'recover-financial-payment'], id: 'inpatient.financial.payment.recover', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/payments/recover', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientPaymentRecoverInputSchema.parse(raw); return { input } } },
     input: inpatientPaymentRecoverInputSchema, output: inpatientPaymentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '查询后续原补收结果并追加确定事实，不重新收款', version: 2 },
   {
@@ -1680,7 +1684,7 @@ const operationDefinitions = [
     },
     risk: 'high-risk-write',
     roles: ['outpatient-doctor'],
-    summary: 'Withdraw a prescription before any dispensing starts',
+    summary: 'Withdraw before dispensing; WORKFLOW_CONFLICT with active insurance allocations including zero-benefit accrual; cashier must run insurance.cancel first',
     version: 1,
   },
   {
@@ -2295,6 +2299,22 @@ const operationDefinitions = [
     version: 2,
   },
   {
+    cliPath:['insurance','get'],id:'insurance.get',http:{method:'GET',path:'/api/his/v1/insurance/:kind/:id'},
+    input:insuranceTargetSchema,output:insuranceStateSchema,mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['cashier'],summary:'Read synthetic patient benefits, current balance, annualBalances for original settlement years and immutable settlement/compensation history',version:1,
+  },
+  {
+    cliPath:['insurance','preview'],id:'insurance.preview',http:{method:'POST',path:'/api/his/v1/insurance/:kind/:id/preview',encodeBody:raw=>{const {kind:_kind,id:_id,...input}=insuranceTargetSchema.extend({planCode:insurancePlanCodeSchema}).parse(raw);return {input,expectedVersions:{}}}},
+    input:insuranceTargetSchema.extend({planCode:insurancePlanCodeSchema}),output:insurancePreviewResponseSchema,mode:'preview',requirements:{expectedVersions:false,idempotency:'required'},risk:'write',roles:['cashier'],summary:'Preview fixed synthetic employee/resident benefits bound to charge and patient annual balance versions; INSURANCE_FUNDS_CONFLICT: medication benefits require a completed Encounter before preview/confirm',version:1,
+  },
+  {
+    cliPath:['insurance','confirm'],id:'insurance.confirm',http:{method:'POST',path:'/api/his/v1/insurance/:kind/:id/confirm',encodeBody:raw=>{const {kind:_kind,id:_id,...input}=insuranceTargetSchema.extend({previewId:z.string().min(1),commitToken:z.string().min(16).max(256)}).parse(raw);return {input,expectedVersions:{}}}},
+    input:insuranceTargetSchema.extend({previewId:z.string().min(1),commitToken:z.string().min(16).max(256)}),output:insuranceResponseSchema,mode:'command',requirements:{expectedVersions:false,idempotency:'required'},risk:'high-risk-write',roles:['cashier'],summary:'Confirm reviewed synthetic benefits; stale charges or patient annual balance require a new preview; INSURANCE_PREVIEW_STALE; INSURANCE_FUNDS_CONFLICT: medication benefits require a completed Encounter before preview/confirm',version:1,
+  },
+  {
+    cliPath:['insurance','cancel'],id:'insurance.cancel',http:{method:'POST',path:'/api/his/v1/insurance/:kind/:id/cancel',encodeBody:raw=>{const {kind:_kind,id:_id,...input}=insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()}).parse(raw);return {input,expectedVersions:{}}}},
+    input:insuranceTargetSchema.extend({settlementId:z.string().min(1),expectedBalanceVersion:z.number().int().nonnegative()}),output:insuranceResponseSchema,mode:'command',requirements:{expectedVersions:false,idempotency:'required'},risk:'high-risk-write',roles:['cashier'],summary:'Append compensation using expectedBalanceVersion from annualBalances for the original settlement year; preserve later encounters annual and account balances',version:1,
+  },
+  {
     cliPath: ['billing', 'refunds', 'get'], id: 'billing.refunds.get', mode: 'query', version: 1,
     http: { method: 'GET', path: '/api/his/v1/billing/cases/:caseId/refunds' },
     input: z.object({ caseId: z.string().min(1) }).strict(), output: refundCaseSchema,
@@ -2317,7 +2337,7 @@ const operationDefinitions = [
       return { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }
     } }, input: refundPreviewOperationInputSchema, output: refundPreviewResponseSchema,
     roles: ['cashier'], risk: 'write', requirements: { expectedVersions: true, idempotency: 'required' },
-    summary: 'Freeze a partial refund against the original successful payment and recorded fee correction; unknown collections or refunds on the same charge block new previews and confirms',
+    summary: 'Freeze a partial refund against the original successful payment and recorded fee correction',
   },
   {
     cliPath: ['refund', 'confirm'], id: 'refund.confirm', mode: 'command', version: 1,
@@ -2335,7 +2355,7 @@ const operationDefinitions = [
       return { expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(chargeVersion) }, input }
     } }, input: refundRecoverOperationInputSchema, output: refundResponseSchema,
     roles: ['cashier'], risk: 'high-risk-write', requirements: { expectedVersions: true, idempotency: 'required' },
-    summary: 'Query the original refund attempt without sending another refund; definite decline releases its reservation; a human cashier in the current Epoch may also recover in a completed Scenario, while closed Scenarios and Agent Grants remain restricted',
+    summary: 'Query the original refund attempt without sending another refund; definite decline releases its reservation',
   },
   {
     cliPath: ['payment', 'preview'],
@@ -2566,6 +2586,24 @@ const operationDefinitions = [
     summary: 'Search one supported FHIR R5 resource type with declared parameters',
     version: 1,
   },
+  { cliPath: ['inpatient','financial-insurance','cancel'], id: 'inpatient.financial.insurance.cancel',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/:adjustmentId/insurance/cancel',
+      encodeBody: raw => { const { admissionId: _admission, adjustmentId: _adjustment, ...input } = inpatientFinancialInsuranceCancelInputSchema.parse(raw); return { input } } },
+    input: inpatientFinancialInsuranceCancelInputSchema, output: inpatientFinancialResponseSchema, mode: 'command',
+    requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'],
+    summary: '在当前财务调整下追加原待遇精确补偿，保留首次结算及其他就诊年度影响；响应丢失查原Command回执', version: 1 },
+  { cliPath: ['inpatient','financial-insurance','preview'], id: 'inpatient.financial.insurance.preview',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/:adjustmentId/insurance/preview',
+      encodeBody: raw => { const { admissionId: _admission, adjustmentId: _adjustment, ...input } = inpatientFinancialInsurancePreviewInputSchema.parse(raw); return { input } } },
+    input: inpatientFinancialInsurancePreviewInputSchema, output: insurancePreviewResponseSchema, mode: 'command',
+    requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'write', roles: ['cashier'],
+    summary: '按原年度方案、权威更正费用与实时患者累计预览替代待遇，必须重新审阅', version: 1 },
+  { cliPath: ['inpatient','financial-insurance','confirm'], id: 'inpatient.financial.insurance.confirm',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/financial-adjustments/:adjustmentId/insurance/confirm',
+      encodeBody: raw => { const { admissionId: _admission, adjustmentId: _adjustment, ...input } = inpatientFinancialInsuranceConfirmInputSchema.parse(raw); return { input } } },
+    input: inpatientFinancialInsuranceConfirmInputSchema, output: inpatientFinancialResponseSchema, mode: 'command',
+    requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'],
+    summary: '确认已审阅且原年度余额仍有效的新待遇，追加关联后按患者现金差额办理收退；失效须重新预览，响应丢失查原Command回执', version: 1 },
   { cliPath:['inpatient','record'],id:'inpatient.record.read',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/record'},input:z.object({admissionId:z.string().min(1)}).strict(),output:inpatientRecordSchema,
     mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','ward-nurse','medical-records'],summary:'读取首页核心字段、当前来源指纹、修订审核或不可变归档',version:1 },
   { cliPath:['inpatient','submit-record'],id:'inpatient.record.submit',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/record/submit',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientRecordSubmitInputSchema.parse(raw);return {input}}},input:inpatientRecordSubmitInputSchema,output:inpatientRecordResponseSchema,
@@ -2595,13 +2633,13 @@ const operationDefinitions = [
   { cliPath: ['inpatient','payments'], id: 'inpatient.payment.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/payments' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientPaymentsSchema,
     mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['cashier'], summary: '读取首次结算收退款、原款余额和未知结果', version: 1 },
   { cliPath: ['inpatient','preview-payment'], id: 'inpatient.payment.preview', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/payments/preview', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientPaymentInputSchema.parse(raw); return { input } } },
-    input: inpatientPaymentInputSchema, output: inpatientPaymentPreviewResponseSchema, mode: 'command', requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'write', roles: ['cashier'], summary: '冻结当前明细、组合方式和金额，预览预交金或补缴', version: 1 },
+    input: inpatientPaymentInputSchema, output: inpatientPaymentPreviewResponseSchema, mode: 'preview', requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'write', roles: ['cashier'], summary: '冻结当前明细、组合方式和金额，预览预交金或补缴', version: 1 },
   { cliPath: ['inpatient','confirm-payment'], id: 'inpatient.payment.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/payments/confirm', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientPaymentConfirmInputSchema.parse(raw); return { input } } },
     input: inpatientPaymentConfirmInputSchema, output: inpatientPaymentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '确认已审阅预览，仅成功预交金投影入原账', version: 2 },
   { cliPath: ['inpatient','recover-payment'], id: 'inpatient.payment.recover', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/payments/recover', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientPaymentRecoverInputSchema.parse(raw); return { input } } },
     input: inpatientPaymentRecoverInputSchema, output: inpatientPaymentResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '按原尝试与版本查询未知收款，追加唯一结果', version: 2 },
   { cliPath: ['inpatient','preview-refund'], id: 'inpatient.refund.preview', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/refunds/preview', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientRefundInputSchema.parse(raw); return { input } } },
-    input: inpatientRefundInputSchema, output: inpatientRefundPreviewResponseSchema, mode: 'command', requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'write', roles: ['cashier'], summary: '按本次住院原款与应退差额预览退款', version: 1 },
+    input: inpatientRefundInputSchema, output: inpatientRefundPreviewResponseSchema, mode: 'preview', requirements: { expectedVersions: false, idempotency: 'required' }, risk: 'write', roles: ['cashier'], summary: '按本次住院原款与应退差额预览退款，单笔上限1000万元，超额须分次办理', version: 1 },
   { cliPath: ['inpatient','confirm-refund'], id: 'inpatient.refund.confirm', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/refunds/confirm', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientRefundConfirmInputSchema.parse(raw); return { input } } },
     input: inpatientRefundConfirmInputSchema, output: refundResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'high-risk-write', roles: ['cashier'], summary: '确认已审阅退款，沿原方式分配并保留未知占用', version: 2 },
   { cliPath: ['inpatient','recover-refund'], id: 'inpatient.refund.recover', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/refunds/recover', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientRefundRecoverInputSchema.parse(raw); return { input } } },
@@ -2907,6 +2945,10 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'laboratory-request.retry-generation': 'clinmesh-doctor',
   'patient.create': 'clinmesh-registration',
   'patient.search': 'clinmesh-registration',
+  'insurance.get': 'clinmesh-billing',
+  'insurance.preview': 'clinmesh-billing',
+  'insurance.confirm': 'clinmesh-billing',
+  'insurance.cancel': 'clinmesh-billing',
   'payment.confirm': 'clinmesh-billing',
   'payment.preview': 'clinmesh-billing',
   'payment.recover': 'clinmesh-billing',
@@ -2944,6 +2986,7 @@ function handlerOwnerFor(
   if (operation.http.path.startsWith('/api/his/v1/admin/laboratory-services/')) {
     return 'LaboratoryServicePublisher'
   }
+  if (operation.id.startsWith('insurance.')) return 'InsuranceService'
   if (operation.id.startsWith('registration.synthetic-case.')) return 'SyntheticCaseVisitService'
   return 'WorkflowService'
 }
@@ -2959,11 +3002,11 @@ export const hisOperationCatalog: readonly HisOperationDefinition[] = operationD
     handlerOwner: handlerOwnerFor(operation),
     identities: hisOperationIdentitySchema.options,
     previewToken: operation.id === clinicalDocumentOperationIds.sign
-      || operation.id === 'payment.confirm'
-      || operation.id === 'refund.confirm'
+      || operation.id === 'payment.confirm' || operation.id === 'insurance.confirm' || operation.id === 'refund.confirm'
       || operation.id === 'inpatient.financial.refund.confirm'
       || operation.id === 'inpatient.financial.payment.confirm'
       || operation.id === 'inpatient.payment.confirm' || operation.id === 'inpatient.refund.confirm'
+      || operation.id === 'inpatient.financial.insurance.confirm'
       ? 'required' as const
       : 'none' as const,
     skill,

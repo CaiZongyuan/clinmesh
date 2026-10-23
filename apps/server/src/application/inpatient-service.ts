@@ -9,6 +9,7 @@ import { InpatientInvestigations } from './inpatient-investigations.ts'
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { InpatientBilling } from './inpatient-billing.ts'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.ts'
+import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
 import { InpatientDrg } from './inpatient-drg.ts'
 import { z } from 'zod'
@@ -42,6 +43,7 @@ const readers = ['registrar', 'inpatient-doctor', 'ward-nurse', 'medical-records
 export class InpatientService {
   readonly billing: InpatientBilling
   readonly financialAdjustments: InpatientFinancialAdjustments
+  readonly insuranceAdjustments: InpatientInsuranceAdjustments
   readonly orders: InpatientOrders
   readonly surgery: InpatientSurgery
   readonly records: InpatientRecords
@@ -50,11 +52,12 @@ export class InpatientService {
   readonly investigations: InpatientInvestigations
   readonly transfers: InpatientTransfers
   readonly drg: InpatientDrg
-  #workspaces: WorkspaceRepository
-  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, workflow: WorkflowService, drgRules: DrgRules | null = null) {
+  readonly #workspaces: WorkspaceRepository
+  constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor, readonly referenceData: ReferenceDataService, readonly workflow: WorkflowService, drgRules: DrgRules | null = null) {
     this.#workspaces = new WorkspaceRepository(database)
     this.billing = new InpatientBilling(database, fhir)
     this.financialAdjustments = new InpatientFinancialAdjustments(this)
+    this.insuranceAdjustments = new InpatientInsuranceAdjustments(this)
     this.orders = new InpatientOrders(this)
     this.surgery = new InpatientSurgery(this)
     this.records = new InpatientRecords(this)

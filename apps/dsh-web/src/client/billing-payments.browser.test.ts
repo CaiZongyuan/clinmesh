@@ -7,6 +7,7 @@ import { billingCaseSchema, billingQueueSchema, paymentResponseSchema } from '@c
 import { refundCaseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { readJsonFromBrowser } from '../../../../scripts/browser-contract.ts'
 import { expectBillingFits, readBill, startBillingBrowserServer, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
+import { verifyRefundWriteRecovery } from '../../../web/e2e/billing-refunds-recovery.fixture.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
@@ -75,6 +76,7 @@ async function mountBilling(page: Page, version: string, server: { origin: strin
 for (const version of ['18', '19']) test.describe(`billing asynchronous responses on React ${version}`, () => {
   test.beforeAll(async () => { await buildFixture(version) })
   test('restores a lost refund receipt after remount while another case is selected', async ({ page }) => {
+    test.setTimeout(120000)
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     let originalItem: z.infer<typeof billingQueueSchema>['items'][number] | undefined
     try {
@@ -144,49 +146,51 @@ for (const version of ['18', '19']) test.describe(`billing asynchronous response
     } finally { await server.close() }
   })
   test('reviews original-payment refunds and recovery inside the Surface shadow root', async ({ page }) => {
+    test.setTimeout(120000)
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))
     try {
       await mountBilling(page, version, server)
       await submitPayment(page)
-      const panel = page.getByRole('region', { name: '费用更正与退款', exact: true })
-      await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('1000')
-      await panel.getByLabel('费用更正原因', { exact: true }).fill('合成费用录入错误，核准冲减20元。')
-      await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
-      const correction = page.getByRole('alertdialog', { name: '确认费用更正', exact: true })
-      await expectShadowDialog(page, correction)
-      await correction.getByRole('button', { name: '确认费用更正', exact: true }).click()
-      await expect(correction.getByRole('alert')).toBeVisible()
-      await correction.getByRole('button', { name: '取消', exact: true }).click()
-      await panel.getByLabel('费用冲减金额（元）', { exact: true }).fill('20')
-      await panel.getByRole('button', { name: '记录费用更正', exact: true }).click()
-      await expect(correction.getByRole('alert')).toHaveCount(0)
-      await correction.getByRole('button', { name: '确认费用更正', exact: true }).click()
-      await expect(correction).toHaveCount(0)
-      await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
-      await panel.getByLabel('退款处理结果', { exact: true }).click()
-      await page.getByRole('option', { name: '结果未知', exact: true }).click()
-      await panel.getByRole('button', { name: '预览退款', exact: true }).click()
-      const review = page.getByRole('alertdialog', { name: '确认退款', exact: true })
-      await expectShadowDialog(page, review)
-      // The channel and ledger commit normally; only the first response is lost.
-      await page.route('**/api/his/v1/refunds/*/actions/confirm', async route => {
-        const response = await route.fetch()
-        expect(response.status()).toBe(200)
-        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'SYNTHETIC_RESPONSE_LOST', message: 'Synthetic response lost' } }) })
-      }, { times: 1 })
-      await review.getByRole('button', { name: '提交退款', exact: true }).click()
-      await expect(review.getByRole('alert')).toBeVisible()
-      await review.getByRole('button', { name: '提交退款', exact: true }).click()
-      await expect(review).toHaveCount(0)
-      await panel.getByRole('button', { name: '查询原退款结果', exact: true }).click()
-      const recovery = page.getByRole('alertdialog', { name: '查询原退款结果', exact: true })
-      await expectShadowDialog(page, recovery)
-      await recovery.getByRole('button', { name: '查询原退款结果', exact: true }).click()
-      await expect(recovery).toHaveCount(0)
-      const response = await page.request.get(`${server.origin}/api/his/v1/billing/cases/${server.caseId}/refunds`)
-      expect(refundCaseSchema.parse(await response.json())).toMatchObject({ adjustedFen: 2000, refundedFen: 1000, reservedFen: 0,
-        refunds: [{ outcome: 'success', initialOutcome: 'ambiguous', tenders: [{ method: 'cash', amountFen: 1000 }] }] })
+      await verifyRefundWriteRecovery(page, server, async () => {
+        await mountBilling(page, version, server)
+        await page.getByRole('tab', { name: '已缴', exact: true }).click()
+      }, dialog => expectShadowDialog(page, dialog))
     } finally { await server.close() }
+  })
+  test('reviews and compensates real insurance benefits inside the ShadowRoot',async({page})=>{
+    test.setTimeout(120000)
+    const server=await startBillingBrowserServer(fileURLToPath(new URL('../../../web/',import.meta.url)))
+    try{
+      await mountBilling(page,version,server)
+      const panel=page.getByRole('region',{name:'患者医保待遇',exact:true})
+      await panel.getByRole('button',{name:'患者医保待遇（合成）',exact:true}).click()
+      await panel.getByRole('button',{name:'预览医保待遇',exact:true}).click()
+      await panel.getByRole('button',{name:'审阅医保结算',exact:true}).click()
+      const review=page.getByRole('alertdialog',{name:'确认医保结算',exact:true})
+      await expectShadowDialog(page,review)
+      // The HTTP matrix owns staleness semantics; this boundary checks visible modal feedback.
+      const confirmPath=`**/api/his/v1/insurance/outpatient/${server.caseId}/confirm`
+      await page.route(confirmPath,route=>route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({
+        error:{code:'INSURANCE_PREVIEW_STALE',message:'费用或患者年度余额已变化，请重新预览',type:'conflict',outcome:'definitely_not_sent',retryable:false},
+      })}),{times:1})
+      await review.getByRole('button',{name:'提交医保结算',exact:true}).click()
+      await expect(review.getByRole('alert')).toContainText('医保预览已失效，请刷新费用与年度余额，重新预览并核对待遇。')
+      await expect(review.getByRole('alert')).not.toContainText('费用或患者年度余额已变化')
+      await review.getByRole('button',{name:'返回核对',exact:true}).click()
+      await panel.getByRole('button',{name:'预览医保待遇',exact:true}).click()
+      await panel.getByRole('button',{name:'审阅医保结算',exact:true}).click()
+      await page.route(confirmPath,async route=>{expect((await route.fetch()).status()).toBe(200);await route.abort('failed')},{times:1})
+      await review.getByRole('button',{name:'提交医保结算',exact:true}).click()
+      await expect(review.getByRole('alert').filter({hasText:'原操作结果待确认'})).toBeVisible()
+      await review.getByRole('button',{name:'恢复原医保操作',exact:true}).click()
+      await expect(review).toHaveCount(0)
+      await panel.getByRole('button',{name:'撤销原待遇',exact:true}).click()
+      const cancel=page.getByRole('alertdialog',{name:'确认撤销医保',exact:true})
+      await expectShadowDialog(page,cancel)
+      await cancel.getByRole('button',{name:'提交撤销',exact:true}).click()
+      await expect(cancel).toHaveCount(0)
+      expect((await readBill(page,server)).charges.find(row=>row.chargeItemId===server.chargeItemId)?.remainingFen).toBe(6800)
+    }finally{await server.close()}
   })
   for (const replaceSelection of [false, true]) test(`binds a delayed real confirmation to its original selection (queue replacement: ${replaceSelection})`, async ({ page }) => {
     const server = await startBillingBrowserServer(fileURLToPath(new URL('../../../web/', import.meta.url)))

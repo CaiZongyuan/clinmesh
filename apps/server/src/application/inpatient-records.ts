@@ -174,7 +174,10 @@ export class InpatientRecords {
       const storedSettlement=z.object({preview_json:z.string()}).parse(this.owner.database.driver.prepare('SELECT preview_json FROM inpatient_settlement WHERE workspace_id=? AND epoch=? AND admission_id=?').get(context.workspaceId,context.epoch,input.admissionId))
       const settledPreview=inpatientSettlementPreviewSchema.parse(JSON.parse(storedSettlement.preview_json))
       if(canonicalJsonHash(settledPreview.charges)!==canonicalJsonHash(fees.charges)||canonicalJsonHash(settledPreview.transactions)!==canonicalJsonHash(fees.transactions.filter(item=>item.kind==='deposit')))throw new InpatientError('INPATIENT_RECORD_FINANCIAL_CONFLICT','当前逐项账与原结算账不一致')
-      if (fees.settlement?.chargesFen !== fees.chargesFen || fees.transactions.reduce((sum, item) => sum + item.amountFen, 0) !== fees.chargesFen)
+      const insuranceFen = (settledPreview.insurance?.fundFen ?? 0) + (settledPreview.insurance?.accountFen ?? 0)
+      if (fees.settlement?.chargesFen !== fees.chargesFen
+        || canonicalJsonHash(fees.insurance ?? null) !== canonicalJsonHash(settledPreview.insurance ?? null)
+        || fees.transactions.reduce((sum, item) => sum + item.amountFen, 0) + insuranceFen !== fees.chargesFen)
         throw new InpatientError('INPATIENT_RECORD_FINANCIAL_CONFLICT', '当前费用与结算资金不一致')
       const id = uuidv7(), review = current.reviews.at(-1)!
       // 归档冻结分组与首页快照同事务落盘；规则包未配置时为 null，归档不受 DRG 仿真可用性阻塞。

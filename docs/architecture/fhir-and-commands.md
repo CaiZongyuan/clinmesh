@@ -442,7 +442,9 @@ Command receipt 的 `executing` 插入与业务写处于同一个 `BEGIN IMMEDIA
 
 临床文书签署和门诊支付使用带时效 token 的预览/提交协议。结构化病历预览绑定 Actor context、独立草稿版本和 Encounter 版本；首期复诊兼容预览同时绑定旧文书、诊断、Prescription 和 Encounter；门诊支付预览绑定岗位上下文、ChargeItem 版本、本次金额及组合方式。预览从服务端事实计算文书摘要或金额分配并返回按服务端真实时间计时、五分钟有效的签名 `commitToken`，不修改权威临床、费用或支付状态。
 
-提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；退药、门诊退费、医保和库存调拨不属于当前能力，也不宣称已有预览协议。
+提交验证 token、Actor context、Workspace/Epoch、过期时间和 expected versions，然后重新读取并校验依赖。客户端不能回传或修改预览 effects。发药使用 Prescription expected version 与库存批次条件写直接提交；患者医保使用下述独立待遇预览合同，库存调拨不属于当前能力。
+
+`insurance.get/preview/confirm/cancel` 使用受信路径中的 `kind/id` 绑定门诊或住院目标，只有收费员拥有能力。医保预览冻结原费用和目录指纹、患者年度与账户版本，确认用 `previewId/commitToken` 重读依赖；撤销用原 `settlementId` 和 `expectedBalanceVersion` 追加补偿。这些是领域版本，不伪装为 FHIR resource expected versions。确认、撤销和回执恢复复用共享 Command 的幂等及审计；响应未知时保留原输入和键，先查询 receipt。当前合成待遇不机械投影 Coverage、Claim 或 EOB，详细资金和临床边界见[医保模拟](clinical-workflows.md#86-医保模拟)。
 
 门诊账单 GET（`billing.case.get` v2）仅向收费员返回当前作用域内一次门诊的完整应收与余额，以及一页原支付历史。HTTP 与 CLI 使用 `page`、`pageSize`，默认 1、20，单页最多 100；`paymentsPagination` 返回页码、页大小与历史总条数，`payments` 按创建时间及 payment ID 倒序排列。Surface 的 `billing.case.read` 只绑定当前就诊，可选 `page` 读取并显示每页 20 条的历史，供人工审阅恢复；不接受其他病例 ID。`payment.recover` 是审阅后的窄 Command，要求幂等键、`input.expectedPaymentVersion` 和原应收的 ChargeItem expected version；没有任意金额或 outcome 输入，也不重用预览 token。未解决支付版本为 1，追加确定结果后为 2；终态查询返回既有结果，继续未知不改变版本。HTTP、Operation Catalog、CLI 和 Surface 共用此 owner，业务与恢复边界见[收费与支付](clinical-workflows.md#85-收费支付与退款)。
 住院结算使用独立的逐项账目指纹预览：提交校验原预览指纹、Encounter 版本与预期金额，不使用上述五分钟 `commitToken`。住院结算包含补缴或关联原入金的退款，与医生出院医嘱、护士出区和清床分别执行；状态门禁及原意图恢复合同见[住院出院与结算](clinical-workflows.md#住院出院与结算)。

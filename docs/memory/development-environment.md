@@ -95,3 +95,5 @@
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。
 
 - 文档站构建与全仓 lint 顺序执行：VitePress 会短暂创建并删除 `.vitepress/config.ts.timestamp-*.mjs`，并行 oxlint 可能在扫描后读取到已删除文件而报 `Failed to open file`。先确认构建结束，再原样重跑 lint，不扩大忽略范围掩盖源码错误。
+
+- Windows PowerShell 将含中文的 here-string 通过管道传给 Node 等原生程序时，先把 `$OutputEncoding` 设为无 BOM 的 UTF-8；默认编码可能将中文变成问号，使字符串替换静默失效。写入后检查目标文本与 diff，不以进程成功退出作为修改生效的证据。

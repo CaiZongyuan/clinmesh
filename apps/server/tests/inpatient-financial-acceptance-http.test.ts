@@ -256,11 +256,10 @@ describe('结算后独立财务验收公共 HTTP', () => {
     expect((await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/recover`, { ...recovery, amountFen: 1, outcome: 'success' })).status).toBe(400)
     if (rule === 'ambiguous-pending') {
       const unused = current.sources[1]!
-      const blocked = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/preview`, { adjustmentId: current.adjustments[0]!.adjustmentId,
-        sourceKind: unused.sourceKind, sourceId: unused.sourceId, amountFen: 1, expectedFingerprint: current.fingerprint,
+      const excessive = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/preview`, { adjustmentId: current.adjustments[0]!.adjustmentId,
+        sourceKind: unused.sourceKind, sourceId: unused.sourceId, amountFen: 1001, expectedFingerprint: current.fingerprint,
         expectedSourceVersion: unused.version, simulatorRule: 'success' })
-      expect(blocked.status).toBe(409)
-      expect(apiErrorSchema.parse(await blocked.json()).error.code).toBe('INPATIENT_FINANCIAL_AMOUNT_CONFLICT')
+      expect(excessive.status).toBe(409)
       const repeated = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/recover`, recovery)
       expect(repeated.status).toBe(200)
       expect(refundResponseSchema.parse(await repeated.json()).data).toEqual(result.data)

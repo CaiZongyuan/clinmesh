@@ -149,7 +149,7 @@ Mobile 功能先列出与 Web/Desktop 必须一致的语义，再验证移动端
 
 短性能门禁属于 `pnpm check`。它在隔离的 file-backed SQLite 上运行 Reference Release 导入、独立 Reference SQLite 的疾病/药品/检验全文搜索、本院服务目录 HTTP 查询、普通与重 Command、测试专用 Trace 对照和内置 Scenario install/reset。门禁只 gate statement/query/write、rows written、数据库增长、Trace rows/bytes、错误和索引计划。Trace bytes 是 `action_trace` 全部持久化 TEXT 字段的 UTF-8 字节数，不代表 SQLite page allocation。P50/P95/P99、transaction time 和吞吐始终进入结果，但不作为跨机器 PR hard gate。SQLite 当前不提供可靠 rows-read，因此结果 schema 明确不声明该指标。
 
-数据库增长是主文件、WAL 和 SHM 的运行前后总字节差。CLI 在预算断言前输出完整结果并写入可选的 `--output` 文件；超限仍以非零状态退出，存储错误同时报告实际增长与预算字节数。校准以 Git 中的 LF 源码和 CI 运行环境为准，确认增长来源后按 64 KiB 粒度向上取整，计数与错误预算分别核对。
+Scenario install/reset 的存储采样在工作负载前后分别完成 `wal_checkpoint(TRUNCATE)`，再合计主文件、WAL 与 SHM 的字节数，比较 checkpoint 后的持久分配增长。两次 checkpoint 均在 SQL 计数与延迟采样之外；这一指标不表示操作期间的 WAL 峰值，避免将初始化数据的延迟刷盘计入场景增长。存储预算以 `apps/server/performance-baselines.json` 为准。CLI 在预算断言前输出完整结果并写入可选的 `--output` 文件；超限仍以非零状态退出，存储错误同时报告实际增长与预算字节数。
 
 ```sh
 pnpm perf:ci

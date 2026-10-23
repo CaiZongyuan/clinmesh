@@ -1,3 +1,4 @@
+import { InsurancePanel } from './insurance-panel.tsx'
 import type { BillingQueueItem, SessionContext } from '@clinmesh/contracts/his'
 import { parseAgentToolInput } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
@@ -22,11 +23,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@clinmesh/ui/components/tabs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
 import { BillingCasePanel, paymentMethodLabel } from './billing-case-panel.tsx'
 import { BillingRefundPanel } from './billing-refund-panel.tsx'
-import { useRefundWriteIntent } from './refund-write-intent.ts'
+import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import { getWorkspaceErrorMessage, getWorkspaceErrorTitle } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -101,14 +102,14 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const displaysPaymentResult = (context: ReturnType<typeof paymentMutationContext> | undefined) =>
     context?.chargeItemId !== undefined && context.chargeItemId === selectedCharge?.chargeItemId
       && context.scope === agentViewRevision({ scope }) && context.revision === selectionRevision.current
-  const refreshBilling = async () => {
+  const refreshBilling = useCallback(async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['billing-queue', ...scope] }),
       queryClient.invalidateQueries({ queryKey: ['billing-case', ...scope] }),
       queryClient.invalidateQueries({ queryKey: ['pharmacy-queue', ...scope] }),
     ])
-  }
-  const refundWrite = useRefundWriteIntent(session, async () => {
+  },[queryClient,session.actor.workspaceId,session.actor.epoch])
+  const refundWrite = useInpatientWriteIntent(session, async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['billing-refunds', ...scope] }),
       refreshBilling(),
@@ -193,7 +194,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     },
     onSettled: refreshBilling,
   })
-  const clearPayment = () => {
+  const clearPayment = useCallback(() => {
     historyRevision.current += 1
     selectionRevision.current += 1
     setPaymentConfirmationOpen(false)
@@ -201,7 +202,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     confirm.reset()
     recover.reset()
     setTenderAmounts({})
-  }
+  },[preview.reset,confirm.reset,recover.reset])
+  const insuranceChanged=useCallback(async()=>{clearPayment();await refreshBilling()},[clearPayment,refreshBilling])
   const changeCategory = (value: BillingCategory) => {
     if (paymentPending) return
     setCategory(value)
@@ -224,6 +226,9 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const unknownAttempt = bill.data?.payments.find(payment => payment.chargeItemId === selectedCharge?.chargeItemId && payment.outcome === 'ambiguous')
   const paymentPending = preview.isPending || confirm.isPending || recover.isPending || refundWrite.mutation.isPending
   const paymentWriteBlocked = paymentPending || refundWrite.blocked
+  const pendingRefund = refundWrite.pending?.command.operation === 'billing.charge.adjust'
+    || refundWrite.pending?.command.operation.startsWith('refund.') === true
+  const refundError = refundWrite.storageFailure ?? refundWrite.mutation.error
   paymentInFlight.current = paymentPending
   const changeHistoryPage = (page: number) => {
     if (paymentInFlight.current) return
@@ -328,7 +333,6 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
         simulatorRule,
         tenderAmounts,
         paymentPending,
-        paymentWriteBlocked,
         unknownPaymentId: unknownAttempt?.paymentId,
         status,
       }),
@@ -390,6 +394,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
 
   return (
     <div className="grid min-w-0 grid-cols-1 gap-6 xl:grid-cols-[minmax(19rem,0.8fr)_minmax(28rem,1.2fr)]">
+      {refundWrite.pending === null ? null : <Alert className="xl:col-span-2"><AlertTitle>{locale === 'zh-CN' ? '原操作结果待确认' : 'Original operation awaiting confirmation'}</AlertTitle><AlertDescription>
+        <p>{locale === 'zh-CN' ? '已保留原输入和幂等键；先恢复原操作，再办理新的收退款。' : 'The original input and key are saved. Resolve the original operation before another collection or refund.'}</p>
+        {pendingRefund ? <Button disabled={refundWrite.mutation.isPending} onClick={() => refundWrite.mutation.mutate(undefined)} variant="outline">{locale === 'zh-CN' ? '恢复原费用操作' : 'Recover original billing operation'}</Button> : null}
+      </AlertDescription></Alert>}
+      {refundError === null ? null : <div className="xl:col-span-2"><PaymentError message={getWorkspaceErrorMessage(refundError, messages)} title={messages.operationFailed} /></div>}
       <section aria-labelledby="billing-queue-heading" className="flex min-w-0 flex-col gap-4 border-b pb-6 xl:border-r xl:border-b-0 xl:pr-6">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-base font-semibold" id="billing-queue-heading">{messages.billingQueue}</h2>
@@ -451,12 +460,6 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
 
       <section aria-labelledby="payment-details-heading" className="flex min-w-0 flex-col gap-5">
         <h2 className="text-base font-semibold" id="payment-details-heading">{messages.paymentDetails}</h2>
-        {refundWrite.pending === null ? null : <Alert>
-          <AlertTitle>{locale === 'zh-CN' ? '费用操作待确认' : 'Fee operation awaiting confirmation'}</AlertTitle>
-          <AlertDescription>{locale === 'zh-CN' ? '请先恢复原费用操作，核对结果后继续。' : 'Restore the original fee operation and check its result before continuing.'}</AlertDescription>
-          <Button disabled={paymentPending} variant="outline" onClick={() => refundWrite.mutation.mutate(undefined)}>{locale === 'zh-CN' ? '恢复原费用操作' : 'Restore original fee operation'}</Button>
-        </Alert>}
-        {refundWrite.storageFailure !== null ? <PaymentError message={getWorkspaceErrorMessage(refundWrite.storageFailure, messages)} title={messages.operationFailed} /> : refundWrite.mutation.isError ? <PaymentError message={getWorkspaceErrorMessage(refundWrite.mutation.error, messages)} title={messages.operationFailed} /> : null}
         {confirm.isSuccess && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentOutcome outcome={confirm.data.data.outcome} messages={messages} /> : null}
         {recover.isSuccess && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentOutcome outcome={recover.data.data.outcome} messages={messages} /> : null}
         {recover.isError && displaysPaymentResult(paymentContexts.current.recover) ? <PaymentError message={getWorkspaceErrorMessage(recover.error, messages)} title={messages.operationFailed} /> : null}
@@ -467,9 +470,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
             {bill.isPending ? <Skeleton className="h-24 w-full" /> : bill.isError ? (
               <PaymentError message={getWorkspaceErrorMessage(bill.error, messages)} title={messages.paymentUnavailable} />
             ) : bill.data === undefined ? null : (
-              <BillingCasePanel key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={paymentId => recover.mutateAsync(paymentId)} onRefresh={() => bill.refetch()} recovering={paymentWriteBlocked} />
+              <BillingCasePanel key={caseKey} bill={bill.data} locale={locale} messages={messages} onPageChange={changeHistoryPage} onRecover={paymentId => recover.mutateAsync(paymentId)} onRefresh={() => bill.refetch()} recovering={paymentPending} />
             )}
-            {bill.data === undefined ? null : <BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} write={refundWrite} disabled={paymentPending} />}
+            {bill.data === undefined ? null : <BillingRefundPanel key={`refund:${caseKey}`} bill={bill.data} session={session} locale={locale} disabled={paymentPending} onChanged={refreshBilling} />}
+            <InsurancePanel key={agentViewRevision({session,target:selectedCharge.caseId})} target={{kind:'outpatient',id:selectedCharge.caseId}} session={session} locale={locale} disabled={paymentPending} onChanged={insuranceChanged}/>
             <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-4">
               <div><div className="text-lg font-semibold">{selectedCharge.patient.name}</div><div className="text-sm text-muted-foreground">{selectedChargeDescription}</div></div>
               <div className="text-right"><div className="text-xs text-muted-foreground">{messages.amount}</div><div className="text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</div></div>
@@ -492,7 +496,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                 {(['cash', 'bank-card', 'mobile'] as const).map(method => (
                   <Field key={method}>
                     <FieldLabel htmlFor={`payment-${method}`}>{paymentMethodLabel(method, messages)}</FieldLabel>
-                    <Input disabled={paymentWriteBlocked} id={`payment-${method}`} inputMode="decimal" placeholder="0.00" value={tenderAmounts[method] ?? ''} onChange={event => {
+                    <Input disabled={paymentPending} id={`payment-${method}`} inputMode="decimal" placeholder="0.00" value={tenderAmounts[method] ?? ''} onChange={event => {
                       setTenderAmounts(current => ({ ...current, [method]: event.target.value }))
                       preview.reset()
                       setPaymentConfirmationOpen(false)
@@ -502,7 +506,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                 <Field>
                   <FieldLabel htmlFor="payment-simulator-rule">{messages.paymentSimulatorRule}</FieldLabel>
                   <WorkspaceSelect
-                    disabled={paymentWriteBlocked}
+                    disabled={paymentPending}
                     id="payment-simulator-rule"
                     items={simulatorItems}
                     onValueChange={value => {

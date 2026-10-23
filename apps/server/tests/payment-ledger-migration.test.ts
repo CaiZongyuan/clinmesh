@@ -146,6 +146,8 @@ describe('payment ledger migration', () => {
       '0080_inpatient-record-archive-drg.sql',
       '0081_inpatient-drg-payer-review.sql',
       '0082_practitioner-role-medical-insurance.sql',
+      '0090_insurance-benefits.sql',
+      '0091_inpatient-insurance-adjustments.sql',
     ])
 
     expect(originalAttempts(database)).toEqual(original)
