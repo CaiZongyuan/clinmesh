@@ -3,11 +3,13 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { createInterface } from 'node:readline'
 import { z } from 'zod'
 import { runReferenceDatabaseCli } from './reference-database-cli.ts'
+import { readServerEnvironment } from './config.ts'
+import { runDrgReferenceSync, type DrgReferenceSyncOptions } from './drg-reference-sync.ts'
 
 const maxCliOutputBytes = 2 * 1024 * 1024
 const sha256Schema = z.string().regex(/^[a-f0-9]{64}$/)
@@ -118,6 +120,7 @@ export interface ReferenceSyncOptions {
   onProgress?: (line: string) => void
   repositoryRoot?: string
   runtimeDataDirectory?: string
+  drgReference?: Pick<DrgReferenceSyncOptions, 'lockPath' | 'distributionPath' | 'installDirectory'>
 }
 
 function elapsedSeconds(start: number): string {
@@ -348,6 +351,14 @@ export async function runReferenceSync(options: ReferenceSyncOptions) {
     const databasePath = options.checkOnly
       ? join(staging, 'check-reference.sqlite')
       : resolve(options.databasePath)
+    const drg = await timedPhase({
+      label: 'DRG reference',
+      onProgress: options.onProgress,
+      run: () => runDrgReferenceSync({
+        ...options.drgReference, databasePath: resolve(options.databasePath), repositoryRoot, checkOnly: options.checkOnly,
+        ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }),
+      }),
+    })
     await mkdir(dirname(databasePath), { recursive: true })
     await timedPhase({
       label: 'migrate',
@@ -367,7 +378,7 @@ export async function runReferenceSync(options: ReferenceSyncOptions) {
       run: () => runReferenceDatabaseCli(['verify', '--database', databasePath]),
     })
     report(`reference:sync 完成 (总耗时 ${elapsedSeconds(syncStart)})`)
-    return { checkOnly: options.checkOnly, datasets, release }
+    return { checkOnly: options.checkOnly, datasets, release, drg }
   } finally {
     await rm(staging, { recursive: true })
   }
@@ -380,15 +391,17 @@ function option(name: string): string | undefined {
 }
 
 async function main(): Promise<void> {
+  const environment = readServerEnvironment(process.env)
   const result = await runReferenceSync({
     checkOnly: process.argv.includes('--check'),
-    databasePath: option('--database') ?? join(defaultRepositoryRoot, '.data/clinmesh-reference.sqlite'),
+    databasePath: option('--database') ?? environment.CLINMESH_REFERENCE_DATABASE_PATH ?? join(defaultRepositoryRoot, '.data/clinmesh-reference.sqlite'),
     lockPath: option('--lock') ?? join(defaultRepositoryRoot, 'reference-data.lock.json'),
     onProgress: line => process.stderr.write(`${line}\n`),
   })
   process.stdout.write(`${JSON.stringify(result)}\n`)
 }
 
-if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(import.meta.filename)) {
+if (process.argv[1] !== undefined && /^reference-sync\.(ts|js)$/.test(basename(process.argv[1]))
+  && resolve(process.argv[1]) === resolve(import.meta.filename)) {
   await main()
 }
