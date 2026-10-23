@@ -362,3 +362,69 @@ clinmesh command receipt get --operation-id inpatient.financial.insurance.confir
 三个输入均带 `admissionId/adjustmentId`。补偿另传当前 `settlementId/expectedBalanceVersion/expectedFingerprint`；预览传当前 `expectedFingerprint`；确认只传原预览的 `previewId/commitToken`。输入不接受患者、年度、方案或自行计算的费用。补偿恢复原待遇的精确影响，后来其他就诊的账户与统筹累计继续保留。跨年仍修正原待遇年度。
 
 原年度余额或更正费用变化导致 `INPATIENT_INSURANCE_PREVIEW_STALE` 时，重新读取并审阅新预览，保留原失败结果，不自动替换金额确认。响应丢失先查原 Command receipt，保持原输入和幂等键。`insurance.ready` 后，按 `remainingCollectFen/remainingRefundFen` 使用现有后续收退款命令；医保患者现金差额不受费用更正方向或金额限制，例如冲减费用后，其他就诊占用账户仍可产生补收。未知收退只使当前更正 `unknown`，查原尝试恢复后才可开始下一次更正。
+
+## DRG 预分组、处方推演与医保办核定
+
+1. 未归档住院用 `drg-pregroup` 按首页快照实时预分组；归档病例直读冻结结果，不重算。响应附双轨编码口径与解释路径：病案首页保留临床版 2022 编码，分组器按医保版码域映射，两个口径在结果中分别可追溯。
+2. `drg-simulate` 把草稿医嘱对照正式收费、在途承诺、材料预留与草稿推演金额，附依赖指纹；目录或版本变化使指纹失效，须重新推演。`estimatedFen=null` 表示目录缺价，不以零值填充。推演不产生费用、预留或核定事实。
+3. 住院医生为计划手术预留材料：`encounterVersion` 做预期版本校验，绑定目录 ID、版本与原因；预留不改变临床事实与库存。仅预留态可释放并须附原因。
+4. 归档后医保办岗位用 `drg-payer-review` 按冻结分组与固定版本合成参数模拟核定，金额由服务端确定性产生，不落真实支付；未归档住院拒绝核定。`drg-payer-reviews` 回查历次核定及依据。
+
+```bash
+clinmesh inpatient drg-pregroup --admission-id <admission-id>
+clinmesh inpatient drg-simulate --input @simulation.json
+clinmesh inpatient drg-reservations --admission-id <admission-id>
+clinmesh inpatient drg-reserve-material --input @reservation.json --idempotency-key <key>
+clinmesh inpatient drg-release-reservation --input @release.json --idempotency-key <key>
+clinmesh inpatient drg-payer-review --input @payer-review.json --idempotency-key <key>
+clinmesh inpatient drg-payer-reviews --admission-id <admission-id>
+clinmesh command receipt get --operation-id inpatient.drg.reservation.create --idempotency-key <key>
+```
+
+`simulation.json`（推演草稿；空草稿等价于只对照已记账事实）：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "draft": {
+    "medications": [{ "catalogItemId": "synthetic-medication", "catalogVersion": 1, "doseText": "0.5g", "frequencyCode": "BID", "doseQuantity": 2 }],
+    "services": [{ "serviceId": "hospital-service-diabetes-education", "serviceVersion": 1, "quantity": 1 }]
+  }
+}
+```
+
+`reservation.json`：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "2",
+  "materialId": "synthetic-material",
+  "catalogVersion": 1,
+  "quantity": 1,
+  "reason": "合成计划手术材料预留"
+}
+```
+
+`release.json`：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "2",
+  "reservationId": "synthetic-reservation",
+  "reason": "合成手术取消释放预留"
+}
+```
+
+`payer-review.json`：
+
+```json
+{
+  "admissionId": "synthetic-admission",
+  "encounterVersion": "2",
+  "reason": "合成医保办模拟核定"
+}
+```
+
+`CATALOG_CONFLICT` 表示耗材目录、版本或计价单位不可用，换目录条目前先与临床核对。`INPATIENT_RESERVATION_CONFLICT` 表示库存或版本竞争，重新读取预留与目录后再试；`INPATIENT_RESERVATION_NOT_FOUND` 只在预留不存在或已释放时出现。`INPATIENT_DRG_NOT_ARCHIVED` 表示核定只针对归档冻结分组。结果未知先查同operation原receipt，保留原输入与幂等键，不换key重做。

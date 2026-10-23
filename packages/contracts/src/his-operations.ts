@@ -17,7 +17,13 @@ import {
   inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, inpatientSwapResponseSchema,
   inpatientReferralListSchema, inpatientReferralInputSchema, inpatientReferralResponseSchema,
 } from './inpatient.ts'
+import { inpatientDrgPregroupResultSchema } from './inpatient-drg.ts'
+import { inpatientDrgSimulationSchema, inpatientDrgSimulationInputSchema, inpatientMaterialReservationListSchema,
+  inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from './inpatient-drg-simulation.ts'
+import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema } from './inpatient-drg-payer.ts'
 import { z } from 'zod'
+
+const inpatientDrgSimulationRequestSchema = z.object({ admissionId: z.string().min(1), draft: inpatientDrgSimulationInputSchema.optional() }).strict()
 import {
   capabilityStatementSchema,
   fhirResourceSchema,
@@ -2606,6 +2612,20 @@ const operationDefinitions = [
     mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'编码人员核验固定临床编码与当前来源，审核通过或退回',version:1 },
   { cliPath:['inpatient','archive-record'],id:'inpatient.record.archive',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/record/archive',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientRecordArchiveInputSchema.parse(raw);return {input}}},input:inpatientRecordArchiveInputSchema,output:inpatientRecordResponseSchema,
     mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-records'],summary:'核当前审核、清床结算及完整来源后冻结归档',version:1 },
+  { cliPath:['inpatient','drg-pregroup'],id:'inpatient.drg.pregroup',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/pregroup'},input:z.object({admissionId:z.string().min(1)}).strict(),output:inpatientDrgPregroupResultSchema,
+    mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','ward-nurse','medical-records','medical-insurance'],summary:'未归档按首页快照实时预分组，归档病例直读冻结结果，附双轨编码口径与解释路径',version:1 },
+  { cliPath:['inpatient','drg-simulate'],id:'inpatient.drg.simulate',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/simulation',encodeBody:raw=>{const {admissionId:_id,draft}=inpatientDrgSimulationRequestSchema.parse(raw);return {input:draft}}},input:inpatientDrgSimulationRequestSchema,output:inpatientDrgSimulationSchema,
+    mode:'preview',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','medical-records'],summary:'处方推演对照正式收费、承诺、预留与草稿，附依赖指纹与双口径分组',version:1 },
+  { cliPath:['inpatient','drg-reservations'],id:'inpatient.drg.reservation.read',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/reservations'},input:z.object({admissionId:z.string().min(1)}).strict(),output:inpatientMaterialReservationListSchema,
+    mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['inpatient-doctor','ward-nurse','medical-records'],summary:'读取治疗材料预留及替换释放历史',version:1 },
+  { cliPath:['inpatient','drg-reserve-material'],id:'inpatient.drg.reservation.create',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/reservations',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientMaterialReservationCreateInputSchema.parse(raw);return {input}}},input:inpatientMaterialReservationCreateInputSchema,output:inpatientMaterialReservationListSchema,
+    mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'为计划手术预留材料，绑定目录版本与原因，不改变临床事实',version:1 },
+  { cliPath:['inpatient','drg-release-reservation'],id:'inpatient.drg.reservation.release',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/reservations/:reservationId/release',encodeBody:raw=>{const {admissionId:_id,reservationId:_rid,...input}=inpatientMaterialReservationReleaseInputSchema.parse(raw);return {input}}},input:inpatientMaterialReservationReleaseInputSchema,output:inpatientMaterialReservationListSchema,
+    mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['inpatient-doctor'],summary:'释放预留中的材料，仅预留态可释放',version:1 },
+  { cliPath:['inpatient','drg-payer-review'],id:'inpatient.drg.payer.review',http:{method:'POST',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/payer-review',encodeBody:raw=>{const {admissionId:_id,...input}=inpatientDrgPayerReviewCreateInputSchema.parse(raw);return {input}}},input:inpatientDrgPayerReviewCreateInputSchema,output:inpatientDrgPayerReviewListSchema,
+    mode:'command',requirements:{expectedVersions:true,idempotency:'required'},risk:'write',roles:['medical-insurance'],summary:'医保办按归档冻结分组与固定版本合成参数模拟核定，金额由服务端确定性产生',version:1 },
+  { cliPath:['inpatient','drg-payer-reviews'],id:'inpatient.drg.payer.reviews',http:{method:'GET',path:'/api/his/v1/inpatient/admissions/:admissionId/drg/payer-reviews'},input:z.object({admissionId:z.string().min(1)}).strict(),output:inpatientDrgPayerReviewListSchema,
+    mode:'query',requirements:{expectedVersions:false,idempotency:'none'},risk:'read',roles:['medical-insurance','medical-records'],summary:'回查模拟核定复核记录及依据',version:1 },
   { cliPath: ['inpatient','discharge-events'], id: 'inpatient.discharge.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/discharge' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientDischargeEventsSchema,
     mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '读取出院、实际出区、召回及清床事件', version: 1 },
   { cliPath: ['inpatient','settlement-preview'], id: 'inpatient.discharge.preview', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/discharge/preview' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientSettlementPreviewSchema,

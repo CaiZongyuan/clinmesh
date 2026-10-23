@@ -274,7 +274,7 @@ export function applyMigrations(
       continue
     }
 
-    const rebuildReferences = ['0069_inpatient-admission.sql', '0071_inpatient-investigations-transfer.sql'].includes(migrationFile)
+    const rebuildReferences = ['0069_inpatient-admission.sql', '0071_inpatient-investigations-transfer.sql', '0082_practitioner-role-medical-insurance.sql'].includes(migrationFile)
     if (rebuildReferences) database.driver.pragma('foreign_keys = OFF')
     try {
       database.driver.exec('BEGIN IMMEDIATE')
