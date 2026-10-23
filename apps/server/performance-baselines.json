@@ -70,7 +70,7 @@
     },
     "scenario-install-reset-application": {
       "maximumBusyCount": 0,
-      "maximumDatabaseGrowthBytes": 5373952,
+      "maximumDatabaseGrowthBytes": 5439488,
       "maximumErrorCount": 0,
       "maximumQueriesPerIteration": 137,
       "maximumRetryCount": 0,

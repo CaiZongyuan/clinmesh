@@ -1,6 +1,6 @@
 # 测试与验证排障
 
-- 短性能门禁的数据库增长包含主文件、WAL 和 SHM，新增表或索引会改变页分配，不能只用业务写入行数判断存储回归。调整存储基线前保存完整 workload 结果，核对 statement/query/write、行数、Trace 和错误预算；仅对已解释的增长按现有 64 KiB 粒度向上取整。`performance-cli.ts` 在基线断言通过后才输出 JSON，失败日志没有实际值时，可通过同一 runner 保存结果后调用原断言取证，不能凭报错估算或直接放宽预算。
+- 校准短性能门禁的存储预算时，使用 `git -c core.autocrlf=false archive` 的 LF 副本，并与 CI 的 Node/SQLite 版本对照。迁移校验和归一化不代表执行 SQL 也已归一化；DDL 换行可改变初始 SQLite/WAL 页分配，使同样最终大小的增长值不同。保存完整 workload 结果，核对 statement/query/write、行数、Trace 和错误预算后，再按现有 64 KiB 粒度取整；指标定义与失败输出见[性能合同](../testing.md#性能合同)。
 
 - `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。
 
