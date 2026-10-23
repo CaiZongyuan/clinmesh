@@ -39,7 +39,7 @@ export const inpatientSurgeryExecuteInputSchema = inpatientSurgeryActionInputSch
     /** 预留替换：引用本住院预留中的耗材记录，执行时一次性转为实际使用，不重复计费。 */
     reservationId: id.optional() }).strict()).max(20)
     .refine(items => new Set(items.map(item => item.materialId)).size === items.length, '耗材不得重复')
-    .refine(items => new Set(items.map(item => item.reservationId ?? '')).size === items.length, '耗材预留不得重复引用'),
+    .refine(items => { const ids = items.map(item => item.reservationId).filter(value => value !== undefined); return new Set(ids).size === ids.length }, '耗材预留不得重复引用'),
 })
 const preparation = z.object({ actorId: z.string().min(1), practitionerRoleId: id, recordedAt: z.iso.datetime({ offset: true }), note }).strict()
 export const inpatientSurgeryRequestSchema = z.object({ id, admissionId: id, version, status: z.enum(['requested','ready','completed','cancelled']),

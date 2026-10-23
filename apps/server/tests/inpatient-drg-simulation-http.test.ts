@@ -8,6 +8,7 @@ import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
+import { inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -188,5 +189,13 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     expect((await released.json()).error.code).toBe('INPATIENT_RESERVATION_CONFLICT')
     expect((await s.request(s.cashier, `${s.path}/drg/reservations`, { encounterVersion: '1', materialId: material.id,
       catalogVersion: material.version, quantity: 1, reason: '越岗验证' })).status).toBe(403)
+  })
+
+  it('execute 校验多项无预留耗材合法，重复引用同一预留仍被拒绝', () => {
+    const base = { admissionId: 'admission-1', requestId: 'request-1', expectedRequestVersion: 1, procedureId: 'procedure-1', catalogVersion: 1, note: '合成校验' }
+    const material = (materialId: string) => ({ materialId, catalogVersion: 1, quantity: 1 })
+    expect(inpatientSurgeryExecuteInputSchema.safeParse({ ...base, materials: [material('material-a'), material('material-b')] }).success).toBe(true)
+    expect(inpatientSurgeryExecuteInputSchema.safeParse({ ...base,
+      materials: [material('material-a'), { ...material('material-b'), reservationId: 'reservation-1' }, { ...material('material-c'), reservationId: 'reservation-1' }] }).success).toBe(false)
   })
 })
