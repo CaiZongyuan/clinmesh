@@ -270,7 +270,11 @@ describe('SQLite lifecycle', () => {
         '0075_model-usage-dimensions.sql',
         '0076_model-usage-retention.sql',
         '0077_model-usage-token-breakdown.sql',
+        '0078_inpatient-material-reservation.sql',
         '0078_model-task-invalid-code.sql',
+        '0079_inpatient-record-archive-drg.sql',
+        '0080_inpatient-drg-payer-review.sql',
+        '0081_practitioner-role-medical-insurance.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -415,7 +419,11 @@ describe('SQLite lifecycle', () => {
         '0075_model-usage-dimensions.sql',
         '0076_model-usage-retention.sql',
         '0077_model-usage-token-breakdown.sql',
+        '0078_inpatient-material-reservation.sql',
         '0078_model-task-invalid-code.sql',
+        '0079_inpatient-record-archive-drg.sql',
+        '0080_inpatient-drg-payer-review.sql',
+        '0081_practitioner-role-medical-insurance.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -2068,7 +2076,11 @@ describe('SQLite lifecycle', () => {
       '0075_model-usage-dimensions.sql',
       '0076_model-usage-retention.sql',
       '0077_model-usage-token-breakdown.sql',
+      '0078_inpatient-material-reservation.sql',
       '0078_model-task-invalid-code.sql',
+      '0079_inpatient-record-archive-drg.sql',
+      '0080_inpatient-drg-payer-review.sql',
+      '0081_practitioner-role-medical-insurance.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([
