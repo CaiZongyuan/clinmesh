@@ -17,6 +17,25 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('住院财务人工示例显式确认并绑定高风险操作版本', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id] of [
+    ['adjust-finance', 'inpatient.financial.adjust'],
+    ['confirm-financial-refund', 'inpatient.financial.refund.confirm'],
+    ['recover-financial-refund', 'inpatient.financial.refund.recover'],
+    ['confirm-financial-payment', 'inpatient.financial.payment.confirm'],
+    ['recover-financial-payment', 'inpatient.financial.payment.recover'],
+    ['confirm-payment', 'inpatient.payment.confirm'], ['recover-payment', 'inpatient.payment.recover'],
+    ['confirm-refund', 'inpatient.refund.confirm'], ['recover-refund', 'inpatient.refund.recover'],
+    ['settle', 'inpatient.discharge.settle'],
+  ]) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!
+    expect(line.split(/\s+/)).toContain('--yes')
+    expect(inspectExample(program, line).operation).toMatchObject({ id, risk: 'high-risk-write', version: 2 })
+  }
+})
+
 it('结算后更正示例绑定原费用、当前账目与原资金尝试', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = (await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')).replaceAll('\r\n', '\n')

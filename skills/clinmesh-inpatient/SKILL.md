@@ -7,6 +7,8 @@ description: ClinMesh 住院登记、诊断、医嘱校对执行、发药给药�
 
 先读 [`../clinmesh-shared/SKILL.md`](../clinmesh-shared/SKILL.md)。以受信岗位读取目录和住院事实；住院医生与病区护士只操作自己科室、病区。跨岗位交接必须使用对应 Grant。
 
+下方带 `--yes` 的财务命令为 human mode 示例；Agent mode 省略此标志，按 shared Skill 的受信 Capability Grant 规则执行。
+
 ```bash
 clinmesh inpatient catalog
 clinmesh inpatient list
@@ -197,12 +199,12 @@ clinmesh inpatient depart --input @departure.json --idempotency-key <key>
 clinmesh inpatient settlement-preview --admission-id <admission-id>
 clinmesh inpatient payments --admission-id <admission-id>
 clinmesh inpatient preview-payment --input @inpatient-payment.json --idempotency-key <key>
-clinmesh inpatient confirm-payment --input @inpatient-confirmation.json --idempotency-key <key>
-clinmesh inpatient recover-payment --input @inpatient-payment-recovery.json --idempotency-key <key>
+clinmesh inpatient confirm-payment --input @inpatient-confirmation.json --idempotency-key <key> --yes
+clinmesh inpatient recover-payment --input @inpatient-payment-recovery.json --idempotency-key <key> --yes
 clinmesh inpatient preview-refund --input @inpatient-refund.json --idempotency-key <key>
-clinmesh inpatient confirm-refund --input @inpatient-confirmation.json --idempotency-key <key>
-clinmesh inpatient recover-refund --input @inpatient-refund-recovery.json --idempotency-key <key>
-clinmesh inpatient settle --input @settlement.json --idempotency-key <key>
+clinmesh inpatient confirm-refund --input @inpatient-confirmation.json --idempotency-key <key> --yes
+clinmesh inpatient recover-refund --input @inpatient-refund-recovery.json --idempotency-key <key> --yes
+clinmesh inpatient settle --input @settlement.json --idempotency-key <key> --yes
 clinmesh inpatient clear-bed --input @discharge.json --idempotency-key <key>
 clinmesh inpatient recall --input @discharge.json --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.discharge.settle --idempotency-key <key>
@@ -298,13 +300,13 @@ clinmesh command receipt get --operation-id inpatient.record.archive --idempoten
 
 ```bash
 clinmesh inpatient financial-adjustments --admission-id <admission-id>
-clinmesh inpatient adjust-finance --input @financial-adjustment.json --idempotency-key <key>
+clinmesh inpatient adjust-finance --input @financial-adjustment.json --idempotency-key <key> --yes
 clinmesh inpatient preview-financial-refund --input @financial-refund.json --idempotency-key <key>
-clinmesh inpatient confirm-financial-refund --input @financial-confirm.json --idempotency-key <key>
-clinmesh inpatient recover-financial-refund --input @financial-refund-recovery.json --idempotency-key <key>
+clinmesh inpatient confirm-financial-refund --input @financial-confirm.json --idempotency-key <key> --yes
+clinmesh inpatient recover-financial-refund --input @financial-refund-recovery.json --idempotency-key <key> --yes
 clinmesh inpatient preview-financial-payment --input @financial-payment.json --idempotency-key <key>
-clinmesh inpatient confirm-financial-payment --input @financial-confirm.json --idempotency-key <key>
-clinmesh inpatient recover-financial-payment --input @financial-payment-recovery.json --idempotency-key <key>
+clinmesh inpatient confirm-financial-payment --input @financial-confirm.json --idempotency-key <key> --yes
+clinmesh inpatient recover-financial-payment --input @financial-payment-recovery.json --idempotency-key <key> --yes
 clinmesh command receipt get --operation-id inpatient.financial.refund.confirm --idempotency-key <key>
 clinmesh command receipt get --operation-id inpatient.financial.payment.confirm --idempotency-key <key>
 ```
