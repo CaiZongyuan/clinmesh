@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createPatientResponseSchema } from '@clinmesh/contracts/his'
+import { apiErrorSchema, createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { advanceVirtualTimeResponseSchema, inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDischargeResponseSchema, inpatientPaymentPreviewResponseSchema, inpatientPaymentResponseSchema, inpatientSettlementPreviewSchema, inpatientSettlementResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientFinancialSchema, inpatientFinancialResponseSchema, inpatientFinancialRefundPreviewResponseSchema } from '@clinmesh/contracts/inpatient-finance'
@@ -60,17 +60,17 @@ async function setup() {
 }
 
 describe('首次结算后的财务更正公共 HTTP', () => {
-  it('追加费用补计后只补收差额，未知原收款重启恢复且首次结算不变', async () => {
+  it.each(['ambiguous', 'ambiguous-decline', 'ambiguous-pending'] as const)('补计后%s原收款重启查询，查明前不能继续补收且首次结算不变', async rule => {
     const s = await setup()
     const before = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
     const adjusted = await s.request(s.cashier, `${s.path}/financial-adjustments`, { chargeId: before.charges[0]!.chargeId,
-      direction: 'increase', amountFen: 1500, expectedFingerprint: before.fingerprint, reason: '合成床日费补计更正' })
+      direction: 'increase', amountFen: 3000, expectedFingerprint: before.fingerprint, reason: '合成床日费补计更正' })
     expect(adjusted.status).toBe(200)
     const bill = inpatientFinancialResponseSchema.parse(await adjusted.json()).data
-    expect(bill).toMatchObject({ frozenChargesFen: 5000, currentChargesFen: 6500, remainingCollectFen: 1500, remainingRefundFen: 0 })
+    expect(bill).toMatchObject({ frozenChargesFen: 5000, currentChargesFen: 8000, remainingCollectFen: 3000, remainingRefundFen: 0 })
     const preview = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/preview`, {
       adjustmentId: bill.adjustments[0]!.adjustmentId, amountFen: 1500, expectedFingerprint: bill.fingerprint,
-      tenders: [{ method: 'cash', amountFen: 1000 }, { method: 'bank-card', amountFen: 500 }], simulatorRule: 'ambiguous' })
+      tenders: [{ method: 'cash', amountFen: 1000 }, { method: 'bank-card', amountFen: 500 }], simulatorRule: rule })
     expect(preview.status).toBe(200)
     const reviewed = inpatientPaymentPreviewResponseSchema.parse(await preview.json()).data
     const confirmation = { previewId: reviewed.previewId, commitToken: reviewed.commitToken }, key = randomUUID()
@@ -81,36 +81,63 @@ describe('首次结算后的财务更正公共 HTTP', () => {
     const pending = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
     expect(pending).toMatchObject({ currentFundsFen: 5000, reservedCollectFen: 1500 })
     expect(pending.adjustments[0]!.status).toBe('unknown')
-    expect((await s.request(s.cashier, `${s.path}/financial-adjustments/payments/preview`, {
+    const blocked = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/preview`, {
       adjustmentId: bill.adjustments[0]!.adjustmentId, amountFen: 1, expectedFingerprint: pending.fingerprint,
-      tenders: [{ method: 'cash', amountFen: 1 }], simulatorRule: 'success' })).status).toBe(409)
+      tenders: [{ method: 'cash', amountFen: 1 }], simulatorRule: 'success' })
+    expect(blocked.status).toBe(409)
+    expect(apiErrorSchema.parse(await blocked.json()).error.code).toBe('INPATIENT_FINANCIAL_AMOUNT_CONFLICT')
+    expect(inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())).toEqual(pending)
     await s.restart()
     expect(inpatientPaymentResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments/payments/confirm`, confirmation, key)).json())).toEqual(receipt)
     const recovery = { paymentId: receipt.data.paymentId, expectedPaymentVersion: 1 }, recoveryKey = randomUUID()
     const recovered = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/recover`, recovery, recoveryKey)
     expect(recovered.status).toBe(200)
-    expect(inpatientPaymentResponseSchema.parse(await recovered.json()).data).toMatchObject({ outcome: 'success', version: 2 })
+    const result = inpatientPaymentResponseSchema.parse(await recovered.json())
+    expect(result.data).toMatchObject({ outcome: rule === 'ambiguous' ? 'success' : rule === 'ambiguous-decline' ? 'declined' : 'ambiguous',
+      version: rule === 'ambiguous-pending' ? 1 : 2 })
     const replayed = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/recover`, recovery, recoveryKey)
     expect(replayed.status).toBe(200)
-    inpatientPaymentResponseSchema.parse(await replayed.json())
+    expect(inpatientPaymentResponseSchema.parse(await replayed.json())).toEqual(result)
     const current = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
-    expect(current).toMatchObject({ currentFundsFen: 6500, currentChargesFen: 6500, remainingCollectFen: 0, reservedCollectFen: 0 })
+    if (rule === 'ambiguous-pending') {
+      expect(current).toEqual(pending)
+      const stillBlocked = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/preview`, {
+        adjustmentId: bill.adjustments[0]!.adjustmentId, amountFen: 1, expectedFingerprint: current.fingerprint,
+        tenders: [{ method: 'cash', amountFen: 1 }], simulatorRule: 'success' })
+      expect(stillBlocked.status).toBe(409)
+      apiErrorSchema.parse(await stillBlocked.json())
+      return
+    }
+    const remainingFen = rule === 'ambiguous' ? 1500 : 3000
+    expect(current).toMatchObject({ currentFundsFen: rule === 'ambiguous' ? 6500 : 5000, currentChargesFen: 8000, remainingCollectFen: remainingFen, reservedCollectFen: 0 })
     expect(current.payments).toHaveLength(1)
-    expect(current.adjustments[0]!.status).toBe('completed')
+    expect(current.adjustments[0]!.status).toBe('pending')
+    const remainingPreview = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/preview`, {
+      adjustmentId: bill.adjustments[0]!.adjustmentId, amountFen: remainingFen, expectedFingerprint: current.fingerprint,
+      tenders: [{ method: 'cash', amountFen: remainingFen }], simulatorRule: 'success' })
+    expect(remainingPreview.status).toBe(200)
+    const remaining = inpatientPaymentPreviewResponseSchema.parse(await remainingPreview.json()).data
+    const completed = await s.request(s.cashier, `${s.path}/financial-adjustments/payments/confirm`, { previewId: remaining.previewId, commitToken: remaining.commitToken })
+    expect(completed.status).toBe(200)
+    expect(inpatientPaymentResponseSchema.parse(await completed.json()).data).toMatchObject({ amountFen: remainingFen, outcome: 'success' })
+    const final = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
+    expect(final).toMatchObject({ currentFundsFen: 8000, currentChargesFen: 8000, remainingCollectFen: 0, reservedCollectFen: 0 })
+    expect(final.payments).toHaveLength(2)
+    expect(final.adjustments[0]!.status).toBe('completed')
     const frozen = inpatientSettlementPreviewSchema.parse(await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json())
     expect(frozen.transactions).toEqual(s.settled.transactions)
     expect(frozen.settlement).toEqual(s.settled.settlement)
   })
-  it('后续未知退款只挂起调整，重启查询原尝试后结清差额且不改变首次冻结资金', async () => {
+  it.each(['ambiguous', 'ambiguous-decline'] as const)('冲减后%s原退款重启查询，查明后才可继续退款且首次冻结资金不变', async rule => {
     const s = await setup()
     const before = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
     const adjusted = await s.request(s.cashier, `${s.path}/financial-adjustments`, { chargeId: before.charges[0]!.chargeId,
-      amountFen: 2000, expectedFingerprint: before.fingerprint, reason: '合成后续床日费冲减' })
+      amountFen: 3000, expectedFingerprint: before.fingerprint, reason: '合成后续床日费冲减' })
     expect(adjusted.status).toBe(200)
     const bill = inpatientFinancialResponseSchema.parse(await adjusted.json()).data, source = bill.sources[0]!
     const preview = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/preview`, {
       adjustmentId: bill.adjustments[0]!.adjustmentId, sourceKind: source.sourceKind, sourceId: source.sourceId,
-      amountFen: 2000, expectedFingerprint: bill.fingerprint, expectedSourceVersion: source.version, simulatorRule: 'ambiguous' })
+      amountFen: 2000, expectedFingerprint: bill.fingerprint, expectedSourceVersion: source.version, simulatorRule: rule })
     expect(preview.status).toBe(200)
     const reviewed = inpatientFinancialRefundPreviewResponseSchema.parse(await preview.json()).data
     const confirmation = { previewId: reviewed.previewId, commitToken: reviewed.commitToken }, key = randomUUID()
@@ -119,24 +146,41 @@ describe('首次结算后的财务更正公共 HTTP', () => {
     const receipt = refundResponseSchema.parse(await response.json())
     expect(receipt.data).toMatchObject({ outcome: 'ambiguous', amountFen: 2000 })
     const pending = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
-    expect(pending).toMatchObject({ currentFundsFen: 5000, currentChargesFen: 3000, reservedFen: 2000 })
+    expect(pending).toMatchObject({ currentFundsFen: 5000, currentChargesFen: 2000, reservedFen: 2000 })
     expect(pending.adjustments[0]!.status).toBe('unknown')
-    expect((await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/preview`, {
+    const blocked = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/preview`, {
       adjustmentId: bill.adjustments[0]!.adjustmentId, sourceKind: source.sourceKind, sourceId: source.sourceId,
-      amountFen: 1, expectedFingerprint: pending.fingerprint, expectedSourceVersion: pending.sources[0]!.version, simulatorRule: 'success' })).status).toBe(409)
+      amountFen: 1, expectedFingerprint: pending.fingerprint, expectedSourceVersion: pending.sources[0]!.version, simulatorRule: 'success' })
+    expect(blocked.status).toBe(409)
+    expect(apiErrorSchema.parse(await blocked.json()).error.code).toBe('INPATIENT_FINANCIAL_AMOUNT_CONFLICT')
+    expect(inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())).toEqual(pending)
     await s.restart()
     expect(refundResponseSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/confirm`, confirmation, key)).json())).toEqual(receipt)
     const recovery = { refundId: receipt.data.refundId, expectedRefundVersion: 1 }, recoveryKey = randomUUID()
     const recovered = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/recover`, recovery, recoveryKey)
     expect(recovered.status).toBe(200)
-    expect(refundResponseSchema.parse(await recovered.json()).data).toMatchObject({ outcome: 'success', version: 2 })
+    const result = refundResponseSchema.parse(await recovered.json())
+    expect(result.data).toMatchObject({ outcome: rule === 'ambiguous' ? 'success' : 'declined', version: 2 })
     const replayed = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/recover`, recovery, recoveryKey)
     expect(replayed.status).toBe(200)
-    refundResponseSchema.parse(await replayed.json())
+    expect(refundResponseSchema.parse(await replayed.json())).toEqual(result)
     const current = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
-    expect(current).toMatchObject({ currentFundsFen: 3000, currentChargesFen: 3000, remainingRefundFen: 0, reservedFen: 0 })
+    const remainingFen = rule === 'ambiguous' ? 1000 : 3000
+    expect(current).toMatchObject({ currentFundsFen: rule === 'ambiguous' ? 3000 : 5000, currentChargesFen: 2000, remainingRefundFen: remainingFen, reservedFen: 0 })
     expect(current.refunds).toHaveLength(1)
-    expect(current.adjustments[0]!.status).toBe('completed')
+    expect(current.adjustments[0]!.status).toBe('pending')
+    const remainingPreview = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/preview`, {
+      adjustmentId: bill.adjustments[0]!.adjustmentId, sourceKind: source.sourceKind, sourceId: source.sourceId,
+      amountFen: remainingFen, expectedFingerprint: current.fingerprint, expectedSourceVersion: current.sources[0]!.version, simulatorRule: 'success' })
+    expect(remainingPreview.status).toBe(200)
+    const remaining = inpatientFinancialRefundPreviewResponseSchema.parse(await remainingPreview.json()).data
+    const completed = await s.request(s.cashier, `${s.path}/financial-adjustments/refunds/confirm`, { previewId: remaining.previewId, commitToken: remaining.commitToken })
+    expect(completed.status).toBe(200)
+    expect(refundResponseSchema.parse(await completed.json()).data).toMatchObject({ amountFen: remainingFen, outcome: 'success' })
+    const final = inpatientFinancialSchema.parse(await (await s.request(s.cashier, `${s.path}/financial-adjustments`)).json())
+    expect(final).toMatchObject({ currentFundsFen: 2000, currentChargesFen: 2000, remainingRefundFen: 0, reservedFen: 0 })
+    expect(final.refunds).toHaveLength(2)
+    expect(final.adjustments[0]!.status).toBe('completed')
     const frozen = inpatientSettlementPreviewSchema.parse(await (await s.request(s.cashier, `${s.path}/discharge/preview`)).json())
     expect(frozen.transactions).toEqual(s.settled.transactions)
     expect(frozen.settlement).toEqual(s.settled.settlement)

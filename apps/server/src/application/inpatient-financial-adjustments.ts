@@ -112,7 +112,7 @@ export class InpatientFinancialAdjustments {
     const snapshot = this.#snapshot(context, input.admissionId)
     if (snapshot.fingerprint !== input.expectedFingerprint) throw new InpatientError('INPATIENT_FINANCIAL_PREVIEW_STALE', '账目或资金已变化，请重新审阅财务差异')
     const adjustment = snapshot.adjustments.find(item => item.adjustmentId === input.adjustmentId)
-    if (!adjustment || adjustment.direction !== 'increase' || snapshot.reservedFen > 0
+    if (!adjustment || adjustment.direction !== 'increase' || adjustment.reservedCollectFen > 0 || snapshot.reservedFen > 0
       || input.amountFen > adjustment.remainingFen - adjustment.reservedCollectFen
       || input.amountFen > snapshot.remainingCollectFen - snapshot.reservedCollectFen)
       throw new InpatientError('INPATIENT_FINANCIAL_AMOUNT_CONFLICT', '补收超过本次费用补计依据或当前待收差额')
@@ -160,7 +160,7 @@ export class InpatientFinancialAdjustments {
     const source = this.owner.payments.sources(context, input.admissionId).find(item => item.kind === input.sourceKind && item.id === input.sourceId)
     if (!adjustment || adjustment.direction !== 'decrease' || !source) throw new InpatientError('INPATIENT_FINANCIAL_SOURCE_CONFLICT', '退款须关联本次住院的原费用冲减和原交易')
     const balance = this.ledger.balance(context, source)
-    if (balance.version !== input.expectedSourceVersion || input.amountFen > balance.refundableFen
+    if (adjustment.reservedFen > 0 || balance.version !== input.expectedSourceVersion || input.amountFen > balance.refundableFen
       || input.amountFen > adjustment.remainingFen - adjustment.reservedFen
       || snapshot.reservedCollectFen > 0 || input.amountFen > snapshot.remainingRefundFen - snapshot.reservedFen)
       throw new InpatientError('INPATIENT_FINANCIAL_AMOUNT_CONFLICT', '退款超过当前更正依据、待退金额或原交易可退余额')
