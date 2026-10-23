@@ -52,7 +52,7 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 新整理快照固定句子引用协议，模型只返回事实文字与句子编号，服务端恢复原始来源身份和逐字完整引文后复用既有程序校验与质控来源上下文；旧快照继续按原协议恢复，未变化事实沿用保留索引。编号映射和格式修复均计入完整输入预算，超限保留来源和失败。协议、句界、快照隔离及体积比较见[句子编号决策](../decisions/implemented/architecture/2026-10-19-recording-sentence-references.md)。
 
-病例 Query 的 `consultationRecording` 返回持久控制版本、暂停／待补录／处理中／失败状态、已整理和剩余来源数量、来源及草稿保存事实。常规失败保留来源和失败状态，不自动重跑；只有服务关闭中断在剩余 outbox 尝试预算内恢复。`failures` 返回安全错误码、来源与重试状态，预算和恢复规则见[低延迟记录规格](../spec/2026-10-15-low-latency-document-recording.md)。任务、来源和应用状态在 SQLite 持久化，重启复用模型绑定，旧 Epoch 结果不得写入当前病例。暂停只停止整理，回答继续保存；恢复与失败重试按序补录未完成来源，既有病例首次补录须医生明确点击。兼容 verification 计数固定为零、issues 为空，不代表语义通过；旧核对任务只退役，不驱动重试。控制 Command 推进任务代次，迟到结果不得越过暂停或新代次，完成回答不重置；顺序与模型绑定见[记录恢复决策](../decisions/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
+病例 Query 的 `consultationRecording` 返回持久控制版本、暂停／待补录／处理中／失败状态、已整理和剩余来源数量、来源及草稿保存事实。常规失败保留来源和失败状态，不自动重跑；服务关闭后仅安全接续可确认没有未决派发的任务或复用已持久成功步骤，在途结果未知须由医生明确重试。`failures` 返回安全错误码、来源与重试状态，预算和恢复规则见[低延迟记录规格](../spec/2026-10-15-low-latency-document-recording.md)。任务、来源和应用状态在 SQLite 持久化，重启复用模型绑定，旧 Epoch 结果不得写入当前病例。暂停只停止整理，回答继续保存；恢复与失败重试按序补录未完成来源，既有病例首次补录须医生明确点击。兼容 verification 计数固定为零、issues 为空，不代表语义通过；旧核对任务只退役，不驱动重试。控制 Command 推进任务代次，迟到结果不得越过暂停或新代次，完成回答不重置；顺序与模型绑定见[记录恢复决策](../decisions/implemented/architecture/2026-10-08-consultation-recording-recovery.md)。
 
 自动记录没有医生确认状态，签署不要求逐条核对或问诊遗漏勾选。预览仍固定完整正文、草稿版本、负责身份、Encounter 版本与 Consultation/来源快照；准备推进提取代次，迟到结果失效，已签文书不可变。取消恢复未完成任务并保留暂停和失败；冻结与恢复见[签署准备决策](../decisions/implemented/architecture/2026-10-10-consultation-signing-preparation.md)。正式签署与 Agent 高风险提案批准沿用原授权。
 
@@ -200,6 +200,8 @@ Admission request
 InpatientService.surgery 拥有申请、准备、取消及实际实施事实。申请生成 ServiceRequest，保存计划术式及虚拟时间；requested/ready 可以取消，completed 保留实际事实，不以计划到时自动执行。护士记录术前检查核对，医生确认知情同意书已签署，两项分别保存责任人、时间、说明与审计；均完成后为 ready，执行前在同一 Command 事务重新检查岗位、当前住院责任、在院状态与申请版本。这是对已签署同意的确认，不是电子签名系统。
 
 Scenario 拥有固定八条临床分类摘录和合成本院手术、耗材价目，启动只补缺失项。临床编码保留完整代码、类别、3.0来源版本、项目摘录Release、来源URL/哈希/单元格；来源与限制见[编码依据](../research/2026-10-20-inpatient-record-coding-and-recall.md#手术操作固定子集的来源)。分类编码、院内手术ID与ChargeDefinition分开，价格标为合成演示价；耗材只记录实际使用与收费，不包含库存、采购或批号供应链。
+
+耗材目录包含原两项合成材料与固定心血管参考表的231条记录。归一化来源快照保留原字段、企业、原编码/注册证、规格及单位缺项、价格类型、地区、起止日、适用性和7组附件来源及哈希；原工作簿不进入仓库。中选价按元规范为整数分，独立的基准品拟供应价不覆盖中选价。52条明确单位的记录按中选价作为合成本院演示收费，另179条保存 `reference.unit=null`、`unavailableReason=unit-unconfirmed`，保留参考价但没有收费定义，实际实施拒绝选择；规格不推测。来源含历史采购价及地区限制，不代表真实医院现行价格，也不自动扩展起搏术式。目录 query operation v2 返回完整来源，Web只为选中的可收费耗材展开用量；每次最多20类。当前及新Epoch沿用幂等补缺安装，既有项和实施、receipt不被覆盖，取舍见[Agent Note](../decisions/implemented/architecture/2026-10-22-cardiovascular-material-catalog.md)。
 
 实际实施可选择与计划不同的术式，server 按实际目录及版本冻结术式、实施岗位、虚拟时间、说明、耗材数量和安全整数分价格。同一事务保存唯一 Procedure、耗材、手术与耗材逐项费用、申请完成和审计；投影或费用失败则全部回滚。账目归属实施时当前科室，申请原作者保留。首页只从 executedForAdmission 读取实际事实；出院与转科 Command 在自身事务调用 assertNoPending，未实施且未取消申请阻断出院、交接及接收。该内部门禁由调用方先校验当前业务权限；目标病区接收前尚未拥有原科普通详情权限。
 

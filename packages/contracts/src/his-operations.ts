@@ -2635,7 +2635,7 @@ const operationDefinitions = [
   { cliPath: ['inpatient','settle'], id: 'inpatient.discharge.settle', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/discharge/settle', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSettleInputSchema.parse(raw); return { input } } },
     input: inpatientSettleInputSchema, output: inpatientSettlementResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['cashier'], summary: '事务核对原预览逐项指纹与金额，多退少补并封账', version: 1 },
   { cliPath: ['inpatient','surgery-catalog'], id: 'inpatient.surgery.catalog', http: { method: 'GET', path: '/api/his/v1/inpatient/surgery-catalog' }, input: emptyInputSchema, output: inpatientSurgeryCatalogSchema,
-    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse'], summary: '读取固定有界手术分类摘录及合成本院收费目录', version: 1 },
+    mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse'], summary: '读取固定手术分类与完整耗材来源；unit-unconfirmed项保留参考价格但不可计费', version: 2 },
   { cliPath: ['inpatient','surgeries'], id: 'inpatient.surgery.read', http: { method: 'GET', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries' }, input: z.object({ admissionId: z.string().min(1) }).strict(), output: inpatientSurgerySchema,
     mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse','medical-records'], summary: '分别读取计划、术前确认与本次实际实施事实', version: 1 },
   { cliPath: ['inpatient','request-surgery'], id: 'inpatient.surgery.request', http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/surgeries/request', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientSurgeryRequestInputSchema.parse(raw); return { input } } },
@@ -3036,6 +3036,11 @@ export const excludedHisRoutes = [
     method: 'POST',
     path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/generate',
     reason: '医生页面辅助建议生成，本期不提供独立 CLI 或 Agent tool 授权，临床采纳与正式提交沿用既有操作。',
+  },
+  {
+    method: 'POST',
+    path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/considerations/disposition',
+    reason: '医生页面的待核实思路已核实与忽略处置，只接受医生 Session 且不改变临床事实；不提供独立 CLI 或 Agent tool 授权。',
   },
   {
     method: 'POST',

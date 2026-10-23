@@ -117,6 +117,8 @@ clinmesh command receipt get --operation-id inpatient.surgery.execute --idempote
 
 住院医生申请传本次 `admissionId/encounterVersion`、目录 `procedureId/catalogVersion`、不早于当前虚拟时间的 `plannedFor` 和 `reason`。计划只创建 ServiceRequest，不产生已实施事实或费用，场景推进也不自动执行。目录是临床版 ICD-9-CM-3 工作表3.0的固定八条来源摘录，保留前导零、点和扩展后缀、类别、项目摘录Release与来源定位；不是全量、最新版或医保版目录。院内收费ID与临床分类码分开，价格明确为合成演示价，不得将分类编码当成收费项目ID提交。
 
+`surgery-catalog`（operation v2）的 `materials` 保留原两项合成材料及231条心血管参考记录。新增项的 `reference` 包含来源、原字段、地区与期限、单位/规格缺项；`reference.priceFen` 为表内中选价，`baseSupplyPriceFen` 为独立的基准品拟供应价，不替代中选价。只有带 `chargeDefinition` 的条目可用于实际实施：52条明确单位的记录按表内中选价制定合成本院演示价；`unavailableReason=unit-unconfirmed` 的179条没有收费定义，单位为null，保留参考价格但不能使用，不推测单位。来源包含历史采购参考及地区限制，不代表当前实际医院价格。
+
 护士以 `check-surgery-preop` 记录术前检查核对，医生以 `confirm-surgery-consent` 记录对已签署知情同意书的确认；这是可审计的确认事实，不提供真实电子签名。两个动作与取消均传 `requestId/expectedRequestVersion/note`，两项准备均完成才能执行。准备和执行按当前住院科室及病区责任授权，原申请作者身份不会阻止合法接管。
 
 执行传 `admissionId/requestId/expectedRequestVersion`、实际 `procedureId/catalogVersion`、`note` 和 `materials`；耗材每项为 `materialId/catalogVersion/quantity`，未使用时显式空数组。实际术式可以不同于申请，server 按实际目录冻结手术及耗材价格，原子保存唯一 Procedure、用料、逐项账项与审计。不得传任意收费金额，不推断未记录耗材或手术；已实施不能取消删除，账项更正走收费员原费用关联冲正。未实施未取消申请阻断出院。

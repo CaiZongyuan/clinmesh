@@ -140,6 +140,8 @@ describe('payment ledger migration', () => {
       '0076_model-usage-retention.sql',
       '0077_inpatient-financial-adjustments.sql',
       '0077_model-usage-token-breakdown.sql',
+      '0078_model-task-invalid-code.sql',
+      '0079_doctor-consideration-disposition.sql',
       '0090_insurance-benefits.sql',
       '0091_inpatient-insurance-adjustments.sql',
     ])

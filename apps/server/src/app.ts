@@ -129,7 +129,7 @@ import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
 import { RegistrationNumberError } from './infrastructure/sqlite/registration-numbering.ts'
 import type { DoctorRecommendationsService } from './application/doctor-recommendations-service.ts'
-import { doctorRecommendationKindSchema, generateDoctorRecommendationsRequestSchema, confirmDoctorPreparationRequestSchema } from '@clinmesh/contracts/doctor-recommendations'
+import { doctorRecommendationKindSchema, generateDoctorRecommendationsRequestSchema, confirmDoctorPreparationRequestSchema, doctorConsiderationDispositionKindSchema, setDoctorConsiderationDispositionRequestSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { createCapabilityStatement } from './fhir/capabilities.ts'
 import { isSupportedResourceType } from './fhir/capabilities.ts'
 import {
@@ -1974,6 +1974,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           return context.json(await options.doctorRecommendations!.generate(
             await actor(context), context.req.param('caseId'), doctorRecommendationKindSchema.parse(context.req.param('kind')),
             generateDoctorRecommendationsRequestSchema.parse(await context.req.json()), requestIdempotencyKey(context),
+          ))
+        } catch (error) { return apiErrorResponse(context, error) }
+      })
+      app.post('/api/his/v1/doctor/cases/:caseId/recommendations/:kind/considerations/disposition', async (context) => {
+        try {
+          identity.assertTrustedMutation(context.req.raw.headers)
+          return context.json(await options.doctorRecommendations!.setConsiderationDisposition(
+            await actor(context), context.req.param('caseId'), doctorConsiderationDispositionKindSchema.parse(context.req.param('kind')),
+            setDoctorConsiderationDispositionRequestSchema.parse(await context.req.json()),
           ))
         } catch (error) { return apiErrorResponse(context, error) }
       })

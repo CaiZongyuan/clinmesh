@@ -1,4 +1,5 @@
 import { inpatientSurgeryCatalogSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { cardiovascularMaterials } from './cardiovascular-materials.ts'
 
 /** 固定八条来源摘录；院内收费ID与合成演示价独立于临床分类编码。 */
 export const syntheticInpatientSurgeryCatalog = inpatientSurgeryCatalogSchema.parse({
@@ -19,5 +20,6 @@ export const syntheticInpatientSurgeryCatalog = inpatientSurgeryCatalogSchema.pa
   materials: [
     { id: 'hospital-material-suture', version: 1, display: '合成演示缝合材料', chargeDefinition: { id: 'hospital-charge-material-suture', priceFen: 2000, unit: '包', synthetic: true, trigger: 'execution' } },
     { id: 'hospital-material-catheter', version: 1, display: '合成演示导管', chargeDefinition: { id: 'hospital-charge-material-catheter', priceFen: 5000, unit: '根', synthetic: true, trigger: 'execution' } },
+    ...cardiovascularMaterials,
   ],
 })

@@ -563,6 +563,10 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   expect(getHisOperation('inpatient.order.issue').version).toBe(2)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
+  expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)
+  expect(getHisOperation('inpatient.surgery.catalog').summary).toContain('unit-unconfirmed')
+  expect(skill).toContain('unavailableReason=unit-unconfirmed')
+  expect(skill).toContain('baseSupplyPriceFen')
 })
 
 it('keeps inpatient investigation and transfer examples bound to narrow versioned commands', async () => {

@@ -88,6 +88,8 @@
 
 ## 模型、来源与后台任务
 
+- 模型成功步骤缓存启用后，确定性临床约束（如检验值、参考区间与高低解释的一致性）须进入 Provider 的 `validate`，不能只在缓存返回后拒绝结果，否则结构合法但临床矛盾的正文会被持久标为成功并反复复用。保留后置门禁及原安全错误码，通过异常 `cause` 精确还原自身领域错误；替身也须执行 `validate`。回归核对无效结果未进入成功检查点、未生成报告和原实际请求次数，参见[检验生成回归](../../apps/server/tests/synthetic-case-http.test.ts)。
+
 - 模型任务失效后丢弃迟到结果，不等于取消实际 Provider 请求。把失效信号贯通模型绑定、生成与格式修复，并在任务结束后释放状态订阅；回归须在放行受控 Provider 前断言取消，再检查未完成来源与恢复处理。自动记录机制见[常规模型等待决策](../decisions/implemented/architecture/2026-10-18-recording-normal-model-budget.md)。
 
 - 模型语义核对的否定结论是合法结果，结构化输出 `validate` 只校验完整性和形状；在请求完成后处理否定结论。把否定结论当成可修复格式错误，会诱导模型对同一候选改成通过。病史总结采用此边界，见[多轮溯源决策](../decisions/implemented/architecture/2026-10-12-consultation-agent-summary-sources.md)。

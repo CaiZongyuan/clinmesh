@@ -146,18 +146,23 @@ it.each(['direct', 'bridge'] as const)('requires a trustworthy boundary before f
   expect(dispatched).toBe(0)
   expect((await control(fixture)).lastRejection).toMatchObject({ code: 'MODEL_METERING_UNAVAILABLE', scope: 'workspace', dimension: 'tokens' })
   expect((await requests()).total).toBe(0)
+  const { jobId } = patientPersonaJobSchema.pick({ jobId: true }).parse(fixture.runtime.database.driver.prepare(
+    "SELECT job_id AS jobId FROM patient_persona_job WHERE workspace_id = 'workspace-demo' AND status = 'queued'",
+  ).get())
+  const readJob = async () => {
+    const response = await fixture.runtime.app.request(`/api/sim/v1/patient-persona-jobs/${jobId}`, { headers: { cookie } })
+    expect(response.status).toBe(200)
+    return patientPersonaJobSchema.parse(await response.json())
+  }
   await control(fixture, { tokens: null, cny: 1 })
-  const waiting = await fixture.runtime.patientPersona.processNext()
-  expect(waiting).toMatchObject({ status: 'queued' })
+  await expect.poll(async () => ({ job: await readJob(), lastRejection: (await control(fixture)).lastRejection })).toMatchObject({
+    job: { jobId, status: 'queued' },
+    lastRejection: { code: 'MODEL_METERING_UNAVAILABLE', scope: 'workspace', dimension: 'cny' },
+  })
   expect(dispatched).toBe(0)
-  expect((await control(fixture)).lastRejection).toMatchObject({ code: 'MODEL_METERING_UNAVAILABLE', scope: 'workspace', dimension: 'cny' })
   expect((await requests()).total).toBe(0)
   await control(fixture, { tokens: null, cny: null })
-  await expect.poll(async () => {
-    const response = await fixture.runtime.app.request(`/api/sim/v1/patient-persona-jobs/${waiting!.jobId}`, { headers: { cookie } })
-    expect(response.status).toBe(200)
-    return response.json()
-  }).toMatchObject({ jobId: waiting!.jobId, status: 'succeeded' })
+  await expect.poll(readJob).toMatchObject({ jobId, status: 'succeeded' })
   expect(dispatched).toBe(1)
   expect((await requests()).items[0]).toMatchObject({ reservationBoundary: {
     adapter: transport === 'direct' ? 'openai-chat' : 'dsh-bridge', inputTokens: null, outputTokens: null,

@@ -522,10 +522,17 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
         '0071_inpatient-investigations-transfer.sql', '0071_model-usage.sql', '0071_payment-installments.sql',
         '0072_inpatient-surgery.sql', '0072_model-usage-control.sql', '0072_payment-history-pagination.sql',
         '0073_inpatient-discharge.sql', '0073_model-task-recovery.sql', '0074_host-model-waiting.sql', '0074_inpatient-record.sql',
-        '0075_model-usage-dimensions.sql', '0075_payment-refunds.sql', '0075_refund-tenders.sql',
-        '0076_inpatient-payments.sql', '0076_model-usage-retention.sql',
-        '0077_inpatient-financial-adjustments.sql', '0077_model-usage-token-breakdown.sql',
-        '0090_insurance-benefits.sql', '0091_inpatient-insurance-adjustments.sql',
+        '0075_model-usage-dimensions.sql',
+        '0075_payment-refunds.sql',
+        '0075_refund-tenders.sql',
+        '0076_inpatient-payments.sql',
+        '0076_model-usage-retention.sql',
+        '0077_inpatient-financial-adjustments.sql',
+        '0077_model-usage-token-breakdown.sql',
+        '0078_model-task-invalid-code.sql',
+        '0079_doctor-consideration-disposition.sql',
+        '0090_insurance-benefits.sql',
+        '0091_inpatient-insurance-adjustments.sql',
       ],schemaVersion:expectedSchemaVersion()})
       expect(legacy.driver.prepare('SELECT prescription_id,inpatient_dispense_id,quantity FROM inventory_movement WHERE movement_id=?').get('legacy-movement')).toEqual({prescription_id:outpatient.id,inpatient_dispense_id:null,quantity:3})
       expect(legacy.driver.prepare('SELECT amount_fen FROM inpatient_charge WHERE admission_id=?').get(s.admission.id)).toEqual({amount_fen:5000})

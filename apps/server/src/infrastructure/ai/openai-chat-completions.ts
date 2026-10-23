@@ -50,7 +50,7 @@ export class ChatCompletionsError extends Error {
 }
 
 export class StructuredOutputValidationError extends Error {
-  constructor(readonly code: 'quality_source' | 'quality_coverage' | 'quality_scope', readonly path: string) {
+  constructor(readonly code: 'quality_source' | 'quality_coverage' | 'quality_scope' | 'investigation_output', readonly path: string) {
     super('The structured output failed a domain validation check')
     this.name = 'StructuredOutputValidationError'
   }
