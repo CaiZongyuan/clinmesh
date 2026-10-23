@@ -48,6 +48,9 @@ const outpatientRefundResponse = { auditId: 'synthetic-audit', requestId: 'synth
   correlationId: 'synthetic-correlation', createdAt: '2026-10-22T09:00:00+08:00', resolvedAt: '2026-10-22T09:01:00+08:00', version: 2,
 } }
 const outpatientCommands = [
+  { command: { operation: 'refund.preview', caseId: 'synthetic-case', input: { paymentId: 'synthetic-payment', chargeItemId: 'synthetic-charge', chargeVersion: 3, amountFen: 1000, expectedSourceVersion: 1, simulatorRule: 'ambiguous' } },
+    path: '/api/his/v1/refunds/actions/preview', input: { paymentId: 'synthetic-payment', amountFen: 1000, expectedSourceVersion: 1, simulatorRule: 'ambiguous' },
+    response: { ...outpatientRefundResponse, data: { previewId: 'synthetic-preview', commitToken: 'synthetic-frozen-token', sourceId: 'synthetic-payment', chargeItemId: 'synthetic-charge', amountFen: 1000, refundableFen: 2000, expectedSourceVersion: 1, expectedOutcome: 'ambiguous', expiresAt: '2026-10-22T09:05:00+08:00' } } },
   { command: { operation: 'billing.charge.adjust', input: { caseId: 'synthetic-case', chargeItemId: 'synthetic-charge', chargeVersion: 3, amountFen: 2000, reason: '合成费用更正原因' } },
     path: '/api/his/v1/billing/cases/synthetic-case/adjustments', input: { chargeItemId: 'synthetic-charge', amountFen: 2000, reason: '合成费用更正原因' },
     response: { ...outpatientRefundResponse, data: { adjustmentId: 'synthetic-adjustment', chargeItemId: 'synthetic-charge', adjustedFen: 2000, chargeVersion: 4 } } },

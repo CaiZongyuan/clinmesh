@@ -32,7 +32,7 @@ test('keeps triage prefill saved when automatic recording only updates another f
     await page.getByRole('tab', { name: '待诊', exact: true }).click()
     await page.locator(`[data-agent-selection="${started.outpatientCaseId}"]`).click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
-    await expect(page.getByRole('tab', { name: '在诊', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     await page.getByRole('tab', { name: '问诊记录', exact: true }).click()
     await page.getByRole('textbox', { name: '向患者提问', exact: true }).fill('什么时候头晕更明显？')
     await page.getByRole('button', { name: '向患者提问', exact: true }).click()
@@ -90,6 +90,7 @@ test('edits document quality issues directly and signs without individual review
     await page.getByRole('tab', { name: '待诊', exact: true }).click()
     await page.getByText('张琴', { exact: true }).first().click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     const read = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
       `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json())
     const errors: string[] = []

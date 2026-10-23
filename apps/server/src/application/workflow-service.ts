@@ -9422,8 +9422,9 @@ export class WorkflowService {
     outcome: 'ambiguous' | 'declined' | 'success',
     effects: CommandEffect[],
   ): string {
-    const paidFen = this.#payments.balance(context, charge.charge_item_id).paidFen
-    const fullyPaid = outcome === 'success' && paidFen + this.insurance.coverage(context, `ChargeItem/${charge.charge_item_id}`) === charge.current_amount_fen
+    const balance = this.#payments.balance(context, charge.charge_item_id)
+    const fullyPaid = outcome === 'success' && balance.unresolved === 0
+      && balance.paidFen + this.insurance.coverage(context, `ChargeItem/${charge.charge_item_id}`) === charge.current_amount_fen
     const chargeItem = transaction.fhir.read(context, 'ChargeItem', charge.charge_item_id)
     const updated = transaction.fhir.update(context, { ...chargeItem, status: fullyPaid ? 'billed' : 'billable' }, chargeItem.meta?.versionId ?? '1')
     effects.push({ kind: 'updated', reference: `ChargeItem/${charge.charge_item_id}`, versionId: updated.meta?.versionId ?? String(charge.charge_version + 1) })

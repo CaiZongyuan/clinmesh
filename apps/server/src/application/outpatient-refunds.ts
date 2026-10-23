@@ -7,7 +7,7 @@ import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCase
 import type { ActorContext, CommandExecutor } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
-import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
+import { WorkspaceContextError, WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import { PaymentLedger } from './payment-ledger.ts'
 import { readOutpatientInsuranceAllocations } from './outpatient-insurance.ts'
 import { RefundLedger } from './refund-ledger.ts'
@@ -21,6 +21,15 @@ export class OutpatientRefunds {
   }
   #authorize(context: ActorContext) {
     if (context.roleCode !== 'cashier') throw new WorkflowError('ROLE_NOT_ALLOWED', '仅收费员可办理费用更正和退款')
+  }
+  #authorizeRecovery(context: ActorContext) {
+    this.#authorize(context)
+    const run = z.object({ status: z.enum(['active', 'completed', 'closed']) }).parse(this.database.driver.prepare(
+      'SELECT status FROM scenario_run WHERE workspace_id=? AND epoch=? AND scenario_run_id=?')
+      .get(context.workspaceId, context.epoch, context.scenarioRunId))
+    if (run.status === 'closed' || (run.status === 'completed' && context.agentGrantId !== undefined)) {
+      throw new WorkspaceContextError('The Scenario Run does not permit recovery of the original refund')
+    }
   }
   #charge(context: ActorContext, chargeItemId: string, caseId?: string) {
     const row = z.object({ case_id: z.string(), total_fen: z.number().int().nonnegative(), version: z.number().int().positive(), category: z.string(),
@@ -109,6 +118,9 @@ export class OutpatientRefunds {
   #validate(context: ActorContext, paymentId: string, amountFen: number, version: number, expectedVersions: Record<string, string>) {
     const value = this.#source(context, paymentId)
     this.#expectedCharge(expectedVersions, value.attempt.chargeItemId)
+    if (new PaymentLedger(this.database).balance(context, value.attempt.chargeItemId).unresolved > 0) {
+      throw new WorkflowError('WORKFLOW_CONFLICT', '请先查明该费用的原收款或退款结果')
+    }
     const balance = this.ledger.balance(context, value.source)
     if (balance.version !== version || amountFen > balance.refundableFen || amountFen > this.#allowance(context, value.attempt.chargeItemId)) {
       throw new WorkflowError('WORKFLOW_CONFLICT', '原交易余额或费用更正依据已变化，请重新预览')
@@ -149,8 +161,8 @@ export class OutpatientRefunds {
   }
   recover(context: ActorContext, refundId: string, raw: unknown, expectedVersions: Record<string, string>, idempotencyKey: string) {
     const input = refundRecoverInputSchema.parse(raw)
-    return this.commands.execute({ context, input: { refundId, ...input }, expectedVersions, idempotencyKey, operation: 'refund.recover', dataSchema: refundResponseSchema.shape.data,
-      authorize: () => this.#authorize(context) }, () => {
+    return this.commands.execute({ context, contextRequirement: 'current', input: { refundId, ...input }, expectedVersions, idempotencyKey, operation: 'refund.recover', dataSchema: refundResponseSchema.shape.data,
+      authorize: () => this.#authorizeRecovery(context) }, () => {
       const attempt = this.ledger.attempt(context, refundId)
       if (attempt === undefined || attempt.ownerKind !== 'outpatient') throw new WorkflowError('WORKFLOW_CONFLICT', '原退款不存在')
       const value = this.#source(context, attempt.sourceId)

@@ -55,6 +55,25 @@ it('keeps later inpatient insurance compensation and reviewed replacement comman
   for (const term of ['INPATIENT_INSURANCE_PREVIEW_STALE', 'insurance.ready', 'remainingCollectFen/remainingRefundFen', '原年度']) expect(skill).toContain(term)
 })
 
+it('住院财务人工示例显式确认并绑定高风险操作版本', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id] of [
+    ['adjust-finance', 'inpatient.financial.adjust'],
+    ['confirm-financial-refund', 'inpatient.financial.refund.confirm'],
+    ['recover-financial-refund', 'inpatient.financial.refund.recover'],
+    ['confirm-financial-payment', 'inpatient.financial.payment.confirm'],
+    ['recover-financial-payment', 'inpatient.financial.payment.recover'],
+    ['confirm-payment', 'inpatient.payment.confirm'], ['recover-payment', 'inpatient.payment.recover'],
+    ['confirm-refund', 'inpatient.refund.confirm'], ['recover-refund', 'inpatient.refund.recover'],
+    ['settle', 'inpatient.discharge.settle'],
+  ]) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!
+    expect(line.split(/\s+/)).toContain('--yes')
+    expect(inspectExample(program, line).operation).toMatchObject({ id, risk: 'high-risk-write', version: 2 })
+  }
+})
+
 it('结算后更正示例绑定原费用、当前账目与原资金尝试', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
@@ -100,7 +119,7 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     ['clinmesh billing charge adjust ', 'billing.charge.adjust', 1],
     ['clinmesh refund preview ', 'refund.preview', 1],
     ['clinmesh refund confirm ', 'refund.confirm', 1],
-    ['clinmesh refund recover ', 'refund.recover', 1],
+    ['clinmesh refund recover ', 'refund.recover', 2],
     ['clinmesh insurance get ', 'insurance.get', 1],
     ['clinmesh insurance preview ', 'insurance.preview', 1],
     ['clinmesh insurance confirm ', 'insurance.confirm', 1],
@@ -123,6 +142,8 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
   for (const term of ['expectedBalanceVersion', 'annualBalances', 'INSURANCE_PREVIEW_STALE', 'not payment tenders',
     'calendar year', 'preserves later transactions and clinical progress', 'INSURANCE_FUNDS_CONFLICT', 'completed Encounter']) expect(skill).toContain(term)
   for (const id of ['insurance.preview', 'insurance.confirm']) expect(getHisOperation(id).summary).toContain('INSURANCE_FUNDS_CONFLICT')
+  for (const term of ['current-Epoch human cashier', 'completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(skill).toContain(term)
+  for (const term of ['current-Epoch human cashier', 'active/completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(getHisOperation('refund.recover').summary).toContain(term)
   const examples=[...skill.matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
   for(const [index,operation] of ['insurance.preview','insurance.confirm','insurance.cancel'].entries()){
     expect(getHisOperation(operation).input.safeParse(examples[index]).success).toBe(true)

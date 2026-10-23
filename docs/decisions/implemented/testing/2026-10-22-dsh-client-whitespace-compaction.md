@@ -21,4 +21,4 @@ ClinMesh 在应用自己的构建链中，先运行锁定的 Surface builder，�
 
 ## Consequences
 
-空白压缩与预算检查职责独立，预算仍由[原决策](2026-10-07-dsh-client-size-budget.md)拥有。构建器升级后若 wrapper 改变，须显式核对压缩边界，不能绕过拒绝。Bun 将空白压缩标为 experimental，因此除实际产物的原有校验外，保留真实 Bun 的延迟 require、字符串及正则语义、重复压缩稳定性和不匹配包装拒绝测试；编译器版本变化时继续运行这些合同。
+空白压缩与预算检查职责独立，预算仍由[原决策](2026-10-07-dsh-client-size-budget.md)拥有。构建器升级后若 wrapper 改变，须显式核对压缩边界，不能绕过拒绝。Bun 将空白压缩标为 experimental，因此除实际产物的原有校验外，保留真实 Bun 的延迟 require、字符串及正则语义、重复压缩稳定性和不匹配包装拒绝测试；编译器版本变化时继续运行这些合同。真实产物浏览器合同把最终 lazy-CJS 文件注入宿主 React 18/19，验证住院收款预览、确认和 ShadowRoot 中的真实界面。

@@ -1,7 +1,7 @@
 import { expect, type Locator, type Page } from '@playwright/test'
 import { z } from 'zod'
 import { commandReceiptLookupSchema } from '@clinmesh/contracts/his-operations'
-import { chargeAdjustmentResponseSchema, refundCaseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
+import { chargeAdjustmentResponseSchema, refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 
 export async function verifyRefundWriteRecovery(
   page: Page,
@@ -74,9 +74,44 @@ export async function verifyRefundWriteRecovery(
   await panel.getByLabel('本次退款金额（元）', { exact: true }).fill('10')
   await panel.getByLabel('退款处理结果', { exact: true }).click()
   await page.getByRole('option', { name: '结果未知', exact: true }).click()
+  let previewPosts = 0
+  let previewKey = ''
+  let originalPreviewId = ''
+  let originalPreviewToken = ''
+  await page.route('**/api/his/v1/refunds/actions/preview', async route => {
+    previewPosts += 1
+    previewKey = route.request().headers()['idempotency-key'] ?? ''
+    const response = await route.fetch()
+    expect(response.status()).toBe(200)
+    const preview = refundPreviewResponseSchema.parse(await response.json()).data
+    originalPreviewId = preview.previewId
+    originalPreviewToken = preview.commitToken
+    await route.abort('failed')
+  })
   await panel.getByRole('button', { name: '预览退款', exact: true }).click()
+  await expect(panel.getByRole('alert').filter({ hasText: '原操作结果待确认' })).toBeVisible()
+  await reopen()
+  await expect(panel.getByRole('button', { name: '预览退款', exact: true })).toBeDisabled()
+  const previewReceipt = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return url.pathname === '/api/his/v1/command-receipts'
+      && url.searchParams.get('operationId') === 'refund.preview' && url.searchParams.get('idempotencyKey') === previewKey
+  })
+  await page.getByRole('button', { name: '恢复原费用操作', exact: true }).click()
+  const previewResponse = await previewReceipt
+  expect(previewResponse.status()).toBe(200)
+  const previewLookup = commandReceiptLookupSchema.parse(await previewResponse.json())
+  expect(previewLookup.status).toBe('completed')
+  if (previewLookup.status !== 'completed') throw new Error('Missing original refund preview receipt')
+  expect(refundPreviewResponseSchema.parse(previewLookup.response).data.previewId).toBe(originalPreviewId)
+  expect(previewPosts).toBe(1)
+  await expect(page.getByRole('alertdialog', { name: '确认退款', exact: true })).toBeVisible()
+  const confirmation = page.waitForRequest(request => request.method() === 'POST'
+    && new URL(request.url()).pathname === `/api/his/v1/refunds/${originalPreviewId}/actions/confirm`)
   const refund = await loseAndRestore('refund.confirm', '**/api/his/v1/refunds/*/actions/confirm',
     refundResponseSchema, page.getByRole('alertdialog', { name: '确认退款', exact: true }), '提交退款')
+  expect((await confirmation).postDataJSON().input).toEqual({ commitToken: originalPreviewToken })
+  expect(previewPosts).toBe(1)
   expect(await read()).toMatchObject({ refundedFen: 0, reservedFen: 1000, refunds: [{ refundId: refund.data.refundId, outcome: 'ambiguous' }] })
 
   await panel.getByRole('button', { name: '查询原退款结果', exact: true }).click()

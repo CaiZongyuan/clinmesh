@@ -57,6 +57,7 @@ test('a doctor cancels an incompatible laboratory request after reviewing its fa
   await page.getByRole('button', { name: '候诊患者', exact: true }).click()
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('tab', { name: '检验检查', exact: true }).click()
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   // 弹窗合同：目录选择与适应证确认在「选择检验项目」弹窗内完成，确认即直写服务端草稿。
@@ -118,7 +119,7 @@ test('keeps the current category when another category finishes issuing a reques
     await page.getByRole('tab', { name: '待诊', exact: true }).click()
     await page.getByRole('button', { name: /^选择病例 / }).click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
-    await expect(page.getByRole('tab', { name: '在诊', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     await page.getByRole('tab', { name: '检验检查', exact: true }).click()
     const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
     // 弹窗合同：先在弹窗内加入检验草稿，再发起开具并用路由闸门挂起请求。
@@ -169,6 +170,7 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   if (width === 390) await page.getByRole('button', { name: '候诊患者', exact: true }).click()
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('tab', { name: '检验检查', exact: true }).click()
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
   const readCase = async () => {

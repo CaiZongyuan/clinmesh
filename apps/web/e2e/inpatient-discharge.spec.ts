@@ -194,6 +194,7 @@ test('真实收费员退款未知刷新后查询原退款，护士不能提前�
   await page.getByRole('button',{name:'预览退款',exact:true}).click()
   await expect(page.getByText(/已冻结退款预览/)).toContainText('1,000.00')
   await page.getByRole('button',{name:'确认已审阅退款',exact:true}).click()
+  await expect(page.getByRole('button',{name:'查询原退款',exact:true})).toBeEnabled()
   await expect(page.getByRole('button',{name:'确认结算',exact:true})).toBeDisabled()
   await page.reload()
   await s.select()
