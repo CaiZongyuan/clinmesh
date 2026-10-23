@@ -2974,8 +2974,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       try { return context.json(workflow.insurance.state(await actor(context),insuranceTargetSchema.parse({kind:context.req.param('kind'),id:context.req.param('id')}))) }
       catch(error){return apiErrorResponse(context,error)}
     })
-    for(const action of ['preview','confirm','cancel'] as const){
-      app.post('/api/his/v1/insurance/:kind/:id/'+action, async context => {
+    const insuranceAction = (action: 'preview' | 'confirm' | 'cancel') => async (context: Context) => {
         try {
           identity.assertTrustedMutation(context.req.raw.headers)
           const body=z.object({input:z.record(z.string(),z.unknown()),expectedVersions:z.record(z.string(),z.string())}).strict().parse(await context.req.json())
@@ -2985,8 +2984,10 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           if(action==='confirm')return context.json(workflow.insurance.confirm(acting,insuranceConfirmInputSchema.parse(raw),key))
           return context.json(workflow.insurance.cancel(acting,insuranceCancelInputSchema.parse(raw),key))
         }catch(error){return apiErrorResponse(context,error)}
-      })
     }
+    app.post('/api/his/v1/insurance/:kind/:id/preview', insuranceAction('preview'))
+    app.post('/api/his/v1/insurance/:kind/:id/confirm', insuranceAction('confirm'))
+    app.post('/api/his/v1/insurance/:kind/:id/cancel', insuranceAction('cancel'))
     app.get('/api/his/v1/billing/cases/:caseId', async (context) => {
       try {
         const query = z.object({

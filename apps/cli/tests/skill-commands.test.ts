@@ -40,6 +40,10 @@ it('keeps later inpatient insurance compensation and reviewed replacement comman
 it('结算后更正示例绑定原费用、当前账目与原资金尝试', async () => {
   const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  expect(skill).toContain('INPATIENT_FUNDS_PENDING')
+  for (const id of ['refund.preview', 'refund.confirm', 'payment.preview', 'payment.confirm']) {
+    expect(getHisOperation(`inpatient.financial.${id}`).summary).toContain('INPATIENT_FUNDS_PENDING')
+  }
   for (const [path, id] of [
     ['financial-adjustments', 'read'], ['adjust-finance', 'adjust'], ['preview-financial-refund', 'refund.preview'], ['confirm-financial-refund', 'refund.confirm'],
     ['recover-financial-refund', 'refund.recover'], ['preview-financial-payment', 'payment.preview'], ['confirm-financial-payment', 'payment.confirm'], ['recover-financial-payment', 'payment.recover'],
@@ -58,6 +62,12 @@ it('结算后更正示例绑定原费用、当前账目与原资金尝试', asyn
   const adjustment = examples.find(input => input.direction === 'decrease')
   expect(getHisOperation('inpatient.financial.adjust').input.safeParse({ ...adjustment, amountFen: -1 }).success).toBe(false)
   expect(getHisOperation('inpatient.financial.adjust').input.safeParse({ ...adjustment, encounterId: 'untrusted' }).success).toBe(false)
+})
+
+it('处方撤回操作与技能保留零支付医保分配的撤销前置条件', async () => {
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  for (const term of ['WORKFLOW_CONFLICT', 'zero fund', 'clinmesh insurance cancel']) expect(skill).toContain(term)
+  for (const term of ['WORKFLOW_CONFLICT', 'zero-benefit', 'insurance.cancel']) expect(getHisOperation('prescription.withdraw').summary).toContain(term)
 })
 
 it('keeps unified billing and recorded payment recovery examples aligned with the cashier catalog', async () => {
@@ -93,7 +103,8 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
     'Recovery queries the channel without collecting again', 'only a fully paid charge',
     'Registration charges remain unpaid and read-only']) expect(skill).toContain(term)
   for (const term of ['expectedBalanceVersion', 'annualBalances', 'INSURANCE_PREVIEW_STALE', 'not payment tenders',
-    'calendar year', 'preserves later transactions and clinical progress']) expect(skill).toContain(term)
+    'calendar year', 'preserves later transactions and clinical progress', 'INSURANCE_FUNDS_CONFLICT', 'completed Encounter']) expect(skill).toContain(term)
+  for (const id of ['insurance.preview', 'insurance.confirm']) expect(getHisOperation(id).summary).toContain('INSURANCE_FUNDS_CONFLICT')
   const examples=[...skill.matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
   for(const [index,operation] of ['insurance.preview','insurance.confirm','insurance.cancel'].entries()){
     expect(getHisOperation(operation).input.safeParse(examples[index]).success).toBe(true)

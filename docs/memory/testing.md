@@ -8,6 +8,8 @@
 
 ## 范围、快照与资源争用
 
+- HIS 路由与 Operation Catalog 的覆盖检查从源码提取完整路由字面量。共享处理器可用工厂复用，但每个公开路由须显式注册；循环拼接路径会使运行时可用的路由在覆盖检查中变成不完整路径。新增或调整注册后运行 `his-operation-catalog.test.ts`，避免只用请求成功证明目录已同步。
+
 - CLI Skill 示例漂移测试读取 Markdown 后统一将 CRLF 转为 LF，再解析代码块；否则 Windows checkout 的有效 JSON 示例会被仅匹配 `\n` 的正则漏掉。统一在读取 helper 归一化，不批量改产品文档换行或放宽业务 schema。
 
 - 新增 Operation Catalog 路径参数时，同时核对真实 UI 的持久化意图发送器：只替换已有 `admissionId` 的 adapter 不会自动绑定新的 `adjustmentId`。公开 HTTP 直接调用正确路径仍可全部通过，须从真实按钮验证请求路径及丢回执后的原意图恢复；回归见[后续医保更正入口](../../apps/web/e2e/inpatient-insurance-adjustments.spec.ts)与 React 18/19 Surface 合同。

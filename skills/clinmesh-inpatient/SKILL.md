@@ -335,7 +335,7 @@ clinmesh command receipt get --operation-id inpatient.financial.payment.confirm 
 {"admissionId":"synthetic-admission","previewId":"synthetic-preview","commitToken":"replace-with-original-preview-token"}
 ```
 
-响应丢失先查原 Command receipt，并保留完整原输入和幂等键。渠道结果未知须查询原尝试；`financial-refund-recovery.json` 与 `financial-payment-recovery.json` 分别使用实际原 ID 和版本，不接受金额或 outcome：
+响应丢失先查原 Command receipt，并保留完整原输入和幂等键。渠道结果未知时，新的补收及退款预览或确认返回 `INPATIENT_FUNDS_PENDING`，即使仍有剩余差额或改选其他原交易也须先查询原尝试。`financial-refund-recovery.json` 与 `financial-payment-recovery.json` 分别使用实际原 ID 和版本，不接受金额或 outcome；取得确定结果后重新读取差额并审阅新预览：
 
 ```json
 {"admissionId":"synthetic-admission","refundId":"synthetic-refund","expectedRefundVersion":1}

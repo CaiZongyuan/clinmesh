@@ -121,13 +121,18 @@ export class InpatientFinancialAdjustments {
       return { data: this.snapshot(context, input.admissionId), effects: [{ kind: 'created' as const, reference: `InpatientFinancialAdjustment/${id}`, versionId: '1' }] }
     })
   }
+  #assertFundsResolved(snapshot: z.infer<typeof inpatientFinancialSchema>) {
+    if (snapshot.reservedFen + snapshot.reservedCollectFen > 0)
+      throw new InpatientError('INPATIENT_FUNDS_PENDING', '请先查询原收退款尝试，查明未知资金结果')
+  }
   #collectBasis(context: ActorContext, input: z.infer<typeof inpatientFinancialPaymentPreviewInputSchema>) {
     const snapshot = this.snapshot(context, input.admissionId)
+    this.#assertFundsResolved(snapshot)
     if (snapshot.fingerprint !== input.expectedFingerprint) throw new InpatientError('INPATIENT_FINANCIAL_PREVIEW_STALE', '账目或资金已变化，请重新审阅财务差异')
     const adjustment = snapshot.adjustments.find(item => item.adjustmentId === input.adjustmentId)
-    if (!adjustment || (snapshot.insurance ? !snapshot.insurance.ready || snapshot.adjustments.at(-1)?.adjustmentId !== adjustment.adjustmentId : adjustment.direction !== 'increase') || snapshot.reservedFen > 0
-      || (!snapshot.insurance && input.amountFen > adjustment.remainingFen - adjustment.reservedCollectFen)
-      || input.amountFen > snapshot.remainingCollectFen - snapshot.reservedCollectFen)
+    if (!adjustment || (snapshot.insurance ? !snapshot.insurance.ready || snapshot.adjustments.at(-1)?.adjustmentId !== adjustment.adjustmentId : adjustment.direction !== 'increase')
+      || (!snapshot.insurance && input.amountFen > adjustment.remainingFen)
+      || input.amountFen > snapshot.remainingCollectFen)
       throw new InpatientError('INPATIENT_FINANCIAL_AMOUNT_CONFLICT', '补收超过本次费用补计依据或当前待收差额')
     return snapshot
   }
@@ -168,14 +173,15 @@ export class InpatientFinancialAdjustments {
   }
   #refundBasis(context: ActorContext, input: z.infer<typeof inpatientFinancialRefundPreviewInputSchema>) {
     const snapshot = this.snapshot(context, input.admissionId)
+    this.#assertFundsResolved(snapshot)
     if (snapshot.fingerprint !== input.expectedFingerprint) throw new InpatientError('INPATIENT_FINANCIAL_PREVIEW_STALE', '账目或资金已变化，请重新审阅财务差异')
     const adjustment = snapshot.adjustments.find(item => item.adjustmentId === input.adjustmentId)
     const source = this.owner.payments.sources(context, input.admissionId).find(item => item.kind === input.sourceKind && item.id === input.sourceId)
     if (!adjustment || (snapshot.insurance ? !snapshot.insurance.ready || snapshot.adjustments.at(-1)?.adjustmentId !== adjustment.adjustmentId : adjustment.direction !== 'decrease') || !source) throw new InpatientError('INPATIENT_FINANCIAL_SOURCE_CONFLICT', '退款须关联本次住院的有效更正和原交易')
     const balance = this.ledger.balance(context, source)
     if (balance.version !== input.expectedSourceVersion || input.amountFen > balance.refundableFen
-      || (!snapshot.insurance && input.amountFen > adjustment.remainingFen - adjustment.reservedFen)
-      || snapshot.reservedCollectFen > 0 || input.amountFen > snapshot.remainingRefundFen - snapshot.reservedFen)
+      || (!snapshot.insurance && input.amountFen > adjustment.remainingFen)
+      || input.amountFen > snapshot.remainingRefundFen)
       throw new InpatientError('INPATIENT_FINANCIAL_AMOUNT_CONFLICT', '退款超过当前更正依据、待退金额或原交易可退余额')
     return source
   }

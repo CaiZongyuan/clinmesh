@@ -1,5 +1,5 @@
 import { InsuranceService, InsuranceError, type InsuranceSource, type InsuranceTarget } from './insurance-service.ts'
-import { readOutpatientInsuranceSource } from './outpatient-insurance.ts'
+import { readOutpatientInsuranceAllocations, readOutpatientInsuranceSource } from './outpatient-insurance.ts'
 import { assertInpatientRequestScope, inpatientRequestOwner } from './clinical-request-context.ts'
 import { medicationDoseAndFrequencyAllowed } from './medication-rules.ts'
 import { CommandReceiptNotFoundError } from './command-executor.ts'
@@ -1218,7 +1218,9 @@ export class WorkflowService {
       assertChangeAllowed: (context,source,action) => {
         if(source.target.kind==='inpatient'){options.assertInpatientInsuranceChangeAllowed?.(context,source,action);return}
         for(const charge of source.charges){
-          const row=z.object({status:z.string()}).parse(database.driver.prepare('SELECT status FROM charge_record WHERE workspace_id=? AND epoch=? AND charge_item_id=?').get(context.workspaceId,context.epoch,charge.reference.slice(11)))
+          const row=z.object({status:z.string(),category:z.string()}).parse(database.driver.prepare('SELECT status,category FROM charge_record WHERE workspace_id=? AND epoch=? AND charge_item_id=?').get(context.workspaceId,context.epoch,charge.reference.slice(11)))
+          if(action==='settle'&&row.category==='medication'&&fhir.read(context,'Encounter',source.encounterId).status!=='completed')
+            throw new InsuranceError('INSURANCE_FUNDS_CONFLICT','处方须完诊后再预览或确认医保待遇')
           const balance=this.#payments.balance(context,charge.reference.slice(11))
           if(balance.unresolved>0||(action==='settle'&&(row.status==='paid'||balance.paidFen>0)))throw new InsuranceError('INSURANCE_FUNDS_CONFLICT','请先查明原收款或退款结果；已收款费用新增待遇须通过财务更正处理')
         }
@@ -4887,7 +4889,7 @@ export class WorkflowService {
       if (this.#prescriptionHasUnsettledFunds(input.context, input.prescriptionId)) {
         throw new WorkflowError(
           'WORKFLOW_CONFLICT',
-          'The prescription cannot be withdrawn while a payment is unresolved or partially collected',
+          'The prescription cannot be withdrawn with active insurance allocations or unresolved or partially collected payments; cancel its insurance settlement first',
         )
       }
       const items = z.array(prescriptionDispensingRowSchema).parse(
@@ -9431,7 +9433,7 @@ export class WorkflowService {
     `).run(fullyPaid ? 'paid' : outcome === 'success' ? 'billable' : outcome, context.workspaceId, context.epoch, charge.charge_id)
     if (!fullyPaid) return charge.case_status
     if (charge.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment') return charge.case_status
-    if (charge.category === 'medication' && charge.case_status !== 'awaiting-medication-payment') return charge.case_status
+    if (charge.category === 'medication' && ['awaiting-dispense', 'completed'].includes(charge.case_status)) return charge.case_status
     const status = charge.category === 'laboratory' ? 'awaiting-lis' : 'awaiting-dispense'
     this.#database.driver.prepare(`
       UPDATE outpatient_case SET status = ?, version = version + 1, updated_at = ?
@@ -11667,15 +11669,18 @@ export class WorkflowService {
   }
 
   #prescriptionHasUnsettledFunds(context: ActorContext, prescriptionId: string): boolean {
-    const charges = z.array(z.object({ charge_item_id: z.string(), total_fen: z.number().int().nonnegative() })).parse(
+    const charges = z.array(z.object({ case_id: z.string(), charge_item_id: z.string(), total_fen: z.number().int().nonnegative() })).parse(
       this.#database.driver.prepare(`
-        SELECT charge_item_id, total_fen FROM charge_record
+        SELECT case_id, charge_item_id, total_fen FROM charge_record
         WHERE workspace_id = ? AND epoch = ? AND source_reference = ?
       `).all(context.workspaceId, context.epoch, `Prescription/${prescriptionId}`),
     )
+    const firstCharge = charges[0]
+    if (firstCharge === undefined) return false
+    const allocated = readOutpatientInsuranceAllocations(this.#database, context, firstCharge.case_id)
     return charges.some(charge => {
       const balance = this.#payments.balance(context, charge.charge_item_id)
-      return balance.unresolved > 0 || this.insurance.coverage(context, `ChargeItem/${charge.charge_item_id}`) > 0 || (balance.paidFen > 0 && balance.paidFen < charge.total_fen)
+      return balance.unresolved > 0 || allocated.has(`ChargeItem/${charge.charge_item_id}`) || (balance.paidFen > 0 && balance.paidFen < charge.total_fen)
     })
   }
 

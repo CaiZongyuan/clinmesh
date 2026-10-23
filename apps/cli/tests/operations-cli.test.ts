@@ -33,7 +33,7 @@ describe('clinmesh operations', () => {
       schemaVersion: 1,
     })
     expect(envelope.data.operations).toHaveLength(listHisOperations().length)
-    expect(envelope.data.operations[0]).toEqual({
+    expect(envelope.data.operations.find((operation: { id: string }) => operation.id === 'admin.laboratory-services.candidates.search')).toEqual({
       cliPath: ['admin', 'laboratory-services', 'candidates', 'search'],
       handlerOwner: 'LaboratoryServicePublisher',
       id: 'admin.laboratory-services.candidates.search',

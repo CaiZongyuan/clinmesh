@@ -10,7 +10,7 @@ Status: implemented
 
 `InpatientFinancialAdjustments` 拥有追加费用补计、冲减及关联收退款的策略，在共享 Command 事务内核对当前账目指纹、收费岗位、住院归属和依据额度。普通 InpatientBilling、出院和归档锁继续守护原临床与首次账目；后续调整只影响当前财务差异，不写 Encounter、Account、原费用或原结算。
 
-后续补收复用 `InpatientPayments` 的预览、尝试与追加结果，后续退款复用 [RefundLedger](2026-10-22-original-payment-refunds.md) 的原交易、原方式及跨依据余额。`adjustment_id` 显式区分首次和后续收款；首次资金投影和归档核验排除后续资金，同一成功原款仍只有一套可退余额。相反方向的未处理更正先抵消应收退差额，未知资金保留预占，必须查询原尝试取得确定结果。
+后续补收复用 `InpatientPayments` 的预览、尝试与追加结果，后续退款复用 [RefundLedger](2026-10-22-original-payment-refunds.md) 的原交易、原方式及跨依据余额。`adjustment_id` 显式区分首次和后续收款；首次资金投影和归档核验排除后续资金，同一成功原款仍只有一套可退余额。相反方向的未处理更正先抵消应收退差额。补收与退款的预览和确认共用未知资金门禁；只扣除预占仍会允许剩余差额或另一原交易继续收退，因此必须先查询原尝试取得确定结果。
 
 后续 Command 使用 current context，额外限制人类收费会话只能在 active/completed Run 新写；closed Run、旧 Workspace/Epoch 及失效 Agent Grant 不取得例外。其他临床 Command 继续要求 active，病案人员只读原冻结账与当前差异。真实时间五分钟的预览绑定原岗位、金额、渠道规则与当前指纹；确认重验，回执丢失沿用原输入和幂等键恢复。
 

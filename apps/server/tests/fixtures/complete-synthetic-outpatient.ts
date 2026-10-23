@@ -60,8 +60,9 @@ export async function completeSyntheticOutpatient(runtime: Awaited<ReturnType<ty
   expect(bill).toBeDefined()
   const paymentPreview = paymentPreviewResponseSchema.parse(await (await command(cashier, '/api/his/v1/payments/actions/preview', {
     caseId: started.outpatientCaseId, category: 'medication', simulatorRule: 'success' }, { [`ChargeItem/${bill.chargeItemId}`]: String(bill.chargeVersion) })).json()).data
-  paymentResponseSchema.parse(await (await command(cashier, `/api/his/v1/payments/${paymentPreview.previewId}/actions/confirm`, { commitToken: paymentPreview.commitToken },
-    { [`ChargeItem/${paymentPreview.chargeItemId}`]: String(paymentPreview.chargeVersion) })).json())
+  const payment = paymentResponseSchema.parse(await (await command(cashier, `/api/his/v1/payments/${paymentPreview.previewId}/actions/confirm`, { commitToken: paymentPreview.commitToken },
+    { [`ChargeItem/${paymentPreview.chargeItemId}`]: String(paymentPreview.chargeVersion) })).json()).data
+  expect(payment).toMatchObject({ outcome: 'success', status: 'awaiting-dispense' })
   const queue = pharmacyQueueSchema.parse(await (await runtime.app.request('/api/his/v1/pharmacy/queue?status=pending&pageSize=20', { headers: { cookie: pharmacist } })).json())
   const item = queue.items.find(candidate => candidate.prescriptionId === prescription.id)!
   expect(item).toBeDefined()

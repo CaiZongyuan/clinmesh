@@ -94,7 +94,7 @@ DSH 模型桥接已配置时，新病例默认启用整理；历史未启用病�
 
 无需用药结论是独立的 domain-native 正式事实，记录负责 Actor、Practitioner Role 和虚拟业务时间，不用空 Prescription 或空 MedicationRequest 代替。有效处方与无需用药结论互斥；处方撤回后可确认无需用药。确认动作也清除处方草稿并递增草稿版本。
 
-处方撤回使用不可变 `prescription_withdrawal` 事实表达，不删除或覆盖原 Prescription。只有未发生任何调剂且无未知或部分收款的 signed 或 paid 处方可按 Prescription expected version 和全部 MedicationRequest expected versions 撤回；成功后各 MedicationRequest 进入 `cancelled` 并保留 FHIR history，Prescription 版本递增且读模型投影为 `withdrawn`。未收费的已撤回药品费用不再进入收费员待收费队列，已全额收费历史仍可查询且不会隐式退款；药房队列、审核、支付和发药入口都拒绝已撤回处方。
+处方撤回使用不可变 `prescription_withdrawal` 事实表达，不删除或覆盖原 Prescription。只有未发生任何调剂、无未知或部分收款且无有效医保分配的 signed 或 paid 处方可按 Prescription expected version 和全部 MedicationRequest expected versions 撤回；基金和个人账户支付为零的医保分配也可能累计年度起付金额，须先由收费员撤销原医保待遇并追加补偿。成功后各 MedicationRequest 进入 `cancelled` 并保留 FHIR history，Prescription 版本递增且读模型投影为 `withdrawn`。未收费的已撤回药品费用不再进入收费员待收费队列，已全额收费历史仍可查询且不会隐式退款；药房队列、审核、支付和发药入口都拒绝已撤回处方。
 
 带 Consultation 的病例使用独立检验申请 owner。`laboratory_request_state` 保存一个病例级草稿及单调递增版本；保存和删除都以当前 Encounter 与草稿版本做 CAS，删除或开具只清空草稿而不复用旧版本。保存草稿重新读取 active、doctor-orderable Hospital Service 并冻结 service/report snapshot；开立再次校验相同 service ID 和版本，直接提交 Reference Concept ID 返回目录冲突。单一内部适应证 `clinical-evaluation` 不要求医生选择。没有病例责任人的 `awaiting-doctor` 病例必须先由接诊 Command 分配责任并推进状态，Web 才开放检验、诊断、处方和病历写入。开具时保存本院服务 coding、根 LOINC 和报告定义，创建 `ServiceRequest.status=active` 与 `Task.status=requested`，Task `focus` 指向该 ServiceRequest。服务配置保留合成价格，但该流程不创建 ChargeItem，也不推进 Encounter 或医生 Queue Task。
 
@@ -235,7 +235,7 @@ InpatientPayments拥有首次封账前的追加预交金、出区补缴和退款
 
 首次结算完成后，收费员可在已结算、清床或归档的本次住院追加关联原正数费用的冲减或补计，并明确记录原因。原费用、首次结算和归档快照保持可查；当前账只叠加这些有业务引用的更正。病案页面单独显示原冻结金额与当前差异，病案人员只读此差异。后续财务状态不写入行政、首次财务或病案状态，不恢复床位、撤销出区、解档或更改诊断操作。
 
-费用与资金分别确认。冲减退款须同时满足本更正剩余额度、全账待退净额及本次成功原交易可退余额；补计补收须同时满足本更正剩余额度与全账待收净额，组合方式金额合计须一致。相反方向的未处理更正先抵消差额，未知资金继续预占。原交易的成功及未知退款统一扣减余额和原方式额度，不能换依据、原交易或幂等键重复退；后续成功补收也可成为新的原退款来源。拒绝保留尝试并释放预占，未知只开放原尝试结果查询，恢复追加确定结果，不重新收退。
+费用与资金分别确认。冲减退款须同时满足本更正剩余额度、全账待退净额及本次成功原交易可退余额；补计补收须同时满足本更正剩余额度与全账待收净额，组合方式金额合计须一致。相反方向的未处理更正先抵消差额，未知资金继续预占。原交易的成功及未知退款统一扣减余额和原方式额度，不能换依据、原交易或幂等键重复退；后续成功补收也可成为新的原退款来源。拒绝保留尝试并释放预占，未知只开放原尝试结果查询；补收或退款有任一未知结果时，新预览和确认均以 `INPATIENT_FUNDS_PENDING` 拒绝，包括仍有剩余差额或改选其他原交易的情况。恢复追加确定结果，不重新收退；之后重新读取差额并审阅新预览。
 
 后续预览绑定当前账目指纹、原交易余额版本、金额、渠道规则及岗位上下文，真实时间五分钟过期，确认在共享 Command 写事务内重验。响应丢失先查原 receipt，沿用原输入和 key。当前 Workspace/Epoch 内的人类收费会话可在 active/completed Run 执行这些窄财务 Command，closed Run 与失效 Agent Grant 不开放新写，原临床 Command 仍要求 active。后续未知只使本调整待处理，首次完成、清床和归档不倒退。理由见[首次冻结与后续更正分离](../decisions/implemented/architecture/2026-10-22-inpatient-financial-adjustments.md)。
 
@@ -357,7 +357,7 @@ requested -> reserved -> prepared -> dispensed
 
 普通门诊合成目录把挂号标为目录外，兼容检验先行自付 10%，药品先行自付 20%。原费用的类别和来源必须有明确映射；缺映射拒绝预览，不以零待遇代替。先扣目录外和先行自付，再抵年度剩余起付线，对剩余目录内费用按比例及封顶分配基金，个人账户抵扣目录内个人负担，余额由患者承担。逐项结果保存原费用引用、版本、目录版本及各金额，供页面解释和审计。
 
-门诊待遇、患者收款与临床放行采用原费用减去已记录冲减的净额。有效医保分配关联的费用须先撤销待遇，再办理冲减，保留原费用、待遇和现金历史。未知收款或退款未查明前，阻断待遇变化、再次收款及费用冲减；原尝试恢复入口继续开放。
+门诊待遇、患者收款与临床放行采用原费用减去已记录冲减的净额。药品待遇预览与确认要求 Encounter 已完诊，否则以 `INSURANCE_FUNDS_CONFLICT` 拒绝；个人账户全额覆盖也遵守该门禁，原待遇撤销补偿继续开放。有效医保分配关联的费用须先撤销待遇，再办理冲减，保留原费用、待遇和现金历史。未知收款或退款未查明前，阻断待遇变化、再次收款及费用冲减；原尝试恢复入口继续开放。
 
 待遇账户绑定 Workspace/Epoch、Patient 与上海时区虚拟日历年。年度首次结算固定方案，撤销也不允许切换方案；普通门诊与住院的目录内累计、起付线和基金封顶分别计算，个人账户共用。一次门诊可先结算检验、收取患者余额，再对新处方单独结算；已有效分配的费用不会进入下一笔预览。已收取患者资金的费用拒绝新待遇确认，须先完成适用的财务更正。
 

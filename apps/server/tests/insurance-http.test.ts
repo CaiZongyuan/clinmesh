@@ -6,16 +6,23 @@ import { afterEach, expect, it } from 'vitest'
 import { z } from 'zod'
 import {
   billingCaseSchema,
+  clinicalDocumentDraftResponseSchema,
+  clinicalDocumentSignPreviewResponseSchema,
+  clinicalDocumentSignResponseSchema,
   confirmDiagnosisResponseSchema,
   diagnosisDraftResponseSchema,
   doctorQueueSchema,
+  doctorCaseDetailSchema,
+  encounterCompletionResponseSchema,
   firstVisitDraftResponseSchema,
   issuePrescriptionResponseSchema,
   laboratoryOrderResponseSchema,
   paymentPreviewResponseSchema,
   paymentResponseSchema,
+  pharmacyQueueSchema,
   prescriptionDraftResponseSchema,
   startVisitResponseSchema,
+  withdrawPrescriptionResponseSchema,
 } from '@clinmesh/contracts/his'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import {
@@ -428,10 +435,7 @@ it('有效医保费用先撤销待遇再冲减，保留原现金与待遇历史�
   expect(await s.runtime.dispatcher.dispatchOnce()).toBeUndefined()
 }, 30000)
 
-it('检验已收患者额后新增处方可继续结算，原检验待遇仍有效', async () => {
-  const s = await setup()
-  const first = await settle(s)
-  await pay(s, 'laboratory')
+async function issueMedication(s: Awaited<ReturnType<typeof setup>>) {
   expect((await s.runtime.dispatcher.dispatchOnce())?.status).toBe('completed')
   const task = doctorQueueSchema.parse(
     await (
@@ -515,6 +519,99 @@ it('检验已收患者额后新增处方可继续结算，原检验待遇仍有�
   )
   expect(issuedResponse.status, await issuedResponse.clone().text()).toBe(200)
   const signed = issuePrescriptionResponseSchema.parse(await issuedResponse.json()).data
+  return signed
+}
+
+async function completeMedicationEncounter(s: Awaited<ReturnType<typeof setup>>) {
+  const detail = doctorCaseDetailSchema.parse(await (await s.runtime.app.request(`/api/his/v1/doctor/cases/${s.target.id}`, { headers: { cookie: s.doctor } })).json())
+  const expected = { [`Encounter/${s.started.encounterId}`]: detail.encounter.versionId }
+  const path = `/api/his/v1/encounters/${s.started.encounterId}`
+  const draftResponse = await s.runtime.app.request(path + '/clinical-document/draft', {
+    method: 'PUT', headers: { cookie: s.doctor, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+    body: JSON.stringify({ expectedVersions: expected, input: { expectedDraftVersion: 0, document: {
+      assessment: '合成流感诊断依据完整。', chiefComplaint: '合成发热伴咽痛一天。', disposition: '门诊抗病毒治疗。',
+      followUp: '持续发热或气促时复诊。', historyOfPresentIllness: '一天前开始发热咽痛，无呼吸困难。', physicalExamination: '神志清楚，咽部充血，双肺呼吸音清。',
+    } } }),
+  })
+  expect(draftResponse.status, await draftResponse.clone().text()).toBe(200)
+  const draft = clinicalDocumentDraftResponseSchema.parse(await draftResponse.json()).data
+  const preview = clinicalDocumentSignPreviewResponseSchema.parse(await (await s.write(path + '/clinical-document/actions/preview-sign', {
+    expectedDraftVersion: draft.draftVersion,
+  }, s.doctor, randomUUID(), expected)).json()).data
+  const signed = await s.write(path + '/clinical-document/actions/sign', { previewId: preview.previewId, commitToken: preview.commitToken }, s.doctor, randomUUID(), expected)
+  expect(signed.status, await signed.clone().text()).toBe(200)
+  clinicalDocumentSignResponseSchema.parse(await signed.json())
+  const completed = await s.write(path + '/actions/complete', {}, s.doctor, randomUUID(), expected)
+  expect(completed.status, await completed.clone().text()).toBe(200)
+  encounterCompletionResponseSchema.parse(await completed.json())
+}
+
+it('未完诊处方即使可由个人账户全额覆盖，也拒绝医保预览且不进入药房', async () => {
+  const s = await setup(0), path = `/api/his/v1/insurance/outpatient/${s.target.id}`
+  await settle(s)
+  s.runtime.database.driver.prepare("UPDATE outpatient_catalog SET price_fen=100 WHERE item_id='medication-oseltamivir'").run()
+  const signed = await issueMedication(s)
+  const read = async () => insuranceStateSchema.parse(await (await s.runtime.app.request(path, { headers: { cookie: s.cashier } })).json())
+  const before = await read()
+  const response = await s.write(path + '/preview', { planCode: 'employee-v1' })
+  expect(response.status, await response.clone().text()).toBe(409)
+  expect(await response.json()).toMatchObject({ error: { code: 'INSURANCE_FUNDS_CONFLICT' } })
+  expect(await read()).toEqual(before)
+  const queue = pharmacyQueueSchema.parse(await (await s.runtime.app.request('/api/his/v1/pharmacy/queue?status=pending&pageSize=20', { headers: { cookie: await signIn(s.runtime, 'pharmacist@demo.clinmesh.local', 'Synthetic-Demo-Password-2026!') } })).json())
+  expect(queue.items.some(item => item.prescriptionId === signed.prescription.id)).toBe(false)
+}, 60000)
+
+it('零基金和账户支付的处方须先撤销待遇，补偿年度累计后才能撤方', async () => {
+  const s = await setup(0), path = `/api/his/v1/insurance/outpatient/${s.target.id}`
+  const settleResident = async () => {
+    const preview = insurancePreviewResponseSchema.parse(await (await s.write(path + '/preview', { planCode: 'resident-v1' })).json()).data
+    const response = await s.write(path + '/confirm', { previewId: preview.previewId, commitToken: preview.commitToken })
+    expect(response.status, await response.clone().text()).toBe(200)
+    return insuranceResponseSchema.parse(await response.json()).data
+  }
+  await settleResident()
+  s.runtime.database.driver.prepare("UPDATE outpatient_catalog SET price_fen=100 WHERE item_id='medication-oseltamivir'").run()
+  const signed = await issueMedication(s)
+  await completeMedicationEncounter(s)
+  const before = await settleResident()
+  expect(before.active).toMatchObject({ fundFen: 0, accountFen: 0, eligibleFen: 800 })
+  expect(before.balance.eligibleFen).toBe(800)
+  const readBill = async () => billingCaseSchema.parse(await (await s.runtime.app.request(`/api/his/v1/billing/cases/${s.target.id}`, { headers: { cookie: s.cashier } })).json())
+  const readInsurance = async () => insuranceStateSchema.parse(await (await s.runtime.app.request(path, { headers: { cookie: s.cashier } })).json())
+  const withdraw = () => s.write(`/api/his/v1/prescriptions/${signed.prescription.id}/actions/withdraw`, {
+    expectedPrescriptionVersion: signed.prescription.version,
+  }, s.doctor, randomUUID(), Object.fromEntries(signed.prescription.items.map(item => [
+    `MedicationRequest/${item.medicationRequestId}`, item.medicationRequestVersion,
+  ])))
+  const originalBill = await readBill()
+  const denied = await withdraw()
+  expect(denied.status, await denied.clone().text()).toBe(409)
+  expect(await denied.json()).toMatchObject({ error: { code: 'WORKFLOW_CONFLICT' } })
+  expect(await readBill()).toEqual(originalBill)
+  expect(await readInsurance()).toEqual(before)
+  const cancel = { settlementId: before.active!.id, expectedBalanceVersion: before.balance.version }, cancelKey = randomUUID()
+  const cancelledResponse = await s.write(path + '/cancel', cancel, s.cashier, cancelKey)
+  expect(cancelledResponse.status, await cancelledResponse.clone().text()).toBe(200)
+  const cancelled = insuranceResponseSchema.parse(await cancelledResponse.json()).data
+  expect(cancelled.balance.eligibleFen).toBe(0)
+  expect(cancelled.history.filter(item => item.reversesId === before.active!.id)).toHaveLength(1)
+  expect((await s.write(path + '/cancel', cancel, s.cashier, cancelKey)).status).toBe(200)
+  const withdrawn = await withdraw()
+  expect(withdrawn.status, await withdrawn.clone().text()).toBe(200)
+  expect(withdrawPrescriptionResponseSchema.parse(await withdrawn.json()).data.status).toBe('withdrawn')
+  expect((await readBill()).charges.filter(row => row.category === 'medication')).toEqual([])
+  const after = await readInsurance()
+  expect(after.balance.eligibleFen).toBe(0)
+  expect(after.history).toEqual(cancelled.history)
+  expect(after.activeSettlements.some(item => item.id === before.active!.id)).toBe(false)
+}, 60000)
+
+it('检验已收患者额后新增处方可继续结算，原检验待遇仍有效', async () => {
+  const s = await setup()
+  const first = await settle(s)
+  await pay(s, 'laboratory')
+  const signed = await issueMedication(s)
+  await completeMedicationEncounter(s)
   const second = await settle(s)
   expect(second.activeSettlements).toHaveLength(2)
   expect(second.active?.source.charges.map((row) => row.coverage.code)).toEqual([
