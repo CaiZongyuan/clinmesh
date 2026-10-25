@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": { "types": ["node"] },
+  "include": ["scripts/ci.ts", "scripts/ci.spec.ts", "scripts/ci-cli.spec.ts"]
+}

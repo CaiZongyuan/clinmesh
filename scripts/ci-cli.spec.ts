@@ -1,8 +1,8 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { delimiter, dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -33,7 +33,7 @@ function sandbox() {
   return { directory, env, git, write }
 }
 
-function pullRequest(commits: Array<Record<string, string>>) {
+function pullRequest(commits: Array<Record<string, string>>, baseline: Record<string, string> = {}) {
   const fixture = sandbox()
   const { directory, env, git, write } = fixture
   git(['init', '--initial-branch=main'])
@@ -43,6 +43,7 @@ function pullRequest(commits: Array<Record<string, string>>) {
   for (const path of [serverTest, secondServerTest, browserTest, e2eTest]) {
     write(path, "import { test } from 'vitest'\ntest('synthetic baseline', () => {})\n")
   }
+  for (const [path, value] of Object.entries(baseline)) write(path, value)
   git(['add', '.'])
   git(['commit', '-m', 'synthetic baseline'])
   const base = git(['rev-parse', 'HEAD'])
@@ -50,7 +51,7 @@ function pullRequest(commits: Array<Record<string, string>>) {
   for (const [index, files] of commits.entries()) {
     for (const [path, value] of Object.entries(files)) write(path, value)
     git(['add', '.'])
-    git(['commit', '-m', `synthetic change ${index}`])
+    git(['commit', '--allow-empty', '-m', `synthetic change ${index}`])
   }
   const head = git(['rev-parse', 'HEAD'])
   git(['switch', 'main'])
@@ -64,9 +65,9 @@ function pullRequest(commits: Array<Record<string, string>>) {
     env: { ...env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_SHA: merge, GITHUB_EVENT_PATH: eventPath, GITHUB_OUTPUT: outputPath } }
 }
 
-async function run(cwd: string, args: string[], env: NodeJS.ProcessEnv) {
+async function run(cwd: string, args: string[], env: NodeJS.ProcessEnv, script = entry) {
   return new Promise<{ code: number; stdout: string; stderr: string }>((resolve, reject) => {
-    execFile(process.execPath, [entry, ...args], { cwd, env }, (error, stdout, stderr) => {
+    execFile(process.execPath, [script, ...args], { cwd, env }, (error, stdout, stderr) => {
       if (!error) resolve({ code: 0, stdout, stderr })
       else if (typeof error.code === 'number') resolve({ code: error.code, stdout, stderr })
       else reject(error)
@@ -96,8 +97,10 @@ appendFileSync(process.env.CI_TEST_COMMAND_LOG, JSON.stringify({ args, cwd: proc
 if (process.env.CI_TEST_FAIL_ON && args.includes(process.env.CI_TEST_FAIL_ON)) process.exit(23)
 `)
   chmodSync(binary, 0o755)
+  if (process.platform === 'win32') fixture.write('bin/pnpm.cmd', `@"${process.execPath}" "${binary}" %*\r\n`)
+  const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path') ?? 'PATH'
   return { ...fixture, env: { ...fixture.env,
-    PATH: `${dirname(binary)}${process.platform === 'win32' ? ';' : ':'}${process.env.PATH ?? ''}`,
+    [pathKey]: `${dirname(binary)}${delimiter}${process.env[pathKey] ?? ''}`,
     CI_TEST_COMMAND_LOG: log },
     calls: (): Array<{ args: string[]; cwd: string }> => existsSync(log)
       ? readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line)) : [] }
@@ -170,9 +173,60 @@ describe('CI CLI with a real candidate merge', () => {
     expect(readPlan(await run(fixture.directory, ['plan'], { ...fixture.env, GITHUB_EVENT_PATH: join(fixture.directory, 'absent.json') })))
       .toMatchObject({ mode: 'full', tests: [], docs: true })
   })
+
+  it('falls back to full for a candidate with no content changes', async () => {
+    const fixture = pullRequest([{}])
+    expect(readPlan(await run(fixture.directory, ['plan'], fixture.env))).toMatchObject({ mode: 'full' })
+  })
+
+  it('keeps an exported test helper out of the independent-test path', async () => {
+    const fixture = pullRequest([{ [serverTest]: 'export const sharedTestValue = 1\n' }])
+    expect(readPlan(await run(fixture.directory, ['plan'], fixture.env)))
+      .toMatchObject({ mode: 'full', reason: '测试入口被共享或无法证明独立' })
+  })
+
+  it('keeps a test entry imported by another file out of the independent-test path', async () => {
+    const fixture = pullRequest([{ [serverTest]: '// changed shared test\n' }], {
+      'apps/server/shared.ts': "import './tests/example.test.ts'\n",
+    })
+    expect(readPlan(await run(fixture.directory, ['plan'], fixture.env)))
+      .toMatchObject({ mode: 'full', reason: '测试入口被共享或无法证明独立' })
+  })
+
+  it('runs the planner and final gate without installed dependencies', async () => {
+    const fixture = pullRequest([{ 'README.md': '# Documentation only\n' }])
+    const script = join(fixture.directory, 'ci.ts')
+    copyFileSync(entry, script)
+    fixture.write('package.json', '{"type":"module"}\n')
+    const plan = readPlan(await run(fixture.directory, ['plan'], fixture.env, script))
+    const results = { plan: { result: 'success' }, checks: { result: 'success' },
+      unit: { result: 'skipped' }, browser: { result: 'skipped' }, e2e: { result: 'skipped' } }
+    expect((await run(fixture.directory, ['verify'], {
+      ...fixture.env, CI_PLAN: JSON.stringify(plan), CI_RESULTS: JSON.stringify(results),
+    }, script)).code).toBe(0)
+    expect(existsSync(join(fixture.directory, 'node_modules'))).toBe(false)
+  })
 })
 
 describe('CI command execution boundary', () => {
+  it('prepares generated DSH styles separately for every non-document execution runner', async () => {
+    const fixture = commands()
+    expect((await run(fixture.directory, ['prepare'], {
+      ...fixture.env, CI_PLAN: JSON.stringify(fullPlan),
+    })).code).toBe(0)
+    expect(fixture.calls().map(call => call.args)).toEqual([
+      ['--filter', '@clinmesh/dsh-web', 'build:styles'],
+    ])
+  })
+
+  it('does not prepare UI artifacts for a documentation-only runner', async () => {
+    const fixture = commands()
+    expect((await run(fixture.directory, ['prepare'], {
+      ...fixture.env, CI_PLAN: JSON.stringify({ mode: 'docs', tests: [], docs: true, reason: 'documentation' }),
+    })).code).toBe(0)
+    expect(fixture.calls()).toEqual([])
+  })
+
   it('keeps a documentation-only stage limited to documentation checks', async () => {
     const fixture = commands()
     const plan = { mode: 'docs', tests: [], docs: true, reason: 'synthetic documentation only' }

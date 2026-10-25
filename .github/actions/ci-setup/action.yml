@@ -1,0 +1,17 @@
+name: 准备 CI 运行环境
+description: 安装锁定的现有依赖，供独立检查组使用
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.4.2
+    - uses: pnpm/action-setup@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+    - run: node scripts/ci.ts prepare
+      shell: bash
