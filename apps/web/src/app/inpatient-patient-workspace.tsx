@@ -10,6 +10,7 @@ import { CheckIcon, CopyIcon, MinusIcon, RefreshCwIcon } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useState } from 'react'
 import { InpatientClinical } from './inpatient-clinical.tsx'
+import { InpatientDrgPanel } from './inpatient-drg.tsx'
 import { InpatientCharges } from './inpatient-charges.tsx'
 import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.tsx'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
@@ -33,6 +34,7 @@ const stages = [
   { id: 'fees', zh: '费用', en: 'Charges', ownerZh: '收费员', ownerEn: 'Cashier', conditionZh: '费用来自实际执行、发药、手术及每日床费；收费员可核对并按原费用冲正，预交金独立记录。', conditionEn: 'Charges come from actual execution, dispensing, surgery and daily bed fees. Cashiers reconcile and reverse original charges; deposits remain separate.' },
   { id: 'discharge', zh: '出院结算', en: 'Discharge & settlement', ownerZh: '住院医生 → 病区护士 → 收费员', ownerEn: 'Inpatient doctor → ward nurse → cashier', conditionZh: '医生开出院医嘱，护士办理出区后收费员才能结算；结算完成后护士清床。未收口的医嘱、检查、手术或转科会阻止出院。', conditionEn: 'The doctor orders discharge, the nurse records departure, the cashier settles, then the nurse clears the bed. Outstanding care can block discharge.' },
   { id: 'record', zh: '病案', en: 'Medical record', ownerZh: '住院医生 → 病案人员', ownerEn: 'Inpatient doctor → medical records staff', conditionZh: '医生核对真实来源并提交首页，病案人员编码审核；结算并清床、当前修订审核通过后方可归档。来源变化需重新提交与审核，归档后只读。', conditionEn: 'The doctor submits the record from real sources; medical records staff review coding. Settlement, bed clearance and current approval precede archiving. Source changes require resubmission and review; archived records are read only.' },
+  { id: 'drg', zh: 'DRG 与费用推演', en: 'DRG & charges', ownerZh: '住院医生', ownerEn: 'Inpatient doctor', conditionZh: '读取正式诊疗与费用，比较治疗计划及草稿；预留转实际使用后不再重复推算。', conditionEn: 'Compare confirmed care and charges with plans and drafts. Reservations replaced by actual use are not counted twice.' },
 ] as const
 
 export function inpatientStatus(admission: InpatientAdmission, locale: WorkspaceLocale): string {
@@ -73,7 +75,7 @@ function InpatientNumberValue({ locale, number }: { locale: WorkspaceLocale; num
 type Props = { allowTransfers: boolean; admission: InpatientAdmission; admissions: InpatientAdmission[]; catalog: z.infer<typeof inpatientCatalogSchema> | undefined; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
 const stageGroups: Array<{ zh: string; en: string; ids: Stage[] }> = [
   { zh: '入院', en: 'Admission', ids: ['admission'] },
-  { zh: '在院', en: 'In care', ids: ['orders', 'investigations', 'surgery', 'transfer', 'fees'] },
+  { zh: '在院', en: 'In care', ids: ['orders', 'investigations', 'surgery', 'transfer', 'fees', 'drg'] },
   { zh: '出院', en: 'Discharge', ids: ['discharge'] },
   { zh: '病案', en: 'Record', ids: ['record'] },
 ]
@@ -104,10 +106,11 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
   // 在院未结算是常态，不显示；出院流程中与结算完成后才有信息量。
   const settle = admission.financialStatus === 'settled' ? t('已结算', 'Settled') : admission.status === 'discharge-pending' || admission.status === 'departed' ? t('待结算', 'To settle') : null
   const changeStage = (stage: Stage) => { setSelectedStage(stage); setVisited(current => [...new Set([...current, active, stage])]) }
-  const visibleStages = stages.filter(stage => stage.id !== 'transfer' || clinical && allowTransfers)
+  const visibleStages = stages.filter(stage => (stage.id !== 'transfer' || clinical && allowTransfers) && (stage.id !== 'drg' || doctor))
   const mayRead = (stage: Stage) => {
     if (stage === 'admission') return true
     if (stage === 'record') return clinical || role === 'medical-records'
+    if (stage === 'drg') return doctor
     if (stage === 'fees' || stage === 'discharge') return cashier || clinical && !archived
     return clinical && !archived
   }
@@ -141,6 +144,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
           {!mayRead(stage.id) ? <Alert role="note"><AlertDescription>{archived ? t('病案已归档，诊疗写入关闭；有权限的岗位可在“病案”查询归档快照。', 'The record is archived and care writes are closed. Authorized staff can read the archived snapshot under Medical record.') : t('请由上述负责岗位从自己的工作台进入本环节办理。切换环节不会变更当前账户或岗位。', 'The responsible staff must continue from their own workspace. Changing stages does not change your account or role.')}</AlertDescription></Alert> : <>
             {stage.id === 'admission' ? nurse && !archived ? <InpatientBedAssignment admission={admission} admissions={admissions} catalog={catalog} locale={locale} write={write} /> : <p>{admission.status === 'registered' ? t('登记已完成，等待病区护士接诊。', 'Registration completed; awaiting ward nurse receipt.') : t('入科登记已完成；床位变更由病区护士办理。', 'Admission received; the ward nurse handles bed changes.')}</p> : null}
             {stage.id === 'orders' ? <InpatientClinical admission={admission} session={session} locale={locale} write={write} /> : null}
+            {stage.id === 'drg' ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} /> : null}
             {stage.id === 'investigations' ? <InpatientInvestigations admission={admission} session={session} locale={locale} write={write} /> : null}
             {stage.id === 'surgery' ? <InpatientSurgery admission={admission} session={session} locale={locale} write={write} /> : null}
             {stage.id === 'transfer' ? <InpatientTransfers admission={admission} session={session} locale={locale} write={write} /> : null}
