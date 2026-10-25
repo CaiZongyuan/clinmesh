@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { drgGroupingResultSchema } from './drg'
+import { inpatientDrgPaymentReferenceSchema } from './inpatient-drg-simulation'
 
 const id = z.string().min(1).max(128)
 const text = z.string().min(1).max(1_000)
@@ -20,6 +21,8 @@ export const inpatientDrgPregroupResultSchema = z.object({
   codingNote: text,
   frozen: z.boolean(),
   result: drgGroupingResultSchema,
+  /** 仅在归档时冻结医院支付预估；旧归档缺失时保持缺失，不能用当前参数回填。 */
+  paymentEstimate: inpatientDrgPaymentReferenceSchema.nullable().optional(),
 }).strict()
 
 export type InpatientDrgPregroupResult = z.infer<typeof inpatientDrgPregroupResultSchema>

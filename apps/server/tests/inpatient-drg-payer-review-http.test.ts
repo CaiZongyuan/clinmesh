@@ -118,6 +118,13 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     expect(response.status).toBe(200)
     const preview = inpatientDrgPayerReviewPreviewSchema.parse(await response.json())
     expect(preview).toMatchObject({ admissionId: s.admission.id, drgCode: 'RA15', simulatedPaymentFen: 300_000 })
+    const frozen = await (await s.request(s.insurance, `${s.path}/drg/pregroup`)).json()
+    expect(frozen.paymentEstimate).toMatchObject({ parameterVersion: '2026-demo-2', drgCode: 'RA15', referenceFen: 300_000 })
+    expect(preview).toMatchObject({ paymentEstimate: frozen.paymentEstimate, estimateDifferenceFen: 0,
+      caseSummary: { recordRevision: 1, rulesId: 'chs-drg-payer-test',
+        groupingInput: { gender: 'male', diagnoses: [{ code: 'I10.x09', role: 'main' }], operations: [] },
+        diagnoses: [{ role: 'primary', coding: { code: 'I10.x09', releaseId: 'synthetic-clinical-2022' } }], operations: [] } })
+    expect(preview.caseSummary).not.toHaveProperty('patient')
     expect((await s.request(s.doctor, `${s.path}/drg/payer-review-preview`)).status).toBe(403)
     const audits = fhirBundleSchema.parse(await (await s.request(await s.login('admin'), '/fhir/R5/AuditEvent?_count=100')).json())
     const auditSchema = z.object({ code: z.object({ text: z.string() }), action: z.string(), outcome: z.object({ code: z.object({ code: z.string() }) }) })
@@ -139,7 +146,8 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     expect(await (await s.request(s.insurance, `${s.path}/drg/payer-review`, input, key)).json()).toEqual(receipt)
     expect(receipt.data.reviews).toHaveLength(1)
     expect(receipt.data.reviews[0]).toMatchObject({ simulatedPaymentFen: preview.simulatedPaymentFen,
-      hospitalChargesFen: preview.hospitalChargesFen, differenceFen: preview.differenceFen })
+      hospitalChargesFen: preview.hospitalChargesFen, differenceFen: preview.differenceFen,
+      paymentEstimate: frozen.paymentEstimate, estimateDifferenceFen: 0 })
   })
 
   it('医保办按合成参数核定归档病例，差异与依据可追溯，越岗读写被拒绝', async () => {

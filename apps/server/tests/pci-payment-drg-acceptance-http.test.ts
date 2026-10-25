@@ -149,9 +149,14 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     const archived = (await parsePciResponse(inpatientRecordResponseSchema, await s.request('medical-records', `${path}/record/archive`, {
       expectedRevision: 1, expectedSourcesHash: reviewed.sourcesHash }))).data
     const frozenGrouping = await s.read('medical-insurance', `${path}/drg/pregroup`, inpatientDrgPregroupResultSchema)
-    expect(frozenGrouping).toMatchObject({ frozen: true, result: { drgCode: 'FM39' } })
+    expect(frozenGrouping).toMatchObject({ frozen: true, result: { drgCode: 'FM39' },
+      paymentEstimate: { drgCode: 'FM39', referenceFen: 2000000, parameterVersion: '2026-demo-2' } })
     const preview = await s.read('medical-insurance', `${path}/drg/payer-review-preview`, inpatientDrgPayerReviewPreviewSchema)
-    expect(preview).toMatchObject({ drgCode: 'FM39', simulatedPaymentFen: 2000000, hospitalChargesFen: 326500, differenceFen: 1673500 })
+    expect(preview).toMatchObject({ drgCode: 'FM39', simulatedPaymentFen: 2000000, hospitalChargesFen: 326500, differenceFen: 1673500,
+      paymentEstimate: frozenGrouping.paymentEstimate, estimateDifferenceFen: 0,
+      caseSummary: { operations: [{ executionId: execution.id, primary: true, coding: { code: '36.0700' } }],
+        groupingInput: { diagnoses: [{ code: 'I25.103', role: 'main' }, { code: 'I10.x09', role: 'secondary' }],
+          operations: [{ code: '36.0700', primary: true }] } } })
     const payer = (await parsePciResponse(commandResponseSchema(inpatientDrgPayerReviewListSchema), await s.request('medical-insurance', `${path}/drg/payer-review`, {
       encounterVersion: preview.encounterVersion, expectedFingerprint: preview.fingerprint, reason: '合成医保办PCI差异复核' }))).data
     expect(payer.reviews).toHaveLength(1)

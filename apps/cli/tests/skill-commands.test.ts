@@ -47,6 +47,13 @@ it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', 
   }
   expect(skill).toContain('INPATIENT_DRG_EVALUATION_STALE')
   expect(skill).toContain('INPATIENT_DRG_PAYER_PREVIEW_STALE')
+  expect(skill).toContain('caseSummary')
+  expect(skill).toContain('paymentEstimate')
+  expect(skill).toContain('estimateDifferenceFen')
+  expect(getHisOperation('inpatient.drg.pregroup').version).toBe(3)
+  expect(getHisOperation('inpatient.drg.payer.review.preview').version).toBe(2)
+  expect(payer.version).toBe(4)
+  expect(getHisOperation('inpatient.drg.payer.reviews').version).toBe(2)
 })
 
 it('住院退款示例及Catalog保留单笔一千万元上限', async () => {

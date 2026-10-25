@@ -129,14 +129,14 @@ export class InpatientDrg {
     if (row.drg_result_json === null) throw new InpatientError('DRG_FROZEN_RESULT_MISSING', '归档时未形成冻结分组（规则包未配置）', 409)
     const snapshot = inpatientRecordSnapshotSchema.parse(JSON.parse(row.snapshot_json))
     return { frozen: inpatientDrgPregroupResultSchema.parse(JSON.parse(row.drg_result_json)),
-      sourcesHash: row.sources_hash, chargesFen: snapshot.fees.chargesFen }
+      sourcesHash: row.sources_hash, chargesFen: snapshot.fees.chargesFen, snapshot }
   }
 
   /** 归档事务内冻结分组：与首页快照同事务落盘；规则包未配置时返回 null，归档不带冻结结果。 */
   freezeForArchive(recordRevision: number, snapshot: z.infer<typeof inpatientRecordSnapshotSchema>): string | null {
     if (this.rules === null) return null
-    return JSON.stringify(this.#groupedResult(snapshot.stay.admissionId, recordRevision, true,
-      this.#snapshotGroupingInput(snapshot)))
+    const frozen = this.#groupedResult(snapshot.stay.admissionId, recordRevision, true, this.#snapshotGroupingInput(snapshot))
+    return JSON.stringify({ ...frozen, paymentEstimate: this.#paymentReference(frozen.result) })
   }
 
   #snapshotGroupingInput(snapshot: z.infer<typeof inpatientRecordSnapshotSchema>): DrgGroupingInput {
@@ -412,7 +412,7 @@ export class InpatientDrg {
   }
 
   #payerBasis(context: ActorContext, admissionId: string) {
-    const { frozen, sourcesHash, chargesFen } = this.#frozenArchive(context, admissionId)
+    const { frozen, sourcesHash, chargesFen, snapshot } = this.#frozenArchive(context, admissionId)
     if (frozen.result.status !== 'grouped' || frozen.result.drgCode === null)
       throw new InpatientError('DRG_FROZEN_UNGROUPED', '归档冻结分组未确定病组，无法模拟核定', 409)
     const reference = this.#paymentReference(frozen.result)
@@ -424,6 +424,16 @@ export class InpatientDrg {
       drgCode: reference.drgCode, parameterSetId: reference.parameterSetId, parameterVersion: reference.parameterVersion,
       simulatedPaymentFen: reference.referenceFen, hospitalChargesFen: chargesFen,
       differenceFen: reference.referenceFen - chargesFen, note: reference.note,
+      paymentEstimate: frozen.paymentEstimate ?? null,
+      estimateDifferenceFen: frozen.paymentEstimate == null ? null : reference.referenceFen - frozen.paymentEstimate.referenceFen,
+      caseSummary: {
+        recordRevision: frozen.recordRevision, rulesId: frozen.rulesId, rulesVersion: frozen.rulesVersion,
+        inputCoding: frozen.inputCoding, codingNote: frozen.codingNote,
+        groupingInput: this.#snapshotGroupingInput(snapshot),
+        diagnoses: snapshot.clinical.diagnosis.entries.map(({ note: _note, ...entry }) => entry),
+        operations: snapshot.clinical.operations.map(operation => ({ executionId: operation.id,
+          procedureVersion: operation.procedureVersion, primary: operation.primary, coding: operation.actualProcedure.coding })),
+      },
     }
     const preview = inpatientDrgPayerReviewPreviewSchema.parse({ ...basis,
       fingerprint: canonicalJsonHash({ workspaceId: context.workspaceId, epoch: context.epoch, ...basis }) })
@@ -467,11 +477,17 @@ export class InpatientDrg {
       difference_fen: z.number(), reason: z.string(), created_at: z.string() })).parse(this.owner.database.driver.prepare(
       'SELECT * FROM inpatient_drg_payer_review WHERE workspace_id=? AND epoch=? AND admission_id=? ORDER BY created_at,review_id')
       .all(context.workspaceId, context.epoch, admissionId))
+    const archive = rows.length === 0 ? null : this.#frozenArchive(context, admissionId)
+    const frozenResultHash = archive === null ? null : canonicalJsonHash(archive.frozen)
     return inpatientDrgPayerReviewListSchema.parse({ admissionId, reviews: rows.map(row => inpatientDrgPayerReviewSchema.parse({
       id: row.review_id, admissionId, archiveSourcesHash: row.archive_sources_hash, recordRevision: row.record_revision,
       frozenRulesId: row.frozen_rules_id, frozenRulesVersion: row.frozen_rules_version, frozenResultHash: row.frozen_result_hash,
       drgCode: row.drg_code, parameterSetId: row.parameter_set_id, parameterVersion: row.parameter_version,
       simulatedPaymentFen: row.simulated_payment_fen, hospitalChargesFen: row.hospital_charges_fen,
+      paymentEstimate: archive?.sourcesHash === row.archive_sources_hash && frozenResultHash === row.frozen_result_hash
+        ? archive.frozen.paymentEstimate ?? null : null,
+      estimateDifferenceFen: archive?.sourcesHash === row.archive_sources_hash && frozenResultHash === row.frozen_result_hash
+        && archive.frozen.paymentEstimate != null ? row.simulated_payment_fen - archive.frozen.paymentEstimate.referenceFen : null,
       differenceFen: row.difference_fen, note: syntheticDrgPaymentParameters.note, reason: row.reason, reviewedAt: row.created_at })) })
   }
 }
