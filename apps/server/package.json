@@ -22,6 +22,8 @@
     "drg:package": "tsx src/drg-reference-package.ts",
     "drg:compact": "tsx src/drg-reference-compact.ts",
     "drg:export": "tsx src/drg-reference-export.ts",
+    "drg:build-rules": "tsx src/drg-rules-build.ts",
+    "drg:verify-rules": "tsx src/drg-rules-verify.ts",
     "guidelines:sync": "tsx src/guideline-sync.ts",
     "performance": "tsx src/performance-cli.ts",
     "smoke:patient-brief:live": "tsx src/patient-persona-live-smoke.ts",

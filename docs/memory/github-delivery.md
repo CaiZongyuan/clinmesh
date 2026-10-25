@@ -8,6 +8,8 @@
 
 - 旧版 `gh pr edit` 可能因 GraphQL 请求已退役的 `projectCards` 字段而失败。已有 PR 正文更新授权时，使用 `gh api --method PATCH repos/<owner>/<repo>/pulls/<number> --input <json-file>` 的 REST 入口，JSON 保留实际换行；写入后核对正文、draft 和 head，不把工具兼容问题变成新的内容审批或安装流程。
 
+- Windows PowerShell 生成 GitHub JSON 请求文件时，使用 `[System.IO.File]::ReadAllText` 读取正文，再将 `{ body: string }` 序列化并以无 BOM UTF-8 写入。`Get-Content -Raw` 的字符串可能携带扩展属性，使 `ConvertTo-Json` 把正文变成含 `value` 和文件元数据的对象；发送前回读 JSON，核对 `body` 仍为字符串，发送后比较远端正文与原文件。
+
 - 排查 FlClash／TUN 环境的 GitHub 连接时，`198.18.0.0/15` 可能是正常的 Fake-IP；仅清除命令行代理环境变量不能证明绕过了 TUN。分别比较国内与境外 HTTPS、代理 CONNECT 和 TLS 握手阶段，再判断节点、分流或系统拦截，不把握手前失败归为 GitHub 账号权限问题。
 
 - PR 从 draft 转为 ready 会触发仓库的异步 Codex 审查。合并前核对最新提交对应的 review summary、审查评论与完成反应；审查运行中先等待结果，处理 findings 后沿用已有合并授权。推送修复后若摘要仍指向旧提交，核对是否触发新一轮审查；已有 Ready 授权时可通过 draft → ready 状态事件重新触发，并确认审查绑定新提交。CI 与自动审查的状态分别核对。
