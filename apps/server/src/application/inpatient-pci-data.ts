@@ -14,12 +14,26 @@ export class InpatientPciData {
   constructor(readonly owner: InpatientService) {}
 
   read(context: ActorContext) {
+    if (this.owner.database.driver.inTransaction) return this.snapshot(context)
+    let result: z.infer<typeof inpatientPciDataSchema>
+    try {
+      result = this.snapshot(context)
+    } catch (error) {
+      try { this.owner.commands.auditRead(context, 'inpatient.pci-data.read', {}, 'failed') }
+      catch { /* 读取失败仍返回原始原因。 */ }
+      throw error
+    }
+    this.owner.commands.auditRead(context, 'inpatient.pci-data.read', {}, 'success')
+    return result
+  }
+
+  private snapshot(context: ActorContext) {
     this.owner.assertReadRole(context, ['administrator', 'inpatient-doctor'])
     const medications = pciDataPackage.medications.flatMap(definition => {
       const row = this.medication(context, definition.product)
       if (row === undefined) return []
       const parsedConfig = z.object({ unit: z.string().nullish(), availableScopes: z.array(z.string()).optional(),
-        inpatientIndications: z.array(z.object({ id: z.string(), system: z.string(), version: z.string() })).optional(),
+        inpatientIndications: z.array(z.object({ id: z.string(), system: z.string(), version: z.string(), code: z.string(), sourceLocator: z.string() })).optional(),
         allowedCombinationIds: z.array(z.string()).optional(), allowedFrequencyCodes: z.array(z.string()).optional(),
       }).safeParse(JSON.parse(row.config_json))
       const config = parsedConfig.success ? parsedConfig.data : {}
@@ -29,7 +43,8 @@ export class InpatientPciData {
       if (!config.availableScopes?.includes('inpatient')) conflicts.push('scope-disabled')
       if (config.unit !== definition.hospitalSupplement.unit) conflicts.push('unit-mismatch')
       if (row.price_fen <= 0) conflicts.push('unpriced')
-      if (!config.inpatientIndications?.some(coding => coding.id === pciDataPackage.diagnosis.id && coding.system === pciDataPackage.diagnosis.system && coding.version === pciDataPackage.diagnosis.version)) conflicts.push('indication-restricted')
+      if (!config.inpatientIndications?.some(coding => coding.id === pciDataPackage.diagnosis.id && coding.system === pciDataPackage.diagnosis.system
+        && coding.version === pciDataPackage.diagnosis.version && coding.code === pciDataPackage.diagnosis.code && coding.sourceLocator === pciDataPackage.diagnosis.sourceLocator)) conflicts.push('indication-restricted')
       if (!definition.hospitalSupplement.frequencyCodes.some(code => config.allowedFrequencyCodes?.includes(code))) conflicts.push('frequency-restricted')
       if (pciDataPackage.medications.some(other => other.id !== definition.id && !config.allowedCombinationIds?.includes(this.medication(context, other.product)?.item_id ?? other.id))) conflicts.push('combination-restricted')
       return [{ definitionId: definition.id, catalogItemId: row.item_id, version: row.version,
@@ -77,7 +92,7 @@ export class InpatientPciData {
       const previousPrice = z.object({ chargeDefinition: z.object({ priceFen: z.number().int().positive().safe() }).optional() }).safeParse(old)
       const priceFen = previousPrice.success ? previousPrice.data.chargeDefinition?.priceFen ?? definition.priceFen : definition.priceFen
       const billing = { id: `inpatient-charge-${serviceId}`, version: 1, display: definition.nameZh, priceFen, currency: 'CNY', trigger: 'execution-completed',
-        source: priceFen === definition.priceFen ? `synthetic-pci-${pciDataPackage.version}` : 'published-hospital-price', availableScopes: ['inpatient'], effectiveOn: '2026-10-25' }
+        source: previousPrice.success && previousPrice.data.chargeDefinition !== undefined ? 'published-hospital-price' : `synthetic-pci-${pciDataPackage.version}`, availableScopes: ['inpatient'], effectiveOn: '2026-10-25' }
       const config = { ...old,
         ...(old.billingUnit === undefined || old.billingUnit === null ? { billingUnit: { code: 'ITEM', display: '项目', system: 'urn:clinmesh:wst:billing-unit',
           valueSet: 'urn:clinmesh:wst:value-set:billing-unit', version: `synthetic-pci-${pciDataPackage.version}` } } : {}),

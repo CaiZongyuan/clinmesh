@@ -9,7 +9,7 @@ import { inpatientFullCatalogSchema, inpatientFullClinicalResponseSchema, inpati
 import { inpatientCatalogSearchSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
-import { inpatientSurgeryCatalogSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientInvestigationCatalogSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { InpatientPciData } from '../src/application/inpatient-pci-data.ts'
 import { InpatientService } from '../src/application/inpatient-service.ts'
@@ -19,6 +19,7 @@ import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
 import { pciDataPackage } from '../src/application/scenario-data/pci-data.ts'
+import { AuditQuery } from '../src/application/audit-query.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -112,10 +113,11 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     s.runtime.database.driver.prepare(`INSERT INTO outpatient_catalog(workspace_id,epoch,item_id,kind,code,name_zh,name_en,price_fen,version,active,config_json)
       VALUES(?,?,?,'medication',?,?,?,321,7,1,?)`)
       .run(admin.context.workspaceId, admin.context.epoch, 'existing-clopidogrel', definition.product.code, definition.product.genericName, definition.product.genericName,
-        JSON.stringify({ product: definition.product, unit: '片', availableScopes: ['outpatient'], allowedCombinationIds: [] }))
+        JSON.stringify({ product: definition.product, unit: '片', availableScopes: ['outpatient'], allowedCombinationIds: [],
+          inpatientIndications: [{ ...pciDataPackage.diagnosis, code: 'I20.900' }] }))
     const prepared = s.data.prepare(admin.context, { expectedEpoch: admin.context.epoch }, 'pci-reuse-existing')
     const medication = prepared.data.installed.medications.find(item => item.definitionId === definition.id)!
-    expect(medication).toMatchObject({ catalogItemId: 'existing-clopidogrel', priceFen: 321, unit: '片', availableScopes: ['outpatient', 'inpatient'], conflicts: ['combination-restricted'] })
+    expect(medication).toMatchObject({ catalogItemId: 'existing-clopidogrel', priceFen: 321, unit: '片', availableScopes: ['outpatient', 'inpatient'], conflicts: ['indication-restricted', 'combination-restricted'] })
     expect(prepared.data.installed.medications.filter(item => item.definitionId === definition.id)).toHaveLength(1)
     const again = s.data.prepare(admin.context, { expectedEpoch: admin.context.epoch }, 'pci-reuse-another-key')
     expect(again.effects).toEqual([])
@@ -143,7 +145,33 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     expect(data.installed.medications.find((item: { catalogItemId: string }) => item.catalogItemId === 'medication-pci-clopidogrel').conflicts).toEqual([])
   })
 
-  it('正式开立校对发药给药形成80分费用，重复发药及重新准备不重记费或补回库存，重启保留回执', async () => {
+  it('独立读取成功与拒绝均留审计，prepare事务内回读只记一次共享Command审计', async () => {
+    const s = await setup(), admin = await s.login('admin'), cashier = await s.login('cashier')
+    expect((await s.request(admin.cookie, '/api/his/v1/inpatient/pci-data')).status).toBe(200)
+    expect((await s.request(cashier.cookie, '/api/his/v1/inpatient/pci-data')).status).toBe(403)
+    const query = new AuditQuery(s.runtime.database)
+    expect(query.list(admin.context).filter(item => item.operation === 'inpatient.pci-data.read'))
+      .toMatchObject([{ actorId: admin.context.actorId, outcome: 'success' }, { actorId: cashier.context.actorId, outcome: 'failed' }])
+    const before = query.list(admin.context).length
+    s.data.prepare(admin.context, { expectedEpoch: admin.context.epoch }, 'pci-data-audited-prepare')
+    const events = query.list(admin.context).slice(before)
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ operation: 'inpatient.pci-data.prepare', outcome: 'success' })
+  })
+
+  it('首次准备后保留用户主动停用及移除住院范围的设置，不重新激活或补库存', async () => {
+    const s = await setup(), admin = await s.login('admin')
+    const original = s.data.prepare(admin.context, { expectedEpoch: admin.context.epoch }, 'pci-inactive-initial')
+    s.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET active=0,config_json=json_set(config_json,'$.availableScopes',json('["outpatient"]'))
+      WHERE workspace_id=? AND epoch=? AND item_id='medication-pci-aspirin'`).run(admin.context.workspaceId, admin.context.epoch)
+    const preserved = s.data.prepare(admin.context, { expectedEpoch: admin.context.epoch }, 'pci-inactive-preserve')
+    expect(preserved.effects).toEqual([])
+    const aspirin = preserved.data.installed.medications.find(item => item.definitionId === 'medication-pci-aspirin')!
+    expect(aspirin).toMatchObject({ active: false, availableScopes: ['outpatient'], conflicts: ['inactive', 'scope-disabled'] })
+    expect(aspirin.lots).toEqual(original.data.installed.medications.find(item => item.definitionId === 'medication-pci-aspirin')!.lots)
+  })
+
+  it('药品与单枚支架耗材经正式动作逐项计费，重复操作及重新准备不重记费或补库存，重启保留回执', async () => {
     const s = await setup(true), admin = await s.login('admin'), registrar = await s.login('registrar'), doctor = await s.login('inpatient-doctor')
     const nurse = await s.login('ward-nurse'), pharmacist = await s.login('pharmacist'), cashier = await s.login('cashier')
     const prepared = s.data.prepare(admin.context, { expectedEpoch: admin.context.epoch }, 'pci-business-prepare')
@@ -180,10 +208,28 @@ describe('固定 PCI 数据公开 Command 与目录回读', () => {
     expect(chargeResponse.status).toBe(200)
     const charges = inpatientChargesSchema.parse(await chargeResponse.json())
     expect(charges.charges.filter(charge => charge.kind === 'medication')).toMatchObject([{ amountFen: 80 }])
+    const currentClinical = inpatientFullClinicalResponseSchema.shape.data.parse(await (await s.request(doctor.cookie, `${path}/clinical`)).json())
+    const requested = await s.request(doctor.cookie, `${path}/surgeries/request`, { encounterVersion: currentClinical.encounterVersion, procedureId: 'hospital-surgery-3', catalogVersion: 1,
+      plannedFor: s.owner.virtualTime(admin.context), reason: '合成择期单枚支架局部接入验证' })
+    expect(requested.status).toBe(200)
+    const surgery = inpatientSurgeryResponseSchema.parse(await requested.json()).data.requests[0]!
+    expect((await s.request(nurse.cookie, `${path}/surgeries/check-preop`, { requestId: surgery.id, expectedRequestVersion: 1, note: '人工核对本次术前资料' })).status).toBe(200)
+    expect((await s.request(doctor.cookie, `${path}/surgeries/confirm-consent`, { requestId: surgery.id, expectedRequestVersion: 2, note: '人工确认本次同意书' })).status).toBe(200)
+    const surgeryInput = { requestId: surgery.id, expectedRequestVersion: 3, procedureId: 'hospital-surgery-3', catalogVersion: 1,
+      materials: ['guidewire', 'guiding-catheter', 'balloon', 'stent'].map(suffix => ({ materialId: `hospital-material-pci-${suffix}`, catalogVersion: 1, quantity: 1 })), note: '人工确认本次实际植入一枚合成支架及耗材使用' }
+    const executed = await s.request(doctor.cookie, `${path}/surgeries/execute`, surgeryInput, 'pci-business-surgery')
+    expect(executed.status).toBe(200)
+    const surgeryReceipt = inpatientSurgeryResponseSchema.parse(await executed.json())
+    expect(surgeryReceipt.data.executions[0]!.actualProcedure.coding.code).toBe('36.0700')
+    expect(surgeryReceipt.data.executions[0]!.materials.find(item => item.item.id === 'hospital-material-pci-stent')).toMatchObject({ quantity: 1, amountFen: 73000 })
+    expect(await (await s.request(doctor.cookie, `${path}/surgeries/execute`, surgeryInput, 'pci-business-surgery')).json()).toEqual(surgeryReceipt)
+    const postSurgeryCharges = inpatientChargesSchema.parse(await (await s.request(cashier.cookie, `${path}/charges`)).json())
+    expect(postSurgeryCharges.charges.filter(charge => charge.kind === 'material').map(charge => charge.amountFen).sort((a, b) => a - b)).toEqual([12298, 20000, 21300, 73000])
+    expect(postSurgeryCharges.charges.filter(charge => charge.kind === 'surgery')).toMatchObject([{ amountFen: 180000 }])
     const refreshed = s.data.prepare(admin.context, { expectedEpoch: admin.context.epoch }, 'pci-business-another-prepare')
     expect(refreshed.effects).toEqual([])
     expect(refreshed.data.installed.medications.find(item => item.catalogItemId === 'medication-pci-clopidogrel')!.lots[0]!.quantityOnHand).toBe(999)
-    expect(inpatientChargesSchema.parse(await (await s.request(cashier.cookie, `${path}/charges`)).json())).toEqual(charges)
+    expect(inpatientChargesSchema.parse(await (await s.request(cashier.cookie, `${path}/charges`)).json())).toEqual(postSurgeryCharges)
     await s.runtime.close()
     const reopened = await createClinMeshRuntime(s.options)
     cleanups.push(() => reopened.close())
