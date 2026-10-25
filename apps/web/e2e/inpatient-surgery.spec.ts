@@ -52,7 +52,7 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
   await expect(page.getByRole('spinbutton')).toHaveCount(0)
   await expect(page.getByText('179 项耗材因计价单位未确认而未启用', { exact: true })).toBeVisible()
   await page.getByLabel('手术耗材', { exact: true }).click()
-  await expect(page.getByRole('option')).toHaveCount(54)
+  await expect(page.getByRole('option')).toHaveCount(57)
   await expect(page.getByRole('option', { name: /TJ2023/ })).toHaveCount(0)
   await page.getByRole('option', { name: '合成演示缝合材料', exact: true }).click()
   await page.getByLabel('合成演示缝合材料实际用量', { exact: true }).fill('2')
