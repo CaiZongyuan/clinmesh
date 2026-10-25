@@ -31,6 +31,7 @@ test('recovers signing preparation after reload, resumes paused recording and si
     await page.getByRole('tab', { name: '待诊', exact: true }).click()
     await page.getByText('张琴', { exact: true }).first().click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     const consultationPanel = page.getByRole('tabpanel', { name: '问诊记录', exact: true })
     const recordPanel = page.getByRole('tabpanel', { name: '病历记录', exact: true })
     const ask = async () => {

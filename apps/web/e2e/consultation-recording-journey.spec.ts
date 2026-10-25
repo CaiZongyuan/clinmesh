@@ -44,6 +44,7 @@ test('combines direct recording, manual edits, pause, retry and signing in one c
     await page.getByRole('tab', { name: '待诊', exact: true }).click()
     await page.getByText('张琴', { exact: true }).first().click()
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     const result = await runRecordingJourney({ page,
       read: async () => doctorCaseDetailSchema.parse(await (await page.request.get(
         `${server.origin}/api/his/v1/doctor/cases/${started.outpatientCaseId}`)).json()),

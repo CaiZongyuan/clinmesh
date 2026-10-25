@@ -33,11 +33,11 @@ async function runProfile(profile: ReturnType<typeof performanceProfileSchema.pa
 async function main(): Promise<void> {
   const profile = performanceProfileSchema.parse(option('--profile') ?? 'ci')
   const result = await runProfile(profile)
-  if (profile === 'ci') assertPerformanceBaseline(result.workloads, baselineData)
   const output = `${JSON.stringify(result, null, 2)}\n`
   const outputPath = option('--output')
   if (outputPath !== undefined) await writeFile(resolve(outputPath), output, 'utf8')
   process.stdout.write(output)
+  if (profile === 'ci') assertPerformanceBaseline(result.workloads, baselineData)
 }
 
 await main()

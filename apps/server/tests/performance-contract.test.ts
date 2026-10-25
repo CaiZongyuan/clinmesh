@@ -104,6 +104,14 @@ describe('Performance contract', () => {
     }], baseline)).toThrow('query budget')
     expect(() => assertPerformanceBaseline([{
       ...workload,
+      databaseBytes: { before: 0, after: 8_192, growth: 8_192 },
+    }], baseline)).not.toThrow()
+    expect(() => assertPerformanceBaseline([{
+      ...workload,
+      databaseBytes: { before: 0, after: 8_193, growth: 8_193 },
+    }], baseline)).toThrow('catalog-search-http exceeded its database-growth budget: 8193 > 8192 bytes')
+    expect(() => assertPerformanceBaseline([{
+      ...workload,
       rowsWritten: 1,
     }], baseline)).toThrow('rows-written ceiling')
     expect(() => assertPerformanceBaseline([

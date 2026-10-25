@@ -129,7 +129,7 @@ export function assertPerformanceBaseline(
       throw new Error(`${name} did not meet its rows-written floor`)
     }
     if (workload.databaseBytes.growth > budget.maximumDatabaseGrowthBytes) {
-      throw new Error(`${name} exceeded its database-growth budget`)
+      throw new Error(`${name} exceeded its database-growth budget: ${workload.databaseBytes.growth} > ${budget.maximumDatabaseGrowthBytes} bytes`)
     }
     if (workload.trace.rows / workload.iterations > budget.maximumTraceRowsPerIteration) {
       throw new Error(`${name} exceeded its Trace-row budget`)

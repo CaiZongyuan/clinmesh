@@ -1,4 +1,5 @@
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
+import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.tsx'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -56,6 +57,7 @@ export function InpatientRecord({ admission, session, locale, write }: {
    <section aria-label={t('病案费用', 'Record fees')}><h4>{t('病案费用', 'Record fees')}</h4><p>{t('医疗费用净额', 'Net medical charges')} {formatFen(snapshot.fees.chargesFen, locale)} · {t('预交金（独立资金）', 'Deposit (separate funds)')} {formatFen(snapshot.fees.depositFen, locale)}</p>{Object.entries(snapshot.fees.categoryNetFen).map(([kind, amount]) => <p key={kind}>{kind} · {formatFen(amount, locale)}</p>)}{snapshot.fees.charges.map(item => <p key={item.id}>{item.label} · {formatFen(item.amountFen, locale)}{item.reversalOf ? ` · ${t('冲正', 'Reversal')} ${item.reversalOf}` : ''}</p>)}<p>{t('结算', 'Settlement')} {snapshot.fees.settlement?.id ?? '—'}</p></section>
    {data.reviews.map(review => <p key={review.id}>{review.outcome === 'approved' ? t('审核通过', 'Approved') : t('退回', 'Returned')} · {t('修订', 'Revision')} {review.revision} · {review.practitionerRoleId} · {review.recordedAt}{review.reason ? ` · ${review.reason}` : ''}</p>)}
    {archived ? <p>{t('归档', 'Archived')} {data.archive!.recordedAt} · {data.archive!.practitionerRoleId}</p> : null}
+   {coder && admission.financialStatus === 'settled' ? <InpatientFinancialAdjustments key={admission.id} admission={admission} session={session} locale={locale} /> : null}
    {doctor && !archived ? <>
     {snapshot.clinical.operations.length > 0 ? <Field><FieldLabel htmlFor="inpatient-record-main">{t('确认本次主操作', 'Confirm primary performed procedure')}</FieldLabel><WorkspaceSelect id="inpatient-record-main" value={draft?.main ?? null} items={snapshot.clinical.operations.map(item => ({ value: item.id, label: `${item.actualProcedure.coding.code} · ${item.actualProcedure.coding.display}` }))} onValueChange={value => setDraft(current => ({ main: value, revision: current?.revision ?? expected!.expectedRevision, hash: current?.hash ?? expected!.expectedSourcesHash }))}/></Field> : null}
     <Button disabled={blocked || admission.status === 'registered' || (snapshot.clinical.operations.length > 0 && !draft?.main)} onClick={submit}>{snapshot.clinical.operations.length === 0 ? t('提交首页（本次无已实施操作）', 'Submit record with no performed procedure') : t('提交首页修订', 'Submit record revision')}</Button>

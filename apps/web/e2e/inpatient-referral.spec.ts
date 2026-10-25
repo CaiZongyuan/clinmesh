@@ -27,6 +27,7 @@ test('门诊开具住院证后按可见交接提示由登记员转收，病区�
   await page.getByRole('tab', { name: '待诊', exact: true }).click()
   await page.getByText('张琴', { exact: true }).first().click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('button', { name: '开始首诊', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: '开具住院证', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: '开具住院证', exact: true })

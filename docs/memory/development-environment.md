@@ -6,6 +6,10 @@
 
 ## Worktree、依赖与锁文件
 
+- 清理历史 worktree 前，先保全被忽略的本地数据和验收文件，并反查保留副本的 `node_modules` junction/symlink 是否仍借用待删目录；仍被借用的依赖 owner 暂留。Windows 上 `git worktree remove` 报 `Directory not empty` 或 `Filename too long` 后，可能已注销 worktree 并只删除了部分目录，必须分别核对登记与实际目录，不能把报错当作完整保留。清理残留前核实绝对路径白名单和备份，对链接只删除链接本身；Windows 标为 `prunable` 的 Linux 路径还要在所属 WSL 文件系统核实，不能直接批量 prune。
+
+- Windows worktree 以 junction 复用依赖时，`git status --ignored` 可能追随依赖环并遍历超长路径。检查源码使用 tracked diff，本地数据按明确路径检查；中断扫描后若遗留 `index.lock`，先确认对应 Git 进程已退出、锁路径属于该 worktree，再清理该锁，避免并发切分支被阻塞。
+
 - 独立 worktree 借用已有依赖进行检查时，pnpm 11 的依赖状态检查可能自动尝试安装。明确使用 `--config.verify-deps-before-run=false` 或现有锁定 runner，不能让它清理、安装或重写其他任务共用的 `node_modules`；构建与测试产物仍按任务隔离。
 
 - pnpm 11 默认会在运行脚本前检查依赖；复用依赖的 worktree 可能触发自动重装并因无 TTY 失败。已核对依赖与锁一致时，可通过进程环境 `pnpm_config_verify_deps_before_run=false` 运行检查，不修改仓库配置。复用外部依赖时仍须让 `@clinmesh/*` 链接指向目标 worktree 的包，否则集成测试可能误用原工作区源码。
@@ -93,3 +97,5 @@
 - VitePress 构建把公开页面里裸写的 `http://localhost:*` URL 当作内部死链并使 `pnpm docs:check` 失败（`127.0.0.1` 不受影响）。进入文档站投影的页面中所有本机地址一律写成代码 span，不起链接。
 
 - 文档站构建与全仓 lint 顺序执行：VitePress 会短暂创建并删除 `.vitepress/config.ts.timestamp-*.mjs`，并行 oxlint 可能在扫描后读取到已删除文件而报 `Failed to open file`。先确认构建结束，再原样重跑 lint，不扩大忽略范围掩盖源码错误。
+
+- Windows PowerShell 将含中文的 here-string 通过管道传给 Node 等原生程序时，先把 `$OutputEncoding` 设为无 BOM 的 UTF-8；默认编码可能将中文变成问号，使字符串替换静默失效。写入后检查目标文本与 diff，不以进程成功退出作为修改生效的证据。

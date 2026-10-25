@@ -56,6 +56,7 @@ for (const status of ['ready', 'pending', 'failed'] as const) test(`reuses one $
     await page.getByRole('tab', { name: '待诊', exact: true }).click()
     await select(first.outpatientCaseId)
     await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+    await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
     await page.getByRole('tab', { name: '病历记录', exact: true }).click()
     await expect.poll(() => calls).toBe(1)
     await expect.poll(async () => (await read()).status).toBe(status)

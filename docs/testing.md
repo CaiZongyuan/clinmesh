@@ -26,6 +26,8 @@ Server route 测试必须解析响应 schema。SQLite 正确性 Spike 使用真�
 
 Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/Skill 分类，Identity HTTP test 拥有 Grant hash、岗位、allowlist 与失效矩阵，CLI process test 拥有 argv/stdin/stdout/stderr/exit，HIS 场景测试拥有业务状态机，Skill test 把示例交给真实命令 parser，ambiguous test 在响应丢失后通过公开 receipt 观察唯一 Effect。上层不复制 Server 已有 Command 输入矩阵。
 
+财务命令风险分级变化通过 CLI process/HTTP adapter 验证：human 缺少 `--yes` 时返回 `confirmation_required/definitely_not_sent`，不消费 stdin、不发送请求；显式确认后保留原输入与幂等键。Agent mode 无此人工标志仍可按 Grant 发起请求；读取和预览保留无需确认的路径。Skill 示例同时交给真实 parser 检查标志与 Catalog 版本。
+
 ### Application composition
 
 共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
@@ -146,6 +148,8 @@ Mobile 功能先列出与 Web/Desktop 必须一致的语义，再验证移动端
 ## 性能合同
 
 短性能门禁属于 `pnpm check`。它在隔离的 file-backed SQLite 上运行 Reference Release 导入、独立 Reference SQLite 的疾病/药品/检验全文搜索、本院服务目录 HTTP 查询、普通与重 Command、测试专用 Trace 对照和内置 Scenario install/reset。门禁只 gate statement/query/write、rows written、数据库增长、Trace rows/bytes、错误和索引计划。Trace bytes 是 `action_trace` 全部持久化 TEXT 字段的 UTF-8 字节数，不代表 SQLite page allocation。P50/P95/P99、transaction time 和吞吐始终进入结果，但不作为跨机器 PR hard gate。SQLite 当前不提供可靠 rows-read，因此结果 schema 明确不声明该指标。
+
+Scenario install/reset 的存储采样在工作负载前后分别完成 `wal_checkpoint(TRUNCATE)`，再合计主文件、WAL 与 SHM 的字节数，比较 checkpoint 后的持久分配增长。两次 checkpoint 均在 SQL 计数与延迟采样之外；这一指标不表示操作期间的 WAL 峰值，避免将初始化数据的延迟刷盘计入场景增长。存储预算以 `apps/server/performance-baselines.json` 为准。CLI 在预算断言前输出完整结果并写入可选的 `--output` 文件；超限仍以非零状态退出，存储错误同时报告实际增长与预算字节数。
 
 ```sh
 pnpm perf:ci

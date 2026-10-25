@@ -29,7 +29,7 @@ AND route/command role allowlist
 AND workflow state and target references
 ```
 
-住院新增业务写入要求 active Scenario Run。当前 Epoch 的人类会话可在 Run 完成后读取住院归档及其工作台依赖查询，保留原岗位、科室、病区授权和各岗位字段隔离，具体只读入口见[病案归档合同](clinical-workflows.md#病案首页与归档)。Agent Capability Grant 仍要求 active Run，不因这项人类只读例外放宽。既有 Command receipt 依照[幂等合同](fhir-and-commands.md#65-idempotency)无写重放，不重新执行业务状态变更。
+新增业务写入默认要求 active Scenario Run；当前 Workspace/Epoch 内的人类收费会话可在 completed Run 通过[结算后的财务更正](clinical-workflows.md#结算后的财务更正)执行窄财务 Command，也可按[门诊退款合同](clinical-workflows.md#85-收费支付与退款)查询恢复已有退款；门诊新冲减、新退款仍要求 active Run，closed Run 拒绝新写。当前 Epoch 的人类会话可在 Run 完成后读取住院归档及其工作台依赖查询，保留原岗位、科室、病区授权和各岗位字段隔离，具体只读入口见[病案归档合同](clinical-workflows.md#病案首页与归档)。Agent Capability Grant 仍要求 active Run，不因这些人类会话例外放宽。既有 Command receipt 依照[幂等合同](fhir-and-commands.md#65-idempotency)无写重放，不重新执行业务状态变更。
 
 当前没有 SMART/resource scope、标准 Patient compartment 或通用字段策略引擎。Agent Capability Grant 是 ClinMesh task authority，不等同于通用 delegation grant；未来引入标准 scope 或字段策略时只能继续收窄以上权限。
 
@@ -84,7 +84,7 @@ Audit Event、Provenance、Action Trace 和应用日志职责分开：
 - real timestamp、Actor、Practitioner、Practitioner Role 和 role code
 - Scenario Run ID、operation、success/failed outcome 和规范化 request hash
 
-Command Effect 引用和版本保存在 `command_effect` 与 Action Trace；AuditEvent 投影把 Effect 映射为 entity。当前审计不记录普通读取、duration、request ID、organization/location 字段、客户端、delegator 或错误码，也没有审计查询 UI。新增这些能力前不能宣称完整医疗审计覆盖。
+Command Effect 引用和版本保存在 `command_effect` 与 Action Trace；AuditEvent 投影把 Effect 映射为 entity。门诊退款账、住院首次资金账及后续财务差异读取通过同一审计链记录成功与进入业务授权边界后的拒绝，只保存查询引用的 hash，不保存账目正文；读取审计不参与业务账目指纹或金额计算。其他普通读取，以及 duration、request ID、organization/location 字段、客户端、delegator 或错误码当前不进入审计，也没有审计查询 UI。新增这些能力前不能宣称完整医疗审计覆盖。
 
 Agent Tool 读取和草稿动作不伪装成 AuditEvent。`agent_tool_call` 保存 DSH Session/call ID、context、operation、input hash 和结果；proposal/review 另表保存。人类批准产生正式 Command 时，Tool call 通过 Command `requestId`、`auditId` 和 `action_trace.request_id` 关联既有审计与 Effect，不复制 Command 状态机。
 

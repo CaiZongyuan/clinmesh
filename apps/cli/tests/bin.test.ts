@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { listHisOperations } from '@clinmesh/contracts/his-operations'
 import { describe, expect, it } from 'vitest'
 
 describe('clinmesh process entrypoint', () => {
@@ -9,6 +10,7 @@ describe('clinmesh process entrypoint', () => {
       cwd: repositoryRoot,
       encoding: 'utf8',
       env: process.env,
+      shell: process.platform === 'win32',
     })
 
     expect(result.status, result.stderr).toBe(0)
@@ -17,9 +19,9 @@ describe('clinmesh process entrypoint', () => {
   })
 
   it('prints help successfully', () => {
-    const tsx = fileURLToPath(new URL('../../../node_modules/.bin/tsx', import.meta.url))
+    const tsx = fileURLToPath(import.meta.resolve('tsx/cli'))
     const entry = fileURLToPath(new URL('../src/index.ts', import.meta.url))
-    const result = spawnSync(tsx, [entry, '--help'], {
+    const result = spawnSync(process.execPath, [tsx, entry, '--help'], {
       encoding: 'utf8',
       env: { PATH: process.env.PATH },
     })
@@ -30,9 +32,9 @@ describe('clinmesh process entrypoint', () => {
   })
 
   it('runs local operation discovery without credentials or network', () => {
-    const tsx = fileURLToPath(new URL('../../../node_modules/.bin/tsx', import.meta.url))
+    const tsx = fileURLToPath(import.meta.resolve('tsx/cli'))
     const entry = fileURLToPath(new URL('../src/index.ts', import.meta.url))
-    const result = spawnSync(tsx, [entry, 'operations', 'list'], {
+    const result = spawnSync(process.execPath, [tsx, entry, 'operations', 'list'], {
       encoding: 'utf8',
       env: {
         PATH: process.env.PATH,
@@ -43,7 +45,7 @@ describe('clinmesh process entrypoint', () => {
     expect(result.stderr).toBe('')
     const envelope = JSON.parse(result.stdout)
     expect(envelope).toMatchObject({ ok: true, schemaVersion: 1 })
-    expect(envelope.data.operations).toHaveLength(144)
+    expect(envelope.data.operations.map((operation: { id: string }) => operation.id).sort()).toEqual(listHisOperations().map(operation => operation.id).sort())
     expect(envelope.data.operations).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'billing.case.get' }),
       expect.objectContaining({ id: 'payment.recover' }),

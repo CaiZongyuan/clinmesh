@@ -10,7 +10,11 @@ Status: implemented
 
 Performance runner 使用固定 `performanceResultSchema` 输出每个 workload 的 P50/P95/P99、transaction time、statement/query/write counts、rows written、数据库增长、Trace rows/bytes、吞吐和 busy/error/retry。Trace bytes 是 `action_trace` 全部持久化 TEXT 字段的 UTF-8 字节数，不是字符数或 SQLite page allocation。可选 `SqlitePerformanceObserver` 只在 runner 显式创建的 Database adapter 上记录 statement 执行；默认 Server 不启用 observer，不改变 SQL、事务、审计或 Trace 行为。
 
+CLI 在预算断言前输出并按需保存完整结果，超限仍返回失败；否则最需要诊断的失败运行反而丢失实际指标。存储按主文件、WAL 和 SHM 的前后总大小计算，包含检查点与页布局影响；SQLite 保存原始 DDL 文本，LF/CRLF 可改变初始化时的页分配。预算校准使用 Git 中的 LF 源码并对照 CI 环境，对已解释的增长以 64 KiB 粒度取整，不用其他平台或换行副本的较小增长代替。
+
 `ci` profile 在隔离 file-backed SQLite 上运行合成 Reference Release 导入、独立 Reference SQLite 疾病/药品/检验全文搜索、本院服务 HTTP 查询、普通 Command、25 行重 Command、同写入量的测试专用 SQL control，以及内置 Scenario install/reset。PR gate 只约束稳定的 count、query plan、Trace 和 storage 指标，延迟分位数始终报告但不作跨机器 hard gate。两个搜索 workload 都拒绝 `pageSize=101`；本院服务要求 `hospital_service_catalog_search_idx`，Reference 搜索要求 FTS virtual-table plan 且保持只读数据库零增长。结果 schema 不接受 rows-read 字段。
+
+Scenario 生命周期会积累多个 Epoch 的目录快照，跨过 SQLite 自动 checkpoint 门槛时，文件大小差额可能包含初始化阶段留在 WAL 中的页面。该工作负载采用[测试策略](../../../testing.md#性能合同)规定的 checkpoint 后存储采样，保留现有增长预算，以隔离初始化刷盘历史；checkpoint 不进入业务 SQL 计数或延迟。选择持久分配增长作为这一门禁的含义，接受它不衡量运行期间 WAL 峰值的限制。
 
 `trajectory` profile 通过 production application interfaces 从内置虚拟患者直接开始就诊，完成问诊、CBC 申请与报告确认、高血压诊断、5 mg 本院处方、病历签署和完诊；它不生成、安装或读取 Scenario Dataset/Package。`saturation` profile 使用 Worker threads 和独立 SQLite sandbox 覆盖 1、5、10、25 actors；runner 可以对 `SQLITE_BUSY` 做有界重试并报告次数，这不是生产 Command retry。`full-import` profile 要求调用者提供已合法取得的 manifest，在独立 Reference SQLite 中运行，不把原始目录提交到 Git。
 
@@ -19,6 +23,8 @@ Trace control 只是在测试临时表执行与重 Command 相同的 25 行写�
 ## Alternatives considered
 
 **以 P95/P99 作为 PR hard gate。** 能直接捕获慢化，但共享 CI 的调度、CPU 和文件系统抖动会使结果不可复现；离散 SQL/存储放大更适合作为稳定门禁。
+
+**为 WAL 刷盘差异提高场景增长预算。** 可以放行初始化刷盘导致的超限，却会把与场景无关的历史写入纳入预算并削弱持久数据增长门禁；先统一两端的 checkpoint 状态更能隔离被测行为。
 
 **把返回行数命名为 rows read。** 实现简单，但不能反映索引扫描、临时 B-tree 或 SQLite 内部读取，因而不提供该指标。
 

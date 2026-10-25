@@ -1,4 +1,6 @@
 import { inpatientReferralResponseSchema } from '@clinmesh/contracts/inpatient'
+import { agentCapabilityGrantSchema, agentClientSchema } from '@clinmesh/contracts/agent'
+import { refundCaseSchema, refundPreviewResponseSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
 import { useSyntheticLaboratoryCatalog } from './fixtures/consultation.ts'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -1409,6 +1411,364 @@ describe('outpatient workflow HTTP contract', () => {
     runtimes.push(runtime)
     return { runtime, password, options }
   }
+
+  it('refunds only a recorded fee correction against the original payment without undoing clinical release', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createPaidLabCase(runtime, password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version = '2', key = randomUUID()) => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(testCase.cashierCookie, key),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }),
+    })
+    const adjusted = await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, {
+      chargeItemId, amountFen: 2000, reason: '合成费用录入错误，核准冲减20元。',
+    })
+    expect(adjusted.status).toBe(200)
+    const adjustment = await adjusted.json()
+    expect(adjustment.data).toMatchObject({ chargeItemId, adjustedFen: 2000 })
+    const preview = await write('/api/his/v1/refunds/actions/preview', {
+      paymentId: testCase.payment.paymentId, amountFen: 1000, expectedSourceVersion: 1, simulatorRule: 'success',
+    }, '3')
+    expect(preview.status).toBe(200)
+    const frozen = (await preview.json()).data
+    const key = randomUUID()
+    const confirm = () => write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, { commitToken: frozen.commitToken }, '3', key)
+    const response = await confirm()
+    expect(response.status).toBe(200)
+    const refund = await response.json()
+    expect(refund.data).toMatchObject({ amountFen: 1000, outcome: 'success', sourceId: testCase.payment.paymentId })
+    expect(await (await confirm()).json()).toEqual(refund)
+    const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}`, {
+      headers: { cookie: testCase.cashierCookie },
+    })).json())
+    expect(bill.charges.find(charge => charge.chargeItemId === chargeItemId)).toMatchObject({ amountFen: 4800, paidFen: 5800, remainingFen: 0, status: 'paid' })
+    const caseResponse = await runtime.app.request(`/api/his/v1/doctor/cases/${testCase.caseId}`, { headers: { cookie: testCase.doctorCookie } })
+    expect(doctorCaseDetailSchema.parse(await caseResponse.json()).status).toBe('awaiting-lis')
+    await expectCommandAudit(runtime, testCase.cashierCookie, refund.auditId, 'refund.confirm')
+  })
+
+  it.each(['ambiguous', 'ambiguous-decline', 'ambiguous-pending', 'decline'] as const)('reserves %s refunds across original payments and restores only the recorded attempt after restart', async rule => {
+    const setup = await paymentTestRuntime()
+    let runtime = setup.runtime
+    const testCase = await createLabOrderedCase(runtime, setup.password)
+    let cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', setup.password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version: string, key = randomUUID(), actor = cookie) => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(actor, key), body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }),
+    })
+    const read = async () => refundCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}/refunds`, { headers: { cookie } })).json())
+    const pay = async (amountFen: number, version: string) => {
+      const preview = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+        caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success', tenders: [{ method: 'cash', amountFen }],
+      }, version)).json()).data
+      return paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, { commitToken: preview.commitToken }, version)).json()).data
+    }
+    const first = await pay(3000, '1'), second = await pay(3800, '2')
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, { chargeItemId, amountFen: 2000, reason: '合成收费错误，经核准冲减。' }, '3')).status).toBe(200)
+    const preview = async (paymentId: string, simulatorRule = rule, amountFen = 1500) => write('/api/his/v1/refunds/actions/preview', { paymentId, amountFen, expectedSourceVersion: 1, simulatorRule }, '4')
+    const frozen = refundPreviewResponseSchema.parse(await (await preview(first.paymentId)).json()).data
+    const competitor = refundPreviewResponseSchema.parse(await (await preview(second.paymentId)).json()).data
+    const key = randomUUID()
+    const confirm = () => write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, { commitToken: frozen.commitToken }, '4', key)
+    const initialResponse = await confirm()
+    expect(initialResponse.status).toBe(200)
+    const initial = refundResponseSchema.parse(await initialResponse.json())
+    expect(refundResponseSchema.parse(await (await confirm()).json())).toEqual(initial)
+    expect((await write(`/api/his/v1/refunds/${competitor.previewId}/actions/confirm`, { commitToken: competitor.commitToken }, '4')).status).toBe(rule === 'decline' ? 200 : 409)
+    const beforeRestart = await read()
+    expect(beforeRestart.refundedFen).toBe(0)
+    expect(beforeRestart.reservedFen).toBe(rule === 'decline' ? 0 : 1500)
+    expect((await preview(second.paymentId, rule, 2500)).status).toBe(409)
+    expect((await write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, { commitToken: frozen.commitToken }, '4', randomUUID(), testCase.doctorCookie)).status).toBe(403)
+    if (rule === 'ambiguous') {
+      runtime.close()
+      runtimes.splice(runtimes.indexOf(runtime), 1)
+      runtime = await createClinMeshRuntime(setup.options)
+      runtimes.push(runtime)
+      cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', setup.password)
+    }
+    expect(await read()).toEqual(beforeRestart)
+    const recoveryKey = randomUUID()
+    const recover = () => write(`/api/his/v1/refunds/${initial.data.refundId}/actions/recover`, { expectedRefundVersion: 1 }, '4', recoveryKey)
+    const recovered = refundResponseSchema.parse(await (await recover()).json())
+    expect(refundResponseSchema.parse(await (await recover()).json())).toEqual(recovered)
+    expect(recovered.data).toMatchObject({ refundId: initial.data.refundId, outcome: rule === 'ambiguous' ? 'success' : rule === 'ambiguous-pending' ? 'ambiguous' : 'declined' })
+    expect((await read()).refunds.filter(item => item.sourceId === first.paymentId)).toHaveLength(1)
+    expect((await read()).reservedFen).toBe(rule === 'ambiguous-pending' ? 1500 : 0)
+  })
+
+  it('reconciles partial refunds against each frozen tender without repeating a channel allocation', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version: string) => runtime.app.request(path, { method: 'POST', headers: commandHeaders(cookie),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }) })
+    const preview = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+      caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success',
+      tenders: [{ method: 'cash', amountFen: 1000 }, { method: 'bank-card', amountFen: 2000 }, { method: 'mobile', amountFen: 3800 }],
+    }, '1')).json()).data
+    const payment = paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, { commitToken: preview.commitToken }, '1')).json()).data
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, { chargeItemId, amountFen: 3000, reason: '合成组合支付费用错误，核准冲减。' }, '2')).status).toBe(200)
+    const refund = async (amountFen: number, expectedSourceVersion: number) => {
+      const frozen = refundPreviewResponseSchema.parse(await (await write('/api/his/v1/refunds/actions/preview', {
+        paymentId: payment.paymentId, amountFen, expectedSourceVersion, simulatorRule: 'success',
+      }, '3')).json()).data
+      const result = await write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, { commitToken: frozen.commitToken }, '3')
+      expect(result.status).toBe(200)
+      return refundResponseSchema.parse(await result.json()).data
+    }
+    expect((await refund(2500, 1)).tenders).toEqual([{ method: 'cash', amountFen: 1000 }, { method: 'bank-card', amountFen: 1500 }])
+    const frozen = await Promise.all([0, 1].map(async () => refundPreviewResponseSchema.parse(await (await write('/api/his/v1/refunds/actions/preview', {
+      paymentId: payment.paymentId, amountFen: 500, expectedSourceVersion: 2, simulatorRule: 'success',
+    }, '3')).json()).data))
+    const competing = await Promise.all(frozen.map(value => write(`/api/his/v1/refunds/${value.previewId}/actions/confirm`, { commitToken: value.commitToken }, '3')))
+    expect(competing.map(response => response.status).sort()).toEqual([200, 409])
+    expect(refundResponseSchema.parse(await competing.find(response => response.status === 200)!.json()).data.tenders).toEqual([{ method: 'bank-card', amountFen: 500 }])
+    const ledger = refundCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}/refunds`, { headers: { cookie } })).json())
+    expect(ledger).toMatchObject({ refundedFen: 3000, reservedFen: 0, sources: [{ sourceId: payment.paymentId, refundableFen: 0 }] })
+  })
+
+  it('collects only the corrected receivable after a fee reduction on a partially paid charge', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version: string) => runtime.app.request(path, { method: 'POST', headers: commandHeaders(cookie),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }) })
+    const preview = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+      caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success', tenders: [{ method: 'cash', amountFen: 3000 }],
+    }, '1')).json()).data
+    expect((await write(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, { commitToken: preview.commitToken }, '1')).status).toBe(200)
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, { chargeItemId, amountFen: 1000, reason: '合成录入错误，核准冲减10元。' }, '2')).status).toBe(200)
+    const remaining = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+      caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success',
+    }, '3')).json()).data
+    expect(remaining).toMatchObject({ amountFen: 2800, remainingFen: 2800, paidFen: 3000 })
+    const collected = paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${remaining.previewId}/actions/confirm`, { commitToken: remaining.commitToken }, '3')).json()).data
+    expect(collected).toMatchObject({ amountFen: 2800, outcome: 'success', status: 'awaiting-lis' })
+  })
+
+  it('blocks new and previewed collections until the original unknown refund is resolved', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version: string) => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(cookie),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }),
+    })
+    const previewPayment = (version: string, amountFen?: number) => write('/api/his/v1/payments/actions/preview', {
+      caseId: testCase.caseId, category: 'laboratory', simulatorRule: 'success',
+      ...(amountFen === undefined ? {} : { tenders: [{ method: 'cash', amountFen }] }),
+    }, version)
+    const first = paymentPreviewResponseSchema.parse(await (await previewPayment('1', 3400)).json()).data
+    const payment = paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${first.previewId}/actions/confirm`, {
+      commitToken: first.commitToken,
+    }, '1')).json()).data
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, {
+      chargeItemId, amountFen: 2040, reason: '合成检验收费错误，核准冲减。',
+    }, '2')).status).toBe(200)
+    const beforeRefund = paymentPreviewResponseSchema.parse(await (await previewPayment('3')).json()).data
+    expect(beforeRefund.amountFen).toBe(1360)
+    const frozen = refundPreviewResponseSchema.parse(await (await write('/api/his/v1/refunds/actions/preview', {
+      paymentId: payment.paymentId, amountFen: 2040, expectedSourceVersion: 1, simulatorRule: 'ambiguous',
+    }, '3')).json()).data
+    const refund = refundResponseSchema.parse(await (await write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, {
+      commitToken: frozen.commitToken,
+    }, '3')).json()).data
+    expect(refund.outcome).toBe('ambiguous')
+    for (const response of [await previewPayment('3'), await write(`/api/his/v1/payments/${beforeRefund.previewId}/actions/confirm`, {
+      commitToken: beforeRefund.commitToken,
+    }, '3')]) {
+      expect(response.status).toBe(409)
+      expect(apiErrorSchema.parse(await response.json()).error.code).toBe('WORKFLOW_CONFLICT')
+    }
+    const recovered = refundResponseSchema.parse(await (await write(`/api/his/v1/refunds/${refund.refundId}/actions/recover`, {
+      expectedRefundVersion: 1,
+    }, '3')).json()).data
+    expect(recovered.outcome).toBe('success')
+    const remaining = paymentPreviewResponseSchema.parse(await (await previewPayment('3')).json()).data
+    expect(remaining).toMatchObject({ amountFen: 3400, paidFen: 1360, remainingFen: 3400 })
+    const collected = paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${remaining.previewId}/actions/confirm`, {
+      commitToken: remaining.commitToken,
+    }, '3')).json()).data
+    expect(collected).toMatchObject({ amountFen: 3400, outcome: 'success', status: 'awaiting-lis' })
+    const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}`, {
+      headers: { cookie },
+    })).json())
+    expect(bill.charges.find(charge => charge.chargeItemId === chargeItemId)).toMatchObject({ amountFen: 4760, paidFen: 4760, remainingFen: 0, status: 'paid' })
+  })
+
+  it('resolves an unknown collection before starting a refund against the same charge', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const chargeItemId = testCase.order.chargeItemId
+    const write = (path: string, input: unknown, version: string) => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(cookie),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }),
+    })
+    const collect = async (amountFen: number, simulatorRule: 'success' | 'ambiguous', version: string) => {
+      const frozen = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+        caseId: testCase.caseId, category: 'laboratory', simulatorRule, tenders: [{ method: 'cash', amountFen }],
+      }, version)).json()).data
+      return paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${frozen.previewId}/actions/confirm`, {
+        commitToken: frozen.commitToken,
+      }, version)).json()).data
+    }
+    const first = await collect(3400, 'success', '1')
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, {
+      chargeItemId, amountFen: 2040, reason: '合成检验收费错误，核准冲减。',
+    }, '2')).status).toBe(200)
+    const unknown = await collect(1360, 'ambiguous', '3')
+    const refundInput = { paymentId: first.paymentId, amountFen: 2040, expectedSourceVersion: 1, simulatorRule: 'ambiguous' }
+    const blocked = await write('/api/his/v1/refunds/actions/preview', refundInput, '4')
+    expect(blocked.status).toBe(409)
+    expect(apiErrorSchema.parse(await blocked.json()).error.code).toBe('WORKFLOW_CONFLICT')
+    expect(doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${testCase.caseId}`, {
+      headers: { cookie: testCase.doctorCookie },
+    })).json()).status).toBe('awaiting-lab-payment')
+    const recovered = paymentResponseSchema.parse(await (await write(`/api/his/v1/payments/${unknown.paymentId}/actions/recover`, {
+      expectedPaymentVersion: 1,
+    }, '4')).json()).data
+    expect(recovered).toMatchObject({ outcome: 'success', status: 'awaiting-lis' })
+    const preview = await write('/api/his/v1/refunds/actions/preview', refundInput, '5')
+    expect(preview.status).toBe(200)
+    expect(refundPreviewResponseSchema.parse(await preview.json()).data.amountFen).toBe(2040)
+  })
+
+  it.each(['completed', 'closed'] as const)('restricts original refund recovery in a %s Scenario to the permitted human cashier context', async status => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createPaidMedicationCase(runtime, password)
+    const chargeItemId = testCase.signed.chargeItemId
+    const write = (path: string, input: unknown, key = randomUUID(), cookie = testCase.cashierCookie, version = '3') => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(cookie, key),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }),
+    })
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, {
+      chargeItemId, amountFen: 1000, reason: '合成处方费用更正，核准冲减。',
+    }, randomUUID(), testCase.cashierCookie, '2')).status).toBe(200)
+    const frozen = refundPreviewResponseSchema.parse(await (await write('/api/his/v1/refunds/actions/preview', {
+      paymentId: testCase.payment.paymentId, amountFen: 1000, expectedSourceVersion: 1, simulatorRule: 'ambiguous',
+    })).json()).data
+    const refund = refundResponseSchema.parse(await (await write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, {
+      commitToken: frozen.commitToken,
+    })).json()).data
+    const admin = await signIn(runtime, 'admin@demo.clinmesh.local', password)
+    const control = (path: string, input: unknown) => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(admin), body: JSON.stringify(input),
+    })
+    const client = agentClientSchema.parse(await (await control('/api/agent/v1/clients', { name: '合成门诊退款验收Agent' })).json())
+    const grant = agentCapabilityGrantSchema.parse(await (await control('/api/agent/v1/grants', {
+      agentClientId: client.agentClientId, practitionerRoleId: 'practitioner-role-cashier', ttlSeconds: 3600,
+      operationIds: ['refund.recover'],
+    })).json())
+    const prescription = pharmacyQueueSchema.parse(await (await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: testCase.pharmacistCookie },
+    })).json()).items[0]!
+    const medication = prescription.medications[0]!, lot = medication.lots[0]!
+    const dispensed = await runtime.app.request(`/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/dispense`, {
+      method: 'POST', headers: commandHeaders(testCase.pharmacistCookie),
+      body: JSON.stringify({ expectedVersions: {
+        [`Encounter/${testCase.registration.encounterId}`]: '7',
+        [`MedicationRequest/${medication.medicationRequestId}`]: medication.medicationRequestVersion,
+      }, input: { expectedPrescriptionVersion: prescription.prescriptionVersion,
+        lotSelections: [{ expectedVersion: lot.version, lotId: lot.id, quantity: medication.quantity }] } }),
+    })
+    expect(dispensed.status).toBe(200)
+    expect(dispenseResponseSchema.parse(await dispensed.json()).data.scenarioStatus).toBe('completed')
+    if (status === 'closed') {
+      // Public reset also changes Epoch; inject only the external closed-context boundary here.
+      runtime.database.driver.prepare("UPDATE scenario_run SET status='closed' WHERE workspace_id=? AND epoch=? AND scenario_run_id=?")
+        .run('workspace-demo', 'epoch-1', 'scenario-run-1')
+    }
+    const path = `/api/his/v1/refunds/${refund.refundId}/actions/recover`
+    const input = { expectedRefundVersion: 1 }
+    const agent = await runtime.app.request(path, { method: 'POST',
+      headers: { authorization: `Bearer ${grant.token}`, 'content-type': 'application/json', 'idempotency-key': randomUUID() },
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: '3' }, input }),
+    })
+    expect(agent.status).toBe(401)
+    expect(apiErrorSchema.parse(await agent.json()).error.code).toBe('AGENT_TOKEN_INVALID')
+    for (const [newPath, newInput] of [
+      [`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, { chargeItemId, amountFen: 100, reason: '合成完成场景不得新冲减' }],
+      ['/api/his/v1/refunds/actions/preview', { paymentId: testCase.payment.paymentId, amountFen: 100, expectedSourceVersion: 2, simulatorRule: 'success' }],
+      [`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, { commitToken: frozen.commitToken }],
+    ] as const) {
+      const denied = await write(newPath, newInput)
+      expect(denied.status).toBe(409)
+      expect(apiErrorSchema.parse(await denied.json()).error.code).toBe('CONTEXT_INACTIVE')
+    }
+    const key = randomUUID()
+    const recovered = await write(path, input, key)
+    if (status === 'closed') {
+      expect(recovered.status).toBe(409)
+      expect(apiErrorSchema.parse(await recovered.json()).error.code).toBe('CONTEXT_INACTIVE')
+    } else {
+      expect(recovered.status).toBe(200)
+      const result = refundResponseSchema.parse(await recovered.json())
+      expect(result.data).toMatchObject({ refundId: refund.refundId, outcome: 'success', version: 2 })
+      expect(refundResponseSchema.parse(await (await write(path, input, key)).json())).toEqual(result)
+      await expectCommandAudit(runtime, testCase.cashierCookie, result.auditId, 'refund.recover')
+    }
+    const wrongRole = await write(path, input, randomUUID(), testCase.doctorCookie)
+    expect(wrongRole.status).toBe(403)
+    expect(apiErrorSchema.parse(await wrongRole.json()).error.code).toBe('ROLE_NOT_ALLOWED')
+    const ledger = refundCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}/refunds`, {
+      headers: { cookie: testCase.cashierCookie },
+    })).json())
+    expect(ledger).toMatchObject({ reservedFen: status === 'closed' ? 1000 : 0, refundedFen: status === 'closed' ? 0 : 1000 })
+    expect(ledger.refunds).toHaveLength(1)
+    expect(scenarioStateSchema.parse(await (await runtime.app.request('/api/sim/v1/scenario-runs/current', {
+      headers: { cookie: testCase.cashierCookie },
+    })).json()).status).toBe(status)
+  })
+
+  it('allows withdrawal of an undispensed prescription once its corrected receivable and refund are settled', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createPaidMedicationCase(runtime, password)
+    const chargeItemId = testCase.signed.chargeItemId
+    const write = (path: string, input: unknown, version = '3') => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(testCase.cashierCookie),
+      body: JSON.stringify({ expectedVersions: { [`ChargeItem/${chargeItemId}`]: version }, input }),
+    })
+    expect((await write(`/api/his/v1/billing/cases/${testCase.caseId}/adjustments`, {
+      chargeItemId, amountFen: 100, reason: '合成处方收费错误，核准冲减。',
+    }, '2')).status).toBe(200)
+    const frozen = refundPreviewResponseSchema.parse(await (await write('/api/his/v1/refunds/actions/preview', {
+      paymentId: testCase.payment.paymentId, amountFen: 100, expectedSourceVersion: 1, simulatorRule: 'ambiguous',
+    })).json()).data
+    const refund = refundResponseSchema.parse(await (await write(`/api/his/v1/refunds/${frozen.previewId}/actions/confirm`, {
+      commitToken: frozen.commitToken,
+    })).json()).data
+    const prescription = pharmacyQueueSchema.parse(await (await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', {
+      headers: { cookie: testCase.pharmacistCookie },
+    })).json()).items[0]!
+    const withdraw = () => runtime.app.request(`/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/withdraw`, {
+      method: 'POST', headers: commandHeaders(testCase.doctorCookie),
+      body: JSON.stringify({ expectedVersions: Object.fromEntries(prescription.medications.map(medication => [
+        `MedicationRequest/${medication.medicationRequestId}`, medication.medicationRequestVersion,
+      ])), input: { expectedPrescriptionVersion: prescription.prescriptionVersion } }),
+    })
+    const unresolved = await withdraw()
+    expect(unresolved.status).toBe(409)
+    expect(apiErrorSchema.parse(await unresolved.json()).error.code).toBe('WORKFLOW_CONFLICT')
+    const recovered = refundResponseSchema.parse(await (await write(`/api/his/v1/refunds/${refund.refundId}/actions/recover`, {
+      expectedRefundVersion: 1,
+    })).json()).data
+    expect(recovered.outcome).toBe('success')
+    const withdrawn = await withdraw()
+    expect(withdrawn.status).toBe(200)
+    expect(withdrawPrescriptionResponseSchema.parse(await withdrawn.json()).data).toMatchObject({
+      prescriptionId: prescription.prescriptionId, status: 'withdrawn',
+    })
+    const ledger = refundCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}/refunds`, {
+      headers: { cookie: testCase.cashierCookie },
+    })).json())
+    expect(ledger).toMatchObject({ refundedFen: 100, reservedFen: 0 })
+    expect(ledger.refunds).toHaveLength(1)
+  })
 
   it('keeps doctor queue pagination and case details readable when an active case has no triage record', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-doctor-queue-filter-'))

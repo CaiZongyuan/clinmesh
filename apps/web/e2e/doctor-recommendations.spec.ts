@@ -49,6 +49,7 @@ for (const width of [1280, 390]) test(`prepares in the background and directly c
   if (width === 390) await page.getByRole('button', { name: '候诊患者', exact: true }).click()
   await page.getByRole('button', { name: /^选择病例 / }).click()
   await page.getByRole('button', { name: '开始首诊', exact: true }).click()
+  await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   await expect.poll(() => [...preparedKinds].sort()).toEqual(['diagnosis', 'imaging', 'laboratory', 'pathology', 'prescription'])
   await runRecommendationJourney({ page, read: async () => {
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${recommendationCase.outpatientCaseId}`)
