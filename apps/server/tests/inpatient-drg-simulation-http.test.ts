@@ -98,6 +98,34 @@ async function finish(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院 DRG 处方推演公共 HTTP', () => {
+  it('开具前重验审阅指纹，其他医嘱使旧评估过期，更新后重试仅产生一条医嘱', async () => {
+    const s = await setup()
+    expect((await confirmPrimary(s)).status).toBe(200)
+    const service = s.clinicalCatalog.services[0]
+    const selection = { kind: 'service', serviceId: service.id, serviceVersion: service.version, quantity: 1 }
+    const draft = { medications: [], services: [{ serviceId: service.id, serviceVersion: service.version, quantity: 1 }] }
+    const evaluated = await (await s.request(s.doctor, `${s.path}/drg/simulation`, draft)).json()
+    const admission = (await (await s.request(s.doctor, s.path)).json()).admission
+    expect((await s.request(s.doctor, `${s.path}/orders/issue`, {
+      encounterVersion: admission.versionId, duration: 'temporary', selection,
+    })).status).toBe(200)
+    const stale = await s.request(s.doctor, `${s.path}/orders/issue`, {
+      encounterVersion: admission.versionId, duration: 'temporary', selection, expectedDrgFingerprint: evaluated.fingerprint,
+    })
+    expect(stale.status).toBe(409)
+    expect((await stale.json()).error.code).toBe('INPATIENT_DRG_EVALUATION_STALE')
+    const before = await (await s.request(s.doctor, `${s.path}/clinical`)).json()
+    expect(before.orders).toHaveLength(1)
+    const fresh = await (await s.request(s.doctor, `${s.path}/drg/simulation`, draft)).json()
+    const key = randomUUID()
+    const input = { encounterVersion: admission.versionId, duration: 'temporary', selection, expectedDrgFingerprint: fresh.fingerprint }
+    const accepted = await s.request(s.doctor, `${s.path}/orders/issue`, input, key)
+    expect(accepted.status).toBe(200)
+    const receipt = await accepted.json()
+    expect(await (await s.request(s.doctor, `${s.path}/orders/issue`, input, key)).json()).toEqual(receipt)
+    expect((await (await s.request(s.doctor, `${s.path}/clinical`)).json()).orders).toHaveLength(2)
+  })
+
   it('草稿逐项计价、缺项显式标注、指纹稳定且开具后过期', async () => {
     const s = await setup()
     expect((await confirmPrimary(s)).status).toBe(200)
@@ -105,7 +133,9 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     expect(baseline.formal.chargesFen).toBe(0)
     expect(baseline.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'RA15' })
     expect(baseline.grouping.projected).toBeNull()
-    expect(baseline.incompleteness).toEqual({ costMissing: true, paymentReferenceMissing: true })
+    expect(baseline.incompleteness).toEqual({ costMissing: true, paymentReferenceMissing: false })
+    expect(baseline.paymentReference).toMatchObject({ drgCode: 'RA15', referenceFen: 300_000,
+      parameterSetId: 'clinmesh-synthetic-hospital-drg-payment', parameterVersion: '2026-demo-1' })
     const again = await (await s.request(s.doctor, `${s.path}/drg/simulation`, {})).json()
     expect(again.fingerprint).toBe(baseline.fingerprint)
     const medication = s.clinicalCatalog.medications.find((item: { id: string }) => item.id === 'medication-amlodipine')!

@@ -1,13 +1,14 @@
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
 import { groupDrgCase } from './drg-grouping.ts'
-import type { DrgGroupingInput, DrgRules } from '@clinmesh/contracts/drg'
+import type { DrgGroupingInput, DrgGroupingResult, DrgRules } from '@clinmesh/contracts/drg'
+import type { inpatientOrderIssueInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgPregroupResultSchema, type InpatientDrgPregroupResult } from '@clinmesh/contracts/inpatient-drg'
 import { inpatientRecordSnapshotSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientDrgSimulationSchema, inpatientMaterialReservationListSchema,
   inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema,
   type InpatientDrgSimulation, type InpatientDrgSimulationInput, type InpatientMaterialReservationList } from '@clinmesh/contracts/inpatient-drg-simulation'
-import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema, inpatientDrgPayerReviewSchema,
+import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema, inpatientDrgPayerReviewSchema, inpatientDrgPayerReviewPreviewSchema,
   type InpatientDrgPayerReviewList } from '@clinmesh/contracts/inpatient-drg-payer'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { ActorContext } from './command-executor.ts'
@@ -17,8 +18,8 @@ import { syntheticDrgPaymentParameters } from './scenario-data/drg-payment-param
 const clinicalCodingNote = '病案首页为临床版编码（nhc-icd10-clinical@2022.r4），分组规则字典为医保版口径；'
   + '两套码同码直通，未同码的诊断/操作如实报告为无法入组，不做名称模糊映射。'
 
-const coverageNote = '已覆盖成本=已发生收费净额占推演总额的比例；缺成本与支付参数，'
-  + '参考额差额不构成完整盈亏结论，费用提示不自动调整治疗。'
+const coverageNote = '收费进度仅表达已发生收费净额占推演总额的比例，与成本覆盖不同；'
+  + '合成医院支付参考与患者医保独立，缺少成本时不作完整盈亏结论，费用提示不自动调整治疗。'
 
 const projectedNote = 'projected 为「若计划手术按当前计划实施」的推演分组，不构成临床事实或正式病组；'
   + '草稿与预留只参与计价对照，不改变分组。'
@@ -67,9 +68,8 @@ export class InpatientDrg {
     // 归档病例回看冻结结果不依赖当前规则包；未归档病例保持规则未配置优先报错。
     if (record.archive !== undefined) return this.#frozenArchive(context, admissionId).frozen
     if (this.rules === null) throw new InpatientError('DRG_RULES_NOT_CONFIGURED', '分组规则数据包未配置，无法预分组', 409)
-    if (record.revision === undefined) throw new InpatientError('DRG_RECORD_NOT_SUBMITTED', '病案首页尚未提交修订，无法预分组', 409)
-    return this.#groupedResult(admissionId, record.revision.revision, false,
-      this.#snapshotGroupingInput(record.revision.snapshot))
+    return this.#groupedResult(admissionId, record.revision?.revision ?? 0, false,
+      this.#snapshotGroupingInput(record.snapshot))
   }
 
   /** 规则已就绪前提下的完整预分组结果：调用方自行保证 this.rules 非 null。 */
@@ -164,6 +164,7 @@ export class InpatientDrg {
     const estimatedAdditionalFen = [...committed, ...reserved, ...draftGroups.items]
       .reduce((sum, item) => sum + (item.estimatedFen ?? 0), 0)
     const estimatedTotalFen = chargesFen + estimatedAdditionalFen
+    const paymentReference = this.#paymentReference(formal)
     return inpatientDrgSimulationSchema.parse({
       admissionId,
       evaluatedAt: this.owner.virtualTime(context),
@@ -180,8 +181,30 @@ export class InpatientDrg {
         coveredRatioBp: estimatedTotalFen > 0 ? Math.max(0, Math.min(10_000, Math.round(chargesFen / estimatedTotalFen * 10_000))) : null,
         note: coverageNote },
       grouping: { formal, projected, note: projectedNote },
-      incompleteness: { costMissing: true, paymentReferenceMissing: true },
+      paymentReference,
+      incompleteness: { costMissing: true, paymentReferenceMissing: paymentReference === null },
     })
+  }
+
+  /** 复核绑定实际开具选择，客户端只提交已审阅的指纹。 */
+  assertOrderReview(context: ActorContext, admissionId: string,
+    selection: z.infer<typeof inpatientOrderIssueInputSchema>['selection'], fingerprint: string) {
+    const draft: InpatientDrgSimulationInput = selection.kind === 'medication'
+      ? { medications: [{ catalogItemId: selection.catalogItemId, catalogVersion: selection.catalogVersion,
+        doseText: selection.doseText, frequencyCode: selection.frequencyCode, doseQuantity: selection.doseQuantity }], services: [] }
+      : { medications: [], services: [{ serviceId: selection.serviceId, serviceVersion: selection.serviceVersion, quantity: selection.quantity }] }
+    if (this.simulate(context, admissionId, draft).fingerprint !== fingerprint)
+      throw new InpatientError('INPATIENT_DRG_EVALUATION_STALE', '病例、医嘱、费用或规则已变化，请重新推演并审阅')
+  }
+
+  #paymentReference(result: DrgGroupingResult) {
+    const code = result.status === 'grouped' ? result.drgCode : null
+    const weight = code === null ? undefined : syntheticDrgPaymentParameters.weightsBp[code]
+    return code === null || weight === undefined ? null : {
+      parameterSetId: syntheticDrgPaymentParameters.parameterSetId, parameterVersion: syntheticDrgPaymentParameters.version,
+      drgCode: code, referenceFen: Math.round(syntheticDrgPaymentParameters.baseRateFen * weight / 10_000),
+      note: syntheticDrgPaymentParameters.note,
+    }
   }
 
   /** 草稿计价：按目录 id+版本定位，未命中显式列出不完整，不以零值或跨版本价格填充。 */
@@ -240,6 +263,7 @@ export class InpatientDrg {
         materials: surgeryCatalog.materials.map(item => [item.id, item.version, 'chargeDefinition' in item ? item.chargeDefinition.priceFen : null]) },
       rulesId: this.rules!.rulesId,
       rulesVersion: this.rules!.version,
+      paymentParameters: syntheticDrgPaymentParameters,
     }
   }
 
@@ -337,28 +361,48 @@ export class InpatientDrg {
     })
   }
 
-  /** 医保办模拟核定：归档冻结分组 × 固定版本合成支付参数的受控仿真，追加落盘可追溯。 */
+  payerReviewPreview(context: ActorContext, admissionId: string) {
+    this.owner.assertReadRole(context, ['medical-insurance', 'medical-records'])
+    this.owner.readAdmissionBinding(context, admissionId)
+    return this.#payerBasis(context, admissionId).preview
+  }
+
+  #payerBasis(context: ActorContext, admissionId: string) {
+    const { frozen, sourcesHash, chargesFen } = this.#frozenArchive(context, admissionId)
+    if (frozen.result.status !== 'grouped' || frozen.result.drgCode === null)
+      throw new InpatientError('DRG_FROZEN_UNGROUPED', '归档冻结分组未确定病组，无法模拟核定', 409)
+    const reference = this.#paymentReference(frozen.result)
+    if (reference === null)
+      throw new InpatientError('DRG_PAYMENT_PARAMETER_MISSING', `病组 ${frozen.result.drgCode} 不在合成支付参数覆盖范围内`, 409)
+    const basis = {
+      admissionId, encounterVersion: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId!,
+      archiveSourcesHash: sourcesHash, frozenResultHash: canonicalJsonHash(frozen),
+      drgCode: reference.drgCode, parameterSetId: reference.parameterSetId, parameterVersion: reference.parameterVersion,
+      simulatedPaymentFen: reference.referenceFen, hospitalChargesFen: chargesFen,
+      differenceFen: reference.referenceFen - chargesFen, note: reference.note,
+    }
+    const preview = inpatientDrgPayerReviewPreviewSchema.parse({ ...basis,
+      fingerprint: canonicalJsonHash({ workspaceId: context.workspaceId, epoch: context.epoch, ...basis }) })
+    return { frozen, preview }
+  }
+
+  /** 医保办模拟核定：重验已审阅预览，归档冻结分组与合成参数共同确定金额。 */
   payerReview(context: ActorContext, raw: unknown, idempotencyKey: string) {
     const input = inpatientDrgPayerReviewCreateInputSchema.parse(raw)
     return this.owner.commands.execute({ context, input, idempotencyKey, operation: 'inpatient.drg.payer.review',
       expectedVersions: { [`Encounter/${input.admissionId}`]: input.encounterVersion }, dataSchema: inpatientDrgPayerReviewListSchema,
       authorize: () => this.owner.assertRole(context, ['medical-insurance']) }, () => {
-      const { frozen, sourcesHash, chargesFen } = this.#frozenArchive(context, input.admissionId)
-      if (frozen.result.status !== 'grouped' || frozen.result.drgCode === null)
-        throw new InpatientError('DRG_FROZEN_UNGROUPED', '归档冻结分组未确定病组，无法模拟核定', 409)
-      const drgCode = frozen.result.drgCode
-      const weightBp = syntheticDrgPaymentParameters.weightsBp[drgCode]
-      if (weightBp === undefined)
-        throw new InpatientError('DRG_PAYMENT_PARAMETER_MISSING', `病组 ${drgCode} 不在合成支付参数覆盖范围内`, 409)
-      const simulatedPaymentFen = Math.round(syntheticDrgPaymentParameters.baseRateFen * weightBp / 10_000)
+      const { frozen, preview } = this.#payerBasis(context, input.admissionId)
+      if (input.expectedFingerprint !== preview.fingerprint)
+        throw new InpatientError('INPATIENT_DRG_PAYER_PREVIEW_STALE', '分组或支付参数已变化，请重新读取核定预览并审阅')
       const id = uuidv7()
       this.owner.database.driver.prepare(`INSERT INTO inpatient_drg_payer_review
         (workspace_id,epoch,review_id,admission_id,archive_sources_hash,record_revision,frozen_rules_id,frozen_rules_version,frozen_result_hash,drg_code,parameter_set_id,parameter_version,simulated_payment_fen,hospital_charges_fen,difference_fen,reason,actor_id,practitioner_role_id,created_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(context.workspaceId, context.epoch, id, input.admissionId, sourcesHash, frozen.recordRevision,
-          frozen.rulesId, frozen.rulesVersion, canonicalJsonHash(frozen), drgCode,
-          syntheticDrgPaymentParameters.parameterSetId, syntheticDrgPaymentParameters.version,
-          simulatedPaymentFen, chargesFen, simulatedPaymentFen - chargesFen,
+        .run(context.workspaceId, context.epoch, id, input.admissionId, preview.archiveSourcesHash, frozen.recordRevision,
+          frozen.rulesId, frozen.rulesVersion, preview.frozenResultHash, preview.drgCode,
+          preview.parameterSetId, preview.parameterVersion,
+          preview.simulatedPaymentFen, preview.hospitalChargesFen, preview.differenceFen,
           input.reason, context.actorId, context.practitionerRoleId, this.owner.virtualTime(context))
       return { data: this.#payerReviews(context, input.admissionId),
         effects: [{ kind: 'created' as const, reference: `InpatientDrgPayerReview/${id}`, versionId: '1' }] }

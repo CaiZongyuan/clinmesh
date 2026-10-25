@@ -110,12 +110,13 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     expect(result.result.steps.map((step: { stage: string }) => step.stage)).toEqual(['mdc', 'adrg', 'drg'])
   })
 
-  it('病案未提交不能预分组；未配置规则包时明确报错不静默', async () => {
+  it('在院未提交首页也读取当前正式诊断预分组；未配置规则包时明确报错', async () => {
     const s = await setup(await writeRulesPackage())
     expect((await confirmPrimary(s)).status).toBe(200)
     const missing = await s.request(s.doctor, `${s.path}/drg/pregroup`)
-    expect(missing.status).toBe(409)
-    expect((await missing.json()).error.code).toBe('DRG_RECORD_NOT_SUBMITTED')
+    expect(missing.status).toBe(200)
+    expect(await missing.json()).toMatchObject({ recordRevision: 0, frozen: false,
+      result: { status: 'grouped', drgCode: 'RA15' } })
     const bare = await setup()
     const unconfigured = await bare.request(bare.doctor, `${bare.path}/drg/pregroup`)
     expect(unconfigured.status).toBe(409)

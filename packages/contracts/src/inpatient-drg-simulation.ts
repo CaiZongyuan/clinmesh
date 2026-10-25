@@ -58,7 +58,7 @@ export const inpatientDrgSimulationSchema = z.object({
   reserved: z.object({ items: z.array(inpatientDrgSimulationItemSchema).max(500) }).strict(),
   /** 当前草稿推演：请求输入的假想条目计价，未命中目录的条目进 missing。 */
   draft: z.object({ items: z.array(inpatientDrgSimulationItemSchema).max(40), missing: z.array(inpatientDrgSimulationMissingSchema).max(40) }).strict(),
-  /** 已覆盖成本：仅表达已发生收费占推演总额比例，缺成本与支付参数时不作盈亏结论。 */
+  /** 收费进度：已发生收费占推演总额比例，与成本覆盖独立。 */
   coverage: z.object({ coveredFen: z.number().int().safe(), estimatedTotalFen: z.number().int().safe(),
     coveredRatioBp: z.number().int().min(0).max(10_000).nullable(), note: z.string().max(500) }).strict(),
   /** formal=正式事实分组；projected=「若计划手术实施」的推演分组，不构成临床事实或正式病组。 */

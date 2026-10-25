@@ -117,6 +117,8 @@ export class InpatientOrders {
       this.owner.assertNotArchived(context,input.admissionId)
       const admission = this.assertAdmitted(context, input.admissionId)
       if (input.surgeryExecutionId !== undefined) this.owner.surgery.assertExecution(context, admission.id, input.surgeryExecutionId)
+      if (input.expectedDrgFingerprint !== undefined)
+        this.owner.drg.assertOrderReview(context, input.admissionId, input.selection, input.expectedDrgFingerprint)
       const selection = input.selection, catalog = this.catalog(context)
       let itemId: string, display: string, catalogVersion: number, unit: string, price: number, doseText = '', frequency: 'QD' | 'BID' | 'PRN' = 'QD', quantity: number
       if (selection.kind === 'medication') {
