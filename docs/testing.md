@@ -30,7 +30,7 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 支付与 DRG 的联合不变量由 `pci-payment-drg-acceptance-http.test.ts` 拥有：同一次合成冠心病住院的计划与实际 PCI、四类材料预留替换、发药计费、医保待遇及组合资金、未知结果门禁和恢复、清床归档、核定差异、后续更正与医保补偿、退款重启恢复。断言原费用、首次结算、归档、分组和临床状态不被后续调整改写；心衰和肺炎通过独立 HTTP 入院与预分组保留兼容。该 fixture 仅覆盖已独立对照的四个成人病例小切片，不表示完整来源包通过全量核验。
 
-`inpatient-drg-review.spec.ts` 和 `inpatient-drg.spec.ts` 验证医生草稿迟到隔离、服务端过期重验、取消、实际手术显式引用预留、医保办原回执恢复及缺规则入口；`inpatient-drg.browser.test.ts` 验证 React 18/19 ShadowRoot 下的预留和核定审阅。业务拒绝、权限、幂等与读取审计矩阵留在 Server HTTP 测试，CLI Skill 示例检查保留完整 Command envelope，不在浏览器复制同一矩阵。
+`inpatient-drg-review.spec.ts` 和 `inpatient-drg.spec.ts` 验证医生草稿迟到隔离、异步事实变化主动过期并锁定已开确认、服务端过期重验、取消、实际手术显式引用预留、医保办原回执恢复及缺规则入口；`inpatient-drg.browser.test.ts` 验证 React 18/19 ShadowRoot 下的医嘱、预留和核定审阅。业务拒绝、权限、幂等与读取审计矩阵留在 Server HTTP 测试，CLI Skill 示例检查保留完整 Command envelope，不在浏览器复制同一矩阵。
 
 ### Application composition
 
