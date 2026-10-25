@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest'
 import { resolveInpatientDose } from './inpatient-dose.ts'
 
 describe('住院明确剂量与完整制剂数量换算', () => {
+  it.each(['constructor', 'toString', '__proto__'])('拒绝非法单位 %s 并返回单位错误', unit => {
+    expect(resolveInpatientDose({ unit: '片', doseBasis: { amount: 75, unit: 'mg' }, maxDoseQuantity: 4, doses: [] }, `1 ${unit}`))
+      .toEqual({ reason: 'unit-mismatch' })
+  })
+
   it('按已声明的每制剂含量跨克与毫克精确换算，不受常用建议枚举限制', () => {
     expect(resolveInpatientDose({ unit: '片', doses: [{ doseText: '0.1 g', quantity: 1 }], doseBasis: { amount: 0.1, unit: 'g' }, maxDoseQuantity: 3 }, '300 mg')).toEqual({ quantity: 3 })
     expect(resolveInpatientDose({ unit: '片', doses: [], doseBasis: { amount: 75, unit: 'mg' }, maxDoseQuantity: 2 }, '0.15 g')).toEqual({ quantity: 2 })

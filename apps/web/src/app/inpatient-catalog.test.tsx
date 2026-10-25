@@ -54,6 +54,26 @@ it('医生可编辑每次剂量，明确换算数量并阻止不整片或超上�
   expect(screen.getByText('本次用量超过已声明的每次上限')).toBeDefined()
 })
 
+it('非法剂量单位显示错误，医生改回合法值后可以继续签发', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (path: string) => reads(path)))
+  mount()
+  const user = userEvent.setup()
+  const item = await screen.findByRole('combobox', { name: '医嘱项目' })
+  item.focus()
+  await user.keyboard('{Enter}')
+  await user.click(await screen.findByRole('option', { name: '合成药品' }))
+  const dose = screen.getByRole('textbox', { name: '每次剂量' })
+  await user.clear(dose)
+  await user.type(dose, '1 constructor')
+  expect(screen.getByText('本次剂量单位与已声明的换算不匹配')).toBeDefined()
+  expect(screen.getByRole('button', { name: '签发医嘱' }).hasAttribute('disabled')).toBe(true)
+  await user.clear(dose)
+  await user.type(dose, '10 mg')
+  expect(screen.queryByText('本次剂量单位与已声明的换算不匹配')).toBeNull()
+  expect(screen.getByText('每次2片')).toBeDefined()
+  expect(screen.getByRole('button', { name: '签发医嘱' }).hasAttribute('disabled')).toBe(false)
+})
+
 it('共享目录按来源分页并展示缺项，只有完整院内映射可以选择', async () => {
   const searches: URL[] = []
   vi.stubGlobal('fetch', vi.fn(async (path: string) => {

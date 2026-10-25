@@ -9,7 +9,7 @@ export type InpatientDoseResult = { quantity: number } | {
   reason: 'invalid-dose' | 'missing-conversion' | 'unit-mismatch' | 'fractional-quantity' | 'dose-limit'
 }
 
-const massUnits: Readonly<Record<string, bigint>> = { g: 1_000_000n, mg: 1_000n, ug: 1n, 'μg': 1n, 'µg': 1n, mcg: 1n }
+const massUnits = new Map<string, bigint>([['g', 1_000_000n], ['mg', 1_000n], ['ug', 1n], ['μg', 1n], ['µg', 1n], ['mcg', 1n]])
 
 function fraction(value: string): [bigint, bigint] {
   const [coefficient = '', exponent = '0'] = value.toLowerCase().split('e')
@@ -31,11 +31,12 @@ export function resolveInpatientDose(config: InpatientDoseConfiguration, text: s
   else if (config.doseBasis) {
     const basis = config.doseBasis
     if (!Number.isFinite(basis.amount) || basis.amount <= 0) return { reason: 'missing-conversion' }
-    if (unit !== basis.unit && (!massUnits[unit] || !massUnits[basis.unit])) return { reason: 'unit-mismatch' }
+    const factor = massUnits.get(unit), basisFactor = massUnits.get(basis.unit)
+    if (unit !== basis.unit && (factor === undefined || basisFactor === undefined)) return { reason: 'unit-mismatch' }
     const [doseNumerator, doseDenominator] = fraction(amount)
     const [basisNumerator, basisDenominator] = fraction(String(basis.amount))
-    numerator = doseNumerator * basisDenominator * (massUnits[unit] ?? 1n)
-    denominator = doseDenominator * basisNumerator * (massUnits[basis.unit] ?? 1n)
+    numerator = doseNumerator * basisDenominator * (factor ?? 1n)
+    denominator = doseDenominator * basisNumerator * (basisFactor ?? 1n)
   } else {
     const legacy = config.doses.find(dose => dose.doseText.trim() === text.trim())
     if (!legacy) return { reason: 'missing-conversion' }
