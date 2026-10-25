@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { candidatePath, discoveryPath, discoverUpstreams, lockDigest, parseLock, publishCandidate } from './dsh-upstreams.ts'
+import { candidatePath, discoveryPath, discoverUpstreams, lockDigest, parseLock, publishCandidate, readSkippedReleases } from './dsh-upstreams.ts'
 
 const baseline = {
   schemaVersion: 1,
@@ -25,7 +25,40 @@ function release(version: string) {
   } }
 }
 
+function skippedCandidate() {
+  const target = parseLock(baseline)
+  Object.assign(target.components[0]!, { version: '1.1.0-rc.3', source: release('1.1.0-rc.3').dist.tarball })
+  return { schemaVersion: 1, baselineDigest: 'f'.repeat(64), target, changes: [{ name: '@deepseek-ai/dsh', from: '1.0.0', to: '1.1.0-rc.3' }] }
+}
+
+function closedUpgradePull() {
+  return { number: 298, state: 'closed', merged_at: null, labels: [{ name: '跳过此版本' }], base: { ref: 'main' },
+    head: { sha: 'c'.repeat(40), ref: 'automation/dsh-upstreams-0d6e4079-123456789abc', repo: { full_name: 'example/repo' } } }
+}
+
 describe('DSH 上游发现入口', () => {
+  it('精确跳过维护者拒绝的 npm 版本，保持已验证基线', async () => {
+    const result = await discoverUpstreams(baseline, async () => Response.json({
+      name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0-rc.3': release('1.1.0-rc.3') },
+    }), [{ name: '@deepseek-ai/dsh', to: '1.1.0-rc.3' }])
+    expect(result.changes).toEqual([])
+    expect(result.target).toEqual(baseline)
+  })
+
+  it.each(['1.1.0-rc.4', '1.1.0'])('跳过 rc.3 后仍自动发现后续版本 %s', async version => {
+    const result = await discoverUpstreams(baseline, async () => Response.json({
+      name: '@deepseek-ai/dsh', versions: Object.fromEntries(['1.0.0', '1.1.0-rc.3', version].map(value => [value, release(value)])),
+    }), [{ name: '@deepseek-ai/dsh', to: '1.1.0-rc.3' }])
+    expect(result.changes).toEqual([{ name: '@deepseek-ai/dsh', from: '1.0.0', to: version }])
+  })
+
+  it('跳过决定按组件匹配，同版本的其他组件继续更新', async () => {
+    const result = await discoverUpstreams(baseline, async () => Response.json({
+      name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0-rc.3': release('1.1.0-rc.3') },
+    }), [{ name: 'other-component', to: '1.1.0-rc.3' }])
+    expect(result.changes).toEqual([{ name: '@deepseek-ai/dsh', from: '1.0.0', to: '1.1.0-rc.3' }])
+  })
+
   it('从所有发布版本选择最高正式版或 RC，不受 latest 或 next 指向 alpha 影响', async () => {
     const versions = ['1.0.0', '1.1.0-rc.2', '1.1.0-rc.10', '2.0.0-alpha.1']
     const result = await discoverUpstreams(baseline, async () => Response.json({
@@ -85,6 +118,15 @@ describe('DSH 上游发现入口', () => {
     expect((await discoverUpstreams(input, async () => Response.json(responses.shift()))).changes).toEqual([])
   })
 
+  it('跳过源码精确 commit，后续源码 commit 仍可发现', async () => {
+    const input = { ...baseline, components: [{ name: 'bridge', source: 'https://github.com/example/bridge.git', owner: 'https://github.com/example/bridge', role: '桥接', commit: 'a'.repeat(40) }] }
+    for (const commit of ['b'.repeat(40), 'c'.repeat(40)]) {
+      const responses = [{ default_branch: 'main' }, { sha: commit }, { status: 'ahead' }]
+      const result = await discoverUpstreams(input, async () => Response.json(responses.shift()), [{ name: 'bridge', to: 'b'.repeat(40) }])
+      expect(result.changes).toEqual(commit.startsWith('b') ? [] : [{ name: 'bridge', from: 'a'.repeat(40), to: 'c'.repeat(40) }])
+    }
+  })
+
   it('发现默认分支同版本的新 commit，保留维护归属', async () => {
     const commit = 'a'.repeat(40)
     const next = 'b'.repeat(40)
@@ -98,7 +140,89 @@ describe('DSH 上游发现入口', () => {
   })
 })
 
+describe('升级 PR 跳过标签合同', () => {
+  it('分页读取旧基线 PR，以关闭 PR 的精确 HEAD 候选保存跳过决定', async () => {
+    const result = await readSkippedReleases({ repository: 'example/repo', base: 'main', fetch: async (url, init) => {
+      expect(init?.method).toBe('GET')
+      const parsed = new URL(url)
+      if (parsed.pathname === '/repos/example/repo/pulls') {
+        expect(parsed.searchParams.get('state')).toBe('closed')
+        expect(parsed.searchParams.get('base')).toBe('main')
+        expect(parsed.searchParams.get('per_page')).toBe('100')
+        if (parsed.searchParams.get('page') === '1') return Response.json(Array.from({ length: 100 }, () => ({ labels: [] })))
+        expect(parsed.searchParams.get('page')).toBe('2')
+        return Response.json([closedUpgradePull()])
+      }
+      expect(parsed.pathname).toBe(`/repos/example/repo/contents/${candidatePath}`)
+      expect(parsed.searchParams.get('ref')).toBe('c'.repeat(40))
+      return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(skippedCandidate())).toString('base64') })
+    } })
+    expect(result).toEqual([{ name: '@deepseek-ai/dsh', to: '1.1.0-rc.3' }])
+  })
+
+  it.each([
+    { scenario: '移除标签', pull: { ...closedUpgradePull(), labels: [] } },
+    { scenario: '已经合并', pull: { ...closedUpgradePull(), merged_at: '2026-10-25T01:00:00Z' } },
+    { scenario: '其他目标分支', pull: { ...closedUpgradePull(), base: { ref: 'other' } } },
+    { scenario: '普通 PR', pull: { ...closedUpgradePull(), head: { ...closedUpgradePull().head, ref: 'feature/normal' } } },
+    { scenario: '外部 fork', pull: { ...closedUpgradePull(), head: { ...closedUpgradePull().head, repo: { full_name: 'other/repo' } } } },
+    { scenario: '已删除的外部 fork', pull: { ...closedUpgradePull(), head: { ...closedUpgradePull().head, repo: null } } },
+  ])('$scenario 不抑制更新，也不读取其候选', async ({ pull }) => {
+    expect(await readSkippedReleases({ repository: 'example/repo', base: 'main', fetch: async url => {
+      expect(new URL(url).pathname).toBe('/repos/example/repo/pulls')
+      return Response.json([pull])
+    } })).toEqual([])
+  })
+
+  it('带跳过标签的候选不可读时失败，不静默丢失决定', async () => {
+    await expect(readSkippedReleases({ repository: 'example/repo', base: 'main', fetch: async url => {
+      return new URL(url).pathname.endsWith('/pulls') ? Response.json([closedUpgradePull()]) : Response.json({}, { status: 404 })
+    } })).rejects.toThrow('HTTP 404')
+  })
+})
+
 describe('发现 CLI process 合同', () => {
+  it.each(['本地', '发布', '跳过记录读取失败', '跳过候选非法'])('%s：已关闭 PR 的跳过标签控制真实 CLI，不创建 PR 或调度验收', async scenario => {
+    const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-skipped-'))
+    try {
+      await writeFile(join(directory, 'dsh-upstreams.lock.json'), JSON.stringify(baseline))
+      const fixture = join(directory, 'network.mjs')
+      await writeFile(fixture, `
+        globalThis.fetch = async (url, init = {}) => {
+          if ((init.method ?? 'GET') !== 'GET') throw new Error('不应写入 GitHub：' + url);
+          const parsed = new URL(url);
+          const path = parsed.pathname.replace('/repos/example/repo/', '');
+          if (parsed.origin === 'https://registry.npmjs.org') return Response.json(${JSON.stringify({ name: '@deepseek-ai/dsh', versions: { '1.0.0': release('1.0.0'), '1.1.0-rc.3': release('1.1.0-rc.3') } })});
+          if (path === 'git/ref/heads/main') return Response.json({ object: { sha: 'b'.repeat(40) } });
+          if (path === 'contents/dsh-upstreams.lock.json' && parsed.searchParams.get('ref') === 'b'.repeat(40)) return Response.json({ encoding: 'base64', content: Buffer.from(${JSON.stringify(JSON.stringify(baseline))}).toString('base64') });
+          if (path === 'pulls' && parsed.searchParams.get('state') === 'closed') {
+            if (parsed.searchParams.get('base') !== 'main') throw new Error('必须读取目标分支的跳过记录');
+            if (${scenario === '跳过记录读取失败'}) return Response.json({}, { status: 503 });
+            return Response.json(${JSON.stringify([closedUpgradePull()])});
+          }
+          if (path === 'contents/${candidatePath}' && parsed.searchParams.get('ref') === 'c'.repeat(40)) {
+            return Response.json({ encoding: 'base64', content: Buffer.from(${JSON.stringify(JSON.stringify(scenario === '跳过候选非法' ? { schemaVersion: 1, changes: 'invalid' } : skippedCandidate()))}).toString('base64') });
+          }
+          if (path === 'pulls') return Response.json([]);
+          throw new Error('不应创建或改写候选：' + url);
+        };
+      `)
+      const entry = fileURLToPath(new URL('./dsh-upstreams-cli.ts', import.meta.url))
+      const loader = new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url).href
+      const execution = promisify(execFile)(process.execPath, ['--import', loader, '--import', pathToFileURL(fixture).href, entry, ...(scenario === '本地' ? [] : ['--publish'])], {
+        cwd: directory, env: { ...process.env, GH_TOKEN: '', GITHUB_REPOSITORY: 'example/repo', UPSTREAM_BASE: 'main', GITHUB_OUTPUT: join(directory, 'outputs') },
+      })
+      if (scenario.startsWith('跳过')) {
+        await expect(execution).rejects.toThrow(scenario === '跳过记录读取失败' ? 'HTTP 503' : '响应必须是 JSON 对象')
+        await expect(access(join(directory, 'dsh-upstreams.discovery.json'))).rejects.toThrow()
+        await expect(access(join(directory, 'outputs'))).rejects.toThrow()
+        return
+      }
+      expect(JSON.parse((await execution).stdout)).toMatchObject({ status: 'no-update', changes: [] })
+      expect(await readFile(join(directory, 'outputs'), 'utf8')).toBe('status=no-update\nhead=\nbranch=\n')
+    } finally { await rm(directory, { recursive: true, force: true }) }
+  })
+
   it.each(['可读取', '读取失败'])('目标分支基线%s：发布不采用本地升级锁', async availability => {
     const directory = await mkdtemp(join(tmpdir(), 'clinmesh-upstream-base-'))
     try {
@@ -117,6 +241,7 @@ describe('发现 CLI process 合同', () => {
           if (path === 'git/ref/heads/main') return Response.json({ object: { sha: 'b'.repeat(40) } });
           if (path === 'contents/dsh-upstreams.lock.json' && ${availability === '读取失败'}) return new Response('', { status: 503 });
           if (path === 'contents/dsh-upstreams.lock.json' && parsed.searchParams.get('ref') === 'b'.repeat(40)) return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(baseline)).toString('base64') });
+          if (path === 'pulls' && parsed.searchParams.get('state') === 'closed') return Response.json([]);
           if (path === 'pulls' && (init.method ?? 'GET') === 'GET') { writeFileSync('lookup.json', JSON.stringify({ head: parsed.searchParams.get('head'), base: parsed.searchParams.get('base') })); return Response.json([]); }
           throw new Error('不应读取其他基线或创建 PR：' + url);
         };
@@ -165,6 +290,7 @@ describe('发现 CLI process 合同', () => {
           if (String(url) === 'https://api.github.com/repos/example/bridge/commits/main') return Response.json({ sha: 'c'.repeat(40) });
           const path = new URL(url).pathname.replace('/repos/example/repo/', '');
           const method = init.method ?? 'GET';
+          if (path === 'pulls' && new URL(url).searchParams.get('state') === 'closed') return Response.json([]);
           if (path === 'pulls' && method === 'GET') return Response.json([{ number: 7, body: '人工说明', html_url: 'https://github.com/example/repo/pull/7' }]);
           if (path.startsWith('git/ref/') && method === 'GET') return Response.json({ object: { sha: head } });
           if (path === 'contents/dsh-upstreams.lock.json' && method === 'GET') return Response.json({ encoding: 'base64', content: Buffer.from(JSON.stringify(baseline)).toString('base64') });
