@@ -313,9 +313,9 @@ export function compileDrgProgram(jsText: string): DrgProgram {
       find(node)
       if (route === undefined) return unsupported(node)
       // 验证所有被折叠语句的结构，来源改变不得静默保留旧语义。
-      const normalized = node.getText(source).replace(/\[(?:"[^"]*",?)+\]/g, 'TABLE')
-      const prefix = normalized.slice(0, normalized.indexOf('return K?'))
-      if (prefix !== 'function(x){let C=TABLE;if(!C.includes(x.zdList[0]))return C.includes(x.zdList[0])&&Q("符合MDCZ诊断入组条件，但不符合其它条件"),"";let S={},T="";for(let x of C)x.endsWith("创伤")?T=x:S[x]=T;let I,K=x.zdList.filter(x=>S.hasOwnProperty(x)),M=Array.from(new Set(x.zdList.filter(x=>S.hasOwnProperty(x)).map(x=>S[x])));') return unsupported(node)
+      const normalized = (jsText.slice(node.getStart(source), route.getStart(source)) + 'ROUTE' + jsText.slice(route.getEnd(), node.getEnd()))
+        .replace(/\[(?:"[^"]*",?)+\]/g, 'TABLE')
+      if (digest(normalized) !== '6dc98ef4b50d1853fa9f2a3a293731ed62f7f41a94fc752393fe273709d97601') return unsupported(node)
       functions[id] = [
         { kind: 'let', name: 'I', value: literal(null) },
         { kind: 'if', condition: { kind: 'trauma-regions', table: regionTable.id },

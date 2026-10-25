@@ -23,6 +23,12 @@ function source(body: string, methods: string, extra = '', parameters = 'const C
     function group_record(x) { return function(x) { if(!['D1','OTHER'].includes(x.zdList[0])) return ''; ${body} }(x) }`
 }
 
+const traumaRoute = '(Q("诊断{0}在MDCZ的主诊表内".format(K.join(","))),Q("诊断匹配MDCZ部位：{0}".format(M.join(","))),M.length<2?(Q("诊断匹配部位数量不符合MDCZ要求"),""):(new Groups).ZZ15_group(x)?"ZZ15":"")'
+function traumaSource(route = traumaRoute): string {
+  return `const CC={},MCC={},CCE={},SS_VALID=[];class Groups{ZZ15_group(x){return true}}
+    function group_record(x){return function(x){let C=["头部创伤","D1","胸部创伤","D2"];if(!C.includes(x.zdList[0]))return C.includes(x.zdList[0])&&Q("符合MDCZ诊断入组条件，但不符合其它条件"),"";let S={},T="";for(let x of C)x.endsWith("创伤")?T=x:S[x]=T;let I,K=x.zdList.filter(x=>S.hasOwnProperty(x)),M=Array.from(new Set(x.zdList.filter(x=>S.hasOwnProperty(x)).map(x=>S[x])));return K?${route}:""}(x)}`
+}
+
 describe('固定版本声明式 DRG 条件程序', () => {
   it('从原程序提取条件并通过分组公开接口返回可解释结果', () => {
     const program = compileDrgProgram(programSource)
@@ -107,6 +113,50 @@ describe('固定版本声明式 DRG 条件程序', () => {
     expect(() => drgProgramSchema.parse({ ...program, functions: {
       ...program.functions, [program.entry]: [{ kind: 'return', value: { kind: 'call', id: program.entry } }],
     } })).toThrow('循环')
+  })
+
+  it('多部位创伤保留主诊断资格和不同分区数量条件', () => {
+    const program = compileDrgProgram(traumaSource())
+    expect(evaluateDrgProgram(program, input)).toMatchObject({ status: 'ungroupable', drgCode: null })
+    expect(evaluateDrgProgram(program, { ...input, diagnoses: [...input.diagnoses, { code: 'D2', role: 'secondary' }] }))
+      .toMatchObject({ status: 'grouped', drgCode: 'ZZ15' })
+  })
+
+  it.each(['x.age>70', 'x.dept===1'])('创伤返回路径新增限制 %s 时拒绝准备，不能静默丢弃条件', guard => {
+    expect(() => compileDrgProgram(traumaSource(`${guard}?${traumaRoute}:""`))).toThrow('未解析 DRG 条件')
+  })
+
+  it.each([
+    'return missing',
+    'missing=true;return true',
+    'return later;let later=true',
+    'let self=self;return self',
+    'if(x.age>70){let local=true;}return local',
+    '{let local=true;}return local',
+  ])('准备时拒绝未绑定或声明前使用的局部变量：%s', body => {
+    expect(() => compileDrgProgram(source('return (new Groups).AA19_group(x)?"AA19":""', `AA19_group(x){${body}}`)))
+      .toThrow('未声明变量')
+  })
+
+  it('来源全局变量不能被误作已绑定的函数局部变量', () => {
+    expect(() => compileDrgProgram(source('return (new Groups).AA19_group(x)?"AA19":""', 'AA19_group(x){return eligible}', 'const eligible=true;')))
+      .toThrow('未声明变量 eligible')
+  })
+
+  it('函数内先声明再赋值、分支更新外层变量仍可正常分组', () => {
+    const program = compileDrgProgram(source('let C=new Groups;let selected=false;if(x.age>=50){selected=C.AA19_group(x)}return selected?"AA19":""',
+      'AA19_group(x){let selected=false;selected=x.age>=50;return selected}'))
+    expect(evaluateDrgProgram(program, input)).toMatchObject({ status: 'grouped', drgCode: 'AA19' })
+    expect(evaluateDrgProgram(program, { ...input, ageYears: 49 })).toMatchObject({ status: 'ungroupable', drgCode: null })
+  })
+
+  it.each([
+    'let selected=true;{let selected=false;}return selected',
+    'let selected=false;if(x.age>=50){let selected=true;}return selected',
+    'let selected=true;let selected=false;return selected',
+  ])('不支持的同名变量遮蔽或重复声明在准备时拒绝：%s', body => {
+    expect(() => compileDrgProgram(source('return (new Groups).AA19_group(x)?"AA19":""', `AA19_group(x){${body}}`)))
+      .toThrow('重复声明或变量遮蔽 selected')
   })
 
   it('机器人操作只检查副操作，产科严重条件独立于普通 CC/MCC 条件', () => {

@@ -73,9 +73,16 @@ export type DrgProgram = z.infer<typeof programShape>
 export const drgProgramSchema = programShape.superRefine((program, context) => {
   const graph = new Map<string, Set<string>>()
   const issue = (message: string): void => context.addIssue({ code: 'custom', message })
-  function expressionReferences(node: DrgProgramExpression, edges: Set<string>): void {
+  function expressionReferences(node: DrgProgramExpression, edges: Set<string>, variables: ReadonlySet<string>): void {
     switch (node.kind) {
-      case 'literal': case 'field': case 'variable': case 'log': return
+      case 'literal': case 'field': case 'log': return
+      case 'variable':
+        if (!variables.has(node.name)) issue(`DRG 程序引用未声明变量 ${node.name}`)
+        return
+      case 'assign':
+        if (!variables.has(node.name)) issue(`DRG 程序赋值未声明变量 ${node.name}`)
+        expressionReferences(node.value,edges,variables)
+        return
       case 'table': case 'trauma-regions': {
         const id = node.kind === 'table' ? node.id : node.table
         if (!Object.hasOwn(program.tables,id)) issue(`DRG 程序缺少成员表 ${id}`)
@@ -89,29 +96,33 @@ export const drgProgramSchema = programShape.superRefine((program, context) => {
         if (!Object.hasOwn(program.terminals,node.code)) issue(`DRG 程序缺少终端条件 ${node.code}`)
         edges.add(`terminal:${node.code}`)
         return
-      case 'binary': expressionReferences(node.left,edges); expressionReferences(node.right,edges); return
+      case 'binary': expressionReferences(node.left,edges,variables); expressionReferences(node.right,edges,variables); return
       case 'conditional':
-        expressionReferences(node.condition,edges); expressionReferences(node.yes,edges); expressionReferences(node.no,edges); return
+        expressionReferences(node.condition,edges,variables); expressionReferences(node.yes,edges,variables); expressionReferences(node.no,edges,variables); return
       case 'contains': case 'intersects': case 'match-count':
-        expressionReferences(node.list,edges); expressionReferences(node.value,edges); return
-      default: expressionReferences(node.value,edges)
+        expressionReferences(node.list,edges,variables); expressionReferences(node.value,edges,variables); return
+      default: expressionReferences(node.value,edges,variables)
     }
   }
-  function statementReferences(nodes: readonly DrgProgramStatement[], edges: Set<string>): void {
+  function statementReferences(nodes: readonly DrgProgramStatement[], edges: Set<string>, variables: Set<string>): void {
     for (const node of nodes) {
       if (node.kind === 'if') {
-        expressionReferences(node.condition,edges)
-        statementReferences(node.yes,edges)
-        statementReferences(node.no,edges)
-      } else if (node.kind === 'block') statementReferences(node.statements,edges)
-      else expressionReferences(node.value,edges)
+        expressionReferences(node.condition,edges,variables)
+        statementReferences(node.yes,edges,new Set(variables))
+        statementReferences(node.no,edges,new Set(variables))
+      } else if (node.kind === 'block') statementReferences(node.statements,edges,new Set(variables))
+      else {
+        if (node.kind === 'let' && variables.has(node.name)) issue(`DRG 程序不支持重复声明或变量遮蔽 ${node.name}`)
+        expressionReferences(node.value,edges,variables)
+        if (node.kind === 'let') variables.add(node.name)
+      }
     }
   }
   for (const [kind, records] of [['function',program.functions],['terminal',program.terminals]] as const) {
     for (const [id, statements] of Object.entries(records)) {
       const edges = new Set<string>()
       graph.set(`${kind}:${id}`,edges)
-      statementReferences(statements,edges)
+      statementReferences(statements,edges,new Set())
     }
   }
   if (!Object.hasOwn(program.functions,program.entry)) issue('DRG 程序缺少分组入口')

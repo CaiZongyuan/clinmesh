@@ -5,7 +5,7 @@ import type { FhirRepository, RepositoryContext } from '../infrastructure/sqlite
 const measurement = z.object({
   id: z.string(), meta: z.object({ versionId: z.string() }),
   status: z.enum(['final', 'amended', 'corrected']),
-  valueQuantity: z.object({ value: z.number().positive(), system: z.literal('http://unitsofmeasure.org'), code: z.enum(['g', 'kg']) }),
+  valueQuantity: z.object({ value: z.number().positive(), comparator: z.never().optional(), system: z.literal('http://unitsofmeasure.org'), code: z.enum(['g', 'kg']) }),
 })
 const observationCode = z.object({ code: z.object({ coding: z.array(z.object({ system: z.string().optional(), code: z.string().optional() })).optional() }).optional() })
 

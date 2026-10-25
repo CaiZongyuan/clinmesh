@@ -154,6 +154,8 @@
 
 - 从 FHIR 出生日期计算日龄前先验证完整且有效的日期；`new Date` 会给部分日期补月日，也会将不存在的日期滚动到下个月。未满周岁是否保留日龄按日历整岁判断，不能用 `<365`，否则闰年前一日会丢失仍有效的第 365 日龄。排查凌晨年龄异常时，配对验证同一时点的 `Z` 与 `+08:00` 表达及医院午夜前后；边界回归见[分组年龄测试](../../apps/server/tests/inpatient-drg-age.test.ts)，计算口径见[DRG 条件分组](../architecture/drg-grouping.md#住院输入与冻结)。
 
+- FHIR Quantity 的 `value` 可能只是范围边界；窄 Zod 投影会剥除未声明的 `comparator`，因此读取精确体重前须显式检查比较符。用正式 Observation 写入、回读并配对验证边界值和未知输入，不能只用裸数值 fixture；见[出生体重回归](../../apps/server/tests/inpatient-birth-weight.test.ts)及[住院输入合同](../architecture/drg-grouping.md#住院输入与冻结)。
+
 - 离线清单的合成 fixture 要沿用真实来源字段名，并从公开准备与回读入口核对；只用自拟的通用 `unit` 字段会漏掉来源单位提取缺口。摘要提取修正后重新准备已有资料时，先核对清单身份，恢复方式见[离线 DRG 资料核对](../deployment.md#离线-drg-资料核对)，不要修改数据库绕过不可变校验。
 
 - 验证离线清单读取的失败审计时，用已认证管理员发送非法分页参数，再从公开 FHIR AuditEvent 回读失败事件；只断言 HTTP 400 会漏掉路由提前解析参数、绕过服务层审计的缺口。认证拒绝与进入受信读取边界后的参数拒绝分别验证，合同见[参考数据策略](../architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。

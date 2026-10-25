@@ -58,4 +58,23 @@ describe('完整条件规则包装载', () => {
     await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
     await expect(loadDrgRules(directory)).rejects.toThrow(/终端|覆盖/)
   })
+  it.each([
+    { name: '读取未声明变量', error: '未声明变量 missing', statements: [{ kind: 'return', value: { kind: 'variable', name: 'missing' } }] },
+    { name: '赋值未声明变量', error: '未声明变量 missing', statements: [{ kind: 'expression', value: { kind: 'assign', name: 'missing', value: { kind: 'literal', value: true } } }] },
+    { name: '块内变量遮蔽', error: '重复声明或变量遮蔽 selected', statements: [
+      { kind: 'let', name: 'selected', value: { kind: 'literal', value: true } },
+      { kind: 'block', statements: [{ kind: 'let', name: 'selected', value: { kind: 'literal', value: false } }] },
+      { kind: 'return', value: { kind: 'variable', name: 'selected' } },
+    ] },
+  ])('哈希合法的规则包仍在装载时拒绝不受支持的变量绑定：$name', async ({ statements, error }) => {
+    const { directory } = await writePackage()
+    const program = JSON.parse(await readFile(join(directory, 'program.json'), 'utf8'))
+    program.terminals.RA15 = statements
+    const bytes = JSON.stringify(program) + '\n'
+    await writeFile(join(directory, 'program.json'), bytes)
+    const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'))
+    manifest.files.find((file: { path: string }) => file.path === 'program.json').sha256 = createHash('sha256').update(bytes).digest('hex')
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+    await expect(loadDrgRules(directory)).rejects.toThrow(error)
+  })
 })
