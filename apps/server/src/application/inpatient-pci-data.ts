@@ -146,13 +146,15 @@ export class InpatientPciData {
       }
       const old = current === undefined ? {} : z.record(z.string(), z.json()).parse(JSON.parse(current.config_json))
       const config: Record<string, unknown> = { ...old }
+      const unitMismatch = old.unit !== undefined && old.unit !== null && old.unit !== supplement.unit
       if (current?.active === 1 && old.pciDataSupplement === undefined && Array.isArray(old.availableScopes)) {
         config.availableScopes = [...new Set([...z.array(z.string()).parse(old.availableScopes), 'inpatient'])]
       }
       for (const [key, value] of Object.entries(defaults)) {
         if (config[key] !== undefined && config[key] !== null) continue
-        // 含量基于每一最小制剂单位；已确认的其他单位不能直接套用该换算。
-        if (key === 'inpatientDoseBasis' && old.unit !== undefined && old.unit !== supplement.unit) continue
+        // 剂量、数量和上限均按补充单位声明，不能把按片的配置套给既有盒价。
+        if (unitMismatch && ['dose', 'allowedDoseTexts', 'allowedQuantities', 'defaultQuantity',
+          'inpatientDoses', 'inpatientDoseBasis', 'inpatientMaxDoseQuantity'].includes(key)) continue
         config[key] = value
       }
       if (current === undefined) {
@@ -175,7 +177,7 @@ export class InpatientPciData {
       const hasInventory = database.prepare('SELECT 1 FROM inventory_lot WHERE workspace_id=? AND epoch=? AND medication_id=?').get(context.workspaceId, context.epoch, itemId) !== undefined
       if (hasInventory) continue
       // 旧单位不同或停用项目只补目录资料；不制造数量口径不明的库存。
-      if (current?.active === 0 || (old.unit !== undefined && old.unit !== supplement.unit)) continue
+      if (current?.active === 0 || config.unit !== supplement.unit) continue
       const lotId = `lot-pci-${definition.id.replace('medication-pci-', '')}-20261025`
       const expiresOn = '2028-12-31'
       database.prepare(`INSERT INTO inventory_lot(workspace_id,epoch,lot_id,medication_id,location_id,lot_number,expires_on,quantity_on_hand,version)

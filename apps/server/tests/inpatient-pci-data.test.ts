@@ -65,6 +65,51 @@ async function setup(withReference = false) {
 }
 
 describe('固定 PCI 数据公开 Command 与目录回读', () => {
+  it('单位为空的既有产品首次准备即补齐单位、含量和基础批次，新键不再补写', async () => {
+    const s = await setup(), admin = await s.login('admin'), doctor = await s.login('inpatient-doctor')
+    const definition = pciDataPackage.medications.find(item => item.id === 'medication-pci-aspirin')!
+    const { workspaceId, epoch } = admin.context
+    s.runtime.database.driver.prepare(`INSERT INTO outpatient_catalog
+      (workspace_id,epoch,item_id,kind,code,name_zh,name_en,price_fen,version,active,config_json)
+      VALUES(?,?,?,'medication',?,?,?,?,1,1,?)`).run(workspaceId, epoch, 'existing-null-unit-aspirin', definition.product.code,
+        '合成待补单位阿司匹林', 'synthetic-null-unit-aspirin', 321,
+        JSON.stringify({ product: definition.product, availableScopes: ['outpatient'], unit: null }))
+    const first = s.data.prepare(admin.context, { expectedEpoch: epoch }, 'pci-null-unit-first')
+    const installed = first.data.installed.medications.find(item => item.definitionId === definition.id)!
+    expect(installed).toMatchObject({ catalogItemId: 'existing-null-unit-aspirin', unit: '片', priceFen: 321,
+      lots: [{ quantityOnHand: 1000 }] })
+    expect(installed.conflicts).toEqual([])
+    const catalog = inpatientFullCatalogSchema.parse(await (await s.request(doctor.cookie, '/api/his/v1/inpatient/clinical-catalog')).json())
+    expect(catalog.medications.find(item => item.id === 'existing-null-unit-aspirin')).toMatchObject({ doseBasis: { amount: 100, unit: 'mg' } })
+    const second = s.data.prepare(admin.context, { expectedEpoch: epoch }, 'pci-null-unit-second')
+    expect(second.effects).toEqual([])
+    expect(second.data.installed).toEqual(first.data.installed)
+  })
+
+  it('已有产品按盒计量时不套入按片的剂量和上限，目录保持待补', async () => {
+    const s = await setup(), admin = await s.login('admin'), doctor = await s.login('inpatient-doctor')
+    const definition = pciDataPackage.medications.find(item => item.id === 'medication-pci-aspirin')!
+    const { workspaceId, epoch } = admin.context
+    s.runtime.database.driver.prepare(`INSERT INTO outpatient_catalog
+      (workspace_id,epoch,item_id,kind,code,name_zh,name_en,price_fen,version,active,config_json)
+      VALUES(?,?,?,'medication',?,?,?,?,1,1,?)`).run(workspaceId, epoch, 'existing-box-aspirin', definition.product.code,
+        '合成既有盒装阿司匹林', 'synthetic-box-aspirin', 321,
+        JSON.stringify({ product: definition.product, availableScopes: ['outpatient'], unit: '盒' }))
+    s.runtime.database.driver.prepare(`INSERT INTO inventory_lot
+      (workspace_id,epoch,lot_id,medication_id,location_id,lot_number,expires_on,quantity_on_hand,version)
+      VALUES(?,?,?,'existing-box-aspirin','location-pharmacist','SYN-BOX','2028-12-31',10,1)`)
+      .run(workspaceId, epoch, 'lot-existing-box-aspirin')
+    s.data.prepare(admin.context, { expectedEpoch: epoch }, 'pci-existing-box-prepare')
+    const installed = s.data.read(admin.context).installed.medications.find(item => item.definitionId === definition.id)!
+    expect(installed).toMatchObject({ catalogItemId: 'existing-box-aspirin', unit: '盒', priceFen: 321, lots: [{ quantityOnHand: 10 }] })
+    expect(installed.conflicts).toContain('unit-mismatch')
+    const response = await s.request(doctor.cookie, `/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital&query=${encodeURIComponent('合成既有盒装阿司匹林')}`)
+    expect(response.status).toBe(200)
+    const candidate = inpatientCatalogSearchSchema.parse(await response.json()).items[0]!
+    expect(candidate).toMatchObject({ status: 'incomplete', missingFields: expect.arrayContaining(['dose-limit']) })
+    expect(candidate.catalogItemId).toBeUndefined()
+  })
+
   it('准备后药品能从现有住院目录读到，底稿不创建任何就诊或费用', async () => {
     const s = await setup(), admin = await s.login('admin'), doctor = await s.login('inpatient-doctor')
     const unchangedResources = ['Patient', 'Encounter', 'ChargeItem']
