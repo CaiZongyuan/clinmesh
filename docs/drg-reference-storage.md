@@ -61,4 +61,6 @@ pnpm --filter @clinmesh/server drg:export --input-root <已安装版本根目录
 
 精简常驻规模包含索引、状态模板、规范化行、完整记录、原文页和保留对象。1,889 个文件改为按需派生；两张模板化表合计从 122,784,929 bytes 降至 55,490,111 bytes，其余完全重复内容使用物理别名。归档 SHA-256 为 `e6da3f253bf098a5e694cb6766f0ae57808eab399757636f14322b7f2749efa4`，准确分发身份以[分发锁](../apps/server/reference-data/drg-distribution.lock.json)为准。
 
+公开发行 [drg-reference-2026-10-25-r1](https://github.com/CaiZongyuan/clinmesh/releases/tag/drg-reference-2026-10-25-r1) 的固定下载地址已于 2026-10-25 完整下载核验：HTTP 200、36,122,034 bytes，SHA-256 与上述归档及分发锁一致。
+
 2026-10-25 在仓库外空目录通过受控 HTTP 分发该精确归档，首次完整准备耗时 158,995 ms；关闭 HTTP 服务并移除临时分发配置后，离线重复准备耗时 120,490 ms，返回 `source=installed`、`created=false`，请求总数保持为 1。两次核验及显式导出 readiness 原文件后，安装目录始终为 411 个文件、347,615,526 bytes。这些墙钟值为本机验收观察，不是性能预算；损坏恢复、失败保旧、check-only、危险归档、旧本地离线转换及生产 CLI 由合成公共入口回归覆盖。
