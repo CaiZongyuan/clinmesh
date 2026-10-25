@@ -23,9 +23,11 @@ const coverageNote = '已覆盖成本=已发生收费净额占推演总额的比
 
 const projectedNote = 'projected 为「若计划手术按当前计划实施」的推演分组，不构成临床事实或正式病组；'
   + '草稿与预留只参与计价对照，不改变分组。'
+const birthDateSchema = z.iso.date()
 
 /** 年龄：以离院时点（无离院用入院时点）按日历周年计算整岁，天龄余数用于低龄分组。 */
 export function ageAt(birthDate: string, at: string | undefined): { ageYears: number, ageDays: number | null } {
+  if (!birthDateSchema.safeParse(birthDate).success) return { ageYears: -1, ageDays: null }
   const birth = new Date(birthDate)
   const reference = at === undefined ? new Date() : new Date(at)
   if (Number.isNaN(birth.getTime()) || Number.isNaN(reference.getTime()) || birth > reference) return { ageYears: -1, ageDays: null }
@@ -33,7 +35,7 @@ export function ageAt(birthDate: string, at: string | undefined): { ageYears: nu
   let years = reference.getUTCFullYear() - birth.getUTCFullYear()
   if (reference.getUTCMonth() < birth.getUTCMonth()
     || (reference.getUTCMonth() === birth.getUTCMonth() && reference.getUTCDate() < birth.getUTCDate())) years -= 1
-  return { ageYears: Math.min(150, Math.max(0, years)), ageDays: days < 365 ? days : null }
+  return { ageYears: Math.min(150, Math.max(0, years)), ageDays: years === 0 ? days : null }
 }
 
 function genderOf(rawGender: string | undefined): 'male' | 'female' | 'unknown' {

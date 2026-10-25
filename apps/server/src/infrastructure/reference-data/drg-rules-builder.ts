@@ -1,6 +1,5 @@
 import { z } from 'zod'
 import { drgRulesSchema, type DrgRules } from '@clinmesh/contracts/drg'
-import { drgProgramSchema } from '@clinmesh/contracts/drg-program'
 
 const groupRowSchema = z.object({
   level: z.enum(['MDC', 'ADRG', 'DRG']), code: z.string().min(1), name: z.string().min(1),
@@ -17,7 +16,8 @@ export function buildDrgRules(input: {
   groups: unknown, program: unknown, complicationTables?: unknown, rulesId: string, version: string,
 }): DrgRules {
   const groups = z.array(groupRowSchema).parse(input.groups)
-  const program = drgProgramSchema.parse(input.program)
+  const rules = drgRulesSchema.parse({ rulesId: input.rulesId, version: input.version, program: input.program })
+  const { program } = rules
   const tables = input.complicationTables === undefined ? null : complicationTablesSchema.parse(input.complicationTables)
   const identity = (table: Record<string, string>) => JSON.stringify(Object.entries(table).sort(([a], [b]) => a.localeCompare(b)))
   for (const [name, actual] of [['CC', program.complications.cc], ['MCC', program.complications.mcc], ['CCE', program.complications.cce]] as const) {
@@ -47,5 +47,5 @@ export function buildDrgRules(input: {
       throw new Error(`DRG condition coverage mismatch (${level}): missing=${missing.join(',')}; extra=${extra.join(',')}`)
     }
   }
-  return drgRulesSchema.parse({ rulesId: input.rulesId, version: input.version, program })
+  return rules
 }

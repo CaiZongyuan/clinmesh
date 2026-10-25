@@ -43,9 +43,10 @@ export async function loadDrgRules(directory: string): Promise<DrgRules> {
     if (rows !== file.rows) throw new Error(`DRG rules package row count mismatch: ${file.path}`)
     contents[file.path] = content
   }
-  const program = drgProgramSchema.parse(JSON.parse(contents['program.json']!))
+  const groups = contents['groups.jsonl']!.split('\n').filter(line => line.trim() !== '').map(line => JSON.parse(line))
+  const rules = buildDrgRules({ groups, program: JSON.parse(contents['program.json']!), rulesId: manifest.releaseId, version: manifest.sourceVersion })
+  const { program } = rules
   if (program.coverage.sourceSha256 !== manifest.inputs.openDrgJsSha256
     || JSON.stringify(program.coverage) !== JSON.stringify(manifest.coverage)) throw new Error('DRG rules package source coverage mismatch')
-  const groups = contents['groups.jsonl']!.split('\n').filter(line => line.trim() !== '').map(line => JSON.parse(line))
-  return buildDrgRules({ groups, program, rulesId: manifest.releaseId, version: manifest.sourceVersion })
+  return rules
 }
