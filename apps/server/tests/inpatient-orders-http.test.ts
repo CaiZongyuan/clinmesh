@@ -92,6 +92,44 @@ async function paidOutpatient(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
+  it('分页搜索保留未配齐药品并显示具体缺项，完整项目仍可使用', async () => {
+    const s = await setup()
+    s.runtime.database.driver.prepare("UPDATE outpatient_catalog SET config_json=json_remove(config_json,'$.unit') WHERE item_id='medication-amlodipine'").run()
+    const endpoint = '/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital'
+    const response = await s.request(s.doctor, `${endpoint}&query=${encodeURIComponent('氨氯')}`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ kind: 'medication', source: 'hospital', total: 1,
+      items: [{ id: 'medication-amlodipine', status: 'incomplete', missingFields: ['unit'] }] })
+    const page = await (await s.request(s.doctor, `${endpoint}&pageSize=1&page=2`)).json()
+    expect(page).toMatchObject({ page: 2, pageSize: 1, total: 3 })
+    expect(page.items).toHaveLength(1)
+    const ready = inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json())
+    expect(ready.medications.map(item => item.id)).not.toContain('medication-amlodipine')
+    expect(ready.medications).toHaveLength(2)
+    for (const cookie of [s.nurse, s.cashier, s.pharmacist, s.admin]) expect((await s.request(cookie, endpoint)).status).toBe(403)
+    expect((await s.request(s.doctor, `${endpoint}&pageSize=51`)).status).toBe(400)
+  })
+
+  it('医生填写目录建议外的合法剂量并按明确含量换算，拒绝不整片、超量和伪造数量', async () => {
+    const s = await setup()
+    s.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET config_json=json_set(config_json,
+      '$.inpatientDoseBasis',json('{"amount":5,"unit":"mg"}'),'$.inpatientMaxDoseQuantity',2) WHERE item_id='medication-amlodipine'` ).run()
+    const diagnosis = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '1' }],
+    })).json()).data
+    const selection = { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '10 mg', doseQuantity: 2, frequencyCode: 'QD' }
+    const input = { encounterVersion: diagnosis.encounterVersion, duration: 'temporary', selection }
+    for (const invalid of [{ ...selection, doseText: '7.5 mg' }, { ...selection, doseText: '15 mg', doseQuantity: 3 },
+      { ...selection, doseQuantity: 1 }, { ...selection, doseText: '10 mL' }]) {
+      expect((await s.request(s.doctor, `${s.path}/orders/issue`, { ...input, selection: invalid })).status).toBe(409)
+    }
+    const result = await s.request(s.doctor, `${s.path}/orders/issue`, input)
+    expect(result.status).toBe(200)
+    const clinical = inpatientFullClinicalResponseSchema.parse(await result.json()).data
+    expect(clinical.orders).toEqual([expect.objectContaining({ doseText: '10 mg', doseQuantity: 2, unit: '片' })])
+  })
+
   it('混合时区Virtual Time的临床医嘱执行发药账目及药房清单按真实时点排序', async () => {
     const s = await setup()
     const clock = await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()
