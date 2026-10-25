@@ -88,6 +88,26 @@ async function expectTextFits(locator: Locator) {
   expect(bounds.textLeft).toBeGreaterThanOrEqual(bounds.boxLeft - 1)
   expect(bounds.textRight).toBeLessThanOrEqual(bounds.boxRight + 1)
 }
+async function caseContentWidth(locator: Locator) {
+  return locator.evaluate(element => {
+    for (let node: Element | null = element; node; node = node.parentElement) {
+      if (getComputedStyle(node).containerName.split(' ').includes('case-content')) return node.clientWidth
+    }
+    throw new Error('Missing case content container')
+  })
+}
+async function showConfirmedList(list: Locator, back: Locator) {
+  await expect(list.or(back)).toBeVisible()
+  if (await caseContentWidth(list.or(back)) >= 760) {
+    await expect(list).toBeVisible()
+    await expect(back).toBeHidden()
+  }
+  if (await back.isVisible()) {
+    await back.click()
+    await expect(list.getByRole('textbox')).toBeFocused()
+  }
+  await expect(list).toBeVisible()
+}
 async function forEachAppearance(page: Page, verify: (locale: 'zh-CN' | 'en-US', width: number) => Promise<void>) {
   for (const locale of ['zh-CN', 'en-US'] as const) {
     for (const theme of ['light', 'dark'] as const) {
@@ -609,8 +629,7 @@ for (const version of ['18', '19']) {
       await page.getByRole('tab', { name: locale === 'zh-CN' ? '诊断' : 'Diagnosis', exact: true }).click()
       const diagnosisList = page.getByRole('region', { name: locale === 'zh-CN' ? '诊断列表' : 'Diagnosis list', exact: true })
       const backToDiagnoses = page.getByRole('button', { name: locale === 'zh-CN' ? '返回诊断列表' : 'Back to diagnosis list', exact: true })
-      if (width === 390 && await backToDiagnoses.isVisible()) await backToDiagnoses.click()
-      await expect(diagnosisList).toBeVisible()
+      await showConfirmedList(diagnosisList, backToDiagnoses)
       await diagnosisList.getByRole('button', { name: new RegExp(diagnosisName) }).click()
       const diagnosisDetails = page.getByRole('region', { name: locale === 'zh-CN' ? '诊断详情' : 'Diagnosis details', exact: true })
       await expect(diagnosisDetails).toBeVisible()
@@ -619,10 +638,8 @@ for (const version of ['18', '19']) {
       await scrollWithinPanel(note)
       await expect(note).toBeInViewport()
       await expect(diagnosisDetails.getByRole('textbox')).toHaveCount(0)
-      if (width === 390) {
-        await backToDiagnoses.click()
-        await expect(diagnosisList.getByRole('textbox')).toBeFocused()
-      }
+      await showConfirmedList(diagnosisList, backToDiagnoses)
+      if (width === 390) await expect(diagnosisList.getByRole('textbox')).toBeFocused()
       await expectPanelBounded(page, 'diagnosis')
       const add = page.getByRole('button', { name: locale === 'zh-CN' ? '添加诊断' : 'Add diagnosis', exact: true })
       await add.scrollIntoViewIfNeeded()
@@ -644,8 +661,7 @@ for (const version of ['18', '19']) {
       await page.getByRole('tab', { name: locale === 'zh-CN' ? '处方' : 'Prescription', exact: true }).click()
       const medicationList = page.getByRole('region', { name: locale === 'zh-CN' ? '药品列表' : 'Medication list', exact: true })
       const backToMedications = page.getByRole('button', { name: locale === 'zh-CN' ? '返回药品列表' : 'Back to medication list', exact: true })
-      if (width === 390 && await backToMedications.isVisible()) await backToMedications.click()
-      await expect(medicationList).toBeVisible()
+      await showConfirmedList(medicationList, backToMedications)
       await medicationList.getByRole('button', { name: `${locale === 'zh-CN' ? '查看药品' : 'View medication'} ${medicationName}`, exact: true }).click()
       const medicationDetails = page.getByRole('region', { name: locale === 'zh-CN' ? '药品详情' : 'Medication details', exact: true })
       await expectTextFits(medicationDetails.getByRole('heading', { name: medicationName, exact: true }))
@@ -655,10 +671,8 @@ for (const version of ['18', '19']) {
         : 'Medication orders belong to one prescription. Issuance and withdrawal apply to the entire prescription.', { exact: true })
       await scrollWithinPanel(instructions)
       await expect(instructions).toBeInViewport()
-      if (width === 390) {
-        await backToMedications.click()
-        await expect(medicationList.getByRole('textbox')).toBeFocused()
-      }
+      await showConfirmedList(medicationList, backToMedications)
+      if (width === 390) await expect(medicationList.getByRole('textbox')).toBeFocused()
       await expectPanelBounded(page, 'prescription')
     })
     await appearance(page, 'zh-CN', 'light', 'standard', 390)
@@ -676,5 +690,30 @@ for (const version of ['18', '19']) {
     await expect(edit.getByRole('textbox', { name: '备注', exact: true })).toHaveValue('弹窗中编辑的合成备注。')
     await expect(page.getByRole('dialog', { name: '调整项目', exact: true })).toHaveCount(0)
     await expectNoFixtureErrors(page)
+  })
+
+  test(`returns to confirmed lists when the Surface is narrower than the viewport on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'existing')
+    await appearance(page, 'zh-CN', 'dark', 'larger', 1280)
+    await page.evaluate(() => { document.getElementById('diagnosis-prescription-host')!.style.width = '1200px' })
+    expect(page.viewportSize()?.width).toBe(1280)
+    for (const kind of ['diagnosis', 'prescription'] as const) {
+      const tab = page.getByRole('tab', { name: kind === 'diagnosis' ? '诊断' : '处方', exact: true })
+      const list = page.getByRole('region', { name: kind === 'diagnosis' ? '诊断列表' : '药品列表', exact: true })
+      const details = page.getByRole('region', { name: kind === 'diagnosis' ? '诊断详情' : '药品详情', exact: true })
+      const back = page.getByRole('button', { name: kind === 'diagnosis' ? '返回诊断列表' : '返回药品列表', exact: true })
+      await tab.click()
+      await showConfirmedList(list, back)
+      await list.getByRole('button', { name: new RegExp(kind === 'diagnosis' ? diagnosisName : medicationName) }).click()
+      await expect(details).toBeVisible()
+      await expect(details.getByRole('textbox')).toHaveCount(0)
+      expect(await caseContentWidth(details)).toBeLessThan(760)
+      await expect(back).toBeVisible()
+      await page.getByRole('tab', { name: kind === 'diagnosis' ? '处方' : '诊断', exact: true }).click()
+      await tab.click()
+      await expect(details).toBeVisible()
+      await expect(back).toBeVisible()
+      await showConfirmedList(list, back)
+    }
   })
 }
