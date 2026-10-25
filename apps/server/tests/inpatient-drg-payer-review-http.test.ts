@@ -3,6 +3,9 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
+import { inpatientDrgPayerReviewPreviewSchema } from '@clinmesh/contracts/inpatient-drg-payer'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-package.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
@@ -30,8 +33,22 @@ async function setup() {
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'hospital.sqlite'),
     referenceDatabasePath, activeReferenceReleaseId: 'synthetic-clinical-2022', demoPassword: password,
     migrationMode: 'apply', trustedOrigins: ['http://localhost'] }
-  // 先无规则启动以读取确定性合成目录，再按实际术式/诊断码物化规则包并重启注入。
-  let runtime = await createClinMeshRuntime(base)
+  const groups = [
+    { level: 'MDC', code: 'MDCA', name: '合成循环系统疾病', parentCode: null },
+    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCA' },
+    { level: 'DRG', code: 'RA15', name: '合成高血压组，不伴合并症或并发症', parentCode: 'RA1' },
+    { level: 'ADRG', code: 'RA2', name: '合成PCI介入组', parentCode: 'MDCA' },
+    { level: 'DRG', code: 'RA25', name: '合成PCI介入组，不伴合并症或并发症', parentCode: 'RA2' },
+  ]
+  const jsText = `return ["I10.x09"].includes(x.zdList[0])){Q("符合RA1入组条件，匹配规则：主诊断匹配");}return ["00.6600"].includes(x.ssList[0])){Q("符合RA2入组条件，匹配规则：主手术匹配");}`
+  const drgRulesDirectory = join(directory, 'drg-rules')
+  const { mkdir } = await import('node:fs/promises')
+  await mkdir(drgRulesDirectory, { recursive: true })
+  const files = prepareDrgRulesPackage({ groups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
+    input: { openDrgJsSha256: 'a'.repeat(64), openDrgTablesSha256: 'b'.repeat(64), r3GroupsSha256: 'c'.repeat(64) },
+    releaseId: 'chs-drg-payer-test', sourceVersion: 'CHS-DRG-3.0-payer-test' })
+  for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
+  const runtime = await createClinMeshRuntime({ ...base, drgRulesDirectory })
   cleanups.push(async () => { await runtime.close() })
   async function login(name: string) {
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' },
@@ -57,25 +74,6 @@ async function setup() {
   })).json()).data.admission
   const path = `/api/his/v1/inpatient/admissions/${admission.id}`
   const catalog = await (await request(doctor, '/api/his/v1/inpatient/surgery-catalog')).json()
-  const groups = [
-    { level: 'MDC', code: 'MDCA', name: '合成循环系统疾病', parentCode: null },
-    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCA' },
-    { level: 'DRG', code: 'RA15', name: '合成高血压组，不伴合并症或并发症', parentCode: 'RA1' },
-    { level: 'ADRG', code: 'RA2', name: '合成PCI介入组', parentCode: 'MDCA' },
-    { level: 'DRG', code: 'RA25', name: '合成PCI介入组，不伴合并症或并发症', parentCode: 'RA2' },
-  ]
-  const jsText = `return ["I10.x09"].includes(x.zdList[0])){Q("符合RA1入组条件，匹配规则：主诊断匹配");}return ["${catalog.procedures[0].coding.code}"].includes(x.ssList[0])){Q("符合RA2入组条件，匹配规则：主手术匹配");}`
-  const drgRulesDirectory = join(directory, 'drg-rules')
-  const { mkdir } = await import('node:fs/promises')
-  await mkdir(drgRulesDirectory, { recursive: true })
-  const files = prepareDrgRulesPackage({ groups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
-    input: { openDrgJsSha256: 'a'.repeat(64), openDrgTablesSha256: 'b'.repeat(64), r3GroupsSha256: 'c'.repeat(64) },
-    releaseId: 'chs-drg-payer-test', sourceVersion: 'CHS-DRG-3.0-payer-test' })
-  for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
-  await runtime.close()
-  cleanups.pop()
-  runtime = await createClinMeshRuntime({ ...base, drgRulesDirectory })
-  cleanups.push(async () => { await runtime.close() })
   return { runtime, request, login, admission, doctor, nurse, cashier, insurance, registrar, path, catalog }
 }
 
@@ -118,8 +116,15 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     await submitReviewArchive(s, null)
     const response = await s.request(s.insurance, `${s.path}/drg/payer-review-preview`)
     expect(response.status).toBe(200)
-    const preview = await response.json()
+    const preview = inpatientDrgPayerReviewPreviewSchema.parse(await response.json())
     expect(preview).toMatchObject({ admissionId: s.admission.id, drgCode: 'RA15', simulatedPaymentFen: 300_000 })
+    expect((await s.request(s.doctor, `${s.path}/drg/payer-review-preview`)).status).toBe(403)
+    const audits = fhirBundleSchema.parse(await (await s.request(await s.login('admin'), '/fhir/R5/AuditEvent?_count=100')).json())
+    const auditSchema = z.object({ code: z.object({ text: z.string() }), action: z.string(), outcome: z.object({ code: z.object({ code: z.string() }) }) })
+    expect(audits.entry?.map(entry => auditSchema.parse(entry.resource))).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: { text: 'inpatient.drg.payer.review.preview' }, action: 'R', outcome: { code: { code: '0' } } }),
+      expect.objectContaining({ code: { text: 'inpatient.drg.payer.review.preview' }, action: 'R', outcome: { code: { code: '8' } } }),
+    ]))
     const stale = await s.request(s.insurance, `${s.path}/drg/payer-review`, {
       encounterVersion: preview.encounterVersion, expectedFingerprint: '0'.repeat(64), reason: '过期预览验证',
     })

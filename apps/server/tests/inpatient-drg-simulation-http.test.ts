@@ -9,6 +9,9 @@ import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
 import { inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { createPatientResponseSchema, apiErrorSchema } from '@clinmesh/contracts/his'
+import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
+import { inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -31,8 +34,22 @@ async function setup() {
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'hospital.sqlite'),
     referenceDatabasePath, activeReferenceReleaseId: 'synthetic-clinical-2022', demoPassword: password,
     migrationMode: 'apply', trustedOrigins: ['http://localhost'] }
-  // 先无规则启动以读取确定性合成目录，再按实际术式/诊断码物化规则包并重启注入。
-  let runtime = await createClinMeshRuntime(base)
+  const groups = [
+    { level: 'MDC', code: 'MDCA', name: '合成循环系统疾病', parentCode: null },
+    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCA' },
+    { level: 'DRG', code: 'RA15', name: '合成高血压组，不伴合并症或并发症', parentCode: 'RA1' },
+    { level: 'ADRG', code: 'RA2', name: '合成PCI介入组', parentCode: 'MDCA' },
+    { level: 'DRG', code: 'RA25', name: '合成PCI介入组，不伴合并症或并发症', parentCode: 'RA2' },
+  ]
+  const jsText = `return ["I10.x09"].includes(x.zdList[0])){Q("符合RA1入组条件，匹配规则：主诊断匹配");}return ["00.6600"].includes(x.ssList[0])){Q("符合RA2入组条件，匹配规则：主手术匹配");}`
+  const drgRulesDirectory = join(directory, 'drg-rules')
+  const { mkdir } = await import('node:fs/promises')
+  await mkdir(drgRulesDirectory, { recursive: true })
+  const files = prepareDrgRulesPackage({ groups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
+    input: { openDrgJsSha256: 'a'.repeat(64), openDrgTablesSha256: 'b'.repeat(64), r3GroupsSha256: 'c'.repeat(64) },
+    releaseId: 'chs-drg-sim-test', sourceVersion: 'CHS-DRG-3.0-sim-test' })
+  for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
+  const runtime = await createClinMeshRuntime({ ...base, drgRulesDirectory })
   cleanups.push(async () => { await runtime.close() })
   async function login(name: string) {
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' },
@@ -58,25 +75,6 @@ async function setup() {
   const path = `/api/his/v1/inpatient/admissions/${admission.id}`
   const catalog = await (await request(doctor, '/api/his/v1/inpatient/surgery-catalog')).json()
   const clinicalCatalog = await (await request(doctor, '/api/his/v1/inpatient/clinical-catalog')).json()
-  const groups = [
-    { level: 'MDC', code: 'MDCA', name: '合成循环系统疾病', parentCode: null },
-    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCA' },
-    { level: 'DRG', code: 'RA15', name: '合成高血压组，不伴合并症或并发症', parentCode: 'RA1' },
-    { level: 'ADRG', code: 'RA2', name: '合成PCI介入组', parentCode: 'MDCA' },
-    { level: 'DRG', code: 'RA25', name: '合成PCI介入组，不伴合并症或并发症', parentCode: 'RA2' },
-  ]
-  const jsText = `return ["I10.x09"].includes(x.zdList[0])){Q("符合RA1入组条件，匹配规则：主诊断匹配");}return ["${catalog.procedures[0].coding.code}"].includes(x.ssList[0])){Q("符合RA2入组条件，匹配规则：主手术匹配");}`
-  const drgRulesDirectory = join(directory, 'drg-rules')
-  const { mkdir } = await import('node:fs/promises')
-  await mkdir(drgRulesDirectory, { recursive: true })
-  const files = prepareDrgRulesPackage({ groups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
-    input: { openDrgJsSha256: 'a'.repeat(64), openDrgTablesSha256: 'b'.repeat(64), r3GroupsSha256: 'c'.repeat(64) },
-    releaseId: 'chs-drg-sim-test', sourceVersion: 'CHS-DRG-3.0-sim-test' })
-  for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
-  await runtime.close()
-  cleanups.pop()
-  runtime = await createClinMeshRuntime({ ...base, drgRulesDirectory })
-  cleanups.push(async () => { await runtime.close() })
   return { runtime, request, login, patient, admission, doctor, nurse, cashier, registrar, path, catalog, clinicalCatalog }
 }
 
@@ -98,6 +96,34 @@ async function finish(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院 DRG 处方推演公共 HTTP', () => {
+  it('相同事实的不同住院不能复用审阅指纹', async () => {
+    const s = await setup()
+    const service = s.clinicalCatalog.services[0]
+    const draft = { medications: [], services: [{ serviceId: service.id, serviceVersion: service.version, quantity: 1 }] }
+    const first = inpatientDrgSimulationSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/simulation`, draft)).json())
+    const created = await s.runtime.app.request('/api/his/v1/patients', { method: 'POST', headers: {
+      cookie: s.registrar, origin: 'http://localhost', 'content-type': 'application/json', 'idempotency-key': randomUUID(),
+    }, body: JSON.stringify({ expectedVersions: {}, input: {
+      name: '合成同龄患者', gender: 'male', birthDate: '1960-03-04', identifier: `SYN-${randomUUID()}`,
+    } }) })
+    expect(created.status).toBe(200)
+    const patient = createPatientResponseSchema.parse(await created.json()).data.patient
+    const registered = await s.request(s.registrar, '/api/his/v1/inpatient/admissions', { expectedEpoch: 'epoch-1',
+      patientId: patient.id, patientVersion: patient.versionId, admissionRoute: 'direct', wardId: 'ward-general', depositFen: 100000 })
+    expect(registered.status).toBe(200)
+    const admission = inpatientCommandResponseSchema.parse(await registered.json()).data.admission
+    const path = `/api/his/v1/inpatient/admissions/${admission.id}`
+    const received = await s.request(s.nurse, `${path}/receive`, { encounterVersion: admission.versionId, bedId: 'bed-general-2' })
+    expect(received.status).toBe(200)
+    const second = inpatientCommandResponseSchema.parse(await received.json()).data.admission
+    const evaluated = inpatientDrgSimulationSchema.parse(await (await s.request(s.doctor, `${path}/drg/simulation`, draft)).json())
+    expect(evaluated.fingerprint).not.toBe(first.fingerprint)
+    const stale = await s.request(s.doctor, `${path}/orders/issue`, { encounterVersion: second.versionId, duration: 'temporary',
+      selection: { kind: 'service', serviceId: service.id, serviceVersion: service.version, quantity: 1 }, expectedDrgFingerprint: first.fingerprint })
+    expect(stale.status).toBe(409)
+    expect(apiErrorSchema.parse(await stale.json()).error.code).toBe('INPATIENT_DRG_EVALUATION_STALE')
+  })
+
   it('开具前重验审阅指纹，其他医嘱使旧评估过期，更新后重试仅产生一条医嘱', async () => {
     const s = await setup()
     expect((await confirmPrimary(s)).status).toBe(200)
@@ -135,7 +161,7 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     expect(baseline.grouping.projected).toBeNull()
     expect(baseline.incompleteness).toEqual({ costMissing: true, paymentReferenceMissing: false })
     expect(baseline.paymentReference).toMatchObject({ drgCode: 'RA15', referenceFen: 300_000,
-      parameterSetId: 'clinmesh-synthetic-hospital-drg-payment', parameterVersion: '2026-demo-1' })
+      parameterSetId: 'clinmesh-synthetic-hospital-drg-payment', parameterVersion: '2026-demo-2' })
     const again = await (await s.request(s.doctor, `${s.path}/drg/simulation`, {})).json()
     expect(again.fingerprint).toBe(baseline.fingerprint)
     const medication = s.clinicalCatalog.medications.find((item: { id: string }) => item.id === 'medication-amlodipine')!
@@ -219,7 +245,7 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     simulated = await (await s.request(s.doctor, `${s.path}/drg/simulation`, {})).json()
     expect(simulated.reserved.items).toEqual([])
     expect(simulated.formal.items.filter((item: { kind: string }) => item.kind === 'material')).toEqual([
-      { kind: 'material', id: expect.any(String), display: material.display, quantity: 1, estimatedFen: material.chargeDefinition.priceFen * 2 }])
+      { kind: 'material', id: expect.any(String), display: material.display, quantity: 2, estimatedFen: material.chargeDefinition.priceFen * 2 }])
     expect(simulated.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'RA25' })
     const released = await s.request(s.doctor, `${s.path}/drg/reservations/${reservation.id}/release`, { encounterVersion: (await (await s.request(s.doctor, s.path)).json()).admission.versionId, reason: '重复释放重验' })
     expect(released.status).toBe(409)

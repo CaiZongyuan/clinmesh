@@ -92,6 +92,10 @@ export class InpatientDrg {
     return this.#auditedRead(context, 'inpatient.drg.payer-reviews.read', admissionId, () => this.payerReviews(context, admissionId))
   }
 
+  readPayerReviewPreview(context: ActorContext, admissionId: string) {
+    return this.#auditedRead(context, 'inpatient.drg.payer.review.preview', admissionId, () => this.payerReviewPreview(context, admissionId))
+  }
+
   pregroup(context: ActorContext, admissionId: string): InpatientDrgPregroupResult {
     const record = this.owner.records.read(context, admissionId)
     // 归档病例回看冻结结果不依赖当前规则包；未归档病例保持规则未配置优先报错。
@@ -155,19 +159,26 @@ export class InpatientDrg {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'medical-records'])
     const admission = this.owner.readAdmissionBinding(context, admissionId)
     const facts = this.owner.orders.facts(context, admissionId)
-    const dependencies = this.#dependencies(context, admissionId, facts.charges)
     const input = this.#liveGroupingInput(context, admission)
+    const dependencies = { ...this.#dependencies(context, admissionId, facts.charges), groupingInput: input }
     const formal = groupDrgCase(this.rules, input)
-    const requests = this.owner.surgery.read(context, admissionId).requests
+    const surgery = this.owner.surgery.read(context, admissionId)
+    const requests = surgery.requests
       .filter(request => request.status === 'requested' || request.status === 'ready')
     const plannedOperations = requests.map(request => ({ code: request.plannedProcedure.coding.code, primary: true as const }))
     const projected = plannedOperations.length > 0
       ? groupDrgCase(this.rules, { ...input, operations: [...input.operations, ...plannedOperations] }) : null
 
     const chargesFen = facts.charges.reduce((sum, charge) => sum + charge.amountFen, 0)
-    const pendingOrders = z.array(z.object({ order_id: z.string(), kind: z.string(), display: z.string(),
+    const quantities = new Map([
+      ...facts.dispenses.map(item => [item.id, item.quantity] as const),
+      ...surgery.executions.flatMap(execution => execution.materials.map(item => [item.id, item.quantity] as const)),
+      ...facts.executions.map(execution => [execution.id, facts.orders.find(order => order.id === execution.orderId)?.doseQuantity ?? 1] as const),
+    ])
+    const chargesById = new Map(facts.charges.map(charge => [charge.id, charge]))
+    const pendingOrders = z.array(z.object({ order_id: z.string(), kind: z.string(), display: z.string(), state: z.string(),
       dose_quantity: z.number(), price_fen: z.number(), pending_executions: z.number() })).parse(this.owner.database.driver.prepare(`
-      SELECT o.order_id, o.kind, o.display, o.dose_quantity, o.price_fen,
+      SELECT o.order_id, o.kind, o.display, o.state, o.dose_quantity, o.price_fen,
         (SELECT COUNT(*) FROM inpatient_execution e WHERE e.workspace_id=o.workspace_id AND e.epoch=o.epoch
           AND e.order_id=o.order_id AND e.status='pending') AS pending_executions
       FROM inpatient_order o WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? AND o.state NOT IN ('stopped','completed')
@@ -176,8 +187,9 @@ export class InpatientDrg {
       // 已有排程按待执行次数计；已签署尚未物化执行单的按「待排程的下一剂量」计 1 次，已计费的发药/执行不计入。
       ...pendingOrders.map(row => ({
         kind: row.kind as 'medication' | 'service', id: row.order_id, display: row.display,
-        quantity: Math.max(row.pending_executions, 1),
-        estimatedFen: Math.max(row.pending_executions, 1) * row.dose_quantity * row.price_fen })),
+        quantity: row.state === 'signed' ? 1 : row.pending_executions,
+        estimatedFen: (row.state === 'signed' ? 1 : row.pending_executions) * row.dose_quantity * row.price_fen }))
+        .filter(item => item.quantity > 0),
       ...requests.map(request => ({
         kind: 'surgery' as const, id: request.id, display: request.plannedProcedure.coding.display, quantity: 1,
         estimatedFen: request.plannedProcedure.chargeDefinition.priceFen })),
@@ -202,7 +214,9 @@ export class InpatientDrg {
       rulesVersion: this.rules.version,
       formal: { chargesFen, items: facts.charges.map(charge => ({
         kind: charge.kind as 'medication' | 'service' | 'surgery' | 'material' | 'bed' | 'laboratory' | 'imaging',
-        id: charge.id, display: charge.label, quantity: 1, estimatedFen: charge.amountFen })) },
+        id: charge.id, display: charge.label,
+        quantity: quantities.get((charge.reversalOf === undefined ? charge : chargesById.get(charge.reversalOf) ?? charge).sourceId) ?? 1,
+        estimatedFen: charge.amountFen })) },
       committed: { items: committed },
       reserved: { items: reserved },
       draft: draftGroups,
@@ -278,6 +292,7 @@ export class InpatientDrg {
     const catalog = this.owner.orders.medicationsAndServices(context)
     const surgeryCatalog = this.owner.surgery.catalog(context)
     return {
+      workspaceId: context.workspaceId, epoch: context.epoch, admissionId,
       encounter: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
       diagnosisRevision: diagnosis.revision,
       orders: z.array(z.object({ order_id: z.string(), version: z.number(), state: z.string() })).parse(this.owner.database.driver.prepare(

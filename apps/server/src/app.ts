@@ -1384,7 +1384,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch(error) { return apiErrorResponse(context,error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/payer-review-preview', async context => {
-      try { return context.json(inpatient.drg.payerReviewPreview(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+      try { return context.json(inpatient.drg.readPayerReviewPreview(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/payer-review', async context => {
       try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientDrgPayerReviewCreateInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())

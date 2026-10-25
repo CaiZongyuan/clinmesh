@@ -21,6 +21,34 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('DRG示例绑定预览指纹，写入结果保留可恢复的Command回执', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [path, id] of [
+    ['drg-pregroup', 'inpatient.drg.pregroup'], ['drg-simulate', 'inpatient.drg.simulate'],
+    ['drg-reserve-material', 'inpatient.drg.reservation.create'], ['drg-release-reservation', 'inpatient.drg.reservation.release'],
+    ['drg-payer-review-preview', 'inpatient.drg.payer.review.preview'], ['drg-payer-review', 'inpatient.drg.payer.review'],
+  ]) {
+    expect(inspectExample(program, commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${path} `))!).operation?.id).toBe(id)
+  }
+  const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  const reviewed = examples.find(input => input.encounterVersion && input.expectedFingerprint)
+  const payer = getHisOperation('inpatient.drg.payer.review')
+  expect(payer.input.safeParse(reviewed).success).toBe(true)
+  expect(payer.input.safeParse({ ...reviewed, expectedFingerprint: undefined }).success).toBe(false)
+  for (const [id, data] of [
+    ['inpatient.drg.reservation.create', { admissionId: 'synthetic-admission', encounterVersion: '2', reservations: [] }],
+    ['inpatient.drg.reservation.release', { admissionId: 'synthetic-admission', encounterVersion: '2', reservations: [] }],
+    ['inpatient.drg.payer.review', { admissionId: 'synthetic-admission', reviews: [] }],
+  ] as const) {
+    const operation = getHisOperation(id)
+    expect(operation.output.safeParse({ auditId: 'synthetic-audit', requestId: 'synthetic-request', effects: [], warnings: [], data }).success).toBe(true)
+    expect(operation.output.safeParse(data).success).toBe(false)
+  }
+  expect(skill).toContain('INPATIENT_DRG_EVALUATION_STALE')
+  expect(skill).toContain('INPATIENT_DRG_PAYER_PREVIEW_STALE')
+})
+
 it('住院退款示例及Catalog保留单笔一千万元上限', async () => {
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
@@ -610,7 +638,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   const executionExample = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][2]
   expect(executionExample).toBeDefined()
   expect(getHisOperation('inpatient.surgery.execute').input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
-  expect(getHisOperation('inpatient.order.issue').version).toBe(2)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(3)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)

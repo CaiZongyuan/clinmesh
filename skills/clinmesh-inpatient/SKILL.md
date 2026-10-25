@@ -392,6 +392,8 @@ clinmesh inpatient drg-payer-reviews --admission-id <admission-id>
 clinmesh command receipt get --operation-id inpatient.drg.reservation.create --idempotency-key <key>
 ```
 
+预留创建、释放与核定均返回标准 Command 回执，业务列表位于 `data`，`effects/auditId/requestId` 用于核对提交结果。响应丢失先按原 operation 和幂等键查 receipt，再核对业务列表；不能因未拿到列表换键重做。
+
 `simulation.json`（推演草稿；空草稿等价于只对照已记账事实）：
 
 ```json

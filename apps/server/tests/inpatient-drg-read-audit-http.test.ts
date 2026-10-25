@@ -212,7 +212,7 @@ describe('DRG 读取公共 HTTP 审计', () => {
     expect(await s.audits('inpatient.drg.payer-reviews.read')).toEqual([
       expect.objectContaining({ action: 'R', outcome: { code: { code: '0' } } }),
     ])
-    const write = await s.request(insurance, `${s.path}/drg/payer-review`, { encounterVersion: s.admission.versionId, reason: '合成越界核定' })
+    const write = await s.request(insurance, `${s.path}/drg/payer-review`, { encounterVersion: s.admission.versionId, expectedFingerprint: '0'.repeat(64), reason: '合成越界核定' })
     expect(write.status).toBe(409)
     expect(apiErrorSchema.parse(await write.json()).error.code).toBe('CONTEXT_INACTIVE')
   })
