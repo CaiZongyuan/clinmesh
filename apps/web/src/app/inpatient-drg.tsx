@@ -45,7 +45,7 @@ export function DrgGrouping({ result, locale, title }: { result: z.infer<typeof 
     <h4 className="font-medium">{title}</h4>
     <p>{status}{result.drgCode ? ` · ${result.drgCode}` : ''}</p>
     {result.reason ? <p className="text-sm text-muted-foreground">{result.reason}</p> : null}
-    {result.steps.length > 0 ? <details><summary>{t('查看分组依据', 'Grouping basis')}</summary><ol className="list-inside list-decimal text-sm">{result.steps.map((step, index) => <li key={index}>{step.basis} · {step.result}</li>)}</ol></details> : null}
+    {result.steps.length > 0 ? <details><summary>{t('查看分组依据', 'Grouping basis')}</summary><ol className="list-inside list-decimal text-sm">{result.steps.map((step, index) => <li key={index}>{step.basis}{step.matchedCode ? ` · ${t('命中编码 ', 'Matched code ')}${step.matchedCode}` : ''} · {step.result}</li>)}</ol></details> : null}
   </section>
 }
 
