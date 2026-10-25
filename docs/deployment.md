@@ -79,6 +79,29 @@ pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinme
 
 管理员可在登录会话下请求 `GET /api/sim/v1/reference-data/offline-inventories?page=1&pageSize=20`，回读来源、Manifest／文件哈希、版本、行数、来源单位、覆盖与隔离项。HTTP 与 CLI 清单列表均返回 `items/page/pageSize/total`，默认每页 20 条、最多 50 条，可按总数继续翻页。普通岗位访问被拒绝；成功和失败读取沿用 operational 审计链及 FHIR AuditEvent。查询与恢复依据见[参考数据合同](architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
 
+### 运行时 DRG 规则启用
+
+离线清单就绪只证明文件完整，默认不启用住院分组。需要物化运行时规则时，在仓库根目录用已取得的固定资料执行：
+
+```sh
+pnpm --filter @clinmesh/server drg:rules:prepare --input-root . --output-directory .data/drg-rules/clinmesh-chs-drg-3.0-2026-10-20
+```
+
+该命令按 `apps/server/reference-data/drg-rules-source.lock.json` 核对三份输入的 SHA-256，只解析来源文本，不执行上游 JavaScript。新包在暂存目录校验后原子发布，重复运行核对同一 Manifest；已有不同版本或损坏产物明确报错，不能覆盖历史包。输出包含 `manifestSha256`、资料版本与 `runtimeEnabled:false`，不生成启用审核。
+
+部署审核使用 [`drgRulesReviewSchema`](../apps/server/src/infrastructure/reference-data/drg-rules-package.ts) 定义的本地 JSON：固定 `schemaVersion=clinmesh.drg-rules-review.v1`、`scope=hospital-simulation`，绑定实际 `releaseId/sourceVersion/manifestSha256/referenceReleaseId`，记录核验人和 UTC 时间。`checks.usageTerms/codingCompatibility/sourceApplicability/algorithmValidation` 必须分别有 `status=verified` 和非空证据引用。审核是部署受信配置，文件完整性和制包成功不能代替来源用途、编码与算法核验；不得为通过启动而填写未经证实的结论。
+
+完成这些核验后，在根 `.env` 同时配置以下两个变量并重启 Server：
+
+```sh
+CLINMESH_DRG_RULES_DIRECTORY=.data/drg-rules/clinmesh-chs-drg-3.0-2026-10-20
+CLINMESH_DRG_RULES_REVIEW_PATH=.data/drg-rules/reviews/clinmesh-chs-drg-3.0-2026-10-20.json
+```
+
+相对路径以环境文件所在目录解析。只配置其中一个、审核不完整、包哈希或规则身份不一致、临床 Reference Release 不匹配时启动失败。未配置时其他 HIS 流程可用，DRG 入口明确显示规则未就绪。运行期只读取物化包，不临时下载来源或执行原分组程序。
+
+固定样本已独立对照冠心病无操作 FR59、实际 `36.0700` 支架置入 FM39、心衰 `I50.900` 的 FR25 和肺炎 `J18.900` 的 ES45；`00.6600` 在该来源有效操作表中未命中，不能以 PTCA 计划代替已核验的支架分组。四例对照不等于全量算法与编码适配已通过。OpenDRG 的公开用途说明亦不足以证明 ClinMesh 重新物化和再分发的全部适用条件，当前完整来源包继续隔离，不随本变更自动启用。证据边界见[资料核验](research/2026-10-21-opendrg-public-data-inventory.md)。
+
 ### 免费指南全文同步
 
 完成依赖安装后，在仓库根目录运行：
