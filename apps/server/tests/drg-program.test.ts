@@ -65,6 +65,18 @@ describe('固定版本声明式 DRG 条件程序', () => {
     expect(evaluateDrgProgram(program, { ...input, ageYears: 70 }).drgCode).toBe('BT3H')
   })
 
+  it('来源入口日志只解释为候选检查，不冒充已满足条件或具体编码命中', () => {
+    const program = compileDrgProgram(source(`
+      Q('符合MDCA入组条件，匹配规则：存在手术（仅主手术）');
+      Q('符合MDCP入组条件，匹配规则：婴儿');
+      return (new Groups).PV15_group(x)?'PV15':''`, 'PV15_group(x){return true}'))
+    const result = evaluateDrgProgram(program, { ...input, ageYears: 0, ageDays: 365 })
+    expect(result).toMatchObject({ status: 'grouped', mdcCode: 'MDCP', adrgCode: 'PV1', drgCode: 'PV15' })
+    expect(result.steps.find(step => step.basis.includes('MDCA'))).toEqual({
+      stage: 'mdc', basis: '检查候选分支 MDCA，匹配规则：存在手术（仅主手术）', matchedCode: null, result: '检查候选 MDCA',
+    })
+  })
+
   it('主诊断排除表保留 CC/MCC 优先级和完整诊断预处理语义', () => {
     const program = compileDrgProgram(source(`let C=new Groups;return C.BR11_group(x)?'BR11':C.BR13_group(x)?'BR13':C.BR15_group(x)?'BR15':''`,
       'BR11_group(x){return x.zdList.length>1&&x.mccList.length>0} BR13_group(x){return x.zdList.length>1&&(x.mccList.length>0||x.ccList.length>0)} BR15_group(x){return true}', '',

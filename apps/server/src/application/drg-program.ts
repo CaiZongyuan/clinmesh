@@ -149,8 +149,10 @@ export function evaluateDrgProgram(program: DrgProgram, rawInput: DrgGroupingInp
       case 'log': {
         const match = /^符合(MDC[A-Z]|[A-Z][A-Z0-9_]+)入组条件/.exec(node.message)
         if (match !== null && (match[1]!.startsWith('MDC') || match[1]!.length !== 4) && steps.length < 49) {
-          steps.push({ stage: match[1]!.startsWith('MDC') ? 'mdc' : 'adrg', basis: node.message,
-            matchedCode: main[0]!.code, result: match[1]!.replace(/_\d+$/, '') })
+          // 来源会在实际条件求值前打印“符合”；日志只证明进入候选检查。
+          steps.push({ stage: match[1]!.startsWith('MDC') ? 'mdc' : 'adrg',
+            basis: node.message.replace(match[0], `检查候选分支 ${match[1]}`),
+            matchedCode: null, result: `检查候选 ${match[1]!.replace(/_\d+$/, '')}` })
         }
         return undefined
       }
