@@ -19,6 +19,7 @@
     "./inpatient-finance": "./src/inpatient-finance.ts",
     "./inpatient": "./src/inpatient.ts",
     "./inpatient-surgery": "./src/inpatient-surgery.ts",
+    "./inpatient-pci-data": "./src/inpatient-pci-data.ts",
     "./inpatient-clinical": "./src/inpatient-clinical.ts",
     "./inpatient-investigations": "./src/inpatient-investigations.ts",
     "./inpatient-transfer": "./src/inpatient-transfer.ts",
