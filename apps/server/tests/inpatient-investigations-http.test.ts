@@ -87,6 +87,12 @@ describe('住院检查检验 HTTP 合同', () => {
     expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-complete-wbc', available: true }))
     expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-inpatient-wbc', available: false }))
     expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-unpriced-wbc', available: false, unavailableReason: 'unpriced' }))
+    const search = await s.request(s.doctor, `/api/his/v1/inpatient/catalog-search?kind=laboratory&source=hospital&query=${encodeURIComponent('白细胞')}`)
+    expect(search.status).toBe(200)
+    const candidates = (await search.json()).items
+    expect(candidates).toContainEqual(expect.objectContaining({ id: 'synthetic-complete-wbc', status: 'available', catalogItemId: 'synthetic-complete-wbc' }))
+    expect(candidates).toContainEqual(expect.objectContaining({ id: 'synthetic-inpatient-wbc', status: 'incomplete', missingFields: ['unit'] }))
+    expect(candidates.find((item: { id: string }) => item.id === 'synthetic-unpriced-wbc').missingFields).toContain('price')
     const issue = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
       selection: { kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } })
     expect(issue.status).toBe(409)

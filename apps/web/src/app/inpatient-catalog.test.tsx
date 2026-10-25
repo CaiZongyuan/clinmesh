@@ -75,7 +75,7 @@ it('共享目录按来源分页并展示缺项，只有完整院内映射可以�
   await user.click(await within(hospital).findByRole('button', { name: '下一页' }))
   await within(hospital).findByText('已停用')
   expect(searches.filter(url => url.searchParams.get('source') === 'reference').map(url => url.searchParams.get('page'))).toEqual(['1'])
-  await user.click(within(hospital).getByRole('button', { name: '上一页' }))
+  await user.click(screen.getByRole('button', { name: '搜索药品' }))
   await user.click(await within(hospital).findByRole('button', { name: '选择合成药品' }))
   expect(screen.getByRole('textbox', { name: '每次剂量' })).toBeDefined()
 })

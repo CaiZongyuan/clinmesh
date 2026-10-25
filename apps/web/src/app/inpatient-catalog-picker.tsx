@@ -9,6 +9,7 @@ import { Input } from '@clinmesh/ui/components/input'
 import { apiGet } from './api-client.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
+import { PaginationControls } from './pagination-controls.tsx'
 
 interface Props {
   kind: 'medication' | 'laboratory'
@@ -21,25 +22,27 @@ interface Props {
 export function InpatientCatalogPicker(props: Props) {
   const { kind, locale } = props, zh = locale === 'zh-CN', noun = kind === 'medication' ? '药品' : '检验'
   const [open, setOpen] = useState(false), [text, setText] = useState(''), [query, setQuery] = useState('')
+  const [pages, setPages] = useState({ hospital: 1, reference: 1 })
   return <>
     <Button type="button" variant="outline" aria-expanded={open} onClick={() => setOpen(!open)}>
       {zh ? `${open ? '收起' : '搜索'}共享${noun}目录` : `${open ? 'Hide' : 'Search'} shared ${kind} catalog`}
     </Button>
     {open ? <section aria-label={zh ? `共享${noun}目录` : `Shared ${kind} catalog`} className="flex flex-col gap-3">
-      <form onSubmit={event => { event.preventDefault(); setQuery(text.trim()) }}>
+      <form onSubmit={event => { event.preventDefault(); setQuery(text.trim()); setPages({ hospital: 1, reference: 1 }) }}>
         <FieldGroup className="flex flex-wrap items-end gap-2">
           <Field><FieldLabel htmlFor={`inpatient-${kind}-search`}>{zh ? `${noun}搜索词` : `Search ${kind}`}</FieldLabel>
             <Input id={`inpatient-${kind}-search`} value={text} maxLength={200} onChange={event => setText(event.currentTarget.value)} /></Field>
           <Button type="submit">{zh ? `搜索${noun}` : 'Search'}</Button>
         </FieldGroup>
       </form>
-      {(['hospital', 'reference'] as const).map(source => <CatalogPage key={`${source}:${query}`} {...props} query={query} source={source} />)}
+      {(['hospital', 'reference'] as const).map(source => <CatalogPage key={source} {...props} query={query} source={source} page={pages[source]}
+        onPageChange={page => setPages(current => ({ ...current, [source]: page }))} />)}
     </section> : null}
   </>
 }
 
-function CatalogPage({ kind, session, locale, disabled, onSelect, source, query }: Props & { source: 'hospital' | 'reference'; query: string }) {
-  const [page, setPage] = useState(1), zh = locale === 'zh-CN', noun = kind === 'medication' ? '药品' : '检验'
+function CatalogPage({ kind, session, locale, disabled, onSelect, source, query, page, onPageChange }: Props & { source: 'hospital' | 'reference'; query: string; page: number; onPageChange: (page: number) => void }) {
+  const zh = locale === 'zh-CN', noun = kind === 'medication' ? '药品' : '检验'
   const label = zh ? `${source === 'hospital' ? '院内' : '参考'}${noun}` : `${source === 'hospital' ? 'Hospital' : 'Reference'} ${kind}`
   const results = useQuery({
     queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, 'catalog-search', kind, source, query, page],
@@ -62,8 +65,8 @@ function CatalogPage({ kind, session, locale, disabled, onSelect, source, query 
     {results.data?.items.length === 0 ? <p>{zh ? '没有匹配项目' : 'No matching items'}</p> : null}
     {results.data ? <div className="flex flex-wrap items-center gap-2">
       <p>{zh ? `第 ${page} 页，共 ${results.data.total} 项` : `Page ${page}, ${results.data.total} items`}</p>
-      <Button type="button" variant="outline" disabled={page === 1 || results.isFetching} onClick={() => setPage(page - 1)}>{zh ? '上一页' : 'Previous'}</Button>
-      <Button type="button" variant="outline" disabled={page * results.data.pageSize >= results.data.total || results.isFetching} onClick={() => setPage(page + 1)}>{zh ? '下一页' : 'Next'}</Button>
+      <PaginationControls ariaLabel={zh ? `${label}分页` : `${label} pagination`} messages={getWorkspaceMessages(locale)}
+        page={page} pageSize={results.data.pageSize} total={results.data.total} disabled={results.isFetching} onPageChange={onPageChange} />
     </div> : null}
   </section>
 }

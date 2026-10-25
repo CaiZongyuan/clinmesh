@@ -13,8 +13,25 @@ export class InpatientCatalogSearch {
   constructor(readonly owner: InpatientService) {}
 
   search(context: ActorContext, raw: unknown) {
-    this.owner.assertReadRole(context, ['inpatient-doctor'])
-    const input = inpatientCatalogSearchInputSchema.parse(raw)
+    const audit = !this.owner.database.driver.inTransaction
+    let result: z.infer<typeof inpatientCatalogSearchSchema>, summary: unknown = { validInput: false }
+    try {
+      this.owner.assertReadRole(context, ['inpatient-doctor'])
+      const input = inpatientCatalogSearchInputSchema.parse(raw)
+      summary = { kind: input.kind, source: input.source, page: input.page, pageSize: input.pageSize, hasQuery: Boolean(input.query) }
+      result = this.#search(context, input)
+    } catch (error) {
+      if (audit) {
+        try { this.owner.commands.auditRead(context, 'inpatient.catalog.search', summary, 'failed') }
+        catch { /* 保留原读取拒绝，审计故障不能覆盖其原因。 */ }
+      }
+      throw error
+    }
+    if (audit) this.owner.commands.auditRead(context, 'inpatient.catalog.search', summary, 'success')
+    return result
+  }
+
+  #search(context: ActorContext, input: z.infer<typeof inpatientCatalogSearchInputSchema>) {
     if (input.source === 'hospital') {
       const medication = input.kind === 'medication'
       const table = medication ? 'outpatient_catalog' : 'hospital_service_catalog', id = medication ? 'item_id' : 'service_id'

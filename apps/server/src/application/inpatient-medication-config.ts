@@ -15,7 +15,9 @@ export const inpatientMedicationConfigSchema = z.object({
 })
 
 export function inpatientMedicationMissingFields(raw: unknown, priceFen: number): InpatientCatalogMissingField[] {
-  const result = inpatientMedicationConfigSchema.safeParse(raw)
+  const record = z.record(z.string(), z.unknown()).safeParse(raw)
+  const config = record.success ? record.data : {}
+  const result = inpatientMedicationConfigSchema.safeParse(config)
   const fields = new Set<InpatientCatalogMissingField>()
   if (!result.success) for (const issue of result.error.issues) {
     const key = issue.path[0]
@@ -26,8 +28,6 @@ export function inpatientMedicationMissingFields(raw: unknown, priceFen: number)
           : key === 'inpatientIndications' || key === 'allowedDiagnosisCatalogItemIds' ? 'indication' : 'dose-limit')
   }
   if (!Number.isSafeInteger(priceFen) || priceFen <= 0) fields.add('price')
-  const record = z.record(z.string(), z.unknown()).safeParse(raw)
-  const config = record.success ? record.data : {}
   const shape = inpatientMedicationConfigSchema.shape
   const scopes = shape.availableScopes.safeParse(config.availableScopes)
   if (scopes.success && !scopes.data.includes('inpatient')) fields.add('inpatient-scope')
