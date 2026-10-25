@@ -34,7 +34,6 @@
 
 | 规格 | 状态 |
 | --- | --- |
-| [门诊住院共享目录与 PCI 数据准备](2026-10-25-inpatient-shared-catalog-pci.md) | `approved` |
 | [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `approved` |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
@@ -48,6 +47,7 @@
 | --- | --- |
 | [PR 按影响范围检查与主线全量并行验证](2026-10-25-selective-parallel-ci.md) | `implemented` |
 | [DRG 离线资料无损精简储存](2026-10-25-drg-compact-storage.md) | `implemented` |
+| [门诊住院共享目录与 PCI 数据准备](2026-10-25-inpatient-shared-catalog-pci.md) | `implemented` |
 | [新安装自动准备完整 DRG 参考资料](2026-10-22-drg-reference-installation.md) | `implemented` |
 | [诊疗建议待核实思路的已核实与忽略](2026-10-22-doctor-consideration-disposition.md) | `implemented` |
 | [心血管手术耗材目录](2026-10-22-cardiovascular-surgical-materials.md) | `implemented` |
