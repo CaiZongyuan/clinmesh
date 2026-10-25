@@ -74,6 +74,7 @@ describe('固定版本声明式 DRG 条件程序', () => {
     expect(evaluateDrgProgram(program, withSecondary('CC1')).drgCode).toBe('BR15')
     expect(evaluateDrgProgram(program, withSecondary('MCC2')).drgCode).toBe('BR11')
     expect(evaluateDrgProgram(program, withSecondary('OTHER')).drgCode).toBe('BR15')
+    expect(evaluateDrgProgram(program, withSecondary('toString')).drgCode).toBe('BR15')
   })
 
   it('星号组合编码保持源字典的整码匹配，不凭名称或拆分码推断', () => {

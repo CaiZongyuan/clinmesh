@@ -34,13 +34,14 @@ export function evaluateDrgProgram(program: DrgProgram, rawInput: DrgGroupingInp
   if (input.ageYears === 0 && input.ageDays === null) return failed('invalid-input', '婴儿分组缺少日龄 ageDays')
   const diagnoses = [main[0]!.code, ...input.diagnoses.filter(diagnosis => diagnosis.role === 'secondary').map(diagnosis => diagnosis.code)]
   const operations = [...primary.map(operation => operation.code), ...input.operations.filter(operation => !operation.primary).map(operation => operation.code)]
-  const cce = program.complications.cce[diagnoses[0]!] ?? ''
+  const ownValue = (table: Record<string, string>, code: string): string | undefined => Object.hasOwn(table,code) ? table[code] : undefined
+  const cce = ownValue(program.complications.cce,diagnoses[0]!) ?? ''
   const mcc: string[] = []
   const cc: string[] = []
   // 与锁定程序的预处理一致：遍历完整有序诊断；终端谓词另行要求诊断数 > 1。
   for (const code of diagnoses) {
-    const mccGroup = program.complications.mcc[code]
-    const ccGroup = program.complications.cc[code]
+    const mccGroup = ownValue(program.complications.mcc,code)
+    const ccGroup = ownValue(program.complications.cc,code)
     if (mccGroup !== undefined && (cce === '' || mccGroup !== cce)) mcc.push(code)
     else if (ccGroup !== undefined && (cce === '' || ccGroup !== cce)) cc.push(code)
   }
