@@ -6,6 +6,10 @@
 
 ## Worktree、依赖与锁文件
 
+- 参考资料测试在导入已锁定合成 CSV 时出现 checksum mismatch，先核对 Git checkout 是否将原 LF 改成 CRLF；比较工作区原字节、规范化 LF 与清单 SHA-256，不能改清单哈希掩盖差异。`apps/server/tests/fixtures/reference-data/*.csv` 已用 `.gitattributes` 固定 LF；旧工作区需按 Git 原字节恢复这些 fixture。真实资料的 BOM、JSON 数字词法及换行同样属于内容身份，转换规则见[DRG 储存合同](../drg-reference-storage.md)。
+
+- 大型 JSONL 的行循环内不要逐字段构造 Zod schema；将稳定 schema 提升到模块常量。`JSON.parse` 已验证嵌套值为 JSON，对仅原样传递的字段使用窄边界验证，避免无意义的重复深拷贝。DRG 两张约 123 MB 表的全量转换与额外回读在相同字节输出下由 172.54 秒降至 18.62 秒；解释的字段、引用及最终 SHA-256 检查仍须保留。
+
 - 清理历史 worktree 前，先保全被忽略的本地数据和验收文件，并反查保留副本的 `node_modules` junction/symlink 是否仍借用待删目录；仍被借用的依赖 owner 暂留。Windows 上 `git worktree remove` 报 `Directory not empty` 或 `Filename too long` 后，可能已注销 worktree 并只删除了部分目录，必须分别核对登记与实际目录，不能把报错当作完整保留。清理残留前核实绝对路径白名单和备份，对链接只删除链接本身；Windows 标为 `prunable` 的 Linux 路径还要在所属 WSL 文件系统核实，不能直接批量 prune。
 
 - Windows worktree 以 junction 复用依赖时，`git status --ignored` 可能追随依赖环并遍历超长路径。检查源码使用 tracked diff，本地数据按明确路径检查；中断扫描后若遗留 `index.lock`，先确认对应 Git 进程已退出、锁路径属于该 worktree，再清理该锁，避免并发切分支被阻塞。
@@ -89,6 +93,8 @@
 - worktree 首次跑 `pnpm dev:dsh` 前先补齐两类 gitignored 环境：从主工作区复制 `.env`，再运行 `pnpm reference:sync` 物化参考数据；缺后者时 Server 在 runtime 初始化抛 `REFERENCE_RELEASE_NOT_FOUND`。`.env` 的 `CLINMESH_REFERENCE_RELEASE_ID` 落后于 lock release 也会同样报错——主工作区可能因 `.data` 库里残留旧 release 而侥幸可用，新 worktree 的全新库只会暴露它；发现配置漂移时两侧一起更新，不要只修 worktree 掩盖主工作区的雷。端口语义：DSH Web 3080 被残留进程占用时脚本拒绝启动（防 trusted origin 与登录校验错位，不要绕过）；Server 51868 的残留须手动 kill（只停 `pnpm` 包装层不杀子进程）；Synthea 51878 由 Docker 容器幂等复用，跨启动存活是正常现象。
 
 ## 文档构建
+
+- Windows `core.symlinks=false` 会将 Git mode `120000` 的 `CLAUDE.md` 链接检出为目标路径文本；不要向该 blob 追加换行，否则会破坏 Linux 链接目标。无法创建文件符号链接时，可在文档验证期间临时物化 Git 指定的同级 owner 内容，并在 `finally` 恢复原 placeholder，明确记录此环境适配。Agent Note 行格式检查按 CRLF/LF 切行，避免将 Windows 的 `\r` 误判为非空行或状态尾字符。
 
 - Vite SSR 将带 CLI 守卫的模块内联到另一个入口后，`import.meta.filename` 会变成构建入口文件，单独比较 argv 路径可能误执行被导入模块的 CLI。库逻辑优先直接依赖 typed service；保留 CLI 的模块还要核对入口 basename，并用真正构建出的 JS 执行合成资料准备验证退出码和 JSON 输出。见[DRG 自动分发决策](../decisions/implemented/architecture/2026-10-22-drg-reference-distribution.md)。
 

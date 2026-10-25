@@ -12,6 +12,7 @@ import { offlineReferenceLockSchema, type OfflineReferenceInventory } from '@cli
 import { readServerEnvironment } from './config.ts'
 import { inspectOfflineInventory, listOfflineInventories, publishOfflineInventory } from './infrastructure/reference-data/offline-reference-inventory.ts'
 import { applyReferenceMigrations, openReferenceDatabase } from './infrastructure/sqlite/reference-database.ts'
+import { openCompactStorage, safeArtifactPath } from './infrastructure/reference-data/drg-compact-storage.ts'
 
 const defaultRepositoryRoot = resolve(import.meta.dirname, '../../..')
 const defaultLockPath = resolve(import.meta.dirname, '../reference-data/drg-offline.lock.json')
@@ -111,17 +112,13 @@ async function download(artifact: z.infer<typeof distributionSchema>['artifact']
   }
 }
 
-function safePath(path: string): boolean {
-  return !path.includes('\\') && !path.includes(':') && !path.startsWith('/')
-    && path.split('/').every(part => part !== '' && part !== '.' && part !== '..')
-}
-
 export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Promise<DrgReferenceSyncResult> {
   const lockPath = resolve(options.lockPath ?? defaultLockPath)
   const lockBytes = await readFile(lockPath)
   const lock = offlineReferenceLockSchema.parse(JSON.parse(lockBytes.toString('utf8')))
   const lockHash = hash(JSON.stringify(lock))
-  if (lock.packages.some(item => !safePath(item.root))) throw new Error('DRG package root must be a contained relative path')
+  if (lock.packages.some(item => !safeArtifactPath(item.root))) throw new Error('DRG package root must be a contained relative path')
+  if (!safeArtifactPath(lock.storage.manifest.path)) throw new Error('DRG storage index must be a contained relative path')
   const repositoryRoot = resolve(options.repositoryRoot ?? defaultRepositoryRoot)
   const installDirectory = resolve(options.installDirectory ?? join(dirname(resolve(options.databasePath)), 'drg-reference'))
   const installedRoot = join(installDirectory, lockHash)
@@ -155,7 +152,9 @@ export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Pro
     let extractionError: Error | undefined
     await extract({ cwd: extracted, file: archivePath, strict: true, noMtime: true, filter: (path, entry) => {
       if (extractionError !== undefined) return false
-      if (!('type' in entry) || entry.type !== 'File' || !safePath(path) || !lock.packages.some(item => path.startsWith(`${item.root}/`)) || paths.has(path)) {
+      const inPackage = lock.packages.some(item => path.startsWith(`${item.root}/`))
+      const inStorage = path.startsWith(`${dirname(lock.storage.manifest.path).replaceAll('\\', '/')}/`)
+      if (!('type' in entry) || entry.type !== 'File' || !safeArtifactPath(path) || (!inPackage && !inStorage) || paths.has(path)) {
         extractionError = new Error('DRG archive contains an unsafe, duplicate or unexpected entry')
         return false
       }
@@ -168,9 +167,10 @@ export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Pro
       return true
     } })
     if (extractionError !== undefined) throw extractionError
-    if (paths.size !== distribution.artifact.fileCount || bytes !== distribution.artifact.unpackedSizeBytes) {
-      throw new Error('DRG archive is incomplete')
-    }
+    if (paths.size !== distribution.artifact.fileCount || bytes !== distribution.artifact.unpackedSizeBytes) throw new Error('DRG archive is incomplete')
+    const storage = await openCompactStorage(lock, extracted)
+    const expected = new Set([lock.storage.manifest.path, ...Object.keys(storage.index.objects)])
+    if (expected.size !== paths.size || [...paths].some(path => !expected.has(path))) throw new Error('DRG archive contains unlisted physical files')
     const inventory = await inspectOfflineInventory(lockPath, extracted)
     if (options.checkOnly) return await publish(options, inventory, extracted, 'download')
     let previousExists = false
