@@ -18,6 +18,8 @@
 
 - CLI Skill 示例漂移测试读取 Markdown 后统一将 CRLF 转为 LF，再解析代码块；否则 Windows checkout 的有效 JSON 示例会被仅匹配 `\n` 的正则漏掉。统一在读取 helper 归一化，不批量改产品文档换行或放宽业务 schema。
 
+- Markdown 校验应兼容 Git 在 Windows 的 checkout 形态：逐行结构识别接受 CRLF；`core.symlinks=false` 会把 `120000` 模式的别名检出为无换行的目标路径占位文件，应按 Git 索引识别别名并校验其 canonical 文档，不能往别名补换行或批量重写正文。
+
 - 新增 Operation Catalog 路径参数时，同时核对真实 UI 的持久化意图发送器：只替换已有 `admissionId` 的 adapter 不会自动绑定新的 `adjustmentId`。公开 HTTP 直接调用正确路径仍可全部通过，须从真实按钮验证请求路径及丢回执后的原意图恢复；回归见[后续医保更正入口](../../apps/web/e2e/inpatient-insurance-adjustments.spec.ts)与 React 18/19 Surface 合同。
 
 - Catalog 的 Command 输出须验证完整 `data/effects/auditId/requestId` 回执。仅在 HTTP 测试中手取 `data` 会漏掉裸业务列表 schema 与真实回执的漂移，使页面把已提交写入判为响应异常并进入恢复；修复 owning Catalog，并保留真实按钮和 receipt 恢复证据，不在 UI 绕过响应校验。
