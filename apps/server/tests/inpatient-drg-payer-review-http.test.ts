@@ -1,10 +1,11 @@
+import { syntheticDrgSource, syntheticDrgIdentity } from './fixtures/drg-synthetic-program.ts'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
-import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-package.ts'
+import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-prepare.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
@@ -58,18 +59,18 @@ async function setup() {
   const path = `/api/his/v1/inpatient/admissions/${admission.id}`
   const catalog = await (await request(doctor, '/api/his/v1/inpatient/surgery-catalog')).json()
   const groups = [
-    { level: 'MDC', code: 'MDCA', name: '合成循环系统疾病', parentCode: null },
-    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCA' },
+    { level: 'MDC', code: 'MDCR', name: '合成循环系统疾病', parentCode: null },
+    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCR' },
     { level: 'DRG', code: 'RA15', name: '合成高血压组，不伴合并症或并发症', parentCode: 'RA1' },
-    { level: 'ADRG', code: 'RA2', name: '合成PCI介入组', parentCode: 'MDCA' },
+    { level: 'ADRG', code: 'RA2', name: '合成PCI介入组', parentCode: 'MDCR' },
     { level: 'DRG', code: 'RA25', name: '合成PCI介入组，不伴合并症或并发症', parentCode: 'RA2' },
   ]
-  const jsText = `return ["I10.x09"].includes(x.zdList[0])){Q("符合RA1入组条件，匹配规则：主诊断匹配");}return ["${catalog.procedures[0].coding.code}"].includes(x.ssList[0])){Q("符合RA2入组条件，匹配规则：主手术匹配");}`
+  const jsText = syntheticDrgSource('I10.x09', 'RA15', catalog.procedures[0].coding.code)
   const drgRulesDirectory = join(directory, 'drg-rules')
   const { mkdir } = await import('node:fs/promises')
   await mkdir(drgRulesDirectory, { recursive: true })
   const files = prepareDrgRulesPackage({ groups, jsText, complicationTables: { CC: {}, MCC: {}, CCE: {} },
-    input: { openDrgJsSha256: 'a'.repeat(64), openDrgTablesSha256: 'b'.repeat(64), r3GroupsSha256: 'c'.repeat(64) },
+    input: syntheticDrgIdentity(jsText, groups, { CC: {}, MCC: {}, CCE: {} }),
     releaseId: 'chs-drg-payer-test', sourceVersion: 'CHS-DRG-3.0-payer-test' })
   for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
   await runtime.close()

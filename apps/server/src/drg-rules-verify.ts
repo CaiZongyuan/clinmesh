@@ -14,30 +14,35 @@ const tablesSchema = z.object({ CC: z.record(z.string(), z.string()), MCC: z.rec
 /** 显式离线功能核验；只读取锁定来源、创建独立报告，不访问业务数据库。 */
 export async function runDrgRulesVerificationCli(args: string[]): Promise<{ exitCode: number, summary: unknown }> {
   const { values } = parseArgs({ args, allowPositionals: false, strict: true, options: {
-    source: { type: 'string' }, tables: { type: 'string' }, report: { type: 'string' }, program: { type: 'string' },
+    source: { type: 'string' }, tables: { type: 'string' }, report: { type: 'string' }, program: { type: 'string' }, rules: { type: 'string' },
   } })
   if (values.source === undefined || values.tables === undefined || values.report === undefined) {
-    throw new Error('Usage: drg-rules-verify --source <锁定原程序.js> --tables <chs_drg_30.json> --report <新报告.json> [--program <新规则程序.json>]')
+    throw new Error('Usage: drg-rules-verify --source <锁定原程序.js> --tables <chs_drg_30.json> --report <新报告.json> [--program <新规则程序.json>] [--rules <已物化规则包目录>]')
   }
   const [source, tableBytes] = await Promise.all([readFile(resolve(values.source), 'utf8'), readFile(resolve(values.tables), 'utf8')])
   const oracle = createDrgProgramOracle(source, lockedOpenDrg30SourceSha256)
   const tables = tablesSchema.parse(JSON.parse(tableBytes))
   const { compileDrgProgram } = await import('./infrastructure/reference-data/drg-program-compiler.ts')
   const { evaluateDrgProgram } = await import('./application/drg-program.ts')
-  const program = compileDrgProgram(source)
+  const compiled = compileDrgProgram(source)
+  const loaded = values.rules === undefined ? null : await (await import('./infrastructure/reference-data/drg-rules-package.ts')).loadDrgRules(resolve(values.rules))
+  const program = loaded?.program ?? compiled
+  if (canonicalJsonHash(compiled) !== canonicalJsonHash(program)) throw new Error('Materialized DRG program differs from the complete source compilation')
+  const { groupDrgCase } = await import('./application/drg-grouping.ts')
   if (canonicalJsonHash(tables) !== canonicalJsonHash({ CC: program.complications.cc, MCC: program.complications.mcc,
     CCE: program.complications.cce, SS_VALID: program.validOperations })) throw new Error('OpenDRG parameter tables disagree with the locked source program')
   const programBytes = `${JSON.stringify(program)}\n`
   const inventory = inspectDrgProgramSource(source)
   const report = verifyDrgProgramCases({ sourceSha256: lockedOpenDrg30SourceSha256, oracle,
     cases: [...createDrgIndependentVerificationCases(), ...createDrgSourceVerificationCases(source, tables)],
-    evaluate: input => evaluateDrgProgram(program, input), inventory })
+    evaluate: input => loaded === null ? evaluateDrgProgram(program, input) : groupDrgCase(loaded, input), inventory })
   const originalCodes = new Set(inventory.terminals.map(terminal => terminal.code))
   const compiledCodes = new Set(program.coverage.drgCodes)
   const missingCompiledCodes = [...originalCodes].filter(code => !compiledCodes.has(code))
   const unexpectedCompiledCodes = [...compiledCodes].filter(code => !originalCodes.has(code))
   const artifact = { ...report, sourceTablesSha256: createHash('sha256').update(tableBytes).digest('hex'),
     programSha256: createHash('sha256').update(programBytes).digest('hex'),
+    rulesIdentity: loaded === null ? null : { rulesId: loaded.rulesId, version: loaded.version },
     corpusVersion: 'clinmesh.drg-source-cases.v1', missingCompiledCodes, unexpectedCompiledCodes }
   await mkdir(dirname(resolve(values.report)), { recursive: true })
   await writeFile(resolve(values.report), `${JSON.stringify(artifact, null, 2)}\n`, { flag: 'wx' })

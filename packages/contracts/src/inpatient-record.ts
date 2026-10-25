@@ -8,7 +8,9 @@ const hash = z.string().regex(/^[a-f0-9]{64}$/)
 const stamp = z.iso.datetime({ offset: true })
 const actor = { actorId: z.string().min(1), practitionerRoleId: id, recordedAt: stamp }
 export const inpatientRecordSnapshotSchema = z.object({
-  patient: z.object({ patientId: id, patientVersion: z.string(), identifier: z.string(), name: z.string(), gender: z.string(), birthDate: z.string(), recordNumber: z.string().nullable(), admissionCount: z.number().int().positive() }).strict(),
+  patient: z.object({ patientId: id, patientVersion: z.string(), identifier: z.string(), name: z.string(), gender: z.string(), birthDate: z.string(), recordNumber: z.string().nullable(), admissionCount: z.number().int().positive(),
+    birthWeight: z.object({ grams: z.number().int().positive().max(10_000).nullable(), observations: z.array(z.object({ id, version: z.string() }).strict()).min(1) }).strict().optional(),
+  }).strict(),
   stay: z.object({ admissionId: id, inpatientNumber: z.string(), admissionRoute: z.string(), registeredAt: stamp, admittedAt: stamp.optional(), initialWardId: id.optional(), initialOrganizationId: id.optional(), dischargeWardId: id, dischargeOrganizationId: id,
     transfers: z.array(z.object({ id, sourceWardId: id, targetWardId: id, receivedAt: stamp }).strict()), events: inpatientDischargeEventsSchema.shape.events, departedAt: stamp.optional(), departureMethod: z.string().optional() }).strict(),
   clinical: z.object({ diagnosis: inpatientDiagnosisSchema, operations: z.array(inpatientSurgeryExecutionSchema.extend({ procedureVersion: z.string(), primary: z.boolean() })), mainProcedureExecutionId: id.nullable() }).strict(),

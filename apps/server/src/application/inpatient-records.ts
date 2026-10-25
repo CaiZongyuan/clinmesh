@@ -5,6 +5,7 @@ import { inpatientRecordSchema, inpatientRecordSnapshotSchema, inpatientRecordRe
 import type { ActorContext } from './command-executor.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
+import { readInpatientBirthWeight } from './inpatient-birth-weight.ts'
 const rowSchema = z.record(z.string(), z.union([z.string(), z.number(), z.null()]))
 const readers = ['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance']
 /** 首页只引用正式事实；首页工作流本身不改变 Encounter 或来源指纹。 */
@@ -26,6 +27,7 @@ export class InpatientRecords {
   #collect(context: ActorContext, admissionId: string, mainProcedureExecutionId: string | null) {
     const { row: admission } = this.owner.admissionBinding(context, admissionId)
     const patient = this.owner.fhir.read(context, 'Patient', admission.patient_id)
+    const birthWeight = readInpatientBirthWeight(this.owner.fhir, context, admission.patient_id)
     const identity = z.object({ name: z.array(z.object({ text: z.string().optional() })).optional(), gender: z.string().optional(), birthDate: z.string().optional(), identifier: z.array(z.object({ value: z.string().optional() })).optional() }).parse(patient)
     const number = z.object({ record_number: z.string() }).optional().parse(this.owner.database.driver.prepare('SELECT record_number FROM inpatient_record_number WHERE workspace_id=? AND epoch=? AND patient_id=?').get(context.workspaceId, context.epoch, admission.patient_id))
     const count = z.object({ count: z.number().int().positive() }).parse(this.owner.database.driver.prepare(`SELECT COUNT(*) count FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND patient_id=? AND (julianday(registered_at)<julianday(?) OR (julianday(registered_at)=julianday(?) AND admission_id<=?))`).get(context.workspaceId, context.epoch, admission.patient_id, admission.registered_at, admission.registered_at, admissionId)).count
@@ -76,13 +78,13 @@ export class InpatientRecords {
       }
     }
     const chargeCategories = new Map(fees.charges.map(item => [item.id, item.kind]))
-    const snapshot = inpatientRecordSnapshotSchema.parse({ patient: { patientId: admission.patient_id, patientVersion: patient.meta!.versionId!, identifier: identity.identifier?.[0]?.value ?? '', name: identity.name?.[0]?.text ?? '', gender: identity.gender ?? '', birthDate: identity.birthDate ?? '', recordNumber: number?.record_number ?? null, admissionCount: count },
+    const snapshot = inpatientRecordSnapshotSchema.parse({ patient: { patientId: admission.patient_id, patientVersion: patient.meta!.versionId!, identifier: identity.identifier?.[0]?.value ?? '', name: identity.name?.[0]?.text ?? '', gender: identity.gender ?? '', birthDate: identity.birthDate ?? '', recordNumber: number?.record_number ?? null, admissionCount: count, ...(birthWeight.snapshot === undefined ? {} : { birthWeight: birthWeight.snapshot }) },
       stay: { admissionId, inpatientNumber: admission.inpatient_number, admissionRoute: admission.admission_route, registeredAt: admission.registered_at, ...(admission.admitted_at === null ? {} : { admittedAt: admission.admitted_at }), ...(occupancy[0] === undefined ? {} : { initialWardId: occupancy[0].ward_id, initialOrganizationId: occupancy[0].organization_id }), dischargeWardId: admission.ward_id, dischargeOrganizationId: admission.organization_id,
         transfers: transfers.map(row => ({ id: row.transfer_id, sourceWardId: row.source_ward_id, targetWardId: row.target_ward_id, receivedAt: row.received_at })), events, ...(departure === undefined ? {} : { departedAt: departure.virtualTime, departureMethod: departure.departureMethod }) },
       clinical: { diagnosis, operations, mainProcedureExecutionId }, fees: { ...fees, categoryNetFen: fees.charges.reduce<Record<string, number>>((sum, item) => { const kind = item.reversalOf ? chargeCategories.get(item.reversalOf) : item.kind; if (!kind)
           throw new InpatientError('INPATIENT_RECORD_FINANCIAL_CONFLICT', '冲正缺少原费用类别'); sum[kind] = (sum[kind] ?? 0) + item.amountFen; return sum; }, {}) } })
     // 主操作选择属于首页修订；来源指纹与查询者、当前目录及首页工作流无关。
-    const sources = { patient, admission: { ...admission, record_status: undefined }, occupancy, transfers, events, diagnosis, executions, fees, settlements, requests, revisions, acknowledgements, versions: [...versions].sort(([a], [b]) => a.localeCompare(b)) }
+    const sources = { patient, ...(birthWeight.snapshot === undefined ? {} : { birthWeight: birthWeight.resources }), admission: { ...admission, record_status: undefined }, occupancy, transfers, events, diagnosis, executions, fees, settlements, requests, revisions, acknowledgements, versions: [...versions].sort(([a], [b]) => a.localeCompare(b)) }
     return { snapshot, sources, sourcesHash: canonicalJsonHash(sources) }
   }
   #read(context: ActorContext, admissionId: string) {

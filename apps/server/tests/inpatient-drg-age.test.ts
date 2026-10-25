@@ -14,7 +14,8 @@ describe('DRG 评估年龄口径', () => {
     expect(ageAt('2025-06-01', '2026-03-01T00:00:00Z')).toEqual({ ageYears: 0, ageDays: 273 })
   })
 
-  it('无法解析的出生日期按 0 岁处理', () => {
-    expect(ageAt('not-a-date', '2026-03-01T00:00:00Z')).toEqual({ ageYears: 0, ageDays: null })
+  it('无法解析或未来出生日期不能伪装为新生儿', () => {
+    expect(ageAt('not-a-date', '2026-03-01T00:00:00Z')).toEqual({ ageYears: -1, ageDays: null })
+    expect(ageAt('2027-01-01', '2026-03-01T00:00:00Z')).toEqual({ ageYears: -1, ageDays: null })
   })
 })

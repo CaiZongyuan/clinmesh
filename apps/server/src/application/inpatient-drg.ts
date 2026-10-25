@@ -13,6 +13,7 @@ import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { ActorContext } from './command-executor.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { syntheticDrgPaymentParameters } from './scenario-data/drg-payment-parameters.ts'
+import { readInpatientBirthWeight } from './inpatient-birth-weight.ts'
 
 const clinicalCodingNote = '病案首页为临床版编码（nhc-icd10-clinical@2022.r4），分组规则字典为医保版口径；'
   + '两套码同码直通，未同码的诊断/操作如实报告为无法入组，不做名称模糊映射。'
@@ -27,7 +28,7 @@ const projectedNote = 'projected 为「若计划手术按当前计划实施」�
 export function ageAt(birthDate: string, at: string | undefined): { ageYears: number, ageDays: number | null } {
   const birth = new Date(birthDate)
   const reference = at === undefined ? new Date() : new Date(at)
-  if (Number.isNaN(birth.getTime())) return { ageYears: 0, ageDays: null }
+  if (Number.isNaN(birth.getTime()) || Number.isNaN(reference.getTime()) || birth > reference) return { ageYears: -1, ageDays: null }
   const days = Math.max(0, Math.floor((reference.getTime() - birth.getTime()) / 86_400_000))
   let years = reference.getUTCFullYear() - birth.getUTCFullYear()
   if (reference.getUTCMonth() < birth.getUTCMonth()
@@ -114,6 +115,7 @@ export class InpatientDrg {
         code: operation.actualProcedure.coding.code, primary: operation.primary })),
       gender: genderOf(patient.gender),
       ...stayDemographics(patient.birthDate, stay.admittedAt, stay.departedAt, stay.departureMethod ?? 'unknown'),
+      birthWeightGrams: patient.birthWeight?.grams ?? null,
     }
   }
 
@@ -126,8 +128,8 @@ export class InpatientDrg {
     this.owner.assertReadRole(context, ['inpatient-doctor', 'medical-records'])
     const admission = this.owner.readAdmissionBinding(context, admissionId)
     const facts = this.owner.orders.facts(context, admissionId)
-    const dependencies = this.#dependencies(context, admissionId, facts.charges)
-    const input = this.#liveGroupingInput(context, admission)
+    const { input, demographics } = this.#liveGroupingInput(context, admission)
+    const dependencies = this.#dependencies(context, admissionId, facts.charges, demographics)
     const formal = groupDrgCase(this.rules, input)
     const requests = this.owner.surgery.read(context, admissionId).requests
       .filter(request => request.status === 'requested' || request.status === 'ready')
@@ -207,7 +209,8 @@ export class InpatientDrg {
   }
 
   /** 依赖指纹：临床、医嘱、费用、手术、预留、目录价格与规则版本任一变化即过期。 */
-  #dependencies(context: ActorContext, admissionId: string, charges: { id: string, version: number, amountFen: number }[]) {
+  #dependencies(context: ActorContext, admissionId: string, charges: { id: string, version: number, amountFen: number }[],
+    demographics: { patientVersion: string, birthWeightObservations: { id: string, version: string }[] }) {
     const diagnosis = this.owner.orders.diagnosis(context, admissionId)
     const executions = z.array(z.object({ execution_id: z.string(), version: z.number(), status: z.string() })).parse(this.owner.database.driver.prepare(`
       SELECT e.execution_id, e.version, e.status FROM inpatient_execution e JOIN inpatient_order o
@@ -226,6 +229,7 @@ export class InpatientDrg {
     const catalog = this.owner.orders.medicationsAndServices(context)
     const surgeryCatalog = this.owner.surgery.catalog(context)
     return {
+      demographics,
       encounter: this.owner.fhir.read(context, 'Encounter', admissionId).meta!.versionId,
       diagnosisRevision: diagnosis.revision,
       orders: z.array(z.object({ order_id: z.string(), version: z.number(), state: z.string() })).parse(this.owner.database.driver.prepare(
@@ -244,7 +248,7 @@ export class InpatientDrg {
   }
 
   /** 在院 live 分组输入：正式诊断与已实施操作；主操作以已提交首页修订的选择为准，未提交时无主操作。 */
-  #liveGroupingInput(context: ActorContext, admission: { id: string, patientId: string, row: { admitted_at: string | null } }): DrgGroupingInput {
+  #liveGroupingInput(context: ActorContext, admission: { id: string, patientId: string, row: { admitted_at: string | null } }) {
     const diagnosis = this.owner.orders.diagnosis(context, admission.id)
     const executions = this.owner.surgery.executedForAdmission(context, admission.id)
     const revisionRow = z.object({ snapshot_json: z.string() }).optional().parse(this.owner.database.driver.prepare(
@@ -253,18 +257,21 @@ export class InpatientDrg {
     const mainProcedureExecutionId = revisionRow === undefined ? null
       : z.object({ clinical: z.object({ mainProcedureExecutionId: z.string().nullable() }) }).parse(JSON.parse(revisionRow.snapshot_json)).clinical.mainProcedureExecutionId
     const patient = this.owner.fhir.read(context, 'Patient', admission.patientId)
+    const birthWeight = readInpatientBirthWeight(this.owner.fhir, context, admission.patientId)
     const identity = z.object({ gender: z.string().optional(), birthDate: z.string().optional() }).parse(patient)
     const events = this.owner.discharge.events(context, admission.id)
     const reversed = new Set(events.filter(event => event.kind === 'recall').map(event => event.reversesEventId))
     const departure = events.filter(event => event.kind === 'depart' && !reversed.has(event.id)).at(-1)
     const admittedAt = admission.row.admitted_at ?? undefined
     const departedAt = departure?.virtualTime
-    return {
+    const input: DrgGroupingInput = {
       diagnoses: groupingDiagnoses(diagnosis.entries),
       operations: executions.map(item => ({ code: item.actualProcedure.coding.code, primary: item.id === mainProcedureExecutionId })),
       gender: genderOf(identity.gender),
       ...stayDemographics(identity.birthDate ?? '', admittedAt, departedAt, departure?.departureMethod ?? 'unknown'),
+      birthWeightGrams: birthWeight.snapshot?.grams ?? null,
     }
+    return { input, demographics: { patientVersion: patient.meta!.versionId!, birthWeightObservations: birthWeight.snapshot?.observations ?? [] } }
   }
 
   reservations(context: ActorContext, admissionId: string): InpatientMaterialReservationList {
