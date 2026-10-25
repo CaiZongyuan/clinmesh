@@ -40,7 +40,7 @@
 
 - 资源竞争使既有测试超时时，可在验证进程用 `VITEST_MAX_WORKERS=1` 收窄单元测试并发，不扩大超时或削弱断言。Turbo strict 环境会过滤此变量，通过 Turbo 的验证同时使用 `TURBO_ENV_MODE=loose` 才能把 worker 设置传给 Vitest；仅设置前者不证明实际并发已经收窄。不同包仍可并行，需要进一步隔离时用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行完成包级测试，再由 `pnpm check` 复用有效缓存并继续其他阶段。预验证与后续检查须保持相同的 Turbo 环境模式；strict 与 loose 使用不同任务缓存，切回默认模式可能让包级测试再次并行运行。
 
-- 定向 Vitest 回归使用 `pnpm --filter <package> exec vitest run <file> -t <pattern>`，并核对实际文件和用例计数。当前 pnpm/Vitest 组合中，`pnpm --filter <package> test -- <file>` 把额外 `--` 传给 Vitest 后仍运行完整包，不能仅凭命令文本认定已限制范围。
+- 定向 Vitest 回归使用 `pnpm --filter <package> exec vitest run <file> -t <pattern>`，并核对实际文件和用例计数。当前 pnpm/Vitest 组合中，`pnpm --filter <package> test -- <file>` 把额外 `--` 传给 Vitest 后仍运行完整包，不能仅凭命令文本认定已限制范围。Turbo 过滤包仍会沿 `^test` 执行依赖；只补 DSH 等单包证据时直接运行包内 Vitest，避免重新触发已验过的 Web 全集。
 
 - 没有本次性能运行许可时，不能直接把 `pnpm check` 或全部 Server unit 当作普通回归：前者包含 `perf:ci`，`performance-runner.test.ts` 也实际调用 trajectory／full-import profile。普通 Server 回归可用 `pnpm --filter @clinmesh/server exec vitest run --maxWorkers=1 --exclude tests/performance-runner.test.ts`，明确记录排除范围；纯性能合同及合成 Worker 失败测试不执行真实负载，可按变更范围验证。
 
