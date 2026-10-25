@@ -36,16 +36,16 @@ async function fixture() {
 it('reads both logical identities from one verified object without creating an alias', async () => {
   const input = await fixture()
   const storage = await openCompactStorage(input.lock, input.root)
-  expect((await storage!.read(input.objectPath)).toString()).toBe(input.source.records)
-  expect((await storage!.read(`${input.source.packageRoot}/services/alias.jsonl`)).toString()).toBe(input.source.records)
+  expect((await storage.read(input.objectPath)).toString()).toBe(input.source.records)
+  expect((await storage.read(`${input.source.packageRoot}/services/alias.jsonl`)).toString()).toBe(input.source.records)
   await expect(readFile(join(input.root, input.source.packageRoot, 'services/alias.jsonl'))).rejects.toMatchObject({ code: 'ENOENT' })
   await writeFile(join(input.root, input.objectPath), 'damaged')
-  await expect(storage!.read(input.objectPath)).rejects.toThrow(/checksum|size/)
+  await expect(storage.read(input.objectPath)).rejects.toThrow(/checksum|size/)
 })
 
 it('rejects a modified index before interpreting it', async () => {
   const input = await fixture()
-  await writeFile(join(input.root, input.lock.storage!.manifest.path), '{}')
+  await writeFile(join(input.root, input.lock.storage.manifest.path), '{}')
   await expect(openCompactStorage(input.lock, input.root)).rejects.toThrow(/checksum/)
 })
 
@@ -62,8 +62,8 @@ it('rejects dangling objects and unknown logical paths', async () => {
   delete input.index.objects[input.objectPath]
   await input.save()
   const storage = await openCompactStorage(input.lock, input.root)
-  await expect(storage!.read(input.objectPath)).rejects.toThrow(/missing|unlisted/)
-  await expect(storage!.read('unlisted')).rejects.toThrow(/unlisted/)
+  await expect(storage.read(input.objectPath)).rejects.toThrow(/missing|unlisted/)
+  await expect(storage.read('unlisted')).rejects.toThrow(/unlisted/)
 })
 
 it('rejects a derived recipe dependency cycle', async () => {
@@ -71,7 +71,7 @@ it('rejects a derived recipe dependency cycle', async () => {
   input.index.files[input.objectPath]!.recipe = { kind: 'dataset-csv', source: input.objectPath }
   await input.save()
   const storage = await openCompactStorage(input.lock, input.root)
-  await expect(storage!.read(input.objectPath)).rejects.toThrow(/cycle/)
+  await expect(storage.read(input.objectPath)).rejects.toThrow(/cycle/)
 })
 
 it.skipIf(process.platform === 'win32')('rejects directory links whose real target differs only in case', async () => {
@@ -80,5 +80,5 @@ it.skipIf(process.platform === 'win32')('rejects directory links whose real targ
   await rename(join(parent, 'services'), join(parent, 'SERVICES'))
   await symlink(join(parent, 'SERVICES'), join(parent, 'services'), 'dir')
   const storage = await openCompactStorage(input.lock, input.root)
-  await expect(storage!.read(input.objectPath)).rejects.toThrow(/without links/)
+  await expect(storage.read(input.objectPath)).rejects.toThrow(/without links/)
 })

@@ -84,8 +84,7 @@ export interface CompactStorage {
   verifyObjects(): Promise<void>
 }
 
-export async function openCompactStorage(lock: OfflineReferenceLock, inputRoot: string): Promise<CompactStorage | undefined> {
-  if (lock.storage === undefined) return undefined
+export async function openCompactStorage(lock: OfflineReferenceLock, inputRoot: string): Promise<CompactStorage> {
   const manifest = lock.storage.manifest
   const bytes = await readFile(await containedArtifactPath(inputRoot, manifest.path))
   if (compactDigest(bytes) !== manifest.sha256) throw new Error('Compact storage index checksum mismatch')

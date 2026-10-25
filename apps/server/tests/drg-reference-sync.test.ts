@@ -39,9 +39,7 @@ describe('DRG reference installation', () => {
   async function downloadable() {
     const input = await fixture()
     const archivePath = join(input.root, 'bundle.tar.gz')
-    await create({ cwd: input.root, file: archivePath, gzip: true, portable: true }, [
-      `${input.packageRoot}/manifest.json`, `${input.packageRoot}/services/records.jsonl`,
-    ])
+    await create({ cwd: input.root, file: archivePath, gzip: true, portable: true }, input.physicalPaths)
     const bytes = await readFile(archivePath)
     let requests = 0
     let response: Buffer = bytes
@@ -53,7 +51,7 @@ describe('DRG reference installation', () => {
     const distributionPath = join(input.root, 'distribution.json')
     const distribution = { schemaVersion: 1, inventoryId: 'synthetic-inventory-v1', offlineLockSha256: sha256(input.lockBytes),
       artifact: { url: `http://127.0.0.1:${address.port}/bundle.tar.gz`, sha256: sha256(bytes), sizeBytes: bytes.length,
-        unpackedSizeBytes: Buffer.byteLength(input.records) + Buffer.byteLength(input.manifest), fileCount: 2 } }
+        unpackedSizeBytes: input.unpackedSizeBytes, fileCount: input.physicalPaths.length } }
     await writeFile(distributionPath, JSON.stringify(distribution))
     return { ...input, distributionPath, distribution, archiveBytes: bytes, options: {
       databasePath: input.databasePath, lockPath: input.lockPath, distributionPath,
@@ -66,6 +64,18 @@ describe('DRG reference installation', () => {
     } }
   }
 
+  it('rejects a lock without compact storage before publishing or installing files', async () => {
+    const input = await fixture()
+    const lock = JSON.parse(input.lockBytes)
+    delete lock.storage
+    await writeFile(input.lockPath, JSON.stringify(lock))
+    await expect(runDrgReferenceSync({ ...input, repositoryRoot: input.root,
+      distributionPath: join(input.root, 'absent-distribution.json') })).rejects.toThrow()
+    await expect(stat(input.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(stat(input.installDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(input.root, input.packageRoot, 'services/records.jsonl'), 'utf8')).toBe(input.records)
+  })
+
   it('reuses complete local files without a distribution download and publishes the inventory once', async () => {
     const input = await fixture()
     const options = { ...input, repositoryRoot: input.root, distributionPath: join(input.root, 'does-not-exist.json') }
@@ -77,6 +87,15 @@ describe('DRG reference installation', () => {
       .toMatchObject({ total: 1, items: [{ inventoryId: 'synthetic-inventory-v1', runtimeEnabled: false,
         packages: [{ tables: [{ units: ['次'] }] }] }] })
     await expect(stat(input.installDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(join(input.root, input.packageRoot, 'services/records.jsonl'), 'utf8')).toBe(input.records)
+  })
+
+  it('downloads current compact storage when only complete logical source files are present', async () => {
+    const input = await downloadable()
+    await rm(join(input.root, input.storage.manifest.path))
+    expect(await runDrgReferenceSync({ ...input.options, repositoryRoot: input.root }))
+      .toMatchObject({ source: 'download', created: true })
+    expect(input.requests()).toBe(1)
     expect(await readFile(join(input.root, input.packageRoot, 'services/records.jsonl'), 'utf8')).toBe(input.records)
   })
 
@@ -139,10 +158,8 @@ describe('DRG reference installation', () => {
     const extraPath = `${input.packageRoot}/unlisted.txt`
     await writeFile(join(input.root, extraPath), 'extra')
     const archivePath = join(input.root, 'extra.tar.gz')
-    await create({ cwd: input.root, file: archivePath, gzip: true, portable: true }, [
-      `${input.packageRoot}/manifest.json`, `${input.packageRoot}/services/records.jsonl`, extraPath,
-    ])
-    await input.useArchive(await readFile(archivePath), input.distribution.artifact.unpackedSizeBytes + 5, 3)
+    await create({ cwd: input.root, file: archivePath, gzip: true, portable: true }, [...input.physicalPaths, extraPath])
+    await input.useArchive(await readFile(archivePath), input.distribution.artifact.unpackedSizeBytes + 5, input.physicalPaths.length + 1)
     await expect(runDrgReferenceSync(input.options)).rejects.toThrow(/unlisted/)
     await expect(stat(input.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })

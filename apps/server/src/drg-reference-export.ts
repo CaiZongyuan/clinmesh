@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { parseArgs } from 'node:util'
 import { offlineReferenceLockSchema } from '@clinmesh/contracts/reference-data'
-import { compactDigest, containedArtifactPath, listPinnedArtifacts, openCompactStorage, resolveArtifactOutput } from './infrastructure/reference-data/drg-compact-storage.ts'
+import { compactDigest, listPinnedArtifacts, openCompactStorage, resolveArtifactOutput } from './infrastructure/reference-data/drg-compact-storage.ts'
 
 /** Export a single original file to an explicit destination outside managed data. */
 export async function exportDrgReferenceFile(options: { repositoryRoot: string; lockPath: string; path: string; outputPath: string }) {
@@ -10,16 +10,13 @@ export async function exportDrgReferenceFile(options: { repositoryRoot: string; 
   const lock = offlineReferenceLockSchema.parse(JSON.parse(await readFile(options.lockPath, 'utf8')))
   const outputPath = resolve(options.outputPath)
   const resolvedOutput = await resolveArtifactOutput(outputPath)
-  const managed = [...lock.packages.map(input => resolve(root, input.root)),
-    ...(lock.storage === undefined ? [] : [root])]
-  if (resolvedOutput === await realpath(options.lockPath) || managed.some(path => {
-    const delta = relative(path, resolvedOutput)
-    return delta === '' || (!isAbsolute(delta) && delta !== '..' && !delta.startsWith(`..${sep}`))
-  })) throw new Error('Export destination must be outside managed source and installation paths')
+  const delta = relative(root, resolvedOutput)
+  if (resolvedOutput === await realpath(options.lockPath)
+    || delta === '' || (!isAbsolute(delta) && delta !== '..' && !delta.startsWith(`..${sep}`))) {
+    throw new Error('Export destination must be outside managed source and installation paths')
+  }
   const storage = await openCompactStorage(lock, root)
-  const read = storage === undefined
-    ? async (path: string) => readFile(await containedArtifactPath(root, path))
-    : (path: string) => storage.read(path)
+  const read = (path: string) => storage.read(path)
   const pinned = await listPinnedArtifacts(lock, read)
   const expected = pinned.get(options.path)
   if (expected === undefined) throw new Error('Export path is not in the pinned inventory')

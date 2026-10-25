@@ -20,24 +20,6 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true })))
 })
 
-it('converts complete original local files without a distribution source, including check-only', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'clinmesh-local-compact-'))
-  roots.push(root)
-  const fixture = await createDrgReferenceFixture(root)
-  const compact = await createCompactDrgReference({ sourceRoot: root, sourceLockPath: fixture.lockPath,
-    outputDirectory: join(root, 'expected'), inventoryId: 'synthetic-compact-local-v1', createdAt: '2026-10-25T00:00:00.000Z' })
-  const options = { repositoryRoot: root, lockPath: compact.lockPath, databasePath: join(root, 'reference.sqlite'),
-    installDirectory: join(root, 'installed'), distributionPath: join(root, 'absent-distribution.json') }
-  expect(await runDrgReferenceSync({ ...options, checkOnly: true })).toMatchObject({ source: 'local' })
-  await expect(stat(options.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
-  await expect(stat(options.installDirectory)).rejects.toMatchObject({ code: 'ENOENT' })
-  const first = await runDrgReferenceSync(options)
-  expect(first).toMatchObject({ source: 'local', created: true })
-  expect(await runDrgReferenceSync(options)).toMatchObject({ source: 'installed', created: false })
-  expect(await readFile(join(root, fixture.packageRoot, 'services/records.jsonl'), 'utf8')).toBe(fixture.records)
-  await expect(stat(join(first.inputRoot, 'drg-offline.lock.json'))).rejects.toMatchObject({ code: 'ENOENT' })
-}, 30_000)
-
 it('installs the physical compact package, reuses it offline and repairs without changing immutable facts', async () => {
   const root = await mkdtemp(join(tmpdir(), 'clinmesh-compact-install-'))
   roots.push(root)

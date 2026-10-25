@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { Readable, Transform } from 'node:stream'
@@ -8,12 +8,11 @@ import { pipeline } from 'node:stream/promises'
 import { parseArgs } from 'node:util'
 import { extract } from 'tar'
 import { z } from 'zod'
-import { offlineReferenceLockSchema, type OfflineReferenceInventory, type OfflineReferenceLock } from '@clinmesh/contracts/reference-data'
-import { createCompactDrgReference } from './drg-reference-compact.ts'
+import { offlineReferenceLockSchema, type OfflineReferenceInventory } from '@clinmesh/contracts/reference-data'
 import { readServerEnvironment } from './config.ts'
 import { inspectOfflineInventory, listOfflineInventories, publishOfflineInventory } from './infrastructure/reference-data/offline-reference-inventory.ts'
 import { applyReferenceMigrations, openReferenceDatabase } from './infrastructure/sqlite/reference-database.ts'
-import { containedArtifactPath, listPinnedArtifacts, openCompactStorage } from './infrastructure/reference-data/drg-compact-storage.ts'
+import { openCompactStorage, safeArtifactPath } from './infrastructure/reference-data/drg-compact-storage.ts'
 
 const defaultRepositoryRoot = resolve(import.meta.dirname, '../../..')
 const defaultLockPath = resolve(import.meta.dirname, '../reference-data/drg-offline.lock.json')
@@ -113,34 +112,13 @@ async function download(artifact: z.infer<typeof distributionSchema>['artifact']
   }
 }
 
-function safePath(path: string): boolean {
-  return !path.includes('\\') && !path.includes(':') && !path.startsWith('/')
-    && path.split('/').every(part => part !== '' && part !== '.' && part !== '..')
-}
-
-async function completeLocalSource(lock: OfflineReferenceLock, inputRoot: string): Promise<string | undefined> {
-  if (lock.storage === undefined) return undefined
-  // Validate all original logical files before attempting an offline conversion.
-  const { storage: _storage, ...sourceLock } = lock
-  sourceLock.inventoryId = `${lock.inventoryId}.source`
-  const bytes = JSON.stringify(sourceLock)
-  const temporary = await mkdtemp(join(tmpdir(), 'clinmesh-drg-source-check-'))
-  try {
-    const manifestPath = join(temporary, 'source.lock.json')
-    await writeFile(manifestPath, bytes)
-    try { await inspectOfflineInventory(manifestPath, inputRoot) }
-    catch { return undefined }
-    return bytes
-  } finally { await rm(temporary, { recursive: true, force: true }) }
-}
-
 export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Promise<DrgReferenceSyncResult> {
   const lockPath = resolve(options.lockPath ?? defaultLockPath)
   const lockBytes = await readFile(lockPath)
   const lock = offlineReferenceLockSchema.parse(JSON.parse(lockBytes.toString('utf8')))
   const lockHash = hash(JSON.stringify(lock))
-  if (lock.packages.some(item => !safePath(item.root))) throw new Error('DRG package root must be a contained relative path')
-  if (lock.storage !== undefined && !safePath(lock.storage.manifest.path)) throw new Error('DRG storage index must be a contained relative path')
+  if (lock.packages.some(item => !safeArtifactPath(item.root))) throw new Error('DRG package root must be a contained relative path')
+  if (!safeArtifactPath(lock.storage.manifest.path)) throw new Error('DRG storage index must be a contained relative path')
   const repositoryRoot = resolve(options.repositoryRoot ?? defaultRepositoryRoot)
   const installDirectory = resolve(options.installDirectory ?? join(dirname(resolve(options.databasePath)), 'drg-reference'))
   const installedRoot = join(installDirectory, lockHash)
@@ -152,10 +130,8 @@ export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Pro
     return publish(options, inventory, inputRoot, source)
   }
 
-  const localSource = await completeLocalSource(lock, repositoryRoot)
-  const distribution = localSource === undefined
-    ? distributionSchema.parse(JSON.parse(await readFile(options.distributionPath ?? defaultDistributionPath, 'utf8'))) : undefined
-  if (distribution !== undefined && (distribution.offlineLockSha256 !== lockHash || distribution.inventoryId !== lock.inventoryId)) {
+  const distribution = distributionSchema.parse(JSON.parse(await readFile(options.distributionPath ?? defaultDistributionPath, 'utf8')))
+  if (distribution.offlineLockSha256 !== lockHash || distribution.inventoryId !== lock.inventoryId) {
     throw new Error('DRG distribution does not match the offline inventory lock')
   }
   const stagingParent = options.checkOnly ? tmpdir() : installDirectory
@@ -167,55 +143,43 @@ export async function runDrgReferenceSync(options: DrgReferenceSyncOptions): Pro
   let installed = false
   let cleanupStaging = true
   try {
-    const source = localSource === undefined ? 'download' : 'local'
-    if (localSource !== undefined) {
-      const sourceLockPath = join(staging, 'source.lock.json')
-      await writeFile(sourceLockPath, localSource)
-      await createCompactDrgReference({ sourceRoot: repositoryRoot, sourceLockPath, outputDirectory: extracted,
-        inventoryId: lock.inventoryId, createdAt: lock.createdAt, ...(options.onProgress === undefined ? {} : { onProgress: options.onProgress }) })
-      await rm(join(extracted, 'drg-offline.lock.json'))
-    } else {
-      if (distribution === undefined) throw new Error('DRG distribution is missing')
-      const archivePath = join(staging, 'reference.tar.gz')
-      options.onProgress?.(`下载固定 DRG 资料包：${lock.inventoryId} (${(distribution.artifact.sizeBytes / 1_000_000).toFixed(1)} MB)`)
-      await download(distribution.artifact, archivePath)
-      await mkdir(extracted)
-      const paths = new Set<string>()
-      let bytes = 0
-      let extractionError: Error | undefined
-      await extract({ cwd: extracted, file: archivePath, strict: true, noMtime: true, filter: (path, entry) => {
-        if (extractionError !== undefined) return false
-        const inPackage = lock.packages.some(item => path.startsWith(`${item.root}/`))
-        const inStorage = lock.storage !== undefined && path.startsWith(`${dirname(lock.storage.manifest.path).replaceAll('\\', '/')}/`)
-        if (!('type' in entry) || entry.type !== 'File' || !safePath(path) || (!inPackage && !inStorage) || paths.has(path)) {
-          extractionError = new Error('DRG archive contains an unsafe, duplicate or unexpected entry')
-          return false
-        }
-        paths.add(path)
-        bytes += entry.size
-        if (paths.size > distribution.artifact.fileCount || bytes > distribution.artifact.unpackedSizeBytes) {
-          extractionError = new Error('DRG archive exceeds its pinned extraction limits')
-          return false
-        }
-        return true
-      } })
-      if (extractionError !== undefined) throw extractionError
-      if (paths.size !== distribution.artifact.fileCount || bytes !== distribution.artifact.unpackedSizeBytes) throw new Error('DRG archive is incomplete')
-      const storage = await openCompactStorage(lock, extracted)
-      const expected = storage === undefined
-        ? new Set((await listPinnedArtifacts(lock, async path => readFile(await containedArtifactPath(extracted, path)))).keys())
-        : new Set([lock.storage!.manifest.path, ...Object.keys(storage.index.objects)])
-      if (expected.size !== paths.size || [...paths].some(path => !expected.has(path))) throw new Error('DRG archive contains unlisted physical files')
-    }
+    const archivePath = join(staging, 'reference.tar.gz')
+    options.onProgress?.(`下载固定 DRG 资料包：${lock.inventoryId} (${(distribution.artifact.sizeBytes / 1_000_000).toFixed(1)} MB)`)
+    await download(distribution.artifact, archivePath)
+    await mkdir(extracted)
+    const paths = new Set<string>()
+    let bytes = 0
+    let extractionError: Error | undefined
+    await extract({ cwd: extracted, file: archivePath, strict: true, noMtime: true, filter: (path, entry) => {
+      if (extractionError !== undefined) return false
+      const inPackage = lock.packages.some(item => path.startsWith(`${item.root}/`))
+      const inStorage = path.startsWith(`${dirname(lock.storage.manifest.path).replaceAll('\\', '/')}/`)
+      if (!('type' in entry) || entry.type !== 'File' || !safeArtifactPath(path) || (!inPackage && !inStorage) || paths.has(path)) {
+        extractionError = new Error('DRG archive contains an unsafe, duplicate or unexpected entry')
+        return false
+      }
+      paths.add(path)
+      bytes += entry.size
+      if (paths.size > distribution.artifact.fileCount || bytes > distribution.artifact.unpackedSizeBytes) {
+        extractionError = new Error('DRG archive exceeds its pinned extraction limits')
+        return false
+      }
+      return true
+    } })
+    if (extractionError !== undefined) throw extractionError
+    if (paths.size !== distribution.artifact.fileCount || bytes !== distribution.artifact.unpackedSizeBytes) throw new Error('DRG archive is incomplete')
+    const storage = await openCompactStorage(lock, extracted)
+    const expected = new Set([lock.storage.manifest.path, ...Object.keys(storage.index.objects)])
+    if (expected.size !== paths.size || [...paths].some(path => !expected.has(path))) throw new Error('DRG archive contains unlisted physical files')
     const inventory = await inspectOfflineInventory(lockPath, extracted)
-    if (options.checkOnly) return await publish(options, inventory, extracted, source)
+    if (options.checkOnly) return await publish(options, inventory, extracted, 'download')
     let previousExists = false
     try { await lstat(installedRoot); previousExists = true }
     catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error }
     if (previousExists) { await rename(installedRoot, backup); replaced = true }
     await rename(extracted, installedRoot)
     installed = true
-    const result = await publish(options, inventory, installedRoot, source)
+    const result = await publish(options, inventory, installedRoot, 'download')
     options.onProgress?.(`DRG 资料准备完成：${result.inventoryId}`)
     return result
   } catch (error) {

@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { readFile, realpath } from 'node:fs/promises'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { userInfo } from 'node:os'
 import { Readable } from 'node:stream'
@@ -29,35 +27,14 @@ const preparedManifestSchema = z.object({
   }).loose()),
 }).loose()
 
-async function containedPath(root: string, path: string): Promise<string> {
-  if (isAbsolute(path) || path.includes('\\') || path.split('/').some(part => part === '..' || part === '')) {
-    throw new Error('Offline artifact path must be a contained relative path')
-  }
-  const base = await realpath(root)
-  const target = await realpath(resolve(base, path))
-  const delta = relative(base, target)
-  if (delta === '' || delta === '..' || delta.startsWith(`..${sep}`) || isAbsolute(delta)) {
-    throw new Error('Offline artifact path escapes its package')
-  }
-  return target
-}
-
-async function checkedPath(root: string, file: z.infer<typeof fileSchema>, compact?: CompactRead): Promise<string> {
-  if (compact !== undefined) {
-    if (createHash('sha256').update(await compact(file.path)).digest('hex') !== file.sha256) throw new Error(`Offline artifact checksum mismatch: ${file.path}`)
-    return file.path
-  }
-  const path = await containedPath(root, file.path)
-  const hash = createHash('sha256')
-  for await (const chunk of createReadStream(path)) hash.update(chunk)
-  if (hash.digest('hex') !== file.sha256) throw new Error(`Offline artifact checksum mismatch: ${file.path}`)
-  return path
-}
-
-async function checkedJson(root: string, file: z.infer<typeof fileSchema>, compact?: CompactRead): Promise<unknown> {
-  const bytes = compact === undefined ? await readFile(await containedPath(root, file.path)) : await compact(file.path)
+async function checkedBytes(file: z.infer<typeof fileSchema>, read: CompactRead): Promise<Buffer> {
+  const bytes = await read(file.path)
   if (createHash('sha256').update(bytes).digest('hex') !== file.sha256) throw new Error(`Offline artifact checksum mismatch: ${file.path}`)
-  return JSON.parse(bytes.toString('utf8'))
+  return bytes
+}
+
+async function checkedJson(file: z.infer<typeof fileSchema>, read: CompactRead): Promise<unknown> {
+  return JSON.parse((await checkedBytes(file, read)).toString('utf8'))
 }
 
 function sourceUnits(value: unknown, units: Set<string>): void {
@@ -72,24 +49,20 @@ function sourceUnits(value: unknown, units: Set<string>): void {
   }
 }
 
-async function preparedTables(root: string, manifest: z.infer<typeof preparedManifestSchema>, compact?: CompactRead) {
+async function preparedTables(manifest: z.infer<typeof preparedManifestSchema>, read: CompactRead) {
   const tables: OfflineReferenceInventory['packages'][number]['tables'] = []
   const seen = new Set<string>()
   for (const file of manifest.files) {
-    const path = compact === undefined ? await containedPath(root, file.path) : file.path
-    if (seen.has(path)) throw new Error('Duplicate offline artifact path')
-    seen.add(path)
+    if (seen.has(file.path)) throw new Error('Duplicate offline artifact path')
+    seen.add(file.path)
     let rows = 0
     const units = new Set<string>()
-    const stream = compact === undefined ? createReadStream(path) : Readable.from([await compact(file.path)])
-    const hash = createHash('sha256')
-    stream.on('data', chunk => hash.update(chunk))
+    const stream = Readable.from([await checkedBytes(file, read)])
     for await (const line of createInterface({ input: stream, crlfDelay: Infinity })) {
       if (line.trim() === '') continue
       sourceUnits(jsonRecordSchema.parse(JSON.parse(line)), units)
       rows += 1
     }
-    if (hash.digest('hex') !== file.sha256) throw new Error(`Offline artifact checksum mismatch: ${file.path}`)
     if (rows !== file.rows) throw new Error(`Offline artifact row count mismatch: ${file.path}`)
     tables.push({ path: file.path, sha256: file.sha256, rows, sourceVersion: file.sourceVersion,
       units: [...units].sort(), unitStatus: 'source-only-unverified', scope: 'source-review', missingParameterCodes: [] })
@@ -97,20 +70,20 @@ async function preparedTables(root: string, manifest: z.infer<typeof preparedMan
   return tables
 }
 
-async function openDrgTables(root: string, files: z.infer<typeof fileSchema>[], version: string, compact?: CompactRead) {
+async function openDrgTables(files: z.infer<typeof fileSchema>[], version: string, read: CompactRead) {
   const index = files.find(file => file.path === 'catalog/datasets.json')
   if (index === undefined) throw new Error('OpenDRG dataset catalogue is missing from checksums')
   const datasets = z.array(z.object({
     jsonPath: z.string().min(1), hasHeader: z.boolean(), recordCount: z.number().int().nonnegative(),
     sourceUrl: z.string().url(),
-  }).loose()).parse(await checkedJson(root, index, compact))
+  }).loose()).parse(await checkedJson(index, read))
   const tables: OfflineReferenceInventory['packages'][number]['tables'] = []
   const seen = new Set<string>()
   for (const dataset of datasets) {
     const file = files.find(file => file.path === dataset.jsonPath)
     if (file === undefined || seen.has(file.path)) throw new Error('OpenDRG dataset is unpinned or duplicated')
     seen.add(file.path)
-    const value = await checkedJson(root, file, compact)
+    const value = await checkedJson(file, read)
     const entries = Array.isArray(value)
       ? value.slice(dataset.hasHeader ? 1 : 0).filter(row => Array.isArray(row)
         ? row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '') : row !== null)
@@ -129,11 +102,11 @@ async function openDrgTables(root: string, files: z.infer<typeof fileSchema>[], 
   return tables
 }
 
-async function selectedGrouper(root: string, files: z.infer<typeof fileSchema>[], manifest: unknown, compact?: CompactRead) {
+async function selectedGrouper(files: z.infer<typeof fileSchema>[], manifest: unknown, read: CompactRead) {
   const schemeFile = files.find(file => file.path === 'catalog/schemes.json')
   if (schemeFile === undefined) throw new Error('OpenDRG scheme catalogue is missing from checksums')
   const schemes = z.array(z.object({ id: z.string(), grouperSourceUrl: z.string().url().nullish(), groupDataPath: z.string().nullish() }).loose())
-    .parse(await checkedJson(root, schemeFile, compact))
+    .parse(await checkedJson(schemeFile, read))
   const scheme = schemes.find(item => item.id === 'chs_drg_30')
   const assets = z.object({ assets: z.array(z.object({ url: z.string().url(), localPath: z.string() }).loose()) }).loose().parse(manifest).assets
   const programPath = assets.find(asset => asset.url === scheme?.grouperSourceUrl)?.localPath
@@ -142,7 +115,7 @@ async function selectedGrouper(root: string, files: z.infer<typeof fileSchema>[]
   if (program === undefined || parameters === undefined) throw new Error('Selected OpenDRG grouper files are missing from checksums')
   const values = z.object({ CC: z.record(z.string(), z.json()), MCC: z.record(z.string(), z.json()),
     CCE: z.record(z.string(), z.json()), SS_VALID: z.array(z.string()) }).strict()
-    .parse(await checkedJson(root, parameters, compact))
+    .parse(await checkedJson(parameters, read))
   return { schemeId: 'chs_drg_30' as const, program: { path: program.path, sha256: program.sha256 },
     parameters: { path: parameters.path, sha256: parameters.sha256, counts: {
       CC: Object.keys(values.CC).length, MCC: Object.keys(values.MCC).length,
@@ -150,10 +123,9 @@ async function selectedGrouper(root: string, files: z.infer<typeof fileSchema>[]
     } } }
 }
 
-async function inspectPackage(inputRoot: string, input: OfflineReferenceLock['packages'][number], storage?: CompactStorage) {
-  const root = storage === undefined ? await containedPath(inputRoot, input.root) : resolve(inputRoot, input.root)
-  const compact = storage === undefined ? undefined : (path: string) => storage.read(`${input.root}/${path}`)
-  const manifest = await checkedJson(root, input.manifest, compact)
+async function inspectPackage(input: OfflineReferenceLock['packages'][number], storage: CompactStorage) {
+  const read = (path: string) => storage.read(`${input.root}/${path}`)
+  const manifest = await checkedJson(input.manifest, read)
   let tables: OfflineReferenceInventory['packages'][number]['tables']
   let verifiedFileCount: number
   let grouper: OfflineReferenceInventory['packages'][number]['selectedGrouper'] = null
@@ -161,7 +133,7 @@ async function inspectPackage(inputRoot: string, input: OfflineReferenceLock['pa
   if (input.format === 'prepared-catalogues-v1') {
     const prepared = preparedManifestSchema.parse(manifest)
     if (prepared.releaseId !== input.version) throw new Error('Offline package version mismatch')
-    tables = await preparedTables(root, prepared, compact)
+    tables = await preparedTables(prepared, read)
     verifiedFileCount = tables.length
     sourceArtifacts = Object.entries(prepared.sources).map(([id, source]) => ({ id,
       version: source.version, archiveSha256: source.archiveSha256, pdfSha256: source.pdfSha256,
@@ -173,16 +145,16 @@ async function inspectPackage(inputRoot: string, input: OfflineReferenceLock['pa
     }
     if (input.checksums === undefined) throw new Error('OpenDRG requires checksums')
     const checksums = z.object({ algorithm: z.literal('SHA-256'), files: z.array(fileSchema).min(1) }).loose()
-      .parse(await checkedJson(root, input.checksums, compact))
+      .parse(await checkedJson(input.checksums, read))
     const seen = new Set<string>()
     for (const file of checksums.files) {
-      const path = await checkedPath(root, file, compact)
-      if (seen.has(path)) throw new Error('Duplicate offline artifact path')
-      seen.add(path)
+      if (seen.has(file.path)) throw new Error('Duplicate offline artifact path')
+      seen.add(file.path)
+      await checkedBytes(file, read)
     }
     // Preserve coverage as source facts; never load or execute the bundled JavaScript.
-    tables = await openDrgTables(root, checksums.files, input.version, compact)
-    grouper = await selectedGrouper(root, checksums.files, manifest, compact)
+    tables = await openDrgTables(checksums.files, input.version, read)
+    grouper = await selectedGrouper(checksums.files, manifest, read)
     verifiedFileCount = checksums.files.length
   }
   const { root: _root, ...provenance } = input
@@ -200,18 +172,16 @@ export function auditOfflineInventory(database: ReferenceDatabase, input: {
 
 async function inspectLock(lock: OfflineReferenceLock, inputRoot: string): Promise<OfflineReferenceInventory> {
   const storage = await openCompactStorage(lock, inputRoot)
-  if (storage !== undefined) {
-    const pinned = await listPinnedArtifacts(lock, path => storage.read(path))
-    if (pinned.size !== Object.keys(storage.index.files).length
-      || [...pinned].some(([path, sha256]) => storage.index.files[path]?.sha256 !== sha256)) throw new Error('Compact index does not cover the complete pinned inventory')
-    await storage.verifyObjects()
-  }
+  const pinned = await listPinnedArtifacts(lock, path => storage.read(path))
+  if (pinned.size !== Object.keys(storage.index.files).length
+    || [...pinned].some(([path, sha256]) => storage.index.files[path]?.sha256 !== sha256)) throw new Error('Compact index does not cover the complete pinned inventory')
+  await storage.verifyObjects()
   const packages = []
-  for (const input of lock.packages) packages.push(await inspectPackage(inputRoot, input, storage))
+  for (const input of lock.packages) packages.push(await inspectPackage(input, storage))
   const basis = offlineReferenceInventorySchema.omit({ contentHash: true }).parse({
     schemaVersion: lock.schemaVersion, inventoryId: lock.inventoryId, createdAt: lock.createdAt,
     scheme: lock.scheme, validationScope: 'integrity-only', runtimeEnabled: false, packages,
-    ...(lock.storage === undefined ? {} : { storage: lock.storage }),
+    storage: lock.storage,
   })
   return { ...basis, contentHash: digest(JSON.stringify(basis)) }
 }

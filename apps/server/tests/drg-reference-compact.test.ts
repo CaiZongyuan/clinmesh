@@ -6,13 +6,13 @@ import { createCompactDrgReference } from '../src/drg-reference-compact.ts'
 import { exportDrgReferenceFile } from '../src/drg-reference-export.ts'
 import { inspectOfflineInventory } from '../src/infrastructure/reference-data/offline-reference-inventory.ts'
 import { openCompactStorage } from '../src/infrastructure/reference-data/drg-compact-storage.ts'
-import { createDrgReferenceFixture, sha256 } from './fixtures/drg-reference.ts'
+import { createDrgReferenceFixture, sha256, writeDrgCompactFixtureIndex } from './fixtures/drg-reference.ts'
 import { offlineReferenceLockSchema } from '@clinmesh/contracts/reference-data'
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))) })
 
-it('converts the complete source to a new identity and preserves source bytes', async () => {
+it('builds reproducible compact storage from every pinned logical source and preserves source bytes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'clinmesh-compact-create-'))
   roots.push(root)
   const source = await createDrgReferenceFixture(root)
@@ -24,6 +24,9 @@ it('converts the complete source to a new identity and preserves source bytes', 
   await writeFile(join(root, source.packageRoot, 'manifest.json'), manifestBytes)
   const lock = JSON.parse(source.lockBytes)
   lock.packages[0].manifest.sha256 = sha256(manifestBytes)
+  lock.storage = (await writeDrgCompactFixtureIndex(root, [
+    `${source.packageRoot}/manifest.json`, `${source.packageRoot}/services/records.jsonl`, alias,
+  ])).storage
   await writeFile(source.lockPath, JSON.stringify(lock))
   const before = await inspectOfflineInventory(source.lockPath, root)
   const outputDirectory = join(root, 'compact')
@@ -32,7 +35,7 @@ it('converts the complete source to a new identity and preserves source bytes', 
   expect(result).toMatchObject({ logicalFileCount: 3, physicalFileCount: 3, inventoryId: 'synthetic-compact-v1' })
   const compactLock = offlineReferenceLockSchema.parse(JSON.parse(await readFile(result.lockPath, 'utf8')))
   const storage = await openCompactStorage(compactLock, outputDirectory)
-  expect((await storage!.read(alias)).toString()).toBe(source.records)
+  expect((await storage.read(alias)).toString()).toBe(source.records)
   expect((await readdir(join(outputDirectory, source.packageRoot, 'services')))).toHaveLength(1)
   const after = await inspectOfflineInventory(result.lockPath, outputDirectory)
   expect(after.packages).toEqual(before.packages)
@@ -49,8 +52,8 @@ it('converts the complete source to a new identity and preserves source bytes', 
   const repeat = await createCompactDrgReference({ sourceRoot: root, sourceLockPath: source.lockPath,
     outputDirectory: join(root, 'repeat'), inventoryId: 'synthetic-compact-v1', createdAt: '2026-10-25T00:00:00.000Z' })
   expect(await readFile(repeat.lockPath)).toEqual(await readFile(result.lockPath))
-  expect(await readFile(join(root, 'repeat', compactLock.storage!.manifest.path)))
-    .toEqual(await readFile(join(outputDirectory, compactLock.storage!.manifest.path)))
+  expect(await readFile(join(root, 'repeat', compactLock.storage.manifest.path)))
+    .toEqual(await readFile(join(outputDirectory, compactLock.storage.manifest.path)))
 })
 
 it('does not overwrite an existing destination or publish a conversion from damaged sources', async () => {

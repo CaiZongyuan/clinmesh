@@ -31,7 +31,7 @@ const lockBaseSchema = z.object({
   storage: z.object({
     format: z.literal('clinmesh.drg-compact.v1'),
     manifest: artifact,
-  }).strict().optional(),
+  }).strict(),
 }).strict()
 export const offlineReferenceLockSchema = lockBaseSchema.superRefine((value, context) => {
   if (new Set(value.packages.map(item => item.id)).size !== value.packages.length) {

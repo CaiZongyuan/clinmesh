@@ -8,7 +8,7 @@ import { buildNormalizedArtifacts } from './infrastructure/reference-data/drg-no
 import { compactDigest, compactFormat, containedArtifactPath, listPinnedArtifacts, resolveArtifactOutput, safeArtifactPath,
   type CompactIndex } from './infrastructure/reference-data/drg-compact-storage.ts'
 
-/** Convert only into a new directory; the original release is never modified. */
+/** Build current compact storage from the complete pinned logical source files. */
 export async function createCompactDrgReference(options: {
   sourceRoot: string
   sourceLockPath: string
@@ -24,11 +24,8 @@ export async function createCompactDrgReference(options: {
     const delta = relative(resolve(sourceRoot, input.root), outputDirectory)
     return delta === '' || (!isAbsolute(delta) && delta !== '..' && !delta.startsWith(`..${sep}`))
   })) throw new Error('Compact destination must be outside original package paths')
-  if (lock.storage !== undefined) throw new Error('Compact conversion requires the original full source release')
-  if (lock.inventoryId === options.inventoryId) throw new Error('Compact storage requires a new inventory identity')
   try { await lstat(outputDirectory); throw new Error('Compact output directory already exists') }
   catch (error) { if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error }
-  const source = await inspectOfflineInventory(options.sourceLockPath, sourceRoot)
   const read = async (path: string) => readFile(await containedArtifactPath(sourceRoot, path))
   const pinned = await listPinnedArtifacts(lock, read)
   const readPinned = async (path: string) => {
@@ -82,8 +79,7 @@ export async function createCompactDrgReference(options: {
     const lockPath = join(staging, 'drg-offline.lock.json')
     await writeFile(lockPath, `${JSON.stringify(compactLock, null, 2)}\n`)
     options.onProgress?.(`逐文件核对全部 ${pinned.size} 个原逻辑文件的字节与来源`)
-    const inventory = await inspectOfflineInventory(lockPath, staging)
-    if (JSON.stringify(inventory.packages) !== JSON.stringify(source.packages)) throw new Error('Compact conversion changed inventory facts')
+    await inspectOfflineInventory(lockPath, staging)
     const residentSizeBytes = Object.values(index.objects).reduce((sum, object) => sum + object.sizeBytes, Buffer.byteLength(manifest))
     const result = { inventoryId: compactLock.inventoryId, lockPath: join(outputDirectory, 'drg-offline.lock.json'),
       logicalFileCount: pinned.size, physicalFileCount: Object.keys(index.objects).length + 1,
@@ -99,7 +95,7 @@ if (process.argv[1] !== undefined && /^drg-reference-compact\.(ts|js)$/.test(bas
   const { values } = parseArgs({ options: { 'input-root': { type: 'string' }, manifest: { type: 'string' },
     output: { type: 'string' }, inventory: { type: 'string' }, 'created-at': { type: 'string' } } })
   if (values['input-root'] === undefined || values.manifest === undefined || values.output === undefined
-    || values.inventory === undefined || values['created-at'] === undefined) throw new Error('Usage: drg-reference-compact --input-root <source> --manifest <old-lock> --output <new-directory> --inventory <new-id> --created-at <ISO datetime>')
+    || values.inventory === undefined || values['created-at'] === undefined) throw new Error('Usage: drg-reference-compact --input-root <logical-source> --manifest <current-lock> --output <new-directory> --inventory <inventory-id> --created-at <ISO datetime>')
   const result = await createCompactDrgReference({ sourceRoot: values['input-root'], sourceLockPath: values.manifest,
     outputDirectory: values.output, inventoryId: values.inventory, createdAt: values['created-at'],
     onProgress: line => process.stderr.write(`${line}\n`) })

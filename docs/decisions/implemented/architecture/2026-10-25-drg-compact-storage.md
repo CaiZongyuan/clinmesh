@@ -12,7 +12,7 @@ Status: implemented
 
 制包、安装核验和显式导出使用同一只读读取器。安装不物化派生副本，不使用链接，也不缓存跨运行的核验成功。每次准备重新校验物理对象、完整逻辑文件集合和既有语义清单，只有全部通过后才原子安装和登记。当前格式、命令及路径合同由[储存合同](../../../drg-reference-storage.md)拥有。
 
-新格式使用新 inventory、归档及分发锁，旧发行快照保持原身份。此决策扩展[自动分发决策](2026-10-22-drg-reference-distribution.md)的物理表达；该决策的自动准备、失败保旧、check-only 和运行用途隔离继续有效。
+新格式使用新 inventory、归档及分发锁，旧发行快照保持原身份。安装格式的支持范围由[当前格式决策](../simplification/2026-10-25-drg-current-format-only.md)取代。此决策扩展[自动分发决策](2026-10-22-drg-reference-distribution.md)的物理表达；该决策的自动准备、失败保旧、check-only 和运行用途隔离继续有效。
 
 ## Alternatives considered
 
