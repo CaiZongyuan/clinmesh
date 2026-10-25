@@ -153,6 +153,8 @@ pnpm dev:server
 
 完成步骤 3 后，以门诊医生登录并打开诊断选择器应能搜索到 ICD-10 条目，即参考目录生效。
 
+管理员可通过 [住院 CLI 的 PCI 资料准备入口](../skills/clinmesh-inpatient/SKILL.md#诊断医嘱与执行)读取固定版本底稿，再按当前 Epoch 幂等准备首例药耗及检验目录。该步骤只补基础资料和药品批次，不创建患者或就诊；已有价格、配置、库存消耗和业务保留。用量、候选缺项与数据边界见[住院医嘱合同](architecture/clinical-workflows.md#83-医嘱生命周期)，完整病例及 DRG 联合验收仍由对应执行任务完成。
+
 ## 6. Synthea 患者生成
 
 Synthea Provider 与中国化 localizer 由固定 digest 的预构建镜像提供。镜像内已经包含固定 Synthea JAR、`synthea-cn@2026-08-29.r4` profile、匹配的姓名/地理/人口 Release 与实验性中文显示目录；宿主机不需要 JDK、Python、Rust、`uv`、第二个源码仓库或数据挂载。
