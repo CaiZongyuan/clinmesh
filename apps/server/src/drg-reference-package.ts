@@ -7,6 +7,7 @@ import { offlineReferenceLockSchema } from '@clinmesh/contracts/reference-data'
 import { c } from 'tar'
 import { z } from 'zod'
 import { inspectOfflineInventory } from './infrastructure/reference-data/offline-reference-inventory.ts'
+import { openCompactStorage } from './infrastructure/reference-data/drg-compact-storage.ts'
 
 const fileListSchema = z.object({ files: z.array(z.object({ path: z.string() }).loose()) }).loose()
 const fixedMtime = new Date('2000-01-01T00:00:00.000Z')
@@ -29,7 +30,11 @@ export async function createDrgReferencePackage(options: {
   const lockBytes = await readFile(lockPath)
   const lock = offlineReferenceLockSchema.parse(JSON.parse(lockBytes.toString('utf8')))
   const paths = new Set<string>()
-  for (const input of lock.packages) {
+  const storage = await openCompactStorage(lock, repositoryRoot)
+  if (storage !== undefined) {
+    paths.add(lock.storage!.manifest.path)
+    for (const path of Object.keys(storage.index.objects)) paths.add(path)
+  } else for (const input of lock.packages) {
     const indexPath = input.format === 'prepared-catalogues-v1' ? input.manifest.path : input.checksums?.path
     if (indexPath === undefined) throw new Error('OpenDRG requires a pinned checksum index')
     const index = fileListSchema.parse(JSON.parse(await readFile(join(repositoryRoot, input.root, indexPath), 'utf8')))

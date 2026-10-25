@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [DRG 离线资料无损精简储存](2026-10-25-drg-compact-storage.md) | `approved` |
 | [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `approved` |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |

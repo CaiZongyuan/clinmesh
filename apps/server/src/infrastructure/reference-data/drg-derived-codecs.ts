@@ -20,7 +20,11 @@ type Read = (path: string) => Promise<Buffer>
 
 const indexSchema = z.object({ files: z.array(z.object({ path: pathSchema }).loose()) }).loose()
 const jsonRecordSchema = z.record(z.string(), z.json())
-const hierarchyRecordSchema = z.object({ id: z.string(), fields: jsonRecordSchema, source: jsonRecordSchema }).loose()
+// JSON.parse validates JSON values; only fields interpreted by the codec need a second shape check.
+const sourceRecordSchema = z.record(z.string(), z.unknown())
+const hierarchyRecordSchema = z.object({ id: z.string(), fields: sourceRecordSchema, source: sourceRecordSchema }).loose()
+const acceptedRecordSchema = z.object({ eligibleReferenceCandidate: z.boolean().optional() }).loose()
+const stringSchema = z.string()
 const rulePacks = new WeakMap<Buffer, Record<string, string>>()
 const datasetSchema = z.object({
   jsonPath: pathSchema, csvPath: pathSchema.nullish(), moduleId: z.number().int().nonnegative().optional(),
@@ -111,7 +115,7 @@ function hierarchy(lines: string[], catalog: 'icd10' | 'icd9', newline: string):
     for (const level of levels) {
       const code = record.fields[`${level}${level === 'section' ? '_range' : '_code'}`]
       if (code === null || code === undefined || code === '') continue
-      const id = `${catalog}:${level}:${z.string().parse(code)}`
+      const id = `${catalog}:${level}:${stringSchema.parse(code)}`
       let node = nodes.get(id)
       if (node === undefined) {
         node = {
@@ -151,7 +155,7 @@ export async function renderDerivedRecipe(recipe: DerivedRecipe, read: Read): Pr
   const lines = source.toString('utf8').match(/[^\n]*\n|[^\n]+$/g) ?? []
   if (recipe.kind === 'hierarchy-jsonl') return hierarchy(lines, recipe.catalog, recipe.newline)
   return Buffer.from(lines.filter(line => line.trim() !== ''
-    && jsonRecordSchema.parse(JSON.parse(line)).eligibleReferenceCandidate === true).join(''))
+    && acceptedRecordSchema.parse(JSON.parse(line)).eligibleReferenceCandidate === true).join(''))
 }
 
 export async function buildDerivedRecipes(options: {

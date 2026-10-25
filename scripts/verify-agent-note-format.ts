@@ -18,7 +18,7 @@ const BANNED_IMPLEMENTED = /^## (?:Proposal|Plan|Migration plan|Acceptance crite
 const { notes, errors } = walkAgentNoteTree()
 
 for (const note of notes) {
-  const lines = readFileSync(resolve(agentNoteRoot, note.rel), 'utf8').split('\n')
+  const lines = readFileSync(resolve(agentNoteRoot, note.rel), 'utf8').split(/\r?\n/)
   const fail = (message: string): void => { errors.push(`format: ${note.rel} — ${message}`) }
   let inFence = false
   const prose = lines.filter((line) => {

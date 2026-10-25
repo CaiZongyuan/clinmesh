@@ -176,6 +176,8 @@ export async function buildNormalizedArtifacts(options: {
   const artifacts = new Map<string, Buffer>()
   const read: Read = async path => artifacts.get(path) ?? options.read(path)
   for (const input of options.packages.filter(item => item.format === 'prepared-catalogues-v1')) {
+    containedPath.parse(input.id)
+    if (input.id.includes('/')) throw new Error('Normalized package identity must be a single path segment')
     const manifest = z.object({ files: z.array(z.object({ path: containedPath }).loose()) }).loose()
       .parse(JSON.parse((await options.read(`${input.root}/${input.manifest.path}`)).toString('utf8')))
     const listed = new Set(manifest.files.map(file => file.path))

@@ -134,6 +134,19 @@ describe('DRG reference installation', () => {
     await expect(stat(input.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
+  it('rejects an otherwise valid archive with an unlisted file inside a package root', async () => {
+    const input = await downloadable()
+    const extraPath = `${input.packageRoot}/unlisted.txt`
+    await writeFile(join(input.root, extraPath), 'extra')
+    const archivePath = join(input.root, 'extra.tar.gz')
+    await create({ cwd: input.root, file: archivePath, gzip: true, portable: true }, [
+      `${input.packageRoot}/manifest.json`, `${input.packageRoot}/services/records.jsonl`, extraPath,
+    ])
+    await input.useArchive(await readFile(archivePath), input.distribution.artifact.unpackedSizeBytes + 5, 3)
+    await expect(runDrgReferenceSync(input.options)).rejects.toThrow(/unlisted/)
+    await expect(stat(input.databasePath)).rejects.toMatchObject({ code: 'ENOENT' })
+  })
+
   it('preserves the previous files when both installation and rollback renames fail', async () => {
     const input = await downloadable()
     const first = await runDrgReferenceSync(input.options)
