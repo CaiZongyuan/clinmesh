@@ -123,6 +123,17 @@ describe('CI CLI with a real candidate merge', () => {
     expect(outputs).toMatchObject({ checks: 'true', unit: 'false', browser: 'false', e2e: 'false' })
   })
 
+  it('runs every group for engineering skill configuration mixed with ordinary documentation', async () => {
+    const fixture = pullRequest([{
+      'docs/agents/issue-tracker.md': '# Updated engineering skill configuration\n',
+      'README.md': '# Updated ordinary documentation\n',
+    }], { 'docs/agents/issue-tracker.md': '# Existing engineering skill configuration\n' })
+
+    expect(readPlan(await run(fixture.directory, ['plan'], fixture.env))).toMatchObject({ mode: 'full', tests: [], docs: true })
+    const outputs = readFileSync(fixture.outputPath, 'utf8')
+    for (const stage of ['checks', 'unit', 'browser', 'e2e']) expect(outputs).toContain(`${stage}=true\n`)
+  })
+
   it('selects all test changes across the PR rather than only its last commit', async () => {
     const fixture = pullRequest([
       { [serverTest]: '// changed by the first PR commit\n' },

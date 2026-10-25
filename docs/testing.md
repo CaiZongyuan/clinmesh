@@ -116,7 +116,7 @@ pnpm docs:check
 
 | PR 改动 | 检查范围 |
 | --- | --- |
-| 只有根 README 或 docs 下普通 Markdown | `doc-sync`；Agent 规则和运行时 Skills/提示词不在此范围 |
+| 只有根 README 或 docs 下普通 Markdown | `doc-sync`；Agent 规则、`docs/agents/` 工程 skills 配置和运行时 Skills/提示词不在此范围 |
 | 只有已修改的独立测试入口，可包含普通文档 | 逐文件运行全部用例、所属包 typecheck、定向 lint；Web E2E 追加浏览器 tsconfig，文档变化追加 `doc-sync` |
 | 明确的普通 Web 页面、DSH 显示组件、共享 UI/views 源码 | 全局类型/lint/边界、短性能预算、文档和构建；UI/views、Web、DSH、Desktop 组件测试；完整 Playwright `contracts` 与 `web` |
 | 其他、关键边界、服务端影响范围过广或无法识别 | 全量，覆盖原 `pnpm check` 与 `pnpm check:mobile` 的完整集合 |

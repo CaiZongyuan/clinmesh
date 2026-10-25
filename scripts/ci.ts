@@ -47,6 +47,7 @@ function isSafePath(path: string): boolean {
 
 function isDocumentation(path: string): boolean {
   return (path === 'README.md' || path.startsWith('docs/') && path.endsWith('.md'))
+    && !path.startsWith('docs/agents/')
     && !/(^|\/)(AGENTS|CLAUDE)\.md$/.test(path)
 }
 

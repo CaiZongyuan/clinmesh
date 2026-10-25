@@ -12,6 +12,16 @@ describe('CI checks selected for a pull request', () => {
     expect(requiredStages(plan)).toEqual(['checks'])
   })
 
+  it.each(['A', 'M', 'D'])('checks engineering skill configuration in full for status %s', status => {
+    const plan = createCiPlan('pull_request', [
+      { status, path: 'docs/agents/issue-tracker.md' },
+      { status: 'M', path: 'README.md' },
+    ])
+
+    expect(plan.mode).toBe('full')
+    expect(requiredStages(plan)).toEqual(['checks', 'unit', 'browser', 'e2e'])
+  })
+
   it('runs complete changed test files through their owning runners', () => {
     const files = [
       'apps/web/src/app/doctor/prescription-page.test.tsx',
