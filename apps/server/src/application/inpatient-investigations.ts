@@ -1,12 +1,12 @@
 import { z } from 'zod'
 import { inpatientInvestigationAcknowledgeInputSchema, inpatientInvestigationActionInputSchema, inpatientInvestigationIssueInputSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema, inpatientInvestigationCatalogSchema } from '@clinmesh/contracts/inpatient-investigations'
-import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
 import type { ImagingExamCode } from '@clinmesh/contracts/imaging'
 import type { ActorContext } from './command-executor.ts'
 import { ClinicalRequestKernel, laboratoryRequestPolicy } from './clinical-request-kernel.ts'
 import { imagingRequestPolicy } from './imaging-request-service.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { WorkflowService } from './workflow-service.ts'
+import { inpatientLaboratoryConfiguration } from './inpatient-laboratory-config.ts'
 
 const billingSchema = z.object({ display: z.string().min(1), priceFen: z.number().int().positive().safe(), currency: z.literal('CNY'), trigger: z.literal('execution-completed'),
   source: z.string().min(1), availableScopes: z.array(z.string()).refine(scopes => scopes.includes('inpatient')) })
@@ -45,13 +45,16 @@ export class InpatientInvestigations {
     const rows=z.array(z.object({service_id:z.string(),version:z.number(),config_json:z.string()})).parse(this.owner.database.driver.prepare(
       'SELECT * FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND active=1 ORDER BY name_zh,service_id').all(context.workspaceId,context.epoch))
     return inpatientInvestigationCatalogSchema.parse({items:rows.flatMap<z.infer<typeof inpatientInvestigationCatalogSchema>['items'][number]>(row=>{
-      const config=z.object({laboratoryService:laboratoryServiceSnapshotSchema.optional(),imagingService:z.object({name:z.string(),examCode:z.enum(['chest-radiograph','chest-ct-plain'])}).optional(),
-        availableScopes:z.array(z.string()).optional(),chargeDefinition:z.object({priceFen:z.number().int().nonnegative().safe()}).optional(),inpatientInvestigationBilling:billingSchema.optional()}).parse(JSON.parse(row.config_json))
-      if(config.imagingService !== undefined && config.inpatientInvestigationBilling !== undefined) return [{id:row.service_id,kind:'imaging' as const,display:config.imagingService.name,version:row.version,priceFen:config.inpatientInvestigationBilling.priceFen,available:ready.has(config.imagingService.examCode),indicationCodes:[]}]
-      if(config.laboratoryService?.doctorOrderable) {
-        const priceFen=config.inpatientInvestigationBilling?.priceFen??(config.availableScopes?.includes('inpatient')&&config.chargeDefinition?.priceFen?config.chargeDefinition.priceFen:undefined)
-        return [{id:row.service_id,kind:'laboratory' as const,display:config.laboratoryService.nameZh,version:row.version,...(priceFen===undefined?{}:{priceFen}),available:priceFen!==undefined,
-          ...(priceFen===undefined?{unavailableReason:'unpriced' as const}:{}),indicationCodes:config.laboratoryService.allowedIndicationCodes}]
+      const raw: unknown = JSON.parse(row.config_json)
+      const record = z.record(z.string(), z.unknown()).safeParse(raw), config = record.success ? record.data : {}
+      const imaging = z.object({name:z.string(),examCode:z.enum(['chest-radiograph','chest-ct-plain'])}).safeParse(config.imagingService)
+      const billing = billingSchema.safeParse(config.inpatientInvestigationBilling)
+      if(imaging.success && billing.success) return [{id:row.service_id,kind:'imaging' as const,display:imaging.data.name,version:row.version,priceFen:billing.data.priceFen,available:ready.has(imaging.data.examCode),indicationCodes:[]}]
+      const laboratory = inpatientLaboratoryConfiguration(raw)
+      if(laboratory.service?.doctorOrderable) {
+        const { priceFen, missingFields, service } = laboratory, available = missingFields.length === 0
+        return [{id:row.service_id,kind:'laboratory' as const,display:service.nameZh,version:row.version,...(priceFen===undefined?{}:{priceFen}),available,
+          ...(available?{}:{unavailableReason:priceFen===undefined?'unpriced' as const:'not-offered' as const}),indicationCodes:service.allowedIndicationCodes}]
       }
       return []
     })})

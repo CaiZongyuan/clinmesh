@@ -42,7 +42,7 @@ async function setup() {
     allowedIndicationCodes: ['clinical-assessment'], specimen: { code: '119297000', display: '血液标本' }, tatMinutes: 20, priceFen: 800,
     reportDefinition: { conclusionTemplate: '白细胞计数结果已完成。', results: [{ referenceConcept: concept, valueType: 'quantity', referenceRange: { low: 4, high: 10, text: '4.0-10.0 x10^9/L' }, unit: { system: 'http://unitsofmeasure.org', code: '10*9/L', display: '10^9/L' } }] } })
   runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
-    .run(context.workspaceId, context.epoch, service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service, availableScopes: ['outpatient','inpatient'], chargeDefinition: { id: 'synthetic-wbc-charge-definition', currency: 'CNY', priceFen: 800 } }))
+    .run(context.workspaceId, context.epoch, service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service, billingUnit: { display: '项目' }, availableScopes: ['outpatient','inpatient'], chargeDefinition: { id: 'synthetic-wbc-charge-definition', currency: 'CNY', priceFen: 800 } }))
   const unpriced = { ...service, id: 'synthetic-unpriced-wbc', localCode: 'SYN-UNPRICED-WBC', nameZh: '合成未计价白细胞', priceFen: 0 }
   runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
     .run(context.workspaceId, context.epoch, unpriced.id, unpriced.localCode, unpriced.nameZh, unpriced.nameZh, JSON.stringify({ laboratoryService: unpriced, availableScopes: ['outpatient','inpatient'], chargeDefinition: { currency: 'CNY', priceFen: 0 } }))
@@ -73,6 +73,26 @@ async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRunti
 }
 
 describe('住院检查检验 HTTP 合同', () => {
+  it('单项缺单位或收费定义不阻断同页完整检验，写入拒绝绕过缺项', async () => {
+    const s = await setup()
+    s.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json)
+      SELECT workspace_id,epoch,'synthetic-complete-wbc','SYN-COMPLETE-WBC','合成完整白细胞','complete',1,1,
+        json_set(config_json,'$.laboratoryService.id','synthetic-complete-wbc','$.billingUnit',json('{"display":"项目"}'))
+      FROM hospital_service_catalog WHERE service_id='synthetic-inpatient-wbc'`).run()
+    s.runtime.database.driver.prepare("UPDATE hospital_service_catalog SET config_json=json_set(config_json,'$.chargeDefinition',json('{}')) WHERE service_id='synthetic-unpriced-wbc'").run()
+    s.runtime.database.driver.prepare("UPDATE hospital_service_catalog SET config_json=json_remove(config_json,'$.billingUnit') WHERE service_id='synthetic-inpatient-wbc'").run()
+    const response = await s.request(s.doctor, '/api/his/v1/inpatient/investigation-catalog')
+    expect(response.status).toBe(200)
+    const catalog = await response.json()
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-complete-wbc', available: true }))
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-inpatient-wbc', available: false }))
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-unpriced-wbc', available: false, unavailableReason: 'unpriced' }))
+    const issue = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } })
+    expect(issue.status).toBe(409)
+    expect((await issue.json()).error.code).toBe('INPATIENT_INVESTIGATION_UNAVAILABLE')
+  })
+
   it.each(['laboratory','imaging'] as const)('归档%s报告保持旧门诊入口责任403，正常住院确认原receipt仍无写重放',async kind=>{
     const s=await setup(),opDoctor=await signIn(s.runtime,'doctor@demo.clinmesh.local')
     const selection=kind==='laboratory'?{kind,catalogItemId:'synthetic-inpatient-wbc',indicationCode:'clinical-assessment'}:{kind,serviceId:'imaging-chest-radiograph',indication:'合成归档权限回归'}
