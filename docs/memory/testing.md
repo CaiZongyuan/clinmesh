@@ -66,7 +66,7 @@
 
 - `tsconfig.browser.json` 的 E2E 入口会递归导入 Server 实现，但不会自动加载 Server 项目中的 ambient module 声明；Server 新增无类型依赖时，同时将对应声明文件纳入浏览器类型检查入口，不能只凭包级 `tsc` 通过判断完整类型检查通过。修改 `apps/web/e2e/` 后运行 `pnpm exec tsc --noEmit -p tsconfig.browser.json`；Playwright 会转译 TypeScript，但不做类型检查，E2E 通过不能替代这项检查。
 
-- 医生工作台 e2e 的布局断点全部是容器查询：Playwright 默认视口 1280px 扣除应用侧栏后建议栈列不满足 1080px 容器宽度而隐藏，进入 `/consultation` 前先 `page.setViewportSize` 设定目标宽度，不以默认视口断言三栏元素。登录提交是异步请求：点击"登录"后先等待"候诊队列"可见再 `goto` 其他路由，否则跳转会中断登录请求，应用回到登录页并让后续定位超时。 “开始首诊”同样须等按钮消失、病例进入首诊后再切页签；点击返回只表示动作已派发，焦点的 `active` 不等于页签的 `aria-selected=true`。问诊恢复场景通过[真实入口测试](../../apps/web/e2e/consultation-reply-recovery.spec.ts)等待这些可观察状态，保留回答复用和重放断言。
+- 医生工作台 e2e 的布局断点全部是容器查询：Playwright 默认视口 1280px 扣除应用侧栏后建议栈列不满足 1080px 容器宽度而隐藏，进入 `/consultation` 前先 `page.setViewportSize` 设定目标宽度，不以默认视口断言三栏元素。登录提交是异步请求：点击"登录"后先等待"候诊队列"可见再 `goto` 其他路由，否则跳转会中断登录请求，应用回到登录页并让后续定位超时。 “开始首诊”同样须等按钮消失、病例进入首诊后再切页签；点击返回只表示动作已派发，焦点的 `active` 不等于页签的 `aria-selected=true`。问诊恢复场景通过[真实入口测试](../../apps/web/e2e/consultation-reply-recovery.spec.ts)等待这些可观察状态，保留回答复用和重放断言。 共享表单的列表/详情导航也按实际内容容器判断：先等待列表或返回控件就绪，实际宽容器保留双栏断言，窄容器保留返回搜索框焦点；以宽视口、窄宿主组合验证两种宽度独立，回归见 `apps/dsh-web/src/client/diagnosis-prescription.browser.test.ts`。
 
 - 全仓测试因并发争用触发既有交互超时时，先用原断言及原超时串行复现；本机需要限制 Vitest worker 时可使用 `TURBO_ENV_MODE=loose VITEST_MAX_WORKERS=1 pnpm check`。Turbo 严格环境模式会过滤未声明的 `VITEST_MAX_WORKERS`，单独设置该变量不影响其子任务；可用 dry-run 的 envMode 确认实际传递，不通过扩大超时或跳过用例制造通过。
 
