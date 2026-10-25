@@ -4,7 +4,46 @@ import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from './inpatient-drg.fixture.ts'
 
-test('当前医嘱草稿隔离迟到评估，取消不签发，过期审阅需重算后签发', async ({ page, browserApp }) => {
+test('外部医嘱变化后页面自动标记评估过期，并锁定已经打开的确认', async ({ page, browserApp }) => {
+  const s = await createDrgBrowserPatient(page, browserApp, '合成主动过期患者')
+  const catalog = inpatientFullCatalogSchema.parse(await (await s.api.get('/api/his/v1/inpatient/clinical-catalog')).json())
+  const service = catalog.services[0]!
+  await page.goto(`${browserApp.origin}/inpatient`)
+  await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
+  await page.getByLabel('医嘱项目', { exact: true }).click()
+  await page.getByRole('option', { name: service.display, exact: true }).click()
+  await page.getByRole('button', { name: '推演当前医嘱', exact: true }).click()
+  const panel = page.getByRole('region', { name: 'DRG 与费用推演', exact: true })
+  const reviewButton = panel.getByRole('button', { name: '审阅推演并签发医嘱', exact: true })
+  await expect(reviewButton).toBeEnabled()
+  const externalOrder = async () => {
+    const clinical = inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json())
+    expect((await s.api.post(`${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'temporary',
+      selection: { kind: 'service', serviceId: service.id, serviceVersion: service.version, quantity: 1 } })).status()).toBe(200)
+  }
+  await externalOrder()
+  await expect(panel.getByRole('alert')).toContainText('评估已过期')
+  await expect(reviewButton).toBeDisabled()
+  // 自动轮询取得新结果后仍须人工重新计算，不能静默解锁旧审阅。
+  const cycle = page.waitForResponse(response => response.url().endsWith(`${s.path}/drg/simulation`))
+  await cycle
+  await expect(reviewButton).toBeDisabled()
+  await panel.getByRole('button', { name: '重新计算', exact: true }).click()
+  await reviewButton.click()
+  const dialog = page.getByRole('alertdialog', { name: '确认推演后的医嘱', exact: true })
+  await externalOrder()
+  await expect(dialog.getByRole('alert')).toContainText('评估已过期')
+  await expect(dialog.getByRole('button', { name: '确认签发医嘱', exact: true })).toBeDisabled()
+  expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(2)
+  await dialog.getByRole('button', { name: '取消', exact: true }).click()
+  await panel.getByRole('button', { name: '重新计算', exact: true }).click()
+  await reviewButton.click()
+  await dialog.getByRole('button', { name: '确认签发医嘱', exact: true }).click()
+  await expect(dialog).toBeHidden()
+  expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(3)
+})
+
+test('当前医嘱草稿隔离迟到评估，取消不签发，重新审阅后签发当前草稿', async ({ page, browserApp }) => {
   const s = await createDrgBrowserPatient(page, browserApp)
   const catalog = inpatientFullCatalogSchema.parse(await (await s.api.get('/api/his/v1/inpatient/clinical-catalog')).json())
   const medication = catalog.medications[0]!, service = catalog.services[0]!
@@ -28,6 +67,7 @@ test('当前医嘱草稿隔离迟到评估，取消不签发，过期审阅需�
   await expect.poll(() => inputs.length).toBe(1)
   await page.getByLabel('医嘱项目', { exact: true }).click()
   await page.getByRole('option', { name: service.display, exact: true }).click()
+  await expect(page.getByRole('listbox')).toBeHidden()
   const simulation = page.getByRole('region', { name: 'DRG 与费用推演', exact: true })
   await expect(simulation.getByRole('cell', { name: service.display, exact: true })).toBeVisible()
   release()
@@ -41,18 +81,9 @@ test('当前医嘱草稿隔离迟到评估，取消不签发，过期审阅需�
   await dialog.getByRole('button', { name: '取消', exact: true }).click()
   expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(0)
   await simulation.getByRole('button', { name: '审阅推演并签发医嘱', exact: true }).click()
-  const clinical = inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json())
-  expect((await s.api.post(`${s.path}/orders/issue`, { encounterVersion: clinical.encounterVersion, duration: 'temporary',
-    selection: { kind: 'service', serviceId: service.id, serviceVersion: service.version, quantity: 1 } })).status()).toBe(200)
-  await dialog.getByRole('button', { name: '确认签发医嘱', exact: true }).click()
-  await expect(dialog.getByRole('alert')).toContainText('请刷新依据并重新审阅')
-  expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(1)
-  await dialog.getByRole('button', { name: '取消', exact: true }).click()
-  await simulation.getByRole('button', { name: '重新计算', exact: true }).click()
-  await simulation.getByRole('button', { name: '审阅推演并签发医嘱', exact: true }).click()
   await dialog.getByRole('button', { name: '确认签发医嘱', exact: true }).click()
   await expect(dialog).toBeHidden()
-  expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(2)
+  expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(1)
 })
 
 test('实际手术显式引用治疗预留并替换，正式费用与预留不重复计入', async ({ page, browserApp }) => {

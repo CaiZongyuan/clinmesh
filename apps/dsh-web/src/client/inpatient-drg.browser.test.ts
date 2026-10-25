@@ -1,11 +1,42 @@
 import { inpatientMaterialReservationListSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
+import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from '../../../web/e2e/inpatient-drg.fixture.ts'
 import { buildInpatientDrgFixture } from './inpatient-drg.browser.artifact.ts'
 
 for (const version of ['18', '19']) test.describe(`inpatient DRG React ${version}`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientDrgFixture>>
   test.beforeAll(async () => { test.setTimeout(120_000); artifact = await buildInpatientDrgFixture(version) })
+  test('医嘱推演确认在 ShadowRoot 中保持焦点，取消不写入，确认仅签发一次', async ({ page, browserApp }) => {
+    test.setTimeout(60_000)
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    const s = await createDrgBrowserPatient(page, browserApp, '合成医嘱审阅Surface患者')
+    const catalog = inpatientFullCatalogSchema.parse(await (await s.api.get('/api/his/v1/inpatient/clinical-catalog')).json())
+    const service = catalog.services[0]!
+    await page.route(`${browserApp.origin}/drg-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+    await page.goto(`${browserApp.origin}/drg-contract`)
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.setContent(`<!doctype html><html data-admission-id="${s.admissionId}" data-view="clinical"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    await page.getByLabel('医嘱项目', { exact: true }).click()
+    await page.getByRole('option', { name: service.display, exact: true }).click()
+    await page.getByRole('button', { name: '推演当前医嘱', exact: true }).click()
+    await page.getByRole('button', { name: '审阅推演并签发医嘱', exact: true }).click()
+    const dialog = page.getByRole('alertdialog', { name: '确认推演后的医嘱', exact: true })
+    await expect.poll(() => dialog.evaluate(element => { const root = element.getRootNode(); return root instanceof ShadowRoot && element.contains(root.activeElement) })).toBe(true)
+    const bounds = await dialog.evaluate(element => ({ left: element.getBoundingClientRect().left, right: element.getBoundingClientRect().right, width: element.clientWidth, scroll: element.scrollWidth }))
+    expect(bounds.left).toBeGreaterThanOrEqual(0); expect(bounds.right).toBeLessThanOrEqual(390); expect(bounds.scroll).toBeLessThanOrEqual(bounds.width + 1)
+    await dialog.getByRole('button', { name: '取消', exact: true }).click()
+    expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(0)
+    let posts = 0
+    page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith(`${s.path}/orders/issue`)) posts++ })
+    await page.getByRole('button', { name: '审阅推演并签发医嘱', exact: true }).click()
+    await dialog.getByRole('button', { name: '确认签发医嘱', exact: true }).click()
+    await expect(dialog).toBeHidden()
+    expect(inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json()).orders).toHaveLength(1)
+    expect(posts).toBe(1)
+    expect(errors).toEqual([])
+  })
   test('耗材预留和医保办核定审阅在 ShadowRoot 内保持焦点，窄屏可取消和提交', async ({ page, browserApp }) => {
     test.setTimeout(60_000)
     const errors: string[] = []

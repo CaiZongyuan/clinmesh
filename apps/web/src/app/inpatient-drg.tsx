@@ -12,7 +12,7 @@ import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from '@clinmesh/
 import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ApiClientError, apiGet, apiMutation } from './api-client.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
@@ -21,6 +21,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 
 export type DrgReview = { fingerprint: string; estimatedTotalFen: number; drgCode: string | null }
+export type DrgEvaluationState = { fingerprint: string | null; stale: boolean; reviewable: boolean }
 type Props = { admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }
 
 export function DrgError({ error, locale }: { error: Error | null; locale: WorkspaceLocale }): React.JSX.Element | null {
@@ -48,18 +49,46 @@ export function DrgGrouping({ result, locale, title }: { result: z.infer<typeof 
   </section>
 }
 
-export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, reservations = true }: Props & {
-  draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean
+export function InpatientDrgPanel({ admission, session, locale, write, draft, onReview, reservations = true, active = true, onEvaluationChange }: Props & {
+  draft?: InpatientDrgSimulationInput; onReview?: (review: DrgReview) => void; reservations?: boolean; active?: boolean; onEvaluationChange?: (state: DrgEvaluationState) => void
 }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id]
   const path = `/api/his/v1/inpatient/admissions/${admission.id}/drg`
   const archived = admission.recordStatus === 'archived'
+  const [visible, setVisible] = useState(() => document.visibilityState !== 'hidden')
+  useEffect(() => {
+    const update = () => setVisible(document.visibilityState !== 'hidden')
+    document.addEventListener('visibilitychange', update)
+    return () => document.removeEventListener('visibilitychange', update)
+  }, [])
+  const enabled = active && visible && !archived && admission.status !== 'registered'
+  const evaluationKey = JSON.stringify([...scope, draft ?? null])
+  const currentKey = useRef(evaluationKey)
+  currentKey.current = evaluationKey
+  // Only the accepted fingerprint and its invalidation latch are view state; Query owns the result.
+  const [basis, setBasis] = useState<{ key: string; fingerprint: string; stale: boolean }>()
   const grouping = useQuery({ queryKey: [...scope, 'drg-pregroup'], enabled: archived, retry: false,
     queryFn: ({ signal }) => apiGet(`${path}/pregroup`, inpatientDrgPregroupResultSchema, signal) })
-  const simulation = useQuery({ queryKey: [...scope, 'drg-simulation', draft ?? null], enabled: !archived && admission.status !== 'registered', retry: false,
+  const simulation = useQuery({ queryKey: [...scope, 'drg-simulation', draft ?? null], enabled, retry: false, refetchInterval: enabled ? 3_000 : false, refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiMutation(`${path}/simulation`, inpatientDrgSimulationSchema, { input: draft ?? {} }, { signal }) })
   const data = simulation.data
+  const fingerprint = data?.fingerprint ?? null
+  const accepted = basis?.key === evaluationKey ? basis : undefined
+  const stale = accepted !== undefined && (accepted.stale || fingerprint !== accepted.fingerprint)
+  const reviewable = enabled && accepted !== undefined && !stale && !simulation.isFetching && simulation.error === null && data?.draft.missing.length === 0
+  useEffect(() => {
+    if (fingerprint === null) return
+    setBasis(previous => previous?.key !== evaluationKey ? { key: evaluationKey, fingerprint, stale: false }
+      : previous.fingerprint !== fingerprint && !previous.stale ? { ...previous, stale: true } : previous)
+  }, [evaluationKey, fingerprint])
+  useEffect(() => { onEvaluationChange?.({ fingerprint, stale, reviewable }) }, [fingerprint, stale, reviewable, onEvaluationChange])
+  const recalculate = async () => {
+    if (archived) { await grouping.refetch(); return }
+    const result = await simulation.refetch()
+    if (currentKey.current === evaluationKey && result.error === null && result.data)
+      setBasis({ key: evaluationKey, fingerprint: result.data.fingerprint, stale: false })
+  }
   const groups = data ? [
     { title: t('已发生收费', 'Posted charges'), items: data.formal.items },
     { title: t('已开立待执行', 'Ordered, not yet charged'), items: data.committed.items },
@@ -67,11 +96,12 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     { title: t('当前草稿', 'Current draft'), items: data.draft.items },
   ] : []
   return <section aria-label={t('DRG 与费用推演', 'DRG and charge simulation')} className="flex flex-col gap-4">
-    <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{t('DRG 与费用推演', 'DRG and charge simulation')}</h3><Button variant="outline" disabled={simulation.isFetching || grouping.isFetching || admission.status === 'registered'} onClick={() => { if (archived) void grouping.refetch(); else void simulation.refetch() }}>{archived ? t('刷新冻结结果', 'Refresh frozen result') : t('重新计算', 'Recalculate')}</Button></div>
+    <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{t('DRG 与费用推演', 'DRG and charge simulation')}</h3><Button variant="outline" disabled={simulation.isFetching || grouping.isFetching || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新冻结结果', 'Refresh frozen result') : t('重新计算', 'Recalculate')}</Button></div>
     <p className="text-sm text-muted-foreground">{t('正式分组读取已确认诊疗。计划与草稿仅供比较，不改变临床事实；医院支付参考与患者医保待遇分别计算。', 'Formal grouping reads confirmed care. Plans and drafts are comparisons only. Hospital payment references and patient benefits are calculated separately.')}</p>
     {simulation.isPending && simulation.fetchStatus !== 'idle' ? <p role="status">{t('正在计算分组与费用', 'Calculating grouping and charges')}</p> : null}
     {simulation.isFetching && data ? <p role="status">{t('正在更新，旧结果暂不可用于审阅。', 'Updating; the previous result cannot be reviewed.')}</p> : null}
     <DrgError error={simulation.error ?? grouping.error} locale={locale} />
+    {stale ? <DrgStaleNotice locale={locale} /> : null}
     {archived && grouping.data ? <><DrgGrouping result={grouping.data.result} locale={locale} title={t('归档冻结分组', 'Frozen archive grouping')} /><p className="text-sm text-muted-foreground">{t('归档结果保持冻结，后续规则及财务更正不改写此病组。', 'This result is frozen. Later rules or financial corrections do not rewrite the group.')}</p></> : null}
     {data && !simulation.error ? <>
       <div className="grid gap-4 md:grid-cols-2"><DrgGrouping result={data.grouping.formal} locale={locale} title={t('正式事实分组', 'Confirmed facts')} />{data.grouping.projected ? <DrgGrouping result={data.grouping.projected} locale={locale} title={t('若计划手术实施', 'If planned surgery is performed')} /> : null}</div>
@@ -84,10 +114,14 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
       <Table><TableHeader><TableRow><TableHead>{t('归集', 'Category')}</TableHead><TableHead>{t('项目', 'Item')}</TableHead><TableHead>{t('数量', 'Quantity')}</TableHead><TableHead>{t('金额', 'Amount')}</TableHead></TableRow></TableHeader><TableBody>{groups.flatMap(group => group.items.map((item, index) => <TableRow key={`${group.title}-${item.id}-${index}`}><TableCell>{group.title}</TableCell><TableCell>{item.display}</TableCell><TableCell>{item.quantity}</TableCell><TableCell>{item.estimatedFen === null ? t('缺价', 'Price missing') : formatFen(item.estimatedFen, locale)}</TableCell></TableRow>))}</TableBody></Table>
       {groups.every(group => group.items.length === 0) ? <p>{t('尚无费用、计划或草稿项目。', 'No charges, plans or draft items yet.')}</p> : null}
       <p className="text-xs text-muted-foreground">{t('规则版本：', 'Rules version: ')}{data.rulesVersion}</p>
-      {onReview && draft ? <Button disabled={write.blocked || admission.status !== 'admitted' || simulation.isFetching || data.draft.missing.length > 0} onClick={() => onReview({ fingerprint: data.fingerprint, estimatedTotalFen: data.coverage.estimatedTotalFen, drgCode: data.grouping.formal.drgCode ?? null })}>{t('审阅推演并签发医嘱', 'Review simulation and issue order')}</Button> : null}
+      {onReview && draft ? <Button disabled={write.blocked || admission.status !== 'admitted' || !reviewable} onClick={() => onReview({ fingerprint: data.fingerprint, estimatedTotalFen: data.coverage.estimatedTotalFen, drgCode: data.grouping.formal.drgCode ?? null })}>{t('审阅推演并签发医嘱', 'Review simulation and issue order')}</Button> : null}
     </> : null}
     {reservations && admission.status === 'admitted' ? <MaterialReservations admission={admission} session={session} locale={locale} write={write} /> : null}
   </section>
+}
+
+export function DrgStaleNotice({ locale }: { locale: WorkspaceLocale }): React.JSX.Element {
+  return <Alert variant="destructive"><AlertDescription>{locale === 'zh-CN' ? '评估已过期。诊疗、费用或目录已变化；请重新计算并审阅。' : 'This assessment is stale. Care, charges or the catalog changed; recalculate and review.'}</AlertDescription></Alert>
 }
 
 function MaterialReservations({ admission, session, locale, write }: Props): React.JSX.Element {

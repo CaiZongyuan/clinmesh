@@ -5,6 +5,7 @@ import { PortalContainerProvider } from '@clinmesh/ui/components/portal-context'
 import { inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { InpatientDrgPanel } from '../../../web/src/app/inpatient-drg.tsx'
+import { InpatientClinical } from '../../../web/src/app/inpatient-clinical.tsx'
 import { InpatientDrgPayer } from '../../../web/src/app/inpatient-drg-payer.tsx'
 import { InpatientWriteRecovery } from '../../../web/src/app/inpatient-write-recovery.tsx'
 import { useInpatientWriteIntent } from '../../../web/src/app/inpatient-write-intent.ts'
@@ -17,7 +18,9 @@ function Fixture({ session }: { session: SessionContext }) {
   const write = useInpatientWriteIntent(session, () => client.invalidateQueries({ queryKey: ['inpatient'] }))
   return <><InpatientWriteRecovery write={write} locale="zh-CN" />{detail.data ? session.actor.roleCode === 'medical-insurance'
     ? <InpatientDrgPayer admission={detail.data.admission} session={session} locale="zh-CN" write={write} />
-    : <InpatientDrgPanel admission={detail.data.admission} session={session} locale="zh-CN" write={write} /> : null}</>
+    : document.documentElement.dataset.view === 'clinical'
+      ? <InpatientClinical admission={detail.data.admission} session={session} locale="zh-CN" write={write} />
+      : <InpatientDrgPanel admission={detail.data.admission} session={session} locale="zh-CN" write={write} /> : null}</>
 }
 const host = document.createElement('div')
 document.body.append(host)
