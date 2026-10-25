@@ -179,9 +179,10 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     // 未记费承诺：开具医嘱后推演出现 committed 条目且指纹过期；服务端重验不产生重复评估事实。
     const fresh = (await (await s.request(s.doctor, s.path)).json()).admission
     expect((await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: fresh.versionId, duration: 'temporary',
-      selection: { kind: 'medication', catalogItemId: medication.id, catalogVersion: medication.version, doseText: '5 mg', frequencyCode: 'QD', doseQuantity: 1 } })).status).toBe(200)
+      selection: { kind: 'service', serviceId: service.id, serviceVersion: service.version, quantity: 3 } })).status).toBe(200)
     const afterIssue = await (await s.request(s.doctor, `${s.path}/drg/simulation`, draft)).json()
-    expect(afterIssue.committed.items).toContainEqual(expect.objectContaining({ kind: 'medication', id: expect.any(String) }))
+    expect(afterIssue.committed.items).toContainEqual(expect.objectContaining({ kind: 'service', id: expect.any(String),
+      quantity: 3, estimatedFen: service.priceFen * 3 }))
     expect(afterIssue.fingerprint).not.toBe(simulated.fingerprint)
     for (const cookie of [s.nurse, s.cashier, s.registrar]) expect((await s.request(cookie, `${s.path}/drg/simulation`, {})).status).toBe(403)
     const coder = await s.login('medical-records')

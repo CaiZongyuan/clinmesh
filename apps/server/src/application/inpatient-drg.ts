@@ -184,11 +184,12 @@ export class InpatientDrg {
       FROM inpatient_order o WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? AND o.state NOT IN ('stopped','completed')
       ORDER BY o.order_id`).all(context.workspaceId, context.epoch, admissionId))
     const committed = [
-      // 已有排程按待执行次数计；已签署尚未物化执行单的按「待排程的下一剂量」计 1 次，已计费的发药/执行不计入。
-      ...pendingOrders.map(row => ({
-        kind: row.kind as 'medication' | 'service', id: row.order_id, display: row.display,
-        quantity: row.state === 'signed' ? 1 : row.pending_executions,
-        estimatedFen: (row.state === 'signed' ? 1 : row.pending_executions) * row.dose_quantity * row.price_fen }))
+      // 待执行次数乘单次计量；已签署尚未排程的计下一次，已记费发药/执行不计入。
+      ...pendingOrders.map(row => {
+        const quantity = (row.state === 'signed' ? 1 : row.pending_executions) * row.dose_quantity
+        return { kind: row.kind as 'medication' | 'service', id: row.order_id, display: row.display,
+          quantity, estimatedFen: quantity * row.price_fen }
+      })
         .filter(item => item.quantity > 0),
       ...requests.map(request => ({
         kind: 'surgery' as const, id: request.id, display: request.plannedProcedure.coding.display, quantity: 1,
