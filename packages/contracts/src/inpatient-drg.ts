@@ -13,7 +13,7 @@ const text = z.string().min(1).max(1_000)
  */
 export const inpatientDrgPregroupResultSchema = z.object({
   admissionId: id,
-  recordRevision: z.number().int().positive(),
+  recordRevision: z.number().int().nonnegative(),
   rulesId: text,
   rulesVersion: text,
   inputCoding: z.literal('nhc-icd10-clinical@2022.r4'),

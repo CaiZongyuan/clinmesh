@@ -19,6 +19,11 @@ export const inpatientDrgSimulationInputSchema = z.object({
 
 export type InpatientDrgSimulationInput = z.infer<typeof inpatientDrgSimulationInputSchema>
 
+export const inpatientDrgPaymentReferenceSchema = z.object({
+  parameterSetId: text, parameterVersion: text, drgCode: text,
+  referenceFen: z.number().int().safe().nonnegative(), note: text,
+}).strict()
+
 /** 推演条目：正式收费带净额，未记费承诺/预留/草稿为目录推算；estimatedFen=null 表示缺价，不以零值填充。
  *  kind 覆盖共享账务全部收费类别（含床位/检验/检查），formal 条目按费用来源如实透传。 */
 export const inpatientDrgSimulationItemSchema = z.object({
@@ -58,6 +63,7 @@ export const inpatientDrgSimulationSchema = z.object({
     coveredRatioBp: z.number().int().min(0).max(10_000).nullable(), note: z.string().max(500) }).strict(),
   /** formal=正式事实分组；projected=「若计划手术实施」的推演分组，不构成临床事实或正式病组。 */
   grouping: z.object({ formal: drgGroupingResultSchema, projected: drgGroupingResultSchema.nullable(), note: text }).strict(),
+  paymentReference: inpatientDrgPaymentReferenceSchema.nullable(),
   incompleteness: z.object({ costMissing: z.boolean(), paymentReferenceMissing: z.boolean() }).strict(),
 }).strict()
 

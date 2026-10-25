@@ -30,9 +30,24 @@ export const inpatientDrgPayerReviewSchema = z.object({
 
 export type InpatientDrgPayerReview = z.infer<typeof inpatientDrgPayerReviewSchema>
 
+export const inpatientDrgPayerReviewPreviewSchema = z.object({
+  admissionId: id,
+  encounterVersion: z.string().regex(/^\d+$/),
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  archiveSourcesHash: z.string().regex(/^[a-f0-9]{64}$/),
+  frozenResultHash: z.string().regex(/^[a-f0-9]{64}$/),
+  drgCode: text, parameterSetId: text, parameterVersion: text,
+  simulatedPaymentFen: z.number().int().safe().nonnegative(),
+  hospitalChargesFen: z.number().int().safe().nonnegative(),
+  differenceFen: z.number().int().safe(), note: text,
+}).strict()
+
+export type InpatientDrgPayerReviewPreview = z.infer<typeof inpatientDrgPayerReviewPreviewSchema>
+
 export const inpatientDrgPayerReviewCreateInputSchema = z.object({
   admissionId: id,
   encounterVersion: z.string().regex(/^\d+$/),
+  expectedFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   reason: z.string().trim().min(1).max(2000),
 }).strict()
 

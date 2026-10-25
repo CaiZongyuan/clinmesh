@@ -375,10 +375,10 @@ clinmesh command receipt get --operation-id inpatient.financial.insurance.confir
 
 ## DRG 预分组、处方推演与医保办核定
 
-1. 未归档住院用 `drg-pregroup` 按首页快照实时预分组；归档病例直读冻结结果，不重算。响应附双轨编码口径与解释路径：病案首页保留临床版 2022 编码，分组器按医保版码域映射，两个口径在结果中分别可追溯。
-2. `drg-simulate` 把草稿医嘱对照正式收费、在途承诺、材料预留与草稿推演金额，附依赖指纹；目录或版本变化使指纹失效，须重新推演。`estimatedFen=null` 表示目录缺价，不以零值填充。推演不产生费用、预留或核定事实。
+1. 未归档住院用 `drg-pregroup` 读取当前正式诊断与实际操作；未提交首页时 `recordRevision=0`，归档病例直读冻结结果，不重算。响应附双轨编码口径与解释路径：病案首页保留临床版 2022 编码，分组器按医保版码域映射，两个口径在结果中分别可追溯。
+2. `drg-simulate` 把草稿医嘱对照正式收费、在途承诺、材料预留与草稿推演金额，附依赖指纹及独立的合成医院支付参考。`estimatedFen=null` 表示目录缺价，不以零值填充。推演不产生费用、预留或核定事实。用与待开具单项相同的草稿推演并审阅后，`issue-order` 携带 `expectedDrgFingerprint`；服务端按实际选择重算，`INPATIENT_DRG_EVALUATION_STALE` 要求重新推演与审阅。病例、目录或事实变化均不可继续使用旧指纹，响应丢失先查原回执，沿用原输入和幂等键。
 3. 住院医生为计划手术预留材料：`encounterVersion` 做预期版本校验，绑定目录 ID、版本与原因；预留不改变临床事实与库存。仅预留态可释放并须附原因。
-4. 归档后医保办岗位用 `drg-payer-review` 按冻结分组与固定版本合成参数模拟核定，金额由服务端确定性产生，不落真实支付；未归档住院拒绝核定。`drg-payer-reviews` 回查历次核定及依据。
+4. 归档后先用 `drg-payer-review-preview` 读取冻结分组、固定版本合成核定金额及差异，医保办审阅后用 `drg-payer-review` 携带预览的 `encounterVersion` 和 `expectedFingerprint` 核定。金额由服务端确定性产生，不落真实支付；未归档、缺参数或过期预览明确拒绝，`INPATIENT_DRG_PAYER_PREVIEW_STALE` 后须重新读取与审阅。`drg-payer-reviews` 回查历次核定及依据。
 
 ```bash
 clinmesh inpatient drg-pregroup --admission-id <admission-id>
@@ -386,6 +386,7 @@ clinmesh inpatient drg-simulate --input @simulation.json
 clinmesh inpatient drg-reservations --admission-id <admission-id>
 clinmesh inpatient drg-reserve-material --input @reservation.json --idempotency-key <key>
 clinmesh inpatient drg-release-reservation --input @release.json --idempotency-key <key>
+clinmesh inpatient drg-payer-review-preview --admission-id <admission-id>
 clinmesh inpatient drg-payer-review --input @payer-review.json --idempotency-key <key>
 clinmesh inpatient drg-payer-reviews --admission-id <admission-id>
 clinmesh command receipt get --operation-id inpatient.drg.reservation.create --idempotency-key <key>
@@ -433,6 +434,7 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 {
   "admissionId": "synthetic-admission",
   "encounterVersion": "2",
+  "expectedFingerprint": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "reason": "合成医保办模拟核定"
 }
 ```
