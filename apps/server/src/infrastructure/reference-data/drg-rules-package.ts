@@ -7,7 +7,7 @@ import { buildDrgRules } from './drg-rules-builder.ts'
 import { extractOfficialMembers } from './drg-opendrg-extract.ts'
 
 /**
- * DRG 规则数据包：官方分组器提取产物 + 官方层级投影 + OpenDRG 三表的物化形态。
+ * DRG 规则数据包：公开演示程序提取产物 + CHS 层级投影 + OpenDRG 三表的物化形态。
  * prepare 在运维期执行（读取 OpenDRG JS 做文本解析，不执行 JS 本体）；
  * load 在服务启动期执行（只读 jsonl/json，校验 sha256 与行数）。
  */
@@ -31,6 +31,32 @@ const manifestSchema = z.object({
     sha256: z.string().regex(/^[a-f0-9]{64}$/),
     rows: z.number().int().nonnegative(),
   }).strict()).min(1),
+}).strict()
+
+const memberRowSchema = z.object({ adrgCode: z.string().min(1), chapter: z.enum(['medical', 'surgical']),
+  code: z.string().min(1) }).strict()
+
+const verifiedCheckSchema = z.object({
+  status: z.literal('verified'),
+  evidence: z.array(z.string().trim().min(1)).min(1),
+}).strict()
+
+/** 受信部署配置中的人工核验记录；完整性检查不能生成或代替这些结论。 */
+export const drgRulesReviewSchema = z.object({
+  schemaVersion: z.literal('clinmesh.drg-rules-review.v1'),
+  scope: z.literal('hospital-simulation'),
+  releaseId: z.string().min(1),
+  sourceVersion: z.string().min(1),
+  manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  referenceReleaseId: z.string().min(1),
+  reviewedBy: z.string().trim().min(1),
+  reviewedAt: z.iso.datetime(),
+  checks: z.object({
+    usageTerms: verifiedCheckSchema,
+    codingCompatibility: verifiedCheckSchema,
+    sourceApplicability: verifiedCheckSchema,
+    algorithmValidation: verifiedCheckSchema,
+  }).strict(),
 }).strict()
 
 export interface DrgRulesPackageFiles extends Record<string, string> {}
@@ -90,8 +116,7 @@ async function containedPath(directory: string, path: string): Promise<string> {
   return target
 }
 
-export async function loadDrgRules(directory: string): Promise<DrgRules> {
-  const manifest = manifestSchema.parse(JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')))
+async function loadManifestRules(directory: string, manifest: z.infer<typeof manifestSchema>): Promise<DrgRules> {
   const contents: Record<string, string> = {}
   for (const file of manifest.files) {
     const content = await readFile(await containedPath(directory, file.path), 'utf8')
@@ -109,12 +134,34 @@ export async function loadDrgRules(directory: string): Promise<DrgRules> {
   const medical: Record<string, string[]> = {}
   const surgical: Record<string, string[]> = {}
   for (const line of (contents['members.jsonl'] ?? '').split('\n').filter(line => line.trim() !== '')) {
-    const row = z.object({ adrgCode: z.string().min(1), chapter: z.enum(['medical', 'surgical']),
-      code: z.string().min(1) }).strict().parse(JSON.parse(line))
+    const row = memberRowSchema.parse(JSON.parse(line))
     const target = row.chapter === 'medical' ? medical : surgical
-    target[row.adrgCode] = [...(target[row.adrgCode] ?? []), row.code]
+    const codes = target[row.adrgCode] ?? (target[row.adrgCode] = [])
+    codes.push(row.code)
   }
   return drgRulesSchema.parse(buildDrgRules({ groups, officialMembers: { medical, surgical },
     complicationTables: { cc: rawTables.CC, mcc: rawTables.MCC, cce: rawTables.CCE },
     rulesId: manifest.releaseId, version: manifest.sourceVersion }))
+}
+
+/** 仅验证物化数据完整性，供离线制包与受控测试使用；不表示来源已获运行批准。 */
+export async function loadDrgRules(directory: string): Promise<DrgRules> {
+  const manifest = manifestSchema.parse(JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')))
+  return loadManifestRules(directory, manifest)
+}
+
+export async function loadReviewedDrgRules(input: {
+  directory: string
+  reviewPath: string
+  referenceReleaseId: string | undefined
+}): Promise<DrgRules> {
+  const review = drgRulesReviewSchema.parse(JSON.parse(await readFile(input.reviewPath, 'utf8')))
+  if (review.referenceReleaseId !== input.referenceReleaseId) throw new Error('DRG review reference release mismatch')
+  const manifestText = await readFile(join(input.directory, 'manifest.json'), 'utf8')
+  if (sha256(manifestText) !== review.manifestSha256) throw new Error('DRG review manifest checksum mismatch')
+  const manifest = manifestSchema.parse(JSON.parse(manifestText))
+  if (review.releaseId !== manifest.releaseId || review.sourceVersion !== manifest.sourceVersion) {
+    throw new Error('DRG review rules release mismatch')
+  }
+  return loadManifestRules(input.directory, manifest)
 }

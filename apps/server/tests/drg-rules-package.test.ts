@@ -6,7 +6,7 @@ import { afterAll, describe, expect, it } from 'vitest'
 import { drgRulesSchema } from '@clinmesh/contracts/drg'
 import { buildDrgRules } from '../src/infrastructure/reference-data/drg-rules-builder.ts'
 import { extractOfficialMembers } from '../src/infrastructure/reference-data/drg-opendrg-extract.ts'
-import { loadDrgRules, prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-package.ts'
+import { loadDrgRules, loadReviewedDrgRules, prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-package.ts'
 
 const groups = [
   { level: 'MDC', code: 'MDCE', name: '呼吸系统疾病', parentCode: null },
@@ -34,6 +34,34 @@ async function writePackage(): Promise<string> {
 }
 
 describe('DRG 规则数据包物化与加载', () => {
+  it('部署启用要求逐项证据，并绑定规则文件与临床目录版本', async () => {
+    const directory = await writePackage()
+    const reviewPath = join(directory, 'review.json')
+    const manifestSha256 = createHash('sha256').update(await readFile(join(directory, 'manifest.json'))).digest('hex')
+    const evidence = { status: 'verified', evidence: ['synthetic-review-evidence.md'] }
+    const review = {
+      schemaVersion: 'clinmesh.drg-rules-review.v1', scope: 'hospital-simulation',
+      releaseId: 'chs-drg-30-test', sourceVersion: 'DRG-3.0-test', manifestSha256,
+      referenceReleaseId: 'synthetic-clinical-release', reviewedBy: 'synthetic-reviewer', reviewedAt: '2026-10-25T00:00:00.000Z',
+      checks: { usageTerms: evidence, codingCompatibility: evidence, sourceApplicability: evidence, algorithmValidation: evidence },
+    }
+    const options = { directory, reviewPath, referenceReleaseId: 'synthetic-clinical-release' }
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow()
+    await writeFile(reviewPath, JSON.stringify(review), 'utf8')
+    expect(await loadReviewedDrgRules(options)).toEqual(await loadDrgRules(directory))
+    await expect(loadReviewedDrgRules({ ...options, referenceReleaseId: 'other-release' })).rejects.toThrow(/reference release/)
+    await expect(loadReviewedDrgRules({ ...options, referenceReleaseId: undefined })).rejects.toThrow(/reference release/)
+    await writeFile(reviewPath, JSON.stringify({ ...review, manifestSha256: '0'.repeat(64) }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow(/manifest checksum/)
+    await writeFile(reviewPath, JSON.stringify({ ...review, sourceVersion: 'other-rules-version' }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow(/rules release/)
+    await writeFile(reviewPath, JSON.stringify({ ...review, checks: { ...review.checks,
+      usageTerms: { status: 'verified', evidence: [] } } }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow()
+    await writeFile(reviewPath, JSON.stringify({ ...review, checks: { ...review.checks,
+      algorithmValidation: { ...evidence, status: 'pending' } } }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow()
+  })
   it('物化产物经 loadDrgRules 重建出与直接构建一致的规则集', async () => {
     const directory = await writePackage()
     const loaded = await loadDrgRules(directory)
