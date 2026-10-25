@@ -26,6 +26,8 @@ export function compileDrgProgram(jsText: string): DrgProgram {
   const kinds: Record<string, number> = {}
   const mdcs = new Set<string>()
   const adrgs = new Set<string>()
+  const diagnosisCodes = new Set<string>()
+  const operationCodes = new Set<string>()
 
   function walk(node: ts.Node): void {
     if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer !== undefined
@@ -98,6 +100,52 @@ export function compileDrgProgram(jsText: string): DrgProgram {
     return parsedLiteral(declaration)
   }
 
+  function tableValues(node: ts.Expression): string[] | null {
+    if (ts.isParenthesizedExpression(node)) return tableValues(node.expression)
+    if (ts.isArrayLiteralExpression(node)) return z.array(z.string()).parse(parsedLiteral(node))
+    if (!ts.isIdentifier(node)) return null
+    // 局部表名称在多个 IIFE 中重复，必须按词法作用域解析，不能查全局同名首项。
+    let parent: ts.Node | undefined = node.parent
+    while (parent !== undefined) {
+      if ((ts.isFunctionExpression(parent) || ts.isFunctionDeclaration(parent) || ts.isArrowFunction(parent) || ts.isMethodDeclaration(parent))
+        && parent.body !== undefined && ts.isBlock(parent.body)) {
+        for (const statement of parent.body.statements) {
+          if (!ts.isVariableStatement(statement)) continue
+          for (const declaration of statement.declarationList.declarations) {
+            if (ts.isIdentifier(declaration.name) && declaration.name.text === node.text) {
+              return declaration.initializer !== undefined && ts.isArrayLiteralExpression(declaration.initializer)
+                ? z.array(z.string()).parse(parsedLiteral(declaration.initializer)) : null
+            }
+          }
+        }
+      }
+      parent = parent.parent
+    }
+    const declaration = declarations.get(node.text)
+    return declaration !== undefined && ts.isArrayLiteralExpression(declaration)
+      ? z.array(z.string()).parse(parsedLiteral(declaration)) : null
+  }
+
+  function listDomain(node: ts.Expression): 'diagnoses' | 'operations' | null {
+    if (ts.isParenthesizedExpression(node) || ts.isElementAccessExpression(node)) return listDomain(node.expression)
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+      && node.expression.name.text === 'slice') return listDomain(node.expression.expression)
+    if (ts.isPropertyAccessExpression(node) && node.expression.getText(source) === 'x') {
+      if (node.name.text === 'zdList') return 'diagnoses'
+      if (node.name.text === 'ssList' || node.name.text === 'ssValidList') return 'operations'
+    }
+    return null
+  }
+
+  function recordVocabulary(memberTable: ts.Expression, selector: ts.Expression): void {
+    const domain = listDomain(selector)
+    if (domain === null) return
+    const values = tableValues(memberTable)
+    if (values === null) return
+    const target = domain === 'diagnoses' ? diagnosisCodes : operationCodes
+    for (const code of values) target.add(code)
+  }
+
   function log(node: ts.Expression): Expression {
     let message: string
     if (ts.isStringLiteral(node)) message = node.text
@@ -122,14 +170,17 @@ export function compileDrgProgram(jsText: string): DrgProgram {
     if (robot !== null) {
       const codes = declarations.get(robot[1]!)
       if (codes === undefined || node.arguments.length !== 1) return unsupported(node)
-      return { kind: 'intersects', list: { kind: 'slice', value: expression(node.arguments[0]!), index: 1 },
-        value: table(z.array(z.string()).parse(parsedLiteral(codes))) }
+      const values = z.array(z.string()).parse(parsedLiteral(codes))
+      values.forEach(code => operationCodes.add(code))
+      return { kind: 'intersects', list: { kind: 'slice', value: expression(node.arguments[0]!), index: 1 }, value: table(values) }
     }
     const obstetric = /^function \w+\(x\)\{return!!\(x\.length>0&&(\w+)\.includes\(x\[0\]\)\)\}$/.exec(text)
     if (obstetric !== null) {
       const codes = declarations.get(obstetric[1]!)
       if (codes === undefined || node.arguments.length !== 1) return unsupported(node)
-      return { kind: 'contains', list: table(z.array(z.string()).parse(parsedLiteral(codes))),
+      const values = z.array(z.string()).parse(parsedLiteral(codes))
+      values.forEach(code => diagnosisCodes.add(code))
+      return { kind: 'contains', list: table(values),
         value: { kind: 'at', value: expression(node.arguments[0]!), index: 0 } }
     }
     return null
@@ -141,6 +192,7 @@ export function compileDrgProgram(jsText: string): DrgProgram {
     if (ts.isIdentifier(target) && target.text === 'G' && node.arguments.length === 2) {
       const declaration = namedFunctions.get('G')
       if (declaration !== undefined && declaration.getText(source) !== 'function G(x,C){for(let S of x)if(C.includes(S))return!0;return!1}') return unsupported(declaration)
+      recordVocabulary(node.arguments[1]!,node.arguments[0]!)
       return { kind: 'intersects', list: expression(node.arguments[0]!), value: expression(node.arguments[1]!) }
     }
     const mappedHelper = helper(node)
@@ -158,6 +210,7 @@ export function compileDrgProgram(jsText: string): DrgProgram {
         return { kind: 'terminal', code }
       }
       if (target.name.text === 'includes' && node.arguments.length === 1) {
+        recordVocabulary(target.expression,node.arguments[0]!)
         return { kind: 'contains', list: expression(target.expression), value: expression(node.arguments[0]!) }
       }
       if (target.name.text === 'slice' && node.arguments.length === 1 && ts.isNumericLiteral(node.arguments[0]!)) {
@@ -167,6 +220,7 @@ export function compileDrgProgram(jsText: string): DrgProgram {
     if (ts.isFunctionExpression(target)) {
       const count = /^function\(x,C\)\{let S=0;for\(let T of x\)C\.includes\(T\)&&\(S\+=1\);return S\}$/.test(target.getText(source))
       if (count && node.arguments.length === 2) {
+        recordVocabulary(node.arguments[1]!,node.arguments[0]!)
         return { kind: 'match-count', list: expression(node.arguments[0]!), value: expression(node.arguments[1]!) }
       }
       if (node.arguments.length !== 1 || node.arguments[0]!.getText(source) !== 'x') return unsupported(node)
@@ -248,6 +302,7 @@ export function compileDrgProgram(jsText: string): DrgProgram {
       const values = first.declarationList.declarations[0]?.initializer
       if (values === undefined || !ts.isArrayLiteralExpression(values)) return unsupported(node)
       const regionTable = table(z.array(z.string()).parse(parsedLiteral(values)))
+      z.array(z.string()).parse(parsedLiteral(values)).filter(code => !code.endsWith('创伤')).forEach(code => diagnosisCodes.add(code))
       if (regionTable.kind !== 'table') return unsupported(node)
       let route: ts.Expression | undefined
       function find(current: ts.Node): void {
@@ -292,10 +347,14 @@ export function compileDrgProgram(jsText: string): DrgProgram {
     entry = `f${nextFunction++}`
     functions[entry] = statements(namedEntry.body.statements)
   }
+  const complications = { cc: stringTable.parse(parameter('CC')), mcc: stringTable.parse(parameter('MCC')), cce: stringTable.parse(parameter('CCE')) }
+  const validOperations = z.array(z.string()).parse(parameter('SS_VALID'))
+  for (const table of Object.values(complications)) Object.keys(table).forEach(code => diagnosisCodes.add(code))
+  validOperations.forEach(code => operationCodes.add(code))
   const program = {
     schemaVersion: 'clinmesh.drg-program.v1', entry, functions, terminals, tables,
-    complications: { cc: stringTable.parse(parameter('CC')), mcc: stringTable.parse(parameter('MCC')), cce: stringTable.parse(parameter('CCE')) },
-    validOperations: z.array(z.string()).parse(parameter('SS_VALID')),
+    complications, validOperations,
+    vocabulary: { diagnoses: [...diagnosisCodes].sort(), operations: [...operationCodes].sort() },
     coverage: { sourceSha256: createHash('sha256').update(jsText).digest('hex'), mdcCodes: [...mdcs].sort(),
       adrgCodes: [...adrgs].sort(), drgCodes: Object.keys(terminals).sort(), conditionKinds: kinds },
   }

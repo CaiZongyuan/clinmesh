@@ -58,6 +58,7 @@ const programShape = z.object({
   tables: z.record(z.string(), z.array(z.string())),
   complications: z.object({ cc: z.record(z.string(), z.string()), mcc: z.record(z.string(), z.string()), cce: z.record(z.string(), z.string()) }).strict(),
   validOperations: z.array(z.string()),
+  vocabulary: z.object({ diagnoses: z.array(z.string()), operations: z.array(z.string()) }).strict(),
   coverage: z.object({
     sourceSha256: z.string().regex(/^[a-f0-9]{64}$/),
     mdcCodes: z.array(z.string()),

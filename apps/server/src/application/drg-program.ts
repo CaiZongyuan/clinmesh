@@ -7,6 +7,18 @@ interface Return { value: Value }
 
 class MissingInput extends Error {}
 
+const programIndexes = new WeakMap<DrgProgram, { diagnoses: ReadonlySet<string>, operations: ReadonlySet<string>, validOperations: ReadonlySet<string> }>()
+function indexesFor(program: DrgProgram) {
+  let indexes = programIndexes.get(program)
+  if (indexes === undefined) {
+    // 装载后的固定版本程序不可原地修改；弱引用索引随该程序一起释放。
+    indexes = { diagnoses: new Set(program.vocabulary.diagnoses), operations: new Set(program.vocabulary.operations),
+      validOperations: new Set(program.validOperations) }
+    programIndexes.set(program,indexes)
+  }
+  return indexes
+}
+
 const primitive = (value: Value): string | number | boolean | null | undefined => Array.isArray(value) ? value.join(',') : value
 function equal(left: Value, right: Value): boolean {
   const a = primitive(left)
@@ -34,21 +46,31 @@ export function evaluateDrgProgram(program: DrgProgram, rawInput: DrgGroupingInp
   if (input.ageYears === 0 && input.ageDays === null) return failed('invalid-input', '婴儿分组缺少日龄 ageDays')
   const diagnoses = [main[0]!.code, ...input.diagnoses.filter(diagnosis => diagnosis.role === 'secondary').map(diagnosis => diagnosis.code)]
   const operations = [...primary.map(operation => operation.code), ...input.operations.filter(operation => !operation.primary).map(operation => operation.code)]
+  const indexes = indexesFor(program)
+  const unknownDiagnosis = diagnoses.find(code => !indexes.diagnoses.has(code))
+  const unknownOperation = operations.find(code => !indexes.operations.has(code))
+  if (unknownDiagnosis !== undefined) return failed('ungroupable', `coding-incompatible：当前来源规则未声明兼容诊断编码 ${unknownDiagnosis}`)
+  if (unknownOperation !== undefined) return failed('ungroupable', `coding-incompatible：当前来源规则未声明兼容操作编码 ${unknownOperation}`)
   const ownValue = (table: Record<string, string>, code: string): string | undefined => Object.hasOwn(table,code) ? table[code] : undefined
   const cce = ownValue(program.complications.cce,diagnoses[0]!) ?? ''
   const mcc: string[] = []
   const cc: string[] = []
+  const excluded: string[] = []
   // 与锁定程序的预处理一致：遍历完整有序诊断；终端谓词另行要求诊断数 > 1。
   for (const code of diagnoses) {
     const mccGroup = ownValue(program.complications.mcc,code)
     const ccGroup = ownValue(program.complications.cc,code)
     if (mccGroup !== undefined && (cce === '' || mccGroup !== cce)) mcc.push(code)
     else if (ccGroup !== undefined && (cce === '' || ccGroup !== cce)) cc.push(code)
+    else if (mccGroup !== undefined || ccGroup !== undefined) excluded.push(code)
   }
-  const valid = new Set(program.validOperations)
+  const summary = (codes: readonly string[]): string => `${codes.length} 项${codes.length === 0 ? '' : `（${codes.slice(0,3).join('、')}${codes.length > 3 ? '等' : ''}）`}`
+  steps.push({ stage: 'drg', matchedCode: main[0]!.code,
+    basis: `主诊断排除组：${cce || '无'}；MCC ${summary(mcc)}；CC ${summary(cc)}；按排除组忽略 ${summary(excluded)}`,
+    result: `MCC=${mcc.length}，CC=${cc.length}，排除=${excluded.length}` })
   const fields: Record<string, Value> = { gender: input.gender === 'male' ? '1' : '2', age: input.ageYears,
     ageDay: input.ageDays ?? 0, weight: input.birthWeightGrams,
-    zdList: diagnoses, ssList: operations, mccList: mcc, ccList: cc, ssValidList: operations.filter(code => valid.has(code)) }
+    zdList: diagnoses, ssList: operations, mccList: mcc, ccList: cc, ssValidList: operations.filter(code => indexes.validOperations.has(code)) }
   let budget = 100_000
   const list = (value: Value): string[] => {
     if (!Array.isArray(value)) throw new Error('DRG 程序需要列表值')

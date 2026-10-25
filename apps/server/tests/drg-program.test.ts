@@ -20,7 +20,7 @@ function group_record(x) {
 
 function source(body: string, methods: string, extra = '', parameters = 'const CC={}, MCC={}, CCE={}, SS_VALID=[];'): string {
   return `${parameters} ${extra} class Groups { ${methods} }
-    function group_record(x) { return function(x) { ${body} }(x) }`
+    function group_record(x) { return function(x) { if(!['D1','OTHER'].includes(x.zdList[0])) return ''; ${body} }(x) }`
 }
 
 describe('固定版本声明式 DRG 条件程序', () => {
@@ -71,10 +71,11 @@ describe('固定版本声明式 DRG 条件程序', () => {
       `const CC={'CC1':'A'}, MCC={'MCC1':'A','MCC2':'B'}, CCE={'D1':'A'}, SS_VALID=[];`))
     const withSecondary = (code: string) => ({ ...input, diagnoses: [...input.diagnoses, { code, role: 'secondary' as const }] })
     expect(evaluateDrgProgram(program, withSecondary('MCC1')).drgCode).toBe('BR15')
+    expect(evaluateDrgProgram(program, withSecondary('MCC1')).steps[0]?.basis).toContain('主诊断排除组：A；MCC 0 项；CC 0 项；按排除组忽略 1 项（MCC1）')
     expect(evaluateDrgProgram(program, withSecondary('CC1')).drgCode).toBe('BR15')
     expect(evaluateDrgProgram(program, withSecondary('MCC2')).drgCode).toBe('BR11')
     expect(evaluateDrgProgram(program, withSecondary('OTHER')).drgCode).toBe('BR15')
-    expect(evaluateDrgProgram(program, withSecondary('toString')).drgCode).toBe('BR15')
+    expect(evaluateDrgProgram(program, withSecondary('toString'))).toMatchObject({ status: 'ungroupable', reason: expect.stringContaining('coding-incompatible') })
   })
 
   it('星号组合编码保持源字典的整码匹配，不凭名称或拆分码推断', () => {
@@ -99,7 +100,8 @@ describe('固定版本声明式 DRG 条件程序', () => {
   it('机器人操作只检查副操作，产科严重条件独立于普通 CC/MCC 条件', () => {
     const robot = compileDrgProgram(source(`let C=new Groups;return C.EB10_group(x)?'EB10':C.EB19_group(x)?'EB19':''`,
       'EB10_group(x){return x.ssList.length>0&&t(x.ssList)} EB19_group(x){return true}',
-      'const M=["17.4100"];function t(x){if(x.length>1)for(let C of x.slice(1))if(M.includes(C))return!0;return!1}'))
+      'const M=["17.4100"];function t(x){if(x.length>1)for(let C of x.slice(1))if(M.includes(C))return!0;return!1}',
+      'const CC={}, MCC={}, CCE={}, SS_VALID=["OP1"];'))
     expect(evaluateDrgProgram(robot, { ...input, operations: [{ code: 'OP1', primary: true }, { code: '17.4100', primary: false }] }).drgCode).toBe('EB10')
     expect(evaluateDrgProgram(robot, { ...input, operations: [{ code: '17.4100', primary: true }] }).drgCode).toBe('EB19')
     const obstetric = compileDrgProgram(source(`let C=new Groups;return C.OB11_group(x)?'OB11':C.OB15_group(x)?'OB15':''`,
@@ -107,5 +109,13 @@ describe('固定版本声明式 DRG 条件程序', () => {
       'const D=["D1"];function O(x){return!!(x.length>0&&D.includes(x[0]))}'))
     expect(evaluateDrgProgram(obstetric, { ...input, gender: 'female' }).drgCode).toBe('OB11')
     expect(evaluateDrgProgram(obstetric, { ...input, gender: 'female', diagnoses: [{ code: 'OTHER', role: 'main' }] }).drgCode).toBe('OB15')
+  })
+
+  it('未兼容的次诊断和操作编码不能被忽略后返回成功', () => {
+    const program = compileDrgProgram(programSource)
+    expect(evaluateDrgProgram(program, { ...input, diagnoses: [...input.diagnoses, { code: 'UNKNOWN-DX', role: 'secondary' }] }))
+      .toMatchObject({ status: 'ungroupable', drgCode: null, reason: expect.stringContaining('coding-incompatible') })
+    expect(evaluateDrgProgram(program, { ...input, operations: [{ code: 'UNKNOWN-OP', primary: true }] }))
+      .toMatchObject({ status: 'ungroupable', drgCode: null, reason: expect.stringContaining('coding-incompatible') })
   })
 })
