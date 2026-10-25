@@ -73,6 +73,40 @@ async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRunti
 }
 
 describe('住院检查检验 HTTP 合同', () => {
+  it.each(['laboratory', 'imaging'] as const)('旧%s收费定义没有独立id时仍可开立，并按原冻结价格收费', async kind => {
+    const s = await setup()
+    const serviceId = kind === 'laboratory' ? 'synthetic-inpatient-wbc' : 'imaging-chest-radiograph'
+    const priceFen = kind === 'laboratory' ? 1300 : 8000
+    const billing = { display: '合成旧住院收费定义', currency: 'CNY', priceFen,
+      trigger: 'execution-completed', source: 'synthetic-legacy-billing', availableScopes: ['inpatient'] }
+    s.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_set(config_json,
+      '$.inpatientInvestigationBilling',json(?)) WHERE service_id=?`).run(JSON.stringify(billing), serviceId)
+    const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/investigation-catalog')).json()
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: serviceId, available: true, priceFen }))
+    if (kind === 'laboratory') {
+      const candidates = await (await s.request(s.doctor, `/api/his/v1/inpatient/catalog-search?kind=laboratory&source=hospital&query=${serviceId}`)).json()
+      expect(candidates.items).toEqual([expect.objectContaining({ status: 'available', catalogItemId: serviceId, missingFields: [] })])
+    }
+    const selection = kind === 'laboratory'
+      ? { kind, catalogItemId: serviceId, indicationCode: 'clinical-assessment' }
+      : { kind, serviceId, indication: '合成旧价目兼容回归' }
+    const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, {
+      encounterVersion: s.admission.versionId, catalogVersion: 1, selection })
+    expect(issued.status).toBe(200)
+    const facts = inpatientInvestigationsSchema.parse((await issued.json()).data)
+    const request = (kind === 'laboratory' ? facts.laboratoryRequests : facts.imagingRequests)[0]!
+    s.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET version=version+1,
+      config_json=json_set(config_json,'$.inpatientInvestigationBilling.priceFen',?) WHERE service_id=?`)
+      .run(priceFen + 1000, serviceId)
+    expect((await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: request.id,
+      expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion,
+      taskVersion: request.taskVersion })).status).toBe(200)
+    await dispatchAll(s.runtime)
+    const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const charges = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(charges.charges).toMatchObject([{ kind, sourceId: request.id, amountFen: priceFen }])
+  })
+
   it.each([{}, null])('有效住院收费定义不受损坏备用定义 %j 影响，并在开立时冻结价格', async chargeDefinition => {
     const s = await setup()
     const billing = { id: 'synthetic-inpatient-wbc-charge', version: 3, display: '住院合成白细胞计数', currency: 'CNY', priceFen: 1300,
@@ -98,11 +132,11 @@ describe('住院检查检验 HTTP 合同', () => {
     expect(charges.charges).toMatchObject([{ kind: 'laboratory', sourceId: request.id, amountFen: 1300 }])
   })
 
-  it.each(['missing-id', 'null', 'zero-price'])('住院收费定义 %s 非法时不回退到有效备用价目，也不能绕过目录开立', async invalid => {
+  it.each(['missing-source', 'null', 'zero-price'])('住院收费定义 %s 非法时不回退到有效备用价目，也不能绕过目录开立', async invalid => {
     const s = await setup()
     const billing = { display: '住院合成白细胞计数', currency: 'CNY', priceFen: invalid === 'zero-price' ? 0 : 1300,
-      trigger: 'execution-completed', source: 'synthetic-read-write-regression', availableScopes: ['inpatient'],
-      ...(invalid === 'missing-id' ? {} : { id: 'synthetic-inpatient-wbc-charge' }) }
+      id: 'synthetic-inpatient-wbc-charge', trigger: 'execution-completed', availableScopes: ['inpatient'],
+      ...(invalid === 'missing-source' ? {} : { source: 'synthetic-read-write-regression' }) }
     s.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_set(config_json,
       '$.inpatientInvestigationBilling',json(?)) WHERE service_id='synthetic-inpatient-wbc'`).run(JSON.stringify(invalid === 'null' ? null : billing))
     const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/investigation-catalog')).json()

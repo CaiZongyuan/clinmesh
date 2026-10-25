@@ -2,7 +2,7 @@ import { z } from 'zod'
 import type { InpatientCatalogMissingField } from '@clinmesh/contracts/inpatient-clinical'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
 
-export const inpatientInvestigationBillingSchema = z.object({ id: z.string().min(1), display: z.string().min(1), priceFen: z.number().int().positive().safe(), currency: z.literal('CNY'),
+export const inpatientInvestigationBillingSchema = z.object({ display: z.string().min(1), priceFen: z.number().int().positive().safe(), currency: z.literal('CNY'),
   trigger: z.literal('execution-completed'), source: z.string().min(1), availableScopes: z.array(z.string()).refine(value => value.includes('inpatient')) }).passthrough()
 
 export function inpatientLaboratoryConfiguration(raw: unknown) {
