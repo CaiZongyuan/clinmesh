@@ -63,6 +63,35 @@ function stayDemographics(birthDate: string, admittedAt: string | undefined, dep
 export class InpatientDrg {
   constructor(private readonly owner: InpatientService, private readonly rules: DrgRules | null) {}
 
+  #auditedRead<T>(context: ActorContext, operation: string, admissionId: string, query: () => T): T {
+    let result: T
+    try {
+      result = query()
+    } catch (error) {
+      try { this.owner.commands.auditRead(context, operation, { admissionId }, 'failed') }
+      catch { /* Preserve the original rejection when its audit cannot be stored. */ }
+      throw error
+    }
+    this.owner.commands.auditRead(context, operation, { admissionId }, 'success')
+    return result
+  }
+
+  readReservations(context: ActorContext, admissionId: string): InpatientMaterialReservationList {
+    return this.#auditedRead(context, 'inpatient.drg.reservations.read', admissionId, () => this.reservations(context, admissionId))
+  }
+
+  readPregroup(context: ActorContext, admissionId: string): InpatientDrgPregroupResult {
+    return this.#auditedRead(context, 'inpatient.drg.pregroup', admissionId, () => this.pregroup(context, admissionId))
+  }
+
+  readSimulation(context: ActorContext, admissionId: string, draft: InpatientDrgSimulationInput | undefined): InpatientDrgSimulation {
+    return this.#auditedRead(context, 'inpatient.drg.simulate', admissionId, () => this.simulate(context, admissionId, draft))
+  }
+
+  readPayerReviews(context: ActorContext, admissionId: string): InpatientDrgPayerReviewList {
+    return this.#auditedRead(context, 'inpatient.drg.payer-reviews.read', admissionId, () => this.payerReviews(context, admissionId))
+  }
+
   pregroup(context: ActorContext, admissionId: string): InpatientDrgPregroupResult {
     const record = this.owner.records.read(context, admissionId)
     // 归档病例回看冻结结果不依赖当前规则包；未归档病例保持规则未配置优先报错。
@@ -411,8 +440,8 @@ export class InpatientDrg {
 
   /** 复核记录读取：医保办与病案人员可回查，其他岗位越界拒绝。 */
   payerReviews(context: ActorContext, admissionId: string): InpatientDrgPayerReviewList {
-    this.owner.assertRole(context, ['medical-insurance', 'medical-records'])
-    this.owner.admissionBinding(context, admissionId)
+    this.owner.assertReadRole(context, ['medical-insurance', 'medical-records'])
+    this.owner.readAdmissionBinding(context, admissionId)
     return this.#payerReviews(context, admissionId)
   }
 

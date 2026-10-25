@@ -1364,14 +1364,14 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch(error) { return apiErrorResponse(context,error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/pregroup', async context => {
-      try { return context.json(inpatient.drg.pregroup(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+      try { return context.json(inpatient.drg.readPregroup(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/simulation', async context => {
       try { identity.assertTrustedMutation(context.req.raw.headers); const body = z.object({ input: inpatientDrgSimulationInputSchema.optional() }).strict().parse(await context.req.json().catch(() => ({})))
-        return context.json(inpatient.drg.simulate(await actor(context), context.req.param('admissionId'), body.input)) } catch (error) { return apiErrorResponse(context, error) }
+        return context.json(inpatient.drg.readSimulation(await actor(context), context.req.param('admissionId'), body.input)) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations', async context => {
-      try { return context.json(inpatient.drg.reservations(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+      try { return context.json(inpatient.drg.readReservations(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.post('/api/his/v1/inpatient/admissions/:admissionId/drg/reservations', async context => {
       try { identity.assertTrustedMutation(context.req.raw.headers); const body=z.object({input:inpatientMaterialReservationCreateInputSchema.omit({admissionId:true})}).strict().parse(await context.req.json())
@@ -1392,7 +1392,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch(error) { return apiErrorResponse(context,error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/drg/payer-reviews', async context => {
-      try { return context.json(inpatient.drg.payerReviews(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
+      try { return context.json(inpatient.drg.readPayerReviews(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
     })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/discharge', async context => {
       try { return context.json(inpatient.discharge.read(await actor(context), context.req.param('admissionId'))) } catch (error) { return apiErrorResponse(context, error) }
