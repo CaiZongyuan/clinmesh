@@ -6,10 +6,8 @@ import { ClinicalRequestKernel, laboratoryRequestPolicy } from './clinical-reque
 import { imagingRequestPolicy } from './imaging-request-service.ts'
 import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { WorkflowService } from './workflow-service.ts'
-import { inpatientLaboratoryConfiguration } from './inpatient-laboratory-config.ts'
+import { inpatientInvestigationBillingSchema, inpatientLaboratoryConfiguration } from './inpatient-laboratory-config.ts'
 
-const billingSchema = z.object({ display: z.string().min(1), priceFen: z.number().int().positive().safe(), currency: z.literal('CNY'), trigger: z.literal('execution-completed'),
-  source: z.string().min(1), availableScopes: z.array(z.string()).refine(scopes => scopes.includes('inpatient')) })
 const requestSchema = z.object({ request_id: z.string(), case_id: z.string(), request_kind: z.enum(['laboratory','imaging']), authored_by: z.string(),
   service_request_id: z.string(), execution_task_id: z.string(), diagnostic_report_id: z.string().nullable(),
   status: z.enum(['issued','accepted','in-progress','generation-failed','reported','acknowledged','cancelled']), version: z.number().int().positive() })
@@ -48,7 +46,7 @@ export class InpatientInvestigations {
       const raw: unknown = JSON.parse(row.config_json)
       const record = z.record(z.string(), z.unknown()).safeParse(raw), config = record.success ? record.data : {}
       const imaging = z.object({name:z.string(),examCode:z.enum(['chest-radiograph','chest-ct-plain'])}).safeParse(config.imagingService)
-      const billing = billingSchema.safeParse(config.inpatientInvestigationBilling)
+      const billing = inpatientInvestigationBillingSchema.safeParse(config.inpatientInvestigationBilling)
       if(imaging.success && billing.success) return [{id:row.service_id,kind:'imaging' as const,display:imaging.data.name,version:row.version,priceFen:billing.data.priceFen,available:ready.has(imaging.data.examCode),indicationCodes:[]}]
       const laboratory = inpatientLaboratoryConfiguration(raw)
       if(laboratory.service?.doctorOrderable) {
@@ -84,8 +82,9 @@ export class InpatientInvestigations {
         requestId=issued.data.request.id;effects=issued.effects
       }
       const stored=z.object({config_json:z.string()}).parse(this.owner.database.driver.prepare('SELECT config_json FROM hospital_service_catalog WHERE workspace_id=? AND epoch=? AND service_id=?').get(context.workspaceId,context.epoch,available.id))
-      const declared=z.object({inpatientInvestigationBilling:billingSchema.passthrough().optional(),chargeDefinition:z.object({id:z.string().min(1),currency:z.literal('CNY'),priceFen:z.number().int().nonnegative().safe()}).passthrough().optional()}).parse(JSON.parse(stored.config_json))
-      const definition=declared.inpatientInvestigationBilling??declared.chargeDefinition
+      const config: unknown = JSON.parse(stored.config_json)
+      const definition=input.selection.kind==='laboratory' ? inpatientLaboratoryConfiguration(config).chargeDefinition
+        : z.object({inpatientInvestigationBilling:inpatientInvestigationBillingSchema}).parse(config).inpatientInvestigationBilling
       if(definition===undefined||definition.priceFen!==available.priceFen)throw new InpatientError('INPATIENT_INVESTIGATION_CATALOG_CONFLICT','检查冻结收费定义不一致')
       this.owner.database.driver.prepare(`INSERT INTO inpatient_investigation(workspace_id,epoch,request_id,admission_id,price_fen,charge_definition_json) VALUES(?,?,?,?,?,?)`)
         .run(context.workspaceId,context.epoch,requestId,input.admissionId,available.priceFen,JSON.stringify({...definition,display:available.display,trigger:'execution-completed',serviceId:available.id,catalogVersion:available.version}))
