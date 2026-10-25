@@ -89,7 +89,7 @@ export const inpatientPciDataSchema = z.object({
       priceFen: z.number().int().nonnegative().safe(),
       unit: z.string().nullable(),
       availableScopes: z.array(z.string()),
-      conflicts: z.array(z.enum(['inactive', 'scope-disabled', 'unit-mismatch', 'indication-restricted', 'combination-restricted', 'frequency-restricted', 'unpriced'])),
+      conflicts: z.array(z.enum(['inactive', 'scope-disabled', 'unit-mismatch', 'indication-restricted', 'combination-restricted', 'frequency-restricted', 'unpriced', 'invalid-configuration'])),
       lots: z.array(z.object({ id, version: amount, quantityOnHand: z.number().int().nonnegative(), expiresOn: z.iso.date() }).strict()),
     }).strict()),
     laboratories: z.array(z.object({ definitionId: id, catalogItemId: id, version: amount }).strict()),

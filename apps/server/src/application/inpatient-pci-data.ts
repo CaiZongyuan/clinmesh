@@ -18,11 +18,13 @@ export class InpatientPciData {
     const medications = pciDataPackage.medications.flatMap(definition => {
       const row = this.medication(context, definition.product)
       if (row === undefined) return []
-      const config = z.object({ unit: z.string().nullish(), availableScopes: z.array(z.string()).optional(),
+      const parsedConfig = z.object({ unit: z.string().nullish(), availableScopes: z.array(z.string()).optional(),
         inpatientIndications: z.array(z.object({ id: z.string(), system: z.string(), version: z.string() })).optional(),
         allowedCombinationIds: z.array(z.string()).optional(), allowedFrequencyCodes: z.array(z.string()).optional(),
-      }).parse(JSON.parse(row.config_json))
+      }).safeParse(JSON.parse(row.config_json))
+      const config = parsedConfig.success ? parsedConfig.data : {}
       const conflicts: string[] = []
+      if (!parsedConfig.success) conflicts.push('invalid-configuration')
       if (row.active === 0) conflicts.push('inactive')
       if (!config.availableScopes?.includes('inpatient')) conflicts.push('scope-disabled')
       if (config.unit !== definition.hospitalSupplement.unit) conflicts.push('unit-mismatch')
@@ -77,6 +79,18 @@ export class InpatientPciData {
       const billing = { id: `inpatient-charge-${serviceId}`, version: 1, display: definition.nameZh, priceFen, currency: 'CNY', trigger: 'execution-completed',
         source: priceFen === definition.priceFen ? `synthetic-pci-${pciDataPackage.version}` : 'published-hospital-price', availableScopes: ['inpatient'], effectiveOn: '2026-10-25' }
       const config = { ...old,
+        ...(old.billingUnit === undefined || old.billingUnit === null ? { billingUnit: { code: 'ITEM', display: '项目', system: 'urn:clinmesh:wst:billing-unit',
+          valueSet: 'urn:clinmesh:wst:value-set:billing-unit', version: `synthetic-pci-${pciDataPackage.version}` } } : {}),
+        ...(old.category === undefined ? { category: { code: 'LABORATORY', display: '实验室检验', system: 'urn:clinmesh:wst:service-category',
+          valueSet: 'urn:clinmesh:wst:value-set:service-category', version: `synthetic-pci-${pciDataPackage.version}` } } : {}),
+        ...(old.chargeDefinition === undefined ? { chargeDefinition: { id: `charge-definition-${serviceId}`, currency: 'CNY', effectiveOn: '2026-10-25', priceFen } } : {}),
+        ...(old.componentServiceIds === undefined ? { componentServiceIds: definition.componentServiceIds } : {}),
+        ...(old.executingDepartmentId === undefined ? { executingDepartmentId: definition.executingDepartmentId } : {}),
+        ...(old.nationalService === undefined ? { nationalService: { code: 'CM-NHC-SERVICE-LABORATORY', display: '合成实验室检验服务',
+          id: 'reference-service-synthetic-laboratory', system: 'urn:clinmesh:reference:nhc-medical-service', version: 'synthetic-2026' } } : {}),
+        ...(old.reportTemplate === undefined ? { reportTemplate: definition.reportDefinition.conclusionTemplate } : {}),
+        ...(old.requestCatalogItemIds === undefined ? { requestCatalogItemIds: [definition.referenceConcept.id] } : {}),
+        ...(old.tatMinutes === undefined ? { tatMinutes: definition.tatMinutes } : {}),
         ...(old.availableScopes === undefined ? { availableScopes: ['outpatient', 'inpatient'] } : {}),
         ...(old.laboratoryService === undefined ? { laboratoryService: definition } : {}),
         ...(old.inpatientInvestigationBilling === undefined || old.inpatientInvestigationBilling === null ? { inpatientInvestigationBilling: billing } : {}),

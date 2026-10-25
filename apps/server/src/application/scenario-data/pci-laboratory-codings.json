@@ -1,0 +1,74 @@
+[
+  {
+    "id": "loinc:loinc-zh-cn@2.83.r2:6690-2",
+    "system": "http://loinc.org",
+    "version": "2.83",
+    "code": "6690-2",
+    "display": "白细胞:计数型浓度:时间点:全血:定量型:自动化计数方法",
+    "sourceLocator": "cn-health:loinc-zh-cn@2.83.r2:loinc:6690-2"
+  },
+  {
+    "id": "loinc:loinc-zh-cn@2.83.r2:718-7",
+    "system": "http://loinc.org",
+    "version": "2.83",
+    "code": "718-7",
+    "display": "血红蛋白:质量浓度:时间点:全血:定量型",
+    "sourceLocator": "cn-health:loinc-zh-cn@2.83.r2:loinc:718-7"
+  },
+  {
+    "id": "loinc:loinc-zh-cn@2.83.r2:777-3",
+    "system": "http://loinc.org",
+    "version": "2.83",
+    "code": "777-3",
+    "display": "血小板:计数型浓度:时间点:全血:定量型:自动化计数方法",
+    "sourceLocator": "cn-health:loinc-zh-cn@2.83.r2:loinc:777-3"
+  },
+  {
+    "id": "loinc:loinc-zh-cn@2.83.r2:2160-0",
+    "system": "http://loinc.org",
+    "version": "2.83",
+    "code": "2160-0",
+    "display": "肌酐:质量浓度:时间点:血清/血浆:定量型",
+    "sourceLocator": "cn-health:loinc-zh-cn@2.83.r2:loinc:2160-0"
+  },
+  {
+    "id": "loinc:loinc-zh-cn@2.83.r2:6301-6",
+    "system": "http://loinc.org",
+    "version": "2.83",
+    "code": "6301-6",
+    "display": "组织因子诱导型凝血过程.INR:相对时间:时间点:贫血小板血浆:定量型:凝血功能分析",
+    "sourceLocator": "cn-health:loinc-zh-cn@2.83.r2:loinc:6301-6"
+  },
+  {
+    "id": "loinc:loinc-zh-cn@2.83.r2:1742-6",
+    "system": "http://loinc.org",
+    "version": "2.83",
+    "code": "1742-6",
+    "display": "丙氨酸氨基转移酶:催化浓度:时间点:血清/血浆:定量型",
+    "sourceLocator": "cn-health:loinc-zh-cn@2.83.r2:loinc:1742-6"
+  },
+  {
+    "id": "loinc:loinc-zh-cn@2.83.r2:1920-8",
+    "system": "http://loinc.org",
+    "version": "2.83",
+    "code": "1920-8",
+    "display": "天冬氨酸氨基转移酶:催化浓度:时间点:血清/血浆:定量型",
+    "sourceLocator": "cn-health:loinc-zh-cn@2.83.r2:loinc:1920-8"
+  },
+  {
+    "id": "loinc:loinc-zh-cn@2.83.r2:2823-3",
+    "system": "http://loinc.org",
+    "version": "2.83",
+    "code": "2823-3",
+    "display": "钾:物质的量浓度:时间点:血清/血浆:定量型",
+    "sourceLocator": "cn-health:loinc-zh-cn@2.83.r2:loinc:2823-3"
+  },
+  {
+    "id": "loinc:loinc-zh-cn@2.83.r2:2951-2",
+    "system": "http://loinc.org",
+    "version": "2.83",
+    "code": "2951-2",
+    "display": "钠:物质的量浓度:时间点:血清/血浆:定量型",
+    "sourceLocator": "cn-health:loinc-zh-cn@2.83.r2:loinc:2951-2"
+  }
+]

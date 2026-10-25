@@ -1,7 +1,8 @@
 import { inpatientPciDataPackageSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
-import { referenceMedicationProductSchema } from '@clinmesh/contracts/reference-data'
+import { referenceConceptSnapshotSchema, referenceMedicationProductSchema } from '@clinmesh/contracts/reference-data'
 import products from './pci-medication-products.json' with { type: 'json' }
+import laboratoryCodings from './pci-laboratory-codings.json' with { type: 'json' }
 import clopidogrelQuotation from './pci-clopidogrel-quotation.json' with { type: 'json' }
 import { cardiovascularMaterials } from './cardiovascular-materials.ts'
 import { syntheticInpatientSurgeryCatalog } from './inpatient-surgery-catalog.ts'
@@ -10,6 +11,7 @@ import { syntheticPciDrgPaymentParameters } from './pci-drg-payment-parameters.t
 const version = '2026-10-25.r1'
 const referenceReleaseId = 'clinmesh-cn-health-2026-09-02.r1'
 const medicationProducts = referenceMedicationProductSchema.array().parse(products)
+const laboratoryReferences = referenceConceptSnapshotSchema.array().parse(laboratoryCodings)
 const diagnosis = {
   id: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I25.103',
   system: 'urn:clinmesh:reference:nhsa-diagnosis', version: '2022', code: 'I25.103',
@@ -23,9 +25,10 @@ const medicationDefinitions = [
   ['iohexol', 'XV08ABD107B002010100014', 'mL', 150, 1, 'mL', 100, '50 mL', 50, 'PRN', '血管内注射', 2000],
 ] as const
 
-function loinc(code: string, display: string) {
-  return { id: `loinc:loinc-zh-cn@2.83.r2:${code}`, system: 'http://loinc.org', version: '2.83', code, display,
-    sourceLocator: `cn-health:loinc-zh-cn@2.83.r2:loinc:${code}` }
+function loinc(code: string) {
+  const coding = laboratoryReferences.find(item => item.code === code)
+  if (coding === undefined) throw new Error(`The fixed PCI reference excerpt is missing LOINC ${code}`)
+  return coding
 }
 // 数值与参考区间为固定合成底稿；2160-0 是质量浓度，使用 mg/dL，不冒充物质的量浓度。
 const laboratoryDefinitions = [
@@ -46,7 +49,7 @@ export const pciDataPackage = inpatientPciDataPackageSchema.parse({
     id: 'pci-elective-single-stent-v1', name: '合成冠脉病例甲', birthDate: '1965-04-12', gender: 'male',
     chiefComplaint: '活动后胸部闷痛三个月，加重一周，休息后缓解。',
     history: '固定合成底稿：择期、非急诊，无心肌梗死、心力衰竭、肾功能不全或复杂并发症。既往外院评估考虑稳定性冠心病，拟入院评估；静息无胸痛，无已知药物过敏。既往心电资料描述为活动相关缺血改变。本院检查、诊断、造影及支架植入须在实际就诊中依法定动作形成，底稿不表示本院已实施。',
-    baselineObservations: laboratoryDefinitions.map(([, code, display, unit, , , value]) => ({ coding: loinc(code, display), value, unit })),
+    baselineObservations: laboratoryDefinitions.map(([, code, , unit, , , value]) => ({ coding: loinc(code), value, unit })),
     plannedStentCount: 1, intendedUse: 'authoring-only',
   },
   diagnosis,
@@ -75,9 +78,9 @@ export const pciDataPackage = inpatientPciDataPackageSchema.parse({
   laboratories: laboratoryDefinitions.map(([suffix, code, nameZh, unit, low, high, , specimenCode, specimenDisplay, priceFen]) => laboratoryServiceSnapshotSchema.parse({
     id: `hospital-lab-pci-${suffix}`, version: 1, localCode: `PCI-LAB-${suffix.toUpperCase()}`, nameZh, priceFen,
     allowedIndicationCodes: ['clinical-assessment'], componentServiceIds: [], doctorOrderable: true,
-    executingDepartmentId: 'department-laboratory', referenceConcept: loinc(code, nameZh), referenceReleaseId,
+    executingDepartmentId: 'department-laboratory', referenceConcept: loinc(code), referenceReleaseId,
     reportDefinition: { conclusionTemplate: 'ClinMesh 固定合成资料支持的检验结果，仅用于仿真。', results: [{
-      referenceConcept: loinc(code, nameZh), referenceRange: { low, high, text: `${low}-${high} ${unit}（合成院内参考区间）` },
+      referenceConcept: loinc(code), referenceRange: { low, high, text: `${low}-${high} ${unit}（合成院内参考区间）` },
       unit: { code: unit, display: unit, system: 'http://unitsofmeasure.org' }, valueType: 'quantity',
     }] }, specimen: { code: specimenCode, display: specimenDisplay }, serviceKind: 'laboratory', tatMinutes: 30,
     publicationPolicyVersion: `clinmesh-pci-laboratory-${version}`,
