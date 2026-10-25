@@ -1,32 +1,13 @@
 import { z } from 'zod'
-import { inpatientCatalogSearchInputSchema, inpatientCatalogSearchSchema, type InpatientCatalogCandidate, type InpatientCatalogMissingField } from '@clinmesh/contracts/inpatient-clinical'
-import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
+import { inpatientCatalogSearchInputSchema, inpatientCatalogSearchSchema, type InpatientCatalogCandidate } from '@clinmesh/contracts/inpatient-clinical'
 import type { ActorContext } from './command-executor.ts'
 import type { InpatientService } from './inpatient-service.ts'
 import { inpatientMedicationMissingFields } from './inpatient-medication-config.ts'
+import { inpatientLaboratoryConfiguration } from './inpatient-laboratory-config.ts'
 
 const rowSchema = z.object({ id: z.string(), name_zh: z.string(), version: z.number().int().positive(), active: z.number(),
   price_fen: z.number().int().nonnegative(), config_json: z.string() })
 type CatalogRow = z.infer<typeof rowSchema>
-const billingSchema = z.object({ display: z.string().min(1), priceFen: z.number().int().positive().safe(), currency: z.literal('CNY'),
-  trigger: z.literal('execution-completed'), source: z.string().min(1), availableScopes: z.array(z.string()).refine(value => value.includes('inpatient')) })
-
-export function inpatientLaboratoryConfiguration(raw: unknown) {
-  const config = z.object({ laboratoryService: z.unknown().optional(), billingUnit: z.unknown().optional(),
-    availableScopes: z.array(z.string()).optional(), inpatientInvestigationBilling: z.unknown().optional(),
-    chargeDefinition: z.object({ priceFen: z.number().int().nonnegative() }).optional() }).parse(raw)
-  const service = laboratoryServiceSnapshotSchema.safeParse(config.laboratoryService)
-  const billing = billingSchema.safeParse(config.inpatientInvestigationBilling)
-  const missingFields: InpatientCatalogMissingField[] = []
-  if (!service.success) missingFields.push('laboratory-definition')
-  else if (!service.data.doctorOrderable) missingFields.push('not-orderable')
-  if (!z.object({ display: z.string().trim().min(1) }).safeParse(config.billingUnit).success) missingFields.push('unit')
-  if (!billing.success && !config.availableScopes?.includes('inpatient')) missingFields.push('inpatient-scope')
-  const priceFen = billing.success ? billing.data.priceFen : config.availableScopes?.includes('inpatient') ? config.chargeDefinition?.priceFen : undefined
-  if (priceFen === undefined || priceFen <= 0) missingFields.push('price')
-  return { missingFields, ...(service.success ? { service: service.data } : {}), ...(priceFen === undefined ? {} : { priceFen }) }
-}
-
 /** 共享目录候选按真实来源分别分页，写入身份只来自可用的院内配置。 */
 export class InpatientCatalogSearch {
   constructor(readonly owner: InpatientService) {}

@@ -58,7 +58,7 @@ export const inpatientCatalogSearchInputSchema = z.object({
   pageSize: z.coerce.number().int().positive().max(50).default(20),
 }).strict()
 export const inpatientCatalogMissingFieldSchema = z.enum(['product', 'strength', 'unit', 'price', 'inpatient-scope', 'dose-limit', 'frequency',
-  'indication', 'billing', 'hospital-mapping', 'ambiguous-mapping', 'laboratory-definition', 'not-orderable'])
+  'indication', 'combination', 'conversion', 'billing', 'hospital-mapping', 'ambiguous-mapping', 'laboratory-definition', 'not-orderable'])
 export const inpatientCatalogCandidateSchema = z.object({
   id: z.string().min(1), display: z.string().min(1), status: z.enum(['available', 'incomplete', 'inactive']),
   missingFields: z.array(inpatientCatalogMissingFieldSchema), referenceId: z.string().min(1).optional(),
