@@ -9,6 +9,7 @@ import { offlineReferenceInventoryListSchema } from '@clinmesh/contracts/referen
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { openReferenceDatabase } from '../src/infrastructure/sqlite/reference-database.ts'
+import { writeDrgCompactFixtureIndex } from './fixtures/drg-reference.ts'
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 
@@ -30,9 +31,12 @@ describe('offline reference inventory maintenance CLI', () => {
         sha256: hash(records), rows: 1, sourceVersion: 'synthetic-2026' }],
     })
     await writeFile(join(root, 'prepared/manifest.json'), manifest)
+    const logicalPaths = ['prepared/manifest.json', 'prepared/services/records.jsonl']
+    const compact = await writeDrgCompactFixtureIndex(root, logicalPaths)
     const lock = {
       schemaVersion: 'clinmesh.offline-inventory.v1', inventoryId: 'synthetic-inventory-v1',
       createdAt: '2026-10-21T00:00:00.000Z', scheme: 'CHS-DRG-3.0',
+      storage: compact.storage,
       packages: [{ id: 'prepared-five-catalogues', format: 'prepared-catalogues-v1', root: 'prepared',
         version: 'synthetic-prepared-v1', manifest: { path: 'manifest.json', sha256: hash(manifest) },
         sourceUrl: 'https://example.test/synthetic-prepared',
@@ -42,7 +46,7 @@ describe('offline reference inventory maintenance CLI', () => {
     await writeFile(lockPath, JSON.stringify(lock))
     const databasePath = join(root, 'reference.sqlite')
     await runReferenceDatabaseCli(['migrate', '--database', databasePath])
-    return { root, lock, lockPath, databasePath }
+    return { root, lock, lockPath, databasePath, logicalPaths }
   }
 
   it('prepares an immutable inventory, reads source units and quarantine, and repeats without publishing runtime catalogues', async () => {
@@ -153,6 +157,9 @@ describe('offline reference inventory maintenance CLI', () => {
       version: '2026-10-20', manifest: { path: 'manifest.json', sha256: hash(manifest) },
       checksums: { path: 'checksums.json', sha256: hash(index) }, sourceUrl: 'https://example.test/synthetic/',
       quarantineReasons: ['usage-terms-unconfirmed', 'coding-compatibility-unverified', 'missing-payment-parameters', 'source-applicability-unverified', 'algorithm-unvalidated'] }] }
+    lock.storage = (await writeDrgCompactFixtureIndex(input.root, [
+      'opendrg/manifest.json', 'opendrg/checksums.json', ...checksums.map(file => `opendrg/${file.path}`),
+    ])).storage
     await writeFile(input.lockPath, JSON.stringify(lock))
     const args = ['prepare-inventory', '--database', input.databasePath, '--manifest', input.lockPath, '--input-root', input.root]
     expect(await runReferenceDatabaseCli(args)).toMatchObject({ inventory: { packages: [{
@@ -189,6 +196,9 @@ describe('offline reference inventory maintenance CLI', () => {
       const manifestText = JSON.stringify(manifest)
       await writeFile(manifestPath, manifestText)
       input.lock.packages[0]!.manifest.sha256 = hash(manifestText)
+      if (fault !== 'checksum' && fault !== 'missing-file') {
+        input.lock.storage = (await writeDrgCompactFixtureIndex(input.root, input.logicalPaths)).storage
+      }
       await writeFile(input.lockPath, JSON.stringify(input.lock))
       await expect(runReferenceDatabaseCli(args)).rejects.toThrow()
       const saved = offlineReferenceInventoryListSchema.parse(await runReferenceDatabaseCli(['list-inventories', '--database', input.databasePath]))
