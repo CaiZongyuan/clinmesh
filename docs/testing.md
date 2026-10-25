@@ -110,6 +110,27 @@ pnpm --filter @clinmesh/dsh-web build
 pnpm docs:check
 ```
 
+## GitHub CI 的检查选择与并行
+
+主 CI 沿用 PR 创建、更新、重新打开及 `main`/`master` push 触发。`plan` 用本次事件的 base/head 校验实际候选合并提交，并从第一父提交到候选结果读取完整净改动；checkout 保留两层历史。无法核验事件、提交或完整差异时选择全量。主线 push 固定全量。
+
+| PR 改动 | 检查范围 |
+| --- | --- |
+| 只有根 README 或 docs 下普通 Markdown | `doc-sync`；Agent 规则、`docs/agents/` 工程 skills 配置和运行时 Skills/提示词不在此范围 |
+| 只有已修改的独立测试入口，可包含普通文档 | 逐文件运行全部用例、所属包 typecheck、定向 lint；Web E2E 追加浏览器 tsconfig，文档变化追加 `doc-sync` |
+| 明确的普通 Web 页面、DSH 显示组件、共享 UI/views 源码 | 全局类型/lint/边界、短性能预算、文档和构建；UI/views、Web、DSH、Desktop 组件测试；完整 Playwright `contracts` 与 `web` |
+| 其他、关键边界、服务端影响范围过广或无法识别 | 全量，覆盖原 `pnpm check` 与 `pnpm check:mobile` 的完整集合 |
+
+具体路径、状态和混合改动的选择以 [CI 入口](../scripts/ci.ts)为准。新增、删除、重命名测试、共享 fixture/setup、导出或被静态引用的测试入口回退全量。普通前端路径也排除鉴权、API/Agent/Proof、恢复、受信写意图、宿主设置等混合协议边界；不能把整个 Web 或 DSH 包都视为普通显示代码。未建立可靠窄影响集合的 Server 代码保持全量。
+
+前端选择省略整套 Server Vitest 和 CLI 单元集合，但保留两个完整 Playwright 项目中使用真实 Server、临时 SQLite 的入口验证。上层构建通过 Vite 动态加载 UI，HTTP 消费者也不等同于包依赖，因此不依赖静态导入图自动删减浏览器或 E2E。
+
+选中的 `checks`、`unit`、`browser`、`e2e` 在独立 runner 上并行，固定同一 `github.sha`。每个非文档执行组在安装依赖后显式准备 DSH 生成样式，不能假定其他 runner 的 typecheck 产物可见。基础组包含适用的类型、lint、边界、性能预算、文档、构建和 Mobile；测试组保留原 worker、断言和超时。浏览器组各自准备 Chromium，所有数据与端口继续由既有 fixture 隔离。
+
+最终 `verify` 始终汇总计划及四组结果。计划失败、必需组失败/取消/意外跳过、结果缺失或未知状态均失败；只有计划明确排除的组允许跳过。计划与汇总入口仅依赖 Node 内建能力，不需要先安装业务依赖；执行组调用已有 pnpm/Vitest/Playwright 命令，文件名经验证后作为 argv 传递。
+
+选择、真实 Git/进程边界及汇总回归由 `scripts/ci.spec.ts`、`scripts/ci-cli.spec.ts` 持有，CI 脚本与测试纳入 `tsconfig.ci.json`。设计理由见 [CI 分流与并行决策](decisions/implemented/testing/2026-10-25-selective-parallel-ci.md)，正式验收条件见 [规格](spec/2026-10-25-selective-parallel-ci.md)。`verify` 输出与仓库分支保护是不同能力，强制拦截合并仍需管理员单独启用规则。
+
 跨包 interface、workspace 配置、构建、文档投影或发布 workflow 变化运行 `pnpm check`。只有 Mobile 文件、共享给 Mobile 的 contract/core 入口或 Expo 配置变化时才运行 `pnpm check:mobile`。
 
 ## 测试数据

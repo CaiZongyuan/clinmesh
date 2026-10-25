@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { drgGroupingResultSchema } from './drg'
+import { drgGroupingResultSchema } from './drg.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const stamp = z.iso.datetime({ offset: true })

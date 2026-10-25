@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { drgGroupingResultSchema } from './drg'
+import { drgGroupingResultSchema } from './drg.ts'
 
 const id = z.string().min(1).max(128)
 const text = z.string().min(1).max(1_000)
