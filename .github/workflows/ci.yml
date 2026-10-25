@@ -9,21 +9,93 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  plan:
     runs-on: ubuntu-latest
+    outputs:
+      selection: ${{ steps.plan.outputs.selection }}
+      checks: ${{ steps.plan.outputs.checks }}
+      unit: ${{ steps.plan.outputs.unit }}
+      browser: ${{ steps.plan.outputs.browser }}
+      e2e: ${{ steps.plan.outputs.e2e }}
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.2
-      - uses: pnpm/action-setup@v4
+          ref: ${{ github.sha }}
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm check
-      - run: pnpm check:mobile
+      - id: plan
+        run: node scripts/ci.ts plan
+
+  checks:
+    needs: plan
+    if: needs.plan.outputs.checks == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CI_PLAN: ${{ needs.plan.outputs.selection }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+      - uses: ./.github/actions/ci-setup
+      - run: node scripts/ci.ts run checks
+
+  unit:
+    needs: plan
+    if: needs.plan.outputs.unit == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CI_PLAN: ${{ needs.plan.outputs.selection }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+      - uses: ./.github/actions/ci-setup
+      - run: node scripts/ci.ts run unit
+
+  browser:
+    needs: plan
+    if: needs.plan.outputs.browser == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CI_PLAN: ${{ needs.plan.outputs.selection }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+      - uses: ./.github/actions/ci-setup
+      - run: node scripts/ci.ts run browser
+
+  e2e:
+    needs: plan
+    if: needs.plan.outputs.e2e == 'true'
+    runs-on: ubuntu-latest
+    env:
+      CI_PLAN: ${{ needs.plan.outputs.selection }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          submodules: recursive
+      - uses: ./.github/actions/ci-setup
+      - run: node scripts/ci.ts run e2e
+
+  verify:
+    if: always()
+    needs: [plan, checks, unit, browser, e2e]
+    runs-on: ubuntu-latest
+    env:
+      CI_PLAN: ${{ needs.plan.outputs.selection }}
+      CI_RESULTS: ${{ toJSON(needs) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: node scripts/ci.ts verify
