@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [既有与冠心病指南的 Release 分发及内部测试安装](2026-10-26-guideline-release-installation.md) | `approved` |
 | [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `approved` |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |

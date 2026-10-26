@@ -101,7 +101,28 @@ pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinme
 
 ### 免费指南全文同步
 
-完成依赖安装后，在仓库根目录运行：
+正常的 Server、LAN 和 DSH 准备入口会安装[固定指南包](../apps/server/reference-data/guideline-release.lock.json)，不因业务库或 Reference 库已存在而跳过。生产镜像在构建时准备相同资料，启动时离线复核；业务请求不下载原件。也可在仓库根单独准备或只读检查：
+
+```sh
+pnpm guidelines:prepare
+pnpm guidelines:prepare -- --check
+```
+
+包锁拥有精确版本、Release URL、归档 SHA-256、解包规模、清单身份及原始段落数量；[来源清单](../apps/server/reference-data/guideline-release-manifest.json)拥有逐项题名、机构、文献性质、年份、来源、原件哈希及派生正文、核验记录的哈希。快照为 `guidelines-2026-10-26-v1`，包含既有 26 项及新增冠心病 32 项：58 份原件（53 PDF、5 WHO 文本），另有一份题录 XLSX。2016 年中国 PCI 指南使用 MinerU 恢复正文，2015 年冠状动脉痉挛共识使用 PDF.js CMap 正文并以 MinerU 辅助对照；原始导出、独立物理页映射及 Agent 校对修订随包锁定。核验记录的 `reviewerKind` 区分自动检查、Agent 校对与自然人审校；`manualReview` 只记录自然人状态，安装者无需另行提供人工记录。`textStatus=verified` 表示提取正文及定位通过登记的检查，具体校对页和未确认内容以核验记录为准；不能把局部校对称为全篇临床审校，也不能把 2015—2023 年冠心病合集称为最新指南全集。
+
+默认沿用原用途过滤，当前包可检索全文为 0。内部测试部署在根 `.env` 显式选择以下策略后重启 Server，再检查准备结果：
+
+```dotenv
+CLINMESH_GUIDELINE_DEPLOYMENT_POLICY=internal-testing
+```
+
+该策略仅启用固定包中正文检查通过、状态 active 且至少有一段可靠正文的已登记来源；正文待核验、不可读、已撤回或被替代的来源保持停用。尚未确认的控制字符或替代字符段落完整保留，但在检索候选限额前隔离；可检索段落数因此可能少于已提取段落数，以准备结果为准。来源原始许可和用途待核实状态不变，不将内部测试策略表示为开放许可。取消该策略或设回 `default` 后恢复原限制，部署策略、来源身份、状态、正文与质量规则共同进入 revision，旧建议随之失效；首次建库或切换库路径需重启，已打开的库通过独立 writer 更新后运行中的只读连接可见新内容。未配置路径时，准备器和 Server 都使用 `.data/clinmesh-guidelines.sqlite`。
+
+`guidelines:prepare` 的 stdout JSON 分别报告来源、物理原件、提取、正文核验、原始段落、可检索、异常段落、不可读和自然人待审校数量，并列出逐来源核验说明及 `withheldReason` 停用原因；进度写入 stderr。`--database <path>` 指定目标库，`--install-directory <path>` 指定资料目录，`--manifest <lock>` 指定版本锁。默认原件和正文安装在数据库同目录的 `guidelines/<manifest-sha256>/`；完整安装重复准备可离线复用，`--check` 不下载、不建库、不修改正式目录或审计，同时核对实际库正文，不能用安装成功代替检索命中。更新时维护者发布新版本并修改锁，不覆盖已发布的同版本资产；候选完整验证后整包事务导入，保留其他来源，失败回滚，不替换运行连接所读的 SQLite 文件。下载失败时保留旧库；修复损坏文件后重新准备。进程异常留下 `.prepare.lock` 时，先确认没有准备进程再删除该锁；若报告 recovery failed，先保存错误中给出的 staging／previous 路径并恢复备份，不清理唯一旧版。
+
+维护者制包时准备原件、派生正文及核验记录，保留正文工具版本和物理页／行字符定位，在仓库外创建完整快照，然后运行 `pnpm guidelines:package -- --input-root <snapshot> --output <archive.tar.gz> --url <固定Release资产URL>`。命令验证全部文件并生成可重复的归档，stdout 返回新版本锁；源码仅纳入清单、锁与实现。首次获取依赖该固定 Release 已发布且可达；备份保留对应锁、完整资料目录和一致性 SQLite 备份。恢复到新路径后先准备／只读检查，再启动 Server；不要复制维护者个人桌面目录作为部署合同。
+
+原有官方来源维护同步仍可独立使用：
 
 ```sh
 pnpm guidelines:sync
@@ -112,7 +133,7 @@ pnpm guidelines:sync -- --check
 
 首批注册表包含 21 份国内官方 PDF 和 5 份 WHO 正文文本，具体覆盖与许可事实由[来源研究](research/2026-10-13-clinical-recommendation-guidelines.md#免费路线的首批原文与正文核验)拥有。`sourceCount` 不等于可供模型使用的数量：国内全文用途暂未核实，标为 withheld；WHO 单篇采用非商业许可，仅适用于已核实的当前科研用途，不能据此承诺商业部署权益。新增或修订来源时由维护者核对版本、状态、许可、下载地址与哈希后更新注册表并重新同步，不自动抓取未知来源或推断最新版本。
 
-默认不启用 `non-commercial` 全文。只有核实本部署及所用模型服务的实际用途符合对应非商业许可后，才在根 `.env` 显式设置 `CLINMESH_GUIDELINE_NON_COMMERCIAL_USE=true`；未声明或设为 `false` 时，这些全文仍可保留在本地，但不进入建议、模型输入或可检索数量。Server 与同步 CLI 读取同一声明，变量只接受 `true`／`false`。首批默认可检索全文为 0，声明适用非商业用途后为 5 份／116 段，21 份国内全文仍为 withheld；原有已核短引文沿用其独立依据。更改用途声明后重启 Server，旧建议会失效；`pnpm guidelines:sync -- --check` 可只读核对当前用途下的可用数量。
+在 `default` 部署策略下，只有核实本部署及所用模型服务的实际用途符合对应非商业许可后，才在根 `.env` 显式设置 `CLINMESH_GUIDELINE_NON_COMMERCIAL_USE=true`；未声明或设为 `false` 时非商业全文不进入建议、模型输入或可检索数量。Server、准备和同步 CLI 读取同一声明，变量只接受 `true`／`false`。该开关仅启用现有 5 份 WHO 中正文可靠的段落，不放行用途待核实资料；原有已核短引文沿用其独立依据。内部测试用途由上文的独立策略表达。
 
 Server 默认从 `CLINMESH_GUIDELINE_DATABASE_PATH` 读取该库。库存在时只读打开；缺失时继续使用原有已核短引文，库存在但格式错误时启动失败。首次建立库或改变路径后重启 Server；已打开库的内容更新可被运行中的只读连接读取，并使旧建议失效。可显式使用 `--database <path>`、`--manifest <path>`、`--cache-dir <path>`，其中 `--database` 应与 Server 配置保持一致。备份时保留注册表版本与数据库，并按需保留可重新校验的下载缓存；完整原文和派生数据不提交 Git。正文抽取不等于表格、脚注、临床适用性或所有版本现行性已完成医学审校。
 
