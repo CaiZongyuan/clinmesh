@@ -1,4 +1,5 @@
 import { InpatientPatientWorkspace, inpatientStatus } from './inpatient-patient-workspace.tsx'
+import { InpatientNurseBench } from './inpatient-nurse-bench.tsx'
 import { inpatientTransferCatalogSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { InpatientIncomingTransfers } from './inpatient-transfers.tsx'
 import type { PatientSummary, SessionContext } from '@clinmesh/contracts/his'
@@ -101,14 +102,16 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
     </form> : null}
     {nurse && allowTransfers ?<InpatientIncomingTransfers session={session} locale={locale} write={write}/>:null}
     {admissions.isPending ? <p>{zh ? '正在加载住院患者' : 'Loading admissions'}</p> : null}
-    <Table><TableHeader><TableRow><TableHead>{zh ? '患者' : 'Patient'}</TableHead><TableHead>{zh ? '住院号' : 'Inpatient number'}</TableHead>
+    {nurse
+      ? <InpatientNurseBench admissions={admissions.data?.items ?? []} catalog={catalog.data} session={session} locale={locale} onSelect={setSelectedId} />
+      : <Table><TableHeader><TableRow><TableHead>{zh ? '患者' : 'Patient'}</TableHead><TableHead>{zh ? '住院号' : 'Inpatient number'}</TableHead>
       <TableHead>{zh ? '病区 / 状态' : 'Ward / status'}</TableHead><TableHead>{zh ? '预交金 / 费用' : 'Deposit / charges'}</TableHead><TableHead>{zh ? '操作' : 'Actions'}</TableHead></TableRow></TableHeader>
       <TableBody>{admissions.data?.items.map(admission => <TableRow key={admission.id}>
         <TableCell>{admission.patientName}</TableCell><TableCell>{admission.inpatientNumber}</TableCell>
         <TableCell>{catalog.data?.wards.find(ward => ward.id === admission.wardId)?.name} · {status(admission)}</TableCell>
         <TableCell>{formatFen(admission.depositFen, locale)} / {formatFen(admission.chargesFen, locale)}</TableCell>
         <TableCell><Button aria-label={`${zh ? '查看' : 'View '}${admission.patientName}`} variant="outline" onClick={() => { setSelectedId(admission.id) }}>{zh ? '查看' : 'View'}</Button></TableCell>
-      </TableRow>)}</TableBody></Table>
+      </TableRow>)}</TableBody></Table>}
     {admissions.data?.items.length === 0 ? <p>{zh ? '暂无住院患者' : 'No admissions'}</p> : null}
     </div>}
   </section>
