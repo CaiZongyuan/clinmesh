@@ -1,19 +1,20 @@
 import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import type { GuidelinePassage } from '../../src/application/guideline-corpus.ts'
 import { createGuidelinePackage } from '../../src/guideline-package.ts'
 import { syntheticGuidelineDocument } from './guideline-corpus.ts'
 
 export const guidelineDigest = (bytes: string | Buffer) => createHash('sha256').update(bytes).digest('hex')
 
-export async function createGuidelineReleaseFixture(root: string) {
+export async function createGuidelineReleaseFixture(root: string, passages: GuidelinePassage[] = syntheticGuidelineDocument.passages) {
   const inputRoot = join(root, 'input')
   await mkdir(inputRoot, { recursive: true })
   const source = structuredClone(syntheticGuidelineDocument.source)
   source.license.usage = 'unverified'
   const original = syntheticGuidelineDocument.passages[0]!.text
   const extracted = JSON.stringify({ schemaVersion: 1, sourceId: source.id, originalSha256: source.sha256,
-    extractor: { name: 'synthetic-original-text', version: '1' }, passages: syntheticGuidelineDocument.passages })
+    extractor: { name: 'synthetic-original-text', version: '1' }, passages })
   const verification = JSON.stringify({ schemaVersion: 1, sourceSha256: source.sha256,
     textSha256: guidelineDigest(extracted), textStatus: 'verified', method: 'synthetic-original-text',
     reviewerKind: 'automated', reviewer: 'synthetic-test', checkedAt: '2026-10-26', manualReview: 'pending',

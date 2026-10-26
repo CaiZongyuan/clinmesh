@@ -7,6 +7,7 @@ import { afterEach, expect, it } from 'vitest'
 import { create } from 'tar'
 import { runGuidelinePrepare } from '../src/guideline-prepare.ts'
 import { GuidelineCorpus } from '../src/infrastructure/sqlite/guideline-corpus.ts'
+import type { GuidelinePassage } from '../src/application/guideline-corpus.ts'
 import { createGuidelineReleaseFixture, guidelineDigest } from './fixtures/guideline-release.ts'
 import { syntheticGuidelineDocument } from './fixtures/guideline-corpus.ts'
 
@@ -20,10 +21,10 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { force: true, recursive: true })
 })
 
-async function fixture() {
+async function fixture(passages?: GuidelinePassage[]) {
   const root = await mkdtemp(join(tmpdir(), 'clinmesh-guideline-release-'))
   roots.push(root)
-  const input = await createGuidelineReleaseFixture(root)
+  const input = await createGuidelineReleaseFixture(root, passages)
   let requests = 0
   let bytes: Buffer = await readFile(input.archivePath)
   const server = createServer((_request, response) => { requests++; response.end(bytes) })
@@ -55,6 +56,20 @@ it('从固定包安装到空目录，真实检索正文，完整安装离线重�
   expect(await readFile(input.options.databasePath)).toEqual(before)
   expect(input.requests()).toBe(1)
   expect((await readdir(input.options.installDirectory)).filter(name => name.startsWith('.'))).toEqual([])
+})
+
+it.each([true, false])('准备统计与实际检索一致，保留但隔离提取异常段落（包含正常段：%s）', async includeUsable => {
+  const unusable = { locator: '合成异常段', text: '糖尿病阈值 5\u0002参考值，不能猜测运算符。' }
+  const passages = [...(includeUsable ? syntheticGuidelineDocument.passages : []), unusable]
+  const input = await fixture(passages)
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ passageCount: passages.length,
+    searchableSourceCount: includeUsable ? 1 : 0,
+    searchablePassageCount: includeUsable ? syntheticGuidelineDocument.passages.length : 0 })
+  const corpus = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(corpus.sources()[0]).toMatchObject({ passageCount: passages.length, unusablePassageCount: 1 })
+    expect(corpus.search('糖尿病').guidelines.every(item => !item.text.includes('\u0002'))).toBe(true)
+  } finally { corpus.close() }
 })
 
 it('损坏文件修复失败保留旧库与其他来源，恢复下载后修复完整资料', async () => {

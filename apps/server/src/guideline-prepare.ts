@@ -7,7 +7,7 @@ import { pipeline } from 'node:stream/promises'
 import { parseArgs } from 'node:util'
 import { extract } from 'tar'
 import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
-import { isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
+import { isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
 import { guidelinePathSchema, guidelineReleaseLockSchema, inspectGuidelineRelease,
   type GuidelineReleaseLock } from './infrastructure/guidelines/guideline-release.ts'
@@ -44,12 +44,12 @@ function publish(options: GuidelinePrepareOptions, snapshot: Snapshot, source: '
     const writer = new GuidelineCorpus({ databasePath: options.databasePath })
     try { created = writer.importDocuments(snapshot.documents).created } finally { writer.close() }
   }
-  const searchable = snapshot.documents.filter(item => item.passages.length > 0
+  const searchable = snapshot.documents.filter(item => item.passages.some(isGuidelinePassageUsable)
     && isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy))
   return { packageId: snapshot.manifest.packageId, releaseId: snapshot.manifest.releaseId,
     databasePath: resolve(options.databasePath), inputRoot, source, created, ...snapshot.counts,
     searchableSourceCount: searchable.length,
-    searchablePassageCount: searchable.reduce((total, item) => total + item.passages.length, 0),
+    searchablePassageCount: searchable.reduce((total, item) => total + item.passages.filter(isGuidelinePassageUsable).length, 0),
     failedSourceCount: snapshot.items.filter(item => item.textStatus === 'unreadable').length,
     manualReviewPendingSourceCount: snapshot.items.filter(item => item.manualReview === 'pending').length,
     items: snapshot.items.map(item => ({ ...item, searchable: searchable.some(document => document.source.id === item.sourceId) })) }
