@@ -197,6 +197,7 @@ const clinicalCatalogBaseShape = {
   laboratory: z.array(catalogItemSchema.extend({
     allowedIndicationCodes: z.array(z.string().min(1)).min(1),
     contraindicatedAllergyCodes: z.array(z.string().min(1)),
+    outpatientBilling: outpatientInvestigationPriceSchema.optional(),
     referenceConcept: referenceConceptSnapshotSchema.optional(),
   })),
 }
@@ -2178,17 +2179,23 @@ export const clinicalDocumentRevisionResponseSchema = commandResponseSchema(z.ob
   revisionOfCompositionId: z.string().min(1),
 }))
 
+export const billingCategorySchema = z.enum(['laboratory', 'imaging', 'pathology', 'medication'])
+export type BillingCategory = z.infer<typeof billingCategorySchema>
+
 export const billingQueueSchema = z.object({
   items: z.array(z.object({
     accountId: z.string().min(1),
     amountFen: z.number().int().nonnegative(),
     caseId: z.string().min(1),
-    category: z.enum(['laboratory', 'medication']),
+    category: billingCategorySchema,
     chargeItemId: z.string().min(1),
     chargeVersion: z.number().int().positive(),
     descriptionEn: z.string().min(1),
     descriptionZh: z.string().min(1),
     encounterId: z.string().min(1),
+    requestId: z.string().min(1).optional(),
+    sourceReference: z.string().min(1).optional(),
+    price: outpatientInvestigationPriceSchema.optional(),
     lines: z.array(z.object({
       descriptionEn: z.string().min(1),
       descriptionZh: z.string().min(1),
@@ -2241,11 +2248,14 @@ export const billingCaseSchema = z.object({
   patient: patientSummarySchema,
   charges: z.array(z.object({
     amountFen: z.number().int().nonnegative(),
-    category: z.enum(['registration', 'laboratory', 'medication']),
+    category: z.enum(['registration', ...billingCategorySchema.options]),
     chargeItemId: z.string().min(1),
     chargeVersion: z.number().int().positive(),
     descriptionEn: z.string().min(1),
     descriptionZh: z.string().min(1),
+    requestId: z.string().min(1).optional(),
+    sourceReference: z.string().min(1).optional(),
+    price: outpatientInvestigationPriceSchema.optional(),
     paidFen: z.number().int().nonnegative(),
     insuranceFen: z.number().int().nonnegative().default(0),
     remainingFen: z.number().int().nonnegative(),
