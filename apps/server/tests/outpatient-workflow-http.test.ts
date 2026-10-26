@@ -1495,6 +1495,11 @@ describe('outpatient workflow HTTP contract', () => {
     const charge = (await readBill()).charges.find(item => item.requestId === issued.id)
     expect(charge).toMatchObject({ amountFen: 2500, sourceReference: `ServiceRequest/${issued.serviceRequestId}` })
     if (charge === undefined) throw new Error('Missing independent laboratory charge')
+    const fhirCharge = await runtime.app.request(`/fhir/R5/ChargeItem/${charge.chargeItemId}`, { headers: { cookie: doctorCookie } })
+    expect(fhirResourceSchema.parse(await fhirCharge.json())).toMatchObject({
+      service: [{ reference: { reference: `ServiceRequest/${issued.serviceRequestId}` } }],
+      unitPriceComponent: { type: 'base', amount: { currency: 'CNY', value: 25 } },
+    })
     const collect = async (amountFen: number, version: number) => {
       const expectedVersions = { [`ChargeItem/${charge.chargeItemId}`]: String(version) }
       const preview = paymentPreviewResponseSchema.parse(await (await runtime.app.request('/api/his/v1/payments/actions/preview', {

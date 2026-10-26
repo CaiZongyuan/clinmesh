@@ -89,8 +89,8 @@ export class OutpatientInvestigationBilling {
       resourceType: 'ChargeItem', id: uuidv7(), status: 'billable', code: { text: input.descriptionZh },
       subject: { reference: `Patient/${owner.patient_id}` }, encounter: { reference: `Encounter/${owner.encounter_id}` },
       account: [{ reference: `Account/${owner.account_id}` }], occurrenceDateTime: input.now,
-      quantity: { value: 1, unit: price.unit }, service: [{ reference: `ServiceRequest/${input.serviceRequestId}` }],
-      unitPriceComponent: { amount: { currency: price.currency, value: price.priceFen / 100 } },
+      quantity: { value: 1, unit: price.unit }, service: [{ reference: { reference: `ServiceRequest/${input.serviceRequestId}` } }],
+      unitPriceComponent: { type: 'base', amount: { currency: price.currency, value: price.priceFen / 100 } },
       note: [{ text: `${price.source}; ${price.id}; version ${price.version}` }],
     })
     this.database.driver.prepare(`INSERT INTO charge_record (
