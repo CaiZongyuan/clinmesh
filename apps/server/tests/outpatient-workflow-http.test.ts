@@ -1412,6 +1412,22 @@ describe('outpatient workflow HTTP contract', () => {
     return { runtime, password, options }
   }
 
+  it('rejects a payment preview whose explicit charge target differs from its expected version', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const testCase = await createLabOrderedCase(runtime, password)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const response = await runtime.app.request('/api/his/v1/payments/actions/preview', {
+      method: 'POST', headers: commandHeaders(cookie),
+      body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${testCase.order.chargeItemId}`]: '1' },
+        input: { caseId: testCase.caseId, category: 'laboratory', chargeItemId: 'another-original-charge', simulatorRule: 'success' },
+      }),
+    })
+    expect(response.status).toBe(409)
+    const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${testCase.caseId}`, { headers: { cookie } })).json())
+    expect(bill.payments).toEqual([])
+  })
+
   it('refunds only a recorded fee correction against the original payment without undoing clinical release', async () => {
     const { runtime, password } = await paymentTestRuntime()
     const testCase = await createPaidLabCase(runtime, password)

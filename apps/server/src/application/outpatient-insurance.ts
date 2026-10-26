@@ -11,6 +11,8 @@ import { InsuranceError } from './insurance-service.ts'
 const syntheticCoverage = {
   registration: { sourcePrefix: 'Registration/', included: false, priorSelfPayBps: 0 },
   laboratory: { sourcePrefix: 'ServiceRequest/', included: true, priorSelfPayBps: 1000 },
+  imaging: { sourcePrefix: 'ServiceRequest/', included: false, priorSelfPayBps: 0 },
+  pathology: { sourcePrefix: 'ServiceRequest/', included: false, priorSelfPayBps: 0 },
   medication: { sourcePrefix: 'Prescription/', included: true, priorSelfPayBps: 2000 },
 } as const
 
@@ -65,7 +67,7 @@ export function readOutpatientInsuranceSource(
         version: z.number().int(),
         amount_fen: z.number().int().nonnegative(),
         description_zh: z.string(),
-        category: z.enum(['registration', 'laboratory', 'medication']),
+        category: z.enum(['registration', 'laboratory', 'imaging', 'pathology', 'medication']),
         source_reference: z.string(),
       }),
     )

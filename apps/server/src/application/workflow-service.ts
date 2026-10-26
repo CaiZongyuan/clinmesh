@@ -324,7 +324,7 @@ const paymentPreviewRowSchema = paymentWorkflowRowSchema.extend({
   actor_context_hash: z.string().nullable(),
   amount_fen: z.number().int().nonnegative(),
   case_id: z.string().min(1),
-  category: z.enum(['laboratory', 'medication']),
+  category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
   charge_id: z.string().min(1),
   charge_item_id: z.string().min(1),
   charge_status: chargeStatusRowSchema,
@@ -8331,7 +8331,7 @@ export class WorkflowService {
   }
 
   billingQueue(input: {
-    category: 'laboratory' | 'medication'
+    category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
     context: ActorContext
     page: number
     pageSize: number
@@ -9102,7 +9102,8 @@ export class WorkflowService {
   }
 
   previewPayment(input: {
-    category: 'laboratory' | 'medication'
+    category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
+    chargeItemId?: string
     caseId: string
     context: ActorContext
     expectedVersions: Record<string, string>
@@ -9131,12 +9132,18 @@ export class WorkflowService {
       input: {
         caseId: input.caseId,
         category: input.category,
+        ...(input.chargeItemId === undefined ? {} : { chargeItemId: input.chargeItemId }),
         simulatorRule: input.simulatorRule,
         tenders: input.tenders,
       },
       operation: 'payment.preview',
     }, () => {
       this.#assertRole(input.context, ['cashier'])
+      const targets = Object.keys(input.expectedVersions).filter(reference => reference.startsWith('ChargeItem/'))
+      const chargeItemId = input.chargeItemId ?? targets[0]?.slice('ChargeItem/'.length)
+      if (targets.length !== 1 || chargeItemId === undefined || targets[0] !== `ChargeItem/${chargeItemId}`) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '必须指定与预期版本一致的原费用')
+      }
       const charge = paymentChargeRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
@@ -9160,8 +9167,8 @@ export class WorkflowService {
            AND withdrawal.epoch = prescription.epoch
            AND withdrawal.prescription_id = prescription.prescription_id
           WHERE charge.workspace_id = ? AND charge.epoch = ?
-            AND charge.case_id = ? AND charge.category = ?
-        `).get(input.context.workspaceId, input.context.epoch, input.caseId, input.category),
+            AND charge.case_id = ? AND charge.category = ? AND charge.charge_item_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.caseId, input.category, chargeItemId),
       )
       if (charge === undefined || !['billable', 'declined'].includes(charge.status)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The charge is not available for payment')
@@ -9190,8 +9197,8 @@ export class WorkflowService {
       this.#database.driver.prepare(`
         INSERT INTO payment_preview (
           workspace_id, epoch, preview_id, case_id, category, amount_fen,
-          expected_charge_version, simulator_rule, token_hash, expires_at, tenders_json, actor_context_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          expected_charge_version, simulator_rule, token_hash, expires_at, tenders_json, actor_context_hash, charge_item_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -9205,6 +9212,7 @@ export class WorkflowService {
         expiresAt,
         JSON.stringify(tenders),
         this.#actorContextHash(input.context),
+        charge.charge_item_id,
       )
       return {
         data: {
@@ -9252,6 +9260,7 @@ export class WorkflowService {
            AND charge.epoch = preview.epoch
            AND charge.case_id = preview.case_id
            AND charge.category = preview.category
+           AND charge.charge_item_id = preview.charge_item_id
           JOIN outpatient_case
             ON outpatient_case.workspace_id = preview.workspace_id
            AND outpatient_case.epoch = preview.epoch
