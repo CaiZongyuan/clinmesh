@@ -5,7 +5,7 @@ import type { ApiConflict } from '@clinmesh/contracts/his'
 import { v7 as uuidv7 } from 'uuid'
 import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
-import type { ActorContext, CommandTransaction } from './command-executor.ts'
+import type { ActorContext, CommandEffect, CommandTransaction } from './command-executor.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 
@@ -124,7 +124,7 @@ export class ClinicalRequestKernel {
     context: ActorContext,
     request: ClinicalRequestRow,
     input: { expectedRequestVersion: number; now: string; reasonCode: string },
-  ): { serviceRequest: FhirResource; task: FhirResource; version: number; chargeEffects: import('./command-executor.ts').CommandEffect[] } {
+  ): { serviceRequest: FhirResource; task: FhirResource; version: number; chargeEffects: CommandEffect[] } {
     assertInpatientRecordWritable(this.#database,context,request.case_id)
     if (request.version !== input.expectedRequestVersion) {
       throw new WorkflowError(

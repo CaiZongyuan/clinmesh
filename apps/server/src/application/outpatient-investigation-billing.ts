@@ -156,22 +156,24 @@ export class OutpatientInvestigationBilling {
     })
   }
 
-  readByCharge(context: ActorContext, chargeItemId: string) {
-    const target = z.object({ request_id: z.string() }).optional().parse(this.database.driver.prepare(`
+  #requestIdForCharge(context: ActorContext, chargeItemId: string): string | undefined {
+    return z.object({ request_id: z.string() }).optional().parse(this.database.driver.prepare(`
       SELECT request_id FROM outpatient_investigation_billing
       WHERE workspace_id=? AND epoch=? AND charge_item_id=? AND payment_policy='prepaid-v1'
-    `).get(context.workspaceId, context.epoch, chargeItemId))
-    if (target === undefined) return undefined
-    const billing = this.read(context, target.request_id)
-    return billing === undefined ? undefined : { requestId: target.request_id, billing }
+    `).get(context.workspaceId, context.epoch, chargeItemId))?.request_id
+  }
+
+  readByCharge(context: ActorContext, chargeItemId: string) {
+    const requestId = this.#requestIdForCharge(context, chargeItemId)
+    if (requestId === undefined) return undefined
+    const billing = this.read(context, requestId)
+    return billing === undefined ? undefined : { requestId, billing }
   }
 
   enqueueIfPaid(transaction: CommandTransaction, context: ActorContext, chargeItemId: string, _now: string): boolean {
-    const target = z.object({ request_id: z.string() }).optional().parse(this.database.driver.prepare(`
-      SELECT request_id FROM outpatient_investigation_billing WHERE workspace_id=? AND epoch=? AND charge_item_id=? AND payment_policy='prepaid-v1'
-    `).get(context.workspaceId, context.epoch, chargeItemId))
-    if (target === undefined) return false
-    const row = this.#row(context, target.request_id)
+    const requestId = this.#requestIdForCharge(context, chargeItemId)
+    if (requestId === undefined) return false
+    const row = this.#row(context, requestId)
     if (!this.#prepaid(row) || row.status !== 'issued' || row.released_at !== null) return true
     const money = this.#money(context, row)
     if (money.unresolved > 0 || money.remainingFen !== 0) return true
