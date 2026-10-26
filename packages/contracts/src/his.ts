@@ -2290,6 +2290,7 @@ export const paymentResponseSchema = commandResponseSchema(z.object({
   amountFen: z.number().int().nonnegative(),
   outcome: z.enum(['ambiguous', 'declined', 'success']),
   paymentId: z.string().min(1),
+  remainingFen: z.number().int().nonnegative().optional(),
   status: z.string().min(1),
 }))
 

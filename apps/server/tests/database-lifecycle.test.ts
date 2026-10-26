@@ -283,6 +283,7 @@ describe('SQLite lifecycle', () => {
         '0090_insurance-benefits.sql',
         '0091_inpatient-insurance-adjustments.sql',
         '0092_outpatient-investigation-billing.sql',
+        '0093_outpatient-investigation-draft-price.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -440,6 +441,7 @@ describe('SQLite lifecycle', () => {
         '0090_insurance-benefits.sql',
         '0091_inpatient-insurance-adjustments.sql',
         '0092_outpatient-investigation-billing.sql',
+        '0093_outpatient-investigation-draft-price.sql',
       ],
       schemaVersion: expectedSchemaVersion(),
     })
@@ -2105,6 +2107,7 @@ describe('SQLite lifecycle', () => {
       '0090_insurance-benefits.sql',
       '0091_inpatient-insurance-adjustments.sql',
       '0092_outpatient-investigation-billing.sql',
+      '0093_outpatient-investigation-draft-price.sql',
     ])
     expect(existsSync(migrationResult.preMigrationBackup.path)).toBe(true)
     await expect(runDatabaseCli([

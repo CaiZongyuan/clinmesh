@@ -492,6 +492,48 @@ async function startSyntheticPatientConsultation(runtime: TestRuntime, password:
   }
 }
 
+async function issueIndependentLaboratoryRequest(
+  runtime: TestRuntime, doctorCookie: string,
+  started: { encounterId: string; encounterVersion: string },
+  catalogItemId = 'lab-cbc', expectedDraftVersion = 0,
+) {
+  const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+  const draftResponse = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`, {
+    method: 'PUT', headers: commandHeaders(doctorCookie),
+    body: JSON.stringify({ expectedVersions, input: { catalogItemId, expectedDraftVersion, indicationCode: 'fever' } }),
+  })
+  const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
+  const response = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`, {
+    method: 'POST', headers: commandHeaders(doctorCookie),
+    body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion: draft.draftVersion } }),
+  })
+  expect(response.status, await response.clone().text()).toBe(200)
+  return issueLaboratoryRequestResponseSchema.parse(await response.json()).data
+}
+
+async function payIndependentLaboratoryRequest(
+  runtime: TestRuntime, password: string, caseId: string,
+  request: z.infer<typeof issueLaboratoryRequestResponseSchema>['data']['request'],
+  amountFen?: number,
+  simulatorRule: 'success' | 'decline' | 'ambiguous' | 'ambiguous-decline' | 'ambiguous-pending' = 'success',
+) {
+  const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+  const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${caseId}`, { headers: { cookie } })).json())
+  const charge = bill.charges.find(item => item.requestId === request.id)
+  if (charge === undefined) throw new Error('Missing original independent laboratory charge')
+  const expectedVersions = { [`ChargeItem/${charge.chargeItemId}`]: String(charge.chargeVersion) }
+  const write = (path: string, input: unknown) => runtime.app.request(path, {
+    method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input }),
+  })
+  const preview = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+    caseId, category: 'laboratory', chargeItemId: charge.chargeItemId, simulatorRule,
+    ...(amountFen === undefined ? {} : { tenders: [{ method: 'cash', amountFen }] }),
+  })).json()).data
+  const confirmed = await write(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, { commitToken: preview.commitToken })
+  expect(confirmed.status, await confirmed.clone().text()).toBe(200)
+  return paymentResponseSchema.parse(await confirmed.json()).data
+}
+
 async function createIndependentReportedLaboratoryRequest(
   runtime: TestRuntime,
   password: string,
@@ -526,6 +568,7 @@ async function createIndependentReportedLaboratoryRequest(
     },
   )
   const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data.request
+  await payIndependentLaboratoryRequest(runtime, password, started.caseId, issued)
   for (const kind of [
     'laboratory.accept-request',
     'laboratory.start-request',
@@ -802,6 +845,7 @@ async function createCompletionReadyConsultation(
     )
     const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data
     laboratoryDraftVersion = issued.draftVersion
+    await payIndependentLaboratoryRequest(runtime, password, started.caseId, issued.request)
     for (const kind of [
       'laboratory.accept-request',
       'laboratory.start-request',
@@ -1471,6 +1515,159 @@ describe('outpatient workflow HTTP contract', () => {
     const detail = await readRequest()
     expect(detail.laboratoryRequests?.requests.find(item => item.id === issued.id)).toMatchObject({ status: 'reported', billing: { status: 'paid' } })
     expect((await readBill()).charges.filter(item => item.requestId === issued.id)).toHaveLength(1)
+  })
+
+  it('requires renewed review when a local laboratory draft price changes', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const save = (expectedDraftVersion: number) => runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`, {
+      method: 'PUT', headers: commandHeaders(doctorCookie), body: JSON.stringify({ expectedVersions,
+        input: { catalogItemId: 'lab-cbc', expectedDraftVersion, indicationCode: 'fever' } }),
+    })
+    const draft = laboratoryRequestDraftResponseSchema.parse(await (await save(0)).json()).data
+    runtime.database.driver.prepare("UPDATE outpatient_catalog SET price_fen=2600,version=version+1 WHERE item_id='lab-cbc' AND workspace_id='workspace-demo' AND epoch='epoch-1'").run()
+    const issue = (expectedDraftVersion: number) => runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`, {
+      method: 'POST', headers: commandHeaders(doctorCookie), body: JSON.stringify({ expectedVersions, input: { expectedDraftVersion } }),
+    })
+    const stale = await issue(draft.draftVersion)
+    expect(stale.status).toBe(409)
+    expect(apiErrorSchema.parse(await stale.json()).error.code).toBe('CATALOG_CONFLICT')
+    const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.caseId}`, { headers: { cookie: doctorCookie } })).json())
+    expect(detail.laboratoryRequests?.requests).toEqual([])
+    expect(detail.laboratoryRequests?.draft).toBeDefined()
+    const refreshed = laboratoryRequestDraftResponseSchema.parse(await (await save(draft.draftVersion)).json()).data
+    const issued = issueLaboratoryRequestResponseSchema.parse(await (await issue(refreshed.draftVersion)).json()).data
+    expect(issued.request.billing?.price).toMatchObject({ priceFen: 2600, version: 2 })
+  })
+
+  it.each(['ambiguous', 'ambiguous-decline', 'ambiguous-pending'] as const)('recovers only the original independent %s payment and blocks cancellation while funds are unknown', async simulatorRule => {
+    const setup = await paymentTestRuntime()
+    let runtime = setup.runtime
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, setup.password)
+    const issued = await issueIndependentLaboratoryRequest(runtime, doctorCookie, started)
+    const request = issued.request
+    const payment = await payIndependentLaboratoryRequest(runtime, setup.password, started.caseId, request, undefined, simulatorRule)
+    expect(payment).toMatchObject({ outcome: 'ambiguous', remainingFen: 2500 })
+    const cancelled = await runtime.app.request(`/api/his/v1/laboratory-requests/${request.id}/actions/cancel`, {
+      method: 'POST', headers: commandHeaders(doctorCookie), body: JSON.stringify({
+        expectedVersions: { [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion, [`Task/${request.taskId}`]: request.taskVersion },
+        input: { expectedRequestVersion: request.version, reasonCode: 'no-longer-needed' },
+      }),
+    })
+    expect(cancelled.status).toBe(409)
+    if (simulatorRule === 'ambiguous') {
+      runtime.close()
+      runtimes.splice(runtimes.indexOf(runtime), 1)
+      runtime = await createClinMeshRuntime(setup.options)
+      runtimes.push(runtime)
+    }
+    const cashier = await signIn(runtime, 'cashier@demo.clinmesh.local', setup.password)
+    const doctor = await signIn(runtime, 'doctor@demo.clinmesh.local', setup.password)
+    const key = randomUUID()
+    const recover = (actor = cashier) => runtime.app.request(`/api/his/v1/payments/${payment.paymentId}/actions/recover`, {
+      method: 'POST', headers: commandHeaders(actor, key), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${request.billing!.chargeItemId}`]: '2' }, input: { expectedPaymentVersion: 1 },
+      }),
+    })
+    expect((await recover(doctor)).status).toBe(403)
+    const recovered = paymentResponseSchema.parse(await (await recover()).json())
+    expect(paymentResponseSchema.parse(await (await recover()).json())).toEqual(recovered)
+    expect(recovered.data).toMatchObject({ paymentId: payment.paymentId,
+      outcome: simulatorRule === 'ambiguous' ? 'success' : simulatorRule === 'ambiguous-decline' ? 'declined' : 'ambiguous',
+      remainingFen: simulatorRule === 'ambiguous' ? 0 : 2500 })
+    for (let event = await runtime.dispatcher.dispatchOnce(); event !== undefined; event = await runtime.dispatcher.dispatchOnce()) { /* controlled outbox */ }
+    const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.caseId}`, { headers: { cookie: doctor } })).json())
+    expect(detail.laboratoryRequests?.requests.find(item => item.id === request.id)).toMatchObject({
+      status: simulatorRule === 'ambiguous' ? 'reported' : 'issued',
+      billing: { paidFen: simulatorRule === 'ambiguous' ? 2500 : 0 },
+    })
+    const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${started.caseId}`, { headers: { cookie: cashier } })).json())
+    expect(bill.payments).toHaveLength(1)
+    expect(bill.charges.filter(item => item.requestId === request.id)).toHaveLength(1)
+  })
+
+  it('requires cancelling an unreleased independent request instead of reducing its payment gate', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const issued = await issueIndependentLaboratoryRequest(runtime, doctorCookie, started)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const chargeItemId = issued.request.billing!.chargeItemId
+    const adjusted = await runtime.app.request(`/api/his/v1/billing/cases/${started.caseId}/adjustments`, {
+      method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({
+        expectedVersions: { [`ChargeItem/${chargeItemId}`]: '1' },
+        input: { chargeItemId, amountFen: 2500, reason: '合成价格更正，须取消重开。' },
+      }),
+    })
+    expect(adjusted.status).toBe(409)
+    expect(apiErrorSchema.parse(await adjusted.json()).error.code).toBe('WORKFLOW_CONFLICT')
+    const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${started.caseId}`, { headers: { cookie } })).json())
+    expect(bill.charges.find(item => item.chargeItemId === chargeItemId)).toMatchObject({ amountFen: 2500, remainingFen: 2500 })
+  })
+
+  it.each(['success', 'ambiguous'] as const)('keeps a paid cancellation refundable after completion and dispensing until its %s refund settles', async simulatorRule => {
+    const { runtime, password } = await paymentTestRuntime()
+    const candidate = await createCompletionReadyConsultation(runtime, password, { medication: 'prescription' })
+    const started = { ...candidate.started, encounterVersion: candidate.encounterVersion }
+    const issued = await issueIndependentLaboratoryRequest(runtime, candidate.doctorCookie, started)
+    const payment = await payIndependentLaboratoryRequest(runtime, password, started.caseId, issued.request, 1000)
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const write = (path: string, input: unknown, expectedVersions: Record<string, string>, actor = cookie, key = randomUUID()) => runtime.app.request(path, {
+      method: 'POST', headers: commandHeaders(actor, key), body: JSON.stringify({ input, expectedVersions }),
+    })
+    const request = issued.request
+    const cancelKey = randomUUID()
+    const cancel = () => write(`/api/his/v1/laboratory-requests/${request.id}/actions/cancel`, {
+      expectedRequestVersion: request.version, reasonCode: 'no-longer-needed',
+    }, { [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion, [`Task/${request.taskId}`]: request.taskVersion }, candidate.doctorCookie, cancelKey)
+    const cancelled = laboratoryRequestActionResponseSchema.parse(await (await cancel()).json())
+    expect(cancelled.data.request).toMatchObject({ status: 'cancelled', billing: { paidFen: 1000, remainingFen: 0, status: 'cancelled' } })
+    expect(laboratoryRequestActionResponseSchema.parse(await (await cancel()).json())).toEqual(cancelled)
+    const readBill = async () => billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${started.caseId}`, { headers: { cookie } })).json())
+    const charge = (await readBill()).charges.find(item => item.requestId === request.id)!
+    expect(charge).toMatchObject({ amountFen: 0, paidFen: 1000, remainingFen: 0, status: 'cancelled' })
+    const chargeVersions = { [`ChargeItem/${charge.chargeItemId}`]: String(charge.chargeVersion) }
+    expect((await write('/api/his/v1/payments/actions/preview', { caseId: started.caseId, category: 'laboratory', chargeItemId: charge.chargeItemId, simulatorRule: 'success' }, chargeVersions)).status).toBe(409)
+    const completed = await write(`/api/his/v1/encounters/${started.encounterId}/actions/complete`, {}, { [`Encounter/${started.encounterId}`]: started.encounterVersion }, candidate.doctorCookie)
+    expect(completed.status, await completed.clone().text()).toBe(200)
+    const medicationCharge = (await readBill()).charges.find(item => item.category === 'medication')!
+    const medicationVersions = { [`ChargeItem/${medicationCharge.chargeItemId}`]: String(medicationCharge.chargeVersion) }
+    const medicationPreview = paymentPreviewResponseSchema.parse(await (await write('/api/his/v1/payments/actions/preview', {
+      caseId: started.caseId, category: 'medication', chargeItemId: medicationCharge.chargeItemId, simulatorRule: 'success',
+    }, medicationVersions)).json()).data
+    expect((await write(`/api/his/v1/payments/${medicationPreview.previewId}/actions/confirm`, { commitToken: medicationPreview.commitToken }, medicationVersions)).status).toBe(200)
+    const pharmacist = await signIn(runtime, 'pharmacist@demo.clinmesh.local', password)
+    const prescription = pharmacyQueueSchema.parse(await (await runtime.app.request('/api/his/v1/pharmacy/queue?pageSize=20', { headers: { cookie: pharmacist } })).json()).items[0]!
+    const reviewed = await write(`/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/review`, { expectedPrescriptionVersion: prescription.prescriptionVersion, note: '合成处方审核通过。' },
+      { [`Encounter/${prescription.encounterId}`]: prescription.encounterVersion,
+        ...Object.fromEntries(prescription.medications.map(item => [`MedicationRequest/${item.medicationRequestId}`, item.medicationRequestVersion])) }, pharmacist)
+    expect(reviewed.status).toBe(200)
+    const review = prescriptionReviewResponseSchema.parse(await reviewed.json()).data
+    const dispensed = await write(`/api/his/v1/prescriptions/${prescription.prescriptionId}/actions/dispense`, {
+      expectedPrescriptionVersion: review.prescriptionVersion,
+      lotSelections: prescription.medications.map(item => ({ lotId: item.lots[0]!.id, expectedVersion: item.lots[0]!.version, quantity: item.quantity })),
+    }, { [`Encounter/${prescription.encounterId}`]: prescription.encounterVersion,
+      ...Object.fromEntries(prescription.medications.map(item => [`MedicationRequest/${item.medicationRequestId}`, item.medicationRequestVersion])) }, pharmacist)
+    expect(dispensed.status, await dispensed.clone().text()).toBe(200)
+    expect(dispenseResponseSchema.parse(await dispensed.json()).data.scenarioStatus).toBe('active')
+    const readRun = async () => scenarioStateSchema.parse(await (await runtime.app.request('/api/sim/v1/scenario-runs/current', { headers: { cookie } })).json())
+    expect((await readRun()).status).toBe('active')
+    const preview = refundPreviewResponseSchema.parse(await (await write('/api/his/v1/refunds/actions/preview', {
+      paymentId: payment.paymentId, amountFen: 1000, expectedSourceVersion: 1, simulatorRule,
+    }, chargeVersions)).json()).data
+    const confirmed = refundResponseSchema.parse(await (await write(`/api/his/v1/refunds/${preview.previewId}/actions/confirm`, { commitToken: preview.commitToken }, chargeVersions)).json())
+    expect((await readRun()).status).toBe(simulatorRule === 'success' ? 'completed' : 'active')
+    if (simulatorRule === 'ambiguous') {
+      const key = randomUUID()
+      const recover = () => write(`/api/his/v1/refunds/${confirmed.data.refundId}/actions/recover`, { expectedRefundVersion: 1 }, chargeVersions, cookie, key)
+      const recovered = refundResponseSchema.parse(await (await recover()).json())
+      expect(recovered.data.outcome).toBe('success')
+      expect(refundResponseSchema.parse(await (await recover()).json())).toEqual(recovered)
+      expect(recovered.effects.filter(effect => effect.reference.startsWith('ScenarioRun/'))).toHaveLength(1)
+    }
+    expect((await readRun()).status).toBe('completed')
+    const ledger = refundCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${started.caseId}/refunds`, { headers: { cookie } })).json())
+    expect(ledger).toMatchObject({ adjustedFen: 2500, refundedFen: 1000, reservedFen: 0 })
   })
 
   it('refunds only a recorded fee correction against the original payment without undoing clinical release', async () => {

@@ -81,6 +81,12 @@ export function readOutpatientInsuranceSource(
            ),0) AS amount_fen FROM charge_record c
            WHERE c.workspace_id=? AND c.epoch=? AND c.case_id=?
              AND NOT EXISTS(
+               SELECT 1 FROM outpatient_investigation_billing b
+               JOIN laboratory_request request USING(workspace_id,epoch,request_id)
+               WHERE b.workspace_id=c.workspace_id AND b.epoch=c.epoch
+                 AND b.charge_item_id=c.charge_item_id AND request.status='cancelled'
+             )
+             AND NOT EXISTS(
                SELECT 1 FROM prescription_withdrawal w
                WHERE w.workspace_id=c.workspace_id AND w.epoch=c.epoch
                  AND c.source_reference='Prescription/'||w.prescription_id
