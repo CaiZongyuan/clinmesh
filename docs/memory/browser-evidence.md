@@ -6,6 +6,8 @@
 
 ## 布局、滚动与像素聚合
 
+- 医保审阅等逐项明细弹窗须用完整多项目病例验证。限制内容最大高度并提供内部滚动，断言弹窗留在视口内，再真实点击末尾提交；小病例的可见文本断言会漏掉长费用清单撑出视口的问题，见 [PCI 黄金旅程](../../apps/web/e2e/inpatient-pci.journey.ts)。
+
 - 窄屏与 CSS zoom 组合验证前，按 `viewport / zoom` 核有效 CSS 宽度，并读取全局 `body` 的 computed `min-width`；低于产品最小宽度会使 Portal 等空容器也表现为横向溢出。组件验收分别覆盖受支持窄屏和缩放，用 DOM 尺寸区分全局宽度下限与组件溢出；不要为局部回归改写全站宽度合同。住院收款入口的文字与聚合尺寸证据见 [真实入口测试](../../apps/web/e2e/inpatient-discharge.spec.ts)。
 
 - Base UI 的可换行 TabsList 使用 `h-auto!` 覆盖 `group-data-horizontal/tabs:h-8`；普通 `h-auto` 的优先级不足，英文大字号窄屏下可能遮挡后续按钮。浏览器回归验证真实指针命中，不能只检查文本可见。

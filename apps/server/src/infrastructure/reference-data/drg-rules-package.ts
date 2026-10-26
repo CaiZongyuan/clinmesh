@@ -17,6 +17,29 @@ export const drgRulesManifestSchema = z.object({
     rows: z.number().int().nonnegative() }).strict()).length(2),
 }).strict().refine(manifest => new Set(manifest.files.map(file => file.path)).size === 2, 'duplicate DRG rules files')
 
+const verifiedCheckSchema = z.object({
+  status: z.literal('verified'),
+  evidence: z.array(z.string().trim().min(1)).min(1),
+}).strict()
+
+/** 受信部署配置中的人工核验记录；完整性检查不能生成或代替这些结论。 */
+export const drgRulesReviewSchema = z.object({
+  schemaVersion: z.literal('clinmesh.drg-rules-review.v1'),
+  scope: z.literal('hospital-simulation'),
+  releaseId: z.string().min(1),
+  sourceVersion: z.string().min(1),
+  manifestSha256: z.string().regex(/^[a-f0-9]{64}$/),
+  referenceReleaseId: z.string().min(1),
+  reviewedBy: z.string().trim().min(1),
+  reviewedAt: z.iso.datetime(),
+  checks: z.object({
+    usageTerms: verifiedCheckSchema,
+    codingCompatibility: verifiedCheckSchema,
+    sourceApplicability: verifiedCheckSchema,
+    algorithmValidation: verifiedCheckSchema,
+  }).strict(),
+}).strict()
+
 export interface DrgRulesPackageFiles extends Record<string, string> {}
 
 async function containedPath(directory: string, path: string): Promise<string> {
@@ -33,8 +56,7 @@ async function containedPath(directory: string, path: string): Promise<string> {
 }
 
 /** 服务启动仅读取完整v2声明式程序；缺条件的v1规则必须重新准备。 */
-export async function loadDrgRules(directory: string): Promise<DrgRules> {
-  const manifest = drgRulesManifestSchema.parse(JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')))
+async function loadManifestRules(directory: string, manifest: z.infer<typeof drgRulesManifestSchema>): Promise<DrgRules> {
   const contents: Record<string, string> = {}
   for (const file of manifest.files) {
     const content = await readFile(await containedPath(directory, file.path), 'utf8')
@@ -49,4 +71,26 @@ export async function loadDrgRules(directory: string): Promise<DrgRules> {
   if (program.coverage.sourceSha256 !== manifest.inputs.openDrgJsSha256
     || JSON.stringify(program.coverage) !== JSON.stringify(manifest.coverage)) throw new Error('DRG rules package source coverage mismatch')
   return rules
+}
+
+/** 仅验证物化数据完整性，供离线制包与受控测试使用；不表示来源已获运行批准。 */
+export async function loadDrgRules(directory: string): Promise<DrgRules> {
+  const manifest = drgRulesManifestSchema.parse(JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8')))
+  return loadManifestRules(directory, manifest)
+}
+
+export async function loadReviewedDrgRules(input: {
+  directory: string
+  reviewPath: string
+  referenceReleaseId: string | undefined
+}): Promise<DrgRules> {
+  const review = drgRulesReviewSchema.parse(JSON.parse(await readFile(input.reviewPath, 'utf8')))
+  if (review.referenceReleaseId !== input.referenceReleaseId) throw new Error('DRG review reference release mismatch')
+  const manifestText = await readFile(join(input.directory, 'manifest.json'), 'utf8')
+  if (createHash('sha256').update(manifestText).digest('hex') !== review.manifestSha256) throw new Error('DRG review manifest checksum mismatch')
+  const manifest = drgRulesManifestSchema.parse(JSON.parse(manifestText))
+  if (review.releaseId !== manifest.releaseId || review.sourceVersion !== manifest.sourceVersion) {
+    throw new Error('DRG review rules release mismatch')
+  }
+  return loadManifestRules(input.directory, manifest)
 }

@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { commandResponseSchema, laboratoryServiceSnapshotSchema } from './his.ts'
+import { syntheticCaseInstanceSchema } from './scenario.ts'
 import { referenceConceptSnapshotSchema, referenceMedicationProductSchema } from './reference-data.ts'
 import { inpatientMaterialItemSchema, inpatientProcedureItemSchema } from './inpatient-surgery.ts'
 
@@ -101,4 +102,17 @@ export const inpatientPciDataPrepareRequestSchema = z.object({
   input: z.object({ expectedEpoch: id }).strict(),
 }).strict()
 export const inpatientPciDataResponseSchema = commandResponseSchema(inpatientPciDataSchema)
+export const pciCaseSourcePrepareRequestSchema = z.object({ input: z.object({ expectedEpoch: id }).strict() }).strict()
+export const pciCaseSourceSchema = z.object({
+  case: syntheticCaseInstanceSchema, profileId: id, sourceHash: z.string().regex(/^[a-f0-9]{64}$/), packageVersion: id,
+}).strict()
+export const pciCaseSourceResponseSchema = commandResponseSchema(pciCaseSourceSchema)
+export const startSyntheticInpatientCaseRequestSchema = z.object({
+  activeBriefRevision: z.number().int().positive(), expectedCaseRevision: z.number().int().positive(),
+  expectedEpoch: id, wardId: id,
+}).strict()
+export const startSyntheticInpatientCaseResultSchema = z.object({
+  syntheticCaseId: id, patientId: id, admissionId: id, encounterId: id, status: z.literal('registered'),
+}).strict()
+export const startSyntheticInpatientCaseResponseSchema = commandResponseSchema(startSyntheticInpatientCaseResultSchema)
 export type InpatientPciDataPackage = z.infer<typeof inpatientPciDataPackageSchema>

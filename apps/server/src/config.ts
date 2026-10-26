@@ -43,6 +43,8 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: guidelineNonCommercialUseSchema,
   CLINMESH_GUIDELINE_DEPLOYMENT_POLICY: guidelineDeploymentPolicySchema,
   CLINMESH_DEMO_PASSWORD: z.string().min(12),
+  CLINMESH_DRG_RULES_DIRECTORY: z.string().trim().min(1).optional(),
+  CLINMESH_DRG_RULES_REVIEW_PATH: z.string().trim().min(1).optional(),
   CLINMESH_DSH_BRIDGE_SECRET: z.string().min(32).optional(),
   CLINMESH_HOST: z.string().trim().min(1).default('127.0.0.1'),
   CLINMESH_IMAGING_ASSET_DIRECTORY: z.string().trim().min(1).optional(),
@@ -61,6 +63,10 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_TRUSTED_ORIGINS: z.string().trim().min(1).optional(),
   CLINMESH_WEB_ROOT: z.string().trim().min(1).optional(),
 }).superRefine((environment, context) => {
+  if ((environment.CLINMESH_DRG_RULES_DIRECTORY === undefined) !== (environment.CLINMESH_DRG_RULES_REVIEW_PATH === undefined)) {
+    context.addIssue({ code: 'custom', path: ['CLINMESH_DRG_RULES_REVIEW_PATH'],
+      message: 'DRG runtime rules require both a package directory and an explicit review file' })
+  }
   if (environment.CLINMESH_AI_SOURCE === 'dsh') {
     if (environment.CLINMESH_DSH_BRIDGE_SECRET === undefined) {
       context.addIssue({ code: 'custom', path: ['CLINMESH_DSH_BRIDGE_SECRET'], message: 'DSH model calls require a bridge secret' })
@@ -105,6 +111,8 @@ export interface ServerConfig {
   guidelineNonCommercialUse: boolean
   guidelineDeploymentPolicy: GuidelineDeploymentPolicy
   demoPassword: string
+  drgRulesDirectory?: string
+  drgRulesReviewPath?: string
   dshBridgeSecret?: string
   hostname: string
   imagingAssetDirectory: string
@@ -175,6 +183,8 @@ export function readServerEnvironment(
   const environmentDirectory = dirname(environmentFile)
   for (const name of [
     'CLINMESH_DATABASE_PATH',
+    'CLINMESH_DRG_RULES_DIRECTORY',
+    'CLINMESH_DRG_RULES_REVIEW_PATH',
     'CLINMESH_MODEL_CONTROL_PATH',
     'CLINMESH_MODEL_PRICING_PATH',
     'CLINMESH_GUIDELINE_DATABASE_PATH',
@@ -249,6 +259,10 @@ export function readServerConfig(
     guidelineNonCommercialUse: parsed.CLINMESH_GUIDELINE_NON_COMMERCIAL_USE,
     guidelineDeploymentPolicy: parsed.CLINMESH_GUIDELINE_DEPLOYMENT_POLICY,
     demoPassword: parsed.CLINMESH_DEMO_PASSWORD,
+    ...(parsed.CLINMESH_DRG_RULES_DIRECTORY === undefined ? {} : {
+      drgRulesDirectory: parsed.CLINMESH_DRG_RULES_DIRECTORY,
+      drgRulesReviewPath: parsed.CLINMESH_DRG_RULES_REVIEW_PATH!,
+    }),
     ...(parsed.CLINMESH_DSH_BRIDGE_SECRET === undefined
       ? {}
       : { dshBridgeSecret: parsed.CLINMESH_DSH_BRIDGE_SECRET }),

@@ -11,7 +11,7 @@ import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatien
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../src/runtime.ts'
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 async function setup() {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-inpatient-surgery-'))
   const password = `Test-${randomUUID()}-Aa1!`
@@ -49,7 +49,16 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(response.status).toBe(200)
     const catalog = inpatientSurgeryCatalogSchema.parse(await response.json())
     expect(catalog.procedures).toHaveLength(8)
-    expect(catalog.materials).toHaveLength(233)
+    expect(catalog.materials).toHaveLength(236)
+    for (const [id, unit, priceFen] of [
+      ['hospital-material-stent', '个', 80000],
+      ['hospital-material-balloon', '个', 40000],
+      ['hospital-material-guidewire', '根', 20000],
+    ] as const) {
+      const item = catalog.materials.find(item => item.id === id)
+      expect(item).toMatchObject({ chargeDefinition: { unit, priceFen, synthetic: true } })
+      expect(item).not.toHaveProperty('reference')
+    }
     const imported = catalog.materials.filter((item: { reference?: unknown }) => item.reference !== undefined)
     expect(imported).toHaveLength(231)
     expect(imported.filter(item => 'chargeDefinition' in item)).toHaveLength(52)
@@ -339,7 +348,7 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
     expect(response.status).toBe(200)
     const catalog = await response.json()
     expect(catalog.procedures).toHaveLength(8)
-    expect(catalog.materials).toHaveLength(233)
+    expect(catalog.materials).toHaveLength(236)
     expect(catalog.procedures.find((item: { id: string }) => item.id === 'hospital-surgery-4').chargeDefinition.priceFen).toBe(123456)
   })
 
@@ -361,15 +370,15 @@ describe('住院手术公共 HTTP 与真实 SQLite', () => {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
     const catalog = inpatientSurgeryCatalogSchema.parse(await (await request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
-    expect(catalog.materials).toHaveLength(233)
-    expect(new Set(catalog.materials.map((item: { id: string }) => item.id)).size).toBe(233)
+    expect(catalog.materials).toHaveLength(236)
+    expect(new Set(catalog.materials.map((item: { id: string }) => item.id)).size).toBe(236)
     const retained = catalog.materials.find(item => item.id === 'hospital-material-cv-8')!
     expect('chargeDefinition' in retained && retained.chargeDefinition.priceFen).toBe(123)
     expect(inpatientSurgeryResponseSchema.parse(await (await request(s.doctor, `${s.path}/surgeries/execute`, { input }, key)).json())).toEqual(original)
     expect(inpatientSurgerySchema.parse(await (await request(s.doctor, `${s.path}/surgeries`)).json())).toEqual(original.data)
     expect((await request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/reset', {})).status).toBe(200)
     const resetCatalog = inpatientSurgeryCatalogSchema.parse(await (await request(s.doctor, '/api/his/v1/inpatient/surgery-catalog')).json())
-    expect(resetCatalog.materials).toHaveLength(233)
+    expect(resetCatalog.materials).toHaveLength(236)
     const installed = resetCatalog.materials.find(item => item.id === 'hospital-material-cv-8')!
     expect('chargeDefinition' in installed && installed.chargeDefinition.priceFen).toBe(1199000)
   })

@@ -308,7 +308,7 @@ export const diagnosisRoleSchema = z.enum(['primary', 'secondary'])
 
 export const investigationGenerationCapabilitySchema = z.discriminatedUnion('supported', [
   z.object({
-    source: z.enum(['investigation-agent', 'synthea-exact']),
+    source: z.enum(['investigation-agent', 'synthea-exact', 'case-truth-exact']),
     supported: z.literal(true),
   }).strict(),
   z.object({

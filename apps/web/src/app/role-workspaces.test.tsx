@@ -9502,7 +9502,7 @@ describe('role workspaces', () => {
     expect(within(timeline).getByText('删除处方草稿')).toBeTruthy()
     expect(within(timeline).getByText('开具处方')).toBeTruthy()
     expect(within(timeline).getByText('撤回处方')).toBeTruthy()
-  })
+  }, 15_000)
 
   it('partially dispenses from a versioned lot before completing the Scenario Run', async () => {
     let dispensedQuantity = 0

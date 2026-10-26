@@ -20,6 +20,7 @@
     "reference:sync": "tsx src/reference-sync.ts",
     "drg:prepare": "tsx src/drg-reference-sync.ts",
     "drg:package": "tsx src/drg-reference-package.ts",
+    "drg:rules:prepare": "tsx src/drg-rules-prepare.ts",
     "drg:compact": "tsx src/drg-reference-compact.ts",
     "drg:export": "tsx src/drg-reference-export.ts",
     "drg:build-rules": "tsx src/drg-rules-build.ts",

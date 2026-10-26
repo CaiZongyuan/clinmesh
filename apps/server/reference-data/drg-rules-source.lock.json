@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "clinmesh.drg-rules-source.v1",
+  "releaseId": "clinmesh-chs-drg-30-2026-10-25.conditions-v2",
+  "sourceVersion": "opendrg-chs-drg-3.0@2026-10-20",
+  "inputs": {
+    "groups": {
+      "path": ".data/reference-prepared/r3/drg/groups.jsonl",
+      "sha256": "4dba56d298c8a6d07266978498c8e429e6bb4fc456cbf14c1bb45ea016e855cb"
+    },
+    "js": {
+      "path": ".data/exports/opendrg-2026-10-20/raw/3258.b47bba5f.js",
+      "sha256": "70c00d9ef9b02c1556b8a96ece350f6ce3d1fd2b6f9dd8ea80c2ec7d2ba0f0ff"
+    },
+    "tables": {
+      "path": ".data/exports/opendrg-2026-10-20/groupers/chs_drg_30.json",
+      "sha256": "75e10058ed0a30e2f679c68b34b8db8a580c5572b8667f2b9a1bf258de8db3b5"
+    }
+  }
+}

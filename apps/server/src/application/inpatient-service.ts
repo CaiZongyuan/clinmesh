@@ -28,7 +28,7 @@ import type { DrgRules } from '@clinmesh/contracts/drg'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
-import { type ActorContext, CommandExecutor } from './command-executor.ts'
+import { type ActorContext, type CommandTransaction, CommandExecutor } from './command-executor.ts'
 
 export class InpatientError extends Error {
   constructor(readonly code: string, message: string, readonly status: 400 | 403 | 404 | 409 = 409) { super(message) }
@@ -111,7 +111,10 @@ export class InpatientService {
   }
   detail(context: ActorContext, admissionId: string) {
     this.assertReadRole(context, readers)
-    const { row } = this.readAdmissionBinding(context, admissionId)
+    return this.#detail(context, admissionId)
+  }
+  #detail(context: ActorContext, admissionId: string) {
+    const { row } = this.#admissionScope(context, admissionId)
     const patient = this.fhir.read(context, 'Patient', row.patient_id)
     const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
     const occupancy = z.object({ bed_id: z.string() }).optional().parse(this.database.driver.prepare(
@@ -206,7 +209,11 @@ export class InpatientService {
       dataSchema: inpatientCommandResponseSchema.shape.data, authorize: () => {
         this.assertRole(context, ['registrar'])
         if (input.expectedEpoch !== context.epoch) throw new InpatientError('INPATIENT_EPOCH_CONFLICT', '登记意图所属数据世代已变化，请核对当前住院与费用记录')
-      } }, () => {
+      } }, transaction => this.applyRegister(transaction, context, input))
+  }
+
+  applyRegister(transaction: CommandTransaction, context: ActorContext, input: z.infer<typeof inpatientRegistrationInputSchema>, admissionId = uuidv7()) {
+
       const ward = z.object({ organization_id: z.string() }).optional().parse(this.database.driver.prepare(
         'SELECT organization_id FROM inpatient_ward WHERE workspace_id=? AND epoch=? AND ward_id=?')
         .get(context.workspaceId, context.epoch, input.wardId))
@@ -231,7 +238,7 @@ export class InpatientService {
         .all(context.workspaceId, context.epoch, input.patientId, ...(sourceEncounterId === undefined ? [] : [sourceEncounterId])))
       if (sources.length > 1) throw new InpatientError('INPATIENT_SOURCE_AMBIGUOUS', '患者有多个合成病例来源，请明确原门诊就诊')
       if (input.sourceEncounterId !== undefined && sources.length === 0) throw new InpatientError('INPATIENT_SOURCE_INVALID', '未找到患者的指定合成病例来源')
-      const id = uuidv7()
+      const id = admissionId
       const time = this.virtualTime(context)
       this.database.driver.prepare('INSERT INTO inpatient_record_number VALUES(?,?,?,?) ON CONFLICT(workspace_id,epoch,patient_id) DO NOTHING').run(context.workspaceId,context.epoch,input.patientId,`MR-${uuidv7()}`)
       this.database.driver.prepare(`INSERT INTO inpatient_admission
@@ -242,11 +249,11 @@ export class InpatientService {
           input.referralId ?? null, sources[0]?.case_id ?? null, input.wardId, ward.organization_id, time)
       this.database.driver.prepare(`INSERT INTO clinical_request_context(workspace_id,epoch,case_id,admission_id,patient_id,encounter_id)
         VALUES(?,?,?,?,?,?)`).run(context.workspaceId,context.epoch,id,id,input.patientId,id)
-      const encounter = this.fhir.create(context, { resourceType: 'Encounter', id, status: 'planned',
+      const encounter = transaction.fhir.create(context, { resourceType: 'Encounter', id, status: 'planned',
         class: [{ coding: [{ system: 'http://terminology.hl7.org/CodeSystem/v3-ActCode', code: 'IMP' }] }],
         identifier: [{ system: 'https://caizongyuan.github.io/clinmesh/identifier/inpatient-number', value: `ZY-${id}` }],
         subject: { reference: `Patient/${input.patientId}` }, serviceProvider: { reference: `Organization/${ward.organization_id}` } })
-      const account = this.fhir.create(context, { resourceType: 'Account', id, status: 'active',
+      const account = transaction.fhir.create(context, { resourceType: 'Account', id, status: 'active',
         subject: [{ reference: `Patient/${input.patientId}` }], name: `住院费用账户 ${id}` })
       const effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> = [encounter, account].map(resource => ({ kind: 'created' as const,
         reference: `${resource.resourceType}/${resource.id}`, versionId: resource.meta!.versionId! }))
@@ -259,12 +266,11 @@ export class InpatientService {
       if (input.referralId !== undefined) {
         this.database.driver.prepare(`UPDATE inpatient_referral SET status='received' WHERE workspace_id=? AND epoch=? AND referral_id=?`)
           .run(context.workspaceId, context.epoch, input.referralId)
-        const referral = this.fhir.read(context, 'ServiceRequest', input.referralId)
-        const updated = this.fhir.update(context, { ...referral, status: 'completed' }, referral.meta!.versionId!)
+        const referral = transaction.fhir.read(context, 'ServiceRequest', input.referralId)
+        const updated = transaction.fhir.update(context, { ...referral, status: 'completed' }, referral.meta!.versionId!)
         effects.push({ kind: 'updated', reference: `ServiceRequest/${input.referralId}`, versionId: updated.meta!.versionId! })
       }
-      return { data: this.detail(context, id), effects }
-    })
+      return { data: this.#detail(context, id), effects }
   }
   assignBed(context: ActorContext, raw: unknown, idempotencyKey: string, action: 'receive' | 'move-bed') {
     const input = inpatientBedInputSchema.parse(raw)

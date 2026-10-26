@@ -13,6 +13,7 @@ export default defineConfig({
         'drg-reference-sync': 'src/drg-reference-sync.ts',
         'guideline-prepare': 'src/guideline-prepare.ts',
         'guideline-package': 'src/guideline-package.ts',
+        'drg-rules-prepare': 'src/drg-rules-prepare.ts',
         index: 'src/index.ts',
       },
       output: {

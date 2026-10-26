@@ -1,11 +1,14 @@
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { InpatientChargeList } from './inpatient-charges.tsx'
-import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
+import { inpatientFullCatalogSchema, inpatientFullClinicalSchema, type inpatientOrderIssueInputSchema } from '@clinmesh/contracts/inpatient-clinical'
+import type { InpatientDrgSimulationInput } from '@clinmesh/contracts/inpatient-drg-simulation'
+import type { z } from 'zod'
 import { resolveInpatientDose, type InpatientDoseResult } from '@clinmesh/core/inpatient-dose'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
 import { Button } from '@clinmesh/ui/components/button'
+import { AlertDialog, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@clinmesh/ui/components/alert-dialog'
 import { Field, FieldGroup, FieldLabel, FieldSet, FieldLegend } from '@clinmesh/ui/components/field'
 import { Input } from '@clinmesh/ui/components/input'
 import { useQuery } from '@tanstack/react-query'
@@ -17,9 +20,12 @@ import { InpatientCatalogPicker } from './inpatient-catalog-picker.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { DrgError, DrgStaleNotice, InpatientDrgPanel, type DrgReview, type DrgEvaluationState } from './inpatient-drg.tsx'
+import { formatFen } from './workspace-format.ts'
 
-export function InpatientClinical({ admission, session, locale, write, view = 'orders' }: { view?: 'orders' | 'fees'; admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }): React.JSX.Element {
+export function InpatientClinical({ admission, session, locale, write, view = 'orders', active = true }: { view?: 'orders' | 'fees'; active?: boolean; admission: InpatientAdmission; session: SessionContext; locale: WorkspaceLocale; write: ReturnType<typeof useInpatientWriteIntent> }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
+  const checkingMessage = t('正在核对评估，暂不可确认。', 'Checking the assessment; confirmation is temporarily unavailable.')
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const scope = ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId]
   const messages = getWorkspaceMessages(locale)
@@ -28,6 +34,10 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
   const [itemId,setItemId] = useState<string|null>(null), [duration,setDuration] = useState<'long'|'temporary'>('long')
   const [frequency,setFrequency] = useState<'QD'|'BID'|'PRN'|null>(null), [dose,setDose] = useState<string|null>(null)
   const [reason,setReason] = useState(''), [surgeryId,setSurgeryId] = useState<string|null>(null)
+  const [evaluate, setEvaluate] = useState(false)
+  const [evaluation, setEvaluation] = useState<DrgEvaluationState>()
+  const [review, setReview] = useState<{ input: z.infer<typeof inpatientOrderIssueInputSchema>; display: string; assessment: DrgReview }>()
+  const reviewCurrent = evaluation?.reviewable === true && review?.assessment.fingerprint === evaluation.fingerprint
   const surgery = useQuery({ queryKey: [...scope,admission.id,'surgeries'], enabled: doctor && view === 'orders', queryFn: ({signal}) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`,inpatientSurgerySchema,signal) })
   const medication = catalog.data?.medications.find(item => item.id === itemId), service = catalog.data?.services.find(item => item.id === itemId)
   const doseText = dose ?? medication?.doses[0]?.doseText ?? ''
@@ -37,12 +47,18 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
   const selectedFrequency = frequency !== null && medication?.frequencyCodes.includes(frequency) ? frequency : medication?.frequencyCodes[0]
   const data = clinical.data, blocked = write.blocked || admission.status !== 'admitted'
   const stopBlocked = write.blocked || !['admitted','discharge-pending'].includes(admission.status)
-  const issue = () => {
-    if (!data) return
+  const orderInput = (): z.infer<typeof inpatientOrderIssueInputSchema> | undefined => {
+    if (!data) return undefined
     const common={admissionId:admission.id,encounterVersion:data.encounterVersion,duration,...(surgeryId ? {surgeryExecutionId:surgeryId} : {})}
-    if (medication && selectedDose && 'quantity' in selectedDose && selectedFrequency) write.mutation.mutate({operation:'inpatient.order.issue',input:{...common,selection:{kind:'medication',catalogItemId:medication.id,catalogVersion:medication.version,doseText,doseQuantity:selectedDose.quantity,frequencyCode:selectedFrequency}}})
-    else if(service) write.mutation.mutate({operation:'inpatient.order.issue',input:{...common,selection:{kind:'service',serviceId:service.id,serviceVersion:service.version,quantity:1}}})
+    if (medication && selectedDose && 'quantity' in selectedDose && selectedFrequency) return {...common,selection:{kind:'medication',catalogItemId:medication.id,catalogVersion:medication.version,doseText,doseQuantity:selectedDose.quantity,frequencyCode:selectedFrequency}}
+    if(service) return {...common,selection:{kind:'service',serviceId:service.id,serviceVersion:service.version,quantity:1}}
+    return undefined
   }
+  const issue = () => { const input = orderInput(); if (input) write.mutation.mutate({ operation: 'inpatient.order.issue', input }) }
+  const input = orderInput()
+  const draft: InpatientDrgSimulationInput | undefined = input?.selection.kind === 'medication'
+    ? { medications: [{ catalogItemId: input.selection.catalogItemId, catalogVersion: input.selection.catalogVersion, doseText: input.selection.doseText, doseQuantity: input.selection.doseQuantity, frequencyCode: input.selection.frequencyCode }], services: [] }
+    : input?.selection.kind === 'service' ? { medications: [], services: [{ serviceId: input.selection.serviceId, serviceVersion: input.selection.serviceVersion, quantity: input.selection.quantity }] } : undefined
   const error=clinical.error ?? catalog.error
   if (view === 'fees') return <>{error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,messages)}</AlertDescription></Alert> : null}{data ? <InpatientChargeList data={{ admissionId: admission.id, financialStatus: admission.financialStatus, charges: data.charges, chargesFen: data.chargesFen }} locale={locale} /> : null}</>
   return <section aria-label={t('住院诊疗','Inpatient care')} className="flex flex-col gap-4">
@@ -61,8 +77,10 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
       <p>{t('可填写明确剂量或制剂数量，例如','Enter a dose or preparation quantity, for example ')}{medication.doses[0]?.doseText ?? `1${medication.unit}`} / {`1${medication.unit}`}</p></Field>
       <Field><FieldLabel htmlFor="inpatient-order-frequency">{t('医嘱频次','Order frequency')}</FieldLabel><WorkspaceSelect id="inpatient-order-frequency" value={selectedFrequency??null} items={medication.frequencyCodes.map(code=>({value:code,label:code==='QD'?'QD · 08:00':code==='BID'?'BID · 08:00 / 20:00':t('PRN · 按需','PRN · as needed')}))} onValueChange={setFrequency} /></Field></> : null}
       <Field><FieldLabel htmlFor="inpatient-postoperative">{t('术后关联手术','Postoperative procedure')}</FieldLabel><WorkspaceSelect id="inpatient-postoperative" value={surgeryId ?? ''} items={[{value:'',label:t('普通医嘱','Regular order')},...(surgery.data?.executions ?? []).map(item=>({value:item.id,label:`${item.actualProcedure.coding.code} · ${item.actualProcedure.coding.display}`}))]} onValueChange={setSurgeryId} /></Field>
-      <Button type="submit" disabled={blocked || !data || (!medication && !service) || (medication !== undefined && (!selectedDose || !('quantity' in selectedDose) || !selectedFrequency))}>{t('签发医嘱','Issue order')}</Button>
+      <div className="flex flex-wrap gap-2"><Button type="submit" disabled={blocked || !input}>{t('签发医嘱','Issue order')}</Button><Button type="button" variant="outline" disabled={blocked || !draft} onClick={() => setEvaluate(value => !value)}>{evaluate ? t('收起当前医嘱推演','Hide order simulation') : t('推演当前医嘱','Simulate current order')}</Button></div>
     </FieldGroup></FieldSet></form> : null}
+    {doctor && evaluate && draft ? <InpatientDrgPanel admission={admission} session={session} locale={locale} write={write} draft={draft} active={active} reservations={false} {...(review ? { onEvaluationChange: setEvaluation } : {})} onReview={assessment => { const frozenInput = orderInput(); if (frozenInput) setReview({ input: { ...frozenInput, expectedDrgFingerprint: assessment.fingerprint }, display: medication?.display ?? service?.display ?? '', assessment }) }} /> : null}
+    <AlertDialog open={review !== undefined} onOpenChange={open => { if (!open && !write.mutation.isPending) setReview(undefined) }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{t('确认推演后的医嘱','Confirm reviewed order')}</AlertDialogTitle><AlertDialogDescription>{t('核对当前医嘱和费用推演。提交时将重新核验诊疗、费用和目录版本；变化后需重新推演。','Review the selected order and charge estimate. Care, charges and catalog versions will be checked again when submitting.')}</AlertDialogDescription></AlertDialogHeader>{review ? <><p>{review.display} · {review.input.duration === 'temporary' ? t('临时','Temporary') : t('长期','Long')}</p><p>{review.input.selection.kind === 'medication' ? `${review.input.selection.doseText} · ${review.input.selection.frequencyCode}` : `${t('数量 ','Quantity ')}${review.input.selection.quantity}`}</p><p>{t('正式病组 ','Formal group ')}{review.assessment.drgCode ?? t('未确定','Undetermined')} · {t('推演总额 ','Estimated charges ')}{formatFen(review.assessment.estimatedTotalFen, locale)}</p></> : null}<DrgError error={write.mutation.error} locale={locale} />{evaluation?.stale ? <DrgStaleNotice locale={locale} /> : !reviewCurrent ? <p role="status">{checkingMessage}</p> : null}<AlertDialogFooter><AlertDialogCancel disabled={write.mutation.isPending}>{t('取消','Cancel')}</AlertDialogCancel><Button disabled={write.blocked || !reviewCurrent} onClick={() => { if (review && reviewCurrent) write.mutation.mutate({ operation: 'inpatient.order.issue', input: review.input }, { onSuccess: () => setReview(undefined) }) }}>{t('确认签发医嘱','Confirm order')}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     {doctor || nurse ? <Field><FieldLabel htmlFor="inpatient-order-reason">{t('停嘱或按需执行理由','Reason for stop or PRN execution')}</FieldLabel><Input id="inpatient-order-reason" value={reason} onChange={event=>setReason(event.currentTarget.value)} /></Field> : null}
     {data?.orders.map(order=><article key={order.id} className="flex flex-col gap-2 rounded-md border p-3">
       <p>{order.display} · {{signed:t('待校对','Awaiting verification'),verified:t('已校对','Verified'),'stop-requested':t('待核停','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</p>
