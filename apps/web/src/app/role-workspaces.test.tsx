@@ -4451,8 +4451,10 @@ describe('role workspaces', () => {
         expect(init?.method).toBe('POST')
         expect(JSON.parse(String(init?.body))).toEqual({
           expectedVersions: { [`Encounter/${queueItem.encounterId}`]: '1' }, input: { expectedDraftVersion: 1, resolveExistingDraft: true, selections: [category === 'imaging'
-            ? { source: 'manual', kind: category, serviceId: imagingService.id, indication: '咳嗽两周' }
-            : { source: 'manual', kind: category, serviceId: pathologyService.id, sourceProcedureReference: sourceProcedure.sourceReference, purpose: '外院手术切片复核' }] },
+            ? { source: 'manual', kind: category, serviceId: imagingService.id, indication: '咳嗽两周',
+              reviewedService: { id: imagingService.id, version: 1, outpatientBilling: syntheticOutpatientPrice } }
+            : { source: 'manual', kind: category, serviceId: pathologyService.id, sourceProcedureReference: sourceProcedure.sourceReference, purpose: '外院手术切片复核',
+              reviewedService: { id: pathologyService.id, version: 1, outpatientBilling: syntheticOutpatientPrice } }] },
         })
         return new Promise<Response>(resolve => {
           releaseIssue = () => {
@@ -4796,7 +4798,8 @@ describe('role workspaces', () => {
         expect(body.input.expectedDraftVersion).toBe(draftVersion)
         expect(body.input.resolveExistingDraft).toBe(true)
         expect(body.input.selections).toEqual([{ source: 'manual', kind: 'laboratory',
-          catalogItemId: agentLaboratoryService.id, indicationCode: 'clinical-evaluation' }])
+          catalogItemId: agentLaboratoryService.id, indicationCode: 'clinical-evaluation',
+          reviewedService: { id: agentLaboratoryService.id, version: 1, outpatientBilling: syntheticOutpatientPrice } }])
         const issuedDraft = draft
         if (issuedDraft === undefined) throw new Error('Laboratory draft was not found')
         draft = undefined
@@ -4995,7 +4998,6 @@ describe('role workspaces', () => {
     render(<WebApp />)
     await user.click(await screen.findByRole('tab', { name: '检验检查' }))
     const panel = screen.getByRole('region', { name: '待开具检验' })
-    await user.click(await within(panel).findByRole('checkbox', { name: '选择合成第二项检验' }))
     // 弹窗合同：目录检索移入「添加检验」弹窗，在同一次弹窗内完成检索与翻页。
     await user.click(screen.getByRole('button', { name: '添加检验' }))
     const catalogComposer = within(await screen.findByRole('dialog'))
@@ -5005,6 +5007,11 @@ describe('role workspaces', () => {
     await waitFor(() => expect(directoryReads.at(-1)).toEqual({ query: '血常', page: 2 }))
     await user.click(catalogComposer.getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // 目录加载出已审阅服务与价格后，再取消第二项，确保只开具第一项。
+    const secondSelection = within(panel).getByRole('checkbox', { name: '选择合成第二项检验' })
+    await waitFor(() => expect(secondSelection.getAttribute('aria-checked')).toBe('true'))
+    await user.click(secondSelection)
+    expect(secondSelection.getAttribute('aria-checked')).toBe('false')
     await user.click(within(panel).getByRole('button', { name: /^开具选中项目/ }))
     await within(await screen.findByRole('region', { name: '申请列表' })).findByRole('button', { name: /白细胞计数 已开具/ })
     // 新合同下重开弹窗会重置检索词与页码，仍可再次检索翻页找回待选的第二项。
@@ -5023,7 +5030,8 @@ describe('role workspaces', () => {
     expect(within(screen.getByRole('region', { name: '待开具检验' })).getByText('发热')).toBeTruthy()
     expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-recording': '1' }, input: {
       expectedDraftVersion: 0, generation: 1, inputFingerprint: 'a'.repeat(64), selections: [
-        { source: 'agent', kind: 'laboratory', suggestionId: 'laboratory-suggestion-0', catalogItemId: first.id, indicationCode: 'fever' },
+        { source: 'agent', kind: 'laboratory', suggestionId: 'laboratory-suggestion-0', catalogItemId: first.id, indicationCode: 'fever',
+          reviewedService: { id: first.id, version: 1, outpatientBilling: syntheticOutpatientPrice } },
       ],
     } }])
   })
