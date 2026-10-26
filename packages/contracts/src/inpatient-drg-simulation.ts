@@ -10,6 +10,8 @@ const text = z.string().min(1).max(1_000)
  * 数量口径与收费触发一致：药品按单次计量计价（发药口径），服务按次计价（执行口径）。
  */
 export const inpatientDrgSimulationInputSchema = z.object({
+  /** 仅指定假想实施后的主计划；不代替首页的实际主操作选择。 */
+  primarySurgeryRequestId: id.optional(),
   medications: z.array(z.object({ catalogItemId: id, catalogVersion: z.number().int().positive(),
     doseText: z.string().trim().min(1).max(120), frequencyCode: z.enum(['QD', 'BID', 'PRN']),
     doseQuantity: z.number().int().positive().max(100) }).strict()).max(20).default([]),

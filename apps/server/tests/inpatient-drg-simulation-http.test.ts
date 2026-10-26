@@ -162,7 +162,7 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
     expect(baseline.grouping.projected).toBeNull()
     expect(baseline.incompleteness).toEqual({ costMissing: true, paymentReferenceMissing: false })
     expect(baseline.paymentReference).toMatchObject({ drgCode: 'RA15', referenceFen: 300_000,
-      parameterSetId: 'clinmesh-synthetic-hospital-drg-payment', parameterVersion: '2026-demo-2' })
+      parameterSetId: 'clinmesh-synthetic-hospital-drg-payment', parameterVersion: '2026-demo-3' })
     const again = await (await s.request(s.doctor, `${s.path}/drg/simulation`, {})).json()
     expect(again.fingerprint).toBe(baseline.fingerprint)
     const medication = s.clinicalCatalog.medications.find((item: { id: string }) => item.id === 'medication-amlodipine')!
@@ -204,6 +204,32 @@ describe('住院 DRG 处方推演公共 HTTP', () => {
       estimatedFen: procedure.chargeDefinition.priceFen })
     expect(simulated.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'RA15' })
     expect(simulated.grouping.projected).toMatchObject({ status: 'grouped', drgCode: 'RA25', adrgCode: 'RA2' })
+  })
+
+  it('多计划推演须明确主计划，选择只改变假想主次并绑定评估指纹', async () => {
+    const s = await setup()
+    expect((await confirmPrimary(s)).status).toBe(200)
+    const procedure = s.catalog.procedures[0]
+    const ids: string[] = []
+    for (let index = 0; index < 2; index += 1) {
+      const admission = (await (await s.request(s.doctor, s.path)).json()).admission
+      const response = await s.request(s.doctor, `${s.path}/surgeries/request`, { encounterVersion: admission.versionId,
+        procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: '2026-08-24T15:00:00+08:00', reason: `合成计划${index}` })
+      expect(response.status).toBe(200)
+      const requests = (await response.json()).data.requests
+      ids.push(requests.find((request: { id: string }) => !ids.includes(request.id)).id)
+    }
+    const unresolved = inpatientDrgSimulationSchema.parse(await (await s.request(s.doctor, `${s.path}/drg/simulation`, {})).json())
+    expect(unresolved.grouping.projected).toMatchObject({ status: 'invalid-input' })
+    const selectedResponse = await s.request(s.doctor, `${s.path}/drg/simulation`, { primarySurgeryRequestId: ids[0] })
+    expect(selectedResponse.status).toBe(200)
+    const selected = inpatientDrgSimulationSchema.parse(await selectedResponse.json())
+    expect(selected.grouping.formal).toEqual(unresolved.grouping.formal)
+    expect(selected.grouping.projected).toMatchObject({ status: 'grouped', drgCode: 'RA25' })
+    expect(selected.fingerprint).not.toBe(unresolved.fingerprint)
+    const missing = await s.request(s.doctor, `${s.path}/drg/simulation`, { primarySurgeryRequestId: 'missing-request' })
+    expect(missing.status).toBe(409)
+    expect(apiErrorSchema.parse(await missing.json()).error.code).toBe('INPATIENT_DRG_PLAN_CONFLICT')
   })
 
   it('预留替换不双计：执行时一次转为实际使用，替换后释放被拒绝', async () => {

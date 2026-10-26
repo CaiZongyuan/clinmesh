@@ -410,6 +410,8 @@ clinmesh command receipt get --operation-id inpatient.drg.reservation.create --i
 
 `simulation.json`（推演草稿；空草稿等价于只对照已记账事实）：
 
+多个待实施手术计划时，在完整推演中用 `draft.primarySurgeryRequestId` 明确假想主操作；唯一计划可省略。该选择只改变 projected 主次顺序，formal 仍读取首页实际主操作。未选择时 projected 明确输入不完整；`INPATIENT_DRG_PLAN_CONFLICT` 表示计划已取消、完成或不属本次住院，刷新后重新选择。单项医嘱审阅使用与 `issue-order` 实际选择一致的 medications/services 草稿。
+
 ```json
 {
   "admissionId": "synthetic-admission",

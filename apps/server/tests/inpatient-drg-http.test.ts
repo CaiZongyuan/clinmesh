@@ -163,7 +163,7 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     const frozen = await (await s.request(s.doctor, `${s.path}/drg/pregroup`)).json()
     expect(frozen).toMatchObject({ frozen: true, recordRevision: 1, rulesId: 'chs-drg-pregroup-test', rulesVersion: 'CHS-DRG-3.0-pregroup-test',
       result: { status: 'grouped', drgCode: 'RA15' },
-      paymentEstimate: { drgCode: 'RA15', referenceFen: 300000, parameterVersion: '2026-demo-2' } })
+      paymentEstimate: { drgCode: 'RA15', referenceFen: 300000, parameterVersion: '2026-demo-3' } })
     s.runtime.fhir.update(context, { ...weight, valueQuantity: { value: 2.8, system: 'http://unitsofmeasure.org', code: 'kg' } }, weight.meta!.versionId!)
     // 升级规则包重启后，归档病例仍返回归档时的冻结结果与规则身份。
     await s.reopen(await writeRulesPackage('chs-drg-pregroup-test-v2', 'CHS-DRG-3.0-pregroup-test-v2', 'RA19'))

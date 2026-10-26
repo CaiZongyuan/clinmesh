@@ -15,6 +15,7 @@ import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import type { ActorContext } from './command-executor.ts'
 import { canonicalJsonHash } from './scenario-data/canonical-json.ts'
 import { syntheticDrgPaymentParameters } from './scenario-data/drg-payment-parameters.ts'
+import { syntheticPciDrgPaymentParameters } from './scenario-data/pci-drg-payment-parameters.ts'
 import { readInpatientBirthWeight } from './inpatient-birth-weight.ts'
 
 const clinicalCodingNote = '病案首页为临床版编码（nhc-icd10-clinical@2022.r4），分组规则字典为医保版口径；'
@@ -172,9 +173,14 @@ export class InpatientDrg {
     const surgery = this.owner.surgery.read(context, admissionId)
     const requests = surgery.requests
       .filter(request => request.status === 'requested' || request.status === 'ready')
-    const plannedOperations = requests.map(request => ({ code: request.plannedProcedure.coding.code, primary: true as const }))
+    const primaryRequestId = draft?.primarySurgeryRequestId ?? (requests.length === 1 ? requests[0]!.id : undefined)
+    if (draft?.primarySurgeryRequestId !== undefined && !requests.some(request => request.id === primaryRequestId))
+      throw new InpatientError('INPATIENT_DRG_PLAN_CONFLICT', '计划主操作已取消、完成或不属于本次住院，请刷新后重新选择')
+    const plannedOperations = requests.map(request => ({ code: request.plannedProcedure.coding.code, primary: request.id === primaryRequestId }))
     const projected = plannedOperations.length > 0
-      ? groupDrgCase(this.rules, { ...input, operations: [...input.operations, ...plannedOperations] }) : null
+      ? groupDrgCase(this.rules, { ...input, operations: [
+        ...input.operations.map(operation => ({ ...operation, primary: false })), ...plannedOperations,
+      ] }) : null
 
     const chargesFen = facts.charges.reduce((sum, charge) => sum + charge.amountFen, 0)
     const quantities = new Map([
@@ -250,11 +256,13 @@ export class InpatientDrg {
 
   #paymentReference(result: DrgGroupingResult) {
     const code = result.status === 'grouped' ? result.drgCode : null
-    const weight = code === null ? undefined : syntheticDrgPaymentParameters.weightsBp[code]
+    const parameters = code === 'FM39' ? syntheticPciDrgPaymentParameters : syntheticDrgPaymentParameters
+    const weights: Readonly<Record<string, number>> = parameters.weightsBp
+    const weight = code === null ? undefined : weights[code]
     return code === null || weight === undefined ? null : {
-      parameterSetId: syntheticDrgPaymentParameters.parameterSetId, parameterVersion: syntheticDrgPaymentParameters.version,
-      drgCode: code, referenceFen: Math.round(syntheticDrgPaymentParameters.baseRateFen * weight / 10_000),
-      note: syntheticDrgPaymentParameters.note,
+      parameterSetId: parameters.parameterSetId, parameterVersion: parameters.version,
+      drgCode: code, referenceFen: Math.round(parameters.baseRateFen * weight / 10_000),
+      note: parameters.note,
     }
   }
 
@@ -317,7 +325,7 @@ export class InpatientDrg {
         materials: surgeryCatalog.materials.map(item => [item.id, item.version, 'chargeDefinition' in item ? item.chargeDefinition.priceFen : null]) },
       rulesId: this.rules!.rulesId,
       rulesVersion: this.rules!.version,
-      paymentParameters: syntheticDrgPaymentParameters,
+      paymentParameters: [syntheticDrgPaymentParameters, syntheticPciDrgPaymentParameters],
     }
   }
 

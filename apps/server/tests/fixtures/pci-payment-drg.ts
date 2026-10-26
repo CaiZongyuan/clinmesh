@@ -12,7 +12,7 @@ import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgery
 import { inpatientMaterialReservationListSchema, inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDischargeResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../../src/runtime.ts'
-import { prepareDrgRulesPackage } from '../../src/infrastructure/reference-data/drg-rules-package.ts'
+import { prepareDrgRulesPackage } from '../../src/infrastructure/reference-data/drg-rules-prepare.ts'
 import { runReferenceDatabaseCli } from '../../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../../src/application/scenario-data/medical-service-snapshot.ts'
@@ -37,6 +37,8 @@ export const pciAcceptanceGroups = [
   { level: 'DRG', code: 'FR59', name: '冠状动脉粥样硬化/血栓/闭塞', parentCode: 'FR5' },
   { level: 'ADRG', code: 'FM3', name: '经皮冠状动脉支架植入', parentCode: 'MDCF' },
   { level: 'DRG', code: 'FM39', name: '经皮冠状动脉支架植入', parentCode: 'FM3' },
+  { level: 'ADRG', code: 'FM5', name: '合成冠脉造影阶段', parentCode: 'MDCF' },
+  { level: 'DRG', code: 'FM59', name: '合成冠脉造影终端', parentCode: 'FM5' },
   { level: 'ADRG', code: 'FR2', name: '心力衰竭、休克', parentCode: 'MDCF' },
   { level: 'DRG', code: 'FR25', name: '心力衰竭、休克，不伴合并症或并发症', parentCode: 'FR2' },
   { level: 'ADRG', code: 'ES4', name: '呼吸系统感染/炎症', parentCode: 'MDCE' },
@@ -63,15 +65,26 @@ export async function preparePciAcceptanceData(directory: string) {
       licenseId: 'CC0-1.0', retrievedAt: '2026-10-25T00:00:00.000Z', sourceUrl: 'https://example.test/clinmesh/pci-acceptance', upstreamVersion: '2022.r4-minimal-test-facts' }] }))
   await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
   await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'release.json')])
+  // CI uses a self-authored program, never fragments of an executable upstream source.
+  // The identical HTTP journey can explicitly consume a locally materialized full v2 package.
+  if (process.env.CLINMESH_TEST_DRG_RULES_DIRECTORY) return { referenceDatabasePath, drgRulesDirectory: process.env.CLINMESH_TEST_DRG_RULES_DIRECTORY }
   await mkdir(drgRulesDirectory)
-  const jsText = 'return ["I25.103"].includes(x.zdList[0])){Q("符合FR5入组条件，匹配规则：主诊断匹配");}'
-    + 'return ["I50.900"].includes(x.zdList[0])){Q("符合FR2入组条件，匹配规则：主诊断匹配");}'
-    + 'return ["J18.900"].includes(x.zdList[0])){Q("符合ES4入组条件，匹配规则：主诊断匹配");}'
-    + 'return ["36.0700"].includes(x.ssList[0])){Q("符合FM3入组条件，匹配规则：主手术匹配");}'
-  const complicationTables = { CC: {}, MCC: { 'I50.900': '45' }, CCE: { 'I25.103': '43', 'I50.900': '45', 'J18.900': '51' } }
+  const complicationTables = { CC: {}, MCC: {}, CCE: { 'I10.x09': 'synthetic' }, SS_VALID: ['36.0700', '88.5500'] }
+  const jsText = `const CC={},MCC={},CCE={"I10.x09":"synthetic"},SS_VALID=["36.0700","88.5500"];
+class Groups { FR59_group(x) { return true } FM39_group(x) { return true } FM59_group(x) { return true }
+  FR25_group(x) { return true } ES45_group(x) { return true } }
+function group_record(x) { return function(x) {
+  if (["J18.900"].includes(x.zdList[0])) { Q('符合MDCE入组条件，匹配规则：合成输入'); Q('符合ES4入组条件，匹配规则：合成输入'); return (new Groups).ES45_group(x) ? 'ES45' : '' }
+  Q('符合MDCF入组条件，匹配规则：合成输入');
+  if (["36.0700"].includes(x.ssList[0])) { Q('符合FM3入组条件，匹配规则：合成主操作'); return (new Groups).FM39_group(x) ? 'FM39' : '' }
+  if (["88.5500"].includes(x.ssList[0])) { Q('符合FM5入组条件，匹配规则：合成主操作'); return (new Groups).FM59_group(x) ? 'FM59' : '' }
+  if (["I25.103"].includes(x.zdList[0])) { Q('符合FR5入组条件，匹配规则：合成输入'); return (new Groups).FR59_group(x) ? 'FR59' : '' }
+  if (["I50.900"].includes(x.zdList[0])) { Q('符合FR2入组条件，匹配规则：合成输入'); return (new Groups).FR25_group(x) ? 'FR25' : '' }
+  return '0000'
+}(x) }`
   const files = prepareDrgRulesPackage({ groups: pciAcceptanceGroups, jsText, complicationTables,
-    input: { openDrgJsSha256: hash(jsText), openDrgTablesSha256: hash(JSON.stringify(complicationTables)), r3GroupsSha256: hash(JSON.stringify(pciAcceptanceGroups)) },
-    releaseId: 'clinmesh-pci-acceptance-minimal-slice', sourceVersion: 'CHS-DRG-3.0-four-adult-cases-test-slice' })
+    input: { openDrgJsSha256: hash(jsText), openDrgTablesSha256: hash(JSON.stringify(complicationTables)), r3GroupsSha256: hash(pciAcceptanceGroups.map(row => JSON.stringify(row)).join('\n') + '\n') },
+    releaseId: 'clinmesh-pci-acceptance-synthetic-v2', sourceVersion: 'self-authored-five-stage-cases-v2' })
   for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content)
   return { referenceDatabasePath, drgRulesDirectory }
 }

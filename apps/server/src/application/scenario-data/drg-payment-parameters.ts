@@ -4,10 +4,10 @@
  */
 export const syntheticDrgPaymentParameters = {
   parameterSetId: 'clinmesh-synthetic-hospital-drg-payment',
-  version: '2026-demo-2',
+  version: '2026-demo-3',
   baseRateFen: 500_000,
   /** 万分位权重，只声明实际覆盖的病组。 */
-  weightsBp: { RA15: 6_000, FR59: 8_000, FM39: 40_000, FR25: 12_000, ES45: 6_000 } as Record<string, number>,
+  weightsBp: { RA15: 6_000, FR59: 8_000, FR25: 12_000, ES45: 6_000 } as Record<string, number>,
   note: '模拟核定基于固定版本合成支付参数（仅覆盖列出病组），支付额=基础费率×权重；'
     + '差异为模拟核定支付额与正式收费净额之差，不构成完整盈亏，不代表任何地区真实结算，不触发患者退款。',
 } as const

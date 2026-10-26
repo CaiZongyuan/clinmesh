@@ -120,7 +120,7 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     const preview = inpatientDrgPayerReviewPreviewSchema.parse(await response.json())
     expect(preview).toMatchObject({ admissionId: s.admission.id, drgCode: 'RA15', simulatedPaymentFen: 300_000 })
     const frozen = await (await s.request(s.insurance, `${s.path}/drg/pregroup`)).json()
-    expect(frozen.paymentEstimate).toMatchObject({ parameterVersion: '2026-demo-2', drgCode: 'RA15', referenceFen: 300_000 })
+    expect(frozen.paymentEstimate).toMatchObject({ parameterVersion: '2026-demo-3', drgCode: 'RA15', referenceFen: 300_000 })
     expect(preview).toMatchObject({ paymentEstimate: frozen.paymentEstimate, estimateDifferenceFen: 0,
       caseSummary: { recordRevision: 1, rulesId: 'chs-drg-payer-test',
         groupingInput: { gender: 'male', diagnoses: [{ code: 'I10.x09', role: 'main' }], operations: [] },
