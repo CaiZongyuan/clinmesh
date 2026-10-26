@@ -9,6 +9,7 @@ import { extract } from 'tar'
 import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
 import { isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus } from './infrastructure/sqlite/guideline-corpus.ts'
+import { matchesGuidelineDocuments } from './infrastructure/sqlite/guideline-corpus-check.ts'
 import { guidelinePathSchema, guidelineReleaseLockSchema, inspectGuidelineRelease,
   type GuidelineReleaseLock } from './infrastructure/guidelines/guideline-release.ts'
 
@@ -33,11 +34,7 @@ function checkLock(lock: GuidelineReleaseLock, snapshot: Snapshot) {
 }
 
 function publish(options: GuidelinePrepareOptions, snapshot: Snapshot, source: 'local' | 'installed' | 'download', inputRoot: string) {
-  let current = false
-  if (existsSync(options.databasePath)) {
-    const reader = new GuidelineCorpus({ databasePath: options.databasePath, readOnly: true })
-    try { current = reader.matchesDocuments(snapshot.documents) } finally { reader.close() }
-  }
+  const current = matchesGuidelineDocuments(options.databasePath, snapshot.documents)
   if (options.checkOnly && !current) throw new Error('Guideline files are valid but the target database is missing or does not match')
   let created = false
   if (!current) {

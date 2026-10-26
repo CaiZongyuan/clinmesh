@@ -120,6 +120,8 @@ CLINMESH_GUIDELINE_DEPLOYMENT_POLICY=internal-testing
 
 `guidelines:prepare` 的 stdout JSON 分别报告来源、物理原件、提取、正文核验、原始段落、可检索、异常段落、不可读和自然人待审校数量，并列出逐来源核验说明及 `withheldReason` 停用原因；进度写入 stderr。`--database <path>` 指定目标库，`--install-directory <path>` 指定资料目录，`--manifest <lock>` 指定版本锁。默认原件和正文安装在数据库同目录的 `guidelines/<manifest-sha256>/`；完整安装重复准备可离线复用，`--check` 不下载、不建库、不修改正式目录或审计，同时核对实际库正文，不能用安装成功代替检索命中。更新时维护者发布新版本并修改锁，不覆盖已发布的同版本资产；候选完整验证后整包事务导入，保留其他来源，失败回滚，不替换运行连接所读的 SQLite 文件。下载失败时保留旧库；修复损坏文件后重新准备。进程异常留下 `.prepare.lock` 时，先确认没有准备进程再删除该锁；若报告 recovery failed，先保存错误中给出的 staging／previous 路径并恢复备份，不清理唯一旧版。
 
+准备器的库正文核对会将稳定的数据库主文件和 WAL 一起复制到系统临时目录，在副本中读取已提交事务；共享内存文件只在临时目录创建，结束后清理，正式目录及其 sidecar 不改写。复制期间如有 writer 提交、checkpoint、文件消失或替换，核对失败；等待写入完成后重跑原命令。遇到 rollback journal 时也等待 writer 完成，不忽略 WAL 或退回仅核对主文件。运行时普通只读连接仍可见后续 writer 更新。
+
 维护者制包时准备原件、派生正文及核验记录，保留正文工具版本和物理页／行字符定位，在仓库外创建完整快照，然后运行 `pnpm guidelines:package -- --input-root <snapshot> --output <archive.tar.gz> --url <固定Release资产URL>`。命令验证全部文件并生成可重复的归档，stdout 返回新版本锁；源码仅纳入清单、锁与实现。首次获取依赖该固定 Release 已发布且可达；备份保留对应锁、完整资料目录和一致性 SQLite 备份。恢复到新路径后先准备／只读检查，再启动 Server；不要复制维护者个人桌面目录作为部署合同。
 
 原有官方来源维护同步仍可独立使用：

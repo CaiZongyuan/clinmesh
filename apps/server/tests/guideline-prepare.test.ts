@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:http'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { gzipSync } from 'node:zlib'
@@ -40,20 +40,30 @@ async function fixture(passages?: GuidelinePassage[]) {
       installDirectory: join(root, 'new-install', 'files'), deploymentPolicy: 'internal-testing' as const } }
 }
 
+async function files(directory: string): Promise<unknown[]> {
+  const result: unknown[] = []
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name)
+    result.push(entry.isDirectory() ? [entry.name, await files(path)]
+      : [entry.name, (await stat(path, { bigint: true })).mtimeNs, guidelineDigest(await readFile(path))])
+  }
+  return result
+}
+
 it('从固定包安装到空目录，真实检索正文，完整安装离线重复准备且只读检查不改库', async () => {
   const input = await fixture()
   expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: true, source: 'download',
     sourceCount: 1, originalFileCount: 1, extractedSourceCount: 1, searchableSourceCount: 1 })
+  const before = await files(join(input.root, 'new-install'))
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false, source: 'installed' })
+  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ created: false, source: 'installed' })
+  expect(await files(join(input.root, 'new-install'))).toEqual(before)
   const corpus = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
   try {
     expect(corpus.search('糖尿病').guidelines).toContainEqual(expect.objectContaining({ title: input.source.title,
       sourceHash: input.source.sha256, locator: '合成第3节第1段' }))
     expect(corpus.sources()[0]!.source.license.usage).toBe('unverified')
   } finally { corpus.close() }
-  const before = await readFile(input.options.databasePath)
-  expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false, source: 'installed' })
-  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ created: false, source: 'installed' })
-  expect(await readFile(input.options.databasePath)).toEqual(before)
   expect(input.requests()).toBe(1)
   expect((await readdir(input.options.installDirectory)).filter(name => name.startsWith('.'))).toEqual([])
 })
