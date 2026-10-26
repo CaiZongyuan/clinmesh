@@ -10,6 +10,8 @@ import { create } from 'tar'
 import { runDrgReferenceSync } from '../src/drg-reference-sync.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { createDrgReferenceFixture, sha256 } from './fixtures/drg-reference.ts'
+import { offlineReferenceInventoryListSchema } from '@clinmesh/contracts/reference-data'
+import { openReferenceDatabase } from '../src/infrastructure/sqlite/reference-database.ts'
 
 vi.mock('node:fs/promises', { spy: true })
 vi.mock('node:fs', async importOriginal => {
@@ -97,6 +99,62 @@ describe('DRG reference installation', () => {
       .toMatchObject({ source: 'download', created: true })
     expect(input.requests()).toBe(1)
     expect(await readFile(join(input.root, input.packageRoot, 'services/records.jsonl'), 'utf8')).toBe(input.records)
+  })
+
+  it.each([false, true])('rejects a retired registration without modifying the database when the current inventory exists: %s', async currentExists => {
+    const input = await fixture()
+    const options = { ...input, repositoryRoot: input.root }
+    await runDrgReferenceSync(options)
+    const current = offlineReferenceInventoryListSchema.parse(
+      await runReferenceDatabaseCli(['list-inventories', '--database', input.databasePath]),
+    ).items[0]!
+    const { storage: _storage, contentHash: _contentHash, ...basis } = current
+    basis.inventoryId = 'retired-inventory-v1'
+    const retired = { ...basis, contentHash: sha256(JSON.stringify(basis)) }
+    const database = openReferenceDatabase({ databasePath: input.databasePath, busyTimeoutMs: 5_000 })
+    try {
+      database.driver.prepare('INSERT INTO reference_offline_inventory VALUES (?, ?, ?)')
+        .run(retired.inventoryId, retired.contentHash, JSON.stringify(retired))
+      if (!currentExists) database.driver.prepare('DELETE FROM reference_offline_inventory WHERE inventory_id = ?').run(current.inventoryId)
+    } finally { database.close() }
+    const before = await readFile(input.databasePath)
+    await expect(runDrgReferenceSync(options)).rejects.toThrow(/DRG.*校验失败/)
+    expect(await readFile(input.databasePath)).toEqual(before)
+  })
+
+  it.each(['retired-format', 'content-hash'])('rejects %s on a later page even when the current registration is on the first page', async fault => {
+    const input = await fixture()
+    const options = { ...input, repositoryRoot: input.root }
+    await runDrgReferenceSync(options)
+    const current = offlineReferenceInventoryListSchema.parse(
+      await runReferenceDatabaseCli(['list-inventories', '--database', input.databasePath]),
+    ).items[0]!
+    const { contentHash: _contentHash, ...basis } = current
+    const database = openReferenceDatabase({ databasePath: input.databasePath, busyTimeoutMs: 5_000 })
+    try {
+      const insert = database.driver.prepare('INSERT INTO reference_offline_inventory VALUES (?, ?, ?)')
+      for (let index = 0; index < 49; index += 1) {
+        const entry = { ...basis, inventoryId: `synthetic-inventory-v1-${index}` }
+        const contentHash = sha256(JSON.stringify(entry))
+        insert.run(entry.inventoryId, contentHash, JSON.stringify({ ...entry, contentHash }))
+      }
+      const { storage: _storage, ...retired } = basis
+      const invalid = { ...(fault === 'retired-format' ? retired : basis), inventoryId: 'zz-retired-inventory-v1' }
+      const contentHash = sha256(JSON.stringify(invalid))
+      insert.run(invalid.inventoryId, fault === 'content-hash' ? '0'.repeat(64) : contentHash, JSON.stringify({ ...invalid, contentHash }))
+    } finally { database.close() }
+    const before = await readFile(input.databasePath)
+    await expect(runDrgReferenceSync(options)).rejects.toThrow(/DRG.*校验失败/)
+    expect(await readFile(input.databasePath)).toEqual(before)
+  })
+
+  it('prepares migrations for an existing empty reference database', async () => {
+    const input = await fixture()
+    openReferenceDatabase({ databasePath: input.databasePath, busyTimeoutMs: 5_000 }).close()
+    expect(await runDrgReferenceSync({ ...input, repositoryRoot: input.root }))
+      .toMatchObject({ created: true, source: 'local' })
+    expect(await runReferenceDatabaseCli(['list-inventories', '--database', input.databasePath]))
+      .toMatchObject({ total: 1, items: [{ inventoryId: 'synthetic-inventory-v1' }] })
   })
 
   it('downloads into an empty installation, exposes every source file and reuses it offline', async () => {
