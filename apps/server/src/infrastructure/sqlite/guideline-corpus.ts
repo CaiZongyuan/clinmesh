@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { guidelineEvidenceSchema, type GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
-import { isGuidelineSourceUsable } from '../../application/guideline-corpus.ts'
+import { isGuidelineSourceUsable, localEvaluationSourcePrefix } from '../../application/guideline-corpus.ts'
 import type {
   GuidelineDocument,
   GuidelineSearchResult,
@@ -15,7 +15,7 @@ const identity = z.string().trim().min(1).max(256)
 export const guidelineSourceDefinitionSchema = guidelineEvidenceSchema.omit({
   locator: true, text: true, sourceHash: true,
 }).extend({
-  downloadUrl: z.url(),
+  downloadUrl: z.url().optional(),
   format: z.enum(['pdf', 'text']),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   status: z.enum(['active', 'withdrawn', 'superseded']),
@@ -28,8 +28,9 @@ export const guidelineSourceDefinitionSchema = guidelineEvidenceSchema.omit({
     terms: z.array(identity).min(1),
     diagnosisQueries: z.array(identity.regex(/\p{Script=Han}/u)),
   }).strict()),
-}).strict().transform(({ publishedAt, effectiveAt, ...source }) => ({
+}).strict().transform(({ publishedAt, effectiveAt, downloadUrl, ...source }) => ({
   ...source,
+  ...(downloadUrl === undefined ? {} : { downloadUrl }),
   ...(publishedAt === undefined ? {} : { publishedAt }),
   ...(effectiveAt === undefined ? {} : { effectiveAt }),
 }))
@@ -42,7 +43,8 @@ const documentSchema = z.object({
   source: guidelineSourceDefinitionSchema,
   passages: z.array(passageSchema),
 }).strict().refine(document => document.passages.length > 0
-  || document.source.status !== 'active' || document.source.license.usage !== 'open',
+  || document.source.status !== 'active' || document.source.license.usage !== 'open'
+  || document.source.id.startsWith(localEvaluationSourcePrefix),
   'Open guidelines require readable passages')
   .refine(document => new Set(document.passages.map(passage => passage.locator)).size === document.passages.length,
   'Guideline passage locators must be unique')
@@ -57,9 +59,11 @@ function hash(value: string): string {
 export class GuidelineCorpus {
   readonly #database: Database.Database
   readonly #allowNonCommercial: boolean
+  readonly #allowLocalEvaluation: boolean
 
-  constructor(options: { databasePath: string; readOnly?: boolean; allowNonCommercial?: boolean }) {
+  constructor(options: { databasePath: string; readOnly?: boolean; allowNonCommercial?: boolean; allowLocalEvaluation?: boolean }) {
     this.#allowNonCommercial = options.allowNonCommercial === true
+    this.#allowLocalEvaluation = options.allowLocalEvaluation === true
     if (!options.readOnly) mkdirSync(dirname(options.databasePath), { recursive: true })
     this.#database = new Database(options.databasePath, options.readOnly
       ? { readonly: true, fileMustExist: true }
@@ -119,8 +123,9 @@ export class GuidelineCorpus {
         ON CONFLICT(id) DO UPDATE SET metadata = excluded.metadata, digest = excluded.digest
       `).run(document.source.id, JSON.stringify(document.source), digest)
       const insert = this.#database.prepare('INSERT INTO guideline_passage (id, source_id, locator, text) VALUES (?, ?, ?, ?)')
+      const sourceDigest = hash(JSON.stringify(document.source))
       for (const passage of document.passages) {
-        const id = hash(JSON.stringify([document.source.id, document.source.version, document.source.sha256, passage.locator]))
+        const id = hash(JSON.stringify([document.source.id, document.source.version, document.source.sha256, passage.locator, sourceDigest]))
         insert.run(id, document.source.id, passage.locator, passage.text)
       }
       return { created: true, passageCount: document.passages.length }
@@ -130,7 +135,8 @@ export class GuidelineCorpus {
   search(text: string): GuidelineSearchResult {
     return this.#database.transaction(() => {
       const rows = this.#sourceRows()
-      const revision = hash(JSON.stringify([this.#allowNonCommercial, rows.map(row => row.digest)]))
+      const sources = rows.map(row => guidelineSourceDefinitionSchema.parse(JSON.parse(row.metadata)))
+      const revision = hash(JSON.stringify([this.#allowNonCommercial, this.#allowLocalEvaluation, rows.map(row => row.digest)]))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
       const inactiveSources: GuidelineSearchResult['inactiveSources'] = []
@@ -141,13 +147,13 @@ export class GuidelineCorpus {
         ? [token, ...Array.from({ length: token.length - 2 }, (_, index) => token.slice(index, index + 3))]
         : [token]))]
         .filter(term => [...term].length >= 2).slice(0, 96)
-      for (const row of rows) {
-        const source = guidelineSourceDefinitionSchema.parse(JSON.parse(row.metadata))
+      for (const source of sources) {
         if (source.status !== 'active') {
           inactiveSources.push({ id: source.id, url: source.url, sourceHash: source.sha256 })
           continue
         }
-        if (!isGuidelineSourceUsable(source, this.#allowNonCommercial)) continue
+        if (!isGuidelineSourceUsable(source, this.#allowNonCommercial,
+          { allowLocalEvaluation: this.#allowLocalEvaluation, knownSources: sources })) continue
         const topics = source.topics.filter(topic => topic.terms.some(term => queryText.includes(term.toLowerCase())))
         const sourceTerms = [...new Set([...topics.flatMap(topic => topic.terms), ...terms])].slice(0, 128)
         const indexedTerms = sourceTerms.filter(term => [...term].length >= 3)

@@ -150,6 +150,7 @@ export interface CreateClinMeshRuntimeOptions {
   drgRulesDirectory?: string
   guidelineDatabasePath?: string
   guidelineNonCommercialUse?: boolean
+  guidelineLocalEvaluation?: boolean
   demoPassword: string
   dshBridgeSecret?: string
   imagingAssetDirectory?: string
@@ -207,7 +208,8 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
     const commands = new CommandExecutor(database, fhir, clockOptions)
     if (options.guidelineDatabasePath !== undefined && existsSync(options.guidelineDatabasePath)) {
       guidelineCorpus = new GuidelineCorpus({ databasePath: options.guidelineDatabasePath, readOnly: true,
-        allowNonCommercial: options.guidelineNonCommercialUse === true })
+        allowNonCommercial: options.guidelineNonCommercialUse === true,
+        allowLocalEvaluation: options.guidelineLocalEvaluation === true })
     }
     if (options.referenceDatabasePath !== undefined) {
       referenceDatabase = openReferenceDatabase({
