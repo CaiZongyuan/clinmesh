@@ -1,8 +1,8 @@
 import { z } from 'zod'
-import { drgGroupingInputSchema } from './drg'
-import { inpatientDiagnosisSchema } from './inpatient-clinical'
-import { inpatientProcedureCodingSchema } from './inpatient-surgery'
-import { inpatientDrgPaymentReferenceSchema } from './inpatient-drg-simulation'
+import { drgGroupingInputSchema } from './drg.ts'
+import { inpatientDiagnosisSchema } from './inpatient-clinical.ts'
+import { inpatientProcedureCodingSchema } from './inpatient-surgery.ts'
+import { inpatientDrgPaymentReferenceSchema } from './inpatient-drg-simulation.ts'
 
 const id = z.string().regex(/^[A-Za-z0-9.-]{1,64}$/)
 const stamp = z.iso.datetime({ offset: true })

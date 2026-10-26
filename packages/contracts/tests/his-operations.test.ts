@@ -129,6 +129,13 @@ describe('HIS operation catalog', () => {
         roles: ['administrator', 'registrar'],
       },
       {
+        id: 'registration.synthetic-case.start-inpatient',
+        mode: 'command',
+        requirements: { expectedVersions: true, idempotency: 'required' },
+        risk: 'write',
+        roles: ['registrar'],
+      },
+      {
         cliPath: 'catalog clinical get',
         id: 'catalog.clinical.read',
         roles: ['outpatient-doctor'],
@@ -704,6 +711,7 @@ describe('HIS operation catalog', () => {
       .filter(candidate => candidate.commandOperation !== candidate.id)
       .map(candidate => [candidate.id, candidate.commandOperation]))).toEqual({
       'admin.laboratory-services.publish': 'laboratory-service-publication.create',
+      'admin.pci-case.prepare': 'synthetic-case.pci-source.prepare',
       [clinicalDocumentOperationIds.draftSet]: clinicalDocumentOperationIds.saveDraft,
       [clinicalDocumentOperationIds.previewSign]: clinicalDocumentOperationIds.storedPreviewSign,
       [clinicalDocumentOperationIds.sign]: clinicalDocumentOperationIds.storedSign,
@@ -729,6 +737,7 @@ describe('HIS operation catalog', () => {
       'patient.create': 'patient.create-synthetic',
       'registration.create': 'registration.register',
       'registration.synthetic-case.start': 'synthetic-case.start-outpatient-visit',
+      'registration.synthetic-case.start-inpatient': 'synthetic-case.start-inpatient-visit',
       'service.complete': 'hospital-service.complete',
       'service.order': 'hospital-service.order',
       'triage.record': 'encounter.record-triage',
@@ -743,13 +752,13 @@ describe('HIS operation catalog', () => {
     }
 
     expect(counts).toEqual({
-      'clinmesh-administrator': 3,
+      'clinmesh-administrator': 4,
       'clinmesh-billing': 14,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
       'clinmesh-inpatient': 85,
       'clinmesh-pharmacy': 3,
-      'clinmesh-registration': 7,
+      'clinmesh-registration': 8,
       'clinmesh-shared': 1,
       'clinmesh-triage': 2,
     })
