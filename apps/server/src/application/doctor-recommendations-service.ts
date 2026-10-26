@@ -550,9 +550,14 @@ export class DoctorRecommendationsService {
     if (row !== undefined) {
       const state = doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
       const execution = readDoctorRecommendationExecution(this.options.database, this.#executionIdentity(context, caseId, kind, row.generation))
-      return this.#withDispositions(context, caseId, kind, this.#withAvailableGuidelines({ ...state, inputFingerprint, encounterVersion: snapshot.encounter.versionId,
+      const available = this.#withAvailableGuidelines({ ...state, inputFingerprint, encounterVersion: snapshot.encounter.versionId,
         ...(execution === undefined ? {} : { recovery: { ...execution.status, canContinue: execution.status.canContinue && row.input_fingerprint === inputFingerprint } }),
-        stale: row.input_fingerprint !== inputFingerprint }, snapshot.guidelines))
+        stale: row.input_fingerprint !== inputFingerprint }, snapshot.guidelines)
+      return this.#withDispositions(context, caseId, kind, { ...available,
+        ...(kind !== 'laboratory' ? {} : { laboratoryServices: (snapshot.catalogs.laboratory?.items ?? [])
+          .filter(service => available.items.some(item => item.kind === 'laboratory' && item.catalogItemId === service.id))
+          .map(({ id, version, allowedIndicationCodes, outpatientBilling }) => ({ id, version, allowedIndicationCodes, outpatientBilling })) }),
+      })
     }
     return this.#withDispositions(context, caseId, kind, doctorRecommendationStateSchema.parse({
       caseId, kind, encounterId: snapshot.encounter.id, encounterVersion: snapshot.encounter.versionId,

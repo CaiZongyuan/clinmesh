@@ -181,7 +181,9 @@ describe('laboratory investigation workspace', () => {
     expect(screen.queryByRole('button', { name: /取消检验申请|重试结果生成/ })).toBeNull()
   })
 
-  it('confirms prepared laboratory orders directly with the current draft version without changing the manual editor', async () => {
+  it.each(['unloaded', 'other-page', 'newer-version'])('confirms an AI laboratory order independently of its manual catalog page (%s)', async catalogPage => {
+    const currentService = catalogPage !== 'newer-version' ? service : { ...service, version: 2,
+      outpatientBilling: { ...service.outpatientBilling!, version: 2, priceFen: 3600 } }
     const confirmations: unknown[] = []
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input).endsWith('/actions/confirm')) {
@@ -189,34 +191,45 @@ describe('laboratory investigation workspace', () => {
         return Response.json(confirmDoctorPreparationResponseSchema.parse({ auditId: 'synthetic-audit', effects: [], requestId: 'synthetic-confirm', warnings: [],
           data: { kind: 'laboratory', draftVersion: 3, encounterVersion: '1', recordIds: ['request-new'] } }))
       }
-      return Response.json(recommendations())
+      return Response.json({ ...recommendations(), laboratoryServices: [{ id: service.id, version: service.version,
+        allowedIndicationCodes: service.allowedIndicationCodes, outpatientBilling: service.outpatientBilling }] })
     }))
-    const page = props({ detail: { ...detail, laboratoryRequests: { draftVersion: 2, requests: [], reportingSupported: true } } })
+    const page = props({ detail: { ...detail, laboratoryRequests: { draftVersion: 2, requests: [], reportingSupported: true } },
+      referenceSearch: { data: catalogPage === 'unloaded' ? undefined : { items: [catalogPage === 'other-page'
+        ? { ...service, id: 'other-page-service' } : currentService], page: 2, pageSize: 20, total: 21 },
+        error: null, isError: false, isFetching: false, isPending: catalogPage === 'unloaded', onSearch: vi.fn() } })
     render(<LaboratoryPage {...page} />)
     const panel = within(screen.getByRole('region', { name: '待开具检验' }))
     await panel.findByRole('checkbox', { name: '选择合成检验项目' })
+    await waitFor(() => expect(panel.getByRole('button', { name: /^开具选中项目/ }).hasAttribute('disabled')).toBe(false))
     await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/synthetic-encounter': '1' }, input: {
       generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2,
-      selections: [{ source: 'agent', suggestionId: 'synthetic-laboratory-suggestion', kind: 'laboratory', reviewedService: { id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null }, catalogItemId: service.id, indicationCode: 'clinical-evaluation' }],
+      selections: [{ source: 'agent', suggestionId: 'synthetic-laboratory-suggestion', kind: 'laboratory', reviewedService: { id: currentService.id, version: currentService.version, outpatientBilling: currentService.outpatientBilling ?? null }, catalogItemId: service.id, indicationCode: 'clinical-evaluation' }],
     } }]))
     expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
     expect(page.onIndicationChange).not.toHaveBeenCalled()
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
     expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
+    expect(page.referenceSearch.onSearch).not.toHaveBeenCalled()
   })
   it.each(['WORKFLOW_CONFLICT', 'CATALOG_CONFLICT'] as const)('keeps the manual editor unchanged when final confirmation rejects %s', async code => {
     const paths: string[] = []
+    let currentService = service
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = new URL(String(input), 'http://localhost').pathname
       paths.push(path)
       if (path.endsWith('/actions/confirm')) {
         confirmDoctorPreparationRequestSchema.parse(JSON.parse(String(init?.body)))
+        if (code === 'CATALOG_CONFLICT') currentService = { ...service, version: 2,
+          outpatientBilling: { ...service.outpatientBilling!, version: 2, priceFen: 3600 } }
         return Response.json({ error: { code, message: 'Synthetic final validation rejected the changed source or catalog' } }, { status: 409 })
       }
-      return Response.json(recommendations())
+      return Response.json({ ...recommendations(), laboratoryServices: [{ id: currentService.id, version: currentService.version,
+        allowedIndicationCodes: currentService.allowedIndicationCodes, outpatientBilling: currentService.outpatientBilling }] })
     }))
-    const page = props()
+    const page = props({ referenceSearch: { data: undefined, error: null, isError: false,
+      isFetching: false, isPending: true, onSearch: vi.fn() } })
     render(<LaboratoryPage {...page} />)
     await userEvent.setup().click(await screen.findByRole('button', { name: /^开具选中项目/ }))
     await screen.findByText('更新或提交未完成，草稿已保留。')
@@ -227,6 +240,12 @@ describe('laboratory investigation workspace', () => {
     expect(page.actions.save.onSubmit).not.toHaveBeenCalled()
     expect(page.actions.issue.onSubmit).not.toHaveBeenCalled()
     expect(screen.getByText('尚未选择检验项目')).toBeTruthy()
+    if (code === 'CATALOG_CONFLICT') {
+      await waitFor(() => expect(paths.filter(path => path.endsWith('/recommendations/laboratory')).length).toBeGreaterThan(1))
+      expect(screen.queryByText(/本院门诊价格：.*36\.00/)).toBeNull()
+      await userEvent.setup().click(await screen.findByRole('button', { name: '核对', exact: true }))
+      await within(screen.getByRole('dialog', { name: '调整项目' })).findByText(/本院门诊价格：.*36\.00/)
+    }
   })
 
   it('keeps an explicitly selected manual examination when a delayed preparation response arrives', async () => {

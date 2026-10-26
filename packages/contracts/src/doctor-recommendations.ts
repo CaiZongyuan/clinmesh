@@ -121,6 +121,13 @@ export const doctorRecommendationStateSchema = z.object({
   stale: z.boolean(),
   hidePreviousResults: z.literal(true).optional(),
   items: z.array(doctorRecommendationSuggestionSchema).max(8),
+  // 当前医院服务投影由服务端读取合并，不来自模型，也不随建议持久化。
+  laboratoryServices: z.array(z.object({
+    id: identity,
+    version: z.number().int().positive(),
+    allowedIndicationCodes: z.array(identity).min(1),
+    outpatientBilling: outpatientInvestigationPriceSchema.optional(),
+  }).strict()).max(8).optional(),
   considerations: z.array(doctorRecommendationConsiderationSchema).max(8).optional(),
   considerationDispositions: z.array(doctorConsiderationDispositionSchema).max(64).optional(),
   notices: z.array(doctorRecommendationNoticeSchema).max(12).optional(),
@@ -134,6 +141,14 @@ export const doctorRecommendationStateSchema = z.object({
   const itemIds = new Set<string>()
   const guidelineIds = new Set(state.guidelines.map(item => item.id))
   const sourceIds = new Set(state.caseEvidence.map(item => item.id))
+  const laboratoryServiceIds = new Set<string>()
+  for (const [index, service] of (state.laboratoryServices ?? []).entries()) {
+    if (state.kind !== 'laboratory' || laboratoryServiceIds.has(service.id)
+      || !state.items.some(item => item.kind === 'laboratory' && item.catalogItemId === service.id)) {
+      context.addIssue({ code: 'custom', path: ['laboratoryServices', index], message: 'Current services must uniquely match laboratory suggestions in this case' })
+    }
+    laboratoryServiceIds.add(service.id)
+  }
   for (const [index, item] of state.items.entries()) {
     if (item.kind !== state.kind || itemIds.has(item.id)
       || item.guidelineEvidenceIds.some(id => !guidelineIds.has(id))

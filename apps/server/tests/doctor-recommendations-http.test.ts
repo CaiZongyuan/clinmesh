@@ -610,7 +610,8 @@ it('maps a laboratory suggestion to the full current hospital catalog beyond its
   await fixture.runtime.dispatchPending()
   expect(await fixture.read('laboratory')).toMatchObject({ status: 'ready', items: [{
     kind: 'laboratory', catalogItemId: 'lab-59', label: '合成检验 lab-59', indicationCode: 'clinical-evaluation',
-  }] })
+  }], laboratoryServices: [{ id: 'lab-59', version: 1, allowedIndicationCodes: ['clinical-evaluation'],
+    outpatientBilling: { priceFen: 1000, currency: 'CNY', source: 'synthetic-test' } }] })
   expect(verificationPayload).toMatchObject({ items: [{ catalogItemId: 'lab-59', label: '合成检验 lab-59' }],
     selectedCatalogItems: { laboratory: [{ id: 'lab-59', localCode: 'lab-59', referenceConcept: { code: 'SYN-LAB' },
       reportDefinition: { results: [{ referenceConcept: { code: 'SYN-LAB' }, unit: { code: 'mg/L' } }] } }] } })

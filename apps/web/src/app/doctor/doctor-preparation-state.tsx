@@ -42,7 +42,7 @@ export function useDoctorPreparationJob({ caseId, kind, enabled, paused, scope, 
     if (incoming.hidePreviousResults) {
       for (const [key, cached] of client.getQueriesData<DoctorRecommendationState>({ queryKey: prefix })) {
         if (cached !== undefined) client.setQueryData<DoctorRecommendationState>(key, { ...cached, hidePreviousResults: true,
-          items: [], considerations: [], guidelines: [], caseEvidence: [], stale: true })
+          items: [], laboratoryServices: undefined, considerations: [], guidelines: [], caseEvidence: [], stale: true })
       }
     } else if (previous?.status === 'ready' && !previous.stale && !previous.hidePreviousResults) {
       client.setQueryData([...prefix, 'completed', previous.generation, previous.inputFingerprint], previous)

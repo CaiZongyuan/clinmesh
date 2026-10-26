@@ -249,17 +249,17 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   disabled?: boolean | undefined
   manualItems?: ManualPreparedItem[] | undefined
   itemDetails?: ((value: PreparationDraft) => ReactNode) | undefined
-  investigationServiceFor?: ((value: PreparationDraft) => DoctorReviewedInvestigationService | undefined) | undefined
+  investigationServiceFor?: ((value: PreparationDraft, state: DoctorRecommendationState | undefined) => DoctorReviewedInvestigationService | undefined) | undefined
   manualControls?: ReactNode
   issuedCatalogItemIds?: ReadonlySet<string>
   onManualChange?: ((item: ManualPreparedItem) => boolean | void) | undefined
   onManualRemove?: ((value: PreparationDraft) => void) | undefined
   encounter?: { id: string; versionId: string } | undefined
   resolveExistingDraft?: boolean | undefined
-  manualUnavailableReason?: ((value: PreparationDraft) => string | undefined) | undefined
+  manualUnavailableReason?: ((value: PreparationDraft, state: DoctorRecommendationState | undefined) => string | undefined) | undefined
   onConfirmed?: ((values: PreparationDraft[], result: Awaited<ReturnType<typeof confirmDoctorPreparation>>) => void) | undefined
   expectedDraftVersion?: number | undefined
-  unavailableReason?: ((suggestion: DoctorRecommendationSuggestion) => string | undefined) | undefined
+  unavailableReason?: ((suggestion: DoctorRecommendationSuggestion, state: DoctorRecommendationState | undefined) => string | undefined) | undefined
 }) {
   const preparation = useDoctorPreparation(), client = useQueryClient(), zh = locale === 'zh-CN'
   const localJob = useDoctorPreparationJob({ caseId, kind, enabled: enabled && preparation === undefined, paused: false, inputRevision, scope })
@@ -283,7 +283,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const bindReview = (value: PreparationDraft): PreparationDraft => {
     if (value.kind === 'diagnosis' || value.kind === 'prescription') return value
     const key = JSON.stringify([scope, caseId, identity(value)])
-    const reviewedService = value.reviewedService ?? reviewedServices.current[key] ?? investigationServiceFor?.(value)
+    const reviewedService = value.reviewedService ?? reviewedServices.current[key] ?? investigationServiceFor?.(value, visible)
     if (reviewedService === undefined) return value
     reviewedServices.current[key] = reviewedService
     return { ...value, reviewedService }
@@ -291,7 +291,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
   const preparedSelection = (item: DoctorRecommendationSuggestion) => bindReview(selection(item))
   const manualItems = suppliedManualItems.map(row => ({ ...row, value: bindReview(row.value) }))
   const priceReviewChanged = (value: PreparationDraft) => investigationServiceFor !== undefined && value.kind !== 'diagnosis' && value.kind !== 'prescription'
-    && serviceReviewSignature(value.reviewedService) !== serviceReviewSignature(investigationServiceFor(value))
+    && serviceReviewSignature(value.reviewedService) !== serviceReviewSignature(investigationServiceFor(value, visible))
   const manualIdentity = JSON.stringify(manualItems)
   const manualOwnership = useRef({ identity: manualIdentity, token: 0 })
   if (manualOwnership.current.identity !== manualIdentity) manualOwnership.current = { identity: manualIdentity, token: manualOwnership.current.token + 1 }
@@ -394,11 +394,14 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
       const key = requestKeys.current.get(intent) ?? newIdempotencyKey();requestKeys.current.set(intent, key)
       return confirmDoctorPreparation(request.state, request.draftVersion, request.selections, key, request.resolveExistingDraft)
     },
-    onError: async error => {
+    onError: async (error, request) => {
       if (!(error instanceof ApiClientError) || error.code !== 'CATALOG_CONFLICT') return
-      await client.invalidateQueries({ predicate: query => query.queryKey[0] === `doctor-case-${kind}-services`
-        && query.queryKey[1] === caseId || kind === 'laboratory' && query.queryKey[0] === 'reference-catalog'
-        && query.queryKey.includes('laboratory') && query.queryKey.includes(caseId) })
+      await Promise.all([
+        client.invalidateQueries({ queryKey: ['doctor-recommendations', request.scope, request.state.caseId, request.state.kind] }),
+        client.invalidateQueries({ predicate: query => query.queryKey[0] === `doctor-case-${request.state.kind}-services`
+          && query.queryKey[1] === request.state.caseId || request.state.kind === 'laboratory' && query.queryKey[0] === 'reference-catalog'
+          && query.queryKey.includes('laboratory') && query.queryKey.includes(request.state.caseId) }),
+      ])
     },
     onSuccess: async (result, request) => {
       const ownsRecord = mounted.current && recordView.current.token === request.recordView
@@ -457,7 +460,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     && (manualOnly || !pending && !job.paused && job.error === null && !state?.stale
       && (state?.status === 'ready' || state?.status === 'missing-evidence' && available.every(row => row.value.source === 'manual')))
   const block = available.length > 8 ? zh ? '一次最多选择 8 项。' : 'Select at most eight items.'
-    : available.map(row => row.value.source === 'manual' ? manualUnavailableReason?.(row.value) : row.item === undefined ? undefined : unavailableReason?.(row.item)).find(reason => reason !== undefined)
+    : available.map(row => row.value.source === 'manual' ? manualUnavailableReason?.(row.value, visible) : row.item === undefined ? undefined : unavailableReason?.(row.item, visible)).find(reason => reason !== undefined)
   const submissionError = submission.isError && submission.variables?.view === view ? submission.error : null
   const submissionMessage = submissionError === null ? null : kind === 'prescription' && submissionError instanceof ApiClientError
     && (submissionError.code === 'CATALOG_CONFLICT' || submissionError.code === 'WORKFLOW_CONFLICT')
@@ -491,7 +494,7 @@ export function DoctorRecommendationsPanel({ caseId, kind, enabled, inputRevisio
     }
     setEditSwitchBlocked(false)
     if (!inlineEditing || !editDirty || activeEditing?.key !== row.key) {
-      const currentService = investigationServiceFor?.(row.value)
+      const currentService = investigationServiceFor?.(row.value, visible)
       const value = row.value.kind !== 'diagnosis' && row.value.kind !== 'prescription' && currentService !== undefined
         ? { ...row.value, reviewedService: currentService } : { ...row.value }
       setEditing({ key: row.key, label: row.label, value, sourceValue: JSON.stringify(row.value), fingerprint: state?.inputFingerprint ?? '', view: navigation.current.token })

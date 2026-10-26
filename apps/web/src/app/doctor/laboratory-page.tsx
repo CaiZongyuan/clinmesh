@@ -1,4 +1,4 @@
-import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
+import type { DoctorRecommendationState, DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import { laboratoryGenerationErrorMessage } from '../laboratory-generation-error.ts'
 import type {
   ClinicalCatalog,
@@ -529,15 +529,19 @@ function LaboratoryRequestEditor({
       },
     }
   }, [catalogById, indicationCode, laboratoryItemId, locale, selectedReference, state?.draft])
-  const serviceFor = (id: string) => selectedService?.id === id ? selectedService
-    : state?.draft?.laboratoryService?.id === id ? state.draft.laboratoryService
-    : referenceSearch.data?.items.find(item => item.id === id) ?? catalogById.get(id)
-  const recommendationUnavailableReason = (value: PreparationDraft | DoctorRecommendationSuggestion): string | undefined => {
+  const serviceFor = (id: string, recommendations?: DoctorRecommendationState) => [
+    recommendations?.laboratoryServices?.find(service => service.id === id),
+    referenceSearch.data?.items.find(service => service.id === id), catalogById.get(id),
+    selectedService?.id === id ? selectedService : undefined,
+    state?.draft?.laboratoryService?.id === id ? state.draft.laboratoryService : undefined,
+  ].filter(service => service !== undefined).toSorted((left, right) => right.version - left.version
+    || (right.outpatientBilling?.version ?? 0) - (left.outpatientBilling?.version ?? 0))[0]
+  const recommendationUnavailableReason = (value: PreparationDraft | DoctorRecommendationSuggestion, recommendations?: DoctorRecommendationState): string | undefined => {
     if (actions.save.pending || actions.issue.pending || actions.deleteDraft.pending) {
       return messages.recommendationRequestTargetUnavailable
     }
     if (value.kind !== 'laboratory') return messages.recommendationRequestTargetUnavailable
-    const target = serviceFor(value.catalogItemId)
+    const target = serviceFor(value.catalogItemId, recommendations)
     if (target === undefined || !target.allowedIndicationCodes.includes(value.indicationCode)) return messages.recommendationRequestTargetUnavailable
     return target.outpatientBilling === undefined ? missingInvestigationPrice(locale) : undefined
   }
@@ -716,8 +720,8 @@ function LaboratoryRequestEditor({
       }}
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
-      investigationServiceFor={value => value.kind === 'laboratory' ? reviewedInvestigationService(
-        referenceSearch.data?.items.find(item => item.id === value.catalogItemId) ?? catalogById.get(value.catalogItemId) ?? serviceFor(value.catalogItemId),
+      investigationServiceFor={(value, recommendations) => value.kind === 'laboratory' ? reviewedInvestigationService(
+        serviceFor(value.catalogItemId, recommendations),
       ) : undefined}
       itemDetails={value => value.kind === 'laboratory' ? <InvestigationPrice locale={locale} price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
     />
