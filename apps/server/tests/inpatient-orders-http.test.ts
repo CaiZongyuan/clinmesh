@@ -1,5 +1,6 @@
 import { addSecondaryInpatientWard } from './fixtures/inpatient-secondary-ward.ts'
 import { serviceCatalogSearchSchema } from '@clinmesh/contracts/his'
+import type { ReferenceConcept } from '@clinmesh/contracts/reference-data'
 import { applyMigrations, canonicalStateHash, expectedSchemaVersion, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { dispenseResponseSchema, prescriptionReviewResponseSchema, pharmacyQueueSchema, registrationResponseSchema } from '@clinmesh/contracts/his'
 import { z } from 'zod'
@@ -16,16 +17,17 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createClinMeshRuntime } from '../src/runtime.ts'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { fhirBundleSchema, fhirResourceSchema } from '@clinmesh/contracts/fhir'
+import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
-async function setup(withReference = false) {
+async function setup(withReference = false, extraConcepts: ReferenceConcept[] = []) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-inpatient-orders-'))
   const password = `Test-${randomUUID()}-Aa1!`
   const referenceDatabasePath = join(directory, 'reference.sqlite')
   if (withReference) {
     const artifact = JSON.stringify({ schemaVersion: '1', concepts: [{ id: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', domain: 'diagnosis',
-      system: 'urn:clinmesh:reference:nhsa-diagnosis', version: '2022', code: 'I10.x09', display: '合成真实目录高血压', status: 'active', sourceLocator: 'cn-health:nhc-icd10-clinical@2022.r4:diagnosis:12457' }],
+      system: 'urn:clinmesh:reference:nhsa-diagnosis', version: '2022', code: 'I10.x09', display: '合成真实目录高血压', status: 'active', sourceLocator: 'cn-health:nhc-icd10-clinical@2022.r4:diagnosis:12457' }, ...extraConcepts],
       medicationProducts: syntheticNhsaMedicationProductSnapshot, services: syntheticNhcMedicalServiceSnapshot, valueSetEntries: syntheticWstValueSetSnapshot })
     await writeFile(join(directory,'reference.json'),artifact)
     await writeFile(join(directory,'release.json'),JSON.stringify({ releaseId: 'synthetic-clinical-2022', schemaVersion: '1', createdAt: '2026-08-28T00:00:00.000Z',
@@ -92,6 +94,144 @@ async function paidOutpatient(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
+  it('共享目录成功与越岗读取均有审计，自由搜索正文不进入审计资源', async () => {
+    const s = await setup()
+    const query = 'SYNTHETIC-SEARCH-NOT-FOR-AUDIT'
+    const endpoint = `/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital&query=${query}`
+    expect((await s.request(s.doctor, endpoint)).status).toBe(200)
+    expect((await s.request(s.nurse, endpoint)).status).toBe(403)
+    const audits = fhirBundleSchema.parse(await (await s.request(s.admin, '/fhir/R5/AuditEvent?_count=100')).json())
+    const events = (audits.entry ?? []).flatMap(entry => entry.resource ? [entry.resource] : []).filter(resource => {
+      const code = z.object({ text: z.string() }).safeParse(resource.code)
+      return code.success && code.data.text === 'inpatient.catalog.search'
+    })
+    expect(events).toHaveLength(2)
+    expect(events.map(event => z.object({ code: z.object({ code: z.string() }) }).parse(event.outcome).code.code).sort()).toEqual(['0', '8'])
+    expect(events.every(event => event.action === 'R')).toBe(true)
+    expect(JSON.stringify(events)).not.toContain(query)
+  })
+
+  it('共享参考检验精确关联已发布院内根项目，组合子项不能独立开立', async () => {
+    const concepts: ReferenceConcept[] = [
+      { id: 'laboratory:synthetic-orderable', domain: 'laboratory', code: '6690-2', display: '合成参考根检验', system: 'http://loinc.org', version: '2.83', sourceLocator: 'synthetic:orderable', status: 'active' },
+      { id: 'laboratory:synthetic-component', domain: 'laboratory', code: '789-8', display: '合成参考子检验', system: 'http://loinc.org', version: '2.83', sourceLocator: 'synthetic:component', status: 'active' },
+    ]
+    const s = await setup(true, concepts)
+    for (const [index, concept] of concepts.entries()) {
+      const { domain: _domain, status: _status, ...snapshot } = concept
+      const service = laboratoryServiceSnapshotSchema.parse({ id: `synthetic-lab-${index}`, version: 1, serviceKind: 'laboratory', doctorOrderable: index === 0,
+        localCode: `SYN-LAB-${index}`, nameZh: concept.display, referenceConcept: snapshot, referenceReleaseId: 'synthetic-clinical-2022', componentServiceIds: [],
+        executingDepartmentId: 'department-laboratory', allowedIndicationCodes: ['clinical-assessment'], specimen: { code: '119297000', display: '血液标本' }, tatMinutes: 20, priceFen: 800,
+        reportDefinition: { conclusionTemplate: '合成检验结果。', results: [{ referenceConcept: snapshot, valueType: 'quantity', referenceRange: { low: 4, high: 10, text: '合成范围' }, unit: { system: 'http://unitsofmeasure.org', code: '10*9/L', display: '10^9/L' } }] } })
+      s.runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
+        .run('workspace-demo', 'epoch-1', service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service,
+          availableScopes: ['inpatient'], billingUnit: { display: '项目' }, chargeDefinition: { id: `synthetic-charge-${index}`, currency: 'CNY', priceFen: 800 } }))
+    }
+    const response = await s.request(s.doctor, `/api/his/v1/inpatient/catalog-search?kind=laboratory&source=reference&query=${encodeURIComponent('合成参考')}`)
+    expect(response.status).toBe(200)
+    const result = await response.json()
+    expect(result).toMatchObject({ releaseId: 'synthetic-clinical-2022', total: 2 })
+    expect(result.items).toContainEqual(expect.objectContaining({ referenceId: concepts[0]!.id, status: 'available', catalogItemId: 'synthetic-lab-0', laboratory: { indicationCodes: ['clinical-assessment'], priceFen: 800 } }))
+    const component = result.items.find((item: { referenceId: string }) => item.referenceId === concepts[1]!.id)
+    expect(component).toMatchObject({ status: 'incomplete', missingFields: ['not-orderable'] })
+    expect(component).not.toHaveProperty('catalogItemId')
+  })
+
+  it('参考候选只精确映射同产品版本，歧义和停用不提供可写身份', async () => {
+    const s = await setup()
+    const endpoint = `/api/his/v1/inpatient/catalog-search?kind=medication&source=reference&query=${encodeURIComponent('氨氯')}`
+    const initial = await (await s.request(s.doctor, endpoint)).json()
+    expect(initial.items).toEqual([expect.objectContaining({ status: 'available', catalogItemId: 'medication-amlodipine', catalogVersion: 1 })])
+    s.runtime.database.driver.prepare("UPDATE outpatient_catalog SET config_json=json_set(config_json,'$.product.version','different-product-version') WHERE item_id='medication-amlodipine'").run()
+    const unmapped = (await (await s.request(s.doctor, endpoint)).json()).items[0]
+    expect(unmapped.status).toBe('incomplete')
+    expect(unmapped.missingFields).toContain('hospital-mapping')
+    expect(unmapped).not.toHaveProperty('catalogItemId')
+    s.runtime.database.driver.prepare("UPDATE outpatient_catalog SET config_json=json_set(config_json,'$.product.version','nhsa-medication-products-2026-08-07') WHERE item_id='medication-amlodipine'").run()
+    s.runtime.database.driver.prepare(`INSERT INTO outpatient_catalog(workspace_id,epoch,item_id,kind,code,name_zh,name_en,price_fen,version,active,config_json)
+      SELECT workspace_id,epoch,'medication-amlodipine-duplicate',kind,'DUPLICATE-AMLODIPINE',name_zh,name_en,price_fen,version,active,config_json FROM outpatient_catalog WHERE item_id='medication-amlodipine'`).run()
+    const ambiguous = (await (await s.request(s.doctor, endpoint)).json()).items[0]
+    expect(ambiguous).toMatchObject({ status: 'incomplete', missingFields: ['ambiguous-mapping'] })
+    expect(ambiguous).not.toHaveProperty('catalogItemId')
+    s.runtime.database.driver.prepare("DELETE FROM outpatient_catalog WHERE item_id='medication-amlodipine-duplicate'").run()
+    s.runtime.database.driver.prepare("UPDATE outpatient_catalog SET active=0 WHERE item_id='medication-amlodipine'").run()
+    const inactive = (await (await s.request(s.doctor, endpoint)).json()).items[0]
+    expect(inactive.status).toBe('inactive')
+    expect(inactive).not.toHaveProperty('catalogItemId')
+  })
+
+  it('分页搜索保留未配齐药品并显示具体缺项，完整项目仍可使用', async () => {
+    const s = await setup()
+    const endpoint = '/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital'
+    const before = await (await s.request(s.doctor, endpoint)).json()
+    const beforeReady = inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json())
+    s.runtime.database.driver.prepare("UPDATE outpatient_catalog SET config_json=json_remove(config_json,'$.unit') WHERE item_id='medication-amlodipine'").run()
+    const response = await s.request(s.doctor, `${endpoint}&query=${encodeURIComponent('氨氯')}`)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ kind: 'medication', source: 'hospital', total: 1,
+      items: [{ id: 'medication-amlodipine', status: 'incomplete', missingFields: ['unit'] }] })
+    const page = await (await s.request(s.doctor, `${endpoint}&pageSize=1&page=2`)).json()
+    expect(page).toMatchObject({ page: 2, pageSize: 1, total: before.total })
+    expect(page.items).toHaveLength(1)
+    const ready = inpatientFullCatalogSchema.parse(await (await s.request(s.doctor, '/api/his/v1/inpatient/clinical-catalog')).json())
+    expect(ready.medications.map(item => item.id)).not.toContain('medication-amlodipine')
+    expect(ready.medications).toHaveLength(beforeReady.medications.length - 1)
+    for (const cookie of [s.nurse, s.cashier, s.pharmacist, s.admin]) expect((await s.request(cookie, endpoint)).status).toBe(403)
+    expect((await s.request(s.doctor, `${endpoint}&pageSize=51`)).status).toBe(400)
+  })
+
+  it('医生填写目录建议外的合法剂量并按明确含量换算，拒绝不整片、超量和伪造数量', async () => {
+    const s = await setup()
+    s.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET config_json=json_set(config_json,
+      '$.inpatientDoseBasis',json('{"amount":5,"unit":"mg"}'),'$.inpatientMaxDoseQuantity',2) WHERE item_id='medication-amlodipine'` ).run()
+    const diagnosis = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0,
+      entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '1' }],
+    })).json()).data
+    const selection = { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '10 mg', doseQuantity: 2, frequencyCode: 'QD' }
+    const input = { encounterVersion: diagnosis.encounterVersion, duration: 'temporary', selection }
+    for (const invalid of [{ ...selection, doseText: '7.5 mg' }, { ...selection, doseText: '15 mg', doseQuantity: 3 },
+      { ...selection, doseQuantity: 1 }, { ...selection, doseText: '10 mL' }]) {
+      expect((await s.request(s.doctor, `${s.path}/orders/issue`, { ...input, selection: invalid })).status).toBe(409)
+    }
+    const result = await s.request(s.doctor, `${s.path}/orders/issue`, input)
+    expect(result.status).toBe(200)
+    const clinical = inpatientFullClinicalResponseSchema.parse(await result.json()).data
+    expect(clinical.orders).toEqual([expect.objectContaining({ doseText: '10 mg', doseQuantity: 2, unit: '片' })])
+    const order = clinical.orders[0]!
+    const verified = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })).json()).data
+    const execution = verified.executions[0]!
+    const pharmacy = inpatientPharmacySchema.parse(await (await s.request(s.pharmacist, `${s.path}/pharmacy`)).json())
+    const lot = pharmacy.medications[0]!.lots[0]!
+    const dispense = { executionId: execution.id, expectedExecutionVersion: execution.version, lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: 2 }] }
+    const key = randomUUID(), supplied = await s.request(s.pharmacist, `${s.path}/executions/dispense`, dispense, key)
+    expect(supplied.status).toBe(200)
+    const receipt = inpatientPharmacyResponseSchema.parse(await supplied.json())
+    expect(receipt.data.dispenses).toEqual([expect.objectContaining({ quantity: 2 })])
+    expect(await (await s.request(s.pharmacist, `${s.path}/executions/dispense`, dispense, key)).json()).toEqual(receipt)
+    const charges = inpatientChargesSchema.parse(await (await s.request(s.cashier, `${s.path}/charges`)).json())
+    expect(charges.charges).toEqual([expect.objectContaining({ amountFen: 3000, label: '苯磺酸氨氯地平片 2片' })])
+    const inventory = fhirResourceSchema.parse(await (await s.request(s.pharmacist, `/fhir/R5/InventoryItem/${lot.id}`)).json())
+    expect(inventory.netContent).toMatchObject({ value: 998 })
+  })
+
+  it('无质量换算基底也可按明确制剂单位开立，建议枚举为空不隐藏合法项目', async () => {
+    const s = await setup()
+    s.runtime.database.driver.prepare(`UPDATE outpatient_catalog SET config_json=json_set(json_remove(config_json,'$.inpatientDoses','$.inpatientDoseBasis'),
+      '$.inpatientMaxDoseQuantity',2) WHERE item_id='medication-amlodipine'`).run()
+    const catalog = await (await s.request(s.doctor, `/api/his/v1/inpatient/catalog-search?kind=medication&source=hospital&query=${encodeURIComponent('氨氯')}`)).json()
+    expect(catalog.items).toEqual([expect.objectContaining({ status: 'available', catalogItemId: 'medication-amlodipine', medication: expect.objectContaining({ doses: [], maxDoseQuantity: 2 }) })])
+    const diagnosis = inpatientFullClinicalResponseSchema.parse(await (await s.request(s.doctor, `${s.path}/diagnoses/confirm`, {
+      encounterVersion: s.admission.versionId, expectedRevision: 0, entries: [{ catalogItemId: 'diagnosis-hypertension', role: 'primary', admissionCondition: '1' }],
+    })).json()).data
+    const input = { encounterVersion: diagnosis.encounterVersion, duration: 'temporary', selection: { kind: 'medication',
+      catalogItemId: 'medication-amlodipine', catalogVersion: 1, doseText: '10 mg', doseQuantity: 2, frequencyCode: 'QD' } }
+    expect((await s.request(s.doctor, `${s.path}/orders/issue`, input)).status).toBe(409)
+    const issued = await s.request(s.doctor, `${s.path}/orders/issue`, { ...input, selection: { ...input.selection, doseText: '2片' } })
+    expect(issued.status).toBe(200)
+    expect(inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders).toEqual([expect.objectContaining({ doseText: '2片', doseQuantity: 2 })])
+  })
+
   it('混合时区Virtual Time的临床医嘱执行发药账目及药房清单按真实时点排序', async () => {
     const s = await setup()
     const clock = await (await s.request(s.admin, '/api/sim/v1/scenario-runs/current')).json()

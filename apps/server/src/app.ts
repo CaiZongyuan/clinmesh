@@ -11,6 +11,7 @@ import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssu
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationInputSchema, inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewCreateInputSchema } from '@clinmesh/contracts/inpatient-drg-payer'
+import { inpatientPciDataPrepareRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
@@ -1306,6 +1307,22 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     const identity = options.identity
     const inpatient = options.inpatient
     const actor = (context: Context) => identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+    app.get('/api/his/v1/inpatient/catalog-search', async context => {
+      try { return context.json(inpatient.catalogSearch.search(await actor(context), context.req.query())) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.get('/api/his/v1/inpatient/pci-data', async context => {
+      try { return context.json(inpatient.pciData.read(await actor(context))) }
+      catch (error) { return apiErrorResponse(context, error) }
+    })
+    app.post('/api/his/v1/inpatient/pci-data/prepare', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = inpatientPciDataPrepareRequestSchema.parse(await context.req.json())
+        return context.json(inpatient.pciData.prepare(await actor(context), body.input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/his/v1/inpatient/admissions/:admissionId/payments', async context => {
       try { return context.json(inpatient.payments.read(await actor(context), context.req.param('admissionId'))) } catch(error) { return apiErrorResponse(context,error) }
     })
