@@ -19,3 +19,12 @@ clinmesh admin laboratory-services job get --job-id <job-id>
 Publication completion requires a `succeeded` job and `published` candidate state. `queued` and `running` jobs remain in progress. On `failed`, read the structured error and current candidate version before forming a new intent; a retry uses a new idempotency key and the returned version. `laboratory-cn` panels and tests use their frozen Dataset definition without a Catalog Enrichment provider. LOINC candidates still require valid Catalog Enrichment before they become doctor-visible.
 
 Reference Candidate files are operator-supplied local inputs. This workflow does not upload, publish, or expose those artifacts.
+
+固定 PCI 作者来源通过独立受控入口准备。它建立可审计的 `clinmesh-authored` Profile 与私有 Case Truth；不会登记门诊、入院、执行手术或产生费用。与 `inpatient prepare-pci-data` 的目录、库存准备分别执行。返回病例尚需经现有手工 Persona 修订与选择后交给登记员；诊疗、实际检验、手术和 DRG 仍由正常业务形成。
+
+```bash
+clinmesh admin pci-case prepare --expected-epoch <epoch> --idempotency-key <key>
+clinmesh command receipt get --operation-id admin.pci-case.prepare --idempotency-key <key>
+```
+
+`PCI_SOURCE_EPOCH_CONFLICT` 时刷新受信上下文后核对意图；传输失败保留原键查询回执，禁止通过上传 Bundle 或编造临床事实替代准备。

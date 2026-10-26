@@ -91,6 +91,22 @@ it('PCI 资料准备示例限定当前场景及管理员并保留原幂等意图
   expect(skill).toContain('INPATIENT_PCI_EPOCH_CONFLICT')
 })
 
+it('固定 PCI 来源与直接住院示例使用窄合同并各自恢复原回执', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const admin = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-administrator/SKILL.md'), 'utf8')
+  const registration = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-registration/SKILL.md'), 'utf8')
+  const prepare = getHisOperation('admin.pci-case.prepare'), start = getHisOperation('registration.synthetic-case.start-inpatient')
+  expect(prepare.input.safeParse({ expectedEpoch: 'epoch-1', bundle: {} }).success).toBe(false)
+  expect(prepare.roles).toEqual(['administrator'])
+  expect(start.roles).toEqual(['registrar'])
+  expect(start.input.parse({ caseId: 'synthetic-case', activeBriefRevision: 1, expectedCaseRevision: 2, expectedEpoch: 'epoch-1', wardId: 'ward-general' })).toBeDefined()
+  for (const [skill, prefix, id] of [[admin, 'clinmesh admin pci-case prepare ', prepare.id],
+    [registration, 'clinmesh registration synthetic-case start-inpatient ', start.id]]) {
+    expect(inspectExample(program, commandLines(skill!).find(line => line.startsWith(prefix!))!).operation?.id).toBe(id)
+    expect(skill).toContain(`--operation-id ${id}`)
+  }
+})
+
 it('住院退款示例及Catalog保留单笔一千万元上限', async () => {
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))

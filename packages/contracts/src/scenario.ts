@@ -708,15 +708,24 @@ const syntheticPatientSourceSchema = z.object({
     }).strict(),
     timeRange: z.object({ end: localDateSchema, start: localDateSchema }).strict(),
     timeZone: z.literal('Asia/Shanghai'),
-  }).strict(),
+  }).strict().optional(),
+  authoring: z.object({
+    packageId: z.string().min(1), packageVersion: z.string().min(1), draftId: z.string().min(1),
+  }).strict().optional(),
   format: z.literal('fhir-r4-bundle'),
   hash: z.string().regex(/^[a-f0-9]{64}$/),
   patientId: z.string().min(1),
-  providerId: z.literal('synthea'),
+  providerId: z.enum(['synthea', 'clinmesh-authored']),
   localization: syntheaCnLocalizationProvenanceSchema.optional(),
   translationWarning: syntheaTranslationWarningSchema.optional(),
   raw: z.json(),
-}).strict()
+}).strict().superRefine((source, context) => {
+  if (source.providerId === 'synthea'
+    ? source.generation === undefined || source.authoring !== undefined
+    : source.authoring === undefined || source.generation !== undefined || source.localization !== undefined) {
+    context.addIssue({ code: 'custom', message: 'Source provenance must match the provider identity' })
+  }
+})
 
 export const syntheticPatientProfileSchema = z.object({
   createdAt: z.iso.datetime({ offset: true }),
@@ -743,7 +752,7 @@ export const syntheticPatientProfileSummarySchema = z.object({
   mrn: z.string().min(1),
   name: z.string().min(1),
   profileId: z.string().min(1),
-  providerId: z.literal('synthea'),
+  providerId: z.enum(['synthea', 'clinmesh-authored']),
   revision: z.number().int().positive(),
   updatedAt: z.iso.datetime({ offset: true }),
 }).strict()
@@ -889,7 +898,10 @@ export const syntheticPatientProfileDetailSchema = z.object({
     localization: syntheaCnLocalizationProvenanceSchema.optional(),
     translationWarning: syntheaTranslationWarningSchema.optional(),
     patientId: z.string().min(1),
-    providerId: z.literal('synthea'),
+    providerId: z.enum(['synthea', 'clinmesh-authored']),
+    authoring: z.object({
+      packageId: z.string().min(1), packageVersion: z.string().min(1), draftId: z.string().min(1),
+    }).strict().optional(),
   }).strict(),
   updatedAt: z.iso.datetime({ offset: true }),
   workspaceId: z.string().min(1),

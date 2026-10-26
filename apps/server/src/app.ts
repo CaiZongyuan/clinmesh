@@ -11,7 +11,7 @@ import { inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationIssu
 import { inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationInputSchema, inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewCreateInputSchema } from '@clinmesh/contracts/inpatient-drg-payer'
-import { inpatientPciDataPrepareRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
+import { inpatientPciDataPrepareRequestSchema, pciCaseSourcePrepareRequestSchema, startSyntheticInpatientCaseRequestSchema } from '@clinmesh/contracts/inpatient-pci-data'
 import { InpatientError, type InpatientService } from './application/inpatient-service.ts'
 import { inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, advanceVirtualTimeInputSchema, inpatientReferralInputSchema } from '@clinmesh/contracts/inpatient'
 import { randomUUID } from 'node:crypto'
@@ -128,6 +128,7 @@ import {
 } from './application/imaging-preparation-service.ts'
 import type { SyntheticCaseVisitService } from './application/synthetic-case-visit-service.ts'
 import { SyntheticCaseVisitError } from './application/synthetic-case-visit-service.ts'
+import { PciCaseSourceError } from './application/scenario-data/pci-case-source.ts'
 import type { WorkflowService } from './application/workflow-service.ts'
 import { WorkflowError } from './application/workflow-service.ts'
 import { RegistrationNumberError } from './infrastructure/sqlite/registration-numbering.ts'
@@ -263,6 +264,7 @@ function apiErrorResponse(
     || error instanceof PathologyPreparationError
     || error instanceof ImagingStudyReadError
     || error instanceof SyntheticCaseVisitError
+    || error instanceof PciCaseSourceError
     || error instanceof ReferenceDataError
     || error instanceof ScenarioDataError
     || error instanceof ScenarioError
@@ -916,6 +918,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
         return apiErrorResponse(context, error)
       }
     })
+    app.post('/api/sim/v1/synthetic-cases/pci/prepare', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const body = pciCaseSourcePrepareRequestSchema.parse(await context.req.json())
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+        return context.json(scenarioData.preparePciCaseSource(actor, body.input,
+          z.string().min(8).max(128).parse(context.req.header('idempotency-key'))))
+      } catch (error) { return apiErrorResponse(context, error) }
+    })
     app.get('/api/sim/v1/synthetic-patients', async (context) => {
       try {
         const session = await identity.resolveSessionContext(context.req.raw.headers)
@@ -1300,6 +1311,15 @@ export function createApp(options: CreateAppOptions = {}): Hono {
       } catch (error) {
         return apiErrorResponse(context, error, 'The Synthetic Case visit request is invalid')
       }
+    })
+    app.post('/api/his/v1/synthetic-cases/:caseId/actions/start-inpatient-visit', async context => {
+      try {
+        identity.assertTrustedMutation(context.req.raw.headers)
+        const request = startSyntheticInpatientCaseRequestSchema.parse(await context.req.json())
+        const actor = await identity.resolveRequestActor(context.req.raw.headers, context.req.raw.method, context.req.path)
+        return context.json(caseVisits.startInpatient({ caseId: context.req.param('caseId'), context: actor, request,
+          idempotencyKey: z.string().min(8).max(128).parse(context.req.header('idempotency-key')) }))
+      } catch (error) { return apiErrorResponse(context, error) }
     })
   }
 

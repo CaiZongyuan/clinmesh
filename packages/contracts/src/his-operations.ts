@@ -21,7 +21,7 @@ import { inpatientDrgPregroupResultSchema } from './inpatient-drg.ts'
 import { inpatientDrgSimulationSchema, inpatientDrgSimulationInputSchema, inpatientMaterialReservationListSchema,
   inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from './inpatient-drg-simulation.ts'
 import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema, inpatientDrgPayerReviewPreviewSchema } from './inpatient-drg-payer.ts'
-import { inpatientPciDataSchema, inpatientPciDataPrepareRequestSchema, inpatientPciDataResponseSchema } from './inpatient-pci-data.ts'
+import { inpatientPciDataSchema, inpatientPciDataPrepareRequestSchema, inpatientPciDataResponseSchema, pciCaseSourcePrepareRequestSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseRequestSchema, startSyntheticInpatientCaseResponseSchema } from './inpatient-pci-data.ts'
 import { z } from 'zod'
 
 const inpatientDrgSimulationRequestSchema = z.object({ admissionId: z.string().min(1), draft: inpatientDrgSimulationInputSchema.optional() }).strict()
@@ -158,6 +158,7 @@ export const hisOperationHandlerOwnerSchema = z.enum([
   'LaboratoryServicePublisher',
   'ReferenceDataService',
   'SyntheticCaseVisitService',
+  'ScenarioDataService',
   'WorkflowService',
   'InsuranceService',
   'InpatientService',
@@ -2756,6 +2757,21 @@ const operationDefinitions = [
     summary: '在当前场景幂等准备 PCI 目录与库存基础数据，保留原配置和业务；不创建患者就诊或临床费用', version: 1,
   },
   {
+    cliPath: ['admin', 'pci-case', 'prepare'], id: 'admin.pci-case.prepare',
+    http: { method: 'POST', path: '/api/sim/v1/synthetic-cases/pci/prepare', encodeBody: raw => ({ input: pciCaseSourcePrepareRequestSchema.shape.input.parse(raw) }) },
+    input: pciCaseSourcePrepareRequestSchema.shape.input, output: pciCaseSourceResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['administrator'],
+    summary: '?????? PCI ??????? Case Truth????????????????', version: 1,
+  },
+  {
+    cliPath: ['registration', 'synthetic-case', 'start-inpatient'], id: 'registration.synthetic-case.start-inpatient',
+    http: { method: 'POST', path: '/api/his/v1/synthetic-cases/:caseId/actions/start-inpatient-visit',
+      encodeBody: raw => { const { caseId: _caseId, ...input } = startSyntheticInpatientCaseRequestSchema.extend({ caseId: z.string().min(1) }).parse(raw); return input } },
+    input: startSyntheticInpatientCaseRequestSchema.extend({ caseId: z.string().min(1) }), output: startSyntheticInpatientCaseResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['registrar'],
+    summary: '????? Persona ???????????????????????????????', version: 1,
+  },
+  {
     cliPath: ['inpatient', 'catalog-search'], id: 'inpatient.catalog.search',
     http: { method: 'GET', path: '/api/his/v1/inpatient/catalog-search' },
     input: inpatientCatalogSearchInputSchema, output: inpatientCatalogSearchSchema, mode: 'query',
@@ -2899,6 +2915,8 @@ const commandOperationAliases: Readonly<Record<string, string>> = {
   'patient.create': 'patient.create-synthetic',
   'registration.create': 'registration.register',
   'registration.synthetic-case.start': 'synthetic-case.start-outpatient-visit',
+  'registration.synthetic-case.start-inpatient': 'synthetic-case.start-inpatient-visit',
+  'admin.pci-case.prepare': 'synthetic-case.pci-source.prepare',
   'service.complete': 'hospital-service.complete',
   'service.order': 'hospital-service.order',
   'triage.record': 'encounter.record-triage',
@@ -2991,6 +3009,8 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
   'registration.list': 'clinmesh-registration',
   'registration.synthetic-case.list': 'clinmesh-registration',
   'registration.synthetic-case.start': 'clinmesh-registration',
+  'registration.synthetic-case.start-inpatient': 'clinmesh-registration',
+  'admin.pci-case.prepare': 'clinmesh-administrator',
   'service.complete': 'clinmesh-doctor',
   'service.order': 'clinmesh-doctor',
   'triage.queue.list': 'clinmesh-triage',
@@ -3000,6 +3020,7 @@ const operationSkills: Readonly<Record<string, z.infer<typeof hisOperationSkillS
 function handlerOwnerFor(
   operation: HisOperationDeclaration,
 ): z.infer<typeof hisOperationHandlerOwnerSchema> {
+  if (operation.id === 'admin.pci-case.prepare') return 'ScenarioDataService'
   if (operation.id.startsWith('inpatient.')) return 'InpatientService'
   if (operation.http.path === '/fhir/R5/metadata') return 'FhirCapabilities'
   if (operation.http.path.startsWith('/fhir/R5/')) return 'FhirRepository'

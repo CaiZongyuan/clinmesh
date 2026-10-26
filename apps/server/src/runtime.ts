@@ -396,6 +396,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       },
     })
     const caseVisits = new SyntheticCaseVisitService({
+      inpatient,
       briefs: patientPersonas,
       cases: syntheticCases,
       profiles: syntheticPatientProfiles,
