@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { readActionTraceMetrics, SqlitePerformanceProbe } from '../src/performance/sqlite-performance-probe.ts'
 import type { createClinMeshRuntime } from '../src/runtime.ts'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
+import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import {
   caseBundle,
   createImagingRuntime,
@@ -88,7 +89,10 @@ describe('Imaging study read boundary HTTP contract', () => {
       `/api/his/v1/encounters/${visit.encounterId}/imaging-request/actions/issue`,
       mutation(visit.doctor, { expectedVersions, input: { expectedDraftVersion: draftVersion } }),
     )
-    issueImagingRequestResponseSchema.parse(await issued.json())
+    const request = issueImagingRequestResponseSchema.parse(await issued.json()).data.request
+    await payOutpatientInvestigation(runtime, {
+      caseId: visit.outpatientCaseId, category: 'imaging', chargeItemId: request.billing!.chargeItemId,
+    })
     while (await runtime.dispatcher.dispatchOnce() !== undefined) { /* 执行到报告发布 */ }
     const detail = doctorCaseDetailSchema.parse(await (await runtime.app.request(
       `/api/his/v1/doctor/cases/${visit.outpatientCaseId}`,
