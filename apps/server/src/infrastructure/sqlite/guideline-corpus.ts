@@ -7,6 +7,7 @@ import { z } from 'zod'
 import { isGuidelineSourceUsable } from '../../application/guideline-corpus.ts'
 import type {
   GuidelineDocument,
+  GuidelineDeploymentPolicy,
   GuidelineSearchResult,
   GuidelineSourceStatus,
 } from '../../application/guideline-corpus.ts'
@@ -24,14 +25,21 @@ export const guidelineSourceDefinitionSchema = guidelineEvidenceSchema.omit({
     url: z.url(),
     usage: z.enum(['open', 'non-commercial', 'unverified']),
   }).strict(),
+  distribution: z.object({
+    packageId: identity,
+    releaseId: identity,
+    textStatus: z.enum(['verified', 'pending', 'unreadable']),
+    verificationRecord: z.string().trim().min(1).max(2_000),
+  }).strict().optional(),
   topics: z.array(z.object({
     terms: z.array(identity).min(1),
     diagnosisQueries: z.array(identity.regex(/\p{Script=Han}/u)),
   }).strict()),
-}).strict().transform(({ publishedAt, effectiveAt, ...source }) => ({
+}).strict().transform(({ publishedAt, effectiveAt, distribution, ...source }) => ({
   ...source,
   ...(publishedAt === undefined ? {} : { publishedAt }),
   ...(effectiveAt === undefined ? {} : { effectiveAt }),
+  ...(distribution === undefined ? {} : { distribution }),
 }))
 
 const passageSchema = z.object({
@@ -42,12 +50,17 @@ const documentSchema = z.object({
   source: guidelineSourceDefinitionSchema,
   passages: z.array(passageSchema),
 }).strict().refine(document => document.passages.length > 0
-  || document.source.status !== 'active' || document.source.license.usage !== 'open',
-  'Open guidelines require readable passages')
+  || document.source.status !== 'active' || document.source.license.usage !== 'open'
+  || (document.source.distribution !== undefined && document.source.distribution.textStatus !== 'verified'),
+  'Available guidelines require readable passages')
   .refine(document => new Set(document.passages.map(passage => passage.locator)).size === document.passages.length,
   'Guideline passage locators must be unique')
 const sourceRowSchema = z.object({ metadata: z.string(), digest: z.string(), passageCount: z.number().int().nonnegative() })
 const passageRowSchema = z.object({ id: z.string(), locator: z.string(), text: z.string(), rank: z.number() })
+const storedDocumentSchema = z.object({ metadata: z.string(), digest: z.string() })
+const storedPassagesSchema = z.array(z.object({ id: z.string(), locator: z.string(), text: z.string() }))
+const documentsSchema = z.array(documentSchema).refine(items => new Set(items.map(item => item.source.id)).size === items.length,
+  'Guideline source IDs must be unique within a release')
 const applicationId = 0x434d4743
 
 function hash(value: string): string {
@@ -57,9 +70,11 @@ function hash(value: string): string {
 export class GuidelineCorpus {
   readonly #database: Database.Database
   readonly #allowNonCommercial: boolean
+  readonly #deploymentPolicy: GuidelineDeploymentPolicy
 
-  constructor(options: { databasePath: string; readOnly?: boolean; allowNonCommercial?: boolean }) {
+  constructor(options: { databasePath: string; readOnly?: boolean; allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy }) {
     this.#allowNonCommercial = options.allowNonCommercial === true
+    this.#deploymentPolicy = options.deploymentPolicy ?? 'default'
     if (!options.readOnly) mkdirSync(dirname(options.databasePath), { recursive: true })
     this.#database = new Database(options.databasePath, options.readOnly
       ? { readonly: true, fileMustExist: true }
@@ -106,31 +121,57 @@ export class GuidelineCorpus {
   }
 
   importDocument(input: GuidelineDocument): { created: boolean; passageCount: number } {
-    const document = documentSchema.parse(input)
-    const digest = hash(JSON.stringify(document))
+    return this.importDocuments([input])
+  }
+
+  importDocuments(inputs: readonly GuidelineDocument[]): { created: boolean; passageCount: number } {
+    const documents = documentsSchema.parse(inputs)
     return this.#database.transaction(() => {
-      const existing = this.#database.prepare('SELECT digest FROM guideline_source WHERE id = ?').get(document.source.id)
-      if (existing !== undefined && z.object({ digest: z.string() }).parse(existing).digest === digest) {
-        return { created: false, passageCount: document.passages.length }
+      let created = false
+      let passageCount = 0
+      for (const document of documents) {
+        passageCount += document.passages.length
+        const digest = hash(JSON.stringify(document))
+        if (this.#matchesDocument(document, digest)) continue
+        created = true
+        this.#database.prepare('DELETE FROM guideline_passage WHERE source_id = ?').run(document.source.id)
+        this.#database.prepare(`
+          INSERT INTO guideline_source (id, metadata, digest) VALUES (?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET metadata = excluded.metadata, digest = excluded.digest
+        `).run(document.source.id, JSON.stringify(document.source), digest)
+        const insert = this.#database.prepare('INSERT INTO guideline_passage (id, source_id, locator, text) VALUES (?, ?, ?, ?)')
+        for (const passage of document.passages) {
+          const id = hash(JSON.stringify([document.source.id, document.source.version, document.source.sha256, passage.locator]))
+          insert.run(id, document.source.id, passage.locator, passage.text)
+        }
       }
-      this.#database.prepare('DELETE FROM guideline_passage WHERE source_id = ?').run(document.source.id)
-      this.#database.prepare(`
-        INSERT INTO guideline_source (id, metadata, digest) VALUES (?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET metadata = excluded.metadata, digest = excluded.digest
-      `).run(document.source.id, JSON.stringify(document.source), digest)
-      const insert = this.#database.prepare('INSERT INTO guideline_passage (id, source_id, locator, text) VALUES (?, ?, ?, ?)')
-      for (const passage of document.passages) {
-        const id = hash(JSON.stringify([document.source.id, document.source.version, document.source.sha256, passage.locator]))
-        insert.run(id, document.source.id, passage.locator, passage.text)
-      }
-      return { created: true, passageCount: document.passages.length }
+      return { created, passageCount }
     })()
+  }
+
+  matchesDocuments(inputs: readonly GuidelineDocument[]): boolean {
+    const documents = documentsSchema.parse(inputs)
+    return this.#database.transaction(() => documents.every(document => this.#matchesDocument(document, hash(JSON.stringify(document)))))()
+  }
+
+  #matchesDocument(document: GuidelineDocument, digest: string): boolean {
+    const row = storedDocumentSchema.safeParse(this.#database.prepare('SELECT metadata, digest FROM guideline_source WHERE id = ?').get(document.source.id))
+    if (!row.success || row.data.digest !== digest) return false
+    const rows = storedPassagesSchema.safeParse(this.#database.prepare('SELECT id, locator, text FROM guideline_passage WHERE source_id = ? ORDER BY rowid').all(document.source.id))
+    if (!rows.success || rows.data.length !== document.passages.length) return false
+    let source: unknown
+    try { source = JSON.parse(row.data.metadata) }
+    catch { return false }
+    const metadata = guidelineSourceDefinitionSchema.safeParse(source)
+    if (!metadata.success) return false
+    if (rows.data.some(passage => passage.id !== hash(JSON.stringify([document.source.id, document.source.version, document.source.sha256, passage.locator])))) return false
+    return hash(JSON.stringify({ source: metadata.data, passages: rows.data.map(({ locator, text }) => ({ locator, text })) })) === digest
   }
 
   search(text: string): GuidelineSearchResult {
     return this.#database.transaction(() => {
       const rows = this.#sourceRows()
-      const revision = hash(JSON.stringify([this.#allowNonCommercial, rows.map(row => row.digest)]))
+      const revision = hash(JSON.stringify([this.#allowNonCommercial, this.#deploymentPolicy, rows.map(row => row.digest)]))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
       const inactiveSources: GuidelineSearchResult['inactiveSources'] = []
@@ -143,11 +184,11 @@ export class GuidelineCorpus {
         .filter(term => [...term].length >= 2).slice(0, 96)
       for (const row of rows) {
         const source = guidelineSourceDefinitionSchema.parse(JSON.parse(row.metadata))
-        if (source.status !== 'active') {
+        if (source.status !== 'active' || (source.distribution !== undefined && source.distribution.textStatus !== 'verified')) {
           inactiveSources.push({ id: source.id, url: source.url, sourceHash: source.sha256 })
           continue
         }
-        if (!isGuidelineSourceUsable(source, this.#allowNonCommercial)) continue
+        if (!isGuidelineSourceUsable(source, this.#allowNonCommercial, this.#deploymentPolicy)) continue
         const topics = source.topics.filter(topic => topic.terms.some(term => queryText.includes(term.toLowerCase())))
         const sourceTerms = [...new Set([...topics.flatMap(topic => topic.terms), ...terms])].slice(0, 128)
         const indexedTerms = sourceTerms.filter(term => [...term].length >= 3)

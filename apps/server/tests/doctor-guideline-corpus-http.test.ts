@@ -132,6 +132,31 @@ it('does not send non-commercial passages to the model without an explicit deplo
   expect((await fixture.readCase()).clinicalDocument).toEqual(before)
 })
 
+it('uses verified internal-test release passages for generation and verification, then hides prior results after policy or text status changes', async () => {
+  const fixture = await setup()
+  const source: GuidelineDocument['source'] = { ...document.source,
+    license: { ...document.source.license, usage: 'unverified' },
+    distribution: { packageId: 'synthetic-guidelines', releaseId: 'synthetic-v1', textStatus: 'verified',
+      verificationRecord: 'verification/synthetic-guideline.json' } }
+  fixture.writer.importDocument({ ...document, source })
+  const allowed = await createClinMeshRuntime({ ...fixture.options, guidelineDeploymentPolicy: 'internal-testing' })
+  disposals.push(() => allowed.close())
+  const before = (await fixture.readCase()).clinicalDocument
+  const original = await fixture.generate(allowed)
+  expect(original).toMatchObject({ status: 'ready', stale: false })
+  expect(original.guidelines).toContainEqual(expect.objectContaining({ title: source.title, text: paragraph }))
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  expect(fixture.writer.sources()[0]!.source.license.usage).toBe('unverified')
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+  expect(await fixture.read()).toMatchObject({ stale: true, hidePreviousResults: true, guidelines: [], items: [] })
+  fixture.writer.importDocument({ source: { ...source, distribution: { ...source.distribution!, textStatus: 'pending' } }, passages: [] })
+  expect(await fixture.read(allowed)).toMatchObject({ stale: true, hidePreviousResults: true, guidelines: [], items: [] })
+  const refreshed = await fixture.generate(allowed)
+  expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
+  expect(refreshed.guidelines).not.toContainEqual(expect.objectContaining({ title: source.title }))
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
 it('enables non-commercial passages only in the declared runtime and invalidates its cached recommendations in a restricted runtime', async () => {
   const fixture = await setup('糖尿病复查，咳嗽。')
   fixture.writer.importDocument({ ...document, source: { ...document.source,

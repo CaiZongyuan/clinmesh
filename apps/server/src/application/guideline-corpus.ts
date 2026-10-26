@@ -1,5 +1,7 @@
 import type { GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
 
+export type GuidelineDeploymentPolicy = 'default' | 'internal-testing'
+
 export interface GuidelineSourceDefinition {
   id: string
   title: string
@@ -18,6 +20,12 @@ export interface GuidelineSourceDefinition {
     id: string
     url: string
     usage: 'open' | 'non-commercial' | 'unverified'
+  }
+  distribution?: {
+    packageId: string
+    releaseId: string
+    textStatus: 'verified' | 'pending' | 'unreadable'
+    verificationRecord: string
   }
   topics: Array<{ terms: string[]; diagnosisQueries: string[] }>
 }
@@ -44,7 +52,10 @@ export interface GuidelineSourceStatus {
   passageCount: number
 }
 
-export function isGuidelineSourceUsable(source: GuidelineSourceDefinition, allowNonCommercial = false): boolean {
-  return source.status === 'active' && (source.license.usage === 'open'
-    || (source.license.usage === 'non-commercial' && allowNonCommercial))
+export function isGuidelineSourceUsable(source: GuidelineSourceDefinition, allowNonCommercial = false,
+  deploymentPolicy: GuidelineDeploymentPolicy = 'default'): boolean {
+  if (source.status !== 'active' || (source.distribution !== undefined && source.distribution.textStatus !== 'verified')) return false
+  return source.license.usage === 'open'
+    || (source.license.usage === 'non-commercial' && allowNonCommercial)
+    || (deploymentPolicy === 'internal-testing' && source.distribution?.textStatus === 'verified')
 }

@@ -67,6 +67,52 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(result.revision).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  it('整包导入原子发布并保留其他来源，任一无效正文不能留下部分更新', () => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    const original = document()
+    writer.importDocument(original)
+    const reader = open(path, true)
+    const before = reader.search('软骨发育不全')
+    const added = document()
+    added.source.id = 'second-source'
+    added.source.version = '2027'
+    const invalid = document()
+    invalid.source.id = 'invalid-source'
+    invalid.passages[0]!.text = ''
+    expect(() => writer.importDocuments([added, invalid])).toThrow()
+    expect(reader.sources()).toHaveLength(1)
+    expect(reader.search('软骨发育不全')).toEqual(before)
+    expect(writer.importDocuments([added])).toEqual({ created: true, passageCount: 1 })
+    expect(reader.sources()).toHaveLength(2)
+    expect(reader.search('软骨发育不全').revision).not.toBe(before.revision)
+    expect(writer.importDocuments([added])).toEqual({ created: false, passageCount: 1 })
+    expect(() => writer.importDocuments([added, added])).toThrow()
+    expect(reader.sources()).toHaveLength(2)
+  })
+
+  it('只读整包核对检查实际正文，发现损坏后重复导入修复而不误信既有摘要', () => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    const input = document()
+    writer.importDocument(input)
+    const reader = open(path, true)
+    expect(reader.matchesDocuments([input])).toBe(true)
+    const other = document()
+    other.source.id = 'unrelated-source'
+    writer.importDocument(other)
+    expect(reader.matchesDocuments([input])).toBe(true)
+    const external = new Database(path)
+    try {
+      external.prepare('UPDATE guideline_passage SET text = ? WHERE source_id = ?').run('Damaged persisted source text.', input.source.id)
+    } finally { external.close() }
+    expect(reader.matchesDocuments([input])).toBe(false)
+    expect(writer.importDocuments([input])).toEqual({ created: true, passageCount: 1 })
+    expect(reader.matchesDocuments([input])).toBe(true)
+    expect(reader.sources()).toHaveLength(2)
+    expect(writer.importDocuments([input])).toEqual({ created: false, passageCount: 1 })
+  })
+
   it('全文检索能找到未登记主题的新病种而不返回整个文档', () => {
     const corpus = open()
     const input = document()
@@ -135,6 +181,38 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     input.source.license.usage = 'unverified'
     writer.importDocument(input)
     expect(allowed.search('软骨发育不全').guidelines).toEqual([])
+  })
+
+  it('内部测试只启用固定资料包内已核验正文，保留原始用途并将策略纳入检索版本', () => {
+    const path = join(directory(), 'guidelines.sqlite')
+    const writer = open(path)
+    const input = document()
+    input.source.license.usage = 'unverified'
+    input.source.distribution = { packageId: 'synthetic-guidelines', releaseId: 'synthetic-v1',
+      textStatus: 'verified', verificationRecord: 'verification/synthetic-source.json' }
+    writer.importDocument(input)
+    const internal = new GuidelineCorpus({ databasePath: path, readOnly: true, deploymentPolicy: 'internal-testing' })
+    corpora.push(internal)
+    expect(writer.search('软骨发育不全').guidelines).toEqual([])
+    expect(internal.search('软骨发育不全').guidelines.map(item => item.text)).toEqual([input.passages[0]!.text])
+    expect(internal.sources()[0]!.source.license.usage).toBe('unverified')
+    expect(internal.search('软骨发育不全').revision).not.toBe(writer.search('软骨发育不全').revision)
+    const previous = internal.search('软骨发育不全').revision
+    for (const textStatus of ['pending', 'unreadable'] as const) {
+      writer.importDocument({ ...input, source: { ...input.source, license: { ...input.source.license, usage: 'open' },
+        distribution: { ...input.source.distribution, textStatus } } })
+      expect(internal.search('软骨发育不全').guidelines).toEqual([])
+      expect(writer.search('软骨发育不全').guidelines).toEqual([])
+      expect(internal.search('软骨发育不全').revision).not.toBe(previous)
+    }
+    for (const status of ['withdrawn', 'superseded'] as const) {
+      writer.importDocument({ ...input, source: { ...input.source, status } })
+      expect(internal.search('软骨发育不全').guidelines).toEqual([])
+    }
+    const unregistered = document()
+    unregistered.source.license.usage = 'unverified'
+    writer.importDocument(unregistered)
+    expect(internal.search('软骨发育不全').guidelines).toEqual([])
   })
 
   it('结果限制为八段并遵守序列化预算，保留完整原段落及限定语', () => {

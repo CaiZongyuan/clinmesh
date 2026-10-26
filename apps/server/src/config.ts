@@ -4,8 +4,10 @@ import { parseEnv } from 'node:util'
 import { z } from 'zod'
 import { modelUsagePolicyConfigSchema, type ModelUsagePolicyConfig } from '@clinmesh/contracts/model-usage'
 import { modelPricingConfigSchema, type ModelPricingConfig } from '@clinmesh/contracts/model-pricing'
+import type { GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 
 export const guidelineNonCommercialUseSchema = z.enum(['true', 'false']).default('false').transform(value => value === 'true')
+export const guidelineDeploymentPolicySchema = z.enum(['default', 'internal-testing']).default('default')
 
 const httpUrlSchema = z.url().refine((value) => {
   const protocol = new URL(value).protocol
@@ -39,6 +41,7 @@ const serverEnvironmentSchema = z.object({
   CLINMESH_DATABASE_PATH: z.string().trim().min(1),
   CLINMESH_GUIDELINE_DATABASE_PATH: z.string().trim().min(1).optional(),
   CLINMESH_GUIDELINE_NON_COMMERCIAL_USE: guidelineNonCommercialUseSchema,
+  CLINMESH_GUIDELINE_DEPLOYMENT_POLICY: guidelineDeploymentPolicySchema,
   CLINMESH_DEMO_PASSWORD: z.string().min(12),
   CLINMESH_DSH_BRIDGE_SECRET: z.string().min(32).optional(),
   CLINMESH_HOST: z.string().trim().min(1).default('127.0.0.1'),
@@ -100,6 +103,7 @@ export interface ServerConfig {
   databasePath: string
   guidelineDatabasePath: string
   guidelineNonCommercialUse: boolean
+  guidelineDeploymentPolicy: GuidelineDeploymentPolicy
   demoPassword: string
   dshBridgeSecret?: string
   hostname: string
@@ -243,6 +247,7 @@ export function readServerConfig(
     databasePath: parsed.CLINMESH_DATABASE_PATH,
     guidelineDatabasePath: parsed.CLINMESH_GUIDELINE_DATABASE_PATH ?? defaultGuidelineDatabasePath,
     guidelineNonCommercialUse: parsed.CLINMESH_GUIDELINE_NON_COMMERCIAL_USE,
+    guidelineDeploymentPolicy: parsed.CLINMESH_GUIDELINE_DEPLOYMENT_POLICY,
     demoPassword: parsed.CLINMESH_DEMO_PASSWORD,
     ...(parsed.CLINMESH_DSH_BRIDGE_SECRET === undefined
       ? {}
