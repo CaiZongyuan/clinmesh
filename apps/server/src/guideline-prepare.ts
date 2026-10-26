@@ -44,15 +44,26 @@ function publish(options: GuidelinePrepareOptions, snapshot: Snapshot, source: '
     const writer = new GuidelineCorpus({ databasePath: options.databasePath })
     try { created = writer.importDocuments(snapshot.documents).created } finally { writer.close() }
   }
-  const searchable = snapshot.documents.filter(item => item.passages.some(isGuidelinePassageUsable)
-    && isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy))
+  const items = snapshot.items.map((item, index) => {
+    const { source, passages } = snapshot.documents[index]!
+    const usablePassageCount = passages.filter(isGuidelinePassageUsable).length
+    const searchable = usablePassageCount > 0 && isGuidelineSourceUsable(source, options.allowNonCommercial, options.deploymentPolicy)
+    const withheldReason = source.status !== 'active' ? `来源状态：${source.status}`
+      : item.textStatus !== 'verified' ? `正文核验状态：${item.textStatus}`
+      : usablePassageCount === 0 ? '没有可可靠读取的正文段落'
+      : '当前部署用途策略未启用该来源'
+    return { ...item, searchable, unusablePassageCount: passages.length - usablePassageCount,
+      ...(searchable ? {} : { withheldReason }) }
+  })
+  const searchable = items.filter(item => item.searchable)
   return { packageId: snapshot.manifest.packageId, releaseId: snapshot.manifest.releaseId,
     databasePath: resolve(options.databasePath), inputRoot, source, created, ...snapshot.counts,
     searchableSourceCount: searchable.length,
-    searchablePassageCount: searchable.reduce((total, item) => total + item.passages.filter(isGuidelinePassageUsable).length, 0),
+    searchablePassageCount: searchable.reduce((total, item) => total + item.passageCount - item.unusablePassageCount, 0),
+    unusablePassageCount: items.reduce((total, item) => total + item.unusablePassageCount, 0),
     failedSourceCount: snapshot.items.filter(item => item.textStatus === 'unreadable').length,
     manualReviewPendingSourceCount: snapshot.items.filter(item => item.manualReview === 'pending').length,
-    items: snapshot.items.map(item => ({ ...item, searchable: searchable.some(document => document.source.id === item.sourceId) })) }
+    items }
 }
 
 async function download(artifact: GuidelineReleaseLock['artifact'], outputPath: string) {

@@ -62,9 +62,12 @@ it.each([true, false])('准备统计与实际检索一致，保留但隔离提�
   const unusable = { locator: '合成异常段', text: '糖尿病阈值 5\u0002参考值，不能猜测运算符。' }
   const passages = [...(includeUsable ? syntheticGuidelineDocument.passages : []), unusable]
   const input = await fixture(passages)
-  expect(await runGuidelinePrepare(input.options)).toMatchObject({ passageCount: passages.length,
+  const result = await runGuidelinePrepare(input.options)
+  expect(result).toMatchObject({ passageCount: passages.length, unusablePassageCount: 1,
     searchableSourceCount: includeUsable ? 1 : 0,
     searchablePassageCount: includeUsable ? syntheticGuidelineDocument.passages.length : 0 })
+  expect(result.items[0]).toMatchObject({ unusablePassageCount: 1,
+    ...(includeUsable ? {} : { withheldReason: '没有可可靠读取的正文段落' }) })
   const corpus = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
   try {
     expect(corpus.sources()[0]).toMatchObject({ passageCount: passages.length, unusablePassageCount: 1 })
