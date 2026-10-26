@@ -1,7 +1,7 @@
 import { readdir, readFile as readTextFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { getHisOperation, listHisOperations } from '@clinmesh/contracts/his-operations'
+import { excludedHisRoutes, getHisOperation, listHisOperations } from '@clinmesh/contracts/his-operations'
 import { type Command, type Option } from 'commander'
 import { createCliProgram } from '../src/cli.ts'
 
@@ -211,6 +211,9 @@ it('独立检查收费示例按原费用收款并保留取消退款与历史兼�
   for (const kind of ['laboratory', 'imaging', 'pathology']) {
     const issue = getHisOperation(`encounter.${kind}-request.issue`)
     const cancel = getHisOperation(`${kind}-request.cancel`)
+    const draftInput = { encounterId: 'encounter', encounterVersion: '1', expectedDraftVersion: 1 }
+    expect(issue.input.parse(draftInput)).toEqual(draftInput)
+    expect(issue.input.safeParse({ ...draftInput, reviewedService: { id: 'substitute', version: 1, outpatientBilling: null } }).success).toBe(false)
     expect(issue.summary).toContain('CATALOG_CONFLICT')
     expect(issue.summary).toContain('保留草稿')
     expect(cancel.summary).toContain('insurance.cancel')
@@ -218,8 +221,12 @@ it('独立检查收费示例按原费用收款并保留取消退款与历史兼�
     expect(cancel.roles).toEqual(['outpatient-doctor'])
   }
   expect(doctor).toContain('CATALOG_CONFLICT')
+  expect(doctor).toContain('reviewedService')
+  const confirmationPath = '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm'
+  expect(listHisOperations().some(operation => operation.http.path === confirmationPath)).toBe(false)
+  expect(excludedHisRoutes.find(route => route.path === confirmationPath)?.reason).toContain('不提供独立 CLI 或 Agent Grant')
   for (const term of ['original `requestId`', '`chargeItemId`', 'legacy-unbilled', 'Pending cancellation refunds keep the Scenario Run active']) expect(billing).toContain(term)
-  for (const term of ['CATALOG_CONFLICT', 'legacy-unbilled', 'Ordinary cancellation rejects', 'insurance.cancel', 'no second charge']) expect(workflows).toContain(term)
+  for (const term of ['CATALOG_CONFLICT', 'legacy-unbilled', 'Ordinary cancellation rejects', 'insurance.cancel', 'no second charge', 'reviewedService', 'explicitly review again', 'no CLI command or Agent Grant']) expect(workflows).toContain(term)
 })
 
 it('keeps inpatient pharmacy and charge reads and receipts aligned with role-specific contracts', async () => {

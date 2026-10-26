@@ -3061,7 +3061,7 @@ export const excludedHisRoutes = [
   {
     method: 'POST',
     path: '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm',
-    reason: '医生页面显式确认选中准备项目，复用正式领域内核并在单个受审计 Command 中校验资料；只接受医生 Session，不提供独立 CLI 或 Agent Grant 授权。',
+    reason: '医生页面显式确认选中准备项目，在单个受审计 Command 中校验资料及三类检查已审阅的服务与价目快照；只接受医生 Session，不提供独立 CLI 或 Agent Grant 授权，CLI 开单继续绑定已保存草稿。',
   },
   {
     method: 'GET',

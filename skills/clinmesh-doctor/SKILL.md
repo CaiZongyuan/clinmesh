@@ -53,7 +53,7 @@ clinmesh prescription withdraw --input @withdrawal.json --idempotency-key <key>
 
 ## Laboratory and services
 
-独立门诊检验、放射和病理申请开立前审阅当前服务的 `outpatientBilling` 价格、币种、单位、来源和版本；缺价仍可保存草稿，正式开立以 `CATALOG_CONFLICT` 拒绝并保留草稿，刷新目录后重新审阅。开立产生原申请的唯一费用，足额确定资金后才放行。取消、重试和历史免费申请按[独立检查收费与取消步骤](references/clinical-workflows.md#outpatient-investigation-billing-and-cancellation)处理。
+独立门诊检验、放射和病理申请开立前审阅当前服务的 `outpatientBilling` 价格、币种、单位、来源和版本；缺价仍可保存草稿，正式开立以 `CATALOG_CONFLICT` 拒绝并保留草稿，刷新目录后重新审阅。医生页面清单的 `reviewedService` 保留已审阅服务与价格，变更后须显式重新审阅；该确认接口没有 CLI 或 Agent Grant。开立产生原申请的唯一费用，足额确定资金后才放行。取消、重试和历史免费申请按[独立检查收费与取消步骤](references/clinical-workflows.md#outpatient-investigation-billing-and-cancellation)处理。
 
 Laboratory draft, issue, cancellation, generation retry and report acknowledgement are separate states. Search the current case laboratory catalog before saving a draft; every returned item is an active, doctor-orderable Hospital Laboratory Service. Use its Hospital Service ID and current versioned report definition. A global Reference Concept is terminology, not an orderable service, and cannot be submitted as the catalog item. Only acknowledge a signed current report. Report correction requires an administrator Grant and creates a new immutable report chain. Other Hospital Service order and completion operations use their current ServiceRequest versions.
 
