@@ -47,7 +47,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
   if (view === 'fees') return <>{error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,messages)}</AlertDescription></Alert> : null}{data ? <InpatientChargeList data={{ admissionId: admission.id, financialStatus: admission.financialStatus, charges: data.charges, chargesFen: data.chargesFen }} locale={locale} /> : null}</>
   return <section aria-label={t('住院诊疗','Inpatient care')} className="flex flex-col gap-4">
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,messages)}</AlertDescription></Alert> : null}
-    <h3>{t('诊断与医嘱','Diagnoses and orders')}</h3>
+    <h3 className="font-serif text-base font-semibold">{t('诊断与医嘱','Diagnoses and orders')}</h3>
     {clinical.isPending ? <p>{t('正在加载诊疗记录','Loading care')}</p> : null}
     {data?.diagnosis.entries.map(entry => <p key={entry.conditionId}>{entry.role==='primary' ? t('主诊断：','Primary: ') : t('次诊断：','Secondary: ')}{entry.coding.display}</p>)}
     {doctor && data ? <InpatientDiagnosisEditor data={data} diagnoses={catalog.data?.diagnoses ?? []} session={session} locale={locale} blocked={write.blocked || admission.recordStatus === 'archived' || admission.status === 'registered'} write={write} /> : null}
@@ -64,7 +64,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
       <Button type="submit" disabled={blocked || !data || (!medication && !service) || (medication !== undefined && (!selectedDose || !('quantity' in selectedDose) || !selectedFrequency))}>{t('签发医嘱','Issue order')}</Button>
     </FieldGroup></FieldSet></form> : null}
     {doctor || nurse ? <Field><FieldLabel htmlFor="inpatient-order-reason">{t('停嘱或按需执行理由','Reason for stop or PRN execution')}</FieldLabel><Input id="inpatient-order-reason" value={reason} onChange={event=>setReason(event.currentTarget.value)} /></Field> : null}
-    {data?.orders.map(order=><article key={order.id} className="flex flex-col gap-2 rounded-md border p-3">
+    {data?.orders.map(order=><article key={order.id} className="flex flex-col gap-2 rounded-md border bg-card p-3">
       <p>{order.display} · {{signed:t('待校对','Awaiting verification'),verified:t('已校对','Verified'),'stop-requested':t('待核停','Stop requested'),stopped:t('已停止','Stopped'),completed:t('已结束','Finished')}[order.state]}</p>
       {order.surgeryExecutionId ? <p>{t('术后医嘱 · ','Postoperative order · ')}{surgery.data?.executions.find(item=>item.id===order.surgeryExecutionId)?.actualProcedure.coding.display ?? order.surgeryExecutionId}</p> : null}
       <p>{order.duration==='long'?t('长期','Long'):t('临时','Temporary')} · {order.doseText} · {t('每次','Per execution ')}{order.doseQuantity}{order.unit} · {order.frequencyCode}</p>
@@ -78,9 +78,9 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
     {data?.executions.map(execution=>{
       const order=data.orders.find(order=>order.id===execution.orderId)!
       const valid = !blocked && order.state==='verified'
-      return <article key={execution.id} className="flex flex-col gap-2 rounded-md border p-3">
+      return <article key={execution.id} className="flex flex-col gap-2 rounded-md border bg-card p-3">
         <p>{order.display} · {{pending:t('待执行','Pending'),dispensed:t('已发药','Dispensed'),completed:t('已完成','Completed'),cancelled:t('已取消','Cancelled')}[execution.status]}</p>
-        <p>{new Date(execution.scheduledFor).toLocaleString(zh?'zh-CN':'en-US',{timeZone:'Asia/Shanghai'})} · {order.doseQuantity}{order.unit}</p>
+        <p className="font-mono text-sm tabular-nums">{new Date(execution.scheduledFor).toLocaleString(zh?'zh-CN':'en-US',{timeZone:'Asia/Shanghai'})} · {order.doseQuantity}{order.unit}</p>
         {nurse && execution.status==='dispensed' ? <Button disabled={!valid} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.administer',input:{admissionId:admission.id,executionId:execution.id,expectedExecutionVersion:execution.version}})}>{t('给药','Administer')}</Button>:null}
         {nurse && execution.status==='pending' && order.kind==='service' ? <Button disabled={!valid} onClick={()=>write.mutation.mutate({operation:'inpatient.execution.complete',input:{admissionId:admission.id,executionId:execution.id,expectedExecutionVersion:execution.version}})}>{t('完成健康教育','Complete education')}</Button>:null}
       </article>

@@ -6,10 +6,15 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldGroup, FieldLabel, FieldSet } from '@clinmesh/ui/components/field'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@clinmesh/ui/components/tabs'
-import { CheckIcon, CopyIcon, MinusIcon, RefreshCwIcon } from 'lucide-react'
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@clinmesh/ui/components/sheet'
+import { BellIcon, CheckIcon, CopyIcon, MinusIcon, RefreshCwIcon } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Fragment, useState } from 'react'
 import { InpatientClinical } from './inpatient-clinical.tsx'
+import { InpatientDoctorDrgCard } from './inpatient-doctor-drg-card.tsx'
+import { InpatientDoctorPatientList } from './inpatient-doctor-patient-list.tsx'
+import { InpatientDoctorReminders } from './inpatient-doctor-reminders.tsx'
+import { inpatientCareDay } from './inpatient-doctor-queries.ts'
 import { InpatientCharges } from './inpatient-charges.tsx'
 import { InpatientDischarge, InpatientSettlement } from './inpatient-discharge.tsx'
 import { InpatientInvestigations } from './inpatient-investigations.tsx'
@@ -84,18 +89,24 @@ const stateMarker: Record<InpatientStageState, { icon: 'done' | 'current' | 'clo
   todo: { icon: null, titleZh: '待办', titleEn: 'Upcoming' },
   closed: { icon: 'closed', titleZh: '已关闭，本次住院未发生', titleEn: 'Closed; did not occur this admission' },
 }
-export function InpatientPatientWorkspace({ admission, admissions, catalog, allowTransfers, session, locale, write }: Props): React.JSX.Element {
+export function InpatientPatientWorkspace({ admission: selectedAdmission, admissions, catalog, allowTransfers, session, locale, write }: Props): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const role = session.actor.roleCode, nurse = role === 'ward-nurse', doctor = role === 'inpatient-doctor', cashier = role === 'cashier'
-  const clinical = doctor || nurse, archived = admission.recordStatus === 'archived'
+  const clinical = doctor || nurse
+  const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'], queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal), retry: false })
+  // 医生站左栏就地切换当前查看的住院；其余岗位始终跟随外层选中的患者。
+  const [viewedId, setViewedId] = useState<string | null>(null)
+  const admission = doctor ? admissions.find(item => item.id === viewedId) ?? selectedAdmission : selectedAdmission
+  const [selectedStage, setSelectedStage] = useState<Stage | null>(null), [visited, setVisited] = useState<Stage[]>([])
+  const [remindersOpen, setRemindersOpen] = useState(false)
+  // 就地切换患者后回到默认阶段，visited 只描述当前住院访问过的环节。
+  const [lastViewedId, setLastViewedId] = useState(admission.id)
+  if (lastViewedId !== admission.id) { setLastViewedId(admission.id); setSelectedStage(null); setVisited([]) }
+  const archived = admission.recordStatus === 'archived'
   const next = nextStep(admission, locale)
   const stageStates = inpatientStageStates(admission)
-  const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'], queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal), retry: false })
-  const careDay = admission.admittedAt !== undefined && scenario.data !== undefined
-    ? Math.max(1, Math.floor((Date.parse(scenario.data.virtualTime) - Date.parse(admission.admittedAt)) / 86_400_000) + 1)
-    : undefined
+  const careDay = inpatientCareDay(admission, scenario.data?.virtualTime)
   const defaultStage = cashier ? 'discharge' : role === 'registrar' ? 'admission' : archived || role === 'medical-records' ? 'record' : next.stage
-  const [selectedStage, setSelectedStage] = useState<Stage | null>(null), [visited, setVisited] = useState<Stage[]>([])
   const active = selectedStage ?? defaultStage
   const client = useQueryClient()
   const ward = catalog?.wards.find(item => item.id === admission.wardId), bed = catalog?.beds.find(item => item.id === admission.bedId)
@@ -111,10 +122,11 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
     if (stage === 'fees' || stage === 'discharge') return cashier || clinical && !archived
     return clinical && !archived
   }
-  return <section aria-label={t('住院详情', 'Admission details')} className="flex min-h-0 flex-1 flex-col">
+  const workspace = <section aria-label={t('住院详情', 'Admission details')} className="flex min-h-0 flex-1 flex-col">
     <section aria-label={t('当前住院患者', 'Current inpatient')} className="flex max-h-[40%] shrink-0 flex-col gap-2 overflow-y-auto border-b bg-background px-4 py-3">
-      <div className="flex flex-wrap items-center gap-2"><h2 className="font-semibold">{admission.patientName}</h2>{careDay !== undefined ? <Badge variant="outline">{t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</Badge> : null}<InpatientNumber locale={locale} number={admission.inpatientNumber} /><Badge variant="secondary">{inpatientStatus(admission, locale)}</Badge>{archived ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground"><span>{place}</span><span>{t('预交 ', 'Deposit ')}{formatFen(admission.depositFen, locale)}</span><span>{t('费用 ', 'Charges ')}{formatFen(admission.chargesFen, locale)}</span>{settle === null ? null : <span>{settle}</span>}</div>
+      <div className="flex flex-wrap items-center gap-2"><h2 className="font-serif text-lg font-semibold">{admission.patientName}</h2>{careDay !== undefined ? <Badge variant="outline">{t(`住院第 ${careDay} 天`, `Day ${careDay}`)}</Badge> : null}<InpatientNumber locale={locale} number={admission.inpatientNumber} /><Badge variant="secondary">{inpatientStatus(admission, locale)}</Badge>{admission.chargesFen > admission.depositFen ? <Badge variant="outline" className="text-destructive">{t('欠费预警', 'Arrears')}</Badge> : null}{archived ? <Badge variant="outline">{t('已归档 · 只读', 'Archived · read only')}</Badge> : null}</div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground"><span>{place}</span><span>{t('预交 ', 'Deposit ')}<span className="font-mono tabular-nums">{formatFen(admission.depositFen, locale)}</span></span><span>{t('费用 ', 'Charges ')}<span className="font-mono tabular-nums">{formatFen(admission.chargesFen, locale)}</span></span>{settle === null ? null : <span>{settle}</span>}</div>
+      {doctor ? <InpatientDoctorDrgCard admission={admission} session={session} locale={locale} /> : null}
     </section>
     <Tabs value={active} onValueChange={value => { if (visibleStages.some(stage => stage.id === value)) changeStage(value as Stage) }} className="min-h-0 flex-1 gap-0">
       <div className="flex shrink-0 items-center gap-2 border-b px-4"><div className="min-w-0 flex-1 overflow-x-auto"><TabsList aria-label={t('住院阶段', 'Inpatient stages')} variant="line" className="min-w-max gap-2">{stageGroups.map(group => {
@@ -136,7 +148,7 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       })}</TabsList></div><Button size="icon-sm" variant="ghost" aria-label={t('刷新诊疗记录', 'Refresh care')} onClick={() => void client.invalidateQueries({ queryKey: ['inpatient'] })}><RefreshCwIcon aria-hidden /></Button></div>
       {visibleStages.map(stage => <TabsContent key={stage.id} value={stage.id} keepMounted className="min-h-0 overflow-y-auto p-4">
         {active === stage.id || visited.includes(stage.id) ? <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1"><h3 className="font-medium">{zh ? stage.zh : stage.en}</h3><p className="text-sm text-muted-foreground">{t('负责岗位：', 'Responsible: ')}{zh ? stage.ownerZh : stage.ownerEn}</p><p className="text-sm text-muted-foreground">{zh ? stage.conditionZh : stage.conditionEn}</p></div>
+          <div className="flex flex-col gap-1"><h3 className="font-serif text-base font-medium">{zh ? stage.zh : stage.en}</h3><p className="text-sm text-muted-foreground">{t('负责岗位：', 'Responsible: ')}{zh ? stage.ownerZh : stage.ownerEn}</p><p className="text-sm text-muted-foreground">{zh ? stage.conditionZh : stage.conditionEn}</p></div>
           {admission.status === 'registered' && stage.id !== 'admission' ? <Alert role="note"><AlertDescription>{t('尚未入科。请先由病区护士在“入科分床”接诊并分床。', 'Not yet received. The ward nurse must receive and assign a bed under Admission first.')}</AlertDescription></Alert> : null}
           {!mayRead(stage.id) ? <Alert role="note"><AlertDescription>{archived ? t('病案已归档，诊疗写入关闭；有权限的岗位可在“病案”查询归档快照。', 'The record is archived and care writes are closed. Authorized staff can read the archived snapshot under Medical record.') : t('请由上述负责岗位从自己的工作台进入本环节办理。切换环节不会变更当前账户或岗位。', 'The responsible staff must continue from their own workspace. Changing stages does not change your account or role.')}</AlertDescription></Alert> : <>
             {stage.id === 'admission' ? nurse && !archived ? <InpatientBedAssignment admission={admission} admissions={admissions} catalog={catalog} locale={locale} write={write} /> : <p>{admission.status === 'registered' ? t('登记已完成，等待病区护士接诊。', 'Registration completed; awaiting ward nurse receipt.') : t('入科登记已完成；床位变更由病区护士办理。', 'Admission received; the ward nurse handles bed changes.')}</p> : null}
@@ -152,6 +164,33 @@ export function InpatientPatientWorkspace({ admission, admissions, catalog, allo
       </TabsContent>)}
     </Tabs>
   </section>
+  if (!doctor) return workspace
+  // 医生站三栏：患者列表 / 工作区 / 临床提醒栏；窄容器下右栏降级为抽屉，左栏在更窄容器隐藏。
+  const reminders = <InpatientDoctorReminders admission={admission} admissions={admissions} session={session} locale={locale} />
+  return <div className="@container/inp-doctor relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+    <div className="grid min-h-0 min-w-0 flex-1 @min-[720px]/inp-doctor:grid-cols-[200px_minmax(0,1fr)] @min-[1080px]/inp-doctor:grid-cols-[200px_minmax(0,1fr)_300px]">
+      <aside aria-label={t('住院患者列表', 'Inpatient list')} data-inpatient-region="patient-list" className="min-h-0 min-w-0 overflow-y-auto border-r bg-card @max-[720px]/inp-doctor:hidden">
+        <InpatientDoctorPatientList admissions={admissions} viewedId={admission.id} catalog={catalog} virtualTime={scenario.data?.virtualTime} locale={locale} onSelect={setViewedId} />
+      </aside>
+      <div data-inpatient-region="workspace" className="flex min-h-0 min-w-0 flex-col @max-[1080px]/inp-doctor:pb-14">{workspace}</div>
+      <aside aria-label={t('临床提醒', 'Clinical reminders')} data-inpatient-region="reminders" className="hidden min-h-0 min-w-0 overflow-y-auto border-l bg-card @min-[1080px]/inp-doctor:block">
+        {reminders}
+      </aside>
+    </div>
+    <Button aria-expanded={remindersOpen} aria-haspopup="dialog" className="@min-[1080px]/inp-doctor:hidden absolute right-4 bottom-4 z-10"
+      onClick={() => setRemindersOpen(true)} size="icon-sm" variant="secondary">
+      <BellIcon aria-hidden />
+      <span className="sr-only">{t('打开临床提醒', 'Open clinical reminders')}</span>
+    </Button>
+    <Sheet onOpenChange={setRemindersOpen} open={remindersOpen}>
+      <SheetContent className="w-80 sm:max-w-80" side="right">
+        <SheetHeader>
+          <SheetTitle>{t('临床提醒', 'Clinical reminders')}</SheetTitle>
+        </SheetHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">{reminders}</div>
+      </SheetContent>
+    </Sheet>
+  </div>
 }
 
 function InpatientBedAssignment({ admission, admissions, catalog, locale, write }: Pick<Props, 'admission' | 'admissions' | 'catalog' | 'locale' | 'write'>): React.JSX.Element {
