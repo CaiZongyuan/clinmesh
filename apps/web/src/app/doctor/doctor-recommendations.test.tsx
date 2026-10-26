@@ -614,6 +614,8 @@ describe('prepared clinical confirmation', () => {
 it.each([
   ['national-standard', '国家标准'], ['health-standard', '卫生行业标准'], ['official-protocol', '诊疗方案'],
   ['guideline', '临床指南'], ['product-information', '药品说明书'],
+  ['expert-consensus', '专家共识'], ['scientific-statement', '科学声明'],
+  ['decision-pathway', '决策路径'], ['position-paper', '立场文件'],
 ] as const)('keeps source document type %s inside the collapsed evidence dialog', async (documentType, label) => {
   const original = state()
   const current = state({ guidelines: [{ ...original.guidelines[0]!, documentType }] })
