@@ -7,7 +7,7 @@ type Runtime = Awaited<ReturnType<typeof createClinMeshRuntime>>
 
 /** 临床回归通过收费员公共入口缴清原申请，再由原有受控 dispatcher 推进执行。 */
 export async function payOutpatientInvestigation(runtime: Runtime, input: {
-  caseId: string; category: 'imaging' | 'pathology'; chargeItemId: string
+  caseId: string; category: 'laboratory' | 'imaging' | 'pathology'; chargeItemId: string
 }) {
   const cashier = await signIn(runtime, 'cashier@demo.clinmesh.local')
   const detail = await runtime.app.request(`/api/his/v1/billing/cases/${input.caseId}`, { headers: { cookie: cashier } })
