@@ -12,6 +12,7 @@ import type {
   ImagingRequest,
   ImagingServiceSnapshot,
   LaboratoryRequest,
+  OutpatientInvestigationPrice,
   PathologyRequest,
   PathologyServiceSnapshot,
   SessionContext,
@@ -37,6 +38,8 @@ import { useSyntheticPatientLibraryViewStore } from './synthetic-patient-library
 import { createWebQueryClient, WebApp } from './web-app.tsx'
 import { agentActionTarget } from './agent-action-targets.ts'
 import type { WebRuntimeOptions, WebSurfaceAgentController, WebSurfaceAgentTool } from './web-runtime.tsx'
+
+const syntheticOutpatientPrice: OutpatientInvestigationPrice = { id: 'synthetic-price', version: 1, priceFen: 2500, currency: 'CNY', unit: '项目', source: 'synthetic-outpatient-investigation-2026-10-26-v1', effectiveOn: '2026-08-24' }
 
 const forbiddenChineseClinicalUiTerms = /Agent|评分|仿真|Scenario|Epoch/i
 const forbiddenEnglishClinicalUiTerms = /Agent|scor(?:e|ing)|simulation|Scenario|Epoch/i
@@ -4382,11 +4385,13 @@ describe('role workspaces', () => {
   it.each(['imaging', 'pathology'] as const)('keeps the active investigation form when a late %s issuance completes', async category => {
     window.history.replaceState(null, '', '/consultation')
     const imagingService: ImagingServiceSnapshot = {
+      outpatientBilling: syntheticOutpatientPrice,
       applicability: '成人胸部疾病的评估与随访；不含增强扫描', bodySite: '胸部', code: 'CT-CHEST-PLAIN',
       department: '放射科', examCode: 'chest-ct-plain', id: 'imaging-chest-ct-plain', method: '平扫（不使用造影剂）',
       modality: 'CT', name: '胸部 CT 平扫', reportSections: ['technique', 'findings', 'impression'], version: 1,
     }
     const pathologyService: PathologyServiceSnapshot = {
+      outpatientBilling: syntheticOutpatientPrice,
       applicability: '既往乳腺手术切除标本切片的会诊复核', bodySite: '乳腺', code: 'PATH-BREAST-SLIDE-CONSULT',
       department: '病理科', examCode: 'breast-slide-consultation', id: 'pathology-breast-slide-consultation',
       name: '乳腺切片病理会诊', reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'],
@@ -4582,6 +4587,7 @@ describe('role workspaces', () => {
       version: '2.83',
     }
     const laboratoryService = {
+      outpatientBilling: syntheticOutpatientPrice,
       allowedIndicationCodes: ['clinical-evaluation'],
       componentServiceIds: ['hospital-laboratory-service-wbc'],
       doctorOrderable: true as const,
@@ -4933,6 +4939,7 @@ describe('role workspaces', () => {
         items: [{
           id: 'lab-cbc', serviceKind: 'laboratory', localCode: 'SYN-CBC', nameZh: '血常规', nameEn: 'Complete blood count',
           version: 1, doctorOrderable: true, allowedIndicationCodes: ['fever'], componentServiceIds: [], executingDepartmentId: 'department-laboratory',
+          outpatientBilling: syntheticOutpatientPrice,
           priceFen: 2500, tatMinutes: 20, specimen: { code: 'blood', display: '血液' }, referenceReleaseId: 'synthetic-release',
           referenceConcept: { code: '6690-2', display: '白细胞计数', id: 'synthetic-wbc', sourceLocator: 'synthetic:0', system: 'http://loinc.org', version: '1' },
           reportDefinition: { conclusionTemplate: '合成检验完成', results: [{
@@ -6017,7 +6024,7 @@ describe('role workspaces', () => {
     expect(screen.getByText(/¥68\.00/)).toBeTruthy()
   })
 
-  it('previews and confirms laboratory payment before moving the case to paid', async () => {
+  it.each([['laboratory', '检验费用'], ['imaging', '放射费用'], ['pathology', '病理会诊费用'], ['medication', '药品费用']] as const)('previews and confirms %s payment before moving the selected charge to paid', async (category, categoryLabel) => {
     let paid = false
     let paymentConfirmations = 0
     const patient = {
@@ -6033,7 +6040,9 @@ describe('role workspaces', () => {
       accountId: 'account-1',
       amountFen: 6800,
       caseId: 'case-1',
-      category: 'laboratory',
+      category,
+      requestId: 'original-request-1', sourceReference: 'ServiceRequest/service-request-1',
+      price: { id: 'synthetic-price', version: 1, priceFen: 6800, currency: 'CNY', unit: '项目', source: 'synthetic-outpatient-investigation-2026-10-26-v1', effectiveOn: '2026-08-24' },
       chargeItemId: 'charge-laboratory-1',
       chargeVersion: paid ? 2 : 1,
       descriptionEn: 'Fever laboratory panel',
@@ -6054,9 +6063,9 @@ describe('role workspaces', () => {
       const url = new URL(String(input), 'http://localhost')
       if (url.pathname === '/api/auth/context') return Response.json(cashierSession)
       if (url.pathname === '/api/his/v1/billing/queue') {
-        const category = url.searchParams.get('category')
+        const requestedCategory = url.searchParams.get('category')
         const status = url.searchParams.get('status')
-        const hasItem = category === 'laboratory' && status === (paid ? 'paid' : 'pending')
+        const hasItem = requestedCategory === category && status === (paid ? 'paid' : 'pending')
         return Response.json({
           items: hasItem ? [queueItem] : [],
           ...pagination(hasItem ? 1 : 0),
@@ -6070,7 +6079,8 @@ describe('role workspaces', () => {
         expect(body.expectedVersions).toEqual({ 'ChargeItem/charge-laboratory-1': '1' })
         expect(body.input).toEqual({
           caseId: 'case-1',
-          category: 'laboratory',
+          category,
+          chargeItemId: 'charge-laboratory-1',
           simulatorRule: 'success',
         })
         return Response.json(commandResponse({
@@ -6116,10 +6126,15 @@ describe('role workspaces', () => {
 
     expect(await screen.findByRole('tab', { name: '检验费用' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '药品费用' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '放射费用' })).toBeTruthy()
+    expect(screen.getByRole('tab', { name: '病理会诊费用' })).toBeTruthy()
+    if (category !== 'laboratory') await user.click(screen.getByRole('tab', { name: categoryLabel }))
     expect(screen.getByRole('tab', { name: '待缴' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '已缴' })).toBeTruthy()
     expect(screen.getByRole('tab', { name: '结果未知' })).toBeTruthy()
     expect(await screen.findByRole('listitem', { name: '选择费用 合成患者周明' })).toBeTruthy()
+    expect(screen.getByText('申请：original-request-1')).toBeTruthy()
+    expect(screen.getByText('本院门诊价格：¥68.00 / 项目 · 数量 1')).toBeTruthy()
     expect(screen.getByRole('combobox', { name: '支付处理结果' }).textContent).toContain('成功')
 
     await user.click(screen.getByRole('button', { name: '预览支付' }))

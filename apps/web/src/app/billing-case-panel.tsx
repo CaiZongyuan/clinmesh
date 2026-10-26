@@ -5,11 +5,21 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useState } from 'react'
+import { InvestigationPrice } from './doctor/investigation-billing.tsx'
 import { formatFen } from './workspace-format.ts'
 import { PaginationControls } from './pagination-controls.tsx'
 import type { getWorkspaceMessages, WorkspaceLocale } from './workspace-i18n.ts'
 
 type Messages = ReturnType<typeof getWorkspaceMessages>
+
+export function BillingChargeOrigin({ charge, locale }: { charge: Pick<z.infer<typeof billingCaseSchema>['charges'][number], 'chargeItemId' | 'requestId' | 'sourceReference' | 'price'>; locale: WorkspaceLocale }) {
+  return <div className="flex min-w-0 flex-col gap-1 text-xs text-muted-foreground">
+    <p className="break-all">{locale === 'zh-CN' ? '原费用：' : 'Original charge: '}{charge.chargeItemId}</p>
+    {charge.requestId === undefined ? null : <p className="break-all">{locale === 'zh-CN' ? '申请：' : 'Request: '}{charge.requestId}</p>}
+    {charge.sourceReference === undefined ? null : <p className="break-all">{charge.sourceReference}</p>}
+    {charge.price === undefined ? null : <InvestigationPrice locale={locale} price={charge.price} />}
+  </div>
+}
 
 export function paymentMethodLabel(method: 'cash' | 'bank-card' | 'mobile', messages: Messages) {
   return method === 'cash' ? messages.tenderCash : method === 'bank-card' ? messages.tenderCard : messages.tenderMobile
@@ -40,7 +50,7 @@ export function BillingCasePanel({ bill, locale, messages, onPageChange, onRecov
         <TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{messages.amount}</TableHead><TableHead>{messages.paidAmount}</TableHead><TableHead>{messages.remainingAmount}</TableHead></TableRow></TableHeader>
         <TableBody>{bill.charges.map(charge => (
           <TableRow key={charge.chargeItemId}>
-            <TableCell>{locale === 'zh-CN' ? charge.descriptionZh : charge.descriptionEn}</TableCell>
+            <TableCell>{locale === 'zh-CN' ? charge.descriptionZh : charge.descriptionEn}<BillingChargeOrigin charge={charge} locale={locale} /></TableCell>
             <TableCell>{formatFen(charge.amountFen, locale)}</TableCell>
             <TableCell>{formatFen(charge.paidFen, locale)}</TableCell>
             <TableCell>{formatFen(charge.remainingFen, locale)}</TableCell>

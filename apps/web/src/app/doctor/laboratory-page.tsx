@@ -1,3 +1,4 @@
+import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
 import { laboratoryGenerationErrorMessage } from '../laboratory-generation-error.ts'
 import type {
   ClinicalCatalog,
@@ -47,7 +48,8 @@ import {
 } from './catalog-picker-dialogs.tsx'
 import { useAutosave } from './use-autosave.ts'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
-import { DoctorRecommendationsPanel } from './doctor-recommendations.tsx'
+import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
+import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice } from './investigation-billing.tsx'
 import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 
@@ -199,9 +201,9 @@ function LaboratoryComposerDialog({ allowedIndicationCodes, existingDraftItemId,
                 <dt className="text-muted-foreground">{zh ? '标本' : 'Specimen'}</dt><dd className="break-words">{selected.laboratoryService.specimen.display}</dd>
                 <dt className="text-muted-foreground">{zh ? '报告结构' : 'Report structure'}</dt><dd>{zh ? `${selected.laboratoryService.reportDefinition.results.length} 项指标` : `${selected.laboratoryService.reportDefinition.results.length} indicators`}</dd>
                 <dt className="text-muted-foreground">TAT</dt><dd className="tabular-nums">{selected.laboratoryService.tatMinutes} min</dd>
-                <dt className="text-muted-foreground">{zh ? '费用' : 'Price'}</dt><dd>{formatLaboratoryPrice(selected.laboratoryService.priceFen, locale)}</dd>
               </dl>
             )}
+            <InvestigationPrice locale={locale} price={selected.laboratoryService?.outpatientBilling} />
             <Field>
               <FieldLabel htmlFor="laboratory-composer-indication">{messages.laboratoryIndication}</FieldLabel>
               {indicationItems.length === 1 ? (
@@ -280,7 +282,7 @@ export function LaboratoryPage({
 }): React.JSX.Element {
   const firstVisitDraft = detail.drafts?.firstVisit
   const laboratoryItems = laboratoryCatalog.map(item => ({
-    label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${formatLaboratoryPrice(item.priceFen ?? 0, locale)}`,
+    label: `${locale === 'zh-CN' ? item.nameZh : item.nameEn} · ${item.priceFen === undefined ? (locale === 'zh-CN' ? '未配置价格' : 'Price unavailable') : formatLaboratoryPrice(item.priceFen, locale)}`,
     value: item.id,
   }))
   const indicationItems = laboratoryCatalog
@@ -526,11 +528,17 @@ function LaboratoryRequestEditor({
       },
     }
   }, [catalogById, indicationCode, laboratoryItemId, locale, selectedReference, state?.draft])
-  const recommendationUnavailableReason = (): string | undefined => {
+  const serviceFor = (id: string) => selectedService?.id === id ? selectedService
+    : state?.draft?.laboratoryService?.id === id ? state.draft.laboratoryService
+    : referenceSearch.data?.items.find(item => item.id === id) ?? catalogById.get(id)
+  const recommendationUnavailableReason = (value: PreparationDraft | DoctorRecommendationSuggestion): string | undefined => {
     if (actions.save.pending || actions.issue.pending || actions.deleteDraft.pending) {
       return messages.recommendationRequestTargetUnavailable
     }
-    return undefined
+    if (value.kind !== 'laboratory') return messages.recommendationRequestTargetUnavailable
+    const target = serviceFor(value.catalogItemId)
+    if (target === undefined || !target.allowedIndicationCodes.includes(value.indicationCode)) return messages.recommendationRequestTargetUnavailable
+    return target.outpatientBilling === undefined ? missingInvestigationPrice(locale) : undefined
   }
   const [localRequestId, setLocalRequestId] = useState<string>()
   const handledIssueId = useRef<string | undefined>(actions.issue.successRequestId)
@@ -703,12 +711,8 @@ function LaboratoryRequestEditor({
         else { onLaboratoryItemChange(''); onIndicationChange(''); setSelectedReference(undefined) }
       }}
       unavailableReason={recommendationUnavailableReason}
-      manualUnavailableReason={value => {
-        if (value.kind !== 'laboratory') return messages.recommendationRequestTargetUnavailable
-        const target = selectedService?.id === value.catalogItemId ? selectedService
-          : catalogById.get(value.catalogItemId) ?? referenceSearch.data?.items.find(item => item.id === value.catalogItemId)
-        return target === undefined || target.allowedIndicationCodes.includes(value.indicationCode) ? undefined : messages.recommendationRequestTargetUnavailable
-      }}
+      manualUnavailableReason={recommendationUnavailableReason}
+      itemDetails={value => value.kind === 'laboratory' ? <InvestigationPrice locale={locale} price={serviceFor(value.catalogItemId)?.outpatientBilling} /> : null}
     />
   )
   return (
@@ -731,6 +735,7 @@ function LaboratoryRequestEditor({
               <Badge variant="outline">{laboratoryRequestStatusLabel(activeRequest, messages)}</Badge>
             </div>
             <p className="text-xs text-muted-foreground">{messages.laboratoryIndication}: {indicationLabel(activeRequest.indicationCode, messages)}</p>
+            <InvestigationBilling billing={activeRequest.billing} locale={locale} />
             {activeRequest.generationError === undefined ? null : (
               <Alert variant="destructive"><CircleAlertIcon aria-hidden="true" />
                 <AlertTitle>{laboratoryGenerationErrorMessage(activeRequest.generationError.code, locale)}</AlertTitle></Alert>

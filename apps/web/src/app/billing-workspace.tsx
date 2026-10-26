@@ -26,7 +26,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircleIcon, CircleAlertIcon, CreditCardIcon, ReceiptTextIcon } from 'lucide-react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 import { confirmPayment, getBillingCase, getBillingQueue, newIdempotencyKey, previewPayment, recoverPayment } from './api-client.ts'
-import { BillingCasePanel, paymentMethodLabel } from './billing-case-panel.tsx'
+import { BillingCasePanel, BillingChargeOrigin, paymentMethodLabel } from './billing-case-panel.tsx'
 import { BillingRefundPanel, type FrozenRefund } from './billing-refund-panel.tsx'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { PaginationControls } from './pagination-controls.tsx'
@@ -42,7 +42,7 @@ interface BillingWorkspaceProps {
   session: SessionContext
 }
 
-type BillingCategory = 'laboratory' | 'medication'
+type BillingCategory = BillingQueueItem['category']
 type BillingStatus = 'ambiguous' | 'declined' | 'paid' | 'pending'
 type SimulatorRule = 'ambiguous' | 'ambiguous-decline' | 'ambiguous-pending' | 'decline' | 'success'
 type TenderMethod = 'cash' | 'bank-card' | 'mobile'
@@ -150,7 +150,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     onSuccess: (response, _paymentId, context) => {
       if (!ownsPaymentResult(context)) return
       setSelectedChargeId(context?.chargeItemId)
-      if (context?.category === 'laboratory' || context?.category === 'medication') setCategory(context.category)
+      if (context?.category === 'laboratory' || context?.category === 'imaging' || context?.category === 'pathology' || context?.category === 'medication') setCategory(context.category)
       const nextStatus = paymentQueueStatus(response.data)
       if (nextStatus !== status || (context.category !== undefined && context.category !== category)) setPage(1)
       setStatus(nextStatus)
@@ -421,8 +421,10 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
           <Badge variant="secondary">{queue.data?.total ?? 0}</Badge>
         </div>
         <Tabs onValueChange={value => changeCategory(value as BillingCategory)} value={category}>
-          <TabsList className="w-full">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1">
             <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="laboratory">{messages.laboratoryCharges}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="imaging">{messages.imagingCharges}</TabsTrigger>
+            <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="pathology">{messages.pathologyCharges}</TabsTrigger>
             <TabsTrigger disabled={paymentPending} className="min-w-0 flex-1" value="medication">{messages.medicationCharges}</TabsTrigger>
           </TabsList>
         </Tabs>
@@ -495,11 +497,12 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
               <div><div className="text-lg font-semibold">{selectedCharge.patient.name}</div><div className="text-sm text-muted-foreground">{selectedChargeDescription}</div></div>
               <div className="text-right"><div className="text-xs text-muted-foreground">{messages.amount}</div><div className="text-lg font-semibold">{formatFen(selectedCharge.amountFen, locale)}</div></div>
             </div>
+            <BillingChargeOrigin charge={selectedCharge} locale={locale} />
             <Table>
               <TableHeader><TableRow><TableHead>{messages.chargeItem}</TableHead><TableHead>{messages.quantity}</TableHead><TableHead>{messages.unitPrice}</TableHead><TableHead>{messages.subtotal}</TableHead></TableRow></TableHeader>
               <TableBody>{selectedCharge.lines.map(line => (
                 <TableRow key={line.sourceReference}>
-                  <TableCell className="font-medium">{locale === 'zh-CN' ? line.descriptionZh : line.descriptionEn}</TableCell>
+                  <TableCell className="font-medium">{locale === 'zh-CN' ? line.descriptionZh : line.descriptionEn}<p className="mt-1 break-all text-xs font-normal text-muted-foreground">{line.sourceReference}</p></TableCell>
                   <TableCell>{line.quantity}</TableCell>
                   <TableCell>{formatFen(line.unitPriceFen, locale)}</TableCell>
                   <TableCell>{formatFen(line.subtotalFen, locale)}</TableCell>

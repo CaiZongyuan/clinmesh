@@ -13,6 +13,8 @@ const service: CaseLaboratoryCatalogSearch['items'][number] = {
   allowedIndicationCodes: ['clinical-evaluation'], componentServiceIds: [], doctorOrderable: true,
   executingDepartmentId: 'laboratory', id: 'synthetic-laboratory-service', localCode: 'SYN-LAB',
   nameEn: 'Synthetic laboratory test', nameZh: '合成检验项目', priceFen: 2500,
+  outpatientBilling: { id: 'synthetic-price', version: 1, priceFen: 2500, currency: 'CNY', unit: '项目',
+    source: 'synthetic-outpatient-investigation-2026-10-26-v1', effectiveOn: '2026-08-24' },
   referenceConcept: { id: 'synthetic-reference', code: 'SYN-1', display: '合成检验项目',
     system: 'urn:synthetic:laboratory', version: '1', sourceLocator: 'synthetic:test' },
   referenceReleaseId: 'synthetic-release', reportDefinition: {
@@ -93,6 +95,16 @@ beforeEach(() => { vi.stubGlobal('fetch', vi.fn(async () => Response.json(recomm
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('laboratory investigation workspace', () => {
+  it('keeps an unpriced test as a draft and blocks formal issuance with an explicit explanation', async () => {
+    const { outpatientBilling: _price, ...unpriced } = service
+    const page = props({ laboratoryItemId: service.id, indicationCode: 'clinical-evaluation',
+      referenceSearch: { ...props().referenceSearch, data: { items: [unpriced], page: 1, pageSize: 20, total: 1 } } })
+    render(<LaboratoryPage {...page} />)
+    const pending = within(screen.getByRole('region', { name: '待开具检验' }))
+    expect((pending.getByRole('button', { name: '开具选中项目（1）' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(pending.getAllByText('未配置本院门诊价格，可保存草稿，暂不能正式开立。').length).toBeGreaterThan(0)
+  })
+
   it.each(['zh-CN', 'en-US'] as const)('lets a doctor cancel incompatible truth without offering a retry in %s', async locale => {
     const failed: LaboratoryRequest = {
       ...request('failed', '不兼容合成检验', ''), status: 'generation-failed',
@@ -329,6 +341,7 @@ describe('laboratory investigation workspace', () => {
     }))
     const page = props({ detail: { ...detail, laboratoryRequests: { draftVersion: 1, reportingSupported: true, requests: [],
       draft: { catalogItemId: manualService.id, indicationCode: 'clinical-evaluation', laboratoryService: manualService } } },
+      laboratoryCatalog: [{ ...referenceService, nameEn: referenceService.nameEn ?? referenceService.nameZh, contraindicatedAllergyCodes: [] }],
       referenceSearch: { ...props().referenceSearch, data: { items: directoryLoaded ? [referenceService] : [], page: 1, pageSize: 20, total: directoryLoaded ? 1 : 0 } },
     })
     function ControlledPage() {
@@ -408,7 +421,7 @@ describe('laboratory investigation workspace', () => {
       return Response.json(confirmDoctorPreparationResponseSchema.parse({ auditId: 'synthetic-audit', effects: [], requestId: `confirm-${confirmations.length}`, warnings: [],
         data: { kind: 'laboratory', draftVersion: confirmations.length, encounterVersion: '1', recordIds: confirmation.input.selections.map(value => value.kind === 'laboratory' && value.catalogItemId === secondService.id ? 'second' : 'first') } }))
     }))
-    const page = props()
+    const page = props({ referenceSearch: { ...props().referenceSearch, data: { items: [service, secondService], page: 1, pageSize: 20, total: 2 } } })
     const { rerender, client } = render(<LaboratoryPage {...page} />)
     const user = userEvent.setup()
     const pending = screen.getByRole('region', { name: '待开具检验' })
