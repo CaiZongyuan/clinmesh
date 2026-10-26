@@ -124,7 +124,7 @@ describe('门诊独立检查收费迁移', () => {
       'laboratory_request', 'clinical_request_context']
     const before = preservedTables.map(table => database.driver.prepare(`SELECT * FROM ${table}`).all())
     const previews = database.driver.prepare<[], Record<string, unknown>>('SELECT * FROM payment_preview ORDER BY preview_id').all()
-    expect(applyMigrations(database).applied).toEqual([migration])
+    expect(applyMigrations(database).applied).toEqual([migration, '0093_outpatient-investigation-draft-price.sql'])
     for (const [index, table] of preservedTables.entries()) {
       expect(database.driver.prepare(`SELECT * FROM ${table}`).all()).toEqual(before[index])
     }
@@ -161,7 +161,7 @@ describe('门诊独立检查收费迁移', () => {
     database.driver.prepare('INSERT INTO payment_allocation VALUES(?,?,?,?,?)')
       .run(scope.workspaceId, scope.epoch, 'original-payment', 'item-second', 2500)
 
-    expect(applyMigrations(database).applied).toEqual([migration])
+    expect(applyMigrations(database).applied).toEqual([migration, '0093_outpatient-investigation-draft-price.sql'])
 
     expect(database.driver.prepare("SELECT charge_item_id FROM payment_preview WHERE preview_id='consumed-preview'").get())
       .toEqual({ charge_item_id: 'item-second' })
