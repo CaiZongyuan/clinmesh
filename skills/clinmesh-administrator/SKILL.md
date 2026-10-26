@@ -28,3 +28,5 @@ clinmesh command receipt get --operation-id admin.pci-case.prepare --idempotency
 ```
 
 `PCI_SOURCE_EPOCH_CONFLICT` 时刷新受信上下文后核对意图；传输失败保留原键查询回执，禁止通过上传 Bundle 或编造临床事实替代准备。
+
+保留患者库重置会把已开始的直接住院病例重放到默认病区待接诊。清空患者库后重新准备将返回新的 Profile 修订和 Case 身份；读取本次返回值并重新建立、选择 Persona，再交给登记员。旧轮次病例与审计保持不变。

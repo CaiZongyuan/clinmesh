@@ -8,7 +8,7 @@
 
 ### 10.1 Workspace 隔离
 
-每次人类演示或 Agent 任务运行使用一个 Scenario Run，并在 Workspace 内以不可复用的 Epoch 标识具体数据世代。所有运行资源、索引、领域表、session/Grant context、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、来源 R4 artifact 和冻结的 Investigation Result Snapshot 是 Workspace 级不可变资产，故意跨 Epoch 存续。直接开始或管理员 reset/replay 才把同一 Case Revision 物化为新 Epoch 的本院 Patient、Registration、Encounter、Queue Task 和 Consultation；Visible Source History 保持来源投影，不进入本院 R5 store。
+每次人类演示或 Agent 任务运行使用一个 Scenario Run，并在 Workspace 内以不可复用的 Epoch 标识具体数据世代。所有运行资源、索引、领域表、session/Grant context、Command、outbox、callback 和 Action Trace 都绑定 `workspace_id + epoch`；审计保留域独立，不随 reset 删除。生成任务、Synthetic Patient Profile/Revision、Synthetic Case Instance、Persona Revision、来源 R4 artifact 和冻结的 Investigation Result Snapshot 是 Workspace 级不可变资产，故意跨 Epoch 存续。直接开始或管理员 reset/replay 才把同一 Case Revision 物化为新 Epoch 的本院 Patient 与对应门诊或住院运行资源；Visible Source History 保持来源投影，不进入本院 R5 store。
 
 首期所有 Workspace 共用一个 SQLite 文件并按行隔离。数据库文件不是 Workspace 边界；任何查询和约束都必须显式携带 Workspace/Epoch。
 
@@ -57,14 +57,14 @@ DSH 通用设置提供独立“ClinMesh 模型”，默认解析 DSH 默认模�
 
 生成、人工编辑与问诊出口共用以可见既往 Condition 为依据的诊断文字检查。完整已知病名中的子串不视为新增诊断；明确命名 1/2 型糖尿病的既往并发症记录允许陈述该基础疾病。豁免匹配仅忽略病名内的横向空白，保留全部标点和换行，不把括号、破折号等分隔的短语拼成已知病名；来源病名自身的标点允许原样匹配。其他位置新增的未知诊断、未知子型或编码仍被拦截，不根据检查、药物或前期病变推断已知确诊。边界取舍见[已知病史与隐藏诊断的文字边界](../decisions/implemented/bug-fix/2026-10-06-persona-known-diagnosis-boundary.md)。
 
-开始是带 expected revision 和幂等键的一次性 Command，直接创建本院 R5 Patient、Registration、Encounter、Queue Task 与所需工作流状态，不复制来源历史或参考目录。默认重置在新 Epoch replay 同一不可变 Case Revision，并复用所选 Brief、Case Truth 和全部成功 Investigation Result Snapshot；replay 不重新调用 Synthea 或模型。管理员在模拟数据页通过带悬浮说明的“重置数据”打开二次确认，默认保留患者库，可选择同时清空。清空模式将当前患者库归档并退役关联 Case，不重放这些病例；来源病史、Brief 和真值从当前工作台移除，旧轮次诊疗及审计事实保留。两种模式都保留标准目录、已启用检验服务和账号。清空模式拒绝正在运行的患者或 Brief 生成任务，并取消尚未开始的相关生成任务。
+开始是带 expected revision 和幂等键的一次性 Command，创建本院 R5 Patient 和相应运行状态：门诊创建 Registration、Encounter、Queue Task 与问诊，直接住院创建住院 Encounter/Account；不复制来源历史或参考目录。默认重置在新 Epoch replay 同一不可变 Case Revision，并复用所选 Brief、Case Truth 和全部成功 Investigation Result Snapshot；直接住院回到默认病区待接诊，replay 不重新调用 Synthea 或模型。患者库在门诊未完成或来源绑定的住院尚未清账时显示活动就诊。管理员在模拟数据页通过带悬浮说明的“重置数据”打开二次确认，默认保留患者库，可选择同时清空。清空模式将当前患者库归档并退役关联 Case，不重放这些病例；来源病史、Brief 和真值从当前工作台移除，旧轮次诊疗及审计事实保留。清空后再次准备固定 PCI 来源会建立同一 Profile 的新修订和新 Case，保留来源哈希与旧病例，不重新消费旧 Case。两种模式都保留标准目录、已启用检验服务和账号。清空模式拒绝正在运行的患者或 Brief 生成任务，并取消尚未开始的相关生成任务。
 
 <a id="104-确定性与故障注入"></a>
 
 ### 10.4 确定性与故障注入
 
 - 生成请求固定 Provider commit、profile/localization hash、模块模式、人口参数和 seed；相同来源 Bundle 的 Index Encounter 选择、历史/真值闭包和 case type 保持确定。
-- Investigation resolver 先匹配 Case Truth 中完全兼容的冻结 coding；缺失时按冻结 Adult Reference Baseline 确定性生成，只有没有该规则的 LOINC 叶子才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
+- Investigation resolver 先匹配 Case Truth 中完全兼容的冻结 coding；作者来源精确快照标记 `case-truth-exact`，Synthea 精确快照保留 `synthea-exact`。缺失时按冻结 Adult Reference Baseline 确定性生成，只有没有该规则的 LOINC 叶子才调用受限模型。首次验证成功的结果按 input hash 冻结，重试、reset 和 replay 复用 snapshot。
 - 支付规则可确定地产生 success、declined 或 ambiguous；LIS 规则确定地产生结构化报告。outbox 通过测试 handler 验证 retryable failure、lease 恢复、重复消费和结果未知。
 - 数据库备份的 canonical state hash 覆盖 FHIR current/history 以及除派生 Search 索引、schema migration 和 runtime metadata 外的全部持久领域表；`*_json` 按 JSON 值规范化，递归排除 FHIR `lastUpdated` 和存放 hash 自身的列。对话表的 `message_text` 和问诊回执中的轮次 `messageText` 不参与计算，措辞不用于等价判定；轮次顺序、来源、档案版本和审计元数据仍参与，备份文件保留完整原文。它用于同一 schema 下排除这些字段的备份/恢复等价校验，不证明对话原文的逐字完整性，也不是跨版本 replay hash。
 - 当前 replay 是 Case Revision 到新 Epoch 的重新物化，不是 command-log replay；当前没有逐步 state hash 或通用故障编排 API。

@@ -189,14 +189,18 @@ export class SyntheticPatientProfileRepository {
           EXISTS (
             SELECT 1
             FROM synthetic_case_materialization AS materialization
-            JOIN outpatient_case AS outpatient
+            LEFT JOIN outpatient_case AS outpatient
               ON outpatient.workspace_id = materialization.workspace_id
              AND outpatient.epoch = materialization.epoch
              AND outpatient.case_id = materialization.outpatient_case_id
+            LEFT JOIN inpatient_admission AS inpatient
+              ON inpatient.workspace_id = materialization.workspace_id
+             AND inpatient.epoch = materialization.epoch
+             AND inpatient.source_case_id = materialization.case_id
             WHERE materialization.workspace_id = profile.workspace_id
               AND materialization.epoch = ?
               AND materialization.profile_id = profile.profile_id
-              AND outpatient.status != 'completed'
+              AND (outpatient.status != 'completed' OR inpatient.status != 'cleared')
           ) AS active_visit
         FROM synthetic_patient_profile AS profile
         WHERE profile.workspace_id = ? AND profile.archived_at IS NULL AND (

@@ -2761,7 +2761,7 @@ const operationDefinitions = [
     http: { method: 'POST', path: '/api/sim/v1/synthetic-cases/pci/prepare', encodeBody: raw => ({ input: pciCaseSourcePrepareRequestSchema.shape.input.parse(raw) }) },
     input: pciCaseSourcePrepareRequestSchema.shape.input, output: pciCaseSourceResponseSchema, mode: 'command',
     requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['administrator'],
-    summary: '?????? PCI ??????? Case Truth????????????????', version: 1,
+    summary: '幂等建立固定 PCI 作者来源与隔离 Case Truth；不启动就诊、执行手术或产生费用', version: 1,
   },
   {
     cliPath: ['registration', 'synthetic-case', 'start-inpatient'], id: 'registration.synthetic-case.start-inpatient',
@@ -2769,7 +2769,7 @@ const operationDefinitions = [
       encodeBody: raw => { const { caseId: _caseId, ...input } = startSyntheticInpatientCaseRequestSchema.extend({ caseId: z.string().min(1) }).parse(raw); return input } },
     input: startSyntheticInpatientCaseRequestSchema.extend({ caseId: z.string().min(1) }), output: startSyntheticInpatientCaseResponseSchema, mode: 'command',
     requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['registrar'],
-    summary: '????? Persona ???????????????????????????????', version: 1,
+    summary: '从已有选中 Persona 的合成病例直接登记住院；无门诊挂号、排队、收费，后续由病区接诊', version: 1,
   },
   {
     cliPath: ['inpatient', 'catalog-search'], id: 'inpatient.catalog.search',

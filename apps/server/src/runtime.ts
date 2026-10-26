@@ -309,7 +309,7 @@ export async function createClinMeshRuntime(options: CreateClinMeshRuntimeOption
       syntheticNhsaMedicationProductSnapshot,
       syntheticNhcMedicalServiceSnapshot,
       syntheticWstValueSetSnapshot,
-      { replaySyntheticCases: input => workflow.replaySyntheticCases(input) },
+      { replaySyntheticCases: input => { workflow.replaySyntheticCases(input); caseVisits.replayInpatientCases(input) } },
     )
     const syntheaProvider = options.syntheaProvider
       ?? (options.syntheaProviderUrl === undefined

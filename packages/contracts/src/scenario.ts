@@ -1117,6 +1117,7 @@ export const investigationResultSnapshotSchema = z.object({
     'investigation-agent',
     'mixed',
     'synthea-exact',
+    'case-truth-exact',
   ]),
   workspaceId: z.string().min(1),
 }).strict()

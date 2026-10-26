@@ -48,21 +48,25 @@ export class PciCaseSource {
         if (input.expectedEpoch !== context.epoch) throw new PciCaseSourceError('PCI_SOURCE_EPOCH_CONFLICT', '病例来源准备意图所属数据世代已变化', 409)
       },
     }, () => {
-      const profile = createSyntheticPatientProfiles({ batchId: `${pciDataPackage.id}:${pciDataPackage.version}:case-source`,
+      const fixedProfile = createSyntheticPatientProfiles({ batchId: `${pciDataPackage.id}:${pciDataPackage.version}:case-source`,
         batchName: '固定 PCI 黄金病例来源', createdAt: new Date().toISOString(), sources: [source], workspaceId: context.workspaceId,
         authoring: { packageId: pciDataPackage.id, packageVersion: pciDataPackage.version, draftId: pciDataPackage.caseDraft.id },
       })[0]!
-      const existing = this.cases.getByProfileRevision(context.workspaceId, profile.profileId, profile.revision)
-      if (existing !== undefined && existing.status !== 'retired') return {
-        data: { case: existing, profileId: profile.profileId, sourceHash: source.hash, packageVersion: pciDataPackage.version }, effects: [],
+      const existing = this.cases.getByProfile(context.workspaceId, fixedProfile.profileId)
+      if (existing !== undefined) return {
+        data: { case: existing, profileId: fixedProfile.profileId, sourceHash: source.hash, packageVersion: pciDataPackage.version }, effects: [],
       }
-      this.profiles.createBatch([profile], context.actorId)
-      const syntheticCase = existing === undefined
-        ? this.cases.createFromProfile({ actorId: context.actorId, profile, compiled: compileSyntheaIndexCase(source.raw) })
-        : this.cases.restoreRetired(context.workspaceId, existing.caseId, new Date().toISOString())
+      const restored = this.profiles.createBatch([fixedProfile], context.actorId)
+      let profile = this.profiles.get(context.workspaceId, fixedProfile.profileId)!
+      const retired = this.cases.getByProfileRevision(context.workspaceId, profile.profileId, profile.revision)
+      if (retired !== undefined) {
+        profile = { ...profile, revision: profile.revision + 1, updatedAt: new Date().toISOString() }
+        if (!this.profiles.update(profile, profile.revision - 1, context.actorId)) throw new PciCaseSourceError('PCI_SOURCE_REVISION_CONFLICT', '固定病例档案修订已变化', 409)
+      }
+      const syntheticCase = this.cases.createFromProfile({ actorId: context.actorId, profile, compiled: compileSyntheaIndexCase(source.raw) })
       return { data: { case: syntheticCase, profileId: profile.profileId, sourceHash: source.hash, packageVersion: pciDataPackage.version },
-        effects: [{ kind: existing === undefined ? 'created' as const : 'updated' as const, reference: `SyntheticPatientProfile/${profile.profileId}`, versionId: String(profile.revision) },
-          { kind: existing === undefined ? 'created' as const : 'updated' as const, reference: `SyntheticCase/${syntheticCase.caseId}`, versionId: String(syntheticCase.revision) }],
+        effects: [{ kind: restored.length === 0 && retired === undefined ? 'created' as const : 'updated' as const, reference: `SyntheticPatientProfile/${profile.profileId}`, versionId: String(profile.revision) },
+          { kind: 'created' as const, reference: `SyntheticCase/${syntheticCase.caseId}`, versionId: String(syntheticCase.revision) }],
       }
     })
   }

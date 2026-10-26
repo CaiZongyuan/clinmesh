@@ -111,7 +111,10 @@ export class InpatientService {
   }
   detail(context: ActorContext, admissionId: string) {
     this.assertReadRole(context, readers)
-    const { row } = this.readAdmissionBinding(context, admissionId)
+    return this.#detail(context, admissionId)
+  }
+  #detail(context: ActorContext, admissionId: string) {
+    const { row } = this.#admissionScope(context, admissionId)
     const patient = this.fhir.read(context, 'Patient', row.patient_id)
     const names = z.array(z.object({ text: z.string().optional() })).optional().parse(patient.name)
     const occupancy = z.object({ bed_id: z.string() }).optional().parse(this.database.driver.prepare(
@@ -267,7 +270,7 @@ export class InpatientService {
         const updated = transaction.fhir.update(context, { ...referral, status: 'completed' }, referral.meta!.versionId!)
         effects.push({ kind: 'updated', reference: `ServiceRequest/${input.referralId}`, versionId: updated.meta!.versionId! })
       }
-      return { data: this.detail(context, id), effects }
+      return { data: this.#detail(context, id), effects }
   }
   assignBed(context: ActorContext, raw: unknown, idempotencyKey: string, action: 'receive' | 'move-bed') {
     const input = inpatientBedInputSchema.parse(raw)

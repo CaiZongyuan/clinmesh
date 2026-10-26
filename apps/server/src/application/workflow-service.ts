@@ -7412,7 +7412,7 @@ export class WorkflowService {
         referenceReleaseId: string
       }
       snapshotId: string
-      source: 'adult-reference-baseline' | 'investigation-agent' | 'mixed' | 'synthea-exact'
+      source: 'adult-reference-baseline' | 'investigation-agent' | 'mixed' | 'synthea-exact' | 'case-truth-exact'
     }
   }) {
     return this.#commands.execute({

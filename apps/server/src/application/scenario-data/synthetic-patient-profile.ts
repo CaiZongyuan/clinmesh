@@ -75,7 +75,7 @@ function sourcePatient(source: SourcePatientArtifact) {
       ? [sourcePatientSchema.parse(entry.resource)]
       : []
   ))
-  if (patients.length !== 1) throw new Error('Each Synthea source Bundle must contain one Patient')
+  if (patients.length !== 1) throw new Error('Each source Bundle must contain one Patient')
   return patients[0]!
 }
 

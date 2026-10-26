@@ -5,6 +5,7 @@ import { InpatientError, type InpatientService } from './inpatient-service.ts'
 import {
   startSyntheticCaseRequestSchema,
   isLegacyPatientPersonaContent,
+  syntheticPatientProfileSchema,
 } from '@clinmesh/contracts/scenario'
 import type { PatientPersonaRepository } from '../infrastructure/sqlite/patient-persona-repository.ts'
 import type { SyntheticCaseRepository } from '../infrastructure/sqlite/synthetic-case-repository.ts'
@@ -130,19 +131,40 @@ export class SyntheticCaseVisitService {
     caseId: string; context: ActorContext; idempotencyKey: string
     request: z.infer<typeof startSyntheticInpatientCaseRequestSchema>
   }) {
+    this.#inpatient.assertRole(input.context, ['registrar'])
     const { brief, profile, syntheticCase } = this.#assets(input)
     return this.#inpatient.commands.execute({ context: input.context, idempotencyKey: input.idempotencyKey,
       input: { caseId: input.caseId, ...input.request }, operation: 'synthetic-case.start-inpatient-visit',
       expectedVersions: {}, dataSchema: startSyntheticInpatientCaseResultSchema,
       authorize: () => {
         this.#inpatient.assertRole(input.context, ['registrar'])
-        if (input.request.expectedEpoch !== input.context.epoch) throw new InpatientError('INPATIENT_EPOCH_CONFLICT', '?????????????')
+        if (input.request.expectedEpoch !== input.context.epoch) throw new InpatientError('INPATIENT_EPOCH_CONFLICT', '入院意图所属数据世代已变化')
       },
     }, transaction => this.#workflow.applyStartSyntheticCase(transaction, { brief, profile, syntheticCase, context: input.context,
       expectedCaseRevision: input.request.expectedCaseRevision }, () => this.applyMaterializeInpatient({
         transaction, context: input.context, caseId: syntheticCase.caseId, caseRevision: input.request.expectedCaseRevision,
         profile, briefRevision: brief.revision, wardId: input.request.wardId,
       })))
+  }
+
+  replayInpatientCases(input: { fromContext: ActorContext; toContext: ActorContext; transaction: CommandTransaction }) {
+    const rows = z.array(z.object({
+      case_id: z.string(), case_revision: z.number().int().positive(), profile_id: z.string(),
+      profile_revision: z.number().int().positive(), brief_revision: z.number().int().positive(),
+      identity_json: z.string(), demographics_json: z.string(),
+    })).parse(this.#inpatient.database.driver.prepare(`SELECT m.case_id,m.case_revision,m.profile_id,m.profile_revision,
+      m.brief_revision,p.identity_json,p.demographics_json FROM synthetic_case_materialization m
+      JOIN synthetic_patient_profile_revision p ON p.workspace_id=m.workspace_id AND p.profile_id=m.profile_id AND p.revision=m.profile_revision
+      WHERE m.workspace_id=? AND m.epoch=? AND m.visit_kind='inpatient' ORDER BY m.created_at,m.case_id`)
+      .all(input.fromContext.workspaceId,input.fromContext.epoch))
+    for (const row of rows) this.applyMaterializeInpatient({
+      transaction: input.transaction, context: input.toContext, caseId: row.case_id, caseRevision: row.case_revision,
+      briefRevision: row.brief_revision, wardId: 'ward-general', profile: {
+        profileId: row.profile_id, revision: row.profile_revision,
+        identity: syntheticPatientProfileSchema.shape.identity.parse(JSON.parse(row.identity_json)),
+        demographics: syntheticPatientProfileSchema.shape.demographics.parse(JSON.parse(row.demographics_json)),
+      },
+    })
   }
 
   applyMaterializeInpatient(input: {
