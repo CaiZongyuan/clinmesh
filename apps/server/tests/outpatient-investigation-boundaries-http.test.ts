@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import { rm } from 'node:fs/promises'
 import { fhirBundleSchema } from '@clinmesh/contracts/fhir'
+import { refundCaseSchema } from '@clinmesh/contracts/refunds'
 import {
   apiErrorSchema, billingCaseSchema, doctorCaseDetailSchema, imagingRequestDraftResponseSchema,
   issueImagingRequestResponseSchema, issueLaboratoryRequestResponseSchema, laboratoryRequestDraftResponseSchema,
   laboratoryServiceSnapshotSchema, paymentPreviewResponseSchema, paymentResponseSchema, sessionContextSchema,
+  laboratoryRequestActionResponseSchema,
   type LaboratoryServiceSnapshot,
 } from '@clinmesh/contracts/his'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -120,6 +122,52 @@ async function setup() {
 }
 
 describe('门诊独立检查的价格、原费用与权限边界', () => {
+  it.each(['payment-first', 'cancellation-first'] as const)('取消与原付款并发时保留唯一冲减和确定退款责任（%s）', async order => {
+    const s = await setup()
+    expect((await s.saveDraft('laboratory')).status).toBe(200)
+    const issued = await s.issue('laboratory', 1)
+    expect(issued.status).toBe(200)
+    const request = issueLaboratoryRequestResponseSchema.parse(await issued.json()).data.request
+    const chargeItemId = request.billing!.chargeItemId
+    const previewResponse = await s.preview('laboratory', chargeItemId)
+    expect(previewResponse.status).toBe(200)
+    const preview = paymentPreviewResponseSchema.parse(await previewResponse.json()).data
+    const cancel = () => s.runtime.app.request(`/api/his/v1/laboratory-requests/${request.id}/actions/cancel`, mutation(s.doctor, {
+      expectedVersions: { [`ServiceRequest/${request.serviceRequestId}`]: request.serviceRequestVersion,
+        [`Task/${request.taskId}`]: request.taskVersion },
+      input: { expectedRequestVersion: request.version, reasonCode: 'no-longer-needed' },
+    }))
+    const confirm = () => s.runtime.app.request(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, mutation(s.cashier, {
+      expectedVersions: { [`ChargeItem/${chargeItemId}`]: String(preview.chargeVersion) }, input: { commitToken: preview.commitToken },
+    }))
+    const paymentFirst = order === 'payment-first' ? confirm() : undefined
+    const cancellation = cancel()
+    const [payment, cancelled] = await Promise.all([paymentFirst ?? confirm(), cancellation])
+    expect(cancelled.status, await cancelled.clone().text()).toBe(200)
+    expect(laboratoryRequestActionResponseSchema.parse(await cancelled.json()).data.request.status).toBe('cancelled')
+    expect([200, 409]).toContain(payment.status)
+    const receivedFen = payment.status === 200 ? 800 : 0
+    if (payment.status === 200) expect(paymentResponseSchema.parse(await payment.json()).data.outcome).toBe('success')
+    else expect(apiErrorSchema.parse(await payment.json()).error.code).toBe('EXPECTED_VERSION_CONFLICT')
+
+    await s.runtime.dispatchPending()
+    const latest = (await s.readCase()).laboratoryRequests!.requests.find(item => item.id === request.id)!
+    expect(latest).toMatchObject({ status: 'cancelled', billing: { chargeItemId, paidFen: receivedFen, remainingFen: 0 } })
+    expect(latest.report).toBeUndefined()
+    expect(latest.billing!.releasedAt).toBeUndefined()
+    const bill = await s.readBill()
+    expect(bill.charges.filter(item => item.requestId === request.id)).toEqual([
+      expect.objectContaining({ chargeItemId, amountFen: 0, paidFen: receivedFen, status: 'cancelled' }),
+    ])
+    expect(bill.payments).toHaveLength(receivedFen === 0 ? 0 : 1)
+    const refunds = await s.runtime.app.request(`/api/his/v1/billing/cases/${s.outpatientCaseId}/refunds`, { headers: { cookie: s.cashier } })
+    expect(refunds.status).toBe(200)
+    const ledger = refundCaseSchema.parse(await refunds.json())
+    expect(ledger.adjustments).toEqual([expect.objectContaining({ chargeItemId, amountFen: 800 })])
+    expect(ledger.refunds).toEqual([])
+    expect(ledger.sources.reduce((total, source) => total + source.refundableFen, 0)).toBe(receivedFen)
+  })
+
   it.each(['laboratory', 'imaging'] as const)('%s 缺少有效价格时保留草稿，正式开立不留下原申请或费用', async kind => {
     const s = await setup()
     if (kind === 'laboratory') s.configureLaboratory({ ...s.laboratoryService, priceFen: 0, outpatientBilling: undefined })

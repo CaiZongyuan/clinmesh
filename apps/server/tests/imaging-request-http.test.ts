@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import {
   acknowledgeImagingReportResponseSchema,
   apiErrorSchema,
+  billingCaseSchema,
   caseImagingServiceCatalogSchema,
   doctorCaseDetailSchema,
   encounterCompletionPreviewSchema,
@@ -548,6 +549,13 @@ describe('Imaging request HTTP contract', () => {
       .find(request => request.id === radiograph.id)!
     expect(recovered).toMatchObject({ report: { findings: '双肺野未见明确结节影。' }, status: 'reported' })
     expect(recovered.generationError).toBeUndefined()
+    expect(recovered.billing).toEqual(failedRadiograph.billing)
+    const cashier = await signIn(runtime, 'cashier@demo.clinmesh.local')
+    const bill = billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${outpatientCaseId}`, { headers: { cookie: cashier } })).json())
+    expect(bill.charges.filter(item => item.requestId === radiograph.id)).toEqual([
+      expect.objectContaining({ chargeItemId: failedRadiograph.billing!.chargeItemId, amountFen: 8000, paidFen: 8000 }),
+    ])
+    expect(bill.payments.filter(item => item.chargeItemId === failedRadiograph.billing!.chargeItemId)).toHaveLength(1)
   })
 
   it('ends a request that keeps failing for other reasons as generation-failed after three attempts', async () => {
