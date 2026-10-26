@@ -18,6 +18,8 @@
 
 - file-backed SQLite 测试的清理按资源注册的逆序执行：先关闭 Runtime／数据库连接，再删除临时目录。Linux 可删除仍打开的文件，Windows 会以 `EBUSY` 拒绝；不要用重试删除或放宽断言掩盖未关闭的句柄。
 
+- 模拟复制期间文件被替换时，先创建独立文件，再 `rename` 覆盖目标；立即 unlink 后创建同名同内容文件可能在 Linux 复用 inode，且时间戳仍落在同一粒度，不能保证夹具真的改变了可观测身份。不要为制造身份差异插入等待或放宽生产核对；回归见[指南稳定副本检查](../../apps/server/tests/guideline-corpus-check.test.ts)。
+
 - `perf:ci` 的数据库增长意外超限时，先分别核对主文件、WAL、SHM 大小与 `page_count`，区分持久页面增长和初始化 WAL 的延迟刷盘；不要直接提高预算。Scenario 生命周期的采样边界由[性能合同](../testing.md#性能合同)拥有。
 
 - HIS 路由与 Operation Catalog 的覆盖检查从源码提取完整路由字面量。共享处理器可用工厂复用，但每个公开路由须显式注册；循环拼接路径会使运行时可用的路由在覆盖检查中变成不完整路径。新增或调整注册后运行 `his-operation-catalog.test.ts`，避免只用请求成功证明目录已同步。

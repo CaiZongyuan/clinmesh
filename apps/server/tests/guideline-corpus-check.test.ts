@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { copyFileSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
@@ -101,9 +101,11 @@ it.each(['disappear', 'replace', 'journal'] as const)('复制期间源文件消�
   afterCopy = () => {
     if (change === 'disappear') rmSync(input.databasePath)
     else if (change === 'replace') {
-      const bytes = readFileSync(input.databasePath)
-      rmSync(input.databasePath)
-      writeFileSync(input.databasePath, bytes)
+      // Keep the original alive while creating its replacement: unlink/create
+      // can immediately reuse the same inode and timestamp on Linux.
+      const replacement = `${input.databasePath}.replacement`
+      writeFileSync(replacement, readFileSync(input.databasePath))
+      renameSync(replacement, input.databasePath)
     } else writeFileSync(`${input.databasePath}-journal`, Buffer.from('active journal'))
   }
   expect(() => matchesGuidelineDocuments(input.databasePath, [syntheticGuidelineDocument])).toThrow('changed during read-only checking')
