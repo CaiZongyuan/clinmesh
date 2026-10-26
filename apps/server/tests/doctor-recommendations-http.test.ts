@@ -20,6 +20,8 @@ import { breastCaseBundle } from './fixtures/pathology-scenario.ts'
 import { laboratoryServiceSnapshotSchema } from '@clinmesh/contracts/his'
 import { modelUsageControlSchema, modelUsageListSchema, unknownModelTokenUsage } from '@clinmesh/contracts/model-usage'
 import { setModelControl } from './fixtures/model-control.ts'
+import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
+import { apiErrorSchema, caseLaboratoryCatalogSearchSchema, caseImagingServiceCatalogSchema, casePathologyServiceCatalogSchema } from '@clinmesh/contracts/his'
 
 const disposals: Array<() => Promise<void>> = []
 afterEach(async () => { for (const dispose of disposals.splice(0).reverse()) await dispose() })
@@ -566,6 +568,7 @@ function syntheticLaboratory(id: string) {
   return laboratoryServiceSnapshotSchema.parse({
     id, localCode: id, nameZh: `合成检验 ${id}`, allowedIndicationCodes: ['clinical-evaluation'],
     componentServiceIds: [], doctorOrderable: true, executingDepartmentId: 'laboratory', priceFen: 1000,
+    outpatientBilling: { id: `synthetic-price-${id}`, version: 1, priceFen: 1000, currency: 'CNY', unit: 'item', source: 'synthetic-test', effectiveOn: '2026-08-24' },
     referenceConcept, referenceReleaseId: 'synthetic-laboratory-release', serviceKind: 'laboratory',
     specimen: { code: 'blood', display: '静脉血' }, tatMinutes: 180, version: 1,
     reportDefinition: { conclusionTemplate: '合成检验结果。', results: [{ referenceConcept,
@@ -607,7 +610,8 @@ it('maps a laboratory suggestion to the full current hospital catalog beyond its
   await fixture.runtime.dispatchPending()
   expect(await fixture.read('laboratory')).toMatchObject({ status: 'ready', items: [{
     kind: 'laboratory', catalogItemId: 'lab-59', label: '合成检验 lab-59', indicationCode: 'clinical-evaluation',
-  }] })
+  }], laboratoryServices: [{ id: 'lab-59', version: 1, allowedIndicationCodes: ['clinical-evaluation'],
+    outpatientBilling: { priceFen: 1000, currency: 'CNY', source: 'synthetic-test' } }] })
   expect(verificationPayload).toMatchObject({ items: [{ catalogItemId: 'lab-59', label: '合成检验 lab-59' }],
     selectedCatalogItems: { laboratory: [{ id: 'lab-59', localCode: 'lab-59', referenceConcept: { code: 'SYN-LAB' },
       reportDefinition: { results: [{ referenceConcept: { code: 'SYN-LAB' }, unit: { code: 'mg/L' } }] } }] } })
@@ -1072,6 +1076,7 @@ it.each([false, true])('maps pathology only to an offered service and its author
   if (!fabricated) {
     const prepared = await fixture.read('pathology')
     const selection = { kind: 'pathology', source: 'agent', suggestionId: prepared.items[0]!.id,
+      reviewedService: await reviewedInvestigation(fixture, 'pathology', 'pathology-breast-slide-consultation'),
       serviceId: 'pathology-breast-slide-consultation', sourceProcedureReference: 'urn:uuid:procedure-0', purpose: '复核既往手术切片。' }
     const wrongSource = await confirmPreparation(fixture, 'pathology', preparationBody(prepared, [{
       ...selection, sourceProcedureReference: 'urn:uuid:other-patient-procedure',
@@ -2087,6 +2092,88 @@ function confirmPreparation(fixture: Awaited<ReturnType<typeof setup>>, kind: st
   })
 }
 
+async function reviewedInvestigation(fixture: Awaited<ReturnType<typeof setup>>, kind: 'laboratory' | 'imaging' | 'pathology', id: string) {
+  const base = `/api/his/v1/doctor/cases/${fixture.started.outpatientCaseId}`
+  const path = kind === 'laboratory' ? `${base}/reference-catalogs/laboratory?page=1&pageSize=50` : `${base}/${kind}-services`
+  const response = await fixture.runtime.app.request(path, { headers: { cookie: fixture.cookie } })
+  expect(response.status, await response.clone().text()).toBe(200)
+  const body: unknown = await response.json()
+  const service = kind === 'laboratory' ? caseLaboratoryCatalogSearchSchema.parse(body).items.find(item => item.id === id)
+    : kind === 'imaging' ? caseImagingServiceCatalogSchema.parse(body).items.find(item => item.service.id === id)?.service
+      : casePathologyServiceCatalogSchema.parse(body).items.find(item => item.service.id === id)?.service
+  if (service === undefined) throw new Error(`Missing synthetic ${kind} service ${id}`)
+  return { id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null }
+}
+
+it.each(['laboratory', 'imaging', 'pathology'] as const)('requires a new review of %s service and price before manual recommendation confirmation', async kind => {
+  const syntheaProvider = new class extends StubSyntheaProvider {
+    override async generate() {
+      const corpus = await super.generate()
+      const raw = breastCaseBundle({ name: '合成审价患者' })
+      return { ...corpus, sources: [{ ...corpus.sources[0]!, raw, hash: sourceArtifactHash(raw) }] }
+    }
+  }()
+  const fixture = await setup(undefined, { syntheaProvider })
+  if (kind === 'laboratory') installPreparationLaboratory(fixture, 'lab-reviewed-price')
+  if (kind === 'imaging') await installSyntheticImagingAssets({ assetDirectory: join(fixture.directory, 'imaging-assets'),
+    catalogDirectory: join(fixture.directory, 'imaging-catalog'), assets: [{ assetId: 'synthetic-ct', examCode: 'chest-ct-plain' }] })
+  if (kind === 'pathology') await installSyntheticPathologySlides({ assetDirectory: join(fixture.directory, 'pathology-assets'),
+    catalogDirectory: join(fixture.directory, 'pathology-catalog'), slides: [{ assetId: 'synthetic-breast-slide' }] })
+  const id = kind === 'laboratory' ? 'lab-reviewed-price' : kind === 'imaging' ? 'imaging-chest-ct-plain' : 'pathology-breast-slide-consultation'
+  const original = await reviewedInvestigation(fixture, kind, id)
+  const reviewed = { ...original, outpatientBilling: original.outpatientBilling ?? { id: 'synthetic-reviewed-price', version: 1,
+    priceFen: 1000, currency: 'CNY' as const, unit: '项目', source: 'synthetic-review-test', effectiveOn: '2026-08-24' } }
+  const configure = (service: typeof reviewed) => fixture.runtime.database.driver.prepare(`UPDATE hospital_service_catalog
+    SET version=?,config_json=json_set(config_json,?, ?,?,json(?)) WHERE service_id=?`)
+    .run(service.version, `$.${kind}Service.version`, service.version, `$.${kind}Service.outpatientBilling`, JSON.stringify(service.outpatientBilling), id)
+  configure(reviewed)
+  const clinical = await fixture.readCase()
+  const fields = kind === 'laboratory' ? { catalogItemId: id, indicationCode: 'clinical-evaluation' }
+    : kind === 'imaging' ? { serviceId: id, indication: '核对当前检查目的。' }
+      : { serviceId: id, sourceProcedureReference: 'urn:uuid:procedure-0', purpose: '复核既往手术切片。' }
+  const selection = { ...fields, kind, source: 'manual', reviewedService: reviewed }
+  const body = { expectedVersions: { [`Encounter/${clinical.encounter.id}`]: clinical.encounter.versionId },
+    input: { expectedDraftVersion: 0, selections: [selection] } }
+  const countResources = async () => Promise.all(['ServiceRequest', 'ChargeItem'].map(async type => {
+    const response = await fixture.runtime.app.request(`/fhir/R5/${type}?_total=accurate`, { headers: { cookie: fixture.cookie } })
+    expect(response.status).toBe(200)
+    return z.object({ total: z.number() }).parse(await response.json()).total
+  }))
+  const before = await countResources()
+  for (const changed of [{ ...reviewed, outpatientBilling: { ...reviewed.outpatientBilling, version: 2, priceFen: 1600 } },
+    { ...reviewed, version: 2 }]) {
+    configure(changed)
+    // Even a freshly read global recommendation fingerprint must not replace the selected item's prior review.
+    const latest = await fixture.read(kind)
+    const response = await confirmPreparation(fixture, kind, { ...body, input: { ...body.input, inputFingerprint: latest.inputFingerprint } })
+    expect(response.status, await response.clone().text()).toBe(409)
+    expect(apiErrorSchema.parse(await response.json()).error.code).toBe('CATALOG_CONFLICT')
+    expect(await fixture.readCase()).toEqual(clinical)
+    expect(await countResources()).toEqual(before)
+  }
+  fixture.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_remove(config_json,?) WHERE service_id=?`)
+    .run(`$.${kind}Service.outpatientBilling`, id)
+  const missingPrice = await reviewedInvestigation(fixture, kind, id)
+  expect(missingPrice.outpatientBilling).toBeNull()
+  const missingPriceBody = { ...body, input: { ...body.input, selections: [{ ...selection, reviewedService: missingPrice }] } }
+  expect((await confirmPreparation(fixture, kind, missingPriceBody)).status).toBe(409)
+  configure({ ...reviewed, version: 2, outpatientBilling: { ...reviewed.outpatientBilling, version: 2, priceFen: 1600 } })
+  expect((await confirmPreparation(fixture, kind, missingPriceBody)).status).toBe(409)
+  expect(await fixture.readCase()).toEqual(clinical)
+  expect(await countResources()).toEqual(before)
+  const refreshed = await reviewedInvestigation(fixture, kind, id)
+  const response = await confirmPreparation(fixture, kind, { ...body, input: { ...body.input, selections: [{ ...selection, reviewedService: refreshed }] } })
+  expect(response.status, await response.clone().text()).toBe(200)
+  const receipt = confirmDoctorPreparationResponseSchema.parse(await response.json())
+  expect(receipt.data.recordIds).toHaveLength(1)
+  const afterCase = await fixture.readCase()
+  const requests = kind === 'laboratory' ? afterCase.laboratoryRequests : kind === 'imaging' ? afterCase.imagingRequests : afterCase.pathologyRequests
+  expect(requests?.requests[0]?.billing?.price).toEqual(refreshed.outpatientBilling)
+  expect(requests?.requests[0]?.billing?.remainingFen).toBe(1600)
+  const after = await countResources()
+  expect(after).toEqual(before.map(total => total + 1))
+})
+
 it('confirms manual diagnosis without reading or generating recommendations and replays the same audited receipt', async () => {
   const fixture = await setup()
   const clinical = await fixture.readCase()
@@ -2279,8 +2366,9 @@ it('issues selected prepared laboratory items atomically and preserves an existi
   await fixture.generate('laboratory')
   await fixture.runtime.dispatchPending()
   const prepared = await fixture.read('laboratory')
-  const selections = prepared.items.map(item => ({ kind: 'laboratory', source: 'agent', suggestionId: item.id,
-    catalogItemId: item.kind === 'laboratory' ? item.catalogItemId : '', indicationCode: 'clinical-evaluation' }))
+  const selections = await Promise.all(prepared.items.map(async item => ({ kind: 'laboratory', source: 'agent', suggestionId: item.id,
+    reviewedService: await reviewedInvestigation(fixture, 'laboratory', item.kind === 'laboratory' ? item.catalogItemId : ''),
+    catalogItemId: item.kind === 'laboratory' ? item.catalogItemId : '', indicationCode: 'clinical-evaluation' })))
   expect(selections).toHaveLength(2)
   const beforeBad = await fixture.readCase()
   const bad = await confirmPreparation(fixture, 'laboratory', preparationBody(prepared,
@@ -2327,7 +2415,8 @@ it('requires explicit versioned resolution of an existing laboratory draft and r
   })
   expect(saved.status, await saved.clone().text()).toBe(200)
   const before = await fixture.readCase()
-  const selections = ['lab-manual-next', 'lab-manual-other'].map(catalogItemId => ({ kind: 'laboratory', source: 'manual', catalogItemId, indicationCode: 'clinical-evaluation' }))
+  const selections = await Promise.all(['lab-manual-next', 'lab-manual-other'].map(async catalogItemId => ({ kind: 'laboratory', source: 'manual', catalogItemId, indicationCode: 'clinical-evaluation',
+    reviewedService: await reviewedInvestigation(fixture, 'laboratory', catalogItemId) })))
   const input = { expectedDraftVersion: 1, selections }
   for (const changes of [{}, { resolveExistingDraft: false }, { resolveExistingDraft: true, expectedDraftVersion: 0 },
     { resolveExistingDraft: true, selections: [selections[0], { ...selections[1], indicationCode: 'not-allowed' }] }]) {
@@ -2370,7 +2459,7 @@ it.each(['imaging', 'pathology'] as const)('resolves an existing %s draft atomic
   })
   expect(saved.status, await saved.clone().text()).toBe(200)
   const before = await fixture.readCase()
-  const selection = { ...fields, kind, source: 'manual' }
+  const selection = { ...fields, kind, source: 'manual', reviewedService: await reviewedInvestigation(fixture, kind, fields.serviceId) }
   const input = { expectedDraftVersion: 1, selections: [selection] }
   for (const changes of [{}, { resolveExistingDraft: true, expectedDraftVersion: 0 }, { resolveExistingDraft: true,
     selections: [{ ...selection, ...(kind === 'imaging' ? { serviceId: 'unavailable-service' } : { sourceProcedureReference: 'urn:uuid:other-patient-procedure' }) }],
@@ -2489,6 +2578,9 @@ it('rejects prepared diagnosis confirmation when a report is published after the
     body: JSON.stringify({ expectedVersions: { [`Encounter/${initial.encounterId}`]: initial.encounterVersion }, input: { expectedDraftVersion: 1 } }),
   })
   expect(issued.status).toBe(200)
+  const issuedRequest = (await fixture.readCase()).laboratoryRequests!.requests[0]!
+  await payOutpatientInvestigation(fixture.runtime, { caseId: fixture.started.outpatientCaseId, category: 'laboratory',
+    chargeItemId: issuedRequest.billing!.chargeItemId })
   const reporting = fixture.runtime.dispatchPending()
   try {
     await reportStarted
@@ -2522,8 +2614,17 @@ it('confirms prepared imaging through its actual offering and returns the formal
   await fixture.runtime.dispatchPending()
   const state = await fixture.read('imaging')
   expect(state.status).toBe('ready')
+  const reviewedService = await reviewedInvestigation(fixture, 'imaging', 'imaging-chest-ct-plain')
+  const before = await fixture.readCase()
+  const rejected = await confirmPreparation(fixture, 'imaging', preparationBody(state, [{ kind: 'imaging', source: 'agent',
+    suggestionId: state.items[0]!.id, reviewedService: { ...reviewedService, version: reviewedService.version + 1 },
+    serviceId: 'imaging-chest-ct-plain', indication: '核对当前病例的适用检查范围。' }]))
+  expect(rejected.status).toBe(409)
+  expect(apiErrorSchema.parse(await rejected.json()).error.code).toBe('CATALOG_CONFLICT')
+  expect(await fixture.readCase()).toEqual(before)
   const response = await confirmPreparation(fixture, 'imaging', preparationBody(state, [{ kind: 'imaging', source: 'agent',
-    suggestionId: state.items[0]!.id, serviceId: 'imaging-chest-ct-plain', indication: '核对当前病例的适用检查范围。' }]))
+    suggestionId: state.items[0]!.id, reviewedService,
+    serviceId: 'imaging-chest-ct-plain', indication: '核对当前病例的适用检查范围。' }]))
   expect(response.status, await response.clone().text()).toBe(200)
   const receipt = confirmDoctorPreparationResponseSchema.parse(await response.json())
   expect((await fixture.readCase()).imagingRequests?.requests[0]).toMatchObject({ id: receipt.data.recordIds[0],

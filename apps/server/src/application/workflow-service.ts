@@ -87,6 +87,7 @@ import {
   paymentTendersSchema,
   paymentRecordedTendersSchema,
   paymentSimulatorRuleSchema,
+  outpatientInvestigationPriceSchema,
   billingCaseSchema,
   type PatientSummary,
   noMedicationConclusionSchema,
@@ -114,6 +115,7 @@ import type { ActorContext, CommandEffect, CommandResponse, CommandTransaction }
 import type { ReferenceDataService } from './reference-data-service.ts'
 import { WorkflowError } from './workflow-error.ts'
 import { PaymentLedger } from './payment-ledger.ts'
+import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 import { OutpatientRefunds } from './outpatient-refunds.ts'
 import { paymentChannelPlan } from './payment-channel.ts'
 import { ImagingRequestService } from './imaging-request-service.ts'
@@ -324,7 +326,7 @@ const paymentPreviewRowSchema = paymentWorkflowRowSchema.extend({
   actor_context_hash: z.string().nullable(),
   amount_fen: z.number().int().nonnegative(),
   case_id: z.string().min(1),
-  category: z.enum(['laboratory', 'medication']),
+  category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
   charge_id: z.string().min(1),
   charge_item_id: z.string().min(1),
   charge_status: chargeStatusRowSchema,
@@ -527,6 +529,7 @@ const laboratoryRequestStateRowSchema = z.object({
   draft_indication_code: z.string().min(1).nullable(),
   draft_reference_json: z.string().min(1).nullable(),
   draft_service_snapshot_json: z.string().min(1).nullable(),
+  draft_price_json: z.string().min(1).nullable(),
   version: z.number().int().positive(),
 }).strict().refine(
   row => (row.draft_catalog_item_id === null) === (row.draft_indication_code === null)
@@ -1173,6 +1176,7 @@ export class WorkflowService {
   readonly #now: () => Date
   readonly insurance: InsuranceService
   readonly #payments: PaymentLedger
+  readonly #outpatientBilling: OutpatientInvestigationBilling
   readonly #referenceData: ReferenceDataService | undefined
   readonly #requests: ClinicalRequestKernel
   readonly #tokenSecret: string
@@ -1208,6 +1212,7 @@ export class WorkflowService {
     this.#investigation = options.investigation
     this.#now = options.now ?? (() => new Date())
     this.#payments = new PaymentLedger(database)
+    this.#outpatientBilling = new OutpatientInvestigationBilling(database)
     this.insurance = new InsuranceService(database, commands, {
       now: this.#now,
       readSource: (context,target) => {
@@ -1246,7 +1251,10 @@ export class WorkflowService {
     this.#referenceData = options.referenceData
     this.#requests = new ClinicalRequestKernel(database)
     this.#tokenSecret = options.tokenSecret
-    this.refunds = new OutpatientRefunds(database, fhir, commands, { now: this.#now, virtualTime: context => this.#virtualTime(context), tokenSecret: options.tokenSecret })
+    this.refunds = new OutpatientRefunds(database, fhir, commands, {
+      now: this.#now, virtualTime: context => this.#virtualTime(context), tokenSecret: options.tokenSecret,
+      onFundsChanged: context => this.#completeScenarioIfReady(context, this.#virtualTime(context)).effects,
+    })
     this.qualityControl = new ClinicalDocumentQualityControl({
       database, commands, modelAvailable: options.qualityModelAvailable === true,
       contextStatus: options.qualityContextStatus ?? (() => 'active'),
@@ -1388,7 +1396,9 @@ export class WorkflowService {
       })),
       laboratory: rows.filter(row => row.kind === 'laboratory').map(row => {
         const config = laboratoryCatalogConfigSchema.parse(JSON.parse(row.config_json) as unknown)
-        return { ...summary(row), ...config }
+        return { ...summary(row), ...config, outpatientBilling: this.#outpatientBilling.priceForPublishedLaboratory({
+          id: row.item_id, version: row.version, priceFen: row.price_fen,
+        }) }
       }),
     }
     const medications = rows.filter(row => row.kind === 'medication').map(row => {
@@ -6773,6 +6783,9 @@ export class WorkflowService {
       input.catalogItemId,
     )
     const { config: catalogConfig, laboratoryService, referenceConcept } = selection
+    const price = laboratoryService === undefined
+      ? this.#outpatientBilling.priceForPublishedLaboratory({ id: selection.catalog.item_id, version: selection.catalog.version, priceFen: selection.catalog.price_fen })
+      : this.#outpatientBilling.priceForLaboratory(laboratoryService)
     const now = this.#virtualTime(input.context)
     if (laboratoryService !== undefined) {
       this.#assertAdultLaboratoryServiceApplicable(
@@ -6811,9 +6824,9 @@ export class WorkflowService {
       this.#database.driver.prepare(`
         INSERT INTO laboratory_request_state (
           workspace_id, epoch, case_id, version, draft_catalog_item_id,
-          draft_indication_code, draft_reference_json, draft_service_snapshot_json,
+          draft_indication_code, draft_reference_json, draft_service_snapshot_json, draft_price_json,
           updated_by, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -6823,6 +6836,7 @@ export class WorkflowService {
         input.indicationCode,
         JSON.stringify(referenceConcept),
         laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
+        JSON.stringify(price ?? null),
         input.context.actorId,
         now,
       )
@@ -6830,7 +6844,7 @@ export class WorkflowService {
       const update = this.#database.driver.prepare(`
         UPDATE laboratory_request_state
         SET version = ?, draft_catalog_item_id = ?, draft_indication_code = ?,
-          draft_reference_json = ?, draft_service_snapshot_json = ?,
+          draft_reference_json = ?, draft_service_snapshot_json = ?, draft_price_json = ?,
           updated_by = ?, updated_at = ?
         WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
       `).run(
@@ -6839,6 +6853,7 @@ export class WorkflowService {
         input.indicationCode,
         JSON.stringify(referenceConcept),
         laboratoryService === undefined ? null : JSON.stringify(laboratoryService),
+        JSON.stringify(price ?? null),
         input.context.actorId,
         now,
         input.context.workspaceId,
@@ -6953,7 +6968,7 @@ export class WorkflowService {
     const update = this.#database.driver.prepare(`
       UPDATE laboratory_request_state
       SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
-        draft_reference_json = NULL, draft_service_snapshot_json = NULL,
+        draft_reference_json = NULL, draft_service_snapshot_json = NULL, draft_price_json = NULL,
         updated_by = ?, updated_at = ?
       WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
         AND draft_catalog_item_id IS NOT NULL
@@ -7066,6 +7081,17 @@ export class WorkflowService {
       state.draft_indication_code,
       laboratoryService,
     )
+    const price = laboratoryService === undefined
+      ? this.#outpatientBilling.priceForPublishedLaboratory({ id: catalog.item_id, version: catalog.version, priceFen: catalog.price_fen })
+      : this.#outpatientBilling.priceForLaboratory(laboratoryService)
+    if (inpatientRequestOwner(this.#database, input.context, outpatientCase.case_id) === undefined) {
+      const currentPrice = outpatientInvestigationPriceSchema.nullable().parse(price ?? null)
+      const draftPrice = state.draft_price_json === null ? undefined
+        : outpatientInvestigationPriceSchema.nullable().parse(JSON.parse(state.draft_price_json))
+      if (draftPrice === undefined || JSON.stringify(draftPrice) !== JSON.stringify(currentPrice)) {
+        throw new WorkflowError('CATALOG_CONFLICT', '本院门诊价目已变化，请重新保存并审阅申请')
+      }
+    }
     if (laboratoryService === undefined) {
       this.#assertInvestigationGenerationSupported(
         input.context,
@@ -7156,7 +7182,7 @@ export class WorkflowService {
     const update = this.#database.driver.prepare(`
       UPDATE laboratory_request_state
       SET version = ?, draft_catalog_item_id = NULL, draft_indication_code = NULL,
-        draft_reference_json = NULL, draft_service_snapshot_json = NULL,
+        draft_reference_json = NULL, draft_service_snapshot_json = NULL, draft_price_json = NULL,
         updated_by = ?, updated_at = ?
       WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND version = ?
     `).run(
@@ -7174,11 +7200,13 @@ export class WorkflowService {
         'The laboratory request draft version has changed',
       )
     }
-    if (inpatientRequestOwner(this.#database,input.context,outpatientCase.case_id) === undefined) transaction.enqueue({
-      dedupKey: `laboratory-request:${requestId}:accept`,
-      kind: 'laboratory.accept-request',
-      payload: { requestId },
-    })
+    const charge = inpatientRequestOwner(this.#database, input.context, outpatientCase.case_id) === undefined
+      ? this.#outpatientBilling.issue(transaction, input.context, {
+          requestId, serviceRequestId, caseId: outpatientCase.case_id, category: 'laboratory',
+          descriptionZh: catalog.name_zh, descriptionEn: catalog.name_en, now,
+          price,
+        })
+      : undefined
     return {
       data: {
         caseId: outpatientCase.case_id,
@@ -7186,6 +7214,7 @@ export class WorkflowService {
         request: {
           catalogItemId: state.draft_catalog_item_id,
           id: requestId,
+          ...(charge === undefined ? {} : { billing: charge.billing }),
           indicationCode: state.draft_indication_code,
           previousReports: [],
           ...(laboratoryService === undefined ? {} : { laboratoryService }),
@@ -7198,11 +7227,11 @@ export class WorkflowService {
           version: 1,
         },
       },
-      effects: [serviceRequest, task].map(resource => ({
+      effects: [...[serviceRequest, task].map(resource => ({
         kind: 'created' as const,
         reference: `${resource.resourceType}/${resource.id}`,
         versionId: resource.meta?.versionId ?? '1',
-      })),
+      })), ...(charge?.effects ?? [])],
     }
   }
 
@@ -7245,7 +7274,7 @@ export class WorkflowService {
         `ServiceRequest/${request.service_request_id}`,
         `Task/${request.execution_task_id}`,
       ])
-      const { serviceRequest: updatedServiceRequest, task: updatedTask, version } = this.#requests.cancel(
+      const { serviceRequest: updatedServiceRequest, task: updatedTask, version, chargeEffects } = this.#requests.cancel(
         laboratoryRequestPolicy,
         transaction,
         input.context,
@@ -7266,16 +7295,17 @@ export class WorkflowService {
             serviceRequestId: request.service_request_id,
             serviceRequestVersion: updatedServiceRequest.meta?.versionId ?? '2',
             status: 'cancelled' as const,
+            billing: this.#outpatientBilling.read(input.context, request.request_id),
             taskId: request.execution_task_id,
             taskVersion: updatedTask.meta?.versionId ?? '2',
             version,
           },
         },
-        effects: [updatedServiceRequest, updatedTask].map(resource => ({
+        effects: [...[updatedServiceRequest, updatedTask].map(resource => ({
           kind: 'updated' as const,
           reference: `${resource.resourceType}/${resource.id}`,
           versionId: resource.meta?.versionId ?? '2',
-        })),
+        })), ...chargeEffects],
       }
     })
 
@@ -8300,11 +8330,12 @@ export class WorkflowService {
     if (row === undefined) throw new WorkflowError('WORKFLOW_CONFLICT', 'The billing case is unavailable')
     const ledger = this.#payments
     const charges = z.array(z.object({
-      amountFen: z.number(), category: z.enum(['registration', 'laboratory', 'medication']),
+      amountFen: z.number(), category: z.enum(['registration', 'laboratory', 'imaging', 'pathology', 'medication']),
       chargeItemId: z.string(), chargeVersion: z.number(), descriptionEn: z.string(), descriptionZh: z.string(), status: z.string(),
+      sourceReference: z.string(),
     })).parse(this.#database.driver.prepare(`
       SELECT total_fen AS amountFen, category, charge_item_id AS chargeItemId, version AS chargeVersion,
-        description_en AS descriptionEn, description_zh AS descriptionZh, status
+        description_en AS descriptionEn, description_zh AS descriptionZh, status, source_reference AS sourceReference
       FROM charge_record AS charge
       WHERE workspace_id = ? AND epoch = ? AND case_id = ?
         AND NOT (charge.category = 'medication' AND charge.status != 'paid' AND EXISTS (
@@ -8317,7 +8348,10 @@ export class WorkflowService {
       const { paidFen } = ledger.balance(input.context, charge.chargeItemId)
       const insuranceFen = this.insurance.coverage(input.context, `ChargeItem/${charge.chargeItemId}`)
       const amountFen = charge.amountFen - this.refunds.adjustmentFen(input.context, charge.chargeItemId)
-      return { ...charge, amountFen, paidFen, insuranceFen, remainingFen: Math.max(0, amountFen - paidFen - insuranceFen) }
+      const investigation = this.#outpatientBilling.readByCharge(input.context, charge.chargeItemId)
+      return { ...charge, amountFen, paidFen, insuranceFen, remainingFen: Math.max(0, amountFen - paidFen - insuranceFen),
+        ...(investigation === undefined ? {} : { requestId: investigation.requestId, price: investigation.billing.price,
+          status: investigation.billing.status === 'cancelled' ? 'cancelled' : charge.status }) }
     })
     const { items: payments, ...paymentsPagination } = ledger.attempts(input.context, input.caseId, input.page, input.pageSize)
     return billingCaseSchema.parse({
@@ -8331,7 +8365,7 @@ export class WorkflowService {
   }
 
   billingQueue(input: {
-    category: 'laboratory' | 'medication'
+    category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
     context: ActorContext
     page: number
     pageSize: number
@@ -8352,10 +8386,20 @@ export class WorkflowService {
           )
         `
         : ''
+    const cancelledInvestigation = `EXISTS (
+        SELECT 1 FROM outpatient_investigation_billing billing
+        JOIN laboratory_request request USING(workspace_id,epoch,request_id)
+        WHERE billing.workspace_id=charge.workspace_id AND billing.epoch=charge.epoch
+          AND billing.charge_item_id=charge.charge_item_id AND request.status='cancelled'
+      )`
+    const refundChargeIds = input.status === 'paid' ? this.#outpatientBilling.pendingCancellationRefundChargeIds(input.context) : []
+    const statusFilter = `AND ((charge.status IN (${placeholders}) AND NOT ${cancelledInvestigation})
+      ${refundChargeIds.length === 0 ? '' : `OR charge.charge_item_id IN (${refundChargeIds.map(() => '?').join(',')})`})`
+    bindings.push(...refundChargeIds)
     const total = this.#database.driver.prepare(`
       SELECT COUNT(*) AS count FROM charge_record AS charge
       WHERE charge.workspace_id = ? AND charge.epoch = ? AND charge.category = ?
-        AND charge.status IN (${placeholders})
+        ${statusFilter}
         ${withdrawnPrescriptionFilter}
     `).get(...bindings) as { count: number }
     const rows = this.#database.driver.prepare(`
@@ -8372,7 +8416,7 @@ export class WorkflowService {
        AND patient.resource_type = 'Patient'
        AND patient.resource_id = outpatient_case.patient_id
       WHERE charge.workspace_id = ? AND charge.epoch = ? AND charge.category = ?
-        AND charge.status IN (${placeholders})
+        ${statusFilter}
         ${withdrawnPrescriptionFilter}
       ORDER BY charge.created_at, charge.charge_id
       LIMIT ? OFFSET ?
@@ -8393,9 +8437,11 @@ export class WorkflowService {
       version: number
     }>
     return {
-      items: rows.map(row => ({
+      items: rows.map(row => {
+        const investigation = this.#outpatientBilling.readByCharge(input.context, row.charge_item_id)
+        return {
         accountId: row.account_id,
-        amountFen: row.total_fen,
+        amountFen: investigation?.billing.status === 'cancelled' ? 0 : row.total_fen,
         caseId: row.case_id,
         category: row.category,
         chargeItemId: row.charge_item_id,
@@ -8403,6 +8449,8 @@ export class WorkflowService {
         descriptionEn: row.description_en,
         descriptionZh: row.description_zh,
         encounterId: row.encounter_id,
+        sourceReference: row.source_reference,
+        ...(investigation === undefined ? {} : { requestId: investigation.requestId, price: investigation.billing.price }),
         lines: row.category === 'medication'
           ? this.#prescriptionChargeLines(input.context, row.source_reference)
           : [{
@@ -8414,8 +8462,8 @@ export class WorkflowService {
               unitPriceFen: row.unit_price_fen,
             }],
         patient: patientSummary(parseStoredFhirResource(row.patient_json)),
-        status: row.status,
-      })),
+        status: investigation?.billing.status === 'cancelled' ? 'cancelled' : row.status,
+      }}),
       page: input.page,
       pageSize: input.pageSize,
       total: total.count,
@@ -9038,36 +9086,13 @@ export class WorkflowService {
           WHERE workspace_id = ? AND epoch = ? AND case_id = ? AND status = 'awaiting-dispense'
         `).run(now, input.context.workspaceId, input.context.epoch, prescription.case_id)
       }
-      const remaining = this.#database.driver.prepare(`
-        SELECT COUNT(*) AS count FROM outpatient_case
-        WHERE workspace_id = ? AND epoch = ? AND scenario_run_id = ? AND status != 'completed'
-      `).get(
-        input.context.workspaceId,
-        input.context.epoch,
-        prescription.scenario_run_id,
-      ) as { count: number }
-      const inpatientWork = countRowSchema.parse(this.#database.driver.prepare(`
-        SELECT EXISTS(SELECT 1 FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND record_status!='archived')
-          OR EXISTS(SELECT 1 FROM inpatient_referral WHERE workspace_id=? AND epoch=? AND status='issued') AS count
-      `).get(input.context.workspaceId,input.context.epoch,input.context.workspaceId,input.context.epoch))
-      const scenarioStatus = remaining.count === 0 && inpatientWork.count === 0 ? 'completed' as const : 'active' as const
-      if (scenarioStatus === 'completed') {
-        this.#database.driver.prepare(`
-          UPDATE scenario_run SET status = 'completed', completed_at = ?
-          WHERE workspace_id = ? AND epoch = ? AND scenario_run_id = ? AND status = 'active'
-        `).run(
-          now,
-          input.context.workspaceId,
-          input.context.epoch,
-          prescription.scenario_run_id,
-        )
-      }
+      const scenario = this.#completeScenarioIfReady(input.context, now)
       return {
         data: {
           medicationDispenseIds: medicationDispenses.map(dispense => dispense.id),
           prescriptionId: input.prescriptionId,
           prescriptionVersion: input.expectedPrescriptionVersion + 1,
-          scenarioStatus,
+          scenarioStatus: scenario.status,
           status: dispenseStatus,
         },
         effects: [
@@ -9091,18 +9116,36 @@ export class WorkflowService {
             reference: `Prescription/${input.prescriptionId}`,
             versionId: String(input.expectedPrescriptionVersion + 1),
           },
-          ...(scenarioStatus === 'completed' ? [{
-            kind: 'updated' as const,
-            reference: `ScenarioRun/${prescription.scenario_run_id}`,
-            versionId: '2',
-          }] : []),
+          ...scenario.effects,
         ],
       }
     })
   }
 
+  #completeScenarioIfReady(context: ActorContext, now: string): { status: 'active' | 'completed'; effects: CommandEffect[] } {
+    const remaining = countRowSchema.parse(this.#database.driver.prepare(`
+      SELECT COUNT(*) AS count FROM outpatient_case
+      WHERE workspace_id=? AND epoch=? AND scenario_run_id=? AND status!='completed'
+    `).get(context.workspaceId, context.epoch, context.scenarioRunId))
+    const inpatientWork = countRowSchema.parse(this.#database.driver.prepare(`
+      SELECT EXISTS(SELECT 1 FROM inpatient_admission WHERE workspace_id=? AND epoch=? AND record_status!='archived')
+        OR EXISTS(SELECT 1 FROM inpatient_referral WHERE workspace_id=? AND epoch=? AND status='issued') AS count
+    `).get(context.workspaceId, context.epoch, context.workspaceId, context.epoch))
+    if (remaining.count > 0 || inpatientWork.count > 0 || this.#outpatientBilling.hasPendingCancellationRefunds(context)) {
+      return { status: 'active', effects: [] }
+    }
+    const updated = this.#database.driver.prepare(`
+      UPDATE scenario_run SET status='completed',completed_at=?
+      WHERE workspace_id=? AND epoch=? AND scenario_run_id=? AND status='active'
+    `).run(now, context.workspaceId, context.epoch, context.scenarioRunId)
+    return { status: 'completed', effects: updated.changes === 0 ? [] : [{
+      kind: 'updated', reference: `ScenarioRun/${context.scenarioRunId}`, versionId: '2',
+    }] }
+  }
+
   previewPayment(input: {
-    category: 'laboratory' | 'medication'
+    category: 'laboratory' | 'imaging' | 'pathology' | 'medication'
+    chargeItemId?: string | undefined
     caseId: string
     context: ActorContext
     expectedVersions: Record<string, string>
@@ -9131,12 +9174,18 @@ export class WorkflowService {
       input: {
         caseId: input.caseId,
         category: input.category,
+        ...(input.chargeItemId === undefined ? {} : { chargeItemId: input.chargeItemId }),
         simulatorRule: input.simulatorRule,
         tenders: input.tenders,
       },
       operation: 'payment.preview',
     }, () => {
       this.#assertRole(input.context, ['cashier'])
+      const targets = Object.keys(input.expectedVersions).filter(reference => reference.startsWith('ChargeItem/'))
+      const chargeItemId = input.chargeItemId ?? targets[0]?.slice('ChargeItem/'.length)
+      if (targets.length !== 1 || chargeItemId === undefined || targets[0] !== `ChargeItem/${chargeItemId}`) {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '必须指定与预期版本一致的原费用')
+      }
       const charge = paymentChargeRowSchema.optional().parse(
         this.#database.driver.prepare(`
           SELECT charge.charge_id, charge.charge_item_id, charge.total_fen - COALESCE((SELECT SUM(adjustment.amount_fen)
@@ -9160,29 +9209,20 @@ export class WorkflowService {
            AND withdrawal.epoch = prescription.epoch
            AND withdrawal.prescription_id = prescription.prescription_id
           WHERE charge.workspace_id = ? AND charge.epoch = ?
-            AND charge.case_id = ? AND charge.category = ?
-        `).get(input.context.workspaceId, input.context.epoch, input.caseId, input.category),
+            AND charge.case_id = ? AND charge.category = ? AND charge.charge_item_id = ?
+        `).get(input.context.workspaceId, input.context.epoch, input.caseId, input.category, chargeItemId),
       )
       if (charge === undefined || !['billable', 'declined'].includes(charge.status)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The charge is not available for payment')
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${charge.charge_item_id}`])
+      this.#assertCollectionWorkflow(input.context, input.category, charge)
       const balance = this.#payments.balance(input.context, charge.charge_item_id)
       if (balance.unresolved > 0) throw new WorkflowError('WORKFLOW_CONFLICT', 'Resolve the original unknown collection or refund before collecting again')
       const remainingFen = charge.total_fen - balance.paidFen - this.insurance.coverage(input.context, `ChargeItem/${charge.charge_item_id}`)
       const tenders = paymentRecordedTendersSchema.parse(input.tenders ?? [{ method: 'cash', amountFen: remainingFen }])
       const amountFen = tenders.reduce((sum, tender) => sum + tender.amountFen, 0)
       if (amountFen > remainingFen) throw new WorkflowError('WORKFLOW_CONFLICT', 'Payment exceeds the remaining receivable')
-      const encounter = this.#fhir.read(input.context, 'Encounter', charge.encounter_id)
-      if (
-        (input.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment' && !this.insurance.hadCompensation(input.context, `ChargeItem/${charge.charge_item_id}`))
-        || (input.category === 'medication'
-          && (encounter.status !== 'completed'
-            || (charge.prescription_status !== 'signed' && !this.insurance.hadCompensation(input.context, `ChargeItem/${charge.charge_item_id}`))
-            || charge.withdrawal_id !== null))
-      ) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
-      }
       const rule = paymentChannelPlan(this.#database, input.context, input.simulatorRule)
       const previewId = uuidv7()
       const commitToken = `${previewId}.${this.#hashToken(previewId)}`
@@ -9190,8 +9230,8 @@ export class WorkflowService {
       this.#database.driver.prepare(`
         INSERT INTO payment_preview (
           workspace_id, epoch, preview_id, case_id, category, amount_fen,
-          expected_charge_version, simulator_rule, token_hash, expires_at, tenders_json, actor_context_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          expected_charge_version, simulator_rule, token_hash, expires_at, tenders_json, actor_context_hash, charge_item_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         input.context.workspaceId,
         input.context.epoch,
@@ -9205,6 +9245,7 @@ export class WorkflowService {
         expiresAt,
         JSON.stringify(tenders),
         this.#actorContextHash(input.context),
+        charge.charge_item_id,
       )
       return {
         data: {
@@ -9252,6 +9293,7 @@ export class WorkflowService {
            AND charge.epoch = preview.epoch
            AND charge.case_id = preview.case_id
            AND charge.category = preview.category
+           AND charge.charge_item_id = preview.charge_item_id
           JOIN outpatient_case
             ON outpatient_case.workspace_id = preview.workspace_id
            AND outpatient_case.epoch = preview.epoch
@@ -9279,6 +9321,7 @@ export class WorkflowService {
     amountFen: number
     outcome: 'ambiguous' | 'declined' | 'success'
     paymentId: string
+    remainingFen?: number | undefined
     status: string
   }> {
     return this.#commands.execute({
@@ -9313,15 +9356,7 @@ export class WorkflowService {
       ) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The payment preview no longer matches the charge')
       }
-      if (
-        (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`))
-        || (preview.category === 'medication'
-          && (transaction.fhir.read(input.context, 'Encounter', preview.encounter_id).status !== 'completed'
-            || (preview.prescription_status !== 'signed' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`))
-            || preview.withdrawal_id !== null))
-      ) {
-        throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
-      }
+      this.#assertCollectionWorkflow(input.context, preview.category, preview)
       const rule = paymentChannelPlan(this.#database, input.context, paymentSimulatorRuleSchema.parse(preview.simulator_rule))
       if (balance.unresolved > 0) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'Resolve the original unknown collection or refund before collecting again')
@@ -9367,6 +9402,7 @@ export class WorkflowService {
           amountFen: preview.amount_fen,
           outcome: rule.outcome,
           paymentId,
+          remainingFen: this.#remainingPaymentFen(input.context, preview),
           status,
         },
         effects,
@@ -9398,21 +9434,45 @@ export class WorkflowService {
       }
       this.#assertExpectedVersions(input.expectedVersions, [`ChargeItem/${attempt.chargeItemId}`])
       if (attempt.outcome !== 'ambiguous' || attempt.recoveryOutcome === 'ambiguous') {
-        return { data: { amountFen: attempt.amountFen, outcome: attempt.outcome, paymentId: input.paymentId, status: preview.case_status }, effects: [] }
+        return { data: { amountFen: attempt.amountFen, outcome: attempt.outcome, paymentId: input.paymentId,
+          remainingFen: this.#remainingPaymentFen(input.context, preview), status: preview.case_status }, effects: [] }
       }
-      if (preview.charge_status !== 'ambiguous'
-        || (preview.category === 'laboratory' && preview.case_status !== 'awaiting-lab-payment' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`))
-        || (preview.category === 'medication' && ((preview.prescription_status !== 'signed' && !this.insurance.hadCompensation(input.context, `ChargeItem/${preview.charge_item_id}`)) || preview.withdrawal_id !== null
-          || transaction.fhir.read(input.context, 'Encounter', preview.encounter_id).status !== 'completed'))) {
+      if (preview.charge_status !== 'ambiguous') {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The original receivable is no longer recoverable')
       }
+      this.#assertCollectionWorkflow(input.context, preview.category, preview)
       this.#database.driver.prepare(`INSERT INTO payment_resolution
         (workspace_id, epoch, payment_id, outcome, resolved_at) VALUES (?, ?, ?, ?, ?)
       `).run(input.context.workspaceId, input.context.epoch, input.paymentId, attempt.recoveryOutcome, this.#virtualTime(input.context))
       const effects: CommandEffect[] = [{ kind: 'created', reference: `PaymentResolution/${input.paymentId}`, versionId: '1' }]
       const status = this.#applyPaymentOutcome(transaction, input.context, preview, attempt.recoveryOutcome, effects)
-      return { data: { amountFen: attempt.amountFen, outcome: attempt.recoveryOutcome, paymentId: input.paymentId, status }, effects }
+      return { data: { amountFen: attempt.amountFen, outcome: attempt.recoveryOutcome, paymentId: input.paymentId,
+        remainingFen: this.#remainingPaymentFen(input.context, preview), status }, effects }
     })
+  }
+
+  #remainingPaymentFen(context: ActorContext, charge: { charge_item_id: string; current_amount_fen: number }): number {
+    return Math.max(0, charge.current_amount_fen - this.#payments.balance(context, charge.charge_item_id).paidFen
+      - this.insurance.coverage(context, `ChargeItem/${charge.charge_item_id}`))
+  }
+
+  #assertCollectionWorkflow(
+    context: ActorContext,
+    category: 'laboratory' | 'imaging' | 'pathology' | 'medication',
+    charge: Pick<z.infer<typeof paymentChargeRowSchema>, 'charge_item_id' | 'case_status' | 'encounter_id' | 'prescription_status' | 'withdrawal_id'>,
+  ): void {
+    const investigation = this.#outpatientBilling.readByCharge(context, charge.charge_item_id)
+    if (investigation !== undefined) {
+      if (investigation.billing.status === 'cancelled') throw new WorkflowError('WORKFLOW_CONFLICT', '原检查已取消，不能再次收款')
+      return
+    }
+    const compensated = this.insurance.hadCompensation(context, `ChargeItem/${charge.charge_item_id}`)
+    if ((category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment' && !compensated)
+      || (category === 'medication' && (this.#fhir.read(context, 'Encounter', charge.encounter_id).status !== 'completed'
+        || (charge.prescription_status !== 'signed' && !compensated) || charge.withdrawal_id !== null))
+      || category === 'imaging' || category === 'pathology') {
+      throw new WorkflowError('WORKFLOW_CONFLICT', 'The clinical workflow is not ready for this payment')
+    }
   }
 
   #applyPaymentOutcome(
@@ -9432,6 +9492,7 @@ export class WorkflowService {
       UPDATE charge_record SET status = ?, version = version + 1
       WHERE workspace_id = ? AND epoch = ? AND charge_id = ?
     `).run(fullyPaid ? 'paid' : outcome === 'success' ? 'billable' : outcome, context.workspaceId, context.epoch, charge.charge_id)
+    if (this.#outpatientBilling.enqueueIfPaid(transaction, context, charge.charge_item_id)) return charge.case_status
     if (!fullyPaid) return charge.case_status
     if (charge.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment') return charge.case_status
     if (charge.category === 'medication' && ['awaiting-dispense', 'completed'].includes(charge.case_status)) return charge.case_status
@@ -10440,7 +10501,7 @@ export class WorkflowService {
     return laboratoryRequestStateRowSchema.optional().parse(
       this.#database.driver.prepare(`
         SELECT version, draft_catalog_item_id, draft_indication_code,
-          draft_reference_json, draft_service_snapshot_json
+          draft_reference_json, draft_service_snapshot_json, draft_price_json
         FROM laboratory_request_state
         WHERE workspace_id = ? AND epoch = ? AND case_id = ?
       `).get(context.workspaceId, context.epoch, caseId),
@@ -10565,6 +10626,7 @@ export class WorkflowService {
       return {
         catalogItemId: request.catalog_item_id,
         authoredAt: serviceRequest.authoredOn,
+        billing: this.#outpatientBilling.read(context, request.request_id),
         id: request.request_id,
         indicationCode: request.indication_code,
         ...(request.generation_error_code === null || request.generation_error_message === null

@@ -10,6 +10,7 @@ import { ImagingPage, useImagingViewState, type ImagingPageActions } from './ima
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 
 const ctService: ImagingServiceSnapshot = {
+  outpatientBilling: { id: 'synthetic-price', version: 1, priceFen: 2500, currency: 'CNY', unit: '项目', source: 'synthetic-outpatient-investigation-2026-10-26-v1', effectiveOn: '2026-08-24' },
   applicability: '成人胸部疾病的评估与随访；不含增强扫描',
   bodySite: '胸部',
   code: 'CT-CHEST-PLAIN',
@@ -139,6 +140,17 @@ function recommendations(overrides: Partial<DoctorRecommendationState> = {}): Do
 }
 
 describe('doctor imaging page', () => {
+  it('preserves an unpriced draft and blocks its formal issuance', async () => {
+    const { outpatientBilling: _price, ...unpriced } = ctService
+    const catalog = { items: services.items.map(item => ({ ...item, service: unpriced })) }
+    const calls = stubFetch(({ path }) => Response.json(path.endsWith('/imaging-services') ? catalog : recommendations({ items: [] })))
+    renderPage(<Page onChanged={() => undefined} state={{ draftVersion: 1, requests: [], draft: { service: unpriced, indication: '需要核对的检查指征。' } }} />)
+    const pending = within(screen.getByRole('region', { name: '待开具放射检查' }))
+    await waitFor(() => expect(pending.getByRole('button', { name: /^开具选中项目/ })).toHaveProperty('disabled', true))
+    expect(pending.getAllByText('未配置本院门诊价格，可保存草稿，暂不能正式开立。').length).toBeGreaterThan(0)
+    expect(calls.every(call => call.method === 'GET')).toBe(true)
+  })
+
   beforeEach(() => {
     // jsdom 没有 canvas 与 ImageData；阅片器只需要能把一帧画上去。
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({ putImageData: () => undefined } as never)
@@ -162,7 +174,7 @@ describe('doctor imaging page', () => {
     await panel.findByRole('checkbox', { name: '选择胸部 CT 平扫' })
     await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-1': '3' }, input: {
-      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-imaging-suggestion', kind: 'imaging', serviceId: ctService.id, indication: '持续咳嗽，需要医生核对检查指征。' }],
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-imaging-suggestion', kind: 'imaging', reviewedService: { id: ctService.id, version: ctService.version, outpatientBilling: ctService.outpatientBilling ?? null }, serviceId: ctService.id, indication: '持续咳嗽，需要医生核对检查指征。' }],
     } }]))
     expect(calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/imaging/actions/confirm'])
     expect(screen.queryByRole('dialog')).toBeNull()

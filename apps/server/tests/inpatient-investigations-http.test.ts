@@ -8,13 +8,14 @@ import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema } from '@
 import { inpatientTransferCatalogSchema, inpatientTransferResponseSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
 import { fhirResourceSchema } from '@clinmesh/contracts/fhir'
-import { laboratoryServiceSnapshotSchema, sessionContextSchema } from '@clinmesh/contracts/his'
+import { issueImagingRequestResponseSchema, issueLaboratoryRequestResponseSchema, laboratoryServiceSnapshotSchema, sessionContextSchema } from '@clinmesh/contracts/his'
 import { installSyntheticImagingAssets } from './fixtures/imaging-catalog.ts'
 import { acuteBronchitis, caseBundle, createImagingRuntime, generateCase, mutation, prepareImaging, signIn, snomed, startConsultation } from './fixtures/imaging-scenario.ts'
 import { applyMigrations, canonicalStateHash, openClinMeshDatabase } from '../src/infrastructure/sqlite/database.ts'
 import { z } from 'zod'
 import { repairImagingAssets } from '../src/infrastructure/imaging-assets/imaging-asset-store.ts'
 import { createClinMeshRuntime } from '../src/runtime.ts'
+import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
@@ -456,13 +457,18 @@ describe('住院检查检验 HTTP 合同', () => {
     expect(save.status).toBe(200)
     const issue = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/imaging-request/actions/issue`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 1 } }))
     expect(issue.status).toBe(200)
+    const imaging = issueImagingRequestResponseSchema.parse(await issue.json()).data.request
+    await payOutpatientInvestigation(s.runtime, { caseId: s.visit.outpatientCaseId, category: 'imaging', chargeItemId: imaging.billing!.chargeItemId })
     await dispatchAll(s.runtime)
     const detail = await (await s.request(opDoctor, `/api/his/v1/doctor/cases/${s.visit.outpatientCaseId}`)).json()
     const request = detail.imagingRequests.requests[0]
     expect((await s.runtime.app.request(`/api/his/v1/imaging-requests/${request.id}/reports/${request.report.diagnosticReportId}/actions/acknowledge`, mutation(opDoctor, { expectedVersions: { [`DiagnosticReport/${request.report.diagnosticReportId}`]: '1' }, input: { expectedRequestVersion: request.version } }))).status).toBe(200)
     const labDraft = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/laboratory-request/draft`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 0, catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } }, 'PUT'))
     expect(labDraft.status).toBe(200)
-    expect((await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/laboratory-request/actions/issue`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 1 } }))).status).toBe(200)
+    const labIssue = await s.runtime.app.request(`/api/his/v1/encounters/${s.visit.encounterId}/laboratory-request/actions/issue`, mutation(opDoctor, { expectedVersions: { [`Encounter/${s.visit.encounterId}`]: '3' }, input: { expectedDraftVersion: 1 } }))
+    expect(labIssue.status).toBe(200)
+    const laboratory = issueLaboratoryRequestResponseSchema.parse(await labIssue.json()).data.request
+    await payOutpatientInvestigation(s.runtime, { caseId: s.visit.outpatientCaseId, category: 'laboratory', chargeItemId: laboratory.billing!.chargeItemId })
     await dispatchAll(s.runtime)
     expect(await (await s.request(opDoctor, `/api/his/v1/doctor/cases/${s.visit.outpatientCaseId}`)).json()).toMatchObject({ laboratoryRequests: { requests: [{ status: 'reported', report: { results: [{ value: 7.2 }] } }] } })
     await s.runtime.close()
@@ -473,13 +479,27 @@ describe('住院检查检验 HTTP 合同', () => {
       expect(applyMigrations(database, directory).schemaVersion).toBe(78)
       database.driver.pragma('foreign_keys=OFF'); database.driver.prepare('ATTACH DATABASE ? AS captured').run(join(s.directory, 'clinmesh.sqlite'))
       const tables = z.array(z.object({ name: z.string() })).parse(database.driver.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name<>'schema_migration' ORDER BY name").all())
+      // 当前真实流程先缴费出报告；投影为 78 时只移除 92 新增的预付费关联事实，保留旧检验、药品资金。
+      const prepaidCharges = "SELECT workspace_id,epoch,charge_item_id FROM captured.outpatient_investigation_billing WHERE payment_policy='prepaid-v1'"
+      const prepaidPreviews = `SELECT workspace_id,epoch,preview_id FROM captured.payment_preview WHERE (workspace_id,epoch,charge_item_id) IN (${prepaidCharges})`
+      const historicalChargeResources = `NOT (resource_type='ChargeItem' AND (workspace_id,epoch,resource_id) IN (${prepaidCharges}))`
+      const sourceFilters: Record<string, string> = {
+        // 医保办岗位是 81 新增，78 旧枚举不容纳。
+        practitioner_role_binding: "role_code NOT IN ('medical-insurance')",
+        charge_record: `(workspace_id,epoch,charge_item_id) NOT IN (${prepaidCharges})`,
+        payment_preview: `(workspace_id,epoch,preview_id) NOT IN (${prepaidPreviews})`,
+        payment_transaction: `(workspace_id,epoch,preview_id) NOT IN (${prepaidPreviews})`,
+        fhir_resource: historicalChargeResources,
+        fhir_history: historicalChargeResources,
+        fhir_sp_string: historicalChargeResources,
+      }
       database.driver.exec('BEGIN')
       for (const { name } of tables) {
         const quoted = `"${name.replaceAll('"', '""')}"`
         const columns = z.array(z.object({ name: z.string() })).parse(database.driver.pragma(`table_info(${quoted})`))
         const list = columns.map(column => `"${column.name.replaceAll('"', '""')}"`).join(',')
-        // 医保办岗位是 81 迁移新增，78 旧枚举不容纳；升级回归只搬 78 已有岗位行。
-        const source = name === 'practitioner_role_binding' ? "(SELECT * FROM captured.practitioner_role_binding WHERE role_code NOT IN ('medical-insurance'))" : `captured.${quoted}`
+        const filter = sourceFilters[name]
+        const source = filter === undefined ? `captured.${quoted}` : `(SELECT * FROM captured.${quoted} WHERE ${filter})`
         database.driver.exec(`INSERT OR REPLACE INTO ${quoted}(${list}) SELECT ${list} FROM ${source}`)
       }
       // 成员引用跟着岗位走：清掉指向未搬入岗位（81 新增枚举外）的成员行，保持旧库引用完整。
@@ -568,6 +588,7 @@ describe('住院检查检验 HTTP 合同', () => {
     const acknowledged = await s.request(targetDoctor, `${s.path}/investigations/acknowledge`, input, key)
     expect(acknowledged.status).toBe(200)
     // 测试运行后安装的合成检验目录先完成与启动相同的计价补齐。
+    s.runtime.laboratoryServicePublisher.ensureDefaultServices()
     s.runtime.laboratoryServicePublisher.ensureInpatientPrices()
     const receipt = await acknowledged.json(), before = canonicalStateHash(s.runtime.database)
     await s.runtime.close()

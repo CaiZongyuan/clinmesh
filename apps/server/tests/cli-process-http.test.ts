@@ -778,6 +778,11 @@ describe('clinmesh CLI process over real HTTP', () => {
     )
     const laboratoryConcept = clinicalCatalog.laboratory.find(item => item.id === 'lab-cbc')
     if (laboratoryConcept === undefined) throw new Error('Hospital clinical catalog has no CBC')
+    const cashierToken = await mintGrant('cashier', [
+      'billing.queue.list',
+      'payment.confirm',
+      'payment.preview',
+    ], 'cli-cross-role-cashier-grant-1')
     const laboratoryDraft = cliData(
       await execute(doctorToken, [
         'encounter', 'laboratory-request', 'draft', 'set',
@@ -793,7 +798,7 @@ describe('clinmesh CLI process over real HTTP', () => {
       'encounter.laboratory-request.draft.set',
       laboratoryRequestDraftResponseSchema,
     ).data
-    cliData(
+    const laboratoryIssue = cliData(
       await execute(doctorToken, [
         'encounter', 'laboratory-request', 'issue',
         '--input', '-',
@@ -805,7 +810,41 @@ describe('clinmesh CLI process over real HTTP', () => {
       }),
       'encounter.laboratory-request.issue',
       issueLaboratoryRequestResponseSchema,
-    )
+    ).data
+    const laboratoryBilling = cliData(
+      await execute(cashierToken, [
+        'billing', 'queue', 'list', '--category', 'laboratory', '--status', 'pending',
+      ]),
+      'billing.queue.list',
+      billingQueueSchema,
+    ).items.find(item => item.chargeItemId === laboratoryIssue.request.billing?.chargeItemId)
+    if (laboratoryBilling === undefined) throw new Error('Original laboratory charge did not enter billing')
+    const laboratoryPreview = cliData(
+      await execute(cashierToken, [
+        'payment', 'preview', '--input', '-', '--idempotency-key', 'cli-cross-role-lab-preview-1',
+      ], {
+        caseId: doctorItem.caseId,
+        category: 'laboratory',
+        chargeItemId: laboratoryBilling.chargeItemId,
+        chargeVersion: laboratoryBilling.chargeVersion,
+        simulatorRule: 'success',
+      }),
+      'payment.preview',
+      paymentPreviewResponseSchema,
+    ).data
+    const laboratoryPayment = cliData(
+      await execute(cashierToken, [
+        'payment', 'confirm', '--input', '-', '--idempotency-key', 'cli-cross-role-lab-payment-1',
+      ], {
+        chargeItemId: laboratoryPreview.chargeItemId,
+        chargeVersion: laboratoryPreview.chargeVersion,
+        commitToken: laboratoryPreview.commitToken,
+        previewId: laboratoryPreview.previewId,
+      }),
+      'payment.confirm',
+      paymentResponseSchema,
+    ).data
+    expect(laboratoryPayment).toMatchObject({ outcome: 'success', remainingFen: 0 })
     await runtime.dispatchPending()
     const reportedCase = cliData(
       await execute(doctorToken, ['doctor', 'case', 'get', '--case-id', doctorItem.caseId]),
@@ -957,11 +996,6 @@ describe('clinmesh CLI process over real HTTP', () => {
       encounterCompletionResponseSchema,
     ).data
 
-    const cashierToken = await mintGrant('cashier', [
-      'billing.queue.list',
-      'payment.confirm',
-      'payment.preview',
-    ], 'cli-cross-role-cashier-grant-1')
     const medicationBilling = cliData(
       await execute(cashierToken, [
         'billing', 'queue', 'list', '--category', 'medication', '--status', 'pending',

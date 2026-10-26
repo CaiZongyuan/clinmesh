@@ -21,6 +21,17 @@ function activeFromHistory(history: Settlement[]) {
   const reversed = new Set(history.flatMap(row => row.reversesId === undefined ? [] : [row.reversesId]))
   return history.filter(row => row.reversesId === undefined && !reversed.has(row.id))
 }
+export function readInsuranceCoverage(database: ClinMeshDatabase, context: ActorContext, reference: string) {
+  const rows = z.array(z.object({ data_json: z.string() })).parse(database.driver.prepare(`
+    SELECT data_json FROM insurance_event e
+    WHERE workspace_id=? AND epoch=? AND reverses_id IS NULL
+      AND NOT EXISTS(SELECT 1 FROM insurance_event r
+        WHERE r.workspace_id=e.workspace_id AND r.epoch=e.epoch AND r.reverses_id=e.event_id)
+  `).all(context.workspaceId, context.epoch))
+  return rows.reduce((sum, row) => sum + insuranceSettlementSchema.parse(JSON.parse(row.data_json))
+    .allocations.filter(item => item.reference === reference)
+    .reduce((subtotal, item) => subtotal + item.fundFen + item.accountFen, 0), 0)
+}
 export class InsuranceService {
   constructor(readonly database: ClinMeshDatabase, readonly commands: CommandExecutor, readonly options: InsuranceOptions) {}
   #authorize(context: ActorContext) {
@@ -52,8 +63,7 @@ export class InsuranceService {
     return this.activeSettlements(context, target).at(-1)
   }
   coverage(context: ActorContext, reference: string) {
-    const rows = z.array(z.object({data_json:z.string()})).parse(this.database.driver.prepare('SELECT data_json FROM insurance_event e WHERE workspace_id=? AND epoch=? AND reverses_id IS NULL AND NOT EXISTS(SELECT 1 FROM insurance_event r WHERE r.workspace_id=e.workspace_id AND r.epoch=e.epoch AND r.reverses_id=e.event_id)').all(context.workspaceId,context.epoch))
-    return rows.reduce((sum,row) => sum + insuranceSettlementSchema.parse(JSON.parse(row.data_json)).allocations.filter(a=>a.reference===reference).reduce((subtotal,a)=>subtotal+a.fundFen+a.accountFen,0),0)
+    return readInsuranceCoverage(this.database, context, reference)
   }
   state(context: ActorContext, target: InsuranceTarget) {
     // Commands already own their transaction and audit for the returned projection.

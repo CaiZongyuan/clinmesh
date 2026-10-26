@@ -4,11 +4,12 @@ import { z } from 'zod'
 import { paymentTendersSchema } from '@clinmesh/contracts/his'
 import { chargeAdjustmentInputSchema, chargeAdjustmentResponseSchema, refundCaseSchema, refundConfirmInputSchema,
   refundPreviewInputSchema, refundPreviewResponseSchema, refundRecoverInputSchema, refundResponseSchema } from '@clinmesh/contracts/refunds'
-import type { ActorContext, CommandExecutor } from './command-executor.ts'
+import type { ActorContext, CommandEffect, CommandExecutor } from './command-executor.ts'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { FhirRepository } from '../infrastructure/sqlite/fhir-repository.ts'
 import { WorkspaceContextError, WorkspaceRepository } from '../infrastructure/sqlite/workspace-repository.ts'
 import { PaymentLedger } from './payment-ledger.ts'
+import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 import { readOutpatientInsuranceAllocations } from './outpatient-insurance.ts'
 import { RefundLedger } from './refund-ledger.ts'
 import { WorkflowError } from './workflow-error.ts'
@@ -16,7 +17,8 @@ import { WorkflowError } from './workflow-error.ts'
 export class OutpatientRefunds {
   readonly ledger: RefundLedger
   constructor(readonly database: ClinMeshDatabase, readonly fhir: FhirRepository, readonly commands: CommandExecutor,
-    readonly options: { now: () => Date; virtualTime: (context: ActorContext) => string; tokenSecret: string }) {
+    readonly options: { now: () => Date; virtualTime: (context: ActorContext) => string; tokenSecret: string
+      onFundsChanged?: (context: ActorContext) => CommandEffect[] }) {
     this.ledger = new RefundLedger(database)
   }
   #authorize(context: ActorContext) {
@@ -93,6 +95,10 @@ export class OutpatientRefunds {
       dataSchema: chargeAdjustmentResponseSchema.shape.data, authorize: () => this.#authorize(context) }, () => {
       const charge = this.#charge(context, input.chargeItemId, caseId)
       this.#expectedCharge(expectedVersions, input.chargeItemId)
+      const investigation = new OutpatientInvestigationBilling(this.database).readByCharge(context, input.chargeItemId)
+      if (investigation !== undefined && investigation.billing.releasedAt === undefined && investigation.billing.status !== 'cancelled') {
+        throw new WorkflowError('WORKFLOW_CONFLICT', '首次放行前不能冲减原检查费用，请负责医生取消后按正确价格重新开立')
+      }
       if (readOutpatientInsuranceAllocations(this.database, context, caseId).has(`ChargeItem/${input.chargeItemId}`)) {
         throw new WorkflowError('WORKFLOW_CONFLICT', '请先撤销本费用的有效医保待遇，再办理费用冲减')
       }
@@ -156,7 +162,10 @@ export class OutpatientRefunds {
       const refund = this.ledger.create(context, { source: value.source, basisId: `outpatient-charge:${value.attempt.chargeItemId}`, ownerKind: 'outpatient', ownerId: value.charge.case_id,
         amountFen: preview.amount_fen, simulatorRule: preview.simulator_rule, createdAt: now })
       this.database.driver.prepare('UPDATE refund_preview SET consumed_at=? WHERE workspace_id=? AND epoch=? AND preview_id=?').run(now, context.workspaceId, context.epoch, previewId)
-      return { data: refund, effects: [{ kind: 'created' as const, reference: `RefundTransaction/${refund.refundId}`, versionId: '1' }] }
+      return { data: refund, effects: [
+        { kind: 'created' as const, reference: `RefundTransaction/${refund.refundId}`, versionId: '1' },
+        ...(this.options.onFundsChanged?.(context) ?? []),
+      ] }
     })
   }
   recover(context: ActorContext, refundId: string, raw: unknown, expectedVersions: Record<string, string>, idempotencyKey: string) {
@@ -168,7 +177,10 @@ export class OutpatientRefunds {
       const value = this.#source(context, attempt.sourceId)
       this.#expectedCharge(expectedVersions, value.attempt.chargeItemId)
       const refund = this.ledger.recover(context, refundId, input.expectedRefundVersion, this.options.virtualTime(context))
-      return { data: refund, effects: refund.version === attempt.version ? [] : [{ kind: 'created' as const, reference: `RefundResolution/${refundId}`, versionId: '1' }] }
+      return { data: refund, effects: [
+        ...(refund.version === attempt.version ? [] : [{ kind: 'created' as const, reference: `RefundResolution/${refundId}`, versionId: '1' }]),
+        ...(this.options.onFundsChanged?.(context) ?? []),
+      ] }
     })
   }
 }

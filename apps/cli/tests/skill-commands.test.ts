@@ -1,7 +1,7 @@
 import { readdir, readFile as readTextFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { getHisOperation, listHisOperations } from '@clinmesh/contracts/his-operations'
+import { excludedHisRoutes, getHisOperation, listHisOperations } from '@clinmesh/contracts/his-operations'
 import { type Command, type Option } from 'commander'
 import { createCliProgram } from '../src/cli.ts'
 
@@ -175,10 +175,58 @@ it('keeps unified billing and recorded payment recovery examples aligned with th
   for (const term of ['current-Epoch human cashier', 'completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(skill).toContain(term)
   for (const term of ['current-Epoch human cashier', 'active/completed Scenario Run', 'closed Run and completed Agent Grant are rejected']) expect(getHisOperation('refund.recover').summary).toContain(term)
   const examples=[...skill.matchAll(/```json\n([^]*?)\n```/g)].map(match=>JSON.parse(match[1]!))
-  for(const [index,operation] of ['insurance.preview','insurance.confirm','insurance.cancel'].entries()){
-    expect(getHisOperation(operation).input.safeParse(examples[index]).success).toBe(true)
-    expect(getHisOperation(operation).input.parse(examples[index + 3])).toMatchObject({ kind: 'inpatient' })
+  for (const [operation, field] of [['insurance.preview', 'planCode'], ['insurance.confirm', 'commitToken'], ['insurance.cancel', 'expectedBalanceVersion']]) {
+    for (const kind of ['outpatient', 'inpatient']) {
+      const example = examples.find(input => input.kind === kind && field! in input)
+      expect(getHisOperation(operation!).input.parse(example)).toMatchObject({ kind })
+    }
   }
+})
+
+it('独立检查收费示例按原费用收款并保留取消退款与历史兼容指引', async () => {
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const [billing, doctor, workflows] = await Promise.all([
+    readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-billing/SKILL.md'), 'utf8'),
+    readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8'),
+    readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/references/clinical-workflows.md'), 'utf8'),
+  ])
+  const categories = commandLines(billing).filter(line => line.startsWith('clinmesh billing queue list ') && line.includes('--status pending'))
+    .map(line => {
+      const operation = inspectExample(program, line).operation!
+      const category = line.match(/--category (\S+)/)![1]!
+      expect(operation.input.parse({ category, status: 'pending' })).toMatchObject({ category, status: 'pending' })
+      return category
+    })
+  expect(categories).toEqual(['laboratory', 'imaging', 'pathology', 'medication'])
+  const examples = [...billing.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
+  for (const [id, field] of [['payment.preview', 'category'], ['payment.confirm', 'previewId'], ['payment.recover', 'expectedPaymentVersion']] as const) {
+    const example = examples.find(input => input.chargeItemId && field in input)
+    const operation = getHisOperation(id)
+    expect(operation.input.parse(example)).toMatchObject({ chargeItemId: '<charge-item-id>' })
+    expect(operation.input.safeParse({ ...example, chargeItemId: undefined }).success).toBe(false)
+    expect(operation.input.safeParse({ ...example, requestId: 'substitute-request' }).success).toBe(false)
+    expect(operation.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+    expect(operation.roles).toEqual(['cashier'])
+  }
+  for (const kind of ['laboratory', 'imaging', 'pathology']) {
+    const issue = getHisOperation(`encounter.${kind}-request.issue`)
+    const cancel = getHisOperation(`${kind}-request.cancel`)
+    const draftInput = { encounterId: 'encounter', encounterVersion: '1', expectedDraftVersion: 1 }
+    expect(issue.input.parse(draftInput)).toEqual(draftInput)
+    expect(issue.input.safeParse({ ...draftInput, reviewedService: { id: 'substitute', version: 1, outpatientBilling: null } }).success).toBe(false)
+    expect(issue.summary).toContain('CATALOG_CONFLICT')
+    expect(issue.summary).toContain('保留草稿')
+    expect(cancel.summary).toContain('insurance.cancel')
+    expect(cancel.summary).toContain('原成功交易退款')
+    expect(cancel.roles).toEqual(['outpatient-doctor'])
+  }
+  expect(doctor).toContain('CATALOG_CONFLICT')
+  expect(doctor).toContain('reviewedService')
+  const confirmationPath = '/api/his/v1/doctor/cases/:caseId/recommendations/:kind/actions/confirm'
+  expect(listHisOperations().some(operation => operation.http.path === confirmationPath)).toBe(false)
+  expect(excludedHisRoutes.find(route => route.path === confirmationPath)?.reason).toContain('不提供独立 CLI 或 Agent Grant')
+  for (const term of ['original `requestId`', '`chargeItemId`', 'legacy-unbilled', 'Pending cancellation refunds keep the Scenario Run active']) expect(billing).toContain(term)
+  for (const term of ['CATALOG_CONFLICT', 'legacy-unbilled', 'Ordinary cancellation rejects', 'insurance.cancel', 'no second charge', 'reviewedService', 'explicitly review again', 'no CLI command or Agent Grant']) expect(workflows).toContain(term)
 })
 
 it('keeps inpatient pharmacy and charge reads and receipts aligned with role-specific contracts', async () => {

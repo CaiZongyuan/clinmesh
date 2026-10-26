@@ -995,6 +995,19 @@ export async function runTrajectoryPerformanceProfile() {
       expectedVersions: { [encounterReference]: consultationEncounterVersion },
       idempotencyKey: 'performance-trajectory-lab-issue',
     }))).data.request
+    if (laboratory.billing === undefined) throw new Error('Performance trajectory original laboratory charge is missing')
+    const cashierCookie = await signInAdministrator(runtime, 'cashier@demo.clinmesh.local')
+    const cashierContext = (await runtime.identity.resolveSessionContext(new Headers({ cookie: cashierCookie }))).actor
+    const expectedChargeVersions = { [`ChargeItem/${laboratory.billing.chargeItemId}`]: '1' }
+    const paymentPreview = (await measure(() => runtime.workflow.previewPayment({
+      caseId: started.outpatientCaseId, category: 'laboratory', chargeItemId: laboratory.billing!.chargeItemId,
+      context: cashierContext, expectedVersions: expectedChargeVersions,
+      idempotencyKey: 'performance-trajectory-lab-payment-preview', simulatorRule: 'success',
+    }))).data
+    await measure(() => runtime.workflow.confirmPayment({
+      context: cashierContext, expectedVersions: expectedChargeVersions,
+      idempotencyKey: 'performance-trajectory-lab-payment', previewId: paymentPreview.previewId, commitToken: paymentPreview.commitToken,
+    }))
     for (let step = 0; step < 3; step += 1) {
       await measure(() => runtime.dispatcher.dispatchOnce())
     }

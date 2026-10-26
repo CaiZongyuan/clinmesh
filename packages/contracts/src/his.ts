@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
+export { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
+export type { OutpatientInvestigationBilling, OutpatientInvestigationPrice } from './investigation-billing.ts'
 import { fhirResourceSchema } from './fhir.ts'
 import { imagingExamCodeSchema, pathologyExamCodeSchema } from './imaging.ts'
 import { pathologySourceProcedureSchema } from './pathology.ts'
@@ -194,6 +197,7 @@ const clinicalCatalogBaseShape = {
   laboratory: z.array(catalogItemSchema.extend({
     allowedIndicationCodes: z.array(z.string().min(1)).min(1),
     contraindicatedAllergyCodes: z.array(z.string().min(1)),
+    outpatientBilling: outpatientInvestigationPriceSchema.optional(),
     referenceConcept: referenceConceptSnapshotSchema.optional(),
   })),
 }
@@ -391,6 +395,7 @@ const laboratoryServiceResultDefinitionSchema = z.object({
 })
 
 export const laboratoryServiceSnapshotSchema = z.object({
+  outpatientBilling: outpatientInvestigationPriceSchema.optional(),
   allowedIndicationCodes: z.array(z.string().min(1).max(64)).min(1),
   componentServiceIds: z.array(z.string().min(1).max(512)),
   doctorOrderable: z.boolean(),
@@ -1574,6 +1579,7 @@ export const correctLaboratoryReportResponseSchema = commandResponseSchema(z.obj
 }).strict())
 
 export const laboratoryRequestSchema = z.object({
+  billing: outpatientInvestigationBillingSchema.optional(),
   authoredAt: z.iso.datetime({ offset: true }).optional(),
   catalogItemId: laboratoryRequestCatalogItemIdSchema,
   generationError: z.object({
@@ -1630,6 +1636,7 @@ const completedCaseLaboratoryReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const completedCaseLaboratoryRequestSchema = z.object({
+  billing: outpatientInvestigationBillingSchema.optional(),
   authoredAt: z.iso.datetime({ offset: true }).optional(),
   catalogDisplay: z.string().min(1).optional(),
   catalogItemId: referenceDataItemIdSchema.optional(),
@@ -1703,6 +1710,7 @@ export const laboratoryRequestStateSchema = z.object({
 
 /** 开立时冻结的放射服务定义：部位、检查方式、执行科室、适用范围与报告结构。 */
 export const imagingServiceSnapshotSchema = z.object({
+  outpatientBilling: outpatientInvestigationPriceSchema.optional(),
   applicability: z.string().min(1),
   bodySite: z.string().min(1),
   code: z.string().min(1).max(64),
@@ -1766,6 +1774,7 @@ export const imagingReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const imagingRequestSchema = z.object({
+  billing: outpatientInvestigationBillingSchema.optional(),
   authoredAt: z.iso.datetime({ offset: true }).optional(),
   generationError: z.object({
     code: z.string().min(1).max(128),
@@ -1824,6 +1833,7 @@ export const correctImagingReportResponseSchema = correctLaboratoryReportRespons
 
 /** 开立时冻结的病理会诊服务定义：部位、标本类型、染色、执行科室、适用范围与报告结构。 */
 export const pathologyServiceSnapshotSchema = z.object({
+  outpatientBilling: outpatientInvestigationPriceSchema.optional(),
   applicability: z.string().min(1),
   bodySite: z.string().min(1),
   code: z.string().min(1).max(64),
@@ -1895,6 +1905,7 @@ export const pathologyReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const pathologyRequestSchema = z.object({
+  billing: outpatientInvestigationBillingSchema.optional(),
   authoredAt: z.iso.datetime({ offset: true }).optional(),
   generationError: z.object({
     code: z.string().min(1).max(128),
@@ -2168,17 +2179,23 @@ export const clinicalDocumentRevisionResponseSchema = commandResponseSchema(z.ob
   revisionOfCompositionId: z.string().min(1),
 }))
 
+export const billingCategorySchema = z.enum(['laboratory', 'imaging', 'pathology', 'medication'])
+export type BillingCategory = z.infer<typeof billingCategorySchema>
+
 export const billingQueueSchema = z.object({
   items: z.array(z.object({
     accountId: z.string().min(1),
     amountFen: z.number().int().nonnegative(),
     caseId: z.string().min(1),
-    category: z.enum(['laboratory', 'medication']),
+    category: billingCategorySchema,
     chargeItemId: z.string().min(1),
     chargeVersion: z.number().int().positive(),
     descriptionEn: z.string().min(1),
     descriptionZh: z.string().min(1),
     encounterId: z.string().min(1),
+    requestId: z.string().min(1).optional(),
+    sourceReference: z.string().min(1).optional(),
+    price: outpatientInvestigationPriceSchema.optional(),
     lines: z.array(z.object({
       descriptionEn: z.string().min(1),
       descriptionZh: z.string().min(1),
@@ -2231,11 +2248,14 @@ export const billingCaseSchema = z.object({
   patient: patientSummarySchema,
   charges: z.array(z.object({
     amountFen: z.number().int().nonnegative(),
-    category: z.enum(['registration', 'laboratory', 'medication']),
+    category: z.enum(['registration', ...billingCategorySchema.options]),
     chargeItemId: z.string().min(1),
     chargeVersion: z.number().int().positive(),
     descriptionEn: z.string().min(1),
     descriptionZh: z.string().min(1),
+    requestId: z.string().min(1).optional(),
+    sourceReference: z.string().min(1).optional(),
+    price: outpatientInvestigationPriceSchema.optional(),
     paidFen: z.number().int().nonnegative(),
     insuranceFen: z.number().int().nonnegative().default(0),
     remainingFen: z.number().int().nonnegative(),
@@ -2270,6 +2290,7 @@ export const paymentResponseSchema = commandResponseSchema(z.object({
   amountFen: z.number().int().nonnegative(),
   outcome: z.enum(['ambiguous', 'declined', 'success']),
   paymentId: z.string().min(1),
+  remainingFen: z.number().int().nonnegative().optional(),
   status: z.string().min(1),
 }))
 

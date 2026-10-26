@@ -11,6 +11,8 @@ import { InsuranceError } from './insurance-service.ts'
 const syntheticCoverage = {
   registration: { sourcePrefix: 'Registration/', included: false, priorSelfPayBps: 0 },
   laboratory: { sourcePrefix: 'ServiceRequest/', included: true, priorSelfPayBps: 1000 },
+  imaging: { sourcePrefix: 'ServiceRequest/', included: false, priorSelfPayBps: 0 },
+  pathology: { sourcePrefix: 'ServiceRequest/', included: false, priorSelfPayBps: 0 },
   medication: { sourcePrefix: 'Prescription/', included: true, priorSelfPayBps: 2000 },
 } as const
 
@@ -65,7 +67,7 @@ export function readOutpatientInsuranceSource(
         version: z.number().int(),
         amount_fen: z.number().int().nonnegative(),
         description_zh: z.string(),
-        category: z.enum(['registration', 'laboratory', 'medication']),
+        category: z.enum(['registration', 'laboratory', 'imaging', 'pathology', 'medication']),
         source_reference: z.string(),
       }),
     )
@@ -78,6 +80,12 @@ export function readOutpatientInsuranceSource(
                AND adjustment.charge_item_id=c.charge_item_id
            ),0) AS amount_fen FROM charge_record c
            WHERE c.workspace_id=? AND c.epoch=? AND c.case_id=?
+             AND NOT EXISTS(
+               SELECT 1 FROM outpatient_investigation_billing b
+               JOIN laboratory_request request USING(workspace_id,epoch,request_id)
+               WHERE b.workspace_id=c.workspace_id AND b.epoch=c.epoch
+                 AND b.charge_item_id=c.charge_item_id AND request.status='cancelled'
+             )
              AND NOT EXISTS(
                SELECT 1 FROM prescription_withdrawal w
                WHERE w.workspace_id=c.workspace_id AND w.epoch=c.epoch
