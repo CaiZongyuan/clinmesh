@@ -51,7 +51,7 @@ export const test = base.extend({ browserApp: async ({ webRoot }, use) => {
 
 export { expect }
 
-export function drgBrowserApi(page: Page, app: { origin: string; password: string }) {
+export function drgBrowserApi(page: Pick<Page, 'request'>, app: { origin: string; password: string }) {
   const login = async (role: string) => expect((await page.request.post(`${app.origin}/api/auth/sign-in/email`, { headers: { origin: app.origin },
     data: { email: `${role}@demo.clinmesh.local`, password: app.password } })).status()).toBe(200)
   const post = (path: string, input: unknown, expectedVersions?: object) => page.request.post(app.origin + path, {
@@ -61,7 +61,7 @@ export function drgBrowserApi(page: Page, app: { origin: string; password: strin
   return { login, post, get }
 }
 
-export async function createDrgBrowserPatient(page: Page, app: { origin: string; password: string }, name = '合成DRG贯通患者') {
+export async function createDrgBrowserPatient(page: Pick<Page, 'request'>, app: { origin: string; password: string }, name = '合成DRG贯通患者') {
   const api = drgBrowserApi(page, app)
   await api.login('registrar')
   const patient = createPatientResponseSchema.parse(await (await api.post('/api/his/v1/patients', { name, gender: 'female', birthDate: '1980-01-01', identifier: `SYN-${randomUUID()}` }, {})).json()).data.patient

@@ -3,10 +3,19 @@ import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from '../../../web/e2e/inpatient-drg.fixture.ts'
 import { buildInpatientDrgFixture } from './inpatient-drg.browser.artifact.ts'
+import { runDrgArchiveJourney } from '../../../web/e2e/inpatient-drg-archive.journey.ts'
 
 for (const version of ['18', '19']) test.describe(`inpatient DRG React ${version}`, () => {
   let artifact: Awaited<ReturnType<typeof buildInpatientDrgFixture>>
   test.beforeAll(async () => { test.setTimeout(120_000); artifact = await buildInpatientDrgFixture(version) })
+  test('归档后只展示冻结结果，隐藏页签中的旧推演不再显示', async ({ page, request, browserApp }) => {
+    test.setTimeout(60_000)
+    await runDrgArchiveJourney({ page, request, browserApp, open: async () => {
+      await page.route(`${browserApp.origin}/drg-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
+      await page.goto(`${browserApp.origin}/drg-contract`)
+      await page.setContent(`<!doctype html><html data-view="workspace"><head><style>${artifact.styles}</style></head><body><script>${artifact.code.replaceAll('</script', '<\\/script')}</script></body></html>`)
+    } })
+  })
   test('医嘱推演确认在 ShadowRoot 中保持焦点，取消不写入，确认仅签发一次', async ({ page, browserApp }) => {
     test.setTimeout(60_000)
     const errors: string[] = []

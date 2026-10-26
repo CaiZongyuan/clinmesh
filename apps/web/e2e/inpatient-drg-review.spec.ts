@@ -4,6 +4,11 @@ import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from './inpatient-drg.fixture.ts'
+import { runDrgArchiveJourney } from './inpatient-drg-archive.journey.ts'
+
+test('归档后只展示冻结结果，隐藏页签中的旧推演不再显示', async ({ page, request, browserApp }) => {
+  await runDrgArchiveJourney({ page, request, browserApp, open: async () => { await page.goto(`${browserApp.origin}/inpatient`) } })
+})
 
 test('多手术计划仅按医生选择推演主操作，正式事实与首页保持原样', async ({ page, browserApp }) => {
   const s = await createDrgBrowserPatient(page, browserApp, '合成计划主操作患者')

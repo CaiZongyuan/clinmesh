@@ -1,5 +1,7 @@
 # 测试与验证排障
 
+- TanStack Query 的 `enabled: false` 停止自动查询但保留 `data` 和 `error`。验证实时页面切到归档等冻结模式时，先加载真实结果、切走并保留组件和 QueryClient，再从独立会话改变状态后刷新返回；只用归档初始状态挂载会漏掉旧缓存继续渲染。复用[DRG 归档切换旅程](../../apps/web/e2e/inpatient-drg-archive.journey.ts)核对模式转换及后续刷新。
+
 - 本机同时运行完整 Server、Web 组件和 Playwright 时，内存交换及资源竞争可能使既有长交互触及默认超时。保留原失败日志，在主线与当前分支对照同一用例，再在资源释放后以原超时、原断言复验完整文件；不要仅据墙钟超时修改业务代码或扩大预算。GitHub 的并行检查组使用独立 runner，本地 worktree 共享机器资源。
 
 - `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。

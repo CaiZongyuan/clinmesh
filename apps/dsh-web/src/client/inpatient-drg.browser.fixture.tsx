@@ -7,6 +7,7 @@ import type { SessionContext } from '@clinmesh/contracts/his'
 import { InpatientDrgPanel } from '../../../web/src/app/inpatient-drg.tsx'
 import { InpatientClinical } from '../../../web/src/app/inpatient-clinical.tsx'
 import { InpatientDrgPayer } from '../../../web/src/app/inpatient-drg-payer.tsx'
+import { InpatientWorkspace } from '../../../web/src/app/inpatient-workspace.tsx'
 import { InpatientWriteRecovery } from '../../../web/src/app/inpatient-write-recovery.tsx'
 import { useInpatientWriteIntent } from '../../../web/src/app/inpatient-write-intent.ts'
 import { apiGet, getSession } from '../../../web/src/app/api-client.ts'
@@ -34,5 +35,5 @@ container.dataset.theme = 'light'
 container.style.cssText = 'padding:16px;min-width:0'
 shadow.append(container)
 void getSession().then(session => {
-  createRoot(container).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><PortalContainerProvider container={container}><Fixture session={session} /></PortalContainerProvider></QueryClientProvider>)
+  createRoot(container).render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><PortalContainerProvider container={container}>{document.documentElement.dataset.view === 'workspace' ? <InpatientWorkspace session={session} locale="zh-CN" /> : <Fixture session={session} />}</PortalContainerProvider></QueryClientProvider>)
 })

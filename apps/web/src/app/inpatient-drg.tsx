@@ -104,14 +104,18 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     { title: t('当前草稿', 'Current draft'), items: data.draft.items },
   ] : []
   return <section aria-label={t('DRG 与费用推演', 'DRG and charge simulation')} className="flex flex-col gap-4">
-    <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{t('DRG 与费用推演', 'DRG and charge simulation')}</h3><Button variant="outline" disabled={simulation.isFetching || grouping.isFetching || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新冻结结果', 'Refresh frozen result') : t('重新计算', 'Recalculate')}</Button></div>
+    <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{t('DRG 与费用推演', 'DRG and charge simulation')}</h3><Button variant="outline" disabled={(archived ? grouping.isFetching : simulation.isFetching) || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新冻结结果', 'Refresh frozen result') : t('重新计算', 'Recalculate')}</Button></div>
     <p className="text-sm text-muted-foreground">{t('正式分组读取已确认诊疗。计划与草稿仅供比较，不改变临床事实；医院支付参考与患者医保待遇分别计算。', 'Formal grouping reads confirmed care. Plans and drafts are comparisons only. Hospital payment references and patient benefits are calculated separately.')}</p>
+    {archived ? <>
+      {grouping.isPending ? <p role="status">{t('正在读取冻结结果', 'Loading frozen result')}</p> : null}
+      <DrgError error={grouping.error} locale={locale} />
+      {grouping.data ? <><DrgGrouping result={grouping.data.result} locale={locale} title={t('归档冻结分组', 'Frozen archive grouping')} /><p className="text-sm text-muted-foreground">{t('归档结果保持冻结，后续规则及财务更正不改写此病组。', 'This result is frozen. Later rules or financial corrections do not rewrite the group.')}</p></> : null}
+    </> : <>
     {allowPlanSelection && plans.length > 1 ? <FieldGroup><Field><FieldLabel htmlFor="drg-primary-plan">{t('计划主操作（仅推演）', 'Primary planned procedure (simulation only)')}</FieldLabel><WorkspaceSelect id="drg-primary-plan" value={primarySurgeryRequestId} placeholder={t('请选择计划主操作', 'Select the primary planned procedure')} items={plans.map(item => ({ value: item.id, label: `${item.plannedProcedure.coding.code} · ${item.plannedProcedure.coding.display} · ${item.reason}` }))} onValueChange={setSelectedPlanId} /><p className="text-sm text-muted-foreground">{t('多个待实施计划须明确推演主操作。此选择不更改实际主操作或病案首页。', 'Choose a primary procedure when several plans remain. This does not change performed procedures or the medical record.')}</p></Field></FieldGroup> : null}
     {simulation.isPending && simulation.fetchStatus !== 'idle' ? <p role="status">{t('正在计算分组与费用', 'Calculating grouping and charges')}</p> : null}
     {simulation.isFetching && data ? <p role="status">{t('正在更新，旧结果暂不可用于审阅。', 'Updating; the previous result cannot be reviewed.')}</p> : null}
-    <DrgError error={simulation.error ?? grouping.error ?? (allowPlanSelection ? surgery.error : null)} locale={locale} />
+    <DrgError error={simulation.error ?? (allowPlanSelection ? surgery.error : null)} locale={locale} />
     {stale ? <DrgStaleNotice locale={locale} /> : null}
-    {archived && grouping.data ? <><DrgGrouping result={grouping.data.result} locale={locale} title={t('归档冻结分组', 'Frozen archive grouping')} /><p className="text-sm text-muted-foreground">{t('归档结果保持冻结，后续规则及财务更正不改写此病组。', 'This result is frozen. Later rules or financial corrections do not rewrite the group.')}</p></> : null}
     {data && !simulation.error ? <>
       <div className="grid gap-4 md:grid-cols-2"><DrgGrouping result={data.grouping.formal} locale={locale} title={t('正式事实分组', 'Confirmed facts')} />{data.grouping.projected ? <DrgGrouping result={data.grouping.projected} locale={locale} title={t('若计划手术实施', 'If planned surgery is performed')} /> : null}</div>
       <p data-testid="drg-charges">{t('已发生收费 ', 'Posted charges ')}{formatFen(data.formal.chargesFen, locale)} · {t('含计划、预留及草稿的费用推演 ', 'Charges including plans, reservations and draft ')}{formatFen(data.coverage.estimatedTotalFen, locale)}</p>
@@ -126,6 +130,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
       {onReview && draft ? <Button disabled={write.blocked || admission.status !== 'admitted' || !reviewable} onClick={() => onReview({ fingerprint: data.fingerprint, estimatedTotalFen: data.coverage.estimatedTotalFen, drgCode: data.grouping.formal.drgCode ?? null })}>{t('审阅推演并签发医嘱', 'Review simulation and issue order')}</Button> : null}
     </> : null}
     {reservations && admission.status === 'admitted' ? <MaterialReservations admission={admission} session={session} locale={locale} write={write} /> : null}
+    </>}
   </section>
 }
 
