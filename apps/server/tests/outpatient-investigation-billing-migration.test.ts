@@ -81,6 +81,8 @@ afterEach(async () => {
 describe('门诊独立检查收费迁移', () => {
   it('保留旧应收、精确预览、原收退款及三类免费申请，重启后不重复迁移', async () => {
     const database = await legacyDatabase()
+    insertCharge(database, 'registration', 'registration')
+    insertCharge(database, 'medication', 'medication')
     for (const kind of ['laboratory', 'imaging', 'pathology']) insertRequest(database, `legacy-${kind}`, kind)
     database.driver.prepare(`INSERT INTO inpatient_ward VALUES(?,?,'ward','organization','合成病区')`)
       .run(scope.workspaceId, scope.epoch)
@@ -147,6 +149,26 @@ describe('门诊独立检查收费迁移', () => {
     expect(reopened.driver.pragma('foreign_key_check')).toEqual([])
   })
 
+  it('同次多项同类费用存在时，旧已付款预览使用原资金分配确定费用目标', async () => {
+    const database = await legacyDatabase()
+    insertCharge(database, 'second', 'laboratory')
+    insertPreview(database, 'consumed-preview')
+    database.driver.prepare("UPDATE payment_preview SET consumed_at=? WHERE preview_id='consumed-preview'").run(now)
+    database.driver.prepare(`INSERT INTO payment_transaction
+      (workspace_id,epoch,payment_id,case_id,category,amount_fen,outcome,correlation_id,preview_id,created_at)
+      VALUES(?,?,'original-payment','case','laboratory',2500,'success','original-correlation','consumed-preview',?)`)
+      .run(scope.workspaceId, scope.epoch, now)
+    database.driver.prepare('INSERT INTO payment_allocation VALUES(?,?,?,?,?)')
+      .run(scope.workspaceId, scope.epoch, 'original-payment', 'item-second', 2500)
+
+    expect(applyMigrations(database).applied).toEqual([migration])
+
+    expect(database.driver.prepare("SELECT charge_item_id FROM payment_preview WHERE preview_id='consumed-preview'").get())
+      .toEqual({ charge_item_id: 'item-second' })
+    expect(database.driver.prepare('SELECT charge_item_id FROM payment_allocation').get()).toEqual({ charge_item_id: 'item-second' })
+    expect(database.driver.pragma('foreign_key_check')).toEqual([])
+  })
+
   it.each(['missing', 'ambiguous'] as const)('旧预览费用目标%s时拒绝迁移，完整回滚并恢复外键保护', async matching => {
     const database = await legacyDatabase()
     insertPreview(database, 'preview-invalid')
@@ -193,6 +215,10 @@ describe('门诊独立检查收费迁移', () => {
       SET payment_policy='legacy-unbilled' WHERE request_id='request-imaging'`).run()).toThrow()
     expect(() => database.driver.prepare(`UPDATE outpatient_investigation_billing
       SET price_json=NULL WHERE request_id='request-imaging'`).run()).toThrow()
+    expect(() => database.driver.prepare(`UPDATE outpatient_investigation_billing
+      SET charge_item_id='item-pathology' WHERE request_id='request-imaging'`).run()).toThrow()
+    expect(() => database.driver.prepare(`UPDATE outpatient_investigation_billing
+      SET request_id='nonexistent' WHERE request_id='request-imaging'`).run()).toThrow()
     expect(() => database.driver.prepare(`UPDATE outpatient_investigation_billing
       SET released_at=? WHERE request_id='request-imaging'`).run(now)).toThrow()
     database.driver.prepare(`UPDATE outpatient_investigation_billing SET released_at=?,release_json='{"paidFen":2500}'
