@@ -1428,6 +1428,51 @@ describe('outpatient workflow HTTP contract', () => {
     expect(bill.payments).toEqual([])
   })
 
+  it('bills an independent laboratory request without changing the active doctor visit and releases only after full payment', async () => {
+    const { runtime, password } = await paymentTestRuntime()
+    const { doctorCookie, started } = await startSyntheticPatientConsultation(runtime, password)
+    const expectedVersions = { [`Encounter/${started.encounterId}`]: started.encounterVersion }
+    const draftResponse = await runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/draft`, {
+      method: 'PUT', headers: commandHeaders(doctorCookie), body: JSON.stringify({ expectedVersions,
+        input: { catalogItemId: 'lab-cbc', expectedDraftVersion: 0, indicationCode: 'fever' } }),
+    })
+    const draft = laboratoryRequestDraftResponseSchema.parse(await draftResponse.json()).data
+    const issuePayload = { expectedVersions, input: { expectedDraftVersion: draft.draftVersion } }
+    const issueKey = randomUUID()
+    const issue = () => runtime.app.request(`/api/his/v1/encounters/${started.encounterId}/laboratory-request/actions/issue`, {
+      method: 'POST', headers: commandHeaders(doctorCookie, issueKey), body: JSON.stringify(issuePayload),
+    })
+    const issued = issueLaboratoryRequestResponseSchema.parse(await (await issue()).json()).data.request
+    const replay = issueLaboratoryRequestResponseSchema.parse(await (await issue()).json()).data.request
+    expect(replay.id).toBe(issued.id)
+    expect(issued.billing).toMatchObject({ status: 'pending', remainingFen: 2500 })
+    const cookie = await signIn(runtime, 'cashier@demo.clinmesh.local', password)
+    const readBill = async () => billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${started.caseId}`, { headers: { cookie } })).json())
+    const charge = (await readBill()).charges.find(item => item.requestId === issued.id)
+    expect(charge).toMatchObject({ amountFen: 2500, sourceReference: `ServiceRequest/${issued.serviceRequestId}` })
+    if (charge === undefined) throw new Error('Missing independent laboratory charge')
+    const collect = async (amountFen: number, version: number) => {
+      const expectedVersions = { [`ChargeItem/${charge.chargeItemId}`]: String(version) }
+      const preview = paymentPreviewResponseSchema.parse(await (await runtime.app.request('/api/his/v1/payments/actions/preview', {
+        method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions,
+          input: { caseId: started.caseId, category: 'laboratory', chargeItemId: charge.chargeItemId,
+            simulatorRule: 'success', tenders: [{ method: 'cash', amountFen }] } }),
+      })).json()).data
+      const confirmed = await runtime.app.request(`/api/his/v1/payments/${preview.previewId}/actions/confirm`, {
+        method: 'POST', headers: commandHeaders(cookie), body: JSON.stringify({ expectedVersions, input: { commitToken: preview.commitToken } }),
+      })
+      expect(confirmed.status).toBe(200)
+    }
+    const readRequest = async () => doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.caseId}`, { headers: { cookie: doctorCookie } })).json())
+    await collect(1000, 1)
+    expect((await readRequest()).laboratoryRequests?.requests.find(item => item.id === issued.id)).toMatchObject({ status: 'issued', billing: { status: 'partial', remainingFen: 1500 } })
+    await collect(1500, 2)
+    for (let event = await runtime.dispatcher.dispatchOnce(); event !== undefined; event = await runtime.dispatcher.dispatchOnce()) { /* drain controlled events */ }
+    const detail = await readRequest()
+    expect(detail.laboratoryRequests?.requests.find(item => item.id === issued.id)).toMatchObject({ status: 'reported', billing: { status: 'paid' } })
+    expect((await readBill()).charges.filter(item => item.requestId === issued.id)).toHaveLength(1)
+  })
+
   it('refunds only a recorded fee correction against the original payment without undoing clinical release', async () => {
     const { runtime, password } = await paymentTestRuntime()
     const testCase = await createPaidLabCase(runtime, password)

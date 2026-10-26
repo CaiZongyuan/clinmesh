@@ -64,6 +64,12 @@ export class OutpatientInvestigationBilling {
   constructor(private readonly database: ClinMeshDatabase) { this.#ledger = new PaymentLedger(database) }
 
   priceForLaboratory(service: LaboratoryServiceSnapshot) { return laboratoryOutpatientPrice(service) }
+  priceForPublishedLaboratory(item: { id: string; version: number; priceFen: number }) {
+    return item.priceFen <= 0 ? undefined : {
+      ...syntheticPrice(item.id, item.priceFen, '项目'), version: item.version,
+      source: 'published-synthetic-laboratory-price',
+    }
+  }
   priceForService(category: 'imaging' | 'pathology', serviceId: string) { return serviceOutpatientPrice(category, serviceId) }
 
   issue(transaction: CommandTransaction, context: ActorContext, input: {
