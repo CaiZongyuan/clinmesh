@@ -129,10 +129,17 @@ export class GuidelineCorpus {
     return this.#database.transaction(() => {
       let created = false
       let passageCount = 0
+      let rebuiltIndex = false
       for (const document of documents) {
         passageCount += document.passages.length
         const digest = hash(JSON.stringify(document))
-        if (this.#matchesDocument(document, digest)) continue
+        const existing = this.#storedDocumentIntegrity(document.source.id)
+        if (existing?.valid && existing.digest === digest) continue
+        // 外部损坏可能使原文与 FTS 失配；先恢复索引，确保删除触发器使用当前正文。
+        if (existing !== undefined && !existing.valid && !rebuiltIndex) {
+          this.#database.exec("INSERT INTO guideline_passage_fts(guideline_passage_fts) VALUES('rebuild')")
+          rebuiltIndex = true
+        }
         created = true
         this.#database.prepare('DELETE FROM guideline_passage WHERE source_id = ?').run(document.source.id)
         this.#database.prepare(`
@@ -151,21 +158,28 @@ export class GuidelineCorpus {
 
   matchesDocuments(inputs: readonly GuidelineDocument[]): boolean {
     const documents = documentsSchema.parse(inputs)
-    return this.#database.transaction(() => documents.every(document => this.#matchesDocument(document, hash(JSON.stringify(document)))))()
+    return this.#database.transaction(() => documents.every(document => {
+      const existing = this.#storedDocumentIntegrity(document.source.id)
+      return existing?.valid === true && existing.digest === hash(JSON.stringify(document))
+    }))()
   }
 
-  #matchesDocument(document: GuidelineDocument, digest: string): boolean {
-    const row = storedDocumentSchema.safeParse(this.#database.prepare('SELECT metadata, digest FROM guideline_source WHERE id = ?').get(document.source.id))
-    if (!row.success || row.data.digest !== digest) return false
-    const rows = storedPassagesSchema.safeParse(this.#database.prepare('SELECT id, locator, text FROM guideline_passage WHERE source_id = ? ORDER BY rowid').all(document.source.id))
-    if (!rows.success || rows.data.length !== document.passages.length) return false
+  #storedDocumentIntegrity(sourceId: string): { digest: string; valid: boolean } | undefined {
+    const stored = this.#database.prepare('SELECT metadata, digest FROM guideline_source WHERE id = ?').get(sourceId)
+    if (stored === undefined) return undefined
+    const row = storedDocumentSchema.safeParse(stored)
+    if (!row.success) return { digest: '', valid: false }
+    const invalid = { digest: row.data.digest, valid: false }
+    const rows = storedPassagesSchema.safeParse(this.#database.prepare('SELECT id, locator, text FROM guideline_passage WHERE source_id = ? ORDER BY rowid').all(sourceId))
+    if (!rows.success) return invalid
     let source: unknown
     try { source = JSON.parse(row.data.metadata) }
-    catch { return false }
+    catch { return invalid }
     const metadata = guidelineSourceDefinitionSchema.safeParse(source)
-    if (!metadata.success) return false
-    if (rows.data.some(passage => passage.id !== hash(JSON.stringify([document.source.id, document.source.version, document.source.sha256, passage.locator])))) return false
-    return hash(JSON.stringify({ source: metadata.data, passages: rows.data.map(({ locator, text }) => ({ locator, text })) })) === digest
+    if (!metadata.success || metadata.data.id !== sourceId) return invalid
+    if (rows.data.some(passage => passage.id !== hash(JSON.stringify([sourceId, metadata.data.version, metadata.data.sha256, passage.locator])))) return invalid
+    return { digest: row.data.digest, valid: hash(JSON.stringify({ source: metadata.data,
+      passages: rows.data.map(({ locator, text }) => ({ locator, text })) })) === row.data.digest }
   }
 
   search(text: string): GuidelineSearchResult {

@@ -109,6 +109,7 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(reader.matchesDocuments([input])).toBe(false)
     expect(writer.importDocuments([input])).toEqual({ created: true, passageCount: 1 })
     expect(reader.matchesDocuments([input])).toBe(true)
+    expect(reader.search('软骨发育不全').guidelines).toContainEqual(expect.objectContaining({ text: input.passages[0]!.text }))
     expect(reader.sources()).toHaveLength(2)
     expect(writer.importDocuments([input])).toEqual({ created: false, passageCount: 1 })
   })

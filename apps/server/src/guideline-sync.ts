@@ -2,8 +2,8 @@ import { readFile, stat } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { z } from 'zod'
-import { defaultGuidelineDatabasePath, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
-import { isGuidelineSourceUsable } from './application/guideline-corpus.ts'
+import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
+import { isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus, guidelineSourceDefinitionSchema } from './infrastructure/sqlite/guideline-corpus.ts'
 import { importGuidelineSource } from './infrastructure/guidelines/import-guideline-source.ts'
 
@@ -23,7 +23,7 @@ export interface GuidelineSyncResult {
 }
 
 export async function runGuidelineSync(args: readonly string[], options: {
-  fetch?: typeof fetch; onProgress?: (line: string) => void; allowNonCommercial?: boolean
+  fetch?: typeof fetch; onProgress?: (line: string) => void; allowNonCommercial?: boolean; deploymentPolicy?: GuidelineDeploymentPolicy
 } = {}): Promise<GuidelineSyncResult> {
   const { values } = parseArgs({ args: [...args], allowPositionals: false, strict: true, options: {
     manifest: { type: 'string' }, database: { type: 'string' }, 'cache-dir': { type: 'string' }, check: { type: 'boolean' },
@@ -37,6 +37,7 @@ export async function runGuidelineSync(args: readonly string[], options: {
     sources = registrySchema.parse(JSON.parse(await readFile(manifestPath, 'utf8'))).sources
   }
   const corpus = new GuidelineCorpus({ databasePath, allowNonCommercial: options.allowNonCommercial === true,
+    deploymentPolicy: options.deploymentPolicy ?? 'default',
     ...(values.check ? { readOnly: true } : {}) })
   const items: GuidelineSyncResult['items'] = []
   try {
@@ -44,9 +45,11 @@ export async function runGuidelineSync(args: readonly string[], options: {
     for (const source of sources) {
       options.onProgress?.(`${source.id}: 读取与校验原文`)
       try {
-        if (source.status !== 'active') {
+        const unavailableText = source.distribution !== undefined && source.distribution.textStatus !== 'verified'
+        if (source.status !== 'active' || unavailableText) {
           corpus.importDocument({ source, passages: [] })
-          items.push({ sourceId: source.id, status: source.status, passageCount: 0 })
+          items.push({ sourceId: source.id, status: unavailableText ? 'withheld' : source.status, passageCount: 0,
+            ...(unavailableText ? { reason: `Text verification: ${source.distribution!.textStatus}` } : {}) })
           continue
         }
         // 权限撤销先生效，即使后续原文已经无法取得。
@@ -58,7 +61,7 @@ export async function runGuidelineSync(args: readonly string[], options: {
         const document = await importGuidelineSource(source, { cacheDirectory,
           ...(options.fetch === undefined ? {} : { fetch: options.fetch }) })
         const imported = corpus.importDocument(document)
-        const usable = isGuidelineSourceUsable(source, options.allowNonCommercial)
+        const usable = isGuidelineSourceUsable(source, options.allowNonCommercial, options.deploymentPolicy)
         items.push({ sourceId: source.id, status: !usable ? 'withheld'
           : imported.created ? 'imported' : 'unchanged', passageCount: imported.passageCount })
         options.onProgress?.(`${source.id}: ${imported.passageCount} 段，${usable ? '可检索' : '当前用途不可检索'}`)
@@ -69,20 +72,21 @@ export async function runGuidelineSync(args: readonly string[], options: {
       }
     }
     const installed = corpus.sources()
-    const searchable = installed.filter(item => isGuidelineSourceUsable(item.source, options.allowNonCommercial) && item.passageCount > 0)
+    const searchable = installed.filter(item => isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy) && item.passageCount > 0)
     return { databasePath, sourceCount: installed.length, searchableSourceCount: searchable.length,
       passageCount: installed.reduce((total, item) => total + item.passageCount, 0),
       searchablePassageCount: searchable.reduce((total, item) => total + item.passageCount, 0),
       failedSourceCount: items.filter(item => item.status === 'failed').length,
       items: values.check ? installed.map(item => ({ sourceId: item.source.id,
         status: item.source.status !== 'active' ? item.source.status
-          : item.passageCount > 0 && isGuidelineSourceUsable(item.source, options.allowNonCommercial) ? 'available' : 'withheld', passageCount: item.passageCount })) : items }
+          : item.passageCount > 0 && isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy) ? 'available' : 'withheld', passageCount: item.passageCount })) : items }
   } finally { corpus.close() }
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(import.meta.filename)) {
   const result = await runGuidelineSync(process.argv.slice(2).filter(argument => argument !== '--'), {
     allowNonCommercial: guidelineNonCommercialUseSchema.parse(readServerEnvironment(process.env).CLINMESH_GUIDELINE_NON_COMMERCIAL_USE),
+    deploymentPolicy: guidelineDeploymentPolicySchema.parse(readServerEnvironment(process.env).CLINMESH_GUIDELINE_DEPLOYMENT_POLICY),
     onProgress: line => process.stderr.write(`${line}\n`),
   })
   process.stdout.write(`${JSON.stringify(result)}\n`)

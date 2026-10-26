@@ -62,6 +62,29 @@ it('withholds non-commercial sources from sync availability unless deployment us
     .toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0, items: [{ sourceId: entry.id, status: 'withheld', passageCount: 1 }] })
 })
 
+it('checks internal-test availability using the same registered text status as runtime search', async () => {
+  const text = 'Synthetic diabetes recommendation for a verified internal-test distribution.\n'
+  const entry = source('synthetic-internal-testing', text)
+  entry.license.usage = 'unverified'
+  entry.distribution = { packageId: 'synthetic-guidelines', releaseId: 'synthetic-v1', textStatus: 'verified',
+    verificationRecord: 'verification/synthetic-guideline.json' }
+  const data = await fixture([entry])
+  const corpus = new GuidelineCorpus({ databasePath: data.database })
+  try { corpus.importDocument({ source: entry, passages: [{ locator: 'Line 1', text }] }) }
+  finally { corpus.close() }
+  const args = ['--check', '--database', data.database]
+  const noNetwork: typeof fetch = async () => { throw new Error('Read-only check must not fetch') }
+  expect(await runGuidelineSync(args, { fetch: noNetwork, deploymentPolicy: 'internal-testing' }))
+    .toMatchObject({ sourceCount: 1, searchableSourceCount: 1, searchablePassageCount: 1,
+      items: [{ sourceId: entry.id, status: 'available', passageCount: 1 }] })
+  expect(await runGuidelineSync(args, { fetch: noNetwork }))
+    .toMatchObject({ searchableSourceCount: 0, searchablePassageCount: 0 })
+  await writeFile(data.manifest, JSON.stringify({ schemaVersion: 1,
+    sources: [{ ...entry, distribution: { ...entry.distribution, textStatus: 'unreadable' } }] }))
+  expect(await runGuidelineSync(data.args, { fetch: noNetwork, deploymentPolicy: 'internal-testing' }))
+    .toMatchObject({ failedSourceCount: 0, searchableSourceCount: 0, passageCount: 0 })
+})
+
 it('reuses verified bytes on a repeated sync and checks the corpus without downloading or replacing its revision', async () => {
   const text = 'Synthetic diabetes recommendation. Do not omit the individual conditions.\n'
   const data = await fixture([source('synthetic-cache', text)])
