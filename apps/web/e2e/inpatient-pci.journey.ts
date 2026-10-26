@@ -102,7 +102,12 @@ export async function runPciBrowserJourney(page: Page, app: PciBrowserApp, open:
   await page.getByRole('option', { name: '合成职工 v1', exact: true }).click()
   await insurance.getByRole('button', { name: '预览医保待遇', exact: true }).click()
   await insurance.getByRole('button', { name: '审阅医保结算', exact: true }).click()
-  await page.getByRole('alertdialog', { name: '确认医保结算', exact: true }).getByRole('button', { name: '提交医保结算', exact: true }).click()
+  const benefitsReview = page.getByRole('alertdialog', { name: '确认医保结算', exact: true })
+  await expect.poll(() => benefitsReview.evaluate(element => {
+    const bounds = element.getBoundingClientRect()
+    return bounds.top >= 0 && bounds.bottom <= window.innerHeight
+  })).toBe(true)
+  await benefitsReview.getByRole('button', { name: '提交医保结算', exact: true }).click()
   await expect(page.getByRole('alertdialog')).toHaveCount(0)
   const funds = await s.read('cashier', `${stay.path}/payments`, inpatientPaymentsSchema)
   expect(funds.remainingFen).toBeGreaterThan(10000)

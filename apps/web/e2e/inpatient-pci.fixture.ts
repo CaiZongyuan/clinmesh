@@ -44,6 +44,6 @@ export const test = base.extend<{ pciApp: PciBrowserApp }>({ pciApp: async ({ we
 export { expect }
 
 export async function loginPciBrowser(page: Page, app: PciBrowserApp, role: string) {
-  expect((await page.request.post(`${app.origin}/api/auth/sign-in/email`, { headers: { origin: app.origin },
+  expect((await page.request.post(`${app.origin}/api/auth/sign-in/email`, { maxRetries: 1, headers: { origin: app.origin },
     data: { email: `${role}@demo.clinmesh.local`, password: app.password } })).status()).toBe(200)
 }
