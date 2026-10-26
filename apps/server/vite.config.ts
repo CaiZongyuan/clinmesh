@@ -11,6 +11,8 @@ export default defineConfig({
       input: {
         'database-cli': 'src/database-cli.ts',
         'drg-reference-sync': 'src/drg-reference-sync.ts',
+        'guideline-prepare': 'src/guideline-prepare.ts',
+        'guideline-package': 'src/guideline-package.ts',
         index: 'src/index.ts',
       },
       output: {

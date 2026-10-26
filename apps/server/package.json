@@ -25,9 +25,11 @@
     "drg:build-rules": "tsx src/drg-rules-build.ts",
     "drg:verify-rules": "tsx src/drg-rules-verify.ts",
     "guidelines:sync": "tsx src/guideline-sync.ts",
+    "guidelines:prepare": "tsx src/guideline-prepare.ts",
+    "guidelines:package": "tsx src/guideline-package.ts",
     "performance": "tsx src/performance-cli.ts",
     "smoke:patient-brief:live": "tsx src/patient-persona-live-smoke.ts",
-    "start": "node dist/drg-reference-sync.js && node dist/index.js",
+    "start": "node dist/drg-reference-sync.js && node dist/guideline-prepare.js && node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "clean": "rm -rf dist coverage"

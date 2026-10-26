@@ -24,6 +24,7 @@ export interface DataSourceReadinessDependencies {
   referenceDatabaseReady: (configuredPath: string) => boolean
   runReferenceSync: () => Promise<void>
   runDrgReferenceSync: () => Promise<void>
+  runGuidelinePrepare: () => Promise<void>
   runSyntheaUp: () => Promise<void>
   write: (message: string) => void
 }
@@ -146,6 +147,8 @@ export async function ensureDataSourcesReady(
     if (!referencesSynced) await dependencies.runDrgReferenceSync()
     writeStatus(dependencies, 'ok', 'DRG 参考资料已就绪。')
   }
+  await dependencies.runGuidelinePrepare()
+  writeStatus(dependencies, 'ok', '指南资料已就绪。')
   await ensureSyntheaProvider(dependencies)
 }
 
@@ -295,6 +298,10 @@ export function createDataSourceReadinessDependencies(
     runDrgReferenceSync: () => runPackageManagerCommand([
       '--filter', '@clinmesh/server', 'drg:prepare',
       '--database', resolve(repositoryRoot, process.env.CLINMESH_REFERENCE_DATABASE_PATH ?? '.data/clinmesh-reference.sqlite'),
+    ]),
+    runGuidelinePrepare: () => runPackageManagerCommand([
+      '--filter', '@clinmesh/server', 'guidelines:prepare',
+      '--database', resolve(repositoryRoot, process.env.CLINMESH_GUIDELINE_DATABASE_PATH ?? '.data/clinmesh-guidelines.sqlite'),
     ]),
     runSyntheaUp: () => runSyntheaRuntimeCommand(
       'up',
