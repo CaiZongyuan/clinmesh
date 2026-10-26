@@ -98,7 +98,7 @@ function group_record(x) { return function(x) {
 }
 
 export async function parsePciResponse<T>(schema: z.ZodType<T>, response: Response): Promise<T> {
-  assert.equal(response.status, 200, response.ok ? undefined : await response.clone().text())
+  assert.equal(response.status, 200, response.ok ? 'Expected HTTP 200' : await response.clone().text())
   return schema.parse(await response.json())
 }
 
@@ -156,7 +156,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
   async function preparePciAdmission(materialIds = ['hospital-material-pci-stent', 'hospital-material-pci-balloon', 'hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter']) {
     await parsePciResponse(inpatientPciDataResponseSchema, await request('admin', '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' }))
     const source = (await parsePciResponse(pciCaseSourceResponseSchema, await request('admin', '/api/sim/v1/synthetic-cases/pci/prepare', { expectedEpoch: 'epoch-1' }))).data
-    const casePath = `/api/sim/v1/synthetic-cases/${source.case.id}`
+    const casePath = `/api/sim/v1/synthetic-cases/${source.case.caseId}`
     const persona = (await parsePciResponse(commandResponseSchema(patientPersonaRevisionSchema), await request('admin', `${casePath}/patient-persona-revisions`, { content: {
       chiefComplaint: '活动后胸闷三个月，加重一周，休息可缓解。', knownHistorySummary: '无已知药物过敏，静息无胸痛。', medicationMemory: '近期未自行加药。',
       openingStatement: '医生您好，最近一活动胸口就闷，休息后会好。', persona: { attitude: '愿意配合检查', character: '平和', healthLiteracy: '普通', speechStyle: '简短清楚' },
@@ -164,7 +164,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     } }))).data
     const ready = (await parsePciResponse(commandResponseSchema(syntheticCaseInstanceSchema), await requestRaw('admin', `${casePath}/patient-persona-revisions/active`, {
       personaRevision: persona.revision, expectedCaseRevision: source.case.revision }, 'PUT'))).data
-    const started = (await parsePciResponse(startSyntheticInpatientCaseResponseSchema, await requestRaw('registrar', `/api/his/v1/synthetic-cases/${source.case.id}/actions/start-inpatient-visit`, {
+    const started = (await parsePciResponse(startSyntheticInpatientCaseResponseSchema, await requestRaw('registrar', `/api/his/v1/synthetic-cases/${source.case.caseId}/actions/start-inpatient-visit`, {
       activeBriefRevision: ready.activeBriefRevision, expectedCaseRevision: ready.revision, expectedEpoch: 'epoch-1', wardId: 'ward-general' }))).data
     const admissionPath = `/api/his/v1/inpatient/admissions/${started.admissionId}`
     const registered = await read('registrar', admissionPath, inpatientDetailSchema)
@@ -176,7 +176,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
       kind: 'deposit', amountFen: 5000, tenders: [{ method: 'cash', amountFen: 5000 }] }))).data
     await parsePciResponse(inpatientPaymentResponseSchema, await request('cashier', `${admissionPath}/payments/confirm`, { previewId: deposit.previewId, commitToken: deposit.commitToken }))
     const stay = { admissionId: started.admissionId, patientId: started.patientId, path: admissionPath, encounterVersion: diagnosis.encounterVersion,
-      sourceCaseId: source.case.id, sourceCaseRevision: source.case.revision }
+      sourceCaseId: source.case.caseId, sourceCaseRevision: source.case.revision }
     const path = stay.path
     const catalog = await read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
     const procedure = catalog.procedures.find(item => item.coding.code === '36.0700')!
