@@ -111,6 +111,31 @@ it('选用手工 Persona 后从固定来源直接入院，保留病例绑定、�
   expect(s.modelCalls()).toBe(0)
 })
 
+it.each(['completed', 'closed'] as const)('%s Run 可重放直接入院原回执，但拒绝新入院意图', async status => {
+  const s = await setup(), admin = await s.login('admin'), registrar = await s.login('registrar')
+  const { ready, persona } = await readyPciCase(s, admin)
+  const key = randomUUID(), body = { activeBriefRevision: persona.revision, expectedCaseRevision: ready.revision, expectedEpoch: 'epoch-1', wardId: 'ward-general' }
+  const path = `/api/his/v1/synthetic-cases/${ready.caseId}/actions/start-inpatient-visit`
+  const first = await s.post(registrar, path, body, key)
+  expect(first.status).toBe(200)
+  const started = startSyntheticInpatientCaseResponseSchema.parse(await first.json())
+  // 仅设置生命周期前置，回执恢复与拒绝结果仍经真实认证 HTTP 验证。
+  s.runtime.database.driver.prepare('UPDATE scenario_run SET status=? WHERE scenario_run_id=?').run(status, 'scenario-run-1')
+
+  const replay = await s.post(registrar, path, body, key)
+  expect(replay.status).toBe(200)
+  expect(startSyntheticInpatientCaseResponseSchema.parse(await replay.json())).toEqual(started)
+  const changed = await s.post(registrar, path, { ...body, wardId: 'missing-ward' }, key)
+  expect(changed.status).toBe(409)
+  expect(await changed.json()).toMatchObject({ error: { code: 'IDEMPOTENCY_KEY_REUSED' } })
+  const fresh = await s.post(registrar, path, body)
+  expect(fresh.status).toBe(409)
+  expect(await fresh.json()).toMatchObject({ error: { code: 'CONTEXT_INACTIVE' } })
+  const admissions = inpatientListSchema.parse(await (await s.runtime.app.request('/api/his/v1/inpatient/admissions', { headers: { cookie: registrar } })).json())
+  expect(admissions.items.map(item => item.id)).toEqual([started.data.admissionId])
+  expect(s.modelCalls()).toBe(0)
+})
+
 it('来源准备拒绝非管理员、失效Epoch、缺少Origin及任意病例载荷', async () => {
   const s = await setup(), admin = await s.login('admin'), registrar = await s.login('registrar')
   const path = '/api/sim/v1/synthetic-cases/pci/prepare'

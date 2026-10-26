@@ -131,8 +131,6 @@ export class SyntheticCaseVisitService {
     caseId: string; context: ActorContext; idempotencyKey: string
     request: z.infer<typeof startSyntheticInpatientCaseRequestSchema>
   }) {
-    this.#inpatient.assertRole(input.context, ['registrar'])
-    const { brief, profile, syntheticCase } = this.#assets(input)
     return this.#inpatient.commands.execute({ context: input.context, idempotencyKey: input.idempotencyKey,
       input: { caseId: input.caseId, ...input.request }, operation: 'synthetic-case.start-inpatient-visit',
       expectedVersions: {}, dataSchema: startSyntheticInpatientCaseResultSchema,
@@ -140,11 +138,14 @@ export class SyntheticCaseVisitService {
         this.#inpatient.assertRole(input.context, ['registrar'])
         if (input.request.expectedEpoch !== input.context.epoch) throw new InpatientError('INPATIENT_EPOCH_CONFLICT', '入院意图所属数据世代已变化')
       },
-    }, transaction => this.#workflow.applyStartSyntheticCase(transaction, { brief, profile, syntheticCase, context: input.context,
-      expectedCaseRevision: input.request.expectedCaseRevision }, () => this.applyMaterializeInpatient({
-        transaction, context: input.context, caseId: syntheticCase.caseId, caseRevision: input.request.expectedCaseRevision,
-        profile, briefRevision: brief.revision, wardId: input.request.wardId,
-      })))
+    }, transaction => {
+      const { brief, profile, syntheticCase } = this.#assets(input)
+      return this.#workflow.applyStartSyntheticCase(transaction, { brief, profile, syntheticCase, context: input.context,
+        expectedCaseRevision: input.request.expectedCaseRevision }, () => this.applyMaterializeInpatient({
+          transaction, context: input.context, caseId: syntheticCase.caseId, caseRevision: input.request.expectedCaseRevision,
+          profile, briefRevision: brief.revision, wardId: input.request.wardId,
+        }))
+    })
   }
 
   replayInpatientCases(input: { fromContext: ActorContext; toContext: ActorContext; transaction: CommandTransaction }) {

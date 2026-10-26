@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createWriteStream } from 'node:fs'
+import { createWriteStream, existsSync } from 'node:fs'
 import { lstat, mkdir, mkdtemp, readFile, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -53,22 +53,24 @@ const hash = (value: string | Buffer) => createHash('sha256').update(value).dige
 
 async function publish(options: DrgReferenceSyncOptions, inventory: OfflineReferenceInventory, inputRoot: string, source: DrgReferenceSyncResult['source']) {
   let temporary: string | undefined
-  let database: ReturnType<typeof openReferenceDatabase> | undefined
   try {
-    if (!options.checkOnly) {
+    if (!options.checkOnly && existsSync(options.databasePath)) {
+      const database = openReferenceDatabase({ databasePath: options.databasePath, readonly: true, busyTimeoutMs: 5_000 })
       try {
-        database = openReferenceDatabase({ databasePath: options.databasePath, readonly: true, busyTimeoutMs: 5_000 })
-        let page = 1
-        while (true) {
-          const result = listOfflineInventories(database, { page, pageSize: 50 })
-          if (result.items.some(item => item.inventoryId === inventory.inventoryId && item.contentHash === inventory.contentHash)) {
-            return { inventoryId: inventory.inventoryId, source, created: false, inputRoot }
+        if (database.driver.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'reference_offline_inventory'").get() !== undefined) {
+          let registered = false
+          let page = 1
+          while (true) {
+            const result = listOfflineInventories(database, { page, pageSize: 50 })
+            registered ||= result.items.some(item => item.inventoryId === inventory.inventoryId && item.contentHash === inventory.contentHash)
+            if (page * result.pageSize >= result.total) break
+            page += 1
           }
-          if (page * result.pageSize >= result.total) break
-          page += 1
+          if (registered) return { inventoryId: inventory.inventoryId, source, created: false, inputRoot }
         }
-      } catch { /* A missing database or migration is prepared below. */ }
-      finally { database?.close() }
+      } catch (error) {
+        throw new Error('DRG 离线登记校验失败；请按 docs/deployment.md#旧格式-drg-登记的局部恢复 核对，未确认替代关系前不要清理旧登记', { cause: error })
+      } finally { database.close() }
     }
     if (options.checkOnly) temporary = await mkdtemp(join(tmpdir(), 'clinmesh-drg-check-'))
     const databasePath = temporary === undefined ? options.databasePath : join(temporary, 'reference.sqlite')

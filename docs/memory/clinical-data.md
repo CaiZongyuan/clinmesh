@@ -36,6 +36,8 @@
 
 - Command receipt 是跨版本持久数据。响应 DTO 新增必填字段时提供向后兼容默认值或迁移旧回执；删除 strict DTO 字段时投影旧响应，并覆盖提前委托到其他方法的动作分支。回归用原请求与原幂等键重放升级前响应形状，同时检查原回执和审计不变；只验证新命令成功不能发现这类回归。
 
+- 原幂等请求在 Run 完成后返回 `CONTEXT_INACTIVE` 时，检查业务包装是否在 `CommandExecutor.execute` 前调用了隐含 `assertActive` 的角色检查或读取了可变业务资产。将新写入的授权与资产读取留在 Command 事务内，让既有回执先重放；同时验证新幂等键仍被拒绝、同键改载荷仍稳定冲突。直接入院回归见[病例来源 HTTP 测试](../../apps/server/tests/pci-case-source-http.test.ts)，回执顺序由[幂等合同](../architecture/fhir-and-commands.md#65-idempotency)拥有。
+
 - 扩展共享 apply 的业务上下文时，逐一回归其公开 Command 包装的岗位边界；共享实现允许住院，不代表旧门诊入口可放行住院岗位。同时构造缺关联的遗留事实，验证系统事件拒绝而正确入口仍可完成；见[授权边界回归](../../apps/server/tests/inpatient-legacy-request-http.test.ts)与[临床合同](../architecture/clinical-workflows.md#82-住院闭环后续)。
 
 - SQLite perf gate 统计数据库、WAL 和 SHM 总增长；同一 Command completion 更新的多个 nullable 关联列若各建独立索引，会放大短事务 WAL pages。优先按真实验证查询建立一个复合索引，并用 `pnpm perf:ci` 证明增长，而不是放宽预算。
@@ -155,6 +157,8 @@
 - 从 FHIR 出生日期计算日龄前先验证完整且有效的日期；`new Date` 会给部分日期补月日，也会将不存在的日期滚动到下个月。未满周岁是否保留日龄按日历整岁判断，不能用 `<365`，否则闰年前一日会丢失仍有效的第 365 日龄。排查凌晨年龄异常时，配对验证同一时点的 `Z` 与 `+08:00` 表达及医院午夜前后；边界回归见[分组年龄测试](../../apps/server/tests/inpatient-drg-age.test.ts)，计算口径见[DRG 条件分组](../architecture/drg-grouping.md#住院输入与冻结)。
 
 - FHIR Quantity 的 `value` 可能只是范围边界；窄 Zod 投影会剥除未声明的 `comparator`，因此读取精确体重前须显式检查比较符。用正式 Observation 写入、回读并配对验证边界值和未知输入，不能只用裸数值 fixture；见[出生体重回归](../../apps/server/tests/inpatient-birth-weight.test.ts)及[住院输入合同](../architecture/drg-grouping.md#住院输入与冻结)。
+
+- DRG 准备显示成功但 Server 在 `readInventory` 报缺少 `storage` 时，先只读核对参考库是否同时保留旧格式与当前清单；这会影响带旧登记升级的环境，全新安装未必触发。物理格式不同不代表逻辑资料不同，不能据此重建临床目录；显式恢复的备份、完整核验和定向清理前提见[旧格式登记恢复](../deployment.md#旧格式-drg-登记的局部恢复)。准备入口不得吞掉已有登记的格式或哈希错误；跨页回归不能只验证当前身份所在页。
 
 - 离线清单的合成 fixture 要沿用真实来源字段名，并从公开准备与回读入口核对；只用自拟的通用 `unit` 字段会漏掉来源单位提取缺口。摘要提取修正后重新准备已有资料时，先核对清单身份，恢复方式见[离线 DRG 资料核对](../deployment.md#离线-drg-资料核对)，不要修改数据库绕过不可变校验。
 
