@@ -192,17 +192,18 @@ export class InpatientDrg {
       ...facts.executions.map(execution => [execution.id, facts.orders.find(order => order.id === execution.orderId)?.doseQuantity ?? 1] as const),
     ])
     const chargesById = new Map(facts.charges.map(charge => [charge.id, charge]))
-    const pendingOrders = z.array(z.object({ order_id: z.string(), kind: z.string(), display: z.string(), state: z.string(),
+    const scheduledOrderIds = new Set(facts.executions.map(execution => execution.orderId))
+    const pendingOrders = z.array(z.object({ order_id: z.string(), kind: z.string(), display: z.string(),
       dose_quantity: z.number(), price_fen: z.number(), pending_executions: z.number() })).parse(this.owner.database.driver.prepare(`
-      SELECT o.order_id, o.kind, o.display, o.state, o.dose_quantity, o.price_fen,
+      SELECT o.order_id, o.kind, o.display, o.dose_quantity, o.price_fen,
         (SELECT COUNT(*) FROM inpatient_execution e WHERE e.workspace_id=o.workspace_id AND e.epoch=o.epoch
           AND e.order_id=o.order_id AND e.status='pending') AS pending_executions
       FROM inpatient_order o WHERE o.workspace_id=? AND o.epoch=? AND o.admission_id=? AND o.state NOT IN ('stopped','completed')
       ORDER BY o.order_id`).all(context.workspaceId, context.epoch, admissionId))
     const committed = [
-      // 待执行次数乘单次计量；已签署尚未排程的计下一次，已记费发药/执行不计入。
+      // 首次排程前保留下一剂（含已校对长期医嘱）；排程后仅计待执行，已记费发药/执行不计入。
       ...pendingOrders.map(row => {
-        const quantity = (row.state === 'signed' ? 1 : row.pending_executions) * row.dose_quantity
+        const quantity = (scheduledOrderIds.has(row.order_id) ? row.pending_executions : 1) * row.dose_quantity
         return { kind: row.kind as 'medication' | 'service', id: row.order_id, display: row.display,
           quantity, estimatedFen: quantity * row.price_fen }
       })

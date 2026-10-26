@@ -13,6 +13,7 @@ import { inpatientSurgeryExecuteInputSchema } from '@clinmesh/contracts/inpatien
 import { createPatientResponseSchema, apiErrorSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema } from '@clinmesh/contracts/inpatient'
 import { inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
+import { inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 
 const cleanups: Array<() => Promise<void>> = []
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
@@ -97,6 +98,57 @@ async function finish(s: Awaited<ReturnType<typeof setup>>) {
 }
 
 describe('住院 DRG 处方推演公共 HTTP', () => {
+  it('长期 QD 首次排程前保留未记费承诺，排程和发药后不重复计算', async () => {
+    const s = await setup()
+    const clinical = inpatientFullClinicalResponseSchema.parse(await (await confirmPrimary(s)).json()).data
+    const issued = await s.request(s.doctor, `${s.path}/orders/issue`, {
+      encounterVersion: clinical.encounterVersion, duration: 'long',
+      selection: { kind: 'medication', catalogItemId: 'medication-amlodipine', catalogVersion: 1,
+        doseText: '5 mg', doseQuantity: 1, frequencyCode: 'QD' },
+    })
+    expect(issued.status).toBe(200)
+    const order = inpatientFullClinicalResponseSchema.parse(await issued.json()).data.orders[0]!
+    const simulate = async () => {
+      const response = await s.request(s.doctor, `${s.path}/drg/simulation`, {})
+      expect(response.status).toBe(200)
+      return inpatientDrgSimulationSchema.parse(await response.json())
+    }
+    const expectedItem = { kind: 'medication', id: order.id, display: order.display, quantity: 1, estimatedFen: 1500 }
+    expect((await simulate()).committed.items).toEqual([expectedItem])
+
+    const verified = await s.request(s.nurse, `${s.path}/orders/verify`, { orderId: order.id, expectedOrderVersion: order.version })
+    expect(verified.status).toBe(200)
+    const checked = inpatientFullClinicalResponseSchema.parse(await verified.json()).data
+    expect(checked.orders[0]?.state).toBe('verified')
+    expect(checked.executions).toEqual([])
+    expect(checked.dispenses).toEqual([])
+    const beforeScheduling = await simulate()
+    expect(beforeScheduling.committed.items).toEqual([expectedItem])
+    expect(beforeScheduling.coverage.estimatedTotalFen).toBe(1500)
+
+    const admin = await s.login('admin')
+    expect((await s.request(admin, '/api/sim/v1/scenario-runs/scenario-run-1/actions/advance-time', {
+      expectedVirtualTime: '2026-08-24T09:00:00+08:00', targetVirtualTime: '2026-08-25T08:00:00+08:00',
+    })).status).toBe(200)
+    const scheduled = inpatientFullClinicalSchema.parse(await (await s.request(s.doctor, `${s.path}/clinical`)).json())
+    expect(scheduled.executions).toHaveLength(1)
+    expect((await simulate()).committed.items).toEqual([expectedItem])
+
+    const pharmacist = await s.login('pharmacist')
+    const pharmacy = inpatientPharmacySchema.parse(await (await s.request(pharmacist, `${s.path}/pharmacy`)).json())
+    const execution = pharmacy.executions[0]!, lot = pharmacy.medications.find(item => item.id === 'medication-amlodipine')!.lots[0]!
+    const supplied = await s.request(pharmacist, `${s.path}/executions/dispense`, {
+      executionId: execution.id, expectedExecutionVersion: execution.version,
+      lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: 1 }],
+    })
+    expect(supplied.status).toBe(200)
+    expect(inpatientPharmacyResponseSchema.parse(await supplied.json()).data.executions[0]?.status).toBe('dispensed')
+    const afterDispense = await simulate()
+    expect(afterDispense.committed.items).toEqual([])
+    expect(afterDispense.formal.items).toContainEqual(expect.objectContaining({ kind: 'medication', quantity: 1, estimatedFen: 1500 }))
+    expect(afterDispense.coverage.estimatedTotalFen).toBe(afterDispense.formal.chargesFen)
+  })
+
   it('相同事实的不同住院不能复用审阅指纹', async () => {
     const s = await setup()
     const service = s.clinicalCatalog.services[0]

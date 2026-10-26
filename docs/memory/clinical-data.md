@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 排查 DRG 未记费承诺时，用公开 HTTP 验证长期 QD 医嘱在当日给药时点后校对、次日首次排程、发药尚未给药三个边界；仅检查签署状态或临时医嘱会漏掉“已校对但没有执行单”，无条件补一剂又会重复计算已记费发药。回归入口见[DRG 推演测试](../../apps/server/tests/inpatient-drg-simulation-http.test.ts)，计量范围由[临床流程](../architecture/clinical-workflows.md#drg-评估与医保办核定)拥有。
+
 - 资金预览成功、确认却因金额schema失败时，先统一预览、确认与回执的单笔限额，提前拒绝超限请求并按原限额分笔办理；不要为绕过失败扩大单笔范围。原款总额、累计已退与单笔交易分别验证，回归覆盖限额值、限额加一、分笔后的累计余额及未知恢复，详细合同见[住院出院与结算](../architecture/clinical-workflows.md#住院出院与结算)。
 
 - 仅延后单条迁移、其余 schema 沿用当前版本的兼容测试，固定历史行用显式列名写入，新增可空列交由默认值补齐；真正固定版本的历史库仍固定迁移集合。继续比较完整业务行、归档 JSON、回执及重放行为，见[资金迁移回归](../../apps/server/tests/inpatient-payments-migration.test.ts)。
