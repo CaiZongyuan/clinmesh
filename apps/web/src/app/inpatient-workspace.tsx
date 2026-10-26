@@ -67,7 +67,7 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
   const error = catalog.error ?? transferCatalog.error ?? admissions.error ?? patients.error ?? referrals.error ?? write.storageFailure ?? write.mutation.error
   const messages = getWorkspaceMessages(locale)
   const status = (admission: InpatientAdmission) => inpatientStatus(admission, locale)
-  return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+  return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} data-theme="paper" className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <div className="shrink-0 px-4">
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, messages)}</AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />

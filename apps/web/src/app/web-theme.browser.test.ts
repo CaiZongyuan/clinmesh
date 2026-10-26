@@ -15,6 +15,7 @@ const browserMetricsSchema = z.object({
   dark: themeMetricsSchema,
   light: themeMetricsSchema,
   surfaceDarkDiv: themeMetricsSchema,
+  paper: themeMetricsSchema,
 })
 
 async function buildClinmeshStyles(): Promise<string> {
@@ -79,7 +80,10 @@ function testDocument(clinmeshStyles: string): string {
       app.dataset.theme = 'dark'
       app.style.colorScheme = 'dark'
       const surfaceDarkDiv = read()
-      document.title = btoa(JSON.stringify({ dark, light, surfaceDarkDiv }))
+      app.dataset.theme = 'paper'
+      app.style.colorScheme = 'light'
+      const paper = read()
+      document.title = btoa(JSON.stringify({ dark, light, surfaceDarkDiv, paper }))
     </script>
   </body>
 </html>`
@@ -103,4 +107,8 @@ test('applies standalone dark tokens to the application subtree across themes', 
   expect(metrics.surfaceDarkDiv.htmlBackground).toBe(metrics.light.htmlBackground)
   expect(metrics.surfaceDarkDiv.appBackground).toBe(metrics.dark.htmlBackground)
   expect(metrics.surfaceDarkDiv.appPainted).not.toBe('rgb(255, 255, 255)')
+
+  expect(metrics.paper.appBackground).toBe('#f7f5f1')
+  expect(metrics.paper.appPainted).toBe('rgb(247, 245, 241)')
+  expect(metrics.paper.appColorScheme).toBe('light')
 })
