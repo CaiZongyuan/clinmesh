@@ -132,17 +132,15 @@ export class GuidelineCorpus {
     return this.#database.transaction(() => {
       let created = false
       let passageCount = 0
-      let rebuiltIndex = false
+      if (!this.hasValidSearchIndex()) {
+        this.#database.exec("INSERT INTO guideline_passage_fts(guideline_passage_fts) VALUES('rebuild')")
+        created = true
+      }
       for (const document of documents) {
         passageCount += document.passages.length
         const digest = hash(JSON.stringify(document))
         const existing = this.#storedDocumentIntegrity(document.source.id)
         if (existing?.valid && existing.digest === digest) continue
-        // 外部损坏可能使原文与 FTS 失配；先恢复索引，确保删除触发器使用当前正文。
-        if (existing !== undefined && !existing.valid && !rebuiltIndex) {
-          this.#database.exec("INSERT INTO guideline_passage_fts(guideline_passage_fts) VALUES('rebuild')")
-          rebuiltIndex = true
-        }
         created = true
         this.#database.prepare('DELETE FROM guideline_passage WHERE source_id = ?').run(document.source.id)
         this.#database.prepare(`
@@ -165,6 +163,18 @@ export class GuidelineCorpus {
       const existing = this.#storedDocumentIntegrity(document.source.id)
       return existing?.valid === true && existing.digest === hash(JSON.stringify(document))
     }))()
+  }
+
+  // SQLite requires a writable connection for this command even though it only
+  // checks the index. Read-only preparation runs it on its disposable snapshot.
+  hasValidSearchIndex(): boolean {
+    try {
+      this.#database.exec("INSERT INTO guideline_passage_fts(guideline_passage_fts, rank) VALUES('integrity-check', 1)")
+      return true
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'SQLITE_CORRUPT_VTAB') return false
+      throw error
+    }
   }
 
   #storedDocumentIntegrity(sourceId: string): { digest: string; valid: boolean } | undefined {

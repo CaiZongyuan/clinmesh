@@ -38,7 +38,7 @@ export function matchesGuidelineDocuments(databasePath: string, documents: reado
     if (!matches || paths.some((path, index) => fileState(path) !== before[index])) {
       throw new Error('Guideline database changed during read-only checking; retry after its writer finishes')
     }
-    const reader = new GuidelineCorpus({ databasePath: copy, readOnly: true })
-    try { return reader.matchesDocuments(documents) } finally { reader.close() }
+    const reader = new GuidelineCorpus({ databasePath: copy })
+    try { return reader.matchesDocuments(documents) && reader.hasValidSearchIndex() } finally { reader.close() }
   } finally { rmSync(temporary, { recursive: true, force: true }) }
 }

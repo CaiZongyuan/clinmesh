@@ -130,6 +130,35 @@ it('只读检查发现已加载正文损坏，重复准备修复实际正文而�
   finally { reader.close() }
 })
 
+it('只读检查拒绝独立损坏的全文索引，离线准备恢复检索并保留其他来源', async () => {
+  const input = await fixture()
+  await runGuidelinePrepare(input.options)
+  const other = structuredClone(syntheticGuidelineDocument)
+  other.source.id = 'separate-maintained-source'
+  const writer = new GuidelineCorpus({ databasePath: input.options.databasePath })
+  writer.importDocument(other)
+  writer.close()
+  const { default: Database } = await import('better-sqlite3')
+  const database = new Database(input.options.databasePath)
+  database.exec("INSERT INTO guideline_passage_fts(guideline_passage_fts) VALUES('delete-all')")
+  database.close()
+  const broken = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try { expect(broken.search('diabetes').guidelines).toEqual([]) }
+  finally { broken.close() }
+  const before = await files(join(input.root, 'new-install'))
+  await expect(runGuidelinePrepare({ ...input.options, checkOnly: true })).rejects.toThrow('does not match')
+  expect(await files(join(input.root, 'new-install'))).toEqual(before)
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ source: 'installed', created: true })
+  const restored = new GuidelineCorpus({ databasePath: input.options.databasePath, readOnly: true, deploymentPolicy: 'internal-testing' })
+  try {
+    expect(restored.search('diabetes').guidelines).toHaveLength(2)
+    expect(restored.sources().map(item => item.source.id)).toContain(other.source.id)
+  } finally { restored.close() }
+  expect(await runGuidelinePrepare({ ...input.options, checkOnly: true })).toMatchObject({ created: false })
+  expect(await runGuidelinePrepare(input.options)).toMatchObject({ created: false })
+  expect(input.requests()).toBe(1)
+})
+
 it.each(['wrong-release', 'missing-file', 'extra-file', 'extraction-limit'] as const)(
   '拒绝不完整或不安全归档且不发布库：%s', async kind => {
     const input = await fixture()
