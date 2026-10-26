@@ -7,6 +7,7 @@ import { z } from 'zod'
 import type { ClinMeshDatabase } from '../infrastructure/sqlite/database.ts'
 import type { ActorContext, CommandTransaction } from './command-executor.ts'
 import { WorkflowError } from './workflow-error.ts'
+import { OutpatientInvestigationBilling } from './outpatient-investigation-billing.ts'
 
 export type ClinicalRequestKind = 'laboratory' | 'imaging' | 'pathology'
 
@@ -123,7 +124,7 @@ export class ClinicalRequestKernel {
     context: ActorContext,
     request: ClinicalRequestRow,
     input: { expectedRequestVersion: number; now: string; reasonCode: string },
-  ): { serviceRequest: FhirResource; task: FhirResource; version: number } {
+  ): { serviceRequest: FhirResource; task: FhirResource; version: number; chargeEffects: import('./command-executor.ts').CommandEffect[] } {
     assertInpatientRecordWritable(this.#database,context,request.case_id)
     if (request.version !== input.expectedRequestVersion) {
       throw new WorkflowError(
@@ -150,6 +151,7 @@ export class ClinicalRequestKernel {
         },
       )
     }
+    const chargeEffects = new OutpatientInvestigationBilling(this.#database).cancel(transaction, context, request.request_id, input.now, input.reasonCode)
     const serviceRequest = transaction.fhir.read(context, 'ServiceRequest', request.service_request_id)
     const task = transaction.fhir.read(context, 'Task', request.execution_task_id)
     const updatedServiceRequest = transaction.fhir.update(context, {
@@ -184,7 +186,7 @@ export class ClinicalRequestKernel {
       request.version,
     )
     if (update.changes !== 1) throw this.#versionChanged(policy)
-    return { serviceRequest: updatedServiceRequest, task: updatedTask, version }
+    return { serviceRequest: updatedServiceRequest, task: updatedTask, version, chargeEffects }
   }
 
   /** 受理执行；已取消申请收到晚到受理事件时无副作用完成。 */
@@ -210,6 +212,7 @@ export class ClinicalRequestKernel {
     if (request.status !== 'issued') {
       throw new WorkflowError('WORKFLOW_CONFLICT', `The ${policy.label} request cannot be accepted`)
     }
+    new OutpatientInvestigationBilling(this.#database).assertAndRelease(context, request.request_id, now)
     const task = transaction.fhir.read(context, 'Task', request.execution_task_id)
     const updatedTask = transaction.fhir.update(context, {
       ...task,
@@ -242,6 +245,7 @@ export class ClinicalRequestKernel {
     if (request.status !== 'accepted') {
       throw new WorkflowError('WORKFLOW_CONFLICT', `The ${policy.label} request cannot start execution`)
     }
+    new OutpatientInvestigationBilling(this.#database).assertReleased(context, request.request_id)
     const task = transaction.fhir.read(context, 'Task', request.execution_task_id)
     const updatedTask = transaction.fhir.update(context, {
       ...task,
@@ -387,6 +391,7 @@ export class ClinicalRequestKernel {
     now: string,
   ): FhirResource {
     assertInpatientRecordWritable(this.#database,context,request.case_id)
+    new OutpatientInvestigationBilling(this.#database).assertReleased(context, request.request_id)
     const task = transaction.fhir.read(context, 'Task', request.execution_task_id)
     const retryTask = { ...task }
     Reflect.deleteProperty(retryTask, 'statusReason')

@@ -35,6 +35,7 @@ import {
   type CommandTransaction,
 } from './command-executor.ts'
 import { WorkflowError } from './workflow-error.ts'
+import { OutpatientInvestigationBilling, serviceOutpatientPrice } from './outpatient-investigation-billing.ts'
 
 export const pathologyRequestPolicy: ClinicalRequestPolicy = {
   dedupPrefix: 'pathology-request',
@@ -61,6 +62,7 @@ export const pathologyServiceBaseline: PathologyServiceSnapshot[] = [
     department: '病理科',
     examCode: 'breast-slide-consultation',
     id: 'pathology-breast-slide-consultation',
+    outpatientBilling: serviceOutpatientPrice('pathology', 'pathology-breast-slide-consultation'),
     name: '乳腺切片病理会诊',
     reportSections: ['specimen', 'microscopy', 'diagnosis', 'immunohistochemistry', 'note'],
     specimenType: '既往手术切除标本的石蜡切片',
@@ -223,6 +225,10 @@ export class PathologyRequestService {
           service.version,
           JSON.stringify({ pathologyService: service }),
         )
+        this.#database.driver.prepare(`UPDATE hospital_service_catalog
+          SET config_json=json_set(config_json,'$.pathologyService.outpatientBilling',json(?))
+          WHERE workspace_id=? AND epoch=? AND service_id=? AND json_type(config_json,'$.pathologyService.outpatientBilling') IS NULL`)
+          .run(JSON.stringify(service.outpatientBilling), current.workspaceId, current.epoch, service.id)
       }
     }
   }
@@ -578,10 +584,9 @@ export class PathologyRequestService {
       JSON.stringify(sourceProcedure),
     )
     this.#updateDraft(input.context, outpatientCase.case_id, draft.version, { now })
-    transaction.enqueue({
-      dedupKey: `pathology-request:${requestId}:accept`,
-      kind: 'pathology.accept-request',
-      payload: { requestId },
+    const billing = new OutpatientInvestigationBilling(this.#database).issue(transaction, input.context, {
+      requestId, serviceRequestId: serviceRequest.id!, caseId: outpatientCase.case_id, category: 'pathology',
+      descriptionZh: service.name, descriptionEn: service.name, price: service.outpatientBilling, now,
     })
     return {
       data: {
@@ -589,7 +594,7 @@ export class PathologyRequestService {
         draftVersion: draft.version + 1,
         request: this.#projectedRequest(input.context, requestId),
       },
-      effects: [serviceRequest, task].map(resourceEffect),
+      effects: [...[serviceRequest, task].map(resourceEffect), ...billing.effects],
     }
   }
 
@@ -635,7 +640,7 @@ export class PathologyRequestService {
         })
         return {
           data: { request: this.#projectedRequest(input.context, request.request_id) },
-          effects: [cancelled.serviceRequest, cancelled.task].map(resourceEffect),
+          effects: [...[cancelled.serviceRequest, cancelled.task].map(resourceEffect), ...cancelled.chargeEffects],
         }
       })
     } catch (error) {
@@ -1251,6 +1256,7 @@ export class PathologyRequestService {
       ? []
       : this.#reportVersions(context, request, request.diagnostic_report_id)
     return pathologyRequestSchema.parse({
+      billing: new OutpatientInvestigationBilling(this.#database).read(context, request.request_id),
       authoredAt: serviceRequest.authoredOn,
       ...(request.generation_error_code === null || request.generation_error_message === null
         ? {}
