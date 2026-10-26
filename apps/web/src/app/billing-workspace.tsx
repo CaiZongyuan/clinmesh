@@ -539,11 +539,11 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                     value={simulatorRule}
                   />
                 </Field>
-                <div className="flex justify-end"><Button disabled={paymentWriteBlocked} onClick={() => preview.mutate()} type="button"><CreditCardIcon data-icon="inline-start" />{messages.previewPayment}</Button></div>
+                <div className="flex justify-end"><Button disabled={paymentCollectionBlocked} onClick={() => preview.mutate()} type="button"><CreditCardIcon data-icon="inline-start" />{messages.previewPayment}</Button></div>
                 {preview.isError && displaysPaymentResult(paymentContexts.current.preview) ? <PaymentError message={getWorkspaceErrorMessage(preview.error, messages)} title={getWorkspaceErrorTitle(preview.error, messages, messages.operationFailed)} /> : null}
               </FieldGroup>
             ) : null}
-            {preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge.chargeItemId || !displaysPaymentResult(paymentContexts.current.preview) ? null : (
+            {selectedCharge.status === 'cancelled' || preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge.chargeItemId || !displaysPaymentResult(paymentContexts.current.preview) ? null : (
               <section aria-labelledby="payment-preview-heading" className="flex flex-col gap-3 border-t pt-5">
                 <h3 className="text-sm font-semibold" id="payment-preview-heading">{messages.paymentPreview}</h3>
                 <dl className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
@@ -575,7 +575,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                     }}
                     open={paymentConfirmationOpen}
                   >
-                    <AlertDialogTrigger render={<Button disabled={paymentWriteBlocked} type="button" />}>
+                    <AlertDialogTrigger render={<Button disabled={paymentCollectionBlocked} type="button" />}>
                       <CheckCircleIcon data-icon="inline-start" />{messages.confirmPayment}
                     </AlertDialogTrigger>
                     <AlertDialogContent>
@@ -591,7 +591,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                       {confirm.isError && displaysPaymentResult(paymentContexts.current.confirm) ? <PaymentError message={getWorkspaceErrorMessage(confirm.error, messages)} title={getWorkspaceErrorTitle(confirm.error, messages, messages.operationFailed)} /> : null}
                       <AlertDialogFooter>
                         <AlertDialogCancel disabled={confirm.isPending}>{messages.cancel}</AlertDialogCancel>
-                        <AlertDialogAction disabled={paymentWriteBlocked} onClick={() => confirm.mutate()}>
+                        <AlertDialogAction disabled={paymentCollectionBlocked} onClick={() => confirm.mutate()}>
                           <CheckCircleIcon data-icon="inline-start" />{messages.submitPayment}
                         </AlertDialogAction>
                       </AlertDialogFooter>
