@@ -18,7 +18,7 @@ interface RoleWorkspaceProps {
 }
 
 export function RoleWorkspace({ activeSection, locale, session }: RoleWorkspaceProps): React.JSX.Element {
-  if (['inpatient-doctor', 'ward-nurse', 'medical-records'].includes(session.actor.roleCode) && activeSection === 'inpatient') {
+  if (['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance'].includes(session.actor.roleCode) && activeSection === 'inpatient') {
     return <InpatientWorkspace session={session} locale={locale} />
   }
   if (session.actor.roleCode === 'administrator' && activeSection === 'scenarioData') {

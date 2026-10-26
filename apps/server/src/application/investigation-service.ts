@@ -462,7 +462,9 @@ export class InvestigationService {
     if (exact !== undefined) {
       try {
         this.#contentFromExactObservation(concept, exact)
-        return { source: 'synthea-exact', supported: true }
+        const syntheticCase = this.#cases.get(workspaceId, materialization.synthetic_case_id)
+        const profile = syntheticCase === undefined ? undefined : this.#profiles.getRevision(workspaceId, syntheticCase.profileId, syntheticCase.profileRevision)
+        return { source: profile?.source.providerId === 'clinmesh-authored' ? 'case-truth-exact' : 'synthea-exact', supported: true }
       } catch (error) {
         if (error instanceof InvestigationGenerationError) {
           return { reason: 'exact-incompatible', supported: false }
@@ -570,7 +572,7 @@ export class InvestigationService {
         promptHash: null,
         promptVersion: null,
         requestedConcept,
-        source: 'synthea-exact',
+        source: profile.source.providerId === 'clinmesh-authored' ? 'case-truth-exact' : 'synthea-exact',
         workspaceId,
       })
     }
@@ -779,7 +781,7 @@ export class InvestigationService {
             }),
         requestedConcept: service.referenceConcept,
         source: baselineCount === 0
-          ? 'synthea-exact'
+          ? profile.source.providerId === 'clinmesh-authored' ? 'case-truth-exact' : 'synthea-exact'
           : exactCount === 0 ? 'adult-reference-baseline' : 'mixed',
         workspaceId,
       })

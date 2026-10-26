@@ -1,6 +1,6 @@
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 
-export type InpatientStageId = 'admission' | 'orders' | 'investigations' | 'surgery' | 'transfer' | 'fees' | 'discharge' | 'record'
+export type InpatientStageId = 'admission' | 'orders' | 'investigations' | 'surgery' | 'transfer' | 'fees' | 'discharge' | 'record' | 'drg'
 export type InpatientStageState = 'done' | 'current' | 'todo' | 'closed'
 
 // 从住院登记的状态字段推导阶段主线状态。登记上没有检查、手术、转科的发生事实，
@@ -19,5 +19,6 @@ export function inpatientStageStates(admission: Pick<InpatientAdmission, 'status
     fees: settled ? 'done' : 'todo',
     discharge: archived || status === 'cleared' ? 'done' : ['discharge-pending', 'departed'].includes(status) ? 'current' : 'todo',
     record: archived ? 'done' : status === 'cleared' ? 'current' : 'todo',
+    drg: archived ? 'done' : 'todo',
   }
 }

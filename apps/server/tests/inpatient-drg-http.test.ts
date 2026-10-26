@@ -111,12 +111,13 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     expect([...new Set(result.result.steps.map((step: { stage: string }) => step.stage))]).toEqual(expect.arrayContaining(['mdc', 'adrg', 'drg']))
   })
 
-  it('病案未提交不能预分组；未配置规则包时明确报错不静默', async () => {
+  it('在院未提交首页也读取当前正式诊断预分组；未配置规则包时明确报错', async () => {
     const s = await setup(await writeRulesPackage())
     expect((await confirmPrimary(s)).status).toBe(200)
     const missing = await s.request(s.doctor, `${s.path}/drg/pregroup`)
-    expect(missing.status).toBe(409)
-    expect((await missing.json()).error.code).toBe('DRG_RECORD_NOT_SUBMITTED')
+    expect(missing.status).toBe(200)
+    expect(await missing.json()).toMatchObject({ recordRevision: 0, frozen: false,
+      result: { status: 'grouped', drgCode: 'RA15' } })
     const bare = await setup()
     const unconfigured = await bare.request(bare.doctor, `${bare.path}/drg/pregroup`)
     expect(unconfigured.status).toBe(409)
@@ -161,7 +162,8 @@ describe('住院病案 DRG 预分组公共 HTTP', () => {
     const archivedReceipt = await archived.json()
     const frozen = await (await s.request(s.doctor, `${s.path}/drg/pregroup`)).json()
     expect(frozen).toMatchObject({ frozen: true, recordRevision: 1, rulesId: 'chs-drg-pregroup-test', rulesVersion: 'CHS-DRG-3.0-pregroup-test',
-      result: { status: 'grouped', drgCode: 'RA15' } })
+      result: { status: 'grouped', drgCode: 'RA15' },
+      paymentEstimate: { drgCode: 'RA15', referenceFen: 300000, parameterVersion: '2026-demo-3' } })
     s.runtime.fhir.update(context, { ...weight, valueQuantity: { value: 2.8, system: 'http://unitsofmeasure.org', code: 'kg' } }, weight.meta!.versionId!)
     // 升级规则包重启后，归档病例仍返回归档时的冻结结果与规则身份。
     await s.reopen(await writeRulesPackage('chs-drg-pregroup-test-v2', 'CHS-DRG-3.0-pregroup-test-v2', 'RA19'))

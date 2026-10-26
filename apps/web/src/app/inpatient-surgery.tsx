@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, type inpatientSurgeryRequestSchema } from '@clinmesh/contracts/inpatient-surgery'
+import { inpatientMaterialReservationListSchema, type InpatientMaterialReservation } from '@clinmesh/contracts/inpatient-drg-simulation'
 import type { InpatientAdmission } from '@clinmesh/contracts/inpatient'
 import type { SessionContext } from '@clinmesh/contracts/his'
 import { Alert, AlertDescription } from '@clinmesh/ui/components/alert'
@@ -22,6 +23,7 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
   const scope = ['inpatient',session.actor.workspaceId,session.actor.epoch,session.actor.practitionerRoleId]
   const surgery = useQuery({ queryKey: [...scope,admission.id,'surgeries'], queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`,inpatientSurgerySchema,signal) })
   const catalog = useQuery({ queryKey: [...scope,'surgery-catalog'], enabled: doctor || nurse, queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/surgery-catalog',inpatientSurgeryCatalogSchema,signal) })
+  const reservations = useQuery({ queryKey: [...scope,admission.id,'drg-reservations'], enabled: doctor, queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/drg/reservations`, inpatientMaterialReservationListSchema, signal) })
   const [procedureId,setProcedureId] = useState<string|null>(null), [plannedFor,setPlannedFor] = useState(''), [reason,setReason] = useState('')
   const blocked = write.blocked || admission.status !== 'admitted'
   const procedure = catalog.data?.procedures.find(item => item.id === procedureId)
@@ -32,7 +34,7 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
     write.mutation.mutate({ operation: 'inpatient.surgery.request', input: { admissionId: admission.id, encounterVersion: surgery.data.encounterVersion,
       procedureId: procedure.id, catalogVersion: procedure.version, plannedFor: date.toISOString(), reason } })
   }
-  const error = surgery.error ?? catalog.error
+  const error = surgery.error ?? catalog.error ?? reservations.error
   return <section aria-label={t('住院手术','Inpatient surgery')} className="flex flex-col gap-4">
     <h3>{t('手术计划与实际实施','Surgery plans and performed procedures')}</h3>
     <p>{t('手术目录为固定来源的八条分类摘录，收费为合成本院演示价。','The catalog contains eight entries from a fixed classification source, with synthetic hospital demonstration prices.')}</p>
@@ -44,7 +46,7 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
       <Field><FieldLabel htmlFor="inpatient-surgery-reason">{t('手术申请理由','Surgery request reason')}</FieldLabel><Input id="inpatient-surgery-reason" maxLength={2000} value={reason} onChange={event => setReason(event.currentTarget.value)} required /></Field>
       <Button disabled={blocked || !procedure || !plannedFor || !reason.trim() || !surgery.data} type="submit">{t('申请手术','Request surgery')}</Button>
     </FieldGroup></FieldSet></form> : null}
-    {surgery.data?.requests.map(row => <SurgeryRequest key={row.id} row={row} catalog={catalog.data} admission={admission} session={session} locale={locale} write={write} />)}
+    {surgery.data?.requests.map(row => <SurgeryRequest key={row.id} row={row} catalog={catalog.data} reservations={reservations.data?.reservations ?? []} admission={admission} session={session} locale={locale} write={write} />)}
     {surgery.data?.executions.map(execution => <article key={execution.id} className="rounded-md border p-3">
       <p>{t('实际实施：','Performed: ')}{execution.actualProcedure.coding.code} · {execution.actualProcedure.coding.display}</p>
       <p>{new Date(execution.performedAt).toLocaleString(locale,{timeZone:'Asia/Shanghai'})} · {execution.note}</p>
@@ -55,10 +57,11 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
   </section>
 }
 
-function SurgeryRequest({ row, catalog, admission, session, locale, write }: Props & { row: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined }): React.JSX.Element {
+function SurgeryRequest({ row, catalog, reservations, admission, session, locale, write }: Props & { row: z.infer<typeof inpatientSurgeryRequestSchema>; catalog: z.infer<typeof inpatientSurgeryCatalogSchema> | undefined; reservations: InpatientMaterialReservation[] }): React.JSX.Element {
   const t = (cn: string, en: string) => locale === 'zh-CN' ? cn : en
   const doctor = session.actor.roleCode === 'inpatient-doctor', nurse = session.actor.roleCode === 'ward-nurse'
   const [note,setNote] = useState(''), [actualId,setActualId] = useState<string|null>(null), [quantities,setQuantities] = useState<Record<string,string>>({})
+  const [reservationIds, setReservationIds] = useState<Record<string, string>>({})
   const actual = catalog?.procedures.find(item => item.id === actualId)
   const active = ['requested','ready'].includes(row.status), blocked = write.blocked || admission.status !== 'admitted'
   const common = { admissionId: admission.id, requestId: row.id, expectedRequestVersion: row.version, note }
@@ -69,7 +72,7 @@ function SurgeryRequest({ row, catalog, admission, session, locale, write }: Pro
   const execute = () => {
     if (!actual || !quantitiesValid) return
     write.mutation.mutate({ operation: 'inpatient.surgery.execute', input: { ...common, procedureId: actual.id, catalogVersion: actual.version,
-      materials: materialValues.filter(value => value.quantity > 0).map(({item,quantity}) => ({ materialId: item.id, catalogVersion: item.version, quantity })) } })
+      materials: materialValues.filter(value => value.quantity > 0).map(({item,quantity}) => ({ materialId: item.id, catalogVersion: item.version, quantity, ...(reservationIds[item.id] ? { reservationId: reservationIds[item.id] } : {}) })) } })
   }
   return <article className="flex flex-col gap-3 rounded-md border p-3">
     <p>{row.plannedProcedure.coding.display} · {{ requested:t('待准备','Preparation pending'), ready:t('已就绪','Ready'), completed:t('已实施','Completed'), cancelled:t('已取消','Cancelled') }[row.status]}</p>
@@ -93,8 +96,9 @@ function SurgeryRequest({ row, catalog, admission, session, locale, write }: Pro
             onValueChange={id => { if (id) setQuantities(previous => ({ ...previous, [id]: '1' })) }} />
         </Field>
         {unavailableCount > 0 ? <p>{t(`${unavailableCount} 项耗材因计价单位未确认而未启用`,`${unavailableCount} materials are unavailable because their billing unit is unconfirmed`)}</p> : null}
-        {materialValues.map(({item}) => <Field key={item.id}><FieldLabel htmlFor={`surgery-material-${row.id}-${item.id}`}>{item.display}{t('实际用量',' quantity used')}</FieldLabel><Input id={`surgery-material-${row.id}-${item.id}`} type="number" min="0" max="1000" step="1" value={quantities[item.id] ?? '0'} onChange={event => setQuantities(previous => ({...previous,[item.id]:event.currentTarget.value}))} /><p>{formatFen(item.chargeDefinition.priceFen,locale)}/{item.chargeDefinition.unit}</p>
-          <Button type="button" variant="outline" aria-label={`${t('移除耗材','Remove material')} ${item.display}`} onClick={() => setQuantities(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id !== item.id)))}>{t('移除','Remove')}</Button>
+        {materialValues.map(({item}) => <Field key={item.id}><FieldLabel htmlFor={`surgery-material-${row.id}-${item.id}`}>{item.display}{t('实际用量',' quantity used')}</FieldLabel><Input id={`surgery-material-${row.id}-${item.id}`} type="number" min="0" max="1000" step="1" disabled={!!reservationIds[item.id]} value={quantities[item.id] ?? '0'} onChange={event => setQuantities(previous => ({...previous,[item.id]:event.currentTarget.value}))} /><p>{formatFen(item.chargeDefinition.priceFen,locale)}/{item.chargeDefinition.unit}</p>
+          <FieldLabel htmlFor={`surgery-reservation-${row.id}-${item.id}`}>{t('替换治疗预留','Replace treatment reservation')}</FieldLabel><WorkspaceSelect id={`surgery-reservation-${row.id}-${item.id}`} value={reservationIds[item.id] ?? ''} items={[{ value: '', label: t('独立记录实际使用','Record separate actual use') }, ...reservations.filter(value => value.status === 'reserved' && value.materialId === item.id && (!value.requestId || value.requestId === row.id)).map(value => ({ value: value.id, label: `${value.materialDisplay} × ${value.quantity} · ${value.reason}` }))]} onValueChange={id => { setReservationIds(previous => ({ ...previous, [item.id]: id ?? '' })); const reservation = reservations.find(value => value.id === id); if (reservation) setQuantities(previous => ({ ...previous, [item.id]: String(reservation.quantity) })) }} />
+          <Button type="button" variant="outline" aria-label={`${t('移除耗材','Remove material')} ${item.display}`} onClick={() => { setQuantities(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id !== item.id))); setReservationIds(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => id !== item.id))) }}>{t('移除','Remove')}</Button>
         </Field>)}
         <Button disabled={blocked || row.status !== 'ready' || !actual || !note.trim() || !quantitiesValid} onClick={execute}>{t('记录实际手术','Record performed surgery')}</Button>
       </> : null}

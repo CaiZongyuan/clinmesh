@@ -6,6 +6,8 @@
 
 ## SQLite、迁移与持久回执
 
+- 排查 DRG 未记费承诺时，用公开 HTTP 验证长期 QD 医嘱在当日给药时点后校对、次日首次排程、发药尚未给药三个边界；仅检查签署状态或临时医嘱会漏掉“已校对但没有执行单”，无条件补一剂又会重复计算已记费发药。回归入口见[DRG 推演测试](../../apps/server/tests/inpatient-drg-simulation-http.test.ts)，计量范围由[临床流程](../architecture/clinical-workflows.md#drg-评估与医保办核定)拥有。
+
 - 资金预览成功、确认却因金额schema失败时，先统一预览、确认与回执的单笔限额，提前拒绝超限请求并按原限额分笔办理；不要为绕过失败扩大单笔范围。原款总额、累计已退与单笔交易分别验证，回归覆盖限额值、限额加一、分笔后的累计余额及未知恢复，详细合同见[住院出院与结算](../architecture/clinical-workflows.md#住院出院与结算)。
 
 - 仅延后单条迁移、其余 schema 沿用当前版本的兼容测试，固定历史行用显式列名写入，新增可空列交由默认值补齐；真正固定版本的历史库仍固定迁移集合。继续比较完整业务行、归档 JSON、回执及重放行为，见[资金迁移回归](../../apps/server/tests/inpatient-payments-migration.test.ts)。
@@ -35,6 +37,8 @@
 - 带不同时区偏移的 ISO 时间不能直接按 SQLite TEXT 比较先后。按时间点比较前先统一为时间戳或规范 UTC，医院日界线另按业务时区计算；回归包含上海 `23:30+08:00` 至次日午夜，见[住院时钟测试](../../apps/server/tests/inpatient-http.test.ts)与[虚拟时钟合同](../architecture/simulation.md#102-虚拟时钟)。
 
 - Command receipt 是跨版本持久数据。响应 DTO 新增必填字段时提供向后兼容默认值或迁移旧回执；删除 strict DTO 字段时投影旧响应，并覆盖提前委托到其他方法的动作分支。回归用原请求与原幂等键重放升级前响应形状，同时检查原回执和审计不变；只验证新命令成功不能发现这类回归。
+
+- 原幂等请求在 Run 完成后返回 `CONTEXT_INACTIVE` 时，检查业务包装是否在 `CommandExecutor.execute` 前调用了隐含 `assertActive` 的角色检查或读取了可变业务资产。将新写入的授权与资产读取留在 Command 事务内，让既有回执先重放；同时验证新幂等键仍被拒绝、同键改载荷仍稳定冲突。直接入院回归见[病例来源 HTTP 测试](../../apps/server/tests/pci-case-source-http.test.ts)，回执顺序由[幂等合同](../architecture/fhir-and-commands.md#65-idempotency)拥有。
 
 - 扩展共享 apply 的业务上下文时，逐一回归其公开 Command 包装的岗位边界；共享实现允许住院，不代表旧门诊入口可放行住院岗位。同时构造缺关联的遗留事实，验证系统事件拒绝而正确入口仍可完成；见[授权边界回归](../../apps/server/tests/inpatient-legacy-request-http.test.ts)与[临床合同](../architecture/clinical-workflows.md#82-住院闭环后续)。
 
@@ -159,6 +163,8 @@
 - FHIR Quantity 的 `value` 可能只是范围边界；窄 Zod 投影会剥除未声明的 `comparator`，因此读取精确体重前须显式检查比较符。用正式 Observation 写入、回读并配对验证边界值和未知输入，不能只用裸数值 fixture；见[出生体重回归](../../apps/server/tests/inpatient-birth-weight.test.ts)及[住院输入合同](../architecture/drg-grouping.md#住院输入与冻结)。
 
 - DRG 准备显示成功但 Server 在 `readInventory` 报缺少 `storage` 时，先只读核对参考库是否同时保留旧格式与当前清单；这会影响带旧登记升级的环境，全新安装未必触发。物理格式不同不代表逻辑资料不同，不能据此重建临床目录；显式恢复的备份、完整核验和定向清理前提见[旧格式登记恢复](../deployment.md#旧格式-drg-登记的局部恢复)。准备入口不得吞掉已有登记的格式或哈希错误；跨页回归不能只验证当前身份所在页。
+
+- DRG 支付参数新增独立身份时，回归同时核对预览、核定响应和历史读取的说明，而不只核对金额；用同一参数身份的未知旧版本与未知身份验证回读不会误套当前说明。当前合同见[DRG 评估与医保办核定](../architecture/clinical-workflows.md#drg-评估与医保办核定)。
 
 - 离线清单的合成 fixture 要沿用真实来源字段名，并从公开准备与回读入口核对；只用自拟的通用 `unit` 字段会漏掉来源单位提取缺口。摘要提取修正后重新准备已有资料时，先核对清单身份，恢复方式见[离线 DRG 资料核对](../deployment.md#离线-drg-资料核对)，不要修改数据库绕过不可变校验。
 

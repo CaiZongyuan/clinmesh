@@ -2031,7 +2031,42 @@ export class WorkflowService {
         visitTypeId: input.visitTypeId,
       },
       operation: 'synthetic-case.start-outpatient-visit',
-    }, transaction => {
+    }, transaction => this.applyStartSyntheticCase(transaction, input, () => {
+      const materialized = this.#materializeSyntheticCaseVisit({
+        brief: input.brief,
+        caseId: input.syntheticCase.caseId,
+        caseRevision: input.expectedCaseRevision,
+        context: input.context,
+        departmentId: input.departmentId,
+        locationId: input.locationId,
+        profile: input.profile,
+        transaction,
+        visitDate: input.visitDate,
+        visitTypeId: input.visitTypeId,
+      })
+      return {
+        data: {
+          encounterId: materialized.data.encounterId,
+          outpatientCaseId: materialized.data.outpatientCaseId,
+          patientId: materialized.data.patientId,
+          queueTaskId: materialized.data.queueTaskId,
+          registrationId: materialized.data.registrationId,
+          status: 'awaiting-triage' as const,
+          syntheticCaseId: input.syntheticCase.caseId,
+        },
+        effects: materialized.effects,
+      }
+    }))
+  }
+
+  applyStartSyntheticCase<Data>(transaction: CommandTransaction, input: {
+    brief: PatientPersonaRevision
+    context: ActorContext
+    expectedCaseRevision: number
+    profile: SyntheticPatientProfile
+    syntheticCase: SyntheticCaseInstance
+  }, materialize: (transaction: CommandTransaction) => { data: Data; effects: Array<{ kind: 'created' | 'updated'; reference: string; versionId: string }> }) {
+
       this.#assertRole(input.context, ['administrator', 'registrar'])
       const current = z.object({
         active_brief_revision: z.number().int().positive().nullable(),
@@ -2066,18 +2101,7 @@ export class WorkflowService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Synthetic Case was already started')
       }
       const now = this.#virtualTime(input.context)
-      const materialized = this.#materializeSyntheticCaseVisit({
-        brief: input.brief,
-        caseId: input.syntheticCase.caseId,
-        caseRevision: input.expectedCaseRevision,
-        context: input.context,
-        departmentId: input.departmentId,
-        locationId: input.locationId,
-        profile: input.profile,
-        transaction,
-        visitDate: input.visitDate,
-        visitTypeId: input.visitTypeId,
-      })
+      const materialized = materialize(transaction)
       const caseUpdate = this.#database.driver.prepare(`
         UPDATE synthetic_case_instance
         SET status = 'started', revision = revision + 1, updated_at = ?
@@ -2093,36 +2117,16 @@ export class WorkflowService {
       if (caseUpdate.changes !== 1) {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The Synthetic Case changed while starting')
       }
-      return {
-        data: {
-          encounterId: materialized.data.encounterId,
-          outpatientCaseId: materialized.data.outpatientCaseId,
-          patientId: materialized.data.patientId,
-          queueTaskId: materialized.data.queueTaskId,
-          registrationId: materialized.data.registrationId,
-          status: 'awaiting-triage' as const,
-          syntheticCaseId: input.syntheticCase.caseId,
-        },
-        effects: [...materialized.effects, {
-          kind: 'updated' as const,
-          reference: `SyntheticCase/${input.syntheticCase.caseId}`,
-          versionId: String(input.expectedCaseRevision + 1),
-        }],
-      }
-    })
+      return { ...materialized, effects: [...materialized.effects, {
+        kind: 'updated' as const, reference: `SyntheticCase/${input.syntheticCase.caseId}`, versionId: String(input.expectedCaseRevision + 1),
+      }] }
   }
 
-  #materializeSyntheticCaseVisit(input: {
-    brief: Pick<PatientPersonaRevision, 'content' | 'revision'>
+  applyMaterializeSyntheticPatient(input: {
     caseId: string
-    caseRevision: number
     context: ActorContext
-    departmentId: string
-    locationId: string
     profile: Pick<SyntheticPatientProfile, 'demographics' | 'identity' | 'profileId' | 'revision'>
     transaction: CommandTransaction
-    visitDate: string
-    visitTypeId: string
   }) {
     const patient = input.transaction.fhir.create(input.context, {
       active: true,
@@ -2166,6 +2170,23 @@ export class WorkflowService {
       input.profile.revision,
       now,
     )
+    return patient
+  }
+
+  #materializeSyntheticCaseVisit(input: {
+    brief: Pick<PatientPersonaRevision, 'content' | 'revision'>
+    caseId: string
+    caseRevision: number
+    context: ActorContext
+    departmentId: string
+    locationId: string
+    profile: Pick<SyntheticPatientProfile, 'demographics' | 'identity' | 'profileId' | 'revision'>
+    transaction: CommandTransaction
+    visitDate: string
+    visitTypeId: string
+  }) {
+    const patient = this.applyMaterializeSyntheticPatient(input)
+    const now = this.#virtualTime(input.context)
     const registered = this.#registerPatient(input.transaction, input.context, {
       createConsultation: true,
       departmentId: input.departmentId,
@@ -7421,7 +7442,7 @@ export class WorkflowService {
         referenceReleaseId: string
       }
       snapshotId: string
-      source: 'adult-reference-baseline' | 'investigation-agent' | 'mixed' | 'synthea-exact'
+      source: 'adult-reference-baseline' | 'investigation-agent' | 'mixed' | 'synthea-exact' | 'case-truth-exact'
     }
   }) {
     return this.#commands.execute({

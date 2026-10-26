@@ -1,5 +1,7 @@
 # 测试与验证排障
 
+- TanStack Query 的 `enabled: false` 停止自动查询但保留 `data` 和 `error`。验证实时页面切到归档等冻结模式时，先加载真实结果、切走并保留组件和 QueryClient，再从独立会话改变状态后刷新返回；只用归档初始状态挂载会漏掉旧缓存继续渲染。复用[DRG 归档切换旅程](../../apps/web/e2e/inpatient-drg-archive.journey.ts)核对模式转换及后续刷新。
+
 - 本机同时运行完整 Server、Web 组件和 Playwright 时，内存交换及资源竞争可能使既有长交互触及默认超时。保留原失败日志，在主线与当前分支对照同一用例，再在资源释放后以原超时、原断言复验完整文件；不要仅据墙钟超时修改业务代码或扩大预算。GitHub 的并行检查组使用独立 runner，本地 worktree 共享机器资源。
 
 - `tar` 的异步解包 `filter` 在流回调中运行，直接抛错可能成为未捕获异常并使返回 Promise 挂起。拒绝条目时记录错误并返回 `false`，解包结束后从调用边界抛出；回归必须覆盖链接和越界条目，确认非零失败且无未处理错误。分发锁的身份摘要按 schema 解析后 JSON 计算，不能依赖 Windows CRLF 与 Linux LF 不同的原文件字节。
@@ -11,6 +13,8 @@
 其他操作经验见[工程记忆入口](memory.md)。
 
 ## 范围、快照与资源争用
+
+- Vitest 与 Playwright 复用真实 HTTP/SQLite fixture 时，共享 helper 使用 `node:assert/strict`，不要导入 Vitest 的运行时断言。否则 Playwright 在准备阶段就会因测试运行器上下文不兼容失败，尚未执行浏览器业务；先运行同一 helper 的 HTTP 旅程，再验证真实岗位入口。
 
 - 给自动建议新增必需的审阅字段时，从未打开手动目录的入口验证直接开具，并覆盖手动搜索停留在其他页的情况。测试中先打开添加弹窗会预载目录，可能掩盖建议缺少服务或价目读取合同；对应回归见 `apps/web/src/app/doctor/laboratory-page.test.tsx`。
 
@@ -24,7 +28,11 @@
 
 - CLI Skill 示例漂移测试读取 Markdown 后统一将 CRLF 转为 LF，再解析代码块；否则 Windows checkout 的有效 JSON 示例会被仅匹配 `\n` 的正则漏掉。统一在读取 helper 归一化，不批量改产品文档换行或放宽业务 schema。
 
+- Markdown 校验应兼容 Git 在 Windows 的 checkout 形态：逐行结构识别接受 CRLF；`core.symlinks=false` 会把 `120000` 模式的别名检出为无换行的目标路径占位文件，应按 Git 索引识别别名并校验其 canonical 文档，不能往别名补换行或批量重写正文。
+
 - 新增 Operation Catalog 路径参数时，同时核对真实 UI 的持久化意图发送器：只替换已有 `admissionId` 的 adapter 不会自动绑定新的 `adjustmentId`。公开 HTTP 直接调用正确路径仍可全部通过，须从真实按钮验证请求路径及丢回执后的原意图恢复；回归见[后续医保更正入口](../../apps/web/e2e/inpatient-insurance-adjustments.spec.ts)与 React 18/19 Surface 合同。
+
+- Catalog 的 Command 输出须验证完整 `data/effects/auditId/requestId` 回执。仅在 HTTP 测试中手取 `data` 会漏掉裸业务列表 schema 与真实回执的漂移，使页面把已提交写入判为响应异常并进入恢复；修复 owning Catalog，并保留真实按钮和 receipt 恢复证据，不在 UI 绕过响应校验。
 
 - 跨包测试调用 Server 迁移时，显式用测试文件的 `import.meta.url` 解析 `apps/server/drizzle/` 并传给 `applyMigrations`。默认目录只覆盖 Server 包或仓库根目录；从仓库根运行测试可能通过，而 Turbo 在其他包目录执行时会报 `ENOENT`。用 `pnpm --filter <package> exec vitest run <file>` 复核实际 CI 工作目录，参见 `apps/dsh-web/src/model-bridge.test.ts`。
 
@@ -42,9 +50,15 @@
 
 - 资源竞争使既有测试超时时，可在验证进程用 `VITEST_MAX_WORKERS=1` 收窄单元测试并发，不扩大超时或削弱断言。Turbo strict 环境会过滤此变量，通过 Turbo 的验证同时使用 `TURBO_ENV_MODE=loose` 才能把 worker 设置传给 Vitest；仅设置前者不证明实际并发已经收窄。不同包仍可并行，需要进一步隔离时用 `pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行完成包级测试，再由 `pnpm check` 复用有效缓存并继续其他阶段。预验证与后续检查须保持相同的 Turbo 环境模式；strict 与 loose 使用不同任务缓存，切回默认模式可能让包级测试再次并行运行。
 
-- 定向 Vitest 回归使用 `pnpm --filter <package> exec vitest run <file> -t <pattern>`，并核对实际文件和用例计数。当前 pnpm/Vitest 组合中，`pnpm --filter <package> test -- <file>` 把额外 `--` 传给 Vitest 后仍运行完整包，不能仅凭命令文本认定已限制范围。
+- 定向 Vitest 回归使用 `pnpm --filter <package> exec vitest run <file> -t <pattern>`，并核对实际文件和用例计数。当前 pnpm/Vitest 组合中，`pnpm --filter <package> test -- <file>` 把额外 `--` 传给 Vitest 后仍运行完整包，不能仅凭命令文本认定已限制范围。Turbo 过滤包仍会沿 `^test` 执行依赖；只补 DSH 等单包证据时直接运行包内 Vitest，避免重新触发已验过的 Web 全集。
+
+- 没有本次性能运行许可时，不能直接把 `pnpm check` 或全部 Server unit 当作普通回归：前者包含 `perf:ci`，`performance-runner.test.ts` 也实际调用 trajectory／full-import profile。普通 Server 回归可用 `pnpm --filter @clinmesh/server exec vitest run --maxWorkers=1 --exclude tests/performance-runner.test.ts`，明确记录排除范围；纯性能合同及合成 Worker 失败测试不执行真实负载，可按变更范围验证。
 
 - 收费真实入口和 Surface 浏览器合同从仓库根运行 Playwright，并沿用根配置。收费 HTTP fixture 以当前工作目录定位 `apps/server/drizzle`；从 `apps/web` 启动会错误查找 `apps/web/apps/server/drizzle`，尚未执行业务断言。根 runner 的 `--project=web` 与 `--project=contracts` 分别选择真实入口和组件合同。
+
+- 新检出只运行 Playwright 时，先按[浏览器准备步骤](../testing.md#用户界面验证)生成 Surface 样式；已有开发构建会掩盖缺少 `styles.generated.ts` 的前置条件。Rollup 在部分 fixture 中报该模块缺失时，先补齐与 CI prepare 相同的步骤，再原样验证受影响文件，不修改影像、用量或布局业务。
+
+- 外观矩阵中 `data-font-size` 已更新不代表带 `transition-all` 的标签已完成字号变化；诊断处方曾在属性等待返回后仍测得字体和边界继续变化。先等待 computed font-size 到达目标，保持真实 click 并确认 `aria-selected`，不要用扩大超时、重复点击或键盘替换掩盖导航前态。React 18/19 的确定性过渡回归见 `diagnosis-prescription.browser.test.ts`。
 
 - WSL 全仓验证的较多 Vitest worker 可能使宿主导航和长 SQLite HTTP 测试触及原有超时。先用原断言聚焦复现并区分功能失败与资源争用；核对 `taskset -pc $$` 的可用 CPU 后，可限制整个检查进程树的 CPU affinity，已实际验证 `taskset -c 0-3 pnpm check`。不通过扩大超时或改变业务时序掩盖失败。
 
