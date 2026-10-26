@@ -1,5 +1,6 @@
 import { InpatientPatientWorkspace, inpatientStatus } from './inpatient-patient-workspace.tsx'
 import { InpatientNurseBench } from './inpatient-nurse-bench.tsx'
+import { InpatientInsuranceReview } from './inpatient-insurance-review.tsx'
 import { inpatientTransferCatalogSchema } from '@clinmesh/contracts/inpatient-transfer'
 import { InpatientIncomingTransfers } from './inpatient-transfers.tsx'
 import type { PatientSummary, SessionContext } from '@clinmesh/contracts/his'
@@ -68,6 +69,11 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
   const error = catalog.error ?? transferCatalog.error ?? admissions.error ?? patients.error ?? referrals.error ?? write.storageFailure ?? write.mutation.error
   const messages = getWorkspaceMessages(locale)
   const status = (admission: InpatientAdmission) => inpatientStatus(admission, locale)
+  if (session.actor.roleCode === 'medical-insurance') {
+    return <section aria-label={zh ? '医保办核定工作台' : 'Insurance review workspace'} data-theme="paper" className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
+      <InpatientInsuranceReview session={session} locale={locale} />
+    </section>
+  }
   return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} data-theme="paper" className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <div className="shrink-0 px-4">
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, messages)}</AlertDescription></Alert> : null}
