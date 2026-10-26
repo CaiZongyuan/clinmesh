@@ -116,12 +116,12 @@ describe('HIS operation catalog', () => {
       {
         cliPath: 'reference medications search',
         id: 'reference.medications.search',
-        roles: ['administrator', 'outpatient-doctor'],
+        roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
       },
       {
         cliPath: 'reference laboratory search',
         id: 'reference.laboratory.search',
-        roles: ['administrator', 'outpatient-doctor'],
+        roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
       },
       {
         cliPath: 'catalog registration get',
@@ -747,7 +747,7 @@ describe('HIS operation catalog', () => {
       'clinmesh-billing': 14,
       'clinmesh-doctor': 55,
       'clinmesh-fhir': 5,
-      'clinmesh-inpatient': 81,
+      'clinmesh-inpatient': 84,
       'clinmesh-pharmacy': 3,
       'clinmesh-registration': 7,
       'clinmesh-shared': 1,

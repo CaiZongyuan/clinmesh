@@ -21,6 +21,36 @@ const expectedSkills = [
   'clinmesh-triage',
 ]
 
+it('住院共享目录检索示例提供受控分页并保留真实来源', async () => {
+  const operation = getHisOperation('inpatient.catalog.search')
+  expect(operation.input.parse({ kind: 'medication', source: 'reference' })).toMatchObject({
+    kind: 'medication', source: 'reference', page: 1, pageSize: 20,
+  })
+  expect(operation.input.safeParse({ kind: 'medication', source: 'reference', pageSize: 51 }).success).toBe(false)
+  expect(operation.input.safeParse({ kind: 'medication', source: 'reference', sql: 'SELECT *' }).success).toBe(false)
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  const line = commandLines(skill).find(line => line.startsWith('clinmesh inpatient catalog-search '))!
+  expect(inspectExample(program, line).operation?.id).toBe(operation.id)
+  expect(operation.roles).toEqual(['inpatient-doctor'])
+})
+
+it('PCI 资料准备示例限定当前场景及管理员并保留原幂等意图', async () => {
+  const prepare = getHisOperation('inpatient.pci-data.prepare')
+  expect(prepare.roles).toEqual(['administrator'])
+  expect(prepare.requirements).toEqual({ expectedVersions: true, idempotency: 'required' })
+  expect(prepare.input.parse({ expectedEpoch: 'epoch-1' })).toEqual({ expectedEpoch: 'epoch-1' })
+  expect(prepare.input.safeParse({ expectedEpoch: 'epoch-1', patientId: 'synthetic-patient' }).success).toBe(false)
+  expect(getHisOperation('inpatient.pci-data.read').roles).toEqual(['administrator', 'inpatient-doctor'])
+  const program = createCliProgram({ stdout: { write: () => undefined }, stderr: { write: () => undefined } })
+  const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
+  for (const [command, id] of [['pci-data', 'inpatient.pci-data.read'], ['prepare-pci-data', prepare.id]]) {
+    const line = commandLines(skill).find(line => line.startsWith(`clinmesh inpatient ${command}`))!
+    expect(inspectExample(program, line).operation?.id).toBe(id)
+  }
+  expect(skill).toContain('INPATIENT_PCI_EPOCH_CONFLICT')
+})
+
 it('住院退款示例及Catalog保留单笔一千万元上限', async () => {
   const skill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-inpatient/SKILL.md'), 'utf8')
   const examples = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)].map(match => JSON.parse(match[1]!))
@@ -393,8 +423,15 @@ it('住院命令与岗位、版本、幂等及技能示例同步', async () => {
   const diagnosisExample=[...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][1]
   expect(diagnosisExample).toBeDefined()
   expect(getHisOperation('inpatient.diagnosis.confirm').input.parse(JSON.parse(diagnosisExample![1]!))).toMatchObject({entries:[{role:'primary',admissionCondition:'1'}]})
-  expect(getHisOperation('reference.diagnoses.search').roles).toContain('inpatient-doctor')
-  expect(getHisOperation('reference.diagnoses.search').version).toBe(2)
+  const referenceSkill = await readFile(resolve(import.meta.dirname, '../../../skills/clinmesh-doctor/SKILL.md'), 'utf8')
+  for (const kind of ['diagnoses', 'medications', 'laboratory']) {
+    const operation = getHisOperation(`reference.${kind}.search`)
+    expect(operation.roles).toContain('inpatient-doctor')
+    expect(operation.version).toBe(2)
+    expect(referenceSkill).toContain(operation.id)
+    const line = commandLines(referenceSkill).find(line => line.startsWith(`clinmesh reference ${kind} search `))!
+    expect(inspectExample(program, line).operation?.id).toBe(operation.id)
+  }
   for (const operation of listHisOperations().filter(operation => operation.id.startsWith('inpatient.'))) {
     const prefix = `clinmesh ${operation.cliPath.join(' ')}`
     const line = examples.find(line => line === prefix || line.startsWith(`${prefix} `))!
@@ -651,7 +688,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   const executionExample = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][2]
   expect(executionExample).toBeDefined()
   expect(getHisOperation('inpatient.surgery.execute').input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
-  expect(getHisOperation('inpatient.order.issue').version).toBe(2)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(3)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)

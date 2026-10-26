@@ -265,7 +265,7 @@ it('按当前住院科室和病区授权模型明细，岗位切换和 Epoch 重
   })
   runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
     .run('workspace-demo', 'epoch-1', service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service,
-      availableScopes: ['inpatient'], chargeDefinition: { id: 'synthetic-ip-charge', currency: 'CNY', priceFen: 800 } }))
+      billingUnit: { display: '项目' }, availableScopes: ['inpatient'], chargeDefinition: { id: 'synthetic-ip-charge', currency: 'CNY', priceFen: 800 } }))
   const issueResponse = await request(doctor, `${path}/investigations/issue`, {
     encounterVersion: admission.versionId, catalogVersion: 1, selection: { kind: 'laboratory', catalogItemId: service.id, indicationCode: 'clinical-assessment' },
   })

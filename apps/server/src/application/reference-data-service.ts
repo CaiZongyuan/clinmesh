@@ -339,7 +339,7 @@ export class ReferenceDataService {
   }
 
   #assertCatalogReader(context: ActorContext): void {
-    if (!['administrator', 'outpatient-doctor'].includes(context.roleCode)) {
+    if (!['administrator', 'outpatient-doctor', 'inpatient-doctor'].includes(context.roleCode)) {
       throw new ReferenceDataError(
         'ROLE_NOT_ALLOWED',
         'This role cannot read the clinical Reference catalogs',

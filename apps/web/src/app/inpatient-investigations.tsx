@@ -14,6 +14,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
 import type { useInpatientWriteIntent } from './inpatient-write-intent.ts'
+import { InpatientCatalogPicker } from './inpatient-catalog-picker.tsx'
 
 type Write=ReturnType<typeof useInpatientWriteIntent>
 type Props={admission:InpatientAdmission;session:SessionContext;locale:WorkspaceLocale;write:Write}
@@ -38,6 +39,8 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
     <h3>{t('检查检验与报告','Investigations and reports')}</h3>
     {error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
     {facts.isPending?<p>{t('正在加载检查检验','Loading investigations')}</p>:null}
+    {doctor ? <InpatientCatalogPicker kind="laboratory" session={session} locale={locale} disabled={blocked}
+      onSelect={id => { setItemId(id); void catalog.refetch() }} /> : null}
     {doctor?<form onSubmit={event=>{event.preventDefault();issue()}}><FieldSet disabled={blocked}><FieldLegend>{t('开立住院检查','Order investigation')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">
       <Field><FieldLabel htmlFor="inpatient-investigation-item">{t('住院检查项目','Investigation item')}</FieldLabel><WorkspaceSelect id="inpatient-investigation-item" value={itemId} onValueChange={setItemId}
         items={(catalog.data?.items??[]).map(item=>({value:item.id,label:`${item.display} · ${item.priceFen===undefined?t('未计价','Not priced'):formatFen(item.priceFen,locale)}${item.available?'':t(' · 尚未开展',' · unavailable')}`}))}/></Field>

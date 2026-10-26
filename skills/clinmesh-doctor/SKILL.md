@@ -29,10 +29,12 @@ Read `consultation.replyAttempt` and the original Command receipt after an inter
 队列和病例详情中的 `presentation: null` 表示没有分诊来源的临床表现，不能推断无症状或生命体征正常。保留病例并读取已有病历、问诊记录等可见证据；不得从 Case Truth 补造主诉、体征或分诊记录。缺失时结构化病历的主诉、现病史和体格检查初始为空，已有持久草稿不受影响。
 
 
-`reference.diagnoses.search` version 2 也允许受信 `inpatient-doctor` 检索同一已安装诊断 Reference Catalog。住院诊断确认和医嘱执行遵循 [clinmesh-inpatient](../clinmesh-inpatient/SKILL.md)，不复用门诊病例与支付门禁。
+`reference.diagnoses.search`、`reference.medications.search`、`reference.laboratory.search` version 2 允许受信 `inpatient-doctor` 检索同一已安装的诊断、具体药品及检验 Reference Catalog。住院可用性和缺项通过 `inpatient catalog-search` 查询，Reference 身份不直接用于开立。住院诊断确认和医嘱执行遵循 [clinmesh-inpatient](../clinmesh-inpatient/SKILL.md)，不复用门诊病例与支付门禁。
 
 ```bash
 clinmesh reference diagnoses search --query 高血压 --page 1 --page-size 20
+clinmesh reference medications search --query 阿司匹林 --page 1 --page-size 20
+clinmesh reference laboratory search --query 血红蛋白 --page 1 --page-size 20
 ```
 
 
