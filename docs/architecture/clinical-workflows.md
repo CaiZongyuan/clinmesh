@@ -285,7 +285,7 @@ DRG 公开预分组、推演、预留读取、核定预览和核定历史读取�
 
 医生填写本次 `doseText` 及频次，服务端与页面共用纯剂量换算：按明确 `unit` 直接填写，或通过每制剂含量 `inpatientDoseBasis` 换算为完整制剂数量，核对请求的 `doseQuantity`。`inpatientMaxDoseQuantity` 声明每次上限；旧项目没有新上限时以原建议的最大制剂数保守兼容，`inpatientDoses` 继续作常用建议。缺少换算依据、单位不兼容、非整数制剂数量及超量明确拒绝；现有库存数量合同仍为整数，不推定支持分片或任意小数输液。角色、完整编码适应症、双向组合、过敏、频次及发药有效批次/库存检查保留。
 
-管理员通过 `pci-data` 回读固定版本的 PCI 合成底稿、来源与院内补充，再以当前 `expectedEpoch` 和幂等键执行 `prepare-pci-data`。准备只补目录、药品基础批次及可供后续消费的数据，保留已有明确价格、配置、库存余额和旧业务；病例底稿不物化患者、门诊或住院，不生成挂号费、手术、归档或核定事实。住院医生可只读资料。原始报价与规格/单位空值和独立合成补充分别保存，FM39 合成参数与目标病组标记不表示已取得分组或核定结果。设计理由见[共享目录与 PCI 数据前置](../decisions/implemented/architecture/2026-10-25-inpatient-shared-catalog-data.md)；完整病例来源、规则装载及跨岗位联合验收由 [#279](https://github.com/CaiZongyuan/clinmesh/issues/279)按[总体规格](../spec/2026-10-15-drg-prescription-budget.md)承接。
+管理员通过 `pci-data` 回读固定版本的 PCI 合成底稿、来源与院内补充，再以当前 `expectedEpoch` 和幂等键执行 `prepare-pci-data`。准备只补目录、药品基础批次及可供后续消费的数据，保留已有明确价格、配置、库存余额和旧业务；病例底稿不物化患者、门诊或住院，不生成挂号费、手术、归档或核定事实。住院医生可只读资料。原始报价与规格/单位空值和独立合成补充分别保存，FM39 合成参数与目标病组标记不表示已取得分组或核定结果。设计理由见[共享目录与 PCI 数据前置](../decisions/implemented/architecture/2026-10-25-inpatient-shared-catalog-data.md)；固定作者病例及直接入院见[仿真来源合同](simulation.md)，完整规则装载见[部署指南](../deployment.md#运行时-drg-规则启用)，联合验收见[测试策略](../testing.md)。
 
 本院虚拟班次是 Shanghai QD08:00、BID08:00/20:00；首日只产生校对时尚未过去的执行时点，临时医嘱一次，PRN只由护士以理由显式申请。场景推进按业务日展开后续长期任务，以医嘱和时点去重；不会自动形成给药事实。申请停嘱立即冻结新任务、发药和给药，护士核停将 pending/dispensed 任务明确取消，保留已有发药、给药和费用，不自动退库存。该班次只描述本院仿真策略，事实分离的设计理由见[Agent Note](../decisions/implemented/architecture/2026-10-21-inpatient-orders-and-administration.md)。
 

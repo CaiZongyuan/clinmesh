@@ -191,7 +191,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
       assert.ok(material, `missing executable synthetic material ${materialId}`)
       const current = await read('inpatient-doctor', path, inpatientDetailSchema)
       const result = await parsePciResponse(reservationResponse, await request('inpatient-doctor', `${path}/drg/reservations`, {
-        encounterVersion: current.admission.versionId, materialId, catalogVersion: material!.version, quantity: 1, requestId: planned.id, reason: '合成PCI院内耗材预留' }))
+        encounterVersion: current.admission.versionId, materialId, catalogVersion: material.version, quantity: 1, requestId: planned.id, reason: '合成PCI院内耗材预留' }))
       reservations = result.data.reservations
     }
     return { ...stay, procedure, requestId: planned.id, reservations, catalog }
@@ -276,8 +276,8 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
       assert.ok(investigation.report, JSON.stringify(investigation.generationError))
       await parsePciResponse(inpatientInvestigationResponseSchema, await request('inpatient-doctor', `${stay.path}/investigations/acknowledge`, {
         requestId: investigation.id, expectedRequestVersion: investigation.version, serviceRequestVersion: investigation.serviceRequestVersion,
-        taskVersion: investigation.taskVersion, diagnosticReportId: investigation.report!.diagnosticReportId,
-        diagnosticReportVersion: investigation.report!.diagnosticReportVersion }))
+        taskVersion: investigation.taskVersion, diagnosticReportId: investigation.report.diagnosticReportId,
+        diagnosticReportVersion: investigation.report.diagnosticReportVersion }))
     }
     return read('inpatient-doctor', `${stay.path}/investigations`, inpatientInvestigationsSchema)
   }

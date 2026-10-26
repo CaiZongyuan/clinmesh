@@ -28,7 +28,7 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 财务命令风险分级变化通过 CLI process/HTTP adapter 验证：human 缺少 `--yes` 时返回 `confirmation_required/definitely_not_sent`，不消费 stdin、不发送请求；显式确认后保留原输入与幂等键。Agent mode 无此人工标志仍可按 Grant 发起请求；读取和预览保留无需确认的路径。Skill 示例同时交给真实 parser 检查标志与 Catalog 版本。
 
-支付与 DRG 的联合不变量由 `pci-payment-drg-acceptance-http.test.ts` 拥有：同一次合成冠心病住院的计划与实际 PCI、四类材料预留替换、发药计费、医保待遇及组合资金、未知结果门禁和恢复、清床归档、核定差异、后续更正与医保补偿、退款重启恢复。断言原费用、首次结算、归档、分组和临床状态不被后续调整改写；心衰和肺炎通过独立 HTTP 入院与预分组保留兼容。该 fixture 仅覆盖已独立对照的四个成人病例小切片，不表示完整来源包通过全量核验。
+支付与 DRG 的联合不变量由 `pci-payment-drg-acceptance-http.test.ts` 拥有：从固定作者 Case Truth 与手工 Persona 直接入院，同一次合成冠心病住院执行九项检验、五种药、造影和支架、四类材料预留替换，再完成医保待遇及组合资金、未知结果门禁和恢复、清床归档、核定差异、后续更正与医保补偿、退款重启恢复。断言原费用、首次结算、归档、分组和临床状态不被后续调整改写；心衰和肺炎通过独立 HTTP 入院与预分组保留兼容。默认 CI 使用自编有限规则程序；设置 `CLINMESH_TEST_DRG_RULES_DIRECTORY` 为本地物化的完整 v2 包目录时，同一旅程强制核对固定 Manifest SHA-256 并使用完整条件程序。完整来源的独立条件对照见[固定来源核验](research/2026-10-25-drg-condition-verification.md)，不等于全部可能输入或地方正式结算一致性。
 
 `inpatient-drg-review.spec.ts` 和 `inpatient-drg.spec.ts` 验证医生草稿迟到隔离、异步事实变化主动过期并锁定已开确认、服务端过期重验、取消、实际手术显式引用预留、医保办原回执恢复及缺规则入口；`inpatient-drg.browser.test.ts` 验证 React 18/19 ShadowRoot 下的医嘱、预留和核定审阅。业务拒绝、权限、幂等与读取审计矩阵留在 Server HTTP 测试，CLI Skill 示例检查保留完整 Command envelope，不在浏览器复制同一矩阵。
 
