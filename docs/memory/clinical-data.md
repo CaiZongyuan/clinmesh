@@ -150,6 +150,12 @@
 
 ## 参考目录、Synthea 与影像素材
 
+- 以编码字符串查询 JSON 参数字典时先用 `Object.hasOwn` 检查自有键；直接读取 `table[code] !== undefined` 会把 `toString` 等原型属性误当有效编码，导致 CC/MCC 等计算伪命中。对应分组公开接口保留原型键回归；规则与编码边界见[DRG 条件分组](../architecture/drg-grouping.md)。
+
+- 从 FHIR 出生日期计算日龄前先验证完整且有效的日期；`new Date` 会给部分日期补月日，也会将不存在的日期滚动到下个月。未满周岁是否保留日龄按日历整岁判断，不能用 `<365`，否则闰年前一日会丢失仍有效的第 365 日龄。排查凌晨年龄异常时，配对验证同一时点的 `Z` 与 `+08:00` 表达及医院午夜前后；边界回归见[分组年龄测试](../../apps/server/tests/inpatient-drg-age.test.ts)，计算口径见[DRG 条件分组](../architecture/drg-grouping.md#住院输入与冻结)。
+
+- FHIR Quantity 的 `value` 可能只是范围边界；窄 Zod 投影会剥除未声明的 `comparator`，因此读取精确体重前须显式检查比较符。用正式 Observation 写入、回读并配对验证边界值和未知输入，不能只用裸数值 fixture；见[出生体重回归](../../apps/server/tests/inpatient-birth-weight.test.ts)及[住院输入合同](../architecture/drg-grouping.md#住院输入与冻结)。
+
 - 离线清单的合成 fixture 要沿用真实来源字段名，并从公开准备与回读入口核对；只用自拟的通用 `unit` 字段会漏掉来源单位提取缺口。摘要提取修正后重新准备已有资料时，先核对清单身份，恢复方式见[离线 DRG 资料核对](../deployment.md#离线-drg-资料核对)，不要修改数据库绕过不可变校验。
 
 - 验证离线清单读取的失败审计时，用已认证管理员发送非法分页参数，再从公开 FHIR AuditEvent 回读失败事件；只断言 HTTP 400 会漏掉路由提前解析参数、绕过服务层审计的缺口。认证拒绝与进入受信读取边界后的参数拒绝分别验证，合同见[参考数据策略](../architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
@@ -158,7 +164,7 @@
 
 - JSON 摘要若用 `JSON.stringify` 计算内容哈希，先按持久化 schema 规范化再哈希；Zod object 解析会按 schema 顺序重建字段。只测首次写入会漏掉“写入成功、再次读取哈希失配”，应覆盖每种来源的重复准备和公开回读。
 
-- 解析 OpenDRG 导出时，缺少分组程序的方案会以 `null` 表示 `grouperSourceUrl/groupDataPath`；先允许来源的缺失表示，再强制所选方案具有已锁定程序和参数。参数文件的 `SS_VALID` 是字符串数组，`CC/MCC/CCE` 是对象；合成 fixture 应覆盖这些真实形状。程序只核对字节哈希，不执行；当前用途边界见[参考数据策略](../architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
+- 解析 OpenDRG 导出时，缺少分组程序的方案会以 `null` 表示 `grouperSourceUrl/groupDataPath`；先允许来源的缺失表示，再强制所选方案具有已锁定程序和参数。参数文件的 `SS_VALID` 是字符串数组，`CC/MCC/CCE` 是对象；合成 fixture 应覆盖这些真实形状。自动资料核对及运行时不执行来源程序；完整条件的显式离线对照见[DRG 条件分组](../architecture/drg-grouping.md)，资料用途边界见[参考数据策略](../architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
 
 - `pnpm reference:sync` 固定写入默认路径 `.data/clinmesh-reference.sqlite`，不读取 `.env` 的 `CLINMESH_REFERENCE_DATABASE_PATH`；`.env` 指向自定义路径时会与同步结果分叉，出现"诊断药品正常、检验目录为空"（旧 Release 不含 `laboratory-cn`）。排查时直接查库：`reference_release` 表按 `release_id` 看 `laboratory_definition_count`。当前 Release 默认取 `reference-data.lock.json` 的 `compositeRelease.releaseId`，不要在 `.env` 手抄该 ID 制造双事实来源；运行中 Server 不热切换参考库，修复后必须重启。
 
@@ -185,3 +191,7 @@
 - Synthea GMF 的 `Observation` 条件在患者没有该 Observation 时做值比较会抛出 `NullPointerException` 并中止整次运行（只有 `is nil` / `is not nil` 不抛）；`And` 按书写顺序短路。写进 keep module 的 Observation 取值条件必须先放同一编码的 `is not nil`，再放 `==` 比较；编码值比较要求 `value_code` 的 system 与模块中一致（SNOMED 为 `SNOMED-CT`），类型不符的比较同样抛出异常。
 
 - 给既有 Scenario 增加环境或岗位时，验证已经 reset 到后续 Epoch 的旧库重启；装配入口必须补当前 active Epoch，且认证 binding 与 FHIR Practitioner/Role 均存在。新库 seed 通过不能代替旧库升级证明，见[住院建档决策](../decisions/implemented/architecture/2026-10-20-inpatient-admission-owner.md)。
+
+- 向共享 `outpatient_catalog` 增加 active 住院药品时，核对 `WorkflowService.#prescriptionConclusionSupported`：它对全部 active 药品配置执行 `every`，缺少门诊疗程、数量或适应症字段会使全门诊独立处方能力变为 false。新增配置须保持已有完整合同，并通过公开门诊目录回读 `prescriptionConclusionSupported`；回归见 `apps/server/tests/inpatient-pci-data.test.ts` 和 `inpatient-pci-data-http.test.ts`。
+
+- 核对 SQLite 来源类型时读取最新实际 schema 及重建迁移；早期 `0024` 的 builtin 病例来源许可已被 `0036` 重建替换，不能据旧迁移推断当前支持。固定 PCI 底稿与实际来源/就诊分开，边界见[住院目录与资料准备](../architecture/clinical-workflows.md#83-医嘱生命周期)。

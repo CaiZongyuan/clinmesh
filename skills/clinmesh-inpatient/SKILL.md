@@ -52,9 +52,21 @@ clinmesh command receipt get --operation-id inpatient.admission.receive --idempo
 
 ## 诊断、医嘱与执行
 
+管理员可读取 `pci-data`，核对固定版本的合成病例底稿、药耗、检验、编码、来源报价及合成补充后，用当前受信 `expectedEpoch` 准备首例资料。住院医生只读该资料。准备只补院内目录和基础库存，实际患者及就诊由正常业务另行建立；重复准备保留既有库存余额、明确价格与业务事实。
+
+```bash
+clinmesh inpatient pci-data
+clinmesh inpatient prepare-pci-data --expected-epoch <epoch> --idempotency-key <key>
+clinmesh command receipt get --operation-id inpatient.pci-data.prepare --idempotency-key <key>
+```
+
+`INPATIENT_PCI_EPOCH_CONFLICT` 要求核对当前场景后再决定新意图，不能为恢复原请求替换 Epoch；响应丢失先查原 Command receipt，保留原完整输入和幂等键。`groupingTarget` 是后续核验的目标病组，底稿及准备结果不表示已经实施手术、完成分组或产生模拟核定。
+
 先读取本次住院的当前状态、正式诊断、医嘱和任务。住院医生按 [clinmesh-doctor 的 Reference 检索示例](../clinmesh-doctor/SKILL.md)检索已安装的完整诊断 Reference Catalog；确认时只提交目录 ID、主次、明确入院病情及备注，server 解析并冻结编码、版本、来源定位和当时 Release。目录不可用时保留显式合成院内目录，不把其修订号当作国家临床版本。
 
 ```bash
+clinmesh inpatient catalog-search --kind medication --source hospital --page 1 --page-size 20
+clinmesh inpatient catalog-search --kind laboratory --source reference --query 血常规 --page 1 --page-size 20
 clinmesh inpatient clinical-catalog
 clinmesh inpatient clinical --admission-id <admission-id>
 clinmesh inpatient confirm-diagnosis --input @diagnoses.json --idempotency-key <key>
@@ -69,7 +81,9 @@ clinmesh inpatient complete-service --input @execution.json --idempotency-key <k
 clinmesh inpatient reverse-charge --input @reversal.json --idempotency-key <key>
 ```
 
-每个文件使用受信读取结果的 `admissionId`。诊断确认传 `encounterVersion`、`expectedRevision` 与恰好一个 primary 的 `entries`；每项必须显式选择 `admissionCondition`（`1`有、`2`临床未确定、`3`情况不明、`4`无），输入顺序保存在正式确认中，不根据备注或日期推断病情；签发传当前 `encounterVersion`、`duration` 和受控 `selection`。药品选择含目录 ID/版本、`doseText`、`frequencyCode`、每次 `doseQuantity`；这里数量以目录基准单位计，三个首期产品均为片，不是盒，也不是门诊整张处方总量或疗程。合成本院适应症规则、组合、过敏、剂量和频次不满足时不得换 ID 绕过。
+`catalog-search` 的 `kind` 为 `medication` 或 `laboratory`，`source` 为 `hospital` 或 `reference`；两来源分别分页，`pageSize` 最大 50。候选返回 `available`、`incomplete` 或 `inactive`，`missingFields` 列明缺项。只用 `available` 返回的 `catalogItemId/catalogVersion` 开立；Reference ID、同名产品或不唯一映射不能替代院内身份。查询失败时保留失败原因并重新查询，空结果不表示加载成功前可自行补造项目。
+
+每个文件使用受信读取结果的 `admissionId`。诊断确认传 `encounterVersion`、`expectedRevision` 与恰好一个 primary 的 `entries`；每项必须显式选择 `admissionCondition`（`1`有、`2`临床未确定、`3`情况不明、`4`无），输入顺序保存在正式确认中，不根据备注或日期推断病情；签发传当前 `encounterVersion`、`duration` 和受控 `selection`。药品选择含目录 ID/版本、医生本次填写的 `doseText`、`frequencyCode`、每次 `doseQuantity`；数量以目录 `unit` 计，质量单位按明确的 `doseBasis` 换算为整数制剂数量，并受 `maxDoseQuantity` 约束。`doses` 是常用建议，未填写本次剂量由医嘱表单提示。单位或含量不明确时先补资料；合成本院适应症、组合、过敏、剂量和频次不满足时不得换 ID 绕过。
 
 `diagnoses.json` 合成示例；医生须按本次患者实际判断明确填写入院病情，并以受信读取的住院和版本替换示例值：
 

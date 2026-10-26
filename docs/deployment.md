@@ -57,11 +57,11 @@ pnpm reference:sync
 
 ### 离线 DRG 资料核对
 
-新用户无需复制资料目录或单独导入。`pnpm dev:server`、`pnpm dsh:setup` / `pnpm dev:dsh` 和 `pnpm dev:lan` 的启动准备自动取得并核验完整五目录 r3 与 OpenDRG 2026-10-20 快照；`pnpm reference:sync` 同样包含这一步。首次准备需要访问 GitHub Release；固定压缩包约 60.7 MB，解包后共 2,335 文件、约 665.6 MB。Docker 构建时自动准备并将资料及参考库放入镜像，冷启动离线复用，不从个人电脑寻找资料。
+新用户无需复制资料目录或单独导入。`pnpm dev:server`、`pnpm dsh:setup` / `pnpm dev:dsh` 和 `pnpm dev:lan` 的启动准备自动取得并核验完整五目录 r3 与 OpenDRG 2026-10-20 快照；`pnpm reference:sync` 同样包含这一步。首次准备需要访问 GitHub Release；精简包约 36.1 MB，常驻约 347.6 MB，完整保留原 2,335 个逻辑文件。精确字节、物理文件数和无损读取机制见[DRG 储存合同](drg-reference-storage.md)。Docker 构建时自动准备并将资料及参考库放入镜像，冷启动离线复用，不从个人电脑寻找资料。
 
 自动启动准备使用 `.env.example` 中的参考数据库配置。显式移除 `CLINMESH_REFERENCE_DATABASE_PATH` 时保留合成 fixture 模式，不下载 DRG，也不报告 DRG 已就绪；维护 CLI 显式指定 `--database` 仍可准备目标库。
 
-内容身份由[离线清单](../apps/server/reference-data/drg-offline.lock.json)固定，下载地址、压缩包哈希及解包规模由[分发锁](../apps/server/reference-data/drg-distribution.lock.json)固定。自动安装目录位于参考数据库同级的 `drg-reference/`，默认是 `.data/drg-reference/`，每个锁版本单独保存。已有 `.data/reference-prepared/r3` 和 `.data/exports/opendrg-2026-10-20` 两个完整本地目录时，直接核验并复用，不再下载。
+内容身份由[离线清单](../apps/server/reference-data/drg-offline.lock.json)固定，下载地址、压缩包哈希及解包规模由[分发锁](../apps/server/reference-data/drg-distribution.lock.json)固定。自动安装目录位于参考数据库同级的 `drg-reference/`，默认是 `.data/drg-reference/`，按当前锁身份保存。仓库根或安装目录中已有完整的当前精简资料时，核验后离线复用；缺失时下载固定精简包。开发阶段只维护当前格式，不扫描、转换或回退旧完整安装；旧格式参考库需要重新创建并运行正常资料准备。
 
 正常准备完成后，维护者可从仓库根目录核对结果：
 
@@ -73,9 +73,9 @@ pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinme
 
 自动准备失败时显示下载或校验错误，启动准备不宣告成功；网络恢复后重跑原启动命令即可。已安装资料完整时不访问分发源；缺失或损坏时重新下载到临时目录，整包及来源文件核验通过才替换安装版本，失败保留已有文件和清单。只想修复 DRG 而不重新同步临床目录时，可运行 `pnpm --filter @clinmesh/server drg:prepare`；它读取与 Server 相同的环境文件和参考库路径，支持 `--database`、`--install-directory`、`--manifest`、`--distribution`、`--input-root` 供维护及隔离验证使用。`--check` 在临时目录核验，不写正式资料目录、数据库或审计。自定义 `--database` 应与 Server 配置一致。
 
-每轮准备对完整资料核验一遍，登记清单复用本轮核验结果；下一次独立准备仍会重新检查全部文件，已有相同清单返回 `created: false`。LAN 和 DSH 启动器完成参考资料准备后，通过 Server 内部 `dev:prepared` 入口继续启动，只执行数据库迁移；`pnpm dev:server` 独立启动仍执行完整准备。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接与重复文件均拒绝发布；同一 `inventoryId` 不能覆盖。新资料或摘要提取结果修正需要新清单身份。当前清单 `clinmesh-drg-offline-2026-10-22.r2` 保留 `sourceUnit` 中的来源计价单位，旧清单保持可查；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
+每轮准备对完整资料核验一遍，登记清单复用本轮核验结果；下一次独立准备仍会重新检查全部文件，已有相同清单返回 `created: false`。LAN 和 DSH 启动器完成参考资料准备后，通过 Server 内部 `dev:prepared` 入口继续启动，只执行数据库迁移；`pnpm dev:server` 独立启动仍执行完整准备。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接、循环依赖、重复或未列入索引的物理文件均拒绝发布；同一 `inventoryId` 不能覆盖。当前精简清单为 `clinmesh-drg-offline-2026-10-25.r1`，原逻辑 manifest/checksums 与全部来源事实保持不变；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
 
-维护者更新固定资料时，先在本地完成来源与内容核验，再运行 `pnpm --filter @clinmesh/server drg:package --input-root <资料所在仓库根> --manifest <离线清单路径> --output <归档路径>` 制作可复现包。工具只打包清单列出的文件，输出包 SHA-256、压缩及解包字节数、文件数与规范化清单摘要；新版本资产与分发锁必须一起更新，不能覆盖已发布快照。
+维护者构建、制包和按需导出使用[储存维护命令](drg-reference-storage.md#维护命令)，安装不永久生成逻辑副本。新资料资产与两份锁一起更新，不能覆盖已发布快照；仓库只保留当前精简格式的发行锁。
 
 管理员可在登录会话下请求 `GET /api/sim/v1/reference-data/offline-inventories?page=1&pageSize=20`，回读来源、Manifest／文件哈希、版本、行数、来源单位、覆盖与隔离项。HTTP 与 CLI 清单列表均返回 `items/page/pageSize/total`，默认每页 20 条、最多 50 条，可按总数继续翻页。普通岗位访问被拒绝；成功和失败读取沿用 operational 审计链及 FHIR AuditEvent。查询与恢复依据见[参考数据合同](architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
 
@@ -175,6 +175,8 @@ pnpm dev:server
 住院医生、病区护士与病案人员登录后进入住院工作台；挂号员、收费员与药师在各自工作台切换住院页签。住院医生与病区护士的当前岗位绑定具体科室和病区，转科时使用目标科室岗位接管，业务门禁见[临床业务流程](architecture/clinical-workflows.md#82-住院闭环后续)。
 
 完成步骤 3 后，以门诊医生登录并打开诊断选择器应能搜索到 ICD-10 条目，即参考目录生效。
+
+管理员可通过 [住院 CLI 的 PCI 资料准备入口](../skills/clinmesh-inpatient/SKILL.md#诊断医嘱与执行)读取固定版本底稿，再按当前 Epoch 幂等准备首例药耗及检验目录。该步骤只补基础资料和药品批次，不创建患者或就诊；已有价格、配置、库存消耗和业务保留。用量、候选缺项与数据边界见[住院医嘱合同](architecture/clinical-workflows.md#83-医嘱生命周期)，完整病例及 DRG 联合验收仍由对应执行任务完成。
 
 ## 6. Synthea 患者生成
 
@@ -444,6 +446,8 @@ pnpm smoke:recommendations:live
 ### DSH 持续升级
 
 [`DSH upstream updates`](../.github/workflows/dsh-upstreams.yml) 每日 UTC 02:23（北京时间 10:23）发现更新，也支持 Actions 页面手动运行。发现范围由 [`dsh-upstreams.lock.json`](../dsh-upstreams.lock.json) 拥有：npm 组件比较全部公开正式版和 `rc.N`，不以 `latest` 或 `next` 标签决定候选；源码组件跟踪公开来源的默认分支完整 commit。源码默认分支落后于已验证支持提交时保留支持提交，历史分叉时明确失败并等待维护者协调。
+
+决定跳过一次升级时，给对应升级 PR 添加 **`跳过此版本`** 标签并关闭 PR，无需修改仓库配置；已关闭的 PR 可以补加标签。自动化分页读取同一目标分支上已关闭且未合并的升级 PR，从其精确 HEAD 的 `deployment/dsh/candidate.json` 读取本次变化的组件名与目标 npm 版本或源码 commit。只跳过这些精确目标，候选中未变化的组件不受影响；后续正式版、RC、源码 commit 和其他组件继续发现，不回退已验证基线。跳过决定不依赖当前基线摘要或原分支是否仍存在。恢复更新时移除所有记录该目标的跳过标签；仅关闭 PR 或写评论不构成跳过，已合并、其他目标分支、外部 fork 和普通 PR 不参与。只读发现与发布使用相同入口；标签记录或对应候选读取失败、响应非法时停止，不把读取失败当作没有跳过记录。
 
 本地只读发现命令为 `pnpm upstream:discover`，结果写入已忽略的 `dsh-upstreams.discovery.json`。所有来源解析成功后才产生新候选；已验证 npm 版本被撤销、发行身份或完整性变化、非法响应和网络错误均失败，不产生部分更新。没有差异不创建 PR。发布模式先从目标分支的精确 HEAD 读取基线锁，不采用运行分支或本地 checkout 的锁；读取失败停止，不回退到本地。手动和定时运行以仓库默认分支为目标，专用验证分支的 push 以该验证分支为目标。随后在新版本发现前检查当前基线对应的活动候选；官方 npm registry 对已知候选包直接返回 404、目标版本已撤销或内容变化时，保留候选和人工提交，确认 HEAD 未变化后将该提交的兼容状态置为失败，并在 PR 自动管理区和发现报告的 `result` 中记录待适配原因，不调度安装。即使后续发现因基线版本撤销或其他来源错误而失败，候选失效证据仍保存：报告的 `result` 保留待适配结果，报告和 CLI 输出另以 `discoveryError` 记录发现错误，不产生新候选或验收 HEAD。没有候选失效时，发现错误仍以非零退出码结束。正常候选不写入；候选核对禁止重定向，403、503、超时和非法响应仍报错，不判定为撤销。只有固定官方 registry 地址的直接 404 按整包撤销处理，其他来源的 404 不采用该规则。`pnpm upstream:discover --publish` 还要求 `GH_TOKEN`，使用 GitHub Git API 在当前升级分支 HEAD 上原子追加候选文件与 `deployment/dsh/discovery.json`，后者保存上一次自动发现的完整候选。再次更新前比较 PR 当前候选与该记录；人工支持 commit、版本或其他目标字段有变化时停止，保留人工目标，不先合并基线。没有人工修改时，新的上游目标同步更新两份文件。基于目标分支和基线摘要的分支名保证重复发现复用活动 draft PR；PR 中的自动管理区更新完整组件差异，区外人工说明保留。
 

@@ -1,6 +1,6 @@
 import { z } from 'zod'
-import { drgGroupingResultSchema } from './drg'
-import { inpatientDrgPaymentReferenceSchema } from './inpatient-drg-simulation'
+import { drgGroupingResultSchema } from './drg.ts'
+import { inpatientDrgPaymentReferenceSchema } from './inpatient-drg-simulation.ts'
 
 const id = z.string().min(1).max(128)
 const text = z.string().min(1).max(1_000)

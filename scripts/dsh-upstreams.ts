@@ -24,6 +24,8 @@ export type Candidate = {
   target: UpstreamLock
   changes: { name: string; from: string; to: string }[]
 }
+type SkippedRelease = { name: string; to: string }
+const skippedReleaseLabel = '跳过此版本'
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>
 
 function object(value: unknown): Record<string, unknown> {
@@ -134,7 +136,7 @@ export async function checkNpmAvailability(target: UpstreamLock, fetch: Fetch = 
   return undefined
 }
 
-export async function discoverUpstreams(input: unknown, fetch: Fetch = globalThis.fetch): Promise<Candidate> {
+export async function discoverUpstreams(input: unknown, fetch: Fetch = globalThis.fetch, skipped: readonly SkippedRelease[] = []): Promise<Candidate> {
   const baseline = parseLock(input)
   const target = structuredClone(baseline)
   for (const item of target.components) {
@@ -143,8 +145,9 @@ export async function discoverUpstreams(input: unknown, fetch: Fetch = globalThi
       if (packument.name !== item.name) throw new Error(`npm 包身份不匹配：${item.name}`)
       const versions = object(packument.versions)
       if (!versions[item.version]) throw new Error(`已验证版本被撤销：${item.name}@${item.version}`)
-      const selected = Object.keys(versions).filter(value => versionParts(value)).sort(compareVersions).at(-1)
-      if (!selected) throw new Error(`无正式版或 RC：${item.name}`)
+      const selected = Object.keys(versions).filter(value => versionParts(value)
+        && compareVersions(value, item.version!) > 0
+        && !skipped.some(release => release.name === item.name && release.to === value)).sort(compareVersions).at(-1) ?? item.version
       for (const version of new Set([item.version, selected])) {
         const release = object(versions[version])
         if (release.name !== item.name || release.version !== version) throw new Error(`npm 发行身份不匹配：${item.name}`)
@@ -160,7 +163,7 @@ export async function discoverUpstreams(input: unknown, fetch: Fetch = globalThi
       const branch = string(metadata.default_branch)
       const head = await json(fetch, `https://api.github.com/repos/${repo}/commits/${encodeURIComponent(branch)}`)
       const commit = sha(head.sha)
-      if (commit !== item.commit) {
+      if (commit !== item.commit && !skipped.some(release => release.name === item.name && release.to === commit)) {
         const comparison = await json(fetch, `https://api.github.com/repos/${repo}/compare/${item.commit}...${commit}`)
         if (comparison.status === 'ahead') item.commit = commit
         else if (comparison.status !== 'behind') throw new Error(`源码历史分叉或非法比较响应，需人工适配：${item.name}`)
@@ -253,6 +256,31 @@ export async function readPublishedBaseline(options: PublicationOptions): Promis
   const file = object(await request(`contents/dsh-upstreams.lock.json?ref=${head}`))
   if (file.encoding !== 'base64') throw new Error('非法基线文件编码')
   return parseLock(JSON.parse(Buffer.from(string(file.content), 'base64').toString('utf8')))
+}
+
+export async function readSkippedReleases(options: PublicationOptions): Promise<SkippedRelease[]> {
+  const request = githubRequest(options)
+  const skipped: SkippedRelease[] = []
+  for (let page = 1; ; page++) {
+    const pulls = await request(`pulls?state=closed&base=${encodeURIComponent(options.base)}&per_page=100&page=${page}`)
+    if (!Array.isArray(pulls)) throw new Error('非法已关闭升级 PR 响应')
+    for (const value of pulls) {
+      const pull = object(value)
+      if (!Array.isArray(pull.labels)) throw new Error('非法升级 PR 标签')
+      if (!pull.labels.some(value => object(value).name === skippedReleaseLabel)) continue
+      if (pull.state !== 'closed' || (pull.merged_at !== null && typeof pull.merged_at !== 'string')) throw new Error('非法跳过版本 PR 状态')
+      if (pull.merged_at !== null) continue
+      if (object(pull.base).ref !== options.base) continue
+      const head = object(pull.head)
+      if (head.repo === null) continue
+      if (object(head.repo).full_name !== options.repository || !/^automation\/dsh-upstreams-[a-f0-9]{8}-[a-f0-9]{12}$/.test(string(head.ref))) continue
+      const file = object(await request(`contents/${candidatePath}?ref=${sha(head.sha)}`))
+      if (file.encoding !== 'base64') throw new Error('非法跳过版本候选编码')
+      const candidate = parseCandidate(JSON.parse(Buffer.from(string(file.content), 'base64').toString('utf8')))
+      skipped.push(...candidate.changes.map(({ name, to }) => ({ name, to })))
+    }
+    if (pulls.length < 100) return skipped
+  }
 }
 
 async function openPublication(baselineDigest: string, options: PublicationOptions) {

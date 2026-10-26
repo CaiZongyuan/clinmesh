@@ -42,7 +42,7 @@ async function setup() {
     allowedIndicationCodes: ['clinical-assessment'], specimen: { code: '119297000', display: '血液标本' }, tatMinutes: 20, priceFen: 800,
     reportDefinition: { conclusionTemplate: '白细胞计数结果已完成。', results: [{ referenceConcept: concept, valueType: 'quantity', referenceRange: { low: 4, high: 10, text: '4.0-10.0 x10^9/L' }, unit: { system: 'http://unitsofmeasure.org', code: '10*9/L', display: '10^9/L' } }] } })
   runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
-    .run(context.workspaceId, context.epoch, service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service, availableScopes: ['outpatient','inpatient'], chargeDefinition: { id: 'synthetic-wbc-charge-definition', currency: 'CNY', priceFen: 800 } }))
+    .run(context.workspaceId, context.epoch, service.id, service.localCode, service.nameZh, service.nameZh, JSON.stringify({ laboratoryService: service, billingUnit: { display: '项目' }, availableScopes: ['outpatient','inpatient'], chargeDefinition: { id: 'synthetic-wbc-charge-definition', currency: 'CNY', priceFen: 800 } }))
   const unpriced = { ...service, id: 'synthetic-unpriced-wbc', localCode: 'SYN-UNPRICED-WBC', nameZh: '合成未计价白细胞', priceFen: 0 }
   runtime.database.driver.prepare('INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json) VALUES(?,?,?,?,?,?,1,1,?)')
     .run(context.workspaceId, context.epoch, unpriced.id, unpriced.localCode, unpriced.nameZh, unpriced.nameZh, JSON.stringify({ laboratoryService: unpriced, availableScopes: ['outpatient','inpatient'], chargeDefinition: { currency: 'CNY', priceFen: 0 } }))
@@ -73,6 +73,111 @@ async function dispatchAll(runtime: Awaited<ReturnType<typeof createImagingRunti
 }
 
 describe('住院检查检验 HTTP 合同', () => {
+  it.each(['laboratory', 'imaging'] as const)('旧%s收费定义没有独立id时仍可开立，并按原冻结价格收费', async kind => {
+    const s = await setup()
+    const serviceId = kind === 'laboratory' ? 'synthetic-inpatient-wbc' : 'imaging-chest-radiograph'
+    const priceFen = kind === 'laboratory' ? 1300 : 8000
+    const billing = { display: '合成旧住院收费定义', currency: 'CNY', priceFen,
+      trigger: 'execution-completed', source: 'synthetic-legacy-billing', availableScopes: ['inpatient'] }
+    s.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_set(config_json,
+      '$.inpatientInvestigationBilling',json(?)) WHERE service_id=?`).run(JSON.stringify(billing), serviceId)
+    const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/investigation-catalog')).json()
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: serviceId, available: true, priceFen }))
+    if (kind === 'laboratory') {
+      const candidates = await (await s.request(s.doctor, `/api/his/v1/inpatient/catalog-search?kind=laboratory&source=hospital&query=${serviceId}`)).json()
+      expect(candidates.items).toEqual([expect.objectContaining({ status: 'available', catalogItemId: serviceId, missingFields: [] })])
+    }
+    const selection = kind === 'laboratory'
+      ? { kind, catalogItemId: serviceId, indicationCode: 'clinical-assessment' }
+      : { kind, serviceId, indication: '合成旧价目兼容回归' }
+    const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, {
+      encounterVersion: s.admission.versionId, catalogVersion: 1, selection })
+    expect(issued.status).toBe(200)
+    const facts = inpatientInvestigationsSchema.parse((await issued.json()).data)
+    const request = (kind === 'laboratory' ? facts.laboratoryRequests : facts.imagingRequests)[0]!
+    s.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET version=version+1,
+      config_json=json_set(config_json,'$.inpatientInvestigationBilling.priceFen',?) WHERE service_id=?`)
+      .run(priceFen + 1000, serviceId)
+    expect((await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: request.id,
+      expectedRequestVersion: request.version, serviceRequestVersion: request.serviceRequestVersion,
+      taskVersion: request.taskVersion })).status).toBe(200)
+    await dispatchAll(s.runtime)
+    const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const charges = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(charges.charges).toMatchObject([{ kind, sourceId: request.id, amountFen: priceFen }])
+  })
+
+  it.each([{}, null])('有效住院收费定义不受损坏备用定义 %j 影响，并在开立时冻结价格', async chargeDefinition => {
+    const s = await setup()
+    const billing = { id: 'synthetic-inpatient-wbc-charge', version: 3, display: '住院合成白细胞计数', currency: 'CNY', priceFen: 1300,
+      trigger: 'execution-completed', source: 'synthetic-read-write-regression', availableScopes: ['inpatient'], effectiveOn: '2026-10-25' }
+    s.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_set(config_json,
+      '$.inpatientInvestigationBilling',json(?),'$.chargeDefinition',json(?)) WHERE service_id='synthetic-inpatient-wbc'`)
+      .run(JSON.stringify(billing), JSON.stringify(chargeDefinition))
+    const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/investigation-catalog')).json()
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-inpatient-wbc', available: true, priceFen: 1300 }))
+    const candidates = await (await s.request(s.doctor, '/api/his/v1/inpatient/catalog-search?kind=laboratory&source=hospital&query=synthetic-inpatient-wbc')).json()
+    expect(candidates.items).toEqual([expect.objectContaining({ status: 'available', catalogItemId: 'synthetic-inpatient-wbc', laboratory: { indicationCodes: ['clinical-assessment'], priceFen: 1300 } })])
+    const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } })
+    expect(issued.status).toBe(200)
+    const request = inpatientInvestigationsSchema.parse((await issued.json()).data).laboratoryRequests[0]!
+    s.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET version=version+1,
+      config_json=json_set(config_json,'$.inpatientInvestigationBilling.priceFen',2300) WHERE service_id='synthetic-inpatient-wbc'`).run()
+    expect((await s.request(s.nurse, `${s.path}/investigations/send`, { requestId: request.id, expectedRequestVersion: request.version,
+      serviceRequestVersion: request.serviceRequestVersion, taskVersion: request.taskVersion })).status).toBe(200)
+    await dispatchAll(s.runtime)
+    const cashier = await signIn(s.runtime, 'cashier@demo.clinmesh.local')
+    const charges = await (await s.request(cashier, `${s.path}/charges`)).json()
+    expect(charges.charges).toMatchObject([{ kind: 'laboratory', sourceId: request.id, amountFen: 1300 }])
+  })
+
+  it.each(['missing-source', 'null', 'zero-price'])('住院收费定义 %s 非法时不回退到有效备用价目，也不能绕过目录开立', async invalid => {
+    const s = await setup()
+    const billing = { display: '住院合成白细胞计数', currency: 'CNY', priceFen: invalid === 'zero-price' ? 0 : 1300,
+      id: 'synthetic-inpatient-wbc-charge', trigger: 'execution-completed', availableScopes: ['inpatient'],
+      ...(invalid === 'missing-source' ? {} : { source: 'synthetic-read-write-regression' }) }
+    s.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET config_json=json_set(config_json,
+      '$.inpatientInvestigationBilling',json(?)) WHERE service_id='synthetic-inpatient-wbc'`).run(JSON.stringify(invalid === 'null' ? null : billing))
+    const catalog = await (await s.request(s.doctor, '/api/his/v1/inpatient/investigation-catalog')).json()
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-inpatient-wbc', available: false }))
+    const candidates = await (await s.request(s.doctor, '/api/his/v1/inpatient/catalog-search?kind=laboratory&source=hospital&query=synthetic-inpatient-wbc')).json()
+    expect(candidates.items).toEqual([expect.objectContaining({ status: 'incomplete', missingFields: expect.arrayContaining(['billing', 'price']) })])
+    expect(candidates.items[0]).not.toHaveProperty('catalogItemId')
+    const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } })
+    expect(issued.status).toBe(409)
+    expect((await issued.json()).error.code).toBe('INPATIENT_INVESTIGATION_UNAVAILABLE')
+    const facts = inpatientInvestigationsSchema.parse(await (await s.request(s.doctor, `${s.path}/investigations`)).json())
+    expect(facts.laboratoryRequests).toEqual([])
+  })
+
+  it('单项缺单位或收费定义不阻断同页完整检验，写入拒绝绕过缺项', async () => {
+    const s = await setup()
+    s.runtime.database.driver.prepare(`INSERT INTO hospital_service_catalog(workspace_id,epoch,service_id,code,name_zh,name_en,version,active,config_json)
+      SELECT workspace_id,epoch,'synthetic-complete-wbc','SYN-COMPLETE-WBC','合成完整白细胞','complete',1,1,
+        json_set(config_json,'$.laboratoryService.id','synthetic-complete-wbc','$.billingUnit',json('{"display":"项目"}'))
+      FROM hospital_service_catalog WHERE service_id='synthetic-inpatient-wbc'`).run()
+    s.runtime.database.driver.prepare("UPDATE hospital_service_catalog SET config_json=json_set(config_json,'$.chargeDefinition',json('{}')) WHERE service_id='synthetic-unpriced-wbc'").run()
+    s.runtime.database.driver.prepare("UPDATE hospital_service_catalog SET config_json=json_remove(config_json,'$.billingUnit') WHERE service_id='synthetic-inpatient-wbc'").run()
+    const response = await s.request(s.doctor, '/api/his/v1/inpatient/investigation-catalog')
+    expect(response.status).toBe(200)
+    const catalog = await response.json()
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-complete-wbc', available: true }))
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-inpatient-wbc', available: false }))
+    expect(catalog.items).toContainEqual(expect.objectContaining({ id: 'synthetic-unpriced-wbc', available: false, unavailableReason: 'unpriced' }))
+    const search = await s.request(s.doctor, `/api/his/v1/inpatient/catalog-search?kind=laboratory&source=hospital&query=${encodeURIComponent('白细胞')}`)
+    expect(search.status).toBe(200)
+    const candidates = (await search.json()).items
+    expect(candidates).toContainEqual(expect.objectContaining({ id: 'synthetic-complete-wbc', status: 'available', catalogItemId: 'synthetic-complete-wbc' }))
+    expect(candidates).toContainEqual(expect.objectContaining({ id: 'synthetic-inpatient-wbc', status: 'incomplete', missingFields: ['unit'] }))
+    expect(candidates.find((item: { id: string }) => item.id === 'synthetic-unpriced-wbc').missingFields).toContain('price')
+    const issue = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
+      selection: { kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } })
+    expect(issue.status).toBe(409)
+    expect((await issue.json()).error.code).toBe('INPATIENT_INVESTIGATION_UNAVAILABLE')
+  })
+
   it.each(['laboratory','imaging'] as const)('归档%s报告保持旧门诊入口责任403，正常住院确认原receipt仍无写重放',async kind=>{
     const s=await setup(),opDoctor=await signIn(s.runtime,'doctor@demo.clinmesh.local')
     const selection=kind==='laboratory'?{kind,catalogItemId:'synthetic-inpatient-wbc',indicationCode:'clinical-assessment'}:{kind,serviceId:'imaging-chest-radiograph',indication:'合成归档权限回归'}
@@ -397,10 +502,14 @@ describe('住院检查检验 HTTP 合同', () => {
 
   it('检验只读取固定来源事实，报告与标本归本次住院，目录价格在申请时冻结', async () => {
     const s = await setup()
+    const candidates = await (await s.request(s.doctor, '/api/his/v1/inpatient/catalog-search?kind=laboratory&source=hospital&query=synthetic-inpatient-wbc')).json()
+    expect(candidates.items).toEqual([expect.objectContaining({ status: 'available', laboratory: { indicationCodes: ['clinical-assessment'], priceFen: 800 } })])
     const issued = await s.request(s.doctor, `${s.path}/investigations/issue`, { encounterVersion: s.admission.versionId, catalogVersion: 1,
       selection: { kind: 'laboratory', catalogItemId: 'synthetic-inpatient-wbc', indicationCode: 'clinical-assessment' } })
     expect(issued.status).toBe(200)
     const request = (await issued.json()).data.laboratoryRequests[0]
+    s.runtime.database.driver.prepare(`UPDATE hospital_service_catalog SET version=version+1,
+      config_json=json_set(config_json,'$.chargeDefinition.priceFen',1800) WHERE service_id='synthetic-inpatient-wbc'`).run()
     expect((await s.request(s.doctor, `${s.path}/orders/issue`, { encounterVersion: s.admission.versionId, duration: 'temporary', selection: { kind: 'service', serviceId: 'synthetic-inpatient-wbc', serviceVersion: 1, quantity: 1 } })).status).toBe(409)
     expect((await s.request(s.nurse, `${s.path}/executions/complete`, { executionId: request.taskId, expectedExecutionVersion: 1 })).status).toBe(404)
     expect((await dispatchAll(s.runtime)).filter(kind => kind.startsWith('laboratory.'))).toEqual([])

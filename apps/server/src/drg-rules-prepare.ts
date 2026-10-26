@@ -3,7 +3,8 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
-import { loadDrgRules, prepareDrgRulesPackage } from './infrastructure/reference-data/drg-rules-package.ts'
+import { loadDrgRules } from './infrastructure/reference-data/drg-rules-package.ts'
+import { prepareDrgRulesPackage } from './infrastructure/reference-data/drg-rules-prepare.ts'
 
 const sourceFileSchema = z.object({
   path: z.string().min(1), sha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -14,7 +15,7 @@ const sourceLockSchema = z.object({
   inputs: z.object({ groups: sourceFileSchema, js: sourceFileSchema, tables: sourceFileSchema }).strict(),
 }).strict()
 const complicationTablesSchema = z.object({
-  CC: z.record(z.string(), z.string()), MCC: z.record(z.string(), z.string()), CCE: z.record(z.string(), z.string()),
+  CC: z.record(z.string(), z.string()), MCC: z.record(z.string(), z.string()), CCE: z.record(z.string(), z.string()), SS_VALID: z.array(z.string()).optional(),
 })
 
 function sha256(content: string): string { return createHash('sha256').update(content).digest('hex') }

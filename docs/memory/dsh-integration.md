@@ -56,6 +56,8 @@
 
 ## Profile、构建与桥接升级
 
+- DSH 能打开但没有“医院工作台”入口时，先查启动终端的 `entry did not activate` / `failed to import`；宿主导入失败不会出现在浏览器 Console。共享 contracts 的相对导入须保留 `.ts` 扩展名，Bun、Vite 和 Vitest 的解析成功不能证明原生 Node 可加载。用 `node --input-type=module -e "await import('./apps/dsh-web/lib/index.js')"` 验证实际 Host artifact；[原生 ESM 回归](../../packages/contracts/tests/native-esm.test.ts)覆盖所有公开合同入口。修复后重启 DSH 宿主，再核对入口。
+
 - DSH 产物体积受 Bun 编译器版本影响；本地或 CI 超标时，先用 CI 的精确 Bun 版本构建同一源码和锁定依赖再比较，不能直接归因于依赖漂移或放宽预算。预算与已验证版本见[体积预算决策](../decisions/implemented/testing/2026-10-07-dsh-client-size-budget.md)。
 
 - DSH 构建标记不证明子模块的已安装依赖完整。启动时报缺少 peer 包时，在 owning workspace 按锁执行 `bun install --frozen-lockfile` 并检查 tracked diff；不要仅因已有构建标记跳过依赖修复，也不要修改上游源码绕过缺失依赖。

@@ -1,0 +1,82 @@
+{
+  "id": "price-JX-DRUG-20250930-0321",
+  "productCode": "XB01ACL190A001010209639",
+  "codeSystem": "source_drug_unified_code",
+  "platformProductId": null,
+  "name": "硫酸氢氯吡格雷片",
+  "dosageForm": "片剂",
+  "specification": "75 mg(按C16H16ClNO2S计)",
+  "manufacturer": "吉林省博大伟业制药有限公司",
+  "declaringEnterprise": "吉林省博大伟业制药有限公司",
+  "approvalNumber": "国药准字H20203667",
+  "packageRaw": "14*片/盒",
+  "packageStructure": {
+    "count": 14,
+    "contentUnit": "片",
+    "packageUnit": "盒",
+    "basis": "explicit_source_package_text",
+    "hospitalConfirmed": false
+  },
+  "conversionRatioRaw": 14,
+  "smallestPreparationUnit": "片",
+  "smallestPackageUnit": "盒",
+  "price": {
+    "kind": "selected_procurement_price",
+    "amount": "7",
+    "currency": "CNY",
+    "raw": "7",
+    "basis": "denominator_unverified",
+    "unit": null
+  },
+  "region": "江西省",
+  "snapshotDate": "2025-09-30",
+  "batch": "江西（国采1-4批）接续集采",
+  "publicationDate": "2025-10-14",
+  "validFrom": null,
+  "validTo": null,
+  "currentApplicability": "unverified",
+  "rawFields": {
+    "序号": 319,
+    "项目名称": "江西（国采1-4批）接续集采",
+    "药品统一编码": "XB01ACL190A001010209639",
+    "产品名称": "硫酸氢氯吡格雷片",
+    "剂型": "片剂",
+    "规格": "75 mg(按C16H16ClNO2S计)",
+    "转换比": 14,
+    "最小制剂单位": "片",
+    "最小包装单位": "盒",
+    "包装": "14*片/盒",
+    "包装材质": "铝塑泡罩",
+    "生产企业": "吉林省博大伟业制药有限公司",
+    "申报企业": "吉林省博大伟业制药有限公司",
+    "中选价(元)": 7,
+    "批准文号": "国药准字H20203667",
+    "国家数据库备注\n（限用条件等）": "",
+    "药理分类": "血液和造血器官药"
+  },
+  "source": {
+    "kind": "external_price_file",
+    "sourceId": "JX-DRUG-20250930",
+    "path": "raw/price-sources/official/JX-DRUG-20250930.xls",
+    "sha256": "cd267ba420d497dd167a416dbbc0d331b19eb2b25b643a1281f551d7ab49b3d8",
+    "url": "https://ybj.jiangxi.gov.cn/jxsylbzj/col72391/1978010903959244800/bsBgu63P.xls",
+    "worksheet": "药品品种（586家企业，670个品种，1974个产品）",
+    "row": 321,
+    "priceCell": "N321"
+  },
+  "hospitalMapping": {
+    "state": "待补全",
+    "hospitalProductId": null,
+    "chargePrice": null,
+    "procurementCost": null,
+    "unitConversion": null
+  },
+  "runtimeEnabled": false,
+  "currentPriceUse": {
+    "label": "待核实",
+    "reason": "地区、当前有效期和本院适用性尚未确认；原价格列仅标中选价(元)，未据包装列推定金额分母",
+    "missingFields": [
+      "价格计量单位或金额分母"
+    ]
+  }
+}

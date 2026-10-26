@@ -9,6 +9,7 @@ import { offlineReferenceLockSchema } from '@clinmesh/contracts/reference-data'
 import { t } from 'tar'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createDrgReferencePackage } from '../src/drg-reference-package.ts'
+import { writeDrgCompactFixtureIndex } from './fixtures/drg-reference.ts'
 
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex')
 
@@ -23,9 +24,11 @@ describe('DRG reference distribution package', () => {
     directories.push(repositoryRoot)
     const preparedRoot = '.data/reference-prepared/r3'
     const openDrgRoot = '.data/exports/opendrg-2026-10-20'
+    const paths: string[] = []
     async function put(path: string, text: string) {
       await mkdir(dirname(join(repositoryRoot, path)), { recursive: true })
       await writeFile(join(repositoryRoot, path), text)
+      paths.push(path)
       return { path, sha256: hash(text) }
     }
     const records = '{"code":"SYNTHETIC","sourceUnit":"次"}\n'
@@ -57,6 +60,7 @@ describe('DRG reference distribution package', () => {
     checksums.push({ path: 'manifest.json', sha256: hash(openDrg) })
     const index = JSON.stringify({ algorithm: 'SHA-256', files: checksums })
     await put(`${openDrgRoot}/checksums.json`, index)
+    const compact = await writeDrgCompactFixtureIndex(repositoryRoot, paths)
     const lock = JSON.stringify({
       schemaVersion: 'clinmesh.offline-inventory.v1', inventoryId: 'synthetic-inventory-v1',
       createdAt: '2026-10-22T00:00:00.000Z', scheme: 'CHS-DRG-3.0', packages: [
@@ -68,6 +72,7 @@ describe('DRG reference distribution package', () => {
           checksums: { path: 'checksums.json', sha256: hash(index) }, sourceUrl: 'https://example.test/',
           quarantineReasons: ['usage-terms-unconfirmed', 'algorithm-unvalidated'] },
       ],
+      storage: compact.storage,
     })
     const lockPath = join(repositoryRoot, 'offline.lock.json')
     await writeFile(lockPath, lock)
@@ -89,7 +94,7 @@ describe('DRG reference distribution package', () => {
     expect(first).toEqual(second)
     expect(first).toMatchObject({
       sha256: hash(await readFile(firstPath)), offlineLockSha256: hash(input.lock),
-      inventoryId: 'synthetic-inventory-v1', fileCount: 9,
+      inventoryId: 'synthetic-inventory-v1', fileCount: 10,
     })
     const entries: string[] = []
     let unpackedSizeBytes = 0
@@ -100,6 +105,7 @@ describe('DRG reference distribution package', () => {
       entries.push(entry.path)
     } })
     expect(entries).toEqual([
+      '.data/drg-compact/v1/index.json',
       '.data/exports/opendrg-2026-10-20/algorithm.js',
       '.data/exports/opendrg-2026-10-20/catalog/datasets.json',
       '.data/exports/opendrg-2026-10-20/catalog/schemes.json',
@@ -138,7 +144,7 @@ describe('DRG reference distribution package', () => {
     const input = await fixture()
     await link(join(input.repositoryRoot, input.preparedRoot, 'services/records.jsonl'), join(input.repositoryRoot, 'record-link'))
     const outputPath = join(input.repositoryRoot, 'package.tar.gz')
-    await expect(createDrgReferencePackage({ ...input, outputPath })).rejects.toThrow('regular file without links')
+    await expect(createDrgReferencePackage({ ...input, outputPath })).rejects.toThrow(/without links/)
     await expect(readFile(outputPath)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 
@@ -151,7 +157,7 @@ describe('DRG reference distribution package', () => {
     ])
     expect(JSON.parse(result.stdout)).toMatchObject({
       sha256: hash(await readFile(outputPath)), offlineLockSha256: hash(input.lock),
-      inventoryId: 'synthetic-inventory-v1', fileCount: 9,
+      inventoryId: 'synthetic-inventory-v1', fileCount: 10,
     })
   })
 })

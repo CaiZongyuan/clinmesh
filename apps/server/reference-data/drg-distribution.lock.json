@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
-  "inventoryId": "clinmesh-drg-offline-2026-10-22.r2",
-  "offlineLockSha256": "4a3b59d74fa009a4c5b7fb42a4e476d59fc155db4b89278941b6e988c79881fe",
+  "inventoryId": "clinmesh-drg-offline-2026-10-25.r1",
+  "offlineLockSha256": "41fd84227944a0996336586cb44891d90891c59593b34c03ee8c2c2c063e0fb2",
   "artifact": {
-    "url": "https://github.com/CaiZongyuan/clinmesh/releases/download/drg-reference-2026-10-22-r2/clinmesh-drg-reference-2026-10-22-r2.tar.gz",
-    "sha256": "ada19faf934c45ae768c61c3e7402c3a0842db2ba9cabddc587e856dbffea683",
-    "sizeBytes": 60712201,
-    "unpackedSizeBytes": 665553443,
-    "fileCount": 2335
+    "url": "https://github.com/CaiZongyuan/clinmesh/releases/download/drg-reference-2026-10-25-r1/clinmesh-drg-reference-2026-10-25-r1.tar.gz",
+    "sha256": "e6da3f253bf098a5e694cb6766f0ae57808eab399757636f14322b7f2749efa4",
+    "sizeBytes": 36122034,
+    "unpackedSizeBytes": 347615526,
+    "fileCount": 411
   }
 }

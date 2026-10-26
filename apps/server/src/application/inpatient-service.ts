@@ -11,6 +11,8 @@ import { InpatientBilling } from './inpatient-billing.ts'
 import { InpatientFinancialAdjustments } from './inpatient-financial-adjustments.ts'
 import { InpatientInsuranceAdjustments } from './inpatient-insurance-adjustments.ts'
 import { InpatientOrders } from './inpatient-orders.ts'
+import { InpatientCatalogSearch } from './inpatient-catalog-search.ts'
+import { InpatientPciData } from './inpatient-pci-data.ts'
 import { InpatientDrg } from './inpatient-drg.ts'
 import { z } from 'zod'
 import { v7 as uuidv7 } from 'uuid'
@@ -45,6 +47,8 @@ export class InpatientService {
   readonly financialAdjustments: InpatientFinancialAdjustments
   readonly insuranceAdjustments: InpatientInsuranceAdjustments
   readonly orders: InpatientOrders
+  readonly catalogSearch: InpatientCatalogSearch
+  readonly pciData: InpatientPciData
   readonly surgery: InpatientSurgery
   readonly records: InpatientRecords
   readonly payments: InpatientPayments
@@ -59,6 +63,8 @@ export class InpatientService {
     this.financialAdjustments = new InpatientFinancialAdjustments(this)
     this.insuranceAdjustments = new InpatientInsuranceAdjustments(this)
     this.orders = new InpatientOrders(this)
+    this.catalogSearch = new InpatientCatalogSearch(this)
+    this.pciData = new InpatientPciData(this)
     this.surgery = new InpatientSurgery(this)
     this.records = new InpatientRecords(this)
     this.payments = new InpatientPayments(this)

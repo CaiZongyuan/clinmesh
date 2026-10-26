@@ -11,7 +11,7 @@ import { inpatientDischargeInputSchema, inpatientDepartInputSchema, inpatientSet
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema, inpatientSurgeryRequestInputSchema, inpatientSurgeryActionInputSchema, inpatientSurgeryExecuteInputSchema } from './inpatient-surgery.ts'
 import { inpatientInvestigationCatalogSchema,inpatientInvestigationsSchema,inpatientInvestigationIssueInputSchema,inpatientInvestigationActionInputSchema,inpatientInvestigationAcknowledgeInputSchema,inpatientInvestigationResponseSchema } from './inpatient-investigations.ts'
 import { inpatientTransferCatalogSchema,inpatientIncomingTransfersSchema,inpatientTransfersSchema,inpatientTransferRequestInputSchema,inpatientTransferActionInputSchema,inpatientTransferReceiveInputSchema,inpatientTransferResponseSchema } from './inpatient-transfer.ts'
-import { inpatientPharmacyListSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from './inpatient-clinical.ts'
+import { inpatientCatalogSearchInputSchema, inpatientCatalogSearchSchema, inpatientPharmacyListSchema, inpatientPharmacySchema, inpatientPharmacyResponseSchema, inpatientChargesSchema, inpatientChargesResponseSchema, inpatientChargeReverseInputSchema, inpatientExecutionActionInputSchema, inpatientDispenseInputSchema, inpatientFullCatalogSchema, inpatientFullClinicalSchema, inpatientFullClinicalResponseSchema, inpatientOrderIssueInputSchema, inpatientOrderActionInputSchema, inpatientOrderReasonInputSchema, inpatientDiagnosisConfirmInputSchema } from './inpatient-clinical.ts'
 import {
   inpatientCatalogSchema, inpatientListSchema, inpatientDetailSchema, inpatientCommandResponseSchema,
   inpatientRegistrationInputSchema, inpatientBedInputSchema, inpatientSwapInputSchema, inpatientSwapResponseSchema,
@@ -21,6 +21,7 @@ import { inpatientDrgPregroupResultSchema } from './inpatient-drg.ts'
 import { inpatientDrgSimulationSchema, inpatientDrgSimulationInputSchema, inpatientMaterialReservationListSchema,
   inpatientMaterialReservationCreateInputSchema, inpatientMaterialReservationReleaseInputSchema } from './inpatient-drg-simulation.ts'
 import { inpatientDrgPayerReviewListSchema, inpatientDrgPayerReviewCreateInputSchema, inpatientDrgPayerReviewPreviewSchema } from './inpatient-drg-payer.ts'
+import { inpatientPciDataSchema, inpatientPciDataPrepareRequestSchema, inpatientPciDataResponseSchema } from './inpatient-pci-data.ts'
 import { z } from 'zod'
 
 const inpatientDrgSimulationRequestSchema = z.object({ admissionId: z.string().min(1), draft: inpatientDrgSimulationInputSchema.optional() }).strict()
@@ -1125,9 +1126,9 @@ const operationDefinitions = [
       idempotency: 'none',
     },
     risk: 'read',
-    roles: ['administrator', 'outpatient-doctor'],
+    roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
     summary: 'Search the active medication reference catalog',
-    version: 1,
+    version: 2,
   },
   {
     cliPath: ['reference', 'laboratory', 'search'],
@@ -1144,9 +1145,9 @@ const operationDefinitions = [
       idempotency: 'none',
     },
     risk: 'read',
-    roles: ['administrator', 'outpatient-doctor'],
+    roles: ['administrator', 'outpatient-doctor', 'inpatient-doctor'],
     summary: 'Search the active laboratory reference catalog',
-    version: 1,
+    version: 2,
   },
   {
     cliPath: ['catalog', 'registration', 'get'],
@@ -2742,6 +2743,26 @@ const operationDefinitions = [
     mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['cashier'], summary: '读取逐项住院账目、净额与财务状态', version: 1,
   },
   {
+    cliPath: ['inpatient', 'pci-data'], id: 'inpatient.pci-data.read',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/pci-data' }, input: emptyInputSchema,
+    output: inpatientPciDataSchema, mode: 'query', requirements: { expectedVersions: false, idempotency: 'none' },
+    risk: 'read', roles: ['administrator', 'inpatient-doctor'], summary: '读取固定版本 PCI 合成底稿、来源、院内补充和已安装资料，不创建就诊', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'prepare-pci-data'], id: 'inpatient.pci-data.prepare',
+    http: { method: 'POST', path: '/api/his/v1/inpatient/pci-data/prepare', encodeBody: raw => ({ input: inpatientPciDataPrepareRequestSchema.shape.input.parse(raw) }) },
+    input: inpatientPciDataPrepareRequestSchema.shape.input, output: inpatientPciDataResponseSchema, mode: 'command',
+    requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['administrator'],
+    summary: '在当前场景幂等准备 PCI 目录与库存基础数据，保留原配置和业务；不创建患者就诊或临床费用', version: 1,
+  },
+  {
+    cliPath: ['inpatient', 'catalog-search'], id: 'inpatient.catalog.search',
+    http: { method: 'GET', path: '/api/his/v1/inpatient/catalog-search' },
+    input: inpatientCatalogSearchInputSchema, output: inpatientCatalogSearchSchema, mode: 'query',
+    requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor'],
+    summary: '按院内或参考来源分页检索住院药品及检验候选，返回具体缺项，仅完整映射提供可开立身份', version: 1,
+  },
+  {
     cliPath: ['inpatient', 'clinical-catalog'], id: 'inpatient.clinical.catalog',
     http: { method: 'GET', path: '/api/his/v1/inpatient/clinical-catalog' }, input: emptyInputSchema, output: inpatientFullCatalogSchema, mode: 'query',
     requirements: { expectedVersions: false, idempotency: 'none' }, risk: 'read', roles: ['inpatient-doctor','ward-nurse'], summary: '读取住院实际可用临床目录', version: 1,
@@ -2759,7 +2780,7 @@ const operationDefinitions = [
   {
     cliPath: ['inpatient', 'issue-order'], id: 'inpatient.order.issue',
     http: { method: 'POST', path: '/api/his/v1/inpatient/admissions/:admissionId/orders/issue', encodeBody: raw => { const { admissionId: _id, ...input } = inpatientOrderIssueInputSchema.parse(raw); return { input } } },
-    input: inpatientOrderIssueInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '住院医嘱issue；校验当前责任、版本及可选expectedDrgFingerprint，过期评估要求重新审阅', version: 3,
+    input: inpatientOrderIssueInputSchema, output: inpatientFullClinicalResponseSchema, mode: 'command', requirements: { expectedVersions: true, idempotency: 'required' }, risk: 'write', roles: ['inpatient-doctor'], summary: '签发住院医嘱；按明确单位换算并重验有界剂量、责任、版本及可选 DRG 审阅指纹', version: 4,
   },
   {
     cliPath: ['inpatient', 'verify-order'], id: 'inpatient.order.verify',

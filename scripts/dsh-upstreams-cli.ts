@@ -1,7 +1,7 @@
 import { appendFile, readFile, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { discoverUpstreams, publishCandidate, readPublishedBaseline, reconcileActiveCandidate, type Candidate } from './dsh-upstreams.ts'
+import { discoverUpstreams, publishCandidate, readPublishedBaseline, readSkippedReleases, reconcileActiveCandidate, type Candidate } from './dsh-upstreams.ts'
 
 export async function runDiscovery(args: string[], environment: NodeJS.ProcessEnv = process.env) {
   if (args.some(arg => arg !== '--publish')) throw new Error('用法：pnpm upstream:discover [--publish]')
@@ -20,7 +20,7 @@ export async function runDiscovery(args: string[], environment: NodeJS.ProcessEn
   let candidate: Candidate | undefined
   let discoveryError: string | undefined
   try {
-    candidate = await discoverUpstreams(baseline, fetch)
+    candidate = await discoverUpstreams(baseline, fetch, await readSkippedReleases(options))
   } catch (error) {
     if (!invalidated) throw error
     discoveryError = error instanceof Error ? error.message : '上游发现失败'

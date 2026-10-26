@@ -40,6 +40,7 @@ it('runs the production DRG installer without invoking another bundled CLI and r
     expect(repeat.status, repeat.stderr).toBe(0)
     expect(JSON.parse(repeat.stdout)).toMatchObject({ inventoryId: 'synthetic-inventory-v1', created: false })
     expect(await readFile(databasePath)).toEqual(before)
+
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
