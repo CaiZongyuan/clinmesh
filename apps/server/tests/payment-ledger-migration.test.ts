@@ -148,6 +148,8 @@ describe('payment ledger migration', () => {
       '0082_practitioner-role-medical-insurance.sql',
       '0090_insurance-benefits.sql',
       '0091_inpatient-insurance-adjustments.sql',
+      '0092_authored-case-source.sql',
+      '0093_synthetic-inpatient-case-materialization.sql',
     ])
 
     expect(originalAttempts(database)).toEqual(original)

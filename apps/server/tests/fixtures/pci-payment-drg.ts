@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import assert from 'node:assert/strict'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { expect } from 'vitest'
 import { z } from 'zod'
 import { commandResponseSchema, createPatientResponseSchema } from '@clinmesh/contracts/his'
 import { inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh/contracts/inpatient'
@@ -10,7 +10,11 @@ import { inpatientFullCatalogSchema, inpatientFullClinicalResponseSchema,
   inpatientPharmacySchema, inpatientPharmacyResponseSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientSurgeryCatalogSchema, inpatientSurgerySchema, inpatientSurgeryResponseSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { inpatientMaterialReservationListSchema, inpatientDrgSimulationSchema } from '@clinmesh/contracts/inpatient-drg-simulation'
-import { inpatientDischargeResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientDischargeResponseSchema, inpatientPaymentPreviewResponseSchema, inpatientPaymentResponseSchema } from '@clinmesh/contracts/inpatient-discharge'
+import { inpatientRecordSchema, inpatientRecordResponseSchema } from '@clinmesh/contracts/inpatient-record'
+import { inpatientInvestigationCatalogSchema, inpatientInvestigationResponseSchema, inpatientInvestigationsSchema } from '@clinmesh/contracts/inpatient-investigations'
+import { inpatientPciDataResponseSchema, pciCaseSourceResponseSchema, startSyntheticInpatientCaseResponseSchema } from '@clinmesh/contracts/inpatient-pci-data'
+import { patientPersonaRevisionSchema, syntheticCaseInstanceSchema } from '@clinmesh/contracts/scenario'
 import { createClinMeshRuntime, type CreateClinMeshRuntimeOptions } from '../../src/runtime.ts'
 import { prepareDrgRulesPackage } from '../../src/infrastructure/reference-data/drg-rules-prepare.ts'
 import { runReferenceDatabaseCli } from '../../src/reference-database-cli.ts'
@@ -67,7 +71,11 @@ export async function preparePciAcceptanceData(directory: string) {
   await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'release.json')])
   // CI uses a self-authored program, never fragments of an executable upstream source.
   // The identical HTTP journey can explicitly consume a locally materialized full v2 package.
-  if (process.env.CLINMESH_TEST_DRG_RULES_DIRECTORY) return { referenceDatabasePath, drgRulesDirectory: process.env.CLINMESH_TEST_DRG_RULES_DIRECTORY }
+  if (process.env.CLINMESH_TEST_DRG_RULES_DIRECTORY) {
+    const directory = process.env.CLINMESH_TEST_DRG_RULES_DIRECTORY
+    assert.equal(hash(await readFile(join(directory, 'manifest.json'), 'utf8')), '23dcd363076bbf1956d62788698819d1693b457c2b383818f209b963b7cc9d44', 'Full PCI acceptance requires the pinned complete v2 package')
+    return { referenceDatabasePath, drgRulesDirectory: directory }
+  }
   await mkdir(drgRulesDirectory)
   const complicationTables = { CC: {}, MCC: {}, CCE: { 'I10.x09': 'synthetic' }, SS_VALID: ['36.0700', '88.5500'] }
   const jsText = `const CC={},MCC={},CCE={"I10.x09":"synthetic"},SS_VALID=["36.0700","88.5500"];
@@ -90,17 +98,20 @@ function group_record(x) { return function(x) {
 }
 
 export async function parsePciResponse<T>(schema: z.ZodType<T>, response: Response): Promise<T> {
-  expect(response.status, response.ok ? undefined : await response.clone().text()).toBe(200)
+  assert.equal(response.status, 200, response.ok ? undefined : await response.clone().text())
   return schema.parse(await response.json())
 }
 
 export async function preparePciPaymentDrgFixture() {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-pci-payment-drg-'))
   const data = await preparePciAcceptanceData(directory), password = `Test-${randomUUID()}-Aa1!`
+  let modelCalls = 0
   const options: CreateClinMeshRuntimeOptions = { authBaseUrl: 'http://localhost', authSecret: 'test-auth-secret-with-at-least-32-characters',
     cursorSecret: 'test-cursor-secret-with-at-least-32-characters', databasePath: join(directory, 'hospital.sqlite'), ...data,
-    activeReferenceReleaseId: 'synthetic-pci-acceptance-reference', demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'] }
-  return { directory, data, password, options }
+    activeReferenceReleaseId: 'synthetic-pci-acceptance-reference', demoPassword: password, migrationMode: 'apply', trustedOrigins: ['http://localhost'],
+    investigationModel: 'synthetic-forbidden',
+    chatCompletionsProvider: { completeJson: async () => { modelCalls += 1; throw new Error('Fixed PCI acceptance must never request a model') } } }
+  return { directory, data, password, options, get modelCalls() { return modelCalls } }
 }
 
 export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<typeof preparePciPaymentDrgFixture>>) {
@@ -112,15 +123,18 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     if (cached !== undefined) return cached
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST', headers: { 'content-type': 'application/json', origin: 'http://localhost' },
       body: JSON.stringify({ email: `${role}@demo.clinmesh.local`, password }) })
-    expect(response.status).toBe(200)
+    assert.equal(response.status, 200)
     const cookie = response.headers.get('set-cookie')!.split(';', 1)[0]!
     cookies.set(role, cookie)
     return cookie
   }
+  async function requestRaw(role: string, path: string, body: unknown, method = 'POST', key = randomUUID()) {
+    return runtime.app.request(path, { method, headers: { cookie: await login(role), origin: 'http://localhost',
+      'content-type': 'application/json', 'idempotency-key': key }, body: JSON.stringify(body) })
+  }
   async function request(role: string, path: string, input?: unknown, key = randomUUID(), expectedVersions?: Record<string, string>) {
-    return runtime.app.request(path, { method: input === undefined ? 'GET' : 'POST', headers: { cookie: await login(role), origin: 'http://localhost',
-      'content-type': 'application/json', 'idempotency-key': key },
-    ...(input === undefined ? {} : { body: JSON.stringify({ input, ...(expectedVersions === undefined ? {} : { expectedVersions }) }) }) })
+    return input === undefined ? runtime.app.request(path, { headers: { cookie: await login(role) } })
+      : requestRaw(role, path, { input, ...(expectedVersions === undefined ? {} : { expectedVersions }) }, 'POST', key)
   }
   const read = <T>(role: string, path: string, schema: z.ZodType<T>) => request(role, path).then(response => parsePciResponse(schema, response))
   async function admitSyntheticCase(codes: string[], bedId: string) {
@@ -139,12 +153,34 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
       })) }))
     return { admissionId: registered.id, patientId: patient.id, path, encounterVersion: diagnosis.data.encounterVersion }
   }
-  async function preparePciAdmission(materialIds = ['hospital-material-stent', 'hospital-material-balloon', 'hospital-material-guidewire', 'hospital-material-catheter']) {
-    const stay = await admitSyntheticCase(['I25.103', 'I10.x09'], 'bed-general-1')
+  async function preparePciAdmission(materialIds = ['hospital-material-pci-stent', 'hospital-material-pci-balloon', 'hospital-material-pci-guidewire', 'hospital-material-pci-guiding-catheter']) {
+    await parsePciResponse(inpatientPciDataResponseSchema, await request('admin', '/api/his/v1/inpatient/pci-data/prepare', { expectedEpoch: 'epoch-1' }))
+    const source = (await parsePciResponse(pciCaseSourceResponseSchema, await request('admin', '/api/sim/v1/synthetic-cases/pci/prepare', { expectedEpoch: 'epoch-1' }))).data
+    const casePath = `/api/sim/v1/synthetic-cases/${source.case.id}`
+    const persona = (await parsePciResponse(commandResponseSchema(patientPersonaRevisionSchema), await request('admin', `${casePath}/patient-persona-revisions`, { content: {
+      chiefComplaint: '活动后胸闷三个月，加重一周，休息可缓解。', knownHistorySummary: '无已知药物过敏，静息无胸痛。', medicationMemory: '近期未自行加药。',
+      openingStatement: '医生您好，最近一活动胸口就闷，休息后会好。', persona: { attitude: '愿意配合检查', character: '平和', healthLiteracy: '普通', speechStyle: '简短清楚' },
+      symptomExperience: '步行数百米后胸口闷，停下休息几分钟会缓解，没有晕厥。',
+    } }))).data
+    const ready = (await parsePciResponse(commandResponseSchema(syntheticCaseInstanceSchema), await requestRaw('admin', `${casePath}/patient-persona-revisions/active`, {
+      personaRevision: persona.revision, expectedCaseRevision: source.case.revision }, 'PUT'))).data
+    const started = (await parsePciResponse(startSyntheticInpatientCaseResponseSchema, await requestRaw('registrar', `/api/his/v1/synthetic-cases/${source.case.id}/actions/start-inpatient-visit`, {
+      activeBriefRevision: ready.activeBriefRevision, expectedCaseRevision: ready.revision, expectedEpoch: 'epoch-1', wardId: 'ward-general' }))).data
+    const admissionPath = `/api/his/v1/inpatient/admissions/${started.admissionId}`
+    const registered = await read('registrar', admissionPath, inpatientDetailSchema)
+    const admission = (await parsePciResponse(inpatientCommandResponseSchema, await request('ward-nurse', `${admissionPath}/receive`, {
+      encounterVersion: registered.admission.versionId, bedId: 'bed-general-1' }))).data.admission
+    const diagnosis = (await parsePciResponse(inpatientFullClinicalResponseSchema, await request('inpatient-doctor', `${admissionPath}/diagnoses/confirm`, {
+      encounterVersion: admission.versionId, expectedRevision: 0, entries: [{ catalogItemId: clinicalConcepts[0]!.id, role: 'primary', admissionCondition: '1', note: '本院医生确认固定合成冠心病' }] }))).data
+    const deposit = (await parsePciResponse(inpatientPaymentPreviewResponseSchema, await request('cashier', `${admissionPath}/payments/preview`, {
+      kind: 'deposit', amountFen: 5000, tenders: [{ method: 'cash', amountFen: 5000 }] }))).data
+    await parsePciResponse(inpatientPaymentResponseSchema, await request('cashier', `${admissionPath}/payments/confirm`, { previewId: deposit.previewId, commitToken: deposit.commitToken }))
+    const stay = { admissionId: started.admissionId, patientId: started.patientId, path: admissionPath, encounterVersion: diagnosis.encounterVersion,
+      sourceCaseId: source.case.id, sourceCaseRevision: source.case.revision }
     const path = stay.path
     const catalog = await read('inpatient-doctor', '/api/his/v1/inpatient/surgery-catalog', inpatientSurgeryCatalogSchema)
     const procedure = catalog.procedures.find(item => item.coding.code === '36.0700')!
-    expect(procedure.coding.code).toBe('36.0700')
+    assert.equal(procedure.coding.code, '36.0700')
     const planned = (await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${path}/surgeries/request`, {
       encounterVersion: stay.encounterVersion, procedureId: procedure.id, catalogVersion: procedure.version,
       plannedFor: '2026-08-24T15:00:00+08:00', reason: '合成冠心病PCI支架计划' }))).data.requests[0]!
@@ -152,7 +188,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     const reservationResponse = commandResponseSchema(inpatientMaterialReservationListSchema)
     for (const materialId of materialIds) {
       const material = catalog.materials.find(item => item.id === materialId)
-      expect(material, `missing executable synthetic material ${materialId}`).toBeDefined()
+      assert.ok(material, `missing executable synthetic material ${materialId}`)
       const current = await read('inpatient-doctor', path, inpatientDetailSchema)
       const result = await parsePciResponse(reservationResponse, await request('inpatient-doctor', `${path}/drg/reservations`, {
         encounterVersion: current.admission.versionId, materialId, catalogVersion: material!.version, quantity: 1, requestId: planned.id, reason: '合成PCI院内耗材预留' }))
@@ -169,31 +205,81 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     const surgery = await read('inpatient-doctor', `${stay.path}/surgeries`, inpatientSurgerySchema)
     return { requestId, expectedRequestVersion: surgery.requests.find(item => item.id === requestId)!.version,
       procedureId: stay.procedure.id, catalogVersion: stay.procedure.version,
-      note: '合成PCI实际支架植入', materials: stay.reservations.map(reservation => ({ materialId: reservation.materialId,
+      note: `合成病例实际实施：${stay.procedure.coding.display}`, materials: stay.reservations.map(reservation => ({ materialId: reservation.materialId,
         catalogVersion: stay.catalog.materials.find(item => item.id === reservation.materialId)!.version, quantity: reservation.quantity, reservationId: reservation.id })) }
   }
   async function executePci(stay: Awaited<ReturnType<typeof preparePciAdmission>>) {
     return (await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${stay.path}/surgeries/execute`,
-      await pciExecutionInput(stay)))).data.executions[0]!
+      await pciExecutionInput(stay)))).data.executions.find(item => item.requestId === stay.requestId)!
   }
-  async function dispenseHypertensionMedication(stay: Awaited<ReturnType<typeof preparePciAdmission>>) {
+  async function confirmMainProcedure(stay: { path: string }, executionId: string) {
+    const record = await read('inpatient-doctor', `${stay.path}/record`, inpatientRecordSchema)
+    return parsePciResponse(inpatientRecordResponseSchema, await request('inpatient-doctor', `${stay.path}/record/submit`, {
+      expectedRevision: record.revision?.revision ?? 0, expectedSourcesHash: record.sourcesHash, mainProcedureExecutionId: executionId }))
+  }
+  async function executeAngiography(stay: Awaited<ReturnType<typeof preparePciAdmission>>) {
+    const procedure = stay.catalog.procedures.find(item => item.coding.code === '88.5500')!
+    const admission = await read('inpatient-doctor', stay.path, inpatientDetailSchema)
+    const requested = await parsePciResponse(inpatientSurgeryResponseSchema, await request('inpatient-doctor', `${stay.path}/surgeries/request`, {
+      encounterVersion: admission.admission.versionId, procedureId: procedure.id, catalogVersion: procedure.version,
+      plannedFor: '2026-08-24T15:00:00+08:00', reason: '固定合成病例实际冠脉造影' }))
+    const requestId = requested.data.requests.find(item => item.plannedProcedure.id === procedure.id)!.id
+    const angiography = { ...stay, procedure, requestId, reservations: [] }
+    return executePci(angiography)
+  }
+  async function dispensePciMedications(stay: Awaited<ReturnType<typeof preparePciAdmission>>) {
     const catalog = await read('inpatient-doctor', '/api/his/v1/inpatient/clinical-catalog', inpatientFullCatalogSchema)
-    const medication = catalog.medications.find(item => item.id === 'medication-amlodipine')!
-    const selection = { kind: 'medication', catalogItemId: medication.id, catalogVersion: medication.version, doseText: '5 mg', frequencyCode: 'QD', doseQuantity: 1 }
-    const draft = { medications: [{ catalogItemId: medication.id, catalogVersion: medication.version, doseText: '5 mg', frequencyCode: 'QD', doseQuantity: 1 }], services: [] }
+    const suppliedExecutions: string[] = []
+    for (const [suffix, doseText, doseQuantity, frequencyCode] of [
+      ['aspirin', '100 mg', 1, 'QD'], ['clopidogrel', '75 mg', 1, 'QD'], ['atorvastatin', '20 mg', 2, 'QD'],
+      ['heparin', '1 mL', 1, 'PRN'], ['iohexol', '50 mL', 50, 'PRN'],
+    ] as const) {
+    const medication = catalog.medications.find(item => item.id === `medication-pci-${suffix}`)!
+    const selection = { kind: 'medication', catalogItemId: medication.id, catalogVersion: medication.version, doseText, frequencyCode, doseQuantity }
+    const draft = { medications: [{ catalogItemId: medication.id, catalogVersion: medication.version, doseText, frequencyCode, doseQuantity }], services: [] }
     const evaluation = await parsePciResponse(inpatientDrgSimulationSchema, await request('inpatient-doctor', `${stay.path}/drg/simulation`, draft))
     const admission = await read('inpatient-doctor', stay.path, inpatientDetailSchema)
     const issued = (await parsePciResponse(inpatientFullClinicalResponseSchema, await request('inpatient-doctor', `${stay.path}/orders/issue`, {
       encounterVersion: admission.admission.versionId, duration: 'temporary', selection, expectedDrgFingerprint: evaluation.fingerprint }))).data
     const order = issued.orders.find(item => item.state === 'signed')!
-    const verified = (await parsePciResponse(inpatientFullClinicalResponseSchema, await request('ward-nurse', `${stay.path}/orders/verify`, {
+    let verified = (await parsePciResponse(inpatientFullClinicalResponseSchema, await request('ward-nurse', `${stay.path}/orders/verify`, {
       orderId: order.id, expectedOrderVersion: order.version }))).data
+    if (frequencyCode === 'PRN') verified = (await parsePciResponse(inpatientFullClinicalResponseSchema, await request('ward-nurse', `${stay.path}/executions/request-prn`, {
+      orderId: order.id, expectedOrderVersion: verified.orders.find(item => item.id === order.id)!.version, reason: '固定合成病例本次介入用药' }))).data
     const execution = verified.executions.find(item => item.orderId === order.id)!
     const pharmacy = await read('pharmacist', `${stay.path}/pharmacy`, inpatientPharmacySchema)
     const lot = pharmacy.medications.find(item => item.id === medication.id)!.lots[0]!
     const supplied = (await parsePciResponse(inpatientPharmacyResponseSchema, await request('pharmacist', `${stay.path}/executions/dispense`, {
-      executionId: execution.id, expectedExecutionVersion: execution.version, lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: 1 }] }))).data
-    return { executionId: execution.id, clinical: supplied }
+      executionId: execution.id, expectedExecutionVersion: execution.version, lotSelections: [{ lotId: lot.id, expectedVersion: lot.version, quantity: doseQuantity }] }))).data
+    await parsePciResponse(inpatientFullClinicalResponseSchema, await request('ward-nurse', `${stay.path}/executions/administer`, {
+      executionId: execution.id, expectedExecutionVersion: supplied.executions.find(item => item.id === execution.id)!.version }))
+    suppliedExecutions.push(execution.id)
+    }
+    return suppliedExecutions
+  }
+  async function completePciLaboratories(stay: { path: string }) {
+    const catalog = await read('inpatient-doctor', '/api/his/v1/inpatient/investigation-catalog', inpatientInvestigationCatalogSchema)
+    for (const item of catalog.items.filter(item => item.id.startsWith('hospital-lab-pci-'))) {
+      const admission = await read('inpatient-doctor', stay.path, inpatientDetailSchema)
+      const issued = (await parsePciResponse(inpatientInvestigationResponseSchema, await request('inpatient-doctor', `${stay.path}/investigations/issue`, {
+        encounterVersion: admission.admission.versionId, catalogVersion: item.version,
+        selection: { kind: 'laboratory', catalogItemId: item.id, indicationCode: 'clinical-assessment' } }))).data
+      const investigation = issued.laboratoryRequests.find(request => request.catalogItemId === item.id)!
+      await parsePciResponse(inpatientInvestigationResponseSchema, await request('ward-nurse', `${stay.path}/investigations/send`, {
+        requestId: investigation.id, expectedRequestVersion: investigation.version,
+        serviceRequestVersion: investigation.serviceRequestVersion, taskVersion: investigation.taskVersion }))
+    }
+    for (let attempt = 0; attempt < 100; attempt += 1) if (await runtime.dispatcher.dispatchOnce() === undefined) break
+    const reported = await read('inpatient-doctor', `${stay.path}/investigations`, inpatientInvestigationsSchema)
+    assert.equal(reported.laboratoryRequests.length, 9)
+    for (const investigation of reported.laboratoryRequests) {
+      assert.ok(investigation.report, JSON.stringify(investigation.generationError))
+      await parsePciResponse(inpatientInvestigationResponseSchema, await request('inpatient-doctor', `${stay.path}/investigations/acknowledge`, {
+        requestId: investigation.id, expectedRequestVersion: investigation.version, serviceRequestVersion: investigation.serviceRequestVersion,
+        taskVersion: investigation.taskVersion, diagnosticReportId: investigation.report!.diagnosticReportId,
+        diagnosticReportVersion: investigation.report!.diagnosticReportVersion }))
+    }
+    return read('inpatient-doctor', `${stay.path}/investigations`, inpatientInvestigationsSchema)
   }
   async function depart(stay: { path: string }) {
     const current = await read('inpatient-doctor', stay.path, inpatientDetailSchema)
@@ -202,7 +288,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     return (await parsePciResponse(inpatientDischargeResponseSchema, await request('ward-nurse', `${stay.path}/discharge/depart`, {
       encounterVersion: issued.versionId, reason: '合成PCI出区核对', departureMethod: 'home' }))).data.admission
   }
-  return { get runtime() { return runtime }, directory, options, ...data, login, request, read, admitSyntheticCase, preparePciAdmission, pciExecutionInput, executePci, dispenseHypertensionMedication, depart,
+  return { get runtime() { return runtime }, directory, options, ...data, login, request, read, admitSyntheticCase, preparePciAdmission, pciExecutionInput, executePci, executeAngiography, confirmMainProcedure, dispensePciMedications, completePciLaboratories, depart,
     restart: async () => { await runtime.close(); runtime = await createClinMeshRuntime(options) },
     close: async () => { await runtime.close(); await rm(directory, { recursive: true }) } }
 }

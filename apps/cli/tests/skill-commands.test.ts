@@ -687,7 +687,7 @@ it('手术CLI与Skill保留双准备、实际实施与原receipt恢复合同', a
   const executionExample = [...skill.matchAll(/```json\n([\s\S]+?)\n```/g)][2]
   expect(executionExample).toBeDefined()
   expect(getHisOperation('inpatient.surgery.execute').input.parse(JSON.parse(executionExample![1]!))).toMatchObject({ expectedRequestVersion: 3, materials: [{ quantity: 2 }] })
-  expect(getHisOperation('inpatient.order.issue').version).toBe(3)
+  expect(getHisOperation('inpatient.order.issue').version).toBe(4)
   expect(skill).toContain('surgeryExecutionId')
   expect(skill).toContain('inpatient.surgery.execute')
   expect(getHisOperation('inpatient.surgery.catalog').version).toBe(2)
