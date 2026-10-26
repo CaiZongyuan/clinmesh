@@ -349,11 +349,37 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     corpus.importDocument(generic)
     const specific = document()
     specific.source.id = 'zzz-achondroplasia'
-    specific.passages = [{ locator: 'Recommendation 1', text: 'Achondroplasia requires a focused assessment.' }]
+    specific.passages = Array.from({ length: 9 }, (_, index) => ({
+      locator: `Recommendation ${index + 1}`, text: 'Achondroplasia requires a focused assessment.',
+    }))
     corpus.importDocument(specific)
     const result = corpus.search('achondroplasia assessment')
     expect(result.guidelines[0]!.text).toBe(specific.passages[0]!.text)
     expect(result.guidelines).toHaveLength(8)
+    expect(result.guidelines.every(item => item.text === specific.passages[0]!.text)).toBe(true)
+  })
+
+  it('混合病例的同等相关主题先覆盖不同来源，重复段落不能挤掉另一主题依据', () => {
+    const corpus = open()
+    const history = document()
+    history.source.id = 'synthetic-hypertension-history'
+    history.source.topics = [{ terms: ['高血压', 'hypertension', 'assessment'], diagnosisQueries: ['高血压'] }]
+    history.passages = Array.from({ length: 12 }, (_, index) => ({
+      locator: `History recommendation ${index}`,
+      text: 'Hypertension assessment assessment assessment requires monitoring.',
+    }))
+    const current = document()
+    current.source.id = 'synthetic-postprocedure-assessment'
+    current.source.topics = [{ terms: ['术后评估', 'assessment'], diagnosisQueries: [] }]
+    current.passages = [{ locator: 'Discharge assessment', text: 'Assessment before discharge requires a caregiver, reliable follow-up, medication review, a contact number for urgent concerns, and confirmation that the patient understands the care plan.' }]
+    corpus.importDocuments([history, current])
+
+    const result = corpus.search('既往高血压，目前需要术后评估和出院照护条件')
+    expect(result.guidelines).toContainEqual(expect.objectContaining({
+      locator: 'Discharge assessment', text: current.passages[0]!.text,
+    }))
+    expect(result.guidelines).toHaveLength(8)
+    expect(result.diagnosisQueries).toEqual(['高血压'])
   })
 
   it('检索保留原段落的空白与原有换行，不改写取得的原文', () => {

@@ -63,6 +63,7 @@ const storedPassagesSchema = z.array(z.object({ id: z.string(), locator: z.strin
 const documentsSchema = z.array(documentSchema).refine(items => new Set(items.map(item => item.source.id)).size === items.length,
   'Guideline source IDs must be unique within a release')
 const applicationId = 0x434d4743
+const searchRevision = 'topic-source-rounds-v1'
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex')
@@ -198,11 +199,11 @@ export class GuidelineCorpus {
   search(text: string): GuidelineSearchResult {
     return this.#database.transaction(() => {
       const rows = this.#sourceRows()
-      const revision = hash(JSON.stringify([guidelinePassagePolicyRevision, this.#allowNonCommercial, this.#deploymentPolicy, rows.map(row => row.digest)]))
+      const revision = hash(JSON.stringify([searchRevision, guidelinePassagePolicyRevision, this.#allowNonCommercial, this.#deploymentPolicy, rows.map(row => row.digest)]))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
       const inactiveSources: GuidelineSearchResult['inactiveSources'] = []
-      const candidates: Array<{ evidence: GuidelineEvidence; queries: string[]; rank: number; topicMatches: number }> = []
+      const candidates: Array<{ evidence: GuidelineEvidence; sourceId: string; queries: string[]; rank: number; topicMatches: number }> = []
       const queryText = text.toLowerCase()
       const tokens = text.match(/\p{Script=Han}+|[a-zA-Z0-9]+/gu) ?? []
       const terms = [...new Set(tokens.flatMap(token => /^\p{Script=Han}{4,}$/u.test(token)
@@ -252,11 +253,20 @@ export class GuidelineCorpus {
             topicMatches++
             for (const query of topic.diagnosisQueries) queries.add(query)
           }
-          candidates.push({ evidence, queries: [...queries], rank: passage.rank, topicMatches })
+          candidates.push({ evidence, sourceId: source.id, queries: [...queries], rank: passage.rank, topicMatches })
         }
       }
-      for (const candidate of candidates.toSorted((left, right) => right.topicMatches - left.topicMatches
-        || left.rank - right.rank || left.evidence.id.localeCompare(right.evidence.id))) {
+      // 相同主题相关性先覆盖各来源，再取同源后续段落，避免重复依据占满预算。
+      const sourceRounds = new Map<string, number>()
+      const rankedCandidates = candidates.toSorted((left, right) => right.topicMatches - left.topicMatches
+        || left.rank - right.rank || left.evidence.id.localeCompare(right.evidence.id)).map(candidate => {
+        const key = JSON.stringify([candidate.topicMatches, candidate.sourceId])
+        const sourceRound = sourceRounds.get(key) ?? 0
+        sourceRounds.set(key, sourceRound + 1)
+        return { ...candidate, sourceRound }
+      })
+      for (const candidate of rankedCandidates.toSorted((left, right) => right.topicMatches - left.topicMatches
+        || left.sourceRound - right.sourceRound || left.rank - right.rank || left.evidence.id.localeCompare(right.evidence.id))) {
         if (guidelines.length === 8) break
         const queries = new Set([...diagnosisQueries, ...candidate.queries])
         if (Buffer.byteLength(JSON.stringify({ guidelines: [...guidelines, candidate.evidence], diagnosisQueries: [...queries], inactiveSources, revision })) > 48 * 1024) continue
