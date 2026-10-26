@@ -120,6 +120,32 @@ it('uses imported original guideline passages in generation and independent veri
   expect((await fixture.readCase()).clinicalDocument).toEqual(before)
 })
 
+it('keeps damaged numeric original passages in storage while excluding control and replacement characters from model evidence', async () => {
+  const fixture = await setup()
+  const damaged = ['\u0002', '\u0082', '\uFFFD'].map((character, index) => ({
+    locator: `合成第${index + 4}节阈值`, text: `Synthetic diabetes threshold: 5${character}ULN. Do not infer the original operator.`,
+  }))
+  const mixed = { ...document, passages: [...document.passages, ...damaged] }
+  fixture.writer.importDocument(mixed)
+  const before = (await fixture.readCase()).clinicalDocument
+  const original = await fixture.generate()
+  expect(original).toMatchObject({ status: 'ready', stale: false })
+  expect(original.guidelines).toContainEqual(expect.objectContaining({ title: document.source.title, text: paragraph }))
+  for (const passage of damaged) {
+    expect(fixture.seen.generation).not.toContainEqual(expect.objectContaining({ text: passage.text }))
+    expect(original.guidelines).not.toContainEqual(expect.objectContaining({ text: passage.text }))
+  }
+  expect(fixture.seen.verification).toEqual(fixture.seen.generation)
+  expect(fixture.writer.matchesDocuments([mixed])).toBe(true)
+  expect(fixture.writer.sources()[0]).toMatchObject({ passageCount: 4, unusablePassageCount: 3 })
+  fixture.writer.importDocument({ ...document, passages: damaged })
+  expect(await fixture.read()).toMatchObject({ stale: true, hidePreviousResults: true, guidelines: [], items: [] })
+  const refreshed = await fixture.generate()
+  expect(refreshed).toMatchObject({ status: 'missing-evidence', stale: false, items: [] })
+  expect(refreshed.guidelines.some(item => item.title === document.source.title)).toBe(false)
+  expect((await fixture.readCase()).clinicalDocument).toEqual(before)
+})
+
 it('does not send non-commercial passages to the model without an explicit deployment declaration', async () => {
   const fixture = await setup('糖尿病复查，咳嗽。')
   fixture.writer.importDocument({ ...document, source: { ...document.source,

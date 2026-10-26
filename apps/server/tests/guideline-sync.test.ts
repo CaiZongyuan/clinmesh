@@ -85,6 +85,26 @@ it('checks internal-test availability using the same registered text status as r
     .toMatchObject({ failedSourceCount: 0, searchableSourceCount: 0, passageCount: 0 })
 })
 
+it('counts only readable passages and reports damaged text without rewriting stored originals', async () => {
+  const entry = source('synthetic-mixed-text', 'Synthetic diabetes source.\n')
+  const unreadable = { ...entry, id: 'synthetic-only-damaged-text' }
+  const data = await fixture([entry, unreadable])
+  const corpus = new GuidelineCorpus({ databasePath: data.database })
+  const mixed = { source: entry, passages: [
+    { locator: 'Line 1', text: 'Diabetes threshold: 5\u0002ULN.' },
+    { locator: 'Line 2', text: 'Diabetes threshold: 5\uFFFDULN.' },
+    { locator: 'Line 3', text: 'Diabetes requires confirmation before treatment.\n' },
+  ] }
+  try {
+    corpus.importDocuments([mixed, { source: unreadable, passages: [mixed.passages[0]!] }])
+    const checked = await runGuidelineSync(['--check', '--database', data.database])
+    expect(checked).toMatchObject({ sourceCount: 2, passageCount: 4, searchableSourceCount: 1, searchablePassageCount: 1,
+      items: [{ sourceId: entry.id, status: 'available', passageCount: 3, unusablePassageCount: 2 },
+        { sourceId: unreadable.id, status: 'withheld', passageCount: 1, unusablePassageCount: 1 }] })
+    expect(corpus.matchesDocuments([mixed])).toBe(true)
+  } finally { corpus.close() }
+})
+
 it('reuses verified bytes on a repeated sync and checks the corpus without downloading or replacing its revision', async () => {
   const text = 'Synthetic diabetes recommendation. Do not omit the individual conditions.\n'
   const data = await fixture([source('synthetic-cache', text)])

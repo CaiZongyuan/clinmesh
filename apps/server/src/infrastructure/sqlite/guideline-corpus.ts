@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { guidelineEvidenceSchema, type GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
 import Database from 'better-sqlite3'
 import { z } from 'zod'
-import { isGuidelineSourceUsable } from '../../application/guideline-corpus.ts'
+import { guidelinePassagePolicyRevision, isGuidelinePassageUsable, isGuidelineSourceUsable } from '../../application/guideline-corpus.ts'
 import type {
   GuidelineDocument,
   GuidelineDeploymentPolicy,
@@ -55,7 +55,8 @@ const documentSchema = z.object({
   'Available guidelines require readable passages')
   .refine(document => new Set(document.passages.map(passage => passage.locator)).size === document.passages.length,
   'Guideline passage locators must be unique')
-const sourceRowSchema = z.object({ metadata: z.string(), digest: z.string(), passageCount: z.number().int().nonnegative() })
+const sourceRowSchema = z.object({ metadata: z.string(), digest: z.string(), passageCount: z.number().int().nonnegative(),
+  unusablePassageCount: z.number().int().nonnegative() })
 const passageRowSchema = z.object({ id: z.string(), locator: z.string(), text: z.string(), rank: z.number() })
 const storedDocumentSchema = z.object({ metadata: z.string(), digest: z.string() })
 const storedPassagesSchema = z.array(z.object({ id: z.string(), locator: z.string(), text: z.string() }))
@@ -114,6 +115,8 @@ export class GuidelineCorpus {
       this.#database.pragma('foreign_keys = ON')
       this.#database.pragma('busy_timeout = 5000')
       if (!options.readOnly) this.#database.pragma('journal_mode = WAL')
+      this.#database.function('guideline_passage_usable', { deterministic: true }, text =>
+        typeof text === 'string' && isGuidelinePassageUsable({ text }) ? 1 : 0)
     } catch (error) {
       this.#database.close()
       throw error
@@ -185,7 +188,7 @@ export class GuidelineCorpus {
   search(text: string): GuidelineSearchResult {
     return this.#database.transaction(() => {
       const rows = this.#sourceRows()
-      const revision = hash(JSON.stringify([this.#allowNonCommercial, this.#deploymentPolicy, rows.map(row => row.digest)]))
+      const revision = hash(JSON.stringify([guidelinePassagePolicyRevision, this.#allowNonCommercial, this.#deploymentPolicy, rows.map(row => row.digest)]))
       const guidelines: GuidelineEvidence[] = []
       const diagnosisQueries = new Set<string>()
       const inactiveSources: GuidelineSearchResult['inactiveSources'] = []
@@ -211,11 +214,12 @@ export class GuidelineCorpus {
         const passages = indexedTerms.length === 0 ? [] : z.array(passageRowSchema).parse(this.#database.prepare(`
           SELECT p.id, p.locator, p.text, bm25(guideline_passage_fts) AS rank FROM guideline_passage p
           JOIN guideline_passage_fts ON guideline_passage_fts.rowid = p.rowid
-          WHERE p.source_id = ? AND guideline_passage_fts MATCH ?
+          WHERE p.source_id = ? AND guideline_passage_fts MATCH ? AND guideline_passage_usable(p.text)
           ORDER BY bm25(guideline_passage_fts), p.id LIMIT 64
         `).all(source.id, sourcePhrase))
         if (shortTerms.length > 0) passages.push(...z.array(passageRowSchema).parse(this.#database.prepare(`
           SELECT id, locator, text, 0 AS rank FROM guideline_passage WHERE source_id = ?
+          AND guideline_passage_usable(text)
           AND (${shortTerms.map(() => 'instr(lower(text), lower(?)) > 0').join(' OR ')}) ORDER BY id LIMIT 64
         `).all(source.id, ...shortTerms)))
         const seen = new Set<string>()
@@ -256,12 +260,14 @@ export class GuidelineCorpus {
   sources(): GuidelineSourceStatus[] {
     return this.#sourceRows().map(row => ({
       source: guidelineSourceDefinitionSchema.parse(JSON.parse(row.metadata)), passageCount: row.passageCount,
+      ...(row.unusablePassageCount > 0 ? { unusablePassageCount: row.unusablePassageCount } : {}),
     }))
   }
 
   #sourceRows() {
     return z.array(sourceRowSchema).parse(this.#database.prepare(`
-      SELECT metadata, digest, (SELECT count(*) FROM guideline_passage p WHERE p.source_id = s.id) AS passageCount
+      SELECT metadata, digest, (SELECT count(*) FROM guideline_passage p WHERE p.source_id = s.id) AS passageCount,
+        (SELECT count(*) FROM guideline_passage p WHERE p.source_id = s.id AND NOT guideline_passage_usable(p.text)) AS unusablePassageCount
       FROM guideline_source s ORDER BY id
     `).all())
   }

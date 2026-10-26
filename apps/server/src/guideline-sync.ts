@@ -3,7 +3,7 @@ import { resolve, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { z } from 'zod'
 import { defaultGuidelineDatabasePath, guidelineDeploymentPolicySchema, guidelineNonCommercialUseSchema, readServerEnvironment } from './config.ts'
-import { isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
+import { isGuidelinePassageUsable, isGuidelineSourceUsable, type GuidelineDeploymentPolicy } from './application/guideline-corpus.ts'
 import { GuidelineCorpus, guidelineSourceDefinitionSchema } from './infrastructure/sqlite/guideline-corpus.ts'
 import { importGuidelineSource } from './infrastructure/guidelines/import-guideline-source.ts'
 
@@ -19,7 +19,7 @@ export interface GuidelineSyncResult {
   passageCount: number
   searchablePassageCount: number
   failedSourceCount: number
-  items: Array<{ sourceId: string; status: string; passageCount: number; reason?: string }>
+  items: Array<{ sourceId: string; status: string; passageCount: number; unusablePassageCount?: number; reason?: string }>
 }
 
 export async function runGuidelineSync(args: readonly string[], options: {
@@ -61,10 +61,13 @@ export async function runGuidelineSync(args: readonly string[], options: {
         const document = await importGuidelineSource(source, { cacheDirectory,
           ...(options.fetch === undefined ? {} : { fetch: options.fetch }) })
         const imported = corpus.importDocument(document)
-        const usable = isGuidelineSourceUsable(source, options.allowNonCommercial, options.deploymentPolicy)
+        const usablePassageCount = document.passages.filter(isGuidelinePassageUsable).length
+        const unusablePassageCount = document.passages.length - usablePassageCount
+        const usable = isGuidelineSourceUsable(source, options.allowNonCommercial, options.deploymentPolicy) && usablePassageCount > 0
         items.push({ sourceId: source.id, status: !usable ? 'withheld'
-          : imported.created ? 'imported' : 'unchanged', passageCount: imported.passageCount })
-        options.onProgress?.(`${source.id}: ${imported.passageCount} 段，${usable ? '可检索' : '当前用途不可检索'}`)
+          : imported.created ? 'imported' : 'unchanged', passageCount: imported.passageCount,
+          ...(unusablePassageCount > 0 ? { unusablePassageCount } : {}) })
+        options.onProgress?.(`${source.id}: ${imported.passageCount} 段，${usable ? usablePassageCount : 0} 段可检索`)
       } catch (error) {
         items.push({ sourceId: source.id, status: 'failed', passageCount: 0,
           reason: error instanceof Error ? error.message : 'Guideline source import failed' })
@@ -72,14 +75,16 @@ export async function runGuidelineSync(args: readonly string[], options: {
       }
     }
     const installed = corpus.sources()
-    const searchable = installed.filter(item => isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy) && item.passageCount > 0)
+    const searchable = installed.filter(item => isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy)
+      && item.passageCount > (item.unusablePassageCount ?? 0))
     return { databasePath, sourceCount: installed.length, searchableSourceCount: searchable.length,
       passageCount: installed.reduce((total, item) => total + item.passageCount, 0),
-      searchablePassageCount: searchable.reduce((total, item) => total + item.passageCount, 0),
+      searchablePassageCount: searchable.reduce((total, item) => total + item.passageCount - (item.unusablePassageCount ?? 0), 0),
       failedSourceCount: items.filter(item => item.status === 'failed').length,
       items: values.check ? installed.map(item => ({ sourceId: item.source.id,
         status: item.source.status !== 'active' ? item.source.status
-          : item.passageCount > 0 && isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy) ? 'available' : 'withheld', passageCount: item.passageCount })) : items }
+          : item.passageCount > (item.unusablePassageCount ?? 0) && isGuidelineSourceUsable(item.source, options.allowNonCommercial, options.deploymentPolicy) ? 'available' : 'withheld',
+        passageCount: item.passageCount, ...(item.unusablePassageCount === undefined ? {} : { unusablePassageCount: item.unusablePassageCount }) })) : items }
   } finally { corpus.close() }
 }
 

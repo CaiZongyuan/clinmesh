@@ -364,6 +364,24 @@ describe('GuidelineCorpus 公共存储与检索接口', () => {
     expect(corpus.search('软骨发育不全').guidelines[0]!.text).toBe(input.passages[0]!.text)
   })
 
+  it('保存完整原文但隔离控制字符和替换字符段落，邻近正常条款仍可检索', () => {
+    const corpus = open()
+    const input = document()
+    input.passages = [
+      { locator: '第1页阈值条款', text: '软骨发育不全阈值为 5\u0002ULN，需结合病例评估。' },
+      { locator: '第2页单位条款', text: '软骨发育不全阈值为 5\uFFFDULN，单位不得猜测。' },
+      { locator: '第3页正常条款', text: '\t软骨发育不全需要进一步评估。\r\n不得仅凭身高确诊。\n' },
+      { locator: '第4页异常条款', text: '软骨发育不全阈值为 5\u0082ULN，单位不得猜测。' },
+    ]
+    corpus.importDocument(input)
+    expect(corpus.search('软骨发育不全').guidelines.map(item => item.text)).toEqual([input.passages[2]!.text])
+    expect(corpus.sources()).toEqual([{ source: input.source, passageCount: 4, unusablePassageCount: 3 }])
+    expect(corpus.matchesDocuments([input])).toBe(true)
+    const normal = document()
+    corpus.importDocument(normal)
+    expect(corpus.sources()).toEqual([{ source: normal.source, passageCount: 1 }])
+  })
+
   it('无需重新下载正文即可原子撤回、替代或撤销来源许可，可用来源仍拒绝空正文', () => {
     const corpus = open()
     const input = document()

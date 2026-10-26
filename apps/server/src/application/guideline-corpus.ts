@@ -1,6 +1,7 @@
 import type { GuidelineEvidence } from '@clinmesh/contracts/doctor-recommendations'
 
 export type GuidelineDeploymentPolicy = 'default' | 'internal-testing'
+export const guidelinePassagePolicyRevision = 'readable-original-passages-v1'
 
 export interface GuidelineSourceDefinition {
   id: string
@@ -50,6 +51,11 @@ export interface GuidelineSearchResult {
 export interface GuidelineSourceStatus {
   source: GuidelineSourceDefinition
   passageCount: number
+  unusablePassageCount?: number
+}
+
+export function isGuidelinePassageUsable(passage: Pick<GuidelinePassage, 'text'>): boolean {
+  return passage.text.trim().length > 0 && !/[\p{Cc}\uFFFD]/u.test(passage.text.replaceAll(/[\t\n\r]/g, ''))
 }
 
 export function isGuidelineSourceUsable(source: GuidelineSourceDefinition, allowNonCommercial = false,
