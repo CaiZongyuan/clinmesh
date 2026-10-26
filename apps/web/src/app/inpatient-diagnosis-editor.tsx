@@ -52,7 +52,7 @@ export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blo
   }
   let secondary = 0
   return <form onSubmit={event => { event.preventDefault(); submit() }}><FieldSet disabled={blocked}>
-    <FieldLegend>{t('确认本次住院诊断', 'Confirm admission diagnosis')}</FieldLegend>
+    <FieldLegend className="font-serif">{t('确认本次住院诊断', 'Confirm admission diagnosis')}</FieldLegend>
     <FieldGroup className="flex flex-col gap-3">
       <Field><FieldLabel htmlFor="inpatient-diagnosis-search">{t('诊断目录检索', 'Search diagnosis catalog')}</FieldLabel><Input id="inpatient-diagnosis-search" value={query} onChange={event => setQuery(event.currentTarget.value)} /></Field>
       <Button type="button" variant="outline" onClick={() => { setSearch(query.trim()); setPage(1) }}>{t('查询诊断', 'Search diagnoses')}</Button>
@@ -61,7 +61,7 @@ export function InpatientDiagnosisEditor({ data, diagnoses, session, locale, blo
         const primary = entry.role === 'primary', title = primary ? t('住院诊断', 'Inpatient diagnosis') : t(`次诊断 ${++secondary}`, `Secondary diagnosis ${secondary}`)
         const conditionTitle = primary ? t('主诊断入院病情', 'Primary diagnosis on admission') : t(`${title} 入院病情`, `${title} on admission`)
         const update = (patch: Partial<Entry>) => edit(entries => entries.map((item, i) => i === index ? { ...item, ...patch } : item))
-        return <div key={entry.key} className="grid gap-3 rounded-md border p-3 md:grid-cols-2">
+        return <div key={entry.key} className="grid gap-3 rounded-md border bg-card p-3 md:grid-cols-2">
           <Field><FieldLabel htmlFor={`inpatient-diagnosis-${entry.key}`}>{title}</FieldLabel><WorkspaceSelect id={`inpatient-diagnosis-${entry.key}`} value={entry.catalogItemId}
             items={[...candidates.values()].filter(item => item.value === entry.catalogItemId || !current.entries.some(other => other.catalogItemId === item.value))}
             onValueChange={value => update({ catalogItemId: value, display: value ? candidates.get(value)?.label ?? '' : '' })} /></Field>
