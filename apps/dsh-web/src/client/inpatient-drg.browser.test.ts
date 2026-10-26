@@ -13,7 +13,7 @@ for (const version of ['18', '19']) test.describe(`inpatient DRG React ${version
     page.on('pageerror', error => errors.push(error.message))
     const s = await createDrgBrowserPatient(page, browserApp, '合成医嘱审阅Surface患者')
     const catalog = inpatientFullCatalogSchema.parse(await (await s.api.get('/api/his/v1/inpatient/clinical-catalog')).json())
-    const medication = catalog.medications[0]!
+    const medication = catalog.medications.find(item => item.display === '苯磺酸氨氯地平片')!
     const doseText = `1.0${medication.unit}`
     await page.route(`${browserApp.origin}/drg-contract`, route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html></html>' }))
     await page.goto(`${browserApp.origin}/drg-contract`)

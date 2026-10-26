@@ -65,6 +65,7 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
   const enabled = active && visible && !archived && admission.status !== 'registered'
   const allowPlanSelection = draft === undefined && onReview === undefined && !archived
   const surgery = useQuery({ queryKey: [...scope, 'surgeries'], enabled: enabled && allowPlanSelection,
+    refetchInterval: enabled && allowPlanSelection ? 3_000 : false, refetchIntervalInBackground: false,
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
   const plans = (surgery.data?.requests ?? []).filter(item => item.status === 'requested' || item.status === 'ready')
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)

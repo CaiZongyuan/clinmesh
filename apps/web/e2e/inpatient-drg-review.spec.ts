@@ -1,6 +1,7 @@
 import { inpatientFullCatalogSchema, inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientDrgSimulationSchema, inpatientDrgSimulationInputSchema, inpatientMaterialReservationListSchema, type InpatientDrgSimulationInput } from '@clinmesh/contracts/inpatient-drg-simulation'
 import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient-drg-payer'
+import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from './inpatient-drg.fixture.ts'
 
@@ -25,7 +26,6 @@ test('多手术计划仅按医生选择推演主操作，正式事实与首页�
   await expect(projected).toContainText('已分组 · RA25')
   await expect(panel.getByLabel('计划主操作（仅推演）', { exact: true })).toHaveCount(0)
   const second = await requestPlan('合成第二个操作计划')
-  await page.getByRole('button', { name: '刷新诊疗记录', exact: true }).click()
   await expect(projected).toContainText('分组依据不完整')
   await expect(panel.getByRole('region', { name: '正式事实分组', exact: true })).toContainText('已分组 · RA15')
   await panel.getByLabel('计划主操作（仅推演）', { exact: true }).click()
@@ -39,6 +39,8 @@ test('多手术计划仅按医生选择推演主操作，正式事实与首页�
   const surgery = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
   expect(surgery.executions).toEqual([])
   expect(surgery.requests).toHaveLength(2)
+  const record = inpatientRecordSchema.parse(await (await s.api.get(`${s.path}/record`)).json())
+  expect(record.snapshot.clinical).toMatchObject({ mainProcedureExecutionId: null, operations: [] })
 })
 
 test('外部医嘱变化后页面自动标记评估过期，并锁定已经打开的确认', async ({ page, browserApp }) => {
