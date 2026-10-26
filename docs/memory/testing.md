@@ -52,6 +52,10 @@
 
 - 收费真实入口和 Surface 浏览器合同从仓库根运行 Playwright，并沿用根配置。收费 HTTP fixture 以当前工作目录定位 `apps/server/drizzle`；从 `apps/web` 启动会错误查找 `apps/web/apps/server/drizzle`，尚未执行业务断言。根 runner 的 `--project=web` 与 `--project=contracts` 分别选择真实入口和组件合同。
 
+- 新检出只运行 Playwright 时，先按[浏览器准备步骤](../testing.md#用户界面验证)生成 Surface 样式；已有开发构建会掩盖缺少 `styles.generated.ts` 的前置条件。Rollup 在部分 fixture 中报该模块缺失时，先补齐与 CI prepare 相同的步骤，再原样验证受影响文件，不修改影像、用量或布局业务。
+
+- 外观矩阵中 `data-font-size` 已更新不代表带 `transition-all` 的标签已完成字号变化；诊断处方曾在属性等待返回后仍测得字体和边界继续变化。先等待 computed font-size 到达目标，保持真实 click 并确认 `aria-selected`，不要用扩大超时、重复点击或键盘替换掩盖导航前态。React 18/19 的确定性过渡回归见 `diagnosis-prescription.browser.test.ts`。
+
 - WSL 全仓验证的较多 Vitest worker 可能使宿主导航和长 SQLite HTTP 测试触及原有超时。先用原断言聚焦复现并区分功能失败与资源争用；核对 `taskset -pc $$` 的可用 CPU 后，可限制整个检查进程树的 CPU affinity，已实际验证 `taskset -c 0-3 pnpm check`。不通过扩大超时或改变业务时序掩盖失败。
 
 - WSL 全量测试在高并行度下可能因 CPU 争用触发既有 5s/10s 超时，并在超时清理后出现数据库已关闭的次生错误。确认单项通过后，可用 `taskset -c 0-3 pnpm check` 限制本次验证的 CPU 亲和性，让 Node/Vitest 降低并行度；若多个包仍同时争用 CPU，先用 `taskset -c 0-3 pnpm exec turbo run test --filter=!@clinmesh/mobile --concurrency=1` 串行验证包级集合，再运行 `pnpm check` 复用仍有效的成功缓存。验证记录须明确 CPU affinity、worker 或串行限制，不把受限并发结果说成默认并发通过。保留完整测试集合、原断言和原超时，不修改业务实现来掩盖资源争用。`apps/server` 的单项超时为 15 秒（`vitest.config.ts`），因为完整 HTTP 闭环在 CI runner 上要 4–5 秒；仍超时时先查是否真变慢，不继续加大上限。

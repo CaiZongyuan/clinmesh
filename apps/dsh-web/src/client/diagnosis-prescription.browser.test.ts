@@ -57,6 +57,15 @@ async function appearance(page: Page, locale: 'zh-CN' | 'en-US', theme: 'light' 
   await expect(root).toHaveAttribute('lang', locale)
   await expect(root).toHaveAttribute('data-font-size', fontSize)
   await expect(root).toHaveAttribute('data-theme', theme)
+  // 属性先于 transition-all 的字号过渡生效；实际字体到位后再点击页签。
+  await expect(page.getByRole('tab', { name: locale === 'zh-CN' ? '诊断' : 'Diagnosis', exact: true }))
+    .toHaveCSS('font-size', { standard: '13px', larger: '14.625px', large: '16.25px' }[fontSize])
+}
+async function selectCaseSection(page: Page, locale: 'zh-CN' | 'en-US', section: 'diagnosis' | 'prescription') {
+  const name = section === 'diagnosis' ? locale === 'zh-CN' ? '诊断' : 'Diagnosis' : locale === 'zh-CN' ? '处方' : 'Prescription'
+  const tab = page.getByRole('tab', { name, exact: true })
+  await tab.click()
+  await expect(tab).toHaveAttribute('aria-selected', 'true')
 }
 async function expectNoFixtureErrors(page: Page) {
   await page.evaluate(() => window.dispatchEvent(new Event('diagnosis-prescription-errors')))
@@ -174,7 +183,23 @@ async function expectWorkspaceColumns(page: Page, hasRecords: boolean) {
   expect(bounds.rightLeft).toBeGreaterThanOrEqual(bounds.entryRight)
 }
 
-for (const version of ['18', '19']) {
+for (const version of ['18', '19']) test.describe(`diagnosis and prescription on React ${version}`, () => {
+  test.describe.configure({ mode: 'default' })
+  test.beforeAll(async () => { await buildFixture(version) })
+
+  test(`settles tab typography before clicking after a narrow-to-wide appearance change on React ${version}`, async ({ page }) => {
+    await mount(page, version, 'empty')
+    await appearance(page, 'zh-CN', 'light', 'standard', 390)
+    const tab = page.getByRole('tab', { name: '诊断', exact: true })
+    // 拉开真实 CSS 字号过渡，确定性覆盖属性已更新而点击目标仍在移动的窗口。
+    await tab.evaluate(element => { element.style.transitionDuration = '1s' })
+    await appearance(page, 'zh-CN', 'light', 'larger', 1280)
+    expect(await tab.evaluate(element => getComputedStyle(element).fontSize)).toBe('14.625px')
+    await selectCaseSection(page, 'zh-CN', 'diagnosis')
+    await expect(page.getByRole('region', { name: '填写诊断', exact: true })).toBeVisible()
+    await expectNoFixtureErrors(page)
+  })
+
   test(`continues a retry-disabled pending task on React ${version}`, async ({ page }) => {
     await mount(page, version, 'retry-disabled')
     await page.getByRole('tab', { name: '诊断', exact: true }).click()
@@ -594,7 +619,7 @@ for (const version of ['18', '19']) {
     await forEachAppearance(page, async (locale, width) => {
       const zh = locale === 'zh-CN'
       for (const section of ['diagnosis', 'prescription'] as const) {
-        await page.getByRole('tab', { name: section === 'diagnosis' ? zh ? '诊断' : 'Diagnosis' : zh ? '处方' : 'Prescription', exact: true }).click()
+        await selectCaseSection(page, locale, section)
         const editor = page.getByRole('region', { name: section === 'diagnosis' ? zh ? '填写诊断' : 'Enter diagnosis' : zh ? '填写处方' : 'Enter prescription', exact: true })
         await editor.getByRole('button', { name: section === 'diagnosis'
           ? `${zh ? '编辑诊断' : 'Edit diagnosis'} ${diagnosisName}`
@@ -626,7 +651,7 @@ for (const version of ['18', '19']) {
     test.setTimeout(60_000)
     await mount(page, version, 'existing')
     await forEachAppearance(page, async (locale, width) => {
-      await page.getByRole('tab', { name: locale === 'zh-CN' ? '诊断' : 'Diagnosis', exact: true }).click()
+      await selectCaseSection(page, locale, 'diagnosis')
       const diagnosisList = page.getByRole('region', { name: locale === 'zh-CN' ? '诊断列表' : 'Diagnosis list', exact: true })
       const backToDiagnoses = page.getByRole('button', { name: locale === 'zh-CN' ? '返回诊断列表' : 'Back to diagnosis list', exact: true })
       await showConfirmedList(diagnosisList, backToDiagnoses)
@@ -658,7 +683,7 @@ for (const version of ['18', '19']) {
       await expect(dialog).toHaveCount(0)
       await expect(add).toBeFocused()
 
-      await page.getByRole('tab', { name: locale === 'zh-CN' ? '处方' : 'Prescription', exact: true }).click()
+      await selectCaseSection(page, locale, 'prescription')
       const medicationList = page.getByRole('region', { name: locale === 'zh-CN' ? '药品列表' : 'Medication list', exact: true })
       const backToMedications = page.getByRole('button', { name: locale === 'zh-CN' ? '返回药品列表' : 'Back to medication list', exact: true })
       await showConfirmedList(medicationList, backToMedications)
@@ -716,4 +741,4 @@ for (const version of ['18', '19']) {
       await showConfirmedList(list, back)
     }
   })
-}
+})
