@@ -1,4 +1,7 @@
 import { z } from 'zod'
+import { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
+export { outpatientInvestigationBillingSchema, outpatientInvestigationPriceSchema } from './investigation-billing.ts'
+export type { OutpatientInvestigationBilling, OutpatientInvestigationPrice } from './investigation-billing.ts'
 import { fhirResourceSchema } from './fhir.ts'
 import { imagingExamCodeSchema, pathologyExamCodeSchema } from './imaging.ts'
 import { pathologySourceProcedureSchema } from './pathology.ts'
@@ -391,6 +394,7 @@ const laboratoryServiceResultDefinitionSchema = z.object({
 })
 
 export const laboratoryServiceSnapshotSchema = z.object({
+  outpatientBilling: outpatientInvestigationPriceSchema.optional(),
   allowedIndicationCodes: z.array(z.string().min(1).max(64)).min(1),
   componentServiceIds: z.array(z.string().min(1).max(512)),
   doctorOrderable: z.boolean(),
@@ -1574,6 +1578,7 @@ export const correctLaboratoryReportResponseSchema = commandResponseSchema(z.obj
 }).strict())
 
 export const laboratoryRequestSchema = z.object({
+  billing: outpatientInvestigationBillingSchema.optional(),
   authoredAt: z.iso.datetime({ offset: true }).optional(),
   catalogItemId: laboratoryRequestCatalogItemIdSchema,
   generationError: z.object({
@@ -1630,6 +1635,7 @@ const completedCaseLaboratoryReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const completedCaseLaboratoryRequestSchema = z.object({
+  billing: outpatientInvestigationBillingSchema.optional(),
   authoredAt: z.iso.datetime({ offset: true }).optional(),
   catalogDisplay: z.string().min(1).optional(),
   catalogItemId: referenceDataItemIdSchema.optional(),
@@ -1703,6 +1709,7 @@ export const laboratoryRequestStateSchema = z.object({
 
 /** 开立时冻结的放射服务定义：部位、检查方式、执行科室、适用范围与报告结构。 */
 export const imagingServiceSnapshotSchema = z.object({
+  outpatientBilling: outpatientInvestigationPriceSchema.optional(),
   applicability: z.string().min(1),
   bodySite: z.string().min(1),
   code: z.string().min(1).max(64),
@@ -1766,6 +1773,7 @@ export const imagingReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const imagingRequestSchema = z.object({
+  billing: outpatientInvestigationBillingSchema.optional(),
   authoredAt: z.iso.datetime({ offset: true }).optional(),
   generationError: z.object({
     code: z.string().min(1).max(128),
@@ -1824,6 +1832,7 @@ export const correctImagingReportResponseSchema = correctLaboratoryReportRespons
 
 /** 开立时冻结的病理会诊服务定义：部位、标本类型、染色、执行科室、适用范围与报告结构。 */
 export const pathologyServiceSnapshotSchema = z.object({
+  outpatientBilling: outpatientInvestigationPriceSchema.optional(),
   applicability: z.string().min(1),
   bodySite: z.string().min(1),
   code: z.string().min(1).max(64),
@@ -1895,6 +1904,7 @@ export const pathologyReportSchema = z.object({
 }).strict().superRefine(validateLaboratoryReportRevision)
 
 export const pathologyRequestSchema = z.object({
+  billing: outpatientInvestigationBillingSchema.optional(),
   authoredAt: z.iso.datetime({ offset: true }).optional(),
   generationError: z.object({
     code: z.string().min(1).max(128),
