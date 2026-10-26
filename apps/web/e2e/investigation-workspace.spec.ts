@@ -9,6 +9,7 @@ import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
 import { test as base, expect } from './fixtures.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
+import { collectOutpatientInvestigation } from './outpatient-investigation-payment.fixture.ts'
 
 const test = base.extend<{ investigationCase: Awaited<ReturnType<typeof startConsultationCase>> }>({
   browserApp: async ({ webRoot }, use) => {
@@ -38,7 +39,17 @@ const test = base.extend<{ investigationCase: Awaited<ReturnType<typeof startCon
           return { model: input.model, content: JSON.stringify(persona) }
         } },
       })
-      try { await use(app) }
+      try {
+        // 本场景验证临床真值不兼容；其独立合成项目先配置有效门诊价，避免被缺价门禁提前拦截。
+        const priced = app.runtime.database.driver.prepare(`UPDATE hospital_service_catalog
+          SET config_json = json_set(config_json, '$.laboratoryService.outpatientBilling', json(?))
+          WHERE json_extract(config_json, '$.laboratoryService.referenceConcept.code') = '0101901A'`).run(JSON.stringify({
+          id: 'synthetic-e2e-incompatible-laboratory-price', version: 1, priceFen: 800, currency: 'CNY', unit: '项目',
+          source: 'synthetic-e2e-incompatible-laboratory', effectiveOn: '2026-08-24',
+        }))
+        expect(priced.changes).toBe(1)
+        await use(app)
+      }
       finally { await app.close() }
     } finally { await rm(directory, { force: true, recursive: true }) }
   },
@@ -60,6 +71,8 @@ test('a doctor cancels an incompatible laboratory request after reviewing its fa
   await expect(page.getByRole('tab', { name: '在诊', exact: true, includeHidden: true })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('tab', { name: '检验检查', exact: true }).click()
   const laboratory = page.getByRole('tabpanel', { name: /^检验 \d+$/ })
+  const readCase = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
+    `${browserApp.origin}/api/his/v1/doctor/cases/${investigationCase.outpatientCaseId}`)).json())
   // 弹窗合同：目录选择与适应证确认在「选择检验项目」弹窗内完成，确认即直写服务端草稿。
   await laboratory.getByRole('button', { name: '添加检验', exact: true }).click()
   const composer = page.getByRole('dialog', { name: '选择检验项目', exact: true })
@@ -75,6 +88,10 @@ test('a doctor cancels an incompatible laboratory request after reviewing its fa
   expect(issuedResponse.status()).toBe(200)
   const issuedId = confirmDoctorPreparationResponseSchema.parse(await issuedResponse.json()).data.recordIds[0]
   if (issuedId === undefined) throw new Error('Expected the issued laboratory request identity')
+  const original = (await readCase()).laboratoryRequests?.requests.find(request => request.id === issuedId)
+  expect(original?.billing).toBeDefined()
+  await collectOutpatientInvestigation(browserApp, { caseId: investigationCase.outpatientCaseId,
+    category: 'laboratory', chargeItemId: original!.billing!.chargeItemId })
   await browserApp.runtime.dispatchPending()
   const detail = laboratory.getByRole('region', { name: '申请详情', exact: true })
   await expect(detail.getByText('该病例的合成检验真值与申请的结果定义或单位不兼容，无法生成结果。请取消此申请。', { exact: true })).toBeVisible()
@@ -82,8 +99,6 @@ test('a doctor cancels an incompatible laboratory request after reviewing its fa
   await detail.getByRole('button', { name: '取消检验申请 合成不兼容检验', exact: true }).click()
   const confirmation = page.getByRole('alertdialog', { name: '确认取消检验申请', exact: true })
   await expect(confirmation.getByText('结果生成失败', { exact: true })).toBeVisible()
-  const readCase = async () => doctorCaseDetailSchema.parse(await (await page.request.get(
-    `${browserApp.origin}/api/his/v1/doctor/cases/${investigationCase.outpatientCaseId}`)).json())
   const failed = (await readCase()).laboratoryRequests?.requests.find(request => request.id === issuedId)
   expect(failed?.status).toBe('generation-failed')
   expect(failed?.generationError?.code).toBe('INVESTIGATION_TRUTH_INCOMPATIBLE')
@@ -228,6 +243,10 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await expect(entry.getByRole('button', { name: '添加检验', exact: true })).toBeVisible()
   expect((await readCase()).laboratoryRequests?.requests[0]?.id).toBe(issuedId)
 
+  const first = (await readCase()).laboratoryRequests?.requests.find(request => request.id === issuedId)
+  expect(first?.billing).toBeDefined()
+  await collectOutpatientInvestigation(browserApp, { caseId: investigationCase.outpatientCaseId,
+    category: 'laboratory', chargeItemId: first!.billing!.chargeItemId })
   await browserApp.runtime.dispatchPending()
   await expect(detail.getByRole('heading', { name: '合成白细胞计数 · 检验报告', exact: true })).toBeVisible()
   await expect(detail.getByRole('table').getByText('11.2', { exact: true })).toBeVisible()
@@ -264,6 +283,10 @@ for (const width of [1280, 390]) test(`a doctor issues, reads, adds and restores
   await issueSelected.click()
   await expect(page.getByRole('tab', { name: '检验 2', exact: true })).toBeVisible()
   await expect(detail.getByRole('heading', { name: '合成血红蛋白', exact: true })).toBeVisible()
+  const second = (await readCase()).laboratoryRequests?.requests.find(request => request.id !== issuedId)
+  expect(second?.billing).toBeDefined()
+  await collectOutpatientInvestigation(browserApp, { caseId: investigationCase.outpatientCaseId,
+    category: 'laboratory', chargeItemId: second!.billing!.chargeItemId })
   await browserApp.runtime.dispatchPending()
   await expect(detail.getByRole('table').getByText('135', { exact: true })).toBeVisible()
   await expect(detail.getByRole('table').getByText('g/L', { exact: true })).toBeVisible()
