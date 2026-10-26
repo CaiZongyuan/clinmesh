@@ -173,7 +173,7 @@ export async function createPciPaymentDrgFixture(prepared: Awaited<ReturnType<ty
     const diagnosis = (await parsePciResponse(inpatientFullClinicalResponseSchema, await request('inpatient-doctor', `${admissionPath}/diagnoses/confirm`, {
       encounterVersion: admission.versionId, expectedRevision: 0, entries: [{ catalogItemId: clinicalConcepts[0]!.id, role: 'primary', admissionCondition: '1', note: '本院医生确认固定合成冠心病' }] }))).data
     const deposit = (await parsePciResponse(inpatientPaymentPreviewResponseSchema, await request('cashier', `${admissionPath}/payments/preview`, {
-      kind: 'deposit', amountFen: 5000, tenders: [{ method: 'cash', amountFen: 5000 }] }))).data
+      kind: 'deposit', amountFen: 5000, tenders: [{ method: 'cash', amountFen: 5000 }], simulatorRule: 'success' }))).data
     await parsePciResponse(inpatientPaymentResponseSchema, await request('cashier', `${admissionPath}/payments/confirm`, { previewId: deposit.previewId, commitToken: deposit.commitToken }))
     const stay = { admissionId: started.admissionId, patientId: started.patientId, path: admissionPath, encounterVersion: diagnosis.encounterVersion,
       sourceCaseId: source.case.caseId, sourceCaseRevision: source.case.revision }
