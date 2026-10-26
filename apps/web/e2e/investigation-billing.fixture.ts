@@ -1,9 +1,12 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { z } from 'zod'
 import { expect, type Page } from '@playwright/test'
-import { doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { commandResponseSchema, doctorCaseDetailSchema } from '@clinmesh/contracts/his'
+import { imagingPreparationBatchSchema } from '@clinmesh/contracts/imaging'
+import { pathologyPreparationBatchSchema } from '@clinmesh/contracts/pathology'
 import { confirmDoctorPreparationResponseSchema } from '@clinmesh/contracts/doctor-recommendations'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
 import { persona, startConsultationCase, StubSyntheaProvider } from '../../server/tests/fixtures/consultation.ts'
@@ -22,7 +25,11 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
       pathologyAssetDirectory: join(directory, 'pathology-assets'), pathologyCatalogDirectory: join(directory, 'pathology-catalog') }
     if (allKinds) {
       await installSyntheticImagingAssets({ assetDirectory: assets.imagingAssetDirectory, catalogDirectory: assets.imagingCatalogDirectory,
-        assets: [{ assetId: 'synthetic-billing-radiograph', examCode: 'chest-radiograph' }] })
+        assets: [{ assetId: 'synthetic-billing-radiograph', examCode: 'chest-radiograph' }],
+        matching: { codeSystem: 'http://snomed.info/sct', profiles: [{
+          ageRange: [18, 90], assets: { 'chest-radiograph': 'synthetic-billing-radiograph' }, finding: 'negative',
+          id: 'synthetic-billing-chest', indexConditionCodes: ['386661006'], label: '合成收费胸片', sex: 'female',
+        }], ruleVersion: 1, schemaVersion: 1, sourceExamCodes: {}, uncoveredConditions: [] } })
       await installSyntheticPathologySlides({ assetDirectory: assets.pathologyAssetDirectory, catalogDirectory: assets.pathologyCatalogDirectory,
         slides: [{ assetId: 'synthetic-billing-slide' }] })
     }
@@ -35,11 +42,31 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
           if (!allKinds) return corpus
           return { ...corpus, sources: corpus.sources.map(source => {
             const raw = z.object({ entry: z.array(z.object({ resource: z.record(z.string(), z.unknown()) }).passthrough()) }).passthrough().parse(source.raw)
+            raw.entry.find(entry => entry.resource.id === 'iwtest')!.resource.valueQuantity = {
+              code: '10*3/uL', system: 'http://unitsofmeasure.org', unit: '10*3/uL', value: 11.2,
+            }
+            raw.entry.find(entry => entry.resource.id === 'ihtest')!.resource.valueQuantity = {
+              code: 'g/dL', system: 'http://unitsofmeasure.org', unit: 'g/dL', value: 13.5,
+            }
             raw.entry.push({ fullUrl: 'urn:uuid:synthetic-breast-procedure', resource: {
               code: { coding: [{ code: '392021009', display: '乳房肿块切除术', system: 'http://snomed.info/sct' }] },
               encounter: { reference: 'urn:uuid:prior-encounter' }, id: 'synthetic-breast-procedure',
               performedPeriod: { end: '2025-01-10T09:05:00+08:00', start: '2025-01-10T09:05:00+08:00' },
               resourceType: 'Procedure', status: 'completed', subject: { reference: 'urn:uuid:patient' },
+            } })
+            raw.entry.push({ fullUrl: 'urn:uuid:synthetic-breast-condition', resource: {
+              code: { coding: [{ code: '254837009', display: '乳腺恶性肿瘤', system: 'http://snomed.info/sct' }] },
+              encounter: { reference: 'urn:uuid:prior-encounter' }, id: 'synthetic-breast-condition',
+              recordedDate: '2025-01-10T09:05:00+08:00', resourceType: 'Condition', subject: { reference: 'urn:uuid:patient' },
+            } })
+            for (const [name, code, valueCode] of [
+              ['er', '85337-4', '10828004'], ['pr', '85339-0', '10828004'], ['her2', '85319-2', '260385009'],
+              ['n', '21906-3', '1229973008'], ['t', '21905-5', '1228929004'],
+            ]) raw.entry.push({ fullUrl: `urn:uuid:synthetic-breast-${name}`, resource: {
+              code: { coding: [{ code, system: 'http://loinc.org' }] },
+              effectiveDateTime: '2025-01-10T09:05:00+08:00', encounter: { reference: 'urn:uuid:prior-encounter' },
+              id: `synthetic-breast-${name}`, resourceType: 'Observation', status: 'final', subject: { reference: 'urn:uuid:patient' },
+              valueCodeableConcept: { coding: [{ code: valueCode, system: 'http://snomed.info/sct' }] },
             } })
             return { ...source, raw, hash: sourceArtifactHash(raw) }
           }) }
@@ -51,6 +78,18 @@ export async function startInvestigationBillingServer(webRoot: string, allKinds 
       } },
     })
     const started = await startConsultationCase(app.runtime, app.password, app.origin)
+    if (allKinds) {
+      for (const kind of ['imaging', 'pathology'] as const) {
+        const response = await app.runtime.app.request(`/api/sim/v1/admin/${kind}-preparations`, {
+          method: 'POST', headers: { 'content-type': 'application/json', cookie: started.adminCookie, origin: app.origin, 'idempotency-key': randomUUID() },
+          body: JSON.stringify({ input: { caseIds: [started.caseId] } }),
+        })
+        expect(response.status).toBe(200)
+        const schema = kind === 'imaging' ? imagingPreparationBatchSchema : pathologyPreparationBatchSchema
+        const prepared = commandResponseSchema(schema).parse(await response.json()).data.prepared[0]
+        expect(prepared?.preparation?.exams.find(exam => exam.examCode === (kind === 'imaging' ? 'chest-radiograph' : 'breast-slide-consultation'))?.status).toBe('ready')
+      }
+    }
     const server = app
     return { ...server, caseId: started.outpatientCaseId, async close() {
       try { await server.close() }

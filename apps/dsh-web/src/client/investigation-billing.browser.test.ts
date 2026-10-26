@@ -3,9 +3,10 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 import type { Page } from '@playwright/test'
 import { expect, test } from '../../../web/e2e/fixtures.ts'
-import { readBill, submitPayment } from '../../../web/e2e/billing-payments.fixture.ts'
+import { readBill } from '../../../web/e2e/billing-payments.fixture.ts'
 import { issueDoctorLaboratoryRequest, readDoctorBillingCase, startDoctorFirstVisit, startInvestigationBillingServer } from '../../../web/e2e/investigation-billing.fixture.ts'
 import { refundCancelledInvestigation } from '../../../web/e2e/investigation-billing-cancellation.fixture.ts'
+import { collectAndObserveInvestigationReports, issueBillableInvestigations } from '../../../web/e2e/investigation-billing-execution.fixture.ts'
 import { buildSurfaceStyles } from '../surface-styles.ts'
 
 const require = createRequire(import.meta.url)
@@ -48,7 +49,7 @@ async function openSurface(page: Page, origin: string, script: string, view: str
 }
 
 for (const version of ['18', '19']) {
-  test(`real ClinMesh Surface collects original investigation fees and recovers cancellation refunds with React ${version}`, async ({ page, browser, webRoot }) => {
+  test(`real ClinMesh Surface returns paid investigation reports and recovers cancellation refunds with React ${version}`, async ({ page, browser, webRoot }) => {
     test.setTimeout(180_000)
     const server = await startInvestigationBillingServer(webRoot, true)
     const cashierContext = await browser.newContext()
@@ -79,16 +80,16 @@ for (const version of ['18', '19']) {
       await expect(cashier.getByRole('tab', { name: '药品费用', exact: true })).toBeVisible()
       await refundCancelledInvestigation(page, cashier, server, 'imaging')
       await refundCancelledInvestigation(page, cashier, server, 'pathology')
-      await cashier.getByRole('tab', { name: '检验费用', exact: true }).click()
-      await cashier.getByRole('tab', { name: '待缴', exact: true }).click()
-      expect((await submitPayment(cashier)).outcome).toBe('success')
+      const ids = await issueBillableInvestigations(page, id)
+      await collectAndObserveInvestigationReports(page, cashier, server, ids)
       const bill = await readBill(cashier, server)
       expect(bill.charges.find(charge => charge.chargeItemId === request.billing!.chargeItemId)).toMatchObject({ paidFen: 800, remainingFen: 0 })
-      expect(bill.payments).toHaveLength(3)
-      expect(bill.payments.filter(payment => payment.chargeItemId === request.billing!.chargeItemId)).toHaveLength(1)
+      expect(bill.payments).toHaveLength(6)
+      expect(bill.payments.filter(payment => payment.chargeItemId === request.billing!.chargeItemId)).toHaveLength(2)
       expect(errors).toEqual([])
       expect(pixelRequests).toEqual([])
     } finally {
+      await page.close()
       await cashierContext.close()
       await server.close()
     }
