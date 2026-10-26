@@ -568,7 +568,7 @@ const completeHospitalServiceOperationInputSchema = z.object({
 }).strict()
 
 const billingQueueInputSchema = paginationInputSchema.extend({
-  category: z.enum(['laboratory', 'medication']),
+  category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
   status: z.enum(['ambiguous', 'declined', 'paid', 'pending']),
 }).strict()
 
@@ -581,7 +581,7 @@ const refundRecoverOperationInputSchema = refundRecoverInputSchema.extend({ refu
 
 const paymentPreviewOperationInputSchema = z.object({
   caseId: z.string().min(1),
-  category: z.enum(['laboratory', 'medication']),
+  category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
   chargeItemId: z.string().min(1),
   chargeVersion: z.number().int().positive(),
   simulatorRule: paymentSimulatorRuleSchema,
