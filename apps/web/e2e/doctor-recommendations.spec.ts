@@ -9,6 +9,7 @@ import { test as base } from './fixtures.ts'
 import { createRecommendationGuidelineDatabase, recommendationFixture, RecommendationSyntheaProvider } from './doctor-recommendations-fixture.ts'
 import { createInvestigationReferenceDatabase } from './investigation-workspace.fixture.ts'
 import { runRecommendationJourney } from './doctor-recommendations-journey.ts'
+import { collectOutpatientInvestigation } from './outpatient-investigation-payment.fixture.ts'
 
 const test = base.extend<{ recommendationCase: Awaited<ReturnType<typeof startConsultationCase>> }>({
   browserApp: async ({ webRoot }, use) => {
@@ -55,7 +56,9 @@ for (const width of [1280, 390]) test(`prepares in the background and directly c
     const response = await page.request.get(`${browserApp.origin}/api/his/v1/doctor/cases/${recommendationCase.outpatientCaseId}`)
     expect(response.status()).toBe(200)
     return doctorCaseDetailSchema.parse(await response.json())
-  } })
+  }, collectLaboratory: chargeItemId => collectOutpatientInvestigation(browserApp, {
+    caseId: recommendationCase.outpatientCaseId, category: 'laboratory', chargeItemId,
+  }) })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   expect(errors).toEqual([])
 })

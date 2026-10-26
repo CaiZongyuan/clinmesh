@@ -152,6 +152,8 @@
 
 ## 参考目录、Synthea 与影像素材
 
+- 合成病例能开单和缴费，不代表能生成检验报告。真实报告回归的来源 `Observation.valueQuantity` 必须包含可换算的 UCUM `system` 与 `code`；只有 `unit` 展示文字会触发 `INVESTIGATION_TRUTH_INCOMPATIBLE`。复用[检验工作台夹具](../../apps/web/e2e/investigation-workspace.fixture.ts)和[原费用执行夹具](../../apps/web/e2e/investigation-billing.fixture.ts)的白细胞 `10*3/uL`、血红蛋白 `g/dL` 来源，同时断言报告换算值，避免只核对资金就漏掉执行前置。
+
 - 以编码字符串查询 JSON 参数字典时先用 `Object.hasOwn` 检查自有键；直接读取 `table[code] !== undefined` 会把 `toString` 等原型属性误当有效编码，导致 CC/MCC 等计算伪命中。对应分组公开接口保留原型键回归；规则与编码边界见[DRG 条件分组](../architecture/drg-grouping.md)。
 
 - 从 FHIR 出生日期计算日龄前先验证完整且有效的日期；`new Date` 会给部分日期补月日，也会将不存在的日期滚动到下个月。未满周岁是否保留日龄按日历整岁判断，不能用 `<365`，否则闰年前一日会丢失仍有效的第 365 日龄。排查凌晨年龄异常时，配对验证同一时点的 `Z` 与 `+08:00` 表达及医院午夜前后；边界回归见[分组年龄测试](../../apps/server/tests/inpatient-drg-age.test.ts)，计算口径见[DRG 条件分组](../architecture/drg-grouping.md#住院输入与冻结)。

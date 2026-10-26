@@ -4,7 +4,9 @@ import type { DoctorCaseDetail } from '@clinmesh/contracts/his'
 import { syntheticGuidelineDocument, syntheticGuidelineMarker, syntheticGuidelineParagraph } from '../../server/tests/fixtures/guideline-corpus.ts'
 import { recommendationProcessingMarker, recommendationReasoningMarker } from './doctor-recommendations-fixture.ts'
 
-export async function runRecommendationJourney({ page, read }: { page: Page; read: () => Promise<DoctorCaseDetail> }) {
+export async function runRecommendationJourney({ page, read, collectLaboratory }: {
+  page: Page; read: () => Promise<DoctorCaseDetail>; collectLaboratory: (chargeItemId: string) => Promise<void>
+}) {
   const details = page.getByRole('dialog', { name: '依据与说明', exact: true })
   const closeDetails = async () => {
     await details.getByRole('button', { name: 'Close', exact: true }).click()
@@ -134,12 +136,17 @@ export async function runRecommendationJourney({ page, read }: { page: Page; rea
   await page.getByRole('tab', { name: '检验检查', exact: true }).click()
   const laboratory = page.getByRole('region', { name: '待开具检验', exact: true })
   const issueLaboratory = laboratory.getByRole('button', { name: /^开具选中项目/ })
+  await expect(laboratory.getByText('本院门诊价格：¥8.00 / 项目 · 数量 1', { exact: true })).toBeVisible()
   await expect(issueLaboratory).toBeEnabled()
   expect((await read()).laboratoryRequests?.requests ?? []).toEqual([])
   expect((await read()).laboratoryRequests?.draft).toBeUndefined()
   const beforeReport = await read()
   await issueLaboratory.click()
   await expect.poll(async () => (await read()).laboratoryRequests?.requests.length).toBe(1)
+  const original = (await read()).laboratoryRequests?.requests[0]
+  expect(original?.billing).toMatchObject({ status: 'pending', remainingFen: 800 })
+  if (original?.billing === undefined) throw new Error('Expected the original laboratory ChargeItem')
+  await collectLaboratory(original.billing.chargeItemId)
   await expect.poll(async () => (await read()).laboratoryRequests?.requests[0]?.report?.status).toBe('final')
   const afterReport = await read()
   z.object({ authoredAt: z.iso.datetime({ offset: true }) }).parse(afterReport.laboratoryRequests?.requests[0])

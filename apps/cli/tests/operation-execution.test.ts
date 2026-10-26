@@ -14,6 +14,55 @@ function captureStream() {
 }
 
 describe('catalog-backed operation execution', () => {
+  it.each(['laboratory', 'imaging', 'pathology', 'medication'])(
+    'keeps two %s charge targets in one encounter distinct through payment preview HTTP requests', async category => {
+      const stdout = captureStream(), stderr = captureStream()
+      const charges = ['charge-first', 'charge-second'].map(chargeItemId => ({
+        amountFen: 800, category, chargeItemId, chargeVersion: 3,
+        descriptionEn: 'Synthetic service', descriptionZh: '合成收费项目',
+        paidFen: 0, remainingFen: 800, status: 'billable',
+      }))
+      const fetch = vi.fn().mockResolvedValueOnce(Response.json({
+        accountId: 'account-1', caseId: 'case-1', encounterId: 'encounter-1', charges,
+        paidFen: 0, remainingFen: 1600, totalFen: 1600, payments: [],
+        paymentsPagination: { page: 1, pageSize: 20, total: 0 },
+        patient: { id: 'patient-1', identifier: 'CM-SYNTHETIC-1', name: '合成收费患者', synthetic: true, versionId: '1' },
+      }))
+      for (const chargeItemId of ['charge-first', 'charge-second']) {
+        fetch.mockResolvedValueOnce(Response.json({
+          auditId: 'audit-preview', effects: [], requestId: 'request-preview', warnings: [],
+          data: { allocations: [{ amountFen: 800, chargeItemId }], amountFen: 800,
+            channel: 'synthetic-payment', chargeItemId, chargeVersion: 3,
+            commitToken: 'synthetic-preview-token', expectedOutcome: 'success',
+            expiresAt: '2026-10-26T08:05:00Z', previewId: `preview-${chargeItemId}` },
+        }))
+      }
+      const execute = createHttpExecutor({
+        baseUrl: 'http://127.0.0.1:51868', credential: { kind: 'agent', token: 'cma_synthetic' }, fetch,
+      })
+      expect(await runCli(['billing', 'case', 'get', '--case-id', 'case-1'],
+        { stdout: stdout.stream, stderr: stderr.stream }, { authMode: 'agent', execute })).toBe(0)
+      expect(JSON.parse(stdout.value())).toMatchObject({ data: { encounterId: 'encounter-1', charges } })
+      for (const chargeItemId of ['charge-first', 'charge-second']) {
+        expect(await runCli(['payment', 'preview', '--case-id', 'case-1', '--category', category,
+          '--charge-item-id', chargeItemId, '--charge-version', '3', '--simulator-rule', 'success',
+          '--idempotency-key', `preview-${chargeItemId}`],
+        { stdout: stdout.stream, stderr: stderr.stream }, { authMode: 'agent', execute })).toBe(0)
+      }
+      expect(stderr.value()).toBe('')
+      expect(fetch.mock.calls.slice(1).map(([url, request]) => ({
+        url: String(url), key: request.headers['idempotency-key'], body: JSON.parse(request.body),
+      }))).toEqual([
+        { url: 'http://127.0.0.1:51868/api/his/v1/payments/actions/preview', key: 'preview-charge-first',
+          body: { expectedVersions: { 'ChargeItem/charge-first': '3' },
+            input: { caseId: 'case-1', category, chargeItemId: 'charge-first', simulatorRule: 'success' } } },
+        { url: 'http://127.0.0.1:51868/api/his/v1/payments/actions/preview', key: 'preview-charge-second',
+          body: { expectedVersions: { 'ChargeItem/charge-second': '3' },
+            input: { caseId: 'case-1', category, chargeItemId: 'charge-second', simulatorRule: 'success' } } },
+      ])
+    },
+  )
+
   it('queries the original refund with its reviewed version and never forwards a new amount or outcome', async () => {
     const stdout = captureStream(), stderr = captureStream()
     const fetch = vi.fn().mockResolvedValue(Response.json({ auditId: 'audit-refund', effects: [], requestId: 'request-refund', warnings: [],

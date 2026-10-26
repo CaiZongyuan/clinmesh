@@ -149,6 +149,8 @@ describe('payment ledger migration', () => {
       '0090_insurance-benefits.sql',
       '0091_inpatient-insurance-adjustments.sql',
       '0092_authored-case-source.sql',
+      '0092_outpatient-investigation-billing.sql',
+      '0093_outpatient-investigation-draft-price.sql',
       '0093_synthetic-inpatient-case-materialization.sql',
       '0094_authored-exact-investigation.sql',
     ])

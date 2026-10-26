@@ -7,20 +7,33 @@ description: ClinMesh cashier CLI workflow for reading bills, reviewing syntheti
 
 Read [`../clinmesh-shared/SKILL.md`](../clinmesh-shared/SKILL.md) first.
 
-Read the queue, then the selected case's unified bill. The bill includes registration, laboratory and medication charges, their paid and remaining amounts, and payment attempts with their current versions. Registration charges remain unpaid and read-only in this workflow.
+Read the queue, then the selected case's unified bill. The bill includes registration, laboratory, imaging, pathology and medication charges, their paid and remaining amounts, and payment attempts with their current versions. Registration charges remain unpaid and read-only in this workflow. For an independent investigation, review its original `requestId`, `sourceReference`, frozen `price` and `chargeItemId`; two charges in the same case and category remain separate payment targets.
 
 `billing.case.get` returns complete bill balances and one page of `payments`, newest first by creation time and payment ID. Use `paymentsPagination` (`page`, `pageSize`, `total`) to request further pages; the default page size is 20 and the hard maximum is 100. A missing attempt on one page does not mean it never existed. Find the original unknown attempt before recovery; never replace it with a new collection. The Surface bill read accepts `page` and displays that history page for human review.
 
-Payment uses preview then confirm. Optional `tenders` combine `cash`, `bank-card` and `mobile` amounts in positive integer fen; omitted tenders use the default full remaining amount. Keep the preview ID, commit token, ChargeItem version and each command's idempotency key together. Confirm freezes the previewed tenders. A successful partial payment leaves a balance; only a fully paid charge advances clinical fulfillment.
+Payment uses preview then confirm, binding the exact `chargeItemId` and its current version; `caseId` and `category` only filter. Optional `tenders` combine `cash`, `bank-card` and `mobile` amounts in positive integer fen; omitted tenders use the default full remaining amount. Keep the preview ID, commit token, ChargeItem version and each command's idempotency key together. Confirm freezes the previewed tenders. A successful partial payment leaves a balance; only a fully paid charge with definite funds, including valid insurance allocations, releases its original investigation once. An accepted request keeps that release snapshot through later financial changes. A cancelled request cannot be collected or released.
 
 ```bash
 clinmesh billing queue list --category laboratory --status pending
+clinmesh billing queue list --category imaging --status pending
+clinmesh billing queue list --category pathology --status pending
+clinmesh billing queue list --category medication --status pending
 clinmesh billing case get --case-id <case-id> --page 1 --page-size 20
 clinmesh billing case get --case-id <case-id> --page 2 --page-size 20
 clinmesh operations schema payment.preview
 clinmesh payment preview --input @payment-preview.json --idempotency-key <key>
 clinmesh payment confirm --input @payment-confirm.json --idempotency-key <key>
 clinmesh command receipt get --operation-id payment.confirm --idempotency-key <key>
+```
+
+Use these synthetic input shapes for `payment-preview.json` and `payment-confirm.json`, replacing identifiers, versions, amounts and tokens with the reviewed bill and preview. The two tender amounts below are one partial collection, not a replacement price.
+
+```json
+{"caseId":"<case-id>","category":"imaging","chargeItemId":"<charge-item-id>","chargeVersion":1,"simulatorRule":"success","tenders":[{"method":"cash","amountFen":300},{"method":"mobile","amountFen":500}]}
+```
+
+```json
+{"previewId":"<preview-id>","chargeItemId":"<charge-item-id>","chargeVersion":1,"commitToken":"<commit-token-from-preview>"}
 ```
 
 If the response is lost or the CLI reports `ambiguous_outcome`, read the original Command receipt with the original operation ID and key first. A completed confirm receipt can itself report a recorded ambiguous payment: that receipt proves the payment attempt exists, not that the channel collected funds.
@@ -35,11 +48,19 @@ clinmesh payment recover --input @payment-recover.json --idempotency-key <recove
 clinmesh command receipt get --operation-id payment.recover --idempotency-key <recovery-key>
 ```
 
+`payment-recover.json` binds the recorded original attempt, never a substitute collection:
+
+```json
+{"paymentId":"<payment-id>","chargeItemId":"<charge-item-id>","chargeVersion":2,"expectedPaymentVersion":1}
+```
+
 ## Fee corrections and original-payment refunds
 
 Read `billing.refunds.get` before correcting fees or refunding. Each successful source reports its `version`, `refundedFen`, `reservedFen` and `refundableFen`. The current bill subtracts recorded fee corrections from receivables and successful refunds from collections; original charges, payment attempts and clinical execution remain in their original history.
 
 `billing.charge.adjust` records a positive integer fen reduction with the original ChargeItem version and a specific financial-error reason. It creates refund allowance but sends no money. Refund only an original successful payment, bounded by both its remaining funds and the unconsumed correction allowance across every original payment for that charge. Refunds consume the original frozen tender order and remaining amount per method; do not choose a new refund method. Unknown refunds reserve these amounts; definite decline releases the reservation.
+
+For a new independent investigation before its first release, ask the responsible doctor to cancel the original request instead of reducing its release threshold with an ordinary correction. Cancellation appends the full fee reduction and preserves the original charge; it does not refund money. Refresh the refund read model and return only the actual original successful collections, even when the original charge was only partly paid. Resolve unknown funds first and cancel active insurance through its original settlement before clinical cancellation. Pending cancellation refunds keep the Scenario Run active through Encounter completion or dispensing until the original refund responsibility is settled. Follow the [investigation billing and cancellation contract](../../docs/spec/2026-10-26-outpatient-investigation-billing.md#取消执行失败与退款) for allowed states.
 
 Cancel the charge's active insurance settlement before reducing its fee. Benefits, collections and clinical release use the fee after recorded reductions. Resolve the original unknown collection or refund before changing benefits, collecting again or correcting that charge; keep using the original recovery command while its result remains unknown.
 
@@ -55,11 +76,11 @@ clinmesh command receipt get --operation-id refund.recover --idempotency-key <re
 
 Preview input binds `paymentId`, `amountFen`, `expectedSourceVersion`, `chargeItemId`, `chargeVersion` and `simulatorRule`; confirm preserves its `previewId`, `commitToken` and original ChargeItem version. Query recovery uses the original `refundId`, `expectedRefundVersion` and latest ChargeItem version. Never supply an outcome to recovery or replace an unknown refund with a fresh refund. After response loss inspect the original Command receipt and reuse the original key and payload. A stale preview requires explicit review of a new preview. New corrections, previews and confirmations require an active Scenario Run. Only `refund.recover` permits a current-Epoch human cashier to query an existing refund in a completed Scenario Run; closed Run and completed Agent Grant are rejected. Definite decline releases the original reservation. This exception does not authorize new post-settlement or archived-account correction.
 
-Payment does not complete the clinical Encounter. Confirm the bill's remaining amounts and queue state before handing off a fully paid medication charge to a pharmacist Grant or continuing the applicable laboratory workflow.
+Payment does not complete the clinical Encounter. Confirm the bill's remaining amounts and queue state before handing off a fully paid medication charge to a pharmacist Grant or continuing the original laboratory, imaging or pathology request. Historical `legacy-unbilled` independent requests keep their original behavior; do not create retrospective charges. New request retries and report corrections preserve the original frozen fee rather than creating another charge.
 
 ## Synthetic patient insurance
 
-Read benefits before collecting patient funds. `insurance.get` returns the patient's current annual balance, `annualBalances` for original settlement years, active settlements and append-only settlement/compensation history. Cancellation uses `expectedBalanceVersion` from the entry matching the selected settlement's `year`, even when the current calendar year differs. `insurance.preview` reviews real charge references and versions, synthetic coverage, prior self pay, deductible, fund, personal account and patient cash due. Fund and personal account allocations reduce the receivable; they are not payment tenders and do not create cash receipts. Registration is outside synthetic coverage.
+Read benefits before collecting patient funds. `insurance.get` returns the patient's current annual balance, `annualBalances` for original settlement years, active settlements and append-only settlement/compensation history. Cancellation uses `expectedBalanceVersion` from the entry matching the selected settlement's `year`, even when the current calendar year differs. `insurance.preview` reviews real charge references and versions, synthetic coverage, prior self pay, deductible, fund, personal account and patient cash due. Fund and personal account allocations reduce the receivable; they are not payment tenders and do not create cash receipts. Registration, imaging and pathology are outside synthetic coverage; imaging and pathology do not inherit laboratory prior-self-pay rules.
 
 ```bash
 clinmesh insurance get --kind outpatient --id <case-id>

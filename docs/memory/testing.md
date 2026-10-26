@@ -14,6 +14,8 @@
 
 - Vitest 与 Playwright 复用真实 HTTP/SQLite fixture 时，共享 helper 使用 `node:assert/strict`，不要导入 Vitest 的运行时断言。否则 Playwright 在准备阶段就会因测试运行器上下文不兼容失败，尚未执行浏览器业务；先运行同一 helper 的 HTTP 旅程，再验证真实岗位入口。
 
+- 给自动建议新增必需的审阅字段时，从未打开手动目录的入口验证直接开具，并覆盖手动搜索停留在其他页的情况。测试中先打开添加弹窗会预载目录，可能掩盖建议缺少服务或价目读取合同；对应回归见 `apps/web/src/app/doctor/laboratory-page.test.tsx`。
+
 - 主 CI 定向范围不符预期时，先看 `plan` 的模式和回退原因，再核对事件与候选双父提交、完整净差异及共享测试入口；主线选择全量属于预期。判断整体结果看最终 `verify`，单个执行组成功不代表全部必需组完成。当前合同见[CI 检查选择与并行](../testing.md#github-ci-的检查选择与并行)。
 
 - file-backed SQLite 测试的清理按资源注册的逆序执行：先关闭 Runtime／数据库连接，再删除临时目录。Linux 可删除仍打开的文件，Windows 会以 `EBUSY` 拒绝；不要用重试删除或放宽断言掩盖未关闭的句柄。

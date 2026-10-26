@@ -21,6 +21,7 @@ import { persona, signIn, startConsultationCase, StubSyntheaProvider } from '../
 import { journeyReplies, runRecordingJourney } from '../apps/web/e2e/consultation-recording-journey.ts'
 import { createRecommendationGuidelineDatabase, recommendationFixture, RecommendationSyntheaProvider } from '../apps/web/e2e/doctor-recommendations-fixture.ts'
 import { runRecommendationJourney } from '../apps/web/e2e/doctor-recommendations-journey.ts'
+import { collectOutpatientInvestigation } from '../apps/web/e2e/outpatient-investigation-payment.fixture.ts'
 import { documentQualityFixture, qualityPatientReply } from '../apps/web/e2e/doctor-document-quality-fixture.ts'
 import { runDocumentQualityJourney } from '../apps/web/e2e/doctor-document-quality-journey.ts'
 import { createInvestigationReferenceDatabase } from '../apps/web/e2e/investigation-workspace.fixture.ts'
@@ -79,6 +80,7 @@ const sourceHashes = Object.fromEntries(await Promise.all([
   'apps/web/src/app/doctor/catalog-picker-dialogs.tsx',
   'apps/web/src/app/doctor/doctor-record-review-notice.tsx', 'apps/server/src/infrastructure/ai/dsh-model-provider.ts',
   'apps/web/e2e/doctor-recommendations-journey.ts', 'apps/web/e2e/doctor-recommendations-fixture.ts',
+  'apps/web/e2e/outpatient-investigation-payment.fixture.ts',
   'apps/web/e2e/doctor-document-quality-journey.ts', 'apps/web/e2e/doctor-document-quality-fixture.ts',
   'apps/server/src/application/doctor-recommendations-service.ts', 'apps/server/src/application/doctor-guideline-evidence.ts',
   'apps/server/src/application/guideline-corpus.ts', 'apps/server/src/infrastructure/sqlite/guideline-corpus.ts',
@@ -429,7 +431,11 @@ export function apply(ctx) {
   await expect.poll(() => activeTools.includes('clinmesh_fill_clinical_document_draft'), { timeout: 60_000 }).toBe(true)
   if (recommendationsOnly) {
     phase = 'recommendations-journey'
-    report.recommendations = await runRecommendationJourney({ page, read })
+    report.recommendations = await runRecommendationJourney({ page, read,
+      collectLaboratory: chargeItemId => collectOutpatientInvestigation({ runtime: hospital!, origin: serverOrigin, password }, {
+        caseId: started.outpatientCaseId, category: 'laboratory', chargeItemId,
+      }),
+    })
   }
   let control: Record<string, unknown> = { stage: 'initial', fail: false, released: false }
   const updateControl = async (patch: Record<string, unknown>) => { control = { ...control, ...patch }; await writeFile(controlPath, json(control)) }

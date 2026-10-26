@@ -3072,7 +3072,7 @@ export function createApp(options: CreateAppOptions = {}): Hono {
     app.get('/api/his/v1/billing/queue', async (context) => {
       try {
         const query = z.object({
-          category: z.enum(['laboratory', 'medication']),
+          category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
           page: z.coerce.number().int().min(1).default(1),
           pageSize: z.coerce.number().int().min(1).max(100).default(20),
           status: z.enum(['ambiguous', 'declined', 'paid', 'pending']).default('pending'),
@@ -3170,7 +3170,8 @@ export function createApp(options: CreateAppOptions = {}): Hono {
           expectedVersions: z.record(z.string(), z.string()),
           input: z.object({
             caseId: z.string().min(1),
-            category: z.enum(['laboratory', 'medication']),
+            category: z.enum(['laboratory', 'imaging', 'pathology', 'medication']),
+            chargeItemId: z.string().min(1).optional(),
             simulatorRule: paymentSimulatorRuleSchema,
             tenders: paymentTendersSchema.optional(),
           }),
