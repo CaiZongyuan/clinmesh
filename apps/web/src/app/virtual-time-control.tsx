@@ -10,6 +10,7 @@ import { advanceVirtualTimeResponseSchema } from '@clinmesh/contracts/inpatient'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
+import { DAY_MS } from './inpatient-scope.ts'
 
 export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocale; session: SessionContext }): React.JSX.Element {
   const zh = locale === 'zh-CN'
@@ -39,7 +40,7 @@ export function VirtualTimeControl({ locale, session }: { locale: WorkspaceLocal
           if (scenario.data === undefined) return
           write.mutation.mutate({ operation: 'scenario.advance-time', input: {
             expectedVirtualTime: scenario.data.virtualTime,
-            targetVirtualTime: new Date(Date.parse(scenario.data.virtualTime) + 86_400_000).toISOString(),
+            targetVirtualTime: new Date(Date.parse(scenario.data.virtualTime) + DAY_MS).toISOString(),
           } })
         }}>{zh ? '推进一天' : 'Advance one day'}</Button>
         <Button className="self-end" disabled={write.blocked || scenario.data === undefined || !target} type="submit">{zh ? '推进虚拟时间' : 'Advance virtual time'}</Button>

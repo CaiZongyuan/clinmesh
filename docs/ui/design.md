@@ -79,7 +79,7 @@ Web“设置 → 外观”的字号偏好提供“标准 / 较大 / 大”三档
 
 独立 Web 采用“AI 原生工作台”视觉语言（[规格](../spec/2026-10-19-ai-native-doctor-workspace.md) 方向四）：浅色画布配靛紫点缀，深色主题为紫调中性画布与亮靛紫点缀，两主题同等成立；AI 参与面的进行中状态使用 `--clinmesh-glow` 环绕柔光作为辅助反馈。暗色主题独立映射画布、文字、边线和语义色，不直接反相亮色值。桌面与 DSH 消费 `:root` / `.dark` 基线，视觉基线在 DSH 集成步骤对齐。独立 Web 的主题选择写入 `clinmesh.preferences:v1`，公共组件目录和登录后工作区使用同一机制。DSH 模式的主题选择与作用域见[Surface 与 Host 边界](../architecture/agent-integration.md#71-surface-与-host-边界)。
 
-住院线在共享语义 token 上叠加“纸张编辑风”作用域主题（[规格](../spec/2026-10-26-inpatient-paper-restyle.md)）：住院壳层声明 `data-theme="paper"`，token 落 `packages/ui/src/styles.css` 同一 owner 文件——纸底 `#F7F5F1`、面板 `#FDFCFA`、墨色 `#1C1A17`、发丝线 `#E3DFD7`/`#D8D2C6`，crit/warn/good 复用 `destructive`/`warning`/`success` 语义位，圆角 2px、无常驻阴影、状态用 outline chip、标题衬线（`--font-serif`）、数据等宽；主题固定浅色（`color-scheme: light`）。门诊过渡期保持方向四，第二批门诊迁移完成后删除方向四 token 实现全站统一。
+住院线在共享语义 token 上叠加“纸张编辑风”作用域主题（[规格](../spec/2026-10-26-inpatient-paper-restyle.md)）：住院壳挂载期间由 `useInpatientPaperTheme` 把 `data-palette="paper"` 挂到应用根——Dialog/Sheet/Select 等 portal 弹层在页面子树外，挂根才能与页面同主题；独立属性避免与主题偏好（`data-theme`）互覆盖。token 落 `packages/ui/src/styles.css` 同一 owner 文件——纸底 `#F7F5F1`、面板 `#FDFCFA`、墨色 `#1C1A17`、发丝线 `#E3DFD7`/`#D8D2C6`，crit/warn/good 复用 `destructive`/`warning`/`success` 语义位，圆角 2px、无常驻阴影、状态用 outline chip、标题衬线（`--font-serif`）、数据等宽；主题固定浅色（`color-scheme: light`）。门诊过渡期保持方向四，第二批门诊迁移完成后删除方向四 token 实现全站统一。
 
 ## 门诊医生工作台
 

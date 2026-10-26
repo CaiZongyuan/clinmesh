@@ -230,6 +230,10 @@ _Avoid_: Login identity, account switch, unrestricted impersonation
 一个床位在一段时间内被某次住院就诊预占或实际占用的互斥事实。
 _Avoid_: Encounter location, bed status text
 
+**Recall Window**:
+住院出区后未结算的一段有限时间：原床保留、诊疗事实保持可写，逾期或结算后进入清床。
+_Avoid_: Undo, cancel discharge, revoke
+
 ## 临床请求与执行
 
 **Drug Concept**:

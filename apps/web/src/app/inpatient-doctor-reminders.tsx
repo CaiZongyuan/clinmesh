@@ -4,7 +4,7 @@ import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clini
 import { inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { useQuery } from '@tanstack/react-query'
 import { apiGet } from './api-client.ts'
-import { inpatientScopeKey } from './inpatient-doctor-queries.ts'
+import { inpatientScopeKey } from './inpatient-scope.ts'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 import { cn } from '@clinmesh/ui/lib/utils'

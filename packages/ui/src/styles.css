@@ -254,10 +254,9 @@
 }
 
 /* 纸张编辑风主题（E·paper）：住院线作用域，规格 docs/spec/2026-10-26-inpatient-paper-restyle.md。
-   直接声明压过祖先链上的方向四与 .dark 继承值；带 data-clinmesh-app 的双选择器保证
-   作用域属性落在应用根元素上时仍以源码顺序压过 .dark 同强度规则。 */
-[data-theme="paper"],
-[data-clinmesh-app="web"][data-theme="paper"] {
+   挂在应用根元素（useInpatientPaperTheme），portal 弹层与页面同主题；独立 data-palette 属性
+   避免与主题偏好（data-theme=light/dark）互覆盖；声明在 .dark 与方向四之后，源码顺序压过两者。 */
+[data-clinmesh-app="web"][data-palette="paper"] {
   color-scheme: light;
   --background: #f7f5f1;
   --foreground: #1c1a17;

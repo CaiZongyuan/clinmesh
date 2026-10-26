@@ -4,7 +4,8 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { ApiClientError } from './api-client.ts'
-import { fetchInpatientDrgPregroup, inpatientScopeKey, runInpatientDrgSimulation } from './inpatient-doctor-queries.ts'
+import { fetchInpatientDrgPregroup, runInpatientDrgSimulation } from './inpatient-doctor-queries.ts'
+import { inpatientScopeKey } from './inpatient-scope.ts'
 import { formatFen } from './workspace-format.ts'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 
@@ -36,11 +37,13 @@ export function InpatientDoctorDrgCard({ admission, session, locale }: {
     <h3 className="font-serif text-sm font-semibold">{t('DRG 预分组与推演', 'DRG pregrouping and simulation')}</h3>
     {!available ? <p className="text-sm text-muted-foreground">{t('尚未入科，入科后可预分组。', 'Available after the patient is admitted.')}</p>
       : pregroup.isPending ? <p className="text-sm text-muted-foreground">{t('正在读取预分组…', 'Loading pregrouping…')}</p>
-      : pregroup.error !== null ? <p role="alert" className={pregroup.error instanceof ApiClientError && expectedBlockers.includes(pregroup.error.code) ? 'text-sm text-muted-foreground' : 'text-sm text-destructive'}>{describe(pregroup.error)}</p>
+      : pregroup.error !== null ? (pregroup.error instanceof ApiClientError && expectedBlockers.includes(pregroup.error.code)
+        ? <p className="text-sm text-muted-foreground">{describe(pregroup.error)}</p>
+        : <p role="alert" className="text-sm text-destructive">{describe(pregroup.error)}</p>)
       : result !== undefined ? <div className="flex flex-col gap-1 text-sm">
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className={result.status === 'grouped' ? 'text-success' : result.status === 'invalid-input' ? 'text-destructive' : 'text-warning'}>
-            {t(stateLabels[result.status]![0], stateLabels[result.status]![1])}
+            {(() => { const [zhLabel, enLabel] = stateLabels[result.status] ?? [result.status, result.status]; return t(zhLabel, enLabel) })()}
           </Badge>
           {result.drgCode !== null ? <span className="font-mono text-base font-semibold">{result.drgCode}</span> : null}
           <Badge variant="outline" className="text-muted-foreground">{pregrouped!.frozen ? t('归档冻结', 'Frozen at archive') : t('实时推算', 'Live estimate')}</Badge>

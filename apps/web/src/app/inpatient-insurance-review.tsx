@@ -14,6 +14,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { apiGet, apiMutation, newIdempotencyKey } from './api-client.ts'
+import { inpatientScopeKey } from './inpatient-scope.ts'
 import { formatFen } from './workspace-format.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -32,7 +33,7 @@ function ReviewKv({ label, tone = 'default', children }: { label: string; tone?:
 export function InpatientInsuranceReview({ session, locale }: { session: SessionContext; locale: WorkspaceLocale }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const client = useQueryClient()
-  const key = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId]
+  const key = inpatientScopeKey(session)
   const insurer = session.actor.roleCode === 'medical-insurance'
   const admissions = useQuery({ queryKey: [...key, 'admissions'], queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/admissions', inpatientListSchema, signal) })
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -57,7 +58,7 @@ export function InpatientInsuranceReview({ session, locale }: { session: Session
       void client.invalidateQueries({ queryKey: [...key, 'payer-reviews'] })
     },
   })
-  return <section data-theme="paper" aria-label={t('医保办 DRG 支付模拟核定', 'Insurance DRG payer simulation review')} className="flex min-w-0 flex-col gap-4">
+  return <section aria-label={t('医保办 DRG 支付模拟核定', 'Insurance DRG payer simulation review')} className="flex min-w-0 flex-col gap-4">
     <div className="flex flex-col gap-1">
       <h2 className="font-serif text-lg">{t('DRG 支付模拟核定', 'DRG payer simulation review')}</h2>
       <p className="text-sm text-muted-foreground">{t('对已归档病案执行模拟核定：以归档冻结分组 × 固定版本合成支付参数计算模拟核定支付额，由服务端确定性产生；差异不构成完整盈亏，独立于患者结算。', 'Run simulation reviews on archived admissions: the simulated payment derives deterministically from the frozen grouping and fixed-version synthetic payment parameters; differences are not a full profit-and-loss figure and stay independent of patient settlement.')}</p>

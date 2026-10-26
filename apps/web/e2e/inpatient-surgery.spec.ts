@@ -13,7 +13,7 @@ test('手术双准备、实际术式与耗材、丢回执恢复及术后医嘱�
     await expect(page.getByRole('button', { name: '用户菜单' })).toBeVisible()
   }
   const selectPatient = async () => {
-    await page.getByRole('button', { name: '查看合成手术患者', exact: true }).click()
+    await page.getByRole('button', { name: /合成手术患者/ }).click()
     await page.getByRole('tab', { name: '手术', exact: true }).click()
   }
   await page.goto(`${browserApp.origin}/registration`)

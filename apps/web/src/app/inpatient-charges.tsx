@@ -25,7 +25,7 @@ export function InpatientChargeList({ data, locale, write }: { data: z.infer<typ
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const [reason, setReason] = useState('')
   const reversedIds = new Set(data.charges.flatMap(charge => charge.reversalOf === undefined ? [] : [charge.reversalOf]))
-  return <section aria-label={t('住院费用明细', 'Inpatient charges')} data-theme="paper" className="flex flex-col gap-3"><h3 className="font-serif font-bold">{t('费用明细', 'Charges')}</h3>
+  return <section aria-label={t('住院费用明细', 'Inpatient charges')} className="flex flex-col gap-3"><h3 className="font-serif font-bold">{t('费用明细', 'Charges')}</h3>
     {write ? <Field><FieldLabel htmlFor="inpatient-reversal-reason">{t('冲正理由', 'Reversal reason')}</FieldLabel><Input id="inpatient-reversal-reason" value={reason} onChange={event => setReason(event.currentTarget.value)} /></Field> : null}
     <Table><TableHeader><TableRow><TableHead>{t('日期 / 项目', 'Date / item')}</TableHead><TableHead className="text-right">{t('金额', 'Amount')}</TableHead><TableHead>{t('状态', 'Status')}</TableHead></TableRow></TableHeader><TableBody>
       {data.charges.map(charge => {

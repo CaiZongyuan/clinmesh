@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { aggregateDoctorReminders } from './inpatient-doctor-reminders.tsx'
-import { inpatientCareDay } from './inpatient-doctor-queries.ts'
+import { inpatientCareDay } from './inpatient-scope.ts'
 
 describe('aggregateDoctorReminders', () => {
   it('费用超过预交金时给出欠费提醒，未超过时为空', () => {

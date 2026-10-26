@@ -6,8 +6,10 @@ import { Badge } from '@clinmesh/ui/components/badge'
 import { Button } from '@clinmesh/ui/components/button'
 import { Field, FieldLabel } from '@clinmesh/ui/components/field'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { apiGet } from './api-client.ts'
+import { useInpatientPaperTheme } from './inpatient-paper-theme.ts'
+import { DAY_MS } from './inpatient-scope.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -15,12 +17,13 @@ import { useInpatientWriteIntent } from './inpatient-write-intent.ts'
 import { InpatientWriteRecovery } from './inpatient-write-recovery.tsx'
 
 type PharmacyAdmissionStatus = z.infer<typeof inpatientPharmacyListSchema>['items'][number]['status']
-const DAY_MS = 86_400_000
 // 临期提示仅做展示（warn 语义色），不改变发药门禁；以虚拟时间判断，虚拟时间不可读时静默降级。
 const NEAR_EXPIRY_DAYS = 30
 
 export function InpatientPharmacy({ session, locale }: { session: SessionContext; locale: WorkspaceLocale }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
+  const shellRef = useRef<HTMLElement>(null)
+  useInpatientPaperTheme(shellRef)
   const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId]
   const [selectedId, setSelectedId] = useState<string>(), [lotIds, setLotIds] = useState<Record<string, string>>({})
   const client = useQueryClient()
@@ -33,7 +36,7 @@ export function InpatientPharmacy({ session, locale }: { session: SessionContext
   const virtualNow = scenario.data !== undefined ? Date.parse(scenario.data.virtualTime) : undefined
   const data = pharmacy.data, error = admissions.error ?? pharmacy.error ?? write.storageFailure ?? write.mutation.error
   const statusText = (status: PharmacyAdmissionStatus) => ({ registered: t('待入科', 'Registered'), admitted: t('在院', 'Admitted'), 'discharge-pending': t('待出院', 'Discharge pending'), departed: t('已出区', 'Departed'), cleared: t('已清床', 'Cleared') }[status])
-  return <section aria-label={t('住院药房', 'Inpatient pharmacy')} data-theme="paper" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+  return <section ref={shellRef} aria-label={t('住院药房', 'Inpatient pharmacy')} className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <div className="shrink-0 px-4">
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />

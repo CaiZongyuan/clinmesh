@@ -3,7 +3,7 @@ import type { inpatientCatalogSchema } from '@clinmesh/contracts/inpatient'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { cn } from '@clinmesh/ui/lib/utils'
 import type { z } from 'zod'
-import { inpatientCareDay } from './inpatient-doctor-queries.ts'
+import { inpatientCareDay } from './inpatient-scope.ts'
 import { inpatientStatus } from './inpatient-patient-workspace.tsx'
 import type { WorkspaceLocale } from './workspace-i18n.ts'
 

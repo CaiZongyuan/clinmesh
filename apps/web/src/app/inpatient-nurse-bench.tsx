@@ -4,6 +4,7 @@ import { scenarioStateSchema, type SessionContext } from '@clinmesh/contracts/hi
 import { Button } from '@clinmesh/ui/components/button'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { apiGet } from './api-client.ts'
+import { DAY_MS, inpatientScopeKey } from './inpatient-scope.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
 import { formatFen } from './workspace-format.ts'
@@ -11,8 +12,6 @@ import { inpatientStatus } from './inpatient-patient-workspace.tsx'
 import type { z } from 'zod'
 
 type Catalog = z.infer<typeof inpatientCatalogSchema>
-
-const dayBoundary = 86_400_000
 
 // 护士站一览板：床位格、待接诊、召回窗口与本班医嘱任务，全部来自既有查询，不新增端点。
 export function InpatientNurseBench({ admissions, catalog, session, locale, onSelect }: {
@@ -23,7 +22,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
   onSelect: (admissionId: string) => void
 }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
-  const scope = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId]
+  const scope = inpatientScopeKey(session)
   const messages = getWorkspaceMessages(locale)
   const scenario = useQuery({ queryKey: ['scenario', 'virtual-time'], queryFn: ({ signal }) => apiGet('/api/sim/v1/scenario-runs/current', scenarioStateSchema, signal), retry: false })
   const virtualMs = scenario.data !== undefined ? Date.parse(scenario.data.virtualTime) : undefined
@@ -31,10 +30,13 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
   const registered = admissions.filter(admission => admission.status === 'registered')
   const departedOpen = admissions.filter(admission => admission.status === 'departed' && admission.financialStatus === 'open' && admission.bedId !== undefined)
+  // 出区清床后 admission 停留在 cleared（归档只锁病案），保留只读回查入口。
+  const discharged = admissions.filter(admission => admission.status === 'cleared')
   const byId = new Map(admissions.map(admission => [admission.id, admission]))
+  // 与 inpatientCareDay 的横幅合同不同：一览板自登记起算，未入科也显示第 1 天。
   const dayOf = (admission: InpatientAdmission) => {
     const start = admission.admittedAt ?? admission.registeredAt
-    return virtualMs === undefined ? undefined : Math.max(1, Math.floor((virtualMs - Date.parse(start)) / dayBoundary) + 1)
+    return virtualMs === undefined || start === undefined ? undefined : Math.max(1, Math.floor((virtualMs - Date.parse(start)) / DAY_MS) + 1)
   }
 
   const clinicalTargets = admissions.filter(admission => admission.status === 'admitted' || admission.status === 'discharge-pending')
@@ -60,7 +62,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
         {scenario.data !== undefined ? new Date(scenario.data.virtualTime).toLocaleString(zh ? 'zh-CN' : 'en-US', { timeZone: 'Asia/Shanghai' }) : t('虚拟时间读取中', 'Loading virtual time')}
       </p>
     </header>
-    {error !== undefined && error !== null ? <p role="alert" className="text-sm text-destructive">{getWorkspaceErrorMessage(error, messages)}</p> : null}
+    {error !== null ? <p role="alert" className="text-sm text-destructive">{getWorkspaceErrorMessage(error, messages)}</p> : null}
 
     {registered.length > 0 ? <section aria-label={t('待接诊', 'Awaiting admission')} className="border-l-4 border-destructive bg-destructive/5 px-3 py-2">
       <p className="text-sm">
@@ -108,7 +110,18 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
         {departedOpen.map(admission => <li key={admission.id}>
           <span className="font-medium">{admission.patientName}</span>
           <span className="font-mono text-muted-foreground"> · {admission.inpatientNumber}</span>
-          {t(' —— 已出区待结算；召回由住院医生在患者页执行。', ' — departed and unsettled; recall is executed by the physician on the patient page.')}
+          {t(' —— 已出区待结算；点击上方床位格进入，召回由住院医生在患者页执行。', ' — departed and unsettled; use the bed card above to open the chart, recall is executed by the physician.')}
+        </li>)}
+      </ul>
+    </section> : null}
+
+    {discharged.length > 0 ? <section aria-label={t('出院后病历', 'Post-discharge records')} className="border border-border bg-card">
+      <h3 className="border-b border-border px-3 py-2 font-serif text-sm font-semibold">{t('出院后病历（只读回查）', 'Post-discharge records (read only)')}</h3>
+      <ul className="divide-y divide-border">
+        {discharged.map(admission => <li key={admission.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+          <Button variant="link" className="h-auto px-0 font-medium" onClick={() => onSelect(admission.id)}>{admission.patientName}</Button>
+          <span className="font-mono text-xs text-muted-foreground">{admission.inpatientNumber}</span>
+          <span className="ml-auto border border-border px-1 text-xs text-muted-foreground">{inpatientStatus(admission, locale)}</span>
         </li>)}
       </ul>
     </section> : null}

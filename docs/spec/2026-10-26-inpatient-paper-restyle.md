@@ -36,7 +36,7 @@ Status: approved
 
 ## 设计决定
 
-- 主题作用域共存：纸张编辑风以独立作用域（如 `data-theme="paper"`）挂住院壳层，token 源仍唯一在 `packages/ui/src/styles.css`；门诊过渡期保持"方向四"，第二批门诊迁移完成后删除方向四 token，全站统一。
+- 主题作用域共存：纸张编辑风以独立作用域属性挂应用根（`data-palette="paper"`，住院壳挂载期间由 `useInpatientPaperTheme` 维护，使 portal 弹层与页面同主题），token 源仍唯一在 `packages/ui/src/styles.css`；门诊过渡期保持"方向四"，第二批门诊迁移完成后删除方向四 token，全站统一。
 - 聚合层在前端实现：TanStack Query 按患者复用既有 queryKey（admissions、clinical、surgeries）拼装提醒与护士任务视图，不新增后端合同或聚合端点。
 - 右栏只呈现平台已有事实，不引入门诊式 recommendation 合同，不显示虚构建议；Agent 建议与执行回执抽屉本期不进入住院线。
 - 召回沿用服务端授权（仅 inpatient-doctor）：护士站呈现召回窗口信息与去向指引，不提供越权入口。

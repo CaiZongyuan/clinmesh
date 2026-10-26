@@ -80,7 +80,7 @@ function testDocument(clinmeshStyles: string): string {
       app.dataset.theme = 'dark'
       app.style.colorScheme = 'dark'
       const surfaceDarkDiv = read()
-      app.dataset.theme = 'paper'
+      app.dataset.palette = 'paper'
       app.style.colorScheme = 'light'
       const paper = read()
       document.title = btoa(JSON.stringify({ dark, light, surfaceDarkDiv, paper }))

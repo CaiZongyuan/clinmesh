@@ -13,6 +13,7 @@ import { Skeleton } from '@clinmesh/ui/components/skeleton'
 import { useQuery } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { apiGet } from './api-client.ts'
+import { inpatientScopeKey } from './inpatient-scope.ts'
 import { formatFen } from './workspace-format.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { getWorkspaceErrorMessage } from './workspace-error.ts'
@@ -38,7 +39,7 @@ function recordStatusBadge(status: InpatientAdmission['recordStatus'], t: (cn: s
 function RecordQueue({ session, locale, currentId }: { session: SessionContext; locale: WorkspaceLocale; currentId: string }): React.JSX.Element {
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   const [filter, setFilter] = useState<RecordStatusFilter>('all')
-  const queue = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, 'admissions'],
+  const queue = useQuery({ queryKey: [...inpatientScopeKey(session), 'admissions'],
     queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/admissions', inpatientListSchema, signal) })
   const items = (queue.data?.items ?? []).filter(item => filter === 'all' || item.recordStatus === filter)
   const filters: Array<{ value: RecordStatusFilter; label: string }> = [
