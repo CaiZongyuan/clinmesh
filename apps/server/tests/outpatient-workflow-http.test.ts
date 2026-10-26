@@ -1626,6 +1626,8 @@ describe('outpatient workflow HTTP contract', () => {
     const readBill = async () => billingCaseSchema.parse(await (await runtime.app.request(`/api/his/v1/billing/cases/${started.caseId}`, { headers: { cookie } })).json())
     const charge = (await readBill()).charges.find(item => item.requestId === request.id)!
     expect(charge).toMatchObject({ amountFen: 0, paidFen: 1000, remainingFen: 0, status: 'cancelled' })
+    const refundQueue = billingQueueSchema.parse(await (await runtime.app.request('/api/his/v1/billing/queue?category=laboratory&status=paid&pageSize=20', { headers: { cookie } })).json())
+    expect(refundQueue.items.find(item => item.chargeItemId === charge.chargeItemId)).toMatchObject({ status: 'cancelled', amountFen: 0 })
     const chargeVersions = { [`ChargeItem/${charge.chargeItemId}`]: String(charge.chargeVersion) }
     expect((await write('/api/his/v1/payments/actions/preview', { caseId: started.caseId, category: 'laboratory', chargeItemId: charge.chargeItemId, simulatorRule: 'success' }, chargeVersions)).status).toBe(409)
     const completed = await write(`/api/his/v1/encounters/${started.encounterId}/actions/complete`, {}, { [`Encounter/${started.encounterId}`]: started.encounterVersion }, candidate.doctorCookie)
@@ -5423,6 +5425,7 @@ describe('outpatient workflow HTTP contract', () => {
       effects: [
         { kind: 'created', reference: `ServiceRequest/${issued.data.request.serviceRequestId}` },
         { kind: 'created', reference: `Task/${issued.data.request.taskId}` },
+        { kind: 'created', reference: `ChargeItem/${issued.data.request.billing!.chargeItemId}` },
       ],
     })
     const serviceCatalogResponse = await runtime.app.request(
@@ -5511,7 +5514,7 @@ describe('outpatient workflow HTTP contract', () => {
     const chargeSearch = await runtime.app.request('/fhir/R5/ChargeItem?_total=accurate', {
       headers: { cookie: doctorCookie },
     })
-    expect(fhirBundleSchema.parse(await chargeSearch.json())).toMatchObject({ total: 1 })
+    expect(fhirBundleSchema.parse(await chargeSearch.json())).toMatchObject({ total: 2 })
   })
 
   it.each([
@@ -5849,12 +5852,13 @@ describe('outpatient workflow HTTP contract', () => {
     expect(laboratoryRequestActionResponseSchema.parse(
       await (await cancel(cancellable.request, cancelIdempotencyKey)).json(),
     )).toEqual(cancelled)
-    expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({
-      kind: 'laboratory.accept-request',
-      status: 'completed',
-    })
+    expect(runtime.workflow.acceptLaboratoryRequest({
+      context: { actorId: 'actor-lis-system', epoch: 'epoch-1', organizationId: 'organization-clinmesh', roleCode: 'lis-system', scenarioRunId: 'scenario-run-1', workspaceId: 'workspace-demo' },
+      eventId: randomUUID(), requestId: cancellable.request.id,
+    }).data.status).toBe('cancelled')
 
     const active = await saveAndIssue('lab-cbc', cancellable.draftVersion)
+    await payIndependentLaboratoryRequest(runtime, password, started.caseId, active.request)
     expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({
       kind: 'laboratory.accept-request',
       status: 'completed',
@@ -6781,6 +6785,7 @@ describe('outpatient workflow HTTP contract', () => {
       },
     )
     const issued = issueLaboratoryRequestResponseSchema.parse(await issueResponse.json()).data.request
+    await payIndependentLaboratoryRequest(initialRuntime, password, started.caseId, issued)
     expect(await dispatchAfterQualityChecks(initialRuntime)).toMatchObject({
       kind: 'laboratory.accept-request',
       status: 'completed',
@@ -7052,6 +7057,7 @@ describe('outpatient workflow HTTP contract', () => {
     })
 
     expect(report).toThrow('Only an in-progress laboratory request can be reported')
+    await payIndependentLaboratoryRequest(runtime, password, started.caseId, issued)
     expect(await dispatchAfterQualityChecks(runtime)).toMatchObject({
       kind: 'laboratory.accept-request',
       status: 'completed',

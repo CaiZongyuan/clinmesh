@@ -8386,19 +8386,21 @@ export class WorkflowService {
           )
         `
         : ''
-    const cancelledInvestigationFilter = input.status === 'paid' ? '' : `
-      AND NOT EXISTS (
+    const cancelledInvestigation = `EXISTS (
         SELECT 1 FROM outpatient_investigation_billing billing
         JOIN laboratory_request request USING(workspace_id,epoch,request_id)
         WHERE billing.workspace_id=charge.workspace_id AND billing.epoch=charge.epoch
           AND billing.charge_item_id=charge.charge_item_id AND request.status='cancelled'
       )`
+    const refundChargeIds = input.status === 'paid' ? this.#outpatientBilling.pendingCancellationRefundChargeIds(input.context) : []
+    const statusFilter = `AND ((charge.status IN (${placeholders}) AND NOT ${cancelledInvestigation})
+      ${refundChargeIds.length === 0 ? '' : `OR charge.charge_item_id IN (${refundChargeIds.map(() => '?').join(',')})`})`
+    bindings.push(...refundChargeIds)
     const total = this.#database.driver.prepare(`
       SELECT COUNT(*) AS count FROM charge_record AS charge
       WHERE charge.workspace_id = ? AND charge.epoch = ? AND charge.category = ?
-        AND charge.status IN (${placeholders})
+        ${statusFilter}
         ${withdrawnPrescriptionFilter}
-        ${cancelledInvestigationFilter}
     `).get(...bindings) as { count: number }
     const rows = this.#database.driver.prepare(`
       SELECT charge.*, patient.content_json AS patient_json,
@@ -8414,9 +8416,8 @@ export class WorkflowService {
        AND patient.resource_type = 'Patient'
        AND patient.resource_id = outpatient_case.patient_id
       WHERE charge.workspace_id = ? AND charge.epoch = ? AND charge.category = ?
-        AND charge.status IN (${placeholders})
+        ${statusFilter}
         ${withdrawnPrescriptionFilter}
-        ${cancelledInvestigationFilter}
       ORDER BY charge.created_at, charge.charge_id
       LIMIT ? OFFSET ?
     `).all(...bindings, input.pageSize, (input.page - 1) * input.pageSize) as Array<{
@@ -8440,7 +8441,7 @@ export class WorkflowService {
         const investigation = this.#outpatientBilling.readByCharge(input.context, row.charge_item_id)
         return {
         accountId: row.account_id,
-        amountFen: row.total_fen,
+        amountFen: investigation?.billing.status === 'cancelled' ? 0 : row.total_fen,
         caseId: row.case_id,
         category: row.category,
         chargeItemId: row.charge_item_id,
@@ -8461,7 +8462,7 @@ export class WorkflowService {
               unitPriceFen: row.unit_price_fen,
             }],
         patient: patientSummary(parseStoredFhirResource(row.patient_json)),
-        status: row.status,
+        status: investigation?.billing.status === 'cancelled' ? 'cancelled' : row.status,
       }}),
       page: input.page,
       pageSize: input.pageSize,
@@ -9491,7 +9492,7 @@ export class WorkflowService {
       UPDATE charge_record SET status = ?, version = version + 1
       WHERE workspace_id = ? AND epoch = ? AND charge_id = ?
     `).run(fullyPaid ? 'paid' : outcome === 'success' ? 'billable' : outcome, context.workspaceId, context.epoch, charge.charge_id)
-    if (this.#outpatientBilling.enqueueIfPaid(transaction, context, charge.charge_item_id, this.#virtualTime(context))) return charge.case_status
+    if (this.#outpatientBilling.enqueueIfPaid(transaction, context, charge.charge_item_id)) return charge.case_status
     if (!fullyPaid) return charge.case_status
     if (charge.category === 'laboratory' && charge.case_status !== 'awaiting-lab-payment') return charge.case_status
     if (charge.category === 'medication' && ['awaiting-dispense', 'completed'].includes(charge.case_status)) return charge.case_status

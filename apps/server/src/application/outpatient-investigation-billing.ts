@@ -170,7 +170,7 @@ export class OutpatientInvestigationBilling {
     return billing === undefined ? undefined : { requestId, billing }
   }
 
-  enqueueIfPaid(transaction: CommandTransaction, context: ActorContext, chargeItemId: string, _now: string): boolean {
+  enqueueIfPaid(transaction: CommandTransaction, context: ActorContext, chargeItemId: string): boolean {
     const requestId = this.#requestIdForCharge(context, chargeItemId)
     if (requestId === undefined) return false
     const row = this.#row(context, requestId)
@@ -201,13 +201,12 @@ export class OutpatientInvestigationBilling {
   assertReleased(context: ActorContext, requestId: string): void {
     const row = this.#row(context, requestId)
     this.#assertKnownPolicy(context, requestId, row)
-    if (this.#prepaid(row) && (row.released_at === null || row.release_json === null || row.status === 'cancelled')) {
+    if (!this.#prepaid(row)) return
+    if (row.released_at === null || row.release_json === null || row.status === 'cancelled') {
       throw new WorkflowError('WORKFLOW_CONFLICT', '原检查申请尚未取得财务放行许可')
     }
-    if (this.#prepaid(row)) {
-      const release = releaseSchema.parse(JSON.parse(row.release_json!))
-      if (release.chargeItemId !== row.charge_item_id) throw new WorkflowError('WORKFLOW_CONFLICT', '财务放行许可与原费用不匹配')
-    }
+    const release = releaseSchema.parse(JSON.parse(row.release_json))
+    if (release.chargeItemId !== row.charge_item_id) throw new WorkflowError('WORKFLOW_CONFLICT', '财务放行许可与原费用不匹配')
   }
 
   cancel(transaction: CommandTransaction, context: ActorContext, requestId: string, now: string, reasonCode: string): CommandEffect[] {
@@ -238,18 +237,22 @@ export class OutpatientInvestigationBilling {
     ]
   }
 
-  hasPendingCancellationRefunds(context: ActorContext): boolean {
+  pendingCancellationRefundChargeIds(context: ActorContext): string[] {
     const targets = z.array(z.object({ request_id: z.string() })).parse(this.database.driver.prepare(`
       SELECT billing.request_id FROM outpatient_investigation_billing billing
       JOIN laboratory_request request USING(workspace_id,epoch,request_id)
       JOIN outpatient_case cases ON cases.workspace_id=billing.workspace_id AND cases.epoch=billing.epoch AND cases.case_id=billing.case_id
       WHERE billing.workspace_id=? AND billing.epoch=? AND cases.scenario_run_id=? AND billing.payment_policy='prepaid-v1' AND request.status='cancelled'
     `).all(context.workspaceId, context.epoch, context.scenarioRunId))
-    return targets.some(({ request_id }) => {
+    return targets.flatMap(({ request_id }) => {
       const row = this.#row(context, request_id)
-      if (!this.#prepaid(row)) return false
+      if (!this.#prepaid(row)) return []
       const money = this.#money(context, row)
-      return money.paidFen > 0 || money.unresolved > 0
+      return money.paidFen > 0 || money.unresolved > 0 ? [row.charge_item_id] : []
     })
+  }
+
+  hasPendingCancellationRefunds(context: ActorContext): boolean {
+    return this.pendingCancellationRefundChargeIds(context).length > 0
   }
 }
