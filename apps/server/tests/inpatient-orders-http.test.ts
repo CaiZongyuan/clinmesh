@@ -683,6 +683,7 @@ describe('住院医嘱 HTTP 与真实 SQLite 合同', () => {
         '0091_inpatient-insurance-adjustments.sql',
         '0092_authored-case-source.sql',
         '0093_synthetic-inpatient-case-materialization.sql',
+        '0094_authored-exact-investigation.sql',
       ],schemaVersion:expectedSchemaVersion()})
       expect(legacy.driver.prepare('SELECT prescription_id,inpatient_dispense_id,quantity FROM inventory_movement WHERE movement_id=?').get('legacy-movement')).toEqual({prescription_id:outpatient.id,inpatient_dispense_id:null,quantity:3})
       expect(legacy.driver.prepare('SELECT amount_fen FROM inpatient_charge WHERE admission_id=?').get(s.admission.id)).toEqual({amount_fen:5000})

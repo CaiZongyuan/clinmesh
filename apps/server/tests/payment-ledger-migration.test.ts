@@ -150,6 +150,7 @@ describe('payment ledger migration', () => {
       '0091_inpatient-insurance-adjustments.sql',
       '0092_authored-case-source.sql',
       '0093_synthetic-inpatient-case-materialization.sql',
+      '0094_authored-exact-investigation.sql',
     ])
 
     expect(originalAttempts(database)).toEqual(original)
