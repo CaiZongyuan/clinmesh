@@ -63,15 +63,22 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
     return () => document.removeEventListener('visibilitychange', update)
   }, [])
   const enabled = active && visible && !archived && admission.status !== 'registered'
-  const evaluationKey = JSON.stringify([...scope, draft ?? null])
+  const allowPlanSelection = draft === undefined && onReview === undefined && !archived
+  const surgery = useQuery({ queryKey: [...scope, 'surgeries'], enabled: enabled && allowPlanSelection,
+    queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/surgeries`, inpatientSurgerySchema, signal) })
+  const plans = (surgery.data?.requests ?? []).filter(item => item.status === 'requested' || item.status === 'ready')
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
+  const primarySurgeryRequestId = allowPlanSelection && plans.length > 1 && plans.some(item => item.id === selectedPlanId) ? selectedPlanId : null
+  const simulationInput = draft ?? (primarySurgeryRequestId === null ? undefined : { medications: [], services: [], primarySurgeryRequestId })
+  const evaluationKey = JSON.stringify([...scope, simulationInput ?? null])
   const currentKey = useRef(evaluationKey)
   currentKey.current = evaluationKey
   // Only the accepted fingerprint and its invalidation latch are view state; Query owns the result.
   const [basis, setBasis] = useState<{ key: string; fingerprint: string; stale: boolean }>()
   const grouping = useQuery({ queryKey: [...scope, 'drg-pregroup'], enabled: archived, retry: false,
     queryFn: ({ signal }) => apiGet(`${path}/pregroup`, inpatientDrgPregroupResultSchema, signal) })
-  const simulation = useQuery({ queryKey: [...scope, 'drg-simulation', draft ?? null], enabled, retry: false, refetchInterval: enabled ? 3_000 : false, refetchIntervalInBackground: false,
-    queryFn: ({ signal }) => apiMutation(`${path}/simulation`, inpatientDrgSimulationSchema, { input: draft ?? {} }, { signal }) })
+  const simulation = useQuery({ queryKey: [...scope, 'drg-simulation', simulationInput ?? null], enabled, retry: false, refetchInterval: enabled ? 3_000 : false, refetchIntervalInBackground: false,
+    queryFn: ({ signal }) => apiMutation(`${path}/simulation`, inpatientDrgSimulationSchema, { input: simulationInput ?? {} }, { signal }) })
   const data = simulation.data
   const fingerprint = data?.fingerprint ?? null
   const accepted = basis?.key === evaluationKey ? basis : undefined
@@ -98,9 +105,10 @@ export function InpatientDrgPanel({ admission, session, locale, write, draft, on
   return <section aria-label={t('DRG 与费用推演', 'DRG and charge simulation')} className="flex flex-col gap-4">
     <div className="flex flex-wrap items-center gap-2"><h3 className="font-medium">{t('DRG 与费用推演', 'DRG and charge simulation')}</h3><Button variant="outline" disabled={simulation.isFetching || grouping.isFetching || admission.status === 'registered'} onClick={() => void recalculate()}>{archived ? t('刷新冻结结果', 'Refresh frozen result') : t('重新计算', 'Recalculate')}</Button></div>
     <p className="text-sm text-muted-foreground">{t('正式分组读取已确认诊疗。计划与草稿仅供比较，不改变临床事实；医院支付参考与患者医保待遇分别计算。', 'Formal grouping reads confirmed care. Plans and drafts are comparisons only. Hospital payment references and patient benefits are calculated separately.')}</p>
+    {allowPlanSelection && plans.length > 1 ? <FieldGroup><Field><FieldLabel htmlFor="drg-primary-plan">{t('计划主操作（仅推演）', 'Primary planned procedure (simulation only)')}</FieldLabel><WorkspaceSelect id="drg-primary-plan" value={primarySurgeryRequestId} placeholder={t('请选择计划主操作', 'Select the primary planned procedure')} items={plans.map(item => ({ value: item.id, label: `${item.plannedProcedure.coding.code} · ${item.plannedProcedure.coding.display} · ${item.reason}` }))} onValueChange={setSelectedPlanId} /><p className="text-sm text-muted-foreground">{t('多个待实施计划须明确推演主操作。此选择不更改实际主操作或病案首页。', 'Choose a primary procedure when several plans remain. This does not change performed procedures or the medical record.')}</p></Field></FieldGroup> : null}
     {simulation.isPending && simulation.fetchStatus !== 'idle' ? <p role="status">{t('正在计算分组与费用', 'Calculating grouping and charges')}</p> : null}
     {simulation.isFetching && data ? <p role="status">{t('正在更新，旧结果暂不可用于审阅。', 'Updating; the previous result cannot be reviewed.')}</p> : null}
-    <DrgError error={simulation.error ?? grouping.error} locale={locale} />
+    <DrgError error={simulation.error ?? grouping.error ?? (allowPlanSelection ? surgery.error : null)} locale={locale} />
     {stale ? <DrgStaleNotice locale={locale} /> : null}
     {archived && grouping.data ? <><DrgGrouping result={grouping.data.result} locale={locale} title={t('归档冻结分组', 'Frozen archive grouping')} /><p className="text-sm text-muted-foreground">{t('归档结果保持冻结，后续规则及财务更正不改写此病组。', 'This result is frozen. Later rules or financial corrections do not rewrite the group.')}</p></> : null}
     {data && !simulation.error ? <>

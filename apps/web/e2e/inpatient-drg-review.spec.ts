@@ -4,6 +4,43 @@ import { inpatientDrgPayerReviewListSchema } from '@clinmesh/contracts/inpatient
 import { inpatientSurgeryCatalogSchema, inpatientSurgeryResponseSchema, inpatientSurgerySchema } from '@clinmesh/contracts/inpatient-surgery'
 import { archiveDrgBrowserPatient, createDrgBrowserPatient, expect, test } from './inpatient-drg.fixture.ts'
 
+test('多手术计划仅按医生选择推演主操作，正式事实与首页保持原样', async ({ page, browserApp }) => {
+  const s = await createDrgBrowserPatient(page, browserApp, '合成计划主操作患者')
+  const catalog = inpatientSurgeryCatalogSchema.parse(await (await s.api.get('/api/his/v1/inpatient/surgery-catalog')).json())
+  const procedure = catalog.procedures.find(item => item.coding.code === '00.6600')!
+  const requestPlan = async (reason: string) => {
+    const clinical = inpatientFullClinicalSchema.parse(await (await s.api.get(`${s.path}/clinical`)).json())
+    const result = inpatientSurgeryResponseSchema.parse(await (await s.api.post(`${s.path}/surgeries/request`, {
+      encounterVersion: clinical.encounterVersion, procedureId: procedure.id, catalogVersion: procedure.version,
+      plannedFor: '2026-08-24T15:00:00+08:00', reason,
+    })).json()).data
+    return result.requests.find(item => item.reason === reason)!
+  }
+  await requestPlan('合成第一个操作计划')
+  await page.goto(`${browserApp.origin}/inpatient`)
+  await page.getByRole('button', { name: `查看${s.name}`, exact: true }).click()
+  await page.getByRole('tab', { name: 'DRG 与费用推演', exact: true }).click()
+  const panel = page.getByRole('region', { name: 'DRG 与费用推演', exact: true })
+  const projected = panel.getByRole('region', { name: '若计划手术实施', exact: true })
+  await expect(projected).toContainText('已分组 · RA25')
+  await expect(panel.getByLabel('计划主操作（仅推演）', { exact: true })).toHaveCount(0)
+  const second = await requestPlan('合成第二个操作计划')
+  await page.getByRole('button', { name: '刷新诊疗记录', exact: true }).click()
+  await expect(projected).toContainText('分组依据不完整')
+  await expect(panel.getByRole('region', { name: '正式事实分组', exact: true })).toContainText('已分组 · RA15')
+  await panel.getByLabel('计划主操作（仅推演）', { exact: true }).click()
+  const selectedResponse = page.waitForResponse(response => response.url().endsWith(`${s.path}/drg/simulation`)
+    && response.request().postDataJSON().input.primarySurgeryRequestId === second.id)
+  await page.getByRole('option', { name: `${procedure.coding.code} · ${procedure.coding.display} · ${second.reason}`, exact: true }).click()
+  const result = inpatientDrgSimulationSchema.parse(await (await selectedResponse).json())
+  expect(result.grouping.formal).toMatchObject({ status: 'grouped', drgCode: 'RA15' })
+  expect(result.grouping.projected).toMatchObject({ status: 'grouped', drgCode: 'RA25' })
+  await expect(projected).toContainText('已分组 · RA25')
+  const surgery = inpatientSurgerySchema.parse(await (await s.api.get(`${s.path}/surgeries`)).json())
+  expect(surgery.executions).toEqual([])
+  expect(surgery.requests).toHaveLength(2)
+})
+
 test('外部医嘱变化后页面自动标记评估过期，并锁定已经打开的确认', async ({ page, browserApp }) => {
   const s = await createDrgBrowserPatient(page, browserApp, '合成主动过期患者')
   const catalog = inpatientFullCatalogSchema.parse(await (await s.api.get('/api/his/v1/inpatient/clinical-catalog')).json())
@@ -52,6 +89,7 @@ test('当前医嘱草稿隔离迟到评估，取消不签发，重新审阅后�
   await page.getByRole('tab', { name: '诊断医嘱', exact: true }).click()
   await page.getByLabel('医嘱项目', { exact: true }).click()
   await page.getByRole('option', { name: medication.display, exact: true }).click()
+  await page.getByLabel('每次剂量', { exact: true }).fill(`1${medication.unit}`)
   let release!: () => void
   const held = new Promise<void>(resolve => { release = resolve })
   const inputs: InpatientDrgSimulationInput[] = []
@@ -73,6 +111,7 @@ test('当前医嘱草稿隔离迟到评估，取消不签发，重新审阅后�
   release()
   await expect(simulation.getByRole('cell', { name: medication.display, exact: true })).toHaveCount(0)
   expect(inputs[0]!.services).toEqual([])
+  expect(inputs[0]!.medications[0]).toMatchObject({ doseText: `1${medication.unit}`, doseQuantity: 1 })
   expect(inputs.at(-1)!.medications).toEqual([])
   await expect(simulation).toContainText('医院支付参考 RA15 · ¥3,000.00')
   await simulation.getByRole('button', { name: '审阅推演并签发医嘱', exact: true }).click()

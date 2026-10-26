@@ -8,7 +8,8 @@ import { inpatientCommandResponseSchema, inpatientDetailSchema } from '@clinmesh
 import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clinical'
 import { inpatientRecordSchema } from '@clinmesh/contracts/inpatient-record'
 import { startBrowserServer } from '../../server/tests/browser-server.ts'
-import { prepareDrgRulesPackage } from '../../server/src/infrastructure/reference-data/drg-rules-package.ts'
+import { prepareDrgRulesPackage } from '../../server/src/infrastructure/reference-data/drg-rules-prepare.ts'
+import { syntheticDrgIdentity, syntheticDrgSource } from '../../server/tests/fixtures/drg-synthetic-program.ts'
 import { runReferenceDatabaseCli } from '../../server/src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../../server/src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../../server/src/application/scenario-data/medical-service-snapshot.ts'
@@ -31,12 +32,17 @@ export const test = base.extend({ browserApp: async ({ webRoot }, use) => {
       retrievedAt: '2026-08-28T00:00:00.000Z', sourceUrl: 'https://example.test/clinical', upstreamVersion: '2022' }] }))
     await runReferenceDatabaseCli(['migrate', '--database', referenceDatabasePath])
     await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'release.json')])
-    const files = prepareDrgRulesPackage({ groups: [
-      { level: 'MDC', code: 'MDCA', name: '合成循环系统', parentCode: null },
-      { level: 'ADRG', code: 'RA1', name: '合成高血压', parentCode: 'MDCA' },
+    const groups = [
+      { level: 'MDC', code: 'MDCR', name: '合成循环系统', parentCode: null },
+      { level: 'ADRG', code: 'RA1', name: '合成高血压', parentCode: 'MDCR' },
       { level: 'DRG', code: 'RA15', name: '合成页面病组', parentCode: 'RA1' },
-    ], jsText: 'return ["I10.x09"].includes(x.zdList[0])){Q("符合RA1入组条件，匹配规则：主诊断匹配");}', complicationTables: { CC: {}, MCC: {}, CCE: {} },
-    input: { openDrgJsSha256: 'a'.repeat(64), openDrgTablesSha256: 'b'.repeat(64), r3GroupsSha256: 'c'.repeat(64) }, releaseId: 'synthetic-drg-browser', sourceVersion: 'synthetic-browser-1' })
+      { level: 'ADRG', code: 'RA2', name: '合成操作候选', parentCode: 'MDCR' },
+      { level: 'DRG', code: 'RA25', name: '合成操作病组', parentCode: 'RA2' },
+    ]
+    const jsText = syntheticDrgSource('I10.x09', 'RA15', '00.6600')
+    const complicationTables = { CC: {}, MCC: {}, CCE: {} }
+    const files = prepareDrgRulesPackage({ groups, jsText, complicationTables,
+      input: syntheticDrgIdentity(jsText, groups, complicationTables), releaseId: 'synthetic-drg-browser', sourceVersion: 'synthetic-browser-2' })
     for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content, 'utf8')
     app = await startBrowserServer(webRoot, { referenceDatabasePath, activeReferenceReleaseId: 'synthetic-drg-browser', drgRulesDirectory })
     await use(app)
