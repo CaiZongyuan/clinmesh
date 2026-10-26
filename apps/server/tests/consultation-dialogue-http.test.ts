@@ -24,6 +24,7 @@ import { randomUUID } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { setModelControl } from './fixtures/model-control.ts'
 import { sourceArtifactHash } from '../src/application/scenario-data/provider.ts'
+import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 
 class ScriptedDialogueProvider implements JsonChatCompletionsProvider {
   readonly requests: JsonChatCompletionInput[] = []
@@ -927,6 +928,9 @@ describe('Consultation free dialogue HTTP contract', () => {
     })
     expect(issued.status).toBe(200)
     const request = issueLaboratoryRequestResponseSchema.parse(await issued.json()).data.request
+    await payOutpatientInvestigation(runtime, {
+      caseId: started.outpatientCaseId, category: 'laboratory', chargeItemId: request.billing!.chargeItemId,
+    })
     for (let step = 0; step < 3; step++) await runtime.dispatcher.dispatchOnce()
     const reported = doctorCaseDetailSchema.parse(await (await runtime.app.request(`/api/his/v1/doctor/cases/${started.outpatientCaseId}`, { headers: { cookie } })).json())
     expect(reported.consultation?.turns.at(-1)).toMatchObject({ kind: 'report-card', sequence: 3 })
