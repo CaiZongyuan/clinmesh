@@ -129,13 +129,6 @@ describe('HIS operation catalog', () => {
         roles: ['administrator', 'registrar'],
       },
       {
-        id: 'registration.synthetic-case.start-inpatient',
-        mode: 'command',
-        requirements: { expectedVersions: true, idempotency: 'required' },
-        risk: 'write',
-        roles: ['registrar'],
-      },
-      {
         cliPath: 'catalog clinical get',
         id: 'catalog.clinical.read',
         roles: ['outpatient-doctor'],
@@ -201,6 +194,13 @@ describe('HIS operation catalog', () => {
         requirements: { expectedVersions: true, idempotency: 'required' },
         risk: 'write',
         roles: ['administrator', 'registrar'],
+      },
+      {
+        id: 'registration.synthetic-case.start-inpatient',
+        mode: 'command',
+        requirements: { expectedVersions: true, idempotency: 'required' },
+        risk: 'write',
+        roles: ['registrar'],
       },
     ])
     const waitingCases = getHisOperation('registration.synthetic-case.list')
