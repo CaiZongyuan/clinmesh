@@ -3,7 +3,7 @@ import { signInCashier } from './billing-payments.fixture.ts'
 import { collectAndObserveInvestigationReports, issueBillableInvestigations } from './investigation-billing-execution.fixture.ts'
 import { openDoctorFirstVisit, startInvestigationBillingServer } from './investigation-billing.fixture.ts'
 
-test('collects three doctor-issued investigation fees and returns their original executed reports to the doctor', async ({ page, browser, webRoot }) => {
+test('collects two laboratory, imaging and pathology fees in one visit and returns their original executed reports to the doctor', async ({ page, browser, webRoot }) => {
   test.setTimeout(120_000)
   const server = await startInvestigationBillingServer(webRoot, true)
   const context = await browser.newContext()

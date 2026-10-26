@@ -84,7 +84,7 @@ for (const version of ['18', '19']) {
       await collectAndObserveInvestigationReports(page, cashier, server, ids)
       const bill = await readBill(cashier, server)
       expect(bill.charges.find(charge => charge.chargeItemId === request.billing!.chargeItemId)).toMatchObject({ paidFen: 800, remainingFen: 0 })
-      expect(bill.payments).toHaveLength(6)
+      expect(bill.payments).toHaveLength(7)
       expect(bill.payments.filter(payment => payment.chargeItemId === request.billing!.chargeItemId)).toHaveLength(2)
       expect(errors).toEqual([])
       expect(pixelRequests).toEqual([])
