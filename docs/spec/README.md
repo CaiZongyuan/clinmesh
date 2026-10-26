@@ -34,6 +34,7 @@
 
 | 规格 | 状态 |
 | --- | --- |
+| [住院线纸张编辑风界面重构（第一批）](2026-10-26-inpatient-paper-restyle.md) | `approved` |
 | [门诊住院共享支付与 DRG 一体化](2026-10-15-drg-prescription-budget.md) | `approved` |
 | [AI 原生医生工作台改版](2026-10-19-ai-native-doctor-workspace.md) | `implemented` |
 | [模型用量监控与可选额度控制](2026-10-19-model-usage-control.md) | `approved` |
