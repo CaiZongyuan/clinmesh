@@ -30,7 +30,7 @@ export function InpatientFinancialInsurance({ bill, locale, write, fetching }: {
   const error = write?.mutation.error ? getWorkspaceErrorMessage(write.mutation.error, getWorkspaceMessages(locale)) : undefined
   const detail = (value: typeof insurance.original): React.JSX.Element => <span className="font-mono">{t('基金', 'Fund')} {formatFen(value.fundFen, locale)} · {t('账户', 'Account')} {formatFen(value.accountFen, locale)} · {t('患者', 'Patient')} {formatFen(value.patientFen, locale)}</span>
   return <section aria-label={t('后续医保更正', 'Later insurance correction')} className="flex flex-col gap-3 border-t border-border pt-3">
-    <h4 className="font-serif">{t('后续医保更正', 'Later insurance correction')}</h4>
+    <h4>{t('后续医保更正', 'Later insurance correction')}</h4>
     <p>{t('首次冻结待遇', 'First frozen benefits')} · {detail(insurance.original)}</p>
     <p><span className="font-mono">{insurance.original.year}</span> · {t('原年度账户余额', 'Original year account balance')} <span className="font-mono">{formatFen(insurance.balance.accountFen, locale)}</span> · {t('年度统筹累计', 'Annual fund total')} <span className="font-mono">{formatFen(insurance.balance.fundFen, locale)}</span></p>
     {insurance.active ? <p data-testid="financial-insurance-active">{t('当前待遇', 'Current benefits')} · {detail(insurance.active)}</p> : null}

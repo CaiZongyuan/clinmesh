@@ -47,7 +47,7 @@ export function InpatientClinical({ admission, session, locale, write, view = 'o
   if (view === 'fees') return <>{error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,messages)}</AlertDescription></Alert> : null}{data ? <InpatientChargeList data={{ admissionId: admission.id, financialStatus: admission.financialStatus, charges: data.charges, chargesFen: data.chargesFen }} locale={locale} /> : null}</>
   return <section aria-label={t('住院诊疗','Inpatient care')} className="flex flex-col gap-4">
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,messages)}</AlertDescription></Alert> : null}
-    <h3 className="font-serif text-base font-semibold">{t('诊断与医嘱','Diagnoses and orders')}</h3>
+    <h3 className="text-base font-semibold">{t('诊断与医嘱','Diagnoses and orders')}</h3>
     {clinical.isPending ? <p>{t('正在加载诊疗记录','Loading care')}</p> : null}
     {data?.diagnosis.entries.map(entry => <p key={entry.conditionId}>{entry.role==='primary' ? t('主诊断：','Primary: ') : t('次诊断：','Secondary: ')}{entry.coding.display}</p>)}
     {doctor && data ? <InpatientDiagnosisEditor data={data} diagnoses={catalog.data?.diagnoses ?? []} session={session} locale={locale} blocked={write.blocked || admission.recordStatus === 'archived' || admission.status === 'registered'} write={write} /> : null}

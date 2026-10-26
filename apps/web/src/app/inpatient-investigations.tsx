@@ -36,7 +36,7 @@ export function InpatientInvestigations({admission,session,locale,write}:Props) 
   const error=facts.error??catalog.error
   const status=(value:string,sent:boolean)=>({issued:sent?t('已送检，待受理','Sent, awaiting acceptance'):t('待送检','Awaiting dispatch'),accepted:t('已受理','Accepted'),'in-progress':t('执行中','In progress'),'generation-failed':t('结果生成失败','Result failed'),reported:t('报告已签发','Reported'),acknowledged:t('报告已阅','Acknowledged'),cancelled:t('已取消','Cancelled')}[value]??value)
   return <section aria-label={t('住院检查检验','Inpatient investigations')} className="flex flex-col gap-3">
-    <h3 className="font-serif text-base font-semibold">{t('检查检验与报告','Investigations and reports')}</h3>
+    <h3 className="text-base font-semibold">{t('检查检验与报告','Investigations and reports')}</h3>
     {error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
     {facts.isPending?<p>{t('正在加载检查检验','Loading investigations')}</p>:null}
     {doctor ? <InpatientCatalogPicker kind="laboratory" session={session} locale={locale} disabled={blocked}

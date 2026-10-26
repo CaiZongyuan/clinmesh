@@ -34,7 +34,7 @@ export function InpatientSurgery({ admission, session, locale, write }: Props): 
   }
   const error = surgery.error ?? catalog.error
   return <section aria-label={t('住院手术','Inpatient surgery')} className="flex flex-col gap-4">
-    <h3 className="font-serif text-base font-semibold">{t('手术计划与实际实施','Surgery plans and performed procedures')}</h3>
+    <h3 className="text-base font-semibold">{t('手术计划与实际实施','Surgery plans and performed procedures')}</h3>
     <p>{t('手术目录为固定来源的八条分类摘录，收费为合成本院演示价。','The catalog contains eight entries from a fixed classification source, with synthetic hospital demonstration prices.')}</p>
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {surgery.isPending ? <p>{t('正在加载手术记录','Loading surgery records')}</p> : null}

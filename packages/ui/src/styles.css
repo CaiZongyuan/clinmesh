@@ -253,54 +253,6 @@
   --clinmesh-glow: 0 0 0 1.5px rgb(139 127 242 / 40%), 0 0 16px rgb(139 127 242 / 18%);
 }
 
-/* 纸张编辑风主题（E·paper）：住院线作用域，规格 docs/spec/2026-10-26-inpatient-paper-restyle.md。
-   挂在应用根元素（useInpatientPaperTheme），portal 弹层与页面同主题；独立 data-palette 属性
-   避免与主题偏好（data-theme=light/dark）互覆盖；声明在 .dark 与方向四之后，源码顺序压过两者。 */
-[data-clinmesh-app="web"][data-palette="paper"] {
-  color-scheme: light;
-  --background: #f7f5f1;
-  --foreground: #1c1a17;
-  --card: #fdfcfa;
-  --card-foreground: #1c1a17;
-  --popover: #fdfcfa;
-  --popover-foreground: #1c1a17;
-  --primary: #1c1a17;
-  --primary-foreground: #f7f5f1;
-  --secondary: #efece4;
-  --secondary-foreground: #1c1a17;
-  --muted: #efece4;
-  --muted-foreground: #6f6a5e;
-  --accent: #e9e4d8;
-  --accent-foreground: #1c1a17;
-  --destructive: #a6321f;
-  --destructive-foreground: #fdfcfa;
-  --success: #3e5f3c;
-  --success-foreground: #f7f5f1;
-  --warning: #8a6a1f;
-  --warning-foreground: #f7f5f1;
-  --info: #44546a;
-  --info-foreground: #f7f5f1;
-  --border: #e3dfd7;
-  --input: #d8d2c6;
-  --ring: #1c1a17;
-  --chart-1: #3e5f3c;
-  --chart-2: #a6321f;
-  --chart-3: #8a6a1f;
-  --chart-4: #44546a;
-  --chart-5: #6f6a5e;
-  --radius: 0.125rem;
-  --sidebar: #f2efe9;
-  --sidebar-foreground: #1c1a17;
-  --sidebar-primary: #1c1a17;
-  --sidebar-primary-foreground: #f7f5f1;
-  --sidebar-accent: #e9e4d8;
-  --sidebar-accent-foreground: #1c1a17;
-  --sidebar-border: #e3dfd7;
-  --sidebar-ring: #1c1a17;
-  --clinmesh-glow: 0 0 0 1px #d8d2c6;
-  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", SimSun, serif;
-}
-
 @layer base {
   * {
     @apply border-border outline-ring/50;

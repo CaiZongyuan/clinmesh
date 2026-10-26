@@ -27,7 +27,7 @@ export function InpatientTransfers({admission,session,locale,write}:Props&{admis
   const [targetWardId,setTargetWardId]=useState<string|null>(null),[reason,setReason]=useState('')
   const blocked=write.blocked||admission.status!=='admitted',error=catalog.error??facts.error
   return <section aria-label={t('住院转科','Inpatient transfer')} className="flex flex-col gap-3">
-    <h3 className="font-serif text-base font-semibold">{t('转科与交接','Transfer and handover')}</h3>
+    <h3 className="text-base font-semibold">{t('转科与交接','Transfer and handover')}</h3>
     {error?<Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error,getWorkspaceMessages(locale))}</AlertDescription></Alert>:null}
     {doctor?<form onSubmit={event=>{event.preventDefault();if(targetWardId)write.mutation.mutate({operation:'inpatient.transfer.request',input:{admissionId:admission.id,encounterVersion:admission.versionId,targetWardId,reason}})}}>
       <FieldSet disabled={blocked}><FieldLegend>{t('申请转科','Request transfer')}</FieldLegend><FieldGroup className="grid gap-3 md:grid-cols-2">

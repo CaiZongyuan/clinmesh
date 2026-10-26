@@ -34,7 +34,7 @@ export function InpatientDoctorDrgCard({ admission, session, locale }: {
   const pregrouped = pregroup.data
   const result = pregrouped?.result
   return <section aria-label={t('DRG 预分组与推演', 'DRG pregrouping and simulation')} data-inpatient-doctor-drg className="flex flex-col gap-2 rounded-md border bg-card p-3">
-    <h3 className="font-serif text-sm font-semibold">{t('DRG 预分组与推演', 'DRG pregrouping and simulation')}</h3>
+    <h3 className="text-sm font-semibold">{t('DRG 预分组与推演', 'DRG pregrouping and simulation')}</h3>
     {!available ? <p className="text-sm text-muted-foreground">{t('尚未入科，入科后可预分组。', 'Available after the patient is admitted.')}</p>
       : pregroup.isPending ? <p className="text-sm text-muted-foreground">{t('正在读取预分组…', 'Loading pregrouping…')}</p>
       : pregroup.error !== null ? (pregroup.error instanceof ApiClientError && expectedBlockers.includes(pregroup.error.code)

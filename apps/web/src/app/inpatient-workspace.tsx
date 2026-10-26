@@ -13,9 +13,8 @@ import { Input } from '@clinmesh/ui/components/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@clinmesh/ui/components/table'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ArrowLeftIcon } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { apiGet, searchPatients } from './api-client.ts'
-import { useInpatientPaperTheme } from './inpatient-paper-theme.ts'
 import { WorkspaceSelect } from './workspace-select.tsx'
 import { formatFen, yuanToFen } from './workspace-format.ts'
 import { getWorkspaceMessages, type WorkspaceLocale } from './workspace-i18n.ts'
@@ -27,8 +26,6 @@ export { yuanToFen } from './workspace-format.ts'
 
 export function InpatientWorkspace({ session, locale }: { session: SessionContext; locale: WorkspaceLocale }): React.JSX.Element {
   const zh = locale === 'zh-CN'
-  const shellRef = useRef<HTMLElement>(null)
-  useInpatientPaperTheme(shellRef)
   const client = useQueryClient()
   const key = ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId]
   const catalog = useQuery({ queryKey: [...key, 'catalog'], queryFn: ({ signal }) => apiGet('/api/his/v1/inpatient/catalog', inpatientCatalogSchema, signal) })
@@ -73,11 +70,11 @@ export function InpatientWorkspace({ session, locale }: { session: SessionContex
   const messages = getWorkspaceMessages(locale)
   const status = (admission: InpatientAdmission) => inpatientStatus(admission, locale)
   if (session.actor.roleCode === 'medical-insurance') {
-    return <section ref={shellRef} aria-label={zh ? '医保办核定工作台' : 'Insurance review workspace'} className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
+    return <section aria-label={zh ? '医保办核定工作台' : 'Insurance review workspace'} className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4">
       <InpatientInsuranceReview session={session} locale={locale} />
     </section>
   }
-  return <section ref={shellRef} aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+  return <section aria-label={zh ? '住院工作台' : 'Inpatient workspace'} className="flex min-h-0 flex-1 flex-col overflow-hidden">
     <div className="shrink-0 px-4">
     {error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(error, messages)}</AlertDescription></Alert> : null}
     <InpatientWriteRecovery write={write} locale={locale} />

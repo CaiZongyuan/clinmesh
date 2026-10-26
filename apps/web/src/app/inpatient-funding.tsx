@@ -38,7 +38,7 @@ export function InpatientFunding({ admission, locale, write, statement }: Props)
     ? inpatientRefundPreviewResponseSchema.parse(latest.response).data : undefined
   const formatTenders = (items: typeof tenders | undefined) => (items ?? []).map(item => `${methods[item.method]} ${formatFen(item.amountFen,locale)}`).join(' / ')
   return <section aria-label={t('住院收退款','Inpatient funding')} className="flex min-w-0 flex-col gap-3">
-    <h3 className="font-serif font-bold">{t('住院收退款','Inpatient funding')}</h3>
+    <h3 className="font-bold">{t('住院收退款','Inpatient funding')}</h3>
     <div className="flex flex-col gap-2 rounded-md border bg-card px-3 py-2 text-sm">
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
         <span>{t('累计预交金：','Deposits: ')}<span className="font-mono text-foreground tabular-nums">{formatFen(statement.depositFen,locale)}</span></span>
@@ -51,7 +51,7 @@ export function InpatientFunding({ admission, locale, write, statement }: Props)
     </div>
     {statement.pendingCount > 0 ? <Alert><AlertDescription>{t('资金结果未知，请查询原尝试。查明前不能再次收退款、封账或清床。','Funds are unknown. Query the original attempt before another payment, settlement or bed clearance.')}</AlertDescription></Alert> : null}
     <FieldSet disabled={blocked} className="rounded-md border bg-card p-3">
-      <FieldLegend className="font-serif">{t('收取预交金或补缴','Collect deposit or supplement')}</FieldLegend>
+      <FieldLegend>{t('收取预交金或补缴','Collect deposit or supplement')}</FieldLegend>
       <FieldGroup>
         <Field><FieldLabel id="inpatient-funding-kind-label">{t('收款用途','Collection purpose')}</FieldLabel>
           <ToggleGroup aria-labelledby="inpatient-funding-kind-label" value={[kind]} variant="outline" onValueChange={values => {
@@ -76,7 +76,7 @@ export function InpatientFunding({ admission, locale, write, statement }: Props)
       <p>{t('已冻结收款预览：','Frozen collection preview: ')}{payPreview.kind === 'deposit' ? t('预交金','Deposit') : t('补缴','Supplement')} · <span className="font-mono tabular-nums">{formatFen(payPreview.amountFen,locale)}</span> · {formatTenders(payPreview.tenders)} · {outcome(payPreview.expectedOutcome)}</p>
       <div><Button disabled={blocked} onClick={() => write.mutation.mutate({operation:'inpatient.payment.confirm',input:{admissionId:admission.id,previewId:payPreview.previewId,commitToken:payPreview.commitToken}})}>{t('确认已审阅收款','Confirm reviewed collection')}</Button></div>
     </AlertDescription></Alert> : null}
-    {admission.status === 'departed' ? <FieldSet disabled={blocked} className="rounded-md border bg-card p-3"><FieldLegend className="font-serif">{t('按原款退款','Refund original collection')}</FieldLegend><FieldGroup>
+    {admission.status === 'departed' ? <FieldSet disabled={blocked} className="rounded-md border bg-card p-3"><FieldLegend>{t('按原款退款','Refund original collection')}</FieldLegend><FieldGroup>
       <Field><FieldLabel htmlFor="inpatient-refund-source">{t('原入金','Original collection')}</FieldLabel>
         <WorkspaceSelect id="inpatient-refund-source" value={sourceId} onValueChange={setSourceId} items={statement.sources.filter(source => source.refundableFen > 0).map(source => ({value:source.id,
           label:`${source.kind === 'inpatient-deposit' ? t('预交金','Deposit') : t('补缴','Supplement')} · ${source.createdAt} · ${t('可退','Refundable')} ${formatFen(source.refundableFen,locale)}`}))} />

@@ -60,13 +60,13 @@ export function InpatientInsuranceReview({ session, locale }: { session: Session
   })
   return <section aria-label={t('医保办 DRG 支付模拟核定', 'Insurance DRG payer simulation review')} className="flex min-w-0 flex-col gap-4">
     <div className="flex flex-col gap-1">
-      <h2 className="font-serif text-lg">{t('DRG 支付模拟核定', 'DRG payer simulation review')}</h2>
+      <h2 className="text-lg">{t('DRG 支付模拟核定', 'DRG payer simulation review')}</h2>
       <p className="text-sm text-muted-foreground">{t('对已归档病案执行模拟核定：以归档冻结分组 × 固定版本合成支付参数计算模拟核定支付额，由服务端确定性产生；差异不构成完整盈亏，独立于患者结算。', 'Run simulation reviews on archived admissions: the simulated payment derives deterministically from the frozen grouping and fixed-version synthetic payment parameters; differences are not a full profit-and-loss figure and stay independent of patient settlement.')}</p>
     </div>
     <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
       <Card size="sm" aria-label={t('核定队列', 'Review queue')} className="w-full shrink-0 lg:w-80">
         <CardHeader className="border-b">
-          <CardTitle className="font-serif">{t('核定队列', 'Review queue')}</CardTitle>
+          <CardTitle>{t('核定队列', 'Review queue')}</CardTitle>
           <CardDescription>{t('已归档病案', 'Archived admissions')}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-1.5">
@@ -89,7 +89,7 @@ export function InpatientInsuranceReview({ session, locale }: { session: Session
       </Card>
       <Card size="sm" className="min-w-0 flex-1" aria-label={t('历史核定', 'Review history')}>
         <CardHeader className="border-b">
-          <CardTitle className="font-serif">{selected ? `${t('病案', 'Record')} · ${selected.patientName}` : t('历史核定', 'Review history')}</CardTitle>
+          <CardTitle>{selected ? `${t('病案', 'Record')} · ${selected.patientName}` : t('历史核定', 'Review history')}</CardTitle>
           {selected ? <CardDescription><span className="break-all font-mono">{selected.inpatientNumber}</span></CardDescription> : null}
           {insurer && selected ? <CardAction>
             <Button size="sm" onClick={() => { execute.reset(); setDialogOpen(true) }}>{t('执行模拟核定', 'Run simulation review')}</Button>

@@ -19,7 +19,7 @@ export function InpatientDoctorPatientList({ admissions, viewedId, catalog, virt
   const zh = locale === 'zh-CN', t = (cn: string, en: string) => zh ? cn : en
   return <div className="flex flex-col">
     <div className="flex items-baseline justify-between gap-2 border-b px-3 py-2">
-      <h3 className="font-serif text-sm font-semibold">{t('住院患者', 'Inpatients')}</h3>
+      <h3 className="text-sm font-semibold">{t('住院患者', 'Inpatients')}</h3>
       <span aria-label={t('在册人数', 'Admission count')} className="font-mono text-xs text-muted-foreground">{admissions.length}</span>
     </div>
     <ul className="flex flex-col">

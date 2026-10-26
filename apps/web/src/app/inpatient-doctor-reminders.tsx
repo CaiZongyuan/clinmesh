@@ -82,7 +82,7 @@ export function InpatientDoctorReminders({ admission, admissions, session, local
   const reminders = careOpen ? aggregateDoctorReminders({ depositFen: item.depositFen, chargesFen: item.chargesFen,
     orders: clinical.data?.orders, executions: clinical.data?.executions, surgeryRequests: surgeries.data?.requests, locale }) : []
   return <section aria-label={t('临床提醒', 'Clinical reminders')} data-inpatient-doctor-reminders className="flex flex-col gap-2 p-3">
-    <h3 className="font-serif text-sm font-semibold">{t('临床提醒', 'Clinical reminders')}</h3>
+    <h3 className="text-sm font-semibold">{t('临床提醒', 'Clinical reminders')}</h3>
     {!careOpen ? <p className="text-sm text-muted-foreground">{t('病案已归档，诊疗写入关闭。', 'The record is archived; care writes are closed.')}</p> : <>
       {reminders.length > 0 ? <ul className="flex flex-col gap-2">
         {reminders.map(reminder => <li key={reminder.key} className={cn('border-l-2 py-0.5 ps-2 text-sm', toneClassName[reminder.tone])}>{reminder.text}</li>)}

@@ -57,7 +57,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
 
   return <div className="flex flex-col gap-4" aria-label={t('病区一览板', 'Ward board')}>
     <header className="flex flex-wrap items-baseline justify-between gap-2">
-      <h2 className="font-serif text-lg font-semibold">{t('病区一览板', 'Ward board')}</h2>
+      <h2 className="text-lg font-semibold">{t('病区一览板', 'Ward board')}</h2>
       <p className="font-mono text-xs text-muted-foreground">
         {scenario.data !== undefined ? new Date(scenario.data.virtualTime).toLocaleString(zh ? 'zh-CN' : 'en-US', { timeZone: 'Asia/Shanghai' }) : t('虚拟时间读取中', 'Loading virtual time')}
       </p>
@@ -77,7 +77,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
     {wards.map(ward => {
       const wardBeds = beds.filter(bed => bed.wardId === ward.id)
       return <section key={ward.id} aria-label={ward.name} className="border border-border bg-card">
-        <h3 className="border-b border-border px-3 py-2 font-serif text-sm font-semibold">{ward.name}</h3>
+        <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">{ward.name}</h3>
         {wardBeds.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('该病区暂无床位', 'No beds in this ward')}</p> : <ul className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
           {wardBeds.map(bed => {
             const admission = bed.admissionId !== undefined ? byId.get(bed.admissionId) : undefined
@@ -105,7 +105,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
     {catalog === undefined ? <p className="text-sm text-muted-foreground">{t('正在加载病区目录', 'Loading ward catalog')}</p> : null}
 
     {departedOpen.length > 0 ? <section aria-label={t('召回窗口', 'Recall window')} className="border border-warning/60 bg-warning/5 px-3 py-2">
-      <h3 className="font-serif text-sm font-semibold">{t('召回窗口（出区未结算，原床保留）', 'Recall window (departed, unsettled, bed held)')}</h3>
+      <h3 className="text-sm font-semibold">{t('召回窗口（出区未结算，原床保留）', 'Recall window (departed, unsettled, bed held)')}</h3>
       <ul className="mt-1 text-sm">
         {departedOpen.map(admission => <li key={admission.id}>
           <span className="font-medium">{admission.patientName}</span>
@@ -116,7 +116,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
     </section> : null}
 
     {discharged.length > 0 ? <section aria-label={t('出院后病历', 'Post-discharge records')} className="border border-border bg-card">
-      <h3 className="border-b border-border px-3 py-2 font-serif text-sm font-semibold">{t('出院后病历（只读回查）', 'Post-discharge records (read only)')}</h3>
+      <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">{t('出院后病历（只读回查）', 'Post-discharge records (read only)')}</h3>
       <ul className="divide-y divide-border">
         {discharged.map(admission => <li key={admission.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
           <Button variant="link" className="h-auto px-0 font-medium" onClick={() => onSelect(admission.id)}>{admission.patientName}</Button>
@@ -127,7 +127,7 @@ export function InpatientNurseBench({ admissions, catalog, session, locale, onSe
     </section> : null}
 
     <section aria-label={t('本班医嘱任务', 'Shift medication tasks')} className="border border-border bg-card">
-      <h3 className="border-b border-border px-3 py-2 font-serif text-sm font-semibold">{t('本班医嘱任务', 'Shift medication tasks')}</h3>
+      <h3 className="border-b border-border px-3 py-2 text-sm font-semibold">{t('本班医嘱任务', 'Shift medication tasks')}</h3>
       {tasks.length === 0 ? <p className="px-3 py-3 text-sm text-muted-foreground">{t('本班暂无待校对或待执行任务', 'No orders awaiting verification or administration this shift')}</p> : <ul className="divide-y divide-border">
         {tasks.map(task => <li key={task.admission.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
           <span className="text-sm font-medium">{task.admission.patientName}</span>

@@ -37,7 +37,7 @@ export function InpatientFinancialAdjustments({ admission, session, locale, writ
   const bill = useQuery({ queryKey: ['inpatient', session.actor.workspaceId, session.actor.epoch, session.actor.practitionerRoleId, admission.id, 'financial-adjustments'],
     queryFn: ({ signal }) => apiGet(`/api/his/v1/inpatient/admissions/${admission.id}/financial-adjustments`, inpatientFinancialSchema, signal) })
   return <section aria-label={t('后续财务更正', 'Later financial adjustments')} className="flex min-w-0 flex-col gap-3 rounded-xl border border-border bg-card p-4">
-    <h3 className="font-serif">{t('后续财务更正', 'Later financial adjustments')}</h3>
+    <h3>{t('后续财务更正', 'Later financial adjustments')}</h3>
     {bill.isPending ? <Skeleton className="h-16 w-full" /> : null}
     {bill.error ? <Alert variant="destructive"><AlertDescription>{getWorkspaceErrorMessage(bill.error, getWorkspaceMessages(locale))}</AlertDescription></Alert> : null}
     {bill.data ? <>
