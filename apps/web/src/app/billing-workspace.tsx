@@ -167,7 +167,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     },
     mutationFn: () => {
       if (refundWrite.blocked) throw new Error(messages.paymentUnavailable)
-      if (selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
+      if (selectedCharge === undefined || selectedCharge.status === 'cancelled') throw new Error(messages.paymentUnavailable)
       return previewPayment({
         caseId: selectedCharge.caseId,
         category: selectedCharge.category,
@@ -187,7 +187,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     },
     mutationFn: () => {
       if (refundWrite.blocked) throw new Error(messages.paymentUnavailable)
-      if (preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge?.chargeItemId) throw new Error(messages.paymentUnavailable)
+      if (selectedCharge?.status === 'cancelled' || preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge?.chargeItemId) throw new Error(messages.paymentUnavailable)
       return confirmPayment({
         chargeItemId: preview.data.data.chargeItemId,
         chargeVersion: preview.data.data.chargeVersion,
@@ -240,6 +240,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
   const unknownAttempt = bill.data?.payments.find(payment => payment.chargeItemId === selectedCharge?.chargeItemId && payment.outcome === 'ambiguous')
   const paymentPending = preview.isPending || confirm.isPending || recover.isPending || refundWrite.mutation.isPending
   const paymentWriteBlocked = paymentPending || refundWrite.blocked
+  const paymentCollectionBlocked = paymentWriteBlocked || selectedCharge?.status === 'cancelled'
   const pendingRefund = refundWrite.pending?.command.operation === 'billing.charge.adjust'
     || refundWrite.pending?.command.operation.startsWith('refund.') === true
   const refundError = refundWrite.storageFailure ?? refundWrite.mutation.error
@@ -311,19 +312,19 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
       },
       'billing.payment.preview': {
         description: 'Generate a payment preview for the selected synthetic charge.',
-        enabled: !paymentWriteBlocked && selectedCharge !== undefined,
+        enabled: !paymentCollectionBlocked && selectedCharge !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: async () => {
-          if (paymentWriteBlocked || selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
+          if (paymentCollectionBlocked || selectedCharge === undefined) throw new Error(messages.paymentUnavailable)
           return preview.mutateAsync()
         },
       },
       'billing.payment.confirm.propose': {
         description: 'Open human review for the current payment preview.',
-        enabled: !paymentWriteBlocked && preview.data?.data.chargeItemId === selectedCharge?.chargeItemId && preview.data !== undefined,
+        enabled: !paymentCollectionBlocked && preview.data?.data.chargeItemId === selectedCharge?.chargeItemId && preview.data !== undefined,
         parameters: { type: 'object' as const, properties: {}, additionalProperties: false },
         execute: (_raw: unknown, signal: AbortSignal) => {
-          if (paymentWriteBlocked || preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge?.chargeItemId) throw new Error(messages.paymentUnavailable)
+          if (paymentCollectionBlocked || preview.data === undefined || preview.data.data.chargeItemId !== selectedCharge?.chargeItemId) throw new Error(messages.paymentUnavailable)
           const amountFen = preview.data.data.amountFen
           return agentReview.request({
             confirmLabel: locale => getWorkspaceMessages(locale).submitPayment,
@@ -399,6 +400,7 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
     tenderAmounts,
     paymentPending,
     paymentWriteBlocked,
+    paymentCollectionBlocked,
     bill.data,
     unknownAttempt,
     recover.mutateAsync,
@@ -509,7 +511,8 @@ export function BillingWorkspace({ locale, session }: BillingWorkspaceProps): Re
                 </TableRow>
               ))}</TableBody>
             </Table>
-            {status === 'pending' || status === 'declined' ? (
+            {selectedCharge.status === 'cancelled' ? <p className="text-sm">{locale === 'zh-CN' ? '已取消，原付款由收费员按原交易退款。' : 'Cancelled. The cashier refunds the original payments through their original transactions.'}</p> : null}
+            {selectedCharge.status !== 'cancelled' && (status === 'pending' || status === 'declined') ? (
               <FieldGroup>
                 <p className="text-sm text-muted-foreground">{messages.installmentHint}</p>
                 <h3 className="text-sm font-semibold">{messages.paymentMethods}</h3>
@@ -628,7 +631,7 @@ function billingString(value: unknown, key: string): string {
   return candidate.trim()
 }
 
-function paymentQueueStatus(payment: { outcome: 'success' | 'declined' | 'ambiguous'; status: string; remainingFen?: number }): BillingStatus {
+function paymentQueueStatus(payment: { outcome: 'success' | 'declined' | 'ambiguous'; status: string; remainingFen?: number | undefined }): BillingStatus {
   if (payment.outcome !== 'success') return payment.outcome
   if (payment.remainingFen !== undefined) return payment.remainingFen === 0 ? 'paid' : 'pending'
   return ['awaiting-lis', 'awaiting-dispense'].includes(payment.status) ? 'paid' : 'pending'

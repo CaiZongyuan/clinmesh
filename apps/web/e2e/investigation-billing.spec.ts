@@ -28,7 +28,7 @@ test('collects the precise original charge for two doctor-issued laboratory requ
     const queue = billingQueueSchema.parse(await queueResponse.json())
     expect(queue.items.map(item => item.chargeItemId).sort()).toEqual([first.chargeItemId, second.chargeItemId].sort())
     await cashier.getByRole('listitem').filter({ hasText: '合成血红蛋白' }).click()
-    await expect(cashier.getByText(`申请：${secondId}`, { exact: true })).toBeVisible()
+    await expect(cashier.getByRole('region', { name: '当前费用来源', exact: true }).getByText(`申请：${secondId}`, { exact: true })).toBeVisible()
     await cashier.getByLabel('合成现金', { exact: true }).fill('3')
     const previewed = cashier.waitForRequest(request => request.url().endsWith('/payments/actions/preview'))
     const paid = submitPayment(cashier)

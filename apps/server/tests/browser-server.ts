@@ -10,6 +10,7 @@ import { recordingFixtureProvider } from './fixtures/consultation-history.ts'
 export async function startBrowserServer(webRoot: string, options: Partial<Pick<CreateClinMeshRuntimeOptions,
   'activeReferenceReleaseId' | 'referenceDatabasePath' | 'guidelineDatabasePath' | 'syntheaProvider' | 'chatCompletionsProvider'
   | 'patientPersonaModel' | 'dshBridgeSecret' | 'trustedOrigins' | 'dshModelBridge' | 'autoDispatchIntervalMs' | 'modelPricing'
+  | 'imagingAssetDirectory' | 'imagingCatalogDirectory' | 'pathologyAssetDirectory' | 'pathologyCatalogDirectory'
 >> & { qualityCompletions?: NonNullable<CreateClinMeshRuntimeOptions['chatCompletionsProvider']>['completeJson'] } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-e2e-server-'))
   let runtime: Awaited<ReturnType<typeof createClinMeshRuntime>> | undefined
@@ -43,8 +44,10 @@ export async function startBrowserServer(webRoot: string, options: Partial<Pick<
       cursorSecret: randomUUID() + randomUUID(),
       databasePath: join(directory, 'clinmesh.sqlite'),
       demoPassword: password,
-      imagingAssetDirectory: join(directory, 'imaging-assets'),
-      imagingCatalogDirectory: join(directory, 'imaging-catalog'),
+      imagingAssetDirectory: options.imagingAssetDirectory ?? join(directory, 'imaging-assets'),
+      imagingCatalogDirectory: options.imagingCatalogDirectory ?? join(directory, 'imaging-catalog'),
+      pathologyAssetDirectory: options.pathologyAssetDirectory ?? join(directory, 'pathology-assets'),
+      pathologyCatalogDirectory: options.pathologyCatalogDirectory ?? join(directory, 'pathology-catalog'),
       migrationMode: 'apply',
       trustedOrigins: [origin, ...(options.trustedOrigins ?? [])],
       webRoot,
