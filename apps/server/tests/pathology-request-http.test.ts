@@ -31,6 +31,7 @@ import {
   startConsultation,
 } from './fixtures/imaging-scenario.ts'
 import { installSyntheticPathologySlides, type SyntheticSlide } from './fixtures/pathology-catalog.ts'
+import { payOutpatientInvestigation } from './fixtures/pay-outpatient-investigation.ts'
 import {
   breastCaseBundle,
   breastLesionExcision,
@@ -124,10 +125,15 @@ describe('Pathology consultation request HTTP contract', () => {
   }
 
   async function issue(runtime: Runtime, doctor: string, encounterId: string, expectedDraftVersion: number) {
-    return await runtime.app.request(
+    const response = await runtime.app.request(
       `/api/his/v1/encounters/${encounterId}/pathology-request/actions/issue`,
       mutation(doctor, { expectedVersions: { [`Encounter/${encounterId}`]: '3' }, input: { expectedDraftVersion } }),
     )
+    if (response.status === 200) {
+      const issued = issuePathologyRequestResponseSchema.parse(await response.clone().json()).data
+      await payOutpatientInvestigation(runtime, { caseId: issued.caseId, category: 'pathology', chargeItemId: issued.request.billing!.chargeItemId })
+    }
+    return response
   }
 
   /** 保存草稿并开立，返回正式申请。 */
