@@ -61,7 +61,7 @@ pnpm reference:sync
 
 自动启动准备使用 `.env.example` 中的参考数据库配置。显式移除 `CLINMESH_REFERENCE_DATABASE_PATH` 时保留合成 fixture 模式，不下载 DRG，也不报告 DRG 已就绪；维护 CLI 显式指定 `--database` 仍可准备目标库。
 
-内容身份由[离线清单](../apps/server/reference-data/drg-offline.lock.json)固定，下载地址、压缩包哈希及解包规模由[分发锁](../apps/server/reference-data/drg-distribution.lock.json)固定。自动安装目录位于参考数据库同级的 `drg-reference/`，默认是 `.data/drg-reference/`，按当前锁身份保存。仓库根或安装目录中已有完整的当前精简资料时，核验后离线复用；缺失时下载固定精简包。开发阶段只维护当前格式，不扫描、转换或回退旧完整安装；旧格式参考库需要重新创建并运行正常资料准备。
+内容身份由[离线清单](../apps/server/reference-data/drg-offline.lock.json)固定，下载地址、压缩包哈希及解包规模由[分发锁](../apps/server/reference-data/drg-distribution.lock.json)固定。自动安装目录位于参考数据库同级的 `drg-reference/`，默认是 `.data/drg-reference/`，按当前锁身份保存。仓库根或安装目录中已有完整的当前精简资料时，核验后离线复用；缺失时下载固定精简包。开发阶段只维护当前格式，不扫描、转换或回退旧完整安装；已有库残留旧格式登记时，按[局部恢复](#旧格式-drg-登记的局部恢复)处理，不因清单格式变化重建临床参考目录。
 
 正常准备完成后，维护者可从仓库根目录核对结果：
 
@@ -73,11 +73,31 @@ pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinme
 
 自动准备失败时显示下载或校验错误，启动准备不宣告成功；网络恢复后重跑原启动命令即可。已安装资料完整时不访问分发源；缺失或损坏时重新下载到临时目录，整包及来源文件核验通过才替换安装版本，失败保留已有文件和清单。只想修复 DRG 而不重新同步临床目录时，可运行 `pnpm --filter @clinmesh/server drg:prepare`；它读取与 Server 相同的环境文件和参考库路径，支持 `--database`、`--install-directory`、`--manifest`、`--distribution`、`--input-root` 供维护及隔离验证使用。`--check` 在临时目录核验，不写正式资料目录、数据库或审计。自定义 `--database` 应与 Server 配置一致。
 
-每轮准备对完整资料核验一遍，登记清单复用本轮核验结果；下一次独立准备仍会重新检查全部文件，已有相同清单返回 `created: false`。LAN 和 DSH 启动器完成参考资料准备后，通过 Server 内部 `dev:prepared` 入口继续启动，只执行数据库迁移；`pnpm dev:server` 独立启动仍执行完整准备。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接、循环依赖、重复或未列入索引的物理文件均拒绝发布；同一 `inventoryId` 不能覆盖。当前精简清单为 `clinmesh-drg-offline-2026-10-25.r1`，原逻辑 manifest/checksums 与全部来源事实保持不变；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
+准备在复用或登记当前身份前核验全部已有登记的格式和内容哈希；已有无效登记或其他不可恢复的数据库读取错误会直接失败，不以重新登记掩盖。每轮准备对完整资料核验一遍，登记清单复用本轮核验结果；下一次独立准备仍会重新检查全部文件，已有相同清单返回 `created: false`。LAN 和 DSH 启动器完成参考资料准备后，通过 Server 内部 `dev:prepared` 入口继续启动，只执行数据库迁移；`pnpm dev:server` 独立启动仍执行完整准备。哈希失配、缺文件、版本或格式不兼容、行数不符、越界路径、归档链接、循环依赖、重复或未列入索引的物理文件均拒绝发布；同一 `inventoryId` 不能覆盖。当前精简清单为 `clinmesh-drg-offline-2026-10-25.r1`，原逻辑 manifest/checksums 与全部来源事实保持不变；用途继续固定为离线核对，不启用分组或支付计算。`inventory-audit` 返回最近 100 条本地准备和查询记录，包含实际操作系统用户、时间、成功或失败，不记录原文；完整资料已就绪且相同清单已存在时，自动检查仅以只读方式复用。
 
 维护者构建、制包和按需导出使用[储存维护命令](drg-reference-storage.md#维护命令)，安装不永久生成逻辑副本。新资料资产与两份锁一起更新，不能覆盖已发布快照；仓库只保留当前精简格式的发行锁。
 
 管理员可在登录会话下请求 `GET /api/sim/v1/reference-data/offline-inventories?page=1&pageSize=20`，回读来源、Manifest／文件哈希、版本、行数、来源单位、覆盖与隔离项。HTTP 与 CLI 清单列表均返回 `items/page/pageSize/total`，默认每页 20 条、最多 50 条，可按总数继续翻页。普通岗位访问被拒绝；成功和失败读取沿用 operational 审计链及 FHIR AuditEvent。查询与恢复依据见[参考数据合同](architecture/fhir-and-commands.md#54-中国术语与参考数据策略)。
+
+### 旧格式 DRG 登记的局部恢复
+
+本流程只处理已证明被当前精简资料完整替代的旧登记。`clinmesh-drg-offline-2026-10-25.r1` 与 `clinmesh-drg-offline-2026-10-22.r2` 的全部逻辑文件保持相同 SHA-256，变化的是物理储存和登记身份，见[固定快照](drg-reference-storage.md#当前固定快照)。若旧登记缺少 `storage`，当前读取器会拒绝它；单纯重复下载新资料不能消除旧登记。新安装没有此类残留时无需执行恢复。
+
+维护者显式确认恢复范围后按以下顺序处理；正常准备不会自动删除、忽略或迁移历史记录，当前没有专用清理 CLI。
+
+1. 核对 Server 实际配置的参考库绝对路径与临床 Reference Release，停止会访问或热重启该库的进程，确保维护期间没有并发写入。记录待删除旧身份、预期内容哈希及当前替代身份；不能把所有缺少 `storage` 的记录当成同一类可清理对象。
+2. 使用 SQLite 一致备份机制保存完整参考库，包含 WAL 中已提交内容；不要在连接活跃时仅复制主 `.sqlite` 文件。核对备份完整性与源库逻辑状态一致，将目标旧登记的原始 `inventory_id/content_hash/inventory_json`、关联审计、替代依据及非目标数据校验值另行归档。备份与归档放在持久的本地资料目录，不进入 Git，禁止先删记录再备份。
+3. 完整核验当前锁对应的物理对象、全部逻辑文件覆盖与原 SHA-256，以及行数、单位、缺参和隔离条件。可从公开入口执行下列 check-only 命令；自定义安装目录时同时指定实际 `--install-directory`，该模式不修改正式数据库、安装目录或审计。
+
+   ```sh
+   pnpm --filter @clinmesh/server drg:prepare --database <参考库绝对路径> --check
+   ```
+
+4. 对照归档旧登记和本轮核验得到的当前清单，逐项确认来源、版本、manifest/checksums、逻辑文件哈希及覆盖相符，当前登记的身份和内容哈希也必须与核验结果相符。没有明确替代关系、原哈希不符、当前资料不完整或归档不可验证时停止；不补写 `storage`，不改写旧内容或绕过不可变校验。
+5. 在短 SQLite 写事务内再次核对目标旧身份、内容哈希及原始 JSON 与归档完全相同，并确认当前替代登记仍与本轮核验结果相符；只删除这次确认的旧登记，要求影响行数与预期一致。保留既有审计、其他登记、全部临床参考目录及业务数据库，任一检查失败则回滚。事务内不进行下载或长时间资料核验。
+6. 回读所有剩余清单并运行参考库完整核验，比较清理前后非目标参考数据及既有审计，确认仅目标登记被移除且业务库未修改，再重跑原准备与启动入口。备份和原始归档继续保留；如仍有未知或损坏登记，保留现场并单独诊断，不扩大删除范围。
+
+此流程调整的是已替代登记的维护策略，不恢复旧物理格式支持，也不要求变更临床 Release 配置或重新导入诊断、药品、检验目录。决策理由见[局部恢复决策](decisions/implemented/bug-fix/2026-10-26-drg-inventory-recovery.md)，独有验收条件见[修复规格](spec/2026-10-26-drg-inventory-recovery.md)。
 
 ### 免费指南全文同步
 

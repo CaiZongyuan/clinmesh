@@ -4,7 +4,7 @@
 
 ## 身份与覆盖
 
-离线锁中的 package 保留原版本、来源 URL、manifest/checksums 哈希及隔离条件。原 manifest 和 checksums 描述完整逻辑文件；必填的 `storage` 固定 `clinmesh.drg-compact.v1` 索引的路径和 SHA-256。当前锁、清单登记、读取和制包只接受这一物理格式；缺少索引的锁被拒绝。开发阶段的旧格式安装与清单数据库不迁移，重新准备当前资料及参考库；取舍见[当前格式决策](decisions/implemented/simplification/2026-10-25-drg-current-format-only.md)。
+离线锁中的 package 保留原版本、来源 URL、manifest/checksums 哈希及隔离条件。原 manifest 和 checksums 描述完整逻辑文件；必填的 `storage` 固定 `clinmesh.drg-compact.v1` 索引的路径和 SHA-256。当前锁、清单登记、读取和制包只接受这一物理格式；缺少索引的锁被拒绝。旧格式安装不自动迁移；已被当前资料完整替代的旧登记可按[局部恢复合同](deployment.md#旧格式-drg-登记的局部恢复)显式清理，保留临床参考目录及业务数据。当前格式取舍见[当前格式决策](decisions/implemented/simplification/2026-10-25-drg-current-format-only.md)，恢复边界见[局部恢复决策](decisions/implemented/bug-fix/2026-10-26-drg-inventory-recovery.md)。
 
 索引的 `files` 为每个原逻辑路径保存原 SHA-256、原字节数和内建重建配方；`objects` 为常驻物理路径保存 SHA-256 和字节数。原逻辑文件集合必须恰好等于锁定来源清单，不能通过省略未使用地区、版本、规则或表格降低完整覆盖。来源 manifest/checksums 本身也是逻辑文件和已校验对象。
 
