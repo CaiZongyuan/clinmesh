@@ -37,7 +37,7 @@ Status: approved
 
 ## 设计决定
 
-本节为已确认的业务规则。架构取舍见[门诊申请应收与执行门禁提案](../decisions/proposed/architecture/2026-10-26-outpatient-investigation-billing.md)。
+本节为已确认的业务规则。当前合同见[门诊原申请应收与执行](../architecture/clinical-workflows.md#门诊独立检查的应收与执行门禁)，架构取舍见[门诊申请应收与执行门禁决策](../decisions/implemented/architecture/2026-10-26-outpatient-investigation-billing.md)。
 
 ### 价目与计费时点
 
