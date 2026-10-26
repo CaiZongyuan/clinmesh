@@ -175,7 +175,7 @@ describe('doctor pathology consultation page', () => {
     await panel.findByRole('checkbox', { name: '选择乳腺切片病理会诊' })
     await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-1': '3' }, input: {
-      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-pathology-suggestion', kind: 'pathology', serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '复核既往病灶切除的切片。' }],
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-pathology-suggestion', kind: 'pathology', reviewedService: { id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null }, serviceId: service.id, sourceProcedureReference: excision.sourceReference, purpose: '复核既往病灶切除的切片。' }],
     } }]))
     expect(calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/pathology/actions/confirm'])
     expect(screen.queryByRole('dialog')).toBeNull()

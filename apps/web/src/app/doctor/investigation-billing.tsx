@@ -1,8 +1,13 @@
 import type { OutpatientInvestigationBilling, OutpatientInvestigationPrice } from '@clinmesh/contracts/his'
+import type { DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import { Badge } from '@clinmesh/ui/components/badge'
 import { formatFen } from '../workspace-format.ts'
 import type { WorkspaceLocale } from '../workspace-i18n.ts'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
+
+export function reviewedInvestigationService(service: { id: string; version: number; outpatientBilling?: OutpatientInvestigationPrice | undefined } | undefined): DoctorReviewedInvestigationService | undefined {
+  return service === undefined ? undefined : { id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null }
+}
 
 export function missingInvestigationPrice(locale: WorkspaceLocale) {
   return locale === 'zh-CN'

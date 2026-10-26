@@ -198,7 +198,7 @@ describe('laboratory investigation workspace', () => {
     await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/synthetic-encounter': '1' }, input: {
       generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2,
-      selections: [{ source: 'agent', suggestionId: 'synthetic-laboratory-suggestion', kind: 'laboratory', catalogItemId: service.id, indicationCode: 'clinical-evaluation' }],
+      selections: [{ source: 'agent', suggestionId: 'synthetic-laboratory-suggestion', kind: 'laboratory', reviewedService: { id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null }, catalogItemId: service.id, indicationCode: 'clinical-evaluation' }],
     } }]))
     expect(page.onLaboratoryItemChange).not.toHaveBeenCalled()
     expect(page.onIndicationChange).not.toHaveBeenCalled()

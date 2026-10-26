@@ -1,4 +1,4 @@
-import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
+import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import type { PathologyReport, PathologyRequest, PathologyServiceSnapshot } from '@clinmesh/contracts/his'
 import { pathologyPurposeSchema, savePathologyRequestDraftRequestSchema } from '@clinmesh/contracts/his'
 import type { PathologySourceProcedure } from '@clinmesh/contracts/pathology'
@@ -34,7 +34,7 @@ import { formatClinicalDateTime } from './clinical-date-time.ts'
 import type { ImagingSummaryInsertion, ImagingViewState } from './imaging-page.tsx'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
-import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice } from './investigation-billing.tsx'
+import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 
 interface PathologyRequestState {
   draft?: { purpose: string; service: PathologyServiceSnapshot; sourceProcedure: PathologySourceProcedure } | undefined
@@ -489,6 +489,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
   const [procedureReference, setProcedureReference] = useState<string | null>(state?.draft?.sourceProcedure.sourceReference ?? null)
   const [purpose, setPurpose] = useState(state?.draft?.purpose ?? '')
   const [composerOpen, setComposerOpen] = useState(false)
+  const [reviewedService, setReviewedService] = useState<DoctorReviewedInvestigationService>()
   const [localSelectedId, setLocalSelectedId] = useState<string>()
   const requests = state?.requests ?? []
   const selectedRequest = requests.find(request => request.id === (selectedRequestId ?? localSelectedId)) ?? requests[0]
@@ -600,6 +601,7 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
         existingServiceId={state?.draft?.service.id}
         locale={locale}
         onConfirm={({ procedureReference: nextProcedureReference, purpose: nextPurpose, serviceId: nextServiceId }) => {
+          setReviewedService(reviewedInvestigationService(services.data?.items.find(item => item.service.id === nextServiceId)?.service))
           setServiceId(nextServiceId)
           setProcedureReference(nextProcedureReference)
           setPurpose(nextPurpose)
@@ -626,9 +628,10 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       expectedDraftVersion={draftVersion}
       resolveExistingDraft={state?.draft !== undefined}
       manualItems={serviceId === null && procedureReference === null && purpose === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
-        value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose } }]}
+        value: { source: 'manual', kind: 'pathology', serviceId: serviceId ?? '', sourceProcedureReference: procedureReference ?? '', purpose, ...(reviewedService?.id === serviceId ? { reviewedService } : {}) } }]}
       onManualChange={({ value }) => {
         if (value.kind !== 'pathology' || serviceId !== null && serviceId !== value.serviceId) return false
+        setReviewedService(value.reviewedService)
         setServiceId(value.serviceId); setProcedureReference(value.sourceProcedureReference); setPurpose(value.purpose)
         return true
       }}
@@ -640,7 +643,8 @@ export function PathologyPage({ actions, active = true, caseId, elementId, encou
       onManualRemove={value => { if (value.kind !== 'pathology' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate({ kind: 'delete' }); else { setServiceId(null); setProcedureReference(null); setPurpose('') } }}
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
-      itemDetails={value => value.kind === 'pathology' ? <InvestigationPrice locale={locale} price={services.data?.items.find(item => item.service.id === value.serviceId)?.service.outpatientBilling} /> : null}
+      investigationServiceFor={value => value.kind === 'pathology' ? reviewedInvestigationService(services.data?.items.find(item => item.service.id === value.serviceId)?.service) : undefined}
+      itemDetails={value => value.kind === 'pathology' ? <InvestigationPrice locale={locale} price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
     />
   )
   return (

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { commandResponseSchema, saveDiagnosisDraftRequestSchema, prescriptionDraftItemSchema } from './his.ts'
 import { referenceConceptSnapshotSchema } from './reference-data.ts'
+import { outpatientInvestigationPriceSchema } from './investigation-billing.ts'
 
 export const doctorRecommendationKindSchema = z.enum(['laboratory', 'imaging', 'pathology', 'diagnosis', 'prescription'])
 export type DoctorRecommendationKind = z.infer<typeof doctorRecommendationKindSchema>
@@ -170,6 +171,14 @@ const preparationSelectionSource = {
   suggestionId: identity.optional(),
 }
 
+/** 用户本次审阅的服务版本与完整门诊价目；null 明确表示审阅时缺价。 */
+export const doctorReviewedInvestigationServiceSchema = z.object({
+  id: z.string().min(1).max(512),
+  version: z.number().int().positive(),
+  outpatientBilling: outpatientInvestigationPriceSchema.nullable(),
+}).strict()
+export type DoctorReviewedInvestigationService = z.infer<typeof doctorReviewedInvestigationServiceSchema>
+
 export const doctorPreparationSelectionSchema = z.discriminatedUnion('kind', [
   z.object({ ...preparationSelectionSource, kind: z.literal('diagnosis'),
     catalogItemId: identity, role: z.enum(['primary', 'secondary']),
@@ -178,10 +187,13 @@ export const doctorPreparationSelectionSchema = z.discriminatedUnion('kind', [
   z.object({ ...prescriptionDraftItemSchema.shape,
     ...preparationSelectionSource, kind: z.literal('prescription') }).strict(),
   z.object({ ...preparationSelectionSource, kind: z.literal('laboratory'),
+    reviewedService: doctorReviewedInvestigationServiceSchema,
     catalogItemId: identity, indicationCode: z.string().min(1).max(64) }).strict(),
   z.object({ ...preparationSelectionSource, kind: z.literal('imaging'),
+    reviewedService: doctorReviewedInvestigationServiceSchema,
     serviceId: z.string().min(1).max(128), indication: z.string().trim().min(2).max(500) }).strict(),
   z.object({ ...preparationSelectionSource, kind: z.literal('pathology'),
+    reviewedService: doctorReviewedInvestigationServiceSchema,
     serviceId: z.string().min(1).max(128), purpose: z.string().trim().min(2).max(500),
     sourceProcedureReference: z.string().min(1).max(512) }).strict(),
 ]).superRefine((selection, context) => {

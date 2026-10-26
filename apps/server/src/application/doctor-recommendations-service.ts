@@ -176,6 +176,21 @@ export class DoctorRecommendationsService {
     return this.options.workflow.doctorRecommendationCase(context, caseId)
   }
 
+  #investigationCatalogs(context: ActorContext, caseId: string, kind: 'laboratory' | 'imaging' | 'pathology', offerings: DoctorInvestigationRecommendationCatalogs): DoctorInvestigationRecommendationCatalogs {
+    if (kind === 'laboratory') {
+      const laboratory = this.options.workflow.caseLaboratoryCatalog(context, caseId, { page: 1, pageSize: 50 })
+      for (let page = 2; (page - 1) * laboratory.pageSize < laboratory.total; page += 1) {
+        laboratory.items.push(...this.options.workflow.caseLaboratoryCatalog(context, caseId, { page, pageSize: laboratory.pageSize }).items)
+      }
+      return { laboratory }
+    }
+    if (kind === 'imaging') return { imaging: this.options.workflow.imaging.serviceCatalog(context,
+      new Set(offerings.imaging?.items.filter(item => item.available).map(item => item.service.examCode))) }
+    return { pathology: this.options.workflow.pathology.serviceCatalog(context,
+      new Set(offerings.pathology?.items.filter(item => item.available).map(item => item.service.examCode)),
+      new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures]))) }
+  }
+
   #snapshot(context: ActorContext, caseId: string, kind: DoctorRecommendationKind, offerings: DoctorInvestigationRecommendationCatalogs) {
     const detail = doctorCaseDetailSchema.parse(this.#authorize(context, caseId))
     const caseEvidence: DoctorCaseEvidence[] = []
@@ -249,17 +264,7 @@ export class DoctorRecommendationsService {
       catalogs = { diagnoses: { local: this.options.workflow.clinicalCatalog(context).diagnoses,
         reference: [...new Map(reference.map(item => [item.id, item])).values()] } }
     } else if (kind === 'prescription') catalogs = { medications: this.options.workflow.doctorRecommendationMedications(context) }
-    else if (kind === 'laboratory') {
-      const laboratory = this.options.workflow.caseLaboratoryCatalog(context, caseId, { page: 1, pageSize: 50 })
-      for (let page = 2; (page - 1) * laboratory.pageSize < laboratory.total; page += 1) {
-        laboratory.items.push(...this.options.workflow.caseLaboratoryCatalog(context, caseId, { page, pageSize: laboratory.pageSize }).items)
-      }
-      catalogs = { laboratory }
-    } else if (kind === 'imaging') catalogs = { imaging: this.options.workflow.imaging.serviceCatalog(context,
-      new Set(offerings.imaging?.items.filter(item => item.available).map(item => item.service.examCode))) }
-    else catalogs = { pathology: this.options.workflow.pathology.serviceCatalog(context,
-      new Set(offerings.pathology?.items.filter(item => item.available).map(item => item.service.examCode)),
-      new Map(offerings.pathology?.items.map(item => [item.service.examCode, item.sourceProcedures]))) }
+    else catalogs = this.#investigationCatalogs(context, caseId, kind, offerings)
     return { context, encounter: detail.encounter, kind, caseEvidence, catalogs, guidelines,
       sourceHashes, requiredCaseEvidenceIds, historyEvidenceIds: [...history.required, ...history.optional].map(item => item.id),
       missingInformation: [...missingInformation], contextPolicyVersion: 'ready-to-order-2026-10-18-v1',
@@ -677,13 +682,16 @@ export class DoctorRecommendationsService {
         throw new WorkflowError('WORKFLOW_CONFLICT', 'The current active Encounter version is required')
       }
       const hasAgentSelections = request.input.selections.some(selection => selection.source === 'agent')
+      const currentInput = hasAgentSelections ? this.#snapshot(context, caseId, kind, offerings) : undefined
+      const currentCatalogs = currentInput?.catalogs ?? (kind === 'laboratory' || kind === 'imaging' || kind === 'pathology'
+        ? this.#investigationCatalogs(context, caseId, kind, offerings) : {})
       let state: DoctorRecommendationState | undefined
       if (hasAgentSelections) {
         const row = this.#row(context, caseId, kind)
         state = row === undefined ? undefined : doctorRecommendationStateSchema.parse(JSON.parse(row.state_json))
         if (state?.status !== 'ready' || state.generation !== request.input.generation
           || row?.input_fingerprint !== request.input.inputFingerprint
-          || recommendationInputFingerprint(this.#snapshot(context, caseId, kind, offerings)) !== request.input.inputFingerprint) {
+          || recommendationInputFingerprint(currentInput!) !== request.input.inputFingerprint) {
           throw new WorkflowError('WORKFLOW_CONFLICT', 'The prepared items no longer match current clinical information; update them before confirming')
         }
       }
@@ -691,6 +699,19 @@ export class DoctorRecommendationsService {
       const selectedIds = new Set<string>()
       for (const selection of selections) {
         if (selection.kind !== kind) throw new WorkflowError('WORKFLOW_CONFLICT', 'Select a single recommendation kind')
+        if (selection.kind === 'laboratory' || selection.kind === 'imaging' || selection.kind === 'pathology') {
+          const service = selection.kind === 'laboratory'
+            ? currentCatalogs.laboratory?.items.find(item => item.id === selection.catalogItemId)
+              ?? this.options.workflow.clinicalCatalog(context).laboratory.find(item => item.id === selection.catalogItemId)
+            : selection.kind === 'imaging'
+              ? currentCatalogs.imaging?.items.find(item => item.service.id === selection.serviceId)?.service
+              : currentCatalogs.pathology?.items.find(item => item.service.id === selection.serviceId)?.service
+          if (service === undefined || selection.reviewedService.outpatientBilling === null || canonicalJsonHash(selection.reviewedService) !== canonicalJsonHash({
+            id: service.id, version: service.version, outpatientBilling: service.outpatientBilling ?? null,
+          })) {
+            throw new WorkflowError('CATALOG_CONFLICT', '服务版本或门诊价格已变化，请重新审阅项目和价格后再开具')
+          }
+        }
         if (selection.source === 'manual') continue
         const suggestion = state?.items.find(item => item.id === selection.suggestionId && item.kind === kind)
         if (suggestion === undefined || selectedIds.has(suggestion.id)) {

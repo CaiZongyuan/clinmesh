@@ -1,4 +1,4 @@
-import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
+import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import { laboratoryGenerationErrorMessage } from '../laboratory-generation-error.ts'
 import type {
   ClinicalCatalog,
@@ -49,7 +49,7 @@ import {
 import { useAutosave } from './use-autosave.ts'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
-import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice } from './investigation-billing.tsx'
+import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 import { useDoctorPreparation } from './doctor-preparation-state.tsx'
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 
@@ -469,6 +469,7 @@ function LaboratoryRequestEditor({
   const draftItem = state?.draft === undefined
     ? undefined
     : catalogById.get(state.draft.catalogItemId)
+  const [reviewedService, setReviewedService] = useState<DoctorReviewedInvestigationService>()
   const selectedItem = catalogById.get(laboratoryItemId)
   const selectedConcept = selectedReference?.catalogItemId === laboratoryItemId ? selectedReference : undefined
   const selectedDraft = state?.draft?.catalogItemId === laboratoryItemId ? state.draft : undefined
@@ -665,6 +666,7 @@ function LaboratoryRequestEditor({
         locale={locale}
         messages={messages}
         onConfirm={(selection, indication) => {
+          setReviewedService(reviewedInvestigationService(selection.laboratoryService ?? catalogById.get(selection.catalogItemId)))
           setSelectedReference(selection)
           onLaboratoryItemChange(selection.catalogItemId)
           onIndicationChange(indication)
@@ -692,10 +694,12 @@ function LaboratoryRequestEditor({
       resolveExistingDraft={state?.draft !== undefined}
       manualItems={laboratoryItemId === '' && indicationCode === '' ? [] : [{
         label: selectedDisplay ?? laboratoryItemId,
-        value: { source: 'manual', kind: 'laboratory', catalogItemId: laboratoryItemId, indicationCode },
+        value: { source: 'manual', kind: 'laboratory', catalogItemId: laboratoryItemId, indicationCode,
+          ...(reviewedService?.id === laboratoryItemId ? { reviewedService } : {}) },
       }]}
       onManualChange={({ value }) => {
         if (value.kind !== 'laboratory' || laboratoryItemId !== '' && laboratoryItemId !== value.catalogItemId) return false
+        setReviewedService(value.reviewedService)
         onLaboratoryItemChange(value.catalogItemId)
         onIndicationChange(value.indicationCode)
         return true
@@ -712,7 +716,10 @@ function LaboratoryRequestEditor({
       }}
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
-      itemDetails={value => value.kind === 'laboratory' ? <InvestigationPrice locale={locale} price={serviceFor(value.catalogItemId)?.outpatientBilling} /> : null}
+      investigationServiceFor={value => value.kind === 'laboratory' ? reviewedInvestigationService(
+        referenceSearch.data?.items.find(item => item.id === value.catalogItemId) ?? catalogById.get(value.catalogItemId) ?? serviceFor(value.catalogItemId),
+      ) : undefined}
+      itemDetails={value => value.kind === 'laboratory' ? <InvestigationPrice locale={locale} price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
     />
   )
   return (

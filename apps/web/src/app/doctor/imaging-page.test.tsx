@@ -174,7 +174,7 @@ describe('doctor imaging page', () => {
     await panel.findByRole('checkbox', { name: '选择胸部 CT 平扫' })
     await userEvent.setup().click(panel.getByRole('button', { name: /^开具选中项目/ }))
     await waitFor(() => expect(confirmations).toEqual([{ expectedVersions: { 'Encounter/encounter-1': '3' }, input: {
-      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-imaging-suggestion', kind: 'imaging', serviceId: ctService.id, indication: '持续咳嗽，需要医生核对检查指征。' }],
+      generation: 1, inputFingerprint: 'a'.repeat(64), expectedDraftVersion: 2, selections: [{ source: 'agent', suggestionId: 'synthetic-imaging-suggestion', kind: 'imaging', reviewedService: { id: ctService.id, version: ctService.version, outpatientBilling: ctService.outpatientBilling ?? null }, serviceId: ctService.id, indication: '持续咳嗽，需要医生核对检查指征。' }],
     } }]))
     expect(calls.filter(call => call.method !== 'GET').map(call => call.path)).toEqual(['/api/his/v1/doctor/cases/case-1/recommendations/imaging/actions/confirm'])
     expect(screen.queryByRole('dialog')).toBeNull()

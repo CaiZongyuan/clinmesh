@@ -1,7 +1,7 @@
 import { imagingIndicationSchema } from '@clinmesh/contracts/his'
 import type { ImagingReport, ImagingRequest, ImagingServiceSnapshot } from '@clinmesh/contracts/his'
 import { DoctorRecordReviewNotice } from './doctor-record-review-notice.tsx'
-import type { DoctorRecommendationSuggestion } from '@clinmesh/contracts/doctor-recommendations'
+import type { DoctorRecommendationSuggestion, DoctorReviewedInvestigationService } from '@clinmesh/contracts/doctor-recommendations'
 import { agentToolInputSchemas } from '@clinmesh/contracts/agent'
 import { Alert, AlertDescription, AlertTitle } from '@clinmesh/ui/components/alert'
 import { Badge } from '@clinmesh/ui/components/badge'
@@ -34,7 +34,7 @@ import { getWorkspaceMessages, type WorkspaceLocale } from '../workspace-i18n.ts
 import { formatClinicalDateTime } from './clinical-date-time.ts'
 import { InvestigationRequestWorkspace } from './investigation-request-workspace.tsx'
 import { DoctorRecommendationsPanel, type PreparationDraft } from './doctor-recommendations.tsx'
-import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice } from './investigation-billing.tsx'
+import { InvestigationBilling, InvestigationPrice, missingInvestigationPrice, reviewedInvestigationService } from './investigation-billing.tsx'
 
 interface ImagingRequestState {
   draft?: { indication: string; service: ImagingServiceSnapshot } | undefined
@@ -474,6 +474,7 @@ export function ImagingPage({
   const [serviceId, setServiceId] = useState<string | null>(state?.draft?.service.id ?? null)
   const [indication, setIndication] = useState(state?.draft?.indication ?? '')
   const [composerOpen, setComposerOpen] = useState(false)
+  const [reviewedService, setReviewedService] = useState<DoctorReviewedInvestigationService>()
   const [localSelectedRequestId, setLocalSelectedRequestId] = useState<string>()
   const selectRequest = (id: string): void => {
     setLocalSelectedRequestId(id)
@@ -578,6 +579,7 @@ export function ImagingPage({
         existingServiceId={state?.draft?.service.id}
         locale={locale}
         onConfirm={({ indication: nextIndication, serviceId: nextServiceId }) => {
+          setReviewedService(reviewedInvestigationService(services.data?.items.find(item => item.service.id === nextServiceId)?.service))
           setServiceId(nextServiceId)
           setIndication(nextIndication)
           draftAction.mutate({ indication: nextIndication, kind: 'save', serviceId: nextServiceId })
@@ -602,9 +604,10 @@ export function ImagingPage({
       expectedDraftVersion={draftVersion}
       resolveExistingDraft={state?.draft !== undefined}
       manualItems={serviceId === null && indication === '' ? [] : [{ label: selectedService?.service.name ?? state?.draft?.service.name ?? serviceId ?? '',
-        value: { source: 'manual', kind: 'imaging', serviceId: serviceId ?? '', indication } }]}
+        value: { source: 'manual', kind: 'imaging', serviceId: serviceId ?? '', indication, ...(reviewedService?.id === serviceId ? { reviewedService } : {}) } }]}
       onManualChange={({ value }) => {
         if (value.kind !== 'imaging' || serviceId !== null && serviceId !== value.serviceId) return false
+        setReviewedService(value.reviewedService)
         setServiceId(value.serviceId); setIndication(value.indication)
         return true
       }}
@@ -616,7 +619,8 @@ export function ImagingPage({
       onManualRemove={value => { if (value.kind !== 'imaging' || value.serviceId !== serviceId) return; if (state?.draft !== undefined) draftAction.mutate({ kind: 'delete' }); else { setServiceId(null); setIndication('') } }}
       unavailableReason={recommendationUnavailableReason}
       manualUnavailableReason={recommendationUnavailableReason}
-      itemDetails={value => value.kind === 'imaging' ? <InvestigationPrice locale={locale} price={services.data?.items.find(item => item.service.id === value.serviceId)?.service.outpatientBilling} /> : null}
+      investigationServiceFor={value => value.kind === 'imaging' ? reviewedInvestigationService(services.data?.items.find(item => item.service.id === value.serviceId)?.service) : undefined}
+      itemDetails={value => value.kind === 'imaging' ? <InvestigationPrice locale={locale} price={value.reviewedService?.outpatientBilling ?? undefined} /> : null}
     />
   )
   return (
