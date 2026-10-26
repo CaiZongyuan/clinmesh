@@ -1,7 +1,7 @@
 {
   "schemaVersion": "clinmesh.drg-rules-source.v1",
-  "releaseId": "clinmesh-chs-drg-3.0-2026-10-20",
-  "sourceVersion": "CHS-DRG-3.0-opendrg-2026-10-20",
+  "releaseId": "clinmesh-chs-drg-30-2026-10-25.conditions-v2",
+  "sourceVersion": "opendrg-chs-drg-3.0@2026-10-20",
   "inputs": {
     "groups": {
       "path": ".data/reference-prepared/r3/drg/groups.jsonl",

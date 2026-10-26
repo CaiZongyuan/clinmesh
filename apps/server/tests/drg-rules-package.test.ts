@@ -43,6 +43,8 @@ describe('完整条件规则包装载', () => {
     await expect(loadReviewedDrgRules({ ...options, referenceReleaseId: undefined })).rejects.toThrow(/reference release/)
     await writeFile(reviewPath, JSON.stringify({ ...review, manifestSha256: '0'.repeat(64) }), 'utf8')
     await expect(loadReviewedDrgRules(options)).rejects.toThrow(/manifest checksum/)
+    await writeFile(reviewPath, JSON.stringify({ ...review, releaseId: 'other-rules-release' }), 'utf8')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow(/rules release/)
     await writeFile(reviewPath, JSON.stringify({ ...review, sourceVersion: 'other-rules-version' }), 'utf8')
     await expect(loadReviewedDrgRules(options)).rejects.toThrow(/rules release/)
     await writeFile(reviewPath, JSON.stringify({ ...review, checks: { ...review.checks,
@@ -51,6 +53,9 @@ describe('完整条件规则包装载', () => {
     await writeFile(reviewPath, JSON.stringify({ ...review, checks: { ...review.checks,
       algorithmValidation: { ...evidence, status: 'pending' } } }), 'utf8')
     await expect(loadReviewedDrgRules(options)).rejects.toThrow()
+    await writeFile(reviewPath, JSON.stringify(review), 'utf8')
+    await writeFile(join(directory, 'program.json'), 'changed')
+    await expect(loadReviewedDrgRules(options)).rejects.toThrow(/checksum mismatch/)
   })
 
   it('从持久规则包恢复有序程序及来源身份，所有文件有哈希与行数', async () => {
@@ -73,6 +78,13 @@ describe('完整条件规则包装载', () => {
     await expect(loadDrgRules(directory)).rejects.toThrow(/checksum mismatch/)
     const manifest = JSON.parse(await readFile(join(directory, 'manifest.json'), 'utf8'))
     manifest.schemaVersion = 'clinmesh.drg-rules.v1'
+    await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
+    await expect(loadDrgRules(directory)).rejects.toThrow()
+  })
+  it.each(['../program.json', '/program.json', 'C:/program.json'])('拒绝越界规则文件路径 %s', async path => {
+    const { directory, files } = await writePackage()
+    const manifest = JSON.parse(files['manifest.json']!)
+    manifest.files[0].path = path
     await writeFile(join(directory, 'manifest.json'), JSON.stringify(manifest))
     await expect(loadDrgRules(directory)).rejects.toThrow()
   })

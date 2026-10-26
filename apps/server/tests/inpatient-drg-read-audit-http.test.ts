@@ -15,13 +15,14 @@ import { inpatientFullClinicalSchema } from '@clinmesh/contracts/inpatient-clini
 import { inpatientSettlementPreviewSchema } from '@clinmesh/contracts/inpatient-discharge'
 import { inpatientSurgeryCatalogSchema } from '@clinmesh/contracts/inpatient-surgery'
 import { createClinMeshRuntime } from '../src/runtime.ts'
-import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-package.ts'
+import { prepareDrgRulesPackage } from '../src/infrastructure/reference-data/drg-rules-prepare.ts'
+import { syntheticDrgIdentity, syntheticDrgSource } from './fixtures/drg-synthetic-program.ts'
 import { runReferenceDatabaseCli } from '../src/reference-database-cli.ts'
 import { syntheticNhsaMedicationProductSnapshot } from '../src/application/scenario-data/medication-product-snapshot.ts'
 import { syntheticNhcMedicalServiceSnapshot, syntheticWstValueSetSnapshot } from '../src/application/scenario-data/medical-service-snapshot.ts'
 
 const cleanups: Array<() => Promise<void>> = []
-afterEach(async () => { for (const cleanup of cleanups.splice(0)) await cleanup() })
+afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup() })
 const reads = [
   { suffix: 'pregroup', operation: 'inpatient.drg.pregroup' },
   { suffix: 'simulation', operation: 'inpatient.drg.simulate', input: { medications: [], services: [] } },
@@ -31,6 +32,7 @@ const reads = [
 
 async function setup() {
   const directory = await mkdtemp(join(tmpdir(), 'clinmesh-drg-read-audit-'))
+  cleanups.push(() => rm(directory, { recursive: true, force: true }))
   const referenceDatabasePath = join(directory, 'reference.sqlite')
   const artifact = JSON.stringify({ schemaVersion: '1', concepts: [{ id: 'nhsa-diagnosis:nhc-icd10-clinical@2022.r4:I10.x09', domain: 'diagnosis',
     system: 'urn:clinmesh:reference:nhsa-diagnosis', version: '2022', code: 'I10.x09', display: '合成高血压', status: 'active', sourceLocator: 'synthetic:diagnosis:1' }],
@@ -43,21 +45,29 @@ async function setup() {
   await runReferenceDatabaseCli(['import', '--database', referenceDatabasePath, '--manifest', join(directory, 'release.json')])
   const drgRulesDirectory = join(directory, 'drg-rules')
   await mkdir(drgRulesDirectory)
-  const files = prepareDrgRulesPackage({ groups: [
-    { level: 'MDC', code: 'MDCA', name: '合成循环系统疾病', parentCode: null },
-    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCA' },
+  const groups = [
+    { level: 'MDC', code: 'MDCR', name: '合成系统', parentCode: null },
+    { level: 'ADRG', code: 'RA1', name: '合成高血压组', parentCode: 'MDCR' },
     { level: 'DRG', code: 'RA15', name: '合成高血压组，不伴合并症或并发症', parentCode: 'RA1' },
-  ], jsText: 'return ["I10.x09"].includes(x.zdList[0])){Q("符合RA1入组条件，匹配规则：主诊断匹配");}',
-  complicationTables: { CC: {}, MCC: {}, CCE: {} },
-  input: { openDrgJsSha256: 'a'.repeat(64), openDrgTablesSha256: 'b'.repeat(64), r3GroupsSha256: 'c'.repeat(64) },
-  releaseId: 'synthetic-drg-audit', sourceVersion: 'CHS-DRG-3.0-audit-test' })
+  ]
+  const jsText = syntheticDrgSource(), complicationTables = { CC: {}, MCC: {}, CCE: {}, SS_VALID: [] }
+  const files = prepareDrgRulesPackage({ groups, jsText, complicationTables,
+    input: syntheticDrgIdentity(jsText, groups, complicationTables),
+    releaseId: 'synthetic-drg-audit', sourceVersion: 'synthetic-v2-audit-test' })
   for (const [name, content] of Object.entries(files)) await writeFile(join(drgRulesDirectory, name), content)
+  const drgRulesReviewPath = join(directory, 'synthetic-review.json')
+  const evidence = { status: 'verified', evidence: ['synthetic:read-audit-fixture'] }
+  await writeFile(drgRulesReviewPath, JSON.stringify({ schemaVersion: 'clinmesh.drg-rules-review.v1', scope: 'hospital-simulation',
+    releaseId: 'synthetic-drg-audit', sourceVersion: 'synthetic-v2-audit-test',
+    manifestSha256: createHash('sha256').update(files['manifest.json']!).digest('hex'), referenceReleaseId: 'synthetic-drg-audit',
+    reviewedBy: 'synthetic-test-reviewer', reviewedAt: '2026-10-26T00:00:00.000Z',
+    checks: { usageTerms: evidence, codingCompatibility: evidence, sourceApplicability: evidence, algorithmValidation: evidence } }))
   const password = `Test-${randomUUID()}-Aa1!`
   const runtime = await createClinMeshRuntime({ authBaseUrl: 'http://localhost', trustedOrigins: ['http://localhost'], demoPassword: password,
     authSecret: 'test-auth-secret-with-at-least-32-characters', cursorSecret: 'test-cursor-secret-with-at-least-32-characters',
     databasePath: join(directory, 'hospital.sqlite'), referenceDatabasePath, activeReferenceReleaseId: 'synthetic-drg-audit',
-    drgRulesDirectory, migrationMode: 'apply' })
-  cleanups.push(async () => { await runtime.close(); await rm(directory, { recursive: true }) })
+    drgRulesDirectory, drgRulesReviewPath, migrationMode: 'apply' })
+  cleanups.push(() => runtime.close())
   async function login(name: string) {
     const response = await runtime.app.request('/api/auth/sign-in/email', { method: 'POST',
       headers: { 'content-type': 'application/json', origin: 'http://localhost' }, body: JSON.stringify({ email: `${name}@demo.clinmesh.local`, password }) })

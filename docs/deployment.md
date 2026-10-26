@@ -81,26 +81,28 @@ pnpm --filter @clinmesh/server reference-db verify --database ../../.data/clinme
 
 ### 运行时 DRG 规则启用
 
-离线清单就绪只证明文件完整，默认不启用住院分组。需要物化运行时规则时，在仓库根目录用已取得的固定资料执行：
+离线清单就绪只证明文件完整，默认不启用住院分组。需要物化运行时规则时，从上述安装目录中选取当前锁身份对应的精简资料根目录，在仓库根目录执行：
 
 ```sh
-pnpm --filter @clinmesh/server drg:rules:prepare --input-root . --output-directory .data/drg-rules/clinmesh-chs-drg-3.0-2026-10-20
+pnpm --filter @clinmesh/server drg:rules:prepare --input-root <已安装精简资料根目录绝对路径> --output-directory <新规则目录绝对路径>
 ```
 
-该命令按 `apps/server/reference-data/drg-rules-source.lock.json` 核对三份输入的 SHA-256，只解析来源文本，不执行上游 JavaScript。新包在暂存目录校验后原子发布，重复运行核对同一 Manifest；已有不同版本或损坏产物明确报错，不能覆盖历史包。输出包含 `manifestSha256`、资料版本与 `runtimeEnabled:false`，不生成启用审核。
+`--input-root` 指向包含 `.data/drg-compact/v1/index.json` 的已安装根目录；命令从精简读取器重建三份固定逻辑输入，不要求旧逻辑路径存在物理文件，也不永久展开来源副本。默认离线锁为 `apps/server/reference-data/drg-offline.lock.json`，隔离准备可用 `--manifest <离线锁绝对路径>` 指定另一份当前格式的固定清单。参数使用绝对路径，避免 `pnpm --filter` 切换到 Server 目录后解析到其他位置。
+
+该命令将 `apps/server/reference-data/drg-rules-source.lock.json` 的三份来源路径及 SHA-256 与离线清单交叉核对，编译完整有序条件并核对 CC、MCC、CCE 与必填 SS_VALID 参数表，不执行上游 JavaScript。输出仅接受 `clinmesh.drg-rules.v2`；当前规则身份为 `clinmesh-chs-drg-30-2026-10-25.conditions-v2`，可将新规则目录放在仓库 `.data/drg-rules/` 下。新包在暂存目录校验后原子发布，重复运行核对同一 Manifest；输出目录已包含不同身份、缺少 Manifest、使用目录链接或产物损坏时明确报错，不能覆盖历史包。输出包含 `manifestSha256`、资料版本与 `runtimeEnabled:false`，不生成启用审核。显式单文件输入制包仍使用[分组维护命令](architecture/drg-grouping.md#规则产物与交接)。
 
 部署审核使用 [`drgRulesReviewSchema`](../apps/server/src/infrastructure/reference-data/drg-rules-package.ts) 定义的本地 JSON：固定 `schemaVersion=clinmesh.drg-rules-review.v1`、`scope=hospital-simulation`，绑定实际 `releaseId/sourceVersion/manifestSha256/referenceReleaseId`，记录核验人和 UTC 时间。`checks.usageTerms/codingCompatibility/sourceApplicability/algorithmValidation` 必须分别有 `status=verified` 和非空证据引用。审核是部署受信配置，文件完整性和制包成功不能代替来源用途、编码与算法核验；不得为通过启动而填写未经证实的结论。
 
 完成这些核验后，在根 `.env` 同时配置以下两个变量并重启 Server：
 
 ```sh
-CLINMESH_DRG_RULES_DIRECTORY=.data/drg-rules/clinmesh-chs-drg-3.0-2026-10-20
-CLINMESH_DRG_RULES_REVIEW_PATH=.data/drg-rules/reviews/clinmesh-chs-drg-3.0-2026-10-20.json
+CLINMESH_DRG_RULES_DIRECTORY=.data/drg-rules/clinmesh-chs-drg-30-2026-10-25.conditions-v2
+CLINMESH_DRG_RULES_REVIEW_PATH=.data/drg-rules/reviews/clinmesh-chs-drg-30-2026-10-25.conditions-v2.json
 ```
 
-相对路径以环境文件所在目录解析。只配置其中一个、审核不完整、包哈希或规则身份不一致、临床 Reference Release 不匹配时启动失败。未配置时其他 HIS 流程可用，DRG 入口明确显示规则未就绪。运行期只读取物化包，不临时下载来源或执行原分组程序。
+相对路径以环境文件所在目录解析。只配置其中一个、审核不完整、包哈希或规则身份不一致、临床 Reference Release 不匹配时启动失败。审核核对的同一份 Manifest 用于装载文件并再次验证完整条件；旧 v1 包及其审核不能用于 v2，重新制包后须按实际产物哈希、规则身份与临床目录版本核验。未配置时其他 HIS 流程可用，DRG 入口明确显示规则未就绪。运行期只读取物化包，不临时下载来源或执行原分组程序。
 
-固定样本已独立对照冠心病无操作 FR59、实际 `36.0700` 支架置入 FM39、心衰 `I50.900` 的 FR25 和肺炎 `J18.900` 的 ES45；`00.6600` 在该来源有效操作表中未命中，不能以 PTCA 计划代替已核验的支架分组。四例对照不等于全量算法与编码适配已通过。OpenDRG 的公开用途说明亦不足以证明 ClinMesh 重新物化和再分发的全部适用条件，当前完整来源包继续隔离，不随本变更自动启用。证据边界见[资料核验](research/2026-10-21-opendrg-public-data-inventory.md)。
+固定样本已独立对照冠心病无操作 FR59、实际 `36.0700` 支架置入 FM39、心衰 `I50.900` 的 FR25 和肺炎 `J18.900` 的 ES45；`00.6600` 在该来源有效操作表中未命中，不能以 PTCA 计划代替已核验的支架分组。完整条件程序的固定来源对照见[核验记录](research/2026-10-25-drg-condition-verification.md)，不能代替部署病例全部主次编码、来源用途及适用性的核验。OpenDRG 的公开用途说明亦不足以证明 ClinMesh 重新物化和再分发的全部适用条件，当前完整来源包继续隔离，不随制包自动启用。来源证据边界见[资料核验](research/2026-10-21-opendrg-public-data-inventory.md)。
 
 ### 免费指南全文同步
 
