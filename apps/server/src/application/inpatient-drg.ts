@@ -513,6 +513,10 @@ export class InpatientDrg {
         ? archive.frozen.paymentEstimate ?? null : null,
       estimateDifferenceFen: archive?.sourcesHash === row.archive_sources_hash && frozenResultHash === row.frozen_result_hash
         && archive.frozen.paymentEstimate != null ? row.simulated_payment_fen - archive.frozen.paymentEstimate.referenceFen : null,
-      differenceFen: row.difference_fen, note: syntheticDrgPaymentParameters.note, reason: row.reason, reviewedAt: row.created_at })) })
+      differenceFen: row.difference_fen,
+      note: [syntheticDrgPaymentParameters, syntheticPciDrgPaymentParameters]
+        .find(parameters => parameters.parameterSetId === row.parameter_set_id && parameters.version === row.parameter_version)?.note
+        ?? '历史版本的合成支付参数说明不可用；核定金额按原记录保留，不代表地区真实结算或完整盈亏。',
+      reason: row.reason, reviewedAt: row.created_at })) })
   }
 }

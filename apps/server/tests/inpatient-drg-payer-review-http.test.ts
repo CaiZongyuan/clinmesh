@@ -148,7 +148,19 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     expect(receipt.data.reviews).toHaveLength(1)
     expect(receipt.data.reviews[0]).toMatchObject({ simulatedPaymentFen: preview.simulatedPaymentFen,
       hospitalChargesFen: preview.hospitalChargesFen, differenceFen: preview.differenceFen,
-      paymentEstimate: frozen.paymentEstimate, estimateDifferenceFen: 0 })
+      paymentEstimate: frozen.paymentEstimate, estimateDifferenceFen: 0, note: preview.note })
+    // 历史参数身份或版本已不在当前部署中时，不借用其他参数的说明，也不重算原金额。
+    for (const [parameterSetId, parameterVersion] of [
+      ['historical-synthetic-payment', preview.parameterVersion],
+      [preview.parameterSetId, 'historical-version'],
+    ]) {
+      s.runtime.database.driver.prepare('UPDATE inpatient_drg_payer_review SET parameter_set_id=?,parameter_version=? WHERE review_id=?')
+        .run(parameterSetId, parameterVersion, receipt.data.reviews[0].id)
+      const historical = await (await s.request(s.insurance, `${s.path}/drg/payer-reviews`)).json()
+      expect(historical.reviews[0]).toMatchObject({ parameterSetId, parameterVersion,
+        simulatedPaymentFen: preview.simulatedPaymentFen, hospitalChargesFen: preview.hospitalChargesFen, differenceFen: preview.differenceFen })
+      expect(historical.reviews[0].note).toContain('历史版本的合成支付参数说明不可用')
+    }
   })
 
   it('医保办按合成参数核定归档病例，差异与依据可追溯，越岗读写被拒绝', async () => {

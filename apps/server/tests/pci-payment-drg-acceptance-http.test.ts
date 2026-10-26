@@ -169,6 +169,7 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     expect(frozenGrouping).toMatchObject({ frozen: true, result: { drgCode: 'FM39' },
       paymentEstimate: { drgCode: 'FM39', referenceFen: 1200000, parameterVersion: '2026-10-25.r1' } })
     const preview = await s.read('medical-insurance', `${path}/drg/payer-review-preview`, inpatientDrgPayerReviewPreviewSchema)
+    expect(preview.note).toContain('FM39 权重与基础费率均为合成医院演示参数')
     expect(preview).toMatchObject({ drgCode: 'FM39', simulatedPaymentFen: 1200000, hospitalChargesFen: 403568, differenceFen: 796432,
       paymentEstimate: frozenGrouping.paymentEstimate, estimateDifferenceFen: 0,
       caseSummary: { groupingInput: { diagnoses: [{ code: 'I25.103', role: 'main' }] } } })
@@ -179,7 +180,8 @@ describe('同一次合成冠心病 PCI 的支付、待遇与 DRG 联合验收', 
     const payer = (await parsePciResponse(commandResponseSchema(inpatientDrgPayerReviewListSchema), await s.request('medical-insurance', `${path}/drg/payer-review`, {
       encounterVersion: preview.encounterVersion, expectedFingerprint: preview.fingerprint, reason: '合成医保办PCI差异复核' }))).data
     expect(payer.reviews).toHaveLength(1)
-    expect(payer.reviews[0]).toMatchObject({ drgCode: 'FM39', simulatedPaymentFen: 1200000, archiveSourcesHash: archived.archive!.sourcesHash })
+    expect(payer.reviews[0]).toMatchObject({ drgCode: 'FM39', simulatedPaymentFen: 1200000, archiveSourcesHash: archived.archive!.sourcesHash,
+      parameterSetId: preview.parameterSetId, parameterVersion: preview.parameterVersion, note: preview.note })
     const clinicalFrozen = await s.read('inpatient-doctor', `${path}/clinical`, inpatientFullClinicalSchema)
     const departureFrozen = await s.read('ward-nurse', `${path}/discharge`, inpatientDischargeEventsSchema)
     const clearedAdmission = await s.read('medical-records', path, inpatientDetailSchema)

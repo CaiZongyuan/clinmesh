@@ -271,7 +271,7 @@ InpatientPayments拥有首次封账前的追加预交金、出区补缴和退款
 
 多个待实施手术计划的 projected 分组须通过 `primarySurgeryRequestId` 明确假想主操作；唯一计划默认取该计划。假想实施以该计划为主，其余计划和既有实际操作为次，不改实际主操作或首页。计划已取消、完成或跨住院返回 `INPATIENT_DRG_PLAN_CONFLICT`。实际已有操作但尚未在首页明确主操作时，formal 如实报告输入不完整，不回退为术前分组。
 
-医院支付参考中 FM39 唯一消费 PCI 数据 owner 的 `clinmesh-synthetic-pci-payment@2026-10-25.r1`，基础费率 500000 分乘权重 24000bp，即 1200000 分。其他演示病组使用 `clinmesh-synthetic-hospital-drg-payment@2026-demo-3`，覆盖 RA15、FR59、FR25、ES45；FM59 缺支付参数，明确显示缺项。两者与患者医保待遇独立；既有归档与核定按原参数身份回读。收费进度仅表示已发生收费占推演总额比例，参考额差额不称完整盈亏；成本和预计收入缺少完整组成时明确不可估算。
+医院支付参考中 FM39 唯一消费 PCI 数据 owner 的 `clinmesh-synthetic-pci-payment@2026-10-25.r1`，基础费率 500000 分乘权重 24000bp，即 1200000 分。其他演示病组使用 `clinmesh-synthetic-hospital-drg-payment@2026-demo-3`，覆盖 RA15、FR59、FR25、ES45；FM59 缺支付参数，明确显示缺项。两者与患者医保待遇独立；既有归档与核定按原参数身份回读。核定说明同时匹配记录的参数身份与版本；历史版本不在当前部署时明确说明不可用，保留原金额，不借用其他参数的说明。收费进度仅表示已发生收费占推演总额比例，参考额差额不称完整盈亏；成本和预计收入缺少完整组成时明确不可估算。
 
 DRG 公开预分组、推演、预留读取、核定预览和核定历史读取保留成功或拒绝审计；成功读取无法保存审计时不返回数据。领域内部查询不重复生成外部读取审计。医保办的人类会话可在当前 Epoch 的 completed Run 回查记录，核定写入仍受原 active Run 边界约束。规则制包与受信审核启用见[部署指南](../deployment.md#运行时-drg-规则启用)，决策理由见[联合入口与审阅绑定](../decisions/implemented/feature/2026-10-25-drg-joint-acceptance-and-review.md)。
 
