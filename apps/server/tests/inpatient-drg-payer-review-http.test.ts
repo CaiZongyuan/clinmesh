@@ -158,7 +158,11 @@ describe('住院 DRG 医保办模拟核定公共 HTTP', () => {
     const version = (await (await s.request(s.doctor, s.path)).json()).admission.versionId
     // 未归档病例不能模拟核定。
     expect((await s.request(s.insurance, `${s.path}/drg/payer-review`, { encounterVersion: version, expectedFingerprint: '0'.repeat(64), reason: '未归档验证' })).status).toBe(409)
+    expect((await s.request(s.insurance, `${s.path}/record`)).status).toBe(403)
+    expect((await s.request(s.insurance, `${s.path}/drg/pregroup`)).status).toBe(409)
     const { sourcesHash } = await submitReviewArchive(s, null)
+    expect((await s.request(s.insurance, `${s.path}/record`)).status).toBe(403)
+    expect((await s.request(s.insurance, `${s.path}/drg/pregroup`)).status).toBe(200)
     const preview = await (await s.request(s.insurance, `${s.path}/drg/payer-review-preview`)).json()
     // 越岗边界：医生与收费员不能发起核定，医生不能读取复核记录。
     expect((await s.request(s.doctor, `${s.path}/drg/payer-review`, { encounterVersion: version, expectedFingerprint: preview.fingerprint, reason: '越岗验证' })).status).toBe(403)

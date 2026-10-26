@@ -104,6 +104,9 @@ export class InpatientDrg {
   }
 
   pregroup(context: ActorContext, admissionId: string): InpatientDrgPregroupResult {
+    this.owner.assertReadRole(context, ['inpatient-doctor', 'ward-nurse', 'medical-records', 'medical-insurance'])
+    this.owner.readAdmissionBinding(context, admissionId)
+    if (context.roleCode === 'medical-insurance') return this.#frozenArchive(context, admissionId).frozen
     const record = this.owner.records.read(context, admissionId)
     // 归档病例回看冻结结果不依赖当前规则包；未归档病例保持规则未配置优先报错。
     if (record.archive !== undefined) return this.#frozenArchive(context, admissionId).frozen
