@@ -32,6 +32,8 @@ Agent CLI 使用六个互补 seam：Catalog test 拥有 operation/route/schema/S
 
 `inpatient-drg-review.spec.ts` 和 `inpatient-drg.spec.ts` 验证医生草稿迟到隔离、异步事实变化主动过期并锁定已开确认、服务端过期重验、取消、实际手术显式引用预留、医保办原回执恢复及缺规则入口；`inpatient-drg.browser.test.ts` 验证 React 18/19 ShadowRoot 下的医嘱、预留和核定审阅。业务拒绝、权限、幂等与读取审计矩阵留在 Server HTTP 测试，CLI Skill 示例检查保留完整 Command envelope，不在浏览器复制同一矩阵。
 
+`inpatient-pci.spec.ts` 与 `inpatient-pci.browser.test.ts` 共用黄金旅程，分别通过生产 Web 和 React 18/19 ShadowRoot 中的生产 `InpatientWorkspace` 验证 PCI 术前核对、显式材料替换、实际主操作、出区、待遇与收退款、清床归档、医保办 12000 元核定及归档后关联更正。前置固定来源、直接入院、九项检验、五药和造影通过同一公开 HTTP fixture 准备，不 mock 业务接口。Surface 合同证明共享视图与 HTTP 接线，不代替原生 DSH Session 或 Tool proposal 验收。
+
 ### Application composition
 
 共享业务视图在 `packages/views` 测试；Web 路由和平台 wiring 在 `apps/web` 测试。DSH composition 额外覆盖可注入 API base、Memory Router、ShadowRoot Portal、Page Context 续签、稳定 page scope、detached review 和 artifact contract。Desktop 或 Mobile 进入实际开发后在对应 app 增加平台证据。一个产品行为只有一个完整矩阵归属，其他层保留 wiring、可访问性和真实入口验证，不重复纯函数矩阵。
